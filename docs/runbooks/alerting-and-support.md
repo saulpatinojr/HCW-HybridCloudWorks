@@ -980,6 +980,16 @@ az role assignment create --name $rn --assignee-object-id $me --assignee-princip
 az role assignment delete --ids $rid
 ```
 
+Success is two notifications for `alert-rbac-assignment-app-prod-cus`, and
+this list printing nothing again. A row means the delete did not take: keep
+the record and do the recovery below.
+
+```powershell
+az role assignment list --assignee $me --scope $rg -o json | ConvertFrom-Json | Select-Object roleDefinitionName, scope
+```
+
+Only then remove the record:
+
 ```powershell
 Remove-Item -LiteralPath $rf
 ```
@@ -1118,6 +1128,16 @@ az role definition create --role-definition "@$dj" -o none
 az role definition delete --name $dn --scope $rg
 ```
 
+Success is two notifications for `alert-rbac-definition-app-prod-cus`, and
+this list printing nothing again. A row means the delete did not take: keep
+both files and do the recovery below.
+
+```powershell
+az role definition list --custom-role-only true --scope $rg -o json | ConvertFrom-Json | Where-Object roleName -like 'plat4-fire-test-*' | Select-Object roleName, id
+```
+
+Only then remove the two files:
+
 ```powershell
 Remove-Item -LiteralPath $dj
 ```
@@ -1125,8 +1145,6 @@ Remove-Item -LiteralPath $dj
 ```powershell
 Remove-Item -LiteralPath $df
 ```
-
-Success is the same two notifications for `alert-rbac-definition-app-prod-cus`.
 
 **If either half was interrupted**, recover from the record in any window. A
 delete that answers that the role does not exist means the run stopped before
