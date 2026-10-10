@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Removes every rule the addons role wrote in one iptables chain, so the role
+# can rebuild its egress policy in one known order on each run. The addons
+# role installs this as /usr/local/libexec/hcw-addons-egress-clear and runs it
+# before inserting the rules again (roles/addons/tasks/main.yml).
+#
+#   hcw-addons-egress-clear [chain] [comment]
+#
+# chain defaults to DOCKER-USER and comment to the one every rule of the role
+# carries. A rule is the role's when its comment is exactly that text; a rule
+# with any other comment, or none (Docker's own), is left alone. Prints one
+# line per rule removed and nothing when there is none, which is the normal
+# state on the first run and after a reboot that ufw has not yet restored.
+#
+# Why rules are deleted by number and not by their text: `iptables -S` prints
+# the comment in double quotes, and a rule line fed back to iptables through
+# an unquoted variable splits `"hcw-addons egress (roles/addons)"` into three
+# arguments with the quote characters still on them, which iptables refuses.
+# The numbered listing is read instead, the role's lines are picked by their
+# `/* comment */`, and each is deleted by its number, highest first, so the
+# numbers of the rules still to delete do not move. The inline pipeline this
+# replaces also failed on an empty chain: grep finds nothing, exits 1, and
+# pipefail made that the task's failure (lab host, 2026-10-10).
+#
+# A chain that does not exist is an error, said by iptables itself: the role
+# runs this after Docker has created DOCKER-USER, so its absence means Docker
+# is not managing iptables, and the inserts that follow would fail anyway.
+set -euo pipefail
+
+chain="${1:-DOCKER-USER}"
+comment="${2:-hcw-addons egress (roles/addons)}"
+
+listing="$(iptables -w -L "${chain}" -n --line-numbers)"
+numbers="$(awk -v marker="/* ${comment} */" 'index($0, marker) { print $1 }' <<<"${listing}" | sort -rn)"
+
+for number in ${numbers}; do
+  iptables -w -D "${chain}" "${number}"
+  echo "removed ${chain} rule ${number}"
+done

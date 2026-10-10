@@ -500,6 +500,17 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/docker/tests/hcw-docker-stale-bridges.test.sh
 
+      # /usr/local/libexec/hcw-addons-egress-clear removes the addons role's
+      # egress rules from DOCKER-USER before the role rebuilds them. The
+      # inline pipeline it replaced failed on an empty chain (the host's
+      # first run, 2026-10-10) and could not delete a rule whose comment
+      # `iptables -S` quotes. It reads what iptables prints, so it runs here
+      # against real iptables, in a scratch chain of its own, never Docker's.
+      # As root, because it writes iptables.
+      - name: hcw-addons-egress-clear test
+        if: steps.changes.outputs.relevant == 'true'
+        run: sudo bash roles/addons/tests/hcw-addons-egress-clear.test.sh
+
       # The Caddyfile's per-name direct-visit redirect (ADR 0035) relies on
       # Caddy ordering every `vars` directive ahead of `redir` and letting a
       # route's later `vars` win for its name. Nothing but Caddy can say so:

@@ -53,7 +53,10 @@ one; ADR 0035 decision 8 records them as the second permitted workload kind.
    without a ufw reload (a reload would flush the rules Docker holds for
    its running containers). Each run first removes every live rule carrying
    the role's comment and rebuilds the set, so a range or port dropped from
-   the defaults is dropped from the chain in the same run. Loopback publishing bounds what reaches an
+   the defaults is dropped from the chain in the same run. The removal is
+   `files/hcw-addons-egress-clear`, installed in `/usr/local/libexec`, which
+   deletes by rule number and is tested against real iptables
+   (`tests/hcw-addons-egress-clear.test.sh`). Loopback publishing bounds what reaches an
    add-on; this bounds where an add-on holding a visitor's upload can send
    it. Read it on the host with `sudo iptables -L DOCKER-USER -n --line-numbers`.
 4. Renders `/etc/caddy/conf.d/20-addons.caddy` with one route per enabled

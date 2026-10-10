@@ -135,18 +135,31 @@
 # removed, so a range or port dropped from the defaults is dropped from the
 # chain too, and the inserts below rebuild the set in one known order. Docker's
 # own trailing RETURN carries no such comment and is untouched.
+#
+# A helper, not an inline pipeline, so it ships with a test against real
+# iptables (tests/hcw-addons-egress-clear.test.sh). The pipeline it replaces
+# failed the first run on the host (2026-10-10): the chain held none of the
+# role's rules, grep exited 1 and pipefail made that the task's failure. On
+# any later run it would have deleted nothing while printing "removed",
+# because `iptables -S` quotes the comment and the unquoted re-read split it.
+# The comment passed here is the one every insert below carries.
+- name: Install hcw-addons-egress-clear, which removes the role's egress rules from a chain
+  ansible.builtin.copy:
+    src: hcw-addons-egress-clear
+    dest: /usr/local/libexec/hcw-addons-egress-clear
+    owner: root
+    group: root
+    mode: "0750"
+  when: addons_active | length > 0
+
 - name: Remove the egress rules this role wrote on an earlier run
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      iptables -S DOCKER-USER 2>/dev/null | grep -F 'hcw-addons egress (roles/addons)' | sed 's/^-A /-D /' | while read -r rule; do
-        # shellcheck disable=SC2086
-        iptables $rule
-        echo removed
-      done
-    executable: /bin/bash
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/hcw-addons-egress-clear
+      - DOCKER-USER
+      - hcw-addons egress (roles/addons)
   register: addons_egress_reconcile
-  changed_when: "'removed' in addons_egress_reconcile.stdout"
+  changed_when: addons_egress_reconcile.stdout_lines | length > 0
   when: addons_active | length > 0 and not ansible_check_mode
 
 - name: Reject every other new flow from the add-ons' subnet

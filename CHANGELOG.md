@@ -4358,6 +4358,33 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab host: the add-ons' egress cleanup works on an empty chain and on its
+  own rules (ADR 0035).** The bootstrap after #1059 stopped at "Remove the
+  egress rules this role wrote on an earlier run". The inline pipeline
+  `iptables -S DOCKER-USER | grep -F … | sed … | while read rule; do iptables $rule`
+  ran under `pipefail`, and on the host's first run the chain held none of
+  the role's rules, so `grep` exited 1 and that became the task's failure.
+  Reproduced in Ubuntu 26.04 with iptables 1.8.11 (nf_tables), the host's
+  own versions. The same reproduction showed the next failure waiting: with
+  a rule present, `iptables -S` prints the comment in quotes, the unquoted
+  `$rule` split it, iptables answered "Bad argument `egress'", and the loop
+  still printed "removed" and exited 0. Every later run would have deleted
+  nothing while saying it had.
+  - `lab-host/ansible/roles/addons/files/hcw-addons-egress-clear`, installed
+    as `/usr/local/libexec/hcw-addons-egress-clear`, reads the numbered
+    listing, picks the role's rules by their exact `/* comment */`, and
+    deletes them by number, highest first. A missing chain fails with
+    iptables' own message instead of being hidden by `2>/dev/null`.
+  - `tests/hcw-addons-egress-clear.test.sh` runs it as root against real
+    iptables, in a scratch chain:
+    - an empty chain;
+    - the role's rules among another comment, a comment containing the
+      role's, and Docker's RETURN;
+    - a second run;
+    - a missing chain.
+
+    CI runs it in the `ansible-lint (lab-host)` job.
+
 - **Lab host: an add-on with no digest yet no longer stops the bootstrap
   (ADR 0035).** The `migration` row is enabled with an empty
   `image_digest`, which by design deploys nothing and only says so, "because
