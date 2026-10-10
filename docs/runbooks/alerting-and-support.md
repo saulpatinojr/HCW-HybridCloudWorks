@@ -887,7 +887,12 @@ account Reader on one group in each subscription and take it back. Like the
 poison test, each half chooses the assignment's id before creating it, records
 it in a file, deletes by that id, and recovers from the file. The poison queue
 test above already covers the application subscription; this covers both.
-`$me` is the value from that test; set it again in a new window:
+Run one half at a time, in one window. The record file is the test's lock: the
+line that writes it refuses to overwrite one, so an error there saying the file
+exists means a run is unfinished; stop and do the recovery below. Every group
+is looked up with its subscription named, so the window's default subscription
+does not matter. `$me` is the value from that test; set it again in a new
+window:
 
 ```powershell
 $me = (az ad signed-in-user show -o json | ConvertFrom-Json).id
@@ -925,7 +930,7 @@ $rid = "$mg/providers/Microsoft.Authorization/roleAssignments/$rn"
 ```
 
 ```powershell
-@{ ra = $rid } | ConvertTo-Json | Set-Content -LiteralPath $rf
+@{ ra = $rid } | ConvertTo-Json | Out-File -LiteralPath $rf -NoClobber
 ```
 
 ```powershell
@@ -948,7 +953,7 @@ For the application subscription, the same with `rg-web-site-prod-cus`: check
 both stop conditions again, then:
 
 ```powershell
-$rg = (az group show -n rg-web-site-prod-cus -o json | ConvertFrom-Json).id
+$rg = (az group show -n rg-web-site-prod-cus --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json).id
 ```
 
 ```powershell
@@ -964,7 +969,7 @@ $rid = "$rg/providers/Microsoft.Authorization/roleAssignments/$rn"
 ```
 
 ```powershell
-@{ ra = $rid } | ConvertTo-Json | Set-Content -LiteralPath $rf
+@{ ra = $rid } | ConvertTo-Json | Out-File -LiteralPath $rf -NoClobber
 ```
 
 ```powershell
@@ -1003,7 +1008,9 @@ throwaway custom role in each subscription and delete it. The role can read
 resource groups and nothing else, is assignable at one group only, and is never
 assigned. Azure chooses a new role's id itself, so this test chooses the role's
 name instead, records it before creating the role, and deletes and recovers by
-it. First the Management half's group and the record:
+it. The record is the lock, as in the test above: one half at a time, and an
+error on the line that writes it, saying the file exists, means stop and
+recover. First the Management half's group and the record:
 
 ```powershell
 $mg = (az group show -n rg-mgmt-plat-prod-cus --subscription sub-plat-mgmt-prod-cus -o json | ConvertFrom-Json).id
@@ -1034,7 +1041,7 @@ $dn = 'plat4-fire-test-' + [guid]::NewGuid().Guid
 ```
 
 ```powershell
-@{ name = $dn; scope = $mg } | ConvertTo-Json | Set-Content -LiteralPath $df
+@{ name = $dn; scope = $mg } | ConvertTo-Json | Out-File -LiteralPath $df -NoClobber
 ```
 
 ```powershell
@@ -1073,7 +1080,7 @@ For the application subscription, the same with `rg-web-site-prod-cus`. The
 group first, then the same two stop conditions: `False`, then nothing.
 
 ```powershell
-$rg = (az group show -n rg-web-site-prod-cus -o json | ConvertFrom-Json).id
+$rg = (az group show -n rg-web-site-prod-cus --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json).id
 ```
 
 ```powershell
@@ -1092,7 +1099,7 @@ $dn = 'plat4-fire-test-' + [guid]::NewGuid().Guid
 ```
 
 ```powershell
-@{ name = $dn; scope = $rg } | ConvertTo-Json | Set-Content -LiteralPath $df
+@{ name = $dn; scope = $rg } | ConvertTo-Json | Out-File -LiteralPath $df -NoClobber
 ```
 
 ```powershell
