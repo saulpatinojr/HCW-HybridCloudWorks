@@ -86,9 +86,9 @@
     - role: lab_images
     # Tool add-ons (ADR 0035): one hardened container per row of `addons` in
     # group_vars, by digest, on the loopback, each with a route in Caddy's
-    # conf.d. Needs docker and caddy, and nothing of coder's; it stops on an
-    # enabled row whose vault key is unset, so it runs after the lab
-    # services are configured.
+    # conf.d. Needs docker and caddy, and nothing of coder's; it stops on a
+    # row being deployed (enabled, with a digest) whose vault key is unset, so
+    # it runs after the lab services are configured.
     - role: addons
     # The owner's tools, last: nothing above needs either, so a failure here
     # leaves the lab services configured. Both are off until the owner turns
