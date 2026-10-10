@@ -16,8 +16,8 @@ argument_specs:
         stopped; removes the container of every row that is not enabled, and the route while no
         row is.
       - Refuses to publish on any address but 127.0.0.1, a row without an integer port of its
-        own, a digest that is not sha256 plus 64 hex characters, and an enabled row whose
-        secret_env names a vault key that is not set.
+        own, a digest that is not sha256 plus 64 hex characters, and a row being deployed (enabled,
+        with a digest) whose secret_env names a vault key that is not set.
     author: HybridCloudWorks
     options:
       addons_enabled:

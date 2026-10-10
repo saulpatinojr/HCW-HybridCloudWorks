@@ -49,9 +49,9 @@ its route is a file in Caddy's `conf.d`, and before `labs_agent`;
 `lab_images` straight after `labs_agent`, because its plan runs on the
 Node.js that role installs and reads the agent's checkout; `addons` after
 `lab_images`, because it needs docker and caddy and nothing of coder's, and
-stops on an enabled row whose vault key is unset; `portainer`
-and `vault` last, because nothing above needs either, so a failure there
-leaves the lab services configured; and `privilege_checks` from
+stops on a row being deployed (enabled, with a digest) whose vault key is
+unset; `portainer` and `vault` last, because nothing above needs either, so a
+failure there leaves the lab services configured; and `privilege_checks` from
 `post_tasks`, after every role and the handlers they notified. Docker
 Compose on this host is for Coder and its PostgreSQL only (ADR 0032); Portainer
 and the tool add-ons are single containers their roles run directly (the

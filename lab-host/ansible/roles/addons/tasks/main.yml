@@ -62,12 +62,20 @@
 # human verification or refuse to start, and either is better said here.
 # The loop prints key NAMES only; the values are never looked at outside
 # the assertion.
-- name: Collect the vault keys the enabled add-ons need
+#
+# Only rows that will be deployed are asked for their keys, the same set
+# the test-key check above and the container tasks below use. A row whose
+# digest is still empty starts nothing, so it needs no secret yet; it gets
+# the "not deployed" note below instead. Asking every enabled row stopped
+# the whole play at this task on 2026-10-10 for an add-on with no digest,
+# and portainer, vault, the privilege checks and the applied-commit record
+# never ran.
+- name: Collect the vault keys the add-ons being deployed need
   ansible.builtin.set_fact:
     addons_secret_refs: >-
       {{ addons_secret_refs | default([])
          + (item.secret_env | default({}) | dict2items | map('combine', {'id': item.id}) | list) }}
-  loop: "{{ addons_running }}"
+  loop: "{{ addons_deployed }}"
   loop_control:
     label: "{{ item.id }}"
 

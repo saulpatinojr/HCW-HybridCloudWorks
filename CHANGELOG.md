@@ -4358,6 +4358,21 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab host: an add-on with no digest yet no longer stops the bootstrap
+  (ADR 0035).** The `migration` row is enabled with an empty
+  `image_digest`, which by design deploys nothing and only says so, "because
+  the other roles must still converge". But the `addons` role asked every
+  enabled row for its vault keys, so on 2026-10-10 the run stopped at
+  "Refuse to start an add-on whose vault key is not set" for a container it
+  would never have started. `portainer`, `vault`, the privilege checks and
+  the applied-commit record never ran.
+  - `lab-host/ansible/roles/addons/tasks/main.yml`: the keys are collected
+    from `addons_deployed` (enabled, with a digest), the same set the
+    test-key check and the container tasks use. A row without a digest gets
+    the "not deployed" note, and its key is asked for once it has a digest.
+  - The playbook comment, the role's argument spec and `lab-host/README.md`
+    say the gate is on a row being deployed.
+
 - **The role-change alerts are a rule per resource type, which Azure
   accepts (PLAT-4, #964).** The apply that created the other PLAT-4 rules
   refused `alert-rbac-write-app` and `alert-rbac-write-mgmt` with
