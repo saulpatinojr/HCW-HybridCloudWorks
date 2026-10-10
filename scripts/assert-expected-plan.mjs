@@ -343,14 +343,24 @@ export const DECLARED = [
     reason: 'PLAT-4: Resource Manager wrote to either vault (ACL, properties, ARM key or secret writes)',
   },
   {
-    address: 'azurerm_monitor_activity_log_alert.rbac_writes_app',
+    address: 'azurerm_monitor_activity_log_alert.rbac_assignment_writes_app',
     action: 'create',
-    reason: 'PLAT-4: a role assignment or definition changed in the application subscription',
+    reason: 'PLAT-4: a role assignment changed in the application subscription',
   },
   {
-    address: 'azurerm_monitor_activity_log_alert.rbac_writes_mgmt',
+    address: 'azurerm_monitor_activity_log_alert.rbac_definition_writes_app',
     action: 'create',
-    reason: 'PLAT-4: a role assignment or definition changed in the Management subscription',
+    reason: 'PLAT-4: a role definition changed in the application subscription',
+  },
+  {
+    address: 'azurerm_monitor_activity_log_alert.rbac_assignment_writes_mgmt',
+    action: 'create',
+    reason: 'PLAT-4: a role assignment changed in the Management subscription',
+  },
+  {
+    address: 'azurerm_monitor_activity_log_alert.rbac_definition_writes_mgmt',
+    action: 'create',
+    reason: 'PLAT-4: a role definition changed in the Management subscription',
   },
   {
     address: 'azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_vault_unwrap',

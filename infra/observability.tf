@@ -1837,7 +1837,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "key_vault_data_writes
 }
 
 # ---------------------------------------------------------------------------
-# Activity Log — vault configuration and role assignments
+# Activity Log — vault configuration, role assignments and role definitions
 # ---------------------------------------------------------------------------
 #
 # Free, and no export: an Activity Log alert is evaluated on the Activity Log
@@ -1855,10 +1855,25 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "key_vault_data_writes
 # depends on: the application subscription, and Management, where the
 # workspace and the alert identities' grants live.
 #
+# One resource type per rule, which is Azure's constraint, not a preference. A
+# rule in the Administrative category scoped to a whole subscription must
+# carry at least one more single-value condition. azurerm sends a list
+# attribute (`resource_types`, `statuses`) as an any-of group, and an any-of
+# group does not count: the first apply refused a rule watching both types
+# with UnsupportedCondition, "must have at least one additional filtering
+# condition" (2026-10-10). `resource_type` is one `equals`, the shape
+# Microsoft's Administrative sample uses, so role assignments and role
+# definitions are a rule each, in each subscription.
+#
 # Every HCP Terraform apply that creates or deletes a role assignment fires
-# the RBAC rule for that subscription. That is intended: it is the second
-# witness an apply does what its plan said, and the one place an assignment
-# made OUTSIDE an apply shows up.
+# the role-assignment rule for that subscription. That is intended: it is the
+# second witness an apply does what its plan said, and the one place an
+# assignment made OUTSIDE an apply shows up. No apply writes a role
+# definition: infra/ declares none, reading its custom roles as data sources,
+# and the owner creates and updates them by hand. So the role-definition
+# rules fire only on a hand change, which is why they exist: a change to a
+# custom role's actions widens every assignment of it without one assignment
+# being written.
 
 # Vault configuration: anything Resource Manager writes on either vault or
 # beneath it. That covers the network ACL and every other vault property, a
@@ -1884,17 +1899,17 @@ resource "azurerm_monitor_activity_log_alert" "key_vault_config_writes" {
   tags = local.tags
 }
 
-resource "azurerm_monitor_activity_log_alert" "rbac_writes_app" {
-  name                = "alert-rbac-write-app-${var.environment}-${var.region_abbreviation}"
+resource "azurerm_monitor_activity_log_alert" "rbac_assignment_writes_app" {
+  name                = "alert-rbac-assignment-app-${var.environment}-${var.region_abbreviation}"
   resource_group_name = azurerm_resource_group.app["web"].name
   location            = "global"
   scopes              = ["/subscriptions/${var.subscription_app}"]
-  description         = "A role assignment or role definition was created, changed or deleted in the application subscription, or an attempt failed. Expected from an HCP Terraform apply that grants or removes a role; anything else is not. PLAT-4."
+  description         = "A role assignment was created or deleted in the application subscription, or an attempt failed. Expected from an HCP Terraform apply that grants or removes a role; anything else is not. PLAT-4."
 
   criteria {
-    category       = "Administrative"
-    resource_types = ["Microsoft.Authorization/roleAssignments", "Microsoft.Authorization/roleDefinitions"]
-    statuses       = ["Succeeded", "Failed"]
+    category      = "Administrative"
+    resource_type = "Microsoft.Authorization/roleAssignments"
+    statuses      = ["Succeeded", "Failed"]
   }
 
   action {
@@ -1904,19 +1919,61 @@ resource "azurerm_monitor_activity_log_alert" "rbac_writes_app" {
   tags = local.tags
 }
 
-resource "azurerm_monitor_activity_log_alert" "rbac_writes_mgmt" {
+resource "azurerm_monitor_activity_log_alert" "rbac_definition_writes_app" {
+  name                = "alert-rbac-definition-app-${var.environment}-${var.region_abbreviation}"
+  resource_group_name = azurerm_resource_group.app["web"].name
+  location            = "global"
+  scopes              = ["/subscriptions/${var.subscription_app}"]
+  description         = "A role definition was created, changed or deleted in the application subscription, or an attempt failed. No apply writes one; expected only when the owner changes a custom role by hand. PLAT-4."
+
+  criteria {
+    category      = "Administrative"
+    resource_type = "Microsoft.Authorization/roleDefinitions"
+    statuses      = ["Succeeded", "Failed"]
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.ops.id
+  }
+
+  tags = local.tags
+}
+
+resource "azurerm_monitor_activity_log_alert" "rbac_assignment_writes_mgmt" {
   provider = azurerm.mgmt
 
-  name                = "alert-rbac-write-mgmt-${var.environment}-${var.region_abbreviation}"
+  name                = "alert-rbac-assignment-mgmt-${var.environment}-${var.region_abbreviation}"
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   location            = "global"
   scopes              = ["/subscriptions/${var.subscription_mgmt}"]
-  description         = "A role assignment or role definition was created, changed or deleted in the Management subscription, or an attempt failed. Expected from an HCP Terraform apply that grants or removes a role; anything else is not. PLAT-4."
+  description         = "A role assignment was created or deleted in the Management subscription, or an attempt failed. Expected from an HCP Terraform apply that grants or removes a role; anything else is not. PLAT-4."
 
   criteria {
-    category       = "Administrative"
-    resource_types = ["Microsoft.Authorization/roleAssignments", "Microsoft.Authorization/roleDefinitions"]
-    statuses       = ["Succeeded", "Failed"]
+    category      = "Administrative"
+    resource_type = "Microsoft.Authorization/roleAssignments"
+    statuses      = ["Succeeded", "Failed"]
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.ops.id
+  }
+
+  tags = local.tags
+}
+
+resource "azurerm_monitor_activity_log_alert" "rbac_definition_writes_mgmt" {
+  provider = azurerm.mgmt
+
+  name                = "alert-rbac-definition-mgmt-${var.environment}-${var.region_abbreviation}"
+  resource_group_name = azurerm_resource_group.platform_mgmt.name
+  location            = "global"
+  scopes              = ["/subscriptions/${var.subscription_mgmt}"]
+  description         = "A role definition was created, changed or deleted in the Management subscription, or an attempt failed. No apply writes one; expected only when the owner changes a custom role by hand. PLAT-4."
+
+  criteria {
+    category      = "Administrative"
+    resource_type = "Microsoft.Authorization/roleDefinitions"
+    statuses      = ["Succeeded", "Failed"]
   }
 
   action {

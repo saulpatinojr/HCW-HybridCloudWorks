@@ -383,7 +383,7 @@ that is simply mis-tuned, because the suppression outlives the reason for it.
 
 ## The PLAT-4 rules
 
-Eleven rules added by PLAT-4 (#964) for conditions the estate assessment of
+The rules PLAT-4 (#964) added, for conditions the estate assessment of
 2026-10-06 found nothing paging on: timer silence, the poison queue, the
 Static Web App's bandwidth ceiling, the lab agent, and the security signals the
 estate already collected without alerting on them. Every one reads data that
@@ -402,16 +402,25 @@ reasoning beside it.
 | `alert-kv-errors` | 2 | A request to `kv-site-prod-cus-01` or `kv-labhybrid-prod-cus-01` answered 400 or above, other than the 401 authentication challenge and a `SecretGet` 404 on an unseeded secret. Last hour, every 15 min. Management subscription | An RBAC or firewall refusal, throttling, or a service error | The `AzureDiagnostics` rows, with the query in *[Before the apply](#before-the-apply)* narrowed to the last hour |
 | `alert-kv-data-write` | 1 | An identity other than the Function App's wrote, deleted, purged, restored or backed up a secret or key in either vault through the data plane, or tried to. Management subscription | A human writing by script, or a caller that should not be there | The row's caller object id and address |
 | `alert-kv-config-write` | — | Resource Manager wrote to either vault: its network ACL or properties, a key or secret through ARM, a delete, or a role assignment on it. Succeeded or failed. Activity Log, free | An HCP Terraform apply that changed a vault (expected), or a change made outside one | The vault's Activity Log; the event names the caller |
-| `alert-rbac-write-app` | — | A role assignment or role definition was created, changed or deleted in the application subscription, or an attempt failed. Activity Log, free | An apply that grants or removes a role (expected), or a grant made outside one | Activity Log filtered to `Microsoft.Authorization` |
-| `alert-rbac-write-mgmt` | — | The same, in the Management subscription | As above | As above, in `sub-plat-mgmt-prod-cus` |
+| `alert-rbac-assignment-app` | — | A role assignment was created or deleted in the application subscription, or an attempt failed. Activity Log, free | An apply that grants or removes a role (expected), or a grant made outside one | Activity Log filtered to `Microsoft.Authorization` |
+| `alert-rbac-assignment-mgmt` | — | The same, in the Management subscription | As above | As above, in `sub-plat-mgmt-prod-cus` |
+| `alert-rbac-definition-app` | — | A role definition was created, changed or deleted in the application subscription, or an attempt failed. No apply writes one. Activity Log, free | A custom role changed by hand: the owner's own change (expected only then), or someone widening a role every assignment of it inherits | The event's caller and request body, then that role's actions against its file: `infra/roles/`, or `scripts/terraform-identity-grants.json` for the run identity's role |
+| `alert-rbac-definition-mgmt` | — | The same, in the Management subscription | As above | As above, in `sub-plat-mgmt-prod-cus` |
 | `alert-lab-vault-unwrap` | 1 | The lab vault's seal key was asked to wrap or unwrap from an address the lab host has not heartbeated from in the last hour. Management subscription | Vault's identity in use off the host, or the host's address changed | The caller address in the row against the host's `Heartbeat` address |
 | `alert-lab-ssh-burst` | 2 | Failed SSH lines on the lab host in 15 minutes number at least 50 and more than four times the day's quarter-hour average. Management subscription | A distributed attempt that fail2ban's per-address ban does not stop, or a broken key | `ssh hcw-lab 'sudo fail2ban-client status sshd'` |
 
 Activity Log alerts carry no severity of their own; their mail shows the
-common schema's default. `alert-kv-config-write` and the two RBAC rules fire on
-every apply that changes a vault or a role assignment. That is intended: it is
-a second witness that the apply did what its plan said, and the only place a
-change made outside an apply shows up.
+common schema's default. `alert-kv-config-write` and the two role-assignment
+rules fire on every apply that changes a vault or a role assignment. That is
+intended: it is a second witness that the apply did what its plan said, and the
+only place a change made outside an apply shows up. The two role-definition
+rules never fire on an apply, because no apply writes a role definition.
+
+Role assignments and role definitions are a rule each because Azure requires
+it, not by choice. A subscription-wide rule in the Administrative category
+needs one more single-value condition, and a rule watching both resource types
+sends them as an any-of group, which Azure does not count: the first apply was
+refused with `UnsupportedCondition` (2026-10-10).
 
 ### Before the apply
 
@@ -718,7 +727,7 @@ a new window). Only once both print nothing, delete the record:
 Remove-Item -LiteralPath (Join-Path $HOME 'plat4-poison-test.json')
 ```
 
-The role's create and delete also fire `alert-rbac-write-app-prod-cus`, twice.
+The role's create and delete also fire `alert-rbac-assignment-app-prod-cus`, twice.
 That is that rule's test done as well.
 
 **`alert-swa-bandwidth`**: lower the threshold to one byte for an hour and
@@ -873,12 +882,17 @@ Success is two notifications for `alert-kv-config-write-prod-cus`, one per
 write, within about ten minutes. Activity Log alerts are stateless, so there
 is no Resolved mail.
 
-**`alert-rbac-write-app` and `alert-rbac-write-mgmt`**: grant this
+**`alert-rbac-assignment-app` and `alert-rbac-assignment-mgmt`**: grant this
 account Reader on one group in each subscription and take it back. Like the
 poison test, each half chooses the assignment's id before creating it, records
 it in a file, deletes by that id, and recovers from the file. The poison queue
 test above already covers the application subscription; this covers both.
-`$me` is the value from that test; set it again in a new window:
+Run one half at a time, in one window. The record file is the test's lock: the
+line that writes it refuses to overwrite one, so an error there saying the file
+exists means a run is unfinished; stop and do the recovery below. Every group
+is looked up with its subscription named, so the window's default subscription
+does not matter. `$me` is the value from that test; set it again in a new
+window:
 
 ```powershell
 $me = (az ad signed-in-user show -o json | ConvertFrom-Json).id
@@ -916,7 +930,7 @@ $rid = "$mg/providers/Microsoft.Authorization/roleAssignments/$rn"
 ```
 
 ```powershell
-@{ ra = $rid } | ConvertTo-Json | Set-Content -LiteralPath $rf
+@{ ra = $rid } | ConvertTo-Json | Out-File -LiteralPath $rf -NoClobber
 ```
 
 ```powershell
@@ -927,7 +941,7 @@ az role assignment create --name $rn --assignee-object-id $me --assignee-princip
 az role assignment delete --ids $rid
 ```
 
-Success is two notifications for `alert-rbac-write-mgmt-prod-cus` within about
+Success is two notifications for `alert-rbac-assignment-mgmt-prod-cus` within about
 ten minutes, and the stop-condition list printing nothing again. Only then
 remove the record:
 
@@ -939,7 +953,7 @@ For the application subscription, the same with `rg-web-site-prod-cus`: check
 both stop conditions again, then:
 
 ```powershell
-$rg = (az group show -n rg-web-site-prod-cus -o json | ConvertFrom-Json).id
+$rg = (az group show -n rg-web-site-prod-cus --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json).id
 ```
 
 ```powershell
@@ -955,7 +969,7 @@ $rid = "$rg/providers/Microsoft.Authorization/roleAssignments/$rn"
 ```
 
 ```powershell
-@{ ra = $rid } | ConvertTo-Json | Set-Content -LiteralPath $rf
+@{ ra = $rid } | ConvertTo-Json | Out-File -LiteralPath $rf -NoClobber
 ```
 
 ```powershell
@@ -965,6 +979,16 @@ az role assignment create --name $rn --assignee-object-id $me --assignee-princip
 ```powershell
 az role assignment delete --ids $rid
 ```
+
+Success is two notifications for `alert-rbac-assignment-app-prod-cus`, and
+this list printing nothing again. A row means the delete did not take: keep
+the record and do the recovery below.
+
+```powershell
+az role assignment list --assignee $me --scope $rg -o json | ConvertFrom-Json | Select-Object roleDefinitionName, scope
+```
+
+Only then remove the record:
 
 ```powershell
 Remove-Item -LiteralPath $rf
@@ -989,6 +1013,167 @@ only then remove the record:
 Remove-Item -LiteralPath (Join-Path $HOME 'plat4-rbac-test.json')
 ```
 
+**`alert-rbac-definition-app` and `alert-rbac-definition-mgmt`**: create a
+throwaway custom role in each subscription and delete it. The role can read
+resource groups and nothing else, is assignable at one group only, and is never
+assigned. Azure chooses a new role's id itself, so this test chooses the role's
+name instead, records it before creating the role, and deletes and recovers by
+it. The record is the lock, as in the test above: one half at a time, and an
+error on the line that writes it, saying the file exists, means stop and
+recover. First the Management half's group and the record:
+
+```powershell
+$mg = (az group show -n rg-mgmt-plat-prod-cus --subscription sub-plat-mgmt-prod-cus -o json | ConvertFrom-Json).id
+```
+
+```powershell
+$df = Join-Path $HOME 'plat4-roledef-test.json'
+```
+
+**Stop conditions:** the first must print `False` (`True` means an earlier run
+did not finish: do the recovery below first), and the second must print
+nothing. A row in the second is a fire-test role an earlier run left behind;
+recover it first.
+
+```powershell
+Test-Path -LiteralPath $df
+```
+
+```powershell
+az role definition list --custom-role-only true --scope $mg -o json | ConvertFrom-Json | Where-Object roleName -like 'plat4-fire-test-*' | Select-Object roleName, id
+```
+
+Choose and record the name, write the role to a temporary file, then create
+it:
+
+```powershell
+$dn = 'plat4-fire-test-' + [guid]::NewGuid().Guid
+```
+
+```powershell
+@{ name = $dn; scope = $mg } | ConvertTo-Json | Out-File -LiteralPath $df -NoClobber
+```
+
+```powershell
+$dj = Join-Path ([IO.Path]::GetTempPath()) ($dn + '.json')
+```
+
+```powershell
+@{ Name = $dn; IsCustom = $true; Description = 'PLAT-4 fire test. Delete on sight.'; Actions = @('Microsoft.Resources/subscriptions/resourceGroups/read'); NotActions = @(); AssignableScopes = @($mg) } | ConvertTo-Json | Set-Content -LiteralPath $dj
+```
+
+```powershell
+az role definition create --role-definition "@$dj" -o none
+```
+
+Run the stop-condition list again: it should now print one row, named `$dn`.
+A new custom role can take a minute to be listed; run it again until the row
+appears. Then delete the role by its name:
+
+```powershell
+az role definition delete --name $dn --scope $mg
+```
+
+Success is two notifications for `alert-rbac-definition-mgmt-prod-cus` within
+about ten minutes, one for the create and one for the delete, and the
+stop-condition list printing nothing again. Only then remove the two files:
+
+```powershell
+Remove-Item -LiteralPath $dj
+```
+
+```powershell
+Remove-Item -LiteralPath $df
+```
+
+For the application subscription, the same with `rg-web-site-prod-cus`. The
+group first, then the same two stop conditions: `False`, then nothing.
+
+```powershell
+$rg = (az group show -n rg-web-site-prod-cus --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json).id
+```
+
+```powershell
+Test-Path -LiteralPath $df
+```
+
+```powershell
+az role definition list --custom-role-only true --scope $rg -o json | ConvertFrom-Json | Where-Object roleName -like 'plat4-fire-test-*' | Select-Object roleName, id
+```
+
+Then choose, record, write and create, and run that list again until it
+prints the new role's row before deleting it:
+
+```powershell
+$dn = 'plat4-fire-test-' + [guid]::NewGuid().Guid
+```
+
+```powershell
+@{ name = $dn; scope = $rg } | ConvertTo-Json | Out-File -LiteralPath $df -NoClobber
+```
+
+```powershell
+$dj = Join-Path ([IO.Path]::GetTempPath()) ($dn + '.json')
+```
+
+```powershell
+@{ Name = $dn; IsCustom = $true; Description = 'PLAT-4 fire test. Delete on sight.'; Actions = @('Microsoft.Resources/subscriptions/resourceGroups/read'); NotActions = @(); AssignableScopes = @($rg) } | ConvertTo-Json | Set-Content -LiteralPath $dj
+```
+
+```powershell
+az role definition create --role-definition "@$dj" -o none
+```
+
+```powershell
+az role definition delete --name $dn --scope $rg
+```
+
+Success is two notifications for `alert-rbac-definition-app-prod-cus`, and
+this list printing nothing again. A row means the delete did not take: keep
+both files and do the recovery below.
+
+```powershell
+az role definition list --custom-role-only true --scope $rg -o json | ConvertFrom-Json | Where-Object roleName -like 'plat4-fire-test-*' | Select-Object roleName, id
+```
+
+Only then remove the two files:
+
+```powershell
+Remove-Item -LiteralPath $dj
+```
+
+```powershell
+Remove-Item -LiteralPath $df
+```
+
+**If either half was interrupted**, recover from the record in any window. A
+delete that answers that the role does not exist means the run stopped before
+creating it, or the role is not listed yet: run the list below, and if it
+prints a row, delete again.
+
+```powershell
+$d = Get-Content -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json') -Raw | ConvertFrom-Json
+```
+
+```powershell
+az role definition delete --name $d.name --scope $d.scope
+```
+
+```powershell
+az role definition list --custom-role-only true --scope $d.scope -o json | ConvertFrom-Json | Where-Object roleName -like 'plat4-fire-test-*' | Select-Object roleName, id
+```
+
+Only once that list prints nothing, remove the temporary role file, if the run
+got as far as writing it, and then the record:
+
+```powershell
+Remove-Item -LiteralPath (Join-Path ([IO.Path]::GetTempPath()) ($d.name + '.json')) -ErrorAction SilentlyContinue
+```
+
+```powershell
+Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
+```
+
 ### Fire record
 
 | Rule | Seen to fire | Notes |
@@ -1000,8 +1185,10 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-rbac-test.json')
 | `alert-kv-errors` | not yet | |
 | `alert-kv-data-write` | not yet | |
 | `alert-kv-config-write` | not yet | |
-| `alert-rbac-write-app` | not yet | |
-| `alert-rbac-write-mgmt` | not yet | |
+| `alert-rbac-assignment-app` | not yet | |
+| `alert-rbac-assignment-mgmt` | not yet | |
+| `alert-rbac-definition-app` | not yet | |
+| `alert-rbac-definition-mgmt` | not yet | |
 | `alert-lab-vault-unwrap` | not yet | |
 | `alert-lab-ssh-burst` | not yet | |
 

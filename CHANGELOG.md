@@ -4358,6 +4358,27 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The role-change alerts are a rule per resource type, which Azure
+  accepts (PLAT-4, #964).** The apply that created the other PLAT-4 rules
+  refused `alert-rbac-write-app` and `alert-rbac-write-mgmt` with
+  `UnsupportedCondition`: "Alert Rule with category 'Administrative' and
+  subscription scope must have at least one additional filtering condition."
+  azurerm sends `resource_types` and `statuses` as any-of groups, and Azure
+  counts only a single-value condition as that filter.
+  - `infra/observability.tf`: each rule became two, one per
+    `resource_type` (a single `equals`, the shape of Microsoft's
+    Administrative sample), still Succeeded and Failed only:
+    `alert-rbac-assignment-app`, `alert-rbac-definition-app`,
+    `alert-rbac-assignment-mgmt` and `alert-rbac-definition-mgmt`. The
+    role-definition rules never fire on an apply, since `infra/` declares no
+    role definition; they catch a custom role widened by hand.
+  - `scripts/assert-expected-plan.mjs` declares the four creates in place of
+    the two.
+  - `docs/runbooks/alerting-and-support.md`: the rule table, the fire record,
+    and a fire test for the role-definition rules (a throwaway custom role,
+    named and recorded before it is created, then deleted by that name).
+    ADR 0005's grants table names the four rules.
+
 - **The alert verifier checks every declared rule, weekly, and the runbook
   stops calling proven delivery unproven (PLAT-4, #964).** The estate
   assessment found `verify-alert-state.yml` dispatch-only, last run
