@@ -19,6 +19,35 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Ambassador hub: AWS Community Builders, GitKraken's real quarterly
+  rule, and what keeps a membership active (owner request 2026-10-11).**
+  - **AWS Community Builders** joins the seeded catalogue, from its program
+    page:
+    - the waitlist link;
+    - open to every AWS builder, with a limited intake each year;
+    - the yearly January cycle, noted as "edit to match".
+  - **GitKraken Ambassador** takes its rule from the program's quarterly
+    check-in of 2026-10-08:
+    - Two or more content pieces a quarter, each logged on the program's
+      contribution tracker, on that quarter's tab.
+    - Its criteria are the check-in's focus: review sites, Reddit, articles
+      that use data, shared GitKraken content, and videos on Merge
+      Conflicts, Dev AI Use and Commit Graph.
+    - The stored program updates itself on the next read, field by field,
+      wherever it still holds the first seed's guess
+      (`SUPERSEDED_SEED_VALUES`). A field the owner edited stays as it is.
+  - **Upkeep** (`upkeep`): a program can say what keeps a held membership
+    active, as a minimum of evidence filed under it in every calendar
+    quarter or year. A card whose membership is Active shows this period's
+    count and its due date, and Details shows this period and the last. Only
+    evidence filed under the program counts; general evidence says nothing
+    about it.
+  - **Contribution tracker** (`contributionTrackerUrl`): the link to where a
+    program wants contributions logged. It is set on Settings and stored
+    with the program only. No seed carries one, and a test holds the seed
+    file free of shared-document links: such a link is private to a
+    program's members, and this repository is public.
+
 - **Alerting: one script runs each PLAT-4 fire test and proves the alert
   fired from Azure Monitor, not the inbox (#964).** "Making each one fire
   once" in `docs/runbooks/alerting-and-support.md` was ten long manual blocks

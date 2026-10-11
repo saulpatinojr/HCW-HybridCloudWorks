@@ -14,6 +14,8 @@ import {
   expiringEvidence,
   programForm,
   programPayload,
+  upkeepProgress,
+  upkeepWindow,
   recommendedActions,
   statusCounts,
   upcomingDeadlines,
@@ -263,5 +265,89 @@ describe('membership status (owner request 2026-10-05)', () => {
     expect(latestApplicationFor(apps, 'p1')?.id).toBe('b');
     expect(latestApplicationFor(apps, 'p3')).toBeNull();
     expect(latestApplicationFor(undefined, 'p1')).toBeNull();
+  });
+});
+
+describe('upkeep: what keeps a held membership active (2026-10-11)', () => {
+  it('names the calendar quarter or year a day falls in, and the one before', () => {
+    expect(upkeepWindow('2026-10-11', 'quarter')).toEqual({
+      start: '2026-10-01',
+      end: '2026-12-31',
+      label: 'Q4 2026',
+    });
+    expect(upkeepWindow('2026-10-11', 'quarter', -1)).toEqual({
+      start: '2026-07-01',
+      end: '2026-09-30',
+      label: 'Q3 2026',
+    });
+    expect(upkeepWindow('2026-01-15', 'quarter', -1).label).toBe('Q4 2025');
+    expect(upkeepWindow('2024-02-10', 'quarter').end).toBe('2024-03-31');
+    expect(upkeepWindow('2026-10-11', 'year', -1)).toEqual({
+      start: '2025-01-01',
+      end: '2025-12-31',
+      label: '2025',
+    });
+  });
+
+  it('counts only evidence filed under the program, of its types, in each period', () => {
+    const program = {
+      id: 'gk',
+      upkeep: { period: 'quarter', minCount: 2, evidenceTypes: ['content'], note: 'Log it.' },
+    };
+    const evidence = [
+      { id: 'a', programIds: ['gk'], sourceModule: 'content', date: '2026-10-02' },
+      { id: 'b', programIds: ['gk', 'mvp'], sourceModule: 'content', date: '2026-11-20' },
+      { id: 'c', programIds: ['gk'], sourceModule: 'content', date: '2026-09-30' },
+      // General evidence says nothing about this program.
+      { id: 'd', programIds: [], sourceModule: 'content', date: '2026-10-05' },
+      {
+        id: 'e',
+        programIds: ['gk'],
+        sourceModule: 'content',
+        date: '2026-10-06',
+        softDeletedAt: 'x',
+      },
+      { id: 'f', programIds: ['gk'], sourceModule: 'speaking', date: '2026-10-07' },
+      { id: 'g', programIds: ['mvp'], sourceModule: 'content', date: '2026-10-08' },
+    ];
+    expect(upkeepProgress(program, evidence, '2026-10-11')).toEqual({
+      period: 'quarter',
+      minCount: 2,
+      note: 'Log it.',
+      current: {
+        start: '2026-10-01',
+        end: '2026-12-31',
+        label: 'Q4 2026',
+        count: 2,
+        met: true,
+        daysLeft: 81,
+      },
+      previous: { start: '2026-07-01', end: '2026-09-30', label: 'Q3 2026', count: 1, met: false },
+    });
+    // No types means any source.
+    const anySource = { ...program, upkeep: { ...program.upkeep, evidenceTypes: [] } };
+    expect(upkeepProgress(anySource, evidence, '2026-10-11').current.count).toBe(3);
+    expect(upkeepProgress({ id: 'mvp' }, evidence, '2026-10-11')).toBeNull();
+  });
+
+  it('round-trips the tracker and the rule through the form, and refuses a bad one', () => {
+    const form = programForm({
+      name: 'GitKraken Ambassador',
+      contributionTrackerUrl: 'https://example.com/tracker',
+      upkeep: { period: 'quarter', minCount: 2, evidenceTypes: ['content'], note: 'Log it.' },
+    });
+    expect(programPayload(form).value).toMatchObject({
+      contributionTrackerUrl: 'https://example.com/tracker',
+      upkeep: { period: 'quarter', minCount: 2, evidenceTypes: ['content'], note: 'Log it.' },
+    });
+    const none = programPayload(programForm({ name: 'X' })).value;
+    expect(none.upkeep).toBeNull();
+    expect(none.contributionTrackerUrl).toBeNull();
+    expect(programPayload({ ...form, contributionTrackerUrl: 'example.com' }).error).toMatch(
+      /Contribution tracker URL/
+    );
+    expect(programPayload({ ...form, upkeep: { ...form.upkeep, minCount: '0' } }).error).toMatch(
+      /minimum of at least 1/
+    );
   });
 });

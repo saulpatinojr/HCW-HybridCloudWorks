@@ -27,6 +27,7 @@ import {
   EVIDENCE_SOURCES,
   QUESTION_KINDS,
   SCORING_UNITS,
+  UPKEEP_PERIODS,
   VERIFICATION_STATUSES,
   isHttpUrl,
   toCalendarDate,
@@ -192,6 +193,24 @@ function cleanScoring(value) {
   return { unit, tiers };
 }
 
+/**
+ * What keeps a membership active: at least `minCount` items of evidence filed
+ * under the program in every `period` (a calendar quarter or year), of
+ * `evidenceTypes` (none means any source), and the program's own words on
+ * where to log them. Null or empty clears it.
+ */
+function cleanUpkeep(value) {
+  if (isBlank(value)) return null;
+  if (!isRecord(value)) refuse('upkeep must be an object or null');
+  const period = oneOf(UPKEEP_PERIODS, 'upkeep.period')(value.period);
+  const minCount = wholeNumber(value.minCount);
+  if (minCount < 1) refuse('upkeep.minCount must be at least 1');
+  const evidenceTypes = stringList(value.evidenceTypes, 20).filter((type) =>
+    EVIDENCE_SOURCES.includes(type)
+  );
+  return { period, minCount, evidenceTypes, note: str(value.note, 1000) };
+}
+
 const PROGRAM = {
   name: 'program',
   fields: {
@@ -216,6 +235,11 @@ const PROGRAM = {
     parentProgramId: field(bounded(200)),
     applicationQuestions: field(cleanApplicationQuestions),
     scoring: field(cleanScoring),
+    upkeep: field(cleanUpkeep),
+    // Where the program wants contributions logged (a shared sheet, a form).
+    // The owner's to set: such a link is often private to the program's
+    // members, so no seed carries one (programs.js).
+    contributionTrackerUrl: field(optionalUrl('contributionTrackerUrl')),
   },
 };
 

@@ -7,7 +7,7 @@
  */
 import { actorName } from '../auth/actor-name.js';
 import { CONTAINER, NOT_PROVISIONED } from './model.js';
-import { DEFAULT_PROGRAMS } from './programs.js';
+import { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES } from './programs.js';
 import { str } from './fields.js';
 import { validateApplication, validateEvidence, validateProgram } from './validate.js';
 
@@ -132,6 +132,14 @@ const SEEDS_BY_ID = new Map(DEFAULT_PROGRAMS.map((program) => [program.id, progr
 const hasQuestions = (doc) =>
   Array.isArray(doc?.applicationQuestions) && doc.applicationQuestions.length > 0;
 
+/** Plain objects with their keys sorted, so two equal values serialise alike. */
+const canonical = (value) =>
+  JSON.stringify(value, (_key, inner) =>
+    inner && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : inner
+  );
+
 /**
  * The fields a seed gained after it was stored that a stored seed may take
  * without losing an edit: the official `applicationQuestions` when the
@@ -149,6 +157,8 @@ const BACKFILL_FIELDS = [
     'parentProgramId',
     (stored, seed) => Boolean(seed.parentProgramId) && !('parentProgramId' in stored),
   ],
+  // Absent, as for parentProgramId: the owner clearing it stores null.
+  ['upkeep', (stored, seed) => Boolean(seed.upkeep) && !('upkeep' in stored)],
 ];
 
 /**
@@ -191,6 +201,14 @@ export function seedBackfillFor(stored, seed) {
   const patch = {};
   for (const [field, wanted] of BACKFILL_FIELDS) {
     if (wanted(stored, seed)) patch[field] = seed[field];
+  }
+  // A field still holding a value an earlier seed wrote was never edited, so
+  // the current seed's value replaces it (programs.js SUPERSEDED_SEED_VALUES).
+  const superseded = SUPERSEDED_SEED_VALUES[seed.id] ?? {};
+  for (const [field, old] of Object.entries(superseded)) {
+    if (field in seed && field in stored && canonical(stored[field]) === canonical(old)) {
+      patch[field] = seed[field];
+    }
   }
   return Object.keys(patch).length > 0 ? patch : null;
 }

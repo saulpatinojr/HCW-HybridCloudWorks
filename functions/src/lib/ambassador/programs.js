@@ -8,6 +8,11 @@
  * The facts below are the program rules as published in 2026, read from the
  * program pages and the official application question lists (owner request
  * 2026-10-05). The questions are the programs' own; no answer is seeded.
+ *
+ * NO PRIVATE LINK IS SEEDED. A program's contribution tracker
+ * (`contributionTrackerUrl`) is often a document shared only with its
+ * members, and this file is in a public repository, so the owner sets it on
+ * Settings and it lives only in the stored program.
  */
 
 const EDIT_NOTE = 'Edit to match the current program rules.';
@@ -452,6 +457,58 @@ const MCT_REGIONAL_LEAD_QUESTIONS = [
   ),
 ];
 
+// ── GitKraken Ambassador: the quarterly check-in's focus (October 2026) ────
+
+const GITKRAKEN_FOCUS = [
+  'Reviews of GitKraken on G2, Capterra and TrustRadius',
+  'Creating and commenting on Reddit threads',
+  'LinkedIn and Medium articles that use data: how much time was saved, how many commits',
+  'Sharing GitKraken content, dropped weekly in the ambassadors’ Slack',
+  'YouTube videos on the themed focus: Merge Conflicts, Dev AI Use, Commit Graph',
+];
+
+/**
+ * Seed values a later seed replaced, by program id and field. A stored seed
+ * whose field still equals one of these exactly never had that field edited,
+ * so the backfill (steps.js) gives it the current seed's value. A field the
+ * owner changed equals none of them and is left alone.
+ *
+ * GitKraken Ambassador's first seed (#873) guessed its rules ("As published
+ * 2026; edit to match"). The program's quarterly check-in of 2026-10-08 gave
+ * the real one: two or more content pieces a quarter, logged on its tracker.
+ */
+export const SUPERSEDED_SEED_VALUES = Object.freeze({
+  'program-gitkraken-ambassador': Object.freeze({
+    description:
+      'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Applications through the form on the programme page. As published 2026; edit to match.',
+    criteria: ['Content', 'Speaking', 'Supporting users'],
+    renewalCadence: 'annual',
+    expirationRule: 'Reviewed annually. As published 2026; edit to match.',
+    requirements: [
+      requirement(
+        'content',
+        'Git and tooling content',
+        `Articles, videos or posts on Git and developer tooling. ${EDIT_NOTE}`,
+        { evidenceTypes: ['content'], minCount: 3, weight: 3 }
+      ),
+      requirement('talks', 'Speaking', `Sessions on Git workflows and tooling. ${EDIT_NOTE}`, {
+        evidenceTypes: ['speaking'],
+        minCount: 1,
+        weight: 2,
+      }),
+      requirement('tutorials', 'Tutorials and labs', `Hands-on tutorials and labs. ${EDIT_NOTE}`, {
+        evidenceTypes: ['labs', 'content'],
+        minCount: 1,
+        weight: 1,
+      }),
+    ],
+    recommendedActivities: [
+      'Publish Git workflow tutorials',
+      'Answer questions in the GitKraken community',
+    ],
+  }),
+});
+
 export const DEFAULT_PROGRAMS = Object.freeze([
   {
     id: 'program-microsoft-mvp',
@@ -836,38 +893,38 @@ export const DEFAULT_PROGRAMS = Object.freeze([
     provider: 'GitKraken',
     category: 'developer-advocacy',
     description:
-      'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Applications through the form on the programme page. As published 2026; edit to match.',
+      'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Two or more content pieces a quarter keep a membership active, each logged on the program’s contribution tracker on that quarter’s tab (the program’s quarterly check-in, October 2026).',
     applicationUrl: 'https://www.gitkraken.com/ambassador',
     eligibility: [
       'Active content creation or community activity around Git and developer tooling',
       'An application through the form on the programme page',
     ],
-    criteria: ['Content', 'Speaking', 'Supporting users'],
+    criteria: GITKRAKEN_FOCUS,
     applicationWindow: { opens: null, closes: null, note: 'Rolling applications.' },
-    renewalCadence: 'annual',
-    expirationRule: 'Reviewed annually. As published 2026; edit to match.',
+    renewalCadence: 'quarterly',
+    expirationRule:
+      'Active while 2 or more content pieces are logged on the contribution tracker each quarter; the program checks the tracker when the quarter ends.',
     requirements: [
       requirement(
-        'content',
-        'Git and tooling content',
-        `Articles, videos or posts on Git and developer tooling. ${EDIT_NOTE}`,
-        { evidenceTypes: ['content'], minCount: 3, weight: 3 }
+        'quarterly-content',
+        'Content pieces in a quarter',
+        `At least 2 a quarter keep the membership active: a review, a Reddit thread, an article, a shared GitKraken post or a video, each logged on the contribution tracker. Readiness over one quarter’s dates is that quarter’s count. ${EDIT_NOTE}`,
+        { evidenceTypes: [], minCount: 2, weight: 1 }
       ),
-      requirement('talks', 'Speaking', `Sessions on Git workflows and tooling. ${EDIT_NOTE}`, {
-        evidenceTypes: ['speaking'],
-        minCount: 1,
-        weight: 2,
-      }),
-      requirement('tutorials', 'Tutorials and labs', `Hands-on tutorials and labs. ${EDIT_NOTE}`, {
-        evidenceTypes: ['labs', 'content'],
-        minCount: 1,
-        weight: 1,
-      }),
     ],
     recommendedActivities: [
-      'Publish Git workflow tutorials',
-      'Answer questions in the GitKraken community',
+      'Log each piece on the contribution tracker, on the quarter’s tab, when it is published',
+      'In articles, use data: the time saved, the commits, the conflicts resolved',
+      'Re-share the GitKraken content dropped weekly in the ambassadors’ Slack',
+      'A YouTube video on one theme: Merge Conflicts, Dev AI Use or Commit Graph',
+      'A review on G2, Capterra or TrustRadius',
     ],
+    upkeep: {
+      period: 'quarter',
+      minCount: 2,
+      evidenceTypes: [],
+      note: 'Two or more content pieces each quarter keep the membership active. Log each one on the contribution tracker, on that quarter’s tab; the program checks the tracker when the quarter ends.',
+    },
   },
   {
     id: 'program-microsoft-management-community',
@@ -967,5 +1024,54 @@ export const DEFAULT_PROGRAMS = Object.freeze([
       'Hold two consecutive years of MCT status before the window',
     ],
     applicationQuestions: MCT_REGIONAL_LEAD_QUESTIONS,
+  },
+  {
+    id: 'program-aws-community-builders',
+    name: 'AWS Community Builders',
+    provider: 'AWS',
+    category: 'community-expert',
+    description:
+      'AWS Community Builders: technical resources, education and networking for AWS enthusiasts and emerging thought leaders who share knowledge with the technical community. AWS subject matter experts run sessions on new services, on creating technical content and on growing its reach. The program accepts a limited number of members a year and welcomes every AWS builder. Program page as published October 2026, which offers a waitlist.',
+    applicationUrl: 'https://builder.aws.com/community/community-builders',
+    eligibility: [
+      'Open to every AWS builder',
+      'Join the waitlist from the program page; the form needs an AWS Builder ID sign-in',
+    ],
+    criteria: [
+      'Content creation',
+      'Community engagement',
+      'Sharing knowledge with others',
+      'No single criterion decides it (AWS, announcing the program)',
+    ],
+    applicationWindow: {
+      opens: null,
+      closes: null,
+      note: 'Waitlist open now; the application cycle has opened once a year, in January. Edit to match.',
+    },
+    renewalCadence: 'annual',
+    expirationRule: `A one-year membership; renewal looks at continued community engagement. ${EDIT_NOTE}`,
+    requirements: [
+      requirement('content', 'AWS content', `Public articles, videos or tutorials on AWS. ${EDIT_NOTE}`, {
+        evidenceTypes: ['content', 'newsletter', 'listen-and-learn'],
+        minCount: 4,
+        weight: 3,
+      }),
+      requirement(
+        'community',
+        'Community engagement',
+        `Talks, user groups, meetups, workshops or answering questions. ${EDIT_NOTE}`,
+        { evidenceTypes: ['speaking', 'labs', 'manual'], minCount: 2, weight: 2 }
+      ),
+      requirement('certs', 'AWS certifications', `Not required; they show depth. ${EDIT_NOTE}`, {
+        evidenceTypes: ['certifications'],
+        minCount: 1,
+        weight: 1,
+      }),
+    ],
+    recommendedActivities: [
+      'Join the waitlist now, from the program page',
+      'Pick the category to apply in; the member list shows Containers, Serverless, AI Engineering, Security, Dev Tools, Data, Machine Learning, Networking and Content Delivery, and Cloud Operations',
+      'Publish AWS content on public platforms in the months before the January cycle',
+    ],
   },
 ]);
