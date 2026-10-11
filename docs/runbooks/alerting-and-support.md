@@ -476,6 +476,69 @@ rule, as the two above are, rather than raising the count.
 
 ### Making each one fire once
 
+**With the script.** `scripts/alerts/Invoke-AlertFireTest.ps1` runs each block
+below as written: the same stop conditions, the same record files in your home
+folder, the same clean-up, put back in a `finally` so that a failure or Ctrl+C
+part-way still restores. Then, instead of watching the inbox, it reads Azure
+Monitor's fired alerts for the rule once a minute and prints
+`PASS <rule> fired at <time>` only for an alert that started after the test
+did, or `FAIL <rule>: no alert within <n> minutes`. It ends with the
+*[Fire record](#fire-record)* rows to paste. Run it from the repository root
+of a checkout of `main`, which has it once the change that adds it is merged,
+signed in with `az login` and with `sub-app-site-prod-cus` as az's default
+subscription (it checks, and prints the `az account set` line when not).
+`True` means the file is there:
+
+```powershell
+Test-Path scripts/alerts/Invoke-AlertFireTest.ps1
+```
+
+One test at a time, quickest first. Adding `-WhatIf` to a line runs only the
+reads, so a stop condition still refuses, and prints every change as the one
+command it would run. The window stays open while a test waits.
+`lab-agent-offline` keeps the agent stopped for a quarter of an hour of it, and
+`swa-bandwidth` and `timer-overdue` keep their change until the alert fires.
+
+| Test | Rules it proves | Needs | Up to | PowerShell |
+| --- | --- | --- | --- | --- |
+| `kv-config-write` | `alert-kv-config-write` | `az` | 20 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test kv-config-write` |
+| `rbac-assignment` | `alert-rbac-assignment-mgmt`, `-app` | `az` | 25 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test rbac-assignment` |
+| `rbac-definition` | `alert-rbac-definition-mgmt`, `-app` | `az` | 30 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test rbac-definition` |
+| `kv-errors-and-data-write` | `alert-kv-errors`, `alert-kv-data-write` | `az` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test kv-errors-and-data-write` |
+| `lab-vault-unwrap` | `alert-lab-vault-unwrap` | `az` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-vault-unwrap` |
+| `lab-ssh-burst` | `alert-lab-ssh-burst` | `az`, `ssh hcw-lab` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-ssh-burst` |
+| `jobs-poison` | `alert-jobs-poison` | `az`, `gh` | 50 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test jobs-poison` |
+| `lab-agent-offline` | `alert-lab-agent-offline` | `az`, `ssh hcw-lab` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-agent-offline` |
+| `swa-bandwidth` | `alert-swa-bandwidth` | `az` | 75 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test swa-bandwidth` |
+| `timer-overdue` | `alert-timer-overdue` | `az` | 90 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test timer-overdue` |
+
+Success is a `PASS` line for every rule and a `$LASTEXITCODE` of `0`. `1`
+means the run stopped: a stop condition refused before any change, or a step
+failed and what it had changed was put back; the lines above it say which.
+`2` means a rule did not fire in time, and everything was put back. `3`
+means something was not put back: its record is kept, and the script prints the
+line that recovers it. A run cut off any other way, a closed window or a lost
+connection, is recovered with its test's line here, which does the recovery
+written in its block below and confirms it with that block's read:
+
+| Test | Recovery, PowerShell |
+| --- | --- |
+| `kv-config-write` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test kv-config-write` |
+| `rbac-assignment` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test rbac-assignment` |
+| `rbac-definition` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test rbac-definition` |
+| `jobs-poison` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test jobs-poison` |
+| `lab-agent-offline` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test lab-agent-offline` |
+| `swa-bandwidth` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test swa-bandwidth` |
+| `timer-overdue` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test timer-overdue` |
+
+The kv-config-write test keeps no record, because its tag is named for the
+moment; its recovery takes off any `plat4FireTest` tag the site vault still
+carries. `kv-errors-and-data-write`, `lab-vault-unwrap` and `lab-ssh-burst`
+change nothing, so they have no recovery.
+
+**By hand.** The blocks below are the reference the script implements, step
+for step, and still the way to run a test without it.
+
 The acceptance of #964 is that each new rule has been seen to fire once. These
 are the tests, one per rule. Each says what success looks like and how to put
 things back; record the date in the *[Fire record](#fire-record)* below. All are

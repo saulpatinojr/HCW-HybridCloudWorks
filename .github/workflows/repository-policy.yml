@@ -96,11 +96,19 @@ jobs:
       # its first line of work since the infra/ split, unnoticed, because
       # nothing runs it on a good day. Its tests hold the names it accepts to
       # the repository as committed.
-      - name: Test the lab and cutover scripts
+      #
+      # scripts/alerts joined on 2026-10-10 (#964). Invoke-AlertFireTest.ps1
+      # makes production changes on purpose (a role, a firewall entry, a
+      # lowered threshold, a disabled timer) and must put each one back, so
+      # its stop conditions, records and put-backs are tested against a mocked
+      # az, and the whole script runs under -WhatIf against a stand-in az that
+      # refuses every write. The path list is explicit, so a new scripts/
+      # directory with tests is added here.
+      - name: Test the lab, cutover and alert scripts
         shell: pwsh
         run: |
           Import-Module Pester -MinimumVersion 5.0
-          $result = Invoke-Pester -Path scripts/lab, scripts/cutover -Output Detailed -PassThru
+          $result = Invoke-Pester -Path scripts/lab, scripts/cutover, scripts/alerts -Output Detailed -PassThru
           if ($result.Result -ne 'Passed' -or $result.PassedCount -eq 0) { exit 1 }
 
       # A step that ran ./scripts/cutover/workspace-query.tests.ps1 stood here
