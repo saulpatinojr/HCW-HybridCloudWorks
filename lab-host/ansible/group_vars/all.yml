@@ -359,6 +359,10 @@ addons:
     env:
       PORT: "8080"
       NA_PUBLIC_HOST: "network-assessment.{{ lab_host_domain }}"
+      NA_PUBLIC_BASE_URL: "https://network-assessment.{{ lab_host_domain }}"
+      CODER_URL: "https://{{ coder_domain }}"
+      CODER_TEMPLATE_ID: "na-guided-lab"
+      NA_WORKSPACE_TTL_MINUTES: "240"
       NA_FRAME_ANCESTORS: "{{ caddy_frame_ancestors | join(' ') }}"
       NA_SITE_ORIGINS: "{{ caddy_frame_ancestors | reject('equalto', \"'self'\") | join(' ') }}"
       NA_ALLOWED_ORIGINS: ""
