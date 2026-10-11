@@ -1,26 +1,32 @@
 # HybridCloudWorks Engineering
 
-The reviewed engineering record for the HybridCloudWorks website: architecture
-decisions, Azure operations, deployment procedures, security controls, and
-historical implementation notes. The source is the `docs/` folder of the
-repository, reviewed through pull requests and published here on every merge.
+This is the engineering record behind
+[hybridcloudworks.com](https://hybridcloudworks.com): how the site is built,
+why it was built that way, and how it is operated. Every page here comes from
+the `docs/` folder of the
+[public repository](https://github.com/saulpatinojr/HCW-HybridCloudWorks),
+reviewed through pull requests like the code and published on every merge.
 
-The current product is an Azure-hosted website. The root [README](repo/readme.md)
-is the entry point for product features and local development. [TODO.md](repo/todo.md)
-(accepted risks and an index to the open GitHub issues) and
-[CHANGELOG.md](repo/changelog.md) (completed work) remain the repository's concise
-records; this site holds the longer narrative.
+## New here?
 
-## Current platform
+- **To use the site**, go to [hybridcloudworks.com](https://hybridcloudworks.com):
+  platform hubs, the certification index, planning tools, the migration
+  assessment and hands-on labs.
+- **For a first look at how it works**, read
+  [How HybridCloudWorks is built](architecture/how-it-is-built.md): one
+  diagram, every component, a map of the repository and how a change reaches
+  the live site.
+- **To learn from it**, start with the four articles under
+  [Start here if you are not the owner](#start-here-if-you-are-not-the-owner),
+  written for someone who has never seen this estate.
+- **To contribute or report a problem**, the repository's
+  [README](repo/readme.md) has a short start, and open work is on the
+  [HCW Work Board](https://github.com/users/saulpatinojr/projects/6).
 
-- Azure Static Web Apps hosts the pre-rendered React/Vite frontend.
-- Azure Functions provides the API and background jobs.
-- Microsoft Entra ID and MSAL protect administration routes.
-- Azure Cosmos DB stores content and operational data.
-- Azure Blob Storage stores managed media.
-- Azure Key Vault, managed identities, Cloudflare, and Application Insights
-  provide secrets, identity, edge routing, and observability.
-- GitHub-hosted runners perform CI and approved manual releases.
+The repository keeps two concise records beside this site:
+[CHANGELOG.md](repo/changelog.md) for completed work, and
+[TODO.md](repo/todo.md) for the accepted risks and an index to the open
+GitHub issues.
 
 ## Engineering references
 

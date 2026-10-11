@@ -3577,6 +3577,31 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **The README is written for someone new to the project, and the
+  engineering detail moved to the docs site (owner, 2026-10-11).**
+  - **README:** the README now leads with what a visitor can do on the site:
+    - learn a platform;
+    - plan with the pricing comparison, decision matrix and Landing Zone
+      Builder;
+    - assess an estate with the migration assessment, now live;
+    - practise in the labs.
+
+    A start-here table follows, then one short paragraph on how the site is
+    built, and a brief contributor path with a five-line local start.
+  - **New docs page:** the architecture diagram, the layer table, the
+    repository map, the full "run it locally" guide and the CI/CD description
+    moved, intact, to
+    [How HybridCloudWorks is built](docs/architecture/how-it-is-built.md). It
+    is on the docs site under Architecture and updated for the tool add-ons
+    and the alert fire tests.
+  - **Badges:** they are grouped as status (CI, CodeQL, docs build, reviews,
+    maintainability, coverage) and links (both sites, the work board, open
+    issues, licence, last commit). The work-board and open-issues badges are
+    new, and every badge was checked to render a real value.
+  - **Docs home page:** it now opens with a "New here?" section.
+  - **Fire record:** `alert-kv-config-write` is recorded, fired at 04:52Z by
+    `Invoke-AlertFireTest.ps1 -Test kv-config-write`.
+
 - **The HCW Work Board is public, so CONTRIBUTING links it again (owner,
   2026-10-10).** Open work stays GitHub issues; CONTRIBUTING, TODO.md and the
   code-review skill now name the board as public and link it
