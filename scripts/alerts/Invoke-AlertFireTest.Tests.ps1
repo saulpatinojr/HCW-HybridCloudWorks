@@ -52,6 +52,9 @@ BeforeAll {
     # Deliberately not shaped like any real credential, so no secret scanner
     # mistakes a fixture for one.
     $fakeSecret = 'FAKE-VALUE-FAKE-VALUE-FAKE-0001'
+    # Should -Match reads its argument as a regular expression; the escaped
+    # form matches the value literally whatever characters it ever holds.
+    $fakeSecretPattern = [regex]::Escape($fakeSecret)
 
     function New-TestContext {
         param([Parameter(Mandatory)] [string] $Test, [string] $Directory)
@@ -809,8 +812,8 @@ Describe 'The tests themselves' {
             Mock Wait-AlertFired { }
             $streams = Invoke-AlertTestLabVaultUnwrap -Context (New-TestContext -Test 'lab-vault-unwrap') -Verbose -Debug *>&1 | Out-String
             Should -Invoke Invoke-AlertVaultWrap -Times 1 -Exactly -ParameterFilter { $Token -eq $fakeSecret -and $Uri -eq 'https://kv-labhybrid-prod-cus-01.vault.azure.net/keys/vault-seal/wrapkey?api-version=7.4' }
-            $streams | Should -Not -Match $fakeSecret
-            Get-HostText | Should -Not -Match $fakeSecret
+            $streams | Should -Not -Match $fakeSecretPattern
+            Get-HostText | Should -Not -Match $fakeSecretPattern
             Get-HostText | Should -Match 'Refused with 403'
             Should -Invoke Wait-AlertFired -Times 1 -Exactly -ParameterFilter { ($Required -join ',') -eq 'alert-lab-vault-unwrap' -and ($Optional -join ',') -eq 'alert-kv-errors' }
         }
@@ -821,14 +824,14 @@ Describe 'The tests themselves' {
                 Invoke-AlertTestTimerOverdue -Context (New-TestContext -Test 'timer-overdue') -Verbose -Debug
                 Invoke-AlertTestLabAgentOffline -Context (New-TestContext -Test 'lab-agent-offline') -Verbose -Debug
             } *>&1 | Out-String
-            $streams | Should -Not -Match $fakeSecret
-            Get-HostText | Should -Not -Match $fakeSecret
+            $streams | Should -Not -Match $fakeSecretPattern
+            Get-HostText | Should -Not -Match $fakeSecretPattern
         }
 
         It 'a value on a stream other than Write-Host would fail these checks' {
             # Guards the guard: the merged capture does see a non-host stream.
             $streams = & { Write-Warning "leak $fakeSecret"; Write-Verbose "leak $fakeSecret" -Verbose } *>&1 | Out-String
-            $streams | Should -Match $fakeSecret
+            $streams | Should -Match $fakeSecretPattern
         }
     }
 
