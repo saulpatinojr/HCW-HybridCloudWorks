@@ -4443,6 +4443,33 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Admin → Integrations → Credentials shows the rotation date you
+  recorded (#1026).** On 2026-10-10 and 2026-10-11 the owner recorded the
+  rotation dates of the eight credentials with a rotation rule, twice, and
+  the tab still read as though none had been saved. Every save had landed:
+  the API's request log holds 24 `PUT cms/credentials` across those two days,
+  all 200. What the tab never did was print the stored date:
+  - The Record form, labelled "Rotated on", always opened on today's date,
+    so reopening it to check looked like the save had been lost.
+  - The line under a row's age named only where the age came from
+    ("recorded", "Keys tab"). Where a Key Vault write was newer than the
+    recorded rotation, the age came from that write, and the recorded date
+    appeared nowhere.
+
+  Now the form opens on the recorded date, and on today only when nothing
+  is recorded. The line under the age names the recorded date whenever one
+  is stored: `recorded 2026-08-20`, or `Keys tab; recorded 2026-08-20` when
+  the Keys tab's write is newer. Tests for both are in
+  `credentialsView.test.js` and `IntegrationsCredentials.test.jsx`.
+- **`COPILOT_REVIEW_APP_PRIVATE_KEY` is recorded as stored (#1063).** The
+  owner stored it in the Agents store on 2026-10-11, and
+  `gh secret list --app agents` lists it. The required-inputs row now reads
+  SET, and the Copilot code review runbook says how to confirm it. A manual
+  dispatch of the setup workflow cannot confirm it, because that run reads
+  Actions secrets rather than the Agents store, so it prints the "not
+  resolvable" notice either way. The first Copilot session after 2026-10-31
+  is the check.
+
 - **Lab host: the add-ons' egress cleanup works on an empty chain and on its
   own rules (ADR 0035).** The bootstrap after #1059 stopped at "Remove the
   egress rules this role wrote on an earlier run". The inline pipeline

@@ -253,7 +253,7 @@ describe('recording a rotation', () => {
       })
     );
     await waitFor(() => expect(screen.getByText('Rotation reminder, due 2028-09-28')).toBeTruthy());
-    expect(screen.getByText('recorded')).toBeTruthy();
+    expect(screen.getByText('recorded 2026-09-29')).toBeTruthy();
     expect(screen.queryByLabelText(/Rotation date for/)).toBeNull();
     expect(toast).toHaveBeenCalledWith(
       expect.objectContaining({ description: 'The reminders sheet was updated.' })
@@ -262,18 +262,29 @@ describe('recording a rotation', () => {
     expect(getJSON).toHaveBeenCalledTimes(1);
   });
 
-  it('defaults the date to this browser’s day, allows the API’s day of grace, and clears with null', async () => {
-    getJSON.mockResolvedValue(payload([row({ recordedOn: '2026-09-29' })]));
-    sendJSON.mockResolvedValue(payload([row()]));
+  it('defaults the date to this browser’s day when nothing is recorded', async () => {
+    getJSON.mockResolvedValue(payload([row()]));
     render(<IntegrationsCredentials />);
     await waitFor(() => expect(screen.getByText(/labs-agent\.pem/)).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /Record rotation of/ }));
-    const input = screen.getByLabelText(/Rotation date for/);
     const local = new Date();
     const pad = (n) => String(n).padStart(2, '0');
-    expect(input.value).toBe(
+    expect(screen.getByLabelText(/Rotation date for/).value).toBe(
       `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}`
     );
+  });
+
+  it('shows the stored date on the row and opens on it, allows the API’s day of grace, and clears with null', async () => {
+    getJSON.mockResolvedValue(
+      payload([row({ recordedOn: '2026-09-29', lastRotatedSource: 'owner', ageDays: 10 })])
+    );
+    sendJSON.mockResolvedValue(payload([row()]));
+    render(<IntegrationsCredentials />);
+    await waitFor(() => expect(screen.getByText(/labs-agent\.pem/)).toBeTruthy());
+    expect(screen.getByText('recorded 2026-09-29')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Record rotation of/ }));
+    const input = screen.getByLabelText(/Rotation date for/);
+    expect(input.value).toBe('2026-09-29');
     // The API accepts up to the UTC day plus one (handlers.js parseRotationBody),
     // so the picker does too, and an owner ahead of or behind UTC can pick their day.
     expect(input.getAttribute('max')).toBe(

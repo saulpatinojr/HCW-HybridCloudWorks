@@ -70,6 +70,18 @@ describe('the columns', () => {
     expect(describeAgeSource(credential())).toBeNull();
   });
 
+  // 2026-10-11: every rotation the owner saved was a 200, and the tab still
+  // read as though none had landed, because no row showed the stored date.
+  it('names the recorded date whenever one is stored, even when a newer source dates the age', () => {
+    expect(
+      describeAgeSource(credential({ lastRotatedSource: 'owner', recordedOn: '2026-08-20' }))
+    ).toBe('recorded 2026-08-20');
+    expect(
+      describeAgeSource(credential({ lastRotatedSource: 'key-vault', recordedOn: '2026-08-20' }))
+    ).toBe('Keys tab; recorded 2026-08-20');
+    expect(describeAgeSource(credential({ recordedOn: '2026-08-20' }))).toBe('recorded 2026-08-20');
+  });
+
   it('tells a reported expiry from an estimated rotation date, and a missing date from no rule', () => {
     expect(describeExpiry(credential({ expiresAt: '2027-01-07T05:45:00.000Z' }))).toEqual({
       text: '2027-01-07',

@@ -93,9 +93,20 @@ export function describeAge(credential) {
   return days === 0 ? 'Today' : plural(days, 'day');
 }
 
-/** Where the age was read from, for the line under it; null when nothing is known. */
+/**
+ * The line under the age: where it was read from, and the date the owner
+ * recorded whenever one is stored. Null when neither is known.
+ *
+ * The recorded date is named even when another source is newer and the age
+ * comes from that one (a Key Vault write after the recorded rotation): left
+ * out, a stored date was invisible on the tab, and an owner who had recorded
+ * it read that as the save not having landed (2026-10-11, every PUT a 200).
+ */
 export function describeAgeSource(credential) {
-  return ROTATED_FROM[credential?.lastRotatedSource] ?? null;
+  const from = ROTATED_FROM[credential?.lastRotatedSource] ?? null;
+  const recorded = credential?.recordedOn ? `recorded ${credential.recordedOn}` : null;
+  if (credential?.lastRotatedSource === 'owner') return recorded ?? from;
+  return [from, recorded].filter(Boolean).join('; ') || null;
 }
 
 /**
