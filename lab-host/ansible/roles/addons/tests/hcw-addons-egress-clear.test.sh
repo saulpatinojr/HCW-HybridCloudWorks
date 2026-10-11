@@ -111,11 +111,20 @@ iptables -w -I "${chain}" -s "${subnet}" -m comment --comment "${guard_comment}"
 run unguard "${chain}" "${comment}"
 check "unguard lifts every held reject" '[ "${rc}" -eq 0 ] && [ "$(count_with_comment "${guard_comment}")" -eq 0 ] && [ "$(count_with_comment "${comment}")" -eq 4 ]' "rc=${rc} output: ${out} left: $(rules)"
 
-# 6. A chain that does not exist fails, with iptables' own message.
+# 6. A held reject for another subnet (say the subnet's default changed after
+#    a stopped run) does not stand in for this one: guard still holds this
+#    subnet's, and unguard lifts both.
+iptables -w -I "${chain}" -s 172.30.0.0/24 -m comment --comment "${guard_comment}" -j REJECT --reject-with icmp-port-unreachable
+run guard "${chain}" "${comment}" "${subnet}"
+check "a held reject for another subnet does not stop this subnet's" '[ "${rc}" -eq 0 ] && [ "$(grep -c "^guarded " <<<"${out}")" -eq 1 ] && iptables -w -C "${chain}" -s "${subnet}" -m comment --comment "${guard_comment}" -j REJECT --reject-with icmp-port-unreachable' "rc=${rc} output: ${out} left: $(rules)"
+run unguard "${chain}" "${comment}"
+check "unguard lifts the held rejects for both subnets" '[ "${rc}" -eq 0 ] && [ "$(grep -c "^unguarded " <<<"${out}")" -eq 2 ] && [ "$(count_with_comment "${guard_comment}")" -eq 0 ]' "rc=${rc} output: ${out} left: $(rules)"
+
+# 7. A chain that does not exist fails, with iptables' own message.
 run guard "${chain}-MISSING" "${comment}" "${subnet}"
 check "a missing chain fails and says why" '[ "${rc}" -ne 0 ] && [ -n "${out}" ]' "rc=${rc} output: ${out}"
 
-# 7. Input that could break out of the iptables-restore line is refused.
+# 8. Input that could break out of the iptables-restore line is refused.
 before="$(rules)"
 run guard "${chain}" "${comment}" "${subnet} -j ACCEPT"
 check "a subnet that is not a CIDR is refused" '[ "${rc}" -eq 2 ] && [ "$(rules)" = "${before}" ]' "rc=${rc} output: ${out}"

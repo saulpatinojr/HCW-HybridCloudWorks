@@ -59,6 +59,14 @@ rules_with_comment() {
     }' <<<"${listing}"
 }
 
+# True when chain $1 already holds the exact reject `guard` would insert for
+# subnet $2 with comment $3: compared by iptables itself (-C), so the subnet,
+# the comment, the target and the reject type must all match. A held reject
+# for another subnet does not count, and unguard removes it with the rest.
+guard_held() {
+  iptables -w -C "$1" -s "$2" -m comment --comment "$3" -j REJECT --reject-with icmp-port-unreachable 2>/dev/null
+}
+
 # Applies the iptables-restore lines in $1 to the filter table as one
 # transaction, leaving every other rule as it is.
 apply() {
@@ -85,9 +93,11 @@ case "${mode}" in
     subnet="${4:-}"
     [ -n "${subnet}" ] || usage
     [[ "${subnet}" =~ ${subnet_shape} ]] || { echo "not an IPv4 CIDR: ${subnet}" >&2; exit 2; }
+    # Read first: a missing chain fails here, in iptables' words, before the
+    # -C below could read as "not held".
     removals="$(rules_with_comment "${chain}" "${comment}" | sed 's/^-A /-D /')"
     lines=""
-    if [ -z "$(rules_with_comment "${chain}" "${guard_comment}")" ]; then
+    if ! guard_held "${chain}" "${subnet}" "${guard_comment}"; then
       lines="-I ${chain} 1 -s ${subnet} -m comment --comment \"${guard_comment}\" -j REJECT --reject-with icmp-port-unreachable"
     fi
     if [ -n "${removals}" ]; then

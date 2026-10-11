@@ -4389,11 +4389,13 @@ This project has not cut a tagged release; entries are grouped under
     chain fails with iptables' own message, instead of being hidden by
     `2>/dev/null`.
   - `tests/hcw-addons-egress-clear.test.sh` runs it as root against real
-    iptables, in a scratch chain (15 checks):
+    iptables, in a scratch chain (17 checks):
     - an empty chain;
     - the role's rules among another comment, a comment containing the
       role's, and Docker's RETURN;
     - a guard run again after a stop;
+    - a held reject for another subnet, which does not stand in for this
+      one (guard checks its own with `iptables -C`);
     - the rebuild under the reject;
     - several held rejects;
     - a missing chain;
