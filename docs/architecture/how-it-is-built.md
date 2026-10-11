@@ -133,11 +133,17 @@ A few packages need more than that:
 ### This documentation site
 
 The site builds from `docs/` with the pinned MkDocs in
-`scripts/docs/requirements.txt`. From the repository root:
+`scripts/docs/requirements.txt`. From the repository root, in PowerShell:
 
-```shell
+```powershell
 python -m pip install -r scripts/docs/requirements.txt
+```
+
+```powershell
 python scripts/docs/check_redaction.py
+```
+
+```powershell
 mkdocs build --strict
 ```
 

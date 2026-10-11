@@ -25,8 +25,9 @@ reviewed through pull requests like the code and published on every merge.
 
 The repository keeps two concise records beside this site:
 [CHANGELOG.md](repo/changelog.md) for completed work, and
-[TODO.md](repo/todo.md) for the accepted risks and an index to the open
-GitHub issues.
+[TODO.md](repo/todo.md) for the accepted risks. Open work is tracked as
+[GitHub issues](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues)
+on the [HCW Work Board](https://github.com/users/saulpatinojr/projects/6).
 
 ## Engineering references
 
