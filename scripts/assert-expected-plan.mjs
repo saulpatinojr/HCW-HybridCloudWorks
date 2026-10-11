@@ -234,6 +234,13 @@ export const DECLARED = [
   // deletes, ADR 0032 decision 6 keys, SEND_REMINDERS, #816) applied in
   // runs ScVFg7p4/JgUsqrst/8M1puNBH that day and was deleted here, as the
   // header asks.
+  //
+  // KEPT on 2026-10-11 although the plans since 2026-10-10 show it as
+  // "declared, not in this plan". That note cannot tell an armed-and-applied
+  // flag from one nobody armed, because an enabled_timers without
+  // PROBE_AI_PROVIDERS also plans no diff. The probe's last run, 2026-10-05
+  // 06:15 UTC, logged "disabled - skipping". Its next run (Mondays 06:15 UTC)
+  // says which: delete this entry once it runs instead of skipping.
   {
     address: 'azurerm_function_app_flex_consumption.hcw',
     path: 'app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS',
@@ -254,35 +261,11 @@ export const DECLARED = [
   // 'false' -> 'true') followed in run-PSfyVZteW1eeDXYo, which the plan check
   // read as that change alone beside the permanent diff.
   //
-  // #1053: verify-alert-state.yml's own identity, which reads alert rules and
-  // action groups in both groups and nothing else (infra/oidc.tf). The custom
-  // role it holds is created by the owner beforehand, so the plan only reads
-  // it; these five are the whole change.
-  {
-    address: 'azurerm_user_assigned_identity.github_alert_reader',
-    action: 'create',
-    reason: '#1053: the identity the alert checker signs in as',
-  },
-  {
-    address: 'azurerm_federated_identity_credential.github_alert_reader_branch',
-    action: 'create',
-    reason: '#1053: its main-branch sign-in, name form',
-  },
-  {
-    address: 'azurerm_federated_identity_credential.github_alert_reader_branch_immutable',
-    action: 'create',
-    reason: '#1053: its main-branch sign-in, immutable form',
-  },
-  {
-    address: 'azurerm_role_assignment.github_alert_reader_app',
-    action: 'create',
-    reason: '#1053: HCW Alert Rule Reader on rg-web-site-prod-cus',
-  },
-  {
-    address: 'azurerm_role_assignment.github_alert_reader_mgmt',
-    action: 'create',
-    reason: '#1053: HCW Alert Rule Reader on rg-mgmt-plat-prod-cus',
-  },
+  // #1053's five creates (github_alert_reader, its two federated credentials
+  // and its two role assignments) applied in run-ytkeuXXK57G5NU4m on
+  // 2026-10-11 and were deleted here too. tfc-plan-check.yml read that plan as
+  // those five beside the permanent diff, and verify-alert-state.yml's first
+  // run under the new identity read every rule in both groups.
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
