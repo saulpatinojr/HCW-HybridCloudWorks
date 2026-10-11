@@ -147,6 +147,7 @@ nav:
   - Security:
       - Scanner triage: security/scanner-triage.md
   - Architecture:
+      - How it is built: architecture/how-it-is-built.md
       - Target architecture: architecture/architecture.md
       - Review 2026-08: architecture/architecture-review-2026-08.md
       - Well-Architected assessment: architecture/well-architected-assessment.md

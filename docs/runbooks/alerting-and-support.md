@@ -1247,7 +1247,7 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 | `alert-swa-bandwidth` | not yet | |
 | `alert-kv-errors` | not yet | |
 | `alert-kv-data-write` | not yet | |
-| `alert-kv-config-write` | not yet | |
+| `alert-kv-config-write` | 2026-10-11, 04:52Z | `Invoke-AlertFireTest.ps1 -Test kv-config-write`: the test tag went on and came off at 04:46Z; Azure Monitor opened the alert (ActivityLog Administrative) at 04:52:04Z. The first proof that Activity Log alerts reach Alerts Management, where the script reads them |
 | `alert-rbac-assignment-app` | not yet | |
 | `alert-rbac-assignment-mgmt` | not yet | |
 | `alert-rbac-definition-app` | not yet | |
