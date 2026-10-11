@@ -53,9 +53,15 @@ one; ADR 0035 decision 8 records them as the second permitted workload kind.
    without a ufw reload (a reload would flush the rules Docker holds for
    its running containers). Each run first removes every live rule carrying
    the role's comment and rebuilds the set, so a range or port dropped from
-   the defaults is dropped from the chain in the same run. The removal is
-   `files/hcw-addons-egress-clear`, installed in `/usr/local/libexec`, which
-   deletes by rule number and is tested against real iptables
+   the defaults is dropped from the chain in the same run. The subnet is
+   never less restricted than the policy meanwhile:
+   `files/hcw-addons-egress-clear` (installed in `/usr/local/libexec`) puts
+   a reject for the whole subnet at the top of the chain, commented
+   `… rebuilding`, in the same iptables-restore transaction that deletes the
+   old rules by their full specification (never by position). The new rules
+   go above it, and it is lifted only after the last one. A run that stops
+   in between leaves that reject, so the add-ons have no egress until the
+   next run completes. It is tested against real iptables
    (`tests/hcw-addons-egress-clear.test.sh`). Loopback publishing bounds what reaches an
    add-on; this bounds where an add-on holding a visitor's upload can send
    it. Read it on the host with `sudo iptables -L DOCKER-USER -n --line-numbers`.

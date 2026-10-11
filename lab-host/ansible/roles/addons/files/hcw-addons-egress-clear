@@ -1,39 +1,109 @@
 #!/usr/bin/env bash
-# Removes every rule the addons role wrote in one iptables chain, so the role
-# can rebuild its egress policy in one known order on each run. The addons
-# role installs this as /usr/local/libexec/hcw-addons-egress-clear and runs it
-# before inserting the rules again (roles/addons/tasks/main.yml).
+# Clears the addons role's egress rules from an iptables chain so the role can
+# rebuild them, without the add-ons' subnet ever being less restricted than the
+# policy says. The addons role installs this as
+# /usr/local/libexec/hcw-addons-egress-clear (roles/addons/tasks/main.yml).
 #
-#   hcw-addons-egress-clear [chain] [comment]
+#   hcw-addons-egress-clear guard   <chain> <comment> <subnet>
+#   hcw-addons-egress-clear unguard <chain> <comment>
 #
-# chain defaults to DOCKER-USER and comment to the one every rule of the role
-# carries. A rule is the role's when its comment is exactly that text; a rule
-# with any other comment, or none (Docker's own), is left alone. Prints one
-# line per rule removed and nothing when there is none, which is the normal
-# state on the first run and after a reboot that ufw has not yet restored.
+# guard, before the role inserts its rules: in ONE iptables-restore
+# transaction, puts a reject for the whole subnet at the top of the chain
+# (carrying "<comment> rebuilding", unless one is already there) and deletes
+# every rule whose comment is exactly <comment>. The role then inserts its
+# rules above that reject. unguard, after the last insert: deletes every
+# "<comment> rebuilding" rule, again in one transaction. So the subnet is
+# rejected throughout the rebuild, and a run that stops anywhere between the
+# two leaves the reject in place: the add-ons lose egress (fail closed) until
+# the next run completes, rather than keeping none of the policy.
 #
-# Why rules are deleted by number and not by their text: `iptables -S` prints
-# the comment in double quotes, and a rule line fed back to iptables through
-# an unquoted variable splits `"hcw-addons egress (roles/addons)"` into three
-# arguments with the quote characters still on them, which iptables refuses.
-# The numbered listing is read instead, the role's lines are picked by their
-# `/* comment */`, and each is deleted by its number, highest first, so the
-# numbers of the rules still to delete do not move. The inline pipeline this
-# replaces also failed on an empty chain: grep finds nothing, exits 1, and
-# pipefail made that the task's failure (lab host, 2026-10-10).
+# Rules are deleted by their full specification, as `iptables -S` prints it,
+# never by position: a rule another writer adds or removes meanwhile cannot
+# shift a deletion onto someone else's rule. If one of the role's rules is
+# gone by the time the transaction commits, iptables-restore rejects the whole
+# transaction and nothing changes, which the role reports as a failed task.
 #
-# A chain that does not exist is an error, said by iptables itself: the role
-# runs this after Docker has created DOCKER-USER, so its absence means Docker
-# is not managing iptables, and the inserts that follow would fail anyway.
+# A rule is the role's only when its comment is exactly <comment>: another
+# comment, one that merely contains <comment>, and Docker's uncommented rules
+# are left alone. iptables -S quotes a comment that contains a space, and the
+# match relies on that, so <comment> must contain one (the role's does).
+#
+# Prints one line per rule inserted or removed, and nothing when there is
+# nothing to do, which is the normal state on the host's first run. A chain
+# that does not exist is an error, in iptables' own words.
+#
+# Why not the inline pipeline this replaces: under pipefail, its grep found no
+# match on the host's first run, exited 1, and failed the task (2026-10-10);
+# and it re-read each `iptables -S` line through an unquoted variable, which
+# split the quoted comment into three arguments, so every later run would have
+# deleted nothing while printing that it had. It also deleted the role's
+# reject before re-inserting it, leaving the subnet open while it ran.
 set -euo pipefail
 
-chain="${1:-DOCKER-USER}"
-comment="${2:-hcw-addons egress (roles/addons)}"
+usage() {
+  echo "usage: $0 guard <chain> <comment> <subnet> | unguard <chain> <comment>" >&2
+  exit 2
+}
 
-listing="$(iptables -w -L "${chain}" -n --line-numbers)"
-numbers="$(awk -v marker="/* ${comment} */" 'index($0, marker) { print $1 }' <<<"${listing}" | sort -rn)"
+# Prints the chain's rules whose comment is exactly $2, as `iptables -S` lists
+# them ("-A <chain> ..."). Fails, with iptables' message, if the chain is missing.
+rules_with_comment() {
+  local listing
+  listing="$(iptables -w -S "$1")"
+  awk -v want="--comment \"$2\"" '
+    /^-A / {
+      at = index($0, want)
+      if (at == 0) next
+      after = substr($0, at + length(want), 1)
+      if (after == "" || after == " ") print
+    }' <<<"${listing}"
+}
 
-for number in ${numbers}; do
-  iptables -w -D "${chain}" "${number}"
-  echo "removed ${chain} rule ${number}"
-done
+# Applies the iptables-restore lines in $1 to the filter table as one
+# transaction, leaving every other rule as it is.
+apply() {
+  printf '*filter\n%s\nCOMMIT\n' "$1" | iptables-restore -w --noflush
+}
+
+mode="${1:-}"
+chain="${2:-}"
+comment="${3:-}"
+[ -n "${chain}" ] && [ -n "${comment}" ] || usage
+# The chain, comment and subnet are written into iptables-restore input, so
+# each is held to the shape it should have and nothing that could end a line
+# or a quoted string.
+chain_shape='^[A-Za-z0-9_-]+$'
+comment_shape='^[A-Za-z0-9 _./()-]+$'
+subnet_shape='^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$'
+[[ "${chain}" =~ ${chain_shape} ]] || { echo "not a chain name: ${chain}" >&2; exit 2; }
+[[ "${comment}" =~ ${comment_shape} ]] || { echo "the comment may hold letters, digits, spaces and _ . / ( ) - only" >&2; exit 2; }
+case "${comment}" in *" "*) ;; *) echo "the comment must contain a space: iptables -S quotes only such a comment" >&2; exit 2 ;; esac
+guard_comment="${comment} rebuilding"
+
+case "${mode}" in
+  guard)
+    subnet="${4:-}"
+    [ -n "${subnet}" ] || usage
+    [[ "${subnet}" =~ ${subnet_shape} ]] || { echo "not an IPv4 CIDR: ${subnet}" >&2; exit 2; }
+    removals="$(rules_with_comment "${chain}" "${comment}" | sed 's/^-A /-D /')"
+    lines=""
+    if [ -z "$(rules_with_comment "${chain}" "${guard_comment}")" ]; then
+      lines="-I ${chain} 1 -s ${subnet} -m comment --comment \"${guard_comment}\" -j REJECT --reject-with icmp-port-unreachable"
+    fi
+    if [ -n "${removals}" ]; then
+      lines="${lines:+${lines}$'\n'}${removals}"
+    fi
+    [ -n "${lines}" ] || exit 0
+    apply "${lines}"
+    printf '%s\n' "${lines}" | sed -e 's/^-I \([^ ]*\) 1 /guarded \1: /' -e 's/^-D \([^ ]*\) /removed \1: /'
+    ;;
+  unguard)
+    lines="$(rules_with_comment "${chain}" "${guard_comment}" | sed 's/^-A /-D /')"
+    [ -n "${lines}" ] || exit 0
+    apply "${lines}"
+    printf '%s\n' "${lines}" | sed 's/^-D \([^ ]*\) /unguarded \1: /'
+    ;;
+  *)
+    usage
+    ;;
+esac

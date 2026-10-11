@@ -4369,19 +4369,35 @@ This project has not cut a tagged release; entries are grouped under
   a rule present, `iptables -S` prints the comment in quotes, the unquoted
   `$rule` split it, iptables answered "Bad argument `egress'", and the loop
   still printed "removed" and exited 0. Every later run would have deleted
-  nothing while saying it had.
+  nothing while saying it had. It also deleted the role's reject before
+  inserting it again, so the add-ons' subnet ran unfiltered for the length
+  of the rebuild, or for good if the run stopped there (CodeRabbit on
+  #1060).
   - `lab-host/ansible/roles/addons/files/hcw-addons-egress-clear`, installed
-    as `/usr/local/libexec/hcw-addons-egress-clear`, reads the numbered
-    listing, picks the role's rules by their exact `/* comment */`, and
-    deletes them by number, highest first. A missing chain fails with
-    iptables' own message instead of being hidden by `2>/dev/null`.
+    as `/usr/local/libexec/hcw-addons-egress-clear`:
+    - `guard`, in one `iptables-restore` transaction, puts a reject for the
+      whole subnet at the top of `DOCKER-USER` (commented `… rebuilding`)
+      and deletes every rule whose comment is exactly the role's, by its
+      full specification and never by position, so another writer's rule
+      cannot be hit.
+    - The role inserts its rules above that reject.
+    - `unguard` lifts it after the last insert.
+
+    A run that stops in between leaves the reject, so the add-ons lose
+    egress rather than keep it unfiltered. Its arguments are held to the
+    shapes they should have before they reach the transaction. A missing
+    chain fails with iptables' own message, instead of being hidden by
+    `2>/dev/null`.
   - `tests/hcw-addons-egress-clear.test.sh` runs it as root against real
-    iptables, in a scratch chain:
+    iptables, in a scratch chain (15 checks):
     - an empty chain;
     - the role's rules among another comment, a comment containing the
       role's, and Docker's RETURN;
-    - a second run;
-    - a missing chain.
+    - a guard run again after a stop;
+    - the rebuild under the reject;
+    - several held rejects;
+    - a missing chain;
+    - input that could break out of the transaction.
 
     CI runs it in the `ansible-lint (lab-host)` job.
 

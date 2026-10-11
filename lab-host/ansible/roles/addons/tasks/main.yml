@@ -136,14 +136,23 @@
 # chain too, and the inserts below rebuild the set in one known order. Docker's
 # own trailing RETURN carries no such comment and is untouched.
 #
-# A helper, not an inline pipeline, so it ships with a test against real
-# iptables (tests/hcw-addons-egress-clear.test.sh). The pipeline it replaces
-# failed the first run on the host (2026-10-10): the chain held none of the
-# role's rules, grep exited 1 and pipefail made that the task's failure. On
-# any later run it would have deleted nothing while printing "removed",
-# because `iptables -S` quotes the comment and the unquoted re-read split it.
-# The comment passed here is the one every insert below carries.
-- name: Install hcw-addons-egress-clear, which removes the role's egress rules from a chain
+# The subnet is never less restricted than the policy while this happens.
+# The removal is one iptables-restore transaction that also puts a reject for
+# the whole subnet at the top of the chain ("... rebuilding"); the inserts go
+# above it, and only after the last one is it lifted. A run that stops in
+# between leaves the reject: the add-ons lose egress until the next run, never
+# keep it unfiltered. Rules are deleted by their full specification, never by
+# position, so another writer's rule cannot be hit
+# (files/hcw-addons-egress-clear, tested against real iptables in
+# tests/hcw-addons-egress-clear.test.sh).
+#
+# It replaces an inline pipeline that failed the host's first run
+# (2026-10-10): the chain held none of the role's rules, grep exited 1 and
+# pipefail made that the task's failure. On any later run it would have
+# deleted nothing while printing "removed", because `iptables -S` quotes the
+# comment and the unquoted re-read split it. The comment passed here is the
+# one every insert below carries.
+- name: Install hcw-addons-egress-clear, which clears the role's egress rules behind a held reject
   ansible.builtin.copy:
     src: hcw-addons-egress-clear
     dest: /usr/local/libexec/hcw-addons-egress-clear
@@ -152,12 +161,14 @@
     mode: "0750"
   when: addons_active | length > 0
 
-- name: Remove the egress rules this role wrote on an earlier run
+- name: Hold a reject on the add-ons' subnet and remove the egress rules this role wrote on an earlier run
   ansible.builtin.command:
     argv:
       - /usr/local/libexec/hcw-addons-egress-clear
+      - guard
       - DOCKER-USER
       - hcw-addons egress (roles/addons)
+      - "{{ addons_network_subnet }}"
   register: addons_egress_reconcile
   changed_when: addons_egress_reconcile.stdout_lines | length > 0
   when: addons_active | length > 0 and not ansible_check_mode
@@ -197,6 +208,19 @@
     jump: RETURN
     comment: hcw-addons egress (roles/addons)
   when: addons_active | length > 0
+
+# The whole policy is above the held reject now, so lifting it changes
+# nothing the policy allows; it only ends the rebuild.
+- name: Lift the reject held on the add-ons' subnet while the egress rules were rebuilt
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/hcw-addons-egress-clear
+      - unguard
+      - DOCKER-USER
+      - hcw-addons egress (roles/addons)
+  register: addons_egress_unguard
+  changed_when: addons_egress_unguard.stdout_lines | length > 0
+  when: addons_active | length > 0 and not ansible_check_mode
 
 - name: Write the same egress rules where ufw restores them at boot
   ansible.builtin.blockinfile:
