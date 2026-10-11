@@ -168,6 +168,7 @@ function useRegisterWrites(replace) {
   return { busy, record, syncReminders };
 }
 
+/** How many credentials are in each state, as the badges above the tables. */
 function Counts({ counts }) {
   return (
     <div
