@@ -241,10 +241,6 @@ export const DECLARED = [
     after: 'true',
     reason: '#701: PROBE_AI_PROVIDERS added to enabled_timers, arming the weekly probe',
   },
-  // #1009: the owner's run that arms the hourly lab canary
-  // (docs/runbooks/labs-host.md, "Arming the canary"). Its flag arrived
-  // disarmed ('false') and alert-timer-overdue already watches labCanary.
-  //
   // Applied by 2026-10-10 and deleted here, as the header asks:
   // - the canary's disarmed flag and alert-timer-overdue's labCanary row (#1009);
   // - the Telegram delivery rule;
@@ -254,13 +250,9 @@ export const DECLARED = [
   // - the docs CNAME move.
   // That run's plan, read against the state, showed each of them as "declared,
   // not in this plan", and its apply then created the four role-change rules.
-  {
-    address: 'azurerm_function_app_flex_consumption.hcw',
-    path: 'app_settings.FEATURE_FLAG_LAB_CANARY',
-    before: 'false',
-    after: 'true',
-    reason: '#1009: LAB_CANARY added to enabled_timers, arming the hourly lab canary',
-  },
+  // The owner's arming of the hourly lab canary (#1009, FEATURE_FLAG_LAB_CANARY
+  // 'false' -> 'true') followed in run-PSfyVZteW1eeDXYo, which the plan check
+  // read as that change alone beside the permanent diff.
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
