@@ -23,6 +23,7 @@ import {
   classifyError,
   compare,
   expectation,
+  knownSubscriptionIds,
   pendingCreates,
   readLive,
   renderReport,
@@ -696,44 +697,63 @@ describe('readLive and the report, end to end on the real inventory', () => {
     expect(runFails(verdicts, groups, live.subscriptionsRead)).toBe(true);
   });
 
-  it('reports the recorded Management gap every run without failing on it, and still fails on the rest', async () => {
-    // Today's estate: github_reader may read rg-web-site-prod-cus and nothing
-    // in Management. The run is green on what it can read, says which rules
-    // it could not, and is red the moment a readable rule is wrong.
+  it('reports a recorded gap every run without failing on it, and still fails on the rest', async () => {
+    // The estate until #1053: the workflow's identity could read
+    // rg-web-site-prod-cus and nothing in Management. The live table is empty
+    // since, so this holds the mechanism to a record of its own: the run is
+    // green on what it can read, says which rules it could not, and is red
+    // the moment a readable rule is wrong.
     const mgmt = rules.find((r) => r.subscription.includes('mgmt')).subscription;
-    expect(UNREADABLE[mgmt], 'the Management subscription is recorded').toBeDefined();
+    const recorded = { [mgmt]: { record: 'no grant there yet (test record)' } };
     const { fetchImpl } = fakeArm(routes({ deny: mgmt }));
     const live = await readLive(rules, { token: 't', fetchImpl });
-    const verdicts = compare(rules, live, { pending: new Map() });
-    const groups = actionGroupProblems(rules, live);
+    const verdicts = compare(rules, live, { pending: new Map(), unreadable: recorded });
+    const groups = actionGroupProblems(rules, live, recorded);
     for (const v of verdicts.filter((x) => x.rule.subscription === mgmt)) {
       expect(v.state).toBe('UNREADABLE');
-      expect(v.notes.join(' ')).toContain(UNREADABLE[mgmt].record);
+      expect(v.notes.join(' ')).toContain(recorded[mgmt].record);
     }
     expect(groups.map((g) => g.state)).toEqual(['UNREADABLE']);
     expect(runFails(verdicts, groups, live.subscriptionsRead)).toBe(false);
     const report = renderReport({ rules, verdicts, extra: [], groups, when: 'now', subscriptionsRead: live.subscriptionsRead });
     expect(report).toMatch(/Every rule this identity can read and judge is live, enabled and wired/);
     expect(report).toMatch(/\*\*unknown\*\*, not healthy/);
-    const warnings = unreadableWarnings(verdicts, groups);
+    const warnings = unreadableWarnings(verdicts, groups, recorded);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/^::warning title=Alert rules not readable::\d+ declared rule\(s\) in sub-plat-mgmt-prod-cus/);
+    expect(warnings[0]).toContain('no grant there yet (test record)');
 
     const appRule = verdicts.find((v) => v.rule.subscription !== mgmt);
     const broken = verdicts.map((v) => (v === appRule ? { ...v, state: 'MISSING' } : v));
     expect(runFails(broken, groups, live.subscriptionsRead)).toBe(true);
   });
 
+  it('records no gap since #1053, so a refused Management read now fails the run', async () => {
+    // github_alert_reader reads alert rules and action groups in both groups
+    // (infra/oidc.tf), so nothing is excused: a refusal there is NOT
+    // AUTHORIZED, a finding, not an UNREADABLE that keeps the run green.
+    expect(UNREADABLE).toEqual({});
+    const mgmt = rules.find((r) => r.subscription.includes('mgmt')).subscription;
+    const { fetchImpl } = fakeArm(routes({ deny: mgmt }));
+    const live = await readLive(rules, { token: 't', fetchImpl });
+    const verdicts = compare(rules, live, { pending: new Map() });
+    const groups = actionGroupProblems(rules, live);
+    for (const v of verdicts.filter((x) => x.rule.subscription === mgmt)) expect(v.state).toBe('NOT AUTHORIZED');
+    expect(runFails(verdicts, groups, live.subscriptionsRead)).toBe(true);
+  });
+
   it('fails the run on a stale record, so the exception goes with the grant that closed it', async () => {
     // Review of #1051: an entry that outlives the gap would let a later
     // refusal there pass quietly. So a readable recorded subscription fails
     // the workflow's run until the entry is deleted.
+    const mgmt = rules.find((r) => r.subscription.includes('mgmt')).subscription;
+    const recorded = { [mgmt]: { record: 'no grant there yet (test record)' } };
     const { fetchImpl } = fakeArm(routes());
     const live = await readLive(rules, { token: 't', fetchImpl });
-    const stale = staleUnreadable(rules, live);
-    expect(stale).toEqual(Object.keys(UNREADABLE));
-    const verdicts = compare(rules, live, { pending: new Map() });
-    const groups = actionGroupProblems(rules, live);
+    const stale = staleUnreadable(rules, live, recorded);
+    expect(stale).toEqual([mgmt]);
+    const verdicts = compare(rules, live, { pending: new Map(), unreadable: recorded });
+    const groups = actionGroupProblems(rules, live, recorded);
     expect(runFails(verdicts, groups, live.subscriptionsRead, [])).toBe(false);
     expect(runFails(verdicts, groups, live.subscriptionsRead, stale)).toBe(true);
     const report = renderReport({ rules, verdicts, extra: [], groups, when: 'now', subscriptionsRead: live.subscriptionsRead, stale });
@@ -749,8 +769,9 @@ describe('readLive and the report, end to end on the real inventory', () => {
     const unrecorded = compare(rules, live, { pending: new Map(), unreadable: {} });
     const denied = renderReport({ rules, verdicts: unrecorded, extra: [], groups: actionGroupProblems(rules, live, {}), when: 'now', subscriptionsRead: live.subscriptionsRead, stale: [mgmt] });
     expect(lastLine(denied)).toMatch(/^\*\*\d+ finding\(s\)\.\*\*/);
-    const recorded = compare(rules, live, { pending: new Map() });
-    const partial = renderReport({ rules, verdicts: recorded, extra: [], groups: actionGroupProblems(rules, live), when: 'now', subscriptionsRead: live.subscriptionsRead });
+    const gap = { [mgmt]: { record: 'no grant there yet (test record)' } };
+    const recorded = compare(rules, live, { pending: new Map(), unreadable: gap });
+    const partial = renderReport({ rules, verdicts: recorded, extra: [], groups: actionGroupProblems(rules, live, gap), when: 'now', subscriptionsRead: live.subscriptionsRead });
     expect(lastLine(partial)).toMatch(/^\*\*Every rule this identity can read and judge is live, enabled and wired\.\*\*/);
     const { fetchImpl: allOk } = fakeArm(routes());
     const full = await readLive(rules, { token: 't', fetchImpl: allOk });
@@ -789,5 +810,98 @@ describe('readLive and the report, end to end on the real inventory', () => {
     const mgmtRead = [...live.lists].find(([key]) => key.includes('mgmt'))[1];
     expect(mgmtRead.status).toBe('not-visible');
     expect(live.actionGroups.get(ag.address).status).toBe('not-visible');
+  });
+
+  // CodeRabbit on #1074: github_alert_reader's one role is at resource-group
+  // scope, so the subscription list may leave a subscription out. The ids the
+  // workflow names fill the gap, and every rule there is still read.
+  it('reads a subscription the list leaves out through the id the workflow names', async () => {
+    const mgmt = subs.find((s) => s.displayName.includes('mgmt'));
+    const visible = subs.filter((s) => s !== mgmt);
+    const base = routes().slice(1);
+    const { fetchImpl, calls } = fakeArm([[/\/subscriptions\?api-version=/, [200, { value: visible }]], ...base]);
+    const knownIds = knownSubscriptionIds(`${mgmt.displayName}=${mgmt.subscriptionId}`);
+    const live = await readLive(rules, { token: 't', fetchImpl, knownIds });
+    const verdicts = compare(rules, live, { pending: new Map(), unreadable: {} });
+    expect(verdicts.filter((v) => !['OK', 'GATED OFF'].includes(v.state))).toEqual([]);
+    expect(actionGroupProblems(rules, live, {}).map((g) => g.state)).toEqual(['OK']);
+    expect(calls.some((c) => c.url.includes(`/subscriptions/${mgmt.subscriptionId}/resourceGroups/`))).toBe(true);
+    expect(runFails(verdicts, actionGroupProblems(rules, live, {}), live.subscriptionsRead)).toBe(false);
+  });
+
+  it('reads every rule through the named ids when the subscription list is refused', async () => {
+    const base = routes().slice(1);
+    const refused = [/\/subscriptions\?api-version=/, [403, { error: { code: 'AuthorizationFailed', message: 'no' } }]];
+    const named = knownSubscriptionIds(subs.map((s) => `${s.displayName}=${s.subscriptionId}`).join(','));
+    const live = await readLive(rules, { token: 't', fetchImpl: fakeArm([refused, ...base]).fetchImpl, knownIds: named });
+    expect(live.subscriptionsRead).toMatchObject({ status: 'ok', namedOnly: true, listStatus: 'denied' });
+    const verdicts = compare(rules, live, { pending: new Map(), unreadable: {} });
+    expect(verdicts.filter((v) => !['OK', 'GATED OFF'].includes(v.state))).toEqual([]);
+    const groups = actionGroupProblems(rules, live, {});
+    expect(groups.map((g) => g.state)).toEqual(['OK']);
+    expect(runFails(verdicts, groups, live.subscriptionsRead)).toBe(false);
+    const report = renderReport({ rules, verdicts, extra: [], groups, when: 'now', subscriptionsRead: live.subscriptionsRead });
+    expect(report).toMatch(/subscriptions were taken from `ALERT_SUBSCRIPTION_IDS`/);
+    expect(report).not.toMatch(/nothing below is known/);
+  });
+
+  it('still fails a refused subscription list when nothing is named, or a rule whose subscription is not named', async () => {
+    const base = routes().slice(1);
+    const refused = [/\/subscriptions\?api-version=/, [403, { error: { code: 'AuthorizationFailed', message: 'no' } }]];
+    const bare = await readLive(rules, { token: 't', fetchImpl: fakeArm([refused, ...base]).fetchImpl });
+    expect(bare.subscriptionsRead.status).not.toBe('ok');
+    expect(runFails([], [], bare.subscriptionsRead)).toBe(true);
+
+    const app = subs.find((s) => !s.displayName.includes('mgmt'));
+    const half = await readLive(rules, {
+      token: 't',
+      fetchImpl: fakeArm([refused, ...base]).fetchImpl,
+      knownIds: knownSubscriptionIds(`${app.displayName}=${app.subscriptionId}`),
+    });
+    const verdicts = compare(rules, half, { pending: new Map(), unreadable: {} });
+    for (const v of verdicts.filter((x) => x.rule.subscription !== app.displayName)) expect(v.state).toBe('NOT AUTHORIZED');
+    expect(runFails(verdicts, actionGroupProblems(rules, half, {}), half.subscriptionsRead)).toBe(true);
+  });
+
+  it('keeps the id the subscription list gives over one the workflow names', async () => {
+    const app = subs.find((s) => !s.displayName.includes('mgmt'));
+    const { fetchImpl, calls } = fakeArm(routes());
+    const knownIds = knownSubscriptionIds(`${app.displayName}=99999999-9999-9999-9999-999999999999`);
+    const live = await readLive(rules, { token: 't', fetchImpl, knownIds });
+    expect(live.ids.get(app.displayName)).toBe(app.subscriptionId);
+    expect(calls.some((c) => c.url.includes('99999999-9999-9999-9999-999999999999'))).toBe(false);
+  });
+});
+
+describe('knownSubscriptionIds', () => {
+  it('maps each display name to its id, lower-cased, ignoring blanks and spaces', () => {
+    const known = knownSubscriptionIds(
+      ' sub-app-site-prod-cus=0000000A-0000-0000-0000-000000000000 ,, sub-plat-mgmt-prod-cus=00000001-0000-0000-0000-000000000000',
+    );
+    expect([...known]).toEqual([
+      ['sub-app-site-prod-cus', '0000000a-0000-0000-0000-000000000000'],
+      ['sub-plat-mgmt-prod-cus', '00000001-0000-0000-0000-000000000000'],
+    ]);
+  });
+
+  it('names nothing when the variable is unset or empty', () => {
+    expect(knownSubscriptionIds(undefined).size).toBe(0);
+    expect(knownSubscriptionIds('').size).toBe(0);
+  });
+
+  // An unset repository variable renders as `name=` in the workflow's env, and
+  // a value that is not a GUID would otherwise be spliced into an ARM path.
+  it.each([
+    ['an unset variable', 'sub-plat-mgmt-prod-cus='],
+    ['no separator', 'sub-plat-mgmt-prod-cus'],
+    ['an id that is not a GUID', 'sub-plat-mgmt-prod-cus=not-a-guid'],
+    ['a path in the id', 'sub-plat-mgmt-prod-cus=00000001-0000-0000-0000-000000000000/../x'],
+    ['a name with a path', '../x=00000001-0000-0000-0000-000000000000'],
+  ])('refuses %s', (_label, text) => {
+    expect(() => knownSubscriptionIds(text)).toThrow(/not display-name=GUID/);
+  });
+
+  it('does not echo the id of an entry it refuses', () => {
+    expect(() => knownSubscriptionIds('x=00000001-0000-0000-0000-000000000000;')).toThrow(/<guid>/);
   });
 });

@@ -13838,6 +13838,38 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **The alert checker signs in as an identity that can read alert rules and
+  nothing else, in both subscriptions (#1053, owner's choice 2026-10-11).**
+  `verify-alert-state.yml` ran as `github_reader`, which also holds a
+  Function App configuration write and could not read the Management
+  subscription. So the capacity rule, the lab rules, the Management
+  role-change rules and the action group read UNREADABLE every week.
+  - `infra/oidc.tf` adds `github_alert_reader`, with `main`-branch sign-in
+    links in both the name and the immutable form, and grants it *HCW Alert
+    Rule Reader* in `rg-web-site-prod-cus` and `rg-mgmt-plat-prod-cus`:
+    - The role, in `infra/roles/alert-rule-reader.json`, is the four reads of
+      scheduled query rules, metric alerts, Activity Log alerts and action
+      groups, with no data action, so the identity cannot query a log.
+    - The owner creates it once, as for every custom role here.
+    - `principal_type` is set on both grants, because the identity is new in
+      the same apply.
+
+    The outputs gain `alert_reader_client_id`, and `federated_subjects` gains
+    the new pair.
+  - The workflow signs in with `ALERT_READER_CLIENT_ID` and stays switched
+    off until it is set. It pins no subscription (`allow-no-subscriptions`),
+    because the identity's one role is at resource-group scope. It passes
+    both subscription ids as `ALERT_SUBSCRIPTION_IDS`, from `SUBSCRIPTION_ID`
+    and the new `SUBSCRIPTION_MGMT_ID`. The script uses them for any
+    subscription the identity's list leaves out, and an entry that is not a
+    name and a GUID stops the check.
+  - `scripts/verify-alert-state.mjs` empties its `UNREADABLE` table and keeps
+    the mechanism. Its tests now use a record of their own, and a new test
+    pins that a refused Management read fails the run.
+  - `scripts/oidc-subjects.test.mjs` maps the new variable to the identity.
+  - The plan checker declares the five creates.
+  - The alerting runbook and the required-inputs table say all of this.
+
 - **`postcss-selector-parser` is pinned to 7.1.6 in the frontend, closing
   Dependabot alert #159** (quadratic selector parsing, CPU exhaustion, every
   version below 7.1.6). The only consumer, `@tailwindcss/typography`, still

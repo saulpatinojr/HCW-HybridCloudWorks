@@ -1,0 +1,18 @@
+{
+  "Name": "HCW Alert Rule Reader",
+  "IsCustom": true,
+  "Description": "Read alert rules (log, metric and Activity Log) and action groups in rg-web-site-prod-cus and rg-mgmt-plat-prod-cus, and nothing else. Consumed by infra/oidc.tf for verify-alert-state.yml (#1053): the weekly check that every declared alert rule is live, enabled and wired. Reader would also let it query every log in the Management workspace; this carries no data action and no other read. Created once by the owner because the Terraform identity deliberately lacks Microsoft.Authorization/roleDefinitions/write.",
+  "Actions": [
+    "Microsoft.Insights/ScheduledQueryRules/Read",
+    "Microsoft.Insights/MetricAlerts/Read",
+    "Microsoft.Insights/ActivityLogAlerts/Read",
+    "Microsoft.Insights/ActionGroups/Read"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/b9e02281-ebb6-49e9-bd7b-f275b1350726/resourceGroups/rg-web-site-prod-cus",
+    "/subscriptions/02dfb8ad-ec22-42e3-8cdc-17fd6e00b17e/resourceGroups/rg-mgmt-plat-prod-cus"
+  ]
+}

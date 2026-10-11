@@ -80,6 +80,8 @@ function trustedSubjectsByIdentity() {
 const IDENTITY_BY_CLIENT_ID_VAR = {
   CLIENT_ID: 'github_deploy',
   READER_CLIENT_ID: 'github_reader',
+  // verify-alert-state.yml: alert rules and action groups, nothing else (#1053).
+  ALERT_READER_CLIENT_ID: 'github_alert_reader',
   // copilot-setup-steps.yml: the identity Copilot code review signs in as.
   COPILOT_REVIEW_CLIENT_ID: 'github_copilot_review',
 };

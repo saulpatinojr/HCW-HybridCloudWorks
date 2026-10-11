@@ -35,29 +35,25 @@
 # READ-ONLY IN WHAT IT DOES: every call the script makes is an ARM GET: one
 # token from `az account get-access-token`, then the subscription list, the
 # three alert rule lists per resource group, and each action group. The
-# identity is github_reader, whose grant on rg-web-site-prod-cus is Reader
-# (`*/read`). It is not a pure reader, and this comment said it was until the
-# review of #1051: it also holds the app-settings list action and the
-# origin-window role on the Function App, a config write publish-content-
-# manifest needs (infra/oidc.tf). This job uses neither. A verification-only
-# identity holding just the alert-rule and action-group reads is the narrower
-# shape, and it is the owner's to choose along with the Management grant.
+# subscription ids come from that list, or from ALERT_SUBSCRIPTION_IDS below
+# for one the list leaves out. The
+# identity is github_alert_reader (#1053, infra/oidc.tf), which holds the
+# custom "HCW Alert Rule Reader" role in rg-web-site-prod-cus and
+# rg-mgmt-plat-prod-cus and nothing else: the four alert-rule and
+# action-group reads, no data action, so it cannot query a log. Until #1053
+# the job ran as github_reader, which also held a Function App config write
+# and could not read the Management subscription at all.
 #
-# THE MANAGEMENT SUBSCRIPTION IS NOT YET READABLE BY THIS IDENTITY. The
-# capacity rule and the lab rules live in rg-mgmt-plat-prod-cus, with the
-# action group, and github_reader holds no role there (infra/oidc.tf). The
-# script records that gap in its UNREADABLE table: those rules and the action
-# group report UNREADABLE in every run's table and as a warning annotation,
-# with their state called unknown, and the run passes or fails on everything
-# it CAN read. Failing every week on a gap everyone already knows is how a
-# monitor gets muted (validate-deployed.yml, deleted 2026-09-08 after three
-# weeks red); a refusal anywhere else, or any other read error, still fails.
-# When this workflow's read there starts succeeding, the run FAILS, naming the
-# stale entry, until it is deleted, so the exception cannot outlive the gap
-# and excuse a later refusal. The step's `coverage` output (and the job's)
-# reads `partial` while any entry applies, `complete` otherwise. PLAT-4's
-# pull request records the grant rather than making it; widening an identity
-# is the owner's call.
+# BOTH SUBSCRIPTIONS ARE READABLE NOW. The capacity rule, the lab rules, the
+# Management role-change rules and the action group live in
+# rg-mgmt-plat-prod-cus; they reported UNREADABLE every week until #1053, and
+# the script's UNREADABLE table is empty since. The mechanism stays: a
+# subscription recorded there reports UNREADABLE in every run's table and as
+# a warning annotation, with its state called unknown, and the run passes or
+# fails on everything it CAN read; when the read there starts succeeding, the
+# run FAILS, naming the stale entry, until it is deleted. The step's
+# `coverage` output (and the job's) reads `partial` while any entry applies,
+# `complete` otherwise.
 #
 # NO `environment:` KEY, deliberately. Declaring one changes the OIDC subject
 # GitHub presents from repo:<owner>/<repo>:ref:<ref> to
@@ -99,9 +95,10 @@ jobs:
   verify:
     name: Verify alert rule state
     # Same self-arming gate as monitor-functions-registered.yml: before the
-    # first apply there is no identity to log in as, and a red run would read
+    # apply that creates github_alert_reader and the variable set from its
+    # client id, there is no identity to log in as, and a red run would read
     # as a permissions bug while actually meaning "not deployed yet".
-    if: ${{ vars.READER_CLIENT_ID != '' }}
+    if: ${{ vars.ALERT_READER_CLIENT_ID != '' }}
     permissions:
       contents: read # the checkout, nothing more
       id-token: write # exchanged by azure/login for an Azure access token
@@ -124,21 +121,36 @@ jobs:
         with:
           node-version: '26'
 
-      # READER_CLIENT_ID, not CLIENT_ID (T-728). This workflow reads and
-      # changes nothing, so it runs as the read-only identity rather than the
-      # one that can deploy code, write blobs and rewrite storage firewalls.
+      # ALERT_READER_CLIENT_ID (#1053), not CLIENT_ID or READER_CLIENT_ID.
+      # This workflow reads alert rules and action groups and nothing else, so
+      # it runs as the identity that can do exactly that, rather than the
+      # deploy identity or the reader that also holds a Function App write.
+      #
+      # No `subscription-id`, and `allow-no-subscriptions` (CodeRabbit on
+      # #1074): the identity's only role is at resource-group scope, and
+      # whether that makes a subscription selectable is not documented. Pinning
+      # one would turn that question into a login failure before a single rule
+      # is read. The token is for ARM, not for a subscription, and the script
+      # takes the ids from ALERT_SUBSCRIPTION_IDS when the list leaves one out.
       - name: Azure login (OIDC)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
-          client-id: ${{ vars.READER_CLIENT_ID }}
+          client-id: ${{ vars.ALERT_READER_CLIENT_ID }}
           tenant-id: ${{ vars.TENANT_ID }}
-          subscription-id: ${{ vars.SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
 
       # Exit 0: every rule it could read is live, enabled and wired (rules in
       # a subscription UNREADABLE records are listed and raised as a warning
       # annotation, never counted as healthy). Exit 1: a finding, named in the
       # report. Exit 2: the check could not run, which fails the step the same
       # way and is never reported as health.
+      #
+      # ALERT_SUBSCRIPTION_IDS pairs each subscription's display name (the one
+      # infra/ declares) with its id. The ids are not secret: both already sit
+      # in infra/roles/*.json as assignable scopes. An entry that is not
+      # name=GUID stops the check with exit 2 rather than being skipped.
       - name: Compare the declared rules with the live ones
         id: verify
+        env:
+          ALERT_SUBSCRIPTION_IDS: sub-app-site-prod-cus=${{ vars.SUBSCRIPTION_ID }},sub-plat-mgmt-prod-cus=${{ vars.SUBSCRIPTION_MGMT_ID }}
         run: node scripts/verify-alert-state.mjs --summary "$GITHUB_STEP_SUMMARY"

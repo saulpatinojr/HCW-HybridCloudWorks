@@ -253,6 +253,36 @@ export const DECLARED = [
   // The owner's arming of the hourly lab canary (#1009, FEATURE_FLAG_LAB_CANARY
   // 'false' -> 'true') followed in run-PSfyVZteW1eeDXYo, which the plan check
   // read as that change alone beside the permanent diff.
+  //
+  // #1053: verify-alert-state.yml's own identity, which reads alert rules and
+  // action groups in both groups and nothing else (infra/oidc.tf). The custom
+  // role it holds is created by the owner beforehand, so the plan only reads
+  // it; these five are the whole change.
+  {
+    address: 'azurerm_user_assigned_identity.github_alert_reader',
+    action: 'create',
+    reason: '#1053: the identity the alert checker signs in as',
+  },
+  {
+    address: 'azurerm_federated_identity_credential.github_alert_reader_branch',
+    action: 'create',
+    reason: '#1053: its main-branch sign-in, name form',
+  },
+  {
+    address: 'azurerm_federated_identity_credential.github_alert_reader_branch_immutable',
+    action: 'create',
+    reason: '#1053: its main-branch sign-in, immutable form',
+  },
+  {
+    address: 'azurerm_role_assignment.github_alert_reader_app',
+    action: 'create',
+    reason: '#1053: HCW Alert Rule Reader on rg-web-site-prod-cus',
+  },
+  {
+    address: 'azurerm_role_assignment.github_alert_reader_mgmt',
+    action: 'create',
+    reason: '#1053: HCW Alert Rule Reader on rg-mgmt-plat-prod-cus',
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

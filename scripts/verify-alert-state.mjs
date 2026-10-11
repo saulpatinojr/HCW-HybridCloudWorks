@@ -3,7 +3,7 @@
  * Compare every alert rule `infra/` declares with the rules Azure holds, and
  * fail naming each one that is missing, disabled or not wired to its action
  * group (PLAT-4, #964). `.github/workflows/verify-alert-state.yml` runs this
- * weekly as `github_reader`.
+ * weekly as `github_alert_reader` (#1053).
  *
  * ## What it reads, and from where
  *
@@ -17,8 +17,11 @@
  * declarations name, of the three alert rule types, and a GET of each action
  * group. The subscription IDs are not in the configuration (the variables are
  * sensitive); each subscription's display name is, and `GET /subscriptions`
- * maps one to the other. A subscription the identity holds no role in is
- * absent from that list, which is reported as exactly that.
+ * maps one to the other. The workflow also names the two ids outright in
+ * ALERT_SUBSCRIPTION_IDS (see knownSubscriptionIds), which fills in any
+ * subscription the list leaves out, so the reads never depend on what a
+ * resource-group-scoped role makes that list show. A subscription named in
+ * neither is reported as not visible.
  *
  * ## What it decides
  *
@@ -115,12 +118,16 @@ export const GATES = {
  * Subscriptions this workflow's identity is known not to be able to read yet,
  * and the record that says so (review of #1051).
  *
- * `github_reader` holds Reader on `rg-web-site-prod-cus` and nothing in the
- * Management subscription, where the capacity and lab rules and the action
- * group live. Until the owner decides that grant (#964), every scheduled run
- * would fail on those reads, and a monitor that is red every week for a
- * reason everyone already knows gets muted: `validate-deployed.yml` was
- * deleted on 2026-09-08 after three weeks of exactly that.
+ * EMPTY since #1053. The workflow ran as `github_reader`, which held nothing
+ * in the Management subscription, where the capacity and lab rules, the
+ * Management role-change rules and the action group live, so that
+ * subscription was recorded here from PLAT-4 until the owner's decision on
+ * 2026-10-11 gave the job an identity of its own, `github_alert_reader`,
+ * that reads alert rules and action groups in both resource groups
+ * (infra/oidc.tf). The mechanism stays for the next gap of the kind: a
+ * monitor that is red every week for a reason everyone already knows gets
+ * muted, and `validate-deployed.yml` was deleted on 2026-09-08 after three
+ * weeks of exactly that.
  *
  * THIS IS NOT A MUTE, by the same rules as EXPECTED_UNRESOLVED in
  * check-unresolved-secrets.mjs. A rule in a subscription listed here, whose
@@ -134,12 +141,7 @@ export const GATES = {
  * The step also writes `coverage=partial` while any entry applies, for
  * consumers that read outcomes rather than summaries.
  */
-export const UNREADABLE = {
-  'sub-plat-mgmt-prod-cus': {
-    record:
-      'github_reader holds no role in the Management subscription; the read grant is the owner\'s decision on #964',
-  },
-};
+export const UNREADABLE = {};
 
 /** The plan checker's declared creates, by address: rules waiting for an apply. */
 export function pendingCreates(declared = DECLARED) {
@@ -245,17 +247,56 @@ export function azAccessToken(exec = execSync) {
 }
 
 /**
+ * Subscription ids the workflow names outright, as `display-name=guid` pairs
+ * separated by commas (ALERT_SUBSCRIPTION_IDS in verify-alert-state.yml).
+ *
+ * WHY (CodeRabbit on #1053): the ids otherwise come only from
+ * `GET /subscriptions`, which lists the subscriptions the caller can see.
+ * github_alert_reader holds one custom role at resource-group scope and no
+ * subscription-level read, and whether that alone puts a subscription in the
+ * list is not something Microsoft documents. Naming the ids means the rule
+ * reads never depend on it: a subscription the list leaves out is still read
+ * at the groups the identity was granted. Each entry is held to a name and a
+ * GUID before it reaches a path; anything else stops the check (exit 2)
+ * rather than being skipped.
+ *
+ * @returns {Map<string, string>} display name -> subscription id
+ */
+export function knownSubscriptionIds(text) {
+  const known = new Map();
+  for (const entry of String(text ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
+    const m = /^([A-Za-z0-9-]+)=([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/.exec(entry);
+    if (!m) throw new Error(`ALERT_SUBSCRIPTION_IDS holds an entry that is not display-name=GUID: ${redact(entry).slice(0, 80)}`);
+    known.set(m[1], m[2].toLowerCase());
+  }
+  return known;
+}
+
+/**
  * Read everything the declared rules need: the subscriptions, each
  * (subscription, resource group, rule type) list, and each action group.
+ * `knownIds` (knownSubscriptionIds) fills in any subscription the list does
+ * not show; one the list does show keeps the id the list gave.
+ *
+ * A list that could not be read at all stops the check only when nothing is
+ * named (CodeRabbit on #1074). With named ids the rule reads go ahead, each
+ * judged on its own answer, and `subscriptionsRead` says the ids were named
+ * (`namedOnly`) and why the list was not used. A rule whose subscription is
+ * named nowhere is still not visible, so it fails as NOT AUTHORIZED.
  */
-export async function readLive(rules, { token, fetchImpl = fetch }) {
+export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new Map() }) {
   const subs = await armGet(`/subscriptions?api-version=${API_VERSIONS.subscriptions}`, {
     token,
     fetchImpl,
     list: true,
   });
-  if (subs.status !== 'ok') return { subscriptionsRead: subs, ids: new Map(), lists: new Map(), actionGroups: new Map() };
-  const ids = new Map(subs.rows.map((s) => [s.displayName, s.subscriptionId]));
+  if (subs.status !== 'ok' && knownIds.size === 0) {
+    return { subscriptionsRead: subs, ids: new Map(), lists: new Map(), actionGroups: new Map() };
+  }
+  const ids = new Map(subs.status === 'ok' ? subs.rows.map((s) => [s.displayName, s.subscriptionId]) : []);
+  for (const [name, id] of knownIds) if (!ids.has(name)) ids.set(name, id);
+  const subscriptionsRead =
+    subs.status === 'ok' ? subs : { status: 'ok', namedOnly: true, listStatus: subs.status, reason: subs.reason };
 
   const lists = new Map();
   const wanted = new Map();
@@ -267,7 +308,7 @@ export async function readLive(rules, { token, fetchImpl = fetch }) {
     if (!id) {
       lists.set(key, {
         status: 'not-visible',
-        reason: `${rule.subscription} is not among the subscriptions this identity can see; it holds no role there`,
+        reason: `${rule.subscription} is not among the subscriptions this identity can see, and ALERT_SUBSCRIPTION_IDS does not name it`,
       });
       continue;
     }
@@ -286,7 +327,10 @@ export async function readLive(rules, { token, fetchImpl = fetch }) {
   for (const group of uniqueActionGroups(rules)) {
     const id = ids.get(group.subscription);
     if (!id) {
-      actionGroups.set(group.address, { status: 'not-visible', reason: `${group.subscription} is not visible to this identity` });
+      actionGroups.set(group.address, {
+        status: 'not-visible',
+        reason: `${group.subscription} is not visible to this identity, and ALERT_SUBSCRIPTION_IDS does not name it`,
+      });
       continue;
     }
     const path =
@@ -295,7 +339,7 @@ export async function readLive(rules, { token, fetchImpl = fetch }) {
     const read = await armGet(path, { token, fetchImpl });
     actionGroups.set(group.address, read.status === 'ok' ? summariseActionGroup(read.body) : read);
   }
-  return { subscriptionsRead: subs, ids, lists, actionGroups };
+  return { subscriptionsRead, ids, lists, actionGroups };
 }
 
 /** The key one (subscription, resource group, rule type) list is held under; groups compare case-insensitively. */
@@ -555,6 +599,12 @@ export function renderReport({ rules, verdicts, extra, groups, when, subscriptio
   );
   if (subscriptionsRead && subscriptionsRead.status !== 'ok') {
     lines.push(`**The subscription list could not be read** (${subscriptionsRead.reason}), so nothing below is known.`, '');
+  } else if (subscriptionsRead?.namedOnly) {
+    lines.push(
+      `The subscription list could not be read (${subscriptionsRead.reason}). The subscriptions were taken from ` +
+        '`ALERT_SUBSCRIPTION_IDS`, and each rule below is judged on its own read.',
+      ''
+    );
   }
   lines.push('| Rule | Resource group | State | Enabled | autoMitigate | Every | Window | Sev | Detail |');
   lines.push('| --- | --- | --- | :---: | :---: | --- | --- | :---: | --- |');
@@ -609,7 +659,7 @@ export function coverageOf(verdicts, groups) {
  * GitHub Actions warning annotations, one per subscription recorded as
  * unreadable, so a green run still shows the gap on its summary page.
  */
-export function unreadableWarnings(verdicts, groups) {
+export function unreadableWarnings(verdicts, groups, unreadable = UNREADABLE) {
   const bySubscription = new Map();
   for (const v of verdicts.filter((x) => x.state === 'UNREADABLE')) {
     bySubscription.set(v.rule.subscription, (bySubscription.get(v.rule.subscription) ?? 0) + 1);
@@ -620,7 +670,7 @@ export function unreadableWarnings(verdicts, groups) {
   return [...bySubscription].map(
     ([subscription, count]) =>
       `::warning title=Alert rules not readable::${count} declared rule(s) in ${subscription} were not read: ` +
-      `${UNREADABLE[subscription]?.record ?? 'not recorded'}. Their state is unknown.`
+      `${unreadable[subscription]?.record ?? 'not recorded'}. Their state is unknown.`
   );
 }
 
@@ -688,7 +738,15 @@ async function main(argv) {
     return 2;
   }
 
-  const live = await readLive(rules, { token });
+  let knownIds;
+  try {
+    knownIds = knownSubscriptionIds(process.env.ALERT_SUBSCRIPTION_IDS);
+  } catch (err) {
+    console.error(err.message);
+    return 2;
+  }
+
+  const live = await readLive(rules, { token, knownIds });
   const verdicts = compare(rules, live);
   const groups = actionGroupProblems(rules, live);
   const extra = undeclared(rules, live);
