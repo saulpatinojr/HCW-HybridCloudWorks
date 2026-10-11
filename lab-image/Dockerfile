@@ -355,6 +355,12 @@ RUN set -eu; . /tmp/versions.env; \
     chmod 0755 /usr/local/bin/kubectl; \
     rm -rf /var/lib/apt/lists/* /tmp/versions.env
 
+# Per-lab bootloaders invoked by the Coder workspace startup script (or
+# directly via `hcw-boot <lab-id>` in a local container).
+COPY bootloaders/ /usr/local/libexec/hcw-boot/
+RUN chmod 0755 /usr/local/libexec/hcw-boot /usr/local/libexec/hcw-boot/hcw-boot /usr/local/libexec/hcw-boot/*.sh \
+ && ln -sf /usr/local/libexec/hcw-boot/hcw-boot /usr/local/bin/hcw-boot
+
 # uid 65534 is Debian's `nobody`, whose passwd entry has /usr/sbin/nologin
 # and a home of /nonexistent. That is right for the runner, where nothing
 # ever opens a shell, and wrong for this target: Coder's agent runs the
@@ -364,8 +370,16 @@ RUN set -eu; . /tmp/versions.env; \
 # creates for uid 65534 and that HOME already points at. The runner target
 # is untouched: it keeps nologin.
 RUN usermod -s /bin/bash -d /tmp/home nobody \
- && test "$(getent passwd 65534 | cut -d: -f6,7)" = "/tmp/home:/bin/bash"
+ && test "$(getent passwd 65534 | cut -d: -f6,7)" = "/tmp/home:/bin/bash" \
+ && printf '%s\n' \
+      '[automount]' \
+      'enabled=false' \
+      '' \
+      '[user]' \
+      'default=nobody' \
+      > /etc/wsl.conf
 
 USER 65534:65534
 WORKDIR /workspace
 CMD ["bash"]
+

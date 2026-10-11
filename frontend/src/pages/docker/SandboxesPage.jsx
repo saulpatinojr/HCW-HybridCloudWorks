@@ -29,8 +29,12 @@
 import React from 'react';
 import { Helmet } from 'react-helmet-async';
 import SectionHeading from '@/components/education/SectionHeading';
-import SandboxSection from '@/components/labs/SandboxSection';
+import SandboxSection, {
+  CloudSandboxSection,
+  SANDBOX_LANDING_FRAME,
+} from '@/components/labs/SandboxSection';
 import Eyebrow from '@/components/shared/Eyebrow';
+import MiniLandingFrame from '@/components/shared/MiniLandingFrame';
 import { routes, staticRoutes } from '@/lib/routeFactory';
 import { PlaceholderLink } from './DockerPlaceholderPage';
 
@@ -47,8 +51,11 @@ const CANONICAL = `https://hybridcloudworks.com${SANDBOXES_PATH}`;
  */
 export const RECIPE_HEADING_ID = 'agent-heading';
 
+/** Heading id for the Docker cloud sandbox (--cloud) walkthrough (#1080). */
+export const CLOUD_RECIPE_HEADING_ID = 'cloud-sandbox-heading';
+
 /** When the commands on this page were last read against Docker's documentation. */
-export const CHECKED_ON = Object.freeze({ iso: '2026-09-29', label: '29 September 2026' });
+export const CHECKED_ON = Object.freeze({ iso: '2026-10-11', label: '11 October 2026' });
 
 /** Docker's own overview of Docker Sandboxes. */
 export const SANDBOXES_DOCS_URL = 'https://docs.docker.com/ai/sandboxes/';
@@ -57,6 +64,14 @@ const DESCRIPTION =
   'Run a coding agent in a Docker sandbox, an isolated microVM on your own machine that sees only the folder you give it, and point it at a landing zone from the Landing Zone Builder to validate and explain the Terraform.';
 
 export default function DockerSandboxesPage() {
+  const scrollToSection = (paneKey) => {
+    const targetId = paneKey === 'how' ? CLOUD_RECIPE_HEADING_ID : RECIPE_HEADING_ID;
+    const el = typeof document !== 'undefined' ? document.getElementById(targetId) : null;
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   return (
     <>
       <Helmet>
@@ -75,15 +90,25 @@ export default function DockerSandboxesPage() {
 
         <div className="relative flex flex-col gap-5">
           <Eyebrow>Docker · Sandboxes</Eyebrow>
-          <h1 className="display-heading text-4xl text-slate-900 dark:text-white sm:text-5xl">
-            {PAGE_TITLE}
-          </h1>
           <p className="max-w-2xl text-base leading-relaxed text-slate-700 dark:text-(--subtitle-gray) sm:text-lg">
             A coding agent that runs commands needs somewhere safe to run them. Docker Sandboxes
             give it an isolated microVM on your own machine, and the sbx command line and local
             sandboxes are free to use, including for commercial work. This is the recipe for
             pointing one at a landing zone you build on this site.
           </p>
+          <MiniLandingFrame
+            provider="Docker"
+            category="Agentic Sandboxes"
+            difficulty="Intermediate"
+            title={PAGE_TITLE}
+            promise={SANDBOX_LANDING_FRAME.promise}
+            topology={SANDBOX_LANDING_FRAME.topology}
+            howItWorks={SANDBOX_LANDING_FRAME.howItWorks}
+            keyServices={SANDBOX_LANDING_FRAME.keyServices}
+            practices={SANDBOX_LANDING_FRAME.practices}
+            outcome={SANDBOX_LANDING_FRAME.outcome}
+            onSelectPane={scrollToSection}
+          />
         </div>
 
         <section aria-labelledby={RECIPE_HEADING_ID} className="relative">
@@ -91,6 +116,13 @@ export default function DockerSandboxesPage() {
             Run an agent against your landing zone
           </SectionHeading>
           <SandboxSection />
+        </section>
+
+        <section aria-labelledby={CLOUD_RECIPE_HEADING_ID} className="relative">
+          <SectionHeading id={CLOUD_RECIPE_HEADING_ID} className="mb-3">
+            Run it in a Docker cloud sandbox (--cloud)
+          </SectionHeading>
+          <CloudSandboxSection />
         </section>
 
         <p

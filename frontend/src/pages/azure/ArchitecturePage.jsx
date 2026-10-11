@@ -1,5 +1,6 @@
 import React from 'react';
 import { Helmet } from 'react-helmet-async';
+import { useNavigate } from 'react-router';
 import { usePublicData } from '@/hooks/usePublicData';
 import { fetchPublicContentList } from '@/lib/publicApi';
 import FeaturedArchitecture from '@/components/architecture/FeaturedArchitecture';
@@ -23,6 +24,8 @@ function mapComplexityToLevel(complexity) {
 }
 
 export default function ArchitecturePage() {
+  const navigate = useNavigate();
+
   // Published-only is enforced server-side by the public API.
   const { data: contentDocs, loading: contentLoading } = usePublicData(
     () => fetchPublicContentList({ type: 'architecture', limit: 250 }),
@@ -38,6 +41,7 @@ export default function ArchitecturePage() {
       category: doc.category || 'General',
       categoryColor: doc.categoryColor || 'blue',
       title: doc.title || doc.Title || 'Untitled Blueprint',
+      slug: doc.slug,
       description: doc.summary || doc.Summary || doc.description || '',
       rpo: doc.rpo || doc.RPO || 'N/A',
       rto: doc.rto || doc.RTO || 'N/A',
@@ -65,6 +69,7 @@ export default function ArchitecturePage() {
             category: doc.category || 'General',
             categoryColor: doc.categoryColor || 'blue',
             title: doc.title || doc.Title || 'Untitled Blueprint',
+            slug: doc.slug,
             description: doc.summary || doc.Summary || doc.description || '',
             rpo: doc.rpo || doc.RPO || 'N/A',
             rto: doc.rto || doc.RTO || 'N/A',
@@ -175,7 +180,13 @@ export default function ArchitecturePage() {
           </div>
 
           {/* Featured Blueprint — data-driven (T-409): the first blueprint, dynamic before static */}
-          <FeaturedArchitecture design={blueprints[0]} badges={featuredBadges(blueprints[0])} />
+          <FeaturedArchitecture
+            design={blueprints[0]}
+            badges={featuredBadges(blueprints[0])}
+            onOpen={(design) =>
+              design.slug && navigate(`/azure/architecture-designs/${design.slug}`)
+            }
+          />
 
           {/* Blueprint Gallery */}
           <div>
@@ -254,6 +265,10 @@ export default function ArchitecturePage() {
                       </div>
                     </div>
                     <button
+                      type="button"
+                      onClick={() =>
+                        blueprint.slug && navigate(`/azure/architecture-designs/${blueprint.slug}`)
+                      }
                       className="w-full mt-auto h-11 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 font-medium text-sm transition-all flex items-center justify-center gap-2 group/btn"
                       aria-label={`Start deep dive for ${blueprint.title}`}
                     >

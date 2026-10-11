@@ -348,6 +348,51 @@ addons:
       AMO_WORKSPACE_PROVIDER: disabled
     secret_env:
       TURNSTILE_SECRET: vault_addon_migration_turnstile_secret
+  - id: network-assessment
+    enabled: true
+    image: docker.io/hybridcloudworks/hcw-addon-network-assessment
+    image_tag: "0.1.0"
+    image_digest: ""
+    port: 18082
+    memory: 512m
+    pids_limit: 256
+    env:
+      PORT: "8080"
+      NA_PUBLIC_HOST: "network-assessment.{{ lab_host_domain }}"
+      NA_FRAME_ANCESTORS: "{{ caddy_frame_ancestors | join(' ') }}"
+      NA_SITE_ORIGINS: "{{ caddy_frame_ancestors | reject('equalto', \"'self'\") | join(' ') }}"
+      NA_ALLOWED_ORIGINS: ""
+      NA_TRUST_PROXY: "1"
+      NA_TURNSTILE_SITE_KEY: ""
+      NA_RATE_LIMIT_POSTS: "10"
+      NA_RATE_LIMIT_WINDOW_MINUTES: "10"
+      NA_MAX_CONCURRENT: "2"
+      NA_TTL_MINUTES: "120"
+      NA_MAX_ITEMS: "200"
+    secret_env:
+      TURNSTILE_SECRET: vault_addon_network_assessment_turnstile_secret
+  - id: cloud-assessment
+    enabled: true
+    image: docker.io/hybridcloudworks/hcw-addon-cloud-assessment
+    image_tag: "0.1.0"
+    image_digest: ""
+    port: 18083
+    memory: 512m
+    pids_limit: 256
+    env:
+      PORT: "8080"
+      CA_FRAME_ANCESTORS: "{{ caddy_frame_ancestors | join(' ') }}"
+      CA_SITE_ORIGINS: "{{ caddy_frame_ancestors | reject('equalto', \"'self'\") | join(' ') }}"
+      CA_ALLOWED_ORIGINS: ""
+      CA_TRUST_PROXY: "1"
+      CA_TURNSTILE_SITE_KEY: ""
+      CA_RATE_LIMIT_POSTS: "10"
+      CA_RATE_LIMIT_WINDOW_MINUTES: "10"
+      CA_MAX_CONCURRENT: "2"
+      CA_TTL_MINUTES: "120"
+      CA_MAX_ITEMS: "200"
+    secret_env:
+      TURNSTILE_SECRET: vault_addon_cloud_assessment_turnstile_secret
 
 # HashiCorp Vault, host-native, for lab-host secrets only: production
 # HybridCloudWorks secrets stay in Key Vault kv-site-prod-cus-01 (ADR 0032,

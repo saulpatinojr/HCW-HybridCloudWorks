@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Per-lab bootloader dispatcher for hcw-lab workspaces.
+# Usage: hcw-boot <lab-id> [lab-root]
+set -euo pipefail
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  echo "usage: hcw-boot <lab-id> [lab-root]" >&2
+  exit 2
+fi
+
+LAB_ID="$1"
+LAB_ROOT="${2:-/tmp/home/lab}"
+BOOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+case "$LAB_ID" in
+  *[!a-z0-9-]*|"")
+    echo "hcw-boot: invalid lab id: $LAB_ID" >&2
+    exit 2
+    ;;
+esac
+
+if [ -f "/usr/local/libexec/hcw-boot/${LAB_ID}.sh" ]; then
+  SCRIPT="/usr/local/libexec/hcw-boot/${LAB_ID}.sh"
+else
+  SCRIPT="$BOOT_DIR/${LAB_ID}.sh"
+fi
+if [ ! -f "$SCRIPT" ]; then
+  echo "hcw-boot: unknown lab bootloader: $LAB_ID" >&2
+  exit 2
+fi
+
+export HOME="${HOME:-/tmp/home}"
+export LAB_ID LAB_ROOT
+mkdir -p "$LAB_ROOT"
+
+exec bash "$SCRIPT" "$LAB_ROOT"

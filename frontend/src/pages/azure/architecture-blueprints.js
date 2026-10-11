@@ -21,10 +21,25 @@
  */
 export const staticBlueprints = [
   {
+    icon: 'shield_lock',
+    category: 'Security',
+    categoryColor: 'blue',
+    title: 'Secure 2-Tier Application on Azure',
+    slug: 'secure-2-tier-azure',
+    description:
+      'A simple, secure and scalable architecture using Application Gateway with WAF, segmented VNet subnets with NSGs, and a Private Endpoint to Azure SQL.',
+    rpo: '< 15 min',
+    rto: '< 30 min',
+    level: '300',
+    cost: '$680/mo',
+    costColor: 'green',
+  },
+  {
     icon: 'hub',
     category: 'Networking',
     categoryColor: 'blue',
     title: 'Enterprise Hub-and-Spoke Landing Zone',
+    slug: 'enterprise-hub-spoke-landing-zone',
     description:
       'Reference architecture for centralized connectivity, policy-driven segmentation, and shared security services across enterprise subscriptions.',
     rpo: '< 15 min',
@@ -37,6 +52,7 @@ export const staticBlueprints = [
     category: 'Migration',
     categoryColor: 'purple',
     title: 'Azure VMware Estate Migration',
+    slug: 'azure-vmware-estate-migration',
     description:
       'Phased migration blueprint using Azure VMware Solution, Recovery Services, and dependency mapping for low-risk cutovers.',
     rpo: '24 hr',
@@ -50,6 +66,7 @@ export const staticBlueprints = [
     category: 'FinOps',
     categoryColor: 'green',
     title: 'FinOps Guardrails for Azure Subscriptions',
+    slug: 'finops-guardrails-azure',
     description:
       'Policy and budget-control pattern with Cost Management exports, Azure Policy enforcement, and automated anomaly alerts.',
     rpo: '1 hr',
@@ -63,6 +80,7 @@ export const staticBlueprints = [
     category: 'Database',
     categoryColor: 'orange',
     title: 'Global Data Tier with Cosmos DB + SQL',
+    slug: 'global-data-tier-cosmos-sql',
     description:
       'Multi-region data architecture combining Cosmos DB and Azure SQL with geo-replication and strict consistency controls.',
     rpo: '< 1s',
@@ -75,6 +93,7 @@ export const staticBlueprints = [
     category: 'Security',
     categoryColor: 'red',
     title: 'Zero Trust Identity Control Plane',
+    slug: 'zero-trust-identity-control-plane',
     description:
       'Identity-first architecture using Entra ID, Conditional Access, PIM, and Defender for Cloud to enforce least privilege at scale.',
     rpo: 'N/A',
@@ -88,6 +107,7 @@ export const staticBlueprints = [
     category: 'Serverless',
     categoryColor: 'blue',
     title: 'Event-Driven Serverless Integration Mesh',
+    slug: 'event-driven-serverless-mesh',
     description:
       'Serverless integration pattern based on Event Grid, Functions, and Service Bus for near real-time distributed workflows.',
     rpo: '< 5 min',

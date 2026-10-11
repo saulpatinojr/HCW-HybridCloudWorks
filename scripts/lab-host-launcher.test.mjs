@@ -808,4 +808,16 @@ describe('the map', () => {
     expect(regex, 'the template no longer validates lab with a regex of alternatives').not.toBeNull();
     expect(regex[1].split('|').sort()).toEqual(Object.keys(LAB_WORKSPACES).sort());
   });
+
+  it('gives every lab in LAB_WORKSPACES its own per-lab bootloader script in lab-image/bootloaders/', () => {
+    const dispatcher = read('lab-image/bootloaders/hcw-boot');
+    expect(dispatcher).toContain('/usr/local/libexec/hcw-boot/${LAB_ID}.sh');
+    for (const labId of Object.keys(LAB_WORKSPACES)) {
+      const script = read(`lab-image/bootloaders/${labId}.sh`);
+      expect(script.startsWith('#!/usr/bin/env bash')).toBe(true);
+    }
+    const template = read('lab-host/coder/templates/hcw-lab/main.tf');
+    expect(template).toContain('/usr/local/libexec/hcw-boot/hcw-boot');
+  });
 });
+

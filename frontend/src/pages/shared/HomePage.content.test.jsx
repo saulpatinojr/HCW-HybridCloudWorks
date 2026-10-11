@@ -23,7 +23,7 @@ const base = vi.hoisted(() => ({ current: '' }));
 vi.mock('@/lib/functionsBase', () => ({ getFunctionsBase: () => base.current }));
 
 import { fetchPublicContentPage } from '@/lib/publicApi';
-import { awsArchitectures } from '@/data/architectures';
+import { architecturesByProvider } from '@/data/architectures';
 import {
   BLUEPRINTS_BY_PROVIDER,
   BLUEPRINT_COUNT,
@@ -163,8 +163,7 @@ describe('the blueprint carousel', () => {
         expect(section, href).toBe('architecture-designs');
         expect(Object.keys(BLUEPRINTS_BY_PROVIDER), href).toContain(provider);
         // A detail page is only linked where the detail template can fill it.
-        if (slug) expect(awsArchitectures[slug], href).toBeDefined();
-        if (slug) expect(provider, href).toBe('aws');
+        if (slug) expect(architecturesByProvider[provider]?.[slug], href).toBeDefined();
       }
       act(() => vi.advanceTimersByTime(5000));
     }

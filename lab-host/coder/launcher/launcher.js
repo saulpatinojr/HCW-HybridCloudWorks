@@ -87,6 +87,8 @@ export const LAB_WORKSPACES = Object.freeze({
   'landing-zone-builder-output': 'lab-lzb',
   'terraform-validate-walkthrough': 'lab-tfv',
   'ansible-syntax-check-walkthrough': 'lab-asc',
+  'wsl-containers-walkthrough': 'lab-wslc',
+  'defender-wsl-plugin-walkthrough': 'lab-mde-wsl',
 });
 
 /** Every state this page reports, in the order a visit can move through them. */

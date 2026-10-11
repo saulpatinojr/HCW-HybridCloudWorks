@@ -746,7 +746,7 @@ describe('staticSectionItems', () => {
   it('counts every provider architecture page, VMware at zero', async () => {
     expect(await staticSectionItems(PAGES)).toEqual({
       '/aws/architecture-designs': 6,
-      '/azure/architecture-designs': 6,
+      '/azure/architecture-designs': 7,
       '/finops/architecture-designs': 6,
       '/gcp/architecture-designs': 6,
       '/vmware/architecture-designs': 0,
