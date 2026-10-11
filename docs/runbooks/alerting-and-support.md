@@ -246,7 +246,7 @@ per declared rule to the job summary (legible from a phone) and to the log:
 | `NOT WIRED` | Live, but its actions do not name the ops action group | Re-apply; the rule pages nobody until then |
 | `DRIFT` | `autoMitigate` differs from the declaration, or a `count`-gated rule is live while `GATES` records its gate as off | Re-apply; for a gate, correct `GATES` if the gate was armed on purpose |
 | `NOT AUTHORIZED` | The workflow's identity could not read that resource group. The rules' state is **unknown**, which is not the same finding as `MISSING` | See the identity note below |
-| `UNREADABLE` | The same refusal, in a subscription the script's `UNREADABLE` table records as not yet readable. Shown in every run and as a warning annotation; the state is **unknown**. Does not fail the run | Decide the grant below. Once it applies, the workflow's next run fails with `STALE RECORD` until the entry is deleted, so the exception cannot outlive the gap |
+| `UNREADABLE` | The same refusal, in a subscription the script's `UNREADABLE` table records as not yet readable. Shown in every run and as a warning annotation; the state is **unknown**. Does not fail the run | The table is empty since #1053, so this appears only if a subscription is recorded again. Grant the alert identity the read there; once it applies, the workflow's next run fails with `STALE RECORD` until the entry is deleted, so the exception cannot outlive the gap |
 | `READ FAILED` | ARM answered with some other error; the detail carries the status and code, with IDs masked | Re-run; if it repeats, the detail says what ARM refused |
 | `ABSENT` | A `count`-gated rule whose gate `GATES` does not record, and absent. Not a failure, and not a pass either | Record the gate in `GATES`; the test suite already refuses a new gate without an entry |
 | `GATED OFF` | A `count`-gated rule whose gate is recorded as off (`GATES` in the script), and absent | Nothing. Arming the gate is an owner decision; record it in `GATES` in the same change |
@@ -256,20 +256,39 @@ no receiver whose status is `Enabled`. Receiver names and statuses are printed;
 the address and number are not, because the report is public. A live rule that
 no declaration names is listed and does not fail the run.
 
-**The identity, and what it cannot yet read.** The job runs as `github_reader`
-(`READER_CLIENT_ID`) and makes only GET calls. The identity is not purely a
-reader, though: besides Reader on `rg-web-site-prod-cus` and the app-settings
-list action, it holds the origin-window role on the Function App, a config
-write `publish-content-manifest.yml` needs (`infra/oidc.tf`). It holds
-**nothing in the Management subscription**, so until a read grant on
-`rg-mgmt-plat-prod-cus` is applied, the capacity rule, the lab rules and the
-action group report `UNREADABLE`: listed in every run, raised as a warning on
-the run page, and called unknown, never healthy. The run itself passes or
-fails on the rules it can read, because a monitor that is red every week for a
-reason everyone knows gets muted. The grant is the owner's decision, recorded
-on #964; a verification-only identity holding just the four alert-rule and
-action-group read actions in both groups is the narrower alternative to
-widening `github_reader`.
+**The identity.** The job runs as `github_alert_reader`
+(`ALERT_READER_CLIENT_ID`, `infra/oidc.tf`) and makes only GET calls. Since
+#1053 that identity holds one custom role, *HCW Alert Rule Reader*
+(`infra/roles/alert-rule-reader.json`), in `rg-web-site-prod-cus` and
+`rg-mgmt-plat-prod-cus`: the four alert-rule and action-group read actions and
+nothing else, so it cannot query a log or change anything. Both subscriptions
+are therefore read on every run, and the script's `UNREADABLE` table is empty.
+
+Until #1053 the job ran as `github_reader`. That identity also holds a
+Function App config write and holds nothing in the Management subscription,
+so the capacity rule, the lab rules, the Management role-change rules and the
+action group reported `UNREADABLE` every week. Reader on the Management group
+would have closed that gap but also let the job query every log in the
+Management workspace, so the owner chose the narrower identity on 2026-10-11.
+
+**The custom role is created by the owner, once**, because the Terraform run
+identity deliberately cannot write role definitions. It was created before
+the apply that grants it. If it is ever deleted, the plan stops at the role
+lookup. Recreate it from the repository root of a checkout of `main`, where
+this must print `True` first:
+
+```powershell
+Test-Path infra/roles/alert-rule-reader.json
+```
+
+```powershell
+az role definition create --role-definition '@infra/roles/alert-rule-reader.json' -o none
+```
+
+That needs a role allowed to write role definitions on both groups (Owner or
+User Access Administrator). The definition is written in the application
+subscription, the home of its first assignable scope, so
+`alert-rbac-definition-app` fires, as it should for any hand change to a role.
 
 The same check runs from an operator's machine under the operator's own
 rights, which do reach the Management subscription. Run it from the repository

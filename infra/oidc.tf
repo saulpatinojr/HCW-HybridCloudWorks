@@ -247,7 +247,11 @@ resource "azurerm_role_assignment" "github_deploy_funcsa_network" {
 #
 #   github_deploy   writes something      deploy-functions, deploy-azure-frontend
 #   github_reader   writes nothing        monitor-functions-registered,
-#                                         verify-alert-state, publish-content-manifest
+#                                         publish-content-manifest
+#
+# verify-alert-state ran as github_reader until #1053 and now has an identity
+# of its own, github_alert_reader below, that can read alert rules and action
+# groups and nothing else.
 #
 # publish-content-manifest is on the reader side deliberately, though the
 # finding's recommendation named only the first two. Its build job queries
@@ -408,6 +412,84 @@ resource "azurerm_role_assignment" "github_reader_origin_window" {
   scope              = azurerm_function_app_flex_consumption.hcw.id
   role_definition_id = data.azurerm_role_definition.func_config_refresh.id
   principal_id       = azurerm_user_assigned_identity.github_reader.principal_id
+}
+
+# ---------------------------------------------------------------------------
+# github_alert_reader — verify-alert-state.yml, and nothing else (#1053)
+# ---------------------------------------------------------------------------
+# The weekly check reads every declared alert rule and the action group back
+# from Azure (scripts/verify-alert-state.mjs): one token, the subscription
+# list, the three alert-rule lists in each resource group and each action
+# group, all GETs. It ran as github_reader, which could not read the
+# Management subscription at all, so the capacity rule, the lab rules, the
+# two Management role-change rules and the action group read UNREADABLE every
+# week. Reader on rg-mgmt-plat-prod-cus would have closed that, and it would
+# also have let this identity query every log in the Management workspace
+# (query is a read action) while it already held a Function App config write.
+# The owner chose the narrower shape on 2026-10-11: an identity of its own,
+# holding the custom "HCW Alert Rule Reader" role (infra/roles/
+# alert-rule-reader.json: the four alert-rule and action-group reads, no
+# data action) in the two groups the rules live in, and nothing else.
+#
+# The workflow declares no `environment:`, so it presents the ref-form
+# subject, and both the name and immutable-ID forms of it are trusted, as for
+# github_reader. The two identities trust the same subjects; the client-id a
+# job sends (ALERT_READER_CLIENT_ID here) decides which one it reaches, which
+# scripts/oidc-subjects.test.mjs checks per workflow.
+resource "azurerm_user_assigned_identity" "github_alert_reader" {
+  name                = "id-${var.workload_name}-github-alerts-${var.environment}-${var.region_abbreviation}-${var.instance}"
+  location            = azurerm_resource_group.app["web"].location
+  resource_group_name = azurerm_resource_group.app["web"].name
+  tags                = local.tags
+}
+
+resource "azurerm_federated_identity_credential" "github_alert_reader_branch" {
+  name                      = "github-${var.github_repo}-alert-reader-branch"
+  user_assigned_identity_id = azurerm_user_assigned_identity.github_alert_reader.id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = "https://token.actions.githubusercontent.com"
+  subject                   = "repo:${var.github_org}/${var.github_repo}:ref:${var.github_deploy_ref}"
+}
+
+resource "azurerm_federated_identity_credential" "github_alert_reader_branch_immutable" {
+  name                      = "github-${var.github_repo}-alert-reader-branch-immutable"
+  user_assigned_identity_id = azurerm_user_assigned_identity.github_alert_reader.id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = "https://token.actions.githubusercontent.com"
+  subject                   = "${local.github_immutable_prefix}:ref:${var.github_deploy_ref}"
+}
+
+# The definition is one object, assignable in both groups; each lookup names
+# the group its assignment lands in, through that group's own provider.
+# principal_type is explicit on both grants because the identity is created
+# in the same apply: without it ARM looks the principal up in Entra first and
+# can miss one that has not replicated yet (as for arc_onboarding).
+data "azurerm_role_definition" "alert_rule_reader_app" {
+  name  = "HCW Alert Rule Reader"
+  scope = azurerm_resource_group.app["web"].id
+}
+
+data "azurerm_role_definition" "alert_rule_reader_mgmt" {
+  provider = azurerm.mgmt
+
+  name  = "HCW Alert Rule Reader"
+  scope = azurerm_resource_group.platform_mgmt.id
+}
+
+resource "azurerm_role_assignment" "github_alert_reader_app" {
+  scope              = azurerm_resource_group.app["web"].id
+  role_definition_id = data.azurerm_role_definition.alert_rule_reader_app.id
+  principal_id       = azurerm_user_assigned_identity.github_alert_reader.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "github_alert_reader_mgmt" {
+  provider = azurerm.mgmt
+
+  scope              = azurerm_resource_group.platform_mgmt.id
+  role_definition_id = data.azurerm_role_definition.alert_rule_reader_mgmt.id
+  principal_id       = azurerm_user_assigned_identity.github_alert_reader.principal_id
+  principal_type     = "ServicePrincipal"
 }
 
 # ---------------------------------------------------------------------------
@@ -613,6 +695,11 @@ output "reader_client_id" {
   value       = azurerm_user_assigned_identity.github_reader.client_id
 }
 
+output "alert_reader_client_id" {
+  description = "ALERT_READER_CLIENT_ID for azure/login in verify-alert-state.yml (#1053) — a repository variable, not a secret"
+  value       = azurerm_user_assigned_identity.github_alert_reader.client_id
+}
+
 output "copilot_review_client_id" {
   description = "COPILOT_REVIEW_CLIENT_ID for azure/login in copilot-setup-steps.yml — a repository variable, mirrored as an Agents secret of the same name because Copilot's own runner resolves no repository variables (runbook step 2b); an identifier in both stores, not a secret"
   value       = azurerm_user_assigned_identity.github_copilot_review.client_id
@@ -623,8 +710,9 @@ output "deploy_principal_id" {
   value       = azurerm_user_assigned_identity.github_deploy.principal_id
 }
 
-# Six entries since 2026-10-06, down from eight: the deploy identity's ref pair
-# was retired (SEC-2). Eight since 2026-09-06, when the Copilot review
+# Eight entries since 2026-10-11, when the alert reader identity's ref pair
+# was added (#1053). Six since 2026-10-06, down from eight: the deploy
+# identity's ref pair was retired (SEC-2). Eight since 2026-09-06, when the Copilot review
 # identity's environment pair was added; six before that since 2026-08-29, when
 # the reader identity's ref pair was added (T-728). Keeping this list in step
 # with the resources above is not cosmetic — it is what an operator diffs a
@@ -637,7 +725,8 @@ output "deploy_principal_id" {
 # with CLIENT_ID (the deploy identity) fails here by design — a job that needs
 # the deploy identity names `environment: production` and presents the
 # environment form. Which identity a job reaches is decided by the client-id
-# it presents, so check whether it sent CLIENT_ID or READER_CLIENT_ID.
+# it presents, so check whether it sent CLIENT_ID, READER_CLIENT_ID or
+# ALERT_READER_CLIENT_ID.
 output "federated_subjects" {
   description = "Exact OIDC subject claims trusted by these identities — compare against a failing token"
   value = [
@@ -645,6 +734,8 @@ output "federated_subjects" {
     azurerm_federated_identity_credential.github_production_immutable.subject,
     azurerm_federated_identity_credential.github_reader_branch.subject,
     azurerm_federated_identity_credential.github_reader_branch_immutable.subject,
+    azurerm_federated_identity_credential.github_alert_reader_branch.subject,
+    azurerm_federated_identity_credential.github_alert_reader_branch_immutable.subject,
     azurerm_federated_identity_credential.github_copilot_review_environment.subject,
     azurerm_federated_identity_credential.github_copilot_review_environment_immutable.subject,
   ]

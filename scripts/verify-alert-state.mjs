@@ -115,12 +115,16 @@ export const GATES = {
  * Subscriptions this workflow's identity is known not to be able to read yet,
  * and the record that says so (review of #1051).
  *
- * `github_reader` holds Reader on `rg-web-site-prod-cus` and nothing in the
- * Management subscription, where the capacity and lab rules and the action
- * group live. Until the owner decides that grant (#964), every scheduled run
- * would fail on those reads, and a monitor that is red every week for a
- * reason everyone already knows gets muted: `validate-deployed.yml` was
- * deleted on 2026-09-08 after three weeks of exactly that.
+ * EMPTY since #1053. The workflow ran as `github_reader`, which held nothing
+ * in the Management subscription, where the capacity and lab rules, the
+ * Management role-change rules and the action group live, so that
+ * subscription was recorded here from PLAT-4 until the owner's decision on
+ * 2026-10-11 gave the job an identity of its own, `github_alert_reader`,
+ * that reads alert rules and action groups in both resource groups
+ * (infra/oidc.tf). The mechanism stays for the next gap of the kind: a
+ * monitor that is red every week for a reason everyone already knows gets
+ * muted, and `validate-deployed.yml` was deleted on 2026-09-08 after three
+ * weeks of exactly that.
  *
  * THIS IS NOT A MUTE, by the same rules as EXPECTED_UNRESOLVED in
  * check-unresolved-secrets.mjs. A rule in a subscription listed here, whose
@@ -134,12 +138,7 @@ export const GATES = {
  * The step also writes `coverage=partial` while any entry applies, for
  * consumers that read outcomes rather than summaries.
  */
-export const UNREADABLE = {
-  'sub-plat-mgmt-prod-cus': {
-    record:
-      'github_reader holds no role in the Management subscription; the read grant is the owner\'s decision on #964',
-  },
-};
+export const UNREADABLE = {};
 
 /** The plan checker's declared creates, by address: rules waiting for an apply. */
 export function pendingCreates(declared = DECLARED) {
@@ -609,7 +608,7 @@ export function coverageOf(verdicts, groups) {
  * GitHub Actions warning annotations, one per subscription recorded as
  * unreadable, so a green run still shows the gap on its summary page.
  */
-export function unreadableWarnings(verdicts, groups) {
+export function unreadableWarnings(verdicts, groups, unreadable = UNREADABLE) {
   const bySubscription = new Map();
   for (const v of verdicts.filter((x) => x.state === 'UNREADABLE')) {
     bySubscription.set(v.rule.subscription, (bySubscription.get(v.rule.subscription) ?? 0) + 1);
@@ -620,7 +619,7 @@ export function unreadableWarnings(verdicts, groups) {
   return [...bySubscription].map(
     ([subscription, count]) =>
       `::warning title=Alert rules not readable::${count} declared rule(s) in ${subscription} were not read: ` +
-      `${UNREADABLE[subscription]?.record ?? 'not recorded'}. Their state is unknown.`
+      `${unreadable[subscription]?.record ?? 'not recorded'}. Their state is unknown.`
   );
 }
 
