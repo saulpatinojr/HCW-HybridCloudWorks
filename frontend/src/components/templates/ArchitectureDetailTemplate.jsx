@@ -1,5 +1,5 @@
 /* eslint-disable complexity */
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import RichTextBody from '@/components/shared/RichTextBody';
 // Lazy: WafAssessment pulls chart.js (vendor-charts) via FrameworkRadar.
 const WafAssessment = React.lazy(() => import('@/components/architecture/WafAssessment'));
@@ -8,47 +8,103 @@ import { useParams, Link } from 'react-router';
 import { usePublicData } from '@/hooks/usePublicData';
 import { fetchPublicContentItem } from '@/lib/publicApi';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, Download, ExternalLink, Code, Loader2 } from 'lucide-react';
-import { awsArchitectures } from '@/data/architectures';
-import InteractiveDiagram from '@/components/widgets/InteractiveDiagram';
+import { architecturesByProvider, awsArchitectures } from '@/data/architectures';
 import { useResolvedHotspots } from '@/hooks/useResolvedHotspots';
 import ContextSidebar from '@/components/layout/ContextSidebar';
 import ShareVia from '@/components/shared/ShareVia';
+import MiniLandingFrame from '@/components/shared/MiniLandingFrame';
+
+function hasNonEmptyList(list) {
+  return Array.isArray(list) && list.some((item) => item && String(item).trim() !== '');
+}
 
 /**
- * Detail page template for architecture designs.
- * Resolution (slug lookup, content then legacy blogs, published-only) is
- * folded into GET public/content/{slugOrId}; the type check stays client-side
- * so a blog sharing the slug can't render as an architecture. The static
- * awsArchitectures map remains the last-resort fallback.
+ * Detail page template for architecture designs (#1084).
+ *
+ * Opens as a one-screen Mini Landing Page (Hero + Promise + Full-width Diagram
+ * + 4 doorway panes: How it works, Key services, Security and best practices,
+ * Outcome). Clicking any pane opens and scrolls to its deep-dive section below.
+ * Empty fields hide their pane or tab rather than rendering placeholder text.
  */
 export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
   const { slug } = useParams();
+  const deepDiveRef = useRef(null);
 
   const { data: item, loading } = usePublicData(
     () => fetchPublicContentItem(slug),
     slug ? `architecture:${slug}` : ''
   );
 
-  // Static fallback for "Real Data Phase 1"
-  const staticData = provider === 'aws' ? awsArchitectures[slug] : null;
+  const providerKey = String(provider || 'aws').toLowerCase();
+  const providerCatalog = architecturesByProvider[providerKey] || awsArchitectures;
+  const staticData = providerCatalog?.[slug] || null;
 
   const dynamicArchitecture =
     item && String(item.type || '').toLowerCase() === 'architecture' ? item : null;
-  const architecture = dynamicArchitecture || staticData;
+  const architecture = dynamicArchitecture
+    ? { ...staticData, ...dynamicArchitecture }
+    : staticData;
 
   // Before the early returns: hooks must run in the same order on every
   // render, and the loading branch below returns before the diagram exists.
-  // Shape-anchored hotspots resolve from the diagram XML; hand-positioned ones
-  // pass straight through, so an architecture with no XML is unaffected.
   const resolvedHotspots = useResolvedHotspots(
     architecture?.diagramXml,
     architecture?.hotspots || []
   );
+
+  const overviewContent = architecture?.overviewHtml || architecture?.overview || '';
+  const specComponents = Array.isArray(architecture?.technicalSpecs?.components)
+    ? architecture.technicalSpecs.components.filter(Boolean)
+    : [];
+  const specPatterns = Array.isArray(architecture?.technicalSpecs?.patterns)
+    ? architecture.technicalSpecs.patterns.filter(Boolean)
+    : [];
+  const hasOverview = Boolean(
+    String(overviewContent).trim() || specComponents.length > 0 || specPatterns.length > 0
+  );
+  const hasWaf = Boolean(architecture?.waf);
+  const deploymentSteps = Array.isArray(architecture?.deploymentSteps)
+    ? architecture.deploymentSteps.filter((s) => s && String(s).trim() !== '')
+    : [];
+  const terraformCode =
+    architecture?.terraformCode && String(architecture.terraformCode).trim() !== ''
+      ? architecture.terraformCode
+      : '';
+  const hasImplementation = Boolean(terraformCode || deploymentSteps.length > 0);
+
+  const estimatedMonthly =
+    architecture?.costAnalysis?.estimatedMonthly || architecture?.estimatedCost || '';
+  const costOptimizations = Array.isArray(architecture?.costAnalysis?.optimizations)
+    ? architecture.costAnalysis.optimizations.filter(Boolean)
+    : [];
+  const costBreakdown = Array.isArray(architecture?.costAnalysis?.breakdown)
+    ? architecture.costAnalysis.breakdown.filter(
+        (row) => row && (row.item || row.label || row.category)
+      )
+    : [];
+  const hasCost = Boolean(
+    String(estimatedMonthly).trim() || costOptimizations.length > 0 || costBreakdown.length > 0
+  );
+
+  const availableTabs = [
+    hasOverview && { value: 'overview', label: 'Overview' },
+    hasWaf && { value: 'waf', label: 'Well-Architected' },
+    hasImplementation && { value: 'implementation', label: 'Implementation' },
+    hasCost && { value: 'cost', label: 'Cost Analysis' },
+  ].filter(Boolean);
+
+  const defaultTab = availableTabs[0]?.value || '';
+  const [activeTab, setActiveTab] = useState(defaultTab);
+
+  useEffect(() => {
+    if (defaultTab && !availableTabs.some((t) => t.value === activeTab)) {
+      setActiveTab(defaultTab);
+    }
+  }, [defaultTab, activeTab, availableTabs]);
 
   if (loading && !staticData && !architecture) {
     return (
@@ -75,11 +131,57 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
     );
   }
 
+  const openDeepDiveTab = (targetTab) => {
+    const resolved = availableTabs.some((t) => t.value === targetTab)
+      ? targetTab
+      : availableTabs[0]?.value;
+    if (!resolved) return;
+    setActiveTab(resolved);
+    if (deepDiveRef.current && typeof deepDiveRef.current.scrollIntoView === 'function') {
+      deepDiveRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const handlePaneDeepDive = (paneId) => {
+    if (paneId === 'how-it-works') {
+      openDeepDiveTab(hasOverview ? 'overview' : 'implementation');
+      return;
+    }
+    if (paneId === 'key-services') {
+      openDeepDiveTab(hasOverview ? 'overview' : 'implementation');
+      return;
+    }
+    if (paneId === 'security') {
+      openDeepDiveTab(hasWaf ? 'waf' : 'overview');
+      return;
+    }
+    if (paneId === 'outcome') {
+      openDeepDiveTab(hasCost ? 'cost' : hasImplementation ? 'implementation' : 'overview');
+    }
+  };
+
+  const badges = [
+    architecture.category && { label: architecture.category, variant: 'default' },
+    architecture.complexity && { label: architecture.complexity, variant: 'secondary' },
+  ].filter(Boolean);
+
+  const keyServicesFallback =
+    Array.isArray(architecture.keyServices) && architecture.keyServices.length > 0
+      ? architecture.keyServices
+      : specComponents.map((name) => ({ name, role: '' }));
+
+  const practicesFallback = hasNonEmptyList(architecture.practices)
+    ? architecture.practices
+    : specPatterns;
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl">
       <Helmet>
         <title>{`${architecture.title} | HCW`}</title>
-        <meta name="description" content={architecture.description} />
+        <meta
+          name="description"
+          content={architecture.promise || architecture.summary || architecture.description || ''}
+        />
         <link
           rel="canonical"
           href={`https://hybridcloudworks.com/${provider}/architecture-designs/${slug}`}
@@ -87,7 +189,10 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
         {/* Open Graph */}
         <meta property="og:type" content="article" />
         <meta property="og:title" content={`${architecture.title} | HCW`} />
-        <meta property="og:description" content={architecture.description} />
+        <meta
+          property="og:description"
+          content={architecture.promise || architecture.summary || architecture.description || ''}
+        />
         <meta
           property="og:url"
           content={`https://hybridcloudworks.com/${provider}/architecture-designs/${slug}`}
@@ -99,210 +204,242 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
           content={architecture.diagramUrl ? 'summary_large_image' : 'summary'}
         />
         <meta name="twitter:title" content={`${architecture.title} | HCW`} />
-        <meta name="twitter:description" content={architecture.description} />
+        <meta
+          name="twitter:description"
+          content={architecture.promise || architecture.summary || architecture.description || ''}
+        />
         {architecture.diagramUrl && <meta name="twitter:image" content={architecture.diagramUrl} />}
       </Helmet>
 
       {/* Context Sidebar for Extras */}
       <ContextSidebar content={architecture.sidebarContent} />
 
-      {/* Back Button */}
-      <Button variant="ghost" asChild className="mb-6">
-        <Link to={`/${provider}/architecture-designs`}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Architectures
-        </Link>
-      </Button>
-
-      {/* Architecture Header */}
-      <div className="mb-8">
-        <div className="mb-6 flex justify-end">
-          <ShareVia
-            title={architecture.title || 'Architecture'}
-            summary={architecture.summary || architecture.description || ''}
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-2 mb-4">
-          {architecture.category && <Badge variant="default">{architecture.category}</Badge>}
-          {architecture.complexity && <Badge variant="secondary">{architecture.complexity}</Badge>}
-          {architecture.tags?.map((tag, i) => (
-            <Badge key={i} variant="outline">
-              {tag}
-            </Badge>
-          ))}
-        </div>
-
-        <h1 className="text-3xl sm:text-5xl md:text-6xl font-bold mb-4 leading-tight">
-          {architecture.title}
-        </h1>
-
-        <p className="text-base sm:text-lg text-muted-foreground leading-relaxed mb-6">
-          {architecture.description}
-        </p>
-
-        <div className="flex gap-3">
-          <Button>
-            <Download className="h-4 w-4 mr-2" />
-            Download Diagram
-          </Button>
-          <Button variant="outline">
-            <Code className="h-4 w-4 mr-2" />
-            View IaC Code
-          </Button>
-          <Button variant="outline">
-            <ExternalLink className="h-4 w-4 mr-2" />
-            Live Demo
-          </Button>
-        </div>
+      {/* Top Navigation & Share */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <Button variant="ghost" asChild>
+          <Link to={`/${provider}/architecture-designs`}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Architectures
+          </Link>
+        </Button>
+        <ShareVia
+          title={architecture.title || 'Architecture'}
+          summary={architecture.promise || architecture.summary || architecture.description || ''}
+        />
       </div>
 
-      <Separator className="my-8" />
-
-      {/* Architecture Content */}
-      <Tabs defaultValue="diagram" className="mb-12">
-        <TabsList className={`grid w-full ${architecture.waf ? 'grid-cols-5' : 'grid-cols-4'}`}>
-          <TabsTrigger value="diagram">Diagram</TabsTrigger>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          {architecture.waf && <TabsTrigger value="waf">Well-Architected</TabsTrigger>}
-          <TabsTrigger value="implementation">Implementation</TabsTrigger>
-          <TabsTrigger value="cost">Cost Analysis</TabsTrigger>
-        </TabsList>
-
-        {architecture.waf && (
-          <TabsContent value="waf" className="mt-6">
-            <React.Suspense
-              fallback={<p className="text-sm text-muted-foreground">Loading assessment…</p>}
-            >
-              <WafAssessment waf={architecture.waf} />
-            </React.Suspense>
-          </TabsContent>
-        )}
-
-        <TabsContent value="diagram" className="mt-6">
-          <Card className="bg-card/40 border-none shadow-none">
-            <CardContent className="p-0">
-              {architecture.diagramUrl ? (
-                <InteractiveDiagram
-                  imageUrl={architecture.diagramUrl}
-                  hotspots={resolvedHotspots}
-                  onHotspotClick={() => {}}
-                />
-              ) : (
-                <div className="aspect-video bg-muted/20 rounded-lg flex items-center justify-center border border-dashed border-border">
-                  <p className="text-muted-foreground">
-                    Architecture diagram will be displayed here
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="overview" className="mt-6">
-          <div className="prose prose-invert max-w-none">
-            {architecture.overview ? (
-              <RichTextBody value={architecture.overview} />
-            ) : (
-              <div className="space-y-4">
-                <h2 className="text-2xl font-bold">Architecture Overview</h2>
-                <p className="text-muted-foreground">
-                  Detailed architecture overview will be loaded from Firestore, including:
-                </p>
-                <ul className="list-disc list-inside text-muted-foreground space-y-2">
-                  <li>Key components and services</li>
-                  <li>Data flow and communication patterns</li>
-                  <li>Security and compliance considerations</li>
-                  <li>Scalability and performance characteristics</li>
-                </ul>
-              </div>
+      {/* One-Screen Mini Landing Page (#1084) */}
+      <MiniLandingFrame
+        eyebrow={`${String(provider).toUpperCase()} Architecture Blueprint`}
+        title={architecture.title}
+        promise={architecture.promise || architecture.summary || architecture.description}
+        badges={badges}
+        tags={architecture.tags || []}
+        diagramUrl={architecture.diagramUrl}
+        hotspots={resolvedHotspots}
+        topology={architecture.topology}
+        howItWorks={architecture.howItWorks}
+        keyServices={keyServicesFallback}
+        practices={practicesFallback}
+        outcome={architecture.outcome}
+        onOpenDeepDive={availableTabs.length > 0 ? handlePaneDeepDive : null}
+        actions={
+          <>
+            {architecture.diagramUrl && (
+              <Button asChild>
+                <a href={architecture.diagramUrl} download>
+                  <Download className="h-4 w-4 mr-2" />
+                  Download Diagram
+                </a>
+              </Button>
             )}
+            {hasImplementation && (
+              <Button variant="outline" onClick={() => openDeepDiveTab('implementation')}>
+                <Code className="h-4 w-4 mr-2" />
+                View IaC Code
+              </Button>
+            )}
+            {architecture.demoUrl && (
+              <Button variant="outline" asChild>
+                <a href={architecture.demoUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Live Demo
+                </a>
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      {/* Deep Dive Tabs — only rendered when real deep-dive data exists (#1084 item 3) */}
+      {availableTabs.length > 0 && (
+        <div ref={deepDiveRef} id="architecture-deep-dive" className="scroll-mt-24">
+          <Separator className="my-8" />
+
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-xl font-bold tracking-tight">Architecture Deep Dive</h2>
+            <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+              Select a section or click any pane above
+            </span>
           </div>
-        </TabsContent>
 
-        <TabsContent value="implementation" className="mt-6">
-          <div className="space-y-6">
-            <Card className="bg-card/40">
-              <CardHeader>
-                <CardTitle>Terraform Configuration</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <pre className="bg-muted/20 p-4 rounded-lg overflow-x-auto">
-                  <code className="text-sm">
-                    {architecture.terraformCode ||
-                      '# Terraform code will be loaded from Firestore\n# Example infrastructure as code implementation'}
-                  </code>
-                </pre>
-              </CardContent>
-            </Card>
+          <Tabs value={activeTab || defaultTab} onValueChange={setActiveTab} className="mb-12">
+            <TabsList
+              className="flex flex-wrap w-full justify-start gap-1 h-auto p-1"
+              aria-label="Architecture deep dive sections"
+            >
+              {availableTabs.map((tab) => (
+                <TabsTrigger key={tab.value} value={tab.value} className="flex-1 min-w-[130px]">
+                  {tab.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
 
-            <Card className="bg-card/40">
-              <CardHeader>
-                <CardTitle>Deployment Steps</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
-                  <li>Configure provider credentials</li>
-                  <li>Initialize Terraform workspace</li>
-                  <li>Review and apply infrastructure plan</li>
-                  <li>Verify deployment and test endpoints</li>
-                </ol>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="cost" className="mt-6">
-          <div className="grid md:grid-cols-3 gap-6">
-            <Card className="bg-card/40">
-              <CardHeader>
-                <CardTitle className="text-lg">Estimated Monthly Cost</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-3xl font-bold text-primary">
-                  {architecture.estimatedCost || '$500-$2,000'}
-                </p>
-                <p className="text-sm text-muted-foreground mt-2">Based on moderate usage</p>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card/40">
-              <CardHeader>
-                <CardTitle className="text-lg">Cost Optimization</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="text-sm text-muted-foreground space-y-2">
-                  <li>• Use Reserved Instances</li>
-                  <li>• Enable auto-scaling</li>
-                  <li>• Implement caching layers</li>
-                </ul>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card/40">
-              <CardHeader>
-                <CardTitle className="text-lg">Cost Breakdown</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Compute</span>
-                    <span className="font-semibold">60%</span>
+            {hasOverview && (
+              <TabsContent value="overview" className="mt-6 space-y-6">
+                {String(overviewContent).trim() && (
+                  <div className="prose prose-invert max-w-none">
+                    <RichTextBody value={overviewContent} />
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Storage</span>
-                    <span className="font-semibold">25%</span>
+                )}
+                {(specComponents.length > 0 || specPatterns.length > 0) && (
+                  <div className="grid md:grid-cols-2 gap-6">
+                    {specComponents.length > 0 && (
+                      <Card className="bg-card/40">
+                        <CardHeader>
+                          <CardTitle className="text-lg">Key Components</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1.5">
+                            {specComponents.map((comp, idx) => (
+                              <li key={idx}>{comp}</li>
+                            ))}
+                          </ul>
+                        </CardContent>
+                      </Card>
+                    )}
+                    {specPatterns.length > 0 && (
+                      <Card className="bg-card/40">
+                        <CardHeader>
+                          <CardTitle className="text-lg">Architecture Patterns</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1.5">
+                            {specPatterns.map((pat, idx) => (
+                              <li key={idx}>{pat}</li>
+                            ))}
+                          </ul>
+                        </CardContent>
+                      </Card>
+                    )}
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Networking</span>
-                    <span className="font-semibold">15%</span>
-                  </div>
+                )}
+              </TabsContent>
+            )}
+
+            {hasWaf && (
+              <TabsContent value="waf" className="mt-6">
+                <React.Suspense
+                  fallback={<p className="text-sm text-muted-foreground">Loading assessment…</p>}
+                >
+                  <WafAssessment waf={architecture.waf} />
+                </React.Suspense>
+              </TabsContent>
+            )}
+
+            {hasImplementation && (
+              <TabsContent value="implementation" className="mt-6">
+                <div className="space-y-6">
+                  {terraformCode && (
+                    <Card className="bg-card/40">
+                      <CardHeader>
+                        <CardTitle>Terraform Configuration</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <pre className="bg-muted/20 p-4 rounded-lg overflow-x-auto">
+                          <code className="text-sm">{terraformCode}</code>
+                        </pre>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {deploymentSteps.length > 0 && (
+                    <Card className="bg-card/40">
+                      <CardHeader>
+                        <CardTitle>Deployment Steps</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
+                          {deploymentSteps.map((step, idx) => (
+                            <li key={idx}>{step}</li>
+                          ))}
+                        </ol>
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-      </Tabs>
+              </TabsContent>
+            )}
+
+            {hasCost && (
+              <TabsContent value="cost" className="mt-6">
+                <div className="grid md:grid-cols-3 gap-6">
+                  {String(estimatedMonthly).trim() && (
+                    <Card className="bg-card/40">
+                      <CardHeader>
+                        <CardTitle className="text-lg">Estimated Monthly Cost</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-3xl font-bold text-primary">{estimatedMonthly}</p>
+                        <p className="text-sm text-muted-foreground mt-2">
+                          Baseline reference estimate
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {costOptimizations.length > 0 && (
+                    <Card className="bg-card/40">
+                      <CardHeader>
+                        <CardTitle className="text-lg">Cost Optimization</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ul className="text-sm text-muted-foreground space-y-2">
+                          {costOptimizations.map((opt, idx) => (
+                            <li key={idx}>• {opt}</li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {costBreakdown.length > 0 && (
+                    <Card className="bg-card/40">
+                      <CardHeader>
+                        <CardTitle className="text-lg">Cost Breakdown</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2 text-sm">
+                          {costBreakdown.map((row, idx) => (
+                            <div key={idx} className="flex justify-between gap-2">
+                              <span className="text-muted-foreground">
+                                {row.item || row.label || row.category}
+                              </span>
+                              <span className="font-semibold">
+                                {row.cost || row.share || row.percentage || row.value}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              </TabsContent>
+            )}
+          </Tabs>
+        </div>
+      )}
 
       {/* Related Architectures */}
       {architecture.relatedArchitectures && architecture.relatedArchitectures.length > 0 && (
@@ -325,3 +462,4 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
     </div>
   );
 }
+

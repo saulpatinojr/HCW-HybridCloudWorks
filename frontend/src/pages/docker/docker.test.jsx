@@ -209,6 +209,23 @@ describe('the Docker sandboxes page', () => {
     renderPage(<DockerSandboxesPage />);
     expect(screen.queryByText(/coming soon/i)).toBeNull();
   });
+
+  it('renders the mini landing frame and the 7-step Docker cloud sandbox (--cloud) walkthrough (#1080)', () => {
+    renderPage(<DockerSandboxesPage />);
+    expect(screen.getByTestId('mini-landing-frame')).toBeInTheDocument();
+    const cloudSection = screen.getByTestId('cloud-sandbox-section');
+    const cloudSteps = within(cloudSection).getAllByTestId('cloud-sandbox-step');
+    expect(cloudSteps).toHaveLength(7);
+    expect(cloudSection).toHaveTextContent('sbx login');
+    expect(cloudSection).toHaveTextContent('sbx secret set -g anthropic');
+    expect(cloudSection).toHaveTextContent(
+      'sbx run --cloud claude --name hcw-lz -t hybridcloudworks/hcw-lab:latest'
+    );
+    expect(cloudSection).toHaveTextContent('terraform init -backend=false && terraform validate');
+    expect(cloudSection).toHaveTextContent('sbx exec hcw-lz -- terraform -version');
+    expect(cloudSection).toHaveTextContent('sbx rm hcw-lz');
+    expect(cloudSection).toHaveTextContent(/Docker Agentic Platform subscription/i);
+  });
 });
 
 describe('where the recipe used to be', () => {

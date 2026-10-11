@@ -315,6 +315,23 @@ if [ "$target" = full ]; then
   else
     bad "HOME is '$HOME' or /tmp/home is not writable"
   fi
+
+  step "per-lab bootloaders"
+  boot_root="/tmp/home/smoke-boot"
+  rm -rf "$boot_root"
+  for lab_id in \
+    landing-zone-builder-output \
+    terraform-validate-walkthrough \
+    ansible-syntax-check-walkthrough \
+    wsl-containers-walkthrough \
+    defender-wsl-plugin-walkthrough; do
+    if [ -x "/usr/local/libexec/hcw-boot/${lab_id}.sh" ] && HCW_BOOT_OFFLINE=1 /usr/local/libexec/hcw-boot/hcw-boot "$lab_id" "$boot_root"; then
+      ok "hcw-boot $lab_id"
+    else
+      bad "hcw-boot $lab_id failed"
+    fi
+  done
+  rm -rf "$boot_root"
 fi
 
 printf '\n'
@@ -323,3 +340,4 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 echo "smoke: passed ($target)"
+

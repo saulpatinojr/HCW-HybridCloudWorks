@@ -363,8 +363,9 @@ describe('a provider’s labs (/:provider/education/labs, ADR 0033)', () => {
   it('lists a lab shared by two hubs under both', async () => {
     unprovisioned();
     const { container } = renderPage('/azure/education/labs');
-    expect(container.querySelector('li[data-lab="landing-zone-builder-output"]')).not.toBeNull();
-    expect(screen.getByTestId('open-lab-workspace')).toHaveAttribute(
+    const card = container.querySelector('li[data-lab="landing-zone-builder-output"]');
+    expect(card).not.toBeNull();
+    expect(within(card).getByTestId('open-lab-workspace')).toHaveAttribute(
       'href',
       '/azure/education/labs/landing-zone-builder-output'
     );

@@ -23,12 +23,18 @@ export function initialBlueprintForm(blog) {
   return initialFormFrom(blog, {
     title: [['title', 'Title'], ''],
     summary: [['summary', 'Summary'], ''],
+    promise: [['promise'], ''],
     cloudProvider: [['cloudProvider', 'Cloud Provider'], 'AWS'],
     category: [['category'], 'Compute'],
     complexity: [['complexity'], 'Medium'],
     tags: [['tags', 'Tags'], []],
     overviewHtml: [['overviewHtml', 'overview'], ''],
     diagramUrl: [['diagramUrl', 'contentImageUrl', 'imageUrl'], ''],
+    // Mini-landing-page doorway panes (#1084)
+    howItWorks: [['howItWorks'], []],
+    keyServices: [['keyServices'], []],
+    practices: [['practices'], []],
+    outcome: [['outcome'], []],
     // JSON fields (stored as objects in DB, parsed for editing if needed)
     technicalSpecs: [['technicalSpecs'], { components: [], patterns: [] }],
     costAnalysis: [['costAnalysis'], { estimatedMonthly: '$0', breakdown: [] }],
@@ -310,6 +316,81 @@ export default function ArchitectureReviewBoard({ blog, onSave, onPublish, savin
             />
           </CardContent>
         </Card>
+      ),
+    },
+    {
+      value: 'landing',
+      label: 'Landing Panes',
+      icon: Eye,
+      content: (
+        <>
+          <Card>
+            <CardContent className="pt-6">
+              <label htmlFor="arch-promise" className="text-sm font-medium">
+                Hero Promise (One-Line Summary)
+              </label>
+              <Input
+                id="arch-promise"
+                value={formData.promise || ''}
+                onChange={(e) => handleChange('promise', e.target.value)}
+                className="mt-1"
+                placeholder="A simple, secure and scalable architecture using..."
+              />
+            </CardContent>
+          </Card>
+          <TextareaCard
+            title="How It Works (numbered steps)"
+            value={(Array.isArray(formData.howItWorks) ? formData.howItWorks : []).join('\n')}
+            onChange={(value) => handleChange('howItWorks', value.split('\n'))}
+            ariaLabel="How it works steps, one per line"
+            className="min-h-30 font-mono text-sm"
+            placeholder="Users send requests from the internet...&#10;Application Gateway + WAF inspects traffic..."
+            help="One step per line"
+          />
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Key Services (JSON: name, icon, role)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Textarea
+                value={JSON.stringify(formData.keyServices || [], null, 2)}
+                onChange={(e) => {
+                  try {
+                    const parsed = JSON.parse(e.target.value);
+                    if (Array.isArray(parsed)) handleChange('keyServices', parsed);
+                  } catch {
+                    // Allow typing invalid JSON temporarily
+                  }
+                }}
+                aria-label="Key services as JSON"
+                className="min-h-37.5 font-mono text-xs"
+              />
+            </CardContent>
+          </Card>
+          <TextareaCard
+            title="Security and Best Practices"
+            value={(Array.isArray(formData.practices) ? formData.practices : []).join('\n')}
+            onChange={(value) => handleChange('practices', value.split('\n'))}
+            ariaLabel="Security and best practices, one per line"
+            className="min-h-30 font-mono text-sm"
+            placeholder="WAF enabled at the edge&#10;NSGs on both subnets"
+            help="One practice per line"
+          />
+          <TextareaCard
+            title="Outcome"
+            value={(Array.isArray(formData.outcome)
+              ? formData.outcome
+              : formData.outcome
+                ? [formData.outcome]
+                : []
+            ).join('\n')}
+            onChange={(value) => handleChange('outcome', value.split('\n'))}
+            ariaLabel="Outcome lines, one per line"
+            className="min-h-25 font-mono text-sm"
+            placeholder="Delivers a secure, well-segmented 2-tier Azure architecture..."
+            help="One outcome line per line"
+          />
+        </>
       ),
     },
     {

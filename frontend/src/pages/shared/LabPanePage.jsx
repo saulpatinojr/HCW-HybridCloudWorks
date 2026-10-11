@@ -117,6 +117,7 @@ import { Link, Navigate, useParams } from 'react-router';
 import {
   CODER_APPS_ORIGIN,
   CODER_ORIGIN,
+  LAB_LANDING_FRAMES,
   coderSignInUrl,
   labById,
   labLauncherUrl,
@@ -124,11 +125,13 @@ import {
   labsPath,
   primaryProvider,
 } from '@/data/labs/catalogue';
+import DefenderWslSimulator from '@/components/labs/DefenderWslSimulator';
 import HowLabsWork from '@/components/labs/HowLabsWork';
 import LabArticles from '@/components/labs/LabArticles';
 import LabFacts from '@/components/labs/LabFacts';
 import LabSteps from '@/components/labs/LabSteps';
 import WorkspaceStatusBadge from '@/components/labs/WorkspaceStatusBadge';
+import MiniLandingFrame from '@/components/shared/MiniLandingFrame';
 import {
   markSignInStarted,
   markSignedIn,
@@ -338,6 +341,17 @@ function LabPane({ lab, provider }) {
           <p className={`${MUTED} max-w-3xl`}>{lab.summary}</p>
           <LabFacts lab={lab} showTools />
         </header>
+        {LAB_LANDING_FRAMES[lab.id] ? (
+          <MiniLandingFrame
+            title={null}
+            promise={LAB_LANDING_FRAMES[lab.id].promise}
+            topology={LAB_LANDING_FRAMES[lab.id].topology}
+            howItWorks={LAB_LANDING_FRAMES[lab.id].howItWorks}
+            keyServices={LAB_LANDING_FRAMES[lab.id].keyServices}
+            practices={LAB_LANDING_FRAMES[lab.id].practices}
+            outcome={LAB_LANDING_FRAMES[lab.id].outcome}
+          />
+        ) : null}
         <PaneBody
           service={workspaceService(status)}
           signedInAt={signedInAt}
@@ -347,6 +361,7 @@ function LabPane({ lab, provider }) {
           signInHref={signInHref}
           onStartSignIn={startSignIn}
         />
+        {lab.id === 'defender-wsl-plugin-walkthrough' ? <DefenderWslSimulator /> : null}
         <LabDetails lab={lab} />
       </div>
     </>

@@ -9,7 +9,7 @@ import { staticBlueprints as azure } from '@/pages/azure/architecture-blueprints
 import { staticBlueprints as finops } from '@/pages/finops/architecture-blueprints';
 import { staticBlueprints as gcp } from '@/pages/gcp/architecture-blueprints';
 import { staticBlueprints as vmware } from '@/pages/vmware/architecture-blueprints';
-import { awsArchitectures } from '@/data/architectures';
+import { architecturesByProvider } from '@/data/architectures';
 import {
   BLUEPRINTS_BY_PROVIDER,
   BLUEPRINT_COUNT,
@@ -43,8 +43,7 @@ describe('blueprints', () => {
     for (const card of blueprintCards()) {
       if (card.to === `/${card.provider}/architecture-designs`) continue;
       const slug = card.to.split('/').at(-1);
-      expect(card.provider, card.to).toBe('aws');
-      expect(awsArchitectures[slug], card.to).toBeDefined();
+      expect(architecturesByProvider[card.provider]?.[slug], card.to).toBeDefined();
     }
   });
 

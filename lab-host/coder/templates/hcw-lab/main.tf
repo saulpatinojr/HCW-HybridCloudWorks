@@ -122,6 +122,16 @@ locals {
       source = "lab-host/ansible"
       readme = ""
     }
+    "wsl-containers-walkthrough" = {
+      title  = "WSL Containers walkthrough"
+      source = ""
+      readme = ""
+    }
+    "defender-wsl-plugin-walkthrough" = {
+      title  = "Defender for Endpoint WSL2 plug-in walkthrough"
+      source = ""
+      readme = ""
+    }
   }
 
   lab        = local.labs[data.coder_parameter.lab.value]
@@ -158,10 +168,18 @@ data "coder_parameter" "lab" {
     name  = "Ansible syntax-check walkthrough"
     value = "ansible-syntax-check-walkthrough"
   }
+  option {
+    name  = "WSL Containers walkthrough"
+    value = "wsl-containers-walkthrough"
+  }
+  option {
+    name  = "Defender for Endpoint WSL2 plug-in walkthrough"
+    value = "defender-wsl-plugin-walkthrough"
+  }
 
   validation {
-    regex = "^(landing-zone-builder-output|terraform-validate-walkthrough|ansible-syntax-check-walkthrough)$"
-    error = "lab must be one of the catalogue ids: landing-zone-builder-output, terraform-validate-walkthrough, ansible-syntax-check-walkthrough."
+    regex = "^(landing-zone-builder-output|terraform-validate-walkthrough|ansible-syntax-check-walkthrough|wsl-containers-walkthrough|defender-wsl-plugin-walkthrough)$"
+    error = "lab must be one of the catalogue ids: landing-zone-builder-output, terraform-validate-walkthrough, ansible-syntax-check-walkthrough, wsl-containers-walkthrough, defender-wsl-plugin-walkthrough."
   }
 }
 
@@ -170,33 +188,28 @@ resource "coder_agent" "main" {
   os                      = "linux"
   startup_script_behavior = "blocking"
 
-  # Sparse, shallow checkout of one directory of this repository into the
-  # persistent home, once; a second start finds it and leaves it alone.
-  # `$${...}` is Terraform's escape for a literal shell `${...}`.
+  # Dispatches to the per-lab bootloader script (/usr/local/libexec/hcw-boot/hcw-boot)
+  # for the selected LAB_ID. When running on an image built before bootloaders/
+  # was added to lab-image/Dockerfile, fetches lab-image/bootloaders sparsely
+  # into $HOME/.cache/hcw-boot and runs the same per-lab bootloader from there.
   startup_script = <<-EOT
     set -euo pipefail
     export HOME=${local.home}
     LAB_ID='${data.coder_parameter.lab.value}'
-    LAB_SOURCE='${local.lab.source}'
     LAB_ROOT='${local.lab_root}'
     mkdir -p "$LAB_ROOT"
 
-    if [ -n "$LAB_SOURCE" ]; then
-      if [ ! -d "$LAB_ROOT/.git" ]; then
-        git clone --quiet --depth 1 --filter=blob:none --sparse --branch '${local.repo_ref}' '${local.repo_url}' "$LAB_ROOT"
-        git -C "$LAB_ROOT" sparse-checkout set "$LAB_SOURCE"
-      fi
+    if [ -x /usr/local/libexec/hcw-boot/hcw-boot ]; then
+      /usr/local/libexec/hcw-boot/hcw-boot "$LAB_ID" "$LAB_ROOT"
     else
-      mkdir -p "$LAB_ROOT/$LAB_ID"
-      if [ ! -f "$LAB_ROOT/$LAB_ID/README.md" ]; then
-        cat > "$LAB_ROOT/$LAB_ID/README.md" <<'README'
-    ${local.lab.readme}
-    README
+      BOOT_CACHE="$HOME/.cache/hcw-boot"
+      if [ ! -x "$BOOT_CACHE/lab-image/bootloaders/hcw-boot" ]; then
+        rm -rf "$BOOT_CACHE"
+        git clone --quiet --depth 1 --filter=blob:none --sparse --branch '${local.repo_ref}' '${local.repo_url}' "$BOOT_CACHE"
+        git -C "$BOOT_CACHE" sparse-checkout set "lab-image/bootloaders"
+        chmod 0755 "$BOOT_CACHE/lab-image/bootloaders/hcw-boot" "$BOOT_CACHE/lab-image/bootloaders/"*.sh
       fi
-      # The builder's zip is initialised online: undo the image's
-      # mirror-only provider installation for this lab's shell.
-      printf 'unset TF_CLI_CONFIG_FILE\n' > "$HOME/.bashrc.d-hcw-lab"
-      grep -qs 'bashrc.d-hcw-lab' "$HOME/.bashrc" || printf '. "$HOME/.bashrc.d-hcw-lab"\n' >> "$HOME/.bashrc"
+      "$BOOT_CACHE/lab-image/bootloaders/hcw-boot" "$LAB_ID" "$LAB_ROOT"
     fi
   EOT
 

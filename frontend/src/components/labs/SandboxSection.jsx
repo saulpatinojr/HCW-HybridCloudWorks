@@ -146,3 +146,203 @@ export default function SandboxSection() {
     </div>
   );
 }
+
+/** Published Docker Hub lab image used as the template for `--cloud` sandboxes (#1080). */
+export const CLOUD_TEMPLATE_IMAGE = 'hybridcloudworks/hcw-lab:latest';
+
+/**
+ * Seven-step recipe for running a Docker cloud sandbox (`sbx run --cloud`)
+ * against the published `hybridcloudworks/hcw-lab:latest` image (#1080).
+ */
+export const CLOUD_SANDBOX_STEPS = Object.freeze([
+  Object.freeze({
+    id: 'login',
+    title: '1. Sign in to Docker from the sbx CLI',
+    body: 'Authenticate the sbx command line with your Docker account so it can provision a remote cloud microVM.',
+    commands: Object.freeze([
+      Object.freeze({ shell: 'PowerShell', command: 'sbx login' }),
+      Object.freeze({ shell: 'bash', command: 'sbx login' }),
+    ]),
+  }),
+  Object.freeze({
+    id: 'secret',
+    title: '2. Store your model provider key globally',
+    body: 'Pass -g (--global) so your Anthropic key is available to cloud sandboxes without writing it into an image or workspace file.',
+    commands: Object.freeze([
+      Object.freeze({ shell: 'PowerShell', command: 'sbx secret set -g anthropic' }),
+      Object.freeze({ shell: 'bash', command: 'sbx secret set -g anthropic' }),
+    ]),
+  }),
+  Object.freeze({
+    id: 'run-cloud',
+    title: '3. Launch the cloud sandbox from the published lab image',
+    body: 'Pass --cloud to run inside Docker’s remote microVM environment using the published hybridcloudworks/hcw-lab:latest template image.',
+    commands: Object.freeze([
+      Object.freeze({
+        shell: 'PowerShell',
+        command: `sbx run --cloud claude --name ${SANDBOX_NAME} -t ${CLOUD_TEMPLATE_IMAGE}`,
+      }),
+      Object.freeze({
+        shell: 'bash',
+        command: `sbx run --cloud claude --name ${SANDBOX_NAME} -t ${CLOUD_TEMPLATE_IMAGE}`,
+      }),
+    ]),
+  }),
+  Object.freeze({
+    id: 'clone-validate',
+    title: '4. Clone the repository and validate the Terraform configuration inside the sandbox',
+    body: 'Because a cloud sandbox does not mount a local host folder, clone the repository inside the remote Linux environment and run offline Terraform validation.',
+    commands: Object.freeze([
+      Object.freeze({
+        shell: 'bash',
+        command:
+          'git clone https://github.com/saulpatinojr/HCW-HybridCloudWorks.git && cd HCW-HybridCloudWorks/lab-image/smoke/providers-only && terraform init -backend=false && terraform validate',
+      }),
+    ]),
+  }),
+  Object.freeze({
+    id: 'exec-ports',
+    title: '5. Run one-off commands and inspect forwarded ports from your workstation',
+    body: 'Use sbx exec to run non-interactive verification checks inside the running cloud sandbox and sbx ports to inspect exposed ports.',
+    commands: Object.freeze([
+      Object.freeze({
+        shell: 'PowerShell',
+        command: `sbx exec ${SANDBOX_NAME} -- terraform -version && sbx ports ${SANDBOX_NAME}`,
+      }),
+      Object.freeze({
+        shell: 'bash',
+        command: `sbx exec ${SANDBOX_NAME} -- terraform -version && sbx ports ${SANDBOX_NAME}`,
+      }),
+    ]),
+  }),
+  Object.freeze({
+    id: 'expiry-rm',
+    title: '6. Remove the sandbox when finished (one-hour default idle expiry)',
+    body: 'Cloud sandboxes automatically pause or expire after one hour of inactivity by default. Remove the named sandbox explicitly when your session is complete.',
+    commands: Object.freeze([
+      Object.freeze({ shell: 'PowerShell', command: `sbx rm ${SANDBOX_NAME}` }),
+      Object.freeze({ shell: 'bash', command: `sbx rm ${SANDBOX_NAME}` }),
+    ]),
+  }),
+  Object.freeze({
+    id: 'cost-subscription',
+    title: '7. Subscription and billing boundary',
+    body: 'Local sandboxes (sbx run without --cloud) are free on your workstation. Cloud sandboxes (sbx run --cloud) require a Docker Agentic Platform subscription and bill your own Docker account directly on a pay-as-you-go basis.',
+    commands: Object.freeze([]),
+  }),
+]);
+
+export const SANDBOX_LANDING_FRAME = Object.freeze({
+  promise:
+    'Run a coding agent inside an isolated Docker microVM—either free on your workstation with a mounted landing-zone folder or remotely with sbx run --cloud and the published hybridcloudworks/hcw-lab:latest image—so it can inspect and validate Terraform without touching host credentials.',
+  topology: Object.freeze({
+    caption: 'Docker Sandbox Agentic Flow — Workstation & Cloud MicroVM Isolation',
+    surrounding: Object.freeze([
+      'sbx secret store',
+      'hybridcloudworks/hcw-lab:latest',
+      'AGENTS.md guardrails',
+    ]),
+    stages: Object.freeze([
+      Object.freeze({
+        id: 'workstation',
+        title: 'Workstation CLI (sbx)',
+        subtitle: 'sbx login & sbx secret set',
+        boundary: 'Host CLI',
+        guardrail: 'Key stored out-of-band',
+      }),
+      Object.freeze({
+        id: 'local-microvm',
+        title: 'Local MicroVM Sandbox',
+        subtitle: 'sbx run --name hcw-lz',
+        boundary: 'Local Hypervisor',
+        guardrail: 'Single folder mounted',
+      }),
+      Object.freeze({
+        id: 'cloud-microvm',
+        title: 'Cloud MicroVM (--cloud)',
+        subtitle: 'sbx run --cloud claude',
+        boundary: 'Docker Cloud',
+        guardrail: 'No host mount; 1h expiry',
+      }),
+      Object.freeze({
+        id: 'template-image',
+        title: 'Lab Template Image',
+        subtitle: 'hybridcloudworks/hcw-lab:latest',
+        boundary: 'Container Layer',
+        guardrail: 'Pinned Terraform + Azure CLI',
+      }),
+      Object.freeze({
+        id: 'validate',
+        title: 'Offline Terraform Check',
+        subtitle: 'terraform init -backend=false && validate',
+        boundary: 'AGENTS.md Rule',
+        guardrail: 'Validate only; never apply',
+      }),
+    ]),
+  }),
+  howItWorks: Object.freeze([
+    'Install Docker Desktop (with the sbx CLI) and store your model key via sbx secret set anthropic.',
+    'For local runs, unzip a Landing Zone Builder bundle and run sbx run --name hcw-lz --template hcw-lz-sandbox:v1 claude . so only that directory is mounted inside the microVM.',
+    'For cloud runs, authenticate with sbx login and run sbx run --cloud claude --name hcw-lz -t hybridcloudworks/hcw-lab:latest, then clone and validate inside the remote environment.',
+  ]),
+  keyServices: Object.freeze([
+    Object.freeze({
+      name: 'Docker Sandboxes (sbx)',
+      role: 'MicroVM isolation for coding agents locally or in Docker Cloud',
+    }),
+    Object.freeze({
+      name: 'hybridcloudworks/hcw-lab:latest',
+      role: 'Published container image bundling Terraform, Ansible, and cloud CLIs',
+    }),
+    Object.freeze({
+      name: 'AGENTS.md Guardrails',
+      role: 'Instructs the agent to explain, format-check, and validate without planning or applying',
+    }),
+  ]),
+  practices: Object.freeze([
+    'Store model provider keys with sbx secret set (-g for cloud) rather than passing environment variables on the command line or committing .env files.',
+    'Keep validation offline with terraform init -backend=false and terraform validate so no cloud credentials enter the sandbox.',
+    'Remove cloud sandboxes with sbx rm hcw-lz as soon as you finish to avoid idle consumption prior to the one-hour expiry.',
+  ]),
+  outcome:
+    'A reproducible local or cloud microVM workflow that lets an agent explain and validate Terraform landing zones with zero access to your host filesystem or cloud subscriptions.',
+});
+
+export function CloudSandboxSection() {
+  return (
+    <div className="flex flex-col gap-5" data-testid="cloud-sandbox-section">
+      <p className={`text-sm ${MUTED} max-w-3xl`}>
+        When you want to run the same workflow without local microVM virtualization, pass{' '}
+        <code className="font-mono text-xs">--cloud</code> to run inside Docker’s remote Agentic
+        Platform using the published <code className="font-mono text-xs">{CLOUD_TEMPLATE_IMAGE}</code>{' '}
+        image. Because cloud sandboxes cannot mount a folder from your workstation, you clone the
+        repository inside the remote sandbox and validate there.
+      </p>
+
+      <ol className="flex flex-col gap-5 max-w-3xl">
+        {CLOUD_SANDBOX_STEPS.map((step) => (
+          <li
+            key={step.id}
+            data-testid="cloud-sandbox-step"
+            className="rounded-xl border border-slate-800/80 bg-slate-900/40 p-4 space-y-3"
+          >
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{step.title}</h3>
+            <p className={`text-sm ${MUTED}`}>{step.body}</p>
+            {step.commands.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {step.commands.map((entry) => (
+                  <CommandLine
+                    key={`${step.id}-${entry.shell}`}
+                    shell={entry.shell}
+                    command={entry.command}
+                  />
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+

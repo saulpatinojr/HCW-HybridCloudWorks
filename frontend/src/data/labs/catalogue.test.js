@@ -67,9 +67,11 @@ function templateLabIds() {
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
 
 describe('lab catalogue', () => {
-  it('has the three first labs', () => {
+  it('has the five labs', () => {
     expect(labs.map((lab) => lab.id)).toEqual([
       'landing-zone-builder-output',
+      'wsl-containers-walkthrough',
+      'defender-wsl-plugin-walkthrough',
       'terraform-validate-walkthrough',
       'ansible-syntax-check-walkthrough',
     ]);
@@ -234,7 +236,11 @@ describe('the lists the pages derive', () => {
       'landing-zone-builder-output',
       'terraform-validate-walkthrough',
     ]);
-    expect(labsForProvider('azure').map((lab) => lab.id)).toEqual(['landing-zone-builder-output']);
+    expect(labsForProvider('azure').map((lab) => lab.id)).toEqual([
+      'landing-zone-builder-output',
+      'wsl-containers-walkthrough',
+      'defender-wsl-plugin-walkthrough',
+    ]);
     expect(labsForProvider('ansible').map((lab) => lab.id)).toEqual([
       'ansible-syntax-check-walkthrough',
     ]);
@@ -243,7 +249,14 @@ describe('the lists the pages derive', () => {
     expect(
       labsByProvider().map((group) => [group.provider, group.labs.map((lab) => lab.id)])
     ).toEqual([
-      ['azure', ['landing-zone-builder-output']],
+      [
+        'azure',
+        [
+          'landing-zone-builder-output',
+          'wsl-containers-walkthrough',
+          'defender-wsl-plugin-walkthrough',
+        ],
+      ],
       ['terraform', ['terraform-validate-walkthrough']],
       ['ansible', ['ansible-syntax-check-walkthrough']],
     ]);

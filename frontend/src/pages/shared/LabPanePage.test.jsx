@@ -633,4 +633,35 @@ describe('LabPanePage, the lab itself (ADR 0033 §4)', () => {
       expect(screen.getByTestId('workspace-status')).toHaveAttribute('data-status', 'degraded')
     );
   });
+
+  it('frames the WSL2 Container walkthrough (#1082) with MiniLandingFrame and clean visitor copy', async () => {
+    const { container } = renderPane('wsl-containers-walkthrough', 'azure');
+    await screen.findByTestId('lab-sign-in');
+    expect(screen.getByTestId('mini-landing-frame')).toBeInTheDocument();
+    expect(screen.queryByTestId('defender-wsl-simulator')).toBeNull();
+    expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
+  });
+
+  it('frames the Defender for Endpoint WSL2 walkthrough (#1083) with MiniLandingFrame and the interactive simulator', async () => {
+    const { container } = renderPane('defender-wsl-plugin-walkthrough', 'azure');
+    await screen.findByTestId('lab-sign-in');
+    expect(screen.getByTestId('mini-landing-frame')).toBeInTheDocument();
+    const sim = screen.getByTestId('defender-wsl-simulator');
+    expect(sim).toHaveTextContent('1.0.2604.1');
+
+    fireEvent.click(screen.getByTestId('defender-sim-tab-inventory'));
+    expect(screen.getByTestId('defender-device-LAB-HOST-wslc')).toHaveTextContent('WSL2');
+
+    fireEvent.click(screen.getByTestId('defender-sim-tab-edr-test'));
+    fireEvent.click(screen.getByTestId('trigger-edr-test-btn'));
+    expect(screen.getByTestId('edr-alert-banner')).toHaveTextContent(
+      'Linux EDR DIY Test Alert (MDE WSL2 Plug-in)'
+    );
+
+    fireEvent.click(screen.getByTestId('defender-sim-tab-hunting'));
+    fireEvent.click(screen.getByTestId('kql-preset-host-join'));
+    expect(screen.getByTestId('kql-query-display')).toHaveTextContent('HostDeviceId');
+    expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
+  });
 });
+
