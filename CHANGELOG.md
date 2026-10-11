@@ -19,6 +19,40 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Alerting: one script runs each PLAT-4 fire test and proves the alert
+  fired from Azure Monitor, not the inbox (#964).** "Making each one fire
+  once" in `docs/runbooks/alerting-and-support.md` was ten long manual blocks
+  whose proof was a mail arriving. `scripts/alerts/Invoke-AlertFireTest.ps1
+  -Test <name>` runs one block as written and puts it back.
+  - Same stop conditions, refusing and changing nothing when one fails; the
+    same record files in the home folder (`plat4-rbac-test.json`,
+    `plat4-roledef-test.json`, `plat4-poison-test.json`, `plat4-swa-test.json`,
+    `plat4-timer-test.json`), written before the change they describe, with
+    `Out-File -NoClobber` where the runbook makes the record the lock. Every
+    change is put back in a `finally`, so a failure or Ctrl+C part-way still
+    restores, and a record is removed only once the runbook's own read shows
+    nothing left; otherwise it is kept and the run exits 3. `-Recover` does a
+    test's recovery from its record; `-WhatIf` runs the reads and prints every
+    change as the one line it would run.
+  - The proof is Alerts - Get All (`Microsoft.AlertsManagement/alerts`,
+    api-version 2019-03-01, the version Microsoft's reference documents),
+    filtered to the rule's id over the last hour and read once a minute.
+    `PASS <rule> fired at <time>` needs an alert that started after the test
+    did; `alert-timer-overdue`'s must also name `healthPulse` in its context.
+    Anything else is `FAIL <rule>: no alert within <n> minutes` and exit 2.
+    The run ends with the Fire record rows to paste.
+  - Checks the runbook leaves implicit, each a read: az's default
+    subscription is `sub-app-site-prod-cus`; every rule exists before
+    anything changes; `swa-bandwidth` saves nothing unless the threshold reads
+    2666666666; `lab-agent-offline` refuses unless
+    `FEATURE_FLAG_CHECK_AGENT_HEALTH` is `true`.
+  - `scripts/alerts/Invoke-AlertFireTest.Tests.ps1` (Pester 5) tests the
+    parser, every stop condition, the lock, `-WhatIf`, and each put-back when
+    the action fails, against a mocked az, and runs the whole script against
+    a stand-in az that refuses every write. Repository Policy's Pester step
+    now runs `scripts/alerts`. The runbook's section opens with a table of
+    the ten run lines and the seven recovery lines.
+
 - **The migration add-on is turned on for the lab host (ADR 0035, #1064).**
   The `migration` row in `lab-host/ansible/group_vars/all.yml` now carries:
   - `image_digest` set to v0.3.0's image index, `sha256:175622db…`. Tag
