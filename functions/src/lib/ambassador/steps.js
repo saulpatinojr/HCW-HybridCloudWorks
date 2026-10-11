@@ -80,6 +80,11 @@ function seededDoc(ctx, program, order) {
     seeded: true,
     reminders: { daysBeforeDeadline: 14, daysBeforeRenewal: 30 },
     customFields: [],
+    // A seed with a superseded history starts at its current revision, so
+    // nothing of it is ever "corrected".
+    ...(SUPERSEDED_SEED_VALUES[program.id]
+      ? { seedRevision: SUPERSEDED_SEED_VALUES[program.id].revision }
+      : {}),
     createdAt: stamp,
     updatedAt: stamp,
   };
@@ -202,13 +207,18 @@ export function seedBackfillFor(stored, seed) {
   for (const [field, wanted] of BACKFILL_FIELDS) {
     if (wanted(stored, seed)) patch[field] = seed[field];
   }
-  // A field still holding a value an earlier seed wrote was never edited, so
-  // the current seed's value replaces it (programs.js SUPERSEDED_SEED_VALUES).
-  const superseded = SUPERSEDED_SEED_VALUES[seed.id] ?? {};
-  for (const [field, old] of Object.entries(superseded)) {
-    if (field in seed && field in stored && canonical(stored[field]) === canonical(old)) {
-      patch[field] = seed[field];
+  // Once per revision (programs.js SUPERSEDED_SEED_VALUES): a field still
+  // holding an earlier seed's value was never edited, so the current seed's
+  // value replaces it, and the stamp keeps a later deliberate return to the
+  // old value from being corrected again.
+  const superseded = SUPERSEDED_SEED_VALUES[seed.id];
+  if (superseded && (Number(stored.seedRevision) || 1) < superseded.revision) {
+    for (const [field, old] of Object.entries(superseded.fields)) {
+      if (field in seed && field in stored && canonical(stored[field]) === canonical(old)) {
+        patch[field] = seed[field];
+      }
     }
+    patch.seedRevision = superseded.revision;
   }
   return Object.keys(patch).length > 0 ? patch : null;
 }

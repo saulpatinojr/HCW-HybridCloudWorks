@@ -224,6 +224,11 @@ function UpkeepSection({ program, progress }) {
   );
 }
 
+/**
+ * One program's details dialog: its rules, requirements, upkeep, the programs
+ * additional to it, and the readiness from the evidence on file, with Start
+ * application. `evidence` is the hub's evidence once it has landed, or null.
+ */
 export function ProgramDetails({
   program,
   programs,
@@ -327,6 +332,7 @@ export function ProgramDetails({
   );
 }
 
+/** The Programs tab: the catalogue as cards, each with its details and Start application. */
 export default function ProgramsTab({ hub, nav }) {
   const { programs, applications, evidence } = hub;
   // Upkeep counts wait for the evidence read: a count taken before it lands

@@ -468,10 +468,13 @@ const GITKRAKEN_FOCUS = [
 ];
 
 /**
- * Seed values a later seed replaced, by program id and field. A stored seed
- * whose field still equals one of these exactly never had that field edited,
- * so the backfill (steps.js) gives it the current seed's value. A field the
- * owner changed equals none of them and is left alone.
+ * Seed values a later seed replaced, by program id: the seed's `revision`
+ * and the replaced `fields`. A stored seed below that revision whose field
+ * still equals the replaced value never had that field edited, so the
+ * backfill (steps.js) gives it the current seed's value, once, and stamps
+ * `seedRevision`. A field the owner changed is left alone, and after the
+ * stamp so is one the owner later sets back to the old value on purpose
+ * (CodeRabbit on #1077). A program seeded fresh is stamped at creation.
  *
  * GitKraken Ambassador's first seed (#873) guessed its rules ("As published
  * 2026; edit to match"). The program's quarterly check-in of 2026-10-08 gave
@@ -479,33 +482,36 @@ const GITKRAKEN_FOCUS = [
  */
 export const SUPERSEDED_SEED_VALUES = Object.freeze({
   'program-gitkraken-ambassador': Object.freeze({
-    description:
-      'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Applications through the form on the programme page. As published 2026; edit to match.',
-    criteria: ['Content', 'Speaking', 'Supporting users'],
-    renewalCadence: 'annual',
-    expirationRule: 'Reviewed annually. As published 2026; edit to match.',
-    requirements: [
-      requirement(
-        'content',
-        'Git and tooling content',
-        `Articles, videos or posts on Git and developer tooling. ${EDIT_NOTE}`,
-        { evidenceTypes: ['content'], minCount: 3, weight: 3 }
-      ),
-      requirement('talks', 'Speaking', `Sessions on Git workflows and tooling. ${EDIT_NOTE}`, {
-        evidenceTypes: ['speaking'],
-        minCount: 1,
-        weight: 2,
-      }),
-      requirement('tutorials', 'Tutorials and labs', `Hands-on tutorials and labs. ${EDIT_NOTE}`, {
-        evidenceTypes: ['labs', 'content'],
-        minCount: 1,
-        weight: 1,
-      }),
-    ],
-    recommendedActivities: [
-      'Publish Git workflow tutorials',
-      'Answer questions in the GitKraken community',
-    ],
+    revision: 2,
+    fields: Object.freeze({
+      description:
+        'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Applications through the form on the programme page. As published 2026; edit to match.',
+      criteria: ['Content', 'Speaking', 'Supporting users'],
+      renewalCadence: 'annual',
+      expirationRule: 'Reviewed annually. As published 2026; edit to match.',
+      requirements: [
+        requirement(
+          'content',
+          'Git and tooling content',
+          `Articles, videos or posts on Git and developer tooling. ${EDIT_NOTE}`,
+          { evidenceTypes: ['content'], minCount: 3, weight: 3 }
+        ),
+        requirement('talks', 'Speaking', `Sessions on Git workflows and tooling. ${EDIT_NOTE}`, {
+          evidenceTypes: ['speaking'],
+          minCount: 1,
+          weight: 2,
+        }),
+        requirement('tutorials', 'Tutorials and labs', `Hands-on tutorials and labs. ${EDIT_NOTE}`, {
+          evidenceTypes: ['labs', 'content'],
+          minCount: 1,
+          weight: 1,
+        }),
+      ],
+      recommendedActivities: [
+        'Publish Git workflow tutorials',
+        'Answer questions in the GitKraken community',
+      ],
+    }),
   }),
 });
 

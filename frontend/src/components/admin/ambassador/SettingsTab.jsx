@@ -178,6 +178,11 @@ function CustomFieldsEditor({ rows, onChange }) {
   );
 }
 
+/**
+ * The add/edit dialog for one program: every catalogue field, the membership,
+ * the upkeep rule and the contribution tracker. Saves through `onSave` and
+ * closes when it answers true.
+ */
 export function ProgramEditor({ program, programs = [], onClose, onSave, saving }) {
   const [form, setForm] = useState(() => programForm(program));
   // A parent is a top-level program other than this one: one level only,

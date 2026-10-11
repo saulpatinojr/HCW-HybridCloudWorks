@@ -423,10 +423,17 @@ describe('programs', () => {
       order: 3,
       name: 'My community',
     };
-    // A seeded program whose scoring was never stored.
+    // A seeded program whose scoring was never stored. Each is stamped at its
+    // seed's current revision, as seededDoc stamps a fresh one.
     const otherSeeds = DEFAULT_PROGRAMS.filter(
       (p) => ![mvpSeed.id, mctSeed.id, management.id].includes(p.id)
-    ).map((p, i) => ({ ...p, ...base, seeded: true, order: 10 + i }));
+    ).map((p, i) => ({
+      ...p,
+      ...base,
+      seeded: true,
+      order: 10 + i,
+      ...(SUPERSEDED_SEED_VALUES[p.id] ? { seedRevision: SUPERSEDED_SEED_VALUES[p.id].revision } : {}),
+    }));
     const store = memStore({ ambassador: [storedMvp, storedMct, ownManagement, ...otherSeeds] });
     const log = { error: vi.fn(), info: vi.fn() };
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed, log });
@@ -1253,7 +1260,7 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
 describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)', () => {
   const GITKRAKEN = 'program-gitkraken-ambassador';
   const seed = DEFAULT_PROGRAMS.find((p) => p.id === GITKRAKEN);
-  const old = SUPERSEDED_SEED_VALUES[GITKRAKEN];
+  const { revision, fields: old } = SUPERSEDED_SEED_VALUES[GITKRAKEN];
   /** A GitKraken row as #873 stored it: the first seed, before upkeep existed. */
   const storedFirstSeed = () => {
     const row = { ...seed, ...old, seeded: true, membershipStatus: 'active' };
@@ -1301,7 +1308,8 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
   it('brings a never-edited first GitKraken seed up to date, upkeep included, in one patch Cosmos takes', () => {
     const patch = seedBackfillFor(storedFirstSeed(), seed);
     const fields = Object.keys(old);
-    expect(Object.keys(patch).sort()).toEqual([...fields, 'upkeep'].sort());
+    expect(Object.keys(patch).sort()).toEqual([...fields, 'seedRevision', 'upkeep'].sort());
+    expect(patch.seedRevision).toBe(revision);
     for (const field of fields) expect(patch[field]).toEqual(seed[field]);
     expect(patch.upkeep).toEqual(seed.upkeep);
     // The writer adds updatedAt to the patch; Cosmos takes at most this many operations.
@@ -1323,8 +1331,30 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
   });
 
   it('leaves a current GitKraken seed alone, and never refills a cleared upkeep', () => {
-    expect(seedBackfillFor({ ...seed, seeded: true }, seed)).toBeNull();
-    expect(seedBackfillFor({ ...seed, seeded: true, upkeep: null }, seed)).toBeNull();
+    const current = { ...seed, seeded: true, seedRevision: revision };
+    expect(seedBackfillFor(current, seed)).toBeNull();
+    expect(seedBackfillFor({ ...current, upkeep: null }, seed)).toBeNull();
+  });
+
+  // CodeRabbit on #1077: the correction runs once. An owner who later sets a
+  // field back to the first seed's value meant it, and keeps it.
+  it('corrects once: after the stamp, a deliberate return to an old value stays', () => {
+    const corrected = { ...storedFirstSeed(), ...seedBackfillFor(storedFirstSeed(), seed) };
+    expect(corrected.seedRevision).toBe(revision);
+    const restored = { ...corrected, renewalCadence: old.renewalCadence };
+    expect(seedBackfillFor(restored, seed)).toBeNull();
+    // A row whose every superseded field was edited still takes the stamp, once.
+    const edited = { ...storedFirstSeed(), upkeep: seed.upkeep };
+    for (const field of Object.keys(old)) edited[field] = `mine: ${field}`;
+    expect(seedBackfillFor(edited, seed)).toEqual({ seedRevision: revision });
+  });
+
+  it('stamps a freshly seeded GitKraken at the current revision', async () => {
+    const store = memStore();
+    const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
+    await h.listPrograms(makeRequest(), context);
+    expect(store.data.get('ambassador').get(GITKRAKEN).seedRevision).toBe(revision);
+    expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBeUndefined();
   });
 
   it('cleans upkeep and the tracker link, and refuses what is not one', () => {
