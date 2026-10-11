@@ -8,12 +8,12 @@ site frames today.
 | Catalogue id | `migration` |
 | Site route | `/tools/migration` (Tools menu: **Migration Hub**) |
 | AddOn origin | `https://migration.lab.hybridcloudworks.com` (`panePath` `/`, `healthPath` `/api/health`) |
-| Image | `docker.io/hybridcloudworks/hcw-addon-migration`, tag `0.3.0`, pinned by digest in `lab-host/ansible/group_vars/all.yml` [VERIFY]: the digest is written in from the `v0.3.0` publish |
+| Image | `docker.io/hybridcloudworks/hcw-addon-migration`, tag `0.3.0`, pinned by digest in `lab-host/ansible/group_vars/all.yml`: `sha256:175622db4d7029902b68e8e51f8132f78e5247e219944031f00dc2fdc814aa83`, the `v0.3.0` image index, attestation verified (2026-10-11) |
 | Lab host port | `127.0.0.1:18081` → container `8080`, container `hcw-addon-migration` |
 | Row status | `available`; capabilities granted to the pane `navigate` and `downloads` (ADR 0035 decision 9, confirmed by the owner on 2026-10-10) |
 | Status proxy | `GET /api/public/addons/migration/status`, reading `ADDON_MIGRATION_URL` |
 | Health `edition` | `demo` (an upstream constant; the site treats it as opaque) |
-| Vault key | `vault_addon_migration_turnstile_secret` (the AddOn's own human-verification widget, separate from the site's) [REVIEW REQUIRED]: the owner creates the widget |
+| Vault key | `vault_addon_migration_turnstile_secret` (the AddOn's own human-verification widget `hcw-addon-migration`, separate from the site's, created by the owner on 2026-10-11) |
 | Pull requests | App: <https://github.com/saulpatinojr/HCW-AzMigrateOrchestrator_App/pull/15> (the `REFACTOR_APP.md` refactoring). AddOn: <https://github.com/saulpatinojr/HCW-AzMigrateOrchestrator_Addon/pull/4> (the pane app, the standard health shape, configurable `frame-ancestors`, rate limiting, `v0.3.0`) |
 
 ## What the App keeps
@@ -41,7 +41,7 @@ concurrent assessments at two, and answers the standard health envelope with
 From the AddOn's `docs/deployment/lab-host.md`, as the `migration` row's `env`
 in `group_vars/all.yml`: `AMO_FRAME_ANCESTORS` and `AMO_SITE_ORIGINS` derived
 from `caddy_frame_ancestors`, `AMO_TRUST_PROXY=1`, `AMO_TURNSTILE_SITE_KEY`
-(public [VERIFY]: the test key until the widget exists), `AMO_RATE_LIMIT_POSTS=10`,
+(public: the `hcw-addon-migration` widget's site key), `AMO_RATE_LIMIT_POSTS=10`,
 `AMO_RATE_LIMIT_WINDOW_MINUTES=10`, `AMO_MAX_CONCURRENT=2`,
 `AMO_ASSESSMENT_TTL_MINUTES=120`, `AMO_PUBLIC_BASE_URL`, `AMO_ALLOWED_ORIGINS`
 empty, `AMO_TELEMETRY=0`, `AMO_WORKSPACE_PROVIDER=disabled`; `TURNSTILE_SECRET`

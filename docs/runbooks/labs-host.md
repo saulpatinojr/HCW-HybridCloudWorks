@@ -1601,7 +1601,8 @@ The first is `migration`, the Azure migration assessment. Three owner steps
 turn one on, once; a release afterwards is a digest bump ("Bumping a pin" in
 `lab-host/README.md`) and a run.
 
-**1. Create the add-on's human-verification widget** [REVIEW REQUIRED]: one
+**1. Create the add-on's human-verification widget** (done for `migration`
+on 2026-10-11): one
 widget per add-on, separate from the site's own, because the widget is bound
 to the add-on's hostname and the add-on verifies the token with its own
 secret. The exact page is
@@ -1610,11 +1611,11 @@ the widget name `hcw-addon-migration`, the hostname
 `migration.lab.hybridcloudworks.com`, Managed mode and no pre-clearance. The
 widget's **Site Key** is public: put it in `addons[].env.AMO_TURNSTILE_SITE_KEY`
 of the `migration` row in `lab-host/ansible/group_vars/all.yml` in a pull
-request [VERIFY]: the row ships with the provider's documented test key
-`1x00000000000000000000AA` until then, and the `addons` role refuses to
-deploy a row whose environment still carries a test key, because a widget's
-real secret rejects the token a test key produces and no upload would ever
-verify. Then copy
+request. A new add-on's row starts with the provider's documented test key
+`1x00000000000000000000AA`, and the `addons` role refuses to deploy a row
+whose environment still carries a test key, because a widget's real secret
+rejects the token a test key produces and no upload would ever verify. Then
+copy
 the **Secret Key** and, with it on the clipboard, set the vault key.
 PowerShell:
 
@@ -1636,8 +1637,10 @@ docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:
 ```
 
 The `Digest:` line is the value for `image_digest` of the `migration` row in
-`lab-host/ansible/group_vars/all.yml`. [VERIFY]: the row ships with
-`image_digest: ""`, under which the role deploys nothing for it and says so.
+`lab-host/ansible/group_vars/all.yml`: for `v0.3.0`,
+`sha256:175622db4d7029902b68e8e51f8132f78e5247e219944031f00dc2fdc814aa83`,
+written in on 2026-10-11. A row whose digest is empty deploys nothing and
+says so.
 Merge, then run the playbook as after any merge. PowerShell:
 
 ```powershell
