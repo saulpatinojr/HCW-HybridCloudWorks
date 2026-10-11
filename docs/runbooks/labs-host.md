@@ -1601,8 +1601,9 @@ The first is `migration`, the Azure migration assessment. Three owner steps
 turn one on, once; a release afterwards is a digest bump ("Bumping a pin" in
 `lab-host/README.md`) and a run.
 
-**1. Create the add-on's human-verification widget** (done for `migration`
-on 2026-10-11): one
+**1. Create the add-on's human-verification widget** (the `migration`
+widget was created on 2026-10-11; its secret key goes into the vault with
+the line below before the first bootstrap that deploys the row): one
 widget per add-on, separate from the site's own, because the widget is bound
 to the add-on's hostname and the add-on verifies the token with its own
 secret. The exact page is
