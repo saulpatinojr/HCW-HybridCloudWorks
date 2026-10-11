@@ -8,7 +8,7 @@ site frames today.
 | Catalogue id | `migration` |
 | Site route | `/tools/migration` (Tools menu: **Migration Hub**) |
 | AddOn origin | `https://migration.lab.hybridcloudworks.com` (`panePath` `/`, `healthPath` `/api/health`) |
-| Image | `docker.io/hybridcloudworks/hcw-addon-migration`, tag `0.3.0`, pinned by digest in `lab-host/ansible/group_vars/all.yml`: `sha256:175622db4d7029902b68e8e51f8132f78e5247e219944031f00dc2fdc814aa83`, the `v0.3.0` image index, attestation verified (2026-10-11) |
+| Image | `docker.io/hybridcloudworks/hcw-addon-migration`, tag `0.3.1`, pinned by digest in `lab-host/ansible/group_vars/all.yml`: `sha256:88b8d08892860f753c02f405d1b3b99146aed5e460b04a1c426670d9e5e5dd61`, the `v0.3.1` image index, attestation verified (2026-10-11) |
 | Lab host port | `127.0.0.1:18081` → container `8080`, container `hcw-addon-migration` |
 | Row status | `available`; capabilities granted to the pane `navigate` and `downloads` (ADR 0035 decision 9, confirmed by the owner on 2026-10-10) |
 | Status proxy | `GET /api/public/addons/migration/status`, reading `ADDON_MIGRATION_URL` |

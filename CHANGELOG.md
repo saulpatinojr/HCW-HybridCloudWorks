@@ -53,6 +53,15 @@ This project has not cut a tagged release; entries are grouped under
     now runs `scripts/alerts`. The runbook's section opens with a table of
     the ten run lines and the seven recovery lines.
 
+- **The migration add-on moves to v0.3.1.** The `migration` row in
+  `lab-host/ansible/group_vars/all.yml` pins tag `0.3.1` by its image index,
+  `sha256:88b8d088…`, published by the add-on's `v0.3.1` release. The release
+  adopts the upstream explorer 0.3.1 from the first live run with a portal
+  export: the questionnaire keeps focus while typing, the destination region
+  is a select over the Azure regions, and the portal export's RESOURCE LINK
+  column yields resource ids, so no re-export is asked for. Runbook and the
+  pair's architecture page carry the new tag and digest.
+
 - **The migration add-on is turned on for the lab host (ADR 0035, #1064).**
   The `migration` row in `lab-host/ansible/group_vars/all.yml` now carries:
   - `image_digest` set to v0.3.0's image index, `sha256:175622db…`. Tag
