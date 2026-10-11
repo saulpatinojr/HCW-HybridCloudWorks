@@ -218,35 +218,6 @@ export function overdueQuery(rows) {
   return `${OVERDUE_QUERY_HEAD}${lines.join(',\n')}${OVERDUE_QUERY_TAIL}`;
 }
 
-/** `local.timer_schedules` as PLAT-4 (#1052) created it, before #1009's labCanary. */
-const PLAT4_TIMER_SCHEDULES = [
-  ['buildWeeklyNewsletter', '7d', '2026-01-05 13:00'],
-  ['checkAgentHealth', '5m', '2026-01-01 00:00'],
-  ['checkLiveLinks', '7d', '2026-01-05 06:00'],
-  ['cleanupRejectedContent', '1d', '2026-01-01 04:00'],
-  ['cleanupSoftDeletedContent', '4h', '2026-01-01 00:00'],
-  ['cleanupTempStorage', '1d', '2026-01-01 00:00'],
-  ['cleanupUnusedCertImages', '1d', '2026-01-01 05:00'],
-  ['cosmosExportScheduler', '1d', '2026-01-01 03:00'],
-  ['fetchBlogListings', '6h', '2026-01-01 00:15'],
-  ['fetchPodcastFeeds', '2h', '2026-01-01 00:30'],
-  ['forgeScheduled', '1d', '2026-01-01 03:30'],
-  ['generateReviewerDigest', '1d', '2026-01-01 07:00'],
-  ['healthPulse', '5m', '2026-01-01 00:02'],
-  ['labsWeeklyRollup', '1d', '2026-01-01 23:55'],
-  ['monitorPublishingPipeline', '6h', '2026-01-01 00:00'],
-  ['platformJobSweeper', '15m', '2026-01-01 00:00'],
-  ['probeAiProviders', '7d', '2026-01-05 06:15'],
-  ['publishScheduledContent', '15m', '2026-01-01 00:00'],
-  ['reVerifyCertifications', '7d', '2026-01-04 00:00'],
-  ['refreshPlaudToken', '12h', '2026-01-01 00:00'],
-  ['refreshToolServiceCache', '1d', '2026-01-01 02:00'],
-  ['scrapeSkillsHubRss', '7d', '2026-01-02 09:00'],
-  ['sendReminders', '1d', '2026-01-01 13:00'],
-  ['syncRssFeeds', '2h', '2026-01-01 00:00'],
-  ['syncSocialCalendarScheduled', '5m', '2026-01-01 00:00'],
-];
-
 /**
  * Intended one-off changes, each declared by the pull request that makes it
  * (#719).
@@ -270,127 +241,25 @@ export const DECLARED = [
     after: 'true',
     reason: '#701: PROBE_AI_PROVIDERS added to enabled_timers, arming the weekly probe',
   },
-  // #1009: the lab canary's timer. Its flag arrives disarmed ('false'), and
-  // alert-timer-overdue starts watching it. When PLAT-4's create has not
-  // applied yet, that rule is created with the row already in it and the
-  // query update below is a NOTE; once it has, the update is this exact one.
-  {
-    address: 'azurerm_function_app_flex_consumption.hcw',
-    path: 'app_settings.FEATURE_FLAG_LAB_CANARY',
-    before: undefined,
-    after: 'false',
-    reason: '#1009: the lab canary timer, disarmed until LAB_CANARY is added to enabled_timers',
-  },
-  // The owner's run that arms it, after the one above (docs/runbooks/labs-host.md,
-  // "Arming the canary").
+  // #1009: the owner's run that arms the hourly lab canary
+  // (docs/runbooks/labs-host.md, "Arming the canary"). Its flag arrived
+  // disarmed ('false') and alert-timer-overdue already watches labCanary.
+  //
+  // Applied by 2026-10-10 and deleted here, as the header asks:
+  // - the canary's disarmed flag and alert-timer-overdue's labCanary row (#1009);
+  // - the Telegram delivery rule;
+  // - every PLAT-4 rule (#964), the four role-change rules last, in
+  //   run-TdqSjHB524vu6N2T after #1058 split them by resource type;
+  // - #1043's ADDON_MIGRATION_URL;
+  // - the docs CNAME move.
+  // That run's plan, read against the state, showed each of them as "declared,
+  // not in this plan", and its apply then created the four role-change rules.
   {
     address: 'azurerm_function_app_flex_consumption.hcw',
     path: 'app_settings.FEATURE_FLAG_LAB_CANARY',
     before: 'false',
     after: 'true',
     reason: '#1009: LAB_CANARY added to enabled_timers, arming the hourly lab canary',
-  },
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue',
-    path: 'criteria[0].query',
-    before: overdueQuery(PLAT4_TIMER_SCHEDULES),
-    after: overdueQuery([...PLAT4_TIMER_SCHEDULES, ['labCanary', '1h', '2026-01-01 00:20']]),
-    reason: '#1009: alert-timer-overdue watches labCanary too, one row more in its datatable',
-  },
-  // 2026-10-06: a refused Telegram delivery pages through the action group,
-  // after a blocked bot silenced every owner notification for a day.
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.telegram_delivery',
-    action: 'create',
-    reason: 'Telegram refused or failed a send; the owner hears by SMS and mail instead of nobody',
-  },
-  // PLAT-4 (#964): the alert conditions the estate assessment found nothing
-  // paging on. Eleven new rules, no other change: they read data already
-  // collected, so no diagnostic setting, grant or identity moves with them.
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue',
-    action: 'create',
-    reason: 'PLAT-4: a timer that was due has no successful run since, one alert per timer',
-  },
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.lab_agent_offline',
-    action: 'create',
-    reason: 'PLAT-4: a lab agent offline five minutes or more; pages by mail and SMS, not only Telegram',
-  },
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.jobs_poison',
-    action: 'create',
-    reason: 'PLAT-4: a message landed in platform-jobs-poison',
-  },
-  {
-    address: 'azurerm_monitor_metric_alert.swa_bandwidth',
-    action: 'create',
-    reason: 'PLAT-4: a day of Static Web App bandwidth on pace to use 80% of the Free plan month',
-  },
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.key_vault_errors',
-    action: 'create',
-    reason: 'PLAT-4: a Key Vault request answered 400 or above, past the routine 401 challenge and unseeded 404s',
-  },
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.key_vault_data_writes',
-    action: 'create',
-    reason: 'PLAT-4: a secret or key written through the data plane by anyone but the Function App',
-  },
-  {
-    address: 'azurerm_monitor_activity_log_alert.key_vault_config_writes',
-    action: 'create',
-    reason: 'PLAT-4: Resource Manager wrote to either vault (ACL, properties, ARM key or secret writes)',
-  },
-  {
-    address: 'azurerm_monitor_activity_log_alert.rbac_assignment_writes_app',
-    action: 'create',
-    reason: 'PLAT-4: a role assignment changed in the application subscription',
-  },
-  {
-    address: 'azurerm_monitor_activity_log_alert.rbac_definition_writes_app',
-    action: 'create',
-    reason: 'PLAT-4: a role definition changed in the application subscription',
-  },
-  {
-    address: 'azurerm_monitor_activity_log_alert.rbac_assignment_writes_mgmt',
-    action: 'create',
-    reason: 'PLAT-4: a role assignment changed in the Management subscription',
-  },
-  {
-    address: 'azurerm_monitor_activity_log_alert.rbac_definition_writes_mgmt',
-    action: 'create',
-    reason: 'PLAT-4: a role definition changed in the Management subscription',
-  },
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_vault_unwrap',
-    action: 'create',
-    reason: 'PLAT-4: the lab seal key wrapped or unwrapped from an address the host has not heartbeated from',
-  },
-  {
-    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_burst',
-    action: 'create',
-    reason: 'PLAT-4: failed SSH logins on the lab host at four times the day\'s quarter-hour average',
-  },
-  // #1029: the Perplexity key's reference goes; nothing read it.
-  // #1043 added the migration AddOn's address for its status proxy. A plain
-  // value, not a secret; #1043 did not declare it, so run-tsRi4e3Te4vxe5nX
-  // read UNEXPECTED. (#1029's Perplexity removal applied in
-  // run-uB4PpGgfDgZ9ZiWz and was deleted here, as the header asks.)
-  {
-    address: 'azurerm_function_app_flex_consumption.hcw',
-    path: 'app_settings.ADDON_MIGRATION_URL',
-    before: undefined,
-    after: 'https://migration.lab.hybridcloudworks.com',
-    reason: '#1043: the migration AddOn status proxy reads its address',
-  },
-  // The docs site's CNAME follows the repository to its owner's account.
-  {
-    address: 'cloudflare_dns_record.docs_pages',
-    path: 'content',
-    before: 'hybridcloudworks.github.io',
-    after: 'saulpatinojr.github.io',
-    reason: 'docs CNAME to the repository owner\'s Pages host after the 2026-10-07 move',
   },
 ];
 
