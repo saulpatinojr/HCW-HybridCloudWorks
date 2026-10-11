@@ -801,20 +801,34 @@ Describe 'The tests themselves' {
     }
 
     Context 'secrets stay out of the output' {
-        It 'lab-vault-unwrap sends the token and never prints it' {
+        # Write-Host is mocked into hostLines, so Get-HostText covers it; every
+        # other stream (output, error, warning, verbose, debug, information) is
+        # merged with *>&1 and checked as well, with verbose and debug turned
+        # on so a Write-Verbose or Write-Debug that carried a value would show.
+        It 'lab-vault-unwrap sends the token and never prints it on any stream' {
             Mock Wait-AlertFired { }
-            Invoke-AlertTestLabVaultUnwrap -Context (New-TestContext -Test 'lab-vault-unwrap')
+            $streams = Invoke-AlertTestLabVaultUnwrap -Context (New-TestContext -Test 'lab-vault-unwrap') -Verbose -Debug *>&1 | Out-String
             Should -Invoke Invoke-AlertVaultWrap -Times 1 -Exactly -ParameterFilter { $Token -eq $fakeSecret -and $Uri -eq 'https://kv-labhybrid-prod-cus-01.vault.azure.net/keys/vault-seal/wrapkey?api-version=7.4' }
+            $streams | Should -Not -Match $fakeSecret
             Get-HostText | Should -Not -Match $fakeSecret
             Get-HostText | Should -Match 'Refused with 403'
             Should -Invoke Wait-AlertFired -Times 1 -Exactly -ParameterFilter { ($Required -join ',') -eq 'alert-lab-vault-unwrap' -and ($Optional -join ',') -eq 'alert-kv-errors' }
         }
 
-        It 'timer-overdue and lab-agent-offline read the app settings and print none of their values' {
+        It 'timer-overdue and lab-agent-offline read the app settings and print none of their values on any stream' {
             Mock Wait-AlertFired { }
-            Invoke-AlertTestTimerOverdue -Context (New-TestContext -Test 'timer-overdue')
-            Invoke-AlertTestLabAgentOffline -Context (New-TestContext -Test 'lab-agent-offline')
+            $streams = & {
+                Invoke-AlertTestTimerOverdue -Context (New-TestContext -Test 'timer-overdue') -Verbose -Debug
+                Invoke-AlertTestLabAgentOffline -Context (New-TestContext -Test 'lab-agent-offline') -Verbose -Debug
+            } *>&1 | Out-String
+            $streams | Should -Not -Match $fakeSecret
             Get-HostText | Should -Not -Match $fakeSecret
+        }
+
+        It 'a value on a stream other than Write-Host would fail these checks' {
+            # Guards the guard: the merged capture does see a non-host stream.
+            $streams = & { Write-Warning "leak $fakeSecret"; Write-Verbose "leak $fakeSecret" -Verbose } *>&1 | Out-String
+            $streams | Should -Match $fakeSecret
         }
     }
 
