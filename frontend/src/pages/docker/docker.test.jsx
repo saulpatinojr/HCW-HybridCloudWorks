@@ -219,7 +219,7 @@ describe('the Docker sandboxes page', () => {
     expect(cloudSection).toHaveTextContent('sbx login');
     expect(cloudSection).toHaveTextContent('sbx --cloud secret set anthropic');
     expect(cloudSection).toHaveTextContent(
-      'sbx run --cloud claude --name hcw-lz --image-ref hybridcloudworks/hcw-lab:latest --cpus 2 --memory 4096'
+      'sbx run --cloud claude --name hcw-lz --image-ref hybridcloudworks/hcw-lab:latest --cpus 2 --memory 4g'
     );
     expect(cloudSection).toHaveTextContent('terraform init -backend=false && terraform validate');
     expect(cloudSection).toHaveTextContent('sbx --cloud exec hcw-lz -- terraform -version');

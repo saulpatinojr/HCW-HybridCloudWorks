@@ -121,8 +121,7 @@ export default function DefenderWslSimulator() {
   const [selectedQueryId, setSelectedQueryId] = useState(KQL_PRESETS[0].id);
 
   const selectedPreset =
-    KQL_PRESETS.find((preset) => preset.id === selectedQueryId) ||
-    KQL_PRESETS[0];
+    KQL_PRESETS.find((preset) => preset.id === selectedQueryId) || KQL_PRESETS[0];
 
   return (
     <section
@@ -216,8 +215,8 @@ export default function DefenderWslSimulator() {
             In the Microsoft Defender portal under <strong>Assets &gt; Devices</strong>, the Linux
             distribution appears as its own machine entry named{' '}
             <code className="text-cyan-300">&lt;HostName&gt;-wslc</code> tagged with{' '}
-            <code className="text-cyan-300">WSL2</code> and linked to the parent Windows 11 device via{' '}
-            <code className="text-cyan-300">HostDeviceId</code>.
+            <code className="text-cyan-300">WSL2</code> and linked to the parent Windows 11 device
+            via <code className="text-cyan-300">HostDeviceId</code>.
           </p>
           <div className="grid gap-3 md:grid-cols-2">
             {INVENTORY_DEVICES.map((device) => (

@@ -166,18 +166,15 @@ export const azureArchitectures = {
         },
         performance: {
           score: 88,
-          notes:
-            'Autoscaling web tier and connection pooling over low-latency Private Link.',
+          notes: 'Autoscaling web tier and connection pooling over low-latency Private Link.',
         },
         cost: {
           score: 84,
-          notes:
-            'Right-sized vCore SQL tier and autoscaled App Gateway v2 capacity units.',
+          notes: 'Right-sized vCore SQL tier and autoscaled App Gateway v2 capacity units.',
         },
         operational: {
           score: 92,
-          notes:
-            'Centralized Log Analytics workspace and full Terraform infrastructure-as-code.',
+          notes: 'Centralized Log Analytics workspace and full Terraform infrastructure-as-code.',
         },
       },
     },
@@ -224,7 +221,8 @@ resource "azurerm_private_endpoint" "sql" {
     ],
     costAnalysis: {
       estimatedMonthly: '$680 - $1,250 / month',
-      notes: 'Estimated for East US 2 production baseline (WAF v2 + 2 Web instances + 2 vCore General Purpose SQL).',
+      notes:
+        'Estimated for East US 2 production baseline (WAF v2 + 2 Web instances + 2 vCore General Purpose SQL).',
       optimizations: [
         'Use Azure Hybrid Benefit and 1- or 3-year reservations for Azure SQL Database vCores.',
         'Configure Application Gateway v2 minimum capacity units to scale down during off-peak hours.',

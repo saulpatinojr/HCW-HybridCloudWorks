@@ -664,4 +664,3 @@ describe('LabPanePage, the lab itself (ADR 0033 §4)', () => {
     expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
   });
 });
-

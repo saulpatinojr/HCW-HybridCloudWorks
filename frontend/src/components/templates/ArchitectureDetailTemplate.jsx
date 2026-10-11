@@ -1,5 +1,5 @@
 /* eslint-disable complexity */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import RichTextBody from '@/components/shared/RichTextBody';
 // Lazy: WafAssessment pulls chart.js (vendor-charts) via FrameworkRadar.
 const WafAssessment = React.lazy(() => import('@/components/architecture/WafAssessment'));
@@ -45,9 +45,7 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
 
   const dynamicArchitecture =
     item && String(item.type || '').toLowerCase() === 'architecture' ? item : null;
-  const architecture = dynamicArchitecture
-    ? { ...staticData, ...dynamicArchitecture }
-    : staticData;
+  const architecture = dynamicArchitecture ? { ...staticData, ...dynamicArchitecture } : staticData;
 
   // Before the early returns: hooks must run in the same order on every
   // render, and the loading branch below returns before the diagram exists.
@@ -99,12 +97,9 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
 
   const defaultTab = availableTabs[0]?.value || '';
   const [activeTab, setActiveTab] = useState(defaultTab);
-
-  useEffect(() => {
-    if (defaultTab && !availableTabs.some((t) => t.value === activeTab)) {
-      setActiveTab(defaultTab);
-    }
-  }, [defaultTab, activeTab, availableTabs]);
+  const resolvedActiveTab = availableTabs.some((t) => t.value === activeTab)
+    ? activeTab
+    : defaultTab;
 
   if (loading && !staticData && !architecture) {
     return (
@@ -156,7 +151,11 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
       return;
     }
     if (paneId === 'outcome') {
-      openDeepDiveTab(hasCost ? 'cost' : hasImplementation ? 'implementation' : 'overview');
+      if (hasCost) {
+        openDeepDiveTab('cost');
+      } else {
+        openDeepDiveTab(hasImplementation ? 'implementation' : 'overview');
+      }
     }
   };
 
@@ -283,7 +282,7 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
             </span>
           </div>
 
-          <Tabs value={activeTab || defaultTab} onValueChange={setActiveTab} className="mb-12">
+          <Tabs value={resolvedActiveTab} onValueChange={setActiveTab} className="mb-12">
             <TabsList
               className="flex flex-wrap w-full justify-start gap-1 h-auto p-1"
               aria-label="Architecture deep dive sections"
@@ -462,4 +461,3 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
     </div>
   );
 }
-

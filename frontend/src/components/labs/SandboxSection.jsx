@@ -180,11 +180,11 @@ export const CLOUD_SANDBOX_STEPS = Object.freeze([
     commands: Object.freeze([
       Object.freeze({
         shell: 'PowerShell',
-        command: `sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4096`,
+        command: `sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4g`,
       }),
       Object.freeze({
         shell: 'bash',
-        command: `sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4096`,
+        command: `sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4g`,
       }),
     ]),
   }),
@@ -314,9 +314,10 @@ export function CloudSandboxSection() {
       <p className={`text-sm ${MUTED} max-w-3xl`}>
         When you want to run the same workflow without local microVM virtualization, pass{' '}
         <code className="font-mono text-xs">--cloud</code> to run inside Docker’s remote Agentic
-        Platform using the published <code className="font-mono text-xs">{CLOUD_TEMPLATE_IMAGE}</code>{' '}
-        image. Because cloud sandboxes cannot mount a folder from your workstation, you clone the
-        repository inside the remote sandbox and validate there.
+        Platform using the published{' '}
+        <code className="font-mono text-xs">{CLOUD_TEMPLATE_IMAGE}</code> image. Because cloud
+        sandboxes cannot mount a folder from your workstation, you clone the repository inside the
+        remote sandbox and validate there.
       </p>
 
       <ol className="flex flex-col gap-5 max-w-3xl">
@@ -345,4 +346,3 @@ export function CloudSandboxSection() {
     </div>
   );
 }
-

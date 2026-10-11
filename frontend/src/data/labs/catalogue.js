@@ -1090,4 +1090,3 @@ export const LAB_LANDING_FRAMES = Object.freeze({
 });
 
 export default labs;
-

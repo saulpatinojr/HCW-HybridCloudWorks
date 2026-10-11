@@ -378,12 +378,7 @@ export default function ArchitectureReviewBoard({ blog, onSave, onPublish, savin
           />
           <TextareaCard
             title="Outcome"
-            value={(Array.isArray(formData.outcome)
-              ? formData.outcome
-              : formData.outcome
-                ? [formData.outcome]
-                : []
-            ).join('\n')}
+            value={[formData.outcome || []].flat().filter(Boolean).join('\n')}
             onChange={(value) => handleChange('outcome', value.split('\n'))}
             ariaLabel="Outcome lines, one per line"
             className="min-h-25 font-mono text-sm"

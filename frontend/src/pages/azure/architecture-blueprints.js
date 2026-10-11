@@ -117,4 +117,3 @@ export const staticBlueprints = [
     costColor: 'green',
   },
 ];
-

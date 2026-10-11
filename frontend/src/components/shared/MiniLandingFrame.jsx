@@ -1,3 +1,4 @@
+/* eslint-disable complexity */
 /**
  * Shared Mini Landing Page framing (#1084) for Architecture Designs and Labs.
  *
@@ -295,23 +296,22 @@ export default function MiniLandingFrame({
       {/* Full-width Diagram */}
       {hasDiagram && (
         <div className="w-full" data-testid="mini-landing-diagram">
-          {diagram ? (
-            diagram
-          ) : diagramUrl ? (
-            <div className="rounded-xl border border-border bg-card/40 overflow-hidden">
-              <InteractiveDiagram
-                imageUrl={diagramUrl}
+          {diagram ||
+            (diagramUrl ? (
+              <div className="rounded-xl border border-border bg-card/40 overflow-hidden">
+                <InteractiveDiagram
+                  imageUrl={diagramUrl}
+                  hotspots={hotspots}
+                  onHotspotClick={onHotspotClick || (() => {})}
+                />
+              </div>
+            ) : (
+              <TopologyDiagram
+                topology={topology}
                 hotspots={hotspots}
-                onHotspotClick={onHotspotClick || (() => {})}
+                onHotspotClick={onHotspotClick}
               />
-            </div>
-          ) : (
-            <TopologyDiagram
-              topology={topology}
-              hotspots={hotspots}
-              onHotspotClick={onHotspotClick}
-            />
-          )}
+            ))}
         </div>
       )}
 
@@ -319,11 +319,8 @@ export default function MiniLandingFrame({
       {panes.length > 0 && (
         <div
           className={`grid grid-cols-1 md:grid-cols-2 ${
-            panes.length >= 4
-              ? 'xl:grid-cols-4'
-              : panes.length === 3
-                ? 'xl:grid-cols-3'
-                : 'xl:grid-cols-2'
+            { 4: 'xl:grid-cols-4', 3: 'xl:grid-cols-3' }[Math.min(panes.length, 4)] ||
+            'xl:grid-cols-2'
           } gap-4`}
           data-testid="mini-landing-panes"
         >
