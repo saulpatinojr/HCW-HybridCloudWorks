@@ -1628,18 +1628,18 @@ Success looks like: the command prints nothing and exits 0. The value never
 appears on a command line or in output. The `addons` role refuses to start
 the container while this key is unset, naming the key and this line.
 
-**2. Write the digest in.** The add-on's `v0.3.0` release prints
+**2. Write the digest in.** The add-on's `v0.3.1` release prints
 `docker.io/hybridcloudworks/hcw-addon-migration@sha256:…` in its
 `publish-images` run summary; the same value, read from the registry.
 PowerShell, anywhere with Docker:
 
 ```powershell
-docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.0
+docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.1
 ```
 
 The `Digest:` line is the value for `image_digest` of the `migration` row in
-`lab-host/ansible/group_vars/all.yml`: for `v0.3.0`,
-`sha256:175622db4d7029902b68e8e51f8132f78e5247e219944031f00dc2fdc814aa83`,
+`lab-host/ansible/group_vars/all.yml`: for `v0.3.1`,
+`sha256:88b8d08892860f753c02f405d1b3b99146aed5e460b04a1c426670d9e5e5dd61`,
 written in on 2026-10-11. A row whose digest is empty deploys nothing and
 says so.
 Merge, then run the playbook as after any merge. PowerShell:
@@ -1658,7 +1658,7 @@ ssh hcw-lab "curl -s http://127.0.0.1:18081/api/health"
 ```
 
 Success looks like a JSON body with `"ok":true`, `"id":"migration"` and a
-`"version"` matching the pinned tag (`0.3.0`). From outside, the name answers
+`"version"` matching the pinned tag (`0.3.1`). From outside, the name answers
 with the site-only `frame-ancestors` and the add-on's own headers. PowerShell:
 
 ```powershell
@@ -1676,7 +1676,7 @@ sent to `https://hybridcloudworks.com/tools/migration`.
 request sets it; nothing is seeded. Once applied,
 `https://hybridcloudworks.com/tools/migration` shows the pane, and
 `https://hybridcloudworks.com/admin/integrations?tab=services` (Tool add-ons,
-*Migration add-on*, **Test**) answers `Connected: version 0.3.0, edition demo.`
+*Migration add-on*, **Test**) answers `Connected: version 0.3.1, edition demo.`
 Until the host runs the container, the same page and the status read say the
 tool isn't available, which is the truth.
 

@@ -298,13 +298,15 @@ portainer_image_digest: sha256:0cd22f754ac52fcfceb362d5ce8f47ee23a5f6427484db17e
 # pulls and runs nothing for that row and says so, renders the route all the
 # same (the name then answers 503 with the site's sentence, and the site's
 # status proxy reads the add-on as unreachable), and asserts a non-empty
-# digest before deploying. The migration row's digest is v0.3.0's image
+# digest before deploying. The migration row's digest is v0.3.1's image
 # index, read on 2026-10-11 with
-# `docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.0`
+# `docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.1`
 # and equal to what the add-on's publish-images run recorded for pinning and
 # attested (`gh attestation verify` against the add-on's repository passed).
 # Run read-only, with every capability dropped and this row's environment,
-# that image answered /api/health 200 with "ok": true and version 0.3.0.
+# the 0.3.0 image answered /api/health 200 with "ok": true. The 0.3.1 image
+# (attested the same way, 2026-10-11) is asserted by the role's health wait
+# on deploy; the add-on's own CI ran its e2e suite on the same build.
 #
 # env is the add-on's own contract (HCW-AzMigrateOrchestrator_Addon
 # docs/deployment/lab-host.md): the frame-ancestors and site origins are
@@ -325,8 +327,8 @@ addons:
   - id: migration
     enabled: true
     image: docker.io/hybridcloudworks/hcw-addon-migration
-    image_tag: "0.3.0"
-    image_digest: "sha256:175622db4d7029902b68e8e51f8132f78e5247e219944031f00dc2fdc814aa83"
+    image_tag: "0.3.1"
+    image_digest: "sha256:88b8d08892860f753c02f405d1b3b99146aed5e460b04a1c426670d9e5e5dd61"
     port: 18081
     memory: 512m
     pids_limit: 256
