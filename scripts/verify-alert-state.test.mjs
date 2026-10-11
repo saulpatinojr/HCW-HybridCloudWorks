@@ -23,6 +23,7 @@ import {
   classifyError,
   compare,
   expectation,
+  knownSubscriptionIds,
   pendingCreates,
   readLive,
   renderReport,
@@ -809,5 +810,64 @@ describe('readLive and the report, end to end on the real inventory', () => {
     const mgmtRead = [...live.lists].find(([key]) => key.includes('mgmt'))[1];
     expect(mgmtRead.status).toBe('not-visible');
     expect(live.actionGroups.get(ag.address).status).toBe('not-visible');
+  });
+
+  // CodeRabbit on #1074: github_alert_reader's one role is at resource-group
+  // scope, so the subscription list may leave a subscription out. The ids the
+  // workflow names fill the gap, and every rule there is still read.
+  it('reads a subscription the list leaves out through the id the workflow names', async () => {
+    const mgmt = subs.find((s) => s.displayName.includes('mgmt'));
+    const visible = subs.filter((s) => s !== mgmt);
+    const base = routes().slice(1);
+    const { fetchImpl, calls } = fakeArm([[/\/subscriptions\?api-version=/, [200, { value: visible }]], ...base]);
+    const knownIds = knownSubscriptionIds(`${mgmt.displayName}=${mgmt.subscriptionId}`);
+    const live = await readLive(rules, { token: 't', fetchImpl, knownIds });
+    const verdicts = compare(rules, live, { pending: new Map(), unreadable: {} });
+    expect(verdicts.filter((v) => !['OK', 'GATED OFF'].includes(v.state))).toEqual([]);
+    expect(actionGroupProblems(rules, live, {}).map((g) => g.state)).toEqual(['OK']);
+    expect(calls.some((c) => c.url.includes(`/subscriptions/${mgmt.subscriptionId}/resourceGroups/`))).toBe(true);
+    expect(runFails(verdicts, actionGroupProblems(rules, live, {}), live.subscriptionsRead)).toBe(false);
+  });
+
+  it('keeps the id the subscription list gives over one the workflow names', async () => {
+    const app = subs.find((s) => !s.displayName.includes('mgmt'));
+    const { fetchImpl, calls } = fakeArm(routes());
+    const knownIds = knownSubscriptionIds(`${app.displayName}=99999999-9999-9999-9999-999999999999`);
+    const live = await readLive(rules, { token: 't', fetchImpl, knownIds });
+    expect(live.ids.get(app.displayName)).toBe(app.subscriptionId);
+    expect(calls.some((c) => c.url.includes('99999999-9999-9999-9999-999999999999'))).toBe(false);
+  });
+});
+
+describe('knownSubscriptionIds', () => {
+  it('maps each display name to its id, lower-cased, ignoring blanks and spaces', () => {
+    const known = knownSubscriptionIds(
+      ' sub-app-site-prod-cus=0000000A-0000-0000-0000-000000000000 ,, sub-plat-mgmt-prod-cus=00000001-0000-0000-0000-000000000000',
+    );
+    expect([...known]).toEqual([
+      ['sub-app-site-prod-cus', '0000000a-0000-0000-0000-000000000000'],
+      ['sub-plat-mgmt-prod-cus', '00000001-0000-0000-0000-000000000000'],
+    ]);
+  });
+
+  it('names nothing when the variable is unset or empty', () => {
+    expect(knownSubscriptionIds(undefined).size).toBe(0);
+    expect(knownSubscriptionIds('').size).toBe(0);
+  });
+
+  // An unset repository variable renders as `name=` in the workflow's env, and
+  // a value that is not a GUID would otherwise be spliced into an ARM path.
+  it.each([
+    ['an unset variable', 'sub-plat-mgmt-prod-cus='],
+    ['no separator', 'sub-plat-mgmt-prod-cus'],
+    ['an id that is not a GUID', 'sub-plat-mgmt-prod-cus=not-a-guid'],
+    ['a path in the id', 'sub-plat-mgmt-prod-cus=00000001-0000-0000-0000-000000000000/../x'],
+    ['a name with a path', '../x=00000001-0000-0000-0000-000000000000'],
+  ])('refuses %s', (_label, text) => {
+    expect(() => knownSubscriptionIds(text)).toThrow(/not display-name=GUID/);
+  });
+
+  it('does not echo the id of an entry it refuses', () => {
+    expect(() => knownSubscriptionIds('x=00000001-0000-0000-0000-000000000000;')).toThrow(/<guid>/);
   });
 });

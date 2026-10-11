@@ -13857,7 +13857,12 @@ This project has not cut a tagged release; entries are grouped under
     The outputs gain `alert_reader_client_id`, and `federated_subjects` gains
     the new pair.
   - The workflow signs in with `ALERT_READER_CLIENT_ID` and stays switched
-    off until it is set.
+    off until it is set. It pins no subscription (`allow-no-subscriptions`),
+    because the identity's one role is at resource-group scope. It passes
+    both subscription ids as `ALERT_SUBSCRIPTION_IDS`, from `SUBSCRIPTION_ID`
+    and the new `SUBSCRIPTION_MGMT_ID`. The script uses them for any
+    subscription the identity's list leaves out, and an entry that is not a
+    name and a GUID stops the check.
   - `scripts/verify-alert-state.mjs` empties its `UNREADABLE` table and keeps
     the mechanism. Its tests now use a record of their own, and a new test
     pins that a refused Management read fails the run.

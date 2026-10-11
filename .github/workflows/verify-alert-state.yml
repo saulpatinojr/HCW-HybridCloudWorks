@@ -35,6 +35,8 @@
 # READ-ONLY IN WHAT IT DOES: every call the script makes is an ARM GET: one
 # token from `az account get-access-token`, then the subscription list, the
 # three alert rule lists per resource group, and each action group. The
+# subscription ids come from that list, or from ALERT_SUBSCRIPTION_IDS below
+# for one the list leaves out. The
 # identity is github_alert_reader (#1053, infra/oidc.tf), which holds the
 # custom "HCW Alert Rule Reader" role in rg-web-site-prod-cus and
 # rg-mgmt-plat-prod-cus and nothing else: the four alert-rule and
@@ -123,18 +125,32 @@ jobs:
       # This workflow reads alert rules and action groups and nothing else, so
       # it runs as the identity that can do exactly that, rather than the
       # deploy identity or the reader that also holds a Function App write.
+      #
+      # No `subscription-id`, and `allow-no-subscriptions` (CodeRabbit on
+      # #1074): the identity's only role is at resource-group scope, and
+      # whether that makes a subscription selectable is not documented. Pinning
+      # one would turn that question into a login failure before a single rule
+      # is read. The token is for ARM, not for a subscription, and the script
+      # takes the ids from ALERT_SUBSCRIPTION_IDS when the list leaves one out.
       - name: Azure login (OIDC)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
           client-id: ${{ vars.ALERT_READER_CLIENT_ID }}
           tenant-id: ${{ vars.TENANT_ID }}
-          subscription-id: ${{ vars.SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
 
       # Exit 0: every rule it could read is live, enabled and wired (rules in
       # a subscription UNREADABLE records are listed and raised as a warning
       # annotation, never counted as healthy). Exit 1: a finding, named in the
       # report. Exit 2: the check could not run, which fails the step the same
       # way and is never reported as health.
+      #
+      # ALERT_SUBSCRIPTION_IDS pairs each subscription's display name (the one
+      # infra/ declares) with its id. The ids are not secret: both already sit
+      # in infra/roles/*.json as assignable scopes. An entry that is not
+      # name=GUID stops the check with exit 2 rather than being skipped.
       - name: Compare the declared rules with the live ones
         id: verify
+        env:
+          ALERT_SUBSCRIPTION_IDS: sub-app-site-prod-cus=${{ vars.SUBSCRIPTION_ID }},sub-plat-mgmt-prod-cus=${{ vars.SUBSCRIPTION_MGMT_ID }}
         run: node scripts/verify-alert-state.mjs --summary "$GITHUB_STEP_SUMMARY"

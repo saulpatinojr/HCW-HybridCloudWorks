@@ -3,7 +3,7 @@
  * Compare every alert rule `infra/` declares with the rules Azure holds, and
  * fail naming each one that is missing, disabled or not wired to its action
  * group (PLAT-4, #964). `.github/workflows/verify-alert-state.yml` runs this
- * weekly as `github_reader`.
+ * weekly as `github_alert_reader` (#1053).
  *
  * ## What it reads, and from where
  *
@@ -17,8 +17,11 @@
  * declarations name, of the three alert rule types, and a GET of each action
  * group. The subscription IDs are not in the configuration (the variables are
  * sensitive); each subscription's display name is, and `GET /subscriptions`
- * maps one to the other. A subscription the identity holds no role in is
- * absent from that list, which is reported as exactly that.
+ * maps one to the other. The workflow also names the two ids outright in
+ * ALERT_SUBSCRIPTION_IDS (see knownSubscriptionIds), which fills in any
+ * subscription the list leaves out, so the reads never depend on what a
+ * resource-group-scoped role makes that list show. A subscription named in
+ * neither is reported as not visible.
  *
  * ## What it decides
  *
@@ -244,10 +247,38 @@ export function azAccessToken(exec = execSync) {
 }
 
 /**
+ * Subscription ids the workflow names outright, as `display-name=guid` pairs
+ * separated by commas (ALERT_SUBSCRIPTION_IDS in verify-alert-state.yml).
+ *
+ * WHY (CodeRabbit on #1053): the ids otherwise come only from
+ * `GET /subscriptions`, which lists the subscriptions the caller can see.
+ * github_alert_reader holds one custom role at resource-group scope and no
+ * subscription-level read, and whether that alone puts a subscription in the
+ * list is not something Microsoft documents. Naming the ids means the rule
+ * reads never depend on it: a subscription the list leaves out is still read
+ * at the groups the identity was granted. Each entry is held to a name and a
+ * GUID before it reaches a path; anything else stops the check (exit 2)
+ * rather than being skipped.
+ *
+ * @returns {Map<string, string>} display name -> subscription id
+ */
+export function knownSubscriptionIds(text) {
+  const known = new Map();
+  for (const entry of String(text ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
+    const m = /^([A-Za-z0-9-]+)=([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/.exec(entry);
+    if (!m) throw new Error(`ALERT_SUBSCRIPTION_IDS holds an entry that is not display-name=GUID: ${redact(entry).slice(0, 80)}`);
+    known.set(m[1], m[2].toLowerCase());
+  }
+  return known;
+}
+
+/**
  * Read everything the declared rules need: the subscriptions, each
  * (subscription, resource group, rule type) list, and each action group.
+ * `knownIds` (knownSubscriptionIds) fills in any subscription the list does
+ * not show; one the list does show keeps the id the list gave.
  */
-export async function readLive(rules, { token, fetchImpl = fetch }) {
+export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new Map() }) {
   const subs = await armGet(`/subscriptions?api-version=${API_VERSIONS.subscriptions}`, {
     token,
     fetchImpl,
@@ -255,6 +286,7 @@ export async function readLive(rules, { token, fetchImpl = fetch }) {
   });
   if (subs.status !== 'ok') return { subscriptionsRead: subs, ids: new Map(), lists: new Map(), actionGroups: new Map() };
   const ids = new Map(subs.rows.map((s) => [s.displayName, s.subscriptionId]));
+  for (const [name, id] of knownIds) if (!ids.has(name)) ids.set(name, id);
 
   const lists = new Map();
   const wanted = new Map();
@@ -266,7 +298,7 @@ export async function readLive(rules, { token, fetchImpl = fetch }) {
     if (!id) {
       lists.set(key, {
         status: 'not-visible',
-        reason: `${rule.subscription} is not among the subscriptions this identity can see; it holds no role there`,
+        reason: `${rule.subscription} is not among the subscriptions this identity can see, and ALERT_SUBSCRIPTION_IDS does not name it`,
       });
       continue;
     }
@@ -285,7 +317,10 @@ export async function readLive(rules, { token, fetchImpl = fetch }) {
   for (const group of uniqueActionGroups(rules)) {
     const id = ids.get(group.subscription);
     if (!id) {
-      actionGroups.set(group.address, { status: 'not-visible', reason: `${group.subscription} is not visible to this identity` });
+      actionGroups.set(group.address, {
+        status: 'not-visible',
+        reason: `${group.subscription} is not visible to this identity, and ALERT_SUBSCRIPTION_IDS does not name it`,
+      });
       continue;
     }
     const path =
@@ -687,7 +722,15 @@ async function main(argv) {
     return 2;
   }
 
-  const live = await readLive(rules, { token });
+  let knownIds;
+  try {
+    knownIds = knownSubscriptionIds(process.env.ALERT_SUBSCRIPTION_IDS);
+  } catch (err) {
+    console.error(err.message);
+    return 2;
+  }
+
+  const live = await readLive(rules, { token, knownIds });
   const verdicts = compare(rules, live);
   const groups = actionGroupProblems(rules, live);
   const extra = undeclared(rules, live);

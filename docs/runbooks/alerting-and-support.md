@@ -264,6 +264,16 @@ no declaration names is listed and does not fail the run.
 nothing else, so it cannot query a log or change anything. Both subscriptions
 are therefore read on every run, and the script's `UNREADABLE` table is empty.
 
+**Which subscriptions it reads.** Because that role is held at resource-group
+scope, the sign-in pins no subscription (`allow-no-subscriptions`), and the
+subscription list the identity sees may leave one out. The workflow therefore
+names both ids in `ALERT_SUBSCRIPTION_IDS`, built from the repository
+variables `SUBSCRIPTION_ID` and `SUBSCRIPTION_MGMT_ID`, and the script uses a
+named id for any subscription the list does not show. An entry that is not
+`display-name=GUID` stops the check with exit 2: an unset variable renders as
+`sub-plat-mgmt-prod-cus=`, and the run says so rather than skipping the
+Management rules.
+
 Until #1053 the job ran as `github_reader`. That identity also holds a
 Function App config write and holds nothing in the Management subscription,
 so the capacity rule, the lab rules, the Management role-change rules and the
