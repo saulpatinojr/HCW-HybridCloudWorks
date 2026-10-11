@@ -324,7 +324,10 @@ if [ "$target" = full ]; then
     terraform-validate-walkthrough \
     ansible-syntax-check-walkthrough \
     wsl-containers-walkthrough \
-    defender-wsl-plugin-walkthrough; do
+    defender-wsl-plugin-walkthrough \
+    migration-assessment \
+    network-assessment \
+    cloud-assessment; do
     if [ -x "/usr/local/libexec/hcw-boot/${lab_id}.sh" ] && HCW_BOOT_OFFLINE=1 /usr/local/libexec/hcw-boot/hcw-boot "$lab_id" "$boot_root"; then
       ok "hcw-boot $lab_id"
     else
