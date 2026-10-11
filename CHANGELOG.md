@@ -19,6 +19,23 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **The migration add-on is turned on for the lab host (ADR 0035, #1064).**
+  The `migration` row in `lab-host/ansible/group_vars/all.yml` now carries:
+  - `image_digest` set to v0.3.0's image index, `sha256:175622db…`. Tag
+    `0.3.0` points to it, the add-on's publish run recorded it for pinning,
+    and its build-provenance attestation verifies against the add-on's
+    repository.
+  - The `hcw-addon-migration` verification widget's site key, in place of the
+    provider's test key, which the role refuses to deploy.
+
+  The image was run read-only, with every capability dropped and the row's
+  environment, and it answered `/api/health` 200 (`"ok": true`, version
+  0.3.0, verification required). The lab-host README, the labs-host runbook
+  and the app-to-addon pages record the widget and the digest, and drop their
+  `[VERIFY]` and `[REVIEW REQUIRED]` markers for this row. The next bootstrap
+  deploys it, once the widget's secret key is in the vault as
+  `vault_addon_migration_turnstile_secret`.
+
 - **Hybrid Lab: an hourly canary runs one real lab job end to end, and a
   refused Coder status token is raised (#1009, "PR 2: prevent recurrence",
   items 2 and 4).** The admin Labs probe enqueues and cancels, so it passed

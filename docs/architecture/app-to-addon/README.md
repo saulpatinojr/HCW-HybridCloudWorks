@@ -75,12 +75,20 @@ redirected by Caddy to the AddOn's page on the site.
   decision 9 (`allow-downloads` on AddOn panes; the migration row now grants
   `downloads` and the accepted-risk row in `TODO.md` applies)
   ([#1044](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1044)).
-- [REVIEW REQUIRED] One human-verification widget per AddOn, created by the
-  owner; its secret seeded with `hcw-vault-set`
-  ([runbook](../../runbooks/labs-host.md), "Tool add-ons").
-- [VERIFY] The migration row's `image_digest` and `AMO_TURNSTILE_SITE_KEY` in
-  `lab-host/ansible/group_vars/all.yml`, written in by the owner from the
-  `v0.3.0` publish and the widget.
+- One human-verification widget per AddOn, created by the owner, and its
+  secret key put in the lab host's vault with `hcw-vault-set`
+  ([runbook](../../runbooks/labs-host.md), "Tool add-ons"). The `migration`
+  widget (`hcw-addon-migration`) was created on 2026-10-11. Its secret key,
+  `vault_addon_migration_turnstile_secret`, is set on the host and is not
+  visible from this repository. It must be in place before the first
+  bootstrap that deploys the row, because the `addons` role refuses to start
+  the container while it is unset. Each later AddOn needs its own widget and
+  key.
+- The migration row's `image_digest` and `AMO_TURNSTILE_SITE_KEY` in
+  `lab-host/ansible/group_vars/all.yml` were [VERIFY] and are answered,
+  written in on 2026-10-11: the `v0.3.0` image index (its build-provenance
+  attestation verifies against the AddOn's repository) and the widget's site
+  key.
 - The per-name direct-visit redirect's directive ordering was [VERIFY] and is
   answered: `caddy adapt` with the pinned Caddy runs in CI
   (`lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh`).

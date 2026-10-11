@@ -1059,11 +1059,13 @@ from the site's own, because the widget is bound to the add-on's hostname.
 The add-on gates every upload with a human-verification token it verifies
 server side with the secret above. The site key is public (the add-on
 publishes it in `/api/health` so the pane renders the widget), so it lives
-in `group_vars`; the secret never does. The `migration` row ships with the
-provider's documented test key `1x00000000000000000000AA`, and the role
-refuses to deploy a row whose environment still carries a test key: a real
-widget secret rejects the token a test key produces, so the pair would never
-verify an upload. The owner replaces it with the widget's site key.
+in `group_vars`; the secret never does. The `migration` row carries its own
+widget's site key (`hcw-addon-migration`, created 2026-10-11). The role
+refuses to deploy any row whose environment still carries one of the
+provider's documented test keys (`addons_test_site_keys`): a real widget
+secret rejects the token a test key produces, so the pair would never verify
+an upload. A new add-on's row starts with a test key until its own widget
+exists.
 
 ### Bumping the digest
 

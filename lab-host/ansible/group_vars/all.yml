@@ -298,10 +298,13 @@ portainer_image_digest: sha256:0cd22f754ac52fcfceb362d5ce8f47ee23a5f6427484db17e
 # pulls and runs nothing for that row and says so, renders the route all the
 # same (the name then answers 503 with the site's sentence, and the site's
 # status proxy reads the add-on as unreachable), and asserts a non-empty
-# digest before deploying. [VERIFY at PR time]: the migration add-on's
-# v0.3.0 digest, read from its publish-images summary or with
-# `docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.0`,
-# goes here before the host is bootstrapped with this file.
+# digest before deploying. The migration row's digest is v0.3.0's image
+# index, read on 2026-10-11 with
+# `docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.0`
+# and equal to what the add-on's publish-images run recorded for pinning and
+# attested (`gh attestation verify` against the add-on's repository passed).
+# Run read-only, with every capability dropped and this row's environment,
+# that image answered /api/health 200 with "ok": true and version 0.3.0.
 #
 # env is the add-on's own contract (HCW-AzMigrateOrchestrator_Addon
 # docs/deployment/lab-host.md): the frame-ancestors and site origins are
@@ -310,11 +313,11 @@ portainer_image_digest: sha256:0cd22f754ac52fcfceb362d5ce8f47ee23a5f6427484db17e
 # nothing else reaches the loopback port; the rate limit, concurrency and
 # TTL at the add-on's documented defaults; telemetry off; the guided-lab
 # workspace hand-off disabled. The human-verification site key is public
-# (the add-on publishes it in /api/health). [VERIFY at PR time]: the value
-# below is Cloudflare's documented always-passes TEST site key, so every
-# challenge passes until the owner creates the migration widget
-# (docs/runbooks/labs-host.md, "Tool add-ons") and replaces it with the
-# widget's site key in the same PR that seeds the secret.
+# (the add-on publishes it in /api/health): it is the owner's
+# `hcw-addon-migration` widget, created 2026-10-11 for the hostname
+# migration.lab.hybridcloudworks.com in Managed mode
+# (docs/runbooks/labs-host.md, "Tool add-ons"). Its secret key is the vault
+# key below, never this file.
 # secret_env names the vault key each secret comes from; the role refuses to
 # start the container while the key is unset.
 addons_enabled: true
@@ -323,7 +326,7 @@ addons:
     enabled: true
     image: docker.io/hybridcloudworks/hcw-addon-migration
     image_tag: "0.3.0"
-    image_digest: "" # [VERIFY at PR time] the v0.3.0 index digest from the add-on's publish-images summary
+    image_digest: "sha256:175622db4d7029902b68e8e51f8132f78e5247e219944031f00dc2fdc814aa83"
     port: 18081
     memory: 512m
     pids_limit: 256
@@ -334,9 +337,7 @@ addons:
       AMO_SITE_ORIGINS: "{{ caddy_frame_ancestors | reject('equalto', \"'self'\") | join(' ') }}"
       AMO_ALLOWED_ORIGINS: ""
       AMO_TRUST_PROXY: "1"
-      # [VERIFY at PR time] the provider's TEST key: the role refuses to deploy while it is here;
-      # the owner replaces it with the migration widget's site key.
-      AMO_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"
+      AMO_TURNSTILE_SITE_KEY: "0x4AAAAAAFTilBfXu6Dtb8yL"
       AMO_RATE_LIMIT_POSTS: "10"
       AMO_RATE_LIMIT_WINDOW_MINUTES: "10"
       AMO_MAX_CONCURRENT: "2"
