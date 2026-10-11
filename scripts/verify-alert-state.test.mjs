@@ -829,6 +829,40 @@ describe('readLive and the report, end to end on the real inventory', () => {
     expect(runFails(verdicts, actionGroupProblems(rules, live, {}), live.subscriptionsRead)).toBe(false);
   });
 
+  it('reads every rule through the named ids when the subscription list is refused', async () => {
+    const base = routes().slice(1);
+    const refused = [/\/subscriptions\?api-version=/, [403, { error: { code: 'AuthorizationFailed', message: 'no' } }]];
+    const named = knownSubscriptionIds(subs.map((s) => `${s.displayName}=${s.subscriptionId}`).join(','));
+    const live = await readLive(rules, { token: 't', fetchImpl: fakeArm([refused, ...base]).fetchImpl, knownIds: named });
+    expect(live.subscriptionsRead).toMatchObject({ status: 'ok', namedOnly: true, listStatus: 'denied' });
+    const verdicts = compare(rules, live, { pending: new Map(), unreadable: {} });
+    expect(verdicts.filter((v) => !['OK', 'GATED OFF'].includes(v.state))).toEqual([]);
+    const groups = actionGroupProblems(rules, live, {});
+    expect(groups.map((g) => g.state)).toEqual(['OK']);
+    expect(runFails(verdicts, groups, live.subscriptionsRead)).toBe(false);
+    const report = renderReport({ rules, verdicts, extra: [], groups, when: 'now', subscriptionsRead: live.subscriptionsRead });
+    expect(report).toMatch(/subscriptions were taken from `ALERT_SUBSCRIPTION_IDS`/);
+    expect(report).not.toMatch(/nothing below is known/);
+  });
+
+  it('still fails a refused subscription list when nothing is named, or a rule whose subscription is not named', async () => {
+    const base = routes().slice(1);
+    const refused = [/\/subscriptions\?api-version=/, [403, { error: { code: 'AuthorizationFailed', message: 'no' } }]];
+    const bare = await readLive(rules, { token: 't', fetchImpl: fakeArm([refused, ...base]).fetchImpl });
+    expect(bare.subscriptionsRead.status).not.toBe('ok');
+    expect(runFails([], [], bare.subscriptionsRead)).toBe(true);
+
+    const app = subs.find((s) => !s.displayName.includes('mgmt'));
+    const half = await readLive(rules, {
+      token: 't',
+      fetchImpl: fakeArm([refused, ...base]).fetchImpl,
+      knownIds: knownSubscriptionIds(`${app.displayName}=${app.subscriptionId}`),
+    });
+    const verdicts = compare(rules, half, { pending: new Map(), unreadable: {} });
+    for (const v of verdicts.filter((x) => x.rule.subscription !== app.displayName)) expect(v.state).toBe('NOT AUTHORIZED');
+    expect(runFails(verdicts, actionGroupProblems(rules, half, {}), half.subscriptionsRead)).toBe(true);
+  });
+
   it('keeps the id the subscription list gives over one the workflow names', async () => {
     const app = subs.find((s) => !s.displayName.includes('mgmt'));
     const { fetchImpl, calls } = fakeArm(routes());

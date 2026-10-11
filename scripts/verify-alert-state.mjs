@@ -277,6 +277,12 @@ export function knownSubscriptionIds(text) {
  * (subscription, resource group, rule type) list, and each action group.
  * `knownIds` (knownSubscriptionIds) fills in any subscription the list does
  * not show; one the list does show keeps the id the list gave.
+ *
+ * A list that could not be read at all stops the check only when nothing is
+ * named (CodeRabbit on #1074). With named ids the rule reads go ahead, each
+ * judged on its own answer, and `subscriptionsRead` says the ids were named
+ * (`namedOnly`) and why the list was not used. A rule whose subscription is
+ * named nowhere is still not visible, so it fails as NOT AUTHORIZED.
  */
 export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new Map() }) {
   const subs = await armGet(`/subscriptions?api-version=${API_VERSIONS.subscriptions}`, {
@@ -284,9 +290,13 @@ export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new
     fetchImpl,
     list: true,
   });
-  if (subs.status !== 'ok') return { subscriptionsRead: subs, ids: new Map(), lists: new Map(), actionGroups: new Map() };
-  const ids = new Map(subs.rows.map((s) => [s.displayName, s.subscriptionId]));
+  if (subs.status !== 'ok' && knownIds.size === 0) {
+    return { subscriptionsRead: subs, ids: new Map(), lists: new Map(), actionGroups: new Map() };
+  }
+  const ids = new Map(subs.status === 'ok' ? subs.rows.map((s) => [s.displayName, s.subscriptionId]) : []);
   for (const [name, id] of knownIds) if (!ids.has(name)) ids.set(name, id);
+  const subscriptionsRead =
+    subs.status === 'ok' ? subs : { status: 'ok', namedOnly: true, listStatus: subs.status, reason: subs.reason };
 
   const lists = new Map();
   const wanted = new Map();
@@ -329,7 +339,7 @@ export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new
     const read = await armGet(path, { token, fetchImpl });
     actionGroups.set(group.address, read.status === 'ok' ? summariseActionGroup(read.body) : read);
   }
-  return { subscriptionsRead: subs, ids, lists, actionGroups };
+  return { subscriptionsRead, ids, lists, actionGroups };
 }
 
 /** The key one (subscription, resource group, rule type) list is held under; groups compare case-insensitively. */
@@ -589,6 +599,12 @@ export function renderReport({ rules, verdicts, extra, groups, when, subscriptio
   );
   if (subscriptionsRead && subscriptionsRead.status !== 'ok') {
     lines.push(`**The subscription list could not be read** (${subscriptionsRead.reason}), so nothing below is known.`, '');
+  } else if (subscriptionsRead?.namedOnly) {
+    lines.push(
+      `The subscription list could not be read (${subscriptionsRead.reason}). The subscriptions were taken from ` +
+        '`ALERT_SUBSCRIPTION_IDS`, and each rule below is judged on its own read.',
+      ''
+    );
   }
   lines.push('| Rule | Resource group | State | Enabled | autoMitigate | Every | Window | Sev | Detail |');
   lines.push('| --- | --- | --- | :---: | :---: | --- | --- | :---: | --- |');

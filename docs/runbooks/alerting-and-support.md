@@ -269,7 +269,9 @@ scope, the sign-in pins no subscription (`allow-no-subscriptions`), and the
 subscription list the identity sees may leave one out. The workflow therefore
 names both ids in `ALERT_SUBSCRIPTION_IDS`, built from the repository
 variables `SUBSCRIPTION_ID` and `SUBSCRIPTION_MGMT_ID`, and the script uses a
-named id for any subscription the list does not show. An entry that is not
+named id for any subscription the list does not show. If the list itself is
+refused, the named ids are used for every rule, and the report says so above
+its table. An entry that is not
 `display-name=GUID` stops the check with exit 2: an unset variable renders as
 `sub-plat-mgmt-prod-cus=`, and the run says so rather than skipping the
 Management rules.
