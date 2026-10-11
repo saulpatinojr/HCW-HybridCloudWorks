@@ -237,19 +237,37 @@ def cmd_rm(state, args):
 def main():
     state = load_state()
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
-        print("Usage: wslc <command> [args...]")
-        print("\nCommands:")
-        print("  run      Create and start an OCI container inside the session WSL2 utility VM")
-        print("  ps       List WSL containers sharing the session utility VM (-a for all)")
-        print("  exec     Execute a command inside a running WSL container namespace")
-        print("  stop     Stop a running WSL container")
-        print("  rm       Remove a stopped WSL container and its writable overlay layer")
-        print("  images   List OCI images unpacked in the shared ext4 layer store")
+        print("Usage: wslc <command> [args...]  (Simulated Linux container emulator for Windows wslc.exe)")
+        print("\nDocumented Windows wslc.exe Commands (and Emulator Shorthands):")
+        print("  image ls       (alias: images) List OCI images unpacked in the shared ext4 layer store")
+        print("  container ps   (alias: ps)     List WSL containers sharing the session utility VM (-a for all)")
+        print("  run            (or container run)  Create and start an OCI container inside the session WSL2 utility VM")
+        print("  exec           (or container exec) Execute a command inside a running WSL container namespace")
+        print("  stop           (or container stop) Stop a running WSL container")
+        print("  rm             (or container rm)   Remove a stopped WSL container and its writable overlay layer")
         sys.exit(0)
 
     sub = sys.argv[1]
     rest = sys.argv[2:]
-    if sub == "images":
+    if sub == "image" and rest[:1] in (["ls"], ["list"]):
+        cmd_images(state)
+    elif sub == "container" and rest:
+        csub = rest[0]
+        crest = rest[1:]
+        if csub in ("ps", "ls", "list"):
+            cmd_ps(state, show_all=("-a" in crest or "--all" in crest))
+        elif csub == "run":
+            cmd_run(state, crest)
+        elif csub == "exec":
+            cmd_exec(state, crest)
+        elif csub == "stop":
+            cmd_stop(state, crest)
+        elif csub == "rm":
+            cmd_rm(state, crest)
+        else:
+            print(f"wslc: unknown container subcommand '{csub}'", file=sys.stderr)
+            sys.exit(2)
+    elif sub == "images":
         cmd_images(state)
     elif sub == "ps":
         cmd_ps(state, show_all=("-a" in rest or "--all" in rest))
@@ -289,17 +307,19 @@ LAYERS_EOF
 chmod 0755 "$TARGET/inspect-layers.sh"
 
 cat > "$TARGET/README.md" <<'README_EOF'
-# WSL Containers Walkthrough (`wslc`)
+# WSL Containers Walkthrough (`wslc` Emulator)
 
-This workspace includes an interactive `wslc` CLI emulator so you can test the
-WSL Containers lifecycle, storage stack, and networking model step by step.
+This Linux container workspace includes an interactive `wslc` CLI emulator so
+you can test the WSL Containers lifecycle, storage stack, and networking model
+step by step. Both the documented Windows `wslc.exe` subcommands (`wslc image ls`,
+`wslc container ps`) and short aliases (`wslc images`, `wslc ps`) are supported.
 
-## Quick Commands
+## Quick Commands (Documented Windows `wslc.exe` Forms)
 
 ```bash
-wslc images
+wslc image ls
 wslc run -d --name agent-sandbox -v C:\workspace:/workspace docker.io/hybridcloudworks/hcw-lab:latest
-wslc ps
+wslc container ps
 wslc exec agent-sandbox uname -a
 wslc exec agent-sandbox mount
 ./inspect-layers.sh

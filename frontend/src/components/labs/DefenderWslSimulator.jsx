@@ -42,14 +42,15 @@ const KQL_PRESETS = [
     shell: 'KQL',
     query: `DeviceInfo
 | where Timestamp > ago(7d)
-| where AdditionalFields has "WSL2" or DeviceName endswith "-wslc"
+| where OSPlatform == "Linux" and (AdditionalFields has "WSL2" or isnotempty(HostDeviceId))
 | summarize arg_max(Timestamp, *) by DeviceId
-| project Timestamp, DeviceName, DeviceId, OSPlatform, OSDistribution, OnboardingStatus`,
+| project Timestamp, DeviceName, DeviceId, HostDeviceId, OSPlatform, OSDistribution, OnboardingStatus`,
     rows: [
       {
         Timestamp: '2026-10-11T06:00:12Z',
         DeviceName: 'LAB-HOST-wslc',
         DeviceId: 'c41d9a72-8b3e-4f10-a52c-1e9b8d7c6f54',
+        HostDeviceId: '8f3b2e10-4c9a-4d7e-9b1a-7c6d5e4f3a21',
         OSPlatform: 'Linux',
         OSDistribution: 'Ubuntu 24.04 LTS',
         OnboardingStatus: 'Onboarded via WSL2 Plug-in',
@@ -61,8 +62,7 @@ const KQL_PRESETS = [
     label: '2. Join WSL2 instance to Windows 11 host via HostDeviceId',
     shell: 'KQL',
     query: `DeviceInfo
-| where Timestamp > ago(7d) and DeviceName == "LAB-HOST-wslc"
-| extend HostDeviceId = tostring(parse_json(AdditionalFields).HostDeviceId)
+| where Timestamp > ago(7d) and OSPlatform == "Linux" and isnotempty(HostDeviceId)
 | summarize arg_max(Timestamp, *) by DeviceId, HostDeviceId
 | join kind=inner (
     DeviceInfo
@@ -83,11 +83,14 @@ const KQL_PRESETS = [
   },
   {
     id: 'process-events',
-    label: '3. Inspect DeviceProcessEvents inside LAB-HOST-wslc',
+    label: '3. Inspect DeviceProcessEvents across WSL2 instances',
     shell: 'KQL',
-    query: `DeviceProcessEvents
+    query: `let WslDeviceIds = DeviceInfo
+| where Timestamp > ago(7d) and OSPlatform == "Linux" and isnotempty(HostDeviceId)
+| distinct DeviceId;
+DeviceProcessEvents
 | where Timestamp > ago(24h)
-| where DeviceName == "LAB-HOST-wslc"
+| where DeviceId in (WslDeviceIds)
 | where ProcessCommandLine has "diy-edr-test.sh" or FileName in ("bash", "curl", "python3")
 | project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
 | order by Timestamp desc`,

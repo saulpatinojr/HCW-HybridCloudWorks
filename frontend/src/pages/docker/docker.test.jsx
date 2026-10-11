@@ -217,13 +217,13 @@ describe('the Docker sandboxes page', () => {
     const cloudSteps = within(cloudSection).getAllByTestId('cloud-sandbox-step');
     expect(cloudSteps).toHaveLength(7);
     expect(cloudSection).toHaveTextContent('sbx login');
-    expect(cloudSection).toHaveTextContent('sbx secret set -g anthropic');
+    expect(cloudSection).toHaveTextContent('sbx --cloud secret set anthropic');
     expect(cloudSection).toHaveTextContent(
-      'sbx run --cloud claude --name hcw-lz -t hybridcloudworks/hcw-lab:latest'
+      'sbx run --cloud claude --name hcw-lz --image-ref hybridcloudworks/hcw-lab:latest --cpus 2 --memory 4096'
     );
     expect(cloudSection).toHaveTextContent('terraform init -backend=false && terraform validate');
-    expect(cloudSection).toHaveTextContent('sbx exec hcw-lz -- terraform -version');
-    expect(cloudSection).toHaveTextContent('sbx rm hcw-lz');
+    expect(cloudSection).toHaveTextContent('sbx --cloud exec hcw-lz -- terraform -version');
+    expect(cloudSection).toHaveTextContent('sbx --cloud rm hcw-lz');
     expect(cloudSection).toHaveTextContent(/Docker Agentic Platform subscription/i);
   });
 });

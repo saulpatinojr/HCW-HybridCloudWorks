@@ -420,7 +420,7 @@ export const labs = Object.freeze([
     workspaceName: 'lab-wslc',
     title: 'WSL2 Container Sandbox for Coding Agents',
     summary:
-      'Step into a dedicated Linux container workspace that mirrors a WSL2 Ubuntu distribution, inspect the Dockerfile.agentic-wslc image and non-root sandbox user, verify the mounted project boundary, and validate the Terraform harness offline.',
+      'Supplementary Linux container simulation (no Windows 11 Azure VM): step into a rootless Linux container workspace that models a WSL2 Ubuntu distribution, inspect Dockerfile.agentic-wslc and /etc/wsl.conf isolation, and validate the Terraform harness offline.',
     providers: Object.freeze(['azure']),
     technology: Object.freeze(['wsl2', 'containers', 'terraform', 'linux-sandbox']),
     tools: Object.freeze(['az', 'terraform']),
@@ -428,27 +428,27 @@ export const labs = Object.freeze([
     estimatedMinutes: 25,
     status: 'available',
     objectives: Object.freeze([
-      'Inspect a rootless Linux container environment that replicates a WSL2 Ubuntu 24.04 distribution for agentic workflows.',
-      'Verify why bind-mounting only a single project folder prevents a coding agent from reading host SSH keys or cloud credentials.',
-      'Compare importing a container rootfs into WSL2 on Windows 11 with running the identical OCI image in the browser lab workspace.',
+      'Inspect a supplementary rootless Linux container simulation that models a WSL2 Ubuntu 24.04 environment for agentic workflows without provisioning a Windows 11 Azure VM.',
+      'Verify why bind-mounting only a single project folder in Docker—and disabling Windows drive automount via /etc/wsl.conf in WSL2—prevents a coding agent from reading host SSH keys or cloud credentials.',
+      'Compare importing a container rootfs into WSL2 on your own Windows 11 workstation with running the OCI image in the browser lab workspace.',
       'Run the verification script and offline Terraform validation against the pre-seeded workspace harness.',
     ]),
     prerequisites: Object.freeze([
-      'Nothing to bring: the per-lab bootloader seeds ~/wsl-containers-lab with Dockerfile.agentic-wslc, verify-sandbox.sh, and a Terraform root.',
+      'Nothing to bring: the per-lab bootloader seeds ~/wsl-containers-lab with Dockerfile.agentic-wslc, verify-sandbox.sh, and a Terraform root inside a Linux container simulation.',
       'A GitHub account in the HybridCloudWorks organization to open the workspace; or Docker on your own machine and the Run it locally line.',
     ]),
     steps: Object.freeze([
       step(
         'Inspect the WSL2-equivalent container workspace',
         md([
-          'The workspace opens directly in `~/wsl-containers-lab`, seeded by the lab bootloader. List the files and read `Dockerfile.agentic-wslc` to see how the Ubuntu 24.04 rootfs is configured for a non-root `agent` user:',
+          'The workspace opens directly in `~/wsl-containers-lab`, seeded by the lab bootloader. List the files and read `Dockerfile.agentic-wslc` to see how the Ubuntu 24.04 rootfs is configured for a non-root user:',
           '',
           '```bash',
           'ls -la ~/wsl-containers-lab',
           'cat ~/wsl-containers-lab/Dockerfile.agentic-wslc',
           '```',
           '',
-          'Whether you run this image inside Docker or import its root filesystem into WSL2 on a Windows 11 workstation with `wsl --import`, the userland, UID/GID isolation, and `/workspace` mount boundary are identical.',
+          'The imported WSL distribution uses its own `/etc/wsl.conf`: Windows drive automount is disabled (`[automount] enabled=false`) and the default user is `nobody` (`[user] default=nobody`). It does not inherit Docker’s single-folder bind-mount boundary.',
         ])
       ),
       step(
@@ -474,7 +474,7 @@ export const labs = Object.freeze([
           'wsl --import hcw-agent-wslc "$env:LOCALAPPDATA\\hcw-agent-wslc" .\\wslc-rootfs.tar --version 2',
           '```',
           '',
-          'Inside the browser workspace, that same root filesystem is already running as an isolated Linux container.',
+          'Because `docker export` + `wsl --import` does not carry Docker’s runtime user or bind mounts, the image bakes `/etc/wsl.conf` with `automount` disabled and `default=nobody` so `/mnt/c` host files are not exposed automatically.',
         ])
       ),
       step(
@@ -522,7 +522,7 @@ export const labs = Object.freeze([
     workspaceName: 'lab-mde-wsl',
     title: 'Defender for Endpoint WSL2 Plug-in & Hunting Walkthrough',
     summary:
-      'Explore how Microsoft Defender for Endpoint monitors WSL2 Linux distributions from a Windows 11 host (`<HostName>-wslc`), run the safe DIY Linux EDR test script inside the container workspace, inspect the three Advanced Hunting KQL queries, and validate the Azure policy baseline.',
+      'Supplementary Linux container simulation (no Windows 11 Azure VM): explore how Microsoft Defender for Endpoint monitors WSL2 Linux distributions (`<HostName>-wslc`), inspect simulated healthcheck and EDR telemetry, practise the three Advanced Hunting KQL queries, and validate the Azure policy baseline.',
     providers: Object.freeze(['azure']),
     technology: Object.freeze(['defender-for-endpoint', 'wsl2', 'kql', 'terraform']),
     tools: Object.freeze(['az', 'terraform']),
@@ -530,44 +530,44 @@ export const labs = Object.freeze([
     estimatedMinutes: 30,
     status: 'available',
     objectives: Object.freeze([
-      'Verify the Microsoft Defender for Endpoint WSL2 plug-in health output (`healthcheck.exe`) and explain how the kernel sensor bridges WSL2 telemetry to the Windows 11 host.',
-      'Identify the `<HostName>-wslc` machine entry and `WSL2` tag in the Device Inventory and link it to its parent Windows host via `HostDeviceId`.',
-      'Trigger the benign DIY Linux EDR test script (`diy-edr-test.sh --trigger-test-marker`) and inspect the resulting process telemetry.',
+      'Inspect simulated Microsoft Defender for Endpoint WSL2 plug-in health output (`healthcheck.exe` shim) and understand how to run the real tool on a Windows 11 host.',
+      'Identify the `<HostName>-wslc` machine entry and `WSL2` tag in the Device Inventory and link it to its parent Windows host via `DeviceInfo.HostDeviceId`.',
+      'Trigger the benign DIY Linux EDR simulation script (`diy-edr-test.sh --trigger-test-marker`), inspect the simulated process telemetry, and review how real detections are validated in the Microsoft Defender portal.',
       'Run the three Advanced Hunting KQL queries (`DeviceInfo`, `HostDeviceId` join, and `DeviceProcessEvents`) and validate the Terraform management root.',
     ]),
     prerequisites: Object.freeze([
-      'Nothing to bring: the per-lab bootloader seeds ~/mde-wsl-lab with mock-healthcheck.txt, diy-edr-test.sh, hunting-queries.kql, and a Terraform root, and the page includes an interactive Defender Portal & KQL Simulator.',
+      'Nothing to bring: the per-lab bootloader seeds ~/mde-wsl-lab with simulated healthcheck output, diy-edr-test.sh, hunting-queries.kql, and a Terraform root, and the page includes an interactive Defender Portal & KQL Simulator.',
       'A GitHub account in the HybridCloudWorks organization to open the workspace; or Docker on your own machine and the Run it locally line.',
     ]),
     steps: Object.freeze([
       step(
-        'Verify the WSL2 plug-in status with healthcheck.exe',
+        'Inspect simulated WSL2 plug-in status and compare with Windows host healthcheck.exe',
         md([
-          'On a Windows 11 host onboarded to Microsoft Defender for Endpoint, the WSL2 plug-in (`Minimum build 2004 / KB5007253+` with WSL `2.0.14.0+`) runs a lightweight sensor inside every active WSL2 kernel. On the Windows host prompt:',
+          'On a real Windows 11 host onboarded to Microsoft Defender for Endpoint, the WSL2 plug-in (`Minimum build 2004 / KB5007253+` with WSL `2.0.14.0+`) runs a Windows-host health check tool. On an onboarded Windows 11 workstation, run:',
           '',
           '```powershell',
           '& "C:\\Program Files\\Microsoft Defender for Endpoint Plug-in for WSL\\tools\\healthcheck.exe"',
           '```',
           '',
-          'In your Linux lab workspace, inspect the captured output that the bootloader seeded:',
+          'Because this browser lab runs inside a Linux container rather than a Windows VM, the workspace provides simulated output so you can inspect the fields (`PluginStatus`, `SensorHealth`, `HostDeviceId`, `WslDeviceName`) before running the real check on a Windows host:',
           '',
           '```bash',
-          'cat ~/mde-wsl-lab/mock-healthcheck.txt',
+          'healthcheck.exe',
           '```',
           '',
-          'Check that `PluginStatus` is `Running`, `SensorHealth` is `Healthy`, and `WslDeviceName` follows the `<HostName>-wslc` naming convention (`LAB-HOST-wslc`).',
+          'Notice the `[SIMULATED]` banner in the Linux shim output and verify that `WslDeviceName` follows the `<HostName>-wslc` naming convention (`LAB-HOST-wslc`).',
         ])
       ),
       step(
-        'Trigger the safe DIY Linux EDR test script inside WSL2',
+        'Trigger the simulated DIY Linux EDR test script inside the container',
         md([
-          'Run the benign DIY Linux EDR test script inside `~/mde-wsl-lab` (or click **Run DIY Linux EDR Test** in the interactive simulator on this page):',
+          'Run the benign DIY Linux EDR simulation script inside `~/mde-wsl-lab` (or click **Run DIY Linux EDR Test** in the interactive simulator on this page):',
           '',
           '```bash',
           '~/mde-wsl-lab/diy-edr-test.sh --trigger-test-marker',
           '```',
           '',
-          'The script executes a harmless process marker (`MDE-WSL2-DIY-EDR-TEST-MARKER`) and appends a simulated `DeviceProcessEvents` record to `/tmp/mde-wsl-telemetry.log` so you can inspect the exact fields the sensor captures.',
+          'In this Linux container simulation, the script records a local simulated `DeviceProcessEvents` JSON event rather than submitting a live alert to Defender. On a real onboarded Windows 11 + WSL2 host, validate actual detections in the Microsoft Defender portal (`https://security.microsoft.com`) under **Incidents & alerts** and **Advanced hunting**.',
         ])
       ),
       step(
@@ -579,7 +579,7 @@ export const labs = Object.freeze([
           'cat ~/mde-wsl-lab/hunting-queries.kql',
           '```',
           '',
-          'The three queries cover: (1) listing all `WSL2`-tagged Linux instances in `DeviceInfo`, (2) joining `LAB-HOST-wslc` back to its parent Windows 11 host (`LAB-HOST`) via `AdditionalFields.HostDeviceId`, and (3) filtering `DeviceProcessEvents` for commands run inside the WSL2 distribution.',
+          'The three queries cover: (1) listing all `WSL2`-tagged Linux instances in `DeviceInfo` with their `HostDeviceId` column, (2) joining WSL2 instances back to their parent Windows 11 host via `DeviceInfo.HostDeviceId`, and (3) filtering `DeviceProcessEvents` across WSL2 devices identified by `DeviceInfo.HostDeviceId`.',
         ])
       ),
       step(

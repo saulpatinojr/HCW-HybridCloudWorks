@@ -11,8 +11,16 @@ if [ ! -d "$LAB_ROOT/$LAB_SOURCE" ]; then
   if [ "${HCW_BOOT_OFFLINE:-0}" = "1" ] && [ -d "/workspace/smoke/providers-only" ]; then
     mkdir -p "$LAB_ROOT/$LAB_SOURCE"
     cp -R /workspace/smoke/providers-only/. "$LAB_ROOT/$LAB_SOURCE/"
-  elif [ ! -d "$LAB_ROOT/.git" ]; then
-    git clone --quiet --depth 1 --filter=blob:none --sparse --branch "$REPO_REF" "$REPO_URL" "$LAB_ROOT"
-    git -C "$LAB_ROOT" sparse-checkout set "$LAB_SOURCE"
+  else
+    TMP_CHECKOUT="$(mktemp -d)"
+    trap 'rm -rf "$TMP_CHECKOUT"' EXIT
+    git -C "$TMP_CHECKOUT" init --quiet
+    git -C "$TMP_CHECKOUT" remote add origin "$REPO_URL"
+    git -C "$TMP_CHECKOUT" sparse-checkout init --cone
+    git -C "$TMP_CHECKOUT" sparse-checkout set "$LAB_SOURCE"
+    git -C "$TMP_CHECKOUT" fetch --quiet --depth 1 --filter=blob:none origin "$REPO_REF"
+    git -C "$TMP_CHECKOUT" checkout --quiet FETCH_HEAD
+    mkdir -p "$LAB_ROOT/$LAB_SOURCE"
+    cp -R "$TMP_CHECKOUT/$LAB_SOURCE/." "$LAB_ROOT/$LAB_SOURCE/"
   fi
 fi

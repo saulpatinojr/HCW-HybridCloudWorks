@@ -370,7 +370,14 @@ RUN chmod 0755 /usr/local/libexec/hcw-boot /usr/local/libexec/hcw-boot/hcw-boot 
 # creates for uid 65534 and that HOME already points at. The runner target
 # is untouched: it keeps nologin.
 RUN usermod -s /bin/bash -d /tmp/home nobody \
- && test "$(getent passwd 65534 | cut -d: -f6,7)" = "/tmp/home:/bin/bash"
+ && test "$(getent passwd 65534 | cut -d: -f6,7)" = "/tmp/home:/bin/bash" \
+ && printf '%s\n' \
+      '[automount]' \
+      'enabled=false' \
+      '' \
+      '[user]' \
+      'default=nobody' \
+      > /etc/wsl.conf
 
 USER 65534:65534
 WORKDIR /workspace

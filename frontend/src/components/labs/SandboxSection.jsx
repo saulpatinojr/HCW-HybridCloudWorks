@@ -166,25 +166,25 @@ export const CLOUD_SANDBOX_STEPS = Object.freeze([
   }),
   Object.freeze({
     id: 'secret',
-    title: '2. Store your model provider key globally',
-    body: 'Pass -g (--global) so your Anthropic key is available to cloud sandboxes without writing it into an image or workspace file.',
+    title: '2. Store your model provider key in the cloud secret store',
+    body: 'Pass --cloud so your Anthropic key is stored in the cloud secret store (account-wide by default) without writing it into an image or workspace file.',
     commands: Object.freeze([
-      Object.freeze({ shell: 'PowerShell', command: 'sbx secret set -g anthropic' }),
-      Object.freeze({ shell: 'bash', command: 'sbx secret set -g anthropic' }),
+      Object.freeze({ shell: 'PowerShell', command: 'sbx --cloud secret set anthropic' }),
+      Object.freeze({ shell: 'bash', command: 'sbx --cloud secret set anthropic' }),
     ]),
   }),
   Object.freeze({
     id: 'run-cloud',
     title: '3. Launch the cloud sandbox from the published lab image',
-    body: 'Pass --cloud to run inside Docker’s remote microVM environment using the published hybridcloudworks/hcw-lab:latest template image.',
+    body: 'Pass --cloud with --image-ref and explicit CPU and memory values to launch Docker’s remote microVM directly from the published hybridcloudworks/hcw-lab:latest OCI image.',
     commands: Object.freeze([
       Object.freeze({
         shell: 'PowerShell',
-        command: `sbx run --cloud claude --name ${SANDBOX_NAME} -t ${CLOUD_TEMPLATE_IMAGE}`,
+        command: `sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4096`,
       }),
       Object.freeze({
         shell: 'bash',
-        command: `sbx run --cloud claude --name ${SANDBOX_NAME} -t ${CLOUD_TEMPLATE_IMAGE}`,
+        command: `sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4096`,
       }),
     ]),
   }),
@@ -203,25 +203,25 @@ export const CLOUD_SANDBOX_STEPS = Object.freeze([
   Object.freeze({
     id: 'exec-ports',
     title: '5. Run one-off commands and inspect forwarded ports from your workstation',
-    body: 'Use sbx exec to run non-interactive verification checks inside the running cloud sandbox and sbx ports to inspect exposed ports.',
+    body: 'Use sbx --cloud exec to run non-interactive verification checks inside the running cloud sandbox and sbx --cloud ports to inspect exposed ports.',
     commands: Object.freeze([
       Object.freeze({
         shell: 'PowerShell',
-        command: `sbx exec ${SANDBOX_NAME} -- terraform -version && sbx ports ${SANDBOX_NAME}`,
+        command: `sbx --cloud exec ${SANDBOX_NAME} -- terraform -version && sbx --cloud ports ${SANDBOX_NAME}`,
       }),
       Object.freeze({
         shell: 'bash',
-        command: `sbx exec ${SANDBOX_NAME} -- terraform -version && sbx ports ${SANDBOX_NAME}`,
+        command: `sbx --cloud exec ${SANDBOX_NAME} -- terraform -version && sbx --cloud ports ${SANDBOX_NAME}`,
       }),
     ]),
   }),
   Object.freeze({
     id: 'expiry-rm',
     title: '6. Remove the sandbox when finished (one-hour default idle expiry)',
-    body: 'Cloud sandboxes automatically pause or expire after one hour of inactivity by default. Remove the named sandbox explicitly when your session is complete.',
+    body: 'Cloud sandboxes automatically pause or expire after one hour of inactivity by default. Remove the named cloud sandbox explicitly when your session is complete.',
     commands: Object.freeze([
-      Object.freeze({ shell: 'PowerShell', command: `sbx rm ${SANDBOX_NAME}` }),
-      Object.freeze({ shell: 'bash', command: `sbx rm ${SANDBOX_NAME}` }),
+      Object.freeze({ shell: 'PowerShell', command: `sbx --cloud rm ${SANDBOX_NAME}` }),
+      Object.freeze({ shell: 'bash', command: `sbx --cloud rm ${SANDBOX_NAME}` }),
     ]),
   }),
   Object.freeze({

@@ -189,28 +189,17 @@ resource "coder_agent" "main" {
   startup_script_behavior = "blocking"
 
   # Dispatches to the per-lab bootloader script (/usr/local/libexec/hcw-boot/hcw-boot)
-  # for the selected LAB_ID. When running on an image built before bootloaders/
-  # was added to lab-image/Dockerfile, fetches lab-image/bootloaders sparsely
-  # into $HOME/.cache/hcw-boot and runs the same per-lab bootloader from there.
+  # baked into the digest-pinned hcw-lab image for the selected LAB_ID.
   startup_script = <<-EOT
     set -euo pipefail
     export HOME=${local.home}
+    export HCW_REPO_URL='${local.repo_url}'
+    export HCW_REPO_REF='${local.image_tag}'
     LAB_ID='${data.coder_parameter.lab.value}'
     LAB_ROOT='${local.lab_root}'
     mkdir -p "$LAB_ROOT"
 
-    if [ -x /usr/local/libexec/hcw-boot/hcw-boot ]; then
-      /usr/local/libexec/hcw-boot/hcw-boot "$LAB_ID" "$LAB_ROOT"
-    else
-      BOOT_CACHE="$HOME/.cache/hcw-boot"
-      if [ ! -x "$BOOT_CACHE/lab-image/bootloaders/hcw-boot" ]; then
-        rm -rf "$BOOT_CACHE"
-        git clone --quiet --depth 1 --filter=blob:none --sparse --branch '${local.repo_ref}' '${local.repo_url}' "$BOOT_CACHE"
-        git -C "$BOOT_CACHE" sparse-checkout set "lab-image/bootloaders"
-        chmod 0755 "$BOOT_CACHE/lab-image/bootloaders/hcw-boot" "$BOOT_CACHE/lab-image/bootloaders/"*.sh
-      fi
-      "$BOOT_CACHE/lab-image/bootloaders/hcw-boot" "$LAB_ID" "$LAB_ROOT"
-    fi
+    /usr/local/libexec/hcw-boot/hcw-boot "$LAB_ID" "$LAB_ROOT"
   EOT
 
   env = {

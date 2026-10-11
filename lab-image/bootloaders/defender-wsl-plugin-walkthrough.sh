@@ -16,8 +16,13 @@ cat > "$BIN_DIR/healthcheck.exe" <<'HC_EOF'
 set -euo pipefail
 
 cat <<'OUT'
-Microsoft Defender for Endpoint - WSL2 Plug-in Health Check
------------------------------------------------------------
+[SIMULATED OUTPUT - Linux container shim; does not inspect a live Windows host]
+To run the real health check, execute on an onboarded Windows 11 host:
+  & "C:\Program Files\Microsoft Defender for Endpoint Plug-in for WSL\tools\healthcheck.exe"
+
+Microsoft Defender for Endpoint - WSL2 Plug-in Health Check (Simulated)
+-----------------------------------------------------------------------
+Mode                   : Simulated (Linux container walkthrough)
 PluginVersion          : 1.0.2604.1
 PluginState            : Running
 SensorHealth           : Healthy
@@ -35,8 +40,8 @@ chmod 0755 "$BIN_DIR/healthcheck.exe"
 
 cat > "$TARGET/diy-edr-test.sh" <<'EDR_EOF'
 #!/usr/bin/env bash
-# Safe, non-destructive user-space Linux EDR test script for Microsoft Defender
-# for Endpoint inside a WSL2 utility VM (#1083).
+# Safe, non-destructive user-space Linux EDR simulation script for Microsoft
+# Defender for Endpoint inside a WSL2 utility VM (#1083).
 set -euo pipefail
 
 STATE_DIR="$HOME/.local/state/mde-wsl"
@@ -46,13 +51,14 @@ TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 cat > "$EVENT_FILE" <<JSON
 {
+  "Simulated": true,
   "Timestamp": "$TIMESTAMP",
   "DeviceId": "c41a9d02-7e31-4b88-a52f-19d0e8b74c11",
   "DeviceName": "LAB-HOST-wslc",
   "HostDeviceId": "8f3b2e10-4c9a-4d7e-9b1a-7c6d5e4f3a21",
   "DeviceTag": "WSL2",
   "AlertId": "da638957824190812451_1083",
-  "Title": "Linux EDR DIY Test Alert (MDE WSL2 Plug-in)",
+  "Title": "Simulated Linux EDR DIY Test Alert (MDE WSL2 Plug-in)",
   "Severity": "Informational",
   "Category": "Execution",
   "FileName": "diy-edr-test.sh",
@@ -62,8 +68,8 @@ cat > "$EVENT_FILE" <<JSON
 }
 JSON
 
-echo "[MDE-WSL2] Triggered safe user-space DIY Linux EDR test marker on LAB-HOST-wslc"
-echo "[MDE-WSL2] Event recorded at: $EVENT_FILE"
+echo "[SIMULATED - MDE-WSL2] Wrote local simulated DIY Linux EDR event (not submitted to Microsoft Defender portal)"
+echo "[SIMULATED - MDE-WSL2] Event recorded at: $EVENT_FILE"
 cat "$EVENT_FILE"
 EDR_EOF
 chmod 0755 "$TARGET/diy-edr-test.sh"
@@ -72,15 +78,14 @@ cat > "$TARGET/hunting-queries.kql" <<'KQL_EOF'
 // Query 1: Find all WSL2 instances in DeviceInfo
 DeviceInfo
 | where Timestamp > ago(7d)
-| where OSPlatform == "Linux" and (AdditionalFields has "WSL2" or DeviceName endswith "-wslc")
+| where OSPlatform == "Linux" and (AdditionalFields has "WSL2" or isnotempty(HostDeviceId))
 | summarize arg_max(Timestamp, *) by DeviceId
-| project Timestamp, DeviceId, DeviceName, OSPlatform, OSVersionInfo, HostDeviceId = tostring(parse_json(AdditionalFields).HostDeviceId)
+| project Timestamp, DeviceId, DeviceName, OSPlatform, OSVersionInfo, HostDeviceId
 
 // Query 2: Join each WSL2 instance back to its Windows host via HostDeviceId
 let WslDevices = DeviceInfo
 | where Timestamp > ago(7d)
-| extend HostDeviceId = tostring(parse_json(AdditionalFields).HostDeviceId)
-| where isnotempty(HostDeviceId)
+| where OSPlatform == "Linux" and isnotempty(HostDeviceId)
 | summarize arg_max(Timestamp, *) by WslDeviceId = DeviceId, WslDeviceName = DeviceName, HostDeviceId;
 let HostDevices = DeviceInfo
 | where Timestamp > ago(7d)
@@ -90,23 +95,35 @@ WslDevices
 | join kind=inner HostDevices on HostDeviceId
 | project WslDeviceName, WslDeviceId, HostDeviceName, HostDeviceId, OnboardingStatus
 
-// Query 3: Inspect process events inside the WSL2 utility VM (DeviceProcessEvents)
+// Query 3: Inspect process events across WSL2 utility VMs identified via DeviceInfo.HostDeviceId
+let WslDeviceIds = DeviceInfo
+| where Timestamp > ago(7d)
+| where OSPlatform == "Linux" and isnotempty(HostDeviceId)
+| distinct DeviceId;
 DeviceProcessEvents
 | where Timestamp > ago(24h)
-| where DeviceName == "LAB-HOST-wslc"
-| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
+| where DeviceId in (WslDeviceIds)
+| project Timestamp, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName
 | order by Timestamp desc
 KQL_EOF
 
 cat > "$TARGET/README.md" <<'README_EOF'
-# Defender for Endpoint WSL2 Plug-in Walkthrough
+# Defender for Endpoint WSL2 Plug-in Walkthrough (Simulated Container Lab)
 
-This workspace lets you verify the Microsoft Defender for Endpoint (MDE)
-plug-in for WSL2, trigger a safe user-space Linux EDR detection marker, and
-inspect the 3 Advanced Hunting KQL queries that join `LAB-HOST-wslc` back to
-its Windows host (`LAB-HOST`) via `HostDeviceId`.
+This Linux container workspace provides **simulated** output for the Microsoft
+Defender for Endpoint (MDE) plug-in for WSL2 so you can inspect the schema and
+practise the 3 Advanced Hunting KQL queries without provisioning a Windows VM.
 
-## Quick Commands
+> **Important:** `healthcheck.exe` and `./diy-edr-test.sh` in this container
+> emit **simulated** local output and do not inspect a Windows host or submit
+> live alerts to Microsoft Defender. To validate a live environment:
+> 1. On an onboarded Windows 11 host, run:
+>    `& "C:\Program Files\Microsoft Defender for Endpoint Plug-in for WSL\tools\healthcheck.exe"`
+> 2. Trigger the test inside a monitored WSL2 distribution and verify the alert
+>    and `DeviceInfo` / `DeviceProcessEvents` rows in the Microsoft Defender
+>    portal (`https://security.microsoft.com`).
+
+## Quick Commands (Simulated Container Shims)
 
 ```bash
 healthcheck.exe
