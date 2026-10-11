@@ -323,7 +323,10 @@ addons:
     enabled: true
     image: docker.io/hybridcloudworks/hcw-addon-migration
     image_tag: "0.3.0"
-    image_digest: "" # [VERIFY at PR time] the v0.3.0 index digest from the add-on's publish-images summary
+    # The v0.3.0 index digest: the add-on's publish-images run on its v0.3.0 tag (2026-10-11 03:47 UTC, through the
+    # Docker Hub OIDC connection) printed it in its summary, and `docker buildx imagetools inspect
+    # docker.io/hybridcloudworks/hcw-addon-migration:0.3.0` reads the same value from the registry.
+    image_digest: "sha256:175622db4d7029902b68e8e51f8132f78e5247e219944031f00dc2fdc814aa83"
     port: 18081
     memory: 512m
     pids_limit: 256

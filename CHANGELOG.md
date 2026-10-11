@@ -17,6 +17,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool add-ons: the migration add-on's image digest is pinned** (`lab-host/ansible/group_vars/all.yml`,
+  `addons[].image_digest` for `migration`): `sha256:175622db…aa83`, the index digest of
+  `docker.io/hybridcloudworks/hcw-addon-migration:0.3.0`, published 2026-10-11 by the add-on's `publish-images` run
+  through its Docker Hub OIDC connection. The row still carries the verification provider's test site key, so the
+  `addons` role refuses to deploy it until the owner replaces `AMO_TURNSTILE_SITE_KEY` with the migration widget's site
+  key and sets the vault key (runbook "Tool add-ons", steps 1 and 2); that is why this landed as a draft first.
+
 ### Added
 
 - **Hybrid Lab: an hourly canary runs one real lab job end to end, and a
