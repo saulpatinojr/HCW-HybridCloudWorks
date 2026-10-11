@@ -20,6 +20,16 @@
 > #382, same day):** every setup step green in Copilot's runner — Agents
 > reads, federated login, App token — recorded in the
 > [Verification record](#verification-record).
+>
+> **The App's key, 2026-10-11
+> ([#1063](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1063)):**
+> by 2026-09-28 the key was no longer in the Agents store (#1029), so the App-token step
+> skipped. It was stored again on 2026-10-11, and `gh secret list --app agents`
+> lists it with that date. A manual dispatch of the setup workflow cannot
+> confirm it: the dispatched run reads Actions secrets, not the Agents store,
+> so it prints the "not resolvable" notice whatever the Agents store holds.
+> The check is the first Copilot session after its credits return on
+> 2026-10-31. Its setup log should show the App-token step run, not skipped.
 
 Every Copilot review in this repository ends with the hint *"Configure MCP
 servers for context-aware, tailored reviews."* This page is that

@@ -185,12 +185,14 @@ function Counts({ counts }) {
 }
 
 /**
- * The inline form under a row: the date it was rotated, this browser's day
- * by default, and at most the API's own bound (rotationDateBounds).
+ * The inline form under a row: the date it was rotated, at most the API's
+ * own bound (rotationDateBounds). It opens on the date already recorded when
+ * there is one, so the stored record is what the form shows, and on this
+ * browser's day otherwise.
  */
 function RecordForm({ credential, busy, onSave, onClear, onCancel }) {
   const [bounds] = useState(() => rotationDateBounds());
-  const [date, setDate] = useState(bounds.initial);
+  const [date, setDate] = useState(() => credential.recordedOn ?? bounds.initial);
   const submit = (event) => {
     event.preventDefault();
     if (date) onSave(date);
