@@ -43,8 +43,14 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
   const providerCatalog = architecturesByProvider[providerKey] || awsArchitectures;
   const staticData = providerCatalog?.[slug] || null;
 
+  const itemProvider = String(item?.cloudProvider || item?.provider || '')
+    .trim()
+    .toLowerCase();
+  const providerMatches = !itemProvider || itemProvider === providerKey;
   const dynamicArchitecture =
-    item && String(item.type || '').toLowerCase() === 'architecture' ? item : null;
+    item && String(item.type || '').toLowerCase() === 'architecture' && providerMatches
+      ? item
+      : null;
   const architecture = dynamicArchitecture ? { ...staticData, ...dynamicArchitecture } : staticData;
 
   // Before the early returns: hooks must run in the same order on every

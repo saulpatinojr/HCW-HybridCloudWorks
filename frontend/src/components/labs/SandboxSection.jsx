@@ -176,15 +176,15 @@ export const CLOUD_SANDBOX_STEPS = Object.freeze([
   Object.freeze({
     id: 'run-cloud',
     title: '3. Launch the cloud sandbox from the published lab image',
-    body: 'Pass --cloud with --image-ref and explicit CPU and memory values to launch Docker’s remote microVM directly from the published hybridcloudworks/hcw-lab:latest OCI image.',
+    body: 'Remove any existing cloud sandbox with the same name first (resuming an existing sandbox rejects --cpus, --memory, and --image-ref), then pass --cloud with --image-ref and explicit CPU and memory values to launch from hybridcloudworks/hcw-lab:latest.',
     commands: Object.freeze([
       Object.freeze({
         shell: 'PowerShell',
-        command: `sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4g`,
+        command: `sbx --cloud rm ${SANDBOX_NAME} 2>$null; sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4g`,
       }),
       Object.freeze({
         shell: 'bash',
-        command: `sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4g`,
+        command: `sbx --cloud rm ${SANDBOX_NAME} 2>/dev/null || true; sbx run --cloud claude --name ${SANDBOX_NAME} --image-ref ${CLOUD_TEMPLATE_IMAGE} --cpus 2 --memory 4g`,
       }),
     ]),
   }),

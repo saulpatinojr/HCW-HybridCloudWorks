@@ -55,9 +55,16 @@ export function normalizeKeyServices(services) {
  * raster `diagramUrl` is not supplied.
  */
 export function TopologyDiagram({ topology, hotspots = [], onHotspotClick }) {
+  const [selected, setSelected] = React.useState(null);
   if (!topology || !Array.isArray(topology.stages) || topology.stages.length === 0) {
     return null;
   }
+
+  const activeDetail = selected || topology.stages[0] || hotspots[0] || null;
+  const handleSelect = (entry, idx) => {
+    setSelected(entry);
+    onHotspotClick?.(entry, idx);
+  };
 
   return (
     <div
@@ -90,7 +97,7 @@ export function TopologyDiagram({ topology, hotspots = [], onHotspotClick }) {
           <button
             key={stage.id || stage.title || idx}
             type="button"
-            onClick={() => onHotspotClick?.(stage, idx)}
+            onClick={() => handleSelect(stage, idx)}
             className="group relative flex flex-col justify-between rounded-lg border border-slate-800 bg-slate-900/90 p-3.5 text-left transition-colors hover:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary"
             data-testid="topology-stage"
           >
@@ -111,6 +118,9 @@ export function TopologyDiagram({ topology, hotspots = [], onHotspotClick }) {
               {stage.subtitle && (
                 <p className="mt-1 text-xs text-slate-300 leading-snug">{stage.subtitle}</p>
               )}
+              {stage.description && (
+                <p className="mt-1.5 text-xs text-slate-400 leading-snug">{stage.description}</p>
+              )}
             </div>
             {stage.guardrail && (
               <p className="mt-3 border-t border-slate-800/80 pt-2 font-mono text-[11px] text-emerald-300">
@@ -127,7 +137,7 @@ export function TopologyDiagram({ topology, hotspots = [], onHotspotClick }) {
             <button
               key={spot.id || spot.label || index}
               type="button"
-              onClick={() => onHotspotClick?.(spot, index)}
+              onClick={() => handleSelect(spot, index)}
               className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-200 hover:border-primary"
             >
               <span className="font-mono text-primary">#{index + 1}</span>
@@ -136,6 +146,21 @@ export function TopologyDiagram({ topology, hotspots = [], onHotspotClick }) {
           ))}
         </div>
       )}
+
+      {activeDetail &&
+        (activeDetail.description || activeDetail.subtitle || activeDetail.guardrail) && (
+          <div
+            className="mt-4 rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-xs text-slate-300"
+            data-testid="topology-detail"
+          >
+            <span className="font-semibold text-white">
+              {activeDetail.title || activeDetail.label}:{' '}
+            </span>
+            <span>
+              {activeDetail.description || activeDetail.subtitle || activeDetail.guardrail}
+            </span>
+          </div>
+        )}
     </div>
   );
 }
