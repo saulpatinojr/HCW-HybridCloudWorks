@@ -23,7 +23,19 @@ export LC_ALL=C
 # defaults/main.yml, which the role asserts is whole hours (<n>h).
 default_ttl='{{ coder_template_default_ttl }}'
 {% raw %}
+me=hcw-coder-template-push
+say() { printf '%s: %s\n' "${me}" "$*"; }
+# refuse CODE MESSAGE: says why on stderr and exits with CODE.
+refuse() { local code="$1"; shift; printf '%s: %s\n' "${me}" "$*" >&2; exit "${code}"; }
+
 name=hcw-lab
+if [ "$#" -gt 1 ]; then
+  refuse 2 "usage: hcw-coder-template-push [template-name]; nothing published"
+elif [ "$#" -eq 1 ]; then
+  [[ "$1" =~ ^[a-z0-9-]+$ ]] ||
+    refuse 2 "invalid template name '$1' (lowercase letters, digits and hyphens only); nothing published"
+  name="$1"
+fi
 # container_name in lab-host/coder/docker-compose.yml.
 container=coder
 # Coder inside its own container: CODER_HTTP_ADDRESS in the same file. The
@@ -34,11 +46,6 @@ coder_url=http://127.0.0.1:7080
 # through the owner's line it is always /opt/hcw-src.
 src="${HCW_SRC_DIR:-/opt/hcw-src}"
 template_dir="${src}/lab-host/coder/templates/${name}"
-me=hcw-coder-template-push
-
-say() { printf '%s: %s\n' "${me}" "$*"; }
-# refuse CODE MESSAGE: says why on stderr and exits with CODE.
-refuse() { local code="$1"; shift; printf '%s: %s\n' "${me}" "$*" >&2; exit "${code}"; }
 
 # --- Refusals before anything is read from stdin or asked of Docker (exit 2).
 [[ "${default_ttl}" =~ ^[1-9][0-9]*h$ ]] ||

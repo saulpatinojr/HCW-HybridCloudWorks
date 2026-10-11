@@ -809,12 +809,18 @@ describe('the map', () => {
     expect(regex[1].split('|').sort()).toEqual(Object.keys(LAB_WORKSPACES).sort());
   });
 
-  it('gives every lab in LAB_WORKSPACES its own per-lab bootloader script in lab-image/bootloaders/', () => {
+  it('gives every lab in LAB_WORKSPACES and every guided Add-On lab its own per-lab bootloader script in lab-image/bootloaders/', () => {
     const dispatcher = read('lab-image/bootloaders/hcw-boot');
     expect(dispatcher).toContain('/usr/local/libexec/hcw-boot/${LAB_ID}.sh');
     for (const labId of Object.keys(LAB_WORKSPACES)) {
       const script = read(`lab-image/bootloaders/${labId}.sh`);
       expect(script.startsWith('#!/usr/bin/env bash')).toBe(true);
+    }
+    for (const addonLabId of ['migration-assessment', 'network-assessment', 'cloud-assessment']) {
+      const script = read(`lab-image/bootloaders/${addonLabId}.sh`);
+      expect(script.startsWith('#!/usr/bin/env bash')).toBe(true);
+      expect(script).toContain('python3 -m zipfile -e');
+      expect(script).toContain('HCW_BOOT_OFFLINE');
     }
     const template = read('lab-host/coder/templates/hcw-lab/main.tf');
     expect(template).toContain('/usr/local/libexec/hcw-boot/hcw-boot');

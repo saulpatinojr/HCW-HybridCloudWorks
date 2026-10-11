@@ -157,6 +157,7 @@ case "${1:-} ${2:-}" in
     if [ "${mode}" = push-fails ]; then echo "error: template import provisioning failed" >&2; exit 1; fi
     (cd "${STUB_ROOT}$5" && ls -A | LC_ALL=C sort) > "${state}/pushed-files"
     printf '%s\n' "$5" > "${state}/pushed-dir"
+    printf '%s\n' "$3" > "${state}/pushed-name"
     echo "Updated version at Sep 28 12:00:00!"
     ;;
   "templates edit")
@@ -178,7 +179,7 @@ case "${1:-} ${2:-}" in
     reported="$(cat "${state}/ttl")"
     if [ "${mode}" = ttl-differs ]; then reported=2h; fi
     printf 'NAME     DEFAULT TTL\n'
-    printf 'hcw-lab  %s0m0s\n' "${reported}"
+    printf '%s  %s0m0s\n' "$(cat "${state}/pushed-name")" "${reported}"
     ;;
   *) unexpected "$@" ;;
 esac
@@ -196,15 +197,15 @@ template_dir="${HCW_SRC_DIR}/lab-host/coder/templates/hcw-lab"
 TOKEN='AbCdE12345-abcdefghijKLMNOPQRST12'
 out="${work}/out"
 err="${work}/err"
-# publish STDIN [ACCEPTED_TOKEN]: pipes STDIN (printf %b) into the helper
-# with a fresh stub state; returns the helper's exit code.
+# publish STDIN [ACCEPTED_TOKEN] [HELPER_ARGS...]: pipes STDIN (printf %b) into
+# the helper with a fresh stub state; returns the helper's exit code.
 publish() {
   local rc=0
   rm -rf "${STUB_STATE}"
   mkdir -p "${STUB_STATE}"
   : > "${STUB_LOG}"
   printf '%s\n' "${2:-${TOKEN}}" > "${STUB_STATE}/accepted-token"
-  printf '%b' "$1" | bash "${helper}" > "${out}" 2> "${err}" || rc=$?
+  printf '%b' "$1" | bash "${helper}" "${@:3}" > "${out}" 2> "${err}" || rc=$?
   return "${rc}"
 }
 rc_of() { local rc=0; "$@" || rc=$?; echo "${rc}"; }
@@ -329,6 +330,19 @@ check "a symbolic link is refused, so nothing outside the checkout reaches Coder
 export HCW_SRC_DIR="${work}/no-checkout"
 rc="$(rc_of publish "${TOKEN}\n")"
 check "no checkout is refused" "refused_before_docker 'no template at ${work}/no-checkout/lab-host/coder/templates/hcw-lab'"
+addon_tpl="${work}/fake-src/lab-host/coder/templates/amo-guided-lab"
+mkdir -p "${addon_tpl}"
+printf 'terraform {}\n' > "${addon_tpl}/main.tf"
+export HCW_SRC_DIR="${work}/fake-src"
+rc="$(rc_of publish "${TOKEN}\n" "${TOKEN}" amo-guided-lab)"
+check "an explicit template name argument publishes that template" \
+  "[ '${rc}' = 0 ] && [ \"\$(state pushed-name)\" = 'amo-guided-lab' ] && grep -q 'published amo-guided-lab' '${out}'" "$(said)"
+rc="$(rc_of publish "${TOKEN}\n" "${TOKEN}" '../bad')"
+check "an invalid template name is refused before Docker is asked anything" \
+  "refused_before_docker \"invalid template name '../bad'\""
+rc="$(rc_of publish "${TOKEN}\n" "${TOKEN}" hcw-lab extra)"
+check "more than one argument is refused before Docker is asked anything" \
+  "refused_before_docker 'usage: hcw-coder-template-push [template-name]'"
 export HCW_SRC_DIR="${work}/src"
 
 # --- An autostop that is not whole hours, rendered in spite of the role's assert.
