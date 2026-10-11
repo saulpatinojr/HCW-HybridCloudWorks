@@ -379,6 +379,71 @@ export function programsInPlay(programs) {
  * requirements, and the attached evidence with snapshots. Private records,
  * so the export is a file the owner keeps — never a public page.
  */
+// ── upkeep: what keeps a held membership active ─────────────────────────────
+
+/** The periods an upkeep rule counts in, as the API's UPKEEP_PERIODS. */
+export const UPKEEP_PERIODS = Object.freeze(['quarter', 'year']);
+
+/**
+ * The calendar quarter or year holding `day` (YYYY-MM-DD), as the days it
+ * spans and its name, e.g. `{ start: '2026-10-01', end: '2026-12-31', label:
+ * 'Q4 2026' }`. `offset` -1 is the period before it.
+ */
+export function upkeepWindow(day, period, offset = 0) {
+  const year = Number(String(day).slice(0, 4));
+  if (period === 'year') {
+    const y = year + offset;
+    return { start: `${y}-01-01`, end: `${y}-12-31`, label: String(y) };
+  }
+  const month = Number(String(day).slice(5, 7));
+  const index = year * 4 + Math.floor((month - 1) / 3) + offset;
+  const y = Math.floor(index / 4);
+  const quarter = index - y * 4;
+  const first = quarter * 3 + 1;
+  const last = first + 2;
+  const pad = (n) => String(n).padStart(2, '0');
+  const lastDay = new Date(Date.UTC(y, last, 0)).getUTCDate();
+  return {
+    start: `${y}-${pad(first)}-01`,
+    end: `${y}-${pad(last)}-${pad(lastDay)}`,
+    label: `Q${quarter + 1} ${y}`,
+  };
+}
+
+/**
+ * How a membership stands against its program's upkeep rule: the evidence
+ * filed under this program by name, dated in the current period and in the
+ * one before. General evidence (filed under no program) is not counted: it
+ * says nothing about this program, which is what an upkeep rule asks about.
+ * Null when the program has no rule.
+ */
+export function upkeepProgress(program, evidence, today) {
+  const upkeep = program?.upkeep;
+  if (!upkeep || !UPKEEP_PERIODS.includes(upkeep.period)) return null;
+  const types = upkeep.evidenceTypes || [];
+  const filed = (evidence || []).filter(
+    (item) =>
+      !item.softDeletedAt &&
+      Array.isArray(item.programIds) &&
+      item.programIds.includes(program.id) &&
+      (types.length === 0 || types.includes(item.sourceModule))
+  );
+  const tally = (window) => {
+    const count = filed.filter(
+      (item) => item.date && item.date >= window.start && item.date <= window.end
+    ).length;
+    return { ...window, count, met: count >= upkeep.minCount };
+  };
+  const current = tally(upkeepWindow(today, upkeep.period));
+  return {
+    period: upkeep.period,
+    minCount: upkeep.minCount,
+    note: upkeep.note || '',
+    current: { ...current, daysLeft: daysUntil(current.end, today) },
+    previous: tally(upkeepWindow(today, upkeep.period, -1)),
+  };
+}
+
 export function applicationExport(application, program, evidence) {
   return {
     exportedAt: new Date().toISOString(),
@@ -428,6 +493,8 @@ export const EMPTY_PROGRAM_FORM = Object.freeze({
   customFields: [],
   membershipStatus: 'none',
   parentProgramId: '',
+  contributionTrackerUrl: '',
+  upkeep: { period: '', minCount: 2, note: '', evidenceTypes: [] },
 });
 
 export const EMPTY_REQUIREMENT = Object.freeze({
@@ -485,6 +552,41 @@ export function programForm(program) {
         reminders.daysBeforeRenewal ?? EMPTY_PROGRAM_FORM.reminders.daysBeforeRenewal,
     },
     customFields: program.customFields || [],
+    contributionTrackerUrl: textOf(program.contributionTrackerUrl),
+    upkeep: program.upkeep
+      ? {
+          period: textOf(program.upkeep.period),
+          minCount: program.upkeep.minCount ?? EMPTY_PROGRAM_FORM.upkeep.minCount,
+          note: textOf(program.upkeep.note),
+          evidenceTypes: program.upkeep.evidenceTypes || [],
+        }
+      : { ...EMPTY_PROGRAM_FORM.upkeep },
+  };
+}
+
+/** The tracker link as a save sends it: the URL, or null; `{ error }` for one that is not http(s). */
+function trackerPayload(text) {
+  const url = String(text || '').trim();
+  if (url && !/^https?:\/\//i.test(url)) {
+    return { error: 'Contribution tracker URL must start with http:// or https://.' };
+  }
+  return { value: url || null };
+}
+
+/** The upkeep rule as a save sends it, or null for none; `{ error }` for a minimum under 1. */
+function upkeepPayload(rule = EMPTY_PROGRAM_FORM.upkeep) {
+  if (!UPKEEP_PERIODS.includes(rule.period)) return { value: null };
+  const minCount = Math.floor(Number(rule.minCount) || 0);
+  if (minCount < 1) {
+    return { error: 'Keeping the membership active needs a minimum of at least 1.' };
+  }
+  return {
+    value: {
+      period: rule.period,
+      minCount,
+      evidenceTypes: (rule.evidenceTypes || []).filter((t) => EVIDENCE_SOURCES.includes(t)),
+      note: String(rule.note || '').trim(),
+    },
   };
 }
 
@@ -494,6 +596,10 @@ export function programPayload(form) {
   if (form.applicationUrl && !/^https?:\/\//i.test(form.applicationUrl.trim())) {
     return { error: 'Application URL must start with http:// or https://.' };
   }
+  const tracker = trackerPayload(form.contributionTrackerUrl);
+  if (tracker.error) return tracker;
+  const upkeep = upkeepPayload(form.upkeep);
+  if (upkeep.error) return upkeep;
   const requirements = (form.requirements || []).map((r, index) => ({
     id: String(r.id || '').trim() || `req-${index + 1}`,
     label: String(r.label || '').trim(),
@@ -532,6 +638,8 @@ export function programPayload(form) {
         daysBeforeRenewal: Math.max(0, Math.floor(Number(form.reminders.daysBeforeRenewal) || 0)),
       },
       customFields: (form.customFields || []).filter((f) => f.id && f.label),
+      contributionTrackerUrl: tracker.value,
+      upkeep: upkeep.value,
     },
   };
 }

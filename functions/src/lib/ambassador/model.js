@@ -124,6 +124,13 @@ export const QUESTION_KINDS = Object.freeze([
 /** Readiness units: a requirement counts evidence items, or sums their `metrics.credits`. */
 export const SCORING_UNITS = Object.freeze(['credits']);
 
+/**
+ * The periods a program's `upkeep` counts in: a calendar quarter or a
+ * calendar year. Upkeep is what keeps a membership active once it is held,
+ * apart from the requirements an application is scored against.
+ */
+export const UPKEEP_PERIODS = Object.freeze(['quarter', 'year']);
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** `YYYY-MM-DD` naming a real day, or null. A full ISO timestamp keeps its day. */

@@ -178,6 +178,11 @@ function CustomFieldsEditor({ rows, onChange }) {
   );
 }
 
+/**
+ * The add/edit dialog for one program: every catalogue field, the membership,
+ * the upkeep rule and the contribution tracker. Saves through `onSave` and
+ * closes when it answers true.
+ */
 export function ProgramEditor({ program, programs = [], onClose, onSave, saving }) {
   const [form, setForm] = useState(() => programForm(program));
   // A parent is a top-level program other than this one: one level only,
@@ -194,6 +199,8 @@ export function ProgramEditor({ program, programs = [], onClose, onSave, saving 
     setForm((f) => ({ ...f, applicationWindow: { ...f.applicationWindow, [key]: value } }));
   const setReminder = (key) => (value) =>
     setForm((f) => ({ ...f, reminders: { ...f.reminders, [key]: value } }));
+  const setUpkeep = (key) => (value) =>
+    setForm((f) => ({ ...f, upkeep: { ...f.upkeep, [key]: value } }));
 
   const submit = async (event) => {
     event.preventDefault();
@@ -332,6 +339,43 @@ export function ProgramEditor({ program, programs = [], onClose, onSave, saving 
               label="Expiration rule"
               value={form.expirationRule}
               onChange={set('expirationRule')}
+            />
+            <TextField
+              id="program-tracker"
+              label="Contribution tracker URL"
+              type="url"
+              placeholder="https://..."
+              value={form.contributionTrackerUrl}
+              onChange={set('contributionTrackerUrl')}
+              className="md:col-span-2"
+              hint="Where the program wants each contribution logged. Kept with this program only; the seeded catalogue never carries one."
+            />
+            <SelectField
+              id="program-upkeep-period"
+              label="Keeps the membership active"
+              hint="A minimum of evidence filed under this program in every calendar quarter or year, once the membership is held."
+              value={form.upkeep.period}
+              onChange={setUpkeep('period')}
+              options={[
+                { value: '', label: '— no rule —' },
+                { value: 'quarter', label: 'Every quarter' },
+                { value: 'year', label: 'Every year' },
+              ]}
+            />
+            <TextField
+              id="program-upkeep-min"
+              label="Minimum each period"
+              type="number"
+              min="1"
+              value={form.upkeep.minCount}
+              onChange={setUpkeep('minCount')}
+            />
+            <TextAreaField
+              id="program-upkeep-note"
+              label="What the program asks, to stay active"
+              value={form.upkeep.note}
+              onChange={setUpkeep('note')}
+              className="md:col-span-2"
             />
             <TextField
               id="program-reminder-deadline"

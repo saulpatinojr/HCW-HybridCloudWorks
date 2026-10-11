@@ -7,7 +7,7 @@
  */
 import { actorName } from '../auth/actor-name.js';
 import { CONTAINER, NOT_PROVISIONED } from './model.js';
-import { DEFAULT_PROGRAMS } from './programs.js';
+import { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES } from './programs.js';
 import { str } from './fields.js';
 import { validateApplication, validateEvidence, validateProgram } from './validate.js';
 
@@ -80,6 +80,11 @@ function seededDoc(ctx, program, order) {
     seeded: true,
     reminders: { daysBeforeDeadline: 14, daysBeforeRenewal: 30 },
     customFields: [],
+    // A seed with a superseded history starts at its current revision, so
+    // nothing of it is ever "corrected".
+    ...(SUPERSEDED_SEED_VALUES[program.id]
+      ? { seedRevision: SUPERSEDED_SEED_VALUES[program.id].revision }
+      : {}),
     createdAt: stamp,
     updatedAt: stamp,
   };
@@ -132,6 +137,14 @@ const SEEDS_BY_ID = new Map(DEFAULT_PROGRAMS.map((program) => [program.id, progr
 const hasQuestions = (doc) =>
   Array.isArray(doc?.applicationQuestions) && doc.applicationQuestions.length > 0;
 
+/** Plain objects with their keys sorted, so two equal values serialise alike. */
+const canonical = (value) =>
+  JSON.stringify(value, (_key, inner) =>
+    inner && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : inner
+  );
+
 /**
  * The fields a seed gained after it was stored that a stored seed may take
  * without losing an edit: the official `applicationQuestions` when the
@@ -149,6 +162,8 @@ const BACKFILL_FIELDS = [
     'parentProgramId',
     (stored, seed) => Boolean(seed.parentProgramId) && !('parentProgramId' in stored),
   ],
+  // Absent, as for parentProgramId: the owner clearing it stores null.
+  ['upkeep', (stored, seed) => Boolean(seed.upkeep) && !('upkeep' in stored)],
 ];
 
 /**
@@ -174,7 +189,8 @@ async function backfillSeedFields(ctx, rows) {
       { ...patch, updatedAt: ctx.nowIso() },
       stored._etag ? { ifMatch: stored._etag } : {}
     );
-    ctx.log.info?.(`[ambassador] seed backfill ${stored.id}: ${Object.keys(patch).join(', ')}`);
+    // Field names only: telemetry carries no document id (CodeRabbit on #1077).
+    ctx.log.info?.(`[ambassador] seed backfill: ${Object.keys(patch).join(', ')}`);
     out.push(patched || { ...stored, ...patch });
   }
   return out;
@@ -191,6 +207,19 @@ export function seedBackfillFor(stored, seed) {
   const patch = {};
   for (const [field, wanted] of BACKFILL_FIELDS) {
     if (wanted(stored, seed)) patch[field] = seed[field];
+  }
+  // Once per revision (programs.js SUPERSEDED_SEED_VALUES): a field still
+  // holding an earlier seed's value was never edited, so the current seed's
+  // value replaces it, and the stamp keeps a later deliberate return to the
+  // old value from being corrected again.
+  const superseded = SUPERSEDED_SEED_VALUES[seed.id];
+  if (superseded && (Number(stored.seedRevision) || 1) < superseded.revision) {
+    for (const [field, old] of Object.entries(superseded.fields)) {
+      if (field in seed && field in stored && canonical(stored[field]) === canonical(old)) {
+        patch[field] = seed[field];
+      }
+    }
+    patch.seedRevision = superseded.revision;
   }
   return Object.keys(patch).length > 0 ? patch : null;
 }

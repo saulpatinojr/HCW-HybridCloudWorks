@@ -5,7 +5,9 @@
  * explains its arithmetic and never promises acceptance, an absent container
  * is a 503 NOT_PROVISIONED and not a 500, and the role per verb holds.
  */
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi } from 'vitest';
+import { MAX_PATCH_OPERATIONS } from './cosmos-client.js';
 import {
   APPLICATION_STATUSES,
   APPLICATION_TRANSITIONS,
@@ -20,6 +22,7 @@ import {
   parsePeriod,
   programGate,
   seedBackfillFor,
+  SUPERSEDED_SEED_VALUES,
   toCalendarDate,
   validateApplication,
   validateEvidence,
@@ -246,6 +249,7 @@ describe('programs', () => {
     'GitKraken Ambassador',
     'Microsoft Management Community',
     'MCT Regional Lead',
+    'AWS Community Builders',
   ];
 
   it('seeds every default on the first read of an empty container, each editable and enabled', async () => {
@@ -330,15 +334,16 @@ describe('programs', () => {
       'Microsoft Elevate Educator – Expert (MIEE)',
       'Microsoft Management Community',
       'MCT Regional Lead',
+      'AWS Community Builders',
     ]);
     // Appended after the highest stored order (7), in seed order.
-    expect(body.items.slice(7).map((p) => p.order)).toEqual([8, 9, 10]);
+    expect(body.items.slice(7).map((p) => p.order)).toEqual([8, 9, 10, 11]);
     expect(body.items.find((p) => p.id === 'program-github-star').enabled).toBe(false);
-    expect(store.createDoc).toHaveBeenCalledTimes(3);
+    expect(store.createDoc).toHaveBeenCalledTimes(4);
     expect(store.data.get('ambassador').get(gone.id).softDeletedAt).toBe(stamp);
     // Nothing more on the next read.
     await h.listPrograms(makeRequest(), context);
-    expect(store.createDoc).toHaveBeenCalledTimes(3);
+    expect(store.createDoc).toHaveBeenCalledTimes(4);
   });
 
   it('two overlapping reads that both miss a seed leave the first insert, edits included, and never surface a soft-deleted one', async () => {
@@ -382,6 +387,7 @@ describe('programs', () => {
       gitkraken.id,
       'program-microsoft-management-community',
       'program-microsoft-mct-regional-lead',
+      'program-aws-community-builders',
     ]);
   });
 
@@ -417,10 +423,17 @@ describe('programs', () => {
       order: 3,
       name: 'My community',
     };
-    // A seeded program whose scoring was never stored.
+    // A seeded program whose scoring was never stored. Each is stamped at its
+    // seed's current revision, as seededDoc stamps a fresh one.
     const otherSeeds = DEFAULT_PROGRAMS.filter(
       (p) => ![mvpSeed.id, mctSeed.id, management.id].includes(p.id)
-    ).map((p, i) => ({ ...p, ...base, seeded: true, order: 10 + i }));
+    ).map((p, i) => ({
+      ...p,
+      ...base,
+      seeded: true,
+      order: 10 + i,
+      ...(SUPERSEDED_SEED_VALUES[p.id] ? { seedRevision: SUPERSEDED_SEED_VALUES[p.id].revision } : {}),
+    }));
     const store = memStore({ ambassador: [storedMvp, storedMct, ownManagement, ...otherSeeds] });
     const log = { error: vi.fn(), info: vi.fn() };
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed, log });
@@ -445,7 +458,7 @@ describe('programs', () => {
       { ifMatch: '"etag-mvp"' }
     );
     expect(log.info).toHaveBeenCalledWith(
-      '[ambassador] seed backfill program-microsoft-mvp: applicationQuestions'
+      '[ambassador] seed backfill: applicationQuestions'
     );
     // Its own questions stay; the owner's program is untouched; the management seed is absent, so added whole.
     expect(body.items.find((p) => p.id === mctSeed.id).applicationQuestions).toEqual(own);
@@ -1241,5 +1254,130 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
       context
     );
     expect(moved.status).toBe(200);
+  });
+});
+
+describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)', () => {
+  const GITKRAKEN = 'program-gitkraken-ambassador';
+  const seed = DEFAULT_PROGRAMS.find((p) => p.id === GITKRAKEN);
+  const { revision, fields: old } = SUPERSEDED_SEED_VALUES[GITKRAKEN];
+  /** A GitKraken row as #873 stored it: the first seed, before upkeep existed. */
+  const storedFirstSeed = () => {
+    const row = { ...seed, ...old, seeded: true, membershipStatus: 'active' };
+    delete row.upkeep;
+    return row;
+  };
+
+  it('seeds GitKraken with the quarterly rule from its check-in: 2 pieces a quarter', () => {
+    expect(seed.upkeep).toEqual({
+      period: 'quarter',
+      minCount: 2,
+      evidenceTypes: [],
+      note: expect.stringMatching(/contribution tracker, on that quarter’s tab/),
+    });
+    expect(seed.renewalCadence).toBe('quarterly');
+    expect(seed.criteria).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/G2, Capterra and TrustRadius/),
+        expect.stringMatching(/Merge Conflicts, Dev AI Use, Commit Graph/),
+      ])
+    );
+    expect(seed.requirements).toEqual([
+      expect.objectContaining({ id: 'quarterly-content', minCount: 2, evidenceTypes: [] }),
+    ]);
+  });
+
+  it('seeds AWS Community Builders from its program page, waitlist and all', () => {
+    const builders = DEFAULT_PROGRAMS.find((p) => p.id === 'program-aws-community-builders');
+    expect(builders).toMatchObject({
+      name: 'AWS Community Builders',
+      provider: 'AWS',
+      applicationUrl: 'https://builder.aws.com/community/community-builders',
+    });
+    expect(builders.applicationWindow.note).toMatch(/Waitlist open/);
+    expect(builders.applicationQuestions).toBeUndefined();
+  });
+
+  // The repository is public; a program's tracker is often private to its members.
+  it('seeds no contribution tracker, and no shared-document link anywhere', () => {
+    for (const program of DEFAULT_PROGRAMS) expect(program.contributionTrackerUrl).toBeUndefined();
+    const source = readFileSync(new URL('./ambassador/programs.js', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/docs\.google\.com|spreadsheets|sharepoint\.com/i);
+  });
+
+  it('brings a never-edited first GitKraken seed up to date, upkeep included, in one patch Cosmos takes', () => {
+    const patch = seedBackfillFor(storedFirstSeed(), seed);
+    const fields = Object.keys(old);
+    expect(Object.keys(patch).sort()).toEqual([...fields, 'seedRevision', 'upkeep'].sort());
+    expect(patch.seedRevision).toBe(revision);
+    for (const field of fields) expect(patch[field]).toEqual(seed[field]);
+    expect(patch.upkeep).toEqual(seed.upkeep);
+    // The writer adds updatedAt to the patch; Cosmos takes at most this many operations.
+    expect(Object.keys(patch).length + 1).toBeLessThanOrEqual(MAX_PATCH_OPERATIONS);
+  });
+
+  it('keeps every field the owner edited, and matches regardless of key order', () => {
+    const stored = {
+      ...storedFirstSeed(),
+      description: 'My own words.',
+      requirements: old.requirements.map((r) => Object.fromEntries(Object.entries(r).reverse())),
+    };
+    const patch = seedBackfillFor(stored, seed);
+    expect(patch.description).toBeUndefined();
+    expect(patch.requirements).toEqual(seed.requirements);
+    expect(patch.criteria).toEqual(seed.criteria);
+    // Membership is the owner's fact and never part of a backfill.
+    expect(patch.membershipStatus).toBeUndefined();
+  });
+
+  it('leaves a current GitKraken seed alone, and never refills a cleared upkeep', () => {
+    const current = { ...seed, seeded: true, seedRevision: revision };
+    expect(seedBackfillFor(current, seed)).toBeNull();
+    expect(seedBackfillFor({ ...current, upkeep: null }, seed)).toBeNull();
+  });
+
+  // CodeRabbit on #1077: the correction runs once. An owner who later sets a
+  // field back to the first seed's value meant it, and keeps it.
+  it('corrects once: after the stamp, a deliberate return to an old value stays', () => {
+    const corrected = { ...storedFirstSeed(), ...seedBackfillFor(storedFirstSeed(), seed) };
+    expect(corrected.seedRevision).toBe(revision);
+    const restored = { ...corrected, renewalCadence: old.renewalCadence };
+    expect(seedBackfillFor(restored, seed)).toBeNull();
+    // A row whose every superseded field was edited still takes the stamp, once.
+    const edited = { ...storedFirstSeed(), upkeep: seed.upkeep };
+    for (const field of Object.keys(old)) edited[field] = `mine: ${field}`;
+    expect(seedBackfillFor(edited, seed)).toEqual({ seedRevision: revision });
+  });
+
+  it('stamps a freshly seeded GitKraken at the current revision', async () => {
+    const store = memStore();
+    const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
+    await h.listPrograms(makeRequest(), context);
+    expect(store.data.get('ambassador').get(GITKRAKEN).seedRevision).toBe(revision);
+    expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBeUndefined();
+  });
+
+  it('cleans upkeep and the tracker link, and refuses what is not one', () => {
+    const ok = validateProgram(
+      {
+        upkeep: { period: 'quarter', minCount: '2', evidenceTypes: ['content', 'nope'], note: 'x' },
+        contributionTrackerUrl: 'https://example.com/tracker',
+      },
+      { partial: true }
+    );
+    expect(ok.value).toEqual({
+      upkeep: { period: 'quarter', minCount: 2, evidenceTypes: ['content'], note: 'x' },
+      contributionTrackerUrl: 'https://example.com/tracker',
+    });
+    expect(validateProgram({ upkeep: null }, { partial: true }).value).toEqual({ upkeep: null });
+    expect(validateProgram({ upkeep: { period: 'month', minCount: 2 } }, { partial: true }).error).toMatch(
+      /upkeep.period must be one of quarter, year/
+    );
+    expect(validateProgram({ upkeep: { period: 'year', minCount: 0 } }, { partial: true }).error).toMatch(
+      /upkeep.minCount must be at least 1/
+    );
+    expect(
+      validateProgram({ contributionTrackerUrl: 'javascript:alert(1)' }, { partial: true }).error
+    ).toMatch(/contributionTrackerUrl must be an http\(s\) URL/);
   });
 });

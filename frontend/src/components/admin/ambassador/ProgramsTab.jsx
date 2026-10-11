@@ -28,6 +28,7 @@ import {
   programsInPlay,
   sourceLabel,
   todayIso,
+  upkeepProgress,
   windowState,
 } from './ambassadorModel';
 import { ReadinessPanel, ReadsStatus, allLanded } from './Parts';
@@ -146,7 +147,97 @@ function ParentNote({ gate }) {
   );
 }
 
-export function ProgramDetails({ program, programs, onClose, onStart, starting, pursuing }) {
+/** The tracker link, when the owner has set one on Settings. */
+function TrackerLink({ url }) {
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 underline"
+    >
+      Contribution tracker <ExternalLink className="h-3 w-3" />
+    </a>
+  );
+}
+
+/**
+ * A held membership's upkeep on its card: this period's count of evidence
+ * filed under the program against the minimum, the day it is due, and the
+ * tracker to log each piece on.
+ */
+function UpkeepLine({ progress, trackerUrl }) {
+  const { current, minCount } = progress;
+  return (
+    <p
+      className={`text-xs ${current.met ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}`}
+      data-testid="program-upkeep"
+    >
+      {current.label}: {current.count} of {minCount} filed here · due {current.end}
+      {trackerUrl && (
+        <>
+          {' · '}
+          <TrackerLink url={trackerUrl} />
+        </>
+      )}
+    </p>
+  );
+}
+
+/**
+ * The details dialog's upkeep: what the program asks, and, for a held
+ * membership, this period's count and the last one's, with the tracker.
+ */
+function UpkeepSection({ program, progress }) {
+  if (!program.upkeep) return null;
+  const held = program.membershipStatus === 'active';
+  return (
+    <div className="rounded-md border border-border p-3" data-testid="program-upkeep-details">
+      <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Keeping the membership active
+      </h4>
+      <p className="text-sm">
+        At least {program.upkeep.minCount} every {program.upkeep.period}. {program.upkeep.note}
+      </p>
+      {held && progress && (
+        <ul className="mt-2 space-y-0.5 text-sm">
+          <li>
+            {progress.current.label}: {progress.current.count} of {progress.minCount} filed under
+            this program, due {progress.current.end}
+            {progress.current.met ? ' · met' : ''}
+          </li>
+          <li className="text-muted-foreground">
+            {progress.previous.label}: {progress.previous.count} filed
+            {progress.previous.met ? ' · met' : ''}
+          </li>
+        </ul>
+      )}
+      <p className="mt-2 text-xs text-muted-foreground">
+        {program.contributionTrackerUrl ? (
+          <TrackerLink url={program.contributionTrackerUrl} />
+        ) : (
+          'No contribution tracker set: add its link to this program on Settings.'
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * One program's details dialog: its rules, requirements, upkeep, the programs
+ * additional to it, and the readiness from the evidence on file, with Start
+ * application. `evidence` is the hub's evidence once it has landed, or null.
+ */
+export function ProgramDetails({
+  program,
+  programs,
+  evidence = null,
+  onClose,
+  onStart,
+  starting,
+  pursuing,
+}) {
   const readiness = useReadiness(program?.id, '', { enabled: Boolean(program) });
   const byId = useMemo(() => programById(programs), [programs]);
   if (!program) return null;
@@ -206,6 +297,10 @@ export function ProgramDetails({ program, programs, onClose, onStart, starting, 
             </ul>
           </div>
           <Bullets title="Recommended activities" items={program.recommendedActivities} />
+          <UpkeepSection
+            program={program}
+            progress={evidence ? upkeepProgress(program, evidence, todayIso()) : null}
+          />
           <AdditionalPrograms program={program} additional={additional} byId={byId} />
           <div className="rounded-md border border-border p-3">
             <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -237,8 +332,12 @@ export function ProgramDetails({ program, programs, onClose, onStart, starting, 
   );
 }
 
+/** The Programs tab: the catalogue as cards, each with its details and Start application. */
 export default function ProgramsTab({ hub, nav }) {
-  const { programs, applications } = hub;
+  const { programs, applications, evidence } = hub;
+  // Upkeep counts wait for the evidence read: a count taken before it lands
+  // would read as nothing filed.
+  const evidenceRows = evidence && allLanded([evidence]) ? evidence.data : null;
   const reads = [programs, applications];
   const [detailsId, setDetailsId] = useState(null);
   const [starting, setStarting] = useState(null);
@@ -345,6 +444,12 @@ export default function ProgramsTab({ hub, nav }) {
                         ? ` · ${program.applicationWindow.note}`
                         : ''}
                     </p>
+                    {program.membershipStatus === 'active' && evidenceRows && program.upkeep && (
+                      <UpkeepLine
+                        progress={upkeepProgress(program, evidenceRows, today)}
+                        trackerUrl={program.contributionTrackerUrl}
+                      />
+                    )}
                     <AdditionalPrograms
                       program={program}
                       additional={childProgramsOf(programs.data, program.id)}
@@ -377,6 +482,7 @@ export default function ProgramsTab({ hub, nav }) {
       <ProgramDetails
         program={details}
         programs={programs.data}
+        evidence={evidenceRows}
         onClose={() => setDetailsId(null)}
         onStart={start}
         starting={Boolean(starting)}

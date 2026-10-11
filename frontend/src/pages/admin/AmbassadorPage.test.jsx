@@ -285,6 +285,77 @@ describe('Programs', () => {
   });
 });
 
+describe('Programs: keeping a membership active (2026-10-11)', () => {
+  const today = new Date();
+  const pad = (v) => String(v).padStart(2, '0');
+  const day = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  const quarter = `Q${Math.floor(today.getMonth() / 3) + 1} ${today.getFullYear()}`;
+  const UPKEEP_PROGRAM = {
+    id: 'program-gk',
+    docType: 'program',
+    name: 'GitKraken Ambassador',
+    provider: 'GitKraken',
+    category: 'developer-advocacy',
+    description: 'Ambassadors.',
+    enabled: true,
+    order: 4,
+    membershipStatus: 'active',
+    applicationWindow: { opens: null, closes: null, note: 'Rolling applications.' },
+    requirements: [],
+    upkeep: { period: 'quarter', minCount: 2, evidenceTypes: [], note: 'Log each piece.' },
+    contributionTrackerUrl: 'https://example.com/tracker',
+  };
+  const FILED = [
+    { ...EVIDENCE[0], id: 'evidence-gk-1', date: day, programIds: ['program-gk'] },
+    // General evidence is not filed under the program, so it is not counted.
+    { ...EVIDENCE[0], id: 'evidence-general', date: day, programIds: [] },
+  ];
+
+  it('shows this quarter’s count and the tracker on a held membership’s card, and the rule in its details', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(
+      routes({
+        'cms/ambassador/programs': { items: [...PROGRAMS, UPKEEP_PROGRAM] },
+        'cms/ambassador/evidence': { items: FILED },
+        'cms/ambassador/readiness/program-gk': {
+          readiness: { ...READINESS, programId: 'program-gk', requirements: [], missing: [] },
+        },
+      })
+    );
+    render(<AmbassadorPage />);
+    const line = await panel().findByTestId('program-upkeep');
+    expect(line).toHaveTextContent(`${quarter}: 1 of 2 filed here`);
+    expect(within(line).getByRole('link', { name: /Contribution tracker/ })).toHaveAttribute(
+      'href',
+      'https://example.com/tracker'
+    );
+    const card = panel()
+      .getAllByTestId('program-card')
+      .find((c) => c.textContent.startsWith('GitKraken Ambassador'));
+    await act(async () => {
+      fireEvent.click(within(card).getByRole('button', { name: 'Details' }));
+    });
+    const details = await screen.findByTestId('program-upkeep-details');
+    expect(details).toHaveTextContent('At least 2 every quarter. Log each piece.');
+    expect(details).toHaveTextContent(`${quarter}: 1 of 2 filed under this program`);
+  });
+
+  it('shows no count on a program that is not held', async () => {
+    searchParams = 'tab=programs';
+    getJSON.mockImplementation(
+      routes({
+        'cms/ambassador/programs': {
+          items: [...PROGRAMS, { ...UPKEEP_PROGRAM, membershipStatus: 'none' }],
+        },
+        'cms/ambassador/evidence': { items: FILED },
+      })
+    );
+    render(<AmbassadorPage />);
+    await panel().findAllByTestId('program-card');
+    expect(panel().queryByTestId('program-upkeep')).not.toBeInTheDocument();
+  });
+});
+
 describe('Applications', () => {
   it('opens the workspace with the allowed moves only, attaches evidence from the checklist, and records a status change with its note', async () => {
     searchParams = 'tab=applications&application=application-1';

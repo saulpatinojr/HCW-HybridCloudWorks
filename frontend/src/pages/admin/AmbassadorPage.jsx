@@ -45,7 +45,7 @@ const PANELS = {
 
 const HELP = [
   'Everything here exists to culminate in a credible application: a program, the evidence that meets its requirements, and the written responses, submitted inside its window.',
-  'Programs are seeded from the published rules (MVP, MCT, AWS Hero, AWS Ambassador, GitHub Star, Docker Captain, vExpert, MIEE, GitKraken Ambassador, Microsoft Management Community, MCT Regional Lead), and a seed added later joins on the next read; edit their requirements on Settings to match the current published rules. A program with official application questions turns the workspace’s Responses into a guided form with Copy on every answer.',
+  'Programs are seeded from the published rules (MVP, MCT, AWS Hero, AWS Ambassador, GitHub Star, Docker Captain, vExpert, MIEE, GitKraken Ambassador, Microsoft Management Community, MCT Regional Lead, AWS Community Builders), and a seed added later joins on the next read; edit their requirements on Settings to match the current published rules. A program with official application questions turns the workspace’s Responses into a guided form with Copy on every answer.',
   'Evidence is imported from Speaking, Certifications and Published content, or added by hand; attach it to an application from the requirement checklist.',
   'Readiness is computed from your own evidence and says how; acceptance is the program’s decision and this hub never promises it.',
   'Applications are private: nothing here is published. The packet view prints and the export downloads a JSON file you keep.',
