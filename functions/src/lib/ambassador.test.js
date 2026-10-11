@@ -458,7 +458,7 @@ describe('programs', () => {
       { ifMatch: '"etag-mvp"' }
     );
     expect(log.info).toHaveBeenCalledWith(
-      '[ambassador] seed backfill program-microsoft-mvp: applicationQuestions'
+      '[ambassador] seed backfill: applicationQuestions'
     );
     // Its own questions stay; the owner's program is untouched; the management seed is absent, so added whole.
     expect(body.items.find((p) => p.id === mctSeed.id).applicationQuestions).toEqual(own);

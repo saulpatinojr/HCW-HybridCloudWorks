@@ -189,7 +189,8 @@ async function backfillSeedFields(ctx, rows) {
       { ...patch, updatedAt: ctx.nowIso() },
       stored._etag ? { ifMatch: stored._etag } : {}
     );
-    ctx.log.info?.(`[ambassador] seed backfill ${stored.id}: ${Object.keys(patch).join(', ')}`);
+    // Field names only: telemetry carries no document id (CodeRabbit on #1077).
+    ctx.log.info?.(`[ambassador] seed backfill: ${Object.keys(patch).join(', ')}`);
     out.push(patched || { ...stored, ...patch });
   }
   return out;
