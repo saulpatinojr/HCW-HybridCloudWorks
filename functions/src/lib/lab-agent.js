@@ -460,7 +460,9 @@ async function completeLabJob({ guard, store, now }, request, context) {
     }
   }
 
-  context.warn?.(`job ${jobId} changed on every attempt to record agent ${agent.agentId}'s result`);
+  // Content-free: no job or agent id in the text. The Functions host already
+  // ties the line to this invocation, which is the correlation it needs.
+  context.warn?.('completeLabJob: the job changed on every attempt to record its result; nothing was written');
   return json(409, { ok: false, error: 'Job changed while its result was being recorded' });
 }
 

@@ -539,6 +539,8 @@ describe('completeLabJob', () => {
       expect(res.status).toBe(409);
       expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3);
       expect(warn).toHaveBeenCalledTimes(1);
+      // Content-free telemetry: neither the job's id nor the agent's.
+      expect(warn.mock.calls[0][0]).not.toMatch(/j1|vps-1/);
     });
 
     it('answers 500, not a retry, when the write fails for another reason', async () => {
