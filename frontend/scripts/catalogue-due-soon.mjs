@@ -65,7 +65,7 @@ export function renderReport({ due, today, days = DEFAULT_DAYS }) {
   lines.push(
     `${due.length === 1 ? 'One catalogue row goes' : `${due.length} catalogue rows go`} stale in the ${days} days from ${today}.`,
     '',
-    'On each date below, `frontend/src/data/education-catalogues.test.js` (or `azure/certifications.test.js`) fails on **every branch** until the row is re-read against the vendor and updated. Re-verify it before then: store the status the row takes on that date with `statusReadDate` set to the day you read the vendor (the badge keeps its current status until the date, rule 2 of `deriveStatus`), cite the page in the catalogue header, and update any test that pins the old status.',
+    'On each date below, `frontend/src/data/education-catalogues.test.js` (or `azure/certifications.test.js`) fails on **every branch** until the row is re-read against the vendor and updated. An `upcoming` row due on its `availableDate`, or a row due on its `expiryDate`, can be re-read before then: store the status it takes that day (`active`, or `retired`) with `statusReadDate` set to the day you read the vendor, and the badge keeps its current status until the date (rule 2 of `deriveStatus`). A `beta` row cannot be held that way, so re-read it on its date. Either way, cite the page in the catalogue header and update any test that pins the old status.',
     '',
     '| Fires on | Catalogue | What the alarm will say | Check against |',
     '|---|---|---|---|'
