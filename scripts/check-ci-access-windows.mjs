@@ -150,13 +150,36 @@ export function orphanReason(window, run) {
 }
 
 /**
+ * One shell word: bare when it holds only characters no shell treats
+ * specially, single-quoted otherwise. A rule name is Azure's to constrain, not
+ * this script's, so the command it prints does not rely on that (CodeRabbit,
+ * #1097).
+ */
+export function shellWord(value) {
+  const text = String(value);
+  return /^[A-Za-z0-9._/-]+$/.test(text) ? text : `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+/** Markdown inline code that a backtick in the text cannot end early. */
+export function codeSpan(value) {
+  const text = String(value);
+  return text.includes('`') ? `\`\` ${text} \`\`` : `\`${text}\``;
+}
+
+/** A rule name for a table cell: no pipe to split the row, no backtick to open code. */
+const cellText = (value) => String(value).replaceAll('|', '\\|').replaceAll('`', "'");
+
+/**
  * The command that removes an orphan, ready to paste, when the app and its
  * resource group are known (`APP` and `RG`, as the monitor step sets them).
  */
 export function removeCommand(orphan, { app, resourceGroup } = {}) {
   if (!app || !resourceGroup) return null;
   const scm = orphan.site === 'SCM site' ? ' --scm-site true' : '';
-  return `az functionapp config access-restriction remove -n ${app} -g ${resourceGroup} --rule-name ${orphan.name}${scm}`;
+  return (
+    `az functionapp config access-restriction remove -n ${shellWord(app)} -g ${shellWord(resourceGroup)}` +
+    ` --rule-name ${shellWord(orphan.name)}${scm}`
+  );
 }
 
 /** The verdict when the check itself could not run. */
@@ -207,15 +230,15 @@ export async function run({ input = '', env = {}, fetchImpl = fetch }) {
   return {
     code: 1,
     lines: [
-      `${orphans.length} orphaned: ${orphans.map((o) => o.name).join(', ')}`,
+      `${orphans.length} orphaned: ${orphans.map((o) => cellText(o.name)).join(', ')}`,
       ...orphans.map((o) => {
         const command = removeCommand(o, target);
         // A re-run keeps its run id and reopens the same window, so this is a
         // report, not a standing licence to delete (CodeRabbit, #1097).
         const remove = command
-          ? ` If the rule is still there and its run has not been re-run, remove it: \`${command}\``
+          ? ` If the rule is still there and its run has not been re-run, remove it: ${codeSpan(command)}`
           : '';
-        return `- \`${o.name}\` on the ${o.site}: ${o.reason}${o.url ? ` (${o.url})` : ''}.${remove}`;
+        return `- ${codeSpan(o.name)} on the ${o.site}: ${o.reason}${o.url ? ` (${o.url})` : ''}.${remove}`;
       }),
     ],
   };

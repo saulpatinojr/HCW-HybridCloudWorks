@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LIVE_STATUSES, orphanReason, parseWindows, readRun, run, runIdOf } from './check-ci-access-windows.mjs';
+import { LIVE_STATUSES, codeSpan, orphanReason, parseWindows, readRun, run, runIdOf, shellWord } from './check-ci-access-windows.mjs';
 
 const ENV = { GITHUB_TOKEN: 't0ken', GITHUB_REPOSITORY: 'o/r' };
 
@@ -164,6 +164,34 @@ describe('run', () => {
         '`az functionapp config access-restriction remove -n func-site-prod-cus-01 -g rg-web-site-prod-cus --rule-name ci-smoke-6`'
     );
     expect(lines[2]).toMatch(/--rule-name ci-deploy-scm-6 --scm-site true`$/);
+  });
+
+  it('quotes an awkward rule name in the command and keeps it from breaking the report (#1097)', async () => {
+    const { fetchImpl } = github({ 7: { status: 'completed', conclusion: 'failure' } });
+    const name = "ci-it's|a`b-7";
+    const input = JSON.stringify({
+      ipSecurityRestrictions: [{ name, action: 'Allow', ipAddress: '203.0.113.9/32', priority: 300 }],
+      scmIpSecurityRestrictions: [],
+    });
+    const env = { ...ENV, APP: 'func-site-prod-cus-01', RG: 'rg-web-site-prod-cus' };
+    const { code, lines } = await run({ input, env, fetchImpl });
+    expect(code).toBe(1);
+    // The table cell: no pipe to split the row, no backtick to open code.
+    expect(lines[0]).toBe("1 orphaned: ci-it's\\|a'b-7");
+    // The command: one shell word for the name, inside a code span its backtick cannot close.
+    expect(lines[1]).toContain(
+      "`` az functionapp config access-restriction remove -n func-site-prod-cus-01 -g rg-web-site-prod-cus " +
+        "--rule-name 'ci-it'\\''s|a`b-7' ``"
+    );
+  });
+
+  it('leaves a plain name and app bare, and quotes anything a shell would read', () => {
+    expect(shellWord('ci-smoke-38306096439')).toBe('ci-smoke-38306096439');
+    expect(shellWord('func-site-prod-cus-01')).toBe('func-site-prod-cus-01');
+    expect(shellWord('ci-x; rm -rf ~')).toBe("'ci-x; rm -rf ~'");
+    expect(shellWord("it's")).toBe("'it'\\''s'");
+    expect(codeSpan('plain')).toBe('`plain`');
+    expect(codeSpan('a`b')).toBe('`` a`b ``');
   });
 
   it('cannot run without the token and repository, or when GitHub fails, and says so', async () => {
