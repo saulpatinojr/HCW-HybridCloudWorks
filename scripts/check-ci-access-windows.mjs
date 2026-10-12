@@ -160,10 +160,17 @@ export function shellWord(value) {
   return /^[A-Za-z0-9._/-]+$/.test(text) ? text : `'${text.replaceAll("'", "'\\''")}'`;
 }
 
-/** Markdown inline code that a backtick in the text cannot end early. */
+/**
+ * Markdown inline code that no backtick run in the text can end early: the
+ * delimiter is one backtick longer than the longest run inside, padded with a
+ * space when the text holds any (CommonMark, code spans).
+ */
 export function codeSpan(value) {
   const text = String(value);
-  return text.includes('`') ? `\`\` ${text} \`\`` : `\`${text}\``;
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  if (longest === 0) return `\`${text}\``;
+  const fence = '`'.repeat(longest + 1);
+  return `${fence} ${text} ${fence}`;
 }
 
 /** A rule name for a table cell: no pipe to split the row, no backtick to open code. */

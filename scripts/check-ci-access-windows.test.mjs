@@ -192,6 +192,9 @@ describe('run', () => {
     expect(shellWord("it's")).toBe("'it'\\''s'");
     expect(codeSpan('plain')).toBe('`plain`');
     expect(codeSpan('a`b')).toBe('`` a`b ``');
+    // Two in a row need a three-backtick fence, or the span ends inside the name.
+    expect(codeSpan('ci-a``b-7')).toBe('``` ci-a``b-7 ```');
+    expect(codeSpan('x```y`z')).toBe('```` x```y`z ````');
   });
 
   it('cannot run without the token and repository, or when GitHub fails, and says so', async () => {
