@@ -102,20 +102,33 @@ fi
 # One run at a time (#1069). The firewall rebuild installs its reject before it
 # removes the old rules, so one interrupted run stays restrictive, but two runs
 # interleaved across that sequence, or across two checkouts of /opt/hcw-src,
-# are not. The lock is on fd 9 for the life of this process. The handover
-# below execs the checked-out script, which inherits fd 9 and so runs under
-# this lock without taking it again. The kernel releases it however the run
-# ends, and /run/lock is a tmpfs, so no stale lock survives a reboot.
+# are not. The lock is on fd 9 and every pass proves it holds it: no marker
+# lets a pass skip the lock (CodeRabbit, #1099).
+#   - A pass whose fd 9 is already the lock file (same device and inode) was
+#     handed over by exec from a pass that opened it, and keeps that open file
+#     description: flock -n on it succeeds at once, because it holds the lock.
+#   - Any other pass opens the lock file and takes the lock, waiting for a run
+#     that holds it. That includes a handover from a bootstrap.sh older than
+#     this block, which opened nothing, and a pass started by hand with
+#     HCW_BOOTSTRAP_HANDED_OVER set.
+# The play inherits fd 9 too, so the lock is held until the play and anything
+# it runs have ended, even if this script is killed first. What the play
+# starts for good (systemd units, containers) is started by systemd or
+# containerd and does not inherit it. The kernel releases the lock when the
+# last holder exits, and /run/lock is a tmpfs, so no stale lock survives a
+# reboot.
 HCW_BOOTSTRAP_LOCK=/run/lock/hcw-bootstrap.lock
 HCW_BOOTSTRAP_LOCK_WAIT_SECONDS="${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS:-1800}"
-if [ -z "${HCW_BOOTSTRAP_HANDED_OVER:-}" ]; then
+hcw_lock_id="$(stat -c '%d:%i' "${HCW_BOOTSTRAP_LOCK}" 2>/dev/null || true)"
+if [ -z "${hcw_lock_id}" ] || [ "$(stat -L -c '%d:%i' "/proc/$$/fd/9" 2>/dev/null || true)" != "${hcw_lock_id}" ]; then
   exec 9>"${HCW_BOOTSTRAP_LOCK}"
-  if ! flock -n 9; then
-    log "another bootstrap.sh run holds ${HCW_BOOTSTRAP_LOCK}; waiting up to ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s for it to finish"
-    if ! flock -w "${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}" 9; then
-      echo "refusing to run: another bootstrap.sh run still holds ${HCW_BOOTSTRAP_LOCK} after ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s; nothing has been changed" >&2
-      exit 1
-    fi
+fi
+if ! flock -n 9; then
+  log "another bootstrap.sh run holds ${HCW_BOOTSTRAP_LOCK}; waiting up to ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s for it to finish"
+  if ! flock -w "${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}" 9; then
+    echo "refusing to run: another bootstrap.sh run still holds ${HCW_BOOTSTRAP_LOCK} after ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s; nothing has been changed" >&2
+    echo "the processes holding it: sudo fuser -v ${HCW_BOOTSTRAP_LOCK}" >&2
+    exit 1
   fi
 fi
 
@@ -427,10 +440,9 @@ else
 fi
 
 log "running site.yml from ${hcw_repo_sha} against localhost"
-# 9>&- keeps the lock's descriptor out of the play, so nothing it leaves
-# running can hold the lock after this script exits. Closing the child's copy
-# does not release the lock: this process still holds its own.
-"${UV_TOOL_BIN_DIR}/ansible-playbook" -i inventory/localhost.yml site.yml "${extra_args[@]}" "$@" 9>&-
+# The play inherits fd 9, so the lock outlives this script if it is killed
+# while the play runs (the block after the root check says why).
+"${UV_TOOL_BIN_DIR}/ansible-playbook" -i inventory/localhost.yml site.yml "${extra_args[@]}" "$@"
 
 # The play finished (set -e ends the script on a failed one). Record which
 # commit the host now runs in the host-check marker, unless this was a check

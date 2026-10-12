@@ -4501,9 +4501,12 @@ This project has not cut a tagged release; entries are grouped under
   guard-to-unguard sequence, or across two checkouts of `/opt/hcw-src`.
   - The script takes a `flock` on fd 9 straight after its root check. A
     second run waits up to 30 minutes, then refuses having changed nothing.
-  - The handover to a newer `bootstrap.sh` inherits the lock through
-    `exec`, and the play runs with fd 9 closed, so nothing it leaves running
-    can hold the lock.
+  - Every pass proves it holds the lock rather than trusting a marker. A
+    pass handed over by `exec` reuses its inherited fd 9 only when that is
+    the lock file itself. A handover from an older `bootstrap.sh`, or a
+    hand-set `HCW_BOOTSTRAP_HANDED_OVER`, takes the lock like any other run.
+  - The play inherits the lock, so it holds until every mutator has ended,
+    even if the script is killed first.
   - Verifying add-on image attestations before the pull (part 1) waits on an
     owner decision on #1069.
 
