@@ -53,6 +53,17 @@
 # probe(), so an authorization failure still reads as a broken check rather
 # than an outage. Only what it is compared against changed.
 #
+# ORPHANED ACCESS WINDOWS (#1050). deploy-functions.yml and
+# publish-content-manifest.yml each open a one-host `ci-*` Allow rule on the
+# Function App for their runner and close it in an always() step, which does
+# not run on runner loss or a force-cancel. scripts/assert-origin-lock.mjs
+# accepts any single-host `ci-*` rule, because a concurrent run may hold one.
+# scripts/check-ci-access-windows.mjs matches each `ci-*` rule on the site and
+# the SCM site to its run by the id in its name, through the same
+# `actions: read`, and names any whose run has ended. It reads twice, a
+# minute apart, so a run closing its window as this reads is not named.
+# Removing an orphan stays a person's decision: this identity cannot write.
+#
 # The check was never missing — it was manual, or inside deploy-functions.yml,
 # which only runs when someone deploys. Nobody deployed during any of the three
 # incidents. The gap was the timer, not the test.
@@ -259,6 +270,30 @@ jobs:
             read_registration
           done
 
+          # Orphaned per-run access windows (#1050). winstatus: 0 none, 1 some
+          # orphaned (named in winout), 2 the script could not judge them, 3
+          # the listing itself failed. An orphan is read once more, a minute
+          # later, before it is believed: a run may be closing its window.
+          read_windows() {
+            restrictions=$(probe "access restrictions" \
+              az functionapp config access-restriction show -n "$APP" -g "$RG" -o json) || true
+            case "$restrictions" in
+              UNAUTHORIZED|ERROR)
+                winstatus=3
+                winout="$restrictions" ;;
+              *)
+                winstatus=0
+                winout=$(printf '%s' "$restrictions" | node scripts/check-ci-access-windows.mjs) || winstatus=$? ;;
+            esac
+          }
+
+          read_windows
+          if [ "$winstatus" -eq 1 ]; then
+            echo "access windows: ${winout%%$'\n'*}; reading again in 60 s in case a run is closing its own"
+            sleep 60
+            read_windows
+          fi
+
           webjobs=$(probe "AzureWebJobsStorage" \
             az functionapp config appsettings list -n "$APP" -g "$RG" \
               --query "[?name=='AzureWebJobsStorage'] | length(@)" -o tsv) || true
@@ -363,11 +398,25 @@ jobs:
             fi
           fi
 
+          # Per-run access windows on the Function App (#1050).
+          wincell=${winout%%$'\n'*}
+          case "$winstatus" in
+            0) echo "| Orphaned \`ci-*\` access windows | $wincell | ✅ |" ;;
+            1) echo "| Orphaned \`ci-*\` access windows | **$wincell** | ❌ |"; failed=1 ;;
+            *) echo "| Orphaned \`ci-*\` access windows | \`$wincell\` | ⚠️ |"; failed=1 ;;
+          esac >> "$report"
+
           # The registration detail under the table: which expected set, and
           # every missing function by name and trigger.
           regdetail=${regout#"$regcell"}
           if [ -n "${regdetail//[[:space:]]/}" ]; then
             printf '\n%s\n' "${regdetail#$'\n'}" >> "$report"
+          fi
+
+          # Each orphaned window by name, its site and why, under the table.
+          windetail=${winout#"$wincell"}
+          if [ -n "${windetail//[[:space:]]/}" ]; then
+            printf '\n%s\n' "${windetail#$'\n'}" >> "$report"
           fi
 
           # A run where nothing could be read is a broken check, not an outage,
@@ -381,13 +430,15 @@ jobs:
           {
             echo
             if [ "$failed" -eq 0 ]; then
-              echo "Every expected function is registered and the host is not running on an \`azurerm\`-written config."
+              echo "Every expected function is registered, the host is not running on an \`azurerm\`-written config, and no \`ci-*\` access window outlived its run."
             elif [ "$unreadable" -eq 3 ]; then
               echo "**This check could not read anything, so the platform's state is unknown.** That is a broken check, not an outage — do not read it as one. Every row failed the same way, which points at the identity rather than at the Function App: \`Reader\` on \`rg-web-site-prod-cus\` is what \`az functionapp function list\` needs, and \`HCW Function Settings Reader\` is what \`config appsettings list\` needs (\`infra/oidc.tf\`, T-728). Confirm both grants are applied before trusting or distrusting this workflow."
             else
               echo "**Investigate.** An expected function that is not registered, an \`AzureWebJobsStorage\` setting that exists, or a \`RUNTIME_CONFIG_WRITER\` other than \`azapi-strip\` is the condition behind the 2026-08-20 and 2026-08-21 incidents: the host answers, functions are not registered, and routes return 404 or timers silently stop — which no alert rule in \`observability.tf\` detects."
               echo
               echo "When the \`AzureWebJobsStorage\` or \`RUNTIME_CONFIG_WRITER\` row is ❌, the repair is to re-apply \`infra/\` so the azapi strip runs again. **Do not delete the setting by hand** — that hides the regression from the assertion in \`deploy-functions.yml\`. When only the registration row is ❌, the strip is intact and the named functions failed to register on their own: their module's startup error is in the host log. See *The failure with no alert* in \`docs/runbooks/alerting-and-support.md\` (https://docs.hybridcloudworks.com/runbooks/alerting-and-support/)."
+              echo
+              echo "When the \`ci-*\` access windows row is ❌, a run that opened a one-host window on the Function App ended without closing it, and that address can still reach the origin past the Cloudflare lock. Each orphan is listed above with its run and the exact command that removes it. This monitor cannot write, so removing it stays a person's decision."
               echo
               echo "A ⚠️ row means the check could not run, not that the platform is down. An authorization failure is not an outage."
             fi

@@ -568,7 +568,11 @@ problem means production is already degraded rather than merely unchanged.
    the Function App's access restriction from the control plane instead and
    fails unless unmatched requests are `Deny` and every Allow rule matches
    what `infra/` declares (`scripts/assert-origin-lock.mjs`), so a deploy while
-   `functions_origin_lock_enabled` is false goes red by design. The operator path is
+   `functions_origin_lock_enabled` is false goes red by design. That assertion
+   accepts any one-host `ci-*` window, because a concurrent run may hold one;
+   a window whose run died before closing it is named by the hourly
+   `monitor-functions-registered.yml`, with the command that removes it
+   (#1050). The operator path is
    [Edge and DNS verification](edge-dns-verification.md). Making the smoke job
    pass from CI needs the same Cloudflare change that blocked the standard
    availability test (T-519 itself closed 2026-09-01 by routing around it with
