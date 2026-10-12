@@ -4507,6 +4507,9 @@ This project has not cut a tagged release; entries are grouped under
     hand-set `HCW_BOOTSTRAP_HANDED_OVER`, takes the lock like any other run.
   - The play inherits the lock, so it holds until every mutator has ended,
     even if the script is killed first.
+  - The lock file is `/run/hcw-bootstrap.lock`, where only root can create
+    files. It is opened without truncating, and a symlink in its place is
+    refused. The wait must be a whole number of seconds.
   - Verifying add-on image attestations before the pull (part 1) waits on an
     owner decision on #1069.
 

@@ -115,13 +115,28 @@ fi
 # it runs have ended, even if this script is killed first. What the play
 # starts for good (systemd units, containers) is started by systemd or
 # containerd and does not inherit it. The kernel releases the lock when the
-# last holder exits, and /run/lock is a tmpfs, so no stale lock survives a
-# reboot.
-HCW_BOOTSTRAP_LOCK=/run/lock/hcw-bootstrap.lock
+# last holder exits.
+#
+# The file lives in /run itself, which only root can write, not /run/lock,
+# which anyone can. It is opened read-write (9<>), which never truncates, and
+# a path that is not a regular file is refused, so a planted symlink cannot
+# turn the open into a write elsewhere (CodeRabbit, #1099). /run is a tmpfs,
+# so no lock survives a reboot. HCW_BOOTSTRAP_LOCK_WAIT_SECONDS is a whole
+# number of seconds: 0 refuses at once when another run holds the lock, and
+# the default 1800 covers a full first run.
+HCW_BOOTSTRAP_LOCK=/run/hcw-bootstrap.lock
 HCW_BOOTSTRAP_LOCK_WAIT_SECONDS="${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS:-1800}"
+if ! [[ "${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}" =~ ^[0-9]+$ ]]; then
+  echo "refusing to run: HCW_BOOTSTRAP_LOCK_WAIT_SECONDS must be a whole number of seconds, not '${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}'; nothing has been changed" >&2
+  exit 1
+fi
+if [ -L "${HCW_BOOTSTRAP_LOCK}" ] || { [ -e "${HCW_BOOTSTRAP_LOCK}" ] && [ ! -f "${HCW_BOOTSTRAP_LOCK}" ]; }; then
+  echo "refusing to run: ${HCW_BOOTSTRAP_LOCK} is not a regular file; nothing has been changed" >&2
+  exit 1
+fi
 hcw_lock_id="$(stat -c '%d:%i' "${HCW_BOOTSTRAP_LOCK}" 2>/dev/null || true)"
 if [ -z "${hcw_lock_id}" ] || [ "$(stat -L -c '%d:%i' "/proc/$$/fd/9" 2>/dev/null || true)" != "${hcw_lock_id}" ]; then
-  exec 9>"${HCW_BOOTSTRAP_LOCK}"
+  exec 9<>"${HCW_BOOTSTRAP_LOCK}"
 fi
 if ! flock -n 9; then
   log "another bootstrap.sh run holds ${HCW_BOOTSTRAP_LOCK}; waiting up to ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s for it to finish"

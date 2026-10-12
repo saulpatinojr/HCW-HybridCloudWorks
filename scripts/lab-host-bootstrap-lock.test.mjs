@@ -32,7 +32,7 @@ function between(text, start, next) {
   return text.slice(from, to + 1);
 }
 
-const LOCK_BLOCK = between(SCRIPT, 'HCW_BOOTSTRAP_LOCK=/run/lock/hcw-bootstrap.lock', '# 26.04 LTS is the target');
+const LOCK_BLOCK = between(SCRIPT, 'HCW_BOOTSTRAP_LOCK=/run/hcw-bootstrap.lock', '# 26.04 LTS is the target');
 const PLAY_LINE = SCRIPT.split('\n').find((line) => line.startsWith('"${UV_TOOL_BIN_DIR}/ansible-playbook" -i '));
 
 describe('the lock in bootstrap.sh', () => {
@@ -63,6 +63,18 @@ describe('the lock in bootstrap.sh', () => {
     expect(SCRIPT).toMatch(/^HCW_BOOTSTRAP_LOCK_WAIT_SECONDS="\$\{HCW_BOOTSTRAP_LOCK_WAIT_SECONDS:-1800\}"$/m);
   });
 
+  it('keeps the lock where only root can create it, opens it without truncating, and refuses a symlink (#1099)', () => {
+    expect(SCRIPT).toMatch(/^HCW_BOOTSTRAP_LOCK=\/run\/hcw-bootstrap\.lock$/m);
+    expect(LOCK_BLOCK).toContain('exec 9<>"${HCW_BOOTSTRAP_LOCK}"');
+    expect(LOCK_BLOCK).not.toMatch(/exec 9>"/);
+    expect(LOCK_BLOCK).toContain('[ -L "${HCW_BOOTSTRAP_LOCK}" ]');
+    expect(LOCK_BLOCK).toContain('is not a regular file; nothing has been changed');
+  });
+
+  it('takes the wait as a whole number of seconds and refuses anything else', () => {
+    expect(LOCK_BLOCK).toContain('[[ "${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}" =~ ^[0-9]+$ ]]');
+  });
+
   it('lets the play inherit the lock, so it holds until every mutator has ended (#1099)', () => {
     expect(PLAY_LINE).toBeDefined();
     expect(PLAY_LINE).not.toMatch(/9>&-/);
@@ -82,7 +94,8 @@ describe.skipIf(!lockUsable)('the lock block, run', () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   // The block, pointed at a throwaway lock file, after the script's own log().
-  const block = LOCK_BLOCK.replace('/run/lock/hcw-bootstrap.lock', join(dir, 'bootstrap.lock'));
+  const lockPath = join(dir, 'bootstrap.lock');
+  const block = LOCK_BLOCK.replaceAll('/run/hcw-bootstrap.lock', lockPath);
   const prelude = `set -euo pipefail\nlog() { printf '[bootstrap] %s\\n' "$*"; }\n`;
   const pass = (name, body) => {
     const path = join(dir, `${name}.sh`);
@@ -126,6 +139,40 @@ describe.skipIf(!lockUsable)('the lock block, run', () => {
     const { stdout } = race('HCW_BOOTSTRAP_HANDED_OVER=1 HCW_BOOTSTRAP_LOCK_WAIT_SECONDS=1');
     expect(stdout).not.toContain('contender-ran');
     expect(stdout).toContain('contender exit=1');
+  });
+
+  it('holds the lock in the play when the script itself is killed mid-run (#1099)', () => {
+    // The script dies outright while a child it started (the play) still runs
+    // with fd 9. A competing run must wait for the child, not for the script.
+    const dying = pass(
+      'dying',
+      ['( sleep 3; echo child-done ) &', 'echo parent-dying', 'kill -KILL $$'].join('\n')
+    );
+    const { stdout } = race('HCW_BOOTSTRAP_LOCK_WAIT_SECONDS=10', dying);
+    expect(stdout).toContain('parent-dying');
+    expect(stdout).toContain('waiting up to 10 s for it to finish');
+    expect(stdout.indexOf('contender-ran')).toBeGreaterThan(stdout.indexOf('child-done'));
+  });
+
+  it('refuses a lock path that is a symlink, and a wait that is not whole seconds, before doing anything', () => {
+    const target = join(dir, 'elsewhere');
+    writeFileSync(target, 'keep me\n');
+    const symlinked = run('bash', ['-c', `rm -f '${lockPath}' && ln -s '${target}' '${lockPath}' && bash '${contender}'`]);
+    expect(symlinked.status).toBe(1);
+    expect(symlinked.stderr).toContain('is not a regular file');
+    expect(readFileSync(target, 'utf8')).toBe('keep me\n');
+    run('bash', ['-c', `rm -f '${lockPath}'`]);
+
+    for (const wait of ['1.5', '10s', '-1', '']) {
+      const bad = run('bash', ['-c', `HCW_BOOTSTRAP_LOCK_WAIT_SECONDS='${wait}' bash '${contender}'`]);
+      if (wait === '') {
+        // Empty is unset in effect: the default applies and the run proceeds.
+        expect(bad.stdout, 'empty').toContain('contender-ran');
+      } else {
+        expect(bad.status, wait).toBe(1);
+        expect(bad.stderr, wait).toContain('must be a whole number of seconds');
+      }
+    }
   });
 
   it('lets a pass handed over by exec run at once, still holding the lock against everyone else', () => {
