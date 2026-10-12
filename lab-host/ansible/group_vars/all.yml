@@ -328,7 +328,7 @@ addons:
     enabled: true
     image: docker.io/hybridcloudworks/hcw-addon-migration
     image_tag: "0.3.1"
-    image_digest: "sha256:88b8d08892860f753c02f405d1b3b99146aed5e460b04a1c426670d9e5e5dd61"
+    image_digest: "sha256:7c317b26ed680eb65dd472d5b4767486758a9c56e71e0b6703a92045f0b29d7b"
     port: 18081
     memory: 512m
     pids_limit: 256
@@ -352,7 +352,7 @@ addons:
     enabled: true
     image: docker.io/hybridcloudworks/hcw-addon-network-assessment
     image_tag: "0.1.0"
-    image_digest: ""
+    image_digest: "sha256:202bc43bba9b8842bc9594c1dbe203ff636fddf3514d4255b8a60aabcb60aa77"
     port: 18082
     memory: 512m
     pids_limit: 256
@@ -367,7 +367,7 @@ addons:
       NA_SITE_ORIGINS: "{{ caddy_frame_ancestors | reject('equalto', \"'self'\") | join(' ') }}"
       NA_ALLOWED_ORIGINS: ""
       NA_TRUST_PROXY: "1"
-      NA_TURNSTILE_SITE_KEY: ""
+      NA_TURNSTILE_SITE_KEY: "0x4AAAAAAFUTBcHHrlogWG5K"
       NA_RATE_LIMIT_POSTS: "10"
       NA_RATE_LIMIT_WINDOW_MINUTES: "10"
       NA_MAX_CONCURRENT: "2"
@@ -379,7 +379,7 @@ addons:
     enabled: true
     image: docker.io/hybridcloudworks/hcw-addon-cloud-assessment
     image_tag: "0.1.0"
-    image_digest: ""
+    image_digest: "sha256:d51be5be6496588d84bc56f843aa45971fab576bf4ee0d14968fd496888d551b"
     port: 18083
     memory: 512m
     pids_limit: 256
@@ -389,7 +389,7 @@ addons:
       CA_SITE_ORIGINS: "{{ caddy_frame_ancestors | reject('equalto', \"'self'\") | join(' ') }}"
       CA_ALLOWED_ORIGINS: ""
       CA_TRUST_PROXY: "1"
-      CA_TURNSTILE_SITE_KEY: ""
+      CA_TURNSTILE_SITE_KEY: "0x4AAAAAAFUTFQwTUqZvnpmU"
       CA_RATE_LIMIT_POSTS: "10"
       CA_RATE_LIMIT_WINDOW_MINUTES: "10"
       CA_MAX_CONCURRENT: "2"

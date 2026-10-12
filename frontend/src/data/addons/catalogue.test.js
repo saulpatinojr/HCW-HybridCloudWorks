@@ -196,11 +196,15 @@ describe('addon catalogue', () => {
 });
 
 describe('the lists the pages derive', () => {
-  it('frames only available rows, and the two assessments are still coming', () => {
-    expect(availableAddons.map((addon) => addon.id)).toEqual(['migration']);
+  it('frames all three available AddOn rows', () => {
+    expect(availableAddons.map((addon) => addon.id)).toEqual([
+      'migration',
+      'network-assessment',
+      'cloud-assessment',
+    ]);
     expect(availableAddons.every((addon) => addon.status === 'available')).toBe(true);
-    expect(addonById('network-assessment').status).toBe('coming');
-    expect(addonById('cloud-assessment').status).toBe('coming');
+    expect(addonById('network-assessment').status).toBe('available');
+    expect(addonById('cloud-assessment').status).toBe('available');
   });
 
   it('gives every row a page at /tools/<id>, named in staticRoutes', () => {
@@ -225,7 +229,11 @@ describe('the lists the pages derive', () => {
   });
 
   it('lists the available origins, and nothing broader, for the CSP', () => {
-    expect(addonOrigins()).toEqual(['https://migration.lab.hybridcloudworks.com']);
+    expect(addonOrigins()).toEqual([
+      'https://migration.lab.hybridcloudworks.com',
+      'https://network-assessment.lab.hybridcloudworks.com',
+      'https://cloud-assessment.lab.hybridcloudworks.com',
+    ]);
     for (const origin of addonOrigins()) {
       expect(origin).not.toContain('*');
       expect(origin.endsWith(ADDON_ORIGIN_SUFFIX)).toBe(true);
@@ -233,7 +241,11 @@ describe('the lists the pages derive', () => {
   });
 
   it('filters by provider', () => {
-    expect(addonsForProvider('azure').map((addon) => addon.id)).toEqual(['migration']);
+    expect(addonsForProvider('azure').map((addon) => addon.id)).toEqual([
+      'migration',
+      'network-assessment',
+      'cloud-assessment',
+    ]);
     expect(addonsForProvider('aws')).toEqual([]);
   });
 

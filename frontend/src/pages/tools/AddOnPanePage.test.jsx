@@ -51,12 +51,15 @@ const BEHIND_THE_SITE =
   /\bcoder\b|oauth|code-server|\bvps\b|callback|caddy|hostinger|turnstile|cloudflare|docker|\bapi\b/i;
 
 /** Render the page for one row inside a router and the shared providers. */
-function renderPane(addonId = MIGRATION.id) {
+function renderPane(addonId = MIGRATION.id, addonOverride) {
   return render(
     <HelmetProvider>
       <MemoryRouter initialEntries={[`/tools/${addonId}`]}>
         <Routes>
-          <Route path="/tools/:id" element={<AddOnPanePage addonId={addonId} />} />
+          <Route
+            path="/tools/:id"
+            element={<AddOnPanePage addonId={addonId} addon={addonOverride} />}
+          />
           <Route path="/" element={<p>home</p>} />
           <Route path={staticRoutes.contact} element={<p>contact page</p>} />
           <Route path={staticRoutes.landingZone} element={<p>landing zone page</p>} />
@@ -454,10 +457,27 @@ describe('AddOnPanePage, what the AddOn says', () => {
 });
 
 describe('AddOnPanePage, a coming row', () => {
-  it.each(addons.filter((addon) => addon.status === 'coming').map((addon) => [addon.id, addon]))(
+  const comingRows = addons.filter((addon) => addon.status === 'coming');
+  const rowsToTest =
+    comingRows.length > 0
+      ? comingRows.map((addon) => [addon.id, addon])
+      : [
+          [
+            MIGRATION.id,
+            {
+              ...MIGRATION,
+              status: 'coming',
+              comingSince: '2026-10-10',
+              comingReason:
+                'This assessment is being prepared for the site and opens here once its first release is published.',
+            },
+          ],
+        ];
+
+  it.each(rowsToTest)(
     'renders %s as its explainer, with no frame and no status read',
     (_id, addon) => {
-      const { container } = renderPane(addon.id);
+      const { container } = renderPane(addon.id, addon);
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(addon.title);
       expect(container.textContent).toContain(addon.summary);
       const coming = screen.getByTestId('addon-coming');
