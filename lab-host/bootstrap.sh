@@ -99,6 +99,26 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# One run at a time (#1069). The firewall rebuild installs its reject before it
+# removes the old rules, so one interrupted run stays restrictive, but two runs
+# interleaved across that sequence, or across two checkouts of /opt/hcw-src,
+# are not. The lock is on fd 9 for the life of this process. The handover
+# below execs the checked-out script, which inherits fd 9 and so runs under
+# this lock without taking it again. The kernel releases it however the run
+# ends, and /run/lock is a tmpfs, so no stale lock survives a reboot.
+HCW_BOOTSTRAP_LOCK=/run/lock/hcw-bootstrap.lock
+HCW_BOOTSTRAP_LOCK_WAIT_SECONDS="${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS:-1800}"
+if [ -z "${HCW_BOOTSTRAP_HANDED_OVER:-}" ]; then
+  exec 9>"${HCW_BOOTSTRAP_LOCK}"
+  if ! flock -n 9; then
+    log "another bootstrap.sh run holds ${HCW_BOOTSTRAP_LOCK}; waiting up to ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s for it to finish"
+    if ! flock -w "${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}" 9; then
+      echo "refusing to run: another bootstrap.sh run still holds ${HCW_BOOTSTRAP_LOCK} after ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s; nothing has been changed" >&2
+      exit 1
+    fi
+  fi
+fi
+
 # 26.04 LTS is the target (owner decision 2026-09-26: the VPS runs it). 24.04
 # LTS is accepted as a fallback and says so; anything else stops here. site.yml
 # checks the same two releases (lab_host_ubuntu_releases in group_vars/all.yml),
@@ -407,7 +427,10 @@ else
 fi
 
 log "running site.yml from ${hcw_repo_sha} against localhost"
-"${UV_TOOL_BIN_DIR}/ansible-playbook" -i inventory/localhost.yml site.yml "${extra_args[@]}" "$@"
+# 9>&- keeps the lock's descriptor out of the play, so nothing it leaves
+# running can hold the lock after this script exits. Closing the child's copy
+# does not release the lock: this process still holds its own.
+"${UV_TOOL_BIN_DIR}/ansible-playbook" -i inventory/localhost.yml site.yml "${extra_args[@]}" "$@" 9>&-
 
 # The play finished (set -e ends the script on a failed one). Record which
 # commit the host now runs in the host-check marker, unless this was a check
