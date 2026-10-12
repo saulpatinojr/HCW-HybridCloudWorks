@@ -4479,6 +4479,23 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab agent: a job's result is written only while the agent still holds
+  the job (#1057).** `completeLabJob` read the job, checked that the
+  reporting agent held it, then wrote the result with an unfenced patch.
+  Three things can happen to a job in between: an operator cancels it, the
+  canary withdraws it as overdue, or another agent claims it once the
+  15-minute lease lapses. When one did, the stale agent's result
+  overwrote it. The write is now `replaceDocIfMatch` under the ETag of the
+  read that found the job held. On a 412 the job is read again and the
+  same rules decide:
+  - still this agent's and `claimed`: the write is retried, at most three
+    attempts in all;
+  - anything else: the agent gets 403, 404 or 409, and the job is left as
+    it now is.
+
+  The agent already treats a refused completion as an error it logs, so it
+  needs no change.
+
 - **Learn catalogues: the weekly updater passes its own check again, and a
   re-read can land before the vendor's day (#1091).** Two fixes:
   - **The weekly updater went red on 2026-10-12, its first run after the
