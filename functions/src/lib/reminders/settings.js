@@ -202,16 +202,29 @@ export const CREDENTIAL_ROW_PREFIX = 'credential-';
 export const isCredentialRow = (row) =>
   typeof row?.id === 'string' && row.id.startsWith(CREDENTIAL_ROW_PREFIX);
 
-/** The stored document's register rows, normalized; none when it does not validate. */
+/**
+ * The stored document's register rows, each normalized on its own, stamps
+ * included. A row that does not validate is left out and the rest are kept
+ * (#1041): the whole sheet used to be validated at once, so one malformed
+ * owner row dropped every register row and its `notified` stamps, and the
+ * next run said a stage again. A dropped row comes back, valid, at the
+ * register's next sync. A second row under an id already kept is dropped,
+ * as a whole-sheet read would have refused it.
+ */
 function storedCredentialRows(storedDoc) {
-  try {
-    return readStoredReminders(storedDoc).reminders.filter(isCredentialRow);
-  } catch (error) {
-    // A sheet that does not validate is what this save repairs. Its register
-    // rows come back, valid, at the register's next sync.
-    if (error instanceof RemindersValidationError) return [];
-    throw error;
+  const storedRows = Array.isArray(storedDoc?.reminders) ? storedDoc.reminders : [];
+  const kept = new Map();
+  for (const entry of storedRows) {
+    let row;
+    try {
+      [row] = normalizeReminders({ reminders: [entry] }).reminders;
+    } catch (error) {
+      if (error instanceof RemindersValidationError) continue;
+      throw error;
+    }
+    if (isCredentialRow(row) && !kept.has(row.id)) kept.set(row.id, row);
   }
+  return [...kept.values()];
 }
 
 /**

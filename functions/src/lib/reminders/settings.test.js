@@ -227,11 +227,34 @@ describe('the credential register’s rows survive any save unchanged (review of
     expect(added.reminders).toEqual([]);
   });
 
-  it('keeps no register row from a stored sheet that does not validate: the save repairs it', () => {
+  it('drops a stored register row that does not validate: the save repairs it', () => {
     const merged = mergeStoredStamps(normalizeReminders({ reminders: [reminder({ id: 'mine' })] }), {
       reminders: [{ id: `${CREDENTIAL_ROW_PREFIX}broken`, title: '' }],
     });
     expect(merged.reminders.map((r) => r.id)).toEqual(['mine']);
+  });
+
+  it('keeps a valid register row, and its stamp, beside an invalid owner row (#1041)', () => {
+    // An out-of-band edit left an owner row that does not validate. The whole
+    // sheet was validated at once, so the save dropped the register row too,
+    // its `notified` stamp with it, and the next run said that stage again.
+    const brokenOwnerRow = { id: 'mine', title: '', dueDate: 'soon' };
+    const merged = mergeStoredStamps(normalizeReminders({ reminders: [reminder({ id: 'mine' })] }), {
+      reminders: [brokenOwnerRow, registerRow],
+    });
+    const kept = merged.reminders.find(isCredentialRow);
+    expect(merged.reminders.map((r) => r.id)).toEqual(['mine', registerRow.id]);
+    expect(kept.notified).toEqual({ ahead: '2026-12-14T13:00:00.000Z' });
+    expect(kept).toEqual(normalizeReminders({ reminders: [registerRow] }).reminders[0]);
+  });
+
+  it('keeps the first of two stored register rows under one id, as a whole-sheet read would refuse both', () => {
+    const later = { ...registerRow, title: 'A second copy', notified: {} };
+    const merged = mergeStoredStamps(normalizeReminders({ reminders: [] }), {
+      reminders: [registerRow, later],
+    });
+    expect(merged.reminders).toHaveLength(1);
+    expect(merged.reminders[0].title).toBe(registerRow.title);
   });
 
   it('refuses a save that, with the register’s rows, would pass MAX_REMINDERS', () => {
