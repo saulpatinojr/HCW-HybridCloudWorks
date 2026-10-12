@@ -636,11 +636,10 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # CSP frame-src and is the frame's src), no credential travels with it,
     # so there is no vault seeding and no unresolved-reference monitor for
     # it. Unset it to close the pane: the proxy then answers
-    # { configured: false } and the page shows its one sentence. The other
-    # two AddOns (ADDON_NETWORK_ASSESSMENT_URL, ADDON_CLOUD_ASSESSMENT_URL)
-    # are declared in the pull request that makes their catalogue row
-    # available; until then their rows are `coming` and read nothing.
-    "ADDON_MIGRATION_URL" = "https://migration.lab.hybridcloudworks.com"
+    # { configured: false } and the page shows its one sentence.
+    "ADDON_MIGRATION_URL"          = "https://migration.lab.hybridcloudworks.com"
+    "ADDON_NETWORK_ASSESSMENT_URL" = "https://network-assessment.lab.hybridcloudworks.com"
+    "ADDON_CLOUD_ASSESSMENT_URL"   = "https://cloud-assessment.lab.hybridcloudworks.com"
 
     # Hybrid Lab — the Landing Zone Builder's public "Validate on the lab"
     # (ADR 0032 decision 6, revised 2026-09-28: open, locked to the site's

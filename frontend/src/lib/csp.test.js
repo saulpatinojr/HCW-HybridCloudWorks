@@ -164,7 +164,11 @@ describe('Content-Security-Policy', () => {
       'https://*.coder.lab.hybridcloudworks.com',
     ]);
     const ADDON_SOURCES = addonOrigins();
-    expect(ADDON_SOURCES).toEqual(['https://migration.lab.hybridcloudworks.com']);
+    expect(ADDON_SOURCES).toEqual([
+      'https://migration.lab.hybridcloudworks.com',
+      'https://network-assessment.lab.hybridcloudworks.com',
+      'https://cloud-assessment.lab.hybridcloudworks.com',
+    ]);
     expect(directive('frame-src')).toEqual([
       "'self'",
       'https://login.microsoftonline.com',

@@ -182,8 +182,8 @@ const serverFalse = () => false;
 /** A subscription for a value that never changes (fullscreenEnabled). */
 const noSubscription = () => () => {};
 
-export default function AddOnPanePage({ addonId }) {
-  const addon = addonById(addonId);
+export default function AddOnPanePage({ addonId, addon: addonProp }) {
+  const addon = addonProp ?? addonById(addonId);
   if (!addon) return <Navigate to={staticRoutes.home} replace />;
   if (addon.status === 'coming') return <ComingAddOn key={addon.id} addon={addon} />;
   return <AddOnPane key={addon.id} addon={addon} />;
