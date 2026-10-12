@@ -56,6 +56,14 @@ export function findDue({ catalogues = CATALOGUES, today, days = DEFAULT_DAYS })
 /** Markdown table cells cannot hold a raw pipe. */
 const cell = (text) => String(text).replaceAll('|', '\\|');
 
+/**
+ * The issue body: the marker the workflow finds its issue by, then either a
+ * plain "nothing is due" line or the due rows as a table, with how to re-read
+ * each kind of row before (or on) its date.
+ *
+ * @param {{due: Array<{due: string, catalogue: string, problem: string, source?: string|null}>, today: string, days?: number}} input
+ * @returns {string} Markdown ending in a newline
+ */
 export function renderReport({ due, today, days = DEFAULT_DAYS }) {
   const lines = [REPORT_MARKER, ''];
   if (due.length === 0) {
