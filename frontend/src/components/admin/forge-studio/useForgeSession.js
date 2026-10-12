@@ -13,7 +13,7 @@
  * The hook wires them: a reducer for the state, a `ctx` the operations read
  * the session through, and one stable callback per operation.
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useReducer, useRef } from 'react';
 import * as ops from './forgeSessionActions';
 import { forgeSessionReducer, initialState, isDirty } from './forgeSessionReducer';
 
@@ -29,10 +29,15 @@ export function useForgeSession({ initialContentId = '', onContentId } = {}) {
   const [state, dispatch] = useReducer(forgeSessionReducer, initialContentId, initialState);
 
   // The operations read the session as it stands through refs, so each
-  // callback below is created once rather than on every keystroke.
+  // callback below is created once rather than on every keystroke. The refs
+  // move in a layout effect, inside the commit that renders the state: a
+  // passive effect runs after paint, and a document that arrived from a read
+  // was on screen while `ctx.get()` still held the session without it, so a
+  // click in that gap sent nothing (#1072). This page is never pre-rendered,
+  // so the server-render warning a layout effect carries does not arise.
   const stateRef = useRef(state);
   const onContentIdRef = useRef(onContentId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     stateRef.current = state;
     onContentIdRef.current = onContentId;
   });
