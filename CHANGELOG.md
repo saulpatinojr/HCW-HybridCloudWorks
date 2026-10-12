@@ -19,6 +19,23 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **The hourly functions monitor names a `ci-*` access window on the
+  Function App whose run has ended (#1050).** `deploy-functions.yml` and
+  `publish-content-manifest.yml` open a one-host Allow rule for their runner
+  and close it in an `always()` step, which does not run on runner loss or
+  a force-cancel. `assert-origin-lock.mjs` accepts any single-host `ci-*`
+  rule, because a concurrent run may hold one, so an orphan was invisible.
+  - `scripts/check-ci-access-windows.mjs` matches each `ci-*` rule on the
+    site and the SCM site to its run by the id its name ends in, and names
+    any whose run has ended or does not exist. Each orphan comes with the
+    exact `az functionapp config access-restriction remove` command.
+  - `monitor-functions-registered.yml` runs it every hour, reading twice a
+    minute apart so a run closing its own window is not named, and shows it
+    as one more row: ✅, ❌ or ⚠️.
+  - The 2026-08 review's T-713 "FIXED" counted only the storage account's
+    rules. The Function App's `ci-*` rules it named had no probe until now,
+    and the review carries a dated correction.
+
 - **Labs & Architectures: per-lab VPS bootloaders, Linux container sandboxes, Defender WSL container lab, and shared mini landing pages (#1080, #1082, #1083, #1084).**
   - **Shared mini landing page (`#1084`)**: `MiniLandingFrame` (`frontend/src/components/shared/MiniLandingFrame.jsx`) extracts the mini-header bar, status pills, metric strip, and section tabs into a reusable shell. `ArchitectureDetailTemplate` wraps every architecture detail view in `MiniLandingFrame`, and `frontend/src/data/architectures.js` adds `azureArchitectures` (7 Azure architectures led by `secure-2-tier-azure` plus all 6 blueprints from `/azure/architecture` linked via `detailSlug`), complete `awsArchitectures` detail entries, and `architecturesByProvider` so `/azure/architectures/:slug` and `/aws/architectures/:slug` render full interactive detail pages with Mermaid topology, simulator controls, FinOps telemetry, and operational playbooks.
   - **Per-lab VPS bootloaders (`lab-image/bootloaders/`)**: `hcw-boot <lab-id>` dispatches to isolated per-lab bootloader scripts (`terraform-validate-walkthrough.sh`, `ansible-syntax-check-walkthrough.sh`, `landing-zone-builder-output.sh`, `wsl-containers-walkthrough.sh`, `defender-wsl-plugin-walkthrough.sh`, plus the guided Add-On bundle bootloaders `migration-assessment.sh`, `network-assessment.sh`, and `cloud-assessment.sh` using `python3 -m zipfile -e`) baked into `docker.io/hybridcloudworks/hcw-lab` under `/usr/local/libexec/hcw-boot/`. `lab-host/coder/templates/hcw-lab/main.tf` adds the `lab_id` parameter and runs `/usr/local/libexec/hcw-boot/hcw-boot "$LAB_ID"` before starting the Coder agent, `lab-host/coder/launcher/launcher.js` passes `rich_parameter_values` (`lab_id`) when creating a workspace, and `hcw-coder-template-push` accepts an optional `[template-name]` argument (defaulting to `hcw-lab`).
