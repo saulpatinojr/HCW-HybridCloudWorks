@@ -4496,6 +4496,25 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab host: `bootstrap.sh` runs one at a time (#1069, part 2).** Two
+  concurrent runs were not serialised across the firewall rebuild's
+  guard-to-unguard sequence, or across two checkouts of `/opt/hcw-src`.
+  - The script takes a `flock` on fd 9 straight after its root check. A
+    second run waits up to 30 minutes, then refuses having changed nothing.
+  - Every pass proves it holds the lock rather than trusting a marker. A
+    pass handed over by `exec` reuses its inherited fd 9 only when that is
+    the lock file itself. A handover from an older `bootstrap.sh`, or a
+    hand-set `HCW_BOOTSTRAP_HANDED_OVER`, takes the lock like any other run.
+  - The play inherits the lock, so it holds until every mutator has ended,
+    even if the script is killed first.
+  - The lock file is `/run/hcw-bootstrap.lock`, where only root can create
+    files. It is created `0600` and refused if another user owns it, so no
+    local user can open it and hold the lock. It is opened without
+    truncating, a symlink in its place is refused, and it is never removed.
+    The wait must be a whole number of seconds.
+  - Verifying add-on image attestations before the pull (part 1) waits on an
+    owner decision on #1069.
+
 - **Reminders: an editor's save keeps the credential register's rows, and
   their stamps, beside a malformed owner row (#1041).** The save validated
   the stored sheet as a whole, so one owner row that did not validate (an

@@ -99,6 +99,66 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# One run at a time (#1069). The firewall rebuild installs its reject before it
+# removes the old rules, so one interrupted run stays restrictive, but two runs
+# interleaved across that sequence, or across two checkouts of /opt/hcw-src,
+# are not. The lock is on fd 9 and every pass proves it holds it: no marker
+# lets a pass skip the lock (CodeRabbit, #1099).
+#   - A pass whose fd 9 is already the lock file (same device and inode) was
+#     handed over by exec from a pass that opened it, and keeps that open file
+#     description: flock -n on it succeeds at once, because it holds the lock.
+#   - Any other pass opens the lock file and takes the lock, waiting for a run
+#     that holds it. That includes a handover from a bootstrap.sh older than
+#     this block, which opened nothing, and a pass started by hand with
+#     HCW_BOOTSTRAP_HANDED_OVER set.
+# The play inherits fd 9 too, so the lock is held until the play and anything
+# it runs have ended, even if this script is killed first. What the play
+# starts for good (systemd units, containers) is started by systemd or
+# containerd and does not inherit it. The kernel releases the lock when the
+# last holder exits.
+#
+# The file lives in /run itself, which only root can write, not /run/lock,
+# which anyone can. It is opened read-write (9<>), which never truncates, and
+# a path that is not a regular file is refused, so a planted symlink cannot
+# turn the open into a write elsewhere (CodeRabbit, #1099). /run is a tmpfs,
+# so no lock survives a reboot. HCW_BOOTSTRAP_LOCK_WAIT_SECONDS is a whole
+# number of seconds: 0 refuses at once when another run holds the lock, and
+# the default 1800 covers a full first run.
+HCW_BOOTSTRAP_LOCK=/run/hcw-bootstrap.lock
+HCW_BOOTSTRAP_LOCK_WAIT_SECONDS="${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS:-1800}"
+if ! [[ "${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}" =~ ^[0-9]+$ ]]; then
+  echo "refusing to run: HCW_BOOTSTRAP_LOCK_WAIT_SECONDS must be a whole number of seconds, not '${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}'; nothing has been changed" >&2
+  exit 1
+fi
+if [ -L "${HCW_BOOTSTRAP_LOCK}" ] || { [ -e "${HCW_BOOTSTRAP_LOCK}" ] && [ ! -f "${HCW_BOOTSTRAP_LOCK}" ]; }; then
+  echo "refusing to run: ${HCW_BOOTSTRAP_LOCK} is not a regular file; nothing has been changed" >&2
+  exit 1
+fi
+# Only this run's user (root, above) may own or read the file: flock works on a
+# read-only descriptor, so a file anyone could open would let any local user
+# hold the lock and stall every run. Created under umask 077 and set to 0600
+# on every open; never unlinked, so every run locks the same inode.
+if [ -e "${HCW_BOOTSTRAP_LOCK}" ] && [ "$(stat -c '%u' "${HCW_BOOTSTRAP_LOCK}")" != "$(id -u)" ]; then
+  echo "refusing to run: ${HCW_BOOTSTRAP_LOCK} belongs to another user; nothing has been changed" >&2
+  exit 1
+fi
+hcw_lock_id="$(stat -c '%d:%i' "${HCW_BOOTSTRAP_LOCK}" 2>/dev/null || true)"
+if [ -z "${hcw_lock_id}" ] || [ "$(stat -L -c '%d:%i' "/proc/$$/fd/9" 2>/dev/null || true)" != "${hcw_lock_id}" ]; then
+  hcw_umask="$(umask)"
+  umask 077
+  exec 9<>"${HCW_BOOTSTRAP_LOCK}"
+  umask "${hcw_umask}"
+  chmod 0600 "${HCW_BOOTSTRAP_LOCK}"
+fi
+if ! flock -n 9; then
+  log "another bootstrap.sh run holds ${HCW_BOOTSTRAP_LOCK}; waiting up to ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s for it to finish"
+  if ! flock -w "${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}" 9; then
+    echo "refusing to run: another bootstrap.sh run still holds ${HCW_BOOTSTRAP_LOCK} after ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s; nothing has been changed" >&2
+    echo "the processes holding it: sudo fuser -v ${HCW_BOOTSTRAP_LOCK}" >&2
+    exit 1
+  fi
+fi
+
 # 26.04 LTS is the target (owner decision 2026-09-26: the VPS runs it). 24.04
 # LTS is accepted as a fallback and says so; anything else stops here. site.yml
 # checks the same two releases (lab_host_ubuntu_releases in group_vars/all.yml),
@@ -407,6 +467,8 @@ else
 fi
 
 log "running site.yml from ${hcw_repo_sha} against localhost"
+# The play inherits fd 9, so the lock outlives this script if it is killed
+# while the play runs (the block after the root check says why).
 "${UV_TOOL_BIN_DIR}/ansible-playbook" -i inventory/localhost.yml site.yml "${extra_args[@]}" "$@"
 
 # The play finished (set -e ends the script on a failed one). Record which
