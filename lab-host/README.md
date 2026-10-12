@@ -611,6 +611,14 @@ first.
 
 ### Publishing the template
 
+**Normally nobody runs this.** Every `bootstrap.sh` run publishes each
+template under `coder/templates` whose files changed, with the host's own
+rotation credential (`ansible/roles/coder/README.md`, "Publishing the
+template"), and has needed no token since that credential was seeded on
+2026-10-10. What follows is the fallback for when there is no working
+rotation credential, such as a rebuilt host. Pass a template's name to
+publish one other than `hcw-lab`.
+
 `/usr/local/sbin/hcw-coder-template-push`, which the `coder` role installs,
 publishes the template from the host with the Coder CLI that is already
 inside the `coder` container, so nothing is installed on the workstation

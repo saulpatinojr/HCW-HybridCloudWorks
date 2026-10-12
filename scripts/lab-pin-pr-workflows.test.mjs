@@ -97,7 +97,14 @@ describe('the pin sets', () => {
     expect(body).toContain('Refs #949');
     expect(body).not.toMatch(/Closes #|THE_|<your/);
     const digests = prBody({ set: 'image-digests', evidence: 'x', notes: '', runUrl: 'u' });
-    expect(digests).toContain('/usr/local/sbin/hcw-coder-template-push');
+    // The host publishes the templates itself with its rotation credential
+    // (seeded 2026-10-10): the body asks for no token and no manual push.
+    const task = 'Publish the Coder templates with the rotation credential when they changed';
+    expect(digests).toContain(task);
+    expect(digests).not.toMatch(/hcw-setup|Read-Host|hcw-coder-template-push/);
+    // The task the body names is the coder role's own, so a rename fails here, not in the owner's run.
+    const tasks = readFileSync(join(REPO, 'lab-host/ansible/roles/coder/tasks/main.yml'), 'utf8');
+    expect(tasks).toContain(`- name: ${task}`);
     expect(digests).not.toContain('## Not bumped');
   });
 

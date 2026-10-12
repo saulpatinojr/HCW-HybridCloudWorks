@@ -471,16 +471,17 @@ PUSH_HELPER = r'''#!@PYTHON@
 import json, os, sys
 token = sys.stdin.readline().strip()
 mode = open("@MODE@").read().strip() if os.path.exists("@MODE@") else ""
+name = sys.argv[1] if len(sys.argv) > 1 else "hcw-lab"
 with open("@LOG@", "a", encoding="utf-8") as handle:
     handle.write(json.dumps({"token": token, "src": os.environ.get("HCW_SRC_DIR"), "argv": sys.argv[1:]}) + "\n")
-if mode == "fail":
-    print("hcw-coder-template-push: publishing hcw-lab failed; Coder's message is above", file=sys.stderr)
+if mode in ("fail", "fail:" + name):
+    print(f"hcw-coder-template-push: publishing {name} failed; Coder's message is above", file=sys.stderr)
     sys.exit(1)
 count = sum(1 for _ in open("@LOG@", encoding="utf-8"))
 src = os.environ["HCW_SRC_DIR"]
-print("hcw-coder-template-push: copying main.tf from " + src + " to /tmp/hcw-lab.abc in the coder container")
+print(f"hcw-coder-template-push: copying main.tf from {src} to /tmp/{name}.abc in the coder container")
 print("Updated version at now!", file=sys.stderr)
-print(f"hcw-coder-template-push: published hcw-lab from {src}/lab-host/coder/templates/hcw-lab. Active version: brave_turing{count}. Default autostop: 1h0m0s.")
+print(f"hcw-coder-template-push: published {name} from {src}/lab-host/coder/templates/{name}. Active version: brave_turing{count}. Default autostop: 1h0m0s.")
 '''
 
 
@@ -871,8 +872,9 @@ world.seed()
 credential = world.credential()
 result = world.helper("push-template")
 pushes = world.lines(world.push_log)
-check("with one, it publishes through hcw-coder-template-push, the credential on its stdin",
-      result.returncode == 0 and len(pushes) == 1 and pushes[0]["token"] == credential and pushes[0]["argv"] == [],
+check("with one, it publishes through hcw-coder-template-push, by name, the credential on its stdin",
+      result.returncode == 0 and len(pushes) == 1 and pushes[0]["token"] == credential
+      and pushes[0]["argv"] == ["hcw-lab"],
       result.stdout + result.stderr)
 check("from the configured checkout", pushes and pushes[0]["src"] == str(world.src))
 check("and says it published, which is the role's changed_when",
@@ -927,6 +929,63 @@ check("a checkout that moved on without a publish reports a source digest the pu
 result = world.helper("push-template")
 check("and the next publish brings the two back together",
       result.returncode == 0 and len(world.lines(world.push_log)) == 7, result.stdout + result.stderr)
+
+# Every template in the checkout, not hcw-lab alone (2026-10-12). Before, the
+# two guided-lab templates (#1090) needed the owner's token on every change.
+templates = world.template.parent
+guided = templates / "na-guided-lab"
+guided.mkdir()
+(guided / "main.tf").write_text('resource "x" "guided" {}\n', encoding="utf-8")
+(templates / "notes-only").mkdir()
+(templates / "notes-only" / "README.md").write_text("# not a template\n", encoding="utf-8")
+(templates / "Bad_Name").mkdir()
+(templates / "Bad_Name" / "main.tf").write_text('resource "x" "y" {}\n', encoding="utf-8")
+before = len(world.lines(world.push_log))
+result = world.helper("push-template")
+pushes = world.lines(world.push_log)[before:]
+check("a second template in the checkout is published too, by its own name, with the same credential",
+      result.returncode == 0 and [push["argv"] for push in pushes] == [["na-guided-lab"]]
+      and pushes[0]["token"] == world.credential()
+      and "published na-guided-lab with the rotation credential" in result.stdout
+      and "hcw-lab is unchanged" in result.stdout,
+      result.stdout + result.stderr)
+check("a directory with no *.tf, or a name the push helper would refuse, is not published",
+      not any(push["argv"] in (["notes-only"], ["Bad_Name"]) for push in world.lines(world.push_log)))
+state = world.state()
+check("each template is recorded on its own, and hcw-lab keeps the fields the daily report reads",
+      str(state.get("templates", {}).get("na-guided-lab", {}).get("version", "")).startswith("brave_turing")
+      and state["templates"]["hcw-lab"]["digest"] == state.get("templateDigest")
+      and state["templates"]["na-guided-lab"]["digest"] != state.get("templateDigest"),
+      json.dumps(state))
+result = world.helper("push-template")
+check("an unchanged second template is not published again",
+      result.returncode == 0 and len(world.lines(world.push_log)) == before + 1, result.stdout)
+(guided / "main.tf").write_text('resource "x" "guided-2" {}\n', encoding="utf-8")
+(world.template / "main.tf").write_text('resource "x" "lab-2" {}\n', encoding="utf-8")
+world.push_mode.write_text("fail:hcw-lab", encoding="utf-8")
+result = world.helper("push-template")
+pushes = world.lines(world.push_log)[before + 1:]
+check("one template failing does not stop the next; the run fails (exit 1) naming the one that failed",
+      result.returncode == 1 and [push["argv"] for push in pushes] == [["hcw-lab"], ["na-guided-lab"]]
+      and "published na-guided-lab" in result.stdout
+      and "publishing hcw-lab failed" in result.stderr and "hcw-lab not published" in result.stderr,
+      result.stdout + result.stderr)
+world.push_mode.write_text("", encoding="utf-8")
+result = world.helper("push-template")
+pushes = world.lines(world.push_log)[before + 3:]
+check("and the next run publishes only the one that failed",
+      result.returncode == 0 and [push["argv"] for push in pushes] == [["hcw-lab"]], result.stdout + result.stderr)
+legacy = world.state()
+legacy.pop("templates")
+(world.state_dir / "state.json").write_text(json.dumps(legacy), encoding="utf-8")
+result = world.helper("push-template")
+pushes = world.lines(world.push_log)[before + 4:]
+check("a state from before the per-template record still knows hcw-lab was published, and publishes only the new one",
+      result.returncode == 0 and [push["argv"] for push in pushes] == [["na-guided-lab"]]
+      and "hcw-lab is unchanged" in result.stdout,
+      result.stdout + result.stderr)
+for leftover in ("notes-only", "Bad_Name"):
+    shutil.rmtree(templates / leftover)
 world.fake.keys.pop(world.credential().split("-")[0])
 result = world.helper("push-template")
 check("a rotation credential Coder refuses skips the publish (exit 3) and says to seed again",

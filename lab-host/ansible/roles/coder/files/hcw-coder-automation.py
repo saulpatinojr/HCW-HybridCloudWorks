@@ -13,8 +13,9 @@ root:root 0750, and run four ways, each as root:
         site's status token when it is due, hands it to the site, deletes the
         old ones, renews the rotation credential itself, and reports.
     hcw-coder-automation [--config PATH] push-template [--force]
-        The coder role, on every bootstrap.sh run. Publishes the hcw-lab
-        template with the rotation credential when its files changed.
+        The coder role, on every bootstrap.sh run. Publishes every template
+        under lab-host/coder/templates (hcw-lab first) with the rotation
+        credential, each when its own files changed.
     hcw-coder-automation [--config PATH] revoke
         The owner's way to turn it off. Deletes the rotation credential, and
         any on the deletion list, in Coder before removing the file, so no
@@ -985,14 +986,15 @@ def seed(config, args):
 # --- push-template ----------------------------------------------------------
 
 
-def template_digest(config):
+def template_digest(config, directory=None):
     """SHA-256 over exactly what hcw-coder-template-push publishes, and the autostop it sets.
 
     The same files the helper copies: every *.tf (not a dotfile), the lock
     file and the README. None when there is no template directory, which the
-    helper itself then refuses.
+    helper itself then refuses. `directory` defaults to the configured
+    template's, the one the daily report describes.
     """
-    directory = config["template_dir"]
+    directory = directory or config["template_dir"]
     if not os.path.isdir(directory):
         return None
     names = sorted(name for name in os.listdir(directory) if name.endswith(".tf") and not name.startswith("."))
@@ -1021,63 +1023,130 @@ def source_digest_or_none(config):
         return None
 
 
+# hcw-coder-template-push accepts a template name of this shape and no other.
+TEMPLATE_NAME = re.compile(r"[a-z0-9-]+")
+
+
+def templates_to_publish(config):
+    """Every template in the checkout, as (name, directory), the configured one first.
+
+    A directory beside the configured template (lab-host/coder/templates, the
+    place hcw-coder-template-push reads a named template from) is a template
+    when it holds a *.tf file and its name is one the helper accepts; a
+    symbolic link is not followed. The configured template (hcw-lab) comes
+    first, because the daily report and the site's drift check read it, and
+    is listed even when its directory is missing, which the helper then
+    refuses, as it always has. Until 2026-10-12 only that one was published,
+    so the two guided-lab templates (#1090) needed the owner's token on every
+    change.
+    """
+    primary = config["template_name"]
+    root = os.path.dirname(config["template_dir"])
+    found = [(primary, config["template_dir"])]
+    if os.path.isdir(root):
+        for name in sorted(os.listdir(root)):
+            path = os.path.join(root, name)
+            if name == primary or not TEMPLATE_NAME.fullmatch(name) or os.path.islink(path) or not os.path.isdir(path):
+                continue
+            if any(entry.endswith(".tf") and not entry.startswith(".") for entry in os.listdir(path)):
+                found.append((name, path))
+    return found
+
+
+def published_record(config, state, name):
+    """What push-template last published for this template: digest, pushedAt, version.
+
+    Kept per template under state["templates"]. The configured template also
+    keeps its three top-level fields, which the daily report carries; a state
+    written before the per-template record existed is read from those.
+    """
+    record = dict(state.get("templates", {}).get(name, {}))
+    if not record and name == config["template_name"]:
+        record = {"digest": state.get("templateDigest"), "pushedAt": state.get("templatePushedAt"),
+                  "version": state.get("templateVersion")}
+    return record
+
+
+def publish_one(config, args, token, state, name, directory):
+    """Publish one template when its files or autostop changed, and record it. A Failure on error."""
+    digest = template_digest(config, directory)
+    record = published_record(config, state, name)
+    if not args.force and digest is not None and record.get("digest") == digest:
+        say(
+            f"{name} is unchanged since it was published on {str(record.get('pushedAt') or '')[:10]} "
+            f"(version {record.get('version') or 'unknown'}); nothing was published"
+        )
+        return
+    try:
+        completed = subprocess.run(
+            [config["push_helper"], name],
+            input=(token + "\n").encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={"PATH": CHILD_PATH, "LC_ALL": "C", "HCW_SRC_DIR": config["src_dir"]},
+            timeout=PUSH_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise Failure(f"hcw-coder-template-push did not finish within {PUSH_TIMEOUT_SECONDS} seconds") from None
+    except OSError as error:
+        raise Failure(f"{config['push_helper']} could not be started ({type(error).__name__})") from None
+    output = completed.stdout.decode("utf-8", "replace")
+    for line in output.splitlines():
+        print(scrub(line), flush=True)
+    for line in completed.stderr.decode("utf-8", "replace").splitlines():
+        print(scrub(line), file=sys.stderr, flush=True)
+    if completed.returncode != 0:
+        raise Failure(f"hcw-coder-template-push exited with {completed.returncode}; its own message is above")
+    found = re.search(r"Active version: (\S+)\. Default autostop:", output)
+    if not found:
+        raise Failure("hcw-coder-template-push succeeded but named no active version")
+    pushed_at, version = iso(now()), found.group(1)
+    state.setdefault("templates", {})[name] = {"digest": digest, "pushedAt": pushed_at, "version": version}
+    if name == config["template_name"]:
+        state.update(templatePushedAt=pushed_at, templateVersion=version, templateDigest=digest)
+    save_state(config, state)
+    say(f"published {name} with the rotation credential; active version {version}")
+
+
 def push_template(config, args):
-    """Publish the template with hcw-coder-template-push when its files or autostop changed. 0, 1 or SKIPPED."""
+    """Publish every template whose files or autostop changed, each on its own. 0, 1 or SKIPPED.
+
+    One template's failure does not stop the others: each is tried, the ones
+    that published are recorded, and the run then fails naming the rest, so
+    the next bootstrap.sh run retries exactly those.
+    """
     coder = Coder(config["coder_url"])
     user = config["status_user"]
-    template = config["template_name"]
+    templates = templates_to_publish(config)
+    names = ", ".join(name for name, _ in templates)
     with locked(config):
         token = read_credential(config["credential_file"])
         if token is None:
             say(
-                f"{template} was not published by this run: there is no rotation credential yet. Run "
+                f"{names} not published by this run: there is no rotation credential yet. Run "
                 "hcw-coder-automation-seed once (docs/runbooks/labs-host.md, \"Automatic renewal\"), and "
-                "the next bootstrap.sh run publishes it; until then, publish it with hcw-coder-template-push"
+                "the next bootstrap.sh run publishes them; until then, publish each with hcw-coder-template-push"
             )
             return SKIPPED
         status, _ = coder.call("GET", "/api/v2/users/me", token)
         if status == 401:
             say(
-                f"{template} was not published by this run: Coder refused the rotation credential (HTTP 401). "
+                f"{names} not published by this run: Coder refused the rotation credential (HTTP 401). "
                 "Run hcw-coder-automation-seed --force (docs/runbooks/labs-host.md, \"Automatic renewal\")"
             )
             return SKIPPED
         check_identity(coder, token, user, "the rotation credential")
-        digest = template_digest(config)
         state = load_state(config)
-        if not args.force and digest is not None and state.get("templateDigest") == digest:
-            say(
-                f"{template} is unchanged since it was published on {str(state.get('templatePushedAt', ''))[:10]} "
-                f"(version {state.get('templateVersion', 'unknown')}); nothing was published"
-            )
-            return 0
-        try:
-            completed = subprocess.run(
-                [config["push_helper"]],
-                input=(token + "\n").encode("utf-8"),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env={"PATH": CHILD_PATH, "LC_ALL": "C", "HCW_SRC_DIR": config["src_dir"]},
-                timeout=PUSH_TIMEOUT_SECONDS,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            raise Failure(f"hcw-coder-template-push did not finish within {PUSH_TIMEOUT_SECONDS} seconds") from None
-        except OSError as error:
-            raise Failure(f"{config['push_helper']} could not be started ({type(error).__name__})") from None
-        output = completed.stdout.decode("utf-8", "replace")
-        for line in output.splitlines():
-            print(scrub(line), flush=True)
-        for line in completed.stderr.decode("utf-8", "replace").splitlines():
-            print(scrub(line), file=sys.stderr, flush=True)
-        if completed.returncode != 0:
-            raise Failure(f"hcw-coder-template-push exited with {completed.returncode}; its own message is above")
-        found = re.search(r"Active version: (\S+)\. Default autostop:", output)
-        if not found:
-            raise Failure("hcw-coder-template-push succeeded but named no active version")
-        state.update(templatePushedAt=iso(now()), templateVersion=found.group(1), templateDigest=digest)
-        save_state(config, state)
-    say(f"published {template} with the rotation credential; active version {found.group(1)}")
+        failed = []
+        for name, directory in templates:
+            try:
+                publish_one(config, args, token, state, name, directory)
+            except Failure as error:
+                warn(f"publishing {name} failed: {error}")
+                failed.append(name)
+    if failed:
+        raise Failure(f"{', '.join(failed)} not published; the next bootstrap.sh run tries again")
     return 0
 
 
@@ -1156,7 +1225,7 @@ def main(argv=None):
     command = commands.add_parser("run", help="renew what is due and report to the site")
     command.add_argument("--rotate-now", action="store_true", help="renew the site's status token now")
     command.add_argument("--rotate-credential", action="store_true", help="renew the rotation credential now")
-    command = commands.add_parser("push-template", help="publish the template when its files changed")
+    command = commands.add_parser("push-template", help="publish each template whose files changed")
     command.add_argument("--force", action="store_true", help="publish even when nothing changed")
     commands.add_parser("revoke", help="turn it off: delete the rotation credential in Coder, then the file")
     args = parser.parse_args(argv)
