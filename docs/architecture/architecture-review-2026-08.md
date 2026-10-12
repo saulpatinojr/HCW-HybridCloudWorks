@@ -1025,6 +1025,8 @@ Required-Inputs §4.4 with the configuration that actually exists.
 ### T-713 — The storage firewall stays open if a deploy dies mid-window (High, reported)
 
 > **Status (2026-08-28):** **FIXED** — the hourly monitor now probes storage default action and leftover `ci-*` rules, so an orphaned deploy window pages within the hour.
+>
+> **Corrected 2026-10-12 (#1050).** That fix read the storage account's network rules only. The Function App's own `ci-deploy-scm-*` and `ci-smoke-*` access restrictions, which this finding names, had no probe, and `scripts/assert-origin-lock.mjs` accepts any single-host `ci-*` rule because a concurrent run may hold one. The same monitor now matches each Function App `ci-*` rule to its run by the id in its name and fails, naming the rule and the command that removes it, when the run has ended (`scripts/check-ci-access-windows.mjs`).
 
 `.github/workflows/deploy-functions.yml:97-101,145,248-264,294-300`
 
