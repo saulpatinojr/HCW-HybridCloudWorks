@@ -435,6 +435,7 @@ describe('the 2026-10-05 re-read', () => {
  * nothing to fire on. The vendor sentences are quoted in the Azure header.
  */
 describe('the 2026-10-12 re-read', () => {
+  /** The Azure catalogue row with this exam code, as the file stores it. */
   const rowFor = (code) => azure.certifications.find((c) => c.code === code);
 
   it('stores AB-400 active and PL-400 retired, each showing its old badge until its day', () => {
