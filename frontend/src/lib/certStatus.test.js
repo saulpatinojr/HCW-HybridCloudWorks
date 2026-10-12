@@ -263,6 +263,45 @@ describe('deriveStatus', () => {
     expect(deriveStatus({ status: 'upcoming' }, TODAY)).toBe('upcoming');
   });
 
+  it('holds a re-read stored ahead of the vendor day until that day (AB-400, PL-400; #1091)', () => {
+    const readOn = '2026-10-12';
+    const ab400 = { status: 'active', availableDate: '2026-10-16', statusReadDate: readOn };
+    expect(deriveStatus(ab400, '2026-09-10')).toBe('upcoming');
+    expect(deriveStatus(ab400, '2026-10-15')).toBe('upcoming');
+    expect(deriveStatus(ab400, '2026-10-16')).toBe('active');
+    const pl400 = { status: 'retired', expiryDate: '2026-10-30', statusReadDate: readOn };
+    expect(deriveStatus(pl400, '2026-09-10')).toBe('expiring');
+    expect(deriveStatus(pl400, '2026-10-30')).toBe('expiring');
+    expect(deriveStatus(pl400, '2026-10-31')).toBe('retired');
+    // A read on the last day to test is still ahead of the retirement.
+    expect(deriveStatus({ ...pl400, statusReadDate: '2026-10-30' }, '2026-10-30')).toBe('expiring');
+  });
+
+  it('keeps a row stored after its day as stored, on every clock (AZ-800)', () => {
+    // AZ-800 was set `retired` once 2026-09-30 had passed. The education index
+    // pre-renders with the earliest DATA_AS_OF (2026-09-10 at the time), and
+    // must not show it bookable there.
+    const az800 = { status: 'retired', retiredDate: '2026-09-30', expiryDate: '2026-09-30' };
+    expect(deriveStatus(az800, '2026-09-10')).toBe('retired');
+    expect(deriveStatus({ ...az800, statusReadDate: '2026-10-01' }, '2026-09-10')).toBe('retired');
+    const sapC03 = { status: 'active', availableDate: '2026-11-17' };
+    expect(deriveStatus(sapC03, '2026-09-10')).toBe('active');
+    expect(deriveStatus({ ...sapC03, statusReadDate: '2026-11-17' }, '2026-09-10')).toBe('active');
+  });
+
+  it('holds back only those two dates, never the beta dates an active row ignores', () => {
+    const readOn = { statusReadDate: '2026-09-01' };
+    expect(deriveStatus({ status: 'active', gaDate: '2026-12-01', ...readOn }, TODAY)).toBe(
+      'active'
+    );
+    expect(deriveStatus({ status: 'active', betaEndDate: '2026-12-01', ...readOn }, TODAY)).toBe(
+      'active'
+    );
+    expect(deriveStatus({ status: 'expiring', expiryDate: '2026-12-01', ...readOn }, TODAY)).toBe(
+      'expiring'
+    );
+  });
+
   it('never lets an impossible day decide a status', () => {
     // 2026-02-30 matches the YYYY-MM-DD shape; only a real-calendar check
     // stops it flipping a status (#465 review).
@@ -280,10 +319,23 @@ describe('deriveStatus', () => {
     ).toBe('upcoming');
     expect(deriveStatus({ status: 'expiring', expiryDate: '2026-02-30' }, past)).toBe('expiring');
     expect(deriveStatus({ status: 'active', expiryDate: '2026-02-30' }, past)).toBe('active');
+    const readOn = { statusReadDate: '2026-01-01' };
+    expect(deriveStatus({ status: 'retired', expiryDate: '2027-02-30', ...readOn }, past)).toBe(
+      'retired'
+    );
+    expect(deriveStatus({ status: 'active', availableDate: '2027-02-30', ...readOn }, past)).toBe(
+      'active'
+    );
+    const badRead = { statusReadDate: '2026-02-30' };
+    expect(deriveStatus({ status: 'active', availableDate: '2027-06-01', ...badRead }, past)).toBe(
+      'active'
+    );
     // And an impossible "today" decides nothing either.
     expect(deriveStatus({ status: 'upcoming', availableDate: '2026-01-01' }, '2026-02-30')).toBe(
       'upcoming'
     );
+    const ahead = { status: 'retired', expiryDate: '2026-12-31', ...readOn };
+    expect(deriveStatus(ahead, '2026-02-30')).toBe('retired');
   });
 
   it('keeps a stored "retired" and an "active" with no dates', () => {
@@ -374,6 +426,22 @@ describe('describeCertStatus', () => {
     });
   });
 
+  it('describes a re-read stored ahead of its day by the status it still has (#1091)', () => {
+    const readOn = { statusReadDate: '2026-10-12' };
+    const ab400 = { status: 'active', availableDate: '2026-10-16', ...readOn };
+    expect(describeCertStatus(ab400, '2026-10-12')).toEqual({
+      status: 'upcoming',
+      label: 'Coming',
+      detail: 'available Oct 16, 2026',
+    });
+    const pl400 = { status: 'retired', expiryDate: '2026-10-30', ...readOn };
+    expect(describeCertStatus(pl400, '2026-10-12')).toEqual({
+      status: 'expiring',
+      label: 'Retiring',
+      detail: 'last day to test Oct 30, 2026',
+    });
+  });
+
   it('describes a beta that closed ahead of GA, with the GA date when there is one', () => {
     const closed = { status: 'beta', betaEndDate: '2026-09-30', betaClosesBeforeGa: true };
     expect(describeCertStatus(closed, '2026-10-01')).toEqual({
@@ -423,6 +491,22 @@ describe('findStaleStatuses', () => {
     expect(findStaleStatuses(rows, '2026-11-17')).toEqual([
       "SAP-C03: status 'upcoming' but availableDate 2026-11-17 has been reached",
     ]);
+  });
+
+  it('has nothing to name for a re-read stored ahead of its day, before or after it (#1091)', () => {
+    const rows = [
+      {
+        code: 'AB-400',
+        status: 'active',
+        availableDate: '2026-10-16',
+        statusReadDate: '2026-10-12',
+      },
+      { code: 'PL-400', status: 'retired', expiryDate: '2026-10-30', statusReadDate: '2026-10-12' },
+    ];
+    for (const day of ['2026-10-12', '2026-10-16', '2026-10-30', '2026-10-31']) {
+      expect(findStaleStatuses(rows, day), day).toEqual([]);
+    }
+    expect(findStatusesDueWithin(rows, '2026-10-12', 21)).toEqual([]);
   });
 
   it('names an unknown status, a malformed date, and a dateless expiring row', () => {

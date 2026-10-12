@@ -65,7 +65,7 @@ export function renderReport({ due, today, days = DEFAULT_DAYS }) {
   lines.push(
     `${due.length === 1 ? 'One catalogue row goes' : `${due.length} catalogue rows go`} stale in the ${days} days from ${today}.`,
     '',
-    'On each date below, `frontend/src/data/education-catalogues.test.js` (or `azure/certifications.test.js`) fails on **every branch** until the row is re-read against the vendor and updated. Re-verify it before then: change the stored status, cite the page in the catalogue header, and update any test that pins the old status.',
+    'On each date below, `frontend/src/data/education-catalogues.test.js` (or `azure/certifications.test.js`) fails on **every branch** until the row is re-read against the vendor and updated. Re-verify it before then: store the status the row takes on that date with `statusReadDate` set to the day you read the vendor (the badge keeps its current status until the date, rule 2 of `deriveStatus`), cite the page in the catalogue header, and update any test that pins the old status.',
     '',
     '| Fires on | Catalogue | What the alarm will say | Check against |',
     '|---|---|---|---|'

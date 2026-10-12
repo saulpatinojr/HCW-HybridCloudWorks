@@ -116,6 +116,26 @@
 // AB-410, AB-620 and AB-250 are months, not days; their stored `gaDate`s are
 // earlier than the stored `betaEndDate`s and are left as they were because an
 // `active` row reads neither. All 62 rows were re-read, so `DATA_AS_OF` moves.
+//
+// RE-READ 2026-10-12 of AB-400 and PL-400, the two rows #1091 named, stored
+// ahead of their days under rule 2 of `deriveStatus` (src/lib/certStatus.js)
+// with `statusReadDate` 2026-10-12: each badge keeps its current status until
+// the vendor's day, so the alarm in education-catalogues.test.js has nothing
+// to fire on.
+//   AB-400 — `active`, `availableDate` 2026-10-16 kept; shows "Coming" until
+//     then. Exam page, unchanged since 2026-10-05: "The updated AB-400 exam
+//     will be available beginning October 16, 2026, and registration is
+//     available today." The study guide's H1 is still "Exam AB-400: Extending
+//     Microsoft Power Platform Solutions with Code and AI".
+//     https://learn.microsoft.com/en-us/credentials/certifications/exams/ab-400/
+//     https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/ab-400
+//   PL-400 — `retired`, `expiryDate` 2026-10-30 kept; shows "Retiring" through
+//     then. Exam page, unchanged: "Learners who register for PL-400 on or
+//     before October 16 can continue to schedule and take the exam through
+//     October 30, 2026."
+//     https://learn.microsoft.com/en-us/credentials/certifications/exams/pl-400/
+// Only these rows were re-read, so `DATA_AS_OF` and the sync line above are
+// deliberately unchanged.
 
 export const DATA_AS_OF = '2026-10-05';
 
@@ -271,8 +291,9 @@ export const certifications = [
     officialCode: 'AB-400',
     title: 'Extending Microsoft Power Platform Solutions with Code and AI',
     level: 'Associate',
-    status: 'upcoming',
+    status: 'active',
     availableDate: '2026-10-16',
+    statusReadDate: '2026-10-12',
     description:
       'The Power Platform Developer exam under its new number, from October 16, 2026: code-first Power Platform solutions with AI.',
     longDescription:
@@ -2002,8 +2023,9 @@ export const certifications = [
     officialCode: 'PL-400',
     title: 'Microsoft Power Platform Developer',
     level: 'Associate',
-    status: 'expiring',
+    status: 'retired',
     expiryDate: '2026-10-30',
+    statusReadDate: '2026-10-12',
     replacedBy: 'ab-400',
     description: 'Design, develop, secure, and troubleshoot Power Platform solutions.',
     longDescription:
