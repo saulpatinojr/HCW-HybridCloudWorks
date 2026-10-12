@@ -902,6 +902,12 @@ describe('DECLARED', () => {
     const count = (query) => query.split('\n').filter((line) => /^ {2}"\w+", /.test(line)).length;
     expect(count(declaration.after) - count(declaration.before)).toBe(1);
   });
+
+  it('prunes ADDON_NETWORK_ASSESSMENT_URL and ADDON_CLOUD_ASSESSMENT_URL once applied (#1089)', () => {
+    const paths = DECLARED.map((entry) => entry.path);
+    expect(paths).not.toContain('app_settings.ADDON_NETWORK_ASSESSMENT_URL');
+    expect(paths).not.toContain('app_settings.ADDON_CLOUD_ASSESSMENT_URL');
+  });
 });
 
 describe('conditional replacements and declared creates (#816)', () => {

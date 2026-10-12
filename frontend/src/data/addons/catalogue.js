@@ -132,10 +132,7 @@ export const addons = Object.freeze([
     healthPath: '/api/health',
     providers: Object.freeze(['azure']),
     technology: Object.freeze(['azure-networking', 'resource-graph']),
-    status: 'coming',
-    comingSince: '2026-10-10',
-    comingReason:
-      'The network assessment is being prepared for the site and opens here once its first release is published.',
+    status: 'available',
     capabilities: Object.freeze(['navigate', 'downloads']),
     docsUrl: 'https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn#readme',
     articleSlugs: Object.freeze([]),
@@ -150,10 +147,7 @@ export const addons = Object.freeze([
     healthPath: '/api/health',
     providers: Object.freeze(['azure']),
     technology: Object.freeze(['well-architected', 'resource-graph']),
-    status: 'coming',
-    comingSince: '2026-10-10',
-    comingReason:
-      'The cloud assessment is being prepared for the site and opens here once its first release is published.',
+    status: 'available',
     capabilities: Object.freeze(['navigate', 'downloads']),
     docsUrl: 'https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn#readme',
     articleSlugs: Object.freeze([]),

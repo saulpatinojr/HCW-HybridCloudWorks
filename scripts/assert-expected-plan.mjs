@@ -266,6 +266,8 @@ export const DECLARED = [
   // 2026-10-11 and were deleted here too. tfc-plan-check.yml read that plan as
   // those five beside the permanent diff, and verify-alert-state.yml's first
   // run under the new identity read every rule in both groups.
+  // #1089's ADDON_NETWORK_ASSESSMENT_URL and ADDON_CLOUD_ASSESSMENT_URL
+  // applied in run-rK5qZUjro4G4K7rz on 2026-10-12 and were deleted here.
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
