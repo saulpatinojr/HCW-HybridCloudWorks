@@ -71,6 +71,15 @@ describe('the lock in bootstrap.sh', () => {
     expect(LOCK_BLOCK).toContain('is not a regular file; nothing has been changed');
   });
 
+  it('makes the file its own user’s alone, and refuses one another user owns (#1099)', () => {
+    expect(LOCK_BLOCK).toContain('[ "$(stat -c \'%u\' "${HCW_BOOTSTRAP_LOCK}")" != "$(id -u)" ]');
+    expect(LOCK_BLOCK).toContain('belongs to another user; nothing has been changed');
+    expect(LOCK_BLOCK).toMatch(/umask 077\n\s+exec 9<>"\$\{HCW_BOOTSTRAP_LOCK\}"\n\s+umask "\$\{hcw_umask\}"\n\s+chmod 0600 "\$\{HCW_BOOTSTRAP_LOCK\}"/);
+    // The lock is never removed, so every run locks the same inode.
+    const code = LOCK_BLOCK.split('\n').filter((line) => !line.trimStart().startsWith('#'));
+    expect(code.join('\n')).not.toMatch(/\brm\b|unlink/);
+  });
+
   it('takes the wait as a whole number of seconds and refuses anything else', () => {
     expect(LOCK_BLOCK).toContain('[[ "${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS}" =~ ^[0-9]+$ ]]');
   });
@@ -152,6 +161,13 @@ describe.skipIf(!lockUsable)('the lock block, run', () => {
     expect(stdout).toContain('parent-dying');
     expect(stdout).toContain('waiting up to 10 s for it to finish');
     expect(stdout.indexOf('contender-ran')).toBeGreaterThan(stdout.indexOf('child-done'));
+  });
+
+  it('leaves the lock file readable by its own user only, even one that was looser before', () => {
+    run('bash', ['-c', `rm -f '${lockPath}' && touch '${lockPath}' && chmod 0666 '${lockPath}' && bash '${contender}'`]);
+    expect(run('stat', ['-c', '%a', lockPath]).stdout.trim()).toBe('600');
+    run('bash', ['-c', `rm -f '${lockPath}' && bash '${contender}'`]);
+    expect(run('stat', ['-c', '%a', lockPath]).stdout.trim()).toBe('600');
   });
 
   it('refuses a lock path that is a symlink, and a wait that is not whole seconds, before doing anything', () => {

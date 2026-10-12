@@ -134,9 +134,21 @@ if [ -L "${HCW_BOOTSTRAP_LOCK}" ] || { [ -e "${HCW_BOOTSTRAP_LOCK}" ] && [ ! -f 
   echo "refusing to run: ${HCW_BOOTSTRAP_LOCK} is not a regular file; nothing has been changed" >&2
   exit 1
 fi
+# Only this run's user (root, above) may own or read the file: flock works on a
+# read-only descriptor, so a file anyone could open would let any local user
+# hold the lock and stall every run. Created under umask 077 and set to 0600
+# on every open; never unlinked, so every run locks the same inode.
+if [ -e "${HCW_BOOTSTRAP_LOCK}" ] && [ "$(stat -c '%u' "${HCW_BOOTSTRAP_LOCK}")" != "$(id -u)" ]; then
+  echo "refusing to run: ${HCW_BOOTSTRAP_LOCK} belongs to another user; nothing has been changed" >&2
+  exit 1
+fi
 hcw_lock_id="$(stat -c '%d:%i' "${HCW_BOOTSTRAP_LOCK}" 2>/dev/null || true)"
 if [ -z "${hcw_lock_id}" ] || [ "$(stat -L -c '%d:%i' "/proc/$$/fd/9" 2>/dev/null || true)" != "${hcw_lock_id}" ]; then
+  hcw_umask="$(umask)"
+  umask 077
   exec 9<>"${HCW_BOOTSTRAP_LOCK}"
+  umask "${hcw_umask}"
+  chmod 0600 "${HCW_BOOTSTRAP_LOCK}"
 fi
 if ! flock -n 9; then
   log "another bootstrap.sh run holds ${HCW_BOOTSTRAP_LOCK}; waiting up to ${HCW_BOOTSTRAP_LOCK_WAIT_SECONDS} s for it to finish"
