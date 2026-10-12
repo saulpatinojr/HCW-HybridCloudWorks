@@ -4479,6 +4479,17 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Forge Studio: "Send to In Review" sends on the first click after the
+  document loads (#1072).** `useForgeSession`'s operations read the session
+  through a ref that moved in a passive effect, after paint. A document
+  that arrived from a read, not a click, was on screen while the ref still
+  held the session without it. A click in that gap made Send to review
+  send nothing, and a Save could have sent the previous ETag. The coverage
+  run, being slower, hit the gap, and the page test flaked there. The ref
+  now moves in a layout effect, inside the commit that renders the state.
+  A hook test calls Send to review in the commit that first renders the
+  document: it resolved `null` before and posts with the ETag now.
+
 - **Lab agent: a job's result is written only while the agent still holds
   the job (#1057).** `completeLabJob` read the job, checked that the
   reporting agent held it, then wrote the result with an unfenced patch.
