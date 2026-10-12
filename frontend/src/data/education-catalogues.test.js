@@ -364,31 +364,28 @@ describe('the facts the 2026-09-09 audit asked for (#461 items 5–9)', () => {
 describe('the 2026-10-05 re-read', () => {
   const rowFor = (mod, code) => mod.certifications.find((c) => c.code === code);
 
-  it('moves DATA_AS_OF on all three, because every row was read', () => {
-    expect(azure.DATA_AS_OF).toBe('2026-10-05');
-    expect(aws.DATA_AS_OF).toBe('2026-10-05');
-    expect(gcp.DATA_AS_OF).toBe('2026-10-05');
+  it('moves DATA_AS_OF on all three to that day or later, because every row was read', () => {
+    // A floor, not an exact day: update-learn-catalogue.yml stamps the Azure
+    // DATA_AS_OF on every weekly run, so pinning 2026-10-05 failed the
+    // updater's own check on its first run after this re-read (2026-10-12).
+    for (const [provider, { DATA_AS_OF: asOf }] of Object.entries({ azure, aws, gcp })) {
+      expect(asOf >= '2026-10-05', `${provider} DATA_AS_OF is ${asOf}`).toBe(true);
+    }
   });
 
   it('Azure: AI-500 is out of beta, PL-400 hands over to AB-400 on October 16, MS-102 names AB-650', () => {
     expect(rowFor(azure, 'AI-500')).toMatchObject({ status: 'active' });
     expect(rowFor(azure, 'AI-500').gaDate).toBeUndefined();
 
+    // The stored statuses of these two moved in the 2026-10-12 re-read below;
+    // the dates, and so what a visitor sees on each day, did not.
     const pl400 = rowFor(azure, 'PL-400');
-    expect(pl400).toMatchObject({
-      status: 'expiring',
-      expiryDate: '2026-10-30',
-      replacedBy: 'ab-400',
-    });
+    expect(pl400).toMatchObject({ expiryDate: '2026-10-30', replacedBy: 'ab-400' });
     expect(deriveStatus(pl400, '2026-10-30')).toBe('expiring');
     expect(deriveStatus(pl400, '2026-10-31')).toBe('retired');
 
     const ab400 = rowFor(azure, 'AB-400');
-    expect(ab400).toMatchObject({
-      status: 'upcoming',
-      availableDate: '2026-10-16',
-      level: 'Associate',
-    });
+    expect(ab400).toMatchObject({ availableDate: '2026-10-16', level: 'Associate' });
     expect(deriveStatus(ab400, '2026-10-15')).toBe('upcoming');
     expect(deriveStatus(ab400, '2026-10-16')).toBe('active');
     expect(azure.timelineEvents.find((e) => e.id === 'pl-400-ab-400')?.date).toBe('2026-10-16');
@@ -428,5 +425,37 @@ describe('the 2026-10-05 re-read', () => {
     expect(rowFor(aws, 'SAP-C02')).toMatchObject({ status: 'expiring', expiryDate: '2026-11-16' });
     expect(rowFor(aws, 'DVA-C02')).toMatchObject({ status: 'expiring', expiryDate: '2026-11-30' });
     expect(rowFor(aws, 'MLA-C02')).toMatchObject({ status: 'beta', gaDate: '2027-01-14' });
+  });
+});
+
+/**
+ * The 2026-10-12 re-read of AB-400 and PL-400, the two rows #1091 named. Both
+ * are stored ahead of their days under rule 2 of `deriveStatus`, so each badge
+ * keeps its current status until Microsoft's day and the alarm above has
+ * nothing to fire on. The vendor sentences are quoted in the Azure header.
+ */
+describe('the 2026-10-12 re-read', () => {
+  /** The Azure catalogue row with this exam code, as the file stores it. */
+  const rowFor = (code) => azure.certifications.find((c) => c.code === code);
+
+  it('stores AB-400 active and PL-400 retired, each showing its old badge until its day', () => {
+    const ab400 = rowFor('AB-400');
+    expect(ab400).toMatchObject({ status: 'active', availableDate: '2026-10-16' });
+    expect(deriveStatus(ab400, '2026-10-12')).toBe('upcoming');
+    expect(deriveStatus(ab400, '2026-10-15')).toBe('upcoming');
+    expect(deriveStatus(ab400, '2026-10-16')).toBe('active');
+
+    const pl400 = rowFor('PL-400');
+    expect(pl400).toMatchObject({ status: 'retired', expiryDate: '2026-10-30' });
+    expect(deriveStatus(pl400, '2026-10-12')).toBe('expiring');
+    expect(deriveStatus(pl400, '2026-10-30')).toBe('expiring');
+    expect(deriveStatus(pl400, '2026-10-31')).toBe('retired');
+  });
+
+  it('leaves the alarm nothing to name on either day', () => {
+    const rows = [rowFor('AB-400'), rowFor('PL-400')];
+    for (const day of ['2026-10-16', '2026-10-31']) {
+      expect(findStaleStatuses(rows, day), day).toEqual([]);
+    }
   });
 });

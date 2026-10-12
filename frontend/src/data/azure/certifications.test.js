@@ -44,7 +44,9 @@ describe('Azure certification data', () => {
     const retired = certifications.filter((c) => c.status === 'retired');
     // The ten Microsoft retired between 2026-06-30 and 2026-08-31, plus MB-240
     // (retired 2026-06-30), SC-730 (withdrawn after its beta, no date), and
-    // AZ-800 and AZ-801 (retired 2026-09-30, re-read 2026-10-01 for #770).
+    // AZ-800 and AZ-801 (retired 2026-09-30, re-read 2026-10-01 for #770),
+    // and PL-400, stored ahead of its 2026-10-30 last day (statusReadDate
+    // 2026-10-12, #1091) and shown as retiring until then.
     expect(retired.map((c) => c.code).sort()).toEqual([
       'AI-102',
       'AI-900',
@@ -57,6 +59,7 @@ describe('Azure certification data', () => {
       'MB-335',
       'MB-700',
       'PL-200',
+      'PL-400',
       'PL-500',
       'PL-600',
       'SC-730',

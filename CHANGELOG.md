@@ -4479,6 +4479,32 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Learn catalogues: the weekly updater passes its own check again, and a
+  re-read can land before the vendor's day (#1091).** Two fixes:
+  - **The weekly updater went red on 2026-10-12, its first run after the
+    2026-10-05 re-read.** That re-read's test pinned the Azure `DATA_AS_OF`
+    to exactly `2026-10-05`, and `update-learn-catalogue.yml` stamps
+    `DATA_AS_OF` on every run, so the refresh could never pass. The test now
+    holds `2026-10-05` as a floor for all three catalogues.
+  - **#1091 asked for AB-400 (available 2026-10-16) and PL-400 (last day
+    2026-10-30) to be re-read before their days**, but a stored status
+    could not move early without the badge moving with it: `active` showed
+    AB-400 bookable four days before Microsoft opens it. `deriveStatus`
+    gains rule 2. A row whose new `statusReadDate` is before its day keeps
+    its current badge until that day: stored `retired` shows "Retiring"
+    through its `expiryDate`, and stored `active` shows "Coming" until its
+    `availableDate`. The alarm then has nothing to fire on, and the
+    due-soon issue says how to store a re-read this way.
+  - **Only a row that says when it was read is held.** A row stored after
+    its day stays as stored on every clock. AZ-800, `retired` once
+    2026-09-30 had passed, stays `retired` even on the earliest
+    `DATA_AS_OF` the education index pre-renders with. A first version
+    without the date showed it bookable there.
+  - AB-400 is stored `active` and PL-400 `retired`, both with
+    `statusReadDate` 2026-10-12. Microsoft's exam pages, the AB-400 study
+    guide and both dates were unchanged that day, as the Azure catalogue's
+    header quotes.
+
 - **Admin → Integrations → Credentials shows the rotation date you
   recorded (#1026).** On 2026-10-10 and 2026-10-11 the owner recorded the
   rotation dates of the eight credentials with a rotation rule, twice, and

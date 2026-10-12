@@ -146,11 +146,50 @@ export function formatIsoDate(iso) {
 }
 
 /**
+ * Rule 2 of `deriveStatus`: the status a row re-read ahead of its vendor's
+ * day still shows on `today`, or null when the rule does not apply. Every date
+ * must be a real calendar day, `today` included, or nothing is held.
+ *
+ * @param {{statusReadDate?: string, expiryDate?: string, availableDate?: string}} cert
+ * @param {string} stored the row's status, already defaulted to `active`
+ * @param {string} today `YYYY-MM-DD`
+ * @returns {'expiring'|'upcoming'|null}
+ */
+function statusBeforeVendorDay(cert, stored, today) {
+  const readOn = cert.statusReadDate;
+  if (!isIsoDate(readOn) || !isIsoDate(today)) return null;
+  const { expiryDate, availableDate } = cert;
+  // The last day to test is the expiryDate itself, so a read on it is ahead.
+  if (stored === 'retired' && isIsoDate(expiryDate) && readOn <= expiryDate) {
+    return today <= expiryDate ? 'expiring' : null;
+  }
+  if (stored === 'active' && isIsoDate(availableDate) && readOn < availableDate) {
+    return today < availableDate ? 'upcoming' : null;
+  }
+  return null;
+}
+
+/**
  * The status to render for a certification (or applied skill) on `today`.
  *
  * Rules, in order:
  *   1. `expiryDate` before today → `retired`, whatever the stored status says.
- *   2. Stored `beta` whose `gaDate` is today or earlier → `active`. Stored
+ *   2. A status re-read ahead of the vendor's day waits for that day (#1091).
+ *      A row whose `statusReadDate` is before its day: stored `retired` with
+ *      an `expiryDate` not yet passed → `expiring`; stored `active` with an
+ *      `availableDate` still ahead → `upcoming`. The alarm in
+ *      `findStaleStatuses` fires the day a stored status is overtaken by its
+ *      own dates, and the re-read it asks for used to be unrecordable before
+ *      then without the badge moving early. Now the re-read lands any time in
+ *      the warning window and the badge still turns on the vendor's day.
+ *      `statusReadDate` is what tells such a row from one stored after its
+ *      day (AZ-800, `retired` once 2026-09-30 had passed): that one stays
+ *      `retired` on every clock, including the earliest `DATA_AS_OF` the
+ *      education index pre-renders with. Only these two dates: an `active`
+ *      row reads neither `gaDate` nor `betaEndDate`, because several carry
+ *      beta dates Microsoft gave only as months (the header of
+ *      src/data/azure/certifications.js).
+ *   3. Stored `beta` whose `gaDate` is today or earlier → `active`. Stored
  *      `beta` whose `betaEndDate` is before today → `active`, unless the row
  *      says `betaClosesBeforeGa: true`, in which case → `upcoming` (until its
  *      `gaDate`, if one is published). Microsoft's betas go live the moment
@@ -158,12 +197,12 @@ export function formatIsoDate(iso) {
  *      the beta or GA certification", with beta results 4-6 weeks after the
  *      windows close), so a closed Google beta is not something a visitor can
  *      book yet.
- *   3. Stored `upcoming` whose `availableDate` is today or earlier → `active`.
- *   4. Stored `active` with an `expiryDate` still ahead → `expiring`, because
+ *   4. Stored `upcoming` whose `availableDate` is today or earlier → `active`.
+ *   5. Stored `active` with an `expiryDate` still ahead → `expiring`, because
  *      a published retirement date is what "expiring" means.
- *   5. Otherwise the stored status (`active` when absent).
+ *   6. Otherwise the stored status (`active` when absent).
  *
- * @param {{status?: string, expiryDate?: string, betaEndDate?: string, betaClosesBeforeGa?: boolean, gaDate?: string, availableDate?: string}} cert
+ * @param {{status?: string, expiryDate?: string, betaEndDate?: string, betaClosesBeforeGa?: boolean, gaDate?: string, availableDate?: string, statusReadDate?: string}} cert
  * @param {string} [today] `YYYY-MM-DD`; defaults to the local date
  * @returns {'active'|'beta'|'upcoming'|'expiring'|'retired'}
  */
@@ -176,6 +215,9 @@ export function deriveStatus(cert, today = todayIso()) {
   // Every date that decides a status goes through isIsoDate, not the shape
   // regex: an impossible day such as 2026-02-30 must not flip anything.
   const reached = (iso) => isIsoDate(iso) && isIsoDate(today) && iso <= today;
+
+  const held = statusBeforeVendorDay(cert, stored, today);
+  if (held) return held;
 
   if (stored === 'beta') {
     if (reached(cert.gaDate)) return 'active';
@@ -276,6 +318,7 @@ export const CERT_DATE_FIELDS = Object.freeze([
   'availableDate',
   'registrationOpens',
   'retiredDate',
+  'statusReadDate',
 ]);
 
 /**

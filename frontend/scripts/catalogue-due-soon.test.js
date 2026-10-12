@@ -101,6 +101,16 @@ describe('renderReport', () => {
     expect(report.match(/^\| 20\d\d-/gm)).toHaveLength(3);
   });
 
+  it('offers an early re-read only where deriveStatus holds one, and not for a beta (#1091)', () => {
+    const due = findDue({ catalogues: fixtures, today: TODAY, days: 21 });
+    const report = renderReport({ due, today: TODAY, days: 21 });
+    expect(report).toContain('with `statusReadDate` set to the day you read the vendor');
+    expect(report).toContain(
+      'An `upcoming` row due on its `availableDate`, or a row due on its `expiryDate`'
+    );
+    expect(report).toContain('A `beta` row cannot be held that way, so re-read it on its date.');
+  });
+
   it('escapes a pipe, so a row cannot break the table', () => {
     const report = renderReport({
       due: [{ due: '2026-11-01', catalogue: 'x', problem: 'A|B: odd', source: null }],
