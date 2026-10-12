@@ -37,12 +37,6 @@ locals {
   cpu_quota      = 100000
 }
 
-variable "workspace_image" {
-  type        = string
-  description = "Digest-pinned lab workspace image (hcw-lab; no credentials)"
-  default     = "docker.io/hybridcloudworks/hcw-lab@sha256:7cb89818525b470b5bc9269481b8d8b643e142f969287a289da03db17d4fc9d0"
-}
-
 data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
@@ -83,22 +77,19 @@ resource "coder_agent" "main" {
 
   startup_script = <<-EOT
     set -euo pipefail
-    export HOME='${local.home}'
-    export HCW_ASSESSMENT_ID='${data.coder_parameter.assessment_id.value}'
-    export HCW_BUNDLE_TOKEN='${data.coder_parameter.bundle_token.value}'
-    export HCW_API_BASE_URL='${data.coder_parameter.api_base_url.value}'
-    export HCW_ASSESSMENT_DIR='${local.assessment_dir}'
     mkdir -p "$HCW_ASSESSMENT_DIR"
 
     if [ -x /usr/local/libexec/hcw-boot/hcw-boot ] && [ -x /usr/local/libexec/hcw-boot/network-assessment.sh ]; then
       /usr/local/libexec/hcw-boot/hcw-boot network-assessment "${local.home}/lab"
     else
-      curl --proto '=https' --tlsv1.2 -fsSL \
-        -H "x-bundle-token: $HCW_BUNDLE_TOKEN" \
-        "$${HCW_API_BASE_URL%/}/api/assessments/$HCW_ASSESSMENT_ID/bundle.zip" \
-        -o "$HCW_ASSESSMENT_DIR/bundle.zip"
-      python3 -m zipfile -e "$HCW_ASSESSMENT_DIR/bundle.zip" "$HCW_ASSESSMENT_DIR"
-      rm -f "$HCW_ASSESSMENT_DIR/bundle.zip"
+      if [ -n "$HCW_BUNDLE_TOKEN" ] && [ "$HCW_ASSESSMENT_ID" != "00000000-0000-0000-0000-000000000000" ]; then
+        curl --proto '=https' --tlsv1.2 -fsSL \
+          -H "x-bundle-token: $HCW_BUNDLE_TOKEN" \
+          "$${HCW_API_BASE_URL%/}/api/assessments/$HCW_ASSESSMENT_ID/bundle.zip" \
+          -o "$HCW_ASSESSMENT_DIR/bundle.zip"
+        python3 -m zipfile -e "$HCW_ASSESSMENT_DIR/bundle.zip" "$HCW_ASSESSMENT_DIR"
+        rm -f "$HCW_ASSESSMENT_DIR/bundle.zip"
+      fi
       cat > "$HCW_ASSESSMENT_DIR/START-HERE.md" <<'MD'
     # Guided network assessment lab
 
@@ -116,6 +107,10 @@ resource "coder_agent" "main" {
 
   env = {
     HOME                = local.home
+    HCW_ASSESSMENT_ID   = data.coder_parameter.assessment_id.value
+    HCW_BUNDLE_TOKEN    = data.coder_parameter.bundle_token.value
+    HCW_API_BASE_URL    = data.coder_parameter.api_base_url.value
+    HCW_ASSESSMENT_DIR  = local.assessment_dir
     GIT_AUTHOR_NAME     = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
     GIT_AUTHOR_EMAIL    = data.coder_workspace_owner.me.email
     GIT_COMMITTER_NAME  = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
@@ -156,6 +151,7 @@ resource "coder_agent" "main" {
 }
 
 module "code-server" {
+  # checkov:skip=CKV_TF_1: Coder registry module pinned to exact release 1.6.0. docs/security/scanner-triage.md#checkov
   count           = data.coder_workspace.me.start_count
   source          = "registry.coder.com/coder/code-server/coder"
   version         = "1.6.0"
@@ -177,7 +173,7 @@ module "code-server" {
 }
 
 resource "docker_image" "workspace" {
-  name         = var.workspace_image
+  name         = local.default_image
   keep_locally = true
 }
 
