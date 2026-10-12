@@ -12,7 +12,8 @@
  *                      is registered for, only if nobody else took it first
  *   heartbeatAgent   — write liveness for *this* agent only
  *   completeLabJob   — write a terminal result, only for a job this agent
- *                      currently holds
+ *                      currently holds, fenced with the ETag of the read
+ *                      that found it held
  *   reportCoderAutomation
  *                    — record how the host's Coder upkeep went, and hand
  *                      over a renewed Coder status token: one secret, by
@@ -409,7 +410,25 @@ function heldJobRefusal(job, jobId, agent, context) {
   return null;
 }
 
-/** Write a terminal result for a job this agent holds. */
+/**
+ * How many times a completion reads the job and tries its fenced write. A 412
+ * means the job changed after the read; each attempt reads it again, so this
+ * bounds only a job that keeps changing while its result is reported.
+ */
+const COMPLETION_ATTEMPTS = 3;
+
+/**
+ * Write a terminal result for a job this agent holds.
+ *
+ * The write is fenced with the ETag of the read that decided ownership
+ * (#1057). Between that read and the write an operator can cancel the job,
+ * the canary can withdraw an overdue one, or another agent can claim it once
+ * the lease lapses (CLAIM_LEASE_MS). An unfenced patch landed the stale
+ * agent's result over whichever of those happened. On a 412 the job is read
+ * again and `heldJobRefusal` decides again: still held and `claimed`, the
+ * write is retried; otherwise the agent is refused and the job is left as it
+ * now is.
+ */
 async function completeLabJob({ guard, store, now }, request, context) {
   const parsed = await authenticatedAgentBody(guard, request);
   if (parsed.error) return parsed.error;
@@ -419,28 +438,32 @@ async function completeLabJob({ guard, store, now }, request, context) {
   const refused = completionRefusal(jobId, body.status);
   if (refused) return refused;
 
-  const job = await store.readDoc('lab_jobs', jobId, jobId);
-  const notHeld = heldJobRefusal(job, jobId, agent, context);
-  if (notHeld) return notHeld;
+  const result = {
+    status: body.status,
+    exitCode: Number.isInteger(body.exitCode) ? body.exitCode : -1,
+    output: clampOutput(body.output),
+    finishedAt: now().toISOString(),
+  };
 
-  try {
-    await store.patchDoc(
-      'lab_jobs',
-      jobId,
-      {
-        status: body.status,
-        exitCode: Number.isInteger(body.exitCode) ? body.exitCode : -1,
-        output: clampOutput(body.output),
-        finishedAt: now().toISOString(),
-      },
-      { partitionKey: jobId }
-    );
-  } catch (err) {
-    context.error('completeLabJob failed:', err?.message);
-    return json(500, { ok: false, error: 'Failed to record result' });
+  for (let attempt = 1; attempt <= COMPLETION_ATTEMPTS; attempt += 1) {
+    const job = await store.readDoc('lab_jobs', jobId, jobId);
+    const notHeld = heldJobRefusal(job, jobId, agent, context);
+    if (notHeld) return notHeld;
+
+    try {
+      await store.replaceDocIfMatch('lab_jobs', { ...job, ...result }, { partitionKey: jobId });
+      return json(200, { ok: true });
+    } catch (err) {
+      if (err?.code === 412) continue;
+      context.error('completeLabJob failed:', err?.message);
+      return json(500, { ok: false, error: 'Failed to record result' });
+    }
   }
 
-  return json(200, { ok: true });
+  // Content-free: no job or agent id in the text. The Functions host already
+  // ties the line to this invocation, which is the correlation it needs.
+  context.warn?.('completeLabJob: the job changed on every attempt to record its result; nothing was written');
+  return json(409, { ok: false, error: 'Job changed while its result was being recorded' });
 }
 
 /**

@@ -467,7 +467,11 @@ describe('heartbeatAgent: the applied commit (#1009)', () => {
 });
 
 describe('completeLabJob', () => {
-  const held = (over = {}) => ({ id: 'j1', status: 'claimed', agentId: 'vps-1', ...over });
+  const held = (over = {}) => ({ id: 'j1', status: 'claimed', agentId: 'vps-1', _etag: '"e1"', ...over });
+  const written = (store, call = 0) => store.replaceDocIfMatch.mock.calls[call][1];
+  const preconditionFailed = () => Object.assign(new Error('precondition failed'), { code: 412 });
+  const complete = (h) =>
+    h.completeLabJob(req({ agentId: 'vps-1', jobId: 'j1', status: 'succeeded', exitCode: 0 }), context);
 
   it('records a terminal result for a job the agent holds', async () => {
     const store = emptyStore();
@@ -479,9 +483,77 @@ describe('completeLabJob', () => {
     );
 
     expect(res.status).toBe(200);
-    const updates = store.patchDoc.mock.calls[0][2];
-    expect(updates).toMatchObject({ status: 'succeeded', exitCode: 0, output: 'done' });
-    expect(updates.finishedAt).toBe(NOW.toISOString());
+    expect(store.patchDoc).not.toHaveBeenCalled();
+    const [container, doc, options] = store.replaceDocIfMatch.mock.calls[0];
+    expect(container).toBe('lab_jobs');
+    expect(doc).toMatchObject({ id: 'j1', agentId: 'vps-1', status: 'succeeded', exitCode: 0, output: 'done' });
+    expect(doc.finishedAt).toBe(NOW.toISOString());
+    // The ETag of the read that found the job held fences the write (#1057).
+    expect(doc._etag).toBe('"e1"');
+    expect(options).toEqual({ partitionKey: 'j1' });
+  });
+
+  describe('when the job changes between the ownership read and the write (#1057)', () => {
+    it.each([
+      ['another agent claims it once the lease lapses', held({ agentId: 'vps-2', _etag: '"e2"' }), 403],
+      ['an operator or the canary cancels it', held({ status: 'cancelled', _etag: '"e2"' }), 409],
+      ['the canary withdraws it', null, 404],
+    ])('refuses the stale result when %s, and leaves the job as it now is', async (_, now, status) => {
+      const store = emptyStore();
+      store.readDoc = vi.fn().mockResolvedValueOnce(held()).mockResolvedValueOnce(now);
+      store.replaceDocIfMatch = vi.fn().mockRejectedValueOnce(preconditionFailed());
+      const res = await complete(make(allowGuard(), store));
+
+      expect(res.status).toBe(status);
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
+      expect(store.readDoc).toHaveBeenCalledTimes(2);
+      expect(store.patchDoc).not.toHaveBeenCalled();
+    });
+
+    it('retries under the new ETag when the job is still this agent’s and claimed', async () => {
+      const store = emptyStore();
+      store.readDoc = vi.fn().mockResolvedValueOnce(held()).mockResolvedValueOnce(held({ _etag: '"e2"' }));
+      store.replaceDocIfMatch = vi
+        .fn()
+        .mockRejectedValueOnce(preconditionFailed())
+        .mockImplementationOnce(async (c, doc) => doc);
+      const res = await complete(make(allowGuard(), store));
+
+      expect(res.status).toBe(200);
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(2);
+      expect(written(store, 1)).toMatchObject({ status: 'succeeded', _etag: '"e2"' });
+    });
+
+    it('gives up with a conflict when the job changes on every attempt', async () => {
+      const store = emptyStore();
+      store.readDoc = vi.fn(async () => held());
+      store.replaceDocIfMatch = vi.fn(async () => {
+        throw preconditionFailed();
+      });
+      const warn = vi.fn();
+      const res = await make(allowGuard(), store).completeLabJob(
+        req({ agentId: 'vps-1', jobId: 'j1', status: 'failed' }),
+        { ...context, warn }
+      );
+
+      expect(res.status).toBe(409);
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3);
+      expect(warn).toHaveBeenCalledTimes(1);
+      // Content-free telemetry: neither the job's id nor the agent's.
+      expect(warn.mock.calls[0][0]).not.toMatch(/j1|vps-1/);
+    });
+
+    it('answers 500, not a retry, when the write fails for another reason', async () => {
+      const store = emptyStore();
+      store.readDoc = vi.fn(async () => held());
+      store.replaceDocIfMatch = vi.fn(async () => {
+        throw Object.assign(new Error('service unavailable'), { code: 503 });
+      });
+      const res = await complete(make(allowGuard(), store));
+
+      expect(res.status).toBe(500);
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('refuses a job held by another agent', async () => {
@@ -561,7 +633,7 @@ describe('completeLabJob', () => {
       context
     );
 
-    expect(store.patchDoc.mock.calls[0][2].output).toHaveLength(OUTPUT_CAP_BYTES);
+    expect(written(store).output).toHaveLength(OUTPUT_CAP_BYTES);
   });
 
   it('defaults a non-integer exit code rather than storing it', async () => {
@@ -573,6 +645,6 @@ describe('completeLabJob', () => {
       context
     );
 
-    expect(store.patchDoc.mock.calls[0][2].exitCode).toBe(-1);
+    expect(written(store).exitCode).toBe(-1);
   });
 });
