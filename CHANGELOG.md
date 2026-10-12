@@ -4496,6 +4496,17 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab host: `bootstrap.sh` runs one at a time (#1069, part 2).** Two
+  concurrent runs were not serialised across the firewall rebuild's
+  guard-to-unguard sequence, or across two checkouts of `/opt/hcw-src`.
+  - The script takes a `flock` on fd 9 straight after its root check. A
+    second run waits up to 30 minutes, then refuses having changed nothing.
+  - The handover to a newer `bootstrap.sh` inherits the lock through
+    `exec`, and the play runs with fd 9 closed, so nothing it leaves running
+    can hold the lock.
+  - Verifying add-on image attestations before the pull (part 1) waits on an
+    owner decision on #1069.
+
 - **Reminders: an editor's save keeps the credential register's rows, and
   their stamps, beside a malformed owner row (#1041).** The save validated
   the stored sheet as a whole, so one owner row that did not validate (an
