@@ -22,17 +22,25 @@
  *
  * The JSON of `az functionapp config access-restriction show` on stdin, both
  * lists: `ipSecurityRestrictions` (the site) and `scmIpSecurityRestrictions`
- * (the SCM site). The run id of a `ci-*` rule is the digits its name ends in,
- * and each run is read from the Actions API of `GITHUB_REPOSITORY`. A window
- * is live while its run has not completed (queued, waiting, pending,
- * requested or in progress). It is orphaned once the run has completed or no
- * longer exists, and so is a `ci-*` rule whose name carries no run id, which
- * no run could ever close on purpose.
+ * (the SCM site). Azure returns both on every read, the SCM list holding at
+ * least its deny-all (read 2026-10-12), so a document without either is
+ * unreadable, never "no windows": an absent SCM list must not pass as a
+ * checked SCM site (CodeRabbit, #1097). The run id of a `ci-*` rule is the
+ * digits its name ends in, or failing that, a run id in its description, and
+ * each run is read from the Actions API of `GITHUB_REPOSITORY`. A window is
+ * live while its run has not completed (queued, waiting, pending, requested
+ * or in progress). It is orphaned once the run has completed or no longer
+ * exists, and so is a `ci-*` rule that names no run, which no run could ever
+ * close on purpose.
  *
- * Removing an orphan stays a person's decision: the deploy identity holds the
- * write, and this check runs with Reader on the app and `actions: read`. The
- * monitor reads twice, a minute apart, before it names one, so a run that
- * closes its window while the check runs is not reported.
+ * This only reads. Removing an orphan stays a person's decision, made after
+ * reading the rule and the run again: a re-run of a run keeps its id and
+ * opens the same window. The monitor's Azure identity (`github_reader`) could
+ * write the site's config, because `publish-content-manifest.yml` uses it to
+ * open its own window (`infra/oidc.tf`, T-718). The monitor does not use that
+ * write, and separating the two is #1098. The monitor reads twice, a minute
+ * apart, before it names an orphan, so a run that closes its window while the
+ * check runs is not reported.
  *
  * ## Usage
  *
@@ -61,12 +69,25 @@ const LISTS = Object.freeze([
 ]);
 
 /**
+ * The run a `ci-*` rule belongs to: the digits its name ends in, or failing
+ * that, a run id its description carries (`run 123…`, or a run URL). Null when
+ * it names none.
+ */
+export function runIdOf(rule) {
+  const fromName = /-(\d+)$/.exec(String(rule?.name ?? ''))?.[1];
+  if (fromName) return fromName;
+  const description = String(rule?.description ?? '');
+  return /(?:actions\/runs\/|\brun[ #:-]*)(\d+)/i.exec(description)?.[1] ?? null;
+}
+
+/**
  * The `ci-*` rules in an `access-restriction show` document, with the site
- * each guards and the run id its name ends in (null when it ends in none).
+ * each guards and the run it belongs to (null when it names none).
  *
  * @param {string} text the JSON on stdin
  * @returns {Array<{ name: string, site: string, runId: string|null }>}
- * @throws {Error} when the text is not that document
+ * @throws {Error} when the text is not that document, including one without
+ *   both lists
  */
 export function parseWindows(text) {
   let doc;
@@ -75,18 +96,23 @@ export function parseWindows(text) {
   } catch {
     throw new Error('the input is not JSON. Expected `az functionapp config access-restriction show -o json`.');
   }
-  if (!doc || typeof doc !== 'object' || !Array.isArray(doc.ipSecurityRestrictions)) {
-    throw new Error(
-      'the input has no `ipSecurityRestrictions` list. Expected `az functionapp config access-restriction show -o json`.'
-    );
+  if (!doc || typeof doc !== 'object') {
+    throw new Error('the input is not an object. Expected `az functionapp config access-restriction show -o json`.');
+  }
+  for (const [list] of LISTS) {
+    if (!Array.isArray(doc[list])) {
+      throw new Error(
+        `the input has no \`${list}\` list, so that site's rules were not read. ` +
+          'Expected `az functionapp config access-restriction show -o json`, which returns both lists.'
+      );
+    }
   }
   const windows = [];
   for (const [list, site] of LISTS) {
-    for (const rule of Array.isArray(doc[list]) ? doc[list] : []) {
+    for (const rule of doc[list]) {
       const name = String(rule?.name ?? '');
       if (!name.startsWith(CI_PREFIX)) continue;
-      const runId = /-(\d+)$/.exec(name)?.[1] ?? null;
-      windows.push({ name, site, runId });
+      windows.push({ name, site, runId: runIdOf(rule) });
     }
   }
   return windows;
@@ -116,7 +142,7 @@ export async function readRun({ runId, token, owner, repo, fetchImpl = fetch }) 
 
 /** Why a window is orphaned, in one clause, or null while its run is live. */
 export function orphanReason(window, run) {
-  if (window.runId === null) return 'its name carries no run id, so no run can close it';
+  if (window.runId === null) return 'it names no run, in its name or its description, so no run can close it';
   if (run.status === 'missing') return `run ${window.runId} does not exist in this repository`;
   if (LIVE_STATUSES.includes(run.status)) return null;
   const outcome = run.conclusion ? `, ${run.conclusion}` : '';
@@ -184,7 +210,11 @@ export async function run({ input = '', env = {}, fetchImpl = fetch }) {
       `${orphans.length} orphaned: ${orphans.map((o) => o.name).join(', ')}`,
       ...orphans.map((o) => {
         const command = removeCommand(o, target);
-        const remove = command ? ` Remove it: \`${command}\`` : '';
+        // A re-run keeps its run id and reopens the same window, so this is a
+        // report, not a standing licence to delete (CodeRabbit, #1097).
+        const remove = command
+          ? ` If the rule is still there and its run has not been re-run, remove it: \`${command}\``
+          : '';
         return `- \`${o.name}\` on the ${o.site}: ${o.reason}${o.url ? ` (${o.url})` : ''}.${remove}`;
       }),
     ],

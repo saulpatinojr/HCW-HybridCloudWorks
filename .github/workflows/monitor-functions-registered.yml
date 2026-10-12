@@ -62,7 +62,10 @@
 # the SCM site to its run by the id in its name, through the same
 # `actions: read`, and names any whose run has ended. It reads twice, a
 # minute apart, so a run closing its window as this reads is not named.
-# Removing an orphan stays a person's decision: this identity cannot write.
+# Removing an orphan stays a person's decision. This check only reads; the
+# identity it runs as can write site config, because publish-content-manifest
+# uses it for its own window (infra/oidc.tf, T-718), and separating the two is
+# #1098.
 #
 # The check was never missing — it was manual, or inside deploy-functions.yml,
 # which only runs when someone deploys. Nobody deployed during any of the three
@@ -438,7 +441,7 @@ jobs:
               echo
               echo "When the \`AzureWebJobsStorage\` or \`RUNTIME_CONFIG_WRITER\` row is ❌, the repair is to re-apply \`infra/\` so the azapi strip runs again. **Do not delete the setting by hand** — that hides the regression from the assertion in \`deploy-functions.yml\`. When only the registration row is ❌, the strip is intact and the named functions failed to register on their own: their module's startup error is in the host log. See *The failure with no alert* in \`docs/runbooks/alerting-and-support.md\` (https://docs.hybridcloudworks.com/runbooks/alerting-and-support/)."
               echo
-              echo "When the \`ci-*\` access windows row is ❌, a run that opened a one-host window on the Function App ended without closing it, and that address can still reach the origin past the Cloudflare lock. Each orphan is listed above with its run and the exact command that removes it. This monitor cannot write, so removing it stays a person's decision."
+              echo "When the \`ci-*\` access windows row is ❌, a run that opened a one-host window on the Function App ended without closing it, and that address can still reach the origin past the Cloudflare lock. Each orphan is listed above with its run and the exact command that removes it. This monitor only reads, so removing it stays a person's decision: read the rule and its run again first, because a re-run keeps its run id and reopens the same window."
               echo
               echo "A ⚠️ row means the check could not run, not that the platform is down. An authorization failure is not an outage."
             fi

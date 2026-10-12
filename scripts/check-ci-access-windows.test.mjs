@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LIVE_STATUSES, orphanReason, parseWindows, readRun, run } from './check-ci-access-windows.mjs';
+import { LIVE_STATUSES, orphanReason, parseWindows, readRun, run, runIdOf } from './check-ci-access-windows.mjs';
 
 const ENV = { GITHUB_TOKEN: 't0ken', GITHUB_REPOSITORY: 'o/r' };
 
@@ -54,10 +54,27 @@ describe('parseWindows', () => {
     ]);
   });
 
-  it('reads a document with no SCM list, which a site without SCM rules may return', () => {
-    const doc = JSON.parse(restrictions({ site: ['ci-smoke-1'] }));
-    delete doc.scmIpSecurityRestrictions;
-    expect(parseWindows(JSON.stringify(doc))).toHaveLength(1);
+  it('refuses a document without the SCM list, so an unread SCM site cannot pass as checked (#1097)', () => {
+    // Azure returns both lists on every read; the SCM one holds at least its
+    // deny-all (read 2026-10-12). One missing is a document this cannot judge.
+    for (const scm of [undefined, null, {}, 'Deny all']) {
+      const doc = JSON.parse(restrictions({ site: ['ci-smoke-1'] }));
+      doc.scmIpSecurityRestrictions = scm;
+      expect(() => parseWindows(JSON.stringify(doc)), String(scm)).toThrow(/no `scmIpSecurityRestrictions` list/);
+    }
+  });
+
+  it('reads an empty SCM list as an SCM site with no windows', () => {
+    expect(parseWindows(restrictions({ site: ['ci-smoke-1'], scm: [] }))).toHaveLength(1);
+  });
+
+  it('takes the run id from the description when the name carries none', () => {
+    expect(runIdOf({ name: 'ci-hand-made', description: 'opened by run 38306096439' })).toBe('38306096439');
+    expect(
+      runIdOf({ name: 'ci-x', description: 'https://github.com/o/r/actions/runs/123456789' })
+    ).toBe('123456789');
+    expect(runIdOf({ name: 'ci-smoke-42', description: 'run 99' })).toBe('42');
+    expect(runIdOf({ name: 'ci-x', description: '' })).toBeNull();
   });
 
   it('refuses anything that is not the document', () => {
@@ -79,9 +96,9 @@ describe('orphanReason', () => {
     );
   });
 
-  it('names a window whose run does not exist, and one whose name carries no run id', () => {
+  it('names a window whose run does not exist, and one that names no run', () => {
     expect(orphanReason(win, { status: 'missing', conclusion: null })).toMatch(/does not exist/);
-    expect(orphanReason({ ...win, runId: null }, { status: 'unknown' })).toMatch(/no run id/);
+    expect(orphanReason({ ...win, runId: null }, { status: 'unknown' })).toMatch(/names no run/);
   });
 });
 
@@ -142,7 +159,8 @@ describe('run', () => {
     const env = { ...ENV, APP: 'func-site-prod-cus-01', RG: 'rg-web-site-prod-cus' };
     const { lines } = await run({ input, env, fetchImpl });
     expect(lines[1]).toBe(
-      '- `ci-smoke-6` on the site: run 6 has ended (completed, failure). Remove it: ' +
+      '- `ci-smoke-6` on the site: run 6 has ended (completed, failure). ' +
+        'If the rule is still there and its run has not been re-run, remove it: ' +
         '`az functionapp config access-restriction remove -n func-site-prod-cus-01 -g rg-web-site-prod-cus --rule-name ci-smoke-6`'
     );
     expect(lines[2]).toMatch(/--rule-name ci-deploy-scm-6 --scm-site true`$/);
