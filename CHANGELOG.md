@@ -4479,6 +4479,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Reminders: an editor's save keeps the credential register's rows, and
+  their stamps, beside a malformed owner row (#1041).** The save validated
+  the stored sheet as a whole, so one owner row that did not validate (an
+  out-of-band edit) made it keep no register rows at all. Their `notified`
+  stamps went with them, and the next `sendReminders` run said a stage
+  again. Each stored row is now normalised on its own: an invalid row is
+  left out, the valid register rows are kept as stored, and a second row
+  under an id already kept is dropped.
+
 - **Forge Studio: "Send to In Review" sends on the first click after the
   document loads (#1072).** `useForgeSession`'s operations read the session
   through a ref that moved in a passive effect, after paint. A document
