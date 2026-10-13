@@ -19,6 +19,7 @@ import {
   readHostOverview,
   totalDownloads,
   windowEnding,
+  HOST_OVERVIEW_REFRESH_FLOOR_MS,
 } from './host-reads.js';
 import { PodbeanError } from './podbean.js';
 import { TRANSCRIPT_CONTAINER } from './store.js';
@@ -348,18 +349,56 @@ describe('readHostOverview (the cache)', () => {
     expect(doc).not.toHaveProperty('cached');
   });
 
-  it('refresh skips the cache read, reads live, and replaces the stored overview under its etag', async () => {
+  it('refresh reads live past the floor, and replaces the stored overview under its etag', async () => {
     const client = makeClient();
     const stored = cachedDoc();
     const store = makeStore({ readDoc: vi.fn(async () => stored), replaceDocIfMatch: vi.fn(async (_c, doc) => doc) });
     const out = await readHostOverview({ client, store, now, refresh: true });
-    // The one read is the write's own freshness check, not a cache hit.
-    expect(store.readDoc).toHaveBeenCalledTimes(1);
+    // Two reads: the floor check before the live read, and the write's own freshness check.
+    expect(store.readDoc).toHaveBeenCalledTimes(2);
     expect(out.cached).toBe(false);
     expect(client.listEpisodes).toHaveBeenCalledTimes(1);
     expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
     expect(store.replaceDocIfMatch.mock.calls[0][1]).toMatchObject({ _etag: '"e1"', fetchedAt: NOW.toISOString() });
     expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  it('a refresh within the floor serves the cache, so every session together makes one live read a minute', async () => {
+    expect(HOST_OVERVIEW_REFRESH_FLOOR_MS).toBe(60_000);
+    const client = makeClient();
+    const log = vi.fn();
+    const young = cachedDoc({ fetchedAt: new Date(NOW.getTime() - 30_000).toISOString() });
+    const store = makeStore({ readDoc: vi.fn(async () => young) });
+    const out = await readHostOverview({ client, store, now, refresh: true, log });
+    expect(out.cached).toBe(true);
+    expect(out.show.title).toBe('Cached show');
+    expect(client.listEpisodes).not.toHaveBeenCalled();
+    expect(client.getPodcast).not.toHaveBeenCalled();
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('podbean overview: refresh within the floor; serving the cache');
+
+    const past = cachedDoc({ fetchedAt: new Date(NOW.getTime() - 61_000).toISOString() });
+    const live = makeStore({ readDoc: vi.fn(async () => past) });
+    expect((await readHostOverview({ client: makeClient(), store: live, now, refresh: true })).cached).toBe(false);
+  });
+
+  it('a cached overview from another Podbean account is a miss, and the live one is written with the account key', async () => {
+    const client = makeClient({ accountKey: 'acct-b' });
+    const store = makeStore({ readDoc: vi.fn(async () => cachedDoc({ accountKey: 'acct-a' })) });
+    const out = await readHostOverview({ client, store, now });
+    expect(out.cached).toBe(false);
+    expect(out.accountKey).toBe('acct-b');
+    expect(client.listEpisodes).toHaveBeenCalledTimes(1);
+    expect(store.upsertDoc.mock.calls[0][1]).toMatchObject({ accountKey: 'acct-b' });
+
+    const same = makeStore({ readDoc: vi.fn(async () => cachedDoc({ accountKey: 'acct-b' })) });
+    const hit = await readHostOverview({ client: makeClient({ accountKey: 'acct-b' }), store: same, now });
+    expect(hit.cached).toBe(true);
+    expect(hit.accountKey).toBe('acct-b');
+
+    // A document written before the key existed matches a client without one, not one with.
+    expect(isFresh(cachedDoc(), { now: NOW, ttlMs: HOST_OVERVIEW_TTL_MS, days: 30 })).toBe(true);
+    expect(isFresh(cachedDoc(), { now: NOW, ttlMs: HOST_OVERVIEW_TTL_MS, days: 30, accountKey: 'acct-b' })).toBe(false);
   });
 
   it('does not overwrite a stored overview that is newer than this read (two refreshes finishing out of order)', async () => {

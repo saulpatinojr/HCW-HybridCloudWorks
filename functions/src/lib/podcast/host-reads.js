@@ -42,7 +42,14 @@
  * transcript reload. So the overview is stored in `admin_config` as
  * `podbean_host_overview` with its `fetchedAt`, and served from there while
  * it is younger than `HOST_OVERVIEW_TTL_MS` unless the caller asks for a
- * refresh. A cache that cannot be read or written is logged (content-free)
+ * refresh. A refresh is itself budgeted: it reads Podbean only when the
+ * stored overview is older than `HOST_OVERVIEW_REFRESH_FLOOR_MS`, and the
+ * floor is read from the shared document, so every editor session, tab and
+ * instance together make at most one live read a minute — the same bucket
+ * serves publishing and reconciliation. The cached document carries the
+ * client's `accountKey`, so settings pointed at another Podbean account make
+ * the cache a miss rather than serving the previous account's rows until it
+ * expires. A cache that cannot be read or written is logged (content-free)
  * and the live read is returned regardless — the cache is a courtesy to the
  * rate bucket, never a dependency.
  *
@@ -57,6 +64,8 @@ import { TRANSCRIPT_CONTAINER } from './store.js';
 export const HOST_OVERVIEW_CONFIG_ID = 'podbean_host_overview';
 /** How long a cached overview is served before Podbean is read again. */
 export const HOST_OVERVIEW_TTL_MS = 15 * 60_000;
+/** How young a cached overview must be for `?refresh=1` to serve it anyway. */
+export const HOST_OVERVIEW_REFRESH_FLOOR_MS = 60_000;
 /** Per-episode statistics reads per overview; the newest episodes get them. */
 export const HOST_OVERVIEW_STATS_CAP = 20;
 /** The one episode page read; Podbean's maximum `limit`. */
@@ -265,6 +274,7 @@ export async function fetchHostOverview({
 /** The fields a cached document serves; Cosmos's system fields and the partition never leave. */
 const OVERVIEW_FIELDS = Object.freeze([
   'fetchedAt',
+  'accountKey',
   'days',
   'range',
   'show',
@@ -279,9 +289,14 @@ function toOverview(doc) {
   return Object.fromEntries(OVERVIEW_FIELDS.map((field) => [field, doc[field] ?? null]));
 }
 
-/** Whether a cached overview still stands: same window, and younger than the TTL. */
-export function isFresh(cached, { now, ttlMs, days }) {
+/**
+ * Whether a cached overview still stands: the same account and window, and
+ * younger than the TTL. An `accountKey` absent on either side is `null`, so
+ * a client without one (the tests' fakes) matches a document without one.
+ */
+export function isFresh(cached, { now, ttlMs, days, accountKey = null }) {
   if (!cached || cached.days !== days) return false;
+  if ((cached.accountKey ?? null) !== (accountKey ?? null)) return false;
   const age = now.getTime() - Date.parse(cached.fetchedAt);
   return Number.isFinite(age) && age >= 0 && age < ttlMs;
 }
@@ -293,9 +308,11 @@ export function isFresh(cached, { now, ttlMs, days }) {
  * @param {object} deps.client the Podbean client
  * @param {{ queryDocs: Function, readDoc: Function, upsertDoc: Function, replaceDocIfMatch?: Function, createDoc?: Function }} deps.store
  * @param {() => Date} [deps.now]
- * @param {boolean} [deps.refresh] skip the cache (the hub's Refresh button)
+ * @param {boolean} [deps.refresh] the hub's Refresh button: read live unless
+ *   the cache is younger than the floor
  * @param {number} [deps.days]
  * @param {number} [deps.ttlMs]
+ * @param {number} [deps.refreshFloorMs]
  * @param {(line: string) => void} [deps.log] content-free lines only
  * @returns {Promise<object>} the overview with `cached: true | false`
  */
@@ -306,21 +323,26 @@ export async function readHostOverview({
   refresh = false,
   days = HOST_OVERVIEW_DAYS,
   ttlMs = HOST_OVERVIEW_TTL_MS,
+  refreshFloorMs = HOST_OVERVIEW_REFRESH_FLOOR_MS,
   log,
 }) {
-  if (!refresh) {
-    let cached = null;
-    try {
-      cached = toOverview(
-        await store.readDoc('admin_config', HOST_OVERVIEW_CONFIG_ID, ADMIN_CONFIG_PARTITION)
-      );
-    } catch (error) {
-      log?.(`podbean overview: cache read failed (${error?.code || 'UNEXPECTED'}); reading live`);
-    }
-    if (isFresh(cached, { now: now(), ttlMs, days })) return { ...cached, cached: true };
+  const accountKey = client?.accountKey || null;
+  let cached = null;
+  try {
+    cached = toOverview(
+      await store.readDoc('admin_config', HOST_OVERVIEW_CONFIG_ID, ADMIN_CONFIG_PARTITION)
+    );
+  } catch (error) {
+    log?.(`podbean overview: cache read failed (${error?.code || 'UNEXPECTED'}); reading live`);
+  }
+  const at = now();
+  const serveTtl = refresh ? Math.min(ttlMs, refreshFloorMs) : ttlMs;
+  if (isFresh(cached, { now: at, ttlMs: serveTtl, days, accountKey })) {
+    if (refresh) log?.('podbean overview: refresh within the floor; serving the cache');
+    return { ...cached, cached: true };
   }
 
-  const live = await fetchHostOverview({ client, store, now, days });
+  const live = { ...(await fetchHostOverview({ client, store, now, days })), accountKey };
   await writeOverviewCache({ store, live, log });
   return { ...live, cached: false };
 }

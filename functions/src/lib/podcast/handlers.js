@@ -261,8 +261,11 @@ export function createPodcastHandlers({
      * about the show and its episodes, joined to the transcripts that
      * published them, with each episode's downloads over the last thirty
      * days (host-reads.js). Served from `admin_config/podbean_host_overview`
-     * while that is under fifteen minutes old unless `refresh=1`. Without the
-     * Podbean settings, 200 `{ configured: false, reason }` and no call.
+     * while that is under fifteen minutes old unless `refresh=1`, and a
+     * refresh still serves it while it is under a minute old, so refresh
+     * traffic from every session together is one live read a minute. The
+     * cached document is keyed to the Podbean account. Without the Podbean
+     * settings, 200 `{ configured: false, reason }` and no call.
      */
     async getHostOverview(request, context) {
       const auth = await guard.requireRole(request, 'editor');

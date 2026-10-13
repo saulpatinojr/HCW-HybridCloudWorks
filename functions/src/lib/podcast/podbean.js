@@ -125,6 +125,7 @@
  * is missing in a sentence an operator can act on. One gate: every call here
  * needs a token, and a token needs both.
  */
+import { createHash } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 
@@ -360,6 +361,7 @@ export function createPodbeanClient({
   const basic = configured.ok
     ? Buffer.from(`${clientId}:${clientSecret}`, 'utf8').toString('base64')
     : '';
+  const accountKey = clientId ? createHash('sha256').update(clientId).digest('hex').slice(0, 16) : '';
 
   /** @type {{ token: string, expiresAt: number } | null} */
   let cached = null;
@@ -559,6 +561,16 @@ export function createPodbeanClient({
   return {
     /** `isConfigured(env)` for this client, so a caller need not re-read env. */
     configured,
+
+    /**
+     * A stand-in for the account this client reads: the first sixteen hex
+     * digits of SHA-256 over the client id, `''` when not configured. Not a
+     * secret and not the id, so it can sit on a cached document; a cache
+     * keyed to it is a miss the moment the settings point at another
+     * account, rather than serving the previous account's rows until expiry
+     * (CodeRabbit on #1127).
+     */
+    accountKey,
 
     /** The access token, from the cache while it lives. */
     getToken,

@@ -275,9 +275,14 @@ three published by hand before this path appear. The record line stays what
 the publish job saw and the Podbean line under it says what is true now. The
 overview is cached fifteen minutes in `admin_config/podbean_host_overview`
 (Podbean's bucket is 60 requests at 2/s, and the tab re-renders on every
-transcript reload); Refresh reads live. A Podbean failure is recorded where it
-happened, in the publish job's recorded-error shape, and the overview still
-answers. Nothing here writes `podcasts` either.
+transcript reload); Refresh reads live unless the cache is under a minute old,
+a floor read from the shared document so that every editor session and
+instance together make at most one live read a minute against the bucket the
+publish job shares. The cached document carries the client's `accountKey` (a
+hash of the client id, never the id) and is a miss for any other account, so
+re-pointed settings never serve the previous account's rows. A Podbean failure
+is recorded where it happened, in the publish job's recorded-error shape, and
+the overview still answers. Nothing here writes `podcasts` either.
 
 **What does not change.** The feed is still the integration boundary: the site
 learns of a published episode by ingesting the show's feed, never by writing a

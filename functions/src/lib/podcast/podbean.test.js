@@ -840,3 +840,17 @@ describe('the reads (#1115)', () => {
     expect(missing.message).toContain('reading the episode');
   });
 });
+
+describe('accountKey', () => {
+  it('is sixteen hex digits of SHA-256 over the client id: not the id, not the secret, stable, and empty when not configured', () => {
+    const { client } = build();
+    expect(client.accountKey).toMatch(/^[0-9a-f]{16}$/);
+    expect(client.accountKey).not.toContain(CLIENT_ID);
+    expect(CLIENT_ID).not.toContain(client.accountKey);
+    expect(client.accountKey).not.toContain(CLIENT_SECRET);
+    expect(build().client.accountKey).toBe(client.accountKey);
+    const other = build({ env: { ...ENV, PODBEAN_CLIENT_ID: `${CLIENT_ID}x` } });
+    expect(other.client.accountKey).not.toBe(client.accountKey);
+    expect(build({ env: {} }).client.accountKey).toBe('');
+  });
+});

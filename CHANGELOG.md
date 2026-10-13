@@ -44,10 +44,17 @@ This project has not cut a tagged release; entries are grouped under
     `errors.episodes` (then on every transcript row, and no statistics are
     read), or `error` on one row — in the publish job's recorded-error shape,
     and the answer is still 200. Cached 15 minutes in
-    `admin_config/podbean_host_overview`; `?refresh=1` reads live; a cache
-    that cannot be read or written is logged content-free and the live
-    overview is served. Not configured is 200 `{ configured: false, reason }`
-    with no call. Logs carry counts and codes, never a title or the token.
+    `admin_config/podbean_host_overview`; `?refresh=1` reads live, except
+    while the cache is under a minute old, so every editor session, tab and
+    instance together make at most one live read a minute against the
+    bucket publishing shares (the floor is read from the shared document).
+    The cached document carries the client's `accountKey` (sixteen hex
+    digits of SHA-256 over the client id, never the id), so settings pointed
+    at another Podbean account make it a miss rather than serving the
+    previous account's rows until expiry. A cache that cannot be read or
+    written is logged content-free and the live overview is served. Not
+    configured is 200 `{ configured: false, reason }` with no call. Logs
+    carry counts and codes, never a title or the token.
   - **Distribution tab**: under each "Published to Podbean" record, a Podbean
     line with the live status badge (Live / Draft on Podbean), the episode
     page, "N downloads, last 30 days" and a 30-bar sparkline; an "Also on
