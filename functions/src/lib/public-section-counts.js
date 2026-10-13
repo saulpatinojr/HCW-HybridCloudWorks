@@ -343,6 +343,10 @@ export const PODCAST_COUNT_FIELDS = Object.freeze([
   'provider',
   'mediaUrl',
   'mediaUnavailableAt',
+  // isPodcastMediaRetired hides a row on a host the show has left only when
+  // nothing has refreshed it since; without this every such row counts as
+  // never refreshed.
+  'updatedAt',
   'softDeletedAt',
   'softDeleteExpiresAt',
 ]);

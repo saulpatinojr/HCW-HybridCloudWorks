@@ -4503,6 +4503,27 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The podcast pages show the show again, now that it is back on Podbean.**
+  The public list returned one stale RSS.com upload instead of the three
+  episodes in the feed. Two causes, both from the move on 2026-10-13:
+  - **The hide rule.** `RETIRED_PODCAST_MEDIA_HOSTS` hid every episode on
+    `mcdn.podbean.com` (#372). That was right when the show left Podbean on
+    2026-09-05 and its files 404'd, and wrong once the show returned: every
+    current episode is on that host again. Each host the show has left now
+    carries the moment it left. A row there is hidden only when nothing has
+    refreshed it since. `fetchPodcastFeeds` upserts every episode in the
+    current feed every two hours, so current episodes show. Rows from
+    Podbean's first tenure, and the RSS.com upload no feed carries, stay
+    hidden. A host the show still uses is never hidden by this rule, so a
+    stalled timer cannot empty the page. The section counts project
+    `updatedAt` so the sitemap counts the same rows.
+  - **`media-src`.** Once Podbean had copied the audio, an enclosure went
+    `mcdn.podbean.com` → 302 → a numbered storage host (`s307`, `s396`,
+    `s405.podbean.com`, one per file). #1107's `mcdn.podbean.com` alone
+    failed at that hop in headless Chromium, and `https://*.podbean.com`
+    loads it. RSS.com's three hosts left the list, since no listed episode
+    is on them.
+
 - **Show episodes play on the site again, from RSS.com and from Podbean.**
   The site's `media-src` allowed RSS.com's two media hosts (#1101), but an
   RSS.com enclosure redirects through `rsscom.pdn.tritondigital.com`, RSS.com's
