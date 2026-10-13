@@ -276,8 +276,8 @@ its table. An entry that is not
 `sub-plat-mgmt-prod-cus=`, and the run says so rather than skipping the
 Management rules.
 
-Until #1053 the job ran as `github_reader`. That identity also holds a
-Function App config write and holds nothing in the Management subscription,
+Until #1053 the job ran as `github_reader`. That identity also held a
+Function App config write until #1098, and holds nothing in the Management subscription,
 so the capacity rule, the lab rules, the Management role-change rules and the
 action group reported `UNREADABLE` every week. Reader on the Management group
 would have closed that gap but also let the job query every log in the

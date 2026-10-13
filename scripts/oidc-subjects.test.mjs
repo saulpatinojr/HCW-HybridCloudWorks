@@ -82,6 +82,8 @@ const IDENTITY_BY_CLIENT_ID_VAR = {
   READER_CLIENT_ID: 'github_reader',
   // verify-alert-state.yml: alert rules and action groups, nothing else (#1053).
   ALERT_READER_CLIENT_ID: 'github_alert_reader',
+  // publish-content-manifest.yml: its origin window, nothing else (#1098).
+  MANIFEST_WINDOW_CLIENT_ID: 'github_manifest_window',
   // copilot-setup-steps.yml: the identity Copilot code review signs in as.
   COPILOT_REVIEW_CLIENT_ID: 'github_copilot_review',
 };
@@ -254,6 +256,67 @@ describe('OIDC federated credentials cover every Azure login', () => {
       }
     }
     expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * Every role assignment in infra/ to one identity, as `role @ scope` strings.
+ *
+ * The role is the `role_definition_name` literal, or `data.<label>` for a
+ * custom role read by `role_definition_id`; the scope is the expression as
+ * written. Whole blocks again, so the three attributes stay together.
+ */
+function grantsTo(identity) {
+  const infra = join(REPO, 'infra');
+  return readdirSync(infra)
+    .filter((f) => f.endsWith('.tf'))
+    .flatMap((f) => [
+      ...readFileSync(join(infra, f), 'utf8').matchAll(
+        /resource\s+"azurerm_role_assignment"\s+"\w+"\s*\{([\s\S]*?)\n\}/g
+      ),
+    ])
+    .map(([, body]) => {
+      const named = body.match(/^\s*role_definition_name\s*=\s*"([^"]+)"/m)?.[1];
+      const custom = body.match(/^\s*role_definition_id\s*=\s*data\.azurerm_role_definition\.(\w+)\.id/m)?.[1];
+      return {
+        principal: body.match(/^\s*principal_id\s*=\s*azurerm_user_assigned_identity\.(\w+)\.principal_id/m)?.[1],
+        role: named ?? (custom ? `data.${custom}` : undefined),
+        scope: body.match(/^\s*scope\s*=\s*(\S+)/m)?.[1],
+      };
+    })
+    .filter((grant) => grant.principal === identity)
+    .map(({ role, scope }) => `${role} @ ${scope}`)
+    .sort();
+}
+
+/**
+ * What github_reader and github_manifest_window may hold, exactly (#1098).
+ *
+ * The reader held HCW Function Config Refresh beside HCW Function Settings
+ * Reader until #1098, while infra/oidc.tf said it "can change nothing". RBAC
+ * is additive, so the one principal could list app settings and write them.
+ * Exact lists rather than a deny-list of known write roles: a new grant to
+ * either identity has to change this test, which puts it in front of a
+ * reviewer with the reason beside it.
+ */
+describe('the reader and the manifest window hold what infra/oidc.tf says', () => {
+  it('github_reader holds reads only: Reader and the settings list, on the web group', () => {
+    expect(grantsTo('github_reader')).toEqual([
+      'Reader @ azurerm_resource_group.app["web"].id',
+      'data.function_settings_reader @ azurerm_resource_group.app["web"].id',
+    ]);
+  });
+
+  it('github_manifest_window holds the config write and Reader on the one site, and nothing else', () => {
+    expect(grantsTo('github_manifest_window')).toEqual([
+      'Reader @ azurerm_function_app_flex_consumption.hcw.id',
+      'data.func_config_refresh @ azurerm_function_app_flex_consumption.hcw.id',
+    ]);
+  });
+
+  it('reads a grant it is shown, so an empty list above means no grant rather than a broken scan', () => {
+    expect(grantsTo('github_alert_reader').length).toBeGreaterThan(0);
+    expect(grantsTo('github_deploy').length).toBeGreaterThan(0);
   });
 });
 

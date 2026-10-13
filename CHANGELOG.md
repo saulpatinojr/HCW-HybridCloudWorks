@@ -4496,6 +4496,29 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The read-only Azure identity writes nothing now: the content manifest's
+  origin window has an identity of its own (#1098).** `github_reader` held
+  HCW Function Settings Reader and, for `publish-content-manifest.yml`'s
+  per-run origin window, HCW Function Config Refresh. RBAC is additive, so
+  that one principal could list the Function App's app settings and write
+  them, from any step of the hourly monitor, the secrets monitor or the
+  manifest job on `main`. `infra/oidc.tf` said it "can change nothing".
+  - `github_manifest_window` holds Config Refresh and Reader on
+    `func-site-prod-cus-01` and nothing else, with main-branch sign-in in
+    both subject forms. The manifest job signs in with
+    `MANIFEST_WINDOW_CLIENT_ID` and skips until it is set.
+  - `github_reader_origin_window` is removed, so the reader holds Reader and
+    Settings Reader on `rg-web-site-prod-cus` only. The comments that said
+    it could change nothing are true now, and
+    `scripts/oidc-subjects.test.mjs` fails if either identity gains a grant.
+  - `scripts/set-github-variables.ps1` seeds the new variable, and
+    `ALERT_READER_CLIENT_ID`, which #1053 left out of it. The plan checker
+    declares the five creates and the one delete.
+  - The lab-host bootstrap tests made their temp folders in the suite body,
+    which Vitest runs even for a skipped suite, while it never runs a
+    skipped suite's `afterAll`. Every Windows run left a folder behind. They
+    are made in `beforeAll` now.
+
 - **Cosmos restore: the first drill passed, and the runbook's step 5 now
   works as written (2026-10-13).** The owner restored the latest backups
   (`full/2026-10-11` + 1 delta, 11,971 documents) into a scratch account, and

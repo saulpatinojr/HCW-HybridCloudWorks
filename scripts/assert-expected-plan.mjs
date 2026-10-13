@@ -288,6 +288,42 @@ export const DECLARED = [
       "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/STREAMYARD-API-KEY)",
     reason: "StreamYard On-Air: Key Vault reference for STREAMYARD-API-KEY",
   },
+  // #1098: publish-content-manifest's origin window moves off github_reader
+  // onto an identity of its own, so the reader stops holding a config write
+  // beside its app-settings read. Five creates and the reader's grant
+  // destroyed; delete all six once they apply.
+  {
+    address: "azurerm_user_assigned_identity.github_manifest_window",
+    action: "create",
+    reason: "#1098: the origin window's own identity",
+  },
+  {
+    address:
+      "azurerm_federated_identity_credential.github_manifest_window_branch",
+    action: "create",
+    reason: "#1098: main-branch sign-in, name form",
+  },
+  {
+    address:
+      "azurerm_federated_identity_credential.github_manifest_window_branch_immutable",
+    action: "create",
+    reason: "#1098: main-branch sign-in, immutable-ID form",
+  },
+  {
+    address: "azurerm_role_assignment.github_manifest_window_config",
+    action: "create",
+    reason: "#1098: HCW Function Config Refresh on the Function App",
+  },
+  {
+    address: "azurerm_role_assignment.github_manifest_window_read",
+    action: "create",
+    reason: "#1098: Reader on the Function App, for the window's reads",
+  },
+  {
+    address: "azurerm_role_assignment.github_reader_origin_window",
+    action: "delete",
+    reason: "#1098: the reader no longer holds the config write",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

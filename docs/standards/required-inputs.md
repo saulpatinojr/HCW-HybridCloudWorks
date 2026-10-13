@@ -150,8 +150,9 @@ Home (§4.11). Each row says so.
 | `CLIENT_ID` | **VERIFIED** | OIDC login for the workflows that WRITE — `deploy-functions.yml` and `deploy-azure-frontend.yml`. `heal-computed-properties.yml` signed in with it too until #816 deleted it |
 | `COPILOT_REVIEW_CLIENT_ID` | **SET 2026-09-06** | OIDC login in `copilot-setup-steps.yml`, the job GitHub runs before Copilot code review and the Copilot cloud agent start. Identifies `github_copilot_review` (`infra/oidc.tf`): Reader on the four workload groups, nothing else. Seeded from the `copilot_review_client_id` output by `scripts/set-github-variables.ps1`; while unset the login fails closed and the Azure MCP server has no credential — see [Copilot code review MCP servers](../runbooks/copilot-code-review-mcp.md) |
 | `COPILOT_REVIEW_APP_ID` | **SET 2026-09-06** | App ID of *HCW Copilot Review Reader*, the read-only GitHub App from which `copilot-setup-steps.yml` mints a one-hour installation token for the GitHub MCP server Copilot code review uses. An identifier, like `MANIFEST_APP_ID`; the key is the Agents secret in §4.3. Set by hand from the App page (runbook step 4) |
-| `READER_CLIENT_ID` | **SET 2026-09-06** | OIDC login for the workflows that only read — `monitor-functions-registered.yml`, `monitor-unresolved-secrets.yml` and `publish-content-manifest.yml` (T-728); `verify-alert-state.yml` used it until #1053. All three are gated on it and **skip silently while it is unset**, so a rebuilt repository seeds it in the same pass as the apply: an unset value looks like workflows not running, not like a failure |
-| `ALERT_READER_CLIENT_ID` | **PENDING** (set from `az identity show` after the apply that creates the identity, #1053) | OIDC login for `verify-alert-state.yml` alone (#1053): `github_alert_reader`, which holds *HCW Alert Rule Reader* (`infra/roles/alert-rule-reader.json`) in `rg-web-site-prod-cus` and `rg-mgmt-plat-prod-cus` and nothing else. The `alert_reader_client_id` output of `infra/`. The job is gated on it and **skips silently while it is unset** |
+| `READER_CLIENT_ID` | **SET 2026-09-06** | OIDC login for the workflows that only read — `monitor-functions-registered.yml` and `monitor-unresolved-secrets.yml` (T-728). `verify-alert-state.yml` used it until #1053, and `publish-content-manifest.yml` until #1098. Both are gated on it and **skip silently while it is unset**, so a rebuilt repository seeds it in the same pass as the apply: an unset value looks like workflows not running, not like a failure |
+| `ALERT_READER_CLIENT_ID` | **SET 2026-10-11** | OIDC login for `verify-alert-state.yml` alone (#1053): `github_alert_reader`, which holds *HCW Alert Rule Reader* (`infra/roles/alert-rule-reader.json`) in `rg-web-site-prod-cus` and `rg-mgmt-plat-prod-cus` and nothing else. The `alert_reader_client_id` output of `infra/`. The job is gated on it and **skips silently while it is unset** |
+| `MANIFEST_WINDOW_CLIENT_ID` | **PENDING** (set from the `manifest_window_client_id` output after the apply that creates the identity, #1098) | OIDC login for `publish-content-manifest.yml`'s build job alone (#1098): `github_manifest_window`, which holds *HCW Function Config Refresh* (`infra/roles/function-config-refresh.json`) and Reader on `func-site-prod-cus-01` and nothing else, so it can open and close the job's origin window and cannot read app settings. The job is gated on it and **skips silently while it is unset**: the content manifest stays at its last committed version until it is set |
 | `TENANT_ID` | **VERIFIED** | OIDC login |
 | `SUBSCRIPTION_ID` | **VERIFIED** | OIDC login, `az rest` calls, and the application half of `verify-alert-state.yml`'s `ALERT_SUBSCRIPTION_IDS` |
 | `SUBSCRIPTION_MGMT_ID` | **SET 2026-10-11** | The Management subscription's id (`sub-plat-mgmt-prod-cus`), read only by `verify-alert-state.yml` (#1053). It and `SUBSCRIPTION_ID` become `ALERT_SUBSCRIPTION_IDS`, which the check uses for any subscription its identity's subscription list leaves out, since that identity's one role is at resource-group scope. Not secret: it is already an assignable scope in `infra/roles/*.json`. Unset, the check stops with exit 2 naming the empty entry, rather than skipping the Management rules |
@@ -450,10 +451,10 @@ Their role in this inventory is that they are the *source* of §4.2 rather than
 a thing to be provisioned. `scripts/set-github-variables.ps1` reads them and
 writes the repository variables; nothing there is set by hand.
 
-**Twenty-four, and they live in two files.** Nineteen in `infra/outputs.tf`
-and five in `infra/oidc.tf`.
+**Twenty-six, and they live in two files.** Nineteen in `infra/outputs.tf`
+and seven in `infra/oidc.tf`.
 
-**This count has now been wrong three times, each in the same way**, so the
+**This count has now been wrong four times, each in the same way**, so the
 method matters more than the number. It said twenty-three when first written,
 omitting `deploy_principal_id`, because it was built by reading `outputs.tf`
 alone. It was corrected to twenty-four on 2026-08-25 against the apply's own
@@ -464,7 +465,9 @@ looking plausible. Found in review on 2026-09-01, alongside the
 `cloudflare_plan` removal below. It then said twenty-three again from
 2026-09-05, when `copilot_review_client_id` was added to `oidc.tf` (#368), until the
 sweep of 2026-09-29 (#819) counted the files: the same failure, one output
-the other way.
+the other way. And `oidc.tf` read five from 2026-10-11, when
+`alert_reader_client_id` arrived (#1053) without its line here, until #1098
+ran the command below and found six before adding a seventh.
 
 **Count by reading the files, never by adjusting the previous number:**
 
@@ -477,7 +480,7 @@ because it quotes both numbers:
 
 ```
 infra/outputs.tf:19
-infra/oidc.tf:5
+infra/oidc.tf:7
 ```
 
 The total is their sum. Said explicitly because "the command that produces the
@@ -511,13 +514,16 @@ mTLS gate on it. Read it from the zone's Overview page in the Cloudflare
 dashboard when a decision turns on it; it changes only when someone deliberately
 changes it.
 
-From `infra/oidc.tf` (5): `client_id` · `reader_client_id` ·
+From `infra/oidc.tf` (7): `client_id` · `reader_client_id` ·
+`alert_reader_client_id` · `manifest_window_client_id` ·
 `copilot_review_client_id` · `deploy_principal_id` · `federated_subjects`
 
 `reader_client_id` arrived with T-728, which split the read-only identity out
-of the deploy identity — `monitor-functions-registered.yml`,
-`monitor-unresolved-secrets.yml`, `verify-alert-state.yml` and
-`publish-content-manifest.yml` all authenticate with it.
+of the deploy identity — `monitor-functions-registered.yml` and
+`monitor-unresolved-secrets.yml` authenticate with it.
+`alert_reader_client_id` (#1053) is `verify-alert-state.yml`'s, and
+`manifest_window_client_id` (#1098) is `publish-content-manifest.yml`'s; both
+workflows used the reader before.
 `copilot_review_client_id` is the read-only identity Copilot code review and
 the Copilot cloud agent sign in as (`COPILOT_REVIEW_CLIENT_ID`, §4.2).
 
