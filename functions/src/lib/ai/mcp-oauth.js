@@ -15,7 +15,10 @@
  *   - RFC 7591 dynamic client registration: this site registers itself once
  *     per issuer and redirect URI, as a public client where the server allows;
  *   - RFC 6749 / RFC 7636: the authorization-code grant with PKCE S256 only,
- *     and the refresh grant.
+ *     and the refresh grant;
+ *   - RFC 7009 token revocation, on Disconnect, where the metadata names a
+ *     `revocation_endpoint` (Podbean does; Replicate and Hostinger did not
+ *     when read). Best effort: the local delete never waits on it (#1116).
  *
  * Every request goes through `guardedFetch` (lib/http/guarded-fetch.js): https
  * only on every hop, private addresses refused, one deadline and a byte cap.
@@ -25,9 +28,9 @@
  *
  * What lives where on the `mcp_servers` document:
  *
- *   readable    oauth        { status, issuer, tokenEndpoint, clientId,
- *                              tokenEndpointAuthMethod, resource, scope,
- *                              connectedAt, expiresAt, refreshedAt }
+ *   readable    oauth        { status, issuer, tokenEndpoint, revocationEndpoint,
+ *                              clientId, tokenEndpointAuthMethod, resource,
+ *                              scope, connectedAt, expiresAt, refreshedAt }
  *               oauthClient  { issuer, redirectUri, clientId,
  *                              tokenEndpointAuthMethod, registeredAt }
  *   write-only  oauthToken, oauthRefreshToken, oauthClientSecret,
@@ -35,8 +38,9 @@
  *
  * The config routes (admin-integrations/config-collections.js) strip the
  * write-only fields from every read and drop all four OAuth objects from any
- * browser write: only this flow sets them, because `oauth.tokenEndpoint` is
- * where a refresh token is sent and must never be a value an editor typed.
+ * browser write: only this flow sets them, because `oauth.tokenEndpoint` and
+ * `oauth.revocationEndpoint` are where a refresh token is sent and must never
+ * be a value an editor typed.
  *
  * Plaud is NOT routed through here. Its token is pasted on the Recording
  * Hub's Connect tab and refreshed by Plaud's own non-standard endpoint
@@ -415,6 +419,7 @@ async function discoverAuthorizationServer({ issuerUrl, http, name }) {
     authorizationEndpoint,
     tokenEndpoint,
     registrationEndpoint,
+    revocationEndpoint: optionalHttpsEndpoint(doc.revocation_endpoint),
     // RFC 8414 §2: absent means client_secret_basic.
     tokenEndpointAuthMethods: Array.isArray(doc.token_endpoint_auth_methods_supported)
       ? stringList(doc.token_endpoint_auth_methods_supported)
@@ -424,6 +429,21 @@ async function discoverAuthorizationServer({ issuerUrl, http, name }) {
     issParameterSupported: doc.authorization_response_iss_parameter_supported === true,
     metadataUrl: found.url,
   };
+}
+
+/**
+ * An endpoint the flow can do without (RFC 8414 `revocation_endpoint`): its
+ * https URL, or null when absent or not one this site would send a token to.
+ * Not a refusal: a server that advertises a bad revocation address can still
+ * be connected; its Disconnect then just has nowhere to revoke.
+ */
+function optionalHttpsEndpoint(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    return requireHttpsUrl(value, 'The endpoint').href;
+  } catch {
+    return null;
+  }
 }
 
 /** `https://host` for an identifier that is an origin alone, with or without the root "/"; otherwise null. */
@@ -474,6 +494,7 @@ export async function discoverOAuth({ serverUrl, challenge = null, http, name = 
     authorizationEndpoint: server.authorizationEndpoint,
     tokenEndpoint: server.tokenEndpoint,
     registrationEndpoint: server.registrationEndpoint,
+    revocationEndpoint: server.revocationEndpoint,
     tokenEndpointAuthMethods: server.tokenEndpointAuthMethods,
     issParameterSupported: server.issParameterSupported,
     resource: resource.resource,
@@ -646,6 +667,7 @@ export async function startOAuthConnect({
     expiresAt: new Date(createdAt.getTime() + PENDING_TTL_MS).toISOString(),
     issuer: discovery.issuer,
     tokenEndpoint: discovery.tokenEndpoint,
+    revocationEndpoint: discovery.revocationEndpoint ?? null,
     clientId: client.clientId,
     tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
     redirectUri,
@@ -751,6 +773,9 @@ export function connectedUpdates({ pending, tokens, now }) {
       status: 'connected',
       issuer: pending.issuer,
       tokenEndpoint: pending.tokenEndpoint,
+      // Absent on documents connected before #1116: Disconnect then has
+      // nowhere to revoke and says so (`revoked: null`).
+      revocationEndpoint: pending.revocationEndpoint ?? null,
       clientId: pending.clientId,
       tokenEndpointAuthMethod: pending.tokenEndpointAuthMethod,
       resource: pending.resource,
@@ -786,6 +811,83 @@ export function notConnectedMessage(server, serverId) {
 export function tokenExpiresWithin(server, withinMs, now = () => new Date()) {
   const at = Date.parse(server?.oauth?.expiresAt ?? '');
   return Number.isFinite(at) && at - now().getTime() <= withinMs;
+}
+
+// ─── Revocation (RFC 7009) ──────────────────────────────────────────────────
+
+/**
+ * Revoke a server's grant at its authorization server before the tokens are
+ * deleted locally (#1116). The refresh token goes first — RFC 7009 §2.1 says
+ * revoking it should take its access tokens with it — then the access token,
+ * each as `token=…&token_type_hint=…` with the client authentication the
+ * registration chose, exactly as the token endpoint is called.
+ *
+ * Resolves, never throws:
+ *   `{ revoked: true,  issuer }`          every stored token was accepted (2xx);
+ *   `{ revoked: false, issuer, reason }`  one was not — a non-2xx, no answer,
+ *                                         a timeout, or an endpoint this site
+ *                                         will not send a token to;
+ *   `{ revoked: null,  issuer }`          nowhere to revoke: the metadata named
+ *                                         no revocation_endpoint (or the
+ *                                         document predates its storage), or
+ *                                         no token is stored.
+ *
+ * `reason` is built from the endpoint's address and what the server said,
+ * never from a token, so it can be logged and shown on the card.
+ */
+export async function revokeOAuthGrant({ server, serverId, http }) {
+  const name = server?.name || serverId;
+  const oauth = server?.oauth || {};
+  const issuer = typeof oauth.issuer === 'string' && oauth.issuer ? oauth.issuer : null;
+  const endpoint = oauth.revocationEndpoint;
+  const tokens = [
+    ['refresh_token', server?.oauthRefreshToken],
+    ['access_token', server?.oauthToken],
+  ].filter(([, token]) => typeof token === 'string' && token);
+  if (!endpoint || !tokens.length) return { revoked: null, issuer };
+
+  try {
+    requireHttpsUrl(endpoint, `${name}'s revocation endpoint`);
+  } catch (error) {
+    return { revoked: false, issuer, reason: error.message };
+  }
+
+  // Every token this call sends, so a provider body or a transport error that
+  // echoes one is scrubbed before it becomes the `reason` the handler returns
+  // (CodeRabbit on #1124). Raw and percent-encoded forms both.
+  const scrub = (text) => {
+    let out = String(text ?? '');
+    for (const [, token] of tokens) {
+      for (const form of new Set([token, encodeURIComponent(token)])) out = out.split(form).join('***');
+    }
+    return out;
+  };
+
+  let reason = null;
+  for (const [hint, token] of tokens) {
+    const request = tokenRequest({
+      params: { token, token_type_hint: hint },
+      clientId: oauth.clientId,
+      tokenEndpointAuthMethod: oauth.tokenEndpointAuthMethod,
+      clientSecret: server.oauthClientSecret ?? null,
+    });
+    try {
+      const res = await http(endpoint, { method: 'POST', ...request });
+      // RFC 7009 §2.2: 200 whether or not the token was still valid. Anything
+      // else is the server declining, and the next token is still tried.
+      if (res.status < 200 || res.status >= 300) {
+        reason ??= scrub(
+          `${bare(endpoint)} answered the ${hint.replace('_', ' ')} revocation with ${describeOAuthReply(
+            parseJson(res.text),
+            res.status
+          )}.`
+        );
+      }
+    } catch (error) {
+      reason ??= scrub(error?.message || String(error));
+    }
+  }
+  return reason ? { revoked: false, issuer, reason } : { revoked: true, issuer };
 }
 
 function isGrantRejection(error) {

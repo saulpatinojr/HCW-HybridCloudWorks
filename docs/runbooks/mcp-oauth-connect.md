@@ -90,10 +90,20 @@ browser to the apex address, which is the one registered with them.
    expires within 30 minutes or already has, so an idle server's refresh
    token keeps renewing. Its name, flag and schedule are unchanged. Calls do
    not depend on it: step 4 refreshes on demand.
-6. **Disconnect** (`POST /api/cms/mcp/{serverId}/oauth/disconnect`) deletes
-   the tokens and the connection, keeps the registration, and audits
-   `mcp_oauth_disconnected`. To revoke the grant at the vendor too, remove
-   HybridCloudWorks from the authorized apps in the vendor account.
+6. **Disconnect** (`POST /api/cms/mcp/{serverId}/oauth/disconnect`) first
+   revokes the grant at the vendor (RFC 7009: the refresh token, then the
+   access token, POSTed to the `revocation_endpoint` the sign-in's metadata
+   named, with the registered client credentials; #1116), then deletes the
+   tokens and the connection, keeps the registration, and audits
+   `mcp_oauth_disconnected` with `revoked`. The local delete happens whatever
+   the vendor answers. The response's `revoked` is `true`, `false` (a
+   non-2xx, no answer or a timeout — the card then says the grant may still
+   be live at the vendor, and `reason` says why) or `null` (the vendor
+   advertises no revocation endpoint, or the connection predates its
+   storage). Podbean advertises one (`https://mcp.podbean.com/revoke`, read
+   2026-10-13); Replicate and Hostinger did not when read. Where it is
+   `false` or `null`, revoke the grant by removing HybridCloudWorks from the
+   authorized apps in the vendor account.
 
 Every request the flow makes goes through the SSRF guard
 (`lib/http/guarded-fetch.js`) with https required on every hop, and the
