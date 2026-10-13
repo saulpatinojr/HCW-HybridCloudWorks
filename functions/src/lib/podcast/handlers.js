@@ -12,21 +12,21 @@
  * Roles. Generating and reading are `editor`, matching the Listen & Learn
  * routes and the job that does the same work. Approving is `publisher`: it
  * is the act that will put an AI-read episode on the podcast feed under the
- * owner's name — #437 hangs the RSS.com publish on it — and "can publish
+ * owner's name — #437 hangs the Podbean publish on it — and "can publish
  * content to live" is what that role is for. Listen & Learn approves at
  * editor; the difference is that a Learn episode goes on a study page and a
  * podcast transcript goes to a host and every subscriber.
  *
- * Approval publishes (#437, ADR 0029 §1b). Once the review has written
+ * Approval publishes (#437, ADR 0029 §1b, §1c). Once the review has written
  * `published`, the host step runs through `scheduleHostPublish`: a skip
- * (no audio, RSS.com not configured) is recorded on the document at once,
+ * (no audio, Podbean not configured) is recorded on the document at once,
  * otherwise a `publish-podcast-transcript` job is queued and the document
- * is marked `host.rsscom.pending`. The response carries that outcome under
+ * is marked `host.podbean.pending`. The response carries that outcome under
  * `host` so the hub can toast it, and answers 202 when a job is in flight.
  * Three rules hold whatever the host does: a publish failure never
  * un-approves — `status`/`approvedAt` are written here and nowhere in the
  * host path; the retry route below re-runs the same step rather than
- * regenerating, and PATCHes an episode the document already names; and
+ * regenerating, and updates an episode the document already names; and
  * nothing here or in the job writes `podcasts` — the feed stays the ingest
  * boundary, and the site learns of the episode when the timer reads the
  * show's feed. The `host` record itself is read through the existing
@@ -37,7 +37,7 @@
  * ADR 0029 §2a; speech-licence.js). A transcript whose audio was rendered on
  * the free plan is answered 409 with the licence and the upgrade named, and
  * nothing is written: the status stays draft, so no job is queued and nothing
- * reaches RSS.com. The retry route refuses the same way. Withdrawing to
+ * reaches Podbean. The retry route refuses the same way. Withdrawing to
  * draft is never refused.
  */
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
@@ -53,7 +53,7 @@ import {
   recordScheduleFailure,
   scheduleHostPublish,
 } from './publish-transcript.js';
-import { isConfigured as hostIsConfigured } from './rsscom.js';
+import { isConfigured as hostIsConfigured } from './podbean.js';
 import { freePlanRefusal } from './speech-licence.js';
 import {
   STATUS,
@@ -118,7 +118,7 @@ function retryRefusal(doc, { id, context }) {
     return json(409, {
       error:
         `Podcast transcript ${id} is ${doc.status || 'not published'}; ` +
-        'approve it first — publishing to RSS.com is what approval does.',
+        'approve it first — publishing to Podbean is what approval does.',
     });
   }
   return licenceRefusal(doc, context, 'publishPodcastTranscript');
@@ -130,7 +130,7 @@ function retryRefusal(doc, { id, context }) {
  * @param {{ queryDocs: Function, readDoc: Function, upsertDoc: Function, patchDoc: Function }} deps.store
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
- * @param {() => { ok: boolean, reason?: string }} [deps.hostConfigured] `isConfigured` for RSS.com; injected for tests
+ * @param {() => { ok: boolean, reason?: string }} [deps.hostConfigured] `isConfigured` for Podbean; injected for tests
  */
 export function createPodcastHandlers({
   guard,
@@ -354,7 +354,7 @@ export function createPodcastHandlers({
               status: null,
               code: 'SCHEDULE_FAILED',
               message:
-                'The approval was saved, but the RSS.com publish could not be queued; use Publish to retry.',
+                'The approval was saved, but the Podbean publish could not be queued; use Publish to retry.',
               retryable: true,
             },
           },

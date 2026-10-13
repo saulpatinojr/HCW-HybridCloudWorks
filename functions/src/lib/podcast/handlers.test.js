@@ -24,7 +24,7 @@ const CONFIGURED = { ok: true, podcastId: '4242' };
 const NOT_CONFIGURED = {
   ok: false,
   reason:
-    'RSS.com publishing is not configured: RSSCOM_API_KEY (Key Vault secret RSSCOM-API-KEY) is not set, so episodes stay on the manual upload path.',
+    'Podbean publishing is not configured: PODBEAN_CLIENT_SECRET (Key Vault secret PODBEAN-CLIENT-SECRET) is not set, so episodes stay on the manual upload path.',
 };
 
 const USER = { oid: 'oid-1', email: 'editor@example.test' };
@@ -304,7 +304,7 @@ describe('getTranscript', () => {
   it('carries the host record, on the detail and in the listing allowlist, so the hub can read it', async () => {
     // The hub reads `host` to say published / publishing… / not configured /
     // failed. It is a stored field; no separate route is needed for it.
-    const host = { rsscom: { episodeId: 9001, pending: false, error: null } };
+    const host = { podbean: { episodeId: 'IWPNG2FB3F', pending: false, error: null } };
     const store = makeStore({ readDoc: vi.fn(async () => transcript({ host })) });
     const res = await handlers(store).getTranscript(
       makeRequest({ params: { id: 'article_x' } }),
@@ -386,7 +386,7 @@ describe('reviewTranscript', () => {
     expect(patches).toHaveLength(2);
     expect(patches[0]).toHaveProperty('status', 'published');
     expect(patches[1]).toEqual({
-      host: { rsscom: { pending: true, jobId: 'job-1', queuedAt: NOW.toISOString() } },
+      host: { podbean: { pending: true, jobId: 'job-1', queuedAt: NOW.toISOString() } },
     });
   });
 
@@ -407,7 +407,7 @@ describe('reviewTranscript', () => {
     });
     const patches = transcriptPatches(store);
     expect(patches[0]).toMatchObject({ status: 'published', approvedBy: 'oid-1' });
-    expect(patches[1].host.rsscom.skipped).toBe('not_configured');
+    expect(patches[1].host.podbean.skipped).toBe('not_configured');
     expect(patches[1]).not.toHaveProperty('status');
     expect(enqueue).not.toHaveBeenCalled();
     expect(store.upsertDoc).not.toHaveBeenCalled();
@@ -430,8 +430,8 @@ describe('reviewTranscript', () => {
     // The status patch succeeds; the job write fails. The approval happened
     // and must be reported as such — and stored, so a refreshed hub shows
     // the failure and the retry rather than the stale host record.
-    const previous = { episodeId: 9001, guid: 'g', audioPath: 'article/x.mp3', error: null };
-    const store = storeWith(transcript({ host: { rsscom: { ...previous, skipped: 'no_audio' } } }), {
+    const previous = { episodeId: 'IWPNG2FB3F', fileKey: 'k', audioPath: 'article/x.mp3', error: null };
+    const store = storeWith(transcript({ host: { podbean: { ...previous, skipped: 'no_audio' } } }), {
       upsertDoc: vi.fn(async () => {
         throw new Error('jobs container down');
       }),
@@ -448,7 +448,7 @@ describe('reviewTranscript', () => {
     expect(patches[0]).toMatchObject({ status: 'published', approvedBy: 'oid-1' });
     expect(patches[1]).toEqual({
       host: {
-        rsscom: {
+        podbean: {
           ...previous,
           lastAttemptAt: NOW.toISOString(),
           error: {
@@ -494,7 +494,7 @@ describe('reviewTranscript', () => {
       const body = JSON.parse(res.body);
       expect(body.code).toBe('FREE_PLAN_LICENCE');
       expect(body.error).toMatch(/rendered on the ElevenLabs free plan, which has no commercial licence/);
-      expect(body.error).toMatch(/not published to RSS\.com/);
+      expect(body.error).toMatch(/not published to Podbean/);
       expect(body.error).toMatch(/Upgrade to a paid ElevenLabs plan \(https:\/\/elevenlabs\.io\/pricing\)/);
       // No status write, no job, no queue message: the transcript stays a draft.
       expect(store.patchDoc).not.toHaveBeenCalled();
@@ -612,9 +612,9 @@ describe('publishTranscript — the retry', () => {
   });
 
   it('re-runs the host step for a published transcript that already has an episode, keeping its id under the pending marker', async () => {
-    const previous = { episodeId: 9001, guid: 'g', hostStatus: 'published', error: null };
+    const previous = { episodeId: 'IWPNG2FB3F', fileKey: 'k', hostStatus: 'publish', error: null };
     const store = storeWith(
-      transcript({ status: STATUS.published, host: { rsscom: { ...previous, error: { code: 'TIMEOUT' } } } })
+      transcript({ status: STATUS.published, host: { podbean: { ...previous, error: { code: 'TIMEOUT' } } } })
     );
     const enqueue = vi.fn();
     const res = await retry(store, { enqueue });
@@ -661,7 +661,7 @@ describe('publishTranscript — the retry', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
-  it('answers 200 with the skip when RSS.com is not configured or the transcript has no audio', async () => {
+  it('answers 200 with the skip when Podbean is not configured or the transcript has no audio', async () => {
     const enqueue = vi.fn();
     let res = await retry(storeWith(transcript({ status: STATUS.published })), {
       enqueue,
@@ -677,7 +677,7 @@ describe('publishTranscript — the retry', () => {
   });
 
   it('409s while a publish job for the transcript is still in flight, naming it', async () => {
-    const doc = transcript({ status: STATUS.published, host: { rsscom: { pending: true, jobId: 'job-old' } } });
+    const doc = transcript({ status: STATUS.published, host: { podbean: { pending: true, jobId: 'job-old' } } });
     const store = makeStore({
       readDoc: vi.fn(async (container, id) => {
         if (container === TRANSCRIPT_CONTAINER) return doc;

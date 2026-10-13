@@ -68,11 +68,11 @@ export const DIRECTORY = Object.freeze([
     docsUrl: 'https://resend.com/docs',
   },
   {
-    id: 'rsscom',
+    id: 'podbean',
     category: 'communication',
     summary: 'Podcast hosting and distribution.',
     powers: 'Publishing approved podcast episodes to the show feed.',
-    docsUrl: null,
+    docsUrl: 'https://developers.podbean.com/podbean-api-docs/',
   },
   {
     id: 'streamyard',

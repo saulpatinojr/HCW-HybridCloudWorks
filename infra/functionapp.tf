@@ -529,7 +529,7 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     "AZURE_SPEECH_REGION" = var.speech_region
 
     # ELEVENLABS_API_KEY is the PODCAST voice — article and Plaud transcripts
-    # to RSS.com — and only that: the owner approved a paid ElevenLabs plan on
+    # to Podbean — and only that: the owner approved a paid ElevenLabs plan on
     # 2026-09-08 (ADR 0029 §2a, #436) and scoped it on 2026-09-09 (§2b). About
     # USD 0.10 per 1,000 characters. The reference is versionless like every
     # other one here, and App Service caches a versionless reference for the
@@ -561,15 +561,18 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # newsletter_sending_enabled, so approving refuses before Resend is called.
     "NEWSLETTER_SENDING_ENABLED" = var.newsletter_sending_enabled ? "true" : "false"
 
-    # Podcast publishing to RSS.com over its Core API (#437, ADR 0029 §1b). The
-    # key is issued at https://dashboard.rss.com/api-access/ on the Max plan;
-    # the PODCAST_ID is the numeric `id` that `GET /v4/podcasts` returns for
-    # the show and is the path segment on every episode call, so it travels
-    # with the key like the Publer workspace id does. Unseeded, readKey() sees
-    # the unresolved reference as "not configured" and approving an episode
-    # leaves it on the manual dashboard-upload path rather than failing.
-    "RSSCOM_API_KEY"    = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/RSSCOM-API-KEY)"
-    "RSSCOM_PODCAST_ID" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/RSSCOM-PODCAST-ID)"
+    # Podcast publishing to Podbean (#437, ADR 0029 §1b, §1c — the show moved
+    # there on 2026-10-13). Both values come from a developer app created at
+    # https://developers.podbean.com/: the client ID is an identifier and the
+    # client secret the credential, and lib/podcast/podbean.js exchanges the
+    # pair for an access token (client credentials, POST /v1/oauth/token) on
+    # each run. The Integrations page checks them with GET /v1/podcast. They
+    # travel together like the Publer workspace id and key. Unseeded,
+    # readKey() sees the unresolved reference as "not configured" and
+    # approving an episode leaves it on the manual upload path rather than
+    # failing.
+    "PODBEAN_CLIENT_ID"     = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/PODBEAN-CLIENT-ID)"
+    "PODBEAN_CLIENT_SECRET" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/PODBEAN-CLIENT-SECRET)"
 
     # StreamYard On-Air webinar integration (lib/streamyard/onair.js). Issued in
     # StreamYard under Team settings -> Integrations -> Zapier -> Generate API key.

@@ -1,11 +1,11 @@
 /**
- * speech-licence.js: whether a transcript's audio may go to RSS.com under
+ * speech-licence.js: whether a transcript's audio may go to Podbean under
  * the licence it was rendered with (ADR 0029 §2a, amended 2026-09-26).
  *
  * ## The rule
  *
  * Owner decision 2026-09-26: "Test only, block publish". An episode whose
- * audio ElevenLabs rendered on the FREE plan is never pushed to RSS.com.
+ * audio ElevenLabs rendered on the FREE plan is never pushed to Podbean.
  * ElevenLabs' terms for that plan: it "does not include a commercial license
  * and cannot be used for any commercial purpose", and anything published from
  * it must carry "elevenlabs.io" or "11.ai" in its title
@@ -75,7 +75,7 @@ export function freePlanRefusal(doc) {
       : 'by ElevenLabs on a plan that was not recorded';
   return (
     `This episode's audio was rendered ${plan}, which has no commercial licence and cannot be used ` +
-    `for any commercial purpose (${FREE_PLAN_LICENCE_URL}), so it is not published to RSS.com ` +
+    `for any commercial purpose (${FREE_PLAN_LICENCE_URL}), so it is not published to Podbean ` +
     `(owner decision 2026-09-26, ADR 0029 §2a). Upgrade to a paid ElevenLabs plan ` +
     `(${ELEVENLABS_PRICING_URL}), regenerate the audio, then approve again.`
   );

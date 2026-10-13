@@ -7,7 +7,7 @@
  * The other routes are the fast half — reading what was generated, and
  * approving it. The page that presents them is the Recording Hub (#442).
  *
- * Approval publishes to RSS.com (#437, ADR 0029 §1b) — through a second job,
+ * Approval publishes to Podbean (#437, ADR 0029 §1b) — through a second job,
  * `publish-podcast-transcript`, for the same reason: an MP3 upload and an
  * episode create can take tens of seconds, and the client's own deadlines
  * sum past the HTTP budget. So the review route and the retry route both

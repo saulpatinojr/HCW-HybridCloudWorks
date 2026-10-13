@@ -91,7 +91,7 @@ export function PodcastFeedsCard({ value, onChange, onSave, saving, meta }) {
               value={value?.mainFeedUrl ?? ''}
               disabled={saving}
               spellCheck={false}
-              placeholder="https://media.rss.com/…/feed.xml"
+              placeholder="https://podcast.hybridcloudworks.com/feed.xml"
               onChange={(event) => update({ mainFeedUrl: event.target.value })}
               className="font-mono text-xs"
             />

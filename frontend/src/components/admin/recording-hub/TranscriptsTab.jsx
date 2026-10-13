@@ -2,7 +2,7 @@
  * Transcripts — review and approval (#576).
  *
  * The podcast pipeline's output from published articles (#435) and from
- * recordings (#434), each row carrying where it came from and what the RSS.com
+ * recordings (#434), each row carrying where it came from and what the Podbean
  * host has done with it. Approving one here is what queues that publish, which
  * is why the list is the hub's, not this tab's: Distribution shows the other
  * side of the same record.

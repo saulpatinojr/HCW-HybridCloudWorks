@@ -3,7 +3,7 @@
  *
  * The hub is organised by duty now, and two of those duties are two views of
  * one list: approving a transcript on **Transcripts** is what queues its
- * publish to RSS.com, which is the only thing **Distribution** has to show. A
+ * publish to Podbean, which is the only thing **Distribution** has to show. A
  * per-tab read would let them disagree about the same transcript, so this
  * lives at page level the way CertificationsPage owns useCertifications and
  * ListenAndLearnPage owns useListenAndLearn.
@@ -192,7 +192,7 @@ function hostNoteFor(res) {
   // answers 202 with `jobId` (and `host.pending`) while the host publish it
   // queued is in flight, 200 when there was nothing to queue.
   const host = res?.host && typeof res.host === 'object' ? res.host : null;
-  if (res?.jobId) return ` Publishing to RSS.com (job ${res.jobId}).`;
+  if (res?.jobId) return ` Publishing to Podbean (job ${res.jobId}).`;
   if (host?.skipped) return ` Host publish skipped: ${describeSkip(host)}.`;
   return '';
 }

@@ -96,14 +96,14 @@ export function readFileAsBase64(file) {
  */
 export const SKIP_PHRASES = Object.freeze({
   not_configured:
-    'RSS.com is not configured (RSSCOM_API_KEY / RSSCOM_PODCAST_ID are not seeded), so nothing was sent',
-  no_audio: 'the transcript has no audio, so nothing was sent to RSS.com',
+    'Podbean is not configured (PODBEAN_CLIENT_ID / PODBEAN_CLIENT_SECRET are not seeded), so nothing was sent',
+  no_audio: 'the transcript has no audio, so nothing was sent to Podbean',
   not_published: 'the transcript was returned to draft before the publish ran',
   // ElevenLabs free-plan audio has no commercial licence (owner decision
   // 2026-09-26, ADR 0029 §2a). Approval refuses it with 409 before a job is
   // queued; this is the job's own skip, for a document published otherwise.
   free_plan_licence:
-    'the audio was rendered on the ElevenLabs free plan, which has no commercial licence, so nothing was sent to RSS.com',
+    'the audio was rendered on the ElevenLabs free plan, which has no commercial licence, so nothing was sent to Podbean',
 });
 
 /**
@@ -140,7 +140,7 @@ const HOST_STATES = Object.freeze([
 ]);
 
 export function hostState(item) {
-  const host = item?.host?.rsscom;
+  const host = item?.host?.podbean;
   if (!host || typeof host !== 'object') return 'none';
   return HOST_STATES.find(([, holds]) => holds(host))?.[0] ?? 'none';
 }

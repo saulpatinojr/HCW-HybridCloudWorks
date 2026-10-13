@@ -45,7 +45,7 @@ const BACKEND_TERMS = Object.freeze({
   apiHost: /azure functions?\b|function app|static web apps?\b/i,
   stores: /cosmos|key ?vault/i,
   ai: /gemini|openai|anthropic|nvidia|\b(?:gpt|claude)-\d/i,
-  vendors: /elevenlabs|rss\.com|publer|\bresend\b|hostinger/i,
+  vendors: /elevenlabs|rss\.com|podbean|publer|\bresend\b|hostinger/i,
   pipeline: /github app\b|github actions|\bTFC\b|hcp terraform/i,
   labHost: /\bvps\b/i,
   // The runner behind "Validate on the lab" and what its job log shows: never

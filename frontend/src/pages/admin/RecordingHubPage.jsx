@@ -12,7 +12,7 @@
  *                 add audio — with "Script this" on each
  *   Transcripts   what the pipeline produced, with review and approval
  *   Episodes      what is live on the show, read from the public feed
- *   Distribution  what this hub sent to RSS.com and how it went, failures first
+ *   Distribution  what this hub sent to Podbean and how it went, failures first
  *   Settings      the Plaud connection, the refresh timer's record, and links
  *                 to the settings this hub reads but does not own
  *
@@ -25,7 +25,7 @@
  *
  * The transcript list is read once, here, because Transcripts and Distribution
  * are two views of it: approving a transcript is exactly what creates the
- * RSS.com record Distribution shows (useRecordingHub). /admin/recordings
+ * Podbean record Distribution shows (useRecordingHub). /admin/recordings
  * redirects here.
  */
 import React from 'react';
@@ -71,9 +71,9 @@ const HEADER_STATE = Object.freeze({
 
 const HELP = [
   'Recordings: the live Plaud library (once Plaud is connected on Settings), what this site stores, and two ways to add audio by hand. Script this queues a podcast script; Create Content drafts an article from the transcript and opens it in the Editor.',
-  'Transcripts: what the pipeline produced. Approve one and it is published to RSS.com.',
+  'Transcripts: what the pipeline produced. Approve one and it is published to Podbean.',
   'Episodes: what is live on the show, read from the public feed.',
-  'Distribution: every send to RSS.com and how it went, failures first, each with Retry.',
+  'Distribution: every send to Podbean and how it went, failures first, each with Retry.',
   'Settings: the Plaud OAuth token, the refresh timer’s record, and links to the voice and licence settings this hub reads but does not own.',
 ];
 

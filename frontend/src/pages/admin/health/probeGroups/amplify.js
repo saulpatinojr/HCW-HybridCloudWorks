@@ -48,11 +48,11 @@ export const AMPLIFY_PROBES = [
     href: INTEGRATIONS('communication'),
     evaluate: evaluateTelegramNotify,
   }),
-  fromService('rsscom', {
+  fromService('podbean', {
     hub: 'amplify',
     covers: 'Podcast hosting and episode publishing.',
-    impact: 'Episodes have to be uploaded by hand.',
-    action: 'Rotate the key on Keys.',
+    impact: 'Episodes have to be published by hand in Podbean.',
+    action: 'Rotate the client secret on Keys.',
   }),
   fromService('streamyard', {
     hub: 'amplify',

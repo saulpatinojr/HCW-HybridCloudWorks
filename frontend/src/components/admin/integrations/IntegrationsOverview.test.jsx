@@ -186,7 +186,7 @@ describe('Test all', () => {
         'resend',
         'linkieProxy',
         'telegram',
-        'rsscom',
+        'podbean',
         'mcpProxy',
         // ADR 0033: the four language models, then the two AI-service probes.
         'testAiProvider',

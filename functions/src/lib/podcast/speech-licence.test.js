@@ -58,7 +58,7 @@ describe('freePlanRefusal', () => {
     expect(sentence).toMatch(/rendered on the ElevenLabs free plan/);
     expect(sentence).toMatch(/no commercial licence and cannot be used for any commercial purpose/);
     expect(sentence).toContain(FREE_PLAN_LICENCE_URL);
-    expect(sentence).toMatch(/not published to RSS\.com/);
+    expect(sentence).toMatch(/not published to Podbean/);
     expect(sentence).toMatch(/Upgrade to a paid ElevenLabs plan/);
     expect(sentence).toContain(ELEVENLABS_PRICING_URL);
     expect(sentence).toMatch(/regenerate the audio, then approve again\.$/);
