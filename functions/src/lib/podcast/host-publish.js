@@ -239,7 +239,13 @@ function normaliseAudio(result) {
   return { bytes, contentType: result.contentType || DEFAULT_AUDIO_MIME };
 }
 
-function toRecordedError(error) {
+/**
+ * A failure as a document records it: `{ status, code, message, retryable }`,
+ * never the Error itself. Exported so the hub's reads (host-reads.js,
+ * host-stats.js) record a failed Podbean call in the one shape the hub
+ * already renders.
+ */
+export function toRecordedError(error) {
   if (error instanceof PodbeanError) {
     return {
       status: error.status ?? null,

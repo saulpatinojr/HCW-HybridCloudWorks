@@ -44,6 +44,13 @@
  * nothing is written: the status stays draft, so no job is queued and nothing
  * reaches Podbean. The retry route refuses the same way. Withdrawing to
  * draft is never refused.
+ *
+ * The host overview (#1115) is the one read here that goes to Podbean rather
+ * than to Cosmos: what Podbean says now about the episodes the records name,
+ * and their downloads (host-reads.js). `editor`, like the list. Without the
+ * Podbean settings it answers 200 `{ configured: false, reason }` and calls
+ * nothing, the way the ElevenLabs card does; with them, a cached overview
+ * unless `?refresh=1`.
  */
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
 import {
@@ -58,7 +65,8 @@ import {
   recordScheduleFailure,
   scheduleHostPublish,
 } from './publish-transcript.js';
-import { isConfigured as hostIsConfigured } from './podbean.js';
+import { createPodbeanClient, isConfigured as hostIsConfigured } from './podbean.js';
+import { readHostOverview } from './host-reads.js';
 import { freePlanRefusal } from './speech-licence.js';
 import {
   STATUS,
@@ -136,6 +144,7 @@ function retryRefusal(doc, { id, context }) {
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
  * @param {() => { ok: boolean, reason?: string }} [deps.hostConfigured] `isConfigured` for Podbean; injected for tests
+ * @param {() => object} [deps.hostClient] a Podbean client for the overview; injected for tests
  */
 export function createPodcastHandlers({
   guard,
@@ -143,6 +152,7 @@ export function createPodcastHandlers({
   now = () => new Date(),
   uuid = () => crypto.randomUUID(),
   hostConfigured = () => hostIsConfigured(),
+  hostClient = () => createPodbeanClient(),
 }) {
   /**
    * Queue or skip the host step for one published transcript and shape the
@@ -243,6 +253,45 @@ export function createPodcastHandlers({
       } catch (error) {
         context.error('listPodcastTranscripts failed:', error);
         return json(500, { error: 'Failed to list podcast transcripts' });
+      }
+    },
+
+    /**
+     * GET /api/cms/podcast/host/overview[?refresh=1] — what Podbean says now
+     * about the show and its episodes, joined to the transcripts that
+     * published them, with each episode's downloads over the last thirty
+     * days (host-reads.js). Served from `admin_config/podbean_host_overview`
+     * while that is under fifteen minutes old unless `refresh=1`, and a
+     * refresh still serves it while it is under a minute old, so refresh
+     * traffic from every session together is one live read a minute. The
+     * cached document is keyed to the Podbean account. Without the Podbean
+     * settings, 200 `{ configured: false, reason }` and no call.
+     */
+    async getHostOverview(request, context) {
+      const auth = await guard.requireRole(request, 'editor');
+      if (auth.error) return auth.error;
+      try {
+        const configured = hostConfigured();
+        if (!configured.ok) {
+          return json(200, { success: true, configured: false, reason: configured.reason });
+        }
+        const refresh = request.query?.get?.('refresh') === '1';
+        const overview = await readHostOverview({
+          client: hostClient(),
+          store,
+          now,
+          refresh,
+          log: context.log,
+        });
+        // Counts and codes only: the rows carry episode titles.
+        context.log?.(
+          `getPodcastHostOverview: ${overview.cached ? 'cached' : 'live'}, ${overview.episodes.length} rows, ` +
+            `${Object.keys(overview.errors || {}).join(',') || 'no'} errors`
+        );
+        return json(200, { success: true, configured: true, ...overview });
+      } catch (error) {
+        context.error(`getPodcastHostOverview failed: ${error?.code || 'UNEXPECTED'}`);
+        return json(500, { error: 'Failed to read the host overview' });
       }
     },
 

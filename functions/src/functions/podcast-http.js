@@ -23,7 +23,7 @@
 import { output } from '@azure/functions';
 import { httpRoute } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
-import { queryDocs, readDoc, upsertDoc, patchDoc } from '../lib/cosmos-client.js';
+import { queryDocs, readDoc, upsertDoc, patchDoc, replaceDocIfMatch, createDoc } from '../lib/cosmos-client.js';
 import { headBlobForDelivery, uploadBlob } from '../lib/blob-storage.js';
 import { getCostEstimate, modelForTask } from '../lib/ai/router.js';
 import { JOBS_QUEUE } from '../lib/jobs.js';
@@ -38,7 +38,7 @@ const queueOutput = output.storageQueue({
 const handlers = () =>
   createPodcastHandlers({
     guard: getDefaultGuard(),
-    store: { queryDocs, readDoc, upsertDoc, patchDoc },
+    store: { queryDocs, readDoc, upsertDoc, patchDoc, replaceDocIfMatch, createDoc },
   });
 
 httpRoute('generatePodcastTranscript', {
@@ -81,6 +81,17 @@ httpRoute('listPodcastTranscripts', {
   authLevel: 'anonymous',
   route: 'cms/podcast/transcripts',
   handler: (request, context) => handlers().listTranscripts(request, context),
+});
+
+// What Podbean says now about the show and the episodes the records name,
+// with thirty days of downloads each (#1115, lib/podcast/host-reads.js).
+// Cached fifteen minutes in admin_config/podbean_host_overview; `?refresh=1`
+// reads live. "Not configured" is a 200, not an error.
+httpRoute('getPodcastHostOverview', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'cms/podcast/host/overview',
+  handler: (request, context) => handlers().getHostOverview(request, context),
 });
 
 // Registered after the literal `generate` and `review` routes so the static

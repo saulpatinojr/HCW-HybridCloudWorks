@@ -105,7 +105,69 @@ const transcripts = [
       },
     },
   },
+  {
+    id: 'article_live',
+    sourceKind: 'article',
+    sourceId: 'content-4',
+    sourceSlug: 'live-on-the-host',
+    sourceTitle: 'Live on the host',
+    sourceProvider: 'azure',
+    title: 'Out on the show',
+    status: 'published',
+    truncated: false,
+    audioUrl: null,
+    audioError: null,
+    generatedAt: '2026-09-08T16:00:00.000Z',
+    host: {
+      podbean: {
+        episodeId: 'EP-LIVE',
+        permalinkUrl: 'https://podcast.hybridcloudworks.com/e/recorded-at-publish/',
+        hostStatus: 'publish',
+        publishedAt: '2026-09-08T16:05:00.000Z',
+      },
+    },
+  },
 ];
+
+/** What `cms/podcast/host/overview` answers: the live row for the published fixture, and one the hub never sent. */
+const hostOverview = {
+  success: true,
+  configured: true,
+  cached: true,
+  fetchedAt: '2026-09-08T17:00:00.000Z',
+  days: 30,
+  range: { start: '2026-08-10', end: '2026-09-08' },
+  show: { id: 'p1', title: 'Hybrid Cloud Insights', logo: null, website: null },
+  episodes: [
+    {
+      transcriptId: 'article_live',
+      episodeId: 'EP-LIVE',
+      title: 'Out on the show',
+      hostStatus: 'draft',
+      permalinkUrl: 'https://podcast.hybridcloudworks.com/e/out-on-the-show/',
+      publishTime: '2026-09-08T16:05:00.000Z',
+      downloads: { total: 42, byDay: { '2026-09-07': 40, '2026-09-08': 2 } },
+      error: null,
+    },
+    {
+      transcriptId: null,
+      episodeId: 'EP-HAND',
+      title: 'Published by hand',
+      hostStatus: 'publish',
+      permalinkUrl: 'https://podcast.hybridcloudworks.com/e/by-hand/',
+      publishTime: '2026-08-01T10:00:00.000Z',
+      downloads: null,
+      error: {
+        status: 429,
+        code: 'UPSTREAM',
+        message: 'Podbean answered 429 while reading download statistics.',
+        retryable: true,
+      },
+    },
+  ],
+  downloadsCapped: 0,
+  errors: {},
+};
 
 const detail = {
   ...transcripts[1],
@@ -125,9 +187,19 @@ const detail = {
 };
 
 /** The routes the page reads on mount and on demand. */
-function routeGets({ items = transcripts, connected = true, stored = [], plaudRefresh = {} } = {}) {
+function routeGets({
+  items = transcripts,
+  connected = true,
+  stored = [],
+  plaudRefresh = {},
+  overview = hostOverview,
+} = {}) {
   getJSON.mockImplementation(async (route) => {
     if (route === 'cms/podcast/transcripts') return { success: true, items, total: items.length };
+    if (route.startsWith('cms/podcast/host/overview')) {
+      if (overview instanceof Error) throw overview;
+      return overview;
+    }
     if (route.startsWith('cms/podcast/transcripts/')) return { success: true, item: detail };
     if (route === 'public/podcasts?provider=main') {
       return {
@@ -386,7 +458,8 @@ describe('Podcast tab', () => {
     expect(screen.getByText('plaud')).toBeInTheDocument();
     expect(screen.getByText('Landing zone review')).toBeInTheDocument();
     expect(screen.getByText('audio failed')).toBeInTheDocument();
-    expect(screen.getAllByText('published')).toHaveLength(2);
+    // Three: the failed host publish, the pending one, and the one live on Podbean (#1115).
+    expect(screen.getAllByText('published')).toHaveLength(3);
 
     // The episodes moved to their own tab in #576, and are asserted there.
     expect(screen.queryByText('Episode one')).not.toBeInTheDocument();
@@ -729,5 +802,81 @@ describe('Distribution tab', () => {
       'href',
       'https://podcast.hybridcloudworks.com/feed.xml'
     );
+  });
+});
+
+describe('Distribution tab — the Podbean overview (#1115)', () => {
+  it('reads the overview once Distribution mounts, and not for the other tabs', async () => {
+    renderPage('transcripts');
+    await screen.findByText('State backends, spoken');
+    expect(
+      getJSON.mock.calls.filter(([r]) => r.startsWith('cms/podcast/host/overview'))
+    ).toHaveLength(0);
+    openTab('Distribution');
+    await screen.findByText(/Podbean read/);
+    expect(getJSON).toHaveBeenCalledWith('cms/podcast/host/overview');
+  });
+
+  it('shows Podbean’s live status, the episode page and the downloads under the published record', async () => {
+    renderPage('distribution');
+    const published = await screen.findByRole('region', { name: 'Published to Podbean' });
+    // The record line says what the publish job saw; the Podbean line says what is true now.
+    expect(
+      within(published).getByText('Host: Published to Podbean', { exact: false })
+    ).toBeInTheDocument();
+    expect(within(published).getByText('Draft on Podbean')).toBeInTheDocument();
+    expect(within(published).getByRole('link', { name: /Episode page/ })).toHaveAttribute(
+      'href',
+      'https://podcast.hybridcloudworks.com/e/out-on-the-show/'
+    );
+    expect(within(published).getByText('42 downloads, last 30 days')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/Podbean read .*\(cached\)/);
+  });
+
+  it('lists the episodes the show has that this hub never sent, with their own read failure', async () => {
+    renderPage('distribution');
+    const also = await screen.findByRole('region', { name: 'Also on Podbean' });
+    expect(within(also).getByText('Published by hand')).toBeInTheDocument();
+    expect(within(also).getByText('Live')).toBeInTheDocument();
+    expect(
+      within(also).getByText('Podbean answered 429 while reading download statistics.')
+    ).toBeInTheDocument();
+    expect(within(also).queryByText(/downloads, last/)).not.toBeInTheDocument();
+  });
+
+  it('Refresh asks the route for a live read', async () => {
+    renderPage('distribution');
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh from Podbean' }));
+    await waitFor(() =>
+      expect(getJSON).toHaveBeenCalledWith('cms/podcast/host/overview?refresh=1')
+    );
+  });
+
+  it('says so when Podbean is not configured, and shows no live line', async () => {
+    routeGets({
+      overview: {
+        success: true,
+        configured: false,
+        reason: 'Podbean publishing is not configured: PODBEAN_CLIENT_SECRET is not set.',
+      },
+    });
+    renderPage('distribution');
+    expect(
+      await screen.findByText(
+        'Podbean publishing is not configured: PODBEAN_CLIENT_SECRET is not set.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/downloads, last/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Also on Podbean' })).not.toBeInTheDocument();
+  });
+
+  it('a failed overview read is an alert, with the records still listed', async () => {
+    routeGets({ overview: new Error('overview failed with HTTP 502') });
+    renderPage('distribution');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not read Podbean: overview failed with HTTP 502'
+    );
+    expect(screen.getByRole('region', { name: 'Published to Podbean' })).toBeInTheDocument();
+    expect(screen.queryByText(/downloads, last/)).not.toBeInTheDocument();
   });
 });

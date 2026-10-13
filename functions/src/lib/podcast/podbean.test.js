@@ -673,3 +673,184 @@ describe('no credential leaves the client', () => {
     expect(error.detail).toBe('invalid_request: saw ?access_token=***');
   });
 });
+
+describe('the reads (#1115)', () => {
+  const RANGE = { start: '2026-09-14', end: '2026-10-13' };
+  const path = (url) => {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  };
+  const params = (url) => Object.fromEntries(new URL(url).searchParams);
+
+  it('getEpisode GETs /v1/episodes/{id} with the id encoded and nothing but the token beside it', async () => {
+    const { client, lastCall } = build({ responses: [tokenReply(), reply(200, EPISODE)] });
+    expect(await client.getEpisode('IWPNG2FB3F')).toEqual(EPISODE);
+    const { url, init } = lastCall();
+    expect(path(url)).toBe(`${PODBEAN_API_BASE_URL}/episodes/IWPNG2FB3F`);
+    expect(params(url)).toEqual({ access_token: TOKEN });
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+  });
+
+  it('getEpisode refuses an empty id before any call', async () => {
+    const { client, fetchImpl } = build();
+    for (const bad of ['', '   ', null, undefined, 42]) {
+      const error = await client.getEpisode(bad).catch((e) => e);
+      expect(error).toBeInstanceOf(PodbeanError);
+      expect(error.code).toBe('VALIDATION');
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('getDownloadStats sends start, end, period and episode_id under the documented names', async () => {
+    const byDay = { '2026-10-10': 1, '2026-10-11': 10 };
+    const { client, lastCall } = build({ responses: [tokenReply(), reply(200, byDay)] });
+    expect(await client.getDownloadStats({ ...RANGE, period: 'd', episodeId: 'IWPNG2FB3F' })).toEqual(
+      byDay
+    );
+    const { url } = lastCall();
+    expect(path(url)).toBe(`${PODBEAN_API_BASE_URL}/podcastStats/stats`);
+    expect(params(url)).toEqual({
+      access_token: TOKEN,
+      start: '2026-09-14',
+      end: '2026-10-13',
+      period: 'd',
+      episode_id: 'IWPNG2FB3F',
+    });
+  });
+
+  it('getDownloadStats without an episode is the whole show: no episode_id, period d by default', async () => {
+    const { client, lastCall } = build({ responses: [tokenReply(), reply(200, {})] });
+    await client.getDownloadStats(RANGE);
+    expect(params(lastCall().url)).toEqual({
+      access_token: TOKEN,
+      start: '2026-09-14',
+      end: '2026-10-13',
+      period: 'd',
+    });
+  });
+
+  it('countries, platforms and sources GET their own paths with the same range', async () => {
+    for (const [method, segment] of [
+      ['getCountryStats', 'countries'],
+      ['getPlatformStats', 'platforms'],
+      ['getSourceStats', 'sources'],
+    ]) {
+      const answer = { US: 4026, GH: 1429 };
+      const { client, lastCall } = build({ responses: [tokenReply(), reply(200, answer)] });
+      expect(await client[method]({ ...RANGE, period: 'm' }), method).toEqual(answer);
+      const { url, init } = lastCall();
+      expect(path(url), method).toBe(`${PODBEAN_API_BASE_URL}/podcastStats/${segment}`);
+      expect(params(url), method).toEqual({
+        access_token: TOKEN,
+        start: '2026-09-14',
+        end: '2026-10-13',
+        period: 'm',
+      });
+      expect(init.method).toBe('GET');
+    }
+  });
+
+  it('refuses a malformed, impossible or reversed date range and a period outside d|m before any call', async () => {
+    const { client, fetchImpl } = build();
+    const cases = [
+      { start: '2026-9-1', end: '2026-10-13' },
+      { start: '2026-09-01T00:00:00Z', end: '2026-10-13' },
+      { start: '2026-02-30', end: '2026-10-13' },
+      { start: '2026-10-13', end: '2026-09-01' },
+      { start: '2026-09-01', end: null },
+      { ...RANGE, period: 'w' },
+      { ...RANGE, period: 'day' },
+    ];
+    for (const method of ['getDownloadStats', 'getCountryStats', 'getPlatformStats', 'getSourceStats']) {
+      for (const args of cases) {
+        const error = await client[method](args).catch((e) => e);
+        expect(error, `${method} ${JSON.stringify(args)}`).toBeInstanceOf(PodbeanError);
+        expect(error.code, `${method} ${JSON.stringify(args)}`).toBe('VALIDATION');
+        expect(error.retryable).toBe(false);
+        expect(error.status).toBeNull();
+      }
+    }
+    const error = await client.getDownloadStats({ ...RANGE, episodeId: '' }).catch((e) => e);
+    expect(error.code).toBe('VALIDATION');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('getUserRetention GETs /v1/podcastStats/userRetention with period m by default, or w', async () => {
+    const answer = { 'Aug 04-Aug 10': [{ listeners: 12, retention: 1 }] };
+    const { client, lastCall } = build({
+      responses: [tokenReply(), reply(200, answer), reply(200, answer)],
+    });
+    expect(await client.getUserRetention()).toEqual(answer);
+    expect(path(lastCall().url)).toBe(`${PODBEAN_API_BASE_URL}/podcastStats/userRetention`);
+    expect(params(lastCall().url)).toEqual({ access_token: TOKEN, period: 'm' });
+    await client.getUserRetention({ period: 'w' });
+    expect(params(lastCall().url).period).toBe('w');
+    const error = await client.getUserRetention({ period: 'd' }).catch((e) => e);
+    expect(error.code).toBe('VALIDATION');
+  });
+
+  it('getAnalyticReports repeats types[] once per type, every documented type by default', async () => {
+    const answer = { followers: 3, likes: 1, comments: 0, total_episode_length: 5400 };
+    const { client, lastCall } = build({
+      responses: [tokenReply(), reply(200, answer), reply(200, answer)],
+    });
+    expect(await client.getAnalyticReports()).toEqual(answer);
+    const parsed = new URL(lastCall().url);
+    expect(`${parsed.origin}${parsed.pathname}`).toBe(
+      `${PODBEAN_API_BASE_URL}/analytics/podcastAnalyticReports`
+    );
+    expect(parsed.searchParams.getAll('types[]')).toEqual([
+      'followers',
+      'likes',
+      'comments',
+      'total_episode_length',
+    ]);
+    expect(parsed.searchParams.get('access_token')).toBe(TOKEN);
+    await client.getAnalyticReports({ types: ['followers'] });
+    expect(new URL(lastCall().url).searchParams.getAll('types[]')).toEqual(['followers']);
+  });
+
+  it('getAnalyticReports refuses an unknown or empty type list before any call', async () => {
+    const { client, fetchImpl } = build();
+    for (const types of [[], ['downloads'], ['followers', 'plays'], 'followers']) {
+      const error = await client.getAnalyticReports({ types }).catch((e) => e);
+      expect(error.code, JSON.stringify(types)).toBe('VALIDATION');
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('a refused statistics read maps like any other call: 429 is retryable UPSTREAM, 404 NOT_FOUND', async () => {
+    const { client } = build({
+      responses: [
+        tokenReply(),
+        reply(429, { error: 'rate_limit', error_description: 'slow down' }),
+        reply(404, { error: 'not_found', error_description: 'no such episode' }),
+      ],
+    });
+    const limited = await client.getDownloadStats(RANGE).catch((e) => e);
+    expect(limited.code).toBe('UPSTREAM');
+    expect(limited.status).toBe(429);
+    expect(limited.retryable).toBe(true);
+    expect(limited.detail).toBe('rate_limit: slow down');
+    expectNoCredential(limited);
+    const missing = await client.getEpisode('NOPE').catch((e) => e);
+    expect(missing.code).toBe('NOT_FOUND');
+    expect(missing.retryable).toBe(false);
+    expect(missing.message).toContain('reading the episode');
+  });
+});
+
+describe('accountKey', () => {
+  it('is sixteen hex digits of SHA-256 over the client id: not the id, not the secret, stable, and empty when not configured', () => {
+    const { client } = build();
+    expect(client.accountKey).toMatch(/^[0-9a-f]{16}$/);
+    expect(client.accountKey).not.toContain(CLIENT_ID);
+    expect(CLIENT_ID).not.toContain(client.accountKey);
+    expect(client.accountKey).not.toContain(CLIENT_SECRET);
+    expect(build().client.accountKey).toBe(client.accountKey);
+    const other = build({ env: { ...ENV, PODBEAN_CLIENT_ID: `${CLIENT_ID}x` } });
+    expect(other.client.accountKey).not.toBe(client.accountKey);
+    expect(build({ env: {} }).client.accountKey).toBe('');
+  });
+});

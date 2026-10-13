@@ -88,8 +88,27 @@ const transcript = (over = {}) => ({
   ...over,
 });
 
-const handlers = (store, guard = allowGuard, { hostConfigured = () => CONFIGURED } = {}) =>
-  createPodcastHandlers({ guard, store, now: () => NOW, uuid: () => 'job-1', hostConfigured });
+/** A Podbean client that answers an empty show; the overview tests replace parts of it. */
+const makeHostClient = (over = {}) => ({
+  getPodcast: vi.fn(async () => ({ podcast: { id: 'p1', title: 'Hybrid Cloud Insights' } })),
+  listEpisodes: vi.fn(async () => ({ episodes: [] })),
+  getDownloadStats: vi.fn(async () => ({})),
+  ...over,
+});
+
+const handlers = (
+  store,
+  guard = allowGuard,
+  { hostConfigured = () => CONFIGURED, hostClient = () => makeHostClient() } = {}
+) =>
+  createPodcastHandlers({
+    guard,
+    store,
+    now: () => NOW,
+    uuid: () => 'job-1',
+    hostConfigured,
+    hostClient,
+  });
 
 /**
  * A store holding one transcript whose `_etag` moves on every write, as
@@ -141,9 +160,10 @@ describe('auth', () => {
       h.publishTranscript(makeRequest({ params: { id: 'article_x' } }), context, {
         enqueue: vi.fn(),
       }),
+      h.getHostOverview(makeRequest(), context),
     ]);
 
-    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403]);
+    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403, 403]);
     expect(store.queryDocs).not.toHaveBeenCalled();
     expect(store.readDoc).not.toHaveBeenCalled();
     expect(store.upsertDoc).not.toHaveBeenCalled();
@@ -827,5 +847,135 @@ describe('publishTranscript — the retry', () => {
     );
     expect(res.status).toBe(500);
     expect(res.body).not.toContain('cosmos down');
+  });
+});
+
+describe('getHostOverview (#1115)', () => {
+  const overviewRequest = (refresh) => ({
+    params: {},
+    query: new URLSearchParams(refresh === undefined ? '' : `refresh=${refresh}`),
+    json: async () => {
+      throw new SyntaxError('no body');
+    },
+  });
+
+  it('is gated at editor and answers { configured: false, reason } without a call when Podbean is not set up', async () => {
+    const store = makeStore();
+    const client = makeHostClient();
+    const h = handlers(store, editorOnlyGuard, {
+      hostConfigured: () => NOT_CONFIGURED,
+      hostClient: () => client,
+    });
+    const res = await h.getHostOverview(overviewRequest(), context);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      success: true,
+      configured: false,
+      reason: NOT_CONFIGURED.reason,
+    });
+    expect(client.getPodcast).not.toHaveBeenCalled();
+    expect(client.listEpisodes).not.toHaveBeenCalled();
+    expect(store.queryDocs).not.toHaveBeenCalled();
+    expect(store.readDoc).not.toHaveBeenCalled();
+  });
+
+  it('answers the joined overview with configured: true, and serves the cache when it is fresh', async () => {
+    const cached = {
+      id: 'podbean_host_overview',
+      configScope: 'admin_config',
+      fetchedAt: new Date(NOW.getTime() - 60_000).toISOString(),
+      days: 30,
+      range: { start: '2026-08-10', end: '2026-09-08' },
+      show: { id: 'p1', title: 'Cached', logo: null, website: null },
+      episodes: [{ transcriptId: 'article_x', episodeId: 'E1', downloads: { total: 4, byDay: {} }, error: null }],
+      downloadsCapped: 0,
+      errors: {},
+    };
+    const store = makeStore({ readDoc: vi.fn(async () => cached) });
+    const client = makeHostClient();
+    const h = handlers(store, allowGuard, { hostClient: () => client });
+    const body = JSON.parse((await h.getHostOverview(overviewRequest(), context)).body);
+    expect(body).toMatchObject({ success: true, configured: true, cached: true, days: 30 });
+    expect(body.episodes[0].downloads.total).toBe(4);
+    expect(body).not.toHaveProperty('configScope');
+    expect(client.listEpisodes).not.toHaveBeenCalled();
+    expect(store.readDoc).toHaveBeenCalledWith('admin_config', 'podbean_host_overview', 'admin_config');
+  });
+
+  it('?refresh=1 reads Podbean live, joins the transcripts, and writes the cache', async () => {
+    const stored = transcript({
+      id: 'article_x',
+      status: STATUS.published,
+      host: { podbean: { episodeId: 'E1', permalinkUrl: 'https://podcast.example/e/x/' } },
+    });
+    const store = makeStore({ queryDocs: vi.fn(async () => [stored]) });
+    const client = makeHostClient({
+      listEpisodes: vi.fn(async () => ({
+        episodes: [
+          {
+            id: 'E1',
+            title: 'Live title',
+            status: 'publish',
+            permalink_url: 'https://podcast.example/e/live/',
+            publish_time: Math.floor(NOW.getTime() / 1000),
+          },
+        ],
+      })),
+      getDownloadStats: vi.fn(async () => ({ '2026-09-07': 3 })),
+    });
+    const h = handlers(store, allowGuard, { hostClient: () => client });
+    const res = await h.getHostOverview(overviewRequest('1'), context);
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body).toMatchObject({ success: true, configured: true, cached: false, fetchedAt: NOW.toISOString() });
+    expect(body.episodes).toEqual([
+      {
+        transcriptId: 'article_x',
+        episodeId: 'E1',
+        title: 'Live title',
+        hostStatus: 'publish',
+        permalinkUrl: 'https://podcast.example/e/live/',
+        publishTime: NOW.toISOString(),
+        downloads: { total: 3, byDay: { '2026-09-07': 3 } },
+        error: null,
+      },
+    ]);
+    // Two reads: the refresh floor check, then the cache write's own freshness check (nothing stored, so an upsert follows).
+    expect(store.readDoc).toHaveBeenCalledTimes(2);
+    expect(store.upsertDoc).toHaveBeenCalledWith(
+      'admin_config',
+      expect.objectContaining({ id: 'podbean_host_overview', configScope: 'admin_config' })
+    );
+    // The log line carries counts, never the title.
+    const logged = context.log.mock.calls.flat().join(' ');
+    expect(logged).toContain('getPodcastHostOverview: live, 1 rows');
+    expect(logged).not.toContain('Live title');
+  });
+
+  it('a Podbean failure is still a 200 with the error recorded, and a store failure is a content-free 500', async () => {
+    const client = makeHostClient({
+      listEpisodes: vi.fn(async () => {
+        throw new Error('podbean down');
+      }),
+    });
+    const ok = await handlers(makeStore(), allowGuard, { hostClient: () => client }).getHostOverview(
+      overviewRequest(),
+      context
+    );
+    expect(ok.status).toBe(200);
+    expect(JSON.parse(ok.body).errors.episodes.code).toBe('UNEXPECTED');
+
+    const broken = makeStore({
+      queryDocs: vi.fn(async () => {
+        throw Object.assign(new Error('Cosmos said: "Secret title"'), { code: 503 });
+      }),
+    });
+    const failed = await handlers(broken, allowGuard, { hostClient: () => makeHostClient() }).getHostOverview(
+      overviewRequest(),
+      context
+    );
+    expect(failed.status).toBe(500);
+    expect(JSON.parse(failed.body)).toEqual({ error: 'Failed to read the host overview' });
+    expect(context.error).toHaveBeenCalledWith('getPodcastHostOverview failed: 503');
   });
 });
