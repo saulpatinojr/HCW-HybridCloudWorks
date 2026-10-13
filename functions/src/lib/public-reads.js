@@ -169,6 +169,18 @@ export const RETIRED_PODCAST_MEDIA_HOSTS = Object.freeze([
   Object.freeze({ host: 'content.rss.com', leftAt: '2026-10-13T06:00:00.000Z' }),
 ]);
 
+/**
+ * Whether the public podcast list (and the section counts that mirror it)
+ * should hide this episode because its file is not, or is no longer, the
+ * show's: a liveness check marked it (`mediaUnavailableAt`), or its media is
+ * on a host in RETIRED_PODCAST_MEDIA_HOSTS and nothing has refreshed it since
+ * the show left that host.
+ *
+ * @param {{ mediaUrl?: string, updatedAt?: string, mediaUnavailableAt?: string }} [doc]
+ *   A `podcasts` row, or the projection of one that carries these fields.
+ * @returns {boolean} true to hide the row; false for any row on a host the show
+ *   has not left, and for a row with no media URL or one that does not parse.
+ */
 export function isPodcastMediaRetired(doc = {}) {
   if (doc.mediaUnavailableAt) return true;
   const url = String(doc.mediaUrl || '');
