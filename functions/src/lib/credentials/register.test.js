@@ -170,7 +170,6 @@ describe('the issue’s list', () => {
       ['mcp-plaud', 'plaud'],
       ['mcp-replicate', 'replicate-mcp'],
       ['mcp-hostinger', 'hostinger-mcp'],
-      ['mcp-podbean', 'podbean-mcp'],
     ]) {
       expect(findCredential(id).renewal).toBe('automation');
       expect(findCredential(id).source).toEqual({ mcpServer: server });

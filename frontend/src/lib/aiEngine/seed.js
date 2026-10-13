@@ -337,32 +337,6 @@ export const DEFAULT_MCP_SERVERS = [
     notes:
       'Uses PUBLER_API_KEY (the same key as the Social Hub), bound to mcp.publer.com only. Only the read and session tools are allowed; the API refuses the tools that create, schedule, publish, edit, delete or upload. Switching it on or off, and changing the allowed tools, needs super_admin. Sync lists tools even with a bad key; get_publer_user is the key check.',
   },
-  {
-    // Podbean's hosted MCP server (2026-10-13, the day the show moved to
-    // Podbean). Read on that day: /.well-known/oauth-protected-resource names
-    // https://mcp.podbean.com/ as its authorization server, which offers PKCE
-    // (S256), `none` client authentication and a registration_endpoint, so
-    // the generic Connect flow (lib/ai/mcp-oauth.js) signs in with no key.
-    id: 'podbean-mcp',
-    name: 'Podbean MCP',
-    description:
-      'Manage the Hybrid Cloud Insights podcast on Podbean: episodes, show details and listener statistics',
-    url: 'https://mcp.podbean.com/mcp',
-    transport: 'http',
-    enabled: false,
-    apiKeyEnvVar: null,
-    authType: 'oauth',
-    // Fail closed (CodeRabbit on #1114). mcpToolRefusal treats a missing
-    // list as unrestricted and holds a present one to its entries, an empty
-    // one included, so switching this on runs no tool until its tools are
-    // named (#1115, once Connect and Sync have listed them).
-    allowedTools: [],
-    tools: [],
-    status: 'untested',
-    order: 13,
-    notes:
-      'Podbean’s hosted MCP server (Streamable HTTP). Signs in with your Podbean account: press Connect, sign in at Podbean and approve. The token is kept server-side and renewed automatically. It covers one public channel per connection. Its tools can publish, edit and permanently delete episodes and change the show’s details, so it ships switched off. It ships with an empty allow-list, so even switched on it runs no tool until its allowed tools are named (#1115): Connect and Sync first, then have the list set to the tools you use. Switched off, it runs no tools, but Sync can still list them and the token is still renewed; Disconnect deletes the token here and revokes the grant at Podbean when it can (Podbean advertises a revocation endpoint) — if Podbean does not answer, the card says the grant may still be live there, and you revoke it in your Podbean account. Podbean’s AI features spend Podbean AI credits. Docs: https://help.podbean.com/support/solutions/articles/25000035383',
-  },
 ];
 
 /**
@@ -409,7 +383,18 @@ export function providerDisplayPatches(stored, defaults = DEFAULT_PROVIDERS) {
 // authenticates with GCP Application Default Credentials. Gemini is reached
 // through the public API instead, as the `gemini` provider above.
 const DEPRECATED_PROVIDERS = ['vertex', 'perplexity', 'bedrock', 'replicate'];
-const DEPRECATED_MCP_SERVERS = ['anthropic-mcp', 'openai-mcp', 'perplexity-mcp'];
+// `podbean-mcp` was seeded on 2026-10-13 (#1114) and retired the same day:
+// Podbean's sign-in server allowlists redirect addresses to Claude, ChatGPT,
+// Cursor and loopback apps, and its MCP server refuses a token minted by a
+// Podbean developer app (401), both measured. No web app can connect to it,
+// this site included; the site reaches Podbean through its API instead
+// (lib/podcast/podbean.js). Deleted on sight like the others.
+export const DEPRECATED_MCP_SERVERS = [
+  'anthropic-mcp',
+  'openai-mcp',
+  'perplexity-mcp',
+  'podbean-mcp',
+];
 
 // URL migrations for servers that changed endpoints.
 const MCP_URL_PATCHES = {

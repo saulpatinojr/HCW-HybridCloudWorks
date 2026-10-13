@@ -49,7 +49,12 @@ import {
   validateMcpToolPolicy,
   validateMcpUrl,
 } from '../../../functions/src/lib/ai/mcp-policy.js';
-import { DEFAULT_MCP_SERVERS, PUBLER_MCP_ALLOWED_TOOLS, mcpServerPatch } from './aiEngine/seed.js';
+import {
+  DEFAULT_MCP_SERVERS,
+  DEPRECATED_MCP_SERVERS,
+  PUBLER_MCP_ALLOWED_TOOLS,
+  mcpServerPatch,
+} from './aiEngine/seed.js';
 import { MCP_OAUTH_CALLBACK_PATH } from '../components/admin/ai-engine/tabs.js';
 import {
   PASTED_TOKEN_SERVER_IDS,
@@ -400,18 +405,7 @@ describe('the OAuth Connect servers (2026-10-08) match the API', () => {
       enabled: false,
     });
     expect(byId('hostinger-mcp').notes).not.toMatch(/Notion|localhost/i);
-    // Podbean's server advertises RFC 9728/8414 discovery, PKCE and a
-    // registration_endpoint (read 2026-10-13), so Connect needs no key. Its
-    // tools publish and delete episodes, so it ships off like Hostinger.
-    expect(byId('podbean-mcp')).toMatchObject({
-      url: 'https://mcp.podbean.com/mcp',
-      transport: 'http',
-      authType: 'oauth',
-      apiKeyEnvVar: null,
-      enabled: false,
-      allowedTools: [],
-    });
-    for (const id of ['replicate-mcp', 'hostinger-mcp', 'podbean-mcp']) {
+    for (const id of ['replicate-mcp', 'hostinger-mcp']) {
       const server = byId(id);
       expect(validateMcpUrl(server.url)).toMatch(/^https:\/\//);
       expect(validateMcpKeyBinding(server)).toBeNull();
@@ -421,17 +415,12 @@ describe('the OAuth Connect servers (2026-10-08) match the API', () => {
     expect(validateMcpToolPolicy(byId('hostinger-mcp'))).toBeNull();
   });
 
-  it('holds Podbean to an empty allow-list, so switching it on runs no tool until #1115 names them', () => {
-    // CodeRabbit on #1114: a missing list is unrestricted, and Sync fills
-    // `tools`, not `allowedTools`. The seed fails closed instead.
-    const podbean = byId('podbean-mcp');
-    expect(validateMcpToolPolicy(podbean)).toEqual([]);
-    for (const tool of ['delete_episode', 'publish_episode', 'list_episodes']) {
-      expect(
-        mcpToolRefusal({ serverId: podbean.id, server: { ...podbean, enabled: true }, tool }),
-        tool
-      ).toMatch(/not in the allowedTools/);
-    }
+  it('retires podbean-mcp: Podbean admits no web app, so the seed deletes it on sight', () => {
+    // Measured 2026-10-13: registration and a client metadata document both
+    // refused the site's callback ("allowlisted URI: Claude, ChatGPT, Cursor,
+    // or loopback"), and a developer-app token got 401 from the MCP server.
+    expect(byId('podbean-mcp')).toBeUndefined();
+    expect(DEPRECATED_MCP_SERVERS).toContain('podbean-mcp');
   });
 
   it('every seeded server is https and passes the API’s save-time checks', () => {
@@ -451,7 +440,7 @@ describe('the OAuth Connect servers (2026-10-08) match the API', () => {
       DEFAULT_MCP_SERVERS.filter(usesOAuthConnect)
         .map((s) => s.id)
         .sort()
-    ).toEqual(['hostinger-mcp', 'podbean-mcp', 'replicate-mcp']);
+    ).toEqual(['hostinger-mcp', 'replicate-mcp']);
   });
 
   it('migrates the stored Replicate document: no key, OAuth, the seed’s notes — URL and transport kept', () => {
