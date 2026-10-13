@@ -159,6 +159,14 @@ export function isSoftDeleted(doc = {}) {
  * and shows, whatever its host. A row on a host the show still uses is never
  * hidden here: a stalled timer must not empty the page.
  */
+/**
+ * A hostname as the retired-host lists spell it: lower case, with the
+ * trailing dot of a fully qualified form removed. `new URL` keeps that dot,
+ * so `mcdn.podbean.com.` would otherwise miss the entry for the same host
+ * (CodeRabbit on #1121).
+ */
+const retiredHostKey = (hostname) => String(hostname).toLowerCase().replace(/\.$/, '');
+
 export const RETIRED_PODCAST_MEDIA_HOSTS = Object.freeze([
   // Podbean's first tenure ended 2026-09-05. The show returned on 2026-10-13,
   // so a Podbean row last refreshed before the return is from the first one.
@@ -187,7 +195,7 @@ export function isPodcastMediaRetired(doc = {}) {
   if (!url) return false;
   let hostname;
   try {
-    hostname = new URL(url).hostname.toLowerCase();
+    hostname = retiredHostKey(new URL(url).hostname);
   } catch {
     return false;
   }
@@ -196,6 +204,35 @@ export function isPodcastMediaRetired(doc = {}) {
   // No refresh time at all means nothing has refreshed it: hide it.
   const refreshed = Date.parse(doc.updatedAt || '');
   return !(refreshed >= Date.parse(retired.leftAt));
+}
+
+/**
+ * Hosts Listen & Learn audio used to be served from and no longer is (#1119).
+ * The pre-Azure site kept episode MP3s in Firebase Storage; every such file
+ * answered 404 on 2026-10-13, while the rows still named them, so the audio
+ * page rendered three players that played nothing. Listen & Learn audio is
+ * served through `GET /api/public/media/…` (ADR 0029), so a row on one of
+ * these hosts is a dead player until its chapter is regenerated (Admin →
+ * Listen & Learn → Regenerate), and the public reads treat it as having no
+ * audio: the list and the counts omit it, and the per-certification read
+ * blanks `audioUrl` so the page shows the chapter without a player.
+ */
+export const RETIRED_LISTEN_AND_LEARN_AUDIO_HOSTS = Object.freeze([
+  'storage.googleapis.com',
+  'firebasestorage.googleapis.com',
+]);
+
+/** The `audioUrl` the public reads hand out: the row's, or '' when its host is retired. */
+export function servableListenAndLearnAudioUrl(doc = {}) {
+  const url = typeof doc?.audioUrl === 'string' ? doc.audioUrl : '';
+  if (!url) return '';
+  let hostname;
+  try {
+    hostname = retiredHostKey(new URL(url, 'https://www.hybridcloudworks.com').hostname);
+  } catch {
+    return '';
+  }
+  return RETIRED_LISTEN_AND_LEARN_AUDIO_HOSTS.includes(hostname) ? '' : url;
 }
 
 /** Published-date resolution across the five aliases (useCoderCornerData). */
@@ -1242,6 +1279,7 @@ export function createPublicReadHandlers({ store }) {
             // returns nor the order exam weighting would give.
             episodes: episodes
               .filter((doc) => !isSoftDeleted(doc))
+              .map((doc) => ({ ...doc, audioUrl: servableListenAndLearnAudioUrl(doc) }))
               .map(stripInternalFields)
               .sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
           },
@@ -1306,7 +1344,7 @@ export function createPublicReadHandlers({ store }) {
         );
 
         const items = episodes
-          .filter((doc) => !isSoftDeleted(doc) && typeof doc.audioUrl === 'string' && doc.audioUrl)
+          .filter((doc) => !isSoftDeleted(doc) && servableListenAndLearnAudioUrl(doc))
           .map((doc) => {
             const row = {};
             for (const field of LISTEN_AND_LEARN_LIST_FIELDS) {

@@ -4613,6 +4613,19 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Listen & Learn no longer renders dead players for audio the site stopped
+  serving (#1119).** Every public Listen & Learn row (the AB-100 set) still
+  pointed at the pre-Azure Firebase bucket, and every file there answered 404
+  on 2026-10-13, so the audio page showed three players that played nothing
+  and the browser's policy refused the host besides.
+  - `servableListenAndLearnAudioUrl` treats `storage.googleapis.com` and
+    `firebasestorage.googleapis.com` as retired: the provider-wide list and
+    the section counts omit such a row, as they omit one with no audio, and
+    the per-certification read blanks its `audioUrl` so the page shows the
+    chapter without a player.
+  - The rows themselves are kept. Regenerating a chapter (Admin → Listen &
+    Learn → Regenerate) writes new audio to blob storage and the row returns.
+
 - **The podcast pages show the show again, now that it is back on Podbean.**
   The public list returned one stale RSS.com upload instead of the three
   episodes in the feed. Two causes, both from the move on 2026-10-13:
