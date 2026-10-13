@@ -4503,9 +4503,11 @@ This project has not cut a tagged release; entries are grouped under
   that one principal could list the Function App's app settings and write
   them, from any step of the hourly monitor, the secrets monitor or the
   manifest job on `main`. `infra/oidc.tf` said it "can change nothing".
-  - `github_manifest_window` holds Config Refresh and Reader on
-    `func-site-prod-cus-01` and nothing else, with main-branch sign-in in
-    both subject forms. The manifest job signs in with
+  - `github_manifest_window` holds Config Refresh on `func-site-prod-cus-01`
+    and Reader on `rg-web-site-prod-cus`, and nothing else, with main-branch
+    sign-in in both subject forms. Reader sits at the group, the reader's
+    own proven shape, so the subscription is discoverable at sign-in; it
+    lists nothing. The manifest job signs in with
     `MANIFEST_WINDOW_CLIENT_ID` and skips until it is set.
   - `github_reader_origin_window` is removed, so the reader holds Reader and
     Settings Reader on `rg-web-site-prod-cus` only. The comments that said

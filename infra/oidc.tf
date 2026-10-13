@@ -420,12 +420,23 @@ resource "azurerm_role_assignment" "github_deploy_swa_token" {
 #   github_reader            lists app settings, writes nothing
 #   github_manifest_window   writes the site's config, lists nothing
 #
-# READER ON THE ONE SITE, NOT THE GROUP. `az functionapp config
+# Both hold Reader on the web group, which lists nothing either.
+#
+# READER ON THE WEB GROUP, THE READER'S OWN SCOPE. `az functionapp config
 # access-restriction` reads the site and its config before it writes, and the
 # close step reads the rules back to assert none is left; Config Refresh carries
-# no read. Reader here is `*/read` on this site and nowhere else. App settings
-# come back only through config/list/action, which this identity holds on no
-# scope.
+# no read. Reader on the one site would cover those reads, and was this block's
+# first shape. It was moved to the group (CodeRabbit on #1104) because of how
+# the job signs in, not what it reads. Every az command takes its credential
+# from the subscription it finds in the login's account list
+# (azure-cli's Profile.get_subscription raises "Subscription ... not found"
+# otherwise), so the subscription must be discoverable whether the login pins
+# it or each command passes --subscription. Whether a grant on one resource
+# makes it discoverable is not documented. A group-scope Reader beside a
+# site-scope Config Refresh is exactly github_reader's shape, which signs in
+# with SUBSCRIPTION_ID pinned every hour. Reader is `*/read` and no list
+# action, so app settings, which come back only through config/list/action,
+# stay out of reach: this identity holds that action on no scope.
 #
 # principal_type is explicit on both grants because the identity is created in
 # the same apply, as for github_alert_reader.
@@ -472,7 +483,7 @@ resource "azurerm_role_assignment" "github_manifest_window_config" {
 }
 
 resource "azurerm_role_assignment" "github_manifest_window_read" {
-  scope                = azurerm_function_app_flex_consumption.hcw.id
+  scope                = azurerm_resource_group.app["web"].id
   role_definition_name = "Reader"
   principal_id         = azurerm_user_assigned_identity.github_manifest_window.principal_id
   principal_type       = "ServicePrincipal"

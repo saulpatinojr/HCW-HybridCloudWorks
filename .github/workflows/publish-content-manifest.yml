@@ -116,7 +116,8 @@ jobs:
     # MANIFEST_WINDOW_CLIENT_ID (#1098), not CLIENT_ID or READER_CLIENT_ID.
     # This job's only Azure call is the origin window below, a write to the
     # Function App's config, so it signs in as github_manifest_window, which
-    # can open and close that window and read the site, and nothing else. It
+    # can open and close that window and read the web group's resources, and
+    # cannot list app settings. It
     # ran as github_reader from T-728 until #1098, which left the reader
     # holding this write beside its app-settings read (infra/oidc.tf).
     #
@@ -174,11 +175,11 @@ jobs:
       # posture is never widened. That difference is why this route is an HTTP
       # one rather than a blob.
       #
-      # Authorized by github_manifest_window's HCW Function Config Refresh role,
-      # Microsoft.Web/sites/config/Write with config/list/action excluded, and
-      # Reader on the one site for the reads around it. That identity holds the
-      # list action nowhere, so it can open and close this window and cannot
-      # read app settings back (#1098).
+      # Authorized by github_manifest_window's HCW Function Config Refresh role
+      # on the site, Microsoft.Web/sites/config/Write with config/list/action
+      # excluded, and Reader on the web group for the reads around it. That
+      # identity holds the list action nowhere, so it can open and close this
+      # window and cannot read app settings back (#1098).
       - name: Open origin window for this runner
         id: appfw
         env:

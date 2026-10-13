@@ -317,7 +317,7 @@ export const DECLARED = [
   {
     address: "azurerm_role_assignment.github_manifest_window_read",
     action: "create",
-    reason: "#1098: Reader on the Function App, for the window's reads",
+    reason: "#1098: Reader on the web group, for the window's reads and sign-in",
   },
   {
     address: "azurerm_role_assignment.github_reader_origin_window",

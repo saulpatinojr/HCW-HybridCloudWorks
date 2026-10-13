@@ -307,9 +307,11 @@ describe('the reader and the manifest window hold what infra/oidc.tf says', () =
     ]);
   });
 
-  it('github_manifest_window holds the config write and Reader on the one site, and nothing else', () => {
+  it('github_manifest_window holds the config write on the one site and Reader on the web group, and nothing else', () => {
+    // Reader at the group rather than the site so the subscription is
+    // discoverable at sign-in, as for github_reader (infra/oidc.tf).
     expect(grantsTo('github_manifest_window')).toEqual([
-      'Reader @ azurerm_function_app_flex_consumption.hcw.id',
+      'Reader @ azurerm_resource_group.app["web"].id',
       'data.func_config_refresh @ azurerm_function_app_flex_consumption.hcw.id',
     ]);
   });
