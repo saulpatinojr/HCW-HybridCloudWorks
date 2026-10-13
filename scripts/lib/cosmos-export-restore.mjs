@@ -126,10 +126,85 @@ export function containersToRestore(fullManifest, only = null) {
 }
 
 /**
- * A selected layer's data blob must exist: the layer was chosen because its
- * manifest exists, and the manifest is written only once every marker is
- * present, so absence means the set is corrupted or has expired under the
- * lifecycle rule. Restoring past it would silently produce a partial copy.
+ * A layer's manifest, checked before anything is restored from it: it names
+ * the run it sits in (mode and runId), and lists its containers as
+ * `{container: string}` entries. layersCarrying treats a container a manifest
+ * leaves out as one the layer does not carry, which is right for a delta that
+ * is narrower by design; so a list that is missing, empty or malformed must
+ * stop the restore here rather than read as "this layer carries nothing" and
+ * silently drop a day of changes (CodeRabbit, #1102).
+ *
+ * @param {unknown} manifest - the parsed manifest.json
+ * @param {{mode: string, runId: string}} layer - the run it was read from
+ * @returns {{mode: string, runId: string, containers: {container: string}[]}}
+ */
+export function assertManifest(manifest, layer) {
+  const key = `${layer.mode}/${layer.runId}`;
+  const refuse = (why) => {
+    throw new Error(`${key}/manifest.json ${why}: the set is corrupted — do not restore from it`);
+  };
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) refuse('is not a JSON object');
+  if (manifest.mode !== layer.mode || manifest.runId !== layer.runId) {
+    refuse(`describes ${manifest.mode}/${manifest.runId}, not ${key}`);
+  }
+  if (!Array.isArray(manifest.containers) || manifest.containers.length === 0) refuse('lists no containers');
+  if (manifest.containers.some((entry) => typeof entry?.container !== 'string' || !entry.container)) {
+    refuse('has a container entry with no name');
+  }
+  return manifest;
+}
+
+/**
+ * The layers that carry one container: those whose manifest lists it.
+ *
+ * A delta exports the authored and configuration containers only. An
+ * operational one (admin_audit_logs, audits, …) is in the full and in no
+ * delta, by design: export-classification.js gives operational
+ * `full: true, delta: false`. So a container a delta's manifest does not list
+ * takes nothing from that delta, and only a listed container's missing blob is
+ * a corrupted set (assertLayerBlobPresent). Until 2026-10-12 every layer was
+ * asked for every container, and the first drill stopped on admin_audit_logs
+ * in the first delta: no restore with a delta in it had ever completed.
+ *
+ * @param {string} container
+ * @param {{mode: string, runId: string}[]} layers - restoreLayers order
+ * @param {Map<string, {containers?: {container: string}[]}>} manifests - by `mode/runId`
+ * @returns {{mode: string, runId: string}[]} the same order, those listing it
+ */
+export function layersCarrying(container, layers, manifests) {
+  return layers.filter((layer) => {
+    const key = `${layer.mode}/${layer.runId}`;
+    const manifest = manifests.get(key);
+    if (!manifest) throw new Error(`no manifest was read for ${key}`);
+    return (manifest.containers || []).some((entry) => entry.container === container);
+  });
+}
+
+/**
+ * The --verify cell for one container: what the target holds against what it
+ * should. A restore creates (201) only ids the target did not hold, so the
+ * target should hold what it held before this run plus what this run created.
+ * The first drill compared the target with `created` alone, which is right
+ * only for an empty target: a rerun into the same account reported a
+ * container restored by the earlier attempt (3074 there, 0 created) as a
+ * MISMATCH (2026-10-12). Ids are unique per partition key, not per container,
+ * so two documents may share one; the count includes both, as the target does.
+ *
+ * @param {{ before: number, created: number, inTarget: number }} counts
+ * @returns {{ ok: boolean, cell: string }}
+ */
+export function verifyTargetCount({ before, created, inTarget }) {
+  const expected = before + created;
+  if (inTarget === expected) return { ok: true, cell: String(inTarget) };
+  return { ok: false, cell: `${inTarget} MISMATCH (expected ${expected})` };
+}
+
+/**
+ * A listed container's data blob must exist in its layer: the layer was chosen
+ * because its manifest exists, the manifest lists the container, and the
+ * manifest is written only once every marker is present, so absence means the
+ * set is corrupted or has expired under the lifecycle rule. Restoring past it
+ * would silently produce a partial copy.
  *
  * @param {boolean} present
  * @param {string} blob - the blob name, for the error
@@ -197,12 +272,17 @@ export function classifyUpsert(statusCode) {
  * streamed. On a real run `created` IS the distinct count (a second write to
  * an id is a replace) and `replaced` is the overwritten count; on a dry run
  * there is no upsert to read, so both stay null and the report says so.
+ * `writes` marks a real run, where a container with nothing in it created 0,
+ * not null: the first drill reported every empty container as a MISMATCH
+ * because 0 in the target was compared with null (2026-10-12).
+ *
+ * @param {{ writes?: boolean }} [options]
  */
-export function createRestoreTally() {
+export function createRestoreTally({ writes = false } = {}) {
   const perLayer = {};
   let created = 0;
   let replaced = 0;
-  let sawUpsert = false;
+  let sawUpsert = writes;
   return {
     /** One document read from `layer`; `statusCode` is the upsert's, absent on a dry run. */
     add(layer, statusCode) {

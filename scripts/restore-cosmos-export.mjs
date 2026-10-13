@@ -31,6 +31,7 @@
  *   --concurrency <n>           upserts in flight per container (default 8, max 32)
  *   --dry-run                   read and count; write nothing
  *   --verify                    after writing, count each target container
+ *   --allow-production-target   write to an account whose name has -prod- in it
  *   --help
  */
 import { createInterface } from 'node:readline';
@@ -42,6 +43,9 @@ import {
   selectRestoreSet,
   restoreLayers,
   containersToRestore,
+  assertManifest,
+  layersCarrying,
+  verifyTargetCount,
   dataBlobName,
   manifestBlobName,
   parseLine,
@@ -65,6 +69,8 @@ const HELP = `Usage: node scripts/restore-cosmos-export.mjs --storage-account <n
   --concurrency <n>           upserts in flight per container (default 8, max 32)
   --dry-run                   read and count; write nothing
   --verify                    after writing, count each target container
+  --allow-production-target   write to an account whose name has -prod- in it
+                              (a real restore into a new account; never a drill)
   --help
 
 Authenticates with DefaultAzureCredential (az login). Needs Storage Blob Data
@@ -75,7 +81,7 @@ Built-in Data Contributor on the TARGET account. Never touches the source.
 /** Parse argv into the options the run needs. Throws on anything malformed. */
 export function parseOptions(argv) {
   const { flags, options } = parseArgs(argv, {
-    flags: ['dry-run', 'verify', 'help'],
+    flags: ['dry-run', 'verify', 'allow-production-target', 'help'],
     options: [
       'storage-account',
       'target-endpoint',
@@ -94,6 +100,17 @@ export function parseOptions(argv) {
   }
   if (targetEndpoint && !/^https:\/\//.test(targetEndpoint)) {
     throw new Error('--target-endpoint must be an https URL');
+  }
+  // A restore upserts backup documents over whatever the target holds, so a
+  // production account as the target writes older copies over live ones. The
+  // drill restores into a scratch account; a real restore goes into a new
+  // account and says so with the flag (docs/runbooks/cosmos-restore.md).
+  const targetAccount = targetEndpoint ? new URL(targetEndpoint).hostname.split('.')[0] : '';
+  if (/-prod-/.test(targetAccount) && !flags['allow-production-target']) {
+    throw new Error(
+      `--target-endpoint names ${targetAccount}, a production account: a restore writes backup copies over what is there. ` +
+        'A drill restores into a scratch account (cosmos-site-sbx-cus); a real restore into a new account adds --allow-production-target'
+    );
   }
   // An absent --database means hcw; a present-but-blank one is a mistake to
   // name here, not an SDK error about a resource with no id later.
@@ -159,6 +176,24 @@ async function blobExists(container, name) {
   return container.getBlobClient(name).exists();
 }
 
+/** How many documents a target container holds. */
+async function countDocuments(container) {
+  const { resources } = await container.items.query('SELECT VALUE COUNT(1) FROM c').fetchAll();
+  return Number(resources[0]) || 0;
+}
+
+/**
+ * The restore, end to end: choose the set (the latest complete full and every
+ * complete delta after it), check each layer's manifest, then for every
+ * container apply the layers that carry it, in order, and with --verify count
+ * the target. Returns the exit code: 0 done, 1 a container that failed its
+ * count. A refusal (a missing or corrupted layer, a production target without
+ * the flag) throws before anything is written.
+ *
+ * @param {string[]} [argv]
+ * @param {{ log: (line: string) => void }} [out]
+ * @returns {Promise<number>}
+ */
 export async function main(argv = process.argv.slice(2), out = console) {
   const opts = parseOptions(argv);
   if (opts.help) {
@@ -170,7 +205,15 @@ export async function main(argv = process.argv.slice(2), out = console) {
   const names = await listNames(exportBlobs);
   const set = selectRestoreSet(names, { asOf: opts.asOf });
   const layers = restoreLayers(set);
-  const fullManifest = await readJson(exportBlobs, manifestBlobName('full', set.full));
+  // Every layer's manifest, because each says which containers that layer
+  // carries: a delta lists fewer than the full (layersCarrying). Each is
+  // checked before the target is opened (assertManifest).
+  const manifests = new Map();
+  for (const layer of layers) {
+    const manifest = await readJson(exportBlobs, manifestBlobName(layer.mode, layer.runId));
+    manifests.set(`${layer.mode}/${layer.runId}`, assertManifest(manifest, layer));
+  }
+  const fullManifest = manifests.get(`full/${set.full}`);
   const containers = containersToRestore(fullManifest, opts.containers);
 
   out.log(
@@ -198,14 +241,17 @@ export async function main(argv = process.argv.slice(2), out = console) {
   let mismatches = 0;
   for (const name of containers) {
     const t0 = Date.now();
-    const tally = createRestoreTally();
     const target = db ? db.container(name) : null;
-    for (const layer of layers) {
+    const tally = createRestoreTally({ writes: Boolean(target) });
+    // What the target already held, so --verify can expect that plus what this
+    // run creates: an empty account on a first run, more on a rerun.
+    const before = target && opts.verify ? await countDocuments(target) : 0;
+    for (const layer of layersCarrying(name, layers, manifests)) {
       const layerName = `${layer.mode}/${layer.runId}`;
       const blob = dataBlobName(layer.mode, layer.runId, name);
-      // Every layer was selected because its manifest exists, and the manifest
-      // is written only once every container's marker is present — so a
-      // missing data blob is a corrupted or expired set, never an empty
+      // Only the layers whose manifest lists this container, and a manifest is
+      // written only once every listed container's marker is present, so a
+      // missing data blob here is a corrupted or expired set, never an empty
       // container (those still have a blob). Loud, in --dry-run too.
       assertLayerBlobPresent(await blobExists(exportBlobs, blob), blob);
       tally.touch(layerName);
@@ -227,10 +273,9 @@ export async function main(argv = process.argv.slice(2), out = console) {
       .reduce((n, [, c]) => n + c, 0);
     let verified = '';
     if (target && opts.verify) {
-      const { resources } = await target.items.query('SELECT VALUE COUNT(1) FROM c').fetchAll();
-      const inTarget = Number(resources[0]) || 0;
-      verified = inTarget === counts.created ? String(inTarget) : `${inTarget} MISMATCH`;
-      if (inTarget !== counts.created) mismatches += 1;
+      const check = verifyTargetCount({ before, created: counts.created, inTarget: await countDocuments(target) });
+      verified = check.cell;
+      if (!check.ok) mismatches += 1;
     }
     totalDocuments += counts.documents;
     totalCreated += counts.created ?? 0;
@@ -259,12 +304,12 @@ export async function main(argv = process.argv.slice(2), out = console) {
     );
   } else {
     out.log(
-      `Restored ${totalDocuments} document(s): ${totalCreated} created (distinct), ${totalReplaced} replaced by a later layer, across ${containers.length} container(s) in ${elapsedMs} ms (${minutes} min)`
+      `Restored ${totalDocuments} document(s): ${totalCreated} created, ${totalReplaced} replaced (already in the target, or superseded by a later layer), across ${containers.length} container(s) in ${elapsedMs} ms (${minutes} min)`
     );
   }
   if (mismatches) {
     out.log(
-      `${mismatches} container(s) MISMATCH between the target count and the documents created — investigate before calling the drill passed`
+      `${mismatches} container(s) MISMATCH: the target does not hold what it held before this run plus what the run created — investigate before calling the drill passed`
     );
     return 1;
   }

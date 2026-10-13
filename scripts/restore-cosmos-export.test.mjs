@@ -9,6 +9,9 @@ import {
   selectRestoreSet,
   restoreLayers,
   containersToRestore,
+  assertManifest,
+  layersCarrying,
+  verifyTargetCount,
   dataBlobName,
   manifestBlobName,
   parseLine,
@@ -129,6 +132,93 @@ describe('containersToRestore', () => {
       /does not carry: jobs/
     );
     expect(() => containersToRestore({ containers: [] })).toThrow(/lists no containers/);
+  });
+});
+
+describe('layersCarrying', () => {
+  // As the live set read 2026-10-12: the Sunday full carries admin_audit_logs
+  // (operational, full only) and content; the deltas carry content alone.
+  const layers = restoreLayers({ full: '2026-10-11', deltas: ['2026-10-12', '2026-10-13'] });
+  const manifests = new Map([
+    ['full/2026-10-11', { containers: [{ container: 'admin_audit_logs' }, { container: 'content' }] }],
+    ['delta/2026-10-12', { containers: [{ container: 'content' }] }],
+    ['delta/2026-10-13', { containers: [{ container: 'content' }] }],
+  ]);
+
+  it('restores a full-only container from the full alone, not from deltas that never carry it', () => {
+    // The first drill stopped here: every delta was asked for admin_audit_logs.
+    expect(layersCarrying('admin_audit_logs', layers, manifests)).toEqual([
+      { mode: 'full', runId: '2026-10-11' },
+    ]);
+  });
+
+  it('applies every layer that lists a container, in order', () => {
+    expect(layersCarrying('content', layers, manifests)).toEqual(layers);
+  });
+
+  it('refuses to guess when a layer has no manifest read', () => {
+    const partial = new Map([...manifests].filter(([key]) => key !== 'delta/2026-10-13'));
+    expect(() => layersCarrying('content', layers, partial)).toThrow(/no manifest was read for delta\/2026-10-13/);
+  });
+});
+
+describe('assertManifest', () => {
+  const layer = { mode: 'delta', runId: '2026-10-12' };
+  const good = { mode: 'delta', runId: '2026-10-12', containers: [{ container: 'content', docs: 4 }] };
+
+  it('passes a manifest that names its own run and lists named containers', () => {
+    expect(assertManifest(good, layer)).toBe(good);
+  });
+
+  it('refuses one that describes another run, so a misplaced manifest cannot stand in', () => {
+    expect(() => assertManifest({ ...good, runId: '2026-10-11' }, layer)).toThrow(
+      'delta/2026-10-12/manifest.json describes delta/2026-10-11, not delta/2026-10-12'
+    );
+    expect(() => assertManifest({ ...good, mode: 'full' }, layer)).toThrow('describes full/2026-10-12');
+  });
+
+  it('refuses a missing, empty or malformed container list rather than read it as carrying nothing', () => {
+    for (const containers of [undefined, null, {}, []]) {
+      expect(() => assertManifest({ ...good, containers }, layer), JSON.stringify(containers)).toThrow(/lists no containers/);
+    }
+    for (const entry of [null, 'content', {}, { container: '' }, { container: 7 }]) {
+      expect(() => assertManifest({ ...good, containers: [entry] }, layer), JSON.stringify(entry)).toThrow(
+        /has a container entry with no name/
+      );
+    }
+    expect(() => assertManifest([], layer)).toThrow(/is not a JSON object/);
+  });
+});
+
+describe('verifying the target (the first drill, 2026-10-12)', () => {
+  it('passes an empty container: a real run created 0, not null', () => {
+    // 17 empty containers were reported MISMATCH: 0 in the target against null.
+    const tally = createRestoreTally({ writes: true });
+    tally.touch('full/2026-10-11');
+    expect(tally.result()).toMatchObject({ documents: 0, created: 0, replaced: 0 });
+    expect(verifyTargetCount({ before: 0, created: 0, inTarget: 0 })).toEqual({ ok: true, cell: '0' });
+  });
+
+  it('passes a rerun into a target an earlier attempt already filled', () => {
+    // admin_audit_logs: 3074 written by the aborted first attempt, 0 created by the rerun.
+    expect(verifyTargetCount({ before: 3074, created: 0, inTarget: 3074 })).toEqual({ ok: true, cell: '3074' });
+  });
+
+  it('passes a fresh container, and counts two documents that share an id across partitions as two', () => {
+    // image_prompt_sets_prompts: two documents with id "News", in two sets.
+    expect(verifyTargetCount({ before: 0, created: 2, inTarget: 2 }).ok).toBe(true);
+  });
+
+  it('fails, naming the expected count, when the target holds fewer or more', () => {
+    expect(verifyTargetCount({ before: 0, created: 5, inTarget: 4 })).toEqual({
+      ok: false,
+      cell: '4 MISMATCH (expected 5)',
+    });
+    expect(verifyTargetCount({ before: 10, created: 0, inTarget: 11 }).cell).toBe('11 MISMATCH (expected 10)');
+  });
+
+  it('keeps created null on a dry run, which writes nothing', () => {
+    expect(createRestoreTally().result()).toMatchObject({ created: null, replaced: null });
   });
 });
 
@@ -278,6 +368,24 @@ describe('parseOptions', () => {
       dryRun: true,
       verify: false,
     });
+  });
+
+  it('refuses a production account as the target unless --allow-production-target says so', () => {
+    const base = ['--storage-account', 'stsiteprodcus01', '--target-endpoint'];
+    expect(() => parseOptions([...base, 'https://cosmos-site-prod-cus.documents.azure.com:443/'])).toThrow(
+      /names cosmos-site-prod-cus, a production account/
+    );
+    expect(
+      parseOptions([
+        ...base,
+        'https://cosmos-site-prod-cus-02.documents.azure.com:443/',
+        '--allow-production-target',
+      ]).targetEndpoint
+    ).toBe('https://cosmos-site-prod-cus-02.documents.azure.com:443/');
+    // The drill's scratch account needs no flag.
+    expect(parseOptions([...base, 'https://cosmos-site-sbx-cus.documents.azure.com:443/']).targetEndpoint).toBe(
+      'https://cosmos-site-sbx-cus.documents.azure.com:443/'
+    );
   });
 
   it('parses a full restore invocation', () => {

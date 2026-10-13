@@ -84,7 +84,15 @@ checkout before believing any error that names it:
 Test-Path scripts/restore-cosmos-export.mjs
 ```
 
-`True` is the only acceptable answer. Then sign in, select the App landing
+`True` is the only acceptable answer. Step 5 runs the Function App locally,
+which needs Azure Functions Core Tools; install it once, then open a new
+PowerShell window so `func` is on the path:
+
+```powershell
+winget install --id Microsoft.Azure.FunctionsCoreTools -e
+```
+
+Then sign in, select the App landing
 zone subscription, install the script's dependencies, and start the clock —
 the RTO is measured from this line:
 
@@ -199,7 +207,11 @@ $spec = Get-Content infra/cosmos-containers.json -Raw | ConvertFrom-Json; foreac
 az cosmosdb sql container list -a cosmos-site-sbx-cus -g rg-db-site-sbx-cus -d hcw -o json | ConvertFrom-Json | Measure-Object | Select-Object Count
 ```
 
-Success is `Count` with `73` under it. Grant the signed-in user the built-in
+Success is a `Count` equal to the number of containers in the spec, which
+`$spec.containers.Count` prints (75 on 2026-10-12). Creating them one at a time
+takes about a minute each, and Azure prints each one's state (`Enqueued`,
+`Dequeued`, `Succeeded`) as it goes: the repeating pattern is the loop moving
+through the list, not a loop stuck on one container. Grant the signed-in user the built-in
 data-plane contributor role on the new account (the role id is the same
 constant in every tenant):
 
@@ -213,15 +225,21 @@ az cosmosdb sql role assignment create -a cosmos-site-sbx-cus -g rg-db-site-sbx-
 node scripts/restore-cosmos-export.mjs --storage-account stsiteprodcus01 --target-endpoint https://cosmos-site-sbx-cus.documents.azure.com:443/ --verify
 ```
 
-Success looks like the dry run with `created` and `replaced` filled in — the
+Success looks like the dry run with `created` and `replaced` filled in. The
 upsert answers 201 for a document the target had not seen and 200 for one an
-earlier layer already wrote, so `created` is the distinct count and
-`replaced` the documents a delta superseded — a `target` column equal to
-`created` on every row, and a last line reading
-`Restored 70112 document(s): 69874 created (distinct), 238 replaced by a later layer, across 60 container(s) in 1834201 ms (30.6 min)`,
-exit code 0. A row ending `MISMATCH` is a container whose count in the target
-does not equal the documents created there; the script exits 1 and the drill
-has not passed until the cause is known. The cost of this step is about
+earlier layer, or an earlier attempt, already wrote. The `target` column on
+every row equals what the container held before the run plus what the run
+created: into a fresh account that is `created`, and an empty container
+reads `0`. The check counts each container before and after writing it, so
+nothing else may write to the target until the restore and its check finish:
+another writer in between shows as a `MISMATCH` the data does not have. The
+drill's scratch account has no other writer. An operational container such as `admin_audit_logs` shows `0`
+under `deltas`, because it is in the weekly full and in no delta, by design.
+The last line reads
+`Restored 11971 document(s): 11937 created, 34 replaced (already in the target, or superseded by a later layer), across 62 container(s) in 104979 ms (1.7 min)`,
+with exit code 0. A row ending `MISMATCH` is a container whose count in the
+target is not that; it names the count it expected, the script exits 1, and
+the drill has not passed until the cause is known. The cost of this step is about
 $3 in write request units (cost analysis, #385).
 
 ### 5. Spot-check the site's public reads against the restored account
@@ -280,6 +298,12 @@ az storage account network-rule remove -g rg-stor-site-prod-cus --account-name s
 az role assignment delete --assignee $me --role "Storage Blob Data Reader" --scope "$storageId/blobServices/default/containers/cosmos-export" -o none
 ```
 
+The local settings file points at the account just deleted; remove it:
+
+```powershell
+Remove-Item functions/local.settings.json
+```
+
 ```powershell
 az group exists -n rg-db-site-sbx-cus
 ```
@@ -293,7 +317,13 @@ name, resource group and firewall the owner decides at the time (the scratch
 names above are for something that gets deleted); and after step 4 the Function
 App's `COSMOS_ENDPOINT` app setting (Terraform, `infra/functionapp.tf`) and the
 identity's data-plane role assignment (`infra/cosmos.tf`) move to the new
-account. Then republish snapshots and let the ingest timers refill the caches.
+account, and only once step 4's check has finished: the Function App is a
+writer, and the check expects nothing else to write while it counts. Then
+republish snapshots and let the ingest timers refill the caches.
+The restore script refuses a target whose account name has `-prod-` in it,
+because a restore writes backup copies over whatever the target holds; a real
+restore into a new production-named account adds `--allow-production-target`.
+The live account is never the target.
 Deleted-in-the-last-week documents must be re-deleted by hand from the admin
 portal; the audit rows say which.
 
