@@ -348,14 +348,52 @@ describe('readHostOverview (the cache)', () => {
     expect(doc).not.toHaveProperty('cached');
   });
 
-  it('refresh skips the cache read and still writes the new overview', async () => {
+  it('refresh skips the cache read, reads live, and replaces the stored overview under its etag', async () => {
     const client = makeClient();
-    const store = makeStore({ readDoc: vi.fn(async () => cachedDoc()) });
+    const stored = cachedDoc();
+    const store = makeStore({ readDoc: vi.fn(async () => stored), replaceDocIfMatch: vi.fn(async (_c, doc) => doc) });
     const out = await readHostOverview({ client, store, now, refresh: true });
-    expect(store.readDoc).not.toHaveBeenCalled();
+    // The one read is the write's own freshness check, not a cache hit.
+    expect(store.readDoc).toHaveBeenCalledTimes(1);
     expect(out.cached).toBe(false);
     expect(client.listEpisodes).toHaveBeenCalledTimes(1);
+    expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
+    expect(store.replaceDocIfMatch.mock.calls[0][1]).toMatchObject({ _etag: '"e1"', fetchedAt: NOW.toISOString() });
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a stored overview that is newer than this read (two refreshes finishing out of order)', async () => {
+    const client = makeClient();
+    const newer = cachedDoc({ fetchedAt: new Date(NOW.getTime() + 60_000).toISOString() });
+    const store = makeStore({ readDoc: vi.fn(async () => newer), replaceDocIfMatch: vi.fn() });
+    const out = await readHostOverview({ client, store, now, refresh: true });
+    expect(out.cached).toBe(false);
+    expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  it('a 412 on the conditional write keeps whatever landed first, logged content-free', async () => {
+    const client = makeClient();
+    const log = vi.fn();
+    const store = makeStore({
+      readDoc: vi.fn(async () => cachedDoc({ fetchedAt: new Date(NOW.getTime() - HOST_OVERVIEW_TTL_MS).toISOString() })),
+      replaceDocIfMatch: vi.fn(async () => {
+        throw Object.assign(new Error('precondition failed'), { code: 412 });
+      }),
+    });
+    const out = await readHostOverview({ client, store, now, refresh: true, log });
+    expect(out.cached).toBe(false);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('cache write failed (CHANGED)'));
+    expect(log.mock.calls.flat().join(' ')).not.toMatch(/Cached show|E1/);
+  });
+
+  it('writes with an upsert when nothing is cached yet', async () => {
+    const client = makeClient();
+    const store = makeStore({ replaceDocIfMatch: vi.fn() });
+    await readHostOverview({ client, store, now });
     expect(store.upsertDoc).toHaveBeenCalledTimes(1);
+    expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
   });
 
   it('a cached overview for a different window, or a malformed one, is not served', async () => {

@@ -291,7 +291,7 @@ export function isFresh(cached, { now, ttlMs, days }) {
  *
  * @param {object} deps
  * @param {object} deps.client the Podbean client
- * @param {{ queryDocs: Function, readDoc: Function, upsertDoc: Function }} deps.store
+ * @param {{ queryDocs: Function, readDoc: Function, upsertDoc: Function, replaceDocIfMatch?: Function }} deps.store
  * @param {() => Date} [deps.now]
  * @param {boolean} [deps.refresh] skip the cache (the hub's Refresh button)
  * @param {number} [deps.days]
@@ -321,14 +321,39 @@ export async function readHostOverview({
   }
 
   const live = await fetchHostOverview({ client, store, now, days });
-  try {
-    await store.upsertDoc('admin_config', {
-      id: HOST_OVERVIEW_CONFIG_ID,
-      configScope: ADMIN_CONFIG_PARTITION,
-      ...live,
-    });
-  } catch (error) {
-    log?.(`podbean overview: cache write failed (${error?.code || 'UNEXPECTED'}); serving live`);
-  }
+  await writeOverviewCache({ store, live, log });
   return { ...live, cached: false };
+}
+
+/**
+ * Write the live overview to the cache, unless something newer is already
+ * there. Two refreshes in flight finish in any order, so the write is
+ * decided from a fresh read: a stored overview fetched at or after this one
+ * stands, and a stored one that is older is replaced only if it has not
+ * changed since that read (IfMatch on its etag, a 412 meaning someone else
+ * got there first). With nothing stored, an upsert; two first writers both
+ * hold fresh data. Never throws: a cache that cannot be written is logged
+ * and the live overview is served (CodeRabbit on #1127).
+ */
+async function writeOverviewCache({ store, live, log }) {
+  const document = { id: HOST_OVERVIEW_CONFIG_ID, configScope: ADMIN_CONFIG_PARTITION, ...live };
+  try {
+    const current = await store.readDoc('admin_config', HOST_OVERVIEW_CONFIG_ID, ADMIN_CONFIG_PARTITION);
+    if (current?.fetchedAt && current.fetchedAt >= live.fetchedAt) {
+      log?.('podbean overview: cache already holds a newer read; not written');
+      return;
+    }
+    if (current?._etag && typeof store.replaceDocIfMatch === 'function') {
+      await store.replaceDocIfMatch(
+        'admin_config',
+        { ...document, _etag: current._etag },
+        { partitionKey: ADMIN_CONFIG_PARTITION }
+      );
+      return;
+    }
+    await store.upsertDoc('admin_config', document);
+  } catch (error) {
+    const code = error?.code === 412 || error?.statusCode === 412 ? 'CHANGED' : error?.code || 'UNEXPECTED';
+    log?.(`podbean overview: cache write failed (${code}); serving live`);
+  }
 }

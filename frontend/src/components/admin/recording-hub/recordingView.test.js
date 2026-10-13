@@ -22,6 +22,7 @@ import {
   sourceLabel,
   sparklineBars,
   unmatchedLiveRows,
+  overviewNotes,
 } from './recordingView';
 
 describe('fmtDate', () => {
@@ -200,5 +201,37 @@ describe('the Podbean overview helpers (#1115)', () => {
     expect(unmatchedLiveRows(overview).map((row) => row.episodeId)).toEqual(['E9']);
     expect(unmatchedLiveRows(null)).toEqual([]);
     expect(unmatchedLiveRows({ configured: false })).toEqual([]);
+  });
+});
+
+describe('overviewNotes', () => {
+  it('counts the rows that carry download figures, whatever the cap says', () => {
+    const data = {
+      downloadsCapped: 1,
+      episodes: [
+        { downloads: { total: 3, byDay: {} } },
+        { downloads: null, error: { code: 'UPSTREAM', message: 'x' } },
+        { downloads: null, error: { code: 'NOT_LISTED', message: 'y' } },
+      ],
+      errors: {},
+    };
+    expect(overviewNotes(data).coverage).toBe('downloads shown for 1 of 3');
+    expect(overviewNotes({ episodes: [{ downloads: { total: 1, byDay: {} } }], errors: {} }).coverage).toBeNull();
+    expect(overviewNotes({ episodes: [], errors: {} }).coverage).toBeNull();
+  });
+
+  it('surfaces the show read failure as well as the episode-listing one', () => {
+    const data = {
+      episodes: [],
+      errors: {
+        show: { code: 'UPSTREAM', message: 'Podbean answered 503 while reading the podcast.' },
+        episodes: { code: 'UPSTREAM', message: 'Podbean answered 429 while listing episodes.' },
+      },
+    };
+    expect(overviewNotes(data).failures).toEqual([
+      'Show details: Podbean answered 503 while reading the podcast.',
+      'Podbean answered 429 while listing episodes.',
+    ]);
+    expect(overviewNotes({ episodes: [], errors: {} }).failures).toEqual([]);
   });
 });

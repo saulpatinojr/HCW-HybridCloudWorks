@@ -204,6 +204,29 @@ export function liveRowFor(overview, item) {
 }
 
 /** The overview rows no transcript names: what the show has that this hub did not send. */
+/**
+ * The notes the overview status line carries beside "Podbean read …": how
+ * many rows carry download figures when not all do, and the show and
+ * episode-listing read failures. Counted from the rows that have figures,
+ * not from the cap: a row inside the cap whose statistics read failed, or
+ * one Podbean no longer lists, has none either (CodeRabbit on #1127).
+ *
+ * @param {object} data the overview
+ * @returns {{ coverage: string | null, failures: string[] }}
+ */
+export function overviewNotes(data) {
+  const episodes = Array.isArray(data?.episodes) ? data.episodes : [];
+  const withFigures = episodes.filter((row) => row?.downloads).length;
+  const coverage =
+    episodes.length > 0 && withFigures < episodes.length
+      ? `downloads shown for ${withFigures} of ${episodes.length}`
+      : null;
+  const failures = [];
+  if (data?.errors?.show?.message) failures.push(`Show details: ${data.errors.show.message}`);
+  if (data?.errors?.episodes?.message) failures.push(data.errors.episodes.message);
+  return { coverage, failures };
+}
+
 export function unmatchedLiveRows(overview) {
   const rows = Array.isArray(overview?.episodes) ? overview.episodes : [];
   return rows.filter((row) => row.transcriptId === null || row.transcriptId === undefined);

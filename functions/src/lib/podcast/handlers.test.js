@@ -940,7 +940,8 @@ describe('getHostOverview (#1115)', () => {
         error: null,
       },
     ]);
-    expect(store.readDoc).not.toHaveBeenCalled();
+    // The one read is the cache write's freshness check, not a cache hit (nothing stored, so an upsert follows).
+    expect(store.readDoc).toHaveBeenCalledTimes(1);
     expect(store.upsertDoc).toHaveBeenCalledWith(
       'admin_config',
       expect.objectContaining({ id: 'podbean_host_overview', configScope: 'admin_config' })

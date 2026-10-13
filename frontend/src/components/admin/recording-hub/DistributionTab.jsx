@@ -36,6 +36,7 @@ import {
   liveStatusLabel,
   sparklineBars,
   unmatchedLiveRows,
+  overviewNotes,
 } from './recordingView';
 import { HostLine, ReadState } from './shared';
 
@@ -219,18 +220,19 @@ function OverviewLine({ overview, onRefresh }) {
       </p>
     );
   }
-  const listingFailed = data.errors?.episodes?.message;
+  const notes = overviewNotes(data);
   return (
     <p className="text-xs text-slate-500 flex items-center gap-2 flex-wrap" role="status">
       <span>
         Podbean read {fmtWhen(data.fetchedAt) || 'just now'}
         {data.cached ? ' (cached)' : ''}
-        {data.downloadsCapped > 0
-          ? `; downloads shown for the newest ${data.episodes.length - data.downloadsCapped}`
-          : ''}
-        .
+        {notes.coverage ? `; ${notes.coverage}` : ''}.
       </span>
-      {listingFailed && <span className="text-amber-700 dark:text-amber-300">{listingFailed}</span>}
+      {notes.failures.map((line) => (
+        <span key={line} className="text-amber-700 dark:text-amber-300">
+          {line}
+        </span>
+      ))}
       <Button
         size="sm"
         variant="ghost"
