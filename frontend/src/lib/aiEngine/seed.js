@@ -383,7 +383,18 @@ export function providerDisplayPatches(stored, defaults = DEFAULT_PROVIDERS) {
 // authenticates with GCP Application Default Credentials. Gemini is reached
 // through the public API instead, as the `gemini` provider above.
 const DEPRECATED_PROVIDERS = ['vertex', 'perplexity', 'bedrock', 'replicate'];
-const DEPRECATED_MCP_SERVERS = ['anthropic-mcp', 'openai-mcp', 'perplexity-mcp'];
+// `podbean-mcp` was seeded on 2026-10-13 (#1114) and retired the same day:
+// Podbean's sign-in server allowlists redirect addresses to Claude, ChatGPT,
+// Cursor and loopback apps, and its MCP server refuses a token minted by a
+// Podbean developer app (401), both measured. No web app can connect to it,
+// this site included; the site reaches Podbean through its API instead
+// (lib/podcast/podbean.js). Deleted on sight like the others.
+export const DEPRECATED_MCP_SERVERS = [
+  'anthropic-mcp',
+  'openai-mcp',
+  'perplexity-mcp',
+  'podbean-mcp',
+];
 
 // URL migrations for servers that changed endpoints.
 const MCP_URL_PATCHES = {

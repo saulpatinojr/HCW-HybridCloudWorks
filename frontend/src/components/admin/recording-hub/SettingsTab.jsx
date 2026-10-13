@@ -370,7 +370,7 @@ export default function SettingsTab({ hub }) {
           <RouterLink to="/admin/platform?tab=audio" className="text-violet-600 hover:underline">
             Platform settings
           </RouterLink>
-          . The RSS.com credentials are on{' '}
+          . The Podbean credentials are on{' '}
           <RouterLink to="/admin/integrations?tab=keys" className="text-violet-600 hover:underline">
             Integrations → Keys
           </RouterLink>

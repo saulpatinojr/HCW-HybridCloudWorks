@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   isPodcastMediaRetired,
+  servableListenAndLearnAudioUrl,
   createPublicReadHandlers,
   MAIN_PODCAST_PROVIDER,
   PUBLIC_CONTENT_LIST_FIELDS,
@@ -1227,6 +1228,18 @@ describe('getListenAndLearn — approval is the only gate', () => {
     expect(body.episodes.map((e) => e.id)).toEqual(['a', 'b', 'c']);
   });
 
+  it('blanks the audioUrl of a chapter whose audio is on a retired host, keeping the chapter (#1119)', async () => {
+    const deps = store({ id: 'azure_ab-100' }, [
+      { id: 'plan', order: 0, audioUrl: 'https://storage.googleapis.com/hybridcloudworks-61e8d.appspot.com/plan.mp3' },
+      { id: 'design', order: 1, audioUrl: '/api/public/media/listenandlearn/azure/ab-100/design.mp3' },
+    ]);
+    const body = JSON.parse((await get(deps, { platform: 'azure', examCode: 'AB-100' })).body);
+    expect(body.episodes.map((e) => [e.id, e.audioUrl])).toEqual([
+      ['plan', ''],
+      ['design', '/api/public/media/listenandlearn/azure/ab-100/design.mp3'],
+    ]);
+  });
+
   it('drops a soft-deleted episode the status filter would have admitted', async () => {
     const deps = store({ id: 'azure_az-104' }, [
       { id: 'a', order: 0 },
@@ -1474,6 +1487,27 @@ describe('listListenAndLearnEpisodes — the provider-wide list (#349)', () => {
       context
     );
 
+  it('omits an episode whose audio is on a retired host, as it omits one with no audio (#1119)', async () => {
+    // Every public Listen & Learn row pointed at the pre-Azure Firebase
+    // bucket on 2026-10-13, and every file there answered 404.
+    const deps = store({
+      episodes: [
+        published({ id: 'firebase', audioUrl: 'https://storage.googleapis.com/hybridcloudworks-61e8d.appspot.com/x.mp3' }),
+        published({ id: 'blob' }),
+      ],
+      sets: [{ id: 'azure_az-104', provider: 'azure', examCode: 'AZ-104' }],
+    });
+    const body = JSON.parse((await list(deps)).body);
+    expect(body.items.map((i) => i.id)).toEqual(['blob']);
+    expect(servableListenAndLearnAudioUrl({ audioUrl: 'https://firebasestorage.googleapis.com/v0/b/x/o/a.mp3' })).toBe('');
+    expect(servableListenAndLearnAudioUrl({ audioUrl: '/api/public/media/listenandlearn/a.mp3' })).toBe(
+      '/api/public/media/listenandlearn/a.mp3'
+    );
+    expect(servableListenAndLearnAudioUrl({ audioUrl: 'https://STORAGE.googleapis.com./b/x.mp3' })).toBe('');
+    expect(servableListenAndLearnAudioUrl({ audioUrl: 'not a url' })).toBe('not a url');
+    expect(servableListenAndLearnAudioUrl({})).toBe('');
+  });
+
   it('filters to published in SQL, on an equality test, by provider', async () => {
     const deps = store();
     await list(deps);
@@ -1629,16 +1663,47 @@ describe('podcast media that is gone (#372)', () => {
       },
     });
 
-  it('names the retired hosts and honours a liveness mark', () => {
-    expect(isPodcastMediaRetired({ mediaUrl: 'https://mcdn.podbean.com/mf/web/x/ep.mp3' })).toBe(
-      true
-    );
+  it('hides a row on a host the show left only when nothing has refreshed it since', () => {
+    // Podbean's first tenure: never refreshed after the show returned.
+    expect(
+      isPodcastMediaRetired({
+        mediaUrl: 'https://mcdn.podbean.com/mf/web/x/ep.mp3',
+        updatedAt: '2026-09-04T10:00:00.000Z',
+      })
+    ).toBe(true);
     expect(isPodcastMediaRetired({ mediaUrl: 'https://MCDN.podbean.com/ep.mp3' })).toBe(true);
-    expect(isPodcastMediaRetired({ mediaUrl: 'https://media.rss.com/hcw/ep.mp3' })).toBe(false);
+    expect(isPodcastMediaRetired({ mediaUrl: 'https://mcdn.podbean.com./ep.mp3' })).toBe(true);
+    // The current feed's episodes, refreshed by fetchPodcastFeeds since the
+    // return: the bare host list hid all of them on 2026-10-13.
+    expect(
+      isPodcastMediaRetired({
+        mediaUrl: 'https://mcdn.podbean.com/mf/web/y/ep.mp3',
+        updatedAt: '2026-10-13T06:30:00.000Z',
+      })
+    ).toBe(false);
+    // RSS.com: the stale upload the public list showed instead of the show.
+    expect(
+      isPodcastMediaRetired({
+        mediaUrl: 'https://content.rss.com/episodes/1/2/hcw/ep.mp3',
+        updatedAt: '2026-09-08T03:30:00.570Z',
+      })
+    ).toBe(true);
     expect(
       isPodcastMediaRetired({
         mediaUrl: 'https://media.rss.com/hcw/ep.mp3',
-        mediaUnavailableAt: '2026-09-06',
+        updatedAt: '2026-10-13T08:30:00.000Z',
+      })
+    ).toBe(false);
+    // A host the show has not left is never hidden here, however stale, so a
+    // stalled timer cannot empty the page.
+    expect(
+      isPodcastMediaRetired({ mediaUrl: 'https://cdn.example/ep.mp3', updatedAt: '2020-01-01T00:00:00.000Z' })
+    ).toBe(false);
+    expect(
+      isPodcastMediaRetired({
+        mediaUrl: 'https://media.rss.com/hcw/ep.mp3',
+        updatedAt: '2026-10-13T08:30:00.000Z',
+        mediaUnavailableAt: '2026-10-14',
       })
     ).toBe(true);
     expect(isPodcastMediaRetired({ mediaUrl: 'not a url' })).toBe(false);
@@ -1653,6 +1718,7 @@ describe('podcast media that is gone (#372)', () => {
           title: 'PodBean era',
           publishedAt: '2026-05-01',
           mediaUrl: 'https://mcdn.podbean.com/mf/web/x/ep.mp3',
+          updatedAt: '2026-09-04T10:00:00.000Z',
         },
         {
           id: 'marked',
@@ -1662,10 +1728,18 @@ describe('podcast media that is gone (#372)', () => {
           mediaUnavailableAt: '2026-09-06',
         },
         {
+          id: 'stale-rsscom',
+          title: 'RSS.com upload no feed carries',
+          publishedAt: '2026-09-08',
+          mediaUrl: 'https://content.rss.com/episodes/1/2/hcw/a.mp3',
+          updatedAt: '2026-09-08T03:30:00.570Z',
+        },
+        {
           id: 'live',
-          title: 'New host',
+          title: 'Back on Podbean',
           publishedAt: '2026-07-01',
-          mediaUrl: 'https://media.rss.com/b.mp3',
+          mediaUrl: 'https://mcdn.podbean.com/mf/web/y/b.mp3',
+          updatedAt: '2026-10-13T06:30:00.000Z',
         },
       ],
     });

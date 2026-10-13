@@ -3,7 +3,7 @@
  *
  * Added when the owner approved a paid ElevenLabs plan on 2026-09-08 (ADR 0029
  * §2a, #436). It is the PODCAST voice — article and Plaud transcripts that go
- * to RSS.com — and only that (owner rule 2026-09-09, §2b): Listen & Learn is
+ * to Podbean — and only that (owner rule 2026-09-09, §2b): Listen & Learn is
  * read by Gemini TTS and never by this module, whatever keys are present.
  * The product switch in speech/index.js is what enforces that.
  *

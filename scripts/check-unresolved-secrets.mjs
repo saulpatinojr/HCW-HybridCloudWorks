@@ -63,20 +63,20 @@ export const EXPECTED_UNRESOLVED = new Map([
     "AZURE_SPEECH_KEY",
     "fallback TTS provider, deliberately unprovisioned — infra/functionapp.tf:444",
   ],
-  // The two RSS.com secrets wait on a purchase, not on engineering: the
-  // owner decided on 2026-09-18 (#432) that RSS.com Max is bought later and
-  // that these stay unseeded until then. Listed so this monitor can run
-  // again. It was switched off on 2026-09-14 because it could only fail,
-  // and from 2026-09-29 the delivery-health check failed every run for a
-  // workflow that could never succeed. Take both off when the owner seeds
-  // them; this file then reports them as resolved-but-still-listed.
+  // The two Podbean secrets wait on the owner, not on engineering: the show
+  // moved to Podbean on 2026-10-13 (ADR 0029 §1c), and they stay unseeded
+  // until the owner creates the Podbean developer app and pastes its client
+  // ID and secret on Integrations -> Keys. They took the places of the two
+  // podcast-host secrets this list carried before (unseeded since #432 and
+  // retired with that host). Take both off when the owner seeds them; this
+  // file then reports them as resolved-but-still-listed.
   [
-    "RSSCOM_API_KEY",
-    "RSS.com publishing key, unseeded until the owner buys RSS.com Max (#432, owner decision 2026-09-18)",
+    "PODBEAN_CLIENT_ID",
+    "Podbean developer-app client ID, unseeded until the owner creates the Podbean developer app",
   ],
   [
-    "RSSCOM_PODCAST_ID",
-    "RSS.com podcast id, unseeded until the owner buys RSS.com Max (#432, owner decision 2026-09-18)",
+    "PODBEAN_CLIENT_SECRET",
+    "Podbean developer-app client secret, unseeded until the owner creates the Podbean developer app",
   ],
   [
     "STREAMYARD_API_KEY",

@@ -96,14 +96,14 @@ export function readFileAsBase64(file) {
  */
 export const SKIP_PHRASES = Object.freeze({
   not_configured:
-    'RSS.com is not configured (RSSCOM_API_KEY / RSSCOM_PODCAST_ID are not seeded), so nothing was sent',
-  no_audio: 'the transcript has no audio, so nothing was sent to RSS.com',
+    'Podbean is not configured (PODBEAN_CLIENT_ID / PODBEAN_CLIENT_SECRET are not seeded), so nothing was sent',
+  no_audio: 'the transcript has no audio, so nothing was sent to Podbean',
   not_published: 'the transcript was returned to draft before the publish ran',
   // ElevenLabs free-plan audio has no commercial licence (owner decision
   // 2026-09-26, ADR 0029 §2a). Approval refuses it with 409 before a job is
   // queued; this is the job's own skip, for a document published otherwise.
   free_plan_licence:
-    'the audio was rendered on the ElevenLabs free plan, which has no commercial licence, so nothing was sent to RSS.com',
+    'the audio was rendered on the ElevenLabs free plan, which has no commercial licence, so nothing was sent to Podbean',
 });
 
 /**
@@ -140,7 +140,7 @@ const HOST_STATES = Object.freeze([
 ]);
 
 export function hostState(item) {
-  const host = item?.host?.rsscom;
+  const host = item?.host?.podbean;
   if (!host || typeof host !== 'object') return 'none';
   return HOST_STATES.find(([, holds]) => holds(host))?.[0] ?? 'none';
 }
@@ -149,6 +149,87 @@ export function hostState(item) {
 export function hostErrorMessage(host) {
   if (!host?.error) return '';
   return typeof host.error === 'string' ? host.error : host.error.message || 'publish failed';
+}
+
+// ── the Podbean overview (#1115) ─────────────────────────────────────────────
+
+/** Podbean's episode status as a word a reviewer reads: `publish` is live. */
+export function liveStatusLabel(status) {
+  if (status === 'publish') return 'Live';
+  if (status === 'draft') return 'Draft on Podbean';
+  return status ? String(status) : 'Unknown';
+}
+
+/**
+ * "12 downloads, last 30 days", or '' when the row carries no count — a
+ * capped row, or one whose statistics read failed (its `error` says so).
+ */
+export function describeDownloads(row, days = 30) {
+  const total = row?.downloads?.total;
+  if (typeof total !== 'number' || !Number.isFinite(total)) return '';
+  return `${total.toLocaleString()} download${total === 1 ? '' : 's'}, last ${days} days`;
+}
+
+/**
+ * The daily counts in date order, each with a height in 0–100 against the
+ * busiest day, for the sparkline. Empty for no data or an empty window. A
+ * window with no downloads at all is bars of height 0, not nothing: the
+ * difference between "nobody listened" and "we do not know".
+ */
+export function sparklineBars(byDay) {
+  if (!byDay || typeof byDay !== 'object' || Array.isArray(byDay)) return [];
+  const entries = Object.entries(byDay)
+    .map(([date, count]) => ({ date, count: Number(count) }))
+    .filter(({ count }) => Number.isFinite(count) && count >= 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const max = entries.reduce((top, { count }) => Math.max(top, count), 0);
+  return entries.map((entry) => ({
+    ...entry,
+    height: max > 0 ? Math.round((entry.count / max) * 100) : 0,
+  }));
+}
+
+/**
+ * The overview row for one transcript: the one that names it, else the one
+ * for the episode its record names (a transcript regenerated under a new id
+ * keeps the episode), else null.
+ */
+export function liveRowFor(overview, item) {
+  const rows = Array.isArray(overview?.episodes) ? overview.episodes : [];
+  const byTranscript = rows.find((row) => row.transcriptId === item?.id);
+  if (byTranscript) return byTranscript;
+  const episodeId = item?.host?.podbean?.episodeId;
+  if (!episodeId) return null;
+  return rows.find((row) => row.episodeId === String(episodeId)) ?? null;
+}
+
+/** The overview rows no transcript names: what the show has that this hub did not send. */
+/**
+ * The notes the overview status line carries beside "Podbean read …": how
+ * many rows carry download figures when not all do, and the show and
+ * episode-listing read failures. Counted from the rows that have figures,
+ * not from the cap: a row inside the cap whose statistics read failed, or
+ * one Podbean no longer lists, has none either (CodeRabbit on #1127).
+ *
+ * @param {object} data the overview
+ * @returns {{ coverage: string | null, failures: string[] }}
+ */
+export function overviewNotes(data) {
+  const episodes = Array.isArray(data?.episodes) ? data.episodes : [];
+  const withFigures = episodes.filter((row) => row?.downloads).length;
+  const coverage =
+    episodes.length > 0 && withFigures < episodes.length
+      ? `downloads shown for ${withFigures} of ${episodes.length}`
+      : null;
+  const failures = [];
+  if (data?.errors?.show?.message) failures.push(`Show details: ${data.errors.show.message}`);
+  if (data?.errors?.episodes?.message) failures.push(data.errors.episodes.message);
+  return { coverage, failures };
+}
+
+export function unmatchedLiveRows(overview) {
+  const rows = Array.isArray(overview?.episodes) ? overview.episodes : [];
+  return rows.filter((row) => row.transcriptId === null || row.transcriptId === undefined);
 }
 
 /** How a stored recording got into the `recordings` container. */

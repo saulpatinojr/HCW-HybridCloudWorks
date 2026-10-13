@@ -151,10 +151,21 @@ export async function completeMcpOAuth({ state, code, iss }) {
   return res;
 }
 
-/** Forget a server's sign-in: its tokens and connection, server-side. */
+/**
+ * Forget a server's sign-in: its tokens and connection, server-side. Where
+ * the provider advertises a revocation endpoint the API revokes the grant
+ * there first (#1116). Resolves `{ disconnected, revoked, issuer, reason? }`:
+ * `revoked` is true, false (the grant may still be live at `issuer`; `reason`
+ * says why) or null (the provider offers no revocation).
+ */
 export async function disconnectMcpOAuth(serverId) {
-  await sendJSON(`cms/mcp/${encodeURIComponent(serverId)}/oauth/disconnect`, 'POST', {});
+  const res = await sendJSON(
+    `cms/mcp/${encodeURIComponent(serverId)}/oauth/disconnect`,
+    'POST',
+    {}
+  );
   await notifyConfigSubscribers('mcp-servers');
+  return res;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

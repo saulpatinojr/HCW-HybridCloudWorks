@@ -179,11 +179,16 @@ const KEY_VAULT_METADATA = Object.freeze({
     consumer: "Approvals, alerts and reminders on Telegram",
     renewal: "none",
   },
-  "RSSCOM-API-KEY": { issuer: "RSS.com", consumer: "Podcast publishing" },
-  "RSSCOM-PODCAST-ID": {
-    issuer: "RSS.com",
+  "PODBEAN-CLIENT-ID": {
+    issuer: "Podbean",
     consumer: "Podcast publishing",
     renewal: "none",
+  },
+  "PODBEAN-CLIENT-SECRET": {
+    issuer: "Podbean",
+    consumer: "Podcast publishing",
+    rotate:
+      "Rotate it by hand in Podbean's developer portal (developers.podbean.com), then paste the new secret on Integrations → Keys.",
   },
   "STREAMYARD-API-KEY": {
     issuer: "StreamYard",

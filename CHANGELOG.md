@@ -19,6 +19,146 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Recording Hub: a Stats tab with the show's Podbean statistics.** Closes
+  #1115 (the second of two slices; the first added the Distribution tab's
+  live status and downloads). The show's figures lived only on Podbean's
+  site; the hub now reads them through the same client (ADR 0029 §1c).
+  - **`GET cms/podcast/host/stats?range=30d|90d|12m`** (`editor`;
+    `lib/podcast/host-stats.js`): six independent Podbean reads over the
+    range's window — downloads by day (`30d`, `90d`, `period: 'd'`) or by
+    month (`12m`, `period: 'm'`, from the first of the month eleven months
+    ago), countries, platforms, sources, monthly listener retention and the
+    audience counts (`followers`, `likes`, `comments`,
+    `totalEpisodeLengthSeconds`). A failed sub-read is `null` in its place
+    with its recorded error under `errors.<name>`; the others still answer
+    and the response is 200. A range not offered is 400 before any read.
+    Cached 60 minutes per range in `admin_config/podbean_host_stats_<range>`;
+    `?refresh=1` reads live except while the range's cache is under a minute
+    old, and the document carries the client's `accountKey`, both as the
+    overview does. Not configured is 200 `{ configured: false, range, reason }`
+    with no call.
+  - **`lib/podcast/host-cache.js`**: the read-through `admin_config` cache
+    the overview and the statistics now share — served while younger than
+    the TTL; on refresh, served while younger than the floor (read from the
+    shared document, so every session and instance together make one live
+    read a minute); a miss for any other Podbean account; written create-only
+    first and etag-conditionally after; logged by error code and never a
+    dependency when it cannot be read or written. `host-reads.js` moved onto
+    it with no change in behaviour.
+  - **Stats tab** (`?tab=stats`; `statistics`, `downloads`, `analytics` and
+    `listeners` land there): a 30 days / 90 days / 12 months picker, the
+    total downloads and a bar chart with one bar per day or month (zero where
+    nothing was reported, so a quiet day is a bar and not a gap), top
+    countries (named), platforms and sources as ranked lists with share %
+    and an `Other` row past eight, retention as a small table with each
+    point as a percentage, and the audience counts as tiles. Loading,
+    not-configured, failed-read, per-section failure and "no data yet"
+    states each say so. The chart is recharts, as AI Engine → Usage uses.
+  - **Two documented-but-unmeasured shapes are taken either way**: a monthly
+    download key of `YYYY-MM` is a month and `YYYY-MM-DD` folds into its
+    month; a `retention` value at or under 1 is a fraction and above 1 a
+    percentage. Both are stated in `statsView.js` and pinned by its tests,
+    so the first live reading has a test to correct.
+  - Contract and inventory: `.azure/api-surface.json`,
+    `functions/function-inventory.json` (`getPodcastHostStats`).
+
+- **Recording Hub: Podbean's live status and downloads per published
+  episode.** Part of #1115, re-scoped 2026-10-13 after Podbean's MCP server
+  was measured unusable from a web app (redirect allowlist; a developer-app
+  token gets 401 at `/mcp`). The Distribution tab showed only what the
+  publish job recorded; it now reads Podbean through the client the publish
+  already authenticates with (ADR 0029 §1c).
+  - **`podbean.js` gains the reads**: `getEpisode`, `getDownloadStats`,
+    `getCountryStats`, `getPlatformStats`, `getSourceStats`,
+    `getUserRetention` and `getAnalyticReports`, every one a `GET` through the
+    same `call()` with the token as `access_token`. Dates (`YYYY-MM-DD`, a
+    real day, start on or before end) and periods (`d|m`, `m|w`) are refused
+    as `VALIDATION` before any request. `types[]` is sent as a repeated
+    parameter; the shapes are Podbean's documented ones and none is measured
+    live yet — the client tests pin the documented requests.
+  - **`GET cms/podcast/host/overview`** (`editor`; `lib/podcast/host-reads.js`):
+    every transcript whose `host.podbean.episodeId` is set, joined by id to
+    one page of the show's newest 100 episodes, plus the listed episodes no
+    transcript names (`transcriptId: null` — the three published by hand).
+    Per episode: Podbean's title, status, permalink, publish time, and the
+    last 30 days of downloads (`{ total, byDay }`), newest first and at most
+    20 statistics reads per overview (`downloadsCapped` counts the rest). A
+    Podbean failure lands where it happened — `errors.show`,
+    `errors.episodes` (then on every transcript row, and no statistics are
+    read), or `error` on one row — in the publish job's recorded-error shape,
+    and the answer is still 200. Cached 15 minutes in
+    `admin_config/podbean_host_overview`; `?refresh=1` reads live, except
+    while the cache is under a minute old, so every editor session, tab and
+    instance together make at most one live read a minute against the
+    bucket publishing shares (the floor is read from the shared document).
+    The cached document carries the client's `accountKey` (sixteen hex
+    digits of SHA-256 over the client id, never the id), so settings pointed
+    at another Podbean account make it a miss rather than serving the
+    previous account's rows until expiry. A cache that cannot be read or
+    written is logged content-free and the live overview is served. Not
+    configured is 200 `{ configured: false, reason }` with no call. Logs
+    carry counts and codes, never a title or the token.
+  - **Distribution tab**: under each "Published to Podbean" record, a Podbean
+    line with the live status badge (Live / Draft on Podbean), the episode
+    page, "N downloads, last 30 days" and a 30-bar sparkline; an "Also on
+    Podbean" group for the episodes this hub never sent; a "Podbean read
+    <when> (cached)" status line with Refresh. Loading, not-configured and
+    failed-read states each say so; a failed read shows no stale counts. The
+    overview is read when the tab first mounts, not on page load.
+  - Contract and inventory: `.azure/api-surface.json`,
+    `functions/function-inventory.json` (`getPodcastHostOverview`).
+
+- **MCP Disconnect revokes the grant at the provider (RFC 7009).** Closes
+  #1116, raised by CodeRabbit on #1114. Disconnect on an OAuth MCP server
+  deleted the stored token pair and left the grant live at the provider
+  until its refresh token expired or the owner revoked it there.
+  - **Discovery keeps the `revocation_endpoint`** the authorization-server
+    metadata names (RFC 8414), https only, on the pending sign-in and then on
+    the stored connection (`oauth.revocationEndpoint`), beside the token
+    endpoint — so, like the token endpoint, it is set only by the flow and
+    never by a config write. A missing or non-https one is stored as none;
+    it is not a reason to refuse the sign-in. Podbean advertises
+    `https://mcp.podbean.com/revoke` (read 2026-10-13); Replicate and
+    Hostinger did not when read.
+  - **Disconnect revokes first, then deletes.** The refresh token, then the
+    access token, each POSTed as `token` + `token_type_hint` with the client
+    authentication the registration chose (client id in the form for a public
+    client; Basic or in the body for a confidential one), through the same
+    guarded request as every token call: https only, no redirects, one
+    deadline. The local delete happens whatever the provider answers, so an
+    outage cannot keep a token on this side. The response carries `revoked`
+    (`true`, `false` with a short `reason`, or `null` when there is nowhere
+    to revoke) and `issuer`; the audit row records both. No token reaches a
+    log or the response.
+  - **The card says which.** "Disconnected and revoked at mcp.podbean.com",
+    or "Disconnected here; the grant may still be live at mcp.podbean.com —
+    revoke it in your mcp.podbean.com account". A provider without a
+    revocation endpoint gets the plain "disconnected" toast as before. The
+    Podbean card's notes and the Connect runbook say the same.
+
+- **Podbean's MCP server in the AI Engine (Admin → AI Engine → MCP
+  Servers).** The show moved to Podbean on 2026-10-13, and Podbean runs a
+  hosted MCP server at `https://mcp.podbean.com/mcp`. It covers the show's
+  episodes, its details and its listener statistics.
+  - **Sign-in:** read that day, the server advertises RFC 9728 and RFC 8414
+    discovery, PKCE (`S256`), `none` client authentication and a
+    `registration_endpoint`. So the existing Connect flow signs in with no key:
+    press Connect, sign in at Podbean, approve. The token is kept server-side
+    and renewed by the MCP token timer, like Hostinger's and Replicate's.
+  - **Ships switched off.** Its tools can publish, edit and permanently delete
+    episodes.
+  - **Where it is recorded:** `seed.js` seeds it (the AI Engine page adds a
+    missing default on load). The card treats it as built-in. The credentials
+    register lists its OAuth token as `mcp-podbean`. The tests pin it among the
+    Connect servers.
+
+- **`podcast.hybridcloudworks.com` for the show's Podbean website.**
+  Hybrid Cloud Insights moved from RSS.com to Podbean on 2026-10-13.
+  - **The feed:** it is now `https://feed.podbean.com/hybridcloudinsights/feed.xml`. RSS.com's feed and Podbean's first address (`spatino`) both answer 301 towards it, and all three episodes keep their GUIDs.
+  - **The record:** `cloudflare_dns_record.podcast_podbean` points `podcast` at `pbcdn2.podbean.com`, DNS-only like `docs`, because Podbean issues the certificate itself.
+  - **Why a subdomain:** Podbean's "Use a domain I own" page prefills `www`, which is the site. The comment in `infra/frontend.tf` and the edge DNS runbook say so, so the podcast never takes `www` or the apex.
+  - The plan checker declares the one create.
+
 - **The hourly functions monitor names a `ci-*` access window on the
   Function App whose run has ended (#1050).** `deploy-functions.yml` and
   `publish-content-manifest.yml` open a one-host Allow rule for their runner
@@ -3639,6 +3779,90 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Podbean MCP is retired from the AI Engine; the site reaches Podbean
+  through its API.** Seeded on 2026-10-13 (#1114) and retired the same day,
+  on two measurements against `mcp.podbean.com`:
+  - its sign-in server allowlists redirect addresses to Claude, ChatGPT,
+    Cursor and loopback apps. Registration with the site's callback was
+    refused, and a client-metadata document listing it (which Podbean does
+    read) still answered `Unregistered redirect_uri`, while a loopback
+    address in the same document was accepted;
+  - its MCP server answers `401` to a Bearer token minted by a Podbean
+    developer app, so no token the site can hold is accepted.
+
+  No web app can connect to it, this site included. `podbean-mcp` joins
+  `DEPRECATED_MCP_SERVERS` and is deleted on the next AI Engine load; its
+  credentials-register row goes with it. The developer app's credentials do
+  work against `api.podbean.com`, which is how publishing (#1117) already
+  reaches Podbean, and where any further Podbean capability for the AI
+  Engine is built (#1115, re-scoped).
+
+- **Approved podcast episodes publish to Podbean; the RSS.com integration is
+  gone (ADR 0029 §1c).** Hybrid Cloud Insights moved to Podbean on
+  2026-10-13, and its feed is now `https://podcast.hybridcloudworks.com/feed.xml`.
+  RSS.com's API path never ran: RSS.com Max was never bought (#432), so every
+  approval was recorded as not configured.
+  - **The client:** `functions/src/lib/podcast/podbean.js` replaces
+    `rsscom.js`. It was written against Podbean's own API documentation data.
+    It exchanges a developer app's client ID and secret for an access token
+    (client credentials) and caches the token for its life less a minute.
+    It authorises the upload, PUTs the MP3 to the presigned URL with no token,
+    and creates the episode with `POST /v1/episodes` as `publish` and
+    `public`. The episode notes are escaped HTML with a link to the article.
+    A re-run updates the episode the document names and never creates a
+    second.
+  - **Retries:** the create is never repeated. The one repeat is a call
+    refused with `invalid_token`, once, with a fresh token.
+  - **A lost create is found, not duplicated (#1118).** Podbean takes no
+    idempotency key, and CodeRabbit held this to be fixed before merge.
+    - **When:** before any create on a document with an earlier attempt and
+      no episode id, the publish lists the show's newest episodes
+      (`GET /v1/episodes`).
+    - **Match:** one with the same title, published between ten minutes
+      before the document's first attempt and twenty minutes after its last
+      recorded one, is adopted and updated, with the audio re-sent. The
+      upper bound keeps a late retry from adopting an unrelated episode
+      published later under the same title.
+    - **Fails closed:** a listing that fails or cannot be read creates
+      nothing, and neither does an unreadable attempt time (non-retryable).
+    - **Recorded:** `firstAttemptAt` and `adoptedAt` are kept on the record.
+  - **Credentials stay on the server:** no error, log line or recorded
+    failure carries the token, the secret or a URL holding either.
+  - **Same job, same retry route, new record:** `publish-podcast-transcript`
+    and `POST cms/podcast/transcripts/{id}/publish` are unchanged. The outcome
+    is stored under `host.podbean`, with the episode id, page, media URL and
+    file key. `host.rsscom` is neither read nor migrated, because it only ever
+    held `skipped: 'not_configured'`. The job's timeout is now 10 minutes,
+    above the client's deadlines including the one re-auth.
+  - **Integrations:** a Podbean card replaces RSS.com's, with its badge,
+    directory row and health probe. Its test makes the connection probe's
+    first token exchange and then reads the show
+    (`GET https://api.podbean.com/v1/podcast`). The exchange is a new,
+    optional `authenticate` step on a probe, held to one POST and redacted
+    like the GET. The card answers `Connected — <show title>.` and records no
+    key verdict.
+  - **Recording Hub and admin copy** name Podbean, and a published episode
+    links to its Podbean page.
+  - **Public copy:** both vendor guards now refuse "podbean" in public copy
+    and public API messages.
+  - **Keys:** the catalogue, the credential register, the expected-unresolved
+    list and the docs swap `RSSCOM-API-KEY` and `RSSCOM-PODCAST-ID` for
+    `PODBEAN-CLIENT-ID` and `PODBEAN-CLIENT-SECRET`. The client ID is an
+    identifier; the secret is rotated by hand in Podbean's developer portal.
+  - **The Terraform plan** shows four app-setting changes on
+    `azurerm_function_app_flex_consumption.hcw`, all declared in
+    `scripts/assert-expected-plan.mjs`. `RSSCOM_API_KEY` and
+    `RSSCOM_PODCAST_ID` are removed. `PODBEAN_CLIENT_ID` and
+    `PODBEAN_CLIENT_SECRET` are added as Key Vault references to
+    `PODBEAN-CLIENT-ID` and `PODBEAN-CLIENT-SECRET`.
+  - **Owner steps:** create a developer app at
+    `https://developers.podbean.com/`, then paste its client ID and client
+    secret on `https://hybridcloudworks.com/admin/integrations?tab=keys`.
+    Success is the Podbean card's test answering
+    `Connected — Hybrid Cloud Insights.`. Until both are seeded, approvals stay
+    on the manual upload path, exactly as before, and the two settings are on
+    the expected-unresolved list, so the secrets monitor stays green.
+
 - **The README is written for someone new to the project, and the
   engineering detail moved to the docs site (owner, 2026-10-11).**
   - **README:** the README now leads with what a visitor can do on the site:
@@ -4495,6 +4719,70 @@ This project has not cut a tagged release; entries are grouped under
   unestablished.
 
 ### Fixed
+
+- **One Podbean publish per transcript, even when two schedules land at
+  once (closes #1118).** An approval (`POST cms/podcast/transcripts/review`)
+  and a retry (`POST cms/podcast/transcripts/{id}/publish`) arriving in the
+  same instant could both read the transcript with no publish pending, both
+  queue a job, and two first runs would both create: the episode twice on
+  the public feed. #1117 reconciled a create whose answer was lost; this is
+  the other half, the reservation.
+  - **The pending marker is now etag-conditional.** `scheduleHostPublish`
+    writes `host.podbean.pending` with `patchDoc`'s `ifMatch` set to the
+    `_etag` the document was read at — after an approval, the one the
+    status write returned — so it lands only on the version the decision
+    was made about. A 412 means someone else wrote first. The document is
+    re-read once: a live reservation on it is theirs, and the loser answers
+    in flight naming their job (202 from review, 409 from the retry) and
+    cancels the job document it wrote, so the stale-queued sweeper can never
+    re-enqueue it. Anything else — the other job already finished, a
+    withdrawal, an unrelated edit — is not a publish in flight, so the
+    reservation is tried once more against the fresh document, from its
+    stable record, so an `episodeId` just stored is kept under the marker.
+    A document that moves on every attempt queues nothing and throws
+    `RESERVATION_CONTENDED`; the review handler records `SCHEDULE_FAILED`
+    and keeps the approval, as it already did for any other failure to
+    queue. A transcript handed over without its `_etag` is refused before
+    any write. Nothing is enqueued unless the reservation landed.
+  - **Tests.** Two schedules racing on one document produce one job, one
+    marker and one message, the loser in flight; an approval and a retry
+    racing through the handlers agree on one job id; the fresh-document
+    retry keeps the stored episode id; a reservation lost twice cancels its
+    job and queues nothing; a document without an etag writes nothing.
+
+- **Listen & Learn no longer renders dead players for audio the site stopped
+  serving (#1119).** Every public Listen & Learn row (the AB-100 set) still
+  pointed at the pre-Azure Firebase bucket, and every file there answered 404
+  on 2026-10-13, so the audio page showed three players that played nothing
+  and the browser's policy refused the host besides.
+  - `servableListenAndLearnAudioUrl` treats `storage.googleapis.com` and
+    `firebasestorage.googleapis.com` as retired: the provider-wide list and
+    the section counts omit such a row, as they omit one with no audio, and
+    the per-certification read blanks its `audioUrl` so the page shows the
+    chapter without a player.
+  - The rows themselves are kept. Regenerating a chapter (Admin → Listen &
+    Learn → Regenerate) writes new audio to blob storage and the row returns.
+
+- **The podcast pages show the show again, now that it is back on Podbean.**
+  The public list returned one stale RSS.com upload instead of the three
+  episodes in the feed. Two causes, both from the move on 2026-10-13:
+  - **The hide rule.** `RETIRED_PODCAST_MEDIA_HOSTS` hid every episode on
+    `mcdn.podbean.com` (#372). That was right when the show left Podbean on
+    2026-09-05 and its files 404'd, and wrong once the show returned: every
+    current episode is on that host again. Each host the show has left now
+    carries the moment it left. A row there is hidden only when nothing has
+    refreshed it since. `fetchPodcastFeeds` upserts every episode in the
+    current feed every two hours, so current episodes show. Rows from
+    Podbean's first tenure, and the RSS.com upload no feed carries, stay
+    hidden. A host the show still uses is never hidden by this rule, so a
+    stalled timer cannot empty the page. The section counts project
+    `updatedAt` so the sitemap counts the same rows.
+  - **`media-src`.** Once Podbean had copied the audio, an enclosure went
+    `mcdn.podbean.com` → 302 → a numbered storage host (`s307`, `s396`,
+    `s405.podbean.com`, one per file). #1107's `mcdn.podbean.com` alone
+    failed at that hop in headless Chromium, and `https://*.podbean.com`
+    loads it. RSS.com's three hosts left the list, since no listed episode
+    is on them.
 
 - **Show episodes play on the site again, from RSS.com and from Podbean.**
   The site's `media-src` allowed RSS.com's two media hosts (#1101), but an

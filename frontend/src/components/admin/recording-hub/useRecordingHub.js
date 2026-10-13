@@ -3,7 +3,7 @@
  *
  * The hub is organised by duty now, and two of those duties are two views of
  * one list: approving a transcript on **Transcripts** is what queues its
- * publish to RSS.com, which is the only thing **Distribution** has to show. A
+ * publish to Podbean, which is the only thing **Distribution** has to show. A
  * per-tab read would let them disagree about the same transcript, so this
  * lives at page level the way CertificationsPage owns useCertifications and
  * ListenAndLearnPage owns useListenAndLearn.
@@ -14,7 +14,11 @@
  *    library at all, and **Settings** is where it is connected — so connecting
  *    on one must light up the other;
  *  - the podcast feed read answers both **Episodes** (the show) and
- *    **Distribution** (the feed URL), from one call.
+ *    **Distribution** (the feed URL), from one call;
+ *  - the Podbean overview (#1115) — what the host says now about the episodes
+ *    the records name, and their downloads — is read once Distribution first
+ *    asks for it, not on mount: it is a Podbean read (cached server-side for
+ *    fifteen minutes), and four of the five tabs never show it.
  *
  * Race-safe the way #555 hardened the Newsletter Hub:
  *
@@ -133,6 +137,27 @@ async function fetchEpisodes() {
   return outcome;
 }
 
+/**
+ * One GET of the Podbean overview, as `{ data }` or `{ error }` — never throws.
+ * `refresh` is the hub's Refresh button: the route reads Podbean live instead
+ * of serving its fifteen-minute cache.
+ */
+async function fetchHostOverview(refresh) {
+  let outcome;
+  try {
+    const res = await getJSON(
+      refresh ? 'cms/podcast/host/overview?refresh=1' : 'cms/podcast/host/overview'
+    );
+    outcome = { data: res && typeof res === 'object' ? res : {} };
+  } catch (error) {
+    outcome = { error: error?.message || 'Could not read Podbean' };
+  }
+  return outcome;
+}
+
+/** The overview before anything has asked for it. */
+export const HOST_OVERVIEW_IDLE = Object.freeze({ data: null, loading: false, error: '' });
+
 async function readConnection(state) {
   const outcome = await fetchConnection();
   if (!state.alive.current) return;
@@ -158,6 +183,24 @@ async function readTranscripts(state) {
     state.setLoadError('');
   }
   state.setLoading(false);
+}
+
+/**
+ * Read the Podbean overview as generation `mine`, like the transcripts: a
+ * Refresh that answers after a later one paints nothing. A failed read leaves
+ * the error and no rows — stale download counts beside "could not read" would
+ * be the same half-confident panel #358 removed from Settings.
+ */
+async function readHostOverview(state, { refresh = false } = {}) {
+  const mine = ++state.hostGeneration.current;
+  state.setHostOverview((prev) => ({ ...prev, loading: true }));
+  const outcome = await fetchHostOverview(refresh);
+  if (mine !== state.hostGeneration.current || !state.alive.current) return;
+  state.setHostOverview(
+    outcome.error
+      ? { data: null, loading: false, error: outcome.error }
+      : { data: outcome.data, loading: false, error: '' }
+  );
 }
 
 async function readEpisodes(state) {
@@ -192,7 +235,7 @@ function hostNoteFor(res) {
   // answers 202 with `jobId` (and `host.pending`) while the host publish it
   // queued is in flight, 200 when there was nothing to queue.
   const host = res?.host && typeof res.host === 'object' ? res.host : null;
-  if (res?.jobId) return ` Publishing to RSS.com (job ${res.jobId}).`;
+  if (res?.jobId) return ` Publishing to Podbean (job ${res.jobId}).`;
   if (host?.skipped) return ` Host publish skipped: ${describeSkip(host)}.`;
   return '';
 }
@@ -292,9 +335,15 @@ export default function useRecordingHub(ready, toast) {
   const [episodesLoading, setEpisodesLoading] = useState(true);
   const [episodesError, setEpisodesError] = useState('');
 
+  // The Podbean overview (#1115): read once Distribution asks (`hostWanted`)
+  // and auth is ready, then on Refresh.
+  const [hostOverview, setHostOverview] = useState(HOST_OVERVIEW_IDLE);
+  const [hostWanted, setHostWanted] = useState(false);
+
   // Bumped by every transcript read; a read whose number is no longer current
   // has been superseded and must paint nothing.
   const generation = useRef(0);
+  const hostGeneration = useRef(0);
   const alive = useRef(true);
   const busy = useRef('');
   // The latest-ref pattern: `useToast` hands back a new function every render,
@@ -319,7 +368,9 @@ export default function useRecordingHub(ready, toast) {
       setFeedUrl,
       setEpisodesLoading,
       setEpisodesError,
+      setHostOverview,
       generation,
+      hostGeneration,
       alive,
       busy,
       toast: (...args) => toastRef.current?.(...args),
@@ -333,6 +384,7 @@ export default function useRecordingHub(ready, toast) {
       alive.current = false;
       // Supersede anything in flight: its `mine` can never match again.
       generation.current += 1;
+      hostGeneration.current += 1;
     };
   }, []);
 
@@ -344,6 +396,12 @@ export default function useRecordingHub(ready, toast) {
   }, [ready, state]);
 
   useEffect(() => (ready ? startPodcastReads(state) : undefined), [ready, state]);
+
+  // Once, when both hold: `hostWanted` only ever goes true, and a tab that
+  // asks before auth is ready gets its read the moment auth arrives.
+  useEffect(() => {
+    if (ready && hostWanted) readHostOverview(state);
+  }, [ready, hostWanted, state]);
 
   const recheckConnection = useCallback(() => {
     setConnection(CONNECTION.checking);
@@ -375,5 +433,9 @@ export default function useRecordingHub(ready, toast) {
     feedUrl,
     episodesLoading,
     episodesError,
+
+    hostOverview,
+    loadHostOverview: useCallback(() => setHostWanted(true), []),
+    refreshHostOverview: useCallback(() => readHostOverview(state, { refresh: true }), [state]),
   };
 }

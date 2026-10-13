@@ -260,7 +260,7 @@ describe('ElevenLabsCard', () => {
   it('says a free-plan episode is not published, and why', async () => {
     render(<ElevenLabsCard authReady />);
     expect(await screen.findByText(/Free plan: no commercial licence/)).toBeTruthy();
-    expect(screen.getByText(/never\s+published to RSS\.com; approval refuses them/)).toBeTruthy();
+    expect(screen.getByText(/never\s+published to Podbean; approval refuses them/)).toBeTruthy();
   });
 
   it('does not show the free-plan note on a paid plan', async () => {

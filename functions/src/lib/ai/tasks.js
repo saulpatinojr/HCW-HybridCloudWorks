@@ -269,7 +269,7 @@ export const AI_TASKS = Object.freeze({
   }),
   podcastVoice: task({
     label: 'Podcast voice',
-    description: 'Reads a podcast transcript aloud for RSS.com.',
+    description: 'Reads a podcast transcript aloud for Podbean.',
     route:
       'Every podcast render and the Audio tab’s live check. Off means the transcript is saved without audio. ElevenLabs is the only podcast voice (ADR 0029 §2b).',
     modality: 'tts',

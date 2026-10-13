@@ -49,7 +49,12 @@ import {
   validateMcpToolPolicy,
   validateMcpUrl,
 } from '../../../functions/src/lib/ai/mcp-policy.js';
-import { DEFAULT_MCP_SERVERS, PUBLER_MCP_ALLOWED_TOOLS, mcpServerPatch } from './aiEngine/seed.js';
+import {
+  DEFAULT_MCP_SERVERS,
+  DEPRECATED_MCP_SERVERS,
+  PUBLER_MCP_ALLOWED_TOOLS,
+  mcpServerPatch,
+} from './aiEngine/seed.js';
 import { MCP_OAUTH_CALLBACK_PATH } from '../components/admin/ai-engine/tabs.js';
 import {
   PASTED_TOKEN_SERVER_IDS,
@@ -384,7 +389,7 @@ describe('the seeded Publer MCP server passes the API policy (#995)', () => {
 describe('the OAuth Connect servers (2026-10-08) match the API', () => {
   const byId = (id) => DEFAULT_MCP_SERVERS.find((server) => server.id === id);
 
-  it('seeds Replicate at its SSE URL and Hostinger’s hosted server, both OAuth, neither with a key', () => {
+  it('seeds Replicate at its SSE URL and Hostinger’s and Podbean’s hosted servers, all OAuth, none with a key', () => {
     expect(byId('replicate-mcp')).toMatchObject({
       url: 'https://mcp.replicate.com/sse',
       transport: 'sse',
@@ -404,9 +409,18 @@ describe('the OAuth Connect servers (2026-10-08) match the API', () => {
       const server = byId(id);
       expect(validateMcpUrl(server.url)).toMatch(/^https:\/\//);
       expect(validateMcpKeyBinding(server)).toBeNull();
-      expect(validateMcpToolPolicy(server)).toBeNull();
       expect(apiUsesOAuthConnect(server)).toBe(true);
     }
+    expect(validateMcpToolPolicy(byId('replicate-mcp'))).toBeNull();
+    expect(validateMcpToolPolicy(byId('hostinger-mcp'))).toBeNull();
+  });
+
+  it('retires podbean-mcp: Podbean admits no web app, so the seed deletes it on sight', () => {
+    // Measured 2026-10-13: registration and a client metadata document both
+    // refused the site's callback ("allowlisted URI: Claude, ChatGPT, Cursor,
+    // or loopback"), and a developer-app token got 401 from the MCP server.
+    expect(byId('podbean-mcp')).toBeUndefined();
+    expect(DEPRECATED_MCP_SERVERS).toContain('podbean-mcp');
   });
 
   it('every seeded server is https and passes the API’s save-time checks', () => {

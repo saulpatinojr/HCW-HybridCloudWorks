@@ -2,7 +2,7 @@
  * connection-probe-http.js — `connectionProbe` (#483) and the record of what
  * each service test last said (`cms/integration-status`, ADR 0033 Platform).
  *
- * The Integrations page's beaker for Telegram, RSS.com, YouTube, Resend, Qlty,
+ * The Integrations page's beaker for Telegram, Podbean, YouTube, Resend, Qlty,
  * Replicate and Firecrawl, whose credentials are read only on the server.
  * Semantics, the closed probe table and the reason the caller supplies a NAME
  * rather than a path are all in lib/integrations/connection-probe.js.

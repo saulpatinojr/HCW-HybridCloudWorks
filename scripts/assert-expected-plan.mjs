@@ -295,6 +295,11 @@ export const DECLARED = [
   // read that run as those six beside the permanent diff, and
   // `az role assignment list` then showed the reader with Reader and HCW
   // Function Settings Reader only.
+  // #1110's podcast_podbean create applied in run-NSdFBJeGWwWZh38K and
+  // #1117's four app-setting changes (the two RSSCOM references out, the two
+  // PODBEAN references in) in run-zKhjw537s5ZF2FYU, both on 2026-10-13, and
+  // were deleted here. tfc-plan-check.yml read each run as its declared
+  // changes beside the permanent diff and nothing else.
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

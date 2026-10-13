@@ -177,7 +177,7 @@ describe('the issue’s list', () => {
   });
 
   it('calls an identifier an identifier, not a credential to rotate', () => {
-    for (const name of ['TELEGRAM-CHAT-ID', 'PUBLER-WORKSPACE-ID', 'RSSCOM-PODCAST-ID', 'CODER-URL']) {
+    for (const name of ['TELEGRAM-CHAT-ID', 'PUBLER-WORKSPACE-ID', 'PODBEAN-CLIENT-ID', 'CODER-URL']) {
       expect(findCredential(keyVaultCredentialId(name)).renewal).toBe('none');
     }
   });

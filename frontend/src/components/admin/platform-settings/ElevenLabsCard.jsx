@@ -190,7 +190,7 @@ function FreePlanNote() {
       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
       <span>
         Free plan: no commercial licence. Episodes voiced on it are for testing and are never
-        published to RSS.com; approval refuses them. Upgrade, then regenerate, to publish.
+        published to Podbean; approval refuses them. Upgrade, then regenerate, to publish.
       </span>
     </p>
   );

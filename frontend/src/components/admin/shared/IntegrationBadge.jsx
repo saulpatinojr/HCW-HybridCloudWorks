@@ -81,7 +81,14 @@ export const BRANDS = Object.freeze({
   },
   publer: { name: 'Publer', color: '#2E6BFF', site: 'https://publer.com', approximate: true },
   resend: { name: 'Resend', color: '#000000', onDark: '#FFFFFF', site: 'https://resend.com' },
-  rsscom: { name: 'RSS.com', color: '#F26522', site: 'https://rss.com' },
+  // The green podbean.com's own stylesheet uses most (read 2026-10-13), not a
+  // brand page, hence approximate.
+  podbean: {
+    name: 'Podbean',
+    color: '#428200',
+    site: 'https://www.podbean.com',
+    approximate: true,
+  },
   streamyard: {
     name: 'StreamYard',
     color: '#1F6FEB',

@@ -649,6 +649,17 @@ function mcpCardStatus(server) {
   };
 }
 
+/**
+ * One MCP server on the AI Engine's MCP Servers tab: its name, status, tools,
+ * the allowed-tools count when a policy is set, its Connect state for an OAuth
+ * server, and the toggle, Sync and (for a custom server only) Remove actions.
+ *
+ * A server is "built-in" when its id is one the seed ships
+ * (`DEFAULT_MCP_SERVERS` in lib/aiEngine/seed.js), and only a custom server
+ * can be removed here: a removed built-in would be re-seeded on the next load.
+ *
+ * @param {{ server: object, onToggle: Function, onSync: Function, onRemove: Function }} props
+ */
 export function McpServerCard({ server, onToggle, onSync, onRemove }) {
   const [syncing, setSyncing] = useState(false);
   const [expanded, setExpanded] = useState(false);

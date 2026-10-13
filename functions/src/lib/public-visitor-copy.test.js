@@ -82,7 +82,7 @@ const BACKEND_TERMS = Object.freeze([
     "an AI provider or model",
     /gemini|openai|anthropic|nvidia|\b(?:gpt|claude)-\d/i,
   ],
-  ["an integration vendor", /elevenlabs|rss\.com|publer|\bresend\b|hostinger/i],
+  ["an integration vendor", /elevenlabs|rss\.com|podbean|publer|\bresend\b|hostinger/i],
   ["the delivery pipeline", /github (?:app|actions)|\bTFC\b|hcp terraform/i],
   ["the lab host", /\bvps\b|vps-hostinger|\bagent\b/i],
   ["an internal limit", /queue ceiling|\bTTL\b/i],

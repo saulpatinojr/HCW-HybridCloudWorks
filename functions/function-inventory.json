@@ -123,6 +123,8 @@
     "getLabJob",
     "getLabsSnapshot",
     "getOpsHealthSnapshot",
+    "getPodcastHostOverview",
+    "getPodcastHostStats",
     "getPodcastTranscript",
     "getPublishSnapshot",
     "getQueueSnapshot",

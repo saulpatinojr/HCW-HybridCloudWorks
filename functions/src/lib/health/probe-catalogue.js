@@ -49,7 +49,7 @@ export const HEALTH_PROBES = Object.freeze({
   linkie: probe("live", "editor"),
   telegram: probe("live", "editor"),
   "telegram-notify": probe("snapshot", "viewer"),
-  rsscom: probe("live", "editor"),
+  podbean: probe("live", "editor"),
   streamyard: probe("live", "editor"),
   plaud: probe("live", "editor"),
   youtube: probe("live", "editor"),

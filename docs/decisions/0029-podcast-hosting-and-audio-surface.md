@@ -1,6 +1,6 @@
-# ADR 0029: Podcast hosting is RSS.com, the podcast page is the one audio surface, and the media route serves byte ranges
+# ADR 0029: Podcast hosting is Podbean, the podcast page is the one audio surface, and the media route serves byte ranges
 
-**Status:** Accepted 2026-09-07; §1 and §2 amended 2026-09-08 (§1b, §2a); §2a scoped 2026-09-09 (§2b); §2a amended 2026-09-26 (free plan for testing, publish blocked), and again 2026-09-26 (the owner picks the podcast voices by ear, #725); §2a noted 2026-09-27 (the last sample replays free; a render asks first)
+**Status:** Accepted 2026-09-07; §1 and §2 amended 2026-09-08 (§1b, §2a); §2a scoped 2026-09-09 (§2b); §2a amended 2026-09-26 (free plan for testing, publish blocked), and again 2026-09-26 (the owner picks the podcast voices by ear, #725); §2a noted 2026-09-27 (the last sample replays free; a render asks first); §1 amended 2026-10-13 (§1c: the show moved from RSS.com to Podbean, and publishing with it)
 **Decision date:** 2026-09-07
 **Owners:** Workload owner
 
@@ -65,7 +65,7 @@ beat — §1b and §2a say what changed and, more importantly, what did not.
 
 ## Decision
 
-### 1. Hosting: RSS.com, and the feed is the integration boundary (plan and upload amended in §1b)
+### 1. Hosting: RSS.com, and the feed is the integration boundary (plan and upload amended in §1b, host in §1c)
 
 **Decided 2026-09-07; the plan, the upload and the API claim amended by §1b.**
 The show lived on RSS.com's Free plan, and episodes — human recordings and
@@ -192,6 +192,129 @@ Consequences section says episodes land as drafts, and an automated publish path
 must not route around it.
 
 Tracked by #437.
+
+#### 1c. Podbean replaces RSS.com — amended 2026-10-13
+
+**What happened.** The show moved from RSS.com to Podbean on 2026-10-13.
+RSS.com's feed URL answers `301` into Podbean's, and the episode GUIDs came
+across unchanged, so the `podcasts` rows the ingest built from the old feed are
+the rows the new feed produces — the move makes no duplicates. The feed now
+lives on the owner's domain, `https://podcast.hybridcloudworks.com/feed.xml`,
+served by Podbean behind a DNS-only CNAME (#1110); read on 2026-10-13, it
+answers `200` and its own `atom:link rel="self"` names that URL. So the next
+host move is a DNS change rather than a new URL for every subscriber. The Main
+feed field on `/admin/platform` (`admin_config/podcast_feeds.mainFeedUrl`)
+names that URL: the public podcasts API reported it as `mainFeedUrl` on
+2026-10-13. The old URL's chain of `301`s is a courtesy to subscribers, not
+something the ingest leans on.
+
+**RSS.com's API path never ran.** RSS.com Max was never bought — the owner
+deferred it on 2026-09-18 (#432) — so `RSSCOM-API-KEY` and `RSSCOM-PODCAST-ID`
+were never seeded and every approval §1b queued was recorded as
+`host.rsscom.skipped = 'not_configured'`. Nothing was published through that
+client, and nothing needs migrating: the RSS.com client, its tests, its two
+app settings and its two Key Vault references are removed, and no code reads
+`host.rsscom` any more.
+
+**Publishing now uses Podbean's API.** Same job, same trigger, same retry:
+approving a podcast transcript still queues `publish-podcast-transcript`, the
+retry is still `POST cms/podcast/transcripts/{id}/publish`, and a publish that
+fails or is skipped still leaves the approval as written. What changed is the
+host step (`functions/src/lib/podcast/podbean.js`, read against Podbean's own
+API documentation data on 2026-10-13):
+
+- **Credentials** are a Podbean developer app's client ID and secret
+  (`PODBEAN-CLIENT-ID`, `PODBEAN-CLIENT-SECRET`; app settings
+  `PODBEAN_CLIENT_ID`, `PODBEAN_CLIENT_SECRET`), exchanged for an access token
+  with the client-credentials grant. The token is cached for its stated life
+  less a minute and travels as Podbean's documented `access_token` parameter;
+  no error, log line or recorded failure carries it, the secret, or a URL
+  holding either.
+- **Upload** is `GET /v1/files/uploadAuthorize` for a presigned URL and a
+  `file_key`, then a `PUT` of the MP3 to that URL with no token.
+- **The episode** is `POST /v1/episodes` with `status: 'publish'` and
+  `type: 'public'` — the site's approval is the review, so an approved episode
+  goes out at once, as it would have on RSS.com — and its notes as HTML: the
+  summary, the key takeaways, and a link to the article where there is one,
+  because Podbean has no separate link field. A re-run updates the episode the
+  document names (`POST /v1/episodes/{id}`) and never creates a second.
+- **No retries of the create.** The one repeat the client makes is a call
+  refused with `invalid_token`, once, with a fresh token: a request refused for
+  its token created nothing.
+- **A create whose answer was lost is looked for before another is made
+  (#1118).** Podbean takes no idempotency key, so before any create on a
+  document with an earlier attempt and no episode id, the publish lists the
+  show's newest episodes. One with the same title, published inside the span
+  the document's attempts could have created it in, is adopted and updated
+  rather than duplicated. The span runs from ten minutes before the first
+  attempt to twenty minutes after the last recorded one: the job's
+  10-minute timeout plus the same margin. A listing that fails or cannot be
+  read, or an unreadable attempt time, creates nothing. The other half of
+  #1118 is the reservation itself: the `pending` marker a schedule writes is
+  conditional on the `_etag` the transcript was read at, so an approval and
+  a retry landing in the same instant queue one job and the other answers
+  in flight, and the loser's job document is cancelled so the stale-queued
+  sweeper never runs it.
+- **The outcome** lives under `host.podbean` — `episodeId`, `permalinkUrl`,
+  `mediaUrl`, `hostStatus`, `audioPath`, `fileKey`, `publishedAt`,
+  `firstAttemptAt`, `lastAttemptAt`, `adoptedAt`, `error`. Podbean returns no guid, so none is recorded.
+- **The Integrations page's beaker** makes one token exchange and then
+  `GET /v1/podcast`, the only probe with an exchange step, and still records
+  no key verdict: a refused exchange could blame either value.
+
+**The Recording Hub reads Podbean too (#1115, 2026-10-13).** Podbean's MCP
+server cannot be used by a web app (its redirect allowlist names three AI
+clients and loopback, and a developer-app token is refused at `/mcp`; measured
+2026-10-13), so the hub reads the same API the publish uses. The Distribution
+tab's `GET cms/podcast/host/overview` (`host-reads.js`) joins every transcript
+whose record names an episode with one page of the show's newest hundred
+episodes and thirty days of per-episode downloads
+(`GET /v1/podcastStats/stats`), newest first and at most twenty of them per
+read; episodes the show has that no transcript names are rows too, so the
+three published by hand before this path appear. The record line stays what
+the publish job saw and the Podbean line under it says what is true now. The
+overview is cached fifteen minutes in `admin_config/podbean_host_overview`
+(Podbean's bucket is 60 requests at 2/s, and the tab re-renders on every
+transcript reload); Refresh reads live unless the cache is under a minute old,
+a floor read from the shared document so that every editor session and
+instance together make at most one live read a minute against the bucket the
+publish job shares. The cached document carries the client's `accountKey` (a
+hash of the client id, never the id) and is a miss for any other account, so
+re-pointed settings never serve the previous account's rows. A Podbean failure
+is recorded where it happened, in the publish job's recorded-error shape, and
+the overview still answers. Nothing here writes `podcasts` either.
+
+The hub's Stats tab reads the show's statistics the same way
+(`GET cms/podcast/host/stats?range=30d|90d|12m`, `host-stats.js`): downloads
+by day or month (`/v1/podcastStats/stats`), countries, platforms and sources
+(`/v1/podcastStats/countries|platforms|sources`), monthly listener retention
+(`/v1/podcastStats/userRetention`) and the audience counts
+(`/v1/analytics/podcastAnalyticReports`). The six reads are independent — a
+failed one is `null` in its place with its error recorded beside it — and
+each range is cached an hour in `admin_config/podbean_host_stats_<range>` (the
+same one-minute refresh floor and account key as the overview, from
+`host-cache.js`)
+(six requests an hour per range; six per render would empty the bucket).
+None of these shapes has been read live yet: the client sends the requests
+Podbean's own API documentation describes, and the two it leaves
+under-specified — the monthly download key format and retention's unit — are
+passed through unreshaped, with the tab's helpers taking either reading. The
+Unlimited-plan `podcastDailyListener` report is not read; its shape is not
+documented.
+
+**What does not change.** The feed is still the integration boundary: the site
+learns of a published episode by ingesting the show's feed, never by writing a
+`podcasts` row from what it just uploaded. §1b's reasoning holds word for word
+with Podbean in RSS.com's place, and so do §2a's free-plan publish block and
+§2b's scope, which name RSS.com as the place an episode is published to.
+
+**Podbean is not new to this record.** It is the host the Context section calls
+the previous one: its feed and CDN for the show's earlier incarnation went dark
+on 2026-09-05 (#348, #372), which is why `public-reads.js` treats media on
+Podbean's CDN as retired. With the show back on Podbean, a host alone no
+longer says whether media is gone, so the retired-host rule becomes a host and
+a moment (#1113). Podbean's MCP server is also offered in the AI Engine
+(#1114), as a tool for the owner rather than part of this publish path.
 
 ### 2. Speech: providers selected by key presence, in a stated preference order (order amended in §2a, made per product in §2b)
 
@@ -492,8 +615,8 @@ ever run, is a YouTube embed on a page, not an integration.
   Listen & Learn episodes were not on the public feed unless the owner uploaded
   them; on the site they were already on the podcast page, which is where a
   visitor looks. §1b is what made that cost worth removing rather than bearing.
-- **No download analytics beyond the host's.** RSS.com's dashboard reports
-  plays of feed episodes; Listen & Learn plays through the media route are
+- **No download analytics beyond the host's.** The host's dashboard (Podbean's
+  since §1c) reports plays of feed episodes; Listen & Learn plays through the media route are
   visible only as Function invocations.
 - **Media bytes still pass through Function invocations.** Ranged reads make
   a seek cheap rather than free; ADR 0014's note that a CDN can be layered in
@@ -589,7 +712,13 @@ ever run, is a YouTube embed on a page, not an integration.
 - **Revisit RSS.com Max** only if the automated publish step is wanted and
   the API has left beta. **The first condition was met 2026-09-08** (§1b, #437);
   the second is a fact about the API today, verified on that issue before the
-  client is written.
+  client is written. **Moot since 2026-10-13** (§1c): the show left RSS.com.
+- **Validated for Podbean (§1c)** when: the Podbean card's test on
+  Integrations → Services answers "Connected — Hybrid Cloud Insights."; an
+  approved transcript's row on the Recording Hub's Distribution tab reads
+  "Published to Podbean" with a link to the episode; and within two hours of
+  that, the episode is in the feed at `https://podcast.hybridcloudworks.com/feed.xml`
+  and in `podcasts` under `provider: 'main'`, once.
 
 ## Related decisions and references
 
@@ -601,7 +730,9 @@ ever run, is a YouTube embed on a page, not an integration.
   above is measured against.
 - Issue #432 (the audio pipeline project §1b and §2a are the spend decisions
   for), #433, #434, #435 (the three source paths that made a per-episode manual
-  upload expensive), #436 (ElevenLabs), #437 (RSS.com publish).
+  upload expensive), #436 (ElevenLabs), #437 (the host publish step, RSS.com
+  then Podbean), #1110 (the feed on the owner's domain), #1113 (the
+  retired-host rule as host and moment), #1114 (Podbean's MCP server).
 - Issue #349 (the evaluation and the owner's decisions), #348 (the feed list
   moved to `admin_config`), #372 (retired media hidden from the list); PR
   #363 removed the previous host's remaining references.

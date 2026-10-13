@@ -7,7 +7,7 @@
  * The other routes are the fast half — reading what was generated, and
  * approving it. The page that presents them is the Recording Hub (#442).
  *
- * Approval publishes to RSS.com (#437, ADR 0029 §1b) — through a second job,
+ * Approval publishes to Podbean (#437, ADR 0029 §1b) — through a second job,
  * `publish-podcast-transcript`, for the same reason: an MP3 upload and an
  * episode create can take tens of seconds, and the client's own deadlines
  * sum past the HTTP budget. So the review route and the retry route both
@@ -23,7 +23,7 @@
 import { output } from '@azure/functions';
 import { httpRoute } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
-import { queryDocs, readDoc, upsertDoc, patchDoc } from '../lib/cosmos-client.js';
+import { queryDocs, readDoc, upsertDoc, patchDoc, replaceDocIfMatch, createDoc } from '../lib/cosmos-client.js';
 import { headBlobForDelivery, uploadBlob } from '../lib/blob-storage.js';
 import { getCostEstimate, modelForTask } from '../lib/ai/router.js';
 import { JOBS_QUEUE } from '../lib/jobs.js';
@@ -38,7 +38,7 @@ const queueOutput = output.storageQueue({
 const handlers = () =>
   createPodcastHandlers({
     guard: getDefaultGuard(),
-    store: { queryDocs, readDoc, upsertDoc, patchDoc },
+    store: { queryDocs, readDoc, upsertDoc, patchDoc, replaceDocIfMatch, createDoc },
   });
 
 httpRoute('generatePodcastTranscript', {
@@ -81,6 +81,28 @@ httpRoute('listPodcastTranscripts', {
   authLevel: 'anonymous',
   route: 'cms/podcast/transcripts',
   handler: (request, context) => handlers().listTranscripts(request, context),
+});
+
+// What Podbean says now about the show and the episodes the records name,
+// with thirty days of downloads each (#1115, lib/podcast/host-reads.js).
+// Cached fifteen minutes in admin_config/podbean_host_overview; `?refresh=1`
+// reads live. "Not configured" is a 200, not an error.
+httpRoute('getPodcastHostOverview', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'cms/podcast/host/overview',
+  handler: (request, context) => handlers().getHostOverview(request, context),
+});
+
+// The show's statistics for the Stats tab (#1115, lib/podcast/host-stats.js):
+// downloads by day or month, countries, platforms, sources, retention and
+// audience counts over `?range=30d|90d|12m`, cached an hour per range in
+// admin_config/podbean_host_stats_<range>; `?refresh=1` reads live.
+httpRoute('getPodcastHostStats', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'cms/podcast/host/stats',
+  handler: (request, context) => handlers().getHostStats(request, context),
 });
 
 // Registered after the literal `generate` and `review` routes so the static

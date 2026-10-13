@@ -24,7 +24,7 @@
  *                                                                            preview Gemini TTS models retire.
  *   podcast          elevenlabs             PODCAST_TTS_PROVIDER            ElevenLabs is ONLY the podcast
  *                                                                            voice — article and Plaud
- *                                                                            transcripts to RSS.com. Never for
+ *                                                                            transcripts to Podbean. Never for
  *                                                                            Listen & Learn.
  *
  * A pin is an instruction, not a preference: it must name one of ITS product's

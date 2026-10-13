@@ -12,21 +12,26 @@
  * Roles. Generating and reading are `editor`, matching the Listen & Learn
  * routes and the job that does the same work. Approving is `publisher`: it
  * is the act that will put an AI-read episode on the podcast feed under the
- * owner's name — #437 hangs the RSS.com publish on it — and "can publish
+ * owner's name — #437 hangs the Podbean publish on it — and "can publish
  * content to live" is what that role is for. Listen & Learn approves at
  * editor; the difference is that a Learn episode goes on a study page and a
  * podcast transcript goes to a host and every subscriber.
  *
- * Approval publishes (#437, ADR 0029 §1b). Once the review has written
+ * Approval publishes (#437, ADR 0029 §1b, §1c). Once the review has written
  * `published`, the host step runs through `scheduleHostPublish`: a skip
- * (no audio, RSS.com not configured) is recorded on the document at once,
+ * (no audio, Podbean not configured) is recorded on the document at once,
  * otherwise a `publish-podcast-transcript` job is queued and the document
- * is marked `host.rsscom.pending`. The response carries that outcome under
+ * is marked `host.podbean.pending`. The response carries that outcome under
  * `host` so the hub can toast it, and answers 202 when a job is in flight.
+ * The marker is an etag-conditional reservation (#1118): approval hands
+ * `scheduleHostPublish` the document as the status write returned it, with
+ * that write's `_etag`, and the retry route hands it the document as read,
+ * so an approval and a retry landing in the same instant queue one job and
+ * the other answers in flight — 202 here, 409 on the retry — naming it.
  * Three rules hold whatever the host does: a publish failure never
  * un-approves — `status`/`approvedAt` are written here and nowhere in the
  * host path; the retry route below re-runs the same step rather than
- * regenerating, and PATCHes an episode the document already names; and
+ * regenerating, and updates an episode the document already names; and
  * nothing here or in the job writes `podcasts` — the feed stays the ingest
  * boundary, and the site learns of the episode when the timer reads the
  * show's feed. The `host` record itself is read through the existing
@@ -37,8 +42,17 @@
  * ADR 0029 §2a; speech-licence.js). A transcript whose audio was rendered on
  * the free plan is answered 409 with the licence and the upgrade named, and
  * nothing is written: the status stays draft, so no job is queued and nothing
- * reaches RSS.com. The retry route refuses the same way. Withdrawing to
+ * reaches Podbean. The retry route refuses the same way. Withdrawing to
  * draft is never refused.
+ *
+ * The host overview (#1115) is the one read here that goes to Podbean rather
+ * than to Cosmos: what Podbean says now about the episodes the records name,
+ * and their downloads (host-reads.js). `editor`, like the list. Without the
+ * Podbean settings it answers 200 `{ configured: false, reason }` and calls
+ * nothing, the way the ElevenLabs card does; with them, a cached overview
+ * unless `?refresh=1`. The host statistics (host-stats.js) are the same
+ * shape of route for the Stats tab: `?range=30d|90d|12m`, cached an hour
+ * per range.
  */
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
 import {
@@ -53,7 +67,9 @@ import {
   recordScheduleFailure,
   scheduleHostPublish,
 } from './publish-transcript.js';
-import { isConfigured as hostIsConfigured } from './rsscom.js';
+import { createPodbeanClient, isConfigured as hostIsConfigured } from './podbean.js';
+import { readHostOverview } from './host-reads.js';
+import { HOST_STATS_DEFAULT_RANGE, HOST_STATS_RANGES, parseRange, readHostStats } from './host-stats.js';
 import { freePlanRefusal } from './speech-licence.js';
 import {
   STATUS,
@@ -118,7 +134,7 @@ function retryRefusal(doc, { id, context }) {
     return json(409, {
       error:
         `Podcast transcript ${id} is ${doc.status || 'not published'}; ` +
-        'approve it first — publishing to RSS.com is what approval does.',
+        'approve it first — publishing to Podbean is what approval does.',
     });
   }
   return licenceRefusal(doc, context, 'publishPodcastTranscript');
@@ -130,7 +146,8 @@ function retryRefusal(doc, { id, context }) {
  * @param {{ queryDocs: Function, readDoc: Function, upsertDoc: Function, patchDoc: Function }} deps.store
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
- * @param {() => { ok: boolean, reason?: string }} [deps.hostConfigured] `isConfigured` for RSS.com; injected for tests
+ * @param {() => { ok: boolean, reason?: string }} [deps.hostConfigured] `isConfigured` for Podbean; injected for tests
+ * @param {() => object} [deps.hostClient] a Podbean client for the overview; injected for tests
  */
 export function createPodcastHandlers({
   guard,
@@ -138,6 +155,7 @@ export function createPodcastHandlers({
   now = () => new Date(),
   uuid = () => crypto.randomUUID(),
   hostConfigured = () => hostIsConfigured(),
+  hostClient = () => createPodbeanClient(),
 }) {
   /**
    * Queue or skip the host step for one published transcript and shape the
@@ -242,6 +260,86 @@ export function createPodcastHandlers({
     },
 
     /**
+     * GET /api/cms/podcast/host/overview[?refresh=1] — what Podbean says now
+     * about the show and its episodes, joined to the transcripts that
+     * published them, with each episode's downloads over the last thirty
+     * days (host-reads.js). Served from `admin_config/podbean_host_overview`
+     * while that is under fifteen minutes old unless `refresh=1`, and a
+     * refresh still serves it while it is under a minute old, so refresh
+     * traffic from every session together is one live read a minute. The
+     * cached document is keyed to the Podbean account. Without the Podbean
+     * settings, 200 `{ configured: false, reason }` and no call.
+     */
+    async getHostOverview(request, context) {
+      const auth = await guard.requireRole(request, 'editor');
+      if (auth.error) return auth.error;
+      try {
+        const configured = hostConfigured();
+        if (!configured.ok) {
+          return json(200, { success: true, configured: false, reason: configured.reason });
+        }
+        const refresh = request.query?.get?.('refresh') === '1';
+        const overview = await readHostOverview({
+          client: hostClient(),
+          store,
+          now,
+          refresh,
+          log: context.log,
+        });
+        // Counts and codes only: the rows carry episode titles.
+        context.log?.(
+          `getPodcastHostOverview: ${overview.cached ? 'cached' : 'live'}, ${overview.episodes.length} rows, ` +
+            `${Object.keys(overview.errors || {}).join(',') || 'no'} errors`
+        );
+        return json(200, { success: true, configured: true, ...overview });
+      } catch (error) {
+        context.error(`getPodcastHostOverview failed: ${error?.code || 'UNEXPECTED'}`);
+        return json(500, { error: 'Failed to read the host overview' });
+      }
+    },
+
+    /**
+     * GET /api/cms/podcast/host/stats?range=30d|90d|12m[&refresh=1] — the
+     * show's downloads by day or month, countries, platforms, sources,
+     * listener retention and audience counts, from Podbean (host-stats.js).
+     * Served from `admin_config/podbean_host_stats_<range>` while that is
+     * under an hour old unless `refresh=1`. 400 for a range not offered;
+     * without the Podbean settings, 200 `{ configured: false, reason }`.
+     */
+    async getHostStats(request, context) {
+      const auth = await guard.requireRole(request, 'editor');
+      if (auth.error) return auth.error;
+      try {
+        const requested = request.query?.get?.('range');
+        const range = requested ? parseRange(requested) : HOST_STATS_DEFAULT_RANGE;
+        if (!range) {
+          return json(400, { error: `range must be one of ${HOST_STATS_RANGES.join(', ')}` });
+        }
+        const configured = hostConfigured();
+        if (!configured.ok) {
+          return json(200, { success: true, configured: false, range, reason: configured.reason });
+        }
+        const refresh = request.query?.get?.('refresh') === '1';
+        const stats = await readHostStats({
+          client: hostClient(),
+          store,
+          range,
+          now,
+          refresh,
+          log: context.log,
+        });
+        context.log?.(
+          `getPodcastHostStats: ${range} ${stats.cached ? 'cached' : 'live'}, ` +
+            `${Object.keys(stats.errors || {}).join(',') || 'no'} errors`
+        );
+        return json(200, { success: true, configured: true, ...stats });
+      } catch (error) {
+        context.error(`getPodcastHostStats failed: ${error?.code || 'UNEXPECTED'}`);
+        return json(500, { error: 'Failed to read the host statistics' });
+      }
+    },
+
+    /**
      * GET /api/cms/podcast/transcripts/{id} — one transcript in full, drafts
      * and failures included. This is the review view.
      */
@@ -317,6 +415,9 @@ export function createPodcastHandlers({
           return json(200, { success: true, id, status, item: updated || null, host: null });
         }
 
+        // The document as the status write left it, `_etag` included: the
+        // reservation is conditional on that version, not on the one read
+        // before the approval, which the status write has already replaced.
         const host = await runHostStep({
           doc: { ...existing, ...(updated || {}) },
           enqueue,
@@ -333,14 +434,27 @@ export function createPodcastHandlers({
           ...(host.jobId ? { jobId: host.jobId, poll: host.poll } : {}),
         });
       } catch (error) {
-        context.error('reviewPodcastTranscript failed:', error);
+        // The code only: a RESERVATION_CONTENDED error carries the transcript
+        // itself in `latest`, which is content (CodeRabbit on #1125).
+        context.error(`reviewPodcastTranscript failed: ${error?.code || 'UNEXPECTED'}`);
         if (!updated) return json(500, { error: 'Failed to update the transcript' });
         // The approval is written; only the host step failed to queue. Say
         // so rather than reporting a change that did happen as a failure —
         // and persist it, so a refreshed hub shows the failure and the retry
         // rather than the stale host record. Best effort: the second write
         // must not turn a saved approval into a 500.
-        const stored = await recordScheduleFailure({ store, doc: existing, now });
+        // From the newest document the scheduler saw, when it says which
+        // (RESERVATION_CONTENDED), else the one the host step was handed: the
+        // record conditions on that version, so a reservation written since
+        // is left alone. No document at all means nothing to record on.
+        const stored =
+          error?.code === 'TRANSCRIPT_NOT_FOUND'
+            ? false
+            : await recordScheduleFailure({
+                store,
+                doc: error?.latest ?? { ...existing, ...updated },
+                now,
+              });
         context.log?.(
           `reviewPodcastTranscript: host step not queued (SCHEDULE_FAILED ${stored ? 'recorded' : 'not recorded'})`
         );
@@ -354,7 +468,7 @@ export function createPodcastHandlers({
               status: null,
               code: 'SCHEDULE_FAILED',
               message:
-                'The approval was saved, but the RSS.com publish could not be queued; use Publish to retry.',
+                'The approval was saved, but the Podbean publish could not be queued; use Publish to retry.',
               retryable: true,
             },
           },
@@ -405,7 +519,7 @@ export function createPodcastHandlers({
         }
         return json(200, { ok: true, id, host: host.host });
       } catch (error) {
-        context.error('publishPodcastTranscript failed:', error);
+        context.error(`publishPodcastTranscript failed: ${error?.code || 'UNEXPECTED'}`);
         return json(500, { error: 'Failed to queue the publish' });
       }
     },

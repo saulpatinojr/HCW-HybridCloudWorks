@@ -17,6 +17,7 @@ export const TABS = Object.freeze([
   { id: 'transcripts', label: 'Transcripts' },
   { id: 'episodes', label: 'Episodes' },
   { id: 'distribution', label: 'Distribution' },
+  { id: 'stats', label: 'Stats' },
   { id: 'settings', label: 'Settings' },
 ]);
 
@@ -55,6 +56,11 @@ export const MOVED_TABS = Object.freeze({
   rss: 'distribution',
   feed: 'distribution',
   publish: 'distribution',
+  // The Stats tab (#1115): the words someone would type for it.
+  statistics: 'stats',
+  downloads: 'stats',
+  analytics: 'stats',
+  listeners: 'stats',
 });
 
 /** The tab to show for a `?tab=` value: its own, where it moved, or Transcripts. */

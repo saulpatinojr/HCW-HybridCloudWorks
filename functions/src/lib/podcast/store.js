@@ -208,7 +208,7 @@ export function uploadTranscriptAudio({ storage, article, audio, contentType }) 
 /**
  * The stored transcript shape. Everything the hub's review and the player read.
  *
- * `host` is reserved for #437: the RSS.com publish record (episode id, URL,
+ * `host` is reserved for #437: the Podbean publish record (episode id, URL,
  * published-at) lands there when an approval pushes the episode to the host.
  * Null until then, and present from the start so the hub can key on it.
  *
