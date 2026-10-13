@@ -11,9 +11,12 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BOT, SETS, changedPaths, decide, foreignIdentities, prBody } from './open-lab-pin-pr.mjs';
 import {
+  CADDY_TEST_PATH,
   CAPABILITIES_PATH,
   CODER_TEMPLATE_PATH,
   DOCKERFILE_PATH,
+  DOCKER_CLI_FIXTURE_PATH,
+  DOCKER_GUIDE_PAGE_PATH,
   GROUP_VARS_PATH,
   SANDBOX_DOCKERFILE_PATH,
   VERSIONS_ENV_PATH,
@@ -48,8 +51,10 @@ describe('the pin sets', () => {
   });
 
   it('may touch exactly the files their planners edit, and each exists', () => {
-    expect(SETS.host.paths).toEqual([GROUP_VARS_PATH]);
-    expect(SETS['image-base'].paths).toEqual([VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH]);
+    // The dependents ride their set: the caddy test's SHA512 and the Docker CLI
+    // fixture with the host pins, the guide page with the image base.
+    expect(SETS.host.paths).toEqual([GROUP_VARS_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH]);
+    expect(SETS['image-base'].paths).toEqual([VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH]);
     expect(SETS['image-digests'].paths).toEqual([CAPABILITIES_PATH, CODER_TEMPLATE_PATH]);
     for (const s of Object.values(SETS)) for (const p of s.paths) expect(existsSync(join(REPO, p)), p).toBe(true);
   });

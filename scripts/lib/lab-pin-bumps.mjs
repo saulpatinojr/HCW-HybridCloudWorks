@@ -51,6 +51,17 @@ export const DOCKERFILE_PATH = 'lab-image/Dockerfile';
 export const SANDBOX_DOCKERFILE_PATH = 'lab-image/sandbox-template/Dockerfile';
 export const CAPABILITIES_PATH = 'vps-agent/lib/capabilities.js';
 export const CODER_TEMPLATE_PATH = 'lab-host/coder/templates/hcw-lab/main.tf';
+/**
+ * Files held to a pin that a bump must move with it, or the bump's own pull
+ * request fails its checks (#1122 and #1123 did, on 2026-10-13): the caddy
+ * test verifies the release it downloads against CADDY_SHA512; the Docker CLI
+ * request fixture records the CLI the host pins (scripts/lab/
+ * record-docker-cli-fixture.mjs re-records it); the Docker guide page names
+ * the lab image's base tag and CPython release in its prose and commands.
+ */
+export const CADDY_TEST_PATH = 'lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh';
+export const DOCKER_CLI_FIXTURE_PATH = 'scripts/fixtures/docker-cli-agent-requests.json';
+export const DOCKER_GUIDE_PAGE_PATH = 'frontend/src/pages/docker/BuildingImagesPage.jsx';
 
 // Docker Hub only since 2026-10-08. GHCR was the first stop until the
 // repository left the HybridCloudWorks organisation, whose package namespace
@@ -241,10 +252,11 @@ export function inReleaseSha256(inReleaseText, path) {
   return null;
 }
 
-/** The hex beside a file name in a `sha256sum`-format checksum file. */
-export function sumsLine(sumsText, filename) {
+/** The hex beside a file name in a `sha256sum`-format checksum file (`hexLength` 128 for a sha512sum one). */
+export function sumsLine(sumsText, filename, hexLength = 64) {
+  const re = new RegExp(`^([0-9a-f]{${hexLength}})\\s+\\*?(\\S+)$`);
   for (const line of String(sumsText).split('\n')) {
-    const m = line.trim().match(/^([0-9a-f]{64})\s+\*?(\S+)$/);
+    const m = line.trim().match(re);
     if (m && m[2] === filename) return m[1];
   }
   return null;
@@ -257,7 +269,7 @@ export function goSumHash(lookupText, module, version) {
 }
 
 /** A Packages index read with its InRelease, the index's own hash checked against the list. */
-async function aptIndex(http, base, suitePath, component) {
+export async function aptIndex(http, base, suitePath, component) {
   const indexPath = `${component}/binary-amd64/Packages`;
   const packagesUrl = `${base}/${suitePath}/${indexPath}`;
   const inReleaseUrl = `${base}/${suitePath}/InRelease`;
@@ -344,6 +356,13 @@ export function replaceFrom(text, oldRef, newRef) {
   return { text: String(text).replace(re, `$1${newRef}`), from: oldRef, count };
 }
 
+/** Replace every occurrence of a literal; at least one, or refuse. */
+export function replaceEvery(text, from, to, what) {
+  const count = String(text).split(from).length - 1;
+  if (count === 0) throw new Error(`${what}: no occurrence of ${from}`);
+  return { text: String(text).split(from).join(to), from, count };
+}
+
 /** Replace the one match of a pattern's first group; refuse zero or two. */
 export function replaceOne(text, pattern, value, what) {
   const re = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
@@ -394,7 +413,7 @@ const yamlEdit = (path, to) => ({
 
 // ── Host pins (group_vars) ─────────────────────────────────────────────────
 
-const DOCKER_APT = 'https://download.docker.com/linux/ubuntu';
+export const DOCKER_APT = 'https://download.docker.com/linux/ubuntu';
 const DOCKER_CODENAMES = ['resolute', 'noble'];
 const NODESOURCE = 'https://deb.nodesource.com/node_26.x';
 
@@ -440,6 +459,20 @@ function dockerAptBumper(field, packageName, alsoAt = []) {
   });
 }
 
+/**
+ * The docker-ce-cli package for one pinned engine version string, from a
+ * codename's Packages index: its URL under DOCKER_APT and the SHA256 the
+ * signed index lists, so the CLI the request fixture is recorded with is
+ * verified the way the host's own install is (record-docker-cli-fixture.mjs).
+ */
+export function dockerCliDeb(indexText, pinnedVersion) {
+  const stanza = aptStanzas(indexText, 'docker-ce-cli').find((s) => s.version === pinnedVersion);
+  if (!stanza?.sha256 || !stanza.filename) {
+    throw new Error(`docker-ce-cli ${pinnedVersion} is not in the index with a SHA256 and a Filename`);
+  }
+  return { url: `${DOCKER_APT}/${stanza.filename}`, sha256: stanza.sha256, version: stanza.version };
+}
+
 /** A Docker Hub or GHCR image pin: the tag and its index digest, together. */
 function imageBumper({ image, tagKey, digestKey, tagFor, extra = () => [] }) {
   return refreshable(async ({ http, latest }) => {
@@ -458,12 +491,36 @@ export const HOST_BUMPERS = {
   containerd: dockerAptBumper('containerd', 'containerd.io'),
   dockerBuildx: dockerAptBumper('buildx', 'docker-buildx-plugin'),
   dockerCompose: dockerAptBumper('compose', 'docker-compose-plugin'),
-  caddy: imageBumper({
-    image: 'caddy',
-    tagKey: 'caddy_builder_image_tag',
-    digestKey: 'caddy_builder_image_digest',
-    tagFor: (v) => `${v}-builder`,
-    extra: (v) => [yamlEdit(['caddy_version'], `v${v}`)],
+  /**
+   * Caddy: the builder image's tag and digest, caddy_version, and the SHA512
+   * of the release tarball in the caddy test (CADDY_TEST_PATH), which that
+   * test verifies before running the release it downloads. A bump that moved
+   * the version alone failed `ansible-lint (lab-host)` on #1122.
+   */
+  caddy: refreshable(async ({ http, latest }) => {
+    const tag = `${latest}-builder`;
+    const resolved = await resolveTag(http, 'caddy', tag);
+    const sumsUrl = `https://github.com/caddyserver/caddy/releases/download/v${latest}/caddy_${latest}_checksums.txt`;
+    const tarball = `caddy_${latest}_linux_amd64.tar.gz`;
+    const sha512 = sumsLine(await http.text(sumsUrl), tarball, 128);
+    if (!sha512) throw new Error(`${sumsUrl} has no line for ${tarball}`);
+    return {
+      edits: [
+        yamlEdit(['caddy_builder_image_tag'], tag),
+        yamlEdit(['caddy_builder_image_digest'], resolved.digest),
+        yamlEdit(['caddy_version'], `v${latest}`),
+        {
+          file: CADDY_TEST_PATH,
+          where: 'CADDY_SHA512',
+          to: sha512,
+          apply: (t) => replaceOne(t, /^CADDY_SHA512='([0-9a-f]{128})'$/m, sha512, 'CADDY_SHA512'),
+        },
+      ],
+      evidence: [
+        { item: `caddy:${tag} (index digest)`, value: resolved.digest, source: resolved.reads.join('; ') },
+        { item: `${tarball} (SHA512; caddy-adapt.test.sh verifies the release it runs against it)`, value: sha512, source: sumsUrl },
+      ],
+    };
   }),
   caddyCloudflare: async ({ http, latest }) => {
     const module = 'github.com/caddy-dns/cloudflare';
@@ -532,9 +589,11 @@ function hostTarget(row, bumper) {
  * BEHIND, and re-read the rows it marked current whose publisher can rebuild
  * a release under the same name (see `refreshable`); a re-read that matches
  * the pin is no bump. Unreadable rows are not touched here: the check already
- * reports them, and the weekly issue carries it.
+ * reports them, and the weekly issue carries it. `files` carries the other
+ * files a bumper edits (CADDY_TEST_PATH); a bumper whose file was not read
+ * becomes a note, as applyBumps says.
  */
-export async function planHost({ text, rows, http, bumpers = HOST_BUMPERS }) {
+export async function planHost({ text, files = {}, rows, http, bumpers = HOST_BUMPERS }) {
   const bumps = [];
   const notes = [];
   for (const row of rows) {
@@ -552,7 +611,7 @@ export async function planHost({ text, rows, http, bumpers = HOST_BUMPERS }) {
       notes.push({ label: row.label, from: row.pinned, to: target.to, reason: error?.message || String(error) });
     }
   }
-  const result = applyBumps({ [GROUP_VARS_PATH]: text }, bumps);
+  const result = applyBumps({ ...files, [GROUP_VARS_PATH]: text }, bumps);
   const moved = result.applied.filter((bump) => bump.changes.some((c) => c.from !== c.to));
   return { files: result.files, applied: moved, notes: [...notes, ...result.notes] };
 }
@@ -604,6 +663,21 @@ async function planPythonBase(env, http) {
       envEdit('BASE_DIGEST', line.digest),
       envEdit('BASE_PYTHON_VERSION', pythonVersion),
       { file: DOCKERFILE_PATH, where: 'every external FROM', to: newRef, apply: (t) => replaceFrom(t, oldRef, newRef) },
+      // The guide page names the tag in its prose and its inspect command,
+      // and the CPython release beside it; DockerGuides.test.jsx holds the
+      // page to versions.env, so a bump without these failed `frontend` (#1123).
+      {
+        file: DOCKER_GUIDE_PAGE_PATH,
+        where: 'the base tag, wherever the page names it',
+        to: newImage,
+        apply: (t) => replaceEvery(t, env.BASE_IMAGE, newImage, 'BuildingImagesPage base tag'),
+      },
+      {
+        file: DOCKER_GUIDE_PAGE_PATH,
+        where: 'the CPython release the page names',
+        to: `CPython ${pythonVersion}`,
+        apply: (t) => replaceEvery(t, `CPython ${env.BASE_PYTHON_VERSION}`, `CPython ${pythonVersion}`, 'BuildingImagesPage CPython'),
+      },
     ],
     evidence: [
       { item: `${base.name}:${lineTag} (index digest)`, value: line.digest, source: line.reads.join('; ') },

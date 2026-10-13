@@ -109,6 +109,16 @@ jobs:
               --notes "${RUNNER_TEMP}/lab-pins/notes-${set}.md" | tee -a "$GITHUB_STEP_SUMMARY"
           done
 
+      # A Docker Engine move changes the CLI the lab agent's socket proxy is
+      # held to (LAB-5): scripts/lab-host-docker-proxy.test.mjs fails the
+      # host pull request until scripts/fixtures/docker-cli-agent-requests.json
+      # is recorded with the pinned CLI. This re-records it with the pinned
+      # docker-ce-cli, installed into a temporary directory from Docker's
+      # signed apt index (the .deb's SHA256 is the one the index lists), and
+      # exits 0 with nothing written when the fixture already matches the pin.
+      - name: Re-record the Docker CLI fixture when the engine pin moved
+        run: node scripts/lab/record-docker-cli-fixture.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
       # One patch per set, over that set's paths only; the sets whose patch
       # is not empty are the matrix of the next job.
       - name: One patch per set

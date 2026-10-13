@@ -195,8 +195,16 @@ describe('the building images guide matches the files it describes', () => {
       ['runner', base],
       ['full', 'runner'],
     ]);
-    // The tag the page names and inspects is the one pinned.
-    expect(envValue('BASE_IMAGE')).toBe('python:3.14.7-slim-trixie');
+    // The tag the page names and inspects is the one pinned, with its CPython
+    // release, and the page names no other python tag. Read from versions.env,
+    // never written here: the image-base bump moves the page with the pin.
+    const page = repoFile('frontend', 'src', 'pages', 'docker', 'BuildingImagesPage.jsx');
+    expect(envValue('BASE_IMAGE')).toMatch(/^python:\d+\.\d+\.\d+-slim-trixie$/);
+    expect(page).toContain(envValue('BASE_IMAGE'));
+    expect(page).toContain(`CPython ${envValue('BASE_PYTHON_VERSION')}`);
+    expect([...new Set(page.match(/python:\d+\.\d+\.\d+-[a-z-]+/g))]).toEqual([
+      envValue('BASE_IMAGE'),
+    ]);
     expect(IMAGE_COMMANDS.inspectBase[0].command).toContain(envValue('BASE_IMAGE'));
     expect(dockerfile).toMatch(/Docker\s+(?:#\s+)?resolves the digest and ignores the tag/);
   });

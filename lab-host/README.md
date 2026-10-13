@@ -1492,7 +1492,12 @@ node_exporter, Node.js) together with the checksum or digest it read from
 that publisher. It also re-reads the pins that are current but can be
 rebuilt under the same name, an image tag re-pushed on a patched base or a
 package given a new Debian revision, and moves the digest or revision when
-it changed. It opens or updates one pull request on the branch
+it changed. Two files are held to those pins and move with them: the caddy
+test's `CADDY_SHA512` (the release tarball's SHA512 from the publisher's
+checksums file) and `scripts/fixtures/docker-cli-agent-requests.json`, which
+`scripts/lab/record-docker-cli-fixture.mjs` re-records with the pinned
+docker-ce-cli installed into a temporary directory from Docker's signed apt
+index. It opens or updates one pull request on the branch
 `chore/lab-pins-host` whose body says where each value was read. A pin whose
 checksum it could not verify is not moved; it is listed in the weekly issue,
 and this section is how a person moves it. The same run proposes the lab

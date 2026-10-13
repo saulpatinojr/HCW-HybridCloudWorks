@@ -5,8 +5,8 @@
  *   - the lab agent reaches Docker only through hcw-labs-agent-docker-proxy,
  *     whose HAProxy configuration
  *     (lab-host/ansible/roles/labs_agent/templates/docker-proxy.haproxy.cfg.j2)
- *     is evaluated here, rule by rule, against every request Docker CLI
- *     29.8.1 makes for every capability's job
+ *     is evaluated here, rule by rule, against every request the Docker CLI
+ *     the host pins makes for every capability's job
  *     (scripts/fixtures/docker-cli-agent-requests.json, recorded by
  *     scripts/lab/capture-docker-cli-requests.mjs) and against the requests
  *     that would turn a job container into a way out;
