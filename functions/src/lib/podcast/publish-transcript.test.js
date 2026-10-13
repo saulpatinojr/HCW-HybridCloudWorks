@@ -834,6 +834,10 @@ describe('recordScheduleFailure', () => {
     });
     await expect(recordScheduleFailure({ store: contended, doc: doc({ _etag: '"etag-9"' }), now })).resolves.toBe(false);
     await expect(recordScheduleFailure({ store, doc: null, now })).resolves.toBe(false);
+    // Read without its etag: nothing to condition on, so nothing is written.
+    const bare = makeStore();
+    await expect(recordScheduleFailure({ store: bare, doc: { ...doc(), _etag: undefined }, now })).resolves.toBe(false);
+    expect(transcriptWrites(bare)).toEqual([]);
   });
 
   it('never throws — a failed write answers false', async () => {

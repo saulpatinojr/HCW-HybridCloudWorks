@@ -459,7 +459,10 @@ export async function scheduleHostPublish({
  * @returns {Promise<boolean>}
  */
 export async function recordScheduleFailure({ store, doc, now = () => new Date() }) {
-  if (!doc?.id) return false;
+  // No document, or one read without its `_etag`: nothing this can condition
+  // on, so nothing is written. An unconditional write here would be the race
+  // the reservation closes, by another door (CodeRabbit on #1125).
+  if (!doc?.id || !doc._etag) return false;
   const patch = {
     host: {
       podbean: {
@@ -482,7 +485,7 @@ export async function recordScheduleFailure({ store, doc, now = () => new Date()
     // (CodeRabbit on #1125). That newer state stands; false says so.
     await store.patchDoc(TRANSCRIPT_CONTAINER, doc.id, patch, {
       partitionKey: doc.id,
-      ...(doc._etag ? { ifMatch: doc._etag } : {}),
+      ifMatch: doc._etag,
     });
     return true;
   } catch {

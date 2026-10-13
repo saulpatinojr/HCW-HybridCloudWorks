@@ -341,7 +341,9 @@ export function createPodcastHandlers({
           ...(host.jobId ? { jobId: host.jobId, poll: host.poll } : {}),
         });
       } catch (error) {
-        context.error('reviewPodcastTranscript failed:', error);
+        // The code only: a RESERVATION_CONTENDED error carries the transcript
+        // itself in `latest`, which is content (CodeRabbit on #1125).
+        context.error(`reviewPodcastTranscript failed: ${error?.code || 'UNEXPECTED'}`);
         if (!updated) return json(500, { error: 'Failed to update the transcript' });
         // The approval is written; only the host step failed to queue. Say
         // so rather than reporting a change that did happen as a failure —
@@ -424,7 +426,7 @@ export function createPodcastHandlers({
         }
         return json(200, { ok: true, id, host: host.host });
       } catch (error) {
-        context.error('publishPodcastTranscript failed:', error);
+        context.error(`publishPodcastTranscript failed: ${error?.code || 'UNEXPECTED'}`);
         return json(500, { error: 'Failed to queue the publish' });
       }
     },
