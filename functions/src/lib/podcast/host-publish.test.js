@@ -117,7 +117,9 @@ describe('describeForHost', () => {
       '<p>Use &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; friends</p>' +
         '<p>Key takeaways:</p><ul><li>&lt;b&gt;bold&lt;/b&gt;</li><li>it&#39;s</li></ul>'
     );
-    expect(out.content).not.toMatch(/<script|<b>/);
+    // Case-insensitive: an HTML tag is one whatever its case (CodeQL
+    // js/bad-tag-filter on #1117), so `<SCRIPT` must fail this too.
+    expect(out.content).not.toMatch(/<script|<b>/i);
   });
 
   it('falls back to the title when there is no summary and no takeaways', () => {
