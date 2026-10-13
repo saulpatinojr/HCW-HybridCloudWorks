@@ -159,6 +159,14 @@ export function isSoftDeleted(doc = {}) {
  * and shows, whatever its host. A row on a host the show still uses is never
  * hidden here: a stalled timer must not empty the page.
  */
+/**
+ * A hostname as the retired-host lists spell it: lower case, with the
+ * trailing dot of a fully qualified form removed. `new URL` keeps that dot,
+ * so `mcdn.podbean.com.` would otherwise miss the entry for the same host
+ * (CodeRabbit on #1121).
+ */
+const retiredHostKey = (hostname) => String(hostname).toLowerCase().replace(/\.$/, '');
+
 export const RETIRED_PODCAST_MEDIA_HOSTS = Object.freeze([
   // Podbean's first tenure ended 2026-09-05. The show returned on 2026-10-13,
   // so a Podbean row last refreshed before the return is from the first one.
@@ -187,7 +195,7 @@ export function isPodcastMediaRetired(doc = {}) {
   if (!url) return false;
   let hostname;
   try {
-    hostname = new URL(url).hostname.toLowerCase();
+    hostname = retiredHostKey(new URL(url).hostname);
   } catch {
     return false;
   }
@@ -220,7 +228,7 @@ export function servableListenAndLearnAudioUrl(doc = {}) {
   if (!url) return '';
   let hostname;
   try {
-    hostname = new URL(url, 'https://www.hybridcloudworks.com').hostname.toLowerCase();
+    hostname = retiredHostKey(new URL(url, 'https://www.hybridcloudworks.com').hostname);
   } catch {
     return '';
   }

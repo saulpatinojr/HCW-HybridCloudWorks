@@ -1503,6 +1503,7 @@ describe('listListenAndLearnEpisodes — the provider-wide list (#349)', () => {
     expect(servableListenAndLearnAudioUrl({ audioUrl: '/api/public/media/listenandlearn/a.mp3' })).toBe(
       '/api/public/media/listenandlearn/a.mp3'
     );
+    expect(servableListenAndLearnAudioUrl({ audioUrl: 'https://STORAGE.googleapis.com./b/x.mp3' })).toBe('');
     expect(servableListenAndLearnAudioUrl({ audioUrl: 'not a url' })).toBe('not a url');
     expect(servableListenAndLearnAudioUrl({})).toBe('');
   });
@@ -1671,6 +1672,7 @@ describe('podcast media that is gone (#372)', () => {
       })
     ).toBe(true);
     expect(isPodcastMediaRetired({ mediaUrl: 'https://MCDN.podbean.com/ep.mp3' })).toBe(true);
+    expect(isPodcastMediaRetired({ mediaUrl: 'https://mcdn.podbean.com./ep.mp3' })).toBe(true);
     // The current feed's episodes, refreshed by fetchPodcastFeeds since the
     // return: the bare host list hid all of them on 2026-10-13.
     expect(
