@@ -162,7 +162,11 @@ describe('McpOAuthPanel', () => {
     await waitFor(() => expect(disconnectMcpOAuth).toHaveBeenCalledWith('hostinger-mcp'));
     expect(confirm).toHaveBeenCalledTimes(2);
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith({ title: 'Hostinger MCP disconnected' })
+      expect(toast).toHaveBeenCalledWith({
+        title: 'Hostinger MCP disconnected here',
+        description:
+          'Disconnected here. The provider offers no revocation, so remove this site from your account there to end the grant.',
+      })
     );
   });
 
@@ -203,14 +207,20 @@ describe('McpOAuthPanel', () => {
       });
     });
 
-    it('no revocation endpoint, or an older API: the title alone, as before', () => {
+    it('no revocation endpoint, or an older API: says to end the grant at the provider (CodeRabbit on #1124)', () => {
       expect(
-        disconnectToast('Hostinger MCP', { disconnected: true, revoked: null, issuer: null })
+        disconnectToast('Hostinger MCP', {
+          disconnected: true,
+          revoked: null,
+          issuer: 'https://auth.hostinger.com',
+        })
       ).toEqual({
-        title: 'Hostinger MCP disconnected',
+        title: 'Hostinger MCP disconnected here',
+        description:
+          'Disconnected here. auth.hostinger.com offers no revocation, so remove this site from your auth.hostinger.com account to end the grant.',
       });
-      expect(disconnectToast('Hostinger MCP', undefined)).toEqual({
-        title: 'Hostinger MCP disconnected',
+      expect(disconnectToast('Hostinger MCP', undefined)).toMatchObject({
+        title: 'Hostinger MCP disconnected here',
       });
       // Without a usable issuer the server's name stands in.
       expect(disconnectToast('Podbean MCP', { revoked: true, issuer: null }).description).toBe(

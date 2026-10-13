@@ -334,8 +334,10 @@ async function disconnectMcpOAuth(ctx, request, context) {
   // either way, so a provider that is down cannot keep a token on this side.
   const revocation = await revokeOAuthGrant({ server, serverId, http: ctx.oauthHttp });
   if (revocation.revoked === false) {
+    // Fixed text only: `reason` carries provider-controlled text and belongs
+    // in the response for the card, not in the log (CodeRabbit on #1124).
     context.warn?.(
-      `[disconnectMcpOAuth] ${name}'s grant was not revoked at ${revocation.issuer || 'its provider'}: ${revocation.reason} The token is deleted here regardless.`
+      `[disconnectMcpOAuth] ${serverId}: the grant was not revoked at its provider; the token is deleted here regardless.`
     );
   }
 

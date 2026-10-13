@@ -852,6 +852,17 @@ export async function revokeOAuthGrant({ server, serverId, http }) {
     return { revoked: false, issuer, reason: error.message };
   }
 
+  // Every token this call sends, so a provider body or a transport error that
+  // echoes one is scrubbed before it becomes the `reason` the handler returns
+  // (CodeRabbit on #1124). Raw and percent-encoded forms both.
+  const scrub = (text) => {
+    let out = String(text ?? '');
+    for (const [, token] of tokens) {
+      for (const form of new Set([token, encodeURIComponent(token)])) out = out.split(form).join('***');
+    }
+    return out;
+  };
+
   let reason = null;
   for (const [hint, token] of tokens) {
     const request = tokenRequest({
@@ -865,13 +876,15 @@ export async function revokeOAuthGrant({ server, serverId, http }) {
       // RFC 7009 §2.2: 200 whether or not the token was still valid. Anything
       // else is the server declining, and the next token is still tried.
       if (res.status < 200 || res.status >= 300) {
-        reason ??= `${bare(endpoint)} answered the ${hint.replace('_', ' ')} revocation with ${describeOAuthReply(
-          parseJson(res.text),
-          res.status
-        )}.`;
+        reason ??= scrub(
+          `${bare(endpoint)} answered the ${hint.replace('_', ' ')} revocation with ${describeOAuthReply(
+            parseJson(res.text),
+            res.status
+          )}.`
+        );
       }
     } catch (error) {
-      reason ??= error?.message || String(error);
+      reason ??= scrub(error?.message || String(error));
     }
   }
   return reason ? { revoked: false, issuer, reason } : { revoked: true, issuer };

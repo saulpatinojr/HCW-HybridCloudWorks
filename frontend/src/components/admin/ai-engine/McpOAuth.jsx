@@ -88,7 +88,14 @@ export function disconnectToast(name, result) {
       description: `Disconnected here; the grant may still be live at ${where} — revoke it in your ${where} account.`,
     };
   }
-  return { title };
+  // No revocation endpoint (or a server connected before one was recorded):
+  // the grant outlives this delete until it is removed at the provider.
+  return {
+    title: `${name} disconnected here`,
+    description: result?.issuer
+      ? `Disconnected here. ${where} offers no revocation, so remove this site from your ${where} account to end the grant.`
+      : 'Disconnected here. The provider offers no revocation, so remove this site from your account there to end the grant.',
+  };
 }
 
 const BADGES = {

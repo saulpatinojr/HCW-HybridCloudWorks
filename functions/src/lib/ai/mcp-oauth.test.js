@@ -810,6 +810,17 @@ describe('revocation (RFC 7009, #1116)', () => {
     expect(net.calls.map((c) => c.url)).toEqual([REVOKE, REVOKE]);
   });
 
+  it('scrubs a token the provider echoes back before it becomes the reason (CodeRabbit on #1124)', async () => {
+    const net = network({
+      [`POST ${REVOKE}`]: reply(400, { error: 'invalid_request', error_description: 'token rt-1 is not ours; at-1 neither' }),
+    });
+    const result = await revoke(connected(), net);
+    expect(result.revoked).toBe(false);
+    expect(result.reason).toMatch(/invalid_request/);
+    expect(result.reason).toContain('***');
+    expect(result.reason).not.toMatch(/at-1|rt-1/);
+  });
+
   it('refuses an endpoint that is not https before any request', async () => {
     const net = network({});
     const result = await revoke(connected({ oauth: { ...connected().oauth, revocationEndpoint: 'http://mcp.podbean.com/revoke' } }), net);
