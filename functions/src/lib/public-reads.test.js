@@ -1629,16 +1629,46 @@ describe('podcast media that is gone (#372)', () => {
       },
     });
 
-  it('names the retired hosts and honours a liveness mark', () => {
-    expect(isPodcastMediaRetired({ mediaUrl: 'https://mcdn.podbean.com/mf/web/x/ep.mp3' })).toBe(
-      true
-    );
+  it('hides a row on a host the show left only when nothing has refreshed it since', () => {
+    // Podbean's first tenure: never refreshed after the show returned.
+    expect(
+      isPodcastMediaRetired({
+        mediaUrl: 'https://mcdn.podbean.com/mf/web/x/ep.mp3',
+        updatedAt: '2026-09-04T10:00:00.000Z',
+      })
+    ).toBe(true);
     expect(isPodcastMediaRetired({ mediaUrl: 'https://MCDN.podbean.com/ep.mp3' })).toBe(true);
-    expect(isPodcastMediaRetired({ mediaUrl: 'https://media.rss.com/hcw/ep.mp3' })).toBe(false);
+    // The current feed's episodes, refreshed by fetchPodcastFeeds since the
+    // return: the bare host list hid all of them on 2026-10-13.
+    expect(
+      isPodcastMediaRetired({
+        mediaUrl: 'https://mcdn.podbean.com/mf/web/y/ep.mp3',
+        updatedAt: '2026-10-13T06:30:00.000Z',
+      })
+    ).toBe(false);
+    // RSS.com: the stale upload the public list showed instead of the show.
+    expect(
+      isPodcastMediaRetired({
+        mediaUrl: 'https://content.rss.com/episodes/1/2/hcw/ep.mp3',
+        updatedAt: '2026-09-08T03:30:00.570Z',
+      })
+    ).toBe(true);
     expect(
       isPodcastMediaRetired({
         mediaUrl: 'https://media.rss.com/hcw/ep.mp3',
-        mediaUnavailableAt: '2026-09-06',
+        updatedAt: '2026-10-13T08:30:00.000Z',
+      })
+    ).toBe(false);
+    // A host the show has not left is never hidden here, however stale, so a
+    // stalled timer cannot empty the page.
+    expect(
+      isPodcastMediaRetired({ mediaUrl: 'https://cdn.example/ep.mp3', updatedAt: '2020-01-01T00:00:00.000Z' })
+    ).toBe(false);
+    expect(
+      isPodcastMediaRetired({
+        mediaUrl: 'https://media.rss.com/hcw/ep.mp3',
+        updatedAt: '2026-10-13T08:30:00.000Z',
+        mediaUnavailableAt: '2026-10-14',
       })
     ).toBe(true);
     expect(isPodcastMediaRetired({ mediaUrl: 'not a url' })).toBe(false);
@@ -1653,6 +1683,7 @@ describe('podcast media that is gone (#372)', () => {
           title: 'PodBean era',
           publishedAt: '2026-05-01',
           mediaUrl: 'https://mcdn.podbean.com/mf/web/x/ep.mp3',
+          updatedAt: '2026-09-04T10:00:00.000Z',
         },
         {
           id: 'marked',
@@ -1662,10 +1693,18 @@ describe('podcast media that is gone (#372)', () => {
           mediaUnavailableAt: '2026-09-06',
         },
         {
+          id: 'stale-rsscom',
+          title: 'RSS.com upload no feed carries',
+          publishedAt: '2026-09-08',
+          mediaUrl: 'https://content.rss.com/episodes/1/2/hcw/a.mp3',
+          updatedAt: '2026-09-08T03:30:00.570Z',
+        },
+        {
           id: 'live',
-          title: 'New host',
+          title: 'Back on Podbean',
           publishedAt: '2026-07-01',
-          mediaUrl: 'https://media.rss.com/b.mp3',
+          mediaUrl: 'https://mcdn.podbean.com/mf/web/y/b.mp3',
+          updatedAt: '2026-10-13T06:30:00.000Z',
         },
       ],
     });

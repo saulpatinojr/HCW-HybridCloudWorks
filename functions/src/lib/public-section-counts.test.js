@@ -241,10 +241,17 @@ describe('countPodcastDocs', () => {
   it('drops the rows the public listing drops', () => {
     const sections = count([
       { provider: 'azure', softDeletedAt: '2026-09-01' },
-      { provider: 'azure', mediaUrl: 'https://mcdn.podbean.com/x.mp3' },
+      { provider: 'azure', mediaUrl: 'https://mcdn.podbean.com/x.mp3', updatedAt: '2026-09-04T10:00:00.000Z' },
       { provider: 'azure', mediaUnavailableAt: '2026-09-05' },
     ]);
     expect(sections.azure.audio).toBe(0);
+  });
+
+  it('counts a row on a host the show returned to once the feed has refreshed it', () => {
+    const sections = count([
+      { provider: 'azure', mediaUrl: 'https://mcdn.podbean.com/y.mp3', updatedAt: '2026-10-13T06:30:00.000Z' },
+    ]);
+    expect(sections.azure.audio).toBe(1);
   });
 
   it('counts a provider-less row nowhere — the two live rows this is about', () => {
@@ -335,7 +342,7 @@ describe('the counting queries', () => {
       expect(CONTENT_COUNT_FIELDS).toContain(field);
       expect(CONTENT_COUNT_QUERY).toContain(`c["${field}"]`);
     }
-    for (const field of ['provider', 'mediaUrl', 'mediaUnavailableAt']) {
+    for (const field of ['provider', 'mediaUrl', 'mediaUnavailableAt', 'updatedAt']) {
       expect(PODCAST_COUNT_QUERY).toContain(`c["${field}"]`);
     }
     for (const field of ['provider', 'status', 'audioUrl']) {
