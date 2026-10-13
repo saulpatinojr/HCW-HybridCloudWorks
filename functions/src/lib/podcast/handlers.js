@@ -357,7 +357,7 @@ export function createPodcastHandlers({
             ? false
             : await recordScheduleFailure({
                 store,
-                doc: error?.latest ?? { ...existing, ...(updated || {}) },
+                doc: error?.latest ?? { ...existing, ...updated },
                 now,
               });
         context.log?.(
