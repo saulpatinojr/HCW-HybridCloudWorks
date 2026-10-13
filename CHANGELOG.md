@@ -4496,6 +4496,26 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab host: every bootstrap publishes every Coder template, with no token
+  (2026-10-12).** The `coder` role's push published `hcw-lab` alone, with the
+  host's self-renewing rotation credential. `amo-guided-lab` and
+  `na-guided-lab` (#1090) could only be published with the owner's token, so
+  each change to them was a manual chore, which the owner had already ruled
+  out on 2026-10-09.
+  - `hcw-coder-automation push-template` publishes every directory under
+    `lab-host/coder/templates` that holds a `*.tf` file, `hcw-lab` first,
+    each by name and each tracked on its own digest. One failing does not
+    stop the next, and the next run retries only the one that failed.
+  - `hcw-lab` keeps the state fields the daily report and the site's drift
+    check read. A state written before this change still counts it as
+    published.
+  - The lab-image digest pull request told the owner to fetch a token and
+    push the template after the bootstrap. It now says the run publishes
+    them, and a test keeps the token instructions out and checks the task
+    it names still exists. The runbook's "After a merge" and
+    `lab-host/README.md` now say the same, with the manual helper kept as
+    the fallback for a host without a working credential.
+
 - **Lab host: `bootstrap.sh` runs one at a time (#1069, part 2).** Two
   concurrent runs were not serialised across the firewall rebuild's
   guard-to-unguard sequence, or across two checkouts of `/opt/hcw-src`.

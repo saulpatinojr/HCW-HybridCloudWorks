@@ -212,12 +212,14 @@ Health Hub's **Lab host runs main** turns critical once a change under
 a run. Nothing re-runs the playbook for you: the check raises the lag, and
 the line above clears it.
 
-**Then push the Coder template at once** ("Publishing the template",
-below). `lab_images` removes the images the checked-out commit no longer
-names, and after the move to Docker Hub (#1002, #1003) that includes the
-GHCR images Coder's active template version still names, until the push
-publishes the version that names Docker Hub. The runbook has the two steps
-in order: [After a merge](../docs/runbooks/labs-host.md#after-a-merge-the-playbook-then-the-template-at-once).
+**The same run publishes the Coder templates; nothing follows it.** Its
+`coder` role publishes each template whose files changed with the host's
+own rotation credential, before `lab_images` removes the images the
+checked-out commit no longer names. Those include, after the move to Docker
+Hub (#1002, #1003), the GHCR images an older template version still names,
+which is why the publish happens inside the run. "Publishing the template",
+below, is the fallback for a host without a working credential. The
+runbook: [After a merge](../docs/runbooks/labs-host.md#after-a-merge-the-playbook-then-the-template-at-once).
 
 A checkout cloned before the repository moved to saulpatinojr (2026-10-07)
 is repointed by the run: `bootstrap.sh` sets `/opt/hcw-src`'s origin to
@@ -610,6 +612,14 @@ No Coder account was created, so the next successful sign-in is still the
 first.
 
 ### Publishing the template
+
+**Normally nobody runs this.** Every `bootstrap.sh` run publishes each
+template under `coder/templates` whose files changed, with the host's own
+rotation credential (`ansible/roles/coder/README.md`, "Publishing the
+template"), and has needed no token since that credential was seeded on
+2026-10-10. What follows is the fallback for when there is no working
+rotation credential, such as a rebuilt host. Pass a template's name to
+publish one other than `hcw-lab`.
 
 `/usr/local/sbin/hcw-coder-template-push`, which the `coder` role installs,
 publishes the template from the host with the Coder CLI that is already

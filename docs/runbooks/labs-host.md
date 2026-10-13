@@ -680,9 +680,10 @@ is behind `main` until the owner runs it
 ([Labs host, Applied state](../architecture/labs-host.md#applied-state)).
 The rule for that run:
 
-> **Run `bootstrap.sh` and then the Coder template push immediately;
-> `lab_images` removes the GHCR images the old template version still
-> names.**
+> **Run `bootstrap.sh`. That is the whole step.** Its `coder` role
+> publishes every Coder template whose files changed, with the host's own
+> rotation credential, before `lab_images` removes the images the old
+> template versions name. No token, and nothing to paste after it.
 
 Why. The lab images moved from GHCR to Docker Hub on 2026-10-08 (#1002,
 #1003). The `lab_images` role keeps the images the checked-out commit names
@@ -691,8 +692,13 @@ the first run after that merge removes the GHCR `hcw-lab` image from the
 sandbox daemon, while Coder's active template version still names that GHCR
 digest until the push publishes the version that names Docker Hub. A
 workspace started between the two finds its image gone and has to pull it
-back from a registry this repository no longer publishes to. The push
-closes the gap, so it follows the run, not the next day.
+back from a registry this repository no longer publishes to. The run
+publishes the templates itself, before `lab_images` removes anything, so
+the gap never opens. That has needed no token since the rotation credential
+was seeded on 2026-10-10 ("Automatic renewal", below), and it covers every
+template under `lab-host/coder/templates` since 2026-10-12. Before then it
+published `hcw-lab` alone, so a change to `amo-guided-lab` or
+`na-guided-lab` still needed the owner's token.
 
 1. Bash, on the host (PowerShell `ssh hcw-lab` from the workstation gets
    there):
@@ -733,34 +739,22 @@ closes the gap, so it follows the run, not the next day.
      one. It stands while that read is under six hours old; after that a
      healthy verdict turns unknown, and a host already behind stays critical.
 
-2. Straight after, PowerShell on the workstation. Make the short-lived
-   `hcw-setup` token in a pane as step 1 of "The status token for the
-   site" in `lab-host/README.md` shows, paste this line, then paste the
-   token at the masked prompt:
+2. Nothing to paste. In the same run's output, the `coder` role's
+   **Publish the Coder templates with the rotation credential when they
+   changed** is `changed` when it published anything. It prints one line
+   per template it published, `hcw-coder-automation: published <name> with
+   the rotation credential; active version <version>`, and `<name> is
+   unchanged since <date> (version <version>); nothing was published` for
+   each of the rest of `hcw-lab`, `amo-guided-lab` and `na-guided-lab`.
+   A template that fails to publish fails the task, names itself, and is
+   tried again by the next run; the others still publish.
 
-   ```powershell
-   $t = [Net.NetworkCredential]::new('', (Read-Host 'hcw-setup token' -AsSecureString)).Password
-   ```
-
-   Then publish the template from the commit the run just checked out:
-
-   ```powershell
-   $t | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-coder-template-push"
-   ```
-
-   Good is a last line starting `hcw-coder-template-push: published hcw-lab
-   from /opt/hcw-src/lab-host/coder/templates/hcw-lab. Active version:` and
-   ending `Default autostop: 1h0m0s.` Anything else, and what it means, is
-   the table under "Publishing the template" in `lab-host/README.md`.
-
-   Once the rotation credential is seeded ("Automatic renewal", below),
-   step 1's run has already published the template, so this step is not
-   needed: its `coder` role runs **Publish the hcw-lab template with the
-   rotation credential when it changed** before `lab_images` removes
-   anything. Good is that task `changed`, with a line
-   `hcw-coder-automation: published hcw-lab with the rotation credential;
-   active version` in its output, or `ok` with `nothing was published` when
-   the template did not change.
+   Only when the task prints that there is no rotation credential, or that
+   Coder refused it (a rebuilt host, or a leak contained as "Automatic
+   renewal" describes), does anything need the owner: seed it again as that
+   section says, and the next run publishes. A template can be published by
+   hand in the meantime, which is the fallback under "Publishing the
+   template" in `lab-host/README.md`.
 
 ## The lab canary and the status-token check
 
@@ -1141,7 +1135,7 @@ the old root's bridges behind. Compose no longer warns that
 external and the coder role creates it (2026-10-08).
 
 This is also the run that takes the lab images to Docker Hub (#1002,
-#1003), so the template push follows it at once:
+#1003), and it publishes the templates that name them itself:
 [After a merge: the playbook, then the template, at once](#after-a-merge-the-playbook-then-the-template-at-once).
 
 ### Checking it afterwards

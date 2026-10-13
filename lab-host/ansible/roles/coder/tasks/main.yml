@@ -353,16 +353,17 @@
     daemon_reload: true
   when: not coder_enabled | bool
 
-# The template, published by this run when its files (or the default
-# autostop) differ from what the helper last published: it keeps a SHA-256
-# of exactly what hcw-coder-template-push copies, and publishes again only
-# when that changes or the last publish failed. It hands the push helper the
+# The templates, every directory under lab-host/coder/templates with a *.tf
+# (hcw-lab first), each published by this run when its files (or the default
+# autostop) differ from what the helper last published for it: it keeps a
+# SHA-256 per template of exactly what hcw-coder-template-push copies, and
+# publishes again only when that changes or the last publish failed. It hands the push helper the
 # rotation credential on stdin, as the owner's line does with the owner's
 # token. Here, before lab_images removes the images the previous template
 # version names, so no workspace starts in between (docs/runbooks/labs-host.md,
 # "After a merge"). Exit 3 is "no working rotation credential yet": the run
 # goes on and the next task says how to seed one.
-- name: Publish the hcw-lab template with the rotation credential when it changed
+- name: Publish the Coder templates with the rotation credential when they changed
   ansible.builtin.command:
     argv:
       - /usr/local/libexec/hcw-coder-automation

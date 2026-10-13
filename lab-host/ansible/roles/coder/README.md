@@ -390,16 +390,23 @@ so a log line before the answer does no harm.
 
 `push-template`, run by this role on every `bootstrap.sh` run while Coder is
 enabled, after Coder is up and before `lab_images` removes the images the
-previous template version names. It keeps a SHA-256 of exactly what
+previous template versions name. It publishes every template under
+`lab-host/coder/templates`: each directory with a `*.tf` file and a name
+`hcw-coder-template-push` accepts, `hcw-lab` first, each passed to the helper
+by name and tracked on its own. Until 2026-10-12 it published `hcw-lab`
+alone, so the guided-lab templates (#1090) needed the owner's token. One
+template failing does not stop the next: the task then fails naming it, and
+the next run retries only that one. It keeps a SHA-256 of exactly what
 `hcw-coder-template-push` copies (every `*.tf`, `.terraform.lock.hcl`,
 `README.md`) and of `coder_template_default_ttl`, and publishes only when
 that differs from its last successful publish, so a failed publish is
 retried by the next run and an unchanged one costs nothing. It hands the
 push helper the credential on stdin, as the owner's line hands it the
-owner's token, records `templatePushedAt`, `templateVersion` and that
-SHA-256 (`templateDigest`) for the report, and prints `hcw-coder-automation: published hcw-lab with the
-rotation credential; active version <name>`, which is the task's
-`changed_when`. Exit 3, with a line saying to seed, when there is no
+owner's token, records each template's digest, time and version under `templates` in its
+state, and for `hcw-lab` also `templatePushedAt`, `templateVersion` and that
+SHA-256 (`templateDigest`) for the report, and prints `hcw-coder-automation: published <template> with the
+rotation credential; active version <name>` for each it published, which is
+the task's `changed_when`. Exit 3, with a line saying to seed, when there is no
 credential or Coder refuses it: the run carries on. Any other failure fails
 the task. `hcw-coder-template-push` needed no change for this: it already
 took "the owner's, or a Template Admin's" token, and the four commands it
