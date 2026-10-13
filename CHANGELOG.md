@@ -4496,6 +4496,24 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Cosmos restore: a restore with a daily backup in it completes (found by
+  the first drill, 2026-10-12).** The restore script asked every backup layer
+  for every container in the Sunday full. An operational container such as
+  `admin_audit_logs` is in the full and in no daily delta, by design, so the
+  first delta stopped every restore as "corrupted". No restore that included
+  a delta, which is every day but Sunday, had ever completed.
+  - A layer now contributes only the containers its own manifest lists, and
+    a listed container with no file still stops the restore.
+  - Against the live backups the dry run reaches the end: 11,971 documents
+    across 62 containers.
+  - The script refuses a target whose account name has `-prod-` in it unless
+    `--allow-production-target` is given, because a restore writes backup
+    copies over whatever the target holds.
+  - The runbook installs `func` before step 5, takes the container count from
+    the spec instead of a stale 73, explains Azure's
+    `Enqueued`/`Dequeued`/`Succeeded` lines, and deletes the local settings
+    file at teardown.
+
 - **Lab host: every bootstrap publishes every Coder template, with no token
   (2026-10-12).** The `coder` role's push published `hcw-lab` alone, with the
   host's self-renewing rotation credential. `amo-guided-lab` and

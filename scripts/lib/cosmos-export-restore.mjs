@@ -126,10 +126,37 @@ export function containersToRestore(fullManifest, only = null) {
 }
 
 /**
- * A selected layer's data blob must exist: the layer was chosen because its
- * manifest exists, and the manifest is written only once every marker is
- * present, so absence means the set is corrupted or has expired under the
- * lifecycle rule. Restoring past it would silently produce a partial copy.
+ * The layers that carry one container: those whose manifest lists it.
+ *
+ * A delta exports the authored and configuration containers only. An
+ * operational one (admin_audit_logs, audits, …) is in the full and in no
+ * delta, by design: export-classification.js gives operational
+ * `full: true, delta: false`. So a container a delta's manifest does not list
+ * takes nothing from that delta, and only a listed container's missing blob is
+ * a corrupted set (assertLayerBlobPresent). Until 2026-10-12 every layer was
+ * asked for every container, and the first drill stopped on admin_audit_logs
+ * in the first delta: no restore with a delta in it had ever completed.
+ *
+ * @param {string} container
+ * @param {{mode: string, runId: string}[]} layers - restoreLayers order
+ * @param {Map<string, {containers?: {container: string}[]}>} manifests - by `mode/runId`
+ * @returns {{mode: string, runId: string}[]} the same order, those listing it
+ */
+export function layersCarrying(container, layers, manifests) {
+  return layers.filter((layer) => {
+    const key = `${layer.mode}/${layer.runId}`;
+    const manifest = manifests.get(key);
+    if (!manifest) throw new Error(`no manifest was read for ${key}`);
+    return (manifest.containers || []).some((entry) => entry.container === container);
+  });
+}
+
+/**
+ * A listed container's data blob must exist in its layer: the layer was chosen
+ * because its manifest exists, the manifest lists the container, and the
+ * manifest is written only once every marker is present, so absence means the
+ * set is corrupted or has expired under the lifecycle rule. Restoring past it
+ * would silently produce a partial copy.
  *
  * @param {boolean} present
  * @param {string} blob - the blob name, for the error

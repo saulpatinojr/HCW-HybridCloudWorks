@@ -9,6 +9,7 @@ import {
   selectRestoreSet,
   restoreLayers,
   containersToRestore,
+  layersCarrying,
   dataBlobName,
   manifestBlobName,
   parseLine,
@@ -129,6 +130,33 @@ describe('containersToRestore', () => {
       /does not carry: jobs/
     );
     expect(() => containersToRestore({ containers: [] })).toThrow(/lists no containers/);
+  });
+});
+
+describe('layersCarrying', () => {
+  // As the live set read 2026-10-12: the Sunday full carries admin_audit_logs
+  // (operational, full only) and content; the deltas carry content alone.
+  const layers = restoreLayers({ full: '2026-10-11', deltas: ['2026-10-12', '2026-10-13'] });
+  const manifests = new Map([
+    ['full/2026-10-11', { containers: [{ container: 'admin_audit_logs' }, { container: 'content' }] }],
+    ['delta/2026-10-12', { containers: [{ container: 'content' }] }],
+    ['delta/2026-10-13', { containers: [{ container: 'content' }] }],
+  ]);
+
+  it('restores a full-only container from the full alone, not from deltas that never carry it', () => {
+    // The first drill stopped here: every delta was asked for admin_audit_logs.
+    expect(layersCarrying('admin_audit_logs', layers, manifests)).toEqual([
+      { mode: 'full', runId: '2026-10-11' },
+    ]);
+  });
+
+  it('applies every layer that lists a container, in order', () => {
+    expect(layersCarrying('content', layers, manifests)).toEqual(layers);
+  });
+
+  it('refuses to guess when a layer has no manifest read', () => {
+    const partial = new Map([...manifests].filter(([key]) => key !== 'delta/2026-10-13'));
+    expect(() => layersCarrying('content', layers, partial)).toThrow(/no manifest was read for delta\/2026-10-13/);
   });
 });
 
@@ -278,6 +306,24 @@ describe('parseOptions', () => {
       dryRun: true,
       verify: false,
     });
+  });
+
+  it('refuses a production account as the target unless --allow-production-target says so', () => {
+    const base = ['--storage-account', 'stsiteprodcus01', '--target-endpoint'];
+    expect(() => parseOptions([...base, 'https://cosmos-site-prod-cus.documents.azure.com:443/'])).toThrow(
+      /names cosmos-site-prod-cus, a production account/
+    );
+    expect(
+      parseOptions([
+        ...base,
+        'https://cosmos-site-prod-cus-02.documents.azure.com:443/',
+        '--allow-production-target',
+      ]).targetEndpoint
+    ).toBe('https://cosmos-site-prod-cus-02.documents.azure.com:443/');
+    // The drill's scratch account needs no flag.
+    expect(parseOptions([...base, 'https://cosmos-site-sbx-cus.documents.azure.com:443/']).targetEndpoint).toBe(
+      'https://cosmos-site-sbx-cus.documents.azure.com:443/'
+    );
   });
 
   it('parses a full restore invocation', () => {

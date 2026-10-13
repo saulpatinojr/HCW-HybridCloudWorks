@@ -31,6 +31,7 @@
  *   --concurrency <n>           upserts in flight per container (default 8, max 32)
  *   --dry-run                   read and count; write nothing
  *   --verify                    after writing, count each target container
+ *   --allow-production-target   write to an account whose name has -prod- in it
  *   --help
  */
 import { createInterface } from 'node:readline';
@@ -42,6 +43,7 @@ import {
   selectRestoreSet,
   restoreLayers,
   containersToRestore,
+  layersCarrying,
   dataBlobName,
   manifestBlobName,
   parseLine,
@@ -65,6 +67,8 @@ const HELP = `Usage: node scripts/restore-cosmos-export.mjs --storage-account <n
   --concurrency <n>           upserts in flight per container (default 8, max 32)
   --dry-run                   read and count; write nothing
   --verify                    after writing, count each target container
+  --allow-production-target   write to an account whose name has -prod- in it
+                              (a real restore into a new account; never a drill)
   --help
 
 Authenticates with DefaultAzureCredential (az login). Needs Storage Blob Data
@@ -75,7 +79,7 @@ Built-in Data Contributor on the TARGET account. Never touches the source.
 /** Parse argv into the options the run needs. Throws on anything malformed. */
 export function parseOptions(argv) {
   const { flags, options } = parseArgs(argv, {
-    flags: ['dry-run', 'verify', 'help'],
+    flags: ['dry-run', 'verify', 'allow-production-target', 'help'],
     options: [
       'storage-account',
       'target-endpoint',
@@ -94,6 +98,17 @@ export function parseOptions(argv) {
   }
   if (targetEndpoint && !/^https:\/\//.test(targetEndpoint)) {
     throw new Error('--target-endpoint must be an https URL');
+  }
+  // A restore upserts backup documents over whatever the target holds, so a
+  // production account as the target writes older copies over live ones. The
+  // drill restores into a scratch account; a real restore goes into a new
+  // account and says so with the flag (docs/runbooks/cosmos-restore.md).
+  const targetAccount = targetEndpoint ? new URL(targetEndpoint).hostname.split('.')[0] : '';
+  if (/-prod-/.test(targetAccount) && !flags['allow-production-target']) {
+    throw new Error(
+      `--target-endpoint names ${targetAccount}, a production account: a restore writes backup copies over what is there. ` +
+        'A drill restores into a scratch account (cosmos-site-sbx-cus); a real restore into a new account adds --allow-production-target'
+    );
   }
   // An absent --database means hcw; a present-but-blank one is a mistake to
   // name here, not an SDK error about a resource with no id later.
@@ -170,7 +185,13 @@ export async function main(argv = process.argv.slice(2), out = console) {
   const names = await listNames(exportBlobs);
   const set = selectRestoreSet(names, { asOf: opts.asOf });
   const layers = restoreLayers(set);
-  const fullManifest = await readJson(exportBlobs, manifestBlobName('full', set.full));
+  // Every layer's manifest, because each says which containers that layer
+  // carries: a delta lists fewer than the full (layersCarrying).
+  const manifests = new Map();
+  for (const layer of layers) {
+    manifests.set(`${layer.mode}/${layer.runId}`, await readJson(exportBlobs, manifestBlobName(layer.mode, layer.runId)));
+  }
+  const fullManifest = manifests.get(`full/${set.full}`);
   const containers = containersToRestore(fullManifest, opts.containers);
 
   out.log(
@@ -200,12 +221,12 @@ export async function main(argv = process.argv.slice(2), out = console) {
     const t0 = Date.now();
     const tally = createRestoreTally();
     const target = db ? db.container(name) : null;
-    for (const layer of layers) {
+    for (const layer of layersCarrying(name, layers, manifests)) {
       const layerName = `${layer.mode}/${layer.runId}`;
       const blob = dataBlobName(layer.mode, layer.runId, name);
-      // Every layer was selected because its manifest exists, and the manifest
-      // is written only once every container's marker is present — so a
-      // missing data blob is a corrupted or expired set, never an empty
+      // Only the layers whose manifest lists this container, and a manifest is
+      // written only once every listed container's marker is present, so a
+      // missing data blob here is a corrupted or expired set, never an empty
       // container (those still have a blob). Loud, in --dry-run too.
       assertLayerBlobPresent(await blobExists(exportBlobs, blob), blob);
       tally.touch(layerName);
