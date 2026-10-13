@@ -19,6 +19,45 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Recording Hub: Podbean's live status and downloads per published
+  episode.** Part of #1115, re-scoped 2026-10-13 after Podbean's MCP server
+  was measured unusable from a web app (redirect allowlist; a developer-app
+  token gets 401 at `/mcp`). The Distribution tab showed only what the
+  publish job recorded; it now reads Podbean through the client the publish
+  already authenticates with (ADR 0029 §1c).
+  - **`podbean.js` gains the reads**: `getEpisode`, `getDownloadStats`,
+    `getCountryStats`, `getPlatformStats`, `getSourceStats`,
+    `getUserRetention` and `getAnalyticReports`, every one a `GET` through the
+    same `call()` with the token as `access_token`. Dates (`YYYY-MM-DD`, a
+    real day, start on or before end) and periods (`d|m`, `m|w`) are refused
+    as `VALIDATION` before any request. `types[]` is sent as a repeated
+    parameter; the shapes are Podbean's documented ones and none is measured
+    live yet — the client tests pin the documented requests.
+  - **`GET cms/podcast/host/overview`** (`editor`; `lib/podcast/host-reads.js`):
+    every transcript whose `host.podbean.episodeId` is set, joined by id to
+    one page of the show's newest 100 episodes, plus the listed episodes no
+    transcript names (`transcriptId: null` — the three published by hand).
+    Per episode: Podbean's title, status, permalink, publish time, and the
+    last 30 days of downloads (`{ total, byDay }`), newest first and at most
+    20 statistics reads per overview (`downloadsCapped` counts the rest). A
+    Podbean failure lands where it happened — `errors.show`,
+    `errors.episodes` (then on every transcript row, and no statistics are
+    read), or `error` on one row — in the publish job's recorded-error shape,
+    and the answer is still 200. Cached 15 minutes in
+    `admin_config/podbean_host_overview`; `?refresh=1` reads live; a cache
+    that cannot be read or written is logged content-free and the live
+    overview is served. Not configured is 200 `{ configured: false, reason }`
+    with no call. Logs carry counts and codes, never a title or the token.
+  - **Distribution tab**: under each "Published to Podbean" record, a Podbean
+    line with the live status badge (Live / Draft on Podbean), the episode
+    page, "N downloads, last 30 days" and a 30-bar sparkline; an "Also on
+    Podbean" group for the episodes this hub never sent; a "Podbean read
+    <when> (cached)" status line with Refresh. Loading, not-configured and
+    failed-read states each say so; a failed read shows no stale counts. The
+    overview is read when the tab first mounts, not on page load.
+  - Contract and inventory: `.azure/api-surface.json`,
+    `functions/function-inventory.json` (`getPodcastHostOverview`).
+
 - **MCP Disconnect revokes the grant at the provider (RFC 7009).** Closes
   #1116, raised by CodeRabbit on #1114. Disconnect on an OAuth MCP server
   deleted the stored token pair and left the grant live at the provider

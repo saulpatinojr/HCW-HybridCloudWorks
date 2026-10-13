@@ -83,6 +83,17 @@ httpRoute('listPodcastTranscripts', {
   handler: (request, context) => handlers().listTranscripts(request, context),
 });
 
+// What Podbean says now about the show and the episodes the records name,
+// with thirty days of downloads each (#1115, lib/podcast/host-reads.js).
+// Cached fifteen minutes in admin_config/podbean_host_overview; `?refresh=1`
+// reads live. "Not configured" is a 200, not an error.
+httpRoute('getPodcastHostOverview', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'cms/podcast/host/overview',
+  handler: (request, context) => handlers().getHostOverview(request, context),
+});
+
 // Registered after the literal `generate` and `review` routes so the static
 // segments win; otherwise `cms/podcast/transcripts/review` would bind
 // `id: 'review'`.

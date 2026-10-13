@@ -56,6 +56,36 @@
  *   Bearer` also works; this file uses the documented form.
  * - `POST /v1/episodes/{id}/delete` exists. This file does not implement it.
  *
+ * ## The reads (#1115, 2026-10-13) — from the same document, equally unmeasured
+ *
+ * The Recording Hub reads the show's state and its statistics through the
+ * methods below (`host-reads.js`, `host-stats.js`). Every one is a `GET`
+ * through `call()`, with the token as `access_token`:
+ *
+ * - `GET /v1/episodes/{id}` → `{ episode }`, the shape the create answers.
+ * - `GET /v1/podcastStats/stats?start&end&period&episode_id` → a map of date
+ *   → downloads, `{ "2023-09-10": 1, "2023-09-11": 10 }`; `period` is `d`
+ *   (daily keys) or `m` (monthly keys). `episode_id` is optional and its
+ *   absence means the whole show. Podbean clamps `end` to yesterday.
+ * - `GET /v1/podcastStats/countries|platforms|sources?start&end&period` → a
+ *   map of name → downloads (`{ "US": 4026 }`, `{ "Android": 1685 }`,
+ *   `{ "Apple Podcasts": 2048 }`). Data for up to 24 months.
+ * - `GET /v1/podcastStats/userRetention?period=m|w` → a map of a period's
+ *   label → `[{ listeners, retention }]`.
+ * - `GET /v1/analytics/podcastAnalyticReports?types[]=…` →
+ *   `{ followers, likes, comments, total_episode_length }` (seconds). `types`
+ *   is an array parameter; this file sends it as repeated `types[]=`, the
+ *   PHP-style encoding Podbean's own examples use for arrays. UNVERIFIED
+ *   against the live API: if it answers a validation error naming `types`,
+ *   the one line to change is `ANALYTIC_TYPES_PARAM` below.
+ * - `GET /v1/analytics/podcastDailyListener` needs the Unlimited plan and
+ *   documents no shape; not implemented.
+ *
+ * Dates are `YYYY-MM-DD` and periods are from the documented sets; both are
+ * refused as VALIDATION before any request, the way `contentTypeOrRefuse`
+ * refuses a content type, so a bad argument is a plain sentence and not a
+ * Podbean 400 with the request to compare it against.
+ *
  * ## What this file deliberately does not do
  *
  * No retries of `POST /v1/episodes`. The unit of retry is the episode
@@ -127,6 +157,20 @@ const SETTING_SECRETS = Object.freeze({
 
 /** OAuth error codes on the token endpoint that mean "these credentials", not "try later". */
 const CREDENTIAL_ERRORS = new Set(['invalid_client', 'invalid_grant', 'unauthorized_client']);
+
+/** `period` for the download, country, platform and source statistics: daily or monthly keys. */
+export const STATS_PERIODS = Object.freeze(['d', 'm']);
+/** `period` for user retention: monthly or weekly cohorts. */
+export const RETENTION_PERIODS = Object.freeze(['m', 'w']);
+/** The `types` the analytic report documents. */
+export const ANALYTIC_REPORT_TYPES = Object.freeze([
+  'followers',
+  'likes',
+  'comments',
+  'total_episode_length',
+]);
+/** How the array parameter is spelled on the wire (see the header: unverified live). */
+const ANALYTIC_TYPES_PARAM = 'types[]';
 
 /**
  * One error type for everything the client raises, so a caller can record it
@@ -215,6 +259,64 @@ function contentTypeOrRefuse(value, where) {
     );
   }
   return type;
+}
+
+const DATE_SHAPE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A statistics date, `YYYY-MM-DD` and a real calendar day, or refused before
+ * any request. Podbean's own examples use this shape and nothing else; a
+ * `Date`, an ISO timestamp or `2026-2-3` would reach it as a 400 whose text
+ * names neither the parameter nor the value.
+ */
+function dateOrRefuse(value, name) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  const real = DATE_SHAPE.test(text) && new Date(`${text}T00:00:00Z`).toISOString().startsWith(text);
+  if (!real) {
+    throw new PodbeanError(
+      `A statistics read needs ${name} as YYYY-MM-DD; got ${JSON.stringify(value ?? null)}.`,
+      { status: null, code: 'VALIDATION', retryable: false }
+    );
+  }
+  return text;
+}
+
+/** A `period` from the set the endpoint documents, or refused before any request. */
+function periodOrRefuse(value, allowed) {
+  if (!allowed.includes(value)) {
+    throw new PodbeanError(
+      `A statistics read needs period as one of ${allowed.join(', ')}; got ${JSON.stringify(value ?? null)}.`,
+      { status: null, code: 'VALIDATION', retryable: false }
+    );
+  }
+  return value;
+}
+
+/** `{ start, end, period }` validated together, as the four range statistics take them. */
+function rangeOrRefuse({ start, end, period = 'd' } = {}) {
+  const from = dateOrRefuse(start, 'start');
+  const to = dateOrRefuse(end, 'end');
+  if (from > to) {
+    throw new PodbeanError(`A statistics read needs start (${from}) on or before end (${to}).`, {
+      status: null,
+      code: 'VALIDATION',
+      retryable: false,
+    });
+  }
+  return { start: from, end: to, period: periodOrRefuse(period, STATS_PERIODS) };
+}
+
+/** An episode id as Podbean issues them: a non-empty string, trimmed. Refused before any request. */
+function episodeIdOrRefuse(value, where) {
+  const id = typeof value === 'string' ? value.trim() : '';
+  if (!id) {
+    throw new PodbeanError(`${where} needs an episode id; got ${JSON.stringify(value ?? null)}.`, {
+      status: null,
+      code: 'VALIDATION',
+      retryable: false,
+    });
+  }
+  return id;
 }
 
 /** `{ error, error_description }` → `error: description`, or the text, cut short. */
@@ -378,8 +480,10 @@ export function createPodbeanClient({
 
   /**
    * One authenticated call. `query` goes on the URL for a GET, `form` is the
-   * body of a POST; the token is added to whichever carries it. Repeats once,
-   * with a fresh token, on `invalid_token` — the only repeat in this file.
+   * body of a POST; the token is added to whichever carries it. An array
+   * value in `query` is repeated under its key, one entry per element (the
+   * analytic report's `types[]`). Repeats once, with a fresh token, on
+   * `invalid_token` — the only repeat in this file.
    */
   async function call(operation, method, path, { query, form } = {}, { reauthed = false } = {}) {
     const token = await getToken();
@@ -388,7 +492,11 @@ export function createPodbeanClient({
     if (method === 'GET') {
       url.searchParams.set('access_token', token);
       for (const [key, value] of Object.entries(query || {})) {
-        if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+        if (Array.isArray(value)) {
+          for (const entry of value) url.searchParams.append(key, String(entry));
+        } else if (value !== undefined && value !== null) {
+          url.searchParams.set(key, String(value));
+        }
       }
     } else {
       const params = new URLSearchParams();
@@ -468,6 +576,74 @@ export function createPodbeanClient({
      */
     listEpisodes({ offset = 0, limit = 20 } = {}) {
       return call('listing episodes', 'GET', '/episodes', { query: { offset, limit } });
+    },
+
+    /** `GET /v1/episodes/{id}` → `{ episode }`. Read-only; the hub's live status for one episode. */
+    async getEpisode(episodeId) {
+      const id = episodeIdOrRefuse(episodeId, 'An episode read');
+      return call('reading the episode', 'GET', `/episodes/${encodeURIComponent(id)}`);
+    },
+
+    /**
+     * `GET /v1/podcastStats/stats` → `{ [date]: downloads }`, daily keys for
+     * `period: 'd'` and monthly for `'m'`. Without `episodeId` the figures are
+     * the whole show's; with it, that episode's. `end` later than yesterday
+     * is clamped by Podbean, not refused.
+     */
+    async getDownloadStats({ start, end, period = 'd', episodeId } = {}) {
+      const range = rangeOrRefuse({ start, end, period });
+      const query = { ...range };
+      if (episodeId !== undefined && episodeId !== null) {
+        query.episode_id = episodeIdOrRefuse(episodeId, 'A per-episode download read');
+      }
+      return call('reading download statistics', 'GET', '/podcastStats/stats', { query });
+    },
+
+    /** `GET /v1/podcastStats/countries` → `{ [countryCode]: downloads }` for the range. */
+    async getCountryStats(range = {}) {
+      return call('reading country statistics', 'GET', '/podcastStats/countries', {
+        query: rangeOrRefuse(range),
+      });
+    },
+
+    /** `GET /v1/podcastStats/platforms` → `{ [platform]: downloads }` for the range. */
+    async getPlatformStats(range = {}) {
+      return call('reading platform statistics', 'GET', '/podcastStats/platforms', {
+        query: rangeOrRefuse(range),
+      });
+    },
+
+    /** `GET /v1/podcastStats/sources` → `{ [source]: downloads }` (apps and directories) for the range. */
+    async getSourceStats(range = {}) {
+      return call('reading source statistics', 'GET', '/podcastStats/sources', {
+        query: rangeOrRefuse(range),
+      });
+    },
+
+    /** `GET /v1/podcastStats/userRetention?period=m|w` → `{ [cohortLabel]: [{ listeners, retention }] }`. */
+    async getUserRetention({ period = 'm' } = {}) {
+      return call('reading listener retention', 'GET', '/podcastStats/userRetention', {
+        query: { period: periodOrRefuse(period, RETENTION_PERIODS) },
+      });
+    },
+
+    /**
+     * `GET /v1/analytics/podcastAnalyticReports?types[]=…` → one number per
+     * requested type: `{ followers, likes, comments, total_episode_length }`.
+     * Every type must be one the API documents; the whole list is the default.
+     */
+    async getAnalyticReports({ types = ANALYTIC_REPORT_TYPES } = {}) {
+      const list = Array.isArray(types) ? types : [];
+      const unknown = list.filter((type) => !ANALYTIC_REPORT_TYPES.includes(type));
+      if (!list.length || unknown.length) {
+        throw new PodbeanError(
+          `An analytic report read needs types from ${ANALYTIC_REPORT_TYPES.join(', ')}; got ${JSON.stringify(types ?? null)}.`,
+          { status: null, code: 'VALIDATION', retryable: false }
+        );
+      }
+      return call('reading the analytic report', 'GET', '/analytics/podcastAnalyticReports', {
+        query: { [ANALYTIC_TYPES_PARAM]: list },
+      });
     },
 
     /**

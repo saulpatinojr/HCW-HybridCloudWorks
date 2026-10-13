@@ -262,6 +262,23 @@ API documentation data on 2026-10-13):
   `GET /v1/podcast`, the only probe with an exchange step, and still records
   no key verdict: a refused exchange could blame either value.
 
+**The Recording Hub reads Podbean too (#1115, 2026-10-13).** Podbean's MCP
+server cannot be used by a web app (its redirect allowlist names three AI
+clients and loopback, and a developer-app token is refused at `/mcp`; measured
+2026-10-13), so the hub reads the same API the publish uses. The Distribution
+tab's `GET cms/podcast/host/overview` (`host-reads.js`) joins every transcript
+whose record names an episode with one page of the show's newest hundred
+episodes and thirty days of per-episode downloads
+(`GET /v1/podcastStats/stats`), newest first and at most twenty of them per
+read; episodes the show has that no transcript names are rows too, so the
+three published by hand before this path appear. The record line stays what
+the publish job saw and the Podbean line under it says what is true now. The
+overview is cached fifteen minutes in `admin_config/podbean_host_overview`
+(Podbean's bucket is 60 requests at 2/s, and the tab re-renders on every
+transcript reload); Refresh reads live. A Podbean failure is recorded where it
+happened, in the publish job's recorded-error shape, and the overview still
+answers. Nothing here writes `podcasts` either.
+
 **What does not change.** The feed is still the integration boundary: the site
 learns of a published episode by ingesting the show's feed, never by writing a
 `podcasts` row from what it just uploaded. §1b's reasoning holds word for word

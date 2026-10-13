@@ -151,6 +151,64 @@ export function hostErrorMessage(host) {
   return typeof host.error === 'string' ? host.error : host.error.message || 'publish failed';
 }
 
+// ── the Podbean overview (#1115) ─────────────────────────────────────────────
+
+/** Podbean's episode status as a word a reviewer reads: `publish` is live. */
+export function liveStatusLabel(status) {
+  if (status === 'publish') return 'Live';
+  if (status === 'draft') return 'Draft on Podbean';
+  return status ? String(status) : 'Unknown';
+}
+
+/**
+ * "12 downloads, last 30 days", or '' when the row carries no count — a
+ * capped row, or one whose statistics read failed (its `error` says so).
+ */
+export function describeDownloads(row, days = 30) {
+  const total = row?.downloads?.total;
+  if (typeof total !== 'number' || !Number.isFinite(total)) return '';
+  return `${total.toLocaleString()} download${total === 1 ? '' : 's'}, last ${days} days`;
+}
+
+/**
+ * The daily counts in date order, each with a height in 0–100 against the
+ * busiest day, for the sparkline. Empty for no data or an empty window. A
+ * window with no downloads at all is bars of height 0, not nothing: the
+ * difference between "nobody listened" and "we do not know".
+ */
+export function sparklineBars(byDay) {
+  if (!byDay || typeof byDay !== 'object' || Array.isArray(byDay)) return [];
+  const entries = Object.entries(byDay)
+    .map(([date, count]) => ({ date, count: Number(count) }))
+    .filter(({ count }) => Number.isFinite(count) && count >= 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const max = entries.reduce((top, { count }) => Math.max(top, count), 0);
+  return entries.map((entry) => ({
+    ...entry,
+    height: max > 0 ? Math.round((entry.count / max) * 100) : 0,
+  }));
+}
+
+/**
+ * The overview row for one transcript: the one that names it, else the one
+ * for the episode its record names (a transcript regenerated under a new id
+ * keeps the episode), else null.
+ */
+export function liveRowFor(overview, item) {
+  const rows = Array.isArray(overview?.episodes) ? overview.episodes : [];
+  const byTranscript = rows.find((row) => row.transcriptId === item?.id);
+  if (byTranscript) return byTranscript;
+  const episodeId = item?.host?.podbean?.episodeId;
+  if (!episodeId) return null;
+  return rows.find((row) => row.episodeId === String(episodeId)) ?? null;
+}
+
+/** The overview rows no transcript names: what the show has that this hub did not send. */
+export function unmatchedLiveRows(overview) {
+  const rows = Array.isArray(overview?.episodes) ? overview.episodes : [];
+  return rows.filter((row) => row.transcriptId === null || row.transcriptId === undefined);
+}
+
 /** How a stored recording got into the `recordings` container. */
 export function sourceLabel(source) {
   if (source === 'plaud-embedded') return 'Plaud Embedded';
