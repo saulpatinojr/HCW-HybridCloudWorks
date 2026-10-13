@@ -4585,6 +4585,36 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **One Podbean publish per transcript, even when two schedules land at
+  once (closes #1118).** An approval (`POST cms/podcast/transcripts/review`)
+  and a retry (`POST cms/podcast/transcripts/{id}/publish`) arriving in the
+  same instant could both read the transcript with no publish pending, both
+  queue a job, and two first runs would both create: the episode twice on
+  the public feed. #1117 reconciled a create whose answer was lost; this is
+  the other half, the reservation.
+  - **The pending marker is now etag-conditional.** `scheduleHostPublish`
+    writes `host.podbean.pending` with `patchDoc`'s `ifMatch` set to the
+    `_etag` the document was read at — after an approval, the one the
+    status write returned — so it lands only on the version the decision
+    was made about. A 412 means someone else wrote first. The document is
+    re-read once: a live reservation on it is theirs, and the loser answers
+    in flight naming their job (202 from review, 409 from the retry) and
+    cancels the job document it wrote, so the stale-queued sweeper can never
+    re-enqueue it. Anything else — the other job already finished, a
+    withdrawal, an unrelated edit — is not a publish in flight, so the
+    reservation is tried once more against the fresh document, from its
+    stable record, so an `episodeId` just stored is kept under the marker.
+    A document that moves on every attempt queues nothing and throws
+    `RESERVATION_CONTENDED`; the review handler records `SCHEDULE_FAILED`
+    and keeps the approval, as it already did for any other failure to
+    queue. A transcript handed over without its `_etag` is refused before
+    any write. Nothing is enqueued unless the reservation landed.
+  - **Tests.** Two schedules racing on one document produce one job, one
+    marker and one message, the loser in flight; an approval and a retry
+    racing through the handlers agree on one job id; the fresh-document
+    retry keeps the stored episode id; a reservation lost twice cancels its
+    job and queues nothing; a document without an etag writes nothing.
+
 - **The podcast pages show the show again, now that it is back on Podbean.**
   The public list returned one stale RSS.com upload instead of the three
   episodes in the feed. Two causes, both from the move on 2026-10-13:

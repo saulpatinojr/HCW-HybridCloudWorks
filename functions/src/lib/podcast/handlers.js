@@ -23,6 +23,11 @@
  * otherwise a `publish-podcast-transcript` job is queued and the document
  * is marked `host.podbean.pending`. The response carries that outcome under
  * `host` so the hub can toast it, and answers 202 when a job is in flight.
+ * The marker is an etag-conditional reservation (#1118): approval hands
+ * `scheduleHostPublish` the document as the status write returned it, with
+ * that write's `_etag`, and the retry route hands it the document as read,
+ * so an approval and a retry landing in the same instant queue one job and
+ * the other answers in flight — 202 here, 409 on the retry — naming it.
  * Three rules hold whatever the host does: a publish failure never
  * un-approves — `status`/`approvedAt` are written here and nowhere in the
  * host path; the retry route below re-runs the same step rather than
@@ -317,6 +322,9 @@ export function createPodcastHandlers({
           return json(200, { success: true, id, status, item: updated || null, host: null });
         }
 
+        // The document as the status write left it, `_etag` included: the
+        // reservation is conditional on that version, not on the one read
+        // before the approval, which the status write has already replaced.
         const host = await runHostStep({
           doc: { ...existing, ...(updated || {}) },
           enqueue,

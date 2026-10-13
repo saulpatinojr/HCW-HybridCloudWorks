@@ -6,12 +6,19 @@
  * transcript pending; the job re-runs the same step idempotently — update,
  * not create, when the document names an episode — and neither success nor
  * failure nor skip ever carries `status`, `approvedAt` or `approvedBy`.
+ *
+ * #1118: the pending marker is an etag-conditional reservation. Two
+ * schedules racing on one document queue one job, the loser answering in
+ * flight with the winner's job and cancelling its own; a reservation that
+ * loses to something other than a reservation is retried once against the
+ * fresh document; nothing is enqueued unless the marker landed.
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
   HOST_SKIP,
   MAX_TRANSCRIPT_ID_BYTES,
   PUBLISH_JOB_TYPE,
+  RESERVATION_CONTENDED,
   audioReaderFor,
   hostSkipFor,
   parseTranscriptId,
@@ -49,6 +56,7 @@ const doc = (over = {}) => ({
   approvedAt: '2026-09-09T09:00:00.000Z',
   approvedBy: 'oid-1',
   host: null,
+  _etag: '"etag-1"',
   ...over,
 });
 
@@ -58,6 +66,47 @@ const makeStore = (over = {}) => ({
   patchDoc: vi.fn(async (_c, id, updates) => ({ id, ...updates })),
   ...over,
 });
+
+const preconditionFailed = () => Object.assign(new Error('precondition failed'), { code: 412 });
+
+/**
+ * A store holding one transcript whose `_etag` moves on every write, as
+ * Cosmos's does, and a jobs container. A transcript patch carrying `ifMatch`
+ * lands only on the etag it names; any other is the SDK's 412.
+ */
+const versionedStore = (transcript) => {
+  const state = { transcript: { ...transcript }, jobs: new Map(), version: 1 };
+  const store = {
+    readDoc: vi.fn(async (container, id) => {
+      if (container === JOBS_CONTAINER) return state.jobs.get(id) || null;
+      return container === TRANSCRIPT_CONTAINER && id === state.transcript.id
+        ? { ...state.transcript }
+        : null;
+    }),
+    upsertDoc: vi.fn(async (container, d) => {
+      if (container === JOBS_CONTAINER) state.jobs.set(d.id, { ...d });
+      return d;
+    }),
+    patchDoc: vi.fn(async (container, id, updates, options = {}) => {
+      if (container === JOBS_CONTAINER) {
+        const job = { ...state.jobs.get(id), ...updates };
+        state.jobs.set(id, job);
+        return job;
+      }
+      if (options.ifMatch !== undefined && options.ifMatch !== state.transcript._etag) {
+        throw preconditionFailed();
+      }
+      state.version += 1;
+      Object.assign(state.transcript, updates, { _etag: `"etag-${state.version}"` });
+      return { ...state.transcript };
+    }),
+  };
+  return { store, state };
+};
+
+/** The transcript patch calls, as `[patch, options]`. */
+const transcriptWrites = (store) =>
+  store.patchDoc.mock.calls.filter(([c]) => c === TRANSCRIPT_CONTAINER).map((c) => [c[2], c[3]]);
 
 const HOST_EPISODE = {
   id: 'IWPNG2FB3F',
@@ -200,16 +249,22 @@ describe('scheduleHostPublish', () => {
       result: null,
       error: null,
     });
+    // The marker is the reservation: conditional on the etag the document
+    // was read at, so it lands only on the version the decision was about.
     expect(store.patchDoc).toHaveBeenCalledWith(
       TRANSCRIPT_CONTAINER,
       'article_picking-a-state-backend',
       { host: { podbean: { pending: true, jobId: 'job-1', queuedAt: AT } } },
-      { partitionKey: 'article_picking-a-state-backend' }
+      { partitionKey: 'article_picking-a-state-backend', ifMatch: '"etag-1"' }
     );
     expect(enqueue).toHaveBeenCalledWith({ jobId: 'job-1', type: PUBLISH_JOB_TYPE });
-    // The job document is written before the marker names it.
+    // The job document is written before the marker names it, and the
+    // message goes only after the marker landed.
     expect(store.upsertDoc.mock.invocationCallOrder[0]).toBeLessThan(
       store.patchDoc.mock.invocationCallOrder[0]
+    );
+    expect(store.patchDoc.mock.invocationCallOrder[0]).toBeLessThan(
+      enqueue.mock.invocationCallOrder[0]
     );
   });
 
@@ -318,6 +373,207 @@ describe('scheduleHostPublish', () => {
     ).rejects.toThrow(/no queue output wired/);
     expect(store.upsertDoc).not.toHaveBeenCalled();
     expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  describe('the reservation (#1118)', () => {
+    const schedule = (store, over = {}) =>
+      scheduleHostPublish({ store, configured: CONFIGURED, now, ...over });
+
+    it('two schedules racing on one document queue exactly one job: the loser answers in_flight naming it and cancels its own', async () => {
+      const { store, state } = versionedStore(doc());
+      // Both read the document before either wrote: the same etag in hand.
+      const stale = { ...state.transcript };
+      let n = 0;
+      const uuid = () => `job-${(n += 1)}`;
+      const enqueue = vi.fn();
+
+      const outcomes = await Promise.all([
+        schedule(store, { doc: stale, enqueue, uuid }),
+        schedule(store, { doc: stale, enqueue, uuid }),
+      ]);
+
+      const winner = outcomes.find((o) => o.outcome === 'queued');
+      const loser = outcomes.find((o) => o.outcome === 'in_flight');
+      expect(winner).toBeDefined();
+      expect(loser).toBeDefined();
+      // One message, one marker, and the loser points at the winner's job.
+      expect(enqueue).toHaveBeenCalledTimes(1);
+      expect(enqueue).toHaveBeenCalledWith({ jobId: winner.jobId, type: PUBLISH_JOB_TYPE });
+      expect(loser.jobId).toBe(winner.jobId);
+      expect(loser.host).toEqual({ pending: true, jobId: winner.jobId, queuedAt: AT });
+      expect(state.transcript.host.podbean).toEqual(loser.host);
+      // Two attempts at the marker, both conditional on the etag both read;
+      // the second was refused and never retried, because the re-read showed
+      // a live reservation.
+      expect(transcriptWrites(store)).toEqual([
+        [{ host: { podbean: winner.host } }, { partitionKey: stale.id, ifMatch: '"etag-1"' }],
+        [expect.anything(), { partitionKey: stale.id, ifMatch: '"etag-1"' }],
+      ]);
+      // The winner's job waits for its message; the loser's can never be
+      // swept back into the queue.
+      const loserJobId = [...state.jobs.keys()].find((id) => id !== winner.jobId);
+      expect(state.jobs.get(winner.jobId).status).toBe('queued');
+      expect(state.jobs.get(loserJobId)).toMatchObject({
+        status: 'cancelled',
+        finishedAt: AT,
+        error: expect.stringMatching(/reserved it first/),
+      });
+    });
+
+    it('a reservation lost to something other than a reservation is tried once more, against the fresh document and from its stable record', async () => {
+      // The other side already finished: its job stored an episode id and
+      // cleared pending. Nothing is in flight, so answering in_flight would
+      // send the hub to poll a job that does not exist; the caller asked for
+      // a publish and gets one — built from the fresh record, so the
+      // episode id just stored stays under the marker and the run updates
+      // rather than creates.
+      const stored = { episodeId: 'IWPNG2FB3F', hostStatus: 'publish', fileKey: 'k', error: null };
+      const fresh = doc({ _etag: '"etag-2"', host: { podbean: stored } });
+      let writes = 0;
+      const store = makeStore({
+        readDoc: vi.fn(async (c) => (c === TRANSCRIPT_CONTAINER ? fresh : null)),
+        patchDoc: vi.fn(async (c, id, updates, options) => {
+          if (c === TRANSCRIPT_CONTAINER && (writes += 1) === 1) throw preconditionFailed();
+          return { id, ...updates, _etag: options?.ifMatch };
+        }),
+      });
+      const enqueue = vi.fn();
+
+      const out = await schedule(store, { doc: doc(), enqueue, uuid: () => 'job-1' });
+
+      expect(out).toEqual({
+        outcome: 'queued',
+        jobId: 'job-1',
+        host: { ...stored, pending: true, jobId: 'job-1', queuedAt: AT },
+      });
+      expect(transcriptWrites(store)).toEqual([
+        [
+          { host: { podbean: { pending: true, jobId: 'job-1', queuedAt: AT } } },
+          { partitionKey: fresh.id, ifMatch: '"etag-1"' },
+        ],
+        [{ host: { podbean: out.host } }, { partitionKey: fresh.id, ifMatch: '"etag-2"' }],
+      ]);
+      expect(enqueue).toHaveBeenCalledTimes(1);
+      expect(enqueue).toHaveBeenCalledWith({ jobId: 'job-1', type: PUBLISH_JOB_TYPE });
+      // One job document, still queued: nothing to cancel.
+      expect(store.upsertDoc).toHaveBeenCalledTimes(1);
+      expect(store.patchDoc.mock.calls.some(([c]) => c === JOBS_CONTAINER)).toBe(false);
+    });
+
+    it('a reservation that lands late still wins the loser an in_flight answer: each round ends on a read', async () => {
+      // First 412: an unrelated edit. Second 412: a competitor's marker.
+      const reads = [doc({ _etag: '"etag-2"' }), doc({ _etag: '"etag-3"', host: { podbean: { pending: true, jobId: 'job-x', queuedAt: AT } } })];
+      const store = makeStore({
+        readDoc: vi.fn(async (c, id) =>
+          c === TRANSCRIPT_CONTAINER ? reads.shift() : c === JOBS_CONTAINER ? { id, status: 'queued' } : null
+        ),
+        patchDoc: vi.fn(async (c, id, updates) => {
+          if (c === TRANSCRIPT_CONTAINER) throw preconditionFailed();
+          return { id, ...updates };
+        }),
+      });
+      const enqueue = vi.fn();
+
+      const out = await schedule(store, { doc: doc(), enqueue, uuid: () => 'job-mine' });
+
+      expect(out).toEqual({
+        outcome: 'in_flight',
+        jobId: 'job-x',
+        host: { pending: true, jobId: 'job-x', queuedAt: AT },
+      });
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(store.patchDoc).toHaveBeenCalledWith(
+        JOBS_CONTAINER,
+        'job-mine',
+        expect.objectContaining({ status: 'cancelled' })
+      );
+    });
+
+    it('a document that moves on every attempt queues nothing: the job is cancelled and the caller is told', async () => {
+      let version = 1;
+      const store = makeStore({
+        readDoc: vi.fn(async (c) =>
+          c === TRANSCRIPT_CONTAINER ? doc({ _etag: `"etag-${(version += 1)}"` }) : null
+        ),
+        patchDoc: vi.fn(async (c, id, updates) => {
+          if (c === TRANSCRIPT_CONTAINER) throw preconditionFailed();
+          return { id, ...updates };
+        }),
+      });
+      const enqueue = vi.fn();
+
+      const error = await schedule(store, { doc: doc(), enqueue, uuid: () => 'job-1' }).catch(
+        (e) => e
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.code).toBe(RESERVATION_CONTENDED);
+      expect(error.message).toMatch(/nothing was queued/);
+      expect(enqueue).not.toHaveBeenCalled();
+      // Two conditional attempts — the handed-in etag, then the re-read's —
+      // and no third.
+      expect(transcriptWrites(store).map(([, o]) => o.ifMatch)).toEqual(['"etag-1"', '"etag-2"']);
+      expect(store.patchDoc).toHaveBeenCalledWith(
+        JOBS_CONTAINER,
+        'job-1',
+        expect.objectContaining({ status: 'cancelled', finishedAt: AT })
+      );
+    });
+
+    it('a transcript gone on the re-read cancels the job and throws TRANSCRIPT_NOT_FOUND without the id in the message', async () => {
+      const store = makeStore({
+        patchDoc: vi.fn(async (c, id, updates) => {
+          if (c === TRANSCRIPT_CONTAINER) throw preconditionFailed();
+          return { id, ...updates };
+        }),
+      });
+      const enqueue = vi.fn();
+      const error = await schedule(store, { doc: doc(), enqueue, uuid: () => 'job-1' }).catch(
+        (e) => e
+      );
+      expect(error.code).toBe('TRANSCRIPT_NOT_FOUND');
+      expect(error.transcriptId).toBe(doc().id);
+      expect(error.message).not.toContain(doc().id);
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(store.patchDoc).toHaveBeenCalledWith(
+        JOBS_CONTAINER,
+        'job-1',
+        expect.objectContaining({ status: 'cancelled' })
+      );
+    });
+
+    it('a store failure on the marker that is not a 412 is rethrown as before', async () => {
+      const store = makeStore({
+        patchDoc: vi.fn(async () => {
+          throw new Error('cosmos down');
+        }),
+      });
+      await expect(schedule(store, { doc: doc(), enqueue: vi.fn() })).rejects.toThrow('cosmos down');
+      expect(store.readDoc).not.toHaveBeenCalled();
+    });
+
+    it('refuses a document handed over without its _etag before writing anything', async () => {
+      for (const _etag of [undefined, null, '']) {
+        const store = makeStore();
+        const enqueue = vi.fn();
+        await expect(
+          schedule(store, { doc: doc({ _etag }), enqueue })
+        ).rejects.toThrow(/no _etag/);
+        expect(store.upsertDoc).not.toHaveBeenCalled();
+        expect(store.patchDoc).not.toHaveBeenCalled();
+        expect(enqueue).not.toHaveBeenCalled();
+      }
+    });
+
+    it('the skip and in_flight paths need no etag: nothing is reserved there', async () => {
+      const skipped = await schedule(makeStore(), { doc: doc({ _etag: undefined }), configured: NOT_CONFIGURED, enqueue: vi.fn() });
+      expect(skipped.outcome).toBe('skipped');
+      const held = await schedule(
+        makeStore({ readDoc: vi.fn(async (c, id) => (c === JOBS_CONTAINER ? { id, status: 'running' } : null)) }),
+        { doc: doc({ _etag: undefined, host: { podbean: { pending: true, jobId: 'job-old' } } }), enqueue: vi.fn() }
+      );
+      expect(held.outcome).toBe('in_flight');
+    });
   });
 });
 
