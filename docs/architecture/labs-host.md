@@ -39,10 +39,14 @@ itself, never from a published page.
 
 Merged is not applied. A change to `lab-host/` reaches the host when the
 owner runs `bootstrap.sh`, which checks out `origin/main` and runs the
-playbook. A change to a Coder template reaches Coder in that same run: the
-`coder` role publishes every template whose files changed with the host's
-own rotation credential, so nothing follows the run
+playbook. A change to a Coder template reaches Coder in that same run
+while the host's rotation credential is seeded and Coder accepts it: the
+`coder` role publishes every template whose files changed with it, so
+nothing follows the run
 ([runbook](../runbooks/labs-host.md#after-a-merge-the-playbook-then-the-template-at-once)).
+Without a working credential (a rebuilt host, or one revoked after a leak)
+the role skips the publish and says to seed again, and "Publishing the
+template" in `lab-host/README.md` is the fallback until it is.
 Nothing does either on a schedule (#950).
 
 The site watches the gap rather than closing it (#1009). The playbook's last
