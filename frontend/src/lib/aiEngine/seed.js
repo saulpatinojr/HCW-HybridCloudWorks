@@ -352,11 +352,16 @@ export const DEFAULT_MCP_SERVERS = [
     enabled: false,
     apiKeyEnvVar: null,
     authType: 'oauth',
+    // Fail closed (CodeRabbit on #1114). mcpToolRefusal treats a missing
+    // list as unrestricted and holds a present one to its entries, an empty
+    // one included, so switching this on runs no tool until its tools are
+    // named (#1115, once Connect and Sync have listed them).
+    allowedTools: [],
     tools: [],
     status: 'untested',
     order: 13,
     notes:
-      'Podbean’s hosted MCP server (Streamable HTTP). Signs in with your Podbean account: press Connect, sign in at Podbean and approve. The token is kept server-side and renewed automatically. It covers one public channel per connection. Its tools can publish, edit and permanently delete episodes and change the show’s details, so it ships switched off. Before switching it on, Connect and Sync, then have its allowed tools limited to the ones you use: there is no allow-list yet, because the tool names are only known after Sync. Switched off, it runs no tools, but Sync can still list them and the token is still renewed; Disconnect deletes the token here and does not revoke it at Podbean. Podbean’s AI features spend Podbean AI credits. Docs: https://help.podbean.com/support/solutions/articles/25000035383',
+      'Podbean’s hosted MCP server (Streamable HTTP). Signs in with your Podbean account: press Connect, sign in at Podbean and approve. The token is kept server-side and renewed automatically. It covers one public channel per connection. Its tools can publish, edit and permanently delete episodes and change the show’s details, so it ships switched off. It ships with an empty allow-list, so even switched on it runs no tool until its allowed tools are named (#1115): Connect and Sync first, then have the list set to the tools you use. Switched off, it runs no tools, but Sync can still list them and the token is still renewed; Disconnect deletes the token here and does not revoke it at Podbean. Podbean’s AI features spend Podbean AI credits. Docs: https://help.podbean.com/support/solutions/articles/25000035383',
   },
 ];
 

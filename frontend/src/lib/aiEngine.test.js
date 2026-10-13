@@ -409,13 +409,28 @@ describe('the OAuth Connect servers (2026-10-08) match the API', () => {
       authType: 'oauth',
       apiKeyEnvVar: null,
       enabled: false,
+      allowedTools: [],
     });
     for (const id of ['replicate-mcp', 'hostinger-mcp', 'podbean-mcp']) {
       const server = byId(id);
       expect(validateMcpUrl(server.url)).toMatch(/^https:\/\//);
       expect(validateMcpKeyBinding(server)).toBeNull();
-      expect(validateMcpToolPolicy(server)).toBeNull();
       expect(apiUsesOAuthConnect(server)).toBe(true);
+    }
+    expect(validateMcpToolPolicy(byId('replicate-mcp'))).toBeNull();
+    expect(validateMcpToolPolicy(byId('hostinger-mcp'))).toBeNull();
+  });
+
+  it('holds Podbean to an empty allow-list, so switching it on runs no tool until #1115 names them', () => {
+    // CodeRabbit on #1114: a missing list is unrestricted, and Sync fills
+    // `tools`, not `allowedTools`. The seed fails closed instead.
+    const podbean = byId('podbean-mcp');
+    expect(validateMcpToolPolicy(podbean)).toEqual([]);
+    for (const tool of ['delete_episode', 'publish_episode', 'list_episodes']) {
+      expect(
+        mcpToolRefusal({ serverId: podbean.id, server: { ...podbean, enabled: true }, tool }),
+        tool
+      ).toMatch(/not in the allowedTools/);
     }
   });
 
