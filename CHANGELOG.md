@@ -4496,6 +4496,23 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Show episodes play on the site again, from RSS.com and from Podbean.**
+  The site's `media-src` allowed RSS.com's two media hosts (#1101), but an
+  RSS.com enclosure redirects through `rsscom.pdn.tritondigital.com`, RSS.com's
+  download measurement, before the file. Chromium checks `media-src` on every
+  redirect hop, so every show episode failed at that hop
+  (`MEDIA_ERR_SRC_NOT_SUPPORTED`), measured in headless Chromium against the
+  live policy on 2026-10-13.
+  - The show moved to Podbean the same day: RSS.com's feed now answers 301
+    with the Podbean feed, all three episodes keep their GUIDs, and the
+    site's ingest follows the redirect. Podbean's enclosures start at
+    `mcdn.podbean.com` and, until Podbean has copied the audio, redirect back
+    through both RSS.com hosts and the measurement host.
+  - `media-src` adds both hosts, and nothing broader. With them, an RSS.com
+    episode and a Podbean episode each load in Chromium (611 s).
+  - `csp.test.js` pins the list and says to trace an enclosure's hops with
+    `curl -sIL` before changing it.
+
 - **The read-only Azure identity writes nothing now: the content manifest's
   origin window has an identity of its own (#1098).** `github_reader` held
   HCW Function Settings Reader and, for `publish-content-manifest.yml`'s
