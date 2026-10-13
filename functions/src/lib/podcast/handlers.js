@@ -50,7 +50,9 @@
  * and their downloads (host-reads.js). `editor`, like the list. Without the
  * Podbean settings it answers 200 `{ configured: false, reason }` and calls
  * nothing, the way the ElevenLabs card does; with them, a cached overview
- * unless `?refresh=1`.
+ * unless `?refresh=1`. The host statistics (host-stats.js) are the same
+ * shape of route for the Stats tab: `?range=30d|90d|12m`, cached an hour
+ * per range.
  */
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
 import {
@@ -67,6 +69,7 @@ import {
 } from './publish-transcript.js';
 import { createPodbeanClient, isConfigured as hostIsConfigured } from './podbean.js';
 import { readHostOverview } from './host-reads.js';
+import { HOST_STATS_DEFAULT_RANGE, HOST_STATS_RANGES, parseRange, readHostStats } from './host-stats.js';
 import { freePlanRefusal } from './speech-licence.js';
 import {
   STATUS,
@@ -292,6 +295,47 @@ export function createPodcastHandlers({
       } catch (error) {
         context.error(`getPodcastHostOverview failed: ${error?.code || 'UNEXPECTED'}`);
         return json(500, { error: 'Failed to read the host overview' });
+      }
+    },
+
+    /**
+     * GET /api/cms/podcast/host/stats?range=30d|90d|12m[&refresh=1] — the
+     * show's downloads by day or month, countries, platforms, sources,
+     * listener retention and audience counts, from Podbean (host-stats.js).
+     * Served from `admin_config/podbean_host_stats_<range>` while that is
+     * under an hour old unless `refresh=1`. 400 for a range not offered;
+     * without the Podbean settings, 200 `{ configured: false, reason }`.
+     */
+    async getHostStats(request, context) {
+      const auth = await guard.requireRole(request, 'editor');
+      if (auth.error) return auth.error;
+      try {
+        const requested = request.query?.get?.('range');
+        const range = requested ? parseRange(requested) : HOST_STATS_DEFAULT_RANGE;
+        if (!range) {
+          return json(400, { error: `range must be one of ${HOST_STATS_RANGES.join(', ')}` });
+        }
+        const configured = hostConfigured();
+        if (!configured.ok) {
+          return json(200, { success: true, configured: false, range, reason: configured.reason });
+        }
+        const refresh = request.query?.get?.('refresh') === '1';
+        const stats = await readHostStats({
+          client: hostClient(),
+          store,
+          range,
+          now,
+          refresh,
+          log: context.log,
+        });
+        context.log?.(
+          `getPodcastHostStats: ${range} ${stats.cached ? 'cached' : 'live'}, ` +
+            `${Object.keys(stats.errors || {}).join(',') || 'no'} errors`
+        );
+        return json(200, { success: true, configured: true, ...stats });
+      } catch (error) {
+        context.error(`getPodcastHostStats failed: ${error?.code || 'UNEXPECTED'}`);
+        return json(500, { error: 'Failed to read the host statistics' });
       }
     },
 

@@ -284,6 +284,24 @@ re-pointed settings never serve the previous account's rows. A Podbean failure
 is recorded where it happened, in the publish job's recorded-error shape, and
 the overview still answers. Nothing here writes `podcasts` either.
 
+The hub's Stats tab reads the show's statistics the same way
+(`GET cms/podcast/host/stats?range=30d|90d|12m`, `host-stats.js`): downloads
+by day or month (`/v1/podcastStats/stats`), countries, platforms and sources
+(`/v1/podcastStats/countries|platforms|sources`), monthly listener retention
+(`/v1/podcastStats/userRetention`) and the audience counts
+(`/v1/analytics/podcastAnalyticReports`). The six reads are independent — a
+failed one is `null` in its place with its error recorded beside it — and
+each range is cached an hour in `admin_config/podbean_host_stats_<range>` (the
+same one-minute refresh floor and account key as the overview, from
+`host-cache.js`)
+(six requests an hour per range; six per render would empty the bucket).
+None of these shapes has been read live yet: the client sends the requests
+Podbean's own API documentation describes, and the two it leaves
+under-specified — the monthly download key format and retention's unit — are
+passed through unreshaped, with the tab's helpers taking either reading. The
+Unlimited-plan `podcastDailyListener` report is not read; its shape is not
+documented.
+
 **What does not change.** The feed is still the integration boundary: the site
 learns of a published episode by ingesting the show's feed, never by writing a
 `podcasts` row from what it just uploaded. §1b's reasoning holds word for word
