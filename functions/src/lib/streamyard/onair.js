@@ -349,8 +349,7 @@ export function createStreamYardHandlers({
       return json(200, {
         ok: false,
         code: "INTEGRATION_NOT_CONFIGURED",
-        error:
-          "StreamYard On-Air is not configured: STREAMYARD_API_KEY is not set",
+        error: "STREAMYARD_API_KEY is not set",
       });
     }
 
