@@ -3646,6 +3646,59 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Approved podcast episodes publish to Podbean; the RSS.com integration is
+  gone (ADR 0029 §1c).** Hybrid Cloud Insights moved to Podbean on
+  2026-10-13, and its feed is now `https://podcast.hybridcloudworks.com/feed.xml`.
+  RSS.com's API path never ran: RSS.com Max was never bought (#432), so every
+  approval was recorded as not configured.
+  - **The client:** `functions/src/lib/podcast/podbean.js` replaces
+    `rsscom.js`. It was written against Podbean's own API documentation data.
+    It exchanges a developer app's client ID and secret for an access token
+    (client credentials) and caches the token for its life less a minute.
+    It authorises the upload, PUTs the MP3 to the presigned URL with no token,
+    and creates the episode with `POST /v1/episodes` as `publish` and
+    `public`. The episode notes are escaped HTML with a link to the article.
+    A re-run updates the episode the document names and never creates a
+    second.
+  - **Retries:** the create is never repeated. The one repeat is a call
+    refused with `invalid_token`, once, with a fresh token.
+  - **Credentials stay on the server:** no error, log line or recorded
+    failure carries the token, the secret or a URL holding either.
+  - **Same job, same retry route, new record:** `publish-podcast-transcript`
+    and `POST cms/podcast/transcripts/{id}/publish` are unchanged. The outcome
+    is stored under `host.podbean`, with the episode id, page, media URL and
+    file key. `host.rsscom` is neither read nor migrated, because it only ever
+    held `skipped: 'not_configured'`. The job's timeout is now 10 minutes,
+    above the client's deadlines including the one re-auth.
+  - **Integrations:** a Podbean card replaces RSS.com's, with its badge,
+    directory row and health probe. Its test makes the connection probe's
+    first token exchange and then reads the show
+    (`GET https://api.podbean.com/v1/podcast`). The exchange is a new,
+    optional `authenticate` step on a probe, held to one POST and redacted
+    like the GET. The card answers `Connected — <show title>.` and records no
+    key verdict.
+  - **Recording Hub and admin copy** name Podbean, and a published episode
+    links to its Podbean page.
+  - **Public copy:** both vendor guards now refuse "podbean" in public copy
+    and public API messages.
+  - **Keys:** the catalogue, the credential register, the expected-unresolved
+    list and the docs swap `RSSCOM-API-KEY` and `RSSCOM-PODCAST-ID` for
+    `PODBEAN-CLIENT-ID` and `PODBEAN-CLIENT-SECRET`. The client ID is an
+    identifier; the secret is rotated by hand in Podbean's developer portal.
+  - **The Terraform plan** shows four app-setting changes on
+    `azurerm_function_app_flex_consumption.hcw`, all declared in
+    `scripts/assert-expected-plan.mjs`. `RSSCOM_API_KEY` and
+    `RSSCOM_PODCAST_ID` are removed. `PODBEAN_CLIENT_ID` and
+    `PODBEAN_CLIENT_SECRET` are added as Key Vault references to
+    `PODBEAN-CLIENT-ID` and `PODBEAN-CLIENT-SECRET`.
+  - **Owner steps:** create a developer app at
+    `https://developers.podbean.com/`, then paste its client ID and client
+    secret on `https://hybridcloudworks.com/admin/integrations?tab=keys`.
+    Success is the Podbean card's test answering
+    `Connected — Hybrid Cloud Insights.`. Until both are seeded, approvals stay
+    on the manual upload path, exactly as before, and the two settings are on
+    the expected-unresolved list, so the secrets monitor stays green.
+
 - **The README is written for someone new to the project, and the
   engineering detail moved to the docs site (owner, 2026-10-11).**
   - **README:** the README now leads with what a visitor can do on the site:
