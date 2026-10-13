@@ -4496,6 +4496,27 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Cosmos restore: the first drill passed, and the runbook's step 5 now
+  works as written (2026-10-13).** The owner restored the latest backups
+  (`full/2026-10-11` + 1 delta, 11,971 documents) into a scratch account, and
+  every one of the 62 containers matched the backups document for document.
+  The site's local API served 24 content items and 6 podcasts from it.
+  - RTO 1 h 39 min against 8 h; RPO 22 h against 24 h. That time includes
+    finding and fixing three restore-script bugs (#1102).
+  - The scratch account, the firewall rule and the read role are gone. The
+    row is in the Drills table, so the daily `Check drill age` run passes;
+    the next drill is due by 2027-01-21.
+  - Step 5 needed two things the page did not have. First, a storage
+    emulator: without Azurite the local host fails every timer listener and
+    exits. Second, a Node count instead of `Invoke-RestMethod`: content
+    documents carry keys that differ only in case (`Title`/`title`), which
+    PowerShell's JSON reader cannot hold, so its count printed 0 against a
+    correct answer. Both are now in the step, with Azurite's clean-up in
+    step 6.
+  - `check-drill-age.test.mjs` read the runbook's table as of a fixed
+    2026-10-07, which turned the first real row into a date from the future.
+    It now reads it as of today.
+
 - **Cosmos restore: a restore with a daily backup in it completes (found by
   the first drill, 2026-10-12).** The restore script asked every backup layer
   for every container in the Sunday full. An operational container such as

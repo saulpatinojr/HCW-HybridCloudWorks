@@ -1,14 +1,19 @@
 # Cosmos restore — the drill that proves RPO 24 h / RTO 8 h
 
-> **Status: exporter armed and running since 2026-09-09; no drill run yet.**
+> **Status: first drill passed 2026-10-13, RTO 1 h 39 min against 8 h and RPO
+> 22 h against 24 h (the Drills table at the end). Next due by 2027-01-21.**
 > The exporter (`cosmosExportScheduler` and the `cosmos-export-container`
 > job, `functions/src/lib/backup/`) runs while `FEATURE_FLAG_COSMOS_EXPORT`
 > is `true`, which Terraform writes from the `cosmos_export_enabled`
 > workspace variable; its first run completed 2026-09-09 03:00 UTC and the
-> daily missing-run alert is live. The first drill was declined on 2026-09-09
-> and approved on 2026-10-06 (estate review, finding PLAT-1): it is due, and
-> the Drills table at the end is empty until it has run. This page records
-> what was **restored** and how long it took, not what was configured.
+> daily missing-run alert is live. The first drill was declined on 2026-09-09,
+> approved on 2026-10-06 (estate review, finding PLAT-1) and run on
+> 2026-10-13. It found three bugs in the restore script, fixed in #1102:
+> every restore with a delta in it stopped on a full-only container, the
+> count check misread empty containers and reruns, and nothing kept the
+> script off the live account. It also found the step 5 gaps this page now
+> covers. This page records what was **restored** and how long it took, not
+> what was configured.
 
 The design is [ADR 0028](../decisions/0028-cosmos-out-of-account-export.md):
 every Sunday the Function App exports every included container in full, every
@@ -245,34 +250,53 @@ $3 in write request units (cost analysis, #385).
 ### 5. Spot-check the site's public reads against the restored account
 
 Counts prove the copy landed; a read proves the site can serve from it. Run
-the Function App locally against the target account — the local host
-authenticates with the same `az login` identity, and needs Azure Functions
-Core Tools (`func`) on the path — and ask it the two anonymous questions a
-visitor asks first. The settings file is gitignored; this writes the four
-values the public reads need and nothing else (no key, no connection string):
+the Function App locally against the target account and ask it the two
+anonymous questions a visitor asks first. The local host authenticates with
+the same `az login` identity, and needs Azure Functions Core Tools (`func`,
+installed above) and a storage emulator. Without one it starts, fails every
+timer listener and exits on its own, which the first drill found. Azurite is
+Microsoft's emulator; start it in its own PowerShell window and leave it
+running:
+
+```powershell
+npx --yes azurite@3.37.0 --silent --skipApiVersionCheck --location "$env:TEMP\hcw-azurite"
+```
+
+Back in the drill's window, write the settings file. It is gitignored, and
+it holds the four values the public reads need and nothing else: no key and no
+connection string. Then confirm it exists before starting the host:
 
 ```powershell
 @{ IsEncrypted = $false; Values = @{ FUNCTIONS_WORKER_RUNTIME = 'node'; AzureWebJobsStorage = 'UseDevelopmentStorage=true'; COSMOS_ENDPOINT = 'https://cosmos-site-sbx-cus.documents.azure.com:443/'; COSMOS_DATABASE = 'hcw' } } | ConvertTo-Json | Set-Content functions/local.settings.json
 ```
 
 ```powershell
+Test-Path functions/local.settings.json
+```
+
+```powershell
 npm --prefix functions start
 ```
 
-The host logs an error per timer listener because no storage emulator is
-running; that is expected, every timer is off without its flag, and the HTTP
-routes serve regardless. In a second PowerShell window:
+It takes about a minute. Red lines are expected: the Cosmos change-feed
+functions fail indexing because `COSMOS_CONNECTION` is deliberately absent,
+so nothing processes the restored data. Wait for the list of HTTP routes on
+`http://localhost:7071/api/...`. Then, in a third PowerShell window:
 
 ```powershell
-(Invoke-RestMethod http://localhost:7071/api/public/content).items | Measure-Object | Select-Object Count
+node -e "fetch('http://localhost:7071/api/public/content').then(r=>r.json()).then(j=>console.log('content items: ' + j.items.length))"
 ```
 
 ```powershell
-Invoke-RestMethod http://localhost:7071/api/public/podcasts | ConvertTo-Json -Depth 3 | Select-Object -First 30
+node -e "fetch('http://localhost:7071/api/public/podcasts').then(r=>r.json()).then(j=>console.log('podcast items: ' + j.items.length + '; titles: ' + j.items.map(i=>i.title).slice(0,3).join(' / ')))"
 ```
 
-Success is a non-zero `Count` and a podcast list with titles in it. Stop the
-local host with Ctrl+C when done. This is the point the RTO is measured to:
+Success is a non-zero count on both lines, with podcast titles (2026-10-13: 24 content
+items, 6 podcasts). Node, not `Invoke-RestMethod`: the content documents
+carry keys that differ only in case (`Title` and `title`), which
+PowerShell's JSON reader cannot hold. It hands back the raw text instead, so a
+PowerShell count prints 0 against a correct answer. Stop the local host with
+Ctrl+C, then Azurite in its window. This is the point the RTO is measured to:
 
 ```powershell
 $elapsed = (Get-Date) - $drillStart; $elapsed.ToString()
@@ -302,6 +326,12 @@ The local settings file points at the account just deleted; remove it:
 
 ```powershell
 Remove-Item functions/local.settings.json
+```
+
+Azurite's data from step 5 is local and disposable:
+
+```powershell
+Remove-Item "$env:TEMP\hcw-azurite" -Recurse -Force
 ```
 
 ```powershell
@@ -416,4 +446,4 @@ could not be read and quotes the line.
 
 | Date | RTO measured | RPO measured | Who | Applied runs | Documents | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| — | — | — | — | — | — | No drill yet. Approved 2026-10-06 (estate review, PLAT-1); the exporter has been armed since 2026-09-09, so the first one is due now |
+| 2026-10-13 | 01:39:04 | 22 h | saulpatinojr | full/2026-10-11 + 1 delta (2026-10-12) | 11971 | First drill. Found and fixed three restore-script bugs (#1102), and step 5 needed Azurite and a Node count; the RTO includes those fixes. All 62 containers matched the backups document for document |
