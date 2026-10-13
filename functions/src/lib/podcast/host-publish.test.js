@@ -10,7 +10,9 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   HOST_CONTENT_TEXT_MAX,
   HOST_TITLE_MAX,
+  RECONCILE_WINDOW_MS,
   describeForHost,
+  findUnrecordedEpisode,
   publishEpisodeToHost,
 } from './host-publish.js';
 import { PODBEAN_API_BASE_URL, PodbeanError, createPodbeanClient } from './podbean.js';
@@ -199,6 +201,7 @@ describe('publishEpisodeToHost — first publish', () => {
           audioPath: 'azure/az-104/manage-governance.mp3',
           fileKey: 'tmp2/1/manage-governance.mp3',
           publishedAt: NOW.toISOString(),
+          firstAttemptAt: NOW.toISOString(),
           lastAttemptAt: NOW.toISOString(),
           error: null,
         },
@@ -280,6 +283,8 @@ describe('publishEpisodeToHost — idempotent re-publish', () => {
 
     expect(patch.host.podbean).toEqual({
       ...previouslyPublished().host.podbean,
+      // A record from before firstAttemptAt existed: its last attempt stands in.
+      firstAttemptAt: '2026-10-12T10:00:00.000Z',
       lastAttemptAt: NOW.toISOString(),
       error: null,
     });
@@ -337,6 +342,130 @@ describe('publishEpisodeToHost — idempotent re-publish', () => {
   });
 });
 
+describe('publishEpisodeToHost — a create whose answer was lost (#1118)', () => {
+  const secs = (iso) => Math.floor(Date.parse(iso) / 1000);
+  const FIRST = '2026-10-13T09:50:00.000Z';
+  /** An earlier attempt that sent the create and heard nothing back. */
+  const timedOut = (overrides = {}) =>
+    doc({
+      host: {
+        podbean: {
+          firstAttemptAt: FIRST,
+          lastAttemptAt: FIRST,
+          error: { status: null, code: 'TIMEOUT', message: 'Podbean did not answer.', retryable: true },
+        },
+      },
+      ...overrides,
+    });
+  const listed = (episodes) => reply(200, { episodes, offset: 0, limit: 20, has_more: false, count: episodes.length });
+  const LOST = { ...PODBEAN_EPISODE, publish_time: secs('2026-10-13T09:50:40.000Z') };
+
+  it('adopts the episode the lost create made and updates it, audio re-sent, never creating a second', async () => {
+    const host = fakeHost([
+      tokenReply(),
+      listed([LOST]),
+      reply(200, AUTHORIZED),
+      reply(200),
+      reply(200, { episode: LOST }),
+    ]);
+    const client = createPodbeanClient({ env: ENV, fetch: host.fetchImpl });
+    const patch = await publishEpisodeToHost({ client, readAudio, doc: timedOut(), now });
+
+    expect(host.methods()).toEqual([
+      'POST /v1/oauth/token',
+      'GET /v1/episodes',
+      'GET /v1/files/uploadAuthorize',
+      'PUT /podbean-uploads/tmp2/1/manage-governance.mp3',
+      `POST /v1/episodes/${LOST.id}`,
+    ]);
+    expect(Object.fromEntries(new URL(host.calls()[1].url).searchParams)).toMatchObject({ limit: '20' });
+    expect(host.form(4)).toMatchObject({ title: LOST.title, media_key: AUTHORIZED.file_key, type: 'public' });
+    expect(patch.host.podbean).toMatchObject({
+      episodeId: LOST.id,
+      adoptedAt: NOW.toISOString(),
+      firstAttemptAt: FIRST,
+      lastAttemptAt: NOW.toISOString(),
+      publishedAt: '2026-10-13T09:50:40.000Z',
+      fileKey: AUTHORIZED.file_key,
+      error: null,
+    });
+  });
+
+  it('does not take over an older episode with the same title: it predates the first attempt', async () => {
+    const OLD = { ...PODBEAN_EPISODE, id: 'OLDER0001', publish_time: secs('2026-09-01T08:00:00.000Z') };
+    const host = fakeHost([tokenReply(), listed([OLD]), ...HAPPY.slice(1)]);
+    const client = createPodbeanClient({ env: ENV, fetch: host.fetchImpl });
+    const patch = await publishEpisodeToHost({ client, readAudio, doc: timedOut(), now });
+
+    expect(host.methods()).toContain('POST /v1/episodes');
+    expect(host.methods()).not.toContain('POST /v1/episodes/OLDER0001');
+    expect(patch.host.podbean).toMatchObject({ episodeId: PODBEAN_EPISODE.id, error: null });
+    expect(patch.host.podbean).not.toHaveProperty('adoptedAt');
+  });
+
+  it('creates when the listing has no such episode', async () => {
+    const host = fakeHost([tokenReply(), listed([]), ...HAPPY.slice(1)]);
+    const client = createPodbeanClient({ env: ENV, fetch: host.fetchImpl });
+    const patch = await publishEpisodeToHost({ client, readAudio, doc: timedOut(), now });
+
+    expect(host.methods()).toEqual([
+      'POST /v1/oauth/token',
+      'GET /v1/episodes',
+      'GET /v1/files/uploadAuthorize',
+      'PUT /podbean-uploads/tmp2/1/manage-governance.mp3',
+      'POST /v1/episodes',
+    ]);
+    expect(patch.host.podbean).toMatchObject({ episodeId: PODBEAN_EPISODE.id, firstAttemptAt: FIRST, error: null });
+  });
+
+  it('creates nothing when the listing fails, and records why', async () => {
+    const host = fakeHost([tokenReply(), reply(503, { error: 'server_error', error_description: 'busy' })]);
+    const client = createPodbeanClient({ env: ENV, fetch: host.fetchImpl });
+    const patch = await publishEpisodeToHost({ client, readAudio, doc: timedOut(), now });
+
+    expect(host.methods()).toEqual(['POST /v1/oauth/token', 'GET /v1/episodes']);
+    expect(patch.host.podbean).toMatchObject({
+      firstAttemptAt: FIRST,
+      lastAttemptAt: NOW.toISOString(),
+      error: { status: 503, code: 'UPSTREAM', retryable: true },
+    });
+    expect(patch.host.podbean).not.toHaveProperty('episodeId');
+  });
+
+  it('creates nothing when the listing comes back without an episodes array', async () => {
+    const host = fakeHost([tokenReply(), reply(200, { count: 0 })]);
+    const client = createPodbeanClient({ env: ENV, fetch: host.fetchImpl });
+    const patch = await publishEpisodeToHost({ client, readAudio, doc: timedOut(), now });
+
+    expect(host.methods()).toEqual(['POST /v1/oauth/token', 'GET /v1/episodes']);
+    expect(patch.host.podbean.error).toMatchObject({ code: 'UPSTREAM', retryable: true });
+    expect(patch.host.podbean.error.message).toMatch(/Could not tell whether an earlier attempt created the episode/);
+  });
+
+  it('never lists on a first attempt: there is no earlier create to find', async () => {
+    const host = fakeHost(HAPPY);
+    const client = createPodbeanClient({ env: ENV, fetch: host.fetchImpl });
+    await publishEpisodeToHost({ client, readAudio, doc: doc(), now });
+    expect(host.methods()).not.toContain('GET /v1/episodes');
+  });
+
+  it('matches through HTML entities and whitespace, newest first, and only inside the window', async () => {
+    const title = 'Q&A: roles  and policy';
+    const listing = {
+      episodes: [
+        { id: 'EARLY', title: 'Q&amp;A: roles and policy', publish_time: secs(FIRST) - RECONCILE_WINDOW_MS / 1000 - 60 },
+        { id: 'OLDERMATCH', title: 'Q&amp;A: roles and policy', publish_time: secs('2026-10-13T09:51:00.000Z') },
+        { id: 'NEWER', title: 'Q&A:  roles and policy', publish_time: secs('2026-10-13T09:55:00.000Z') },
+        { id: 'OTHER', title: 'Something else', publish_time: secs('2026-10-13T09:56:00.000Z') },
+      ],
+    };
+    const client = { listEpisodes: vi.fn(async () => listing) };
+    const found = await findUnrecordedEpisode({ client, title, since: FIRST });
+    expect(found.id).toBe('NEWER');
+    expect(client.listEpisodes).toHaveBeenCalledWith({ limit: 20 });
+  });
+});
+
 describe('publishEpisodeToHost — failure is recorded, never thrown', () => {
   it('records an upstream failure with status and message and keeps the previous host record', async () => {
     const host = fakeHost([
@@ -353,6 +482,7 @@ describe('publishEpisodeToHost — failure is recorded, never thrown', () => {
     expect(patch).toEqual({
       host: {
         podbean: {
+          firstAttemptAt: NOW.toISOString(),
           lastAttemptAt: NOW.toISOString(),
           error: {
             status: 503,
@@ -394,6 +524,7 @@ describe('publishEpisodeToHost — failure is recorded, never thrown', () => {
     });
     expect(patch.host.podbean).toEqual({
       ...previous,
+      firstAttemptAt: previous.firstAttemptAt ?? previous.lastAttemptAt,
       lastAttemptAt: NOW.toISOString(),
       error: { status: 500, code: 'UPSTREAM', message: expect.stringContaining('500'), retryable: true },
     });

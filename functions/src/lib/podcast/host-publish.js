@@ -17,7 +17,9 @@
  *       audioPath,      // the blob path Podbean currently has audio FROM
  *       fileKey,        // the uploadAuthorize file_key that audio went up under
  *       publishedAt,    // first successful publish, never rewritten
+ *       firstAttemptAt, // the first run, success or not, never rewritten
  *       lastAttemptAt,  // every run, success or not
+ *       adoptedAt,      // set when the id came from reconciliation, not a create
  *       error,          // null on success; { status, code, message, retryable } on failure
  *     }
  *
@@ -38,12 +40,29 @@
  * the ingest keys `podcasts` rows on the feed guid: two episodes are two site
  * rows.
  *
+ * ## A create whose answer was lost (#1118)
+ *
  * The weak spot is a create that succeeded upstream but whose response was
- * lost before the id was recorded. That gap is left visible rather than
- * hidden: the next run would create a duplicate. Closing it needs the host to
- * accept a client-chosen key, which Podbean's API does not offer, or a
- * pre-flight search of the show's episodes by title, which is heuristic.
- * Recorded here so it is decided on purpose.
+ * lost before the id was recorded: a timeout, a dropped connection, a 5xx
+ * after the write. Podbean's API takes no client-chosen idempotency key, so
+ * the next run cannot ask "did that land?" by key. It asks by listing instead
+ * (CodeRabbit on #1117 held this to be fixed before merge, rightly: a
+ * duplicate on the public feed is the failure #437 lists first).
+ *
+ * Before any create on a document that has an earlier attempt on record and
+ * no episode id, `findUnrecordedEpisode` reads the show's newest episodes
+ * (`GET /v1/episodes`). An episode with the same title, published no earlier
+ * than `RECONCILE_WINDOW_MS` before this document's FIRST attempt, is the one
+ * that attempt made: it is adopted (its id recorded, `adoptedAt` set) and
+ * updated, audio re-sent, never created twice. The lower bound is what keeps
+ * an older, unrelated episode with the same title from being taken over: it
+ * was published before this document was ever tried. If the listing itself
+ * fails, nothing is created. A run that cannot tell whether the episode
+ * exists records the failure and leaves the next retry to find out.
+ *
+ * Two runs at once on one document are not this file's concern: the job
+ * scheduler refuses a second publish while one is queued or in flight
+ * (publish-transcript.js), so creates on one document are serial.
  *
  * ## What Podbean is told
  *
@@ -255,6 +274,64 @@ async function uploadAudioFor({ client, readAudio, doc }) {
 }
 
 /**
+ * How far before a document's first attempt a listed episode may have been
+ * published and still count as that attempt's. Podbean stamps `publish_time`
+ * when it creates the episode, which is after the attempt began; ten minutes
+ * absorbs clock skew between Podbean and this host, and is far shorter than
+ * the gap to any unrelated episode with the same title.
+ */
+export const RECONCILE_WINDOW_MS = 10 * 60_000;
+
+/** How many of the newest episodes reconciliation reads: one page. */
+export const RECONCILE_LIMIT = 20;
+
+/** Titles as compared: entities decoded, whitespace collapsed. */
+function comparableTitle(value) {
+  return String(value ?? '')
+    .replace(/&(amp|lt|gt|quot|#39);/g, (_, e) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[e])
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * The Podbean episode an earlier attempt on this document may have created
+ * without its answer arriving, or null when the show has none (#1118; the
+ * rule is in this file's header).
+ *
+ * Throws when the listing cannot be read or comes back in a shape that cannot
+ * be checked: the caller records that and creates nothing, because "could not
+ * tell" must not become "go ahead and create".
+ *
+ * @param {object} deps
+ * @param {{ listEpisodes: Function }} deps.client
+ * @param {string} deps.title the title this run would publish under
+ * @param {string} deps.since ISO time of the document's first attempt
+ * @returns {Promise<object|null>} the newest matching Podbean episode
+ */
+export async function findUnrecordedEpisode({ client, title, since }) {
+  const listed = await client.listEpisodes({ limit: RECONCILE_LIMIT });
+  if (!Array.isArray(listed?.episodes)) {
+    throw new PodbeanError(
+      'Could not tell whether an earlier attempt created the episode: Podbean listed no episodes array.',
+      { status: null, code: 'UPSTREAM', retryable: true }
+    );
+  }
+  const floor = Date.parse(since) - RECONCILE_WINDOW_MS;
+  const wanted = comparableTitle(title);
+  const matches = listed.episodes.filter(
+    (episode) =>
+      episode &&
+      episode.id !== undefined &&
+      episode.id !== null &&
+      episode.id !== '' &&
+      comparableTitle(episode.title) === wanted &&
+      Number(episode.publish_time) * 1000 >= floor
+  );
+  matches.sort((a, b) => Number(b.publish_time) - Number(a.publish_time));
+  return matches[0] ?? null;
+}
+
+/**
  * Publish or re-publish one episode document to Podbean.
  *
  * @param {object} deps
@@ -268,9 +345,14 @@ async function uploadAudioFor({ client, readAudio, doc }) {
 export async function publishEpisodeToHost({ client, readAudio, doc, now = () => new Date(), publicUrl }) {
   const previous = doc?.host?.podbean && typeof doc.host.podbean === 'object' ? doc.host.podbean : {};
   const attemptAt = now().toISOString();
+  // A record written before firstAttemptAt existed counts its last attempt as
+  // its first: the earliest time this file can vouch for.
+  const firstAttemptAt = previous.firstAttemptAt ?? previous.lastAttemptAt ?? attemptAt;
 
   const failure = (error) => ({
-    host: { podbean: { ...previous, lastAttemptAt: attemptAt, error: toRecordedError(error) } },
+    host: {
+      podbean: { ...previous, firstAttemptAt, lastAttemptAt: attemptAt, error: toRecordedError(error) },
+    },
   });
 
   try {
@@ -314,11 +396,48 @@ export async function publishEpisodeToHost({ client, readAudio, doc, now = () =>
             audioPath: doc.audioPath,
             fileKey,
             publishedAt: previous.publishedAt ?? attemptAt,
+            firstAttemptAt,
             lastAttemptAt: attemptAt,
             error: null,
           },
         },
       };
+    }
+
+    // No id, but an earlier attempt: it may have created the episode and lost
+    // the answer. Look before creating (#1118); a failed look throws to the
+    // recorded failure below, and nothing is created.
+    if (previous.lastAttemptAt) {
+      const adopted = await findUnrecordedEpisode({
+        client,
+        title: metadata.title,
+        since: firstAttemptAt,
+      });
+      if (adopted) {
+        // Which audio the lost create carried is unknown, so it is sent again.
+        const adoptedKey = await uploadAudioFor({ client, readAudio, doc });
+        const response = await client.updateEpisode(adopted.id, { ...metadata, media_key: adoptedKey });
+        const episode = response?.episode ?? {};
+        const created = Number(adopted.publish_time);
+        return {
+          host: {
+            podbean: {
+              ...previous,
+              episodeId: adopted.id,
+              permalinkUrl: episode.permalink_url ?? adopted.permalink_url ?? null,
+              mediaUrl: episode.media_url ?? adopted.media_url ?? null,
+              hostStatus: episode.status ?? adopted.status ?? null,
+              audioPath: doc.audioPath,
+              fileKey: adoptedKey,
+              publishedAt: Number.isFinite(created) && created > 0 ? new Date(created * 1000).toISOString() : attemptAt,
+              firstAttemptAt,
+              lastAttemptAt: attemptAt,
+              adoptedAt: attemptAt,
+              error: null,
+            },
+          },
+        };
+      }
     }
 
     const fileKey = await uploadAudioFor({ client, readAudio, doc });
@@ -342,6 +461,7 @@ export async function publishEpisodeToHost({ client, readAudio, doc, now = () =>
           audioPath: doc.audioPath,
           fileKey,
           publishedAt: attemptAt,
+          firstAttemptAt,
           lastAttemptAt: attemptAt,
           error: null,
         },

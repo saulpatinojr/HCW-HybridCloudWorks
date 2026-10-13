@@ -388,6 +388,7 @@ describe('runHostPublish', () => {
       audioPath: 'article/picking-a-state-backend.mp3',
       fileKey: 'tmp2/1/picking-a-state-backend.mp3',
       publishedAt: AT,
+      firstAttemptAt: AT,
       lastAttemptAt: AT,
       error: null,
     });

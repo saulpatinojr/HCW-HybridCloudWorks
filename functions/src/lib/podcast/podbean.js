@@ -461,6 +461,16 @@ export function createPodbeanClient({
     },
 
     /**
+     * `GET /v1/episodes?offset&limit` → `{ episodes: [Episode], offset, limit,
+     * has_more, count }`, newest first (`limit` at most 100). Read-only:
+     * `host-publish.js` uses it to find an episode that an earlier create may
+     * have made without its answer arriving, before it creates another.
+     */
+    listEpisodes({ offset = 0, limit = 20 } = {}) {
+      return call('listing episodes', 'GET', '/episodes', { query: { offset, limit } });
+    },
+
+    /**
      * `GET /v1/files/uploadAuthorize` → `{ presigned_url, file_key, … }`. The
      * caller PUTs the bytes to `presigned_url` and sends `file_key` as the
      * episode's `media_key`.

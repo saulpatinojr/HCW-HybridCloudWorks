@@ -3678,6 +3678,17 @@ This project has not cut a tagged release; entries are grouped under
     second.
   - **Retries:** the create is never repeated. The one repeat is a call
     refused with `invalid_token`, once, with a fresh token.
+  - **A lost create is found, not duplicated (#1118).** Podbean takes no
+    idempotency key, and CodeRabbit held this to be fixed before merge.
+    - **When:** before any create on a document with an earlier attempt and
+      no episode id, the publish lists the show's newest episodes
+      (`GET /v1/episodes`).
+    - **Match:** one with the same title, published no earlier than ten
+      minutes before the document's first attempt, is adopted and updated,
+      with the audio re-sent.
+    - **Fails closed:** a listing that fails or cannot be read creates
+      nothing.
+    - **Recorded:** `firstAttemptAt` and `adoptedAt` are kept on the record.
   - **Credentials stay on the server:** no error, log line or recorded
     failure carries the token, the secret or a URL holding either.
   - **Same job, same retry route, new record:** `publish-podcast-transcript`

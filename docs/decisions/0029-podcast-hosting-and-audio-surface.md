@@ -241,9 +241,16 @@ API documentation data on 2026-10-13):
 - **No retries of the create.** The one repeat the client makes is a call
   refused with `invalid_token`, once, with a fresh token: a request refused for
   its token created nothing.
+- **A create whose answer was lost is looked for before another is made
+  (#1118).** Podbean takes no idempotency key, so before any create on a
+  document with an earlier attempt and no episode id, the publish lists the
+  show's newest episodes. One with the same title, published no earlier than
+  ten minutes before the document's first attempt, is adopted and updated
+  rather than duplicated. A listing that fails or cannot be read creates
+  nothing.
 - **The outcome** lives under `host.podbean` — `episodeId`, `permalinkUrl`,
   `mediaUrl`, `hostStatus`, `audioPath`, `fileKey`, `publishedAt`,
-  `lastAttemptAt`, `error`. Podbean returns no guid, so none is recorded.
+  `firstAttemptAt`, `lastAttemptAt`, `adoptedAt`, `error`. Podbean returns no guid, so none is recorded.
 - **The Integrations page's beaker** makes one token exchange and then
   `GET /v1/podcast`, the only probe with an exchange step, and still records
   no key verdict: a refused exchange could blame either value.

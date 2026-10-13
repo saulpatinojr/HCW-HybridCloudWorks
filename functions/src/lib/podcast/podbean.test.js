@@ -224,6 +224,18 @@ describe('the access token', () => {
 });
 
 describe('requests', () => {
+  it('listEpisodes GETs /v1/episodes with offset and limit beside the token, and sends nothing else', async () => {
+    const listing = { episodes: [], offset: 0, limit: 20, has_more: false, count: 0 };
+    const { client, lastCall } = build({ responses: [tokenReply(), reply(200, listing)] });
+    expect(await client.listEpisodes({ limit: 20 })).toEqual(listing);
+    const { url, init } = lastCall();
+    const parsed = new URL(url);
+    expect(`${parsed.origin}${parsed.pathname}`).toBe(`${PODBEAN_API_BASE_URL}/episodes`);
+    expect(Object.fromEntries(parsed.searchParams)).toEqual({ access_token: TOKEN, offset: '0', limit: '20' });
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+  });
+
   it('getPodcast GETs /v1/podcast with the token as the access_token parameter and no body', async () => {
     const { client, lastCall } = build({
       responses: [tokenReply(), reply(200, { podcast: { id: 'p1', title: 'Hybrid Cloud Insights' } })],
