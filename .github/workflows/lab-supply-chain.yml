@@ -117,7 +117,9 @@ jobs:
       # signed apt index (the .deb's SHA256 is the one the index lists), and
       # exits 0 with nothing written when the fixture already matches the pin.
       - name: Re-record the Docker CLI fixture when the engine pin moved
-        run: node scripts/lab/record-docker-cli-fixture.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          set -euo pipefail
+          node scripts/lab/record-docker-cli-fixture.mjs | tee -a "$GITHUB_STEP_SUMMARY"
 
       # One patch per set, over that set's paths only; the sets whose patch
       # is not empty are the matrix of the next job.

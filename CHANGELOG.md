@@ -28,7 +28,10 @@ This project has not cut a tagged release; entries are grouped under
   release's `caddy_<v>_checksums.txt`; the one that moves Docker Engine
   re-records `scripts/fixtures/docker-cli-agent-requests.json` with the
   pinned `docker-ce-cli`, installed into a temporary directory from Docker's
-  signed apt index with the SHA256 the index lists
+  apt index — the signing key refused unless it hashes to
+  `docker_apt_key_checksum` (the value the docker role holds the host's
+  keyring to), the InRelease verified against that key with gpgv, the index
+  by the InRelease, the .deb by the SHA256 the index lists
   (`scripts/lab/record-docker-cli-fixture.mjs`, a step of
   `lab-supply-chain.yml` that exits with nothing written when the fixture
   already matches); and the image-base bump rewrites the base tag and

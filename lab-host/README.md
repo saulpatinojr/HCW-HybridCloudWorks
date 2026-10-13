@@ -1496,7 +1496,9 @@ it changed. Two files are held to those pins and move with them: the caddy
 test's `CADDY_SHA512` (the release tarball's SHA512 from the publisher's
 checksums file) and `scripts/fixtures/docker-cli-agent-requests.json`, which
 `scripts/lab/record-docker-cli-fixture.mjs` re-records with the pinned
-docker-ce-cli installed into a temporary directory from Docker's signed apt
+docker-ce-cli installed into a temporary directory from Docker's apt index:
+the signing key checked against `docker_apt_key_checksum`, the InRelease
+verified against it with gpgv, the index by the InRelease, the .deb by the
 index. It opens or updates one pull request on the branch
 `chore/lab-pins-host` whose body says where each value was read. A pin whose
 checksum it could not verify is not moved; it is listed in the weekly issue,

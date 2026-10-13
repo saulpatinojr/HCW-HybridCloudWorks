@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import {
   HOST_BUMPERS,
   SANDBOX_DOCKERFILE_PATH,
   VERSIONS_ENV_PATH,
+  aptIndex,
   aptPick,
   compareDebian,
   dockerCliDeb,
@@ -178,6 +179,25 @@ describe('reading publisher indexes', () => {
     const sums = `${'c'.repeat(128)}  caddy_9.9.9_linux_amd64.tar.gz\n${'d'.repeat(128)}  caddy_9.9.9_linux_arm64.tar.gz\n`;
     expect(sumsLine(sums, 'caddy_9.9.9_linux_amd64.tar.gz', 128)).toBe('c'.repeat(128));
     expect(sumsLine(sums, 'caddy_9.9.9_linux_amd64.tar.gz')).toBeNull();
+  });
+
+  it('aptIndex awaits the InRelease verifier before trusting the list, and a refusal is the read refused', async () => {
+    const base = 'https://download.docker.com/linux/ubuntu/dists/resolute';
+    const packages = 'Package: docker-ce-cli\nVersion: 5:29.9.0-1~ubuntu.26.04~resolute\nSHA256: ' + hex('1') + '\n';
+    const inRelease = `SHA256:\n ${sha(packages).slice(7)} 1 stable/binary-amd64/Packages\n`;
+    const routes = { [`${base}/stable/binary-amd64/Packages`]: packages, [`${base}/InRelease`]: inRelease };
+    const seen = vi.fn();
+    const index = await aptIndex(makeHttp(fakeFetch(routes)), 'https://download.docker.com/linux/ubuntu', 'dists/resolute', 'stable', {
+      verifyInRelease: seen,
+    });
+    expect(seen).toHaveBeenCalledWith(inRelease, `${base}/InRelease`);
+    expect(index.text).toBe(packages);
+    const refusing = () => {
+      throw new Error('BAD signature');
+    };
+    await expect(
+      aptIndex(makeHttp(fakeFetch(routes)), 'https://download.docker.com/linux/ubuntu', 'dists/resolute', 'stable', { verifyInRelease: refusing })
+    ).rejects.toThrow(/BAD signature/);
   });
 
   it('names the docker-ce-cli .deb for a pinned version string with the SHA256 the index lists', () => {

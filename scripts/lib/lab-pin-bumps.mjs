@@ -268,12 +268,20 @@ export function goSumHash(lookupText, module, version) {
   return m ? m[1] : null;
 }
 
-/** A Packages index read with its InRelease, the index's own hash checked against the list. */
-export async function aptIndex(http, base, suitePath, component) {
+/**
+ * A Packages index read with its InRelease, the index's own hash checked
+ * against the list. `verifyInRelease(text, url)`, when given, is awaited on
+ * the InRelease text before anything is trusted from it, and throws to refuse
+ * it: the bumps read these indexes for evidence over TLS alone, but a caller
+ * that goes on to run what it downloads (record-docker-cli-fixture.mjs)
+ * verifies the publisher's signature with it.
+ */
+export async function aptIndex(http, base, suitePath, component, { verifyInRelease } = {}) {
   const indexPath = `${component}/binary-amd64/Packages`;
   const packagesUrl = `${base}/${suitePath}/${indexPath}`;
   const inReleaseUrl = `${base}/${suitePath}/InRelease`;
   const [{ body }, inRelease] = await Promise.all([http.raw(packagesUrl), http.text(inReleaseUrl)]);
+  if (verifyInRelease) await verifyInRelease(inRelease, inReleaseUrl);
   const listed = inReleaseSha256(inRelease, indexPath);
   const computed = sha256Hex(body);
   if (listed !== computed) {

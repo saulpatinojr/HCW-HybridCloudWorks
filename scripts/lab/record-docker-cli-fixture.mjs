@@ -11,21 +11,27 @@
  *   1. read the engine pin for one codename (resolute, the lab host's
  *      release) and the version the fixture records; the same, and this
  *      exits 0 with nothing written;
- *   2. read that codename's Packages index from Docker's apt repository the
- *      way the bumper does — the index's own SHA256 checked against the
- *      signed InRelease — and take the docker-ce-cli .deb at the pinned
- *      version string, with the SHA256 the index lists for it;
- *   3. download the .deb, refuse it unless it hashes to that SHA256, and
+ *   2. fetch Docker's apt signing key and refuse it unless it hashes to
+ *      `docker_apt_key_checksum` in group_vars — the same value the docker
+ *      role holds the host's keyring to — then read that codename's InRelease
+ *      and verify its signature against that key with gpgv, before trusting
+ *      anything it lists;
+ *   3. read the Packages index the way the bumper does — its SHA256 is the one
+ *      the verified InRelease lists — and take the docker-ce-cli .deb at the
+ *      pinned version string, with the SHA256 the index lists for it;
+ *   4. download the .deb, refuse it unless it hashes to that SHA256, and
  *      extract it into a temporary directory (`dpkg-deb -x`; nothing is
  *      installed on the machine);
- *   4. run scripts/lab/capture-docker-cli-requests.mjs with that directory's
+ *   5. run scripts/lab/capture-docker-cli-requests.mjs with that directory's
  *      usr/bin first on PATH, so `docker` is the pinned CLI, and check the
  *      fixture now records the pinned version.
  *
- * The CLI is verified the way the host's own install is: the .deb's hash is
- * the one the signed index lists, not a checksum this file would hold. It
- * runs where dpkg is (the ubuntu runner); a workstation without dpkg-deb
- * runs the capture by hand with the pinned CLI, as its header says.
+ * The CLI is verified the way the host's own install is: the key by the
+ * checksum group_vars pins, the InRelease by that key's signature, the index
+ * by the InRelease, the .deb by the index. No checksum of the CLI itself is
+ * held here. It runs where dpkg and gpgv are (the ubuntu runner); a
+ * workstation without them runs the capture by hand with the pinned CLI, as
+ * its header says.
  *
  * Usage: node scripts/lab/record-docker-cli-fixture.mjs [--codename resolute] [--force]
  */
@@ -57,6 +63,41 @@ export function pinnedEngine(groupVars, codename = 'resolute') {
   return { version, core };
 }
 
+/** The URL of Docker's apt signing key, as the docker role's default names it. */
+export const DOCKER_APT_KEY_URL = `${DOCKER_APT}/gpg`;
+
+/** The SHA256 group_vars pins Docker's apt signing key to (`docker_apt_key_checksum`). */
+export function dockerAptKeyChecksum(groupVars) {
+  const hex = String(groupVars).match(/^docker_apt_key_checksum: sha256:([0-9a-f]{64})$/m)?.[1];
+  if (!hex) throw new Error(`docker_apt_key_checksum not found in ${GROUP_VARS_PATH}`);
+  return hex;
+}
+
+/**
+ * A verifier for `aptIndex`: the signing key fetched and refused unless it
+ * hashes to the pinned checksum, dearmored into a keyring under `workDir`,
+ * and `gpgv --keyring <that> <InRelease>` required to exit 0 for the text
+ * the index was read with. `run` is execFileSync's shape, injected for tests.
+ */
+export async function inReleaseVerifier({ http, keyChecksum, workDir, run = execFileSync }) {
+  const { body: key } = await http.raw(DOCKER_APT_KEY_URL);
+  const hex = createHash('sha256').update(key).digest('hex');
+  if (hex !== keyChecksum) throw new Error(`${DOCKER_APT_KEY_URL} hashes to ${hex}, not the pinned ${keyChecksum}`);
+  const armored = path.join(workDir, 'docker.asc');
+  const keyring = path.join(workDir, 'docker.gpg');
+  writeFileSync(armored, key);
+  run('gpg', ['--batch', '--yes', '--dearmor', '-o', keyring, armored], { stdio: 'inherit' });
+  return (inRelease, url) => {
+    const at = path.join(workDir, 'InRelease');
+    writeFileSync(at, inRelease);
+    try {
+      run('gpgv', ['--keyring', keyring, at], { stdio: 'inherit' });
+    } catch (error) {
+      throw new Error(`${url}: signature not verified by the pinned Docker key (${error?.message || error})`);
+    }
+  };
+}
+
 /** The CLI version a fixture records, or null for a file that is not one. */
 export function recordedCli(fixtureText) {
   try {
@@ -75,7 +116,8 @@ const flag = (argv, name) => {
 async function main(argv) {
   const codename = flag(argv, '--codename') ?? 'resolute';
   const force = argv.includes('--force');
-  const { version, core } = pinnedEngine(readFileSync(path.join(REPO, GROUP_VARS_PATH), 'utf8'), codename);
+  const groupVars = readFileSync(path.join(REPO, GROUP_VARS_PATH), 'utf8');
+  const { version, core } = pinnedEngine(groupVars, codename);
   const fixtureAt = path.join(REPO, DOCKER_CLI_FIXTURE_PATH);
   const recorded = recordedCli(readFileSync(fixtureAt, 'utf8'));
   if (recorded === core && !force) {
@@ -84,14 +126,15 @@ async function main(argv) {
   }
 
   const http = makeHttp(fetch);
-  const index = await aptIndex(http, DOCKER_APT, `dists/${codename}`, 'stable');
-  const deb = dockerCliDeb(index.text, version);
-  const { body } = await http.raw(deb.url);
-  const hex = createHash('sha256').update(body).digest('hex');
-  if (hex !== deb.sha256) throw new Error(`${deb.url} hashes to ${hex}, but ${index.packagesUrl} lists ${deb.sha256}`);
-
   const work = mkdtempSync(path.join(os.tmpdir(), 'docker-cli-'));
   try {
+    const verifyInRelease = await inReleaseVerifier({ http, keyChecksum: dockerAptKeyChecksum(groupVars), workDir: work });
+    const index = await aptIndex(http, DOCKER_APT, `dists/${codename}`, 'stable', { verifyInRelease });
+    const deb = dockerCliDeb(index.text, version);
+    const { body } = await http.raw(deb.url);
+    const hex = createHash('sha256').update(body).digest('hex');
+    if (hex !== deb.sha256) throw new Error(`${deb.url} hashes to ${hex}, but ${index.packagesUrl} lists ${deb.sha256}`);
+
     const debAt = path.join(work, 'docker-ce-cli.deb');
     writeFileSync(debAt, body);
     execFileSync('dpkg-deb', ['-x', debAt, work], { stdio: 'inherit' });
@@ -100,15 +143,14 @@ async function main(argv) {
       stdio: 'inherit',
       env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` },
     });
+    const now = recordedCli(readFileSync(fixtureAt, 'utf8'));
+    if (now !== core) throw new Error(`the fixture now records docker CLI ${now}, not the pinned ${core}`);
+    process.stdout.write(
+      `re-recorded ${DOCKER_CLI_FIXTURE_PATH} with docker CLI ${core} (${deb.url}, SHA256 ${deb.sha256} as ${index.packagesUrl} lists; ${index.inReleaseUrl} verified against the key docker_apt_key_checksum pins)\n`
+    );
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
-
-  const now = recordedCli(readFileSync(fixtureAt, 'utf8'));
-  if (now !== core) throw new Error(`the fixture now records docker CLI ${now}, not the pinned ${core}`);
-  process.stdout.write(
-    `re-recorded ${DOCKER_CLI_FIXTURE_PATH} with docker CLI ${core} (${deb.url}, SHA256 ${deb.sha256} as ${index.packagesUrl} lists)\n`
-  );
   return 0;
 }
 
