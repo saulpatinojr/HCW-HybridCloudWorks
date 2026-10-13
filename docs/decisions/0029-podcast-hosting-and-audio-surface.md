@@ -204,8 +204,9 @@ served by Podbean behind a DNS-only CNAME (#1110); read on 2026-10-13, it
 answers `200` and its own `atom:link rel="self"` names that URL. So the next
 host move is a DNS change rather than a new URL for every subscriber. The Main
 feed field on `/admin/platform` (`admin_config/podcast_feeds.mainFeedUrl`)
-names that URL; the old URL's chain of `301`s is a courtesy to subscribers,
-not something the ingest leans on.
+names that URL: the public podcasts API reported it as `mainFeedUrl` on
+2026-10-13. The old URL's chain of `301`s is a courtesy to subscribers, not
+something the ingest leans on.
 
 **RSS.com's API path never ran.** RSS.com Max was never bought — the owner
 deferred it on 2026-09-18 (#432) — so `RSSCOM-API-KEY` and `RSSCOM-PODCAST-ID`
