@@ -295,46 +295,11 @@ export const DECLARED = [
   // read that run as those six beside the permanent diff, and
   // `az role assignment list` then showed the reader with Reader and HCW
   // Function Settings Reader only.
-  {
-    address: "cloudflare_dns_record.podcast_podbean",
-    action: "create",
-    reason: "podcast.hybridcloudworks.com -> Podbean, DNS-only",
-  },
-  // The show moved from RSS.com to Podbean on 2026-10-13 (ADR 0029 §1c):
-  // publishing reads Podbean's developer-app client ID and secret, and the
-  // two RSS.com references go. Four app-setting changes, one apply.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.RSSCOM_API_KEY",
-    before:
-      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/RSSCOM-API-KEY)",
-    after: undefined,
-    reason: "Podbean replaces RSS.com: the RSS.com API key reference goes",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.RSSCOM_PODCAST_ID",
-    before:
-      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/RSSCOM-PODCAST-ID)",
-    after: undefined,
-    reason: "Podbean replaces RSS.com: the RSS.com podcast id reference goes",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.PODBEAN_CLIENT_ID",
-    before: undefined,
-    after:
-      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/PODBEAN-CLIENT-ID)",
-    reason: "Podbean publishing: Key Vault reference for PODBEAN-CLIENT-ID",
-  },
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.PODBEAN_CLIENT_SECRET",
-    before: undefined,
-    after:
-      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/PODBEAN-CLIENT-SECRET)",
-    reason: "Podbean publishing: Key Vault reference for PODBEAN-CLIENT-SECRET",
-  },
+  // #1110's podcast_podbean create applied in run-NSdFBJeGWwWZh38K and
+  // #1117's four app-setting changes (the two RSSCOM references out, the two
+  // PODBEAN references in) in run-zKhjw537s5ZF2FYU, both on 2026-10-13, and
+  // were deleted here. tfc-plan-check.yml read each run as its declared
+  // changes beside the permanent diff and nothing else.
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
