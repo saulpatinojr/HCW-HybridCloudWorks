@@ -308,6 +308,13 @@ describe('countListenAndLearnDocs', () => {
     expect(sections.aws['audio-architecture']).toBe(1);
   });
 
+  it('counts retired-host audio as none (#1119)', () => {
+    const sections = count([
+      { provider: 'azure', status: 'published', audioUrl: 'https://storage.googleapis.com/b/x.mp3' },
+    ]);
+    expect(sections.azure.audio).toBe(0);
+  });
+
   it('drops an episode the listing omits', () => {
     const sections = count([
       { provider: 'aws', status: 'published' },
