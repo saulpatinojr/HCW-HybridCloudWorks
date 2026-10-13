@@ -128,6 +128,13 @@ async function testTelegram() {
   return username ? `Connected — @${username}.` : 'Connected to Telegram.';
 }
 
+/**
+ * The Podbean card's Test: the `podbean` connection probe, which exchanges the
+ * stored client ID and secret for a token on the server and reads the show.
+ *
+ * @returns {Promise<string>} "Connected — <show title>." on success; throws
+ *   with the probe's error otherwise, as every service test here does.
+ */
 async function testPodbean() {
   // The server exchanges the client ID and secret for a token and reads the
   // show with it (ADR 0029 §1c); neither the token nor the secret comes back.

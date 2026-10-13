@@ -572,6 +572,7 @@ export function createConnectionProbe({
       });
     }
 
+    /** The 200 `{ ok: false }` answer for a probe whose request got no response. */
     const unreachable = (error) => {
       // The URL is deliberately absent from this message, and redaction runs
       // over what is left. An undici failure quotes its request target in

@@ -622,6 +622,18 @@ describe('no credential leaves the client', () => {
     expectNoCredential(error);
   });
 
+  it('scrubs a secret however short it is (CodeRabbit on #1117: no length floor)', async () => {
+    const shortSecret = 'zq7';
+    const { client } = build({
+      env: { PODBEAN_CLIENT_ID: CLIENT_ID, PODBEAN_CLIENT_SECRET: shortSecret },
+      responses: [reply(401, { error: 'invalid_client', error_description: `secret ${shortSecret} refused` })],
+    });
+    const error = await client.getToken().catch((e) => e);
+    expect(error.code).toBe('CREDENTIALS_REJECTED');
+    expect(surfaces(error)).not.toContain(shortSecret);
+    expect(error.detail).toBe('invalid_client: secret *** refused');
+  });
+
   it('a transport error quoting the URL it was given is scrubbed of the token', async () => {
     let first = true;
     const fetchImpl = vi.fn(async (url) => {

@@ -228,6 +228,7 @@ function describeErrorBody(data, text) {
   return String(text || '').slice(0, 300);
 }
 
+/** The body as JSON, or null when it is empty or not JSON; never throws. */
 function parseJson(text) {
   try {
     return text ? JSON.parse(text) : null;
@@ -272,7 +273,10 @@ export function createPodbeanClient({
   function scrub(value) {
     let out = String(value ?? '').replace(/access_token=[^&\s"'<>]*/gi, 'access_token=***');
     for (const secret of [clientSecret, basic, ...seenTokens]) {
-      if (typeof secret !== 'string' || secret.length < 8) continue;
+      // Any length: a short credential is still a credential, and a few
+      // over-redacted characters in an error message cost nothing (CodeRabbit
+      // on #1117 — the old floor of 8 rested on no documented contract).
+      if (typeof secret !== 'string' || !secret) continue;
       for (const form of new Set([secret, encodeURIComponent(secret)])) {
         out = out.split(form).join('***');
       }
@@ -280,6 +284,7 @@ export function createPodbeanClient({
     return out;
   }
 
+  /** Throw NOT_CONFIGURED, with isConfigured's sentence, unless both settings are set. */
   function requireConfigured() {
     if (!configured.ok) {
       throw new PodbeanError(configured.reason, { status: null, code: 'NOT_CONFIGURED' });
@@ -572,6 +577,14 @@ export function createPodbeanClient({
   };
 }
 
+/**
+ * The code and retryability of an HTTP failure that no more specific rule
+ * claimed: 400 is VALIDATION, 404 NOT_FOUND, 408/429/5xx a retryable
+ * UPSTREAM, anything else a final UPSTREAM.
+ *
+ * @param {number} status
+ * @returns {{ code: string, retryable: boolean }}
+ */
 function classify(status) {
   if (status === 400) return { code: 'VALIDATION', retryable: false };
   if (status === 404) return { code: 'NOT_FOUND', retryable: false };
