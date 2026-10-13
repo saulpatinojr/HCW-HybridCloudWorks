@@ -230,7 +230,10 @@ upsert answers 201 for a document the target had not seen and 200 for one an
 earlier layer, or an earlier attempt, already wrote. The `target` column on
 every row equals what the container held before the run plus what the run
 created: into a fresh account that is `created`, and an empty container
-reads `0`. An operational container such as `admin_audit_logs` shows `0`
+reads `0`. The check counts each container before and after writing it, so
+nothing else may write to the target until the restore and its check finish:
+another writer in between shows as a `MISMATCH` the data does not have. The
+drill's scratch account has no other writer. An operational container such as `admin_audit_logs` shows `0`
 under `deltas`, because it is in the weekly full and in no delta, by design.
 The last line reads
 `Restored 11971 document(s): 11937 created, 34 replaced (already in the target, or superseded by a later layer), across 62 container(s) in 104979 ms (1.7 min)`,
@@ -314,7 +317,9 @@ name, resource group and firewall the owner decides at the time (the scratch
 names above are for something that gets deleted); and after step 4 the Function
 App's `COSMOS_ENDPOINT` app setting (Terraform, `infra/functionapp.tf`) and the
 identity's data-plane role assignment (`infra/cosmos.tf`) move to the new
-account. Then republish snapshots and let the ingest timers refill the caches.
+account, and only once step 4's check has finished: the Function App is a
+writer, and the check expects nothing else to write while it counts. Then
+republish snapshots and let the ingest timers refill the caches.
 The restore script refuses a target whose account name has `-prod-` in it,
 because a restore writes backup copies over whatever the target holds; a real
 restore into a new production-named account adds `--allow-production-target`.
