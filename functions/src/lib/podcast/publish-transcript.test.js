@@ -513,6 +513,8 @@ describe('scheduleHostPublish', () => {
       // Two conditional attempts — the handed-in etag, then the re-read's —
       // and no third.
       expect(transcriptWrites(store).map(([, o]) => o.ifMatch)).toEqual(['"etag-1"', '"etag-2"']);
+      // The caller's failure record conditions on the newest version seen.
+      expect(error.latest).toMatchObject({ _etag: '"etag-3"' });
       expect(store.patchDoc).toHaveBeenCalledWith(
         JOBS_CONTAINER,
         'job-1',
@@ -818,6 +820,20 @@ describe('recordScheduleFailure', () => {
       },
     });
     expect(patch.host.podbean).not.toHaveProperty('pending');
+  });
+
+  it('conditions the record on the document it was built from, and leaves a newer version alone', async () => {
+    const store = makeStore();
+    await recordScheduleFailure({ store, doc: doc({ _etag: '"etag-9"' }), now });
+    expect(transcriptWrites(store).map(([, o]) => o.ifMatch)).toEqual(['"etag-9"']);
+
+    const contended = makeStore({
+      patchDoc: vi.fn(async () => {
+        throw preconditionFailed();
+      }),
+    });
+    await expect(recordScheduleFailure({ store: contended, doc: doc({ _etag: '"etag-9"' }), now })).resolves.toBe(false);
+    await expect(recordScheduleFailure({ store, doc: null, now })).resolves.toBe(false);
   });
 
   it('never throws — a failed write answers false', async () => {

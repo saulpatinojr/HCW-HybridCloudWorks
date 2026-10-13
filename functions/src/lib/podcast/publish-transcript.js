@@ -432,7 +432,10 @@ export async function scheduleHostPublish({
     new Error(
       `${PUBLISH_JOB_TYPE}: the transcript changed on every attempt to reserve it; nothing was queued`
     ),
-    { code: RESERVATION_CONTENDED, transcriptId: id }
+    // `latest` is the document as last re-read, so a failure record written
+    // for this error conditions on it rather than on the stale copy the
+    // caller holds (CodeRabbit on #1125): a winner's episodeId stays.
+    { code: RESERVATION_CONTENDED, transcriptId: id, latest: current }
   );
 }
 
@@ -456,6 +459,7 @@ export async function scheduleHostPublish({
  * @returns {Promise<boolean>}
  */
 export async function recordScheduleFailure({ store, doc, now = () => new Date() }) {
+  if (!doc?.id) return false;
   const patch = {
     host: {
       podbean: {
@@ -472,7 +476,14 @@ export async function recordScheduleFailure({ store, doc, now = () => new Date()
     },
   };
   try {
-    await patchTranscript(store, doc.id, patch);
+    // Conditional on the version the record was built from, when one is
+    // known: a 412 means a newer reservation or outcome landed since, and
+    // overwriting it with this stale record could drop a winner's episodeId
+    // (CodeRabbit on #1125). That newer state stands; false says so.
+    await store.patchDoc(TRANSCRIPT_CONTAINER, doc.id, patch, {
+      partitionKey: doc.id,
+      ...(doc._etag ? { ifMatch: doc._etag } : {}),
+    });
     return true;
   } catch {
     return false;

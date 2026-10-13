@@ -348,7 +348,18 @@ export function createPodcastHandlers({
         // and persist it, so a refreshed hub shows the failure and the retry
         // rather than the stale host record. Best effort: the second write
         // must not turn a saved approval into a 500.
-        const stored = await recordScheduleFailure({ store, doc: existing, now });
+        // From the newest document the scheduler saw, when it says which
+        // (RESERVATION_CONTENDED), else the one the host step was handed: the
+        // record conditions on that version, so a reservation written since
+        // is left alone. No document at all means nothing to record on.
+        const stored =
+          error?.code === 'TRANSCRIPT_NOT_FOUND'
+            ? false
+            : await recordScheduleFailure({
+                store,
+                doc: error?.latest ?? { ...existing, ...(updated || {}) },
+                now,
+              });
         context.log?.(
           `reviewPodcastTranscript: host step not queued (SCHEDULE_FAILED ${stored ? 'recorded' : 'not recorded'})`
         );
