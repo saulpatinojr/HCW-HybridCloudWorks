@@ -47,10 +47,11 @@ here, and an operator holding it will raise a finding on every single run.
 | `www.hybridcloudworks.com` | Azure, CNAME into `azurestaticapps.net` | no | not Terraform-managed |
 | `api-azure.hybridcloudworks.com` | Cloudflare | **yes** | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions` |
 | `docs.hybridcloudworks.com` | GitHub Pages | no | `infra/frontend.tf`, `cloudflare_dns_record.docs_pages` |
+| `podcast.hybridcloudworks.com` | Podbean, CNAME to `pbcdn2.podbean.com` | no | `infra/frontend.tf`, `cloudflare_dns_record.podcast_podbean` |
 | `asuid.api-azure.hybridcloudworks.com` | nothing — a TXT record holding Azure's ownership proof | n/a | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions_domain_verification` |
 
-`infra/frontend.tf` declares exactly three Cloudflare records, and ADR 0024
-names `api-azure` in as many words as *the one proxied hostname*. Two things
+`infra/frontend.tf` declares exactly four Cloudflare records, and ADR 0024
+names `api-azure` in as many words as *the one proxied hostname*. Three things
 about that table are deliberate rather than oversight:
 
 - **The apex and `www` are not in Terraform.** A Static Web App root domain
@@ -62,6 +63,10 @@ about that table are deliberate rather than oversight:
   checking that the CNAME resolves to `*.github.io`; a proxied record answers
   with Cloudflare's addresses instead, and the domain sticks at "certificate
   pending".
+- **`podcast` is DNS-only, and a subdomain.** Podbean provisions the
+  certificate for the show's website the same way. Its "Use a domain I own"
+  page prefills `www`. A CNAME there would hand the site to the podcast host.
+  The podcast takes `podcast.hybridcloudworks.com`, never `www` or the apex.
 
 So the apex resolving to Azure, answering with **no** `CF-RAY` header, and
 presenting a **DigiCert**-issued certificate is the design. **An apex behind

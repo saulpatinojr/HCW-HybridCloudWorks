@@ -295,6 +295,11 @@ export const DECLARED = [
   // read that run as those six beside the permanent diff, and
   // `az role assignment list` then showed the reader with Reader and HCW
   // Function Settings Reader only.
+  {
+    address: "cloudflare_dns_record.podcast_podbean",
+    action: "create",
+    reason: "podcast.hybridcloudworks.com -> Podbean, DNS-only",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
