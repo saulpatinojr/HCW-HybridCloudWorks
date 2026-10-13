@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   isPodcastMediaRetired,
+  servableListenAndLearnAudioUrl,
   createPublicReadHandlers,
   MAIN_PODCAST_PROVIDER,
   PUBLIC_CONTENT_LIST_FIELDS,
@@ -1227,6 +1228,18 @@ describe('getListenAndLearn — approval is the only gate', () => {
     expect(body.episodes.map((e) => e.id)).toEqual(['a', 'b', 'c']);
   });
 
+  it('blanks the audioUrl of a chapter whose audio is on a retired host, keeping the chapter (#1119)', async () => {
+    const deps = store({ id: 'azure_ab-100' }, [
+      { id: 'plan', order: 0, audioUrl: 'https://storage.googleapis.com/hybridcloudworks-61e8d.appspot.com/plan.mp3' },
+      { id: 'design', order: 1, audioUrl: '/api/public/media/listenandlearn/azure/ab-100/design.mp3' },
+    ]);
+    const body = JSON.parse((await get(deps, { platform: 'azure', examCode: 'AB-100' })).body);
+    expect(body.episodes.map((e) => [e.id, e.audioUrl])).toEqual([
+      ['plan', ''],
+      ['design', '/api/public/media/listenandlearn/azure/ab-100/design.mp3'],
+    ]);
+  });
+
   it('drops a soft-deleted episode the status filter would have admitted', async () => {
     const deps = store({ id: 'azure_az-104' }, [
       { id: 'a', order: 0 },
@@ -1473,6 +1486,26 @@ describe('listListenAndLearnEpisodes — the provider-wide list (#349)', () => {
       makeRequest({ query }),
       context
     );
+
+  it('omits an episode whose audio is on a retired host, as it omits one with no audio (#1119)', async () => {
+    // Every public Listen & Learn row pointed at the pre-Azure Firebase
+    // bucket on 2026-10-13, and every file there answered 404.
+    const deps = store({
+      episodes: [
+        published({ id: 'firebase', audioUrl: 'https://storage.googleapis.com/hybridcloudworks-61e8d.appspot.com/x.mp3' }),
+        published({ id: 'blob' }),
+      ],
+      sets: [{ id: 'azure_az-104', provider: 'azure', examCode: 'AZ-104' }],
+    });
+    const body = JSON.parse((await list(deps)).body);
+    expect(body.items.map((i) => i.id)).toEqual(['blob']);
+    expect(servableListenAndLearnAudioUrl({ audioUrl: 'https://firebasestorage.googleapis.com/v0/b/x/o/a.mp3' })).toBe('');
+    expect(servableListenAndLearnAudioUrl({ audioUrl: '/api/public/media/listenandlearn/a.mp3' })).toBe(
+      '/api/public/media/listenandlearn/a.mp3'
+    );
+    expect(servableListenAndLearnAudioUrl({ audioUrl: 'not a url' })).toBe('not a url');
+    expect(servableListenAndLearnAudioUrl({})).toBe('');
+  });
 
   it('filters to published in SQL, on an equality test, by provider', async () => {
     const deps = store();

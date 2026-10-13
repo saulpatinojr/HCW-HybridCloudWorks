@@ -79,6 +79,7 @@ import {
   SQL_NOT_SOFT_DELETED,
   SQL_PUBLIC_CLAUSE,
   isPodcastMediaRetired,
+  servableListenAndLearnAudioUrl,
   isPublicDocument,
   isSoftDeleted,
 } from './public-reads.js';
@@ -282,7 +283,8 @@ export function countListenAndLearnDocs(sections, docs) {
   for (const doc of docs || []) {
     if (isSoftDeleted(doc)) continue;
     if (doc?.status !== LISTEN_AND_LEARN_PUBLISHED_STATUS) continue;
-    if (typeof doc?.audioUrl !== 'string' || doc.audioUrl === '') continue;
+    // Retired-host audio (#1119) counts as none: the list omits it too.
+    if (!servableListenAndLearnAudioUrl(doc)) continue;
     addAudioRow(sections, doc?.provider);
   }
   return sections;
