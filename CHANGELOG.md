@@ -19,6 +19,22 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Podbean's MCP server in the AI Engine (Admin → AI Engine → MCP
+  Servers).** The show moved to Podbean on 2026-10-13, and Podbean runs a
+  hosted MCP server at `https://mcp.podbean.com/mcp`. It covers the show's
+  episodes, its details and its listener statistics.
+  - **Sign-in:** read that day, the server advertises RFC 9728 and RFC 8414
+    discovery, PKCE (`S256`), `none` client authentication and a
+    `registration_endpoint`. So the existing Connect flow signs in with no key:
+    press Connect, sign in at Podbean, approve. The token is kept server-side
+    and renewed by the MCP token timer, like Hostinger's and Replicate's.
+  - **Ships switched off.** Its tools can publish, edit and permanently delete
+    episodes.
+  - **Where it is recorded:** `seed.js` seeds it (the AI Engine page adds a
+    missing default on load). The card treats it as built-in. The credentials
+    register lists its OAuth token as `mcp-podbean`. The tests pin it among the
+    Connect servers.
+
 - **`podcast.hybridcloudworks.com` for the show's Podbean website.**
   Hybrid Cloud Insights moved from RSS.com to Podbean on 2026-10-13.
   - **The feed:** it is now `https://feed.podbean.com/hybridcloudinsights/feed.xml`. RSS.com's feed and Podbean's first address (`spatino`) both answer 301 towards it, and all three episodes keep their GUIDs.

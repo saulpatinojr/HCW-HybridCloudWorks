@@ -677,6 +677,7 @@ export function McpServerCard({ server, onToggle, onSync, onRemove }) {
     'drawio-mcp',
     'hostinger-mcp',
     'publer-mcp',
+    'podbean-mcp',
   ].includes(server.id);
 
   return (
