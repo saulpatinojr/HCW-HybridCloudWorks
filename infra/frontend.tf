@@ -202,6 +202,40 @@ resource "cloudflare_dns_record" "docs_pages" {
   }
 }
 
+# podcast.hybridcloudworks.com: the show's Podbean website on the owner's
+# domain (2026-10-13, when Hybrid Cloud Insights moved from RSS.com to
+# Podbean). pbcdn2.podbean.com is the target Podbean's "Use a domain I own"
+# page names.
+#
+# A SUBDOMAIN, NEVER www OR THE APEX. Both are the site, on the Static Web App
+# and created by hand (docs/runbooks/edge-dns-verification.md). Podbean's page
+# prefills `www`, and a CNAME there would hand the site to the podcast host;
+# Cloudflare refused it only because the www record already exists.
+#
+# DNS-only, for the reason docs_pages is: Podbean provisions the certificate
+# for a custom domain itself and needs the name to resolve to its own host,
+# and a proxied record answers with Cloudflare's addresses instead. The zone's
+# CAA records already admit letsencrypt.org and the other common issuers.
+#
+# Order of operations: apply this, then enter podcast.hybridcloudworks.com
+# under Podbean's Distribution -> Podcast Website -> Website URL -> "Use a
+# domain I own" and save. The site reads the show's feed, not this website,
+# so admin_config/podcast_feeds does not depend on this record.
+resource "cloudflare_dns_record" "podcast_podbean" {
+  zone_id = var.cloudflare_zone_id
+  name    = "podcast.${var.domain}"
+  content = "pbcdn2.podbean.com"
+  type    = "CNAME"
+  proxied = false
+  ttl     = 300
+  comment = "Podbean podcast website (Hybrid Cloud Insights)"
+
+  # Same provider workaround as docs_pages above.
+  lifecycle {
+    ignore_changes = [include_shadow_metadata]
+  }
+}
+
 # The rename is a change of resource ADDRESS, so without these Terraform would
 # destroy and recreate both records — and these two are the API's hostname and
 # the ownership proof Azure reads at bind time. A destroy/create on them is a

@@ -19,6 +19,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **`podcast.hybridcloudworks.com` for the show's Podbean website.**
+  Hybrid Cloud Insights moved from RSS.com to Podbean on 2026-10-13.
+  - **The feed:** it is now `https://feed.podbean.com/hybridcloudinsights/feed.xml`. RSS.com's feed and Podbean's first address (`spatino`) both answer 301 towards it, and all three episodes keep their GUIDs.
+  - **The record:** `cloudflare_dns_record.podcast_podbean` points `podcast` at `pbcdn2.podbean.com`, DNS-only like `docs`, because Podbean issues the certificate itself.
+  - **Why a subdomain:** Podbean's "Use a domain I own" page prefills `www`, which is the site. The comment in `infra/frontend.tf` and the edge DNS runbook say so, so the podcast never takes `www` or the apex.
+  - The plan checker declares the one create.
+
 - **The hourly functions monitor names a `ci-*` access window on the
   Function App whose run has ended (#1050).** `deploy-functions.yml` and
   `publish-content-manifest.yml` open a one-host Allow rule for their runner

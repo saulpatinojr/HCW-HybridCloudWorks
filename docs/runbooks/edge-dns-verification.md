@@ -47,10 +47,11 @@ here, and an operator holding it will raise a finding on every single run.
 | `www.hybridcloudworks.com` | Azure, CNAME into `azurestaticapps.net` | no | not Terraform-managed |
 | `api-azure.hybridcloudworks.com` | Cloudflare | **yes** | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions` |
 | `docs.hybridcloudworks.com` | GitHub Pages | no | `infra/frontend.tf`, `cloudflare_dns_record.docs_pages` |
+| `podcast.hybridcloudworks.com` | Podbean, CNAME to `pbcdn2.podbean.com` | no | `infra/frontend.tf`, `cloudflare_dns_record.podcast_podbean` |
 | `asuid.api-azure.hybridcloudworks.com` | nothing — a TXT record holding Azure's ownership proof | n/a | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions_domain_verification` |
 
-`infra/frontend.tf` declares exactly three Cloudflare records, and ADR 0024
-names `api-azure` in as many words as *the one proxied hostname*. Two things
+`infra/frontend.tf` declares exactly four Cloudflare records, and ADR 0024
+names `api-azure` in as many words as *the one proxied hostname*. Three things
 about that table are deliberate rather than oversight:
 
 - **The apex and `www` are not in Terraform.** A Static Web App root domain
@@ -62,6 +63,10 @@ about that table are deliberate rather than oversight:
   checking that the CNAME resolves to `*.github.io`; a proxied record answers
   with Cloudflare's addresses instead, and the domain sticks at "certificate
   pending".
+- **`podcast` is DNS-only, and a subdomain.** Podbean provisions the
+  certificate for the show's website the same way. Its "Use a domain I own"
+  page prefills `www`. A CNAME there would hand the site to the podcast host.
+  The podcast takes `podcast.hybridcloudworks.com`, never `www` or the apex.
 
 So the apex resolving to Azure, answering with **no** `CF-RAY` header, and
 presenting a **DigiCert**-issued certificate is the design. **An apex behind
@@ -86,11 +91,11 @@ reads ARM rather than asking `/api/health`.
 ### 1. DNS resolves the way the split says it should
 
 ```powershell
-'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
+'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com','podcast.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
 ```
 
 ```powershell
-'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health' | ForEach-Object { $r = Invoke-WebRequest -Uri $_ -UseBasicParsing; [pscustomobject]@{ Url = $_; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } }
+'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health','https://podcast.hybridcloudworks.com/' | ForEach-Object { $r = Invoke-WebRequest -Uri $_ -UseBasicParsing; [pscustomobject]@{ Url = $_; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } }
 ```
 
 `-UseBasicParsing` is deliberate and is not there for PowerShell 7, where it
@@ -110,8 +115,11 @@ the other one, it stays.
 `CF-RAY` header or `Server: cloudflare`. `api-azure` returns two `A` records
 inside `104.16.0.0/13` and `172.64.0.0/13` — both published Cloudflare ranges —
 plus `AAAA` records, and it answers with `Server: cloudflare` and a `CF-RAY`.
-Key on the ranges and the headers, never on a literal address: the Static Web
-App's address is Azure's to change.
+`podcast` returns a `CNAME` to `pbcdn2.podbean.com` and answers with no
+`CF-RAY`, because it is DNS-only and Podbean serves it. Until the domain is
+entered in Podbean and its certificate is issued, that HTTPS request fails: an
+unfinished setup, not an outage. Key on the ranges and the headers, never on a
+literal address: the Static Web App's address is Azure's to change.
 
 If the headers are ambiguous, confirm the certificate in a browser at
 <https://hybridcloudworks.com/>. The padlock should show `CN=hybridcloudworks.com`
