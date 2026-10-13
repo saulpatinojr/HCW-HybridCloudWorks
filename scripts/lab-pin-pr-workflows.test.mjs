@@ -141,6 +141,35 @@ describe('open-lab-pin-pr.mjs', () => {
 
 describe('lab-supply-chain.yml', () => {
   const source = workflow('lab-supply-chain.yml');
+
+  it('records the sets\' paths before the downloaded CLI runs, refuses any change outside them, and judges the patch before the token job applies it', () => {
+    const propose = source.slice(source.indexOf('  propose:'), source.indexOf('  pull-request:'));
+    const order = [
+      'Record each set\'s paths before anything downloaded runs',
+      'Plan and make the bumps',
+      'Re-record the Docker CLI fixture when the engine pin moved',
+      'Nothing outside the sets\' paths changed',
+      'One patch per set',
+    ].map((name) => propose.indexOf(`- name: ${name}`));
+    expect(order.every((at) => at !== -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The patch step reads the recorded lists, never the script again.
+    const patchStep = propose.slice(propose.indexOf('- name: One patch per set'));
+    expect(patchStep).toContain('mapfile -t paths < "${RUNNER_TEMP}/lab-pins/paths-${set}.txt"');
+    expect(patchStep).not.toContain('open-lab-pin-pr.mjs --paths');
+    expect(propose).toContain('record-docker-cli-fixture.mjs | tee');
+    expect(propose).toMatch(/set -euo pipefail\n\s+node scripts\/lab\/record-docker-cli-fixture\.mjs/);
+
+    const pr = source.slice(source.indexOf('  pull-request:'), source.indexOf('  check:'));
+    const judge = pr.indexOf("- name: The patch touches only this set's recorded paths, and no code this job runs");
+    const apply = pr.indexOf("- name: Apply this set's patch");
+    const mint = pr.indexOf('- name: Mint an App installation token');
+    expect(judge).toBeGreaterThan(-1);
+    expect(judge).toBeLessThan(apply);
+    expect(apply).toBeLessThan(mint);
+    expect(pr).toContain('git apply --numstat "${patch}"');
+    expect(pr).toContain(`grep -E '^(\\.github/|scripts/)' "\${RUNNER_TEMP}/lab-pins/patched.txt" | grep -vE '^scripts/fixtures/'`);
+  });
   const lines = commandLines(source);
   const propose = job(source, 'propose', 'pull-request');
   const pullRequest = job(source, 'pull-request', 'check');

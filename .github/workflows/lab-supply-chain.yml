@@ -24,9 +24,16 @@
 #      Each edit carries the checksum or digest read from the publisher
 #      beside the version (scripts/lib/lab-pin-bumps.mjs says which, from
 #      where). A pin whose checksum could not be verified is not edited: it is
-#      a note, and the notes go into the issue below. The job holds a
-#      read-only token and the network input, and hands the edits on as a
-#      patch.
+#      a note, and the notes go into the issue below. When the Docker Engine
+#      pin moved, scripts/lab/record-docker-cli-fixture.mjs re-records the
+#      agent's Docker CLI request fixture with the pinned docker-ce-cli,
+#      verified through the host's own trust chain (the signing key by
+#      docker_apt_key_checksum, the InRelease by the key, the index by the
+#      InRelease, the .deb by the index) and run from a temporary directory.
+#      Because that is a downloaded binary running in the checkout, each
+#      set's paths are recorded before it runs and the job fails if anything
+#      outside them changed afterwards. The job holds a read-only token and
+#      the network input, and hands the edits on as a patch.
 #   2. `pull-request` applies each set's patch and keeps one pull request per
 #      set open (scripts/open-lab-pin-pr.mjs): a fixed branch per set, the
 #      pull request opened ready for review or, while one is open, its commit
@@ -94,6 +101,20 @@ jobs:
           node-version: '26'
           package-manager-cache: false
 
+      # Each set's paths, read from the pristine checkout and kept in the
+      # artifact, before anything this job downloads has run: the patch step
+      # and the guard below use these lists, never a second read of the
+      # script, so a downloaded binary that rewrote open-lab-pin-pr.mjs could
+      # not widen a set (CodeRabbit on #1129).
+      - name: Record each set's paths before anything downloaded runs
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/lab-pins"
+          for set in host image-base; do
+            node scripts/open-lab-pin-pr.mjs --paths "$set" > "${RUNNER_TEMP}/lab-pins/paths-${set}.txt"
+          done
+          sort -u "${RUNNER_TEMP}"/lab-pins/paths-*.txt > "${RUNNER_TEMP}/lab-pins/paths-all.txt"
+
       # Each set writes its edits into this checkout, its evidence (the pull
       # request body) and its notes (the pins it could not verify). Exit 2 is
       # a plan that could not be made at all; that fails the run.
@@ -102,7 +123,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/lab-pins"
           for set in host image-base; do
             node scripts/lab-pins-upstream.mjs --bump "$set" \
               --evidence "${RUNNER_TEMP}/lab-pins/evidence-${set}.md" \
@@ -121,15 +141,32 @@ jobs:
           set -euo pipefail
           node scripts/lab/record-docker-cli-fixture.mjs | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # One patch per set, over that set's paths only; the sets whose patch
-      # is not empty are the matrix of the next job.
+      # The downloaded CLI ran in this checkout. Whatever it did, only the
+      # sets' paths may differ now: a change anywhere else (a script this job
+      # or the next one runs, this workflow, a new file) fails the run before
+      # a patch is made, judged against the lists recorded above.
+      - name: Nothing outside the sets' paths changed
+        run: |
+          set -euo pipefail
+          git status --porcelain=v1 --untracked-files=all \
+            | sed -E 's/^.. //; s/.* -> //; s/^"(.*)"$/\1/' | sort -u > "${RUNNER_TEMP}/lab-pins/changed.txt"
+          outside="$(comm -13 "${RUNNER_TEMP}/lab-pins/paths-all.txt" "${RUNNER_TEMP}/lab-pins/changed.txt")"
+          if [ -n "${outside}" ]; then
+            echo "::error::The checkout changed outside every pin set; no patch is made. Changed: $(echo "${outside}" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "Changed, all inside the sets' paths: $(tr '\n' ' ' < "${RUNNER_TEMP}/lab-pins/changed.txt")"
+
+      # One patch per set, over that set's paths only (the lists recorded
+      # before anything downloaded ran); the sets whose patch is not empty are
+      # the matrix of the next job.
       - name: One patch per set
         id: patches
         run: |
           set -euo pipefail
           sets=()
           for set in host image-base; do
-            mapfile -t paths < <(node scripts/open-lab-pin-pr.mjs --paths "$set")
+            mapfile -t paths < "${RUNNER_TEMP}/lab-pins/paths-${set}.txt"
             git diff --binary -- "${paths[@]}" > "${RUNNER_TEMP}/lab-pins/${set}.patch"
             if [ -s "${RUNNER_TEMP}/lab-pins/${set}.patch" ]; then sets+=("\"${set}\""); fi
           done
@@ -181,6 +218,31 @@ jobs:
         with:
           name: lab-pins
           path: ${{ runner.temp }}/lab-pins
+
+      # This job holds the App token and runs repository scripts after the
+      # patch is applied, so the patch is judged before it is applied, by a
+      # rule written here rather than in anything the patch could replace: it
+      # may touch only the paths recorded for its set before anything
+      # downloaded ran in `propose`, and never this workflow, another
+      # workflow, or a script outside scripts/fixtures/ (CodeRabbit on #1129).
+      - name: The patch touches only this set's recorded paths, and no code this job runs
+        env:
+          SET: ${{ matrix.set }}
+        run: |
+          set -euo pipefail
+          patch="${RUNNER_TEMP}/lab-pins/${SET}.patch"
+          git apply --numstat "${patch}" | cut -f3- | sort -u > "${RUNNER_TEMP}/lab-pins/patched.txt"
+          sort -u "${RUNNER_TEMP}/lab-pins/paths-${SET}.txt" > "${RUNNER_TEMP}/lab-pins/allowed.txt"
+          outside="$(comm -13 "${RUNNER_TEMP}/lab-pins/allowed.txt" "${RUNNER_TEMP}/lab-pins/patched.txt")"
+          if [ -n "${outside}" ]; then
+            echo "::error::The ${SET} patch touches paths outside the set recorded for it: $(echo "${outside}" | tr '\n' ' ')"
+            exit 1
+          fi
+          if grep -E '^(\.github/|scripts/)' "${RUNNER_TEMP}/lab-pins/patched.txt" | grep -vE '^scripts/fixtures/'; then
+            echo "::error::The ${SET} patch touches a workflow or a script this job could run; refused."
+            exit 1
+          fi
+          echo "Patched: $(tr '\n' ' ' < "${RUNNER_TEMP}/lab-pins/patched.txt")"
 
       - name: Apply this set's patch
         env:
