@@ -216,7 +216,9 @@ describe('overviewNotes', () => {
       errors: {},
     };
     expect(overviewNotes(data).coverage).toBe('downloads shown for 1 of 3');
-    expect(overviewNotes({ episodes: [{ downloads: { total: 1, byDay: {} } }], errors: {} }).coverage).toBeNull();
+    expect(
+      overviewNotes({ episodes: [{ downloads: { total: 1, byDay: {} } }], errors: {} }).coverage
+    ).toBeNull();
     expect(overviewNotes({ episodes: [], errors: {} }).coverage).toBeNull();
   });
 
