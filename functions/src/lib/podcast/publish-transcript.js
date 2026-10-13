@@ -1,45 +1,52 @@
 /**
  * publish-transcript.js — the host step for a podcast transcript: what an
  * approval queues, what the job then does, and the record both leave on the
- * document (#437, slice 2; ADR 0029 §1b).
+ * document (#437, slice 2; ADR 0029 §1b, §1c).
  *
  * ## Two doors, one path
  *
  * Approval (`POST cms/podcast/transcripts/review` → `published`) and the
  * retry button (`POST cms/podcast/transcripts/{id}/publish`) both call
  * `scheduleHostPublish`. It answers the two cases that need no network on the
- * spot — no audio on the transcript, or RSS.com not configured — as a
+ * spot — no audio on the transcript, or Podbean not configured — as a
  * `skipped` record, and otherwise writes a `publish-podcast-transcript` job,
  * marks the document `pending` and sends the queue message. The job
  * (`runHostPublish`, wired in functions/podcast-jobs.js) reads the audio from
  * the `podcast` blob container, calls `publishEpisodeToHost` and stores what
  * it returns. Retry is therefore never a regeneration: it re-runs the same
- * step on the same document, and `host-publish.js` PATCHes the host episode
- * the document already names rather than creating a second one.
+ * step on the same document, and `host-publish.js` updates the Podbean
+ * episode the document already names rather than creating a second one.
  *
  * ## Why a job and not an inline call
  *
- * The client's own deadlines are 30 s for the presigned upload, 300 s for the
- * PUT and 30 s for the episode create — six minutes worst case against an
- * HTTP response bounded at 230 s, and tens of seconds in the ordinary case
- * for a 10 MB MP3. An approval that blocked on that would leave a reviewer
- * watching a spinner for a step whose failure, by design, does not change
- * the approval. So the status is written, the job is queued, the response
- * says `pending` with the job id, and the hub shows "publishing…" until the
- * document says otherwise.
+ * The client's own deadlines are 30 s for the token, 30 s for the upload
+ * authorisation, 300 s for the PUT and 30 s for the episode create — over six
+ * minutes worst case against an HTTP response bounded at 230 s, and tens of
+ * seconds in the ordinary case for a 10 MB MP3. An approval that blocked on
+ * that would leave a reviewer watching a spinner for a step whose failure, by
+ * design, does not change the approval. So the status is written, the job is
+ * queued, the response says `pending` with the job id, and the hub shows
+ * "publishing…" until the document says otherwise.
  *
- * ## The record: `host.rsscom`
+ * ## The record: `host.podbean`
  *
- * The stable keys are `host-publish.js`'s (`episodeId`, `guid`, `hostStatus`,
- * `audioPath`, `uploadId`, `publishedAt`, `lastAttemptAt`, `error`). This file
- * adds transient ones it strips before the step runs, so they never leak
- * into a stored success or failure:
+ * The stable keys are `host-publish.js`'s (`episodeId`, `permalinkUrl`,
+ * `mediaUrl`, `hostStatus`, `audioPath`, `fileKey`, `publishedAt`,
+ * `lastAttemptAt`, `error`). This file adds transient ones it strips before
+ * the step runs, so they never leak into a stored success or failure:
  *
  *     pending    true from enqueue until the job writes its outcome
  *     jobId      that job, so the hub can poll getJob
  *     queuedAt   when
  *     skipped    'not_configured' | 'no_audio' | 'not_published' | 'free_plan_licence'
  *     reason     the sentence for it
+ *
+ * The record was `host.rsscom` until the show moved to Podbean on 2026-10-13
+ * (ADR 0029 §1c). Nothing reads that key any more and nothing migrates it:
+ * publishing to the old host was never configured, so the only thing a
+ * production document ever held there is `skipped: 'not_configured'`, which
+ * says nothing about Podbean. A transcript approved before the move shows no
+ * host record until its first Podbean attempt, and Publish makes one.
  *
  * `free_plan_licence` is the job's own guard for ElevenLabs free-plan audio
  * (speech-licence.js, ADR 0029 §2a amended 2026-09-26). Approval and the
@@ -65,13 +72,14 @@
  * does for one uploaded by hand, and the accepted cost is the lag between
  * approval and appearance that the hub explains.
  *
- * ## `custom_link`
+ * ## The article link
  *
  * The job resolves the article's public URL through `publicUrlOf` (the same
- * precedence the Social Hub uses) and passes it as `custom_link`; a
- * transcript whose article carries no public URL is published without one.
- * The lookup is injected here so the step is testable without the content
- * container.
+ * precedence the Social Hub uses) and hands it to `host-publish.js`, which
+ * links it at the end of the episode notes — Podbean has no separate link
+ * field. A transcript whose article carries no public URL is published
+ * without one. The lookup is injected here so the step is testable without
+ * the content container.
  */
 import { JOBS_CONTAINER, TERMINAL_JOB_STATUSES, newJobDoc } from '../jobs.js';
 import { DEFAULT_AUDIO_MIME, publishEpisodeToHost } from './host-publish.js';
@@ -119,13 +127,13 @@ export function parseTranscriptId(raw, { field = 'transcriptId' } = {}) {
 const TRANSIENT_KEYS = new Set(['pending', 'jobId', 'queuedAt', 'skipped', 'reason']);
 
 /**
- * The stable half of `host.rsscom` — what `host-publish.js` wrote, without
+ * The stable half of `host.podbean` — what `host-publish.js` wrote, without
  * the transient keys this file adds. This is what the step is handed as the
  * previous record, so `pending`/`skipped` never ride `...previous` into a
  * stored outcome.
  */
 export function stableHostRecord(host) {
-  const record = host?.rsscom && typeof host.rsscom === 'object' ? host.rsscom : {};
+  const record = host?.podbean && typeof host.podbean === 'object' ? host.podbean : {};
   const stable = {};
   for (const [key, value] of Object.entries(record)) {
     if (!TRANSIENT_KEYS.has(key)) stable[key] = value;
@@ -156,7 +164,7 @@ export function hostSkipFor(doc, configured) {
     return {
       skipped: HOST_SKIP.noAudio,
       reason:
-        `The transcript has no audio${cause}, so nothing was sent to RSS.com; ` +
+        `The transcript has no audio${cause}, so nothing was sent to Podbean; ` +
         'regenerate it once audio synthesis succeeds, then publish again.',
     };
   }
@@ -169,13 +177,13 @@ export function hostSkipFor(doc, configured) {
 const notPublishedSkip = (doc) => ({
   skipped: HOST_SKIP.notPublished,
   reason:
-    `The transcript is ${doc?.status || 'not published'}, so nothing was sent to RSS.com; ` +
+    `The transcript is ${doc?.status || 'not published'}, so nothing was sent to Podbean; ` +
     'approving it is what publishes it.',
 });
 
 const skippedPatch = (doc, skip, at) => ({
   host: {
-    rsscom: {
+    podbean: {
       ...stableHostRecord(doc?.host),
       skipped: skip.skipped,
       reason: skip.reason,
@@ -186,7 +194,7 @@ const skippedPatch = (doc, skip, at) => ({
 });
 
 const pendingPatch = (doc, jobId, at) => ({
-  host: { rsscom: { ...stableHostRecord(doc?.host), pending: true, jobId, queuedAt: at } },
+  host: { podbean: { ...stableHostRecord(doc?.host), pending: true, jobId, queuedAt: at } },
 });
 
 const patchTranscript = (store, id, patch) =>
@@ -237,10 +245,10 @@ export async function scheduleHostPublish({
   if (skip) {
     const patch = skippedPatch(doc, skip, at);
     await patchTranscript(store, id, patch);
-    return { outcome: 'skipped', host: patch.host.rsscom };
+    return { outcome: 'skipped', host: patch.host.podbean };
   }
 
-  const current = doc?.host?.rsscom;
+  const current = doc?.host?.podbean;
   if (current?.pending === true && (await jobInFlight(store, current.jobId))) {
     return { outcome: 'in_flight', jobId: current.jobId, host: current };
   }
@@ -266,7 +274,7 @@ export async function scheduleHostPublish({
   const patch = pendingPatch(doc, jobId, at);
   await patchTranscript(store, id, patch);
   enqueue({ jobId, type: PUBLISH_JOB_TYPE });
-  return { outcome: 'queued', jobId, host: patch.host.rsscom };
+  return { outcome: 'queued', jobId, host: patch.host.podbean };
 }
 
 /**
@@ -287,14 +295,14 @@ export async function scheduleHostPublish({
 export async function recordScheduleFailure({ store, doc, now = () => new Date() }) {
   const patch = {
     host: {
-      rsscom: {
+      podbean: {
         ...stableHostRecord(doc?.host),
         lastAttemptAt: now().toISOString(),
         error: {
           status: null,
           code: 'SCHEDULE_FAILED',
           message:
-            'The approval was saved, but the RSS.com publish could not be queued; use Publish to retry.',
+            'The approval was saved, but the Podbean publish could not be queued; use Publish to retry.',
           retryable: true,
         },
       },
@@ -313,7 +321,7 @@ export async function recordScheduleFailure({ store, doc, now = () => new Date()
  * wants from `readAudio`. Null stays null (the step records it as a
  * validation failure naming the path). A blob stored without a real content
  * type falls back to `audio/mpeg`, because that is what the generator writes
- * and `expected_mime` on the presigned upload must match the PUT.
+ * and the `content_type` the upload is authorised for must match the PUT.
  */
 export function audioReaderFor(readBlob, container = PODCAST_AUDIO_CONTAINER) {
   return async (audioPath) => {
@@ -329,7 +337,7 @@ export function audioReaderFor(readBlob, container = PODCAST_AUDIO_CONTAINER) {
 
 /**
  * The job's half: read the transcript, refuse what should not go, run the
- * step, store the record. Returns the stored `host.rsscom`.
+ * step, store the record. Returns the stored `host.podbean`.
  *
  * Throws only when there is no document to record on. A transcript that
  * was withdrawn to draft between enqueue and run is not a failure — it is
@@ -339,9 +347,9 @@ export function audioReaderFor(readBlob, container = PODCAST_AUDIO_CONTAINER) {
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function }} deps.store
  * @param {string} deps.id the transcript id
- * @param {ReturnType<import('./rsscom.js').createRssComClient>} deps.client
+ * @param {ReturnType<import('./podbean.js').createPodbeanClient>} deps.client
  * @param {(audioPath: string) => Promise<object|null>} deps.readAudio
- * @param {(doc: object) => Promise<string|null>} [deps.resolvePublicUrl] the article's public URL, for `custom_link`
+ * @param {(doc: object) => Promise<string|null>} [deps.resolvePublicUrl] the article's public URL, linked at the end of the notes
  * @param {() => Date} [deps.now]
  */
 export async function runHostPublish({
@@ -368,7 +376,7 @@ export async function runHostPublish({
   if (skip) {
     const patch = skippedPatch(doc, skip, at);
     await patchTranscript(store, id, patch);
-    return patch.host.rsscom;
+    return patch.host.podbean;
   }
 
   const publicUrl =
@@ -377,12 +385,12 @@ export async function runHostPublish({
   const patch = await publishEpisodeToHost({
     client,
     readAudio,
-    doc: { ...doc, host: { rsscom: stableHostRecord(doc.host) } },
+    doc: { ...doc, host: { podbean: stableHostRecord(doc.host) } },
     now,
     publicUrl: publicUrl || undefined,
   });
   await patchTranscript(store, id, patch);
-  return patch.host.rsscom;
+  return patch.host.podbean;
 }
 
 /**
@@ -409,7 +417,7 @@ export async function runHostPublish({
  */
 export async function recordHostJobFailure({ store, id, status, error, now = () => new Date() }) {
   const doc = await store.readDoc(TRANSCRIPT_CONTAINER, id, id);
-  if (!doc || doc.host?.rsscom?.pending !== true) return false;
+  if (!doc || doc.host?.podbean?.pending !== true) return false;
   const at = now().toISOString();
 
   const patch =
@@ -417,7 +425,7 @@ export async function recordHostJobFailure({ store, id, status, error, now = () 
       ? skippedPatch(doc, notPublishedSkip(doc), at)
       : {
           host: {
-            rsscom: {
+            podbean: {
               ...stableHostRecord(doc.host),
               lastAttemptAt: at,
               error: {

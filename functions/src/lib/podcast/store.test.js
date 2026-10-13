@@ -133,7 +133,7 @@ describe('toTranscriptDoc', () => {
       generatedAt: NOW,
       approvedAt: null,
       approvedBy: null,
-      // Reserved for #437's RSS.com publish record.
+      // Reserved for #437's Podbean publish record.
       host: null,
     });
   });

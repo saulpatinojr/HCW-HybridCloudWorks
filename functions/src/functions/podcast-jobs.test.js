@@ -107,17 +107,17 @@ describe('runTranscriptPublish', () => {
   });
 
   it('records a skip on the document with no key seeded, and reports it — never an error', async () => {
-    // No RSSCOM_* in this process: the client reports not configured, the
+    // No PODBEAN_* in this process: the client reports not configured, the
     // job stores `skipped` and succeeds. Approval stays exactly as written.
-    vi.stubEnv('RSSCOM_API_KEY', '');
-    vi.stubEnv('RSSCOM_PODCAST_ID', '');
+    vi.stubEnv('PODBEAN_CLIENT_ID', '');
+    vi.stubEnv('PODBEAN_CLIENT_SECRET', '');
     readDoc.mockReset();
     patchDoc.mockReset();
     readDoc.mockResolvedValue({
       id: 'article_x',
       status: 'published',
       audioPath: 'article/x.mp3',
-      host: { rsscom: { pending: true, jobId: 'job-1' } },
+      host: { podbean: { pending: true, jobId: 'job-1' } },
     });
     patchDoc.mockResolvedValue({});
     const context = { log: vi.fn(), warn: vi.fn() };
@@ -130,8 +130,8 @@ describe('runTranscriptPublish', () => {
     expect(container).toBe('podcast_transcripts');
     expect(id).toBe('article_x');
     expect(Object.keys(patch)).toEqual(['host']);
-    expect(patch.host.rsscom).toMatchObject({ skipped: 'not_configured', error: null });
-    expect(patch.host.rsscom).not.toHaveProperty('pending');
+    expect(patch.host.podbean).toMatchObject({ skipped: 'not_configured', error: null });
+    expect(patch.host.podbean).not.toHaveProperty('pending');
     expect(context.log.mock.calls[0][0]).toMatch(/skipped \(not_configured\)/);
     vi.unstubAllEnvs();
   });
@@ -157,9 +157,10 @@ describe('registration', () => {
     expect(spec.role).toBe('publisher');
     expect(spec.worker).toBe(runTranscriptPublish);
     expect(spec.maxPayloadBytes).toBeLessThanOrEqual(1024);
-    // Above the client's own deadlines (30 s + 300 s + 30 s), so a slow host
+    // Above the client's own deadlines (30 s token + 30 s authorise + 300 s PUT
+    // + 30 s create, and one re-auth each for the two Podbean calls), so a slow host
     // is recorded as the client's error rather than as a job timeout.
-    expect(spec.timeoutMs).toBeGreaterThan(360_000);
+    expect(spec.timeoutMs).toBeGreaterThan(510_000);
     expect(typeof spec.onComplete).toBe('function');
   });
 
@@ -173,7 +174,7 @@ describe('registration', () => {
     readDoc.mockResolvedValue({
       id: 'article_x',
       status: 'published',
-      host: { rsscom: { pending: true, jobId: 'job-1' } },
+      host: { podbean: { pending: true, jobId: 'job-1' } },
     });
     patchDoc.mockResolvedValue({});
 
@@ -182,7 +183,7 @@ describe('registration', () => {
       { context: {}, now }
     );
     expect(patchDoc).toHaveBeenCalledTimes(1);
-    expect(patchDoc.mock.calls[0][2].host.rsscom).toEqual({
+    expect(patchDoc.mock.calls[0][2].host.podbean).toEqual({
       lastAttemptAt: '2026-09-09T10:00:00.000Z',
       error: { status: null, code: 'JOB_TIMEOUT', message: 'job timed out', retryable: true },
     });

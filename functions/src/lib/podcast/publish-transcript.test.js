@@ -3,8 +3,8 @@
  *
  * What is pinned: a skip is recorded as `skipped`, never `error`, and never
  * queues; a queue writes the job document enqueueJob would and marks the
- * transcript pending; the job re-runs the same step idempotently — PATCH,
- * not POST, when the document names an episode — and neither success nor
+ * transcript pending; the job re-runs the same step idempotently — update,
+ * not create, when the document names an episode — and neither success nor
  * failure nor skip ever carries `status`, `approvedAt` or `approvedBy`.
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -21,7 +21,7 @@ import {
   scheduleHostPublish,
   stableHostRecord,
 } from './publish-transcript.js';
-import { RssComError } from './rsscom.js';
+import { PodbeanError } from './podbean.js';
 import { PODCAST_AUDIO_CONTAINER, TRANSCRIPT_CONTAINER } from './store.js';
 import { JOBS_CONTAINER } from '../jobs.js';
 
@@ -29,11 +29,11 @@ const NOW = new Date('2026-09-09T10:00:00.000Z');
 const now = () => NOW;
 const AT = NOW.toISOString();
 
-const CONFIGURED = { ok: true, podcastId: '4242' };
+const CONFIGURED = { ok: true };
 const NOT_CONFIGURED = {
   ok: false,
   reason:
-    'RSS.com publishing is not configured: RSSCOM_API_KEY (Key Vault secret RSSCOM-API-KEY) is not set, so episodes stay on the manual upload path.',
+    'Podbean publishing is not configured: PODBEAN_CLIENT_SECRET (Key Vault secret PODBEAN-CLIENT-SECRET) is not set, so episodes stay on the manual upload path.',
 };
 
 const USER = { oid: 'oid-1', email: 'publisher@example.test' };
@@ -59,15 +59,23 @@ const makeStore = (over = {}) => ({
   ...over,
 });
 
-const HOST_EPISODE = { id: 9001, guid: 'guid-9001', status: 'scheduled' };
+const HOST_EPISODE = {
+  id: 'IWPNG2FB3F',
+  permalink_url: 'https://podcast.hybridcloudworks.com/e/picking-a-state-backend/',
+  media_url: 'https://mcdn.podbean.com/mf/web/x/picking-a-state-backend.mp3',
+  status: 'publish',
+};
 
 /** A client stub with the shape host-publish.js calls. */
 const makeClient = (over = {}) => ({
   configured: CONFIGURED,
-  createPresignedUpload: vi.fn(async () => ({ id: 'up_1', url: 'https://store.example/put' })),
-  uploadAudio: vi.fn(async () => undefined),
-  createEpisode: vi.fn(async () => HOST_EPISODE),
-  updateEpisode: vi.fn(async () => ({ ...HOST_EPISODE, status: 'published' })),
+  authorizeUpload: vi.fn(async () => ({
+    presigned_url: 'https://s3.amazonaws.com/b/tmp2/1/picking-a-state-backend.mp3?sig=1',
+    file_key: 'tmp2/1/picking-a-state-backend.mp3',
+  })),
+  uploadMedia: vi.fn(async () => undefined),
+  createEpisode: vi.fn(async () => ({ episode: HOST_EPISODE })),
+  updateEpisode: vi.fn(async () => ({ episode: HOST_EPISODE })),
   ...over,
 });
 
@@ -113,9 +121,9 @@ describe('stableHostRecord', () => {
   it('keeps what host-publish wrote and drops the transient keys', () => {
     expect(
       stableHostRecord({
-        rsscom: {
-          episodeId: 9001,
-          guid: 'g',
+        podbean: {
+          episodeId: 'IWPNG2FB3F',
+          fileKey: 'k',
           error: null,
           pending: true,
           jobId: 'job-1',
@@ -124,9 +132,9 @@ describe('stableHostRecord', () => {
           reason: 'x',
         },
       })
-    ).toEqual({ episodeId: 9001, guid: 'g', error: null });
+    ).toEqual({ episodeId: 'IWPNG2FB3F', fileKey: 'k', error: null });
     expect(stableHostRecord(null)).toEqual({});
-    expect(stableHostRecord({ rsscom: 'junk' })).toEqual({});
+    expect(stableHostRecord({ podbean: 'junk' })).toEqual({});
   });
 });
 
@@ -195,7 +203,7 @@ describe('scheduleHostPublish', () => {
     expect(store.patchDoc).toHaveBeenCalledWith(
       TRANSCRIPT_CONTAINER,
       'article_picking-a-state-backend',
-      { host: { rsscom: { pending: true, jobId: 'job-1', queuedAt: AT } } },
+      { host: { podbean: { pending: true, jobId: 'job-1', queuedAt: AT } } },
       { partitionKey: 'article_picking-a-state-backend' }
     );
     expect(enqueue).toHaveBeenCalledWith({ jobId: 'job-1', type: PUBLISH_JOB_TYPE });
@@ -207,10 +215,10 @@ describe('scheduleHostPublish', () => {
 
   it('keeps the stable host record under the pending marker, so the hub still shows the episode', async () => {
     const store = makeStore();
-    const previous = { episodeId: 9001, guid: 'g', hostStatus: 'published', error: null };
+    const previous = { episodeId: 'IWPNG2FB3F', fileKey: 'k', hostStatus: 'published', error: null };
     const out = await scheduleHostPublish({
       store,
-      doc: doc({ host: { rsscom: { ...previous, skipped: 'no_audio', reason: 'old' } } }),
+      doc: doc({ host: { podbean: { ...previous, skipped: 'no_audio', reason: 'old' } } }),
       configured: CONFIGURED,
       enqueue: vi.fn(),
       uuid: () => 'job-2',
@@ -237,7 +245,7 @@ describe('scheduleHostPublish', () => {
       lastAttemptAt: AT,
       error: null,
     });
-    expect(hostPatch(store)).toEqual({ host: { rsscom: out.host } });
+    expect(hostPatch(store)).toEqual({ host: { podbean: out.host } });
     expect(store.upsertDoc).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
   });
@@ -275,7 +283,7 @@ describe('scheduleHostPublish', () => {
     const pending = { pending: true, jobId: 'job-old', queuedAt: AT };
     const out = await scheduleHostPublish({
       store,
-      doc: doc({ host: { rsscom: pending } }),
+      doc: doc({ host: { podbean: pending } }),
       configured: CONFIGURED,
       enqueue,
       now,
@@ -292,7 +300,7 @@ describe('scheduleHostPublish', () => {
       const enqueue = vi.fn();
       const out = await scheduleHostPublish({
         store,
-        doc: doc({ host: { rsscom: { pending: true, jobId: 'job-old' } } }),
+        doc: doc({ host: { podbean: { pending: true, jobId: 'job-old' } } }),
         configured: CONFIGURED,
         enqueue,
         uuid: () => 'job-new',
@@ -343,7 +351,7 @@ describe('runHostPublish', () => {
     });
 
   it('creates the episode on first publish and stores the record with episodeId', async () => {
-    const stored = doc({ host: { rsscom: { pending: true, jobId: 'job-1', queuedAt: AT } } });
+    const stored = doc({ host: { podbean: { pending: true, jobId: 'job-1', queuedAt: AT } } });
     const store = makeStore({ readDoc: vi.fn(async () => stored) });
     const client = makeClient();
 
@@ -355,66 +363,79 @@ describe('runHostPublish', () => {
     expect(client.updateEpisode).not.toHaveBeenCalled();
     expect(client.createEpisode.mock.calls[0][0]).toMatchObject({
       title: 'Picking a state backend',
-      audio_upload_id: 'up_1',
-      ai_content: true,
-      custom_link: 'https://hybridcloudworks.com/blog/picking-a-state-backend',
-      schedule_datetime: AT,
+      media_key: 'tmp2/1/picking-a-state-backend.mp3',
+      status: 'publish',
+      type: 'public',
+      content: expect.stringContaining(
+        '<a href="https://hybridcloudworks.com/blog/picking-a-state-backend">'
+      ),
     });
+    expect(client.authorizeUpload).toHaveBeenCalledWith({
+      filename: 'picking-a-state-backend.mp3',
+      filesize: 3,
+      contentType: 'audio/mpeg',
+    });
+    expect(client.uploadMedia).toHaveBeenCalledWith(
+      'https://s3.amazonaws.com/b/tmp2/1/picking-a-state-backend.mp3?sig=1',
+      Buffer.from('mp3'),
+      'audio/mpeg'
+    );
     expect(record).toEqual({
-      episodeId: 9001,
-      guid: 'guid-9001',
-      hostStatus: 'scheduled',
+      episodeId: 'IWPNG2FB3F',
+      permalinkUrl: HOST_EPISODE.permalink_url,
+      mediaUrl: HOST_EPISODE.media_url,
+      hostStatus: 'publish',
       audioPath: 'article/picking-a-state-backend.mp3',
-      uploadId: 'up_1',
+      fileKey: 'tmp2/1/picking-a-state-backend.mp3',
       publishedAt: AT,
       lastAttemptAt: AT,
       error: null,
     });
     // The transient marker is gone from what was stored, and only `host` was written.
-    expect(hostPatch(store)).toEqual({ host: { rsscom: record } });
+    expect(hostPatch(store)).toEqual({ host: { podbean: record } });
     expect(record).not.toHaveProperty('pending');
   });
 
-  it('omits custom_link when the article has no public URL', async () => {
+  it('adds no article link when the article has no public URL', async () => {
     const store = makeStore({ readDoc: vi.fn(async () => doc()) });
     const client = makeClient();
     await run(store, client, { resolvePublicUrl: async () => '' });
-    expect(client.createEpisode.mock.calls[0][0]).not.toHaveProperty('custom_link');
+    expect(client.createEpisode.mock.calls[0][0].content).not.toContain('<a ');
   });
 
-  it('PATCHes — never POSTs — when the document already names a host episode', async () => {
+  it('updates — never creates — when the document already names a Podbean episode', async () => {
     const previous = {
-      episodeId: 9001,
-      guid: 'guid-9001',
-      hostStatus: 'published',
+      episodeId: 'IWPNG2FB3F',
+      permalinkUrl: 'https://podcast.hybridcloudworks.com/e/picking-a-state-backend/',
+      hostStatus: 'publish',
       audioPath: 'article/picking-a-state-backend.mp3',
-      uploadId: 'up_1',
+      fileKey: 'tmp2/1/picking-a-state-backend.mp3',
       publishedAt: '2026-09-01T00:00:00.000Z',
       lastAttemptAt: '2026-09-01T00:00:00.000Z',
       error: { status: 500, code: 'UPSTREAM', message: 'boom', retryable: true },
     };
     const store = makeStore({
-      readDoc: vi.fn(async () => doc({ host: { rsscom: { ...previous, pending: true, jobId: 'j' } } })),
+      readDoc: vi.fn(async () => doc({ host: { podbean: { ...previous, pending: true, jobId: 'j' } } })),
     });
     const client = makeClient();
 
     const record = await run(store, client);
 
     expect(client.createEpisode).not.toHaveBeenCalled();
-    expect(client.updateEpisode).toHaveBeenCalledWith(9001, expect.objectContaining({ title: 'Picking a state backend' }));
+    expect(client.updateEpisode).toHaveBeenCalledWith('IWPNG2FB3F', expect.objectContaining({ title: 'Picking a state backend' }));
     // Same audio path → no re-upload.
-    expect(client.createPresignedUpload).not.toHaveBeenCalled();
-    expect(record).toMatchObject({ episodeId: 9001, publishedAt: previous.publishedAt, error: null });
+    expect(client.authorizeUpload).not.toHaveBeenCalled();
+    expect(record).toMatchObject({ episodeId: 'IWPNG2FB3F', publishedAt: previous.publishedAt, error: null });
     expect(record).not.toHaveProperty('pending');
     expect(record).not.toHaveProperty('jobId');
   });
 
-  it('records a host failure under host.rsscom.error and leaves the approval alone', async () => {
-    const stored = doc({ host: { rsscom: { pending: true, jobId: 'job-1' } } });
+  it('records a host failure under host.podbean.error and leaves the approval alone', async () => {
+    const stored = doc({ host: { podbean: { pending: true, jobId: 'job-1' } } });
     const store = makeStore({ readDoc: vi.fn(async () => stored) });
     const client = makeClient({
       createEpisode: vi.fn(async () => {
-        throw new RssComError('RSS.com answered 502 while creating the episode.', {
+        throw new PodbeanError('Podbean answered 502 while creating the episode.', {
           status: 502,
           code: 'UPSTREAM',
           retryable: true,
@@ -427,19 +448,19 @@ describe('runHostPublish', () => {
     expect(record.error).toEqual({
       status: 502,
       code: 'UPSTREAM',
-      message: 'RSS.com answered 502 while creating the episode.',
+      message: 'Podbean answered 502 while creating the episode.',
       retryable: true,
     });
     expect(record.pending).toBeUndefined();
     const patch = hostPatch(store);
     expect(Object.keys(patch)).toEqual(['host']);
-    expect(patch.host.rsscom).not.toHaveProperty('status');
-    expect(patch.host.rsscom).not.toHaveProperty('approvedAt');
+    expect(patch.host.podbean).not.toHaveProperty('status');
+    expect(patch.host.podbean).not.toHaveProperty('approvedAt');
   });
 
   it('skips a transcript withdrawn to draft between enqueue and run, without a network call', async () => {
     const store = makeStore({
-      readDoc: vi.fn(async () => doc({ status: 'draft', host: { rsscom: { pending: true, jobId: 'j' } } })),
+      readDoc: vi.fn(async () => doc({ status: 'draft', host: { podbean: { pending: true, jobId: 'j' } } })),
     });
     const client = makeClient();
     const untouched = vi.fn();
@@ -463,7 +484,7 @@ describe('runHostPublish', () => {
     const client = makeClient();
     store = makeStore({ readDoc: vi.fn(async () => doc({ audioPath: null })) });
     expect((await run(store, client)).skipped).toBe('no_audio');
-    expect(client.createPresignedUpload).not.toHaveBeenCalled();
+    expect(client.authorizeUpload).not.toHaveBeenCalled();
   });
 
   it('never uploads ElevenLabs free-plan audio, even for a transcript that is published', async () => {
@@ -475,7 +496,7 @@ describe('runHostPublish', () => {
           speechProvider: 'elevenlabs',
           speechTier: 'free',
           speechFreePlan: true,
-          host: { rsscom: { pending: true, jobId: 'j' } },
+          host: { podbean: { pending: true, jobId: 'j' } },
         })
       ),
     });
@@ -489,7 +510,7 @@ describe('runHostPublish', () => {
       error: null,
     });
     expect(untouched).not.toHaveBeenCalled();
-    expect(client.createPresignedUpload).not.toHaveBeenCalled();
+    expect(client.authorizeUpload).not.toHaveBeenCalled();
     expect(client.createEpisode).not.toHaveBeenCalled();
     expect(Object.keys(hostPatch(store))).toEqual(['host']);
   });
@@ -503,7 +524,7 @@ describe('runHostPublish', () => {
     const client = makeClient();
     const record = await run(store, client);
     expect(client.createEpisode).toHaveBeenCalledTimes(1);
-    expect(record).toMatchObject({ episodeId: 9001, error: null });
+    expect(record).toMatchObject({ episodeId: 'IWPNG2FB3F', error: null });
   });
 
   it('throws when the transcript does not exist — there is nothing to record on — without naming it', async () => {
@@ -520,16 +541,16 @@ describe('runHostPublish', () => {
 describe('recordScheduleFailure', () => {
   it('stores a terminal, retryable SCHEDULE_FAILED record over the stable host fields, touching nothing else', async () => {
     const store = makeStore();
-    const stable = { episodeId: 9001, guid: 'g', audioPath: 'a.mp3', publishedAt: '2026-09-01T00:00:00.000Z' };
+    const stable = { episodeId: 'IWPNG2FB3F', fileKey: 'k', audioPath: 'a.mp3', publishedAt: '2026-09-01T00:00:00.000Z' };
     const ok = await recordScheduleFailure({
       store,
-      doc: doc({ host: { rsscom: { ...stable, pending: true, jobId: 'stale' } } }),
+      doc: doc({ host: { podbean: { ...stable, pending: true, jobId: 'stale' } } }),
       now,
     });
     expect(ok).toBe(true);
     const patch = hostPatch(store);
     expect(Object.keys(patch)).toEqual(['host']);
-    expect(patch.host.rsscom).toEqual({
+    expect(patch.host.podbean).toEqual({
       ...stable,
       lastAttemptAt: AT,
       error: {
@@ -539,7 +560,7 @@ describe('recordScheduleFailure', () => {
         retryable: true,
       },
     });
-    expect(patch.host.rsscom).not.toHaveProperty('pending');
+    expect(patch.host.podbean).not.toHaveProperty('pending');
   });
 
   it('never throws — a failed write answers false', async () => {
@@ -567,14 +588,14 @@ describe('recordHostJobFailure', () => {
       readDoc: vi.fn(async () => ({
         id: 'article_x',
         status: 'published',
-        host: { rsscom: { episodeId: 9001, pending: true, jobId: 'j' } },
+        host: { podbean: { episodeId: 'IWPNG2FB3F', pending: true, jobId: 'j' } },
       })),
     });
     expect(await failure(store)).toBe(true);
     expect(hostPatch(store)).toEqual({
       host: {
-        rsscom: {
-          episodeId: 9001,
+        podbean: {
+          episodeId: 'IWPNG2FB3F',
           lastAttemptAt: AT,
           error: { status: null, code: 'JOB_TIMEOUT', message: 'job timed out', retryable: true },
         },
@@ -584,11 +605,11 @@ describe('recordHostJobFailure', () => {
       readDoc: vi.fn(async () => ({
         id: 'article_x',
         status: 'published',
-        host: { rsscom: { pending: true } },
+        host: { podbean: { pending: true } },
       })),
     });
     await failure(failed, 'failed');
-    expect(hostPatch(failed).host.rsscom.error.code).toBe('JOB_FAILED');
+    expect(hostPatch(failed).host.podbean.error.code).toBe('JOB_FAILED');
   });
 
   it('records not_published — not a publish error — when the transcript was returned to draft meanwhile', async () => {
@@ -599,14 +620,14 @@ describe('recordHostJobFailure', () => {
         readDoc: vi.fn(async () => ({
           id: 'article_x',
           status,
-          host: { rsscom: { episodeId: 9001, pending: true, jobId: 'j' } },
+          host: { podbean: { episodeId: 'IWPNG2FB3F', pending: true, jobId: 'j' } },
         })),
       });
       expect(await failure(store)).toBe(true);
       expect(hostPatch(store)).toEqual({
         host: {
-          rsscom: {
-            episodeId: 9001,
+          podbean: {
+            episodeId: 'IWPNG2FB3F',
             skipped: 'not_published',
             reason: expect.stringMatching(new RegExp(`is ${status || 'not published'}`)),
             lastAttemptAt: AT,
@@ -619,7 +640,7 @@ describe('recordHostJobFailure', () => {
 
   it('does not overwrite an outcome the worker stored before the timer fired, nor touch a missing document', async () => {
     const settled = makeStore({
-      readDoc: vi.fn(async () => ({ id: 'article_x', host: { rsscom: { episodeId: 9001, error: null } } })),
+      readDoc: vi.fn(async () => ({ id: 'article_x', host: { podbean: { episodeId: 'IWPNG2FB3F', error: null } } })),
     });
     expect(await failure(settled)).toBe(false);
     expect(settled.patchDoc).not.toHaveBeenCalled();

@@ -8,14 +8,14 @@
  * `generate-listen-and-learn` does. The document in `podcast_transcripts` is
  * the record; the job result is a small report of it.
  *
- * The second job, `publish-podcast-transcript` (#437, ADR 0029 §1b), is the
- * host step approval queues: read the MP3 from the `podcast` container, put
- * it on RSS.com, store the outcome under `host.rsscom`. It is `publisher`
- * because the route that queues it is, and because it is the act that puts
- * an AI-read episode on the feed under the owner's name. It never writes
- * `status` or `approvedAt`, and it never writes `podcasts` — the feed is the
- * ingest boundary. `custom_link` is the article's public URL when the
- * article document carries one.
+ * The second job, `publish-podcast-transcript` (#437, ADR 0029 §1b, §1c), is
+ * the host step approval queues: read the MP3 from the `podcast` container,
+ * put it on Podbean, store the outcome under `host.podbean`. It is
+ * `publisher` because the route that queues it is, and because it is the act
+ * that puts an AI-read episode on the feed under the owner's name. It never
+ * writes `status` or `approvedAt`, and it never writes `podcasts` — the feed
+ * is the ingest boundary. The episode notes end with a link to the article's
+ * public URL when the article document carries one.
  */
 import { readDoc, upsertDoc, patchDoc } from '../lib/cosmos-client.js';
 import { deleteBlob, readBlobForDelivery, uploadBlob } from '../lib/blob-storage.js';
@@ -35,7 +35,7 @@ import {
   recordHostJobFailure,
   runHostPublish,
 } from '../lib/podcast/publish-transcript.js';
-import { createRssComClient } from '../lib/podcast/rsscom.js';
+import { createPodbeanClient } from '../lib/podcast/podbean.js';
 import {
   RECORDING_JOB_TYPE,
   generateTranscriptFromRecording,
@@ -104,7 +104,7 @@ export function parsePublishPayload(payload) {
 }
 
 /**
- * The article's public URL for `custom_link`, or null. A read failure here
+ * The article's public URL for the episode notes' link, or null. A read failure here
  * is logged and costs the link, not the publish: an episode without a page
  * link is still an episode, and the retry route recovers the link later.
  * The log line carries the job id and the error's code — never a document
@@ -117,7 +117,7 @@ async function resolveArticleUrl(doc, { context, jobId }) {
     return publicUrlOf(article || {}) || null;
   } catch (error) {
     context?.warn?.(
-      `${PUBLISH_JOB_TYPE}: job ${jobId ?? 'unknown'} publishes without custom_link ` +
+      `${PUBLISH_JOB_TYPE}: job ${jobId ?? 'unknown'} publishes without the article link ` +
         `(article read failed: ${error?.code ?? error?.statusCode ?? 'unknown'})`
     );
     return null;
@@ -134,7 +134,7 @@ export async function runTranscriptPublish(payload, { context, job } = {}) {
   const record = await runHostPublish({
     store: { readDoc, patchDoc },
     id,
-    client: createRssComClient(),
+    client: createPodbeanClient(),
     readAudio: audioReaderFor(readBlobForDelivery),
     resolvePublicUrl: (doc) => resolveArticleUrl(doc, { context, jobId }),
   });
@@ -152,7 +152,7 @@ export async function runTranscriptPublish(payload, { context, job } = {}) {
   return {
     id,
     episodeId: record.episodeId ?? null,
-    guid: record.guid ?? null,
+    permalinkUrl: record.permalinkUrl ?? null,
     hostStatus: record.hostStatus ?? null,
     skipped: record.skipped ?? null,
     error: record.error ?? null,
@@ -164,16 +164,18 @@ registerJobType(PUBLISH_JOB_TYPE, {
   // two routes that queue it: this is what puts an episode on the feed.
   role: 'publisher',
   description:
-    'Upload an approved podcast transcript’s audio to RSS.com and create or update its episode; the outcome is recorded on the transcript under host.rsscom.',
+    'Upload an approved podcast transcript’s audio to Podbean and create or update its episode; the outcome is recorded on the transcript under host.podbean.',
   // One transcript id.
   maxPayloadBytes: 512,
-  // The client's own deadlines (30 s presign, 300 s PUT, 30 s create) sum to
-  // six minutes; this sits above them so a slow host is recorded as the
-  // client's specific error rather than as a job timeout.
-  timeoutMs: 8 * 60 * 1000,
+  // The client's own deadlines (30 s token, 30 s upload authorisation, 300 s
+  // PUT, 30 s create) sum to six and a half minutes, and eight and a half if
+  // both Podbean calls spend their one re-auth (a token and a repeat, 60 s
+  // each); this sits above that so a slow host is recorded as the client's
+  // specific error rather than as a job timeout.
+  timeoutMs: 10 * 60 * 1000,
   worker: runTranscriptPublish,
   // A job that died around the step (a thrown store error, the timeout) would
-  // leave host.rsscom.pending true forever; clear it and say why.
+  // leave host.podbean.pending true forever; clear it and say why.
   onComplete: async ({ job, status, error }, { now }) => {
     if (status === 'succeeded') return;
     const parsed = parsePublishPayload(job?.payload);
