@@ -93,6 +93,11 @@ const makeHostClient = (over = {}) => ({
   getPodcast: vi.fn(async () => ({ podcast: { id: 'p1', title: 'Hybrid Cloud Insights' } })),
   listEpisodes: vi.fn(async () => ({ episodes: [] })),
   getDownloadStats: vi.fn(async () => ({})),
+  getCountryStats: vi.fn(async () => ({ US: 3 })),
+  getPlatformStats: vi.fn(async () => ({ iOS: 2 })),
+  getSourceStats: vi.fn(async () => ({ Spotify: 1 })),
+  getUserRetention: vi.fn(async () => ({})),
+  getAnalyticReports: vi.fn(async () => ({ followers: 1, likes: 0, comments: 0, total_episode_length: 60 })),
   ...over,
 });
 
@@ -161,9 +166,10 @@ describe('auth', () => {
         enqueue: vi.fn(),
       }),
       h.getHostOverview(makeRequest(), context),
+      h.getHostStats(makeRequest(), context),
     ]);
 
-    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403, 403]);
+    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403, 403, 403]);
     expect(store.queryDocs).not.toHaveBeenCalled();
     expect(store.readDoc).not.toHaveBeenCalled();
     expect(store.upsertDoc).not.toHaveBeenCalled();
@@ -977,5 +983,100 @@ describe('getHostOverview (#1115)', () => {
     expect(failed.status).toBe(500);
     expect(JSON.parse(failed.body)).toEqual({ error: 'Failed to read the host overview' });
     expect(context.error).toHaveBeenCalledWith('getPodcastHostOverview failed: 503');
+  });
+});
+
+describe('getHostStats (#1115)', () => {
+  const statsRequest = (query = '') => ({
+    params: {},
+    query: new URLSearchParams(query),
+    json: async () => {
+      throw new SyntaxError('no body');
+    },
+  });
+
+  it('refuses a range it does not offer with 400 before any read, and defaults to 30d', async () => {
+    const store = makeStore();
+    const client = makeHostClient();
+    const h = handlers(store, allowGuard, { hostClient: () => client });
+    const bad = await h.getHostStats(statsRequest('range=7d'), context);
+    expect(bad.status).toBe(400);
+    expect(JSON.parse(bad.body)).toEqual({ error: 'range must be one of 30d, 90d, 12m' });
+    expect(client.getDownloadStats).not.toHaveBeenCalled();
+    expect(store.readDoc).not.toHaveBeenCalled();
+
+    const body = JSON.parse((await h.getHostStats(statsRequest(), context)).body);
+    expect(body.range).toBe('30d');
+    expect(store.readDoc).toHaveBeenCalledWith('admin_config', 'podbean_host_stats_30d', 'admin_config');
+  });
+
+  it('answers { configured: false, range, reason } without a call when Podbean is not set up', async () => {
+    const client = makeHostClient();
+    const h = handlers(makeStore(), allowGuard, {
+      hostConfigured: () => NOT_CONFIGURED,
+      hostClient: () => client,
+    });
+    const res = await h.getHostStats(statsRequest('range=12m'), context);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      success: true,
+      configured: false,
+      range: '12m',
+      reason: NOT_CONFIGURED.reason,
+    });
+    expect(client.getDownloadStats).not.toHaveBeenCalled();
+  });
+
+  it('reads the six statistics live on ?refresh=1, caches them per range, and logs codes only', async () => {
+    const store = makeStore();
+    const client = makeHostClient({
+      getDownloadStats: vi.fn(async () => ({ '2026-09-07': 4, '2026-09-08': 1 })),
+      getCountryStats: vi.fn(async () => {
+        throw new Error('countries down');
+      }),
+    });
+    const h = handlers(store, allowGuard, { hostClient: () => client });
+    const res = await h.getHostStats(statsRequest('range=90d&refresh=1'), context);
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body).toMatchObject({
+      success: true,
+      configured: true,
+      cached: false,
+      range: '90d',
+      window: { period: 'd', end: '2026-09-08' },
+      downloads: { total: 5 },
+      countries: null,
+      platforms: { iOS: 2 },
+      sources: { Spotify: 1 },
+      audience: { followers: 1, totalEpisodeLengthSeconds: 60 },
+    });
+    expect(body.errors.countries.code).toBe('UNEXPECTED');
+    expect(store.readDoc).toHaveBeenCalledTimes(2); // the refresh floor check, then the cache write's own pre-read
+    expect(store.upsertDoc).toHaveBeenCalledWith(
+      'admin_config',
+      expect.objectContaining({ id: 'podbean_host_stats_90d', configScope: 'admin_config', range: '90d' })
+    );
+    expect(context.log).toHaveBeenCalledWith('getPodcastHostStats: 90d live, countries errors');
+  });
+
+  it('a store failure is a content-free 500', async () => {
+    const broken = makeStore({
+      readDoc: vi.fn(async () => null),
+      upsertDoc: vi.fn(async () => {
+        throw Object.assign(new Error('upsert refused'), { code: 503 });
+      }),
+    });
+    // The cache write failing is NOT a 500: it is logged and the live answer served.
+    const h = handlers(broken, allowGuard, { hostClient: () => makeHostClient() });
+    expect((await h.getHostStats(statsRequest(), context)).status).toBe(200);
+
+    const hostClient = () => {
+      throw Object.assign(new Error('no client'), { code: 'CLIENT_BUILD' });
+    };
+    const failed = await handlers(makeStore(), allowGuard, { hostClient }).getHostStats(statsRequest(), context);
+    expect(failed.status).toBe(500);
+    expect(JSON.parse(failed.body)).toEqual({ error: 'Failed to read the host statistics' });
+    expect(context.error).toHaveBeenCalledWith('getPodcastHostStats failed: CLIENT_BUILD');
   });
 });

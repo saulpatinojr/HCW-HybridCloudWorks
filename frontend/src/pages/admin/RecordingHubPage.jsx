@@ -12,7 +12,10 @@
  *                 add audio — with "Script this" on each
  *   Transcripts   what the pipeline produced, with review and approval
  *   Episodes      what is live on the show, read from the public feed
- *   Distribution  what this hub sent to Podbean and how it went, failures first
+ *   Distribution  what this hub sent to Podbean and how it went, failures first,
+ *                 and what Podbean says about each episode now (#1115)
+ *   Stats         the show's downloads, countries, platforms, sources,
+ *                 retention and audience, read from Podbean (#1115)
  *   Settings      the Plaud connection, the refresh timer's record, and links
  *                 to the settings this hub reads but does not own
  *
@@ -41,6 +44,7 @@ import RecordingsTab from '@/components/admin/recording-hub/RecordingsTab';
 import TranscriptsTab from '@/components/admin/recording-hub/TranscriptsTab';
 import EpisodesTab from '@/components/admin/recording-hub/EpisodesTab';
 import DistributionTab from '@/components/admin/recording-hub/DistributionTab';
+import StatsTab from '@/components/admin/recording-hub/StatsTab';
 import SettingsTab from '@/components/admin/recording-hub/SettingsTab';
 import useRecordingHub, { CONNECTION } from '@/components/admin/recording-hub/useRecordingHub';
 import { TABS, resolveTab } from '@/components/admin/recording-hub/tabs';
@@ -54,6 +58,7 @@ const PANELS = {
   transcripts: TranscriptsTab,
   episodes: EpisodesTab,
   distribution: DistributionTab,
+  stats: StatsTab,
   settings: SettingsTab,
 };
 
@@ -73,7 +78,8 @@ const HELP = [
   'Recordings: the live Plaud library (once Plaud is connected on Settings), what this site stores, and two ways to add audio by hand. Script this queues a podcast script; Create Content drafts an article from the transcript and opens it in the Editor.',
   'Transcripts: what the pipeline produced. Approve one and it is published to Podbean.',
   'Episodes: what is live on the show, read from the public feed.',
-  'Distribution: every send to Podbean and how it went, failures first, each with Retry.',
+  'Distribution: every send to Podbean and how it went, failures first, each with Retry — and what Podbean says now about each published episode, with thirty days of downloads.',
+  'Stats: the show’s downloads by day or month, where listeners are, what they listen on and through, retention and audience counts, read from Podbean over 30 days, 90 days or 12 months.',
   'Settings: the Plaud OAuth token, the refresh timer’s record, and links to the voice and licence settings this hub reads but does not own.',
 ];
 

@@ -876,7 +876,8 @@ describe('Distribution tab — the Podbean overview (#1115)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Could not read Podbean: overview failed with HTTP 502'
     );
-    expect(screen.getByRole('region', { name: 'Published to Podbean' })).toBeInTheDocument();
+    // The records come from the transcripts read, which lands on its own schedule beside the overview's.
+    expect(await screen.findByRole('region', { name: 'Published to Podbean' })).toBeInTheDocument();
     expect(screen.queryByText(/downloads, last/)).not.toBeInTheDocument();
   });
 });

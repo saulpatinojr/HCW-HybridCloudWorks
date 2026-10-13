@@ -19,6 +19,49 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Recording Hub: a Stats tab with the show's Podbean statistics.** Closes
+  #1115 (the second of two slices; the first added the Distribution tab's
+  live status and downloads). The show's figures lived only on Podbean's
+  site; the hub now reads them through the same client (ADR 0029 §1c).
+  - **`GET cms/podcast/host/stats?range=30d|90d|12m`** (`editor`;
+    `lib/podcast/host-stats.js`): six independent Podbean reads over the
+    range's window — downloads by day (`30d`, `90d`, `period: 'd'`) or by
+    month (`12m`, `period: 'm'`, from the first of the month eleven months
+    ago), countries, platforms, sources, monthly listener retention and the
+    audience counts (`followers`, `likes`, `comments`,
+    `totalEpisodeLengthSeconds`). A failed sub-read is `null` in its place
+    with its recorded error under `errors.<name>`; the others still answer
+    and the response is 200. A range not offered is 400 before any read.
+    Cached 60 minutes per range in `admin_config/podbean_host_stats_<range>`;
+    `?refresh=1` reads live except while the range's cache is under a minute
+    old, and the document carries the client's `accountKey`, both as the
+    overview does. Not configured is 200 `{ configured: false, range, reason }`
+    with no call.
+  - **`lib/podcast/host-cache.js`**: the read-through `admin_config` cache
+    the overview and the statistics now share — served while younger than
+    the TTL; on refresh, served while younger than the floor (read from the
+    shared document, so every session and instance together make one live
+    read a minute); a miss for any other Podbean account; written create-only
+    first and etag-conditionally after; logged by error code and never a
+    dependency when it cannot be read or written. `host-reads.js` moved onto
+    it with no change in behaviour.
+  - **Stats tab** (`?tab=stats`; `statistics`, `downloads`, `analytics` and
+    `listeners` land there): a 30 days / 90 days / 12 months picker, the
+    total downloads and a bar chart with one bar per day or month (zero where
+    nothing was reported, so a quiet day is a bar and not a gap), top
+    countries (named), platforms and sources as ranked lists with share %
+    and an `Other` row past eight, retention as a small table with each
+    point as a percentage, and the audience counts as tiles. Loading,
+    not-configured, failed-read, per-section failure and "no data yet"
+    states each say so. The chart is recharts, as AI Engine → Usage uses.
+  - **Two documented-but-unmeasured shapes are taken either way**: a monthly
+    download key of `YYYY-MM` is a month and `YYYY-MM-DD` folds into its
+    month; a `retention` value at or under 1 is a fraction and above 1 a
+    percentage. Both are stated in `statsView.js` and pinned by its tests,
+    so the first live reading has a test to correct.
+  - Contract and inventory: `.azure/api-surface.json`,
+    `functions/function-inventory.json` (`getPodcastHostStats`).
+
 - **Recording Hub: Podbean's live status and downloads per published
   episode.** Part of #1115, re-scoped 2026-10-13 after Podbean's MCP server
   was measured unusable from a web app (redirect allowlist; a developer-app

@@ -33,6 +33,13 @@ describe('resolveTab', () => {
     expect(resolveTab('feed')).toBe('distribution');
   });
 
+  it('sends the statistics words to Stats (#1115)', () => {
+    expect(resolveTab('stats')).toBe('stats');
+    expect(resolveTab('statistics')).toBe('stats');
+    expect(resolveTab('downloads')).toBe('stats');
+    expect(resolveTab('analytics')).toBe('stats');
+  });
+
   it('falls back to Transcripts for an unknown id, for nothing, and for undefined', () => {
     expect(resolveTab('nope')).toBe(DEFAULT_TAB);
     expect(resolveTab('')).toBe(DEFAULT_TAB);

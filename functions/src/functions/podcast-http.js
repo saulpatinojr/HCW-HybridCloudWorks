@@ -94,6 +94,17 @@ httpRoute('getPodcastHostOverview', {
   handler: (request, context) => handlers().getHostOverview(request, context),
 });
 
+// The show's statistics for the Stats tab (#1115, lib/podcast/host-stats.js):
+// downloads by day or month, countries, platforms, sources, retention and
+// audience counts over `?range=30d|90d|12m`, cached an hour per range in
+// admin_config/podbean_host_stats_<range>; `?refresh=1` reads live.
+httpRoute('getPodcastHostStats', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'cms/podcast/host/stats',
+  handler: (request, context) => handlers().getHostStats(request, context),
+});
+
 // Registered after the literal `generate` and `review` routes so the static
 // segments win; otherwise `cms/podcast/transcripts/review` would bind
 // `id: 'review'`.
