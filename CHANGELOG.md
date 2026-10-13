@@ -3729,6 +3729,24 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Podbean MCP is retired from the AI Engine; the site reaches Podbean
+  through its API.** Seeded on 2026-10-13 (#1114) and retired the same day,
+  on two measurements against `mcp.podbean.com`:
+  - its sign-in server allowlists redirect addresses to Claude, ChatGPT,
+    Cursor and loopback apps. Registration with the site's callback was
+    refused, and a client-metadata document listing it (which Podbean does
+    read) still answered `Unregistered redirect_uri`, while a loopback
+    address in the same document was accepted;
+  - its MCP server answers `401` to a Bearer token minted by a Podbean
+    developer app, so no token the site can hold is accepted.
+
+  No web app can connect to it, this site included. `podbean-mcp` joins
+  `DEPRECATED_MCP_SERVERS` and is deleted on the next AI Engine load; its
+  credentials-register row goes with it. The developer app's credentials do
+  work against `api.podbean.com`, which is how publishing (#1117) already
+  reaches Podbean, and where any further Podbean capability for the AI
+  Engine is built (#1115, re-scoped).
+
 - **Approved podcast episodes publish to Podbean; the RSS.com integration is
   gone (ADR 0029 §1c).** Hybrid Cloud Insights moved to Podbean on
   2026-10-13, and its feed is now `https://podcast.hybridcloudworks.com/feed.xml`.
