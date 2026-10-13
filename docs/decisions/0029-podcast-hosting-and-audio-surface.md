@@ -249,7 +249,12 @@ API documentation data on 2026-10-13):
   rather than duplicated. The span runs from ten minutes before the first
   attempt to twenty minutes after the last recorded one: the job's
   10-minute timeout plus the same margin. A listing that fails or cannot be
-  read, or an unreadable attempt time, creates nothing.
+  read, or an unreadable attempt time, creates nothing. The other half of
+  #1118 is the reservation itself: the `pending` marker a schedule writes is
+  conditional on the `_etag` the transcript was read at, so an approval and
+  a retry landing in the same instant queue one job and the other answers
+  in flight, and the loser's job document is cancelled so the stale-queued
+  sweeper never runs it.
 - **The outcome** lives under `host.podbean` — `episodeId`, `permalinkUrl`,
   `mediaUrl`, `hostStatus`, `audioPath`, `fileKey`, `publishedAt`,
   `firstAttemptAt`, `lastAttemptAt`, `adoptedAt`, `error`. Podbean returns no guid, so none is recorded.

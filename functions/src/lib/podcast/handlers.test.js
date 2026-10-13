@@ -9,6 +9,10 @@
  * Slice 2 of #437 adds: approval runs the host step and reports it; a host
  * skip or failure never changes what the review wrote; the retry route
  * refuses a draft and re-runs the step for a published one.
+ *
+ * #1118: the pending marker is reserved on the etag the status write
+ * returned, and an approval racing a retry queues one job that both answers
+ * name.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createPodcastHandlers } from './handlers.js';
@@ -80,11 +84,47 @@ const transcript = (over = {}) => ({
   approvedAt: null,
   approvedBy: null,
   host: null,
+  _etag: '"etag-1"',
   ...over,
 });
 
 const handlers = (store, guard = allowGuard, { hostConfigured = () => CONFIGURED } = {}) =>
   createPodcastHandlers({ guard, store, now: () => NOW, uuid: () => 'job-1', hostConfigured });
+
+/**
+ * A store holding one transcript whose `_etag` moves on every write, as
+ * Cosmos's does, and a jobs container: a transcript patch carrying `ifMatch`
+ * lands only on the etag it names, any other is the SDK's 412 (#1118).
+ */
+const versionedStore = (transcript) => {
+  const state = { transcript: { ...transcript }, jobs: new Map(), version: 1 };
+  const store = makeStore({
+    readDoc: vi.fn(async (container, id) => {
+      if (container === JOBS_CONTAINER) return state.jobs.get(id) || null;
+      return container === TRANSCRIPT_CONTAINER && id === state.transcript.id
+        ? { ...state.transcript }
+        : null;
+    }),
+    upsertDoc: vi.fn(async (container, d) => {
+      if (container === JOBS_CONTAINER) state.jobs.set(d.id, { ...d });
+      return d;
+    }),
+    patchDoc: vi.fn(async (container, id, updates, options = {}) => {
+      if (container === JOBS_CONTAINER) {
+        const job = { ...state.jobs.get(id), ...updates };
+        state.jobs.set(id, job);
+        return job;
+      }
+      if (options.ifMatch !== undefined && options.ifMatch !== state.transcript._etag) {
+        throw Object.assign(new Error('precondition failed'), { code: 412 });
+      }
+      state.version += 1;
+      Object.assign(state.transcript, updates, { _etag: `"etag-${state.version}"` });
+      return { ...state.transcript };
+    }),
+  });
+  return { store, state };
+};
 
 describe('auth', () => {
   it('every handler passes a guard denial through with zero store reads', async () => {
@@ -388,6 +428,72 @@ describe('reviewTranscript', () => {
     expect(patches[1]).toEqual({
       host: { podbean: { pending: true, jobId: 'job-1', queuedAt: NOW.toISOString() } },
     });
+  });
+
+  it('reserves the pending marker on the etag the status write returned, not the one read before the approval (#1118)', async () => {
+    // The status write replaces the version the handler read; a reservation
+    // conditional on the pre-approval etag would lose to the approval itself.
+    const store = storeWith(transcript(), {
+      patchDoc: vi.fn(async (_c, id, updates) =>
+        updates.status ? { id, ...updates, _etag: '"etag-2"' } : { id, ...updates }
+      ),
+    });
+    const res = await review({ id: 'article_x', status: 'published' }, store);
+    expect(res.status).toBe(202);
+    expect(store.patchDoc).toHaveBeenCalledWith(
+      TRANSCRIPT_CONTAINER,
+      'article_x',
+      { host: { podbean: { pending: true, jobId: 'job-1', queuedAt: NOW.toISOString() } } },
+      { partitionKey: 'article_x', ifMatch: '"etag-2"' }
+    );
+  });
+
+  it('an approval and a retry landing in the same instant queue one job and agree on it (#1118)', async () => {
+    // An already-approved transcript, so both doors are open: approving
+    // again re-runs the host step, and so does Publish.
+    const { store, state } = versionedStore(transcript({ status: STATUS.published }));
+    let n = 0;
+    const h = createPodcastHandlers({
+      guard: allowGuard,
+      store,
+      now: () => NOW,
+      uuid: () => `job-${(n += 1)}`,
+      hostConfigured: () => CONFIGURED,
+    });
+    const enqueue = vi.fn();
+
+    const [approval, retry] = await Promise.all([
+      h.reviewTranscript(makeRequest({ body: { id: 'article_x', status: 'published' } }), context, {
+        enqueue,
+      }),
+      h.publishTranscript(makeRequest({ params: { id: 'article_x' } }), context, { enqueue }),
+    ]);
+
+    // Review answers 202 whether it queued or found the retry's job in
+    // flight; the retry answers 202 when it won and 409 when it lost. Either
+    // way there is one message, one marker, and both name the same job.
+    expect(approval.status).toBe(202);
+    expect([202, 409]).toContain(retry.status);
+    const approvalBody = JSON.parse(approval.body);
+    const retryBody = JSON.parse(retry.body);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    const [{ jobId }] = enqueue.mock.calls[0];
+    expect(approvalBody.jobId).toBe(jobId);
+    expect(retryBody.jobId).toBe(jobId);
+    expect(state.transcript.host.podbean).toEqual({
+      pending: true,
+      jobId,
+      queuedAt: NOW.toISOString(),
+    });
+    expect(state.transcript).toMatchObject({ status: 'published', approvedBy: 'oid-1' });
+    // The winner's job waits for its message; a loser's can never be swept
+    // back into the queue.
+    const statuses = [...state.jobs.values()].map((job) => job.status).sort();
+    expect(statuses).toEqual(statuses.length === 2 ? ['cancelled', 'queued'] : ['queued']);
+    expect(state.jobs.get(jobId).status).toBe('queued');
+    if (retry.status === 409) {
+      expect(retryBody.error).toMatch(new RegExp(`already being published \\(job ${jobId}\\)`));
+    }
   });
 
   it('records not_configured as a skip on the document — status stays published — and answers 200', async () => {

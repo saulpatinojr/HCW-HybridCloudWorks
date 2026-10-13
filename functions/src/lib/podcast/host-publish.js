@@ -74,8 +74,13 @@
  * inside one function invocation, not a lost response.
  *
  * Two runs at once on one document are not this file's concern: the job
- * scheduler refuses a second publish while one is queued or in flight
- * (publish-transcript.js), so creates on one document are serial.
+ * scheduler refuses a second publish while one is queued or in flight, and
+ * since #1118's second half its pending marker is an etag-conditional
+ * reservation (publish-transcript.js, "One reservation per document"), so
+ * two schedules landing in the same instant queue one job and creates on
+ * one document are serial. The listing above answers a create whose reply
+ * was lost; it could not tell two live creates apart, which is why the
+ * reservation has to be the thing that is atomic.
  *
  * ## What Podbean is told
  *
