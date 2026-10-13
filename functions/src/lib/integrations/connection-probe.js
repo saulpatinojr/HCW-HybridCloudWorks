@@ -2,7 +2,7 @@
  * connection-probe.js — "does this credential work?" for the services a
  * browser cannot ask (#483).
  *
- * Telegram, RSS.com, YouTube and Resend hold credentials that are only ever
+ * Telegram, Podbean, YouTube and Resend hold credentials that are only ever
  * read on the server, so the Integrations page had no beaker for them: testing from the
  * browser would mean sending a Key Vault secret to a browser, which that page
  * will not do. #481 made their globes point at the page where each credential
@@ -26,13 +26,14 @@
  * any validator can give: not "the path was checked", but "the caller never
  * supplied one".
  *
- * ## Two of these put the credential in the URL
+ * ## Three of these put a credential in the URL
  *
- * Telegram authenticates in the PATH (`/bot<token>/getMe`) and YouTube in the
- * QUERY (`?key=<key>`). Only RSS.com uses a header. That makes the usual habit
- * of quoting a failed URL back into an error message a credential leak, and it
- * is the kind that ends up in a screenshot on the Integrations page or in
- * Application Insights forever.
+ * Telegram authenticates in the PATH (`/bot<token>/getMe`), YouTube in the
+ * QUERY (`?key=<key>`), and Podbean in the query too (`?access_token=…`, a
+ * token minted from the client credentials for this one call). That makes the
+ * usual habit of quoting a failed URL back into an error message a credential
+ * leak, and it is the kind that ends up in a screenshot on the Integrations
+ * page or in Application Insights forever.
  *
  * So: the built URL is never returned and never logged, and the upstream's
  * response is passed through `redactSecrets` BEFORE it is parsed — one choke
@@ -49,10 +50,11 @@
  * Only Telegram. It answers 401 for a bad token, its `getMe` call takes no
  * other credential, and so a rejection blames exactly one setting.
  *
- * RSS.com, YouTube and Resend stay silent, and that is a decision rather than
+ * Podbean, YouTube and Resend stay silent, and that is a decision rather than
  * an omission. #358 cost two days because a verdict was split across two settings
  * on Publer's DOCUMENTED semantics, which turned out to be the reverse of its
- * measured ones. RSS.com's 401/403 split has not been measured here. YouTube is
+ * measured ones. Podbean's refusals have not been measured here, and its token
+ * exchange takes two settings, so a refusal could blame either. YouTube is
  * worse: the Data API answers 403 for a disabled API, for an exceeded quota and
  * for a referrer-restricted key, and only some of those mean "the key is
  * wrong". A light that goes red on a quota day would send the owner to remint a
@@ -164,15 +166,96 @@ export function assertUrlSafe(value) {
  * `settings` is every app setting the probe needs, in the order the operator
  * should read them. The first is the one a rejection blames when
  * `reportsKeyVerdict` is on.
+ *
+ * `authenticate` is optional and narrow, and exists for a service whose
+ * stored credentials are not what its read call takes: an OAuth 2 client
+ * whose client id and secret must first be exchanged for an access token
+ * (Podbean). It runs before the GET and receives the resolved credentials and
+ * `exchange`, a function that performs AT MOST ONE request, always a POST,
+ * under the probe's deadline. That request is the token exchange: a POST to
+ * the provider's OAuth token endpoint with the client credentials, which
+ * mints a short-lived token and creates nothing the service shows. It answers
+ * `{ ok, status, data }`, parsed from text already redacted of the stored
+ * credentials. `authenticate` returns `{ query, headers }` for the GET — the
+ * handler adds both to what `buildRequest` built and redacts their values
+ * from everything after — or throws `ProbeAuthenticationError` when the
+ * exchange was refused. A second `exchange` call throws instead of sending,
+ * so "one token exchange, then the GET" is enforced, not only described.
  */
-export function createProbe({ name, service, settings, buildRequest, reportsKeyVerdict = false }) {
+export function createProbe({
+  name,
+  service,
+  settings,
+  buildRequest,
+  authenticate = null,
+  reportsKeyVerdict = false,
+}) {
   return Object.freeze({
     name,
     service,
     settings,
     buildRequest,
+    authenticate,
     reportsKeyVerdict,
   });
+}
+
+/**
+ * A token exchange that was refused, or answered without a token. `status`
+ * is the token endpoint's HTTP status (or null), and `detail` its own
+ * sentence, built from text that was redacted before it was parsed.
+ */
+export class ProbeAuthenticationError extends Error {
+  constructor(message, { status = null, detail = '' } = {}) {
+    super(message);
+    this.name = 'ProbeAuthenticationError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/** Podbean's OAuth token endpoint — the one URL `podbean.authenticate` posts to. */
+export const PODBEAN_TOKEN_URL = 'https://api.podbean.com/v1/oauth/token';
+
+/**
+ * The `exchange` an `authenticate` step is handed: one POST, then nothing.
+ *
+ * The method is fixed here rather than chosen by the probe, the URL must be
+ * https, and a second call throws before anything is sent — so a probe with
+ * an `authenticate` step makes exactly one token exchange and then its GET.
+ * The answer is redacted of `secrets` (the stored credentials, plus any
+ * `secrets` the step passes, such as the Basic header that encodes them)
+ * BEFORE it is parsed, for the reason the GET's body is below. `secrets` is
+ * the handler's own list, so what the step adds stays redacted afterwards.
+ *
+ * @param {object} deps
+ * @param {typeof fetch} deps.fetch
+ * @param {string[]} deps.secrets mutated: extra secrets are appended to it
+ * @returns {(url: string, init?: { headers?: object, body?: string, secrets?: string[] }) =>
+ *   Promise<{ ok: boolean, status: number, data: unknown }>}
+ */
+export function createTokenExchange({ fetch: fetchImpl, secrets }) {
+  let exchanged = false;
+  return async function exchange(url, { headers, body, secrets: extra = [] } = {}) {
+    if (exchanged) throw new Error('a probe makes at most one token exchange');
+    exchanged = true;
+    if (!/^https:\/\//.test(String(url))) throw new Error('a token exchange must be https');
+    for (const value of extra) secrets.push(value);
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      headers,
+      body,
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    const safe = redactSecrets(await response.text(), secrets);
+    let data = null;
+    try {
+      data = safe ? JSON.parse(safe) : null;
+    } catch {
+      data = { raw: safe.slice(0, 2000) };
+    }
+    return { ok: response.ok, status: response.status, data };
+  };
 }
 
 /**
@@ -209,22 +292,60 @@ export const PROBES = Object.freeze({
   }),
 
   /**
-   * `GET /v4/podcasts` — every show the key can see. The same call
-   * `lib/podcast/rsscom.js` uses, and gated on the key alone for the reason
-   * that client gives: this is how `RSSCOM_PODCAST_ID` is discovered, so it
-   * must work before the id is seeded. Requiring the id here would make the
-   * button useless at exactly the moment it is most wanted.
+   * `GET /v1/podcast` — the show the app's token is for (ADR 0029 §1c). The
+   * cheapest read Podbean has, and the same one `lib/podcast/podbean.js`
+   * exposes as `getPodcast`.
+   *
+   * Podbean's read calls take an access token, not the client id and secret
+   * that are stored, so this is the one probe with an `authenticate` step:
+   * `POST /v1/oauth/token` with the client credentials as HTTP Basic auth
+   * and `grant_type=client_credentials` (Podbean's documented exchange),
+   * which mints a token and creates nothing on the show. The token then
+   * travels as the `access_token` query parameter, as Podbean's own examples
+   * send it — so it is added to the redaction list the moment it exists, and
+   * the URL that carries it is never returned or logged.
+   *
+   * No key verdict: a refused exchange could be the id or the secret, and
+   * Podbean's refusals have not been measured here.
    */
-  rsscom: createProbe({
-    name: 'rsscom',
-    service: 'RSS.com',
-    settings: ['RSSCOM_API_KEY'],
-    buildRequest: ({ values }) => ({
-      url: 'https://api.rss.com/v4/podcasts',
-      headers: {
-        'X-Api-Key': values.RSSCOM_API_KEY,
-        Accept: 'application/json',
-      },
+  podbean: createProbe({
+    name: 'podbean',
+    service: 'Podbean',
+    settings: ['PODBEAN_CLIENT_ID', 'PODBEAN_CLIENT_SECRET'],
+    authenticate: async ({ values, exchange }) => {
+      const basic = Buffer.from(
+        `${values.PODBEAN_CLIENT_ID}:${values.PODBEAN_CLIENT_SECRET}`,
+        'utf8'
+      ).toString('base64');
+      const { ok, status, data } = await exchange(PODBEAN_TOKEN_URL, {
+        headers: {
+          Authorization: `Basic ${basic}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        body: 'grant_type=client_credentials',
+        // The Basic header is the secret in another encoding; redact it too.
+        secrets: [basic],
+      });
+      const token = typeof data?.access_token === 'string' ? data.access_token.trim() : '';
+      if (!ok || !token) {
+        // OAuth's `{ error, error_description }`, both halves: `invalid_grant`
+        // alone does not tell an operator which box to look in.
+        const detail = [data?.error, data?.error_description]
+          .filter((part) => typeof part === 'string' && part.trim())
+          .join(': ');
+        throw new ProbeAuthenticationError(
+          ok
+            ? 'Podbean answered the token request without an access token'
+            : 'Podbean refused the client ID and secret',
+          { status, detail }
+        );
+      }
+      return { query: { access_token: token } };
+    },
+    buildRequest: () => ({
+      url: 'https://api.podbean.com/v1/podcast',
+      headers: { Accept: 'application/json' },
     }),
   }),
 
@@ -340,6 +461,43 @@ export const PROBES = Object.freeze({
 export const PROBE_NAMES = Object.freeze(Object.keys(PROBES));
 
 /**
+ * `url` with `query` set on it — or `url` itself, untouched, when there is
+ * nothing to add, so a probe without an `authenticate` step sends exactly the
+ * URL its table entry built.
+ */
+function withQuery(url, query) {
+  const entries = Object.entries(query);
+  if (!entries.length) return url;
+  const target = new URL(url);
+  for (const [key, value] of entries) target.searchParams.set(key, String(value));
+  return target.toString();
+}
+
+/**
+ * Run a probe's `authenticate` step, if it has one. Answers `{ minted }` —
+ * the query and headers the GET adds, whose values have already joined
+ * `secrets` — or `{ refused }`, the `ProbeAuthenticationError` the step
+ * threw. Anything else it throws (a transport failure, a second exchange) is
+ * the caller's to report as unreachable.
+ */
+async function authenticateProbe({ probe, values, fetchImpl, secrets }) {
+  if (typeof probe.authenticate !== 'function') return { minted: { query: {}, headers: {} } };
+  const exchange = createTokenExchange({ fetch: fetchImpl, secrets });
+  let result;
+  try {
+    result = await probe.authenticate({ values, exchange });
+  } catch (error) {
+    if (error instanceof ProbeAuthenticationError) return { refused: error };
+    throw error;
+  }
+  const minted = { query: { ...result?.query }, headers: { ...result?.headers } };
+  for (const value of [...Object.values(minted.query), ...Object.values(minted.headers)]) {
+    secrets.push(String(value));
+  }
+  return { minted };
+}
+
+/**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
  * @param {Record<string,string|undefined>} [deps.env]
@@ -414,20 +572,10 @@ export function createConnectionProbe({
       });
     }
 
-    let response;
-    let text;
-    try {
-      const { url, headers } = request_;
-      response = await fetchImpl(url, {
-        method: 'GET',
-        headers,
-        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-      });
-      text = await response.text();
-    } catch (error) {
+    const unreachable = (error) => {
       // The URL is deliberately absent from this message, and redaction runs
       // over what is left. An undici failure quotes its request target in
-      // `cause`, and for two of these three probes that target contains the
+      // `cause`, and for three of these probes that target contains a
       // credential.
       const reason = redactSecrets(error?.message ?? String(error), secrets);
       context.error?.(`${probe.name}Probe could not reach ${probe.service}: ${reason}`);
@@ -435,6 +583,44 @@ export function createConnectionProbe({
         ok: false,
         error: `${probe.service} could not be reached: ${reason}`.slice(0, MAX_ERROR_LENGTH),
       });
+    };
+
+    // The token exchange, for the one kind of probe that needs it (see
+    // `createProbe`). What it mints joins the request built above, and its
+    // values join the redaction list before anything else is sent or said.
+    let step;
+    try {
+      step = await authenticateProbe({ probe, values, fetchImpl, secrets });
+    } catch (error) {
+      return unreachable(error);
+    }
+    if (step.refused) {
+      // A refused exchange is a credential state, not a fault: 200 with
+      // ok:false, like a refused GET, so the page renders "not connected"
+      // with the provider's own sentence. No `data`: nothing past this point
+      // needs the token endpoint's body.
+      const { refused } = step;
+      const detail = redactSecrets(refused.detail || '', secrets);
+      context.warn?.(`${probe.name}Probe: token exchange refused (${refused.status ?? 'no status'})`);
+      return json(200, {
+        ok: false,
+        ...(refused.status ? { status: refused.status } : {}),
+        error: `${refused.message}${detail ? `: ${detail}` : ''}.`.slice(0, MAX_ERROR_LENGTH),
+      });
+    }
+    const { minted } = step;
+
+    let response;
+    let text;
+    try {
+      response = await fetchImpl(withQuery(request_.url, minted.query), {
+        method: 'GET',
+        headers: { ...request_.headers, ...minted.headers },
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
+      text = await response.text();
+    } catch (error) {
+      return unreachable(error);
     }
 
     // REDACTED BEFORE IT IS PARSED, which is the whole reason this is one

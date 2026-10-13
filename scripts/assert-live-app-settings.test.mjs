@@ -25,11 +25,14 @@ describe('declaredKeyVaultSettings, against the real infra/', () => {
 
   it('includes the credentials the 2026-09-09 race lost', () => {
     // Five of the six. PUBLIC_API_ORIGIN is a plain setting and deliberately
-    // out of scope — see the module header.
+    // out of scope — see the module header. Two of the five were the podcast
+    // host's pair, retired with that host on 2026-10-13 (ADR 0029 §1c); the
+    // Podbean pair that replaced them is the same kind of setting and stands
+    // in for them here.
     for (const name of [
       'ELEVENLABS_API_KEY',
-      'RSSCOM_API_KEY',
-      'RSSCOM_PODCAST_ID',
+      'PODBEAN_CLIENT_ID',
+      'PODBEAN_CLIENT_SECRET',
       'PLAUD_EMBEDDED_CLIENT_ID',
       'PLAUD_EMBEDDED_API_KEY',
     ]) {

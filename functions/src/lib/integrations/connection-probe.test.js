@@ -10,10 +10,12 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
+  PODBEAN_TOKEN_URL,
   PROBES,
   PROBE_NAMES,
   assertUrlSafe,
   createConnectionProbe,
+  createTokenExchange,
   redactSecrets,
 } from './connection-probe.js';
 
@@ -26,15 +28,17 @@ import {
 // so its percent-encoded form differs from its raw form.
 const TOKEN = 'not-a-real-telegram-token:EXAMPLE-VALUE-FOR-TESTS';
 const YT_KEY = 'not-a-real-youtube-key-EXAMPLE-VALUE-FOR-TESTS';
-const RSS_KEY = 'not-a-real-rsscom-key-EXAMPLE-VALUE-FOR-TESTS';
+const PODBEAN_ID = 'not-a-real-podbean-client-id-EXAMPLE';
+const PODBEAN_SECRET = 'not-a-real-podbean-client-secret-EXAMPLE-VALUE-FOR-TESTS';
+const PODBEAN_TOKEN = 'not-a-real-podbean-access-token-EXAMPLE-VALUE';
 const RESEND_KEY = 'not-a-real-resend-key-EXAMPLE-VALUE-FOR-TESTS';
 const QLTY_TOKEN = 'not-a-real-qlty-token-EXAMPLE-VALUE-FOR-TESTS';
 
 const ENV = {
   TELEGRAM_BOT_TOKEN: TOKEN,
   TELEGRAM_CHAT_ID: '-1001234567890',
-  RSSCOM_API_KEY: RSS_KEY,
-  RSSCOM_PODCAST_ID: '4242',
+  PODBEAN_CLIENT_ID: PODBEAN_ID,
+  PODBEAN_CLIENT_SECRET: PODBEAN_SECRET,
   YOUTUBE_API_KEY: YT_KEY,
   RESEND_API_KEY: RESEND_KEY,
   QLTY_API_TOKEN: QLTY_TOKEN,
@@ -117,7 +121,7 @@ describe('the probe table', () => {
   it('is closed, and every entry is a GET with no caller-supplied component', () => {
     expect(PROBE_NAMES).toEqual([
       'telegram',
-      'rsscom',
+      'podbean',
       'youtube',
       'resend',
       'qlty',
@@ -135,11 +139,11 @@ describe('the probe table', () => {
   });
 
   it('reports a key verdict for Telegram alone', () => {
-    // RSS.com's 401/403 split is unmeasured and YouTube answers 403 for an
+    // Podbean's refusals are unmeasured and YouTube answers 403 for an
     // exceeded quota as well as a bad key. Wiring either would turn a light
     // red for a reason that is not the key, which is #358.
     expect(PROBES.telegram.reportsKeyVerdict).toBe(true);
-    expect(PROBES.rsscom.reportsKeyVerdict).toBe(false);
+    expect(PROBES.podbean.reportsKeyVerdict).toBe(false);
     expect(PROBES.youtube.reportsKeyVerdict).toBe(false);
     // Resend refuses a sending-only key as well as a wrong one, and only the
     // wrong one means remint.
@@ -184,13 +188,18 @@ describe('the probe table', () => {
     expect(PROBES.telegram.settings).toEqual(['TELEGRAM_BOT_TOKEN']);
   });
 
-  it('asks RSS.com for the call that needs only the key', () => {
-    // `GET /v4/podcasts` is how RSSCOM_PODCAST_ID is discovered, so gating the
-    // probe on the id would make it useless before the id is seeded.
-    expect(PROBES.rsscom.settings).toEqual(['RSSCOM_API_KEY']);
-    const { url, headers } = PROBES.rsscom.buildRequest({ values: ENV });
-    expect(url).toBe('https://api.rss.com/v4/podcasts');
-    expect(headers['X-Api-Key']).toBe(RSS_KEY);
+  it('asks Podbean for the show, with no credential in the URL the table builds', () => {
+    // The token is minted by the authenticate step and added by the handler;
+    // the table's own request carries nothing.
+    expect(PROBES.podbean.settings).toEqual(['PODBEAN_CLIENT_ID', 'PODBEAN_CLIENT_SECRET']);
+    const { url, headers } = PROBES.podbean.buildRequest({ values: ENV });
+    expect(url).toBe('https://api.podbean.com/v1/podcast');
+    expect(JSON.stringify(headers)).not.toContain(PODBEAN_SECRET);
+    expect(typeof PROBES.podbean.authenticate).toBe('function');
+    // Only Podbean exchanges a token; every other probe goes straight to its GET.
+    for (const name of PROBE_NAMES.filter((n) => n !== 'podbean')) {
+      expect(PROBES[name].authenticate, name).toBeNull();
+    }
   });
 
   it('keeps the YouTube probe to one result, because search.list costs ~100 units', () => {
@@ -323,8 +332,8 @@ describe('createConnectionProbe', () => {
     );
   });
 
-  it('does not record a verdict for RSS.com, YouTube or Resend', async () => {
-    for (const probe of ['rsscom', 'youtube', 'resend']) {
+  it('does not record a verdict for Podbean, YouTube or Resend', async () => {
+    for (const probe of ['podbean', 'youtube', 'resend']) {
       const onKeyVerdict = vi.fn(async () => {});
       await build({
         onKeyVerdict,
@@ -404,10 +413,184 @@ describe('createConnectionProbe', () => {
       fetch: vi.fn(async () => {
         throw new Error('fetch failed');
       }),
-    })(req({ probe: 'rsscom' }), ctx());
+    })(req({ probe: 'podbean' }), ctx());
     const parsed = bodyOf(res);
     expect(parsed.ok).toBe(false);
     expect(parsed.status).toBeUndefined();
-    expect(parsed.error).toContain('RSS.com could not be reached');
+    expect(parsed.error).toContain('Podbean could not be reached');
+  });
+});
+
+describe('createTokenExchange', () => {
+  it('sends one POST, redacts the answer before parsing it, and refuses a second call', async () => {
+    const secrets = [PODBEAN_SECRET];
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => `{"access_token":"t0ken-value-long-enough","echo":"${PODBEAN_SECRET}"}`,
+    }));
+    const exchange = createTokenExchange({ fetch: fetchImpl, secrets });
+    const out = await exchange('https://auth.example/token', {
+      headers: { A: 'b' },
+      body: 'grant_type=client_credentials',
+      secrets: ['extra-secret-value'],
+    });
+    expect(out).toEqual({
+      ok: true,
+      status: 200,
+      data: { access_token: 't0ken-value-long-enough', echo: '***' },
+    });
+    const [, init] = fetchImpl.mock.calls[0];
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe('grant_type=client_credentials');
+    // What the step passed joins the handler's list, so it stays redacted after.
+    expect(secrets).toContain('extra-secret-value');
+
+    await expect(exchange('https://auth.example/token')).rejects.toThrow(/at most one token exchange/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a token endpoint that is not https, before sending', async () => {
+    const fetchImpl = vi.fn();
+    const exchange = createTokenExchange({ fetch: fetchImpl, secrets: [] });
+    await expect(exchange('http://auth.example/token')).rejects.toThrow(/must be https/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('the Podbean probe', () => {
+  const BASIC = Buffer.from(`${PODBEAN_ID}:${PODBEAN_SECRET}`).toString('base64');
+
+  /** Answers the token exchange, then the GET, in order. An Error is thrown instead. */
+  const sequence = (...answers) => {
+    const queue = [...answers];
+    return vi.fn(async () => {
+      const next = queue.shift();
+      if (next instanceof Error) throw next;
+      return { ok: next.status < 300, status: next.status, text: async () => next.text };
+    });
+  };
+  const tokenOk = {
+    status: 200,
+    text: `{"access_token":"${PODBEAN_TOKEN}","token_type":"Bearer","expires_in":604800}`,
+  };
+
+  const run = (fetchImpl, env = ENV, context = ctx()) =>
+    createConnectionProbe({ guard: allow, env, readKey, fetch: fetchImpl })(
+      req({ probe: 'podbean' }),
+      context
+    );
+
+  it('exchanges the client credentials for a token, then GETs the show with it', async () => {
+    const fetchImpl = sequence(tokenOk, {
+      status: 200,
+      text: '{"podcast":{"id":"p1","title":"Hybrid Cloud Insights"}}',
+    });
+    const res = await run(fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const [[tokenUrl, tokenInit], [getUrl, getInit]] = fetchImpl.mock.calls;
+    expect(tokenUrl).toBe(PODBEAN_TOKEN_URL);
+    expect(tokenInit.method).toBe('POST');
+    expect(tokenInit.headers.Authorization).toBe(`Basic ${BASIC}`);
+    expect(tokenInit.body).toBe('grant_type=client_credentials');
+    const parsed = new URL(getUrl);
+    expect(`${parsed.origin}${parsed.pathname}`).toBe('https://api.podbean.com/v1/podcast');
+    expect(parsed.searchParams.get('access_token')).toBe(PODBEAN_TOKEN);
+    expect(getInit.method).toBe('GET');
+
+    expect(bodyOf(res)).toEqual({
+      ok: true,
+      status: 200,
+      data: { podcast: { id: 'p1', title: 'Hybrid Cloud Insights' } },
+    });
+    // Neither the token nor the secret nor a URL carrying them reaches the browser.
+    for (const secret of [PODBEAN_TOKEN, PODBEAN_SECRET, BASIC]) {
+      expect(res.body).not.toContain(secret);
+    }
+    expect(res.body).not.toContain('access_token');
+  });
+
+  it('a refused exchange is a clear not-connected answer, and the GET is never sent', async () => {
+    const fetchImpl = sequence({
+      status: 400,
+      text: '{"error":"invalid_grant","error_description":"The grant type is unauthorized for this client_id"}',
+    });
+    const res = await run(fetchImpl);
+    expect(res.status).toBe(200);
+    expect(bodyOf(res)).toEqual({
+      ok: false,
+      status: 400,
+      error:
+        'Podbean refused the client ID and secret: invalid_grant: The grant type is unauthorized for this client_id.',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('an exchange answered without a token says so, and sends no GET', async () => {
+    const fetchImpl = sequence({ status: 200, text: '{"token_type":"Bearer"}' });
+    const res = await run(fetchImpl);
+    expect(bodyOf(res)).toMatchObject({
+      ok: false,
+      error: 'Podbean answered the token request without an access token.',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the missing setting before any call', async () => {
+    const fetchImpl = vi.fn();
+    const res = await run(fetchImpl, { ...ENV, PODBEAN_CLIENT_SECRET: '' });
+    expect(bodyOf(res)).toEqual({
+      ok: false,
+      error: 'Podbean is not configured: PODBEAN_CLIENT_SECRET is not set',
+      code: 'INTEGRATION_NOT_CONFIGURED',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('never returns or logs the token, the secret or the Basic header, on any failure path', async () => {
+    const cases = [
+      // The token endpoint echoing the credentials it was sent.
+      sequence({
+        status: 401,
+        text: `{"error":"invalid_client","error_description":"Basic ${BASIC} for ${PODBEAN_SECRET}"}`,
+      }),
+      // The GET echoing its request line, token and all.
+      sequence(tokenOk, {
+        status: 400,
+        text: `{"error":"invalid_token","error_description":"GET /v1/podcast?access_token=${PODBEAN_TOKEN}"}`,
+      }),
+      // A non-JSON GET body, parked in `raw`.
+      sequence(tokenOk, { status: 502, text: `<html>${PODBEAN_TOKEN}</html>` }),
+      // A transport error on the GET quoting its target.
+      sequence(
+        tokenOk,
+        new Error(`request to https://api.podbean.com/v1/podcast?access_token=${PODBEAN_TOKEN} failed`)
+      ),
+      // A transport error on the exchange.
+      sequence(new Error(`connect ECONNREFUSED with ${PODBEAN_SECRET}`)),
+    ];
+    for (const fetchImpl of cases) {
+      const context = ctx();
+      const res = await run(fetchImpl, ENV, context);
+      const logged = [...context.error.mock.calls, ...context.warn.mock.calls].flat().join(' ');
+      for (const secret of [PODBEAN_TOKEN, PODBEAN_SECRET, BASIC]) {
+        expect(res.body).not.toContain(secret);
+        expect(logged).not.toContain(secret);
+      }
+      expect(bodyOf(res).ok).toBe(false);
+    }
+  });
+
+  it('never reports a key verdict, even for a refused exchange', async () => {
+    const onKeyVerdict = vi.fn(async () => {});
+    await createConnectionProbe({
+      guard: allow,
+      env: ENV,
+      readKey,
+      onKeyVerdict,
+      fetch: sequence({ status: 401, text: '{"error":"invalid_client"}' }),
+    })(req({ probe: 'podbean' }), ctx());
+    expect(onKeyVerdict).not.toHaveBeenCalled();
   });
 });

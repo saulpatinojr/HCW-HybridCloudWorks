@@ -185,7 +185,7 @@ export const SECRET_CATALOG = Object.freeze([
     secret: "ELEVENLABS-API-KEY",
     section: "ai-services",
     label: "ElevenLabs",
-    // The podcast voice ONLY — article and Plaud transcripts to RSS.com
+    // The podcast voice ONLY — article and Plaud transcripts to Podbean
     // (ADR 0029 §2a, scoped by §2b); never Listen & Learn, which is Gemini
     // TTS. A re-minted key needs an app restart to take effect. On the free
     // plan from 2026-09-26 (§2a amended); the permissions are the three the
@@ -295,22 +295,24 @@ export const SECRET_CATALOG = Object.freeze([
   },
 
   // ── Content ──────────────────────────────────────────────────────
+  // Podbean's developer app (ADR 0029 §1c): a client-credentials pair the
+  // publisher exchanges for a token. No `probe` here, for the reason the
+  // test gives — the Integrations page's own beaker (connectionProbe
+  // `podbean`) is the check for these two.
   {
-    setting: "RSSCOM_API_KEY",
-    secret: "RSSCOM-API-KEY",
+    setting: "PODBEAN_CLIENT_ID",
+    secret: "PODBEAN-CLIENT-ID",
     section: "content",
-    label: "RSS.com \u2014 API key",
-    help:
-      "API key. Publishes an approved episode to the podcast. Without it, episodes have to be " +
-      "uploaded to RSS.com by hand.",
+    label: "Podbean \u2014 client ID",
+    help: "Identifier from your Podbean developer app (developers.podbean.com). Paired with the client secret.",
     probe: null,
   },
   {
-    setting: "RSSCOM_PODCAST_ID",
-    secret: "RSSCOM-PODCAST-ID",
+    setting: "PODBEAN_CLIENT_SECRET",
+    secret: "PODBEAN-CLIENT-SECRET",
     section: "content",
-    label: "RSS.com \u2014 podcast id",
-    help: "Identifier, not a secret. Which show episodes are published to.",
+    label: "Podbean \u2014 client secret",
+    help: "Publishes an approved episode to the podcast. Without it, episodes are published by hand in Podbean.",
     probe: null,
   },
   {

@@ -102,8 +102,9 @@ describe('secret catalogue ↔ Terraform', () => {
     // legal probes; adding one here without a reporter is the lie this guards.
     //
     // `telegram` earned its place by being unambiguous: getMe takes the token
-    // and nothing else, so a 401 has exactly one thing to blame. RSS.com and
-    // YouTube gained the same beaker in #483 and deliberately NOT a probe —
+    // and nothing else, so a 401 has exactly one thing to blame. Podbean and
+    // YouTube have the same beaker and deliberately NOT a probe — Podbean's
+    // token exchange takes two settings, so a refusal could blame either, and
     // YouTube answers 403 for an exceeded quota as well as a bad key, and a
     // light that reddens on a quota day is #358 repeated.
     //
