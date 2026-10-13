@@ -388,12 +388,35 @@ describe('readHostOverview (the cache)', () => {
     expect(log.mock.calls.flat().join(' ')).not.toMatch(/Cached show|E1/);
   });
 
-  it('writes with an upsert when nothing is cached yet', async () => {
+  it('creates, not upserts, when nothing is cached yet, so two first writers cannot overwrite each other', async () => {
     const client = makeClient();
-    const store = makeStore({ replaceDocIfMatch: vi.fn() });
+    const store = makeStore({ replaceDocIfMatch: vi.fn(), createDoc: vi.fn(async (_c, doc) => doc) });
+    await readHostOverview({ client, store, now });
+    expect(store.createDoc).toHaveBeenCalledTimes(1);
+    expect(store.createDoc.mock.calls[0][1]).toMatchObject({ id: HOST_OVERVIEW_CONFIG_ID, fetchedAt: NOW.toISOString() });
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+  });
+
+  it('a 409 on the create means another first writer landed; that one stands, and the live read is still served', async () => {
+    const client = makeClient();
+    const log = vi.fn();
+    const store = makeStore({
+      createDoc: vi.fn(async () => {
+        throw Object.assign(new Error('conflict'), { code: 409 });
+      }),
+    });
+    const out = await readHostOverview({ client, store, now, log });
+    expect(out.cached).toBe(false);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('cache write failed (CONFLICT)'));
+  });
+
+  it('a store without createDoc or replaceDocIfMatch falls back to an upsert', async () => {
+    const client = makeClient();
+    const store = makeStore();
     await readHostOverview({ client, store, now });
     expect(store.upsertDoc).toHaveBeenCalledTimes(1);
-    expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
   });
 
   it('a cached overview for a different window, or a malformed one, is not served', async () => {

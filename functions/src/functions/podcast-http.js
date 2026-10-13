@@ -23,7 +23,7 @@
 import { output } from '@azure/functions';
 import { httpRoute } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
-import { queryDocs, readDoc, upsertDoc, patchDoc, replaceDocIfMatch } from '../lib/cosmos-client.js';
+import { queryDocs, readDoc, upsertDoc, patchDoc, replaceDocIfMatch, createDoc } from '../lib/cosmos-client.js';
 import { headBlobForDelivery, uploadBlob } from '../lib/blob-storage.js';
 import { getCostEstimate, modelForTask } from '../lib/ai/router.js';
 import { JOBS_QUEUE } from '../lib/jobs.js';
@@ -38,7 +38,7 @@ const queueOutput = output.storageQueue({
 const handlers = () =>
   createPodcastHandlers({
     guard: getDefaultGuard(),
-    store: { queryDocs, readDoc, upsertDoc, patchDoc, replaceDocIfMatch },
+    store: { queryDocs, readDoc, upsertDoc, patchDoc, replaceDocIfMatch, createDoc },
   });
 
 httpRoute('generatePodcastTranscript', {
