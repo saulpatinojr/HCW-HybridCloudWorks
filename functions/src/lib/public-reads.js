@@ -138,25 +138,64 @@ export function isSoftDeleted(doc = {}) {
 }
 
 /**
- * Media hosts that no longer serve anything (#372). PodBean's CDN answered
- * 404 for every stored episode from 2026-09-05, after the show left it; the
- * rows stayed in `podcasts` because #348 only stopped the timer from polling
- * the feed. A row whose file is gone is a player that plays nothing, so the
- * public list hides it — the rows themselves are kept until the new host's
- * feed (#349) replaces them, and a row marked `mediaUnavailableAt` by any
- * future liveness check is hidden the same way.
+ * Media hosts the show has left, each with the moment it left (#372).
+ *
+ * PodBean's CDN answered 404 for every stored episode from 2026-09-05, after
+ * the show left it; the rows stayed in `podcasts` because #348 only stopped
+ * the timer from polling the feed. A row whose file is gone is a player that
+ * plays nothing, so the public list hides it. The rows themselves are kept,
+ * and a row marked `mediaUnavailableAt` by any future liveness check is
+ * hidden the same way.
+ *
+ * A HOST AND A MOMENT, NOT A HOST ALONE. This was a bare host list until
+ * 2026-10-13, when the show moved from RSS.com back to Podbean: every current
+ * episode's file is on mcdn.podbean.com again, so the bare list hid the whole
+ * show, and the public list showed one stale RSS.com upload instead of three
+ * episodes. What separates a dead row from a live one on the same host is
+ * whether the current feed still carries it. fetchPodcastFeeds upserts every
+ * episode it reads, with a fresh `updatedAt`, every two hours. So a row on a
+ * host the show has left is hidden only when nothing has refreshed it since
+ * the show left. A row the current feed carries is refreshed within two hours
+ * and shows, whatever its host. A row on a host the show still uses is never
+ * hidden here: a stalled timer must not empty the page.
  */
-export const RETIRED_PODCAST_MEDIA_HOSTS = Object.freeze(['mcdn.podbean.com', 'feed.podbean.com']);
+export const RETIRED_PODCAST_MEDIA_HOSTS = Object.freeze([
+  // Podbean's first tenure ended 2026-09-05. The show returned on 2026-10-13,
+  // so a Podbean row last refreshed before the return is from the first one.
+  Object.freeze({ host: 'mcdn.podbean.com', leftAt: '2026-10-13T00:00:00.000Z' }),
+  Object.freeze({ host: 'feed.podbean.com', leftAt: '2026-10-13T00:00:00.000Z' }),
+  // RSS.com's feed answered 301 to Podbean from 2026-10-13 about 05:50 UTC.
+  Object.freeze({ host: 'media.rss.com', leftAt: '2026-10-13T06:00:00.000Z' }),
+  Object.freeze({ host: 'content.rss.com', leftAt: '2026-10-13T06:00:00.000Z' }),
+]);
 
+/**
+ * Whether the public podcast list (and the section counts that mirror it)
+ * should hide this episode because its file is not, or is no longer, the
+ * show's: a liveness check marked it (`mediaUnavailableAt`), or its media is
+ * on a host in RETIRED_PODCAST_MEDIA_HOSTS and nothing has refreshed it since
+ * the show left that host.
+ *
+ * @param {{ mediaUrl?: string, updatedAt?: string, mediaUnavailableAt?: string }} [doc]
+ *   A `podcasts` row, or the projection of one that carries these fields.
+ * @returns {boolean} true to hide the row; false for any row on a host the show
+ *   has not left, and for a row with no media URL or one that does not parse.
+ */
 export function isPodcastMediaRetired(doc = {}) {
   if (doc.mediaUnavailableAt) return true;
   const url = String(doc.mediaUrl || '');
   if (!url) return false;
+  let hostname;
   try {
-    return RETIRED_PODCAST_MEDIA_HOSTS.includes(new URL(url).hostname.toLowerCase());
+    hostname = new URL(url).hostname.toLowerCase();
   } catch {
     return false;
   }
+  const retired = RETIRED_PODCAST_MEDIA_HOSTS.find((entry) => entry.host === hostname);
+  if (!retired) return false;
+  // No refresh time at all means nothing has refreshed it: hide it.
+  const refreshed = Date.parse(doc.updatedAt || '');
+  return !(refreshed >= Date.parse(retired.leftAt));
 }
 
 /** Published-date resolution across the five aliases (useCoderCornerData). */

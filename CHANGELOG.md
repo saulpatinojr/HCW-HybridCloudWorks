@@ -19,6 +19,22 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Podbean's MCP server in the AI Engine (Admin → AI Engine → MCP
+  Servers).** The show moved to Podbean on 2026-10-13, and Podbean runs a
+  hosted MCP server at `https://mcp.podbean.com/mcp`. It covers the show's
+  episodes, its details and its listener statistics.
+  - **Sign-in:** read that day, the server advertises RFC 9728 and RFC 8414
+    discovery, PKCE (`S256`), `none` client authentication and a
+    `registration_endpoint`. So the existing Connect flow signs in with no key:
+    press Connect, sign in at Podbean, approve. The token is kept server-side
+    and renewed by the MCP token timer, like Hostinger's and Replicate's.
+  - **Ships switched off.** Its tools can publish, edit and permanently delete
+    episodes.
+  - **Where it is recorded:** `seed.js` seeds it (the AI Engine page adds a
+    missing default on load). The card treats it as built-in. The credentials
+    register lists its OAuth token as `mcp-podbean`. The tests pin it among the
+    Connect servers.
+
 - **`podcast.hybridcloudworks.com` for the show's Podbean website.**
   Hybrid Cloud Insights moved from RSS.com to Podbean on 2026-10-13.
   - **The feed:** it is now `https://feed.podbean.com/hybridcloudinsights/feed.xml`. RSS.com's feed and Podbean's first address (`spatino`) both answer 301 towards it, and all three episodes keep their GUIDs.
@@ -4555,6 +4571,27 @@ This project has not cut a tagged release; entries are grouped under
   unestablished.
 
 ### Fixed
+
+- **The podcast pages show the show again, now that it is back on Podbean.**
+  The public list returned one stale RSS.com upload instead of the three
+  episodes in the feed. Two causes, both from the move on 2026-10-13:
+  - **The hide rule.** `RETIRED_PODCAST_MEDIA_HOSTS` hid every episode on
+    `mcdn.podbean.com` (#372). That was right when the show left Podbean on
+    2026-09-05 and its files 404'd, and wrong once the show returned: every
+    current episode is on that host again. Each host the show has left now
+    carries the moment it left. A row there is hidden only when nothing has
+    refreshed it since. `fetchPodcastFeeds` upserts every episode in the
+    current feed every two hours, so current episodes show. Rows from
+    Podbean's first tenure, and the RSS.com upload no feed carries, stay
+    hidden. A host the show still uses is never hidden by this rule, so a
+    stalled timer cannot empty the page. The section counts project
+    `updatedAt` so the sitemap counts the same rows.
+  - **`media-src`.** Once Podbean had copied the audio, an enclosure went
+    `mcdn.podbean.com` → 302 → a numbered storage host (`s307`, `s396`,
+    `s405.podbean.com`, one per file). #1107's `mcdn.podbean.com` alone
+    failed at that hop in headless Chromium, and `https://*.podbean.com`
+    loads it. RSS.com's three hosts left the list, since no listed episode
+    is on them.
 
 - **Show episodes play on the site again, from RSS.com and from Podbean.**
   The site's `media-src` allowed RSS.com's two media hosts (#1101), but an
