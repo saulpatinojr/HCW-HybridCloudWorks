@@ -327,17 +327,17 @@ async function disconnectMcpOAuth(ctx, request, context) {
   const loaded = await loadRouteServer(ctx, request, context, 'disconnectMcpOAuth');
   if (loaded.response) return loaded.response;
   const { serverId, server } = loaded;
-  const name = server.name || serverId;
 
   // Revoke at the provider first, while the tokens are still here to send.
   // Its outcome is reported, never acted on: the delete below happens
   // either way, so a provider that is down cannot keep a token on this side.
   const revocation = await revokeOAuthGrant({ server, serverId, http: ctx.oauthHttp });
   if (revocation.revoked === false) {
-    // Fixed text only: `reason` carries provider-controlled text and belongs
-    // in the response for the card, not in the log (CodeRabbit on #1124).
+    // Fixed text only: `reason` carries provider-controlled text and the
+    // server id is a document id, and neither belongs in telemetry
+    // (CodeRabbit on #1124). The response carries both for the card.
     context.warn?.(
-      `[disconnectMcpOAuth] ${serverId}: the grant was not revoked at its provider; the token is deleted here regardless.`
+      '[disconnectMcpOAuth] the grant was not revoked at its provider; the token is deleted here regardless.'
     );
   }
 

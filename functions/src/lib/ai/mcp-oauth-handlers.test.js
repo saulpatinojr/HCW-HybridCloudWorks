@@ -567,7 +567,7 @@ describe('disconnect revokes the grant at the provider (RFC 7009, #1116)', () =>
     expect(revokeCalls(net)).toHaveLength(2);
     // Fixed text, no provider-controlled reason and no issuer in the log.
     expect(ctx.warn).toHaveBeenCalledWith(
-      '[disconnectMcpOAuth] podbean-mcp: the grant was not revoked at its provider; the token is deleted here regardless.'
+      '[disconnectMcpOAuth] the grant was not revoked at its provider; the token is deleted here regardless.'
     );
     expect(logged(ctx, h)).not.toMatch(/temporarily_unavailable/);
     expect(logged(ctx, h)).not.toMatch(/at-1|rt-1/);
