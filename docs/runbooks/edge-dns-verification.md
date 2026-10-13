@@ -91,11 +91,11 @@ reads ARM rather than asking `/api/health`.
 ### 1. DNS resolves the way the split says it should
 
 ```powershell
-'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
+'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com','podcast.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
 ```
 
 ```powershell
-'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health' | ForEach-Object { $r = Invoke-WebRequest -Uri $_ -UseBasicParsing; [pscustomobject]@{ Url = $_; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } }
+'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health','https://podcast.hybridcloudworks.com/' | ForEach-Object { $r = Invoke-WebRequest -Uri $_ -UseBasicParsing; [pscustomobject]@{ Url = $_; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } }
 ```
 
 `-UseBasicParsing` is deliberate and is not there for PowerShell 7, where it
@@ -115,8 +115,11 @@ the other one, it stays.
 `CF-RAY` header or `Server: cloudflare`. `api-azure` returns two `A` records
 inside `104.16.0.0/13` and `172.64.0.0/13` — both published Cloudflare ranges —
 plus `AAAA` records, and it answers with `Server: cloudflare` and a `CF-RAY`.
-Key on the ranges and the headers, never on a literal address: the Static Web
-App's address is Azure's to change.
+`podcast` returns a `CNAME` to `pbcdn2.podbean.com` and answers with no
+`CF-RAY`, because it is DNS-only and Podbean serves it. Until the domain is
+entered in Podbean and its certificate is issued, that HTTPS request fails: an
+unfinished setup, not an outage. Key on the ranges and the headers, never on a
+literal address: the Static Web App's address is Azure's to change.
 
 If the headers are ambiguous, confirm the certificate in a browser at
 <https://hybridcloudworks.com/>. The padlock should show `CN=hybridcloudworks.com`
