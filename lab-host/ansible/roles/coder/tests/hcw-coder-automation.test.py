@@ -28,8 +28,10 @@ workstation, bash, with Docker, from the repository root:
   MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd):/repo:ro" -w /repo python:3.14-slim bash -c "pip install -q jinja2 pyyaml && python3 lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py"
 """
 
+import argparse
 import datetime
 import http.server
+import importlib.util
 import json
 import os
 import pathlib
@@ -986,6 +988,31 @@ check("a state from before the per-template record still knows hcw-lab was publi
       result.stdout + result.stderr)
 for leftover in ("notes-only", "Bad_Name"):
     shutil.rmtree(templates / leftover)
+
+# A template whose files cannot be read is that template's failure, not the
+# run's: the helper, loaded in this process, with the read made to fail. As
+# root, which the container runs as, no file mode can make a read fail, so
+# the read itself is replaced (CodeRabbit, #1100).
+spec = importlib.util.spec_from_file_location("hcw_coder_automation", ROLE / "files" / "hcw-coder-automation.py")
+automation = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(automation)
+
+
+def unreadable(config, directory=None):
+    raise PermissionError(13, "Permission denied", directory)
+
+
+automation.template_digest = unreadable
+try:
+    automation.publish_one(world.config, argparse.Namespace(force=False), "token", {}, "na-guided-lab", str(guided))
+    outcome = "no error"
+except automation.Failure as failure:
+    outcome = f"Failure: {failure}"
+except OSError as error:
+    outcome = f"OSError escaped: {error}"
+check("a template that cannot be read fails as that template (a Failure), so push-template still tries the next",
+      outcome.startswith("Failure: ") and "could not be read (PermissionError)" in outcome, outcome)
+
 world.fake.keys.pop(world.credential().split("-")[0])
 result = world.helper("push-template")
 check("a rotation credential Coder refuses skips the publish (exit 3) and says to seed again",

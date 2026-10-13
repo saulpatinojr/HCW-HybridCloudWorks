@@ -1048,7 +1048,13 @@ def templates_to_publish(config):
             path = os.path.join(root, name)
             if name == primary or not TEMPLATE_NAME.fullmatch(name) or os.path.islink(path) or not os.path.isdir(path):
                 continue
-            if any(entry.endswith(".tf") and not entry.startswith(".") for entry in os.listdir(path)):
+            try:
+                is_template = any(entry.endswith(".tf") and not entry.startswith(".") for entry in os.listdir(path))
+            except OSError:
+                # Unreadable: listed, so its publish fails by name rather than
+                # the template going unseen (CodeRabbit, #1100).
+                is_template = True
+            if is_template:
                 found.append((name, path))
     return found
 
@@ -1068,8 +1074,16 @@ def published_record(config, state, name):
 
 
 def publish_one(config, args, token, state, name, directory):
-    """Publish one template when its files or autostop changed, and record it. A Failure on error."""
-    digest = template_digest(config, directory)
+    """Publish one template when its files or autostop changed, and record it. A Failure on error.
+
+    Every error is a Failure, reading the template's files included, so
+    push_template's per-template handling sees it and the next template is
+    still tried (CodeRabbit, #1100).
+    """
+    try:
+        digest = template_digest(config, directory)
+    except OSError as error:
+        raise Failure(f"{directory} could not be read ({type(error).__name__})") from None
     record = published_record(config, state, name)
     if not args.force and digest is not None and record.get("digest") == digest:
         say(

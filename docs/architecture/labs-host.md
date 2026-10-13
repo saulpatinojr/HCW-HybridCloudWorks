@@ -66,7 +66,7 @@ changes merged after that and were not on it:
 | LAB-3: the lab supply chain, including the held-package timer (#986) | 2026-10-07 06:40 | Not yet |
 | Lab image digests (#989) | 2026-10-07 07:16 | Not yet |
 | LAB-5: the agent behind its own Docker proxy and in no docker group, user-namespace remapping on the host daemon, Coder's workspaces on a rootless daemon (#987) | 2026-10-07 07:26 | Not yet |
-| Lab images published to Docker Hub only (#1002), and the digests that followed (#1003) | 2026-10-08 05:53 and 06:24 | Not yet. The run that applies them must be followed at once by the template push |
+| Lab images published to Docker Hub only (#1002), and the digests that followed (#1003) | 2026-10-08 05:53 and 06:24 | Not yet. The run that applies them publishes the template in the same run (the coder role, with the host's rotation credential) |
 | ADR 0035: the `addons` role and the migration add-on's row, the per-name direct-visit redirect in the Caddyfile, and the add-on checks in `privilege_checks` | Not merged yet (the Phase 6 website pull request) | Not yet. The row's `image_digest` is written in at PR time from the add-on's `v0.3.0` publish, and the owner seeds `vault_addon_migration_turnstile_secret` before the run ([runbook](../runbooks/labs-host.md), "Tool add-ons") |
 
 Each row below that describes one of these says when it merged and that it
@@ -119,7 +119,8 @@ outbound:
 - Coder reaches GitHub for OAuth over 443;
 - Docker pulls digest-pinned images over 443: from Docker Hub as `main`
   holds it (#1002, merged 2026-10-08), and from GHCR until the owner's next
-  playbook run and template push apply that ([Applied state](#applied-state)).
+  playbook run applies that, publishing the template as it goes
+  ([Applied state](#applied-state)).
 
 No inbound port is opened for the site, for Azure or for lab jobs. The site's
 servers reach the host in one direction only, through a server-side status

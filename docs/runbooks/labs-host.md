@@ -1135,7 +1135,7 @@ the old root's bridges behind. Compose no longer warns that
 external and the coder role creates it (2026-10-08).
 
 This is also the run that takes the lab images to Docker Hub (#1002,
-#1003), so the template push follows it at once:
+#1003), and it publishes the templates that name them itself:
 [After a merge: the playbook, then the template, at once](#after-a-merge-the-playbook-then-the-template-at-once).
 
 ### Checking it afterwards
