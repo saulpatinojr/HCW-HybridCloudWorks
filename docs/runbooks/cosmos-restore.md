@@ -288,10 +288,10 @@ node -e "fetch('http://localhost:7071/api/public/content').then(r=>r.json()).the
 ```
 
 ```powershell
-node -e "fetch('http://localhost:7071/api/public/podcasts').then(r=>r.json()).then(j=>console.log(j.items.map(i=>i.title).slice(0,3).join(' / ')))"
+node -e "fetch('http://localhost:7071/api/public/podcasts').then(r=>r.json()).then(j=>console.log('podcast items: ' + j.items.length + '; titles: ' + j.items.map(i=>i.title).slice(0,3).join(' / ')))"
 ```
 
-Success is a non-zero item count and podcast titles (2026-10-13: 24 content
+Success is a non-zero count on both lines, with podcast titles (2026-10-13: 24 content
 items, 6 podcasts). Node, not `Invoke-RestMethod`: the content documents
 carry keys that differ only in case (`Title` and `title`), which
 PowerShell's JSON reader cannot hold. It hands back the raw text instead, so a
