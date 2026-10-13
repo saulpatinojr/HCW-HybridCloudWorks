@@ -31,8 +31,8 @@ import {
   Link2,
   Mail,
   Mic,
+  Podcast,
   Radio,
-  Rss,
   ScanText,
   Send,
   Share2,
@@ -128,10 +128,16 @@ async function testTelegram() {
   return username ? `Connected — @${username}.` : 'Connected to Telegram.';
 }
 
-async function testRssCom() {
-  const body = unwrapProxy(await postJSON('connectionProbe', { probe: 'rsscom' }), 'RSS.com');
-  const count = countList(body, 'podcasts');
-  return count === null ? 'Connected to RSS.com.' : `Connected — ${count} show(s) visible.`;
+async function testPodbean() {
+  // The server exchanges the client ID and secret for a token and reads the
+  // show with it (ADR 0029 §1c); neither the token nor the secret comes back.
+  // The title says WHICH show the app is for, which is the question an
+  // operator with more than one Podbean podcast actually has.
+  const body = unwrapProxy(await postJSON('connectionProbe', { probe: 'podbean' }), 'Podbean');
+  const title = body?.podcast?.title;
+  return typeof title === 'string' && title.trim()
+    ? `Connected — ${title.trim()}.`
+    : 'Connected to Podbean.';
 }
 
 async function testStreamYard() {
@@ -521,23 +527,22 @@ export const SERVICES = Object.freeze([
 
   // ── Content ──────────────────────────────────────────────────────────────
   {
-    id: 'rsscom',
+    id: 'podbean',
     group: 'content',
-    icon: Rss,
-    name: 'RSS.com',
+    icon: Podcast,
+    name: 'Podbean',
     description: 'Hosts the podcast and receives approved episodes.',
-    // Where the key is minted, not the dashboard front door. The card gained a
-    // beaker in #483 and the globe still points here, because the page a red
-    // light sends you to is worth keeping either way.
-    url: 'https://dashboard.rss.com/api-access/',
-    // Server-side (#483): GET /v4/podcasts, the same call that discovers the
-    // show id, so the test works before RSSCOM-PODCAST-ID is seeded.
-    test: testRssCom,
-    secrets: ['RSSCOM-API-KEY', 'RSSCOM-PODCAST-ID'],
-    capabilities: ['List shows', 'Publish an episode'],
+    // Where the developer app — and so the client ID and secret — is made.
+    url: 'https://developers.podbean.com/',
+    // Server-side (ADR 0029 §1c): one client-credentials token exchange, then
+    // GET /v1/podcast with that token, so the test proves both values at once.
+    test: testPodbean,
+    secrets: ['PODBEAN-CLIENT-ID', 'PODBEAN-CLIENT-SECRET'],
+    capabilities: ['Read the show', 'Publish an episode'],
     usedIn: ['Recording Hub (Distribution)'],
-    dataDirection: 'Outbound: episode audio and show notes go to RSS.com.',
-    securityNote: 'Read on the server only. The podcast id is an identifier, not a secret.',
+    dataDirection: 'Outbound: episode audio and show notes go to Podbean.',
+    securityNote:
+      'Read on the server only. The client ID is an identifier; the secret never leaves the server.',
   },
   {
     id: 'streamyard',

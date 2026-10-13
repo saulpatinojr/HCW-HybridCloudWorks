@@ -1,7 +1,7 @@
 /**
  * The pieces more than one Recording Hub tab renders (#576).
  *
- * `HostLine` is why this file exists: it is the RSS.com record for one
+ * `HostLine` is why this file exists: it is the Podbean record for one
  * transcript, and it now appears both under a transcript on **Transcripts**
  * and grouped by state on **Distribution**. One component, so the two cannot
  * describe the same record differently.
@@ -76,11 +76,29 @@ function HostPending({ host }) {
   );
 }
 
+/** The episode's Podbean page, when the record carries an https one; never any other scheme. */
+function episodeHref(host) {
+  const url = typeof host?.permalinkUrl === 'string' ? host.permalinkUrl.trim() : '';
+  return /^https:\/\//i.test(url) ? url : null;
+}
+
 function HostPublished({ host }) {
+  const href = episodeHref(host);
   return (
     <p className="text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
-      <CheckCircle className="h-3 w-3" /> Host: Published to RSS.com
+      <CheckCircle className="h-3 w-3" /> Host: Published to Podbean
       {host.publishedAt ? ` (${fmtDate(host.publishedAt)})` : ''}
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-0.5 hover:underline"
+          aria-label="Open the episode on Podbean"
+        >
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
     </p>
   );
 }
@@ -120,7 +138,7 @@ const HOST_LINES = Object.freeze({
 });
 
 /**
- * The `host.rsscom` record as one line. Rendered only when the record exists,
+ * The `host.podbean` record as one line. Rendered only when the record exists,
  * so a transcript nothing has tried to publish shows no host line at all.
  *
  * The state is `hostState`'s, not a second `if` chain of its own: Distribution
@@ -131,7 +149,7 @@ const HOST_LINES = Object.freeze({
 export function HostLine({ item, onRetry, retrying }) {
   const Line = HOST_LINES[hostState(item)];
   return Line ? (
-    <Line host={item.host.rsscom} item={item} onRetry={onRetry} retrying={retrying} />
+    <Line host={item.host.podbean} item={item} onRetry={onRetry} retrying={retrying} />
   ) : null;
 }
 

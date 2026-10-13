@@ -81,7 +81,7 @@ describe('describeSkip', () => {
 
   it('falls back to a readable phrase per code', () => {
     expect(describeSkip({ skipped: 'no_audio' })).toContain('no audio');
-    expect(describeSkip({ skipped: 'not_configured' })).toContain('RSSCOM_API_KEY');
+    expect(describeSkip({ skipped: 'not_configured' })).toContain('PODBEAN_CLIENT_ID');
     // The job's guard for ElevenLabs free-plan audio (2026-09-26).
     expect(describeSkip({ skipped: 'free_plan_licence' })).toMatch(
       /ElevenLabs free plan, which has no commercial licence/
@@ -96,17 +96,20 @@ describe('describeSkip', () => {
 
 describe('hostState', () => {
   it('names the four states, in the order HostLine renders them', () => {
-    expect(hostState({ host: { rsscom: { pending: true, episodeId: 'e1' } } })).toBe('pending');
-    expect(hostState({ host: { rsscom: { episodeId: 'e1' } } })).toBe('published');
-    expect(hostState({ host: { rsscom: { error: 'boom' } } })).toBe('error');
-    expect(hostState({ host: { rsscom: { skipped: 'no_audio' } } })).toBe('skipped');
+    expect(hostState({ host: { podbean: { pending: true, episodeId: 'e1' } } })).toBe('pending');
+    expect(hostState({ host: { podbean: { episodeId: 'e1' } } })).toBe('published');
+    expect(hostState({ host: { podbean: { error: 'boom' } } })).toBe('error');
+    expect(hostState({ host: { podbean: { skipped: 'no_audio' } } })).toBe('skipped');
   });
 
   it('is `none` when nothing has tried to publish it', () => {
     expect(hostState({})).toBe('none');
     expect(hostState({ host: {} })).toBe('none');
-    expect(hostState({ host: { rsscom: 'nope' } })).toBe('none');
+    expect(hostState({ host: { podbean: 'nope' } })).toBe('none');
     expect(hostState(null)).toBe('none');
+    // The retired host's key (ADR 0029 §1c) is not read: the only record
+    // production ever stored there was this skip, which says nothing about Podbean.
+    expect(hostState({ host: { rsscom: { skipped: 'not_configured' } } })).toBe('none');
   });
 });
 

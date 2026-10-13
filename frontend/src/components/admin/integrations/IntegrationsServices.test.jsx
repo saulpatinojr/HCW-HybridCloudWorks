@@ -377,7 +377,7 @@ describe('what a card says about itself (ADR 0033)', () => {
     const plaud = await waitFor(() => cardFor('Plaud'));
     const link = within(plaud).getByRole('link', { name: /Reconnect in Recording Hub/ });
     expect(link.getAttribute('href')).toBe('/admin/recording-hub?tab=settings');
-    expect(within(cardFor('RSS.com')).queryByText(/Reconnect/)).toBeNull();
+    expect(within(cardFor('Podbean')).queryByText(/Reconnect/)).toBeNull();
   });
 
   it('says why a card has no test instead of showing no beaker and explaining nothing', async () => {

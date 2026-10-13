@@ -64,7 +64,7 @@ const transcripts = [
     audioUrl: null,
     audioError: 'No speech provider is configured',
     generatedAt: '2026-09-08T13:00:00.000Z',
-    host: { rsscom: { episodeId: null, error: { status: 502, message: 'host said no' } } },
+    host: { podbean: { episodeId: null, error: { status: 502, message: 'host said no' } } },
   },
   {
     id: 'article_publishing',
@@ -79,7 +79,7 @@ const transcripts = [
     audioUrl: null,
     audioError: null,
     generatedAt: '2026-09-08T14:00:00.000Z',
-    host: { rsscom: { pending: true, jobId: 'job-7', queuedAt: '2026-09-08T14:01:00.000Z' } },
+    host: { podbean: { pending: true, jobId: 'job-7', queuedAt: '2026-09-08T14:01:00.000Z' } },
   },
   {
     id: 'article_skipped',
@@ -97,9 +97,10 @@ const transcripts = [
     // The shape publish-transcript.js stores: the code in `skipped`, the
     // human sentence beside it in `reason`.
     host: {
-      rsscom: {
+      podbean: {
         skipped: 'not_configured',
-        reason: 'RSSCOM_API_KEY and RSSCOM_PODCAST_ID are not set; seed both to publish episodes.',
+        reason:
+          'PODBEAN_CLIENT_ID and PODBEAN_CLIENT_SECRET are not set; seed both to publish episodes.',
         lastAttemptAt: '2026-09-08T15:01:00.000Z',
       },
     },
@@ -131,7 +132,7 @@ function routeGets({ items = transcripts, connected = true, stored = [], plaudRe
     if (route === 'public/podcasts?provider=main') {
       return {
         items: [{ id: 'ep-1', title: 'Episode one', publishedAt: '2026-09-01T00:00:00.000Z' }],
-        mainFeedUrl: 'https://media.rss.com/hcw/feed.xml',
+        mainFeedUrl: 'https://podcast.hybridcloudworks.com/feed.xml',
       };
     }
     if (route === 'cms/config/mcp-servers') {
@@ -396,7 +397,7 @@ describe('Podcast tab', () => {
     expect(await screen.findByText('Episode one')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /RSS feed/ })).toHaveAttribute(
       'href',
-      'https://media.rss.com/hcw/feed.xml'
+      'https://podcast.hybridcloudworks.com/feed.xml'
     );
     // Nothing to approve here: review lives on Transcripts.
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
@@ -406,7 +407,7 @@ describe('Podcast tab', () => {
     renderPage();
     expect(
       await screen.findByText(
-        'Host: skipped — RSSCOM_API_KEY and RSSCOM_PODCAST_ID are not set; seed both to publish episodes.'
+        'Host: skipped — PODBEAN_CLIENT_ID and PODBEAN_CLIENT_SECRET are not set; seed both to publish episodes.'
       )
     ).toBeInTheDocument();
     expect(screen.queryByText(/not_configured/)).not.toBeInTheDocument();
@@ -414,18 +415,41 @@ describe('Podcast tab', () => {
 
   it('falls back to a readable phrase per skip code when no reason was stored', () => {
     expect(describeSkip({ skipped: 'no_audio' })).toBe(
-      'the transcript has no audio, so nothing was sent to RSS.com'
+      'the transcript has no audio, so nothing was sent to Podbean'
     );
     expect(describeSkip({ skipped: 'not_published' })).toMatch(/returned to draft/);
-    expect(describeSkip({ skipped: 'not_configured' })).toMatch(/RSS\.com is not configured/);
+    expect(describeSkip({ skipped: 'not_configured' })).toMatch(/Podbean is not configured/);
     expect(describeSkip({ skipped: 'something_new' })).toBe('something_new');
     expect(describeSkip({ skipped: 'no_audio', reason: '  ' })).toMatch(/no audio/);
-    render(<HostLine item={{ id: 'x', host: { rsscom: { skipped: 'no_audio' } } }} />);
+    render(<HostLine item={{ id: 'x', host: { podbean: { skipped: 'no_audio' } } }} />);
     expect(
       screen.getByText(
-        'Host: skipped — the transcript has no audio, so nothing was sent to RSS.com'
+        'Host: skipped — the transcript has no audio, so nothing was sent to Podbean'
       )
     ).toBeInTheDocument();
+  });
+
+  it('links a published episode to its Podbean page, and only to an https one', () => {
+    const published = (permalinkUrl) => ({
+      id: 'x',
+      host: {
+        podbean: { episodeId: 'IWPNG2FB3F', publishedAt: '2026-10-13T10:00:00.000Z', permalinkUrl },
+      },
+    });
+    const { unmount } = render(
+      <HostLine item={published('https://podcast.hybridcloudworks.com/e/landing-zones/')} />
+    );
+    expect(screen.getByText(/Host: Published to Podbean/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the episode on Podbean' })).toHaveAttribute(
+      'href',
+      'https://podcast.hybridcloudworks.com/e/landing-zones/'
+    );
+    unmount();
+
+    // A stored value that is not https is shown as published, never linked.
+    render(<HostLine item={published('javascript:alert(1)')} />);
+    expect(screen.getByText(/Host: Published to Podbean/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open the episode on Podbean' })).toBeNull();
   });
 
   it('shows "publishing…" while approval’s host job is pending', async () => {
@@ -457,7 +481,7 @@ describe('Podcast tab', () => {
       expect(toast).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'Transcript approved',
-          description: 'State backends, spoken. Publishing to RSS.com (job job-8).',
+          description: 'State backends, spoken. Publishing to Podbean (job job-8).',
         })
       )
     );
@@ -703,7 +727,7 @@ describe('Distribution tab', () => {
     renderPage('distribution');
     expect(await screen.findByRole('link', { name: /Feed/ })).toHaveAttribute(
       'href',
-      'https://media.rss.com/hcw/feed.xml'
+      'https://podcast.hybridcloudworks.com/feed.xml'
     );
   });
 });

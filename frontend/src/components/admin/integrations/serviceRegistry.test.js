@@ -39,7 +39,7 @@ describe('the service registry', () => {
       'Resend',
       'Linkie',
       'Telegram',
-      'RSS.com',
+      'Podbean',
       'StreamYard On-Air',
       'YouTube',
       'Plaud',
@@ -107,8 +107,8 @@ describe('the service registry', () => {
     // vendor's front door. A bare host would be a shrug.
     //
     // This used to assert the set was non-empty, because a vacuous rule is its
-    // own kind of broken. #483 emptied it legitimately - Telegram, RSS.com and
-    // YouTube were the last three and they all have server-side tests now - so
+    // own kind of broken. #483 emptied it legitimately - Telegram, the podcast
+    // host and YouTube were the last three and they all have server-side tests now - so
     // that guard would fail for the right reason, which makes it the wrong
     // guard. It is replaced by the test below, which pins the set to empty
     // rather than to non-empty. The rule here still stands and starts holding
@@ -282,7 +282,7 @@ describe('the service registry', () => {
       // would silently undo it, so the shape is pinned here.
       for (const [id, probe] of [
         ['telegram', 'telegram'],
-        ['rsscom', 'rsscom'],
+        ['podbean', 'podbean'],
         ['youtube', 'youtube'],
         ['resend', 'resend'],
         ['qlty', 'qlty'],
@@ -298,7 +298,7 @@ describe('the service registry', () => {
       // so a runner that does not read `ok` says Connected for a 401. That
       // defect has now been written three times in this file's history, which
       // is why every new runner gets this test.
-      for (const id of ['telegram', 'rsscom', 'youtube', 'qlty', 'replicate', 'firecrawl']) {
+      for (const id of ['telegram', 'podbean', 'youtube', 'qlty', 'replicate', 'firecrawl']) {
         postJSON.mockResolvedValueOnce({
           ok: false,
           status: 401,
@@ -326,9 +326,16 @@ describe('the service registry', () => {
       await expect(runnerFor('telegram')()).resolves.toContain('@hcw_bot');
     });
 
-    it('counts the shows an RSS.com key can see', async () => {
-      postJSON.mockResolvedValueOnce({ ok: true, status: 200, data: [{ id: 1 }, { id: 2 }] });
-      await expect(runnerFor('rsscom')()).resolves.toContain('2 show(s)');
+    it('names the Podbean show the client credentials are for, and says Connected without one', async () => {
+      postJSON.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { podcast: { id: 'p1', title: 'Hybrid Cloud Insights' } },
+      });
+      await expect(runnerFor('podbean')()).resolves.toBe('Connected — Hybrid Cloud Insights.');
+
+      postJSON.mockResolvedValueOnce({ ok: true, status: 200, data: { podcast: {} } });
+      await expect(runnerFor('podbean')()).resolves.toBe('Connected to Podbean.');
     });
 
     it('names the Qlty login a token belongs to, and says Connected without one', async () => {

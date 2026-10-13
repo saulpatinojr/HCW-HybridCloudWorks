@@ -1,5 +1,5 @@
 /**
- * Distribution — what this hub has sent to RSS.com, and how it went (#576).
+ * Distribution — what this hub has sent to Podbean, and how it went (#576).
  *
  * The host record used to be one line tucked under each transcript, so
  * "did anything fail to publish" meant scrolling the whole list and reading
@@ -31,7 +31,7 @@ const GROUPS = Object.freeze([
   { state: 'pending', title: 'Publishing now', tone: 'text-slate-600 dark:text-slate-300' },
   {
     state: 'published',
-    title: 'Published to RSS.com',
+    title: 'Published to Podbean',
     tone: 'text-emerald-700 dark:text-emerald-300',
   },
   { state: 'none', title: 'Not sent', tone: 'text-slate-500' },
@@ -82,7 +82,7 @@ function Header({ feedUrl, loading, onReload }) {
   return (
     <div className="flex items-baseline justify-between gap-4 flex-wrap">
       <div>
-        <h3 className="font-semibold text-sm">RSS.com</h3>
+        <h3 className="font-semibold text-sm">Podbean</h3>
         <p className="text-xs text-slate-500">
           Approving a transcript queues its publish; this is what happened next.
         </p>
