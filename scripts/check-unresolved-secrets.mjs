@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL } from "node:url";
 
 // Report app settings whose Key Vault reference is NOT resolving (T-720).
 //
@@ -34,7 +34,7 @@ import { pathToFileURL } from 'node:url';
 // URI, which carries the vault name, secret name and version.
 
 /** Statuses the platform reports for a healthy reference. */
-export const HEALTHY_STATUS = 'resolved';
+export const HEALTHY_STATUS = "resolved";
 
 /**
  * References that are SUPPOSED to be unresolved, and why.
@@ -60,8 +60,8 @@ export const HEALTHY_STATUS = 'resolved';
  */
 export const EXPECTED_UNRESOLVED = new Map([
   [
-    'AZURE_SPEECH_KEY',
-    'fallback TTS provider, deliberately unprovisioned — infra/functionapp.tf:444',
+    "AZURE_SPEECH_KEY",
+    "fallback TTS provider, deliberately unprovisioned — infra/functionapp.tf:444",
   ],
   // The two RSS.com secrets wait on a purchase, not on engineering: the
   // owner decided on 2026-09-18 (#432) that RSS.com Max is bought later and
@@ -71,12 +71,16 @@ export const EXPECTED_UNRESOLVED = new Map([
   // workflow that could never succeed. Take both off when the owner seeds
   // them; this file then reports them as resolved-but-still-listed.
   [
-    'RSSCOM_API_KEY',
-    'RSS.com publishing key, unseeded until the owner buys RSS.com Max (#432, owner decision 2026-09-18)',
+    "RSSCOM_API_KEY",
+    "RSS.com publishing key, unseeded until the owner buys RSS.com Max (#432, owner decision 2026-09-18)",
   ],
   [
-    'RSSCOM_PODCAST_ID',
-    'RSS.com podcast id, unseeded until the owner buys RSS.com Max (#432, owner decision 2026-09-18)',
+    "RSSCOM_PODCAST_ID",
+    "RSS.com podcast id, unseeded until the owner buys RSS.com Max (#432, owner decision 2026-09-18)",
+  ],
+  [
+    "STREAMYARD_API_KEY",
+    "StreamYard On-Air API key, unseeded until the owner seeds STREAMYARD-API-KEY on Integrations -> Keys",
   ],
   // CODER_STATUS_TOKEN was here from its Terraform run until the owner
   // created it in Coder and seeded CODER-STATUS-TOKEN on 2026-09-28 (#682),
@@ -99,7 +103,7 @@ export const EXPECTED_UNRESOLVED = new Map([
  * bigger one, and this file's entire job is not misreporting scale.
  */
 export function canonicalName(name) {
-  return String(name).replace(/^APPSETTING_/, '');
+  return String(name).replace(/^APPSETTING_/, "");
 }
 
 /**
@@ -113,29 +117,35 @@ export function canonicalName(name) {
  * see assertKnownShape. Do not relax the throw.
  */
 export function parseReferenceStatuses(payload) {
-  if (!payload || typeof payload !== 'object') {
-    throw new Error('The ARM response was not a JSON object.');
+  if (!payload || typeof payload !== "object") {
+    throw new Error("The ARM response was not a JSON object.");
   }
 
   // Shape A: { properties: { keyToReferenceStatuses: { NAME: {status, ...} } } }
   const map = payload?.properties?.keyToReferenceStatuses;
-  if (map && typeof map === 'object' && !Array.isArray(map)) {
+  if (map && typeof map === "object" && !Array.isArray(map)) {
     return Object.entries(map).map(([name, entry]) => ({
       name,
-      status: typeof entry?.status === 'string' ? entry.status : '(no status reported)',
-      details: typeof entry?.details === 'string' ? entry.details : '',
+      status:
+        typeof entry?.status === "string"
+          ? entry.status
+          : "(no status reported)",
+      details: typeof entry?.details === "string" ? entry.details : "",
     }));
   }
 
   // Shape B: { value: [ { name, properties: { status, ... } } ] }
   if (Array.isArray(payload?.value)) {
     return payload.value.map((row) => ({
-      name: typeof row?.name === 'string' ? row.name : '(unnamed)',
+      name: typeof row?.name === "string" ? row.name : "(unnamed)",
       status:
-        typeof row?.properties?.status === 'string'
+        typeof row?.properties?.status === "string"
           ? row.properties.status
-          : '(no status reported)',
-      details: typeof row?.properties?.details === 'string' ? row.properties.details : '',
+          : "(no status reported)",
+      details:
+        typeof row?.properties?.details === "string"
+          ? row.properties.details
+          : "",
     }));
   }
 
@@ -155,25 +165,28 @@ export function parseReferenceStatuses(payload) {
  */
 export function assertKnownShape(statuses, raw) {
   if (statuses !== null) return statuses;
-  const keys = raw && typeof raw === 'object' ? Object.keys(raw).join(', ') : String(raw);
+  const keys =
+    raw && typeof raw === "object" ? Object.keys(raw).join(", ") : String(raw);
   throw new Error(
-    'The ARM response carried neither known Key Vault reference shape ' +
-      `(top-level keys: ${keys || '(none)'}). This is NOT "every reference is healthy" — ` +
-      'the shape was not understood, so nothing about the references is known. ' +
-      'Read the payload by hand before trusting any run of this check.',
+    "The ARM response carried neither known Key Vault reference shape " +
+      `(top-level keys: ${keys || "(none)"}). This is NOT "every reference is healthy" — ` +
+      "the shape was not understood, so nothing about the references is known. " +
+      "Read the payload by hand before trusting any run of this check.",
   );
 }
 
 /** References that are not reporting healthy. Comparison is case-insensitive. */
 export function unresolvedFrom(statuses) {
-  return statuses.filter((s) => String(s.status).toLowerCase() !== HEALTHY_STATUS);
+  return statuses.filter(
+    (s) => String(s.status).toLowerCase() !== HEALTHY_STATUS,
+  );
 }
 
 /** One line per finding: name and status only. No vault URI, no value. */
 export function formatReport(unresolved) {
   return unresolved
-    .map((s) => `  ${s.name}: ${s.status}${s.details ? ` — ${s.details}` : ''}`)
-    .join('\n');
+    .map((s) => `  ${s.name}: ${s.status}${s.details ? ` — ${s.details}` : ""}`)
+    .join("\n");
 }
 
 export function evaluate(payload) {
@@ -199,7 +212,9 @@ export function evaluate(payload) {
       .filter((s) => String(s.status).toLowerCase() === HEALTHY_STATUS)
       .map((s) => canonicalName(s.name)),
   );
-  const staleAllowlist = [...EXPECTED_UNRESOLVED.keys()].filter((n) => resolvedNames.has(n));
+  const staleAllowlist = [...EXPECTED_UNRESOLVED.keys()].filter((n) =>
+    resolvedNames.has(n),
+  );
 
   return { checked: statuses.length, unexpected, expected, staleAllowlist };
 }
@@ -207,13 +222,13 @@ export function evaluate(payload) {
 async function readStdin() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function main() {
   const text = await readStdin();
   if (!text.trim()) {
-    console.error('No ARM response on stdin. Nothing was checked.');
+    console.error("No ARM response on stdin. Nothing was checked.");
     process.exit(2);
   }
 
@@ -240,17 +255,19 @@ async function main() {
       `${result.expected.length} reference(s) are unresolved as intended, and are not a finding:`,
     );
     for (const s of result.expected) {
-      console.log(`  ${s.name}: ${s.status} — ${EXPECTED_UNRESOLVED.get(s.name)}`);
+      console.log(
+        `  ${s.name}: ${s.status} — ${EXPECTED_UNRESOLVED.get(s.name)}`,
+      );
     }
-    console.log('');
+    console.log("");
   }
 
   if (result.staleAllowlist.length > 0) {
     console.log(
-      'These are on the expected-unresolved list but are RESOLVING, so the list and ' +
-        `the comment behind it have gone stale: ${result.staleAllowlist.join(', ')}`,
+      "These are on the expected-unresolved list but are RESOLVING, so the list and " +
+        `the comment behind it have gone stale: ${result.staleAllowlist.join(", ")}`,
     );
-    console.log('');
+    console.log("");
   }
 
   if (result.unexpected.length === 0) {
@@ -265,12 +282,12 @@ async function main() {
       `expected to be, out of ${result.checked} checked:`,
   );
   console.error(formatReport(result.unexpected));
-  console.error('');
+  console.error("");
   console.error(
-    'Each one is a feature that has quietly turned itself off in production: the code ' +
-      'takes a clean fallback path, so there is no exception in Application Insights. ' +
-      'Unseeded, RBAC revoked, vault firewall denying, and rotated-and-broken all look ' +
-      'identical from here — the status above narrows it.',
+    "Each one is a feature that has quietly turned itself off in production: the code " +
+      "takes a clean fallback path, so there is no exception in Application Insights. " +
+      "Unseeded, RBAC revoked, vault firewall denying, and rotated-and-broken all look " +
+      "identical from here — the status above narrows it.",
   );
   process.exit(1);
 }
@@ -284,6 +301,9 @@ async function main() {
 // did not execute, which is the same failure this file's shape assertion
 // exists to prevent, one layer up. check-unresolved-secrets.invocation.test.mjs
 // pins it by spawning the script for real.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main();
 }

@@ -82,6 +82,12 @@ export const BRANDS = Object.freeze({
   publer: { name: 'Publer', color: '#2E6BFF', site: 'https://publer.com', approximate: true },
   resend: { name: 'Resend', color: '#000000', onDark: '#FFFFFF', site: 'https://resend.com' },
   rsscom: { name: 'RSS.com', color: '#F26522', site: 'https://rss.com' },
+  streamyard: {
+    name: 'StreamYard',
+    color: '#1F6FEB',
+    site: 'https://streamyard.com',
+    approximate: true,
+  },
   youtube: { name: 'YouTube', color: '#FF0000', site: 'https://www.youtube.com' },
   plaud: { name: 'Plaud', color: '#000000', onDark: '#FFFFFF', site: 'https://www.plaud.ai' },
   sessionize: {

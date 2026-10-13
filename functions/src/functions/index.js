@@ -1,70 +1,71 @@
-import { httpRoute, readConfigStamp } from '../lib/auth/http-route.js';
-import { unresolvedSecretCount } from '../lib/secrets-health.js';
+import { httpRoute, readConfigStamp } from "../lib/auth/http-route.js";
+import { unresolvedSecretCount } from "../lib/secrets-health.js";
 
 // Import all triggers so they are registered with the Azure Functions framework
-import './admin-crud-http.js';
-import './ambassador-http.js';
-import './calendar-http.js';
-import './admin-identity-http.js';
-import './admin-integrations-http.js';
-import './admin-secrets-http.js';
-import './credentials-http.js';
-import './ai-proxy-http.js';
-import './ai-model-catalog-http.js';
-import './mcp-http.js';
-import './integrations-http.js';
-import './connection-probe-http.js';
-import './admin-uploads-http.js';
-import './admin-snapshots-http.js';
-import './cms-http.js';
-import './code-quality-http.js';
-import './drafts-http.js';
-import './content-workflow-http.js';
-import './draft-http.js';
-import './forge-config-http.js';
-import './gallery-images-http.js';
-import './health-http.js';
-import './image-prompts-http.js';
-import './inspect-jobs.js';
-import './forge-jobs.js';
-import './jobs-sweeper.js';
-import './change-feed.js';
-import './cloud-tools-http.js';
-import './cloud-tools-jobs.js';
-import './cosmos-export.js';
-import './jobs-http.js';
-import './jobs-worker.js';
-import './lab-agent-http.js';
-import './listen-and-learn-http.js';
-import './listen-and-learn-jobs.js';
-import './labs-http.js';
-import './labs-jobs.js';
-import './labs-public-http.js';
-import './addons-public-http.js';
-import './legacy-blogs-telemetry-http.js';
-import './manual-images-http.js';
-import './newsletter-http.js';
-import './newsletter-admin-http.js';
-import './newsletter-insights-http.js';
-import './ops-health-http.js';
-import './platform-health-http.js';
-import './platform-settings-http.js';
-import './podcast-http.js';
-import './podcast-jobs.js';
-import './podcast-recordings-http.js';
-import './public-media.js';
-import './public-preview.js';
-import './public-content-manifest.js';
-import './public-reads.js';
-import './publish-http.js';
-import './publish-jobs.js';
-import './recording-content-http.js';
-import './reviewer-digest-http.js';
-import './rss-jobs.js';
-import './public-submissions.js';
-import './schedulers.js';
-import './social-caption-http.js';
-import './telegram-http.js';
+import "./admin-crud-http.js";
+import "./ambassador-http.js";
+import "./calendar-http.js";
+import "./admin-identity-http.js";
+import "./admin-integrations-http.js";
+import "./admin-secrets-http.js";
+import "./credentials-http.js";
+import "./ai-proxy-http.js";
+import "./ai-model-catalog-http.js";
+import "./mcp-http.js";
+import "./integrations-http.js";
+import "./connection-probe-http.js";
+import "./admin-uploads-http.js";
+import "./admin-snapshots-http.js";
+import "./cms-http.js";
+import "./code-quality-http.js";
+import "./drafts-http.js";
+import "./content-workflow-http.js";
+import "./draft-http.js";
+import "./forge-config-http.js";
+import "./gallery-images-http.js";
+import "./health-http.js";
+import "./image-prompts-http.js";
+import "./inspect-jobs.js";
+import "./forge-jobs.js";
+import "./jobs-sweeper.js";
+import "./change-feed.js";
+import "./cloud-tools-http.js";
+import "./cloud-tools-jobs.js";
+import "./cosmos-export.js";
+import "./jobs-http.js";
+import "./jobs-worker.js";
+import "./lab-agent-http.js";
+import "./listen-and-learn-http.js";
+import "./listen-and-learn-jobs.js";
+import "./labs-http.js";
+import "./labs-jobs.js";
+import "./labs-public-http.js";
+import "./addons-public-http.js";
+import "./legacy-blogs-telemetry-http.js";
+import "./manual-images-http.js";
+import "./newsletter-http.js";
+import "./newsletter-admin-http.js";
+import "./newsletter-insights-http.js";
+import "./ops-health-http.js";
+import "./platform-health-http.js";
+import "./platform-settings-http.js";
+import "./podcast-http.js";
+import "./podcast-jobs.js";
+import "./podcast-recordings-http.js";
+import "./public-media.js";
+import "./public-preview.js";
+import "./public-content-manifest.js";
+import "./public-reads.js";
+import "./publish-http.js";
+import "./publish-jobs.js";
+import "./recording-content-http.js";
+import "./reviewer-digest-http.js";
+import "./rss-jobs.js";
+import "./public-submissions.js";
+import "./schedulers.js";
+import "./social-caption-http.js";
+import "./streamyard-http.js";
+import "./telegram-http.js";
 
 const BUILD_TIME = new Date().toISOString();
 
@@ -81,17 +82,17 @@ const BUILD_TIME = new Date().toISOString();
  * cold start from a warm instance while diagnosing — and it discloses nothing
  * about the software.
  */
-httpRoute('healthCheck', {
-  methods: ['GET'],
-  authLevel: 'anonymous',
-  route: 'health', // resolves to GET /api/health
+httpRoute("healthCheck", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: "health", // resolves to GET /api/health
   handler: async (request, context) => {
     return {
       status: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        status: 'ok',
-        service: 'hcw-functions',
+        status: "ok",
+        service: "hcw-functions",
         startedAt: BUILD_TIME,
         // T-513's second observation channel. Application Insights went blind
         // for six hours on 2026-08-22 (T-514) while this endpoint kept

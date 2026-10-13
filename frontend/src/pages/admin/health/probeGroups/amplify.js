@@ -54,6 +54,12 @@ export const AMPLIFY_PROBES = [
     impact: 'Episodes have to be uploaded by hand.',
     action: 'Rotate the key on Keys.',
   }),
+  fromService('streamyard', {
+    hub: 'amplify',
+    covers: 'StreamYard On-Air webinar registrations, newsletter invites and Telegram alerts.',
+    impact: 'Webinar registrant webhooks and attendance alerts are rejected until the key is set.',
+    action: 'Set or rotate STREAMYARD-API-KEY on Keys and run the test on Services.',
+  }),
   fromService('plaud', {
     hub: 'amplify',
     covers: 'Recordings and transcripts from the voice recorder.',

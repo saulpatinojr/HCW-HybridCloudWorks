@@ -39,53 +39,56 @@
  */
 export const SECRET_SECTIONS = Object.freeze([
   {
-    id: 'gen-ai',
-    title: 'Gen AI',
+    id: "gen-ai",
+    title: "Gen AI",
     blurb:
-      'Language models. When something needs writing the site tries them in order, so removing ' +
-      'one changes which model writes your content. Each row says what it is used for.',
+      "Language models. When something needs writing the site tries them in order, so removing " +
+      "one changes which model writes your content. Each row says what it is used for.",
   },
   {
-    id: 'ai-services',
-    title: 'AI services',
-    blurb: 'Called for one job each — narration, cover images, and reading a web page well enough to summarise it.',
-  },
-  {
-    id: 'communication',
-    title: 'Communication',
-    blurb: 'Anything that speaks to an audience \u2014 posts, newsletters, links and alerts.',
-  },
-  {
-    id: 'content',
-    title: 'Content',
-    blurb: 'Where episodes, videos and recordings are published and read from.',
-  },
-  {
-    id: 'cloud',
-    title: 'Cloud',
+    id: "ai-services",
+    title: "AI services",
     blurb:
-      'Read the three clouds\u2019 PUBLIC price lists for the comparison tools. None of these bills ' +
-      'this site \u2014 that runs on Azure and is not charged through anything here.',
+      "Called for one job each — narration, cover images, and reading a web page well enough to summarise it.",
   },
   {
-    id: 'code-quality',
-    title: 'Code quality',
-    blurb: 'Read-only access to the repository’s scanner results, shown on the Health page.',
-  },
-  {
-    id: 'platform',
-    title: 'Site platform',
+    id: "communication",
+    title: "Communication",
     blurb:
-      'Values the site itself runs on. Changing one of these takes effect immediately and is ' +
-      'felt by visitors, so each says what it breaks.',
+      "Anything that speaks to an audience \u2014 posts, newsletters, links and alerts.",
   },
   {
-    id: 'labs',
-    title: 'Hybrid Lab',
+    id: "content",
+    title: "Content",
+    blurb: "Where episodes, videos and recordings are published and read from.",
+  },
+  {
+    id: "cloud",
+    title: "Cloud",
     blurb:
-      'The browser workspaces learners open from the labs page, and the check that lets the ' +
-      'Landing Zone Builder send the lab a job. The site shows the workspaces’ status and links ' +
-      'to them, and never signs anyone in to them.',
+      "Read the three clouds\u2019 PUBLIC price lists for the comparison tools. None of these bills " +
+      "this site \u2014 that runs on Azure and is not charged through anything here.",
+  },
+  {
+    id: "code-quality",
+    title: "Code quality",
+    blurb:
+      "Read-only access to the repository’s scanner results, shown on the Health page.",
+  },
+  {
+    id: "platform",
+    title: "Site platform",
+    blurb:
+      "Values the site itself runs on. Changing one of these takes effect immediately and is " +
+      "felt by visitors, so each says what it breaks.",
+  },
+  {
+    id: "labs",
+    title: "Hybrid Lab",
+    blurb:
+      "The browser workspaces learners open from the labs page, and the check that lets the " +
+      "Landing Zone Builder send the lab a job. The site shows the workspaces’ status and links " +
+      "to them, and never signs anyone in to them.",
   },
 ]);
 
@@ -127,37 +130,37 @@ export const SECRET_CATALOG = Object.freeze([
 
   // ── Gen AI ───────────────────────────────────────────────────────
   {
-    setting: 'GEMINI_API_KEY',
-    secret: 'GEMINI-API-KEY',
-    section: 'gen-ai',
-    label: 'Google Gemini',
+    setting: "GEMINI_API_KEY",
+    secret: "GEMINI-API-KEY",
+    section: "gen-ai",
+    label: "Google Gemini",
     // The Listen & Learn voice: Gemini TTS reads every study episode (ADR 0029
     // §2b). Its place in the writing order is the AI Engine page's, not this
     // text's — see the note above NVIDIA's entry.
-    help: 'API key. One of the models the site writes with, tried in the order set on the AI Engine page, and the voice that reads every Listen & Learn episode.',
-    probe: 'gemini',
+    help: "API key. One of the models the site writes with, tried in the order set on the AI Engine page, and the voice that reads every Listen & Learn episode.",
+    probe: "gemini",
   },
   {
-    setting: 'ANTHROPIC_API_KEY',
-    secret: 'ANTHROPIC-API-KEY',
-    section: 'gen-ai',
-    label: 'Anthropic',
-    help: 'API key. One of the models the site writes with, tried in the order set on the AI Engine page.',
-    probe: 'anthropic',
+    setting: "ANTHROPIC_API_KEY",
+    secret: "ANTHROPIC-API-KEY",
+    section: "gen-ai",
+    label: "Anthropic",
+    help: "API key. One of the models the site writes with, tried in the order set on the AI Engine page.",
+    probe: "anthropic",
   },
   {
-    setting: 'OPENAI_API_KEY',
-    secret: 'OPENAI-API-KEY',
-    section: 'gen-ai',
-    label: 'OpenAI',
-    help: 'API key. One of the models the site writes with, tried in the order set on the AI Engine page.',
-    probe: 'openai',
+    setting: "OPENAI_API_KEY",
+    secret: "OPENAI-API-KEY",
+    section: "gen-ai",
+    label: "OpenAI",
+    help: "API key. One of the models the site writes with, tried in the order set on the AI Engine page.",
+    probe: "openai",
   },
   {
-    setting: 'NVIDIA_API_KEY',
-    secret: 'NVIDIA-API-KEY',
-    section: 'gen-ai',
-    label: 'NVIDIA API',
+    setting: "NVIDIA_API_KEY",
+    secret: "NVIDIA-API-KEY",
+    section: "gen-ai",
+    label: "NVIDIA API",
     // #701. An `nvapi-` key from build.nvidia.com/settings/api-keys, trial
     // tier (~40 requests a minute). Placed per feature
     // (ai-config.js PROVIDER_PLACEMENT_DEFAULTS): the backup, 'order', for
@@ -172,247 +175,257 @@ export const SECRET_CATALOG = Object.freeze([
     // DEFAULT_PROVIDER_ORDER until the AI Engine page changes it, so a
     // position in this text is wrong the moment anyone reorders.
     // secret-catalog.test.js refuses one.
-    help: 'API key starting nvapi-. Free, rate-limited models: by default the backup for drafts, summaries and scripts, used when the models above cannot answer. The AI Engine page can make them the main writer for a feature. Never used on the public pages.',
-    probe: 'nvidia',
+    help: "API key starting nvapi-. Free, rate-limited models: by default the backup for drafts, summaries and scripts, used when the models above cannot answer. The AI Engine page can make them the main writer for a feature. Never used on the public pages.",
+    probe: "nvidia",
   },
 
   // ── AI services ───────────────────────────────────────────────────
   {
-    setting: 'ELEVENLABS_API_KEY',
-    secret: 'ELEVENLABS-API-KEY',
-    section: 'ai-services',
-    label: 'ElevenLabs',
+    setting: "ELEVENLABS_API_KEY",
+    secret: "ELEVENLABS-API-KEY",
+    section: "ai-services",
+    label: "ElevenLabs",
     // The podcast voice ONLY — article and Plaud transcripts to RSS.com
     // (ADR 0029 §2a, scoped by §2b); never Listen & Learn, which is Gemini
     // TTS. A re-minted key needs an app restart to take effect. On the free
     // plan from 2026-09-26 (§2a amended); the permissions are the three the
     // podcast needs (Voices → Read since #725, for the voice picker), see
     // docs/standards/required-inputs.md.
-    help: 'API key. Reads podcast episodes aloud. Create it restricted to Text to Speech (Access), User (Read) and Voices (Read), with a credit limit. Free plan: 10,000 credits a month, one per character, and free-plan episodes are not published.',
+    help: "API key. Reads podcast episodes aloud. Create it restricted to Text to Speech (Access), User (Read) and Voices (Read), with a credit limit. Free plan: 10,000 credits a month, one per character, and free-plan episodes are not published.",
     probe: null,
   },
   {
-    setting: 'AZURE_SPEECH_KEY',
-    secret: 'AZURE-SPEECH-KEY',
-    section: 'ai-services',
-    label: 'Azure AI Speech',
+    setting: "AZURE_SPEECH_KEY",
+    secret: "AZURE-SPEECH-KEY",
+    section: "ai-services",
+    label: "Azure AI Speech",
     // Written and tested against the day the preview Gemini TTS models
     // retire. Deliberately unprovisioned; monitor-unresolved-secrets.yml
     // excludes it by name for that reason.
-    help: 'API key. A spare narrator, ready in case the main one stops being available. Not set up on purpose.',
+    help: "API key. A spare narrator, ready in case the main one stops being available. Not set up on purpose.",
     probe: null,
   },
   {
-    setting: 'FIRECRAWL_API_KEY',
-    secret: 'FIRECRAWL-API-KEY',
-    section: 'ai-services',
-    label: 'Firecrawl',
-    help: 'API key. Reads a web page and pulls out its text, so a link can be summarised.',
+    setting: "FIRECRAWL_API_KEY",
+    secret: "FIRECRAWL-API-KEY",
+    section: "ai-services",
+    label: "Firecrawl",
+    help: "API key. Reads a web page and pulls out its text, so a link can be summarised.",
     probe: null,
   },
   {
-    setting: 'REPLICATE_API_KEY',
-    secret: 'REPLICATE-API-KEY',
-    section: 'ai-services',
-    label: 'Replicate',
+    setting: "REPLICATE_API_KEY",
+    secret: "REPLICATE-API-KEY",
+    section: "ai-services",
+    label: "Replicate",
     // A service that runs a model for you, not one of the three the site
     // chooses between when it needs writing. It sits with the other things
     // called for a single job.
-    help: 'API key. Generates the cover image for a post. Without it, posts use a stock image instead.',
+    help: "API key. Generates the cover image for a post. Without it, posts use a stock image instead.",
     probe: null,
   },
 
   // ── Communication ───────────────────────────────────────────────
   {
-    setting: 'PUBLER_API_KEY',
-    secret: 'PUBLER-API-KEY',
-    section: 'communication',
-    label: 'Publer \u2014 API key',
+    setting: "PUBLER_API_KEY",
+    secret: "PUBLER-API-KEY",
+    section: "communication",
+    label: "Publer \u2014 API key",
     // Publer answers 403 when the KEY is wrong and 401 when the workspace id
     // is — the reverse of its own documentation, measured 2026-09-09 (#358).
-    help: 'API key. Lets the site schedule social posts through Publer. If Publer refuses with a 403, this is the value to check.',
-    probe: 'publer',
+    help: "API key. Lets the site schedule social posts through Publer. If Publer refuses with a 403, this is the value to check.",
+    probe: "publer",
   },
   {
-    setting: 'PUBLER_WORKSPACE_ID',
-    secret: 'PUBLER-WORKSPACE-ID',
-    section: 'communication',
-    label: 'Publer \u2014 workspace id',
+    setting: "PUBLER_WORKSPACE_ID",
+    secret: "PUBLER-WORKSPACE-ID",
+    section: "communication",
+    label: "Publer \u2014 workspace id",
     help:
-      'Identifier, not a secret. Which Publer workspace to post into. A 401 from Publer means ' +
-      'this value is wrong, not the key \u2014 copy it from Publer\u2019s API playground, because ' +
-      'the id on their settings page is a different number.',
-    probe: 'publer',
+      "Identifier, not a secret. Which Publer workspace to post into. A 401 from Publer means " +
+      "this value is wrong, not the key \u2014 copy it from Publer\u2019s API playground, because " +
+      "the id on their settings page is a different number.",
+    probe: "publer",
   },
   {
-    setting: 'RESEND_API_KEY',
-    secret: 'RESEND-API-KEY',
-    section: 'communication',
-    label: 'Resend — API key',
+    setting: "RESEND_API_KEY",
+    secret: "RESEND-API-KEY",
+    section: "communication",
+    label: "Resend — API key",
     // ADR 0030. Must be a FULL ACCESS key: a sending-access key can send one
     // email but cannot add contacts or create broadcasts, and the Integrations
     // page's beaker is what tells the two apart. No probe: Resend refuses both a
     // wrong key and a sending-only key, and only the first means remint.
     help:
-      'API key, created with Full access. Holds the newsletter mailing list and sends the ' +
-      'newsletter. A key with Sending access only will not work.',
+      "API key, created with Full access. Holds the newsletter mailing list and sends the " +
+      "newsletter. A key with Sending access only will not work.",
     probe: null,
   },
   {
-    setting: 'LINKIE_API_KEY',
-    secret: 'LINKIE-API-KEY',
-    section: 'communication',
-    label: 'Linkie',
-    help: 'API key. Manages the link-in-bio page and the links on it.',
+    setting: "LINKIE_API_KEY",
+    secret: "LINKIE-API-KEY",
+    section: "communication",
+    label: "Linkie",
+    help: "API key. Manages the link-in-bio page and the links on it.",
     probe: null,
   },
   {
-    setting: 'TELEGRAM_BOT_TOKEN',
-    secret: 'TELEGRAM-BOT-TOKEN',
-    section: 'communication',
-    label: 'Telegram \u2014 bot token',
+    setting: "TELEGRAM_BOT_TOKEN",
+    secret: "TELEGRAM-BOT-TOKEN",
+    section: "communication",
+    label: "Telegram \u2014 bot token",
     // Rotating this INVALIDATES the registered webhook — re-run
     // scripts/cutover/04-telegram-webhook.ps1 afterwards.
     help:
-      'Bot token. Sends the approve-or-reject messages for new content. Changing it stops those ' +
-      'messages until the bot is reconnected.',
+      "Bot token. Sends the approve-or-reject messages for new content. Changing it stops those " +
+      "messages until the bot is reconnected.",
     // The Integrations page's Telegram beaker calls getMe, which authenticates
     // on this token alone and answers 401 when it is wrong (#483). The chat id
     // below stays unprobed on purpose: getMe never reads it, so a success here
     // says nothing about it.
-    probe: 'telegram',
+    probe: "telegram",
   },
   {
-    setting: 'TELEGRAM_CHAT_ID',
-    secret: 'TELEGRAM-CHAT-ID',
-    section: 'communication',
-    label: 'Telegram \u2014 chat id',
-    help: 'Identifier, not a secret. Which Telegram conversation those messages are sent to.',
+    setting: "TELEGRAM_CHAT_ID",
+    secret: "TELEGRAM-CHAT-ID",
+    section: "communication",
+    label: "Telegram \u2014 chat id",
+    help: "Identifier, not a secret. Which Telegram conversation those messages are sent to.",
     probe: null,
   },
 
   // ── Content ──────────────────────────────────────────────────────
   {
-    setting: 'RSSCOM_API_KEY',
-    secret: 'RSSCOM-API-KEY',
-    section: 'content',
-    label: 'RSS.com \u2014 API key',
+    setting: "RSSCOM_API_KEY",
+    secret: "RSSCOM-API-KEY",
+    section: "content",
+    label: "RSS.com \u2014 API key",
     help:
-      'API key. Publishes an approved episode to the podcast. Without it, episodes have to be ' +
-      'uploaded to RSS.com by hand.',
+      "API key. Publishes an approved episode to the podcast. Without it, episodes have to be " +
+      "uploaded to RSS.com by hand.",
     probe: null,
   },
   {
-    setting: 'RSSCOM_PODCAST_ID',
-    secret: 'RSSCOM-PODCAST-ID',
-    section: 'content',
-    label: 'RSS.com \u2014 podcast id',
-    help: 'Identifier, not a secret. Which show episodes are published to.',
+    setting: "RSSCOM_PODCAST_ID",
+    secret: "RSSCOM-PODCAST-ID",
+    section: "content",
+    label: "RSS.com \u2014 podcast id",
+    help: "Identifier, not a secret. Which show episodes are published to.",
     probe: null,
   },
   {
-    setting: 'YOUTUBE_API_KEY',
-    secret: 'YOUTUBE-API-KEY',
-    section: 'content',
-    label: 'YouTube Data API',
+    setting: "STREAMYARD_API_KEY",
+    secret: "STREAMYARD-API-KEY",
+    section: "content",
+    label: "StreamYard On-Air \u2014 API key",
+    help:
+      "API key from StreamYard (Team settings \u2192 Integrations \u2192 Zapier \u2192 Generate API key). " +
+      "Authenticates webinar registration and attendance updates sent from StreamYard On-Air.",
+    probe: null,
+  },
+  {
+    setting: "YOUTUBE_API_KEY",
+    secret: "YOUTUBE-API-KEY",
+    section: "content",
+    label: "YouTube Data API",
     // One certification costs ~505 of the default 10,000 daily quota units.
-    help: 'API key. Finds the \u201cwatch next\u201d videos shown beside each Listen & Learn episode.',
+    help: "API key. Finds the \u201cwatch next\u201d videos shown beside each Listen & Learn episode.",
     probe: null,
   },
   {
-    setting: 'PLAUD_EMBEDDED_CLIENT_ID',
-    secret: 'PLAUD-EMBEDDED-CLIENT-ID',
-    section: 'content',
-    label: 'Plaud Embedded \u2014 client id',
+    setting: "PLAUD_EMBEDDED_CLIENT_ID",
+    secret: "PLAUD-EMBEDDED-CLIENT-ID",
+    section: "content",
+    label: "Plaud Embedded \u2014 client id",
     // A different credential from the Plaud MCP OAuth tokens the Connect tab
     // stores; sent as X-Client-Api-Key beside the key below (#442).
-    help: 'Identifier, not a secret. Names this site to Plaud when audio is sent for transcription.',
+    help: "Identifier, not a secret. Names this site to Plaud when audio is sent for transcription.",
     probe: null,
   },
   {
-    setting: 'PLAUD_EMBEDDED_API_KEY',
-    secret: 'PLAUD-EMBEDDED-API-KEY',
-    section: 'content',
-    label: 'Plaud Embedded \u2014 API key',
+    setting: "PLAUD_EMBEDDED_API_KEY",
+    secret: "PLAUD-EMBEDDED-API-KEY",
+    section: "content",
+    label: "Plaud Embedded \u2014 API key",
     help:
-      'API key. Turns an uploaded recording into text. Without it, the upload is refused before ' +
-      'any audio is stored.',
+      "API key. Turns an uploaded recording into text. Without it, the upload is refused before " +
+      "any audio is stored.",
     probe: null,
   },
 
   // ── Cloud ────────────────────────────────────────────────────────
   {
-    setting: 'AWS_ACCESS_KEY_ID',
-    secret: 'AWS-ACCESS-KEY-ID',
-    section: 'cloud',
-    label: 'AWS \u2014 access key id',
+    setting: "AWS_ACCESS_KEY_ID",
+    secret: "AWS-ACCESS-KEY-ID",
+    section: "cloud",
+    label: "AWS \u2014 access key id",
     // Scope the IAM policy to pricing:GetProducts only.
-    help: 'Access key id. Reads Amazon\u2019s public price list for the cost comparison tools.',
+    help: "Access key id. Reads Amazon\u2019s public price list for the cost comparison tools.",
     probe: null,
   },
   {
-    setting: 'AWS_SECRET_ACCESS_KEY',
-    secret: 'AWS-SECRET-ACCESS-KEY',
-    section: 'cloud',
-    label: 'AWS \u2014 secret access key',
-    help: 'The secret half of the AWS key above. The two are always changed together.',
+    setting: "AWS_SECRET_ACCESS_KEY",
+    secret: "AWS-SECRET-ACCESS-KEY",
+    section: "cloud",
+    label: "AWS \u2014 secret access key",
+    help: "The secret half of the AWS key above. The two are always changed together.",
     probe: null,
   },
   {
-    setting: 'GCP_BILLING_API_KEY',
-    secret: 'GCP-BILLING-API-KEY',
-    section: 'cloud',
-    label: 'Google Cloud Billing Catalog',
+    setting: "GCP_BILLING_API_KEY",
+    secret: "GCP-BILLING-API-KEY",
+    section: "cloud",
+    label: "Google Cloud Billing Catalog",
     // A restricted API key, which is what Google documents for this API.
     help:
-      'API key. Reads Google\u2019s public price list. Without it the Google column disappears from ' +
-      'the comparison and the other two still work.',
+      "API key. Reads Google\u2019s public price list. Without it the Google column disappears from " +
+      "the comparison and the other two still work.",
     probe: null,
   },
 
   // ── Code quality ─────────────────────────────────────────────────
   {
-    setting: 'QLTY_API_TOKEN',
-    secret: 'QLTY-API-TOKEN',
-    section: 'code-quality',
-    label: 'Qlty — access token',
+    setting: "QLTY_API_TOKEN",
+    secret: "QLTY-API-TOKEN",
+    section: "code-quality",
+    label: "Qlty — access token",
     help:
-      'Personal access token from qlty.sh (User settings → Access tokens). Reads the ' +
-      'project’s open findings and metrics for the Health page’s Code and Security tab. ' +
-      'Without it that tab says Qlty is not configured and everything else still works.',
+      "Personal access token from qlty.sh (User settings → Access tokens). Reads the " +
+      "project’s open findings and metrics for the Health page’s Code and Security tab. " +
+      "Without it that tab says Qlty is not configured and everything else still works.",
     probe: null,
   },
 
   // ── Site platform ────────────────────────────────────────────────
   {
-    setting: 'CF_ORIGIN_SECRET',
-    secret: 'CF-ORIGIN-SECRET',
-    section: 'platform',
-    label: 'Cloudflare origin secret',
+    setting: "CF_ORIGIN_SECRET",
+    secret: "CF-ORIGIN-SECRET",
+    section: "platform",
+    label: "Cloudflare origin secret",
     help:
-      'Shared password. Proves a visitor reached the site through Cloudflare. It has to be ' +
-      'changed in Cloudflare at the same time \u2014 until both match, public form submissions are ' +
-      'refused.',
+      "Shared password. Proves a visitor reached the site through Cloudflare. It has to be " +
+      "changed in Cloudflare at the same time \u2014 until both match, public form submissions are " +
+      "refused.",
     probe: null,
   },
   {
-    setting: 'CLIENT_IP_SALT',
-    secret: 'CLIENT-IP-SALT',
-    section: 'platform',
-    label: 'Client IP salt',
+    setting: "CLIENT_IP_SALT",
+    secret: "CLIENT-IP-SALT",
+    section: "platform",
+    label: "Client IP salt",
     help:
-      'Random value. Scrambles visitor addresses before they are counted, so nobody is tracked. ' +
-      'Changing it resets every rate limit \u2014 which is sometimes the point.',
+      "Random value. Scrambles visitor addresses before they are counted, so nobody is tracked. " +
+      "Changing it resets every rate limit \u2014 which is sometimes the point.",
     probe: null,
   },
   {
-    setting: 'PREVIEW_SIGNING_SECRET',
-    secret: 'PREVIEW-SIGNING-SECRET',
-    section: 'platform',
-    label: 'Preview signing secret',
+    setting: "PREVIEW_SIGNING_SECRET",
+    secret: "PREVIEW-SIGNING-SECRET",
+    section: "platform",
+    label: "Preview signing secret",
     help:
-      'Random value. Signs the private links used to preview unpublished pages. Changing it makes ' +
-      'every preview link already shared stop working.',
+      "Random value. Signs the private links used to preview unpublished pages. Changing it makes " +
+      "every preview link already shared stop working.",
     probe: null,
   },
 
@@ -422,26 +435,26 @@ export const SECRET_CATALOG = Object.freeze([
   // decision 4). Read by lib/labs/coder-status.js, which requires https: the
   // token beside it travels in a header.
   {
-    setting: 'CODER_URL',
-    secret: 'CODER-URL',
-    section: 'labs',
-    label: 'Coder address',
+    setting: "CODER_URL",
+    secret: "CODER-URL",
+    section: "labs",
+    label: "Coder address",
     help:
-      'Web address, starting https://. Where the lab’s browser workspaces run. The site reads ' +
-      'their status from it and links visitors to it; until it is set the labs page says the lab ' +
-      'is not yet provisioned.',
+      "Web address, starting https://. Where the lab’s browser workspaces run. The site reads " +
+      "their status from it and links visitors to it; until it is set the labs page says the lab " +
+      "is not yet provisioned.",
     probe: null,
   },
   // Read-only in Coder: it can list templates and count running workspaces
   // and nothing else. Never reaches the browser.
   {
-    setting: 'CODER_STATUS_TOKEN',
-    secret: 'CODER-STATUS-TOKEN',
-    section: 'labs',
-    label: 'Coder status token',
+    setting: "CODER_STATUS_TOKEN",
+    secret: "CODER-STATUS-TOKEN",
+    section: "labs",
+    label: "Coder status token",
     help:
-      'Read-only API token. Lets the site list the lab’s templates and count running workspaces ' +
-      'for the labs page. It cannot start or change anything, and it is never shown to visitors.',
+      "Read-only API token. Lets the site list the lab’s templates and count running workspaces " +
+      "for the labs page. It cannot start or change anything, and it is never shown to visitors.",
     probe: null,
   },
   // The secret half of the Turnstile widget the owner creates in the
@@ -451,15 +464,15 @@ export const SECRET_CATALOG = Object.freeze([
   // The widget is not a Terraform resource because its secret would sit in
   // state (infra/frontend.tf).
   {
-    setting: 'TURNSTILE_SECRET_KEY',
-    secret: 'TURNSTILE-SECRET-KEY',
-    section: 'labs',
-    label: 'Cloudflare Turnstile — secret key',
+    setting: "TURNSTILE_SECRET_KEY",
+    secret: "TURNSTILE-SECRET-KEY",
+    section: "labs",
+    label: "Cloudflare Turnstile — secret key",
     help:
-      'Secret key of the lab’s Turnstile widget, from the Cloudflare dashboard (Turnstile, then ' +
-      'the widget’s settings). It proves a real browser on this site pressed Validate on the lab ' +
-      'in the Landing Zone Builder. Until it is set the builder says the lab’s browser check is ' +
-      'not configured, and the lab takes no public jobs.',
+      "Secret key of the lab’s Turnstile widget, from the Cloudflare dashboard (Turnstile, then " +
+      "the widget’s settings). It proves a real browser on this site pressed Validate on the lab " +
+      "in the Landing Zone Builder. Until it is set the builder says the lab’s browser check is " +
+      "not configured, and the lab takes no public jobs.",
     probe: null,
   },
 ]);
@@ -469,12 +482,14 @@ export const GENERATABLE_SECRETS = Object.freeze([
   // Both are values this estate INVENTS. Everything else is issued by an
   // upstream service, where a generated value is guaranteed wrong — and worse
   // than absent, because absent is a gray light and wrong is a green one.
-  'PREVIEW-SIGNING-SECRET',
-  'CLIENT-IP-SALT',
+  "PREVIEW-SIGNING-SECRET",
+  "CLIENT-IP-SALT",
 ]);
 
 const BY_SECRET = new Map(SECRET_CATALOG.map((entry) => [entry.secret, entry]));
-const BY_SETTING = new Map(SECRET_CATALOG.map((entry) => [entry.setting, entry.secret]));
+const BY_SETTING = new Map(
+  SECRET_CATALOG.map((entry) => [entry.setting, entry.secret]),
+);
 
 /**
  * App-setting name → Key Vault secret name.
@@ -486,20 +501,20 @@ const BY_SETTING = new Map(SECRET_CATALOG.map((entry) => [entry.setting, entry.s
  * records a verdict against nothing. Returns null for an unknown setting.
  */
 export function settingToSecret(setting) {
-  return BY_SETTING.get(String(setting ?? '')) ?? null;
+  return BY_SETTING.get(String(setting ?? "")) ?? null;
 }
 
 /** The catalogue entry for a vault secret name, or undefined. */
 export function findBySecretName(name) {
-  return BY_SECRET.get(String(name ?? ''));
+  return BY_SECRET.get(String(name ?? ""));
 }
 
 /** Is this a secret the page is allowed to write? */
 export function isSeedableSecret(name) {
-  return BY_SECRET.has(String(name ?? ''));
+  return BY_SECRET.has(String(name ?? ""));
 }
 
 /** May this secret be generated instead of pasted? */
 export function isGeneratable(name) {
-  return GENERATABLE_SECRETS.includes(String(name ?? ''));
+  return GENERATABLE_SECRETS.includes(String(name ?? ""));
 }

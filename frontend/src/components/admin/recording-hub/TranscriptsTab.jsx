@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle,
+  Download,
   FileText,
   Loader2,
   Mic,
@@ -68,6 +69,13 @@ function TranscriptRow({ item, onOpen, onReview, onRetry, busy }) {
             <HostLine item={item} onRetry={onRetry} retrying={busy === `retry:${item.id}`} />
           </div>
           <div className="flex gap-1.5 shrink-0">
+            {audio && (
+              <Button size="sm" variant="outline" className="h-7 text-xs px-2" asChild>
+                <a href={audio} download={`${item.id}.mp3`}>
+                  <Download className="h-3 w-3 mr-1" /> Download MP3
+                </a>
+              </Button>
+            )}
             <Button
               size="sm"
               variant="outline"

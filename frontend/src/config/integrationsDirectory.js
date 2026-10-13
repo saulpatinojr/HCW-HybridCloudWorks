@@ -75,6 +75,14 @@ export const DIRECTORY = Object.freeze([
     docsUrl: null,
   },
   {
+    id: 'streamyard',
+    category: 'communication',
+    summary: 'Live streaming and On-Air webinars.',
+    powers:
+      'Webinar registrations, automatic newsletter double opt-in invites and Telegram attendance alerts.',
+    docsUrl: 'https://streamyard.com/developer',
+  },
+  {
     id: 'youtube',
     category: 'communication',
     summary: 'Video hosting.',

@@ -134,6 +134,20 @@ async function testRssCom() {
   return count === null ? 'Connected to RSS.com.' : `Connected — ${count} show(s) visible.`;
 }
 
+async function testStreamYard() {
+  const res = await getJSON('cms/streamyard/status');
+  if (!res?.configured) {
+    throw new Error('StreamYard On-Air is not configured: STREAMYARD_API_KEY is not set.');
+  }
+  const registrants = Number.isInteger(res.totalRegistrants) ? res.totalRegistrants : 0;
+  const attended = Number.isInteger(res.totalAttended) ? res.totalAttended : 0;
+  const channels = [
+    res.newsletterConfigured ? 'newsletter sync ready' : 'newsletter key missing',
+    res.telegramConfigured ? 'Telegram alerts ready' : 'Telegram not configured',
+  ].join(', ');
+  return `Connected — ${registrants} registrant(s), ${attended} attended (${channels}).`;
+}
+
 async function testYouTube() {
   unwrapProxy(await postJSON('connectionProbe', { probe: 'youtube' }), 'YouTube');
   // No count: the probe asks for one result and discards it, so any number
@@ -524,6 +538,28 @@ export const SERVICES = Object.freeze([
     usedIn: ['Recording Hub (Distribution)'],
     dataDirection: 'Outbound: episode audio and show notes go to RSS.com.',
     securityNote: 'Read on the server only. The podcast id is an identifier, not a secret.',
+  },
+  {
+    id: 'streamyard',
+    group: 'content',
+    icon: Radio,
+    name: 'StreamYard On-Air',
+    description:
+      'Webinar registrations, automatic newsletter double opt-in invites and Telegram attendance alerts.',
+    url: 'https://streamyard.com/developer',
+    test: testStreamYard,
+    secrets: ['STREAMYARD-API-KEY'],
+    action: 'streamyardOnAir',
+    capabilities: [
+      'Receive On-Air webinar registrants and attendance updates',
+      'Send newsletter double opt-in confirmation emails to registrants',
+      'Notify Telegram on new registrations and live or on-demand attendance',
+    ],
+    usedIn: ['Newsletter Hub', 'Telegram Alerts', 'Public Webinar Registration'],
+    dataDirection:
+      'Two-way: webinar registrations come in from StreamYard or the site; confirmation emails and Telegram alerts go out.',
+    securityNote:
+      'Read on the server only. Authenticates inbound webhook relays in constant time and never exposes registrant emails in logs.',
   },
   {
     id: 'youtube',
