@@ -345,18 +345,6 @@ const OTHER_ENTRIES = [
     rotate:
       "Refreshed before it expires; if a refresh fails, press Connect on its card under AI Engine → MCP Servers.",
   },
-  {
-    id: "mcp-podbean",
-    name: "mcp_servers/podbean-mcp (OAuth Connect)",
-    store: "cosmos",
-    consumer: "Podbean MCP tools in the AI Engine",
-    issuer: "Podbean",
-    renewal: "automation",
-    lifetimeDays: null,
-    source: { mcpServer: "podbean-mcp" },
-    rotate:
-      "Refreshed before it expires; if a refresh fails, press Connect on its card under AI Engine → MCP Servers.",
-  },
 
   // ── GitHub ──────────────────────────────────────────────────────────────
   {
