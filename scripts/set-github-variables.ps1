@@ -14,6 +14,8 @@
              applied state via the HCP Terraform API (the same token
              set-tfc-variables.ps1 resolves): CLIENT_ID (client_id),
              READER_CLIENT_ID (reader_client_id),
+             ALERT_READER_CLIENT_ID (alert_reader_client_id),
+             MANIFEST_WINDOW_CLIENT_ID (manifest_window_client_id),
              COPILOT_REVIEW_CLIENT_ID (copilot_review_client_id),
              APP_HOSTNAME (function_hostname), FUNCTIONS_URL (api_base_url),
              FUNCTION_APP_NAME, RESOURCE_GROUP (web_resource_group),
@@ -300,12 +302,17 @@ if (-not $script:tfcToken) {
 if ($outputs) {
   $waveTwo = @(
     @{ output = 'client_id'; kind = 'variable'; name = 'CLIENT_ID'; transform = { param($v) $v } }
-    # T-728: the read-only identity. monitor-functions-registered,
-    # verify-alert-state and publish-content-manifest are gated on this
-    # variable being non-empty and SKIP until it is set, so a missing
-    # READER_CLIENT_ID presents as three workflows quietly not running
-    # rather than as a failure. Seed it in the same pass as CLIENT_ID.
+    # T-728: the read-only identity. monitor-functions-registered and
+    # monitor-unresolved-secrets are gated on this variable being non-empty
+    # and SKIP until it is set, so a missing READER_CLIENT_ID presents as
+    # workflows quietly not running rather than as a failure. Seed it in the
+    # same pass as CLIENT_ID. The two below are gated the same way.
     @{ output = 'reader_client_id'; kind = 'variable'; name = 'READER_CLIENT_ID'; transform = { param($v) $v } }
+    # #1053: verify-alert-state's identity, alert rules and action groups only.
+    @{ output = 'alert_reader_client_id'; kind = 'variable'; name = 'ALERT_READER_CLIENT_ID'; transform = { param($v) $v } }
+    # #1098: publish-content-manifest's origin window, config write on the one
+    # site and nothing else.
+    @{ output = 'manifest_window_client_id'; kind = 'variable'; name = 'MANIFEST_WINDOW_CLIENT_ID'; transform = { param($v) $v } }
     # The identity Copilot code review signs in as (copilot-setup-steps.yml).
     # Reader on the four workload groups and nothing else; the login fails
     # closed while this is unset, so seed it in the same pass as the apply.

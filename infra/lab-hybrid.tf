@@ -418,11 +418,9 @@ resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_key_vault" {
 #     line at daemon.err; the DCR ships daemon at Warning and above.
 #
 # verify-alert-state.yml derives its list from these declarations since PLAT-4
-# (#964), so these three are in it. Its identity, github_reader, holds no role
-# in the Management subscription yet, so it reports them UNREADABLE until
-# a read grant on this resource group is applied; `az monitor scheduled-query
-# list -g rg-mgmt-plat-prod-cus --subscription sub-plat-mgmt-prod-cus` shows
-# them meanwhile.
+# (#964), so these three are in it. Its identity since #1053,
+# github_alert_reader, holds HCW Alert Rule Reader on platform_mgmt, where
+# these rules live, so it reads them like the application's rules.
 locals {
   lab_hybrid_machine_name = "arcs-lab-hybrid-${var.environment}-${var.region_abbreviation}-01"
   # How the three rules below find the host's rows. NOT `Computer ==

@@ -107,8 +107,9 @@ of which holds on its own:
    no data action and no `list*/action`, so it cannot list storage keys,
    Cosmos keys, Function App settings or Key Vault secrets, and cannot read a
    blob, a document or a secret. It is deliberately **not** the existing
-   `github_reader` identity, which holds a config write on the Function App
-   for the deploy-time origin window.
+   `github_reader` identity, which lists the Function App's settings, and
+   until #1098 also held a config write on it for the content manifest's
+   origin window.
 2. **There is no stored credential to leak.** `copilot-setup-steps.yml` runs
    `azure/login` under OIDC in the `copilot` environment; the identity's
    federated credential trusts exactly the subject

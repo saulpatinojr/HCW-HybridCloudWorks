@@ -242,27 +242,29 @@ resource "azurerm_role_assignment" "github_deploy_funcsa_network" {
 # scheduled workflow's dependency tree inherited the full deploy blast radius,
 # for jobs whose entire job is to look.
 #
-# So there are two identities now, and the division is what the job DOES, not
-# which team owns it:
+# So the division is what the job DOES, not which team owns it:
 #
-#   github_deploy   writes something      deploy-functions, deploy-azure-frontend
-#   github_reader   writes nothing        monitor-functions-registered,
-#                                         publish-content-manifest
+#   github_deploy            writes something     deploy-functions,
+#                                                 deploy-azure-frontend
+#   github_reader            writes nothing       monitor-functions-registered,
+#                                                 monitor-unresolved-secrets
+#   github_manifest_window   one origin rule      publish-content-manifest
 #
 # verify-alert-state ran as github_reader until #1053 and now has an identity
 # of its own, github_alert_reader below, that can read alert rules and action
 # groups and nothing else.
 #
-# publish-content-manifest is on the reader side deliberately, though the
-# finding's recommendation named only the first two. Its build job queries
-# Cosmos and writes a JSON file into the repository — it has never needed a
-# data-plane write, and it held Cosmos Data Contributor because it shared an
-# identity with the healer. Splitting the identity without splitting that job
-# would leave the finding half closed.
+# publish-content-manifest moved to the reader side with T-728, though the
+# finding's recommendation named only the monitors. Its build job then queried
+# Cosmos and wrote a JSON file into the repository — it never needed a
+# data-plane write, and it held Cosmos Data Contributor only because it shared
+# an identity with the healer. T-718 moved the query into the Function App and
+# left the job one write, its origin window, which #1098 moved off this
+# identity: github_manifest_window below says why.
 #
-# All three workflows on this identity declare no `environment:`, so each
-# presents the ref-form subject, and both the name and immutable-ID forms of it
-# are trusted, for the reasons above the immutable block.
+# The workflows on this identity declare no `environment:`, so each presents
+# the ref-form subject, and both the name and immutable-ID forms of it are
+# trusted, for the reasons above the immutable block.
 #
 # scripts/oidc-subjects.test.mjs checks per identity now, not against one pool
 # of subjects: a reader workflow needs a credential on THIS identity, and a
@@ -326,7 +328,12 @@ resource "azurerm_role_assignment" "github_reader_web" {
 # func_config_refresh, which excludes this exact action. The two are different
 # principals with opposite jobs: the Function App may refresh its settings and
 # must not read them back, and this identity may read them and can change
-# nothing. And what it reads is bounded — every credential in this estate is a
+# nothing. That last clause was false until #1098: this identity also held
+# Config Refresh on the site for publish-content-manifest's origin window, and
+# RBAC is additive, so it could list app settings with this role and write them
+# with that one. The window has an identity of its own now, and
+# scripts/oidc-subjects.test.mjs fails if a write role lands back here.
+# And what it reads is bounded — every credential in this estate is a
 # @Microsoft.KeyVault(SecretUri=...) reference, so the list returns the
 # reference string, not the resolved secret. That is not a convention anyone has
 # to remember: functions/src/functions/app-settings-secrets.test.js fails CI on a
@@ -384,34 +391,102 @@ resource "azurerm_role_assignment" "github_deploy_swa_token" {
   principal_id       = azurerm_user_assigned_identity.github_deploy.principal_id
 }
 
-# Open and close the per-run origin window (T-718).
-#
+# ---------------------------------------------------------------------------
+# github_manifest_window — publish-content-manifest's origin window (#1098)
+# ---------------------------------------------------------------------------
 # publish-content-manifest USED to hold Cosmos Data Reader on two containers and
 # query the database from a GitHub-hosted runner. That one workload is what held
 # the 0.0.0.0 sentinel open on the Cosmos firewall, so the query moved into the
 # Function App — which runs inside the subnet that firewall already admits — and
-# the workflow now fetches public/content-manifest over HTTP instead.
+# the workflow now fetches public/content-manifest over HTTP instead (T-718).
 #
 # Reaching the app means getting past the origin lock, so the workflow adds an IP
 # allow rule for its own runner and removes it in an always() step. That is a
-# write to the site's config, and this is the narrowest role in the estate that
-# permits it: Microsoft.Web/sites/config/Write with config/list/action excluded.
+# write to the site's config, and HCW Function Config Refresh is the narrowest
+# role in the estate that permits it: Microsoft.Web/sites/config/Write with
+# config/list/action excluded. It is the definition the Function App uses, for a
+# different job. Its name says "config refresh" because that was its first
+# consumer; the actions are exactly what an access-restriction add/remove needs,
+# and a second definition with an identical permission set would be a rename,
+# not a control.
 #
-# THE SAME ROLE DEFINITION THE FUNCTION APP USES, for a different job. Its name
-# says "config refresh" because that was its first consumer; the actions are
-# exactly what an access-restriction add/remove needs, and inventing a second
-# definition with an identical permission set would be a rename, not a control.
-# What matters is what it withholds — it cannot read app settings back, and it
-# carries nothing else on the site.
+# AN IDENTITY OF ITS OWN SINCE #1098. Until then the window was granted to
+# github_reader, beside HCW Function Settings Reader. RBAC is additive: a
+# role's NotActions subtracts only inside that role, so the one principal could
+# list app settings with one grant and write them with the other, and every
+# step of every workflow on it, the hourly monitor included, held both. Each
+# half now sits on a principal that lacks the other:
 #
-# REMOVED with the Cosmos query: github_reader_cosmos_content and
+#   github_reader            lists app settings, writes nothing
+#   github_manifest_window   writes the site's config, lists nothing
+#
+# Both hold Reader on the web group, which lists nothing either.
+#
+# READER ON THE WEB GROUP, THE READER'S OWN SCOPE. `az functionapp config
+# access-restriction` reads the site and its config before it writes, and the
+# close step reads the rules back to assert none is left; Config Refresh carries
+# no read. Reader on the one site would cover those reads, and was this block's
+# first shape. It was moved to the group (CodeRabbit on #1104) because of how
+# the job signs in, not what it reads. Every az command takes its credential
+# from the subscription it finds in the login's account list
+# (azure-cli's Profile.get_subscription raises "Subscription ... not found"
+# otherwise), so the subscription must be discoverable whether the login pins
+# it or each command passes --subscription. Whether a grant on one resource
+# makes it discoverable is not documented. A group-scope Reader beside a
+# site-scope Config Refresh is exactly github_reader's shape, which signs in
+# with SUBSCRIPTION_ID pinned every hour. Reader is `*/read` and no list
+# action, so app settings, which come back only through config/list/action,
+# stay out of reach: this identity holds that action on no scope.
+#
+# principal_type is explicit on both grants because the identity is created in
+# the same apply, as for github_alert_reader.
+#
+# The workflow declares no `environment:` on its build job, so it presents the
+# ref-form subject, trusted here in both the name and immutable-ID forms. The
+# subjects are the reader's; the client-id the job sends
+# (MANIFEST_WINDOW_CLIENT_ID) decides which identity it reaches, which
+# scripts/oidc-subjects.test.mjs checks per job.
+#
+# REMOVED with the Cosmos query (T-718): github_reader_cosmos_content and
 # github_reader_cosmos_blogs, Data Reader on those two containers. Nothing in CI
 # reaches the Cosmos data plane now, which is the precondition
-# cosmos_allow_azure_datacenter_ips = false depends on.
-resource "azurerm_role_assignment" "github_reader_origin_window" {
+# cosmos_allow_azure_datacenter_ips = false depends on. REMOVED in #1098:
+# github_reader_origin_window, this grant's predecessor on github_reader.
+resource "azurerm_user_assigned_identity" "github_manifest_window" {
+  name                = "id-${var.workload_name}-github-manifest-${var.environment}-${var.region_abbreviation}-${var.instance}"
+  location            = azurerm_resource_group.app["web"].location
+  resource_group_name = azurerm_resource_group.app["web"].name
+  tags                = local.tags
+}
+
+resource "azurerm_federated_identity_credential" "github_manifest_window_branch" {
+  name                      = "github-${var.github_repo}-manifest-window-branch"
+  user_assigned_identity_id = azurerm_user_assigned_identity.github_manifest_window.id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = "https://token.actions.githubusercontent.com"
+  subject                   = "repo:${var.github_org}/${var.github_repo}:ref:${var.github_deploy_ref}"
+}
+
+resource "azurerm_federated_identity_credential" "github_manifest_window_branch_immutable" {
+  name                      = "github-${var.github_repo}-manifest-window-branch-immutable"
+  user_assigned_identity_id = azurerm_user_assigned_identity.github_manifest_window.id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = "https://token.actions.githubusercontent.com"
+  subject                   = "${local.github_immutable_prefix}:ref:${var.github_deploy_ref}"
+}
+
+resource "azurerm_role_assignment" "github_manifest_window_config" {
   scope              = azurerm_function_app_flex_consumption.hcw.id
   role_definition_id = data.azurerm_role_definition.func_config_refresh.id
-  principal_id       = azurerm_user_assigned_identity.github_reader.principal_id
+  principal_id       = azurerm_user_assigned_identity.github_manifest_window.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "github_manifest_window_read" {
+  scope                = azurerm_resource_group.app["web"].id
+  role_definition_name = "Reader"
+  principal_id         = azurerm_user_assigned_identity.github_manifest_window.principal_id
+  principal_type       = "ServicePrincipal"
 }
 
 # ---------------------------------------------------------------------------
@@ -700,6 +775,11 @@ output "alert_reader_client_id" {
   value       = azurerm_user_assigned_identity.github_alert_reader.client_id
 }
 
+output "manifest_window_client_id" {
+  description = "MANIFEST_WINDOW_CLIENT_ID for azure/login in publish-content-manifest.yml's origin window (#1098) — a repository variable, not a secret"
+  value       = azurerm_user_assigned_identity.github_manifest_window.client_id
+}
+
 output "copilot_review_client_id" {
   description = "COPILOT_REVIEW_CLIENT_ID for azure/login in copilot-setup-steps.yml — a repository variable, mirrored as an Agents secret of the same name because Copilot's own runner resolves no repository variables (runbook step 2b); an identifier in both stores, not a secret"
   value       = azurerm_user_assigned_identity.github_copilot_review.client_id
@@ -710,7 +790,8 @@ output "deploy_principal_id" {
   value       = azurerm_user_assigned_identity.github_deploy.principal_id
 }
 
-# Eight entries since 2026-10-11, when the alert reader identity's ref pair
+# Ten entries since #1098, when the manifest window identity's ref pair was
+# added. Eight since 2026-10-11, when the alert reader identity's ref pair
 # was added (#1053). Six since 2026-10-06, down from eight: the deploy
 # identity's ref pair was retired (SEC-2). Eight since 2026-09-06, when the Copilot review
 # identity's environment pair was added; six before that since 2026-08-29, when
@@ -725,8 +806,8 @@ output "deploy_principal_id" {
 # with CLIENT_ID (the deploy identity) fails here by design — a job that needs
 # the deploy identity names `environment: production` and presents the
 # environment form. Which identity a job reaches is decided by the client-id
-# it presents, so check whether it sent CLIENT_ID, READER_CLIENT_ID or
-# ALERT_READER_CLIENT_ID.
+# it presents, so check whether it sent CLIENT_ID, READER_CLIENT_ID,
+# ALERT_READER_CLIENT_ID or MANIFEST_WINDOW_CLIENT_ID.
 output "federated_subjects" {
   description = "Exact OIDC subject claims trusted by these identities — compare against a failing token"
   value = [
@@ -736,6 +817,8 @@ output "federated_subjects" {
     azurerm_federated_identity_credential.github_reader_branch_immutable.subject,
     azurerm_federated_identity_credential.github_alert_reader_branch.subject,
     azurerm_federated_identity_credential.github_alert_reader_branch_immutable.subject,
+    azurerm_federated_identity_credential.github_manifest_window_branch.subject,
+    azurerm_federated_identity_credential.github_manifest_window_branch_immutable.subject,
     azurerm_federated_identity_credential.github_copilot_review_environment.subject,
     azurerm_federated_identity_credential.github_copilot_review_environment_immutable.subject,
   ]

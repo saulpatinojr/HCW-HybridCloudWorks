@@ -16,7 +16,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = readFileSync(join(REPO, 'lab-host', 'bootstrap.sh'), 'utf8');
@@ -67,7 +67,10 @@ const shellReady =
 // 5 s default was exceeded once on a loaded Windows machine (2026-10-08),
 // where every spawn is slow; 30 s still fails a real hang well within CI.
 describe.skipIf(!shellReady)('the checkout block, run', { timeout: 30_000 }, () => {
-  const root = mkdtempSync(join(tmpdir(), 'hcw-bootstrap-origin-'));
+  // Made in beforeAll, not in this body. Vitest runs a skipped suite's body to
+  // collect its tests but never its hooks, so a directory and a repository made
+  // here were left behind on every run that skips.
+  let root, upstream;
   const slash = (path) => path.replace(/\\/g, '/');
   const git = (cwd, ...args) => {
     const result = run('git', ['-C', cwd, ...args]);
@@ -77,13 +80,15 @@ describe.skipIf(!shellReady)('the checkout block, run', { timeout: 30_000 }, () 
   const author = ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid'];
 
   // A repository at its new address, with one commit.
-  const upstream = join(root, 'upstream');
-  run('git', ['init', '--quiet', '--initial-branch=main', upstream]);
-  writeFileSync(join(upstream, 'README.md'), 'lab\n');
-  git(upstream, 'add', 'README.md');
-  git(upstream, ...author, 'commit', '--quiet', '-m', 'one');
-
-  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'hcw-bootstrap-origin-'));
+    upstream = join(root, 'upstream');
+    run('git', ['init', '--quiet', '--initial-branch=main', upstream]);
+    writeFileSync(join(upstream, 'README.md'), 'lab\n');
+    git(upstream, 'add', 'README.md');
+    git(upstream, ...author, 'commit', '--quiet', '-m', 'one');
+  });
+  afterAll(() => root && rmSync(root, { recursive: true, force: true }));
 
   /** A checkout cloned from the new address, then given `origin` as its remote. */
   function checkoutWithOrigin(name, origin) {

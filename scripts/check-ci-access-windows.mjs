@@ -35,10 +35,10 @@
  *
  * This only reads. Removing an orphan stays a person's decision, made after
  * reading the rule and the run again: a re-run of a run keeps its id and
- * opens the same window. The monitor's Azure identity (`github_reader`) could
- * write the site's config, because `publish-content-manifest.yml` uses it to
- * open its own window (`infra/oidc.tf`, T-718). The monitor does not use that
- * write, and separating the two is #1098. The monitor reads twice, a minute
+ * opens the same window. The monitor's Azure identity (`github_reader`) held a
+ * write on the site's config until #1098, because `publish-content-manifest.yml`
+ * used it to open its own window (`infra/oidc.tf`, T-718). That window has an
+ * identity of its own now, and the reader writes nothing. The monitor reads twice, a minute
  * apart, before it names an orphan, so a run that closes its window while the
  * check runs is not reported.
  *

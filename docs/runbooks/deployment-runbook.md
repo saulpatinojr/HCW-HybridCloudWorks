@@ -325,7 +325,8 @@ both take no arguments for the reasons given in section 0:
   the script after any apply that changes an output** (a renamed group, a
   new hostname), or the GitHub-side copies go stale. The first post-apply
   run is also what arms the self-skipping workflows that sign in with
-  `CLIENT_ID` and `READER_CLIENT_ID`.
+  `CLIENT_ID`, `READER_CLIENT_ID`, `ALERT_READER_CLIENT_ID` and
+  `MANIFEST_WINDOW_CLIENT_ID`.
 
 ### Verify
 

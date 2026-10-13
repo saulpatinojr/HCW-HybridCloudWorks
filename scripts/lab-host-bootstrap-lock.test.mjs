@@ -18,7 +18,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = readFileSync(join(REPO, 'lab-host', 'bootstrap.sh'), 'utf8');
@@ -99,23 +99,29 @@ const bashUsable =
 const lockUsable = bashUsable && run('bash', ['-c', 'command -v flock && test -d /proc/self/fd']).status === 0;
 
 describe.skipIf(!lockUsable)('the lock block, run', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'hcw-bootstrap-lock-'));
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  // Made in beforeAll, not in this body. Vitest runs a skipped suite's body to
+  // collect its tests but never its hooks, so a directory made here was left
+  // behind on every run that skips, which is every Windows run.
+  let dir, lockPath, holder, contender, first;
 
   // The block, pointed at a throwaway lock file, after the script's own log().
-  const lockPath = join(dir, 'bootstrap.lock');
-  const block = LOCK_BLOCK.replaceAll('/run/hcw-bootstrap.lock', lockPath);
   const prelude = `set -euo pipefail\nlog() { printf '[bootstrap] %s\\n' "$*"; }\n`;
   const pass = (name, body) => {
     const path = join(dir, `${name}.sh`);
-    writeFileSync(path, `${prelude}${block}${body}\n`);
+    writeFileSync(path, `${prelude}${LOCK_BLOCK.replaceAll('/run/hcw-bootstrap.lock', lockPath)}${body}\n`);
     return path;
   };
-  const holder = pass('holder', 'echo held; sleep 3; echo released');
-  const contender = pass('contender', 'echo contender-ran');
-  // A first pass that takes the lock, then hands over by exec, as bootstrap.sh does.
-  const second = pass('second', 'echo second-pass-ran; sleep 3; echo second-pass-done');
-  const first = pass('first', `echo first-locked; HCW_BOOTSTRAP_HANDED_OVER=1 exec bash '${second}'`);
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hcw-bootstrap-lock-'));
+    lockPath = join(dir, 'bootstrap.lock');
+    holder = pass('holder', 'echo held; sleep 3; echo released');
+    contender = pass('contender', 'echo contender-ran');
+    // A first pass that takes the lock, then hands over by exec, as bootstrap.sh does.
+    const second = pass('second', 'echo second-pass-ran; sleep 3; echo second-pass-done');
+    first = pass('first', `echo first-locked; HCW_BOOTSTRAP_HANDED_OVER=1 exec bash '${second}'`);
+  });
+  afterAll(() => dir && rmSync(dir, { recursive: true, force: true }));
 
   /** Start `lead` in the background, give it a moment to lock, then run the contender with this environment. */
   const race = (env, lead = holder) => {

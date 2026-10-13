@@ -259,6 +259,7 @@ Both cloud handshakes in this estate are federated, and neither has a secret:
 | GitHub Actions → Azure | the `github_deploy` user-assigned identity | Federated credentials on issuer `https://token.actions.githubusercontent.com`, subject-pinned to the deploy ref AND to the `production` environment, each in both the name and immutable-ID forms — four credentials | `infra/oidc.tf` |
 | GitHub Copilot → Azure (read-only) | the `github_copilot_review` user-assigned identity | The same issuer, pinned to `…:environment:copilot` only, both forms — two credentials, no ref subject, so no branch-triggered workflow can assume it. Reader on the four workload groups and nothing else; the Azure MCP Server runs `--read-only` with fourteen hand-picked tools on top | `infra/oidc.tf` |
 | GitHub Actions → Azure (read-only) | the `github_reader` user-assigned identity | The same issuer, but pinned to the deploy **ref only**, in both forms — two credentials, no environment subject. That asymmetry is load-bearing: a reader workflow that declares `environment:` presents `…:environment:<name>` instead of `…:ref:<ref>` and is refused with AADSTS700213, which is why `verify-alert-state.yml` and `monitor-functions-registered.yml` each carry a header saying not to add one | `infra/oidc.tf` |
+| GitHub Actions → Azure (one job each) | the `github_alert_reader` (#1053) and `github_manifest_window` (#1098) user-assigned identities | The reader's trust exactly: the deploy ref only, both forms, two credentials each. The client-id a job sends picks the identity. The alert reader reads alert rules and action groups; the manifest window writes the Function App's config and lists nothing, so the reader no longer holds a write beside its app-settings read | `infra/oidc.tf` |
 
 Neither mints anything longer-lived than a per-run token. So the **correct count
 of Azure credentials in GitHub Actions secrets is zero**, and that is a
@@ -459,7 +460,8 @@ Everything else there is a default nobody is expected to override.
 | Value | CHECKLIST | Why store 3 |
 | --- | --- | --- |
 | `CLIENT_ID` | §7 | Identifier under WIF; grants nothing without a matching federated subject |
-| `READER_CLIENT_ID`, `COPILOT_REVIEW_CLIENT_ID` | §7 | Identifiers for the read-only identities (`github_reader`; `github_copilot_review`, which Copilot code review signs in as) — same reasoning |
+| `READER_CLIENT_ID`, `ALERT_READER_CLIENT_ID`, `COPILOT_REVIEW_CLIENT_ID` | §7 | Identifiers for the read-only identities (`github_reader`; `github_alert_reader`, which reads alert rules; `github_copilot_review`, which Copilot code review signs in as) — same reasoning |
+| `MANIFEST_WINDOW_CLIENT_ID` | §7 | Identifier for `github_manifest_window`, which opens and closes `publish-content-manifest.yml`'s origin window (#1098) — same reasoning |
 | `COPILOT_REVIEW_APP_ID` | — | App ID of the read-only GitHub App Copilot code review reads GitHub with. An identifier, exactly like `MANIFEST_APP_ID`; the key is in store 4 |
 | `TENANT_ID` | §7 | Identifier |
 | `SUBSCRIPTION_ID` | §7 | Identifier |
