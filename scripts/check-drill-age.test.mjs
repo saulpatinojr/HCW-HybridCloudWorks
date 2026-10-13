@@ -16,6 +16,7 @@ import {
   parseArgs,
   parseDate,
   renderMarkdown,
+  todayUtc,
   verdictLine,
 } from './check-drill-age.mjs';
 
@@ -167,7 +168,9 @@ describe('the committed runbook', () => {
   it('has a Drills table this script can read', () => {
     // The check runs against this file every week; a runbook edit that
     // breaks its shape must fail here, in the pull request, not on Monday.
-    const result = evaluate(readFileSync(RUNBOOK, 'utf8'), { today: '2026-10-07' });
+    // Today's real date: a fixed day read the first drill's row (2026-10-13)
+    // as one from the future, once the table held a real row.
+    const result = evaluate(readFileSync(RUNBOOK, 'utf8'), { today: todayUtc() });
     expect(['none', 'current', 'stale']).toContain(result.status);
   });
 });
