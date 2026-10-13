@@ -46,7 +46,10 @@ export const CAPTURE_PATH = 'scripts/lab/capture-docker-cli-requests.mjs';
  * from it (`5:29.9.0-1~ubuntu.26.04~resolute` → `29.9.0`).
  */
 export function pinnedEngine(groupVars, codename = 'resolute') {
-  const block = String(groupVars).match(new RegExp(`^ {2}${codename}:\\n((?: {4}.*\\n)+)`, 'm'));
+  // A release codename is one lowercase word; anything else is refused before
+  // it reaches the pattern (CodeQL js/regex-injection on the --codename flag).
+  if (!/^[a-z]+$/.test(codename)) throw new Error(`${JSON.stringify(codename)} is not a release codename`);
+  const block =String(groupVars).match(new RegExp(`^ {2}${codename}:\\n((?: {4}.*\\n)+)`, 'm'));
   const version = block?.[1].match(/^ {4}engine: "([^"]+)"$/m)?.[1];
   if (!version) throw new Error(`docker_release_pins.${codename}.engine not found in ${GROUP_VARS_PATH}`);
   const core = version.match(/^(?:\d+:)?(\d+\.\d+\.\d+)-/)?.[1];

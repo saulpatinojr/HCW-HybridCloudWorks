@@ -28,6 +28,8 @@ describe('record-docker-cli-fixture', () => {
     expect(pinnedEngine(slice)).toEqual({ version: '5:29.9.0-1~ubuntu.26.04~resolute', core: '29.9.0' });
     expect(pinnedEngine(slice, 'noble')).toEqual({ version: '5:29.9.0-1~ubuntu.24.04~noble', core: '29.9.0' });
     expect(() => pinnedEngine(slice, 'jammy')).toThrow(/docker_release_pins\.jammy\.engine not found/);
+    expect(() => pinnedEngine(slice, 'resolute:\n    engine: "x"|.*')).toThrow(/is not a release codename/);
+    expect(() => pinnedEngine(slice, 'Resolute')).toThrow(/is not a release codename/);
     expect(() => pinnedEngine('docker_release_pins:\n  resolute:\n    engine: "latest"\n')).toThrow(
       /not an epoch:upstream-revision/
     );
