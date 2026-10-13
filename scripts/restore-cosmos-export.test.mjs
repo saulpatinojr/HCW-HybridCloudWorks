@@ -9,7 +9,9 @@ import {
   selectRestoreSet,
   restoreLayers,
   containersToRestore,
+  assertManifest,
   layersCarrying,
+  verifyTargetCount,
   dataBlobName,
   manifestBlobName,
   parseLine,
@@ -157,6 +159,66 @@ describe('layersCarrying', () => {
   it('refuses to guess when a layer has no manifest read', () => {
     const partial = new Map([...manifests].filter(([key]) => key !== 'delta/2026-10-13'));
     expect(() => layersCarrying('content', layers, partial)).toThrow(/no manifest was read for delta\/2026-10-13/);
+  });
+});
+
+describe('assertManifest', () => {
+  const layer = { mode: 'delta', runId: '2026-10-12' };
+  const good = { mode: 'delta', runId: '2026-10-12', containers: [{ container: 'content', docs: 4 }] };
+
+  it('passes a manifest that names its own run and lists named containers', () => {
+    expect(assertManifest(good, layer)).toBe(good);
+  });
+
+  it('refuses one that describes another run, so a misplaced manifest cannot stand in', () => {
+    expect(() => assertManifest({ ...good, runId: '2026-10-11' }, layer)).toThrow(
+      'delta/2026-10-12/manifest.json describes delta/2026-10-11, not delta/2026-10-12'
+    );
+    expect(() => assertManifest({ ...good, mode: 'full' }, layer)).toThrow('describes full/2026-10-12');
+  });
+
+  it('refuses a missing, empty or malformed container list rather than read it as carrying nothing', () => {
+    for (const containers of [undefined, null, {}, []]) {
+      expect(() => assertManifest({ ...good, containers }, layer), JSON.stringify(containers)).toThrow(/lists no containers/);
+    }
+    for (const entry of [null, 'content', {}, { container: '' }, { container: 7 }]) {
+      expect(() => assertManifest({ ...good, containers: [entry] }, layer), JSON.stringify(entry)).toThrow(
+        /has a container entry with no name/
+      );
+    }
+    expect(() => assertManifest([], layer)).toThrow(/is not a JSON object/);
+  });
+});
+
+describe('verifying the target (the first drill, 2026-10-12)', () => {
+  it('passes an empty container: a real run created 0, not null', () => {
+    // 17 empty containers were reported MISMATCH: 0 in the target against null.
+    const tally = createRestoreTally({ writes: true });
+    tally.touch('full/2026-10-11');
+    expect(tally.result()).toMatchObject({ documents: 0, created: 0, replaced: 0 });
+    expect(verifyTargetCount({ before: 0, created: 0, inTarget: 0 })).toEqual({ ok: true, cell: '0' });
+  });
+
+  it('passes a rerun into a target an earlier attempt already filled', () => {
+    // admin_audit_logs: 3074 written by the aborted first attempt, 0 created by the rerun.
+    expect(verifyTargetCount({ before: 3074, created: 0, inTarget: 3074 })).toEqual({ ok: true, cell: '3074' });
+  });
+
+  it('passes a fresh container, and counts two documents that share an id across partitions as two', () => {
+    // image_prompt_sets_prompts: two documents with id "News", in two sets.
+    expect(verifyTargetCount({ before: 0, created: 2, inTarget: 2 }).ok).toBe(true);
+  });
+
+  it('fails, naming the expected count, when the target holds fewer or more', () => {
+    expect(verifyTargetCount({ before: 0, created: 5, inTarget: 4 })).toEqual({
+      ok: false,
+      cell: '4 MISMATCH (expected 5)',
+    });
+    expect(verifyTargetCount({ before: 10, created: 0, inTarget: 11 }).cell).toBe('11 MISMATCH (expected 10)');
+  });
+
+  it('keeps created null on a dry run, which writes nothing', () => {
+    expect(createRestoreTally().result()).toMatchObject({ created: null, replaced: null });
   });
 });
 

@@ -4506,6 +4506,14 @@ This project has not cut a tagged release; entries are grouped under
     a listed container with no file still stops the restore.
   - Against the live backups the dry run reaches the end: 11,971 documents
     across 62 containers.
+  - Each layer's manifest is checked before anything is written: it must name
+    its own run, and list its containers by name. A missing or malformed list
+    stops the restore instead of quietly dropping that day's changes.
+  - `--verify` expects each container to hold what it held before the run plus
+    what the run created, and counts an empty container as 0. The drill's first
+    report flagged 18 false mismatches: 17 empty containers, and one an aborted
+    first attempt had already filled. An independent check found all 62
+    containers in the test database exactly matching the backups.
   - The script refuses a target whose account name has `-prod-` in it unless
     `--allow-production-target` is given, because a restore writes backup
     copies over whatever the target holds.

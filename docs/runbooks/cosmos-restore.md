@@ -225,16 +225,18 @@ az cosmosdb sql role assignment create -a cosmos-site-sbx-cus -g rg-db-site-sbx-
 node scripts/restore-cosmos-export.mjs --storage-account stsiteprodcus01 --target-endpoint https://cosmos-site-sbx-cus.documents.azure.com:443/ --verify
 ```
 
-Success looks like the dry run with `created` and `replaced` filled in — the
+Success looks like the dry run with `created` and `replaced` filled in. The
 upsert answers 201 for a document the target had not seen and 200 for one an
-earlier layer already wrote, so `created` is the distinct count and
-`replaced` the documents a delta superseded — a `target` column equal to
-`created` on every row (an operational container such as `admin_audit_logs`
-shows `0` under `deltas`: it is in the weekly full and in no delta, by design), and a last line reading
-`Restored 70112 document(s): 69874 created (distinct), 238 replaced by a later layer, across 60 container(s) in 1834201 ms (30.6 min)`,
-exit code 0. A row ending `MISMATCH` is a container whose count in the target
-does not equal the documents created there; the script exits 1 and the drill
-has not passed until the cause is known. The cost of this step is about
+earlier layer, or an earlier attempt, already wrote. The `target` column on
+every row equals what the container held before the run plus what the run
+created: into a fresh account that is `created`, and an empty container
+reads `0`. An operational container such as `admin_audit_logs` shows `0`
+under `deltas`, because it is in the weekly full and in no delta, by design.
+The last line reads
+`Restored 11971 document(s): 11937 created, 34 replaced (already in the target, or superseded by a later layer), across 62 container(s) in 104979 ms (1.7 min)`,
+with exit code 0. A row ending `MISMATCH` is a container whose count in the
+target is not that; it names the count it expected, the script exits 1, and
+the drill has not passed until the cause is known. The cost of this step is about
 $3 in write request units (cost analysis, #385).
 
 ### 5. Spot-check the site's public reads against the restored account
