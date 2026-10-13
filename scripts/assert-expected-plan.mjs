@@ -123,20 +123,27 @@
  * "the plan is empty", which this already handles.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync } from "node:fs";
 
-import { actionsOf, classify, sideEffects } from './lib/plan-actions.mjs';
-import { declarationLines, findDeclaredAction, matchesDeclaration } from './lib/plan-declarations.mjs';
-import { attributeChanges, formatPath } from './lib/plan-diff.mjs';
-import { describeDifference, secretsOf } from './lib/plan-report.mjs';
+import { actionsOf, classify, sideEffects } from "./lib/plan-actions.mjs";
+import {
+  declarationLines,
+  findDeclaredAction,
+  matchesDeclaration,
+} from "./lib/plan-declarations.mjs";
+import { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
+import { describeDifference, secretsOf } from "./lib/plan-report.mjs";
 
 // What a change does is read in lib/plan-actions.mjs, what differs in
 // lib/plan-diff.mjs, and how it is printed in lib/plan-report.mjs; this file
 // keeps the policy. Re-exported so callers and tests have one module to import.
-export { classify } from './lib/plan-actions.mjs';
-export { declarationLines, describeDeclaration } from './lib/plan-declarations.mjs';
-export { attributeChanges, formatPath } from './lib/plan-diff.mjs';
-export { describeDifference, redact, secretsOf } from './lib/plan-report.mjs';
+export { classify } from "./lib/plan-actions.mjs";
+export {
+  declarationLines,
+  describeDeclaration,
+} from "./lib/plan-declarations.mjs";
+export { attributeChanges, formatPath } from "./lib/plan-diff.mjs";
+export { describeDifference, redact, secretsOf } from "./lib/plan-report.mjs";
 
 /**
  * The permanent diff, by resource address.
@@ -150,14 +157,14 @@ export { describeDifference, redact, secretsOf } from './lib/plan-report.mjs';
  */
 export const EXPECTED = {
   replaced: [
-    'azapi_resource_action.function_app_settings',
-    'azapi_update_resource.function_app_settings_without_webjobs_storage',
-    'azapi_update_resource.function_app_ftp_basic_auth',
+    "azapi_resource_action.function_app_settings",
+    "azapi_update_resource.function_app_settings_without_webjobs_storage",
+    "azapi_update_resource.function_app_ftp_basic_auth",
   ],
   updated: [
     {
-      address: 'azurerm_function_app_flex_consumption.hcw',
-      attribute: 'RUNTIME_CONFIG_WRITER',
+      address: "azurerm_function_app_flex_consumption.hcw",
+      attribute: "RUNTIME_CONFIG_WRITER",
     },
   ],
 };
@@ -173,10 +180,12 @@ export const EXPECTED = {
  * like any other update. It is tolerated per instance (`["content"]`,
  * `["blogs"]`) and never reported missing, since most plans do not contain it.
  */
-export const CONDITIONAL_REPLACED = ['azapi_update_resource.cosmos_computed_properties'];
+export const CONDITIONAL_REPLACED = [
+  "azapi_update_resource.cosmos_computed_properties",
+];
 
 /** `type.name["key"]` -> `type.name`, the address a for_each instance belongs to. */
-const baseAddress = (address) => address.replace(/\[[^\]]*\]$/, '');
+const baseAddress = (address) => address.replace(/\[[^\]]*\]$/, "");
 
 /**
  * alert-timer-overdue's query as Terraform renders it (infra/observability.tf,
@@ -188,34 +197,36 @@ const baseAddress = (address) => address.replace(/\[[^\]]*\]$/, '');
  * holds the `after` rows to the map in the tree.
  */
 const OVERDUE_QUERY_HEAD =
-  'let Grace = 45m;\nlet Now = now();\nlet Expected = datatable(timer: string, period: timespan, anchor: datetime) [\n';
+  "let Grace = 45m;\nlet Now = now();\nlet Expected = datatable(timer: string, period: timespan, anchor: datetime) [\n";
 const OVERDUE_QUERY_TAIL = [
-  '',
-  '];',
-  'let Ingesting = toscalar(requests | where timestamp > Now - 30m | count) > 0;',
-  'let LastSuccess = requests',
+  "",
+  "];",
+  "let Ingesting = toscalar(requests | where timestamp > Now - 30m | count) > 0;",
+  "let LastSuccess = requests",
   '  | where tostring(success) =~ "true"',
   '  | extend timer = replace_string(name, "Functions.", "")',
-  '  | summarize lastSuccess = max(timestamp) by timer;',
-  'let Overdue = Expected',
-  '  | where Ingesting',
-  '  | extend lastDue = bin_at(Now - Grace, period, anchor)',
-  '  | where lastDue > Now - 1d',
-  '  | join kind=leftouter LastSuccess on timer',
-  '  | where isnull(lastSuccess) or lastSuccess < lastDue - 1m;',
-  'let Many = toscalar(Overdue | count) > 5;',
-  'union',
-  '  (Overdue | where not(Many) | project timer),',
+  "  | summarize lastSuccess = max(timestamp) by timer;",
+  "let Overdue = Expected",
+  "  | where Ingesting",
+  "  | extend lastDue = bin_at(Now - Grace, period, anchor)",
+  "  | where lastDue > Now - 1d",
+  "  | join kind=leftouter LastSuccess on timer",
+  "  | where isnull(lastSuccess) or lastSuccess < lastDue - 1m;",
+  "let Many = toscalar(Overdue | count) > 5;",
+  "union",
+  "  (Overdue | where not(Many) | project timer),",
   '  (Overdue | where Many | take 1 | project timer = "more than five timers at once")',
-  '',
-].join('\n');
+  "",
+].join("\n");
 
 /** The query for these `[name, period, anchor]` rows, as Terraform writes it. */
 export function overdueQuery(rows) {
   const lines = [...rows]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([name, period, anchor]) => `  "${name}", ${period}, datetime(${anchor})`);
-  return `${OVERDUE_QUERY_HEAD}${lines.join(',\n')}${OVERDUE_QUERY_TAIL}`;
+    .map(
+      ([name, period, anchor]) => `  "${name}", ${period}, datetime(${anchor})`,
+    );
+  return `${OVERDUE_QUERY_HEAD}${lines.join(",\n")}${OVERDUE_QUERY_TAIL}`;
 }
 
 /**
@@ -242,11 +253,12 @@ export const DECLARED = [
   // 06:15 UTC, logged "disabled - skipping". Its next run (Mondays 06:15 UTC)
   // says which: delete this entry once it runs instead of skipping.
   {
-    address: 'azurerm_function_app_flex_consumption.hcw',
-    path: 'app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS',
-    before: 'false',
-    after: 'true',
-    reason: '#701: PROBE_AI_PROVIDERS added to enabled_timers, arming the weekly probe',
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS",
+    before: "false",
+    after: "true",
+    reason:
+      "#701: PROBE_AI_PROVIDERS added to enabled_timers, arming the weekly probe",
   },
   // Applied by 2026-10-10 and deleted here, as the header asks:
   // - the canary's disarmed flag and alert-timer-overdue's labCanary row (#1009);
@@ -268,17 +280,31 @@ export const DECLARED = [
   // run under the new identity read every rule in both groups.
   // #1089's ADDON_NETWORK_ASSESSMENT_URL and ADDON_CLOUD_ASSESSMENT_URL
   // applied in run-rK5qZUjro4G4K7rz on 2026-10-12 and were deleted here.
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.STREAMYARD_API_KEY",
+    before: undefined,
+    after:
+      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/STREAMYARD-API-KEY)",
+    reason: "StreamYard On-Air: Key Vault reference for STREAMYARD-API-KEY",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
-const MARKERS = ['before', 'after', 'after_unknown', 'before_sensitive', 'after_sensitive'];
+const MARKERS = [
+  "before",
+  "after",
+  "after_unknown",
+  "before_sensitive",
+  "after_sensitive",
+];
 
 /** address -> the paths an update there may change, whatever the values. */
 function toleratedPaths() {
   const tolerated = new Map();
   for (const { address, attribute } of EXPECTED.updated) {
     if (!tolerated.has(address)) tolerated.set(address, new Set());
-    tolerated.get(address).add(formatPath(['app_settings', attribute]));
+    tolerated.get(address).add(formatPath(["app_settings", attribute]));
   }
   return tolerated;
 }
@@ -293,7 +319,9 @@ function checkUpdate(change, { tolerated, declared, matched, secrets }) {
   if (absent.length > 0) {
     // Without the markers there is no telling which values are secret, and
     // the report is published. So it stops rather than guessing.
-    throw new Error(`${address}: update has no ${absent.join(', ')}, so its values cannot be printed safely`);
+    throw new Error(
+      `${address}: update has no ${absent.join(", ")}, so its values cannot be printed safely`,
+    );
   }
   const differences = attributeChanges(change.change);
   if (differences.length === 0) {
@@ -306,16 +334,24 @@ function checkUpdate(change, { tolerated, declared, matched, secrets }) {
   const lines = [];
   for (const difference of differences) {
     if (tolerated.get(address)?.has(difference.path)) continue;
-    const declaration = declared.find((d) => matchesDeclaration(d, address, difference));
+    const declaration = declared.find((d) =>
+      matchesDeclaration(d, address, difference),
+    );
     if (declaration) matched.add(declaration);
-    else lines.push(`${address}: update ${difference.path}: ${describeDifference(difference, secrets)}`);
+    else
+      lines.push(
+        `${address}: update ${difference.path}: ${describeDifference(difference, secrets)}`,
+      );
   }
   return lines;
 }
 
 /** Whether a replacement is one of the expected or conditional azapi ones. */
 function isToleratedReplacement(address, expectedReplaced) {
-  return expectedReplaced.has(address) || CONDITIONAL_REPLACED.includes(baseAddress(address));
+  return (
+    expectedReplaced.has(address) ||
+    CONDITIONAL_REPLACED.includes(baseAddress(address))
+  );
 }
 
 /**
@@ -325,13 +361,17 @@ function isToleratedReplacement(address, expectedReplaced) {
  */
 function checkChange(change, action, context) {
   const { address } = change;
-  if (action === 'replace' && isToleratedReplacement(address, context.expectedReplaced)) return [];
+  if (
+    action === "replace" &&
+    isToleratedReplacement(address, context.expectedReplaced)
+  )
+    return [];
 
   // Every attribute of an update, not only app_settings (#719). Anything
   // changing beyond the one known app setting and what a pull request has
   // declared is exactly the drift that hides beside the trio, so it is named
   // rather than waved through on the address alone.
-  if (action === 'update') return checkUpdate(change, context);
+  if (action === "update") return checkUpdate(change, context);
 
   // A create or a delete can be declared too (#816), by address and action
   // alone. There are no values to match, so the address is exact.
@@ -356,13 +396,13 @@ function checkChange(change, action, context) {
  *   it did not, which the caller reports without failing.
  */
 export function checkPlan(plan, { declared = DECLARED } = {}) {
-  if (!plan || typeof plan !== 'object') {
-    throw new Error('plan is not an object');
+  if (!plan || typeof plan !== "object") {
+    throw new Error("plan is not an object");
   }
   // `resource_changes` is absent from a genuinely empty plan, which is valid.
   const changes = plan.resource_changes ?? [];
   if (!Array.isArray(changes)) {
-    throw new Error('plan.resource_changes is not an array');
+    throw new Error("plan.resource_changes is not an array");
   }
 
   const expectedReplaced = new Set(EXPECTED.replaced);
@@ -381,8 +421,9 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
   for (const change of changes) {
     const actions = actionsOf(change);
     const action = classify(actions);
-    for (const note of sideEffects(change, actions)) unexpected.push(`${change.address}: ${note}`);
-    if (action === 'no-op') continue;
+    for (const note of sideEffects(change, actions))
+      unexpected.push(`${change.address}: ${note}`);
+    if (action === "no-op") continue;
     seen.add(change.address);
     unexpected.push(...checkChange(change, action, context));
   }
@@ -405,7 +446,7 @@ export function checkPlan(plan, { declared = DECLARED } = {}) {
 function readPlan(path) {
   let text;
   try {
-    text = readFileSync(path, 'utf8');
+    text = readFileSync(path, "utf8");
   } catch (err) {
     return { problem: `could not read a plan from ${path}: ${err.message}` };
   }
@@ -414,15 +455,17 @@ function readPlan(path) {
   } catch {
     // The parser's own message quotes the text around the fault, and a plan
     // holds secrets in plaintext, so it is not printed.
-    return { problem: `${path} is not valid JSON, so no plan could be read from it.` };
+    return {
+      problem: `${path} is not valid JSON, so no plan could be read from it.`,
+    };
   }
 }
 
 function main(argv) {
   const path = argv[2];
   if (!path) {
-    console.error('usage: node scripts/assert-expected-plan.mjs <plan.json>');
-    console.error('  produce it with: terraform show -json tfplan > plan.json');
+    console.error("usage: node scripts/assert-expected-plan.mjs <plan.json>");
+    console.error("  produce it with: terraform show -json tfplan > plan.json");
     return 2;
   }
 
@@ -443,8 +486,8 @@ function main(argv) {
   if (result.ok) {
     console.log(
       result.declared.length === 0
-        ? 'plan matches the expected permanent diff and nothing else.'
-        : 'plan matches the expected permanent diff and its declared changes, and nothing else.'
+        ? "plan matches the expected permanent diff and nothing else."
+        : "plan matches the expected permanent diff and its declared changes, and nothing else.",
     );
     for (const line of declarationLines(result)) console.log(line);
     return 0;
@@ -457,15 +500,17 @@ function main(argv) {
   for (const address of result.missing) {
     console.error(
       `MISSING     ${address}: expected to be replaced every apply. If #29149 has closed, ` +
-        'remove the azapi pair and this script together.'
+        "remove the azapi pair and this script together.",
     );
   }
-  console.error('');
-  console.error('Do not approve this plan on the shape of the summary line. Read each change.');
+  console.error("");
+  console.error(
+    "Do not approve this plan on the shape of the summary line. Read each change.",
+  );
   return 1;
 }
 
 // Only run when invoked directly, so the exports above stay importable.
-if (process.argv[1] && process.argv[1].endsWith('assert-expected-plan.mjs')) {
+if (process.argv[1] && process.argv[1].endsWith("assert-expected-plan.mjs")) {
   process.exit(main(process.argv));
 }

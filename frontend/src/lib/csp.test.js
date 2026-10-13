@@ -97,14 +97,21 @@ describe('Content-Security-Policy', () => {
   });
 
   // Every <audio> the site renders streams from the API's public media route
-  // (Listen & Learn episodes, the Recording Hub, the ElevenLabs live check).
+  // (Listen & Learn episodes, the Recording Hub, the ElevenLabs live check) or
+  // from the RSS.com podcast enclosure hosts (EpisodePlayer on /:provider/audio).
   // Without media-src the default-src 'self' applied, and in the cross-origin
   // topology it blocked all of them before a byte loaded: the player showed
   // 0:00 with nothing in the network panel (found 2026-09-26 on the Audio
-  // tab). The host is the connect-src one, and nothing broader.
-  it('lets audio stream from the API host, and from nowhere else', () => {
+  // tab). The hosts are the API origin and the RSS.com media hosts, and nothing
+  // broader.
+  it('lets audio stream from the API host and the RSS.com enclosure hosts, and from nowhere else', () => {
     const media = directive('media-src');
-    expect(media).toEqual(["'self'", 'https://api-azure.hybridcloudworks.com']);
+    expect(media).toEqual([
+      "'self'",
+      'https://api-azure.hybridcloudworks.com',
+      'https://media.rss.com',
+      'https://content.rss.com',
+    ]);
     expect(directive('connect-src')).toContain(media[1]);
   });
 

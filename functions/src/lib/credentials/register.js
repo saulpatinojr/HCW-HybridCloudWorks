@@ -60,27 +60,32 @@
  * where the register mirrors the catalogue whole.
  */
 
-import { SECRET_CATALOG } from '../secret-catalog.js';
+import { SECRET_CATALOG } from "../secret-catalog.js";
 
 /**
  * Where a credential lives, in the order the tab lists them. `label` is what
  * the tab shows as the group heading.
  */
-export const CREDENTIAL_STORES = Object.freeze([
-  { id: 'key-vault', label: 'Key Vault kv-site-prod-cus-01' },
-  { id: 'cosmos', label: 'Cosmos mcp_servers' },
-  { id: 'github-actions', label: 'GitHub Actions secret' },
-  { id: 'github-agents', label: 'GitHub Agents secret' },
-  { id: 'github-environment', label: 'GitHub environment (OIDC, no stored secret)' },
-  { id: 'tfc-azure', label: 'HCP Terraform hcw/hcw-azure' },
-  { id: 'tfc-lab', label: 'HCP Terraform hcw/hcw-lab' },
-  { id: 'azure', label: 'Azure Static Web App' },
-  { id: 'entra', label: 'Entra' },
-  { id: 'docker', label: 'Docker Home' },
-  { id: 'lab-vault', label: 'Lab host Ansible Vault' },
-  { id: 'lab-file', label: 'Lab host file' },
-  { id: 'owner', label: 'Owner’s password manager' },
-].map(Object.freeze));
+export const CREDENTIAL_STORES = Object.freeze(
+  [
+    { id: "key-vault", label: "Key Vault kv-site-prod-cus-01" },
+    { id: "cosmos", label: "Cosmos mcp_servers" },
+    { id: "github-actions", label: "GitHub Actions secret" },
+    { id: "github-agents", label: "GitHub Agents secret" },
+    {
+      id: "github-environment",
+      label: "GitHub environment (OIDC, no stored secret)",
+    },
+    { id: "tfc-azure", label: "HCP Terraform hcw/hcw-azure" },
+    { id: "tfc-lab", label: "HCP Terraform hcw/hcw-lab" },
+    { id: "azure", label: "Azure Static Web App" },
+    { id: "entra", label: "Entra" },
+    { id: "docker", label: "Docker Home" },
+    { id: "lab-vault", label: "Lab host Ansible Vault" },
+    { id: "lab-file", label: "Lab host file" },
+    { id: "owner", label: "Owner’s password manager" },
+  ].map(Object.freeze),
+);
 
 /**
  * Whether anything renews a credential.
@@ -94,7 +99,7 @@ export const CREDENTIAL_STORES = Object.freeze([
  *               the first three; an identifier is none of them, and calling it
  *               "hand" would ask the owner to rotate a chat id.
  */
-export const RENEWAL = Object.freeze(['self', 'automation', 'hand', 'none']);
+export const RENEWAL = Object.freeze(["self", "automation", "hand", "none"]);
 
 /**
  * The rotation rule for a hand-only credential whose issuer sets no expiry.
@@ -118,100 +123,153 @@ export const LAB_CERTIFICATE_DAYS = 730;
 export const CODER_STATUS_TOKEN_DAYS = 90;
 export const CODER_ROTATION_CREDENTIAL_DAYS = 365;
 
-const KEYS_TAB_ROTATION = 'Mint a new one from the issuer, paste it on Integrations → Keys, then revoke the old one.';
+const KEYS_TAB_ROTATION =
+  "Mint a new one from the issuer, paste it on Integrations → Keys, then revoke the old one.";
 
 /**
  * The Key Vault metadata, by secret name. Every name the catalogue declares,
  * and no other: register.test.js holds the two to the same set.
  */
 const KEY_VAULT_METADATA = Object.freeze({
-  'GEMINI-API-KEY': { issuer: 'Google AI Studio', consumer: 'AI router; Listen & Learn narration' },
-  'ANTHROPIC-API-KEY': {
-    issuer: 'Anthropic Console',
-    consumer: 'AI router',
+  "GEMINI-API-KEY": {
+    issuer: "Google AI Studio",
+    consumer: "AI router; Listen & Learn narration",
+  },
+  "ANTHROPIC-API-KEY": {
+    issuer: "Anthropic Console",
+    consumer: "AI router",
     lifetimeDays: HAND_ROTATION_DAYS,
   },
-  'OPENAI-API-KEY': { issuer: 'OpenAI', consumer: 'AI router' },
-  'NVIDIA-API-KEY': { issuer: 'NVIDIA API Catalog', consumer: 'AI router, content features only' },
-  'ELEVENLABS-API-KEY': { issuer: 'ElevenLabs', consumer: 'Podcast narration' },
-  'AZURE-SPEECH-KEY': {
-    issuer: 'Azure AI Speech',
-    consumer: 'Listen & Learn spare narrator, not set up on purpose',
+  "OPENAI-API-KEY": { issuer: "OpenAI", consumer: "AI router" },
+  "NVIDIA-API-KEY": {
+    issuer: "NVIDIA API Catalog",
+    consumer: "AI router, content features only",
   },
-  'FIRECRAWL-API-KEY': { issuer: 'Firecrawl', consumer: 'Link summaries for content research' },
-  'REPLICATE-API-KEY': { issuer: 'Replicate', consumer: 'Post cover images' },
-  'PUBLER-API-KEY': { issuer: 'Publer', consumer: 'Social publishing' },
-  'PUBLER-WORKSPACE-ID': { issuer: 'Publer', consumer: 'Social publishing', renewal: 'none' },
-  'RESEND-API-KEY': { issuer: 'Resend', consumer: 'Newsletter list and sending' },
-  'LINKIE-API-KEY': { issuer: 'Linkie', consumer: 'Link-in-bio page' },
-  'TELEGRAM-BOT-TOKEN': {
-    issuer: 'Telegram BotFather',
-    consumer: 'Approvals, alerts and reminders on Telegram',
+  "ELEVENLABS-API-KEY": { issuer: "ElevenLabs", consumer: "Podcast narration" },
+  "AZURE-SPEECH-KEY": {
+    issuer: "Azure AI Speech",
+    consumer: "Listen & Learn spare narrator, not set up on purpose",
+  },
+  "FIRECRAWL-API-KEY": {
+    issuer: "Firecrawl",
+    consumer: "Link summaries for content research",
+  },
+  "REPLICATE-API-KEY": { issuer: "Replicate", consumer: "Post cover images" },
+  "PUBLER-API-KEY": { issuer: "Publer", consumer: "Social publishing" },
+  "PUBLER-WORKSPACE-ID": {
+    issuer: "Publer",
+    consumer: "Social publishing",
+    renewal: "none",
+  },
+  "RESEND-API-KEY": {
+    issuer: "Resend",
+    consumer: "Newsletter list and sending",
+  },
+  "LINKIE-API-KEY": { issuer: "Linkie", consumer: "Link-in-bio page" },
+  "TELEGRAM-BOT-TOKEN": {
+    issuer: "Telegram BotFather",
+    consumer: "Approvals, alerts and reminders on Telegram",
     lifetimeDays: HAND_ROTATION_DAYS,
     // The catalogue's own warning, which a rotation must not miss.
     rotate:
-      'Revoke and reissue it in BotFather, paste it on Integrations → Keys, then re-run scripts/cutover/04-telegram-webhook.ps1: a new token invalidates the webhook.',
+      "Revoke and reissue it in BotFather, paste it on Integrations → Keys, then re-run scripts/cutover/04-telegram-webhook.ps1: a new token invalidates the webhook.",
   },
-  'TELEGRAM-CHAT-ID': {
-    issuer: 'Telegram',
-    consumer: 'Approvals, alerts and reminders on Telegram',
-    renewal: 'none',
+  "TELEGRAM-CHAT-ID": {
+    issuer: "Telegram",
+    consumer: "Approvals, alerts and reminders on Telegram",
+    renewal: "none",
   },
-  'RSSCOM-API-KEY': { issuer: 'RSS.com', consumer: 'Podcast publishing' },
-  'RSSCOM-PODCAST-ID': { issuer: 'RSS.com', consumer: 'Podcast publishing', renewal: 'none' },
-  'YOUTUBE-API-KEY': { issuer: 'Google Cloud', consumer: 'Listen & Learn “watch next” links' },
-  'PLAUD-EMBEDDED-CLIENT-ID': {
-    issuer: 'Plaud Embedded',
-    consumer: 'Recording Hub upload transcription',
-    renewal: 'none',
+  "RSSCOM-API-KEY": { issuer: "RSS.com", consumer: "Podcast publishing" },
+  "RSSCOM-PODCAST-ID": {
+    issuer: "RSS.com",
+    consumer: "Podcast publishing",
+    renewal: "none",
   },
-  'PLAUD-EMBEDDED-API-KEY': { issuer: 'Plaud Embedded', consumer: 'Recording Hub upload transcription' },
+  "STREAMYARD-API-KEY": {
+    issuer: "StreamYard",
+    consumer:
+      "StreamYard On-Air webinar registrants, newsletter sync and Telegram alerts",
+  },
+  "YOUTUBE-API-KEY": {
+    issuer: "Google Cloud",
+    consumer: "Listen & Learn “watch next” links",
+  },
+  "PLAUD-EMBEDDED-CLIENT-ID": {
+    issuer: "Plaud Embedded",
+    consumer: "Recording Hub upload transcription",
+    renewal: "none",
+  },
+  "PLAUD-EMBEDDED-API-KEY": {
+    issuer: "Plaud Embedded",
+    consumer: "Recording Hub upload transcription",
+  },
   // The id half of an access key pair: not secret, but it changes whenever
   // the secret half does, so it is rotated with it rather than never.
-  'AWS-ACCESS-KEY-ID': { issuer: 'AWS IAM', consumer: 'Cloud price comparison (AWS)' },
-  'AWS-SECRET-ACCESS-KEY': { issuer: 'AWS IAM', consumer: 'Cloud price comparison (AWS)' },
-  'GCP-BILLING-API-KEY': { issuer: 'Google Cloud', consumer: 'Cloud price comparison (Google)' },
-  'QLTY-API-TOKEN': { issuer: 'Qlty', consumer: 'Health Hub Code and Security tab' },
-  'CF-ORIGIN-SECRET': {
-    issuer: 'This estate, shared with Cloudflare',
-    consumer: 'Origin lock for public form submissions',
+  "AWS-ACCESS-KEY-ID": {
+    issuer: "AWS IAM",
+    consumer: "Cloud price comparison (AWS)",
+  },
+  "AWS-SECRET-ACCESS-KEY": {
+    issuer: "AWS IAM",
+    consumer: "Cloud price comparison (AWS)",
+  },
+  "GCP-BILLING-API-KEY": {
+    issuer: "Google Cloud",
+    consumer: "Cloud price comparison (Google)",
+  },
+  "QLTY-API-TOKEN": {
+    issuer: "Qlty",
+    consumer: "Health Hub Code and Security tab",
+  },
+  "CF-ORIGIN-SECRET": {
+    issuer: "This estate, shared with Cloudflare",
+    consumer: "Origin lock for public form submissions",
     rotate:
-      'Change it here and in the hcw-azure workspace variable cloudflare_origin_secret together: until both match, public submissions are refused.',
+      "Change it here and in the hcw-azure workspace variable cloudflare_origin_secret together: until both match, public submissions are refused.",
   },
-  'CLIENT-IP-SALT': {
-    issuer: 'This estate (generated)',
-    consumer: 'Visitor rate limits',
-    rotate: 'Press Generate on Integrations → Keys. Every rate limit resets.',
+  "CLIENT-IP-SALT": {
+    issuer: "This estate (generated)",
+    consumer: "Visitor rate limits",
+    rotate: "Press Generate on Integrations → Keys. Every rate limit resets.",
   },
-  'PREVIEW-SIGNING-SECRET': {
-    issuer: 'This estate (generated)',
-    consumer: 'Private preview links',
-    rotate: 'Press Generate on Integrations → Keys. Every preview link already shared stops working.',
+  "PREVIEW-SIGNING-SECRET": {
+    issuer: "This estate (generated)",
+    consumer: "Private preview links",
+    rotate:
+      "Press Generate on Integrations → Keys. Every preview link already shared stops working.",
   },
-  'CODER-URL': { issuer: 'Lab host', consumer: 'Labs card and lab panes', renewal: 'none' },
-  'CODER-STATUS-TOKEN': {
-    issuer: 'Coder on the lab host',
-    consumer: 'Labs card: templates and the running count',
+  "CODER-URL": {
+    issuer: "Lab host",
+    consumer: "Labs card and lab panes",
+    renewal: "none",
+  },
+  "CODER-STATUS-TOKEN": {
+    issuer: "Coder on the lab host",
+    consumer: "Labs card: templates and the running count",
     // The lab host renews it (2026-10-08, lib/labs/coder-automation.js), and
     // says when the token it handed over expires.
-    renewal: 'automation',
+    renewal: "automation",
     lifetimeDays: CODER_STATUS_TOKEN_DAYS,
-    coder: 'statusToken',
+    coder: "statusToken",
     rotate:
       'The lab host renews it daily once its rotation credential is seeded; by hand, mint one as lab-host/README.md, "The status token for the site", says and paste it on Integrations → Keys.',
   },
-  'TURNSTILE-SECRET-KEY': {
-    issuer: 'Cloudflare Turnstile',
-    consumer: 'Landing Zone Builder “Validate on the lab”',
-    rotate: 'Rotate it in the widget’s settings in the Cloudflare dashboard and paste it on Integrations → Keys.',
+  "TURNSTILE-SECRET-KEY": {
+    issuer: "Cloudflare Turnstile",
+    consumer: "Landing Zone Builder “Validate on the lab”",
+    rotate:
+      "Rotate it in the widget’s settings in the Cloudflare dashboard and paste it on Integrations → Keys.",
   },
 });
 
 /** The Key Vault metadata's names, for register.test.js. */
-export const KEY_VAULT_METADATA_NAMES = Object.freeze(Object.keys(KEY_VAULT_METADATA));
+export const KEY_VAULT_METADATA_NAMES = Object.freeze(
+  Object.keys(KEY_VAULT_METADATA),
+);
 
 /** `kv-` and the secret's name in lower case: `kv-anthropic-api-key`. */
-export const keyVaultCredentialId = (secret) => `kv-${String(secret).toLowerCase()}`;
+export const keyVaultCredentialId = (secret) =>
+  `kv-${String(secret).toLowerCase()}`;
 
 /**
  * One register row per catalogue secret, in the catalogue's order. A secret
@@ -221,17 +279,19 @@ export const keyVaultCredentialId = (secret) => `kv-${String(secret).toLowerCase
 function keyVaultEntries() {
   return SECRET_CATALOG.map((entry) => {
     const meta = KEY_VAULT_METADATA[entry.secret] ?? {};
-    const renewal = meta.renewal ?? 'hand';
+    const renewal = meta.renewal ?? "hand";
     return {
       id: keyVaultCredentialId(entry.secret),
       name: entry.secret,
-      store: 'key-vault',
+      store: "key-vault",
       consumer: meta.consumer ?? entry.label,
-      issuer: meta.issuer ?? 'Unknown',
+      issuer: meta.issuer ?? "Unknown",
       renewal,
       lifetimeDays: meta.lifetimeDays ?? null,
-      source: meta.coder ? { secret: entry.secret, coder: meta.coder } : { secret: entry.secret },
-      rotate: meta.rotate ?? (renewal === 'none' ? null : KEYS_TAB_ROTATION),
+      source: meta.coder
+        ? { secret: entry.secret, coder: meta.coder }
+        : { secret: entry.secret },
+      rotate: meta.rotate ?? (renewal === "none" ? null : KEYS_TAB_ROTATION),
     };
   });
 }
@@ -244,331 +304,353 @@ function keyVaultEntries() {
 const OTHER_ENTRIES = [
   // ── Cosmos mcp_servers: OAuth tokens kept on the server documents ───────
   {
-    id: 'mcp-plaud',
-    name: 'mcp_servers/plaud (OAuth token pair)',
-    store: 'cosmos',
-    consumer: 'Recording Hub Plaud library; podcast scripts from recordings',
-    issuer: 'Plaud',
+    id: "mcp-plaud",
+    name: "mcp_servers/plaud (OAuth token pair)",
+    store: "cosmos",
+    consumer: "Recording Hub Plaud library; podcast scripts from recordings",
+    issuer: "Plaud",
     // refreshPlaudToken, every 12 hours (lib/timers/plaud-token.js).
-    renewal: 'automation',
+    renewal: "automation",
     lifetimeDays: null,
-    source: { mcpServer: 'plaud' },
-    rotate: 'Renewed every 12 hours; if it lapses, reconnect on the Recording Hub’s Connect tab.',
+    source: { mcpServer: "plaud" },
+    rotate:
+      "Renewed every 12 hours; if it lapses, reconnect on the Recording Hub’s Connect tab.",
   },
   {
-    id: 'mcp-replicate',
-    name: 'mcp_servers/replicate-mcp (OAuth Connect)',
-    store: 'cosmos',
-    consumer: 'Replicate MCP tools in the AI Engine',
-    issuer: 'Replicate',
-    renewal: 'automation',
+    id: "mcp-replicate",
+    name: "mcp_servers/replicate-mcp (OAuth Connect)",
+    store: "cosmos",
+    consumer: "Replicate MCP tools in the AI Engine",
+    issuer: "Replicate",
+    renewal: "automation",
     lifetimeDays: null,
-    source: { mcpServer: 'replicate-mcp' },
-    rotate: 'Refreshed before it expires; if a refresh fails, press Connect on its card under AI Engine → MCP Servers.',
+    source: { mcpServer: "replicate-mcp" },
+    rotate:
+      "Refreshed before it expires; if a refresh fails, press Connect on its card under AI Engine → MCP Servers.",
   },
   {
-    id: 'mcp-hostinger',
-    name: 'mcp_servers/hostinger-mcp (OAuth Connect)',
-    store: 'cosmos',
-    consumer: 'Hostinger MCP tools in the AI Engine',
-    issuer: 'Hostinger',
-    renewal: 'automation',
+    id: "mcp-hostinger",
+    name: "mcp_servers/hostinger-mcp (OAuth Connect)",
+    store: "cosmos",
+    consumer: "Hostinger MCP tools in the AI Engine",
+    issuer: "Hostinger",
+    renewal: "automation",
     lifetimeDays: null,
-    source: { mcpServer: 'hostinger-mcp' },
-    rotate: 'Refreshed before it expires; if a refresh fails, press Connect on its card under AI Engine → MCP Servers.',
+    source: { mcpServer: "hostinger-mcp" },
+    rotate:
+      "Refreshed before it expires; if a refresh fails, press Connect on its card under AI Engine → MCP Servers.",
   },
 
   // ── GitHub ──────────────────────────────────────────────────────────────
   {
-    id: 'gh-tfc-token',
-    name: 'TFC_TOKEN',
-    store: 'github-actions',
-    consumer: 'tfc-plan-check.yml; deploy-functions.yml’s apply-in-flight check',
-    issuer: 'HCP Terraform (team token)',
-    renewal: 'hand',
-    lifetimeDays: null,
-    rotate: 'Create a team token in HCP Terraform, set it as the TFC_TOKEN secret, then delete the old one.',
-  },
-  {
-    id: 'gh-manifest-app-private-key',
-    name: 'MANIFEST_APP_PRIVATE_KEY',
-    store: 'github-actions',
+    id: "gh-tfc-token",
+    name: "TFC_TOKEN",
+    store: "github-actions",
     consumer:
-      'publish-content-manifest.yml, update-avm-versions.yml, update-learn-catalogue.yml, update-version-floors.yml',
-    issuer: 'GitHub App (MANIFEST_APP_ID)',
-    renewal: 'hand',
-    lifetimeDays: HAND_ROTATION_DAYS,
+      "tfc-plan-check.yml; deploy-functions.yml’s apply-in-flight check",
+    issuer: "HCP Terraform (team token)",
+    renewal: "hand",
+    lifetimeDays: null,
     rotate:
-      'Generate a new private key on the GitHub App’s settings page, set it as MANIFEST_APP_PRIVATE_KEY, then delete the old key there.',
+      "Create a team token in HCP Terraform, set it as the TFC_TOKEN secret, then delete the old one.",
   },
   {
-    id: 'gh-copilot-review-app-private-key',
-    name: 'COPILOT_REVIEW_APP_PRIVATE_KEY',
-    store: 'github-agents',
-    consumer: 'copilot-setup-steps.yml: the GitHub MCP server Copilot code review reads with',
-    issuer: 'GitHub App HCW Copilot Review Reader',
-    renewal: 'hand',
+    id: "gh-manifest-app-private-key",
+    name: "MANIFEST_APP_PRIVATE_KEY",
+    store: "github-actions",
+    consumer:
+      "publish-content-manifest.yml, update-avm-versions.yml, update-learn-catalogue.yml, update-version-floors.yml",
+    issuer: "GitHub App (MANIFEST_APP_ID)",
+    renewal: "hand",
     lifetimeDays: HAND_ROTATION_DAYS,
     rotate:
-      'Generate a new private key on the App’s settings page, store it in the Agents store (docs/runbooks/copilot-code-review-mcp.md, step 4), then delete the old key.',
+      "Generate a new private key on the GitHub App’s settings page, set it as MANIFEST_APP_PRIVATE_KEY, then delete the old key there.",
   },
   {
-    id: 'gh-oidc-production',
-    name: 'environment production → github_deploy',
-    store: 'github-environment',
-    consumer: 'deploy-functions.yml, deploy-azure-frontend.yml',
-    issuer: 'GitHub OIDC, trusted by Entra',
-    renewal: 'self',
+    id: "gh-copilot-review-app-private-key",
+    name: "COPILOT_REVIEW_APP_PRIVATE_KEY",
+    store: "github-agents",
+    consumer:
+      "copilot-setup-steps.yml: the GitHub MCP server Copilot code review reads with",
+    issuer: "GitHub App HCW Copilot Review Reader",
+    renewal: "hand",
+    lifetimeDays: HAND_ROTATION_DAYS,
+    rotate:
+      "Generate a new private key on the App’s settings page, store it in the Agents store (docs/runbooks/copilot-code-review-mcp.md, step 4), then delete the old key.",
+  },
+  {
+    id: "gh-oidc-production",
+    name: "environment production → github_deploy",
+    store: "github-environment",
+    consumer: "deploy-functions.yml, deploy-azure-frontend.yml",
+    issuer: "GitHub OIDC, trusted by Entra",
+    renewal: "self",
     lifetimeDays: null,
   },
   {
-    id: 'gh-oidc-copilot',
-    name: 'environment copilot → github_copilot_review',
-    store: 'github-environment',
-    consumer: 'copilot-setup-steps.yml (Copilot code review and cloud agent)',
-    issuer: 'GitHub OIDC, trusted by Entra',
-    renewal: 'self',
+    id: "gh-oidc-copilot",
+    name: "environment copilot → github_copilot_review",
+    store: "github-environment",
+    consumer: "copilot-setup-steps.yml (Copilot code review and cloud agent)",
+    issuer: "GitHub OIDC, trusted by Entra",
+    renewal: "self",
     lifetimeDays: null,
   },
 
   // ── HCP Terraform ───────────────────────────────────────────────────────
   {
-    id: 'tfc-azure-cloudflare-api-token',
-    name: 'cloudflare_api_token',
-    store: 'tfc-azure',
-    consumer: 'Cloudflare provider: DNS and the origin transform rule',
-    issuer: 'Cloudflare',
-    renewal: 'hand',
+    id: "tfc-azure-cloudflare-api-token",
+    name: "cloudflare_api_token",
+    store: "tfc-azure",
+    consumer: "Cloudflare provider: DNS and the origin transform rule",
+    issuer: "Cloudflare",
+    renewal: "hand",
     lifetimeDays: null,
-    rotate: 'Roll it in the Cloudflare dashboard and update the sensitive workspace variable.',
+    rotate:
+      "Roll it in the Cloudflare dashboard and update the sensitive workspace variable.",
   },
   {
-    id: 'tfc-azure-cloudflare-origin-secret',
-    name: 'cloudflare_origin_secret',
-    store: 'tfc-azure',
-    consumer: 'Cloudflare origin transform rule',
-    issuer: 'This estate (the same value as CF-ORIGIN-SECRET)',
-    renewal: 'hand',
+    id: "tfc-azure-cloudflare-origin-secret",
+    name: "cloudflare_origin_secret",
+    store: "tfc-azure",
+    consumer: "Cloudflare origin transform rule",
+    issuer: "This estate (the same value as CF-ORIGIN-SECRET)",
+    renewal: "hand",
     lifetimeDays: null,
-    rotate: 'Change it with CF-ORIGIN-SECRET, never alone: until both match, public submissions are refused.',
+    rotate:
+      "Change it with CF-ORIGIN-SECRET, never alone: until both match, public submissions are refused.",
   },
   {
-    id: 'tfc-azure-dynamic-credentials',
-    name: 'TFC_AZURE_RUN_CLIENT_ID (dynamic provider credentials)',
-    store: 'tfc-azure',
-    consumer: 'Every hcw-azure plan and apply',
-    issuer: 'HCP Terraform OIDC, trusted by Entra (id-plat-terraform-prod-cus-01)',
-    renewal: 'self',
+    id: "tfc-azure-dynamic-credentials",
+    name: "TFC_AZURE_RUN_CLIENT_ID (dynamic provider credentials)",
+    store: "tfc-azure",
+    consumer: "Every hcw-azure plan and apply",
+    issuer:
+      "HCP Terraform OIDC, trusted by Entra (id-plat-terraform-prod-cus-01)",
+    renewal: "self",
     lifetimeDays: null,
   },
   {
-    id: 'tfc-lab-hostinger-api-token',
-    name: 'hostinger_api_token',
-    store: 'tfc-lab',
-    consumer: 'infra-lab Hostinger provider',
-    issuer: 'Hostinger',
-    renewal: 'hand',
+    id: "tfc-lab-hostinger-api-token",
+    name: "hostinger_api_token",
+    store: "tfc-lab",
+    consumer: "infra-lab Hostinger provider",
+    issuer: "Hostinger",
+    renewal: "hand",
     lifetimeDays: null,
-    rotate: 'Issue a new token in the Hostinger panel and update the sensitive workspace variable.',
+    rotate:
+      "Issue a new token in the Hostinger panel and update the sensitive workspace variable.",
   },
   {
-    id: 'tfc-lab-cloudflare-api-token',
-    name: 'cloudflare_api_token',
-    store: 'tfc-lab',
-    consumer: 'infra-lab lab DNS records',
-    issuer: 'Cloudflare',
-    renewal: 'hand',
+    id: "tfc-lab-cloudflare-api-token",
+    name: "cloudflare_api_token",
+    store: "tfc-lab",
+    consumer: "infra-lab lab DNS records",
+    issuer: "Cloudflare",
+    renewal: "hand",
     lifetimeDays: null,
-    rotate: 'Roll it in the Cloudflare dashboard and update the sensitive workspace variable.',
+    rotate:
+      "Roll it in the Cloudflare dashboard and update the sensitive workspace variable.",
   },
 
   // ── Azure ───────────────────────────────────────────────────────────────
   {
-    id: 'azure-swa-deployment-token',
-    name: 'Static Web App deployment token',
-    store: 'azure',
-    consumer: 'deploy-azure-frontend.yml, read just in time for each run',
-    issuer: 'Azure Static Web Apps',
-    renewal: 'hand',
+    id: "azure-swa-deployment-token",
+    name: "Static Web App deployment token",
+    store: "azure",
+    consumer: "deploy-azure-frontend.yml, read just in time for each run",
+    issuer: "Azure Static Web Apps",
+    renewal: "hand",
     // TODO.md, accepted risk for #834: nothing stores it, so a reset breaks
     // nothing, and the compensating control is a reset every 90 days.
     lifetimeDays: SWA_TOKEN_RESET_DAYS,
     rotate:
-      'Reset it on the Static Web App (Manage deployment token, then Reset). Nothing stores it, so the next deploy reads the new one.',
+      "Reset it on the Static Web App (Manage deployment token, then Reset). Nothing stores it, so the next deploy reads the new one.",
   },
 
   // ── Entra ───────────────────────────────────────────────────────────────
   {
-    id: 'entra-github-reader',
-    name: 'github_reader federated credential (main branch)',
-    store: 'entra',
+    id: "entra-github-reader",
+    name: "github_reader federated credential (main branch)",
+    store: "entra",
     consumer:
-      'monitor-functions-registered.yml, monitor-unresolved-secrets.yml, verify-alert-state.yml, publish-content-manifest.yml',
-    issuer: 'GitHub OIDC, trusted by Entra',
-    renewal: 'self',
+      "monitor-functions-registered.yml, monitor-unresolved-secrets.yml, verify-alert-state.yml, publish-content-manifest.yml",
+    issuer: "GitHub OIDC, trusted by Entra",
+    renewal: "self",
     lifetimeDays: null,
   },
   {
-    id: 'entra-function-app-identity',
-    name: 'func-site-prod-cus-01 managed identity',
-    store: 'entra',
-    consumer: 'The API’s reads of Cosmos, Key Vault, Storage and Foundry',
-    issuer: 'Entra (system-assigned)',
-    renewal: 'self',
+    id: "entra-function-app-identity",
+    name: "func-site-prod-cus-01 managed identity",
+    store: "entra",
+    consumer: "The API’s reads of Cosmos, Key Vault, Storage and Foundry",
+    issuer: "Entra (system-assigned)",
+    renewal: "self",
     lifetimeDays: null,
   },
   {
-    id: 'entra-arc-machine-identity',
-    name: 'arcs-lab-hybrid-prod-cus-01 managed identity',
-    store: 'entra',
-    consumer: 'HashiCorp Vault auto-unseal; the lab host’s Azure Monitor agent',
-    issuer: 'Azure Arc',
-    renewal: 'self',
+    id: "entra-arc-machine-identity",
+    name: "arcs-lab-hybrid-prod-cus-01 managed identity",
+    store: "entra",
+    consumer: "HashiCorp Vault auto-unseal; the lab host’s Azure Monitor agent",
+    issuer: "Azure Arc",
+    renewal: "self",
     lifetimeDays: null,
   },
 
   // ── Docker ──────────────────────────────────────────────────────────────
   {
-    id: 'docker-oidc-connection',
-    name: 'OIDC connection publish-lab-image-main',
-    store: 'docker',
-    consumer: 'publish-lab-image.yml, Publish to Docker Hub',
-    issuer: 'Docker, trusting GitHub OIDC',
-    renewal: 'self',
+    id: "docker-oidc-connection",
+    name: "OIDC connection publish-lab-image-main",
+    store: "docker",
+    consumer: "publish-lab-image.yml, Publish to Docker Hub",
+    issuer: "Docker, trusting GitHub OIDC",
+    renewal: "self",
     lifetimeDays: null,
   },
 
   // ── Lab host: Ansible Vault (/etc/hcw/ansible/vault.yml) ────────────────
   {
-    id: 'lab-coder-github-oauth-secret',
-    name: 'vault_coder_oauth2_github_client_secret',
-    store: 'lab-vault',
-    consumer: 'Coder learner sign-in with GitHub',
-    issuer: 'GitHub OAuth app (HybridCloudWorks organisation)',
-    renewal: 'hand',
+    id: "lab-coder-github-oauth-secret",
+    name: "vault_coder_oauth2_github_client_secret",
+    store: "lab-vault",
+    consumer: "Coder learner sign-in with GitHub",
+    issuer: "GitHub OAuth app (HybridCloudWorks organisation)",
+    renewal: "hand",
     lifetimeDays: HAND_ROTATION_DAYS,
     rotate:
-      'Generate a new client secret on the OAuth app, edit the vault key and re-run bootstrap.sh, which recreates the coder container.',
+      "Generate a new client secret on the OAuth app, edit the vault key and re-run bootstrap.sh, which recreates the coder container.",
   },
   {
-    id: 'lab-coder-postgres-password',
-    name: 'vault_coder_postgres_password',
-    store: 'lab-vault',
-    consumer: 'Coder’s PostgreSQL database',
-    issuer: 'This host (generated)',
-    renewal: 'hand',
+    id: "lab-coder-postgres-password",
+    name: "vault_coder_postgres_password",
+    store: "lab-vault",
+    consumer: "Coder’s PostgreSQL database",
+    issuer: "This host (generated)",
+    renewal: "hand",
     lifetimeDays: null,
-    rotate: 'ALTER USER first, then the vault edit and a run: lab-host/README.md, "Rotating the PostgreSQL password".',
+    rotate:
+      'ALTER USER first, then the vault edit and a run: lab-host/README.md, "Rotating the PostgreSQL password".',
   },
   {
-    id: 'lab-caddy-cloudflare-api-token',
-    name: 'Caddy CLOUDFLARE_API_TOKEN',
-    store: 'lab-vault',
-    consumer: 'Caddy’s DNS-01 certificate renewals',
-    issuer: 'Cloudflare',
-    renewal: 'hand',
+    id: "lab-caddy-cloudflare-api-token",
+    name: "Caddy CLOUDFLARE_API_TOKEN",
+    store: "lab-vault",
+    consumer: "Caddy’s DNS-01 certificate renewals",
+    issuer: "Cloudflare",
+    renewal: "hand",
     lifetimeDays: null,
-    rotate: 'Roll it in the Cloudflare dashboard, edit the vault key and re-run bootstrap.sh; also on every host rebuild.',
+    rotate:
+      "Roll it in the Cloudflare dashboard, edit the vault key and re-run bootstrap.sh; also on every host rebuild.",
   },
   {
-    id: 'lab-addon-migration-turnstile-secret',
-    name: 'vault_addon_migration_turnstile_secret',
-    store: 'lab-vault',
-    consumer: 'The migration add-on’s human verification on uploads (hcw-addon-migration, ADR 0035)',
-    issuer: 'Cloudflare (the add-on’s own Turnstile widget, separate from the site’s)',
-    renewal: 'hand',
+    id: "lab-addon-migration-turnstile-secret",
+    name: "vault_addon_migration_turnstile_secret",
+    store: "lab-vault",
+    consumer:
+      "The migration add-on’s human verification on uploads (hcw-addon-migration, ADR 0035)",
+    issuer:
+      "Cloudflare (the add-on’s own Turnstile widget, separate from the site’s)",
+    renewal: "hand",
     lifetimeDays: null,
     rotate:
       'Rotate it in the widget’s settings, set the vault key with hcw-vault-set and re-run bootstrap.sh, which recreates the container: docs/runbooks/labs-host.md, "Tool add-ons".',
   },
   {
-    id: 'lab-arc-service-principal-secret',
-    name: 'vault_arc_service_principal_secret',
-    store: 'lab-vault',
-    consumer: 'Arc onboarding, once; deleted when the host reads Connected',
-    issuer: 'Entra (sp-arc-onboarding-lab-hybrid-prod-cus)',
-    renewal: 'hand',
+    id: "lab-arc-service-principal-secret",
+    name: "vault_arc_service_principal_secret",
+    store: "lab-vault",
+    consumer: "Arc onboarding, once; deleted when the host reads Connected",
+    issuer: "Entra (sp-arc-onboarding-lab-hybrid-prod-cus)",
+    renewal: "hand",
     lifetimeDays: null,
-    rotate: 'Minted for one onboarding by scripts/lab/Register-LabArc.ps1, valid for 24 hours, and deleted by its -Connect run.',
+    rotate:
+      "Minted for one onboarding by scripts/lab/Register-LabArc.ps1, valid for 24 hours, and deleted by its -Connect run.",
   },
 
   // ── Lab host: files ─────────────────────────────────────────────────────
   {
-    id: 'lab-agent-certificate',
-    name: '/etc/hcw/labs-agent.pem (sp-labs-agent-lab-hybrid-prod-cus-01)',
-    store: 'lab-file',
-    consumer: 'The lab agent’s calls to the API',
-    issuer: 'Self-signed on the lab host, registered in Entra',
-    renewal: 'hand',
+    id: "lab-agent-certificate",
+    name: "/etc/hcw/labs-agent.pem (sp-labs-agent-lab-hybrid-prod-cus-01)",
+    store: "lab-file",
+    consumer: "The lab agent’s calls to the API",
+    issuer: "Self-signed on the lab host, registered in Entra",
+    renewal: "hand",
     lifetimeDays: LAB_CERTIFICATE_DAYS,
     rotate:
       'Generate the next pair on the host and register it with Register-LabAgent.ps1 -NextCertificate before the swap: lab-host/README.md, "Rotating the agent certificate".',
   },
   {
-    id: 'lab-vault-tls-certificate',
-    name: '/etc/vault.d/tls/vault.crt',
-    store: 'lab-file',
-    consumer: 'HashiCorp Vault’s listener on 127.0.0.1',
-    issuer: 'Self-signed on the lab host',
-    renewal: 'hand',
+    id: "lab-vault-tls-certificate",
+    name: "/etc/vault.d/tls/vault.crt",
+    store: "lab-file",
+    consumer: "HashiCorp Vault’s listener on 127.0.0.1",
+    issuer: "Self-signed on the lab host",
+    renewal: "hand",
     lifetimeDays: LAB_CERTIFICATE_DAYS,
     rotate:
       'Remove the pair and re-run bootstrap.sh, then unseal: lab-host/ansible/roles/vault/README.md, "Rotating the certificate".',
   },
   {
-    id: 'lab-coder-rotation-credential',
-    name: '/etc/hcw/coder/automation/rotation-token',
-    store: 'lab-file',
-    consumer: 'hcw-coder-automation: renews the status token, publishes the template',
-    issuer: 'Coder on the lab host (hcw-status)',
+    id: "lab-coder-rotation-credential",
+    name: "/etc/hcw/coder/automation/rotation-token",
+    store: "lab-file",
+    consumer:
+      "hcw-coder-automation: renews the status token, publishes the template",
+    issuer: "Coder on the lab host (hcw-status)",
     // The automation renews it itself under 60 days left, and reports its
     // expiry as rotationTokenExpiresAt.
-    renewal: 'automation',
+    renewal: "automation",
     lifetimeDays: CODER_ROTATION_CREDENTIAL_DAYS,
-    source: { coder: 'rotationToken' },
-    rotate: 'Renewed by the lab host under 60 days left; seeded by hand with hcw-coder-automation-seed.',
+    source: { coder: "rotationToken" },
+    rotate:
+      "Renewed by the lab host under 60 days left; seeded by hand with hcw-coder-automation-seed.",
   },
   {
-    id: 'lab-caddy-certificates',
-    name: 'Caddy’s certificates for lab.hybridcloudworks.com',
-    store: 'lab-file',
-    consumer: 'HTTPS for the lab host and Coder',
-    issuer: 'ACME, through Caddy',
-    renewal: 'self',
+    id: "lab-caddy-certificates",
+    name: "Caddy’s certificates for lab.hybridcloudworks.com",
+    store: "lab-file",
+    consumer: "HTTPS for the lab host and Coder",
+    issuer: "ACME, through Caddy",
+    renewal: "self",
     lifetimeDays: null,
   },
 
   // ── The owner's password manager ────────────────────────────────────────
   {
-    id: 'owner-vault-recovery-keys',
-    name: 'HashiCorp Vault recovery keys and root token',
-    store: 'owner',
-    consumer: 'Vault recovery: generate-root, a rekey, a seal migration',
-    issuer: 'HashiCorp Vault on the lab host',
-    renewal: 'hand',
+    id: "owner-vault-recovery-keys",
+    name: "HashiCorp Vault recovery keys and root token",
+    store: "owner",
+    consumer: "Vault recovery: generate-root, a rekey, a seal migration",
+    issuer: "HashiCorp Vault on the lab host",
+    renewal: "hand",
     lifetimeDays: null,
-    rotate: 'Rekeyed by the owner over SSH; a host rebuild makes them useless.',
+    rotate: "Rekeyed by the owner over SSH; a host rebuild makes them useless.",
   },
   {
-    id: 'owner-portainer-admin-password',
-    name: 'Portainer administrator password',
-    store: 'owner',
-    consumer: 'Portainer through the SSH tunnel',
-    issuer: 'Portainer on the lab host',
-    renewal: 'hand',
+    id: "owner-portainer-admin-password",
+    name: "Portainer administrator password",
+    store: "owner",
+    consumer: "Portainer through the SSH tunnel",
+    issuer: "Portainer on the lab host",
+    renewal: "hand",
     lifetimeDays: null,
-    rotate: 'Changed in Portainer; a host rebuild needs a new one.',
+    rotate: "Changed in Portainer; a host rebuild needs a new one.",
   },
 ];
 
 const deepFreeze = (entry) =>
-  Object.freeze({ ...entry, source: entry.source ? Object.freeze({ ...entry.source }) : null });
+  Object.freeze({
+    ...entry,
+    source: entry.source ? Object.freeze({ ...entry.source }) : null,
+  });
 
 /** The whole register, Key Vault first, every entry frozen. */
 export const CREDENTIAL_REGISTER = Object.freeze(
-  [...keyVaultEntries(), ...OTHER_ENTRIES.map((entry) => ({ rotate: null, ...entry }))].map(
-    deepFreeze
-  )
+  [
+    ...keyVaultEntries(),
+    ...OTHER_ENTRIES.map((entry) => ({ rotate: null, ...entry })),
+  ].map(deepFreeze),
 );
 
 const BY_ID = new Map(CREDENTIAL_REGISTER.map((entry) => [entry.id, entry]));
@@ -576,11 +658,11 @@ const STORE_IDS = new Set(CREDENTIAL_STORES.map((store) => store.id));
 
 /** The entry for an id, or undefined. An own-key lookup, so `constructor` finds nothing. */
 export function findCredential(id) {
-  return BY_ID.get(String(id ?? ''));
+  return BY_ID.get(String(id ?? ""));
 }
 
 /** Whether a store id is one the register knows. */
-export const isCredentialStore = (id) => STORE_IDS.has(String(id ?? ''));
+export const isCredentialStore = (id) => STORE_IDS.has(String(id ?? ""));
 
 /**
  * Whether the owner may record when this credential was last rotated: only
@@ -588,4 +670,4 @@ export const isCredentialStore = (id) => STORE_IDS.has(String(id ?? ''));
  * an automation's date is the automation's to report, and an identifier has
  * no rotation at all.
  */
-export const isRecordable = (entry) => entry?.renewal === 'hand';
+export const isRecordable = (entry) => entry?.renewal === "hand";

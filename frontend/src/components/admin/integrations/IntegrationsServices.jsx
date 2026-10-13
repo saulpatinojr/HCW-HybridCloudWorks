@@ -21,6 +21,7 @@ import ServiceCard from './ServiceCard';
 import CloudPricingRefresh from './CloudPricingRefresh';
 import CoderAutomation from './CoderAutomation';
 import SessionizeSetting, { useSpeakerId } from './SessionizeSetting';
+import StreamYardOnAirPanel from './StreamYardOnAirPanel';
 import useSecretStatus from './useSecretStatus';
 import { TabError, TabLoading } from './TabNotice';
 
@@ -144,6 +145,9 @@ export default function IntegrationsServices({ group, onGroupChange, onOpenKeys,
                 // Re-running the test after the job is what puts the new
                 // refreshed-at line on the card; the button itself only writes.
                 <CloudPricingRefresh onRefreshed={() => tests.runTest(service)} />
+              ) : null}
+              {service.action === 'streamyardOnAir' ? (
+                <StreamYardOnAirPanel onTested={() => tests.runTest(service)} />
               ) : null}
             </ServiceCard>
           ))}

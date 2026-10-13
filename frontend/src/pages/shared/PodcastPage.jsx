@@ -11,6 +11,7 @@ const PLATFORM_LOGOS = {
   spotify: '/icons/logos/spotify.png',
   apple: '/icons/logos/apple-podcast.png',
   amazon: '/icons/logos/AmazonMusic.png',
+  youtube: '/icons/logos/youtube.svg',
   rss: '/icons/logos/rss.svg',
 };
 
@@ -461,6 +462,7 @@ export default function SharedPodcastPage({ provider: providerProp } = {}) {
     { key: 'spotify', name: 'Spotify' },
     { key: 'apple', name: 'Apple Podcasts' },
     { key: 'amazon', name: 'Amazon Music' },
+    { key: 'youtube', name: 'YouTube' },
     { key: 'rss', name: 'RSS feed' },
   ];
   // Only platforms with a link are offered, and the whole sidebar goes when

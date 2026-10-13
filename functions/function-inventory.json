@@ -126,6 +126,7 @@
     "getPodcastTranscript",
     "getPublishSnapshot",
     "getQueueSnapshot",
+    "getStreamYardStatus",
     "healthCheck",
     "heartbeatLabAgent",
     "linkieProxy",
@@ -184,6 +185,7 @@
     "publicNewsletterSignupConfig",
     "publicNewsletterSubscribe",
     "publicSubmitContent",
+    "publicWebinarRegister",
     "publishContent",
     "publishPodcastTranscript",
     "publishSnapshot",
@@ -207,11 +209,13 @@
     "saveEditorDraft",
     "saveNewsletter",
     "softDeleteLivePage",
+    "streamyardWebhook",
     "suggestNewsletterSubjects",
     "syncMcpTools",
     "telegramWebhook",
     "testAiProvider",
     "testNewsletter",
+    "testStreamYardEvent",
     "transitionContentStatus",
     "triggerAiImageGeneration",
     "unpublishContentToInspected",
@@ -259,7 +263,5 @@
     "processContentChanges",
     "syncSocialPostsToPubler"
   ],
-  "storageQueue": [
-    "platformJobWorker"
-  ]
+  "storageQueue": ["platformJobWorker"]
 }

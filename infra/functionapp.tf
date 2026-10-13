@@ -571,6 +571,13 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     "RSSCOM_API_KEY"    = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/RSSCOM-API-KEY)"
     "RSSCOM_PODCAST_ID" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/RSSCOM-PODCAST-ID)"
 
+    # StreamYard On-Air webinar integration (lib/streamyard/onair.js). Issued in
+    # StreamYard under Team settings -> Integrations -> Zapier -> Generate API key.
+    # Authenticates inbound webinar registrant and attendance webhooks and signs
+    # outbound registration forwards. Listed in EXPECTED_UNRESOLVED in
+    # scripts/check-unresolved-secrets.mjs until seeded on the Integrations Keys tab.
+    "STREAMYARD_API_KEY" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/STREAMYARD-API-KEY)"
+
     # Qlty (#569): read-only access to this repository's open findings and
     # metrics for the Health Hub's Code and Security tab
     # (lib/code-quality/qlty-summary.js). A personal access token from

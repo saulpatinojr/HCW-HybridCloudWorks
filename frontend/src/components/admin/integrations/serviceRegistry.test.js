@@ -40,6 +40,7 @@ describe('the service registry', () => {
       'Linkie',
       'Telegram',
       'RSS.com',
+      'StreamYard On-Air',
       'YouTube',
       'Plaud',
       'Sessionize',

@@ -34,6 +34,29 @@ export function useProvider() {
 }
 
 /**
+ * Default podcast subscription metadata for the site's main show (ADR 0029 §1a).
+ * Every provider's /:provider/audio page leads with the main show, so every
+ * provider inherits these subscribe links unless overridden.
+ */
+export const MAIN_PODCAST_CONFIG = {
+  // The RSS feed URL is not configured here (issue #349): the podcast
+  // page reads it from `admin_config/podcast_feeds` through
+  // `GET public/podcasts`, the same document the ingest timer uses, so
+  // the button and the ingest cannot name two different feeds. This
+  // stays null and is only a fallback. The Apple link was the creator
+  // dashboard (podcastsconnect), not a listener page, so it is gone
+  // until the show is resubmitted; Spotify and Amazon are the listener
+  // pages that existed on 2026-09-06.
+  feedUrl: null,
+  subscribeLinks: {
+    spotify: 'https://open.spotify.com/show/66tno2OzalMJZOvSDqM77Y',
+    amazon:
+      'https://music.amazon.com/podcasts/d139c50a-8163-425c-8315-4e19cc9370ee/hybrid-cloud-works',
+    youtube: 'https://www.youtube.com/channel/UCI8e-UAXgefLDN-Ztq-qXHA/podcasts',
+  },
+};
+
+/**
  * Hook to get provider-specific configuration
  * @returns {object} Provider configuration including name, theme, blog path, etc.
  */
@@ -51,22 +74,7 @@ export function useProviderConfig() {
       // list lives there and what holds it to the server's.
       rssFeeds: PROVIDER_FEEDS.azure,
       blogSource: 'https://azure.microsoft.com/en-us/blog/',
-      podcast: {
-        // The RSS feed URL is not configured here (issue #349): the podcast
-        // page reads it from `admin_config/podcast_feeds` through
-        // `GET public/podcasts`, the same document the ingest timer uses, so
-        // the button and the ingest cannot name two different feeds. This
-        // stays null and is only a fallback. The Apple link was the creator
-        // dashboard (podcastsconnect), not a listener page, so it is gone
-        // until the show is resubmitted; Spotify and Amazon are the listener
-        // pages that existed on 2026-09-06.
-        feedUrl: null,
-        subscribeLinks: {
-          spotify: 'https://open.spotify.com/show/66tno2OzalMJZOvSDqM77Y',
-          amazon:
-            'https://music.amazon.com/podcasts/d139c50a-8163-425c-8315-4e19cc9370ee/hybrid-cloud-works',
-        },
-      },
+      podcast: MAIN_PODCAST_CONFIG,
     },
     aws: {
       name: 'AWS',
@@ -76,6 +84,7 @@ export function useProviderConfig() {
       color: 'hsl(var(--primary))',
       rssFeeds: PROVIDER_FEEDS.aws,
       blogSource: 'https://aws.amazon.com/blogs/aws/',
+      podcast: MAIN_PODCAST_CONFIG,
     },
     gcp: {
       name: 'Google Cloud',
@@ -85,6 +94,7 @@ export function useProviderConfig() {
       color: 'hsl(var(--primary))',
       rssFeeds: PROVIDER_FEEDS.gcp,
       blogSource: 'https://cloud.google.com/blog/',
+      podcast: MAIN_PODCAST_CONFIG,
     },
     github: {
       name: 'GitHub',
@@ -94,6 +104,7 @@ export function useProviderConfig() {
       color: 'hsl(var(--primary))',
       rssFeeds: PROVIDER_FEEDS.github,
       blogSource: 'https://github.blog/',
+      podcast: MAIN_PODCAST_CONFIG,
     },
     terraform: {
       name: 'Terraform',
@@ -103,6 +114,7 @@ export function useProviderConfig() {
       color: 'hsl(var(--primary))',
       rssFeeds: PROVIDER_FEEDS.terraform,
       blogSource: 'https://www.hashicorp.com/blog/',
+      podcast: MAIN_PODCAST_CONFIG,
     },
     finops: {
       name: 'FinOps',
@@ -112,6 +124,7 @@ export function useProviderConfig() {
       color: 'hsl(var(--primary))',
       rssFeeds: PROVIDER_FEEDS.finops,
       blogSource: 'https://www.finops.org/',
+      podcast: MAIN_PODCAST_CONFIG,
     },
     vmware: {
       name: 'VMware',
@@ -121,6 +134,7 @@ export function useProviderConfig() {
       color: 'hsl(var(--primary))',
       rssFeeds: PROVIDER_FEEDS.vmware,
       blogSource: 'https://blogs.vmware.com/',
+      podcast: MAIN_PODCAST_CONFIG,
     },
     ansible: {
       name: 'Ansible',
@@ -130,6 +144,7 @@ export function useProviderConfig() {
       color: 'hsl(var(--primary))',
       rssFeeds: PROVIDER_FEEDS.ansible,
       blogSource: 'https://www.ansible.com/blog',
+      podcast: MAIN_PODCAST_CONFIG,
     },
     docker: {
       name: 'Docker',
@@ -143,6 +158,7 @@ export function useProviderConfig() {
       // redirects to the address it names.
       rssFeeds: PROVIDER_FEEDS.docker,
       blogSource: 'https://www.docker.com/blog/',
+      podcast: MAIN_PODCAST_CONFIG,
     },
   };
 
