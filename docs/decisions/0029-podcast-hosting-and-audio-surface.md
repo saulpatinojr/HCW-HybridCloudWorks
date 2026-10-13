@@ -244,10 +244,12 @@ API documentation data on 2026-10-13):
 - **A create whose answer was lost is looked for before another is made
   (#1118).** Podbean takes no idempotency key, so before any create on a
   document with an earlier attempt and no episode id, the publish lists the
-  show's newest episodes. One with the same title, published no earlier than
-  ten minutes before the document's first attempt, is adopted and updated
-  rather than duplicated. A listing that fails or cannot be read creates
-  nothing.
+  show's newest episodes. One with the same title, published inside the span
+  the document's attempts could have created it in, is adopted and updated
+  rather than duplicated. The span runs from ten minutes before the first
+  attempt to twenty minutes after the last recorded one: the job's
+  10-minute timeout plus the same margin. A listing that fails or cannot be
+  read, or an unreadable attempt time, creates nothing.
 - **The outcome** lives under `host.podbean` — `episodeId`, `permalinkUrl`,
   `mediaUrl`, `hostStatus`, `audioPath`, `fileKey`, `publishedAt`,
   `firstAttemptAt`, `lastAttemptAt`, `adoptedAt`, `error`. Podbean returns no guid, so none is recorded.

@@ -10,6 +10,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   HOST_CONTENT_TEXT_MAX,
   HOST_TITLE_MAX,
+  ATTEMPT_SPAN_MS,
   RECONCILE_WINDOW_MS,
   describeForHost,
   findUnrecordedEpisode,
@@ -460,9 +461,50 @@ describe('publishEpisodeToHost — a create whose answer was lost (#1118)', () =
       ],
     };
     const client = { listEpisodes: vi.fn(async () => listing) };
-    const found = await findUnrecordedEpisode({ client, title, since: FIRST });
+    const found = await findUnrecordedEpisode({ client, title, since: FIRST, until: FIRST });
     expect(found.id).toBe('NEWER');
     expect(client.listEpisodes).toHaveBeenCalledWith({ limit: 20 });
+  });
+
+  it('a late retry does not adopt an unrelated episode published after every recorded attempt (CodeRabbit on #1117)', async () => {
+    // The last attempt timed out at 09:50; this retry runs at 10:00 the next
+    // day. A same-title episode published at 18:00 the evening before, by
+    // hand, was not made by any recorded attempt.
+    const LATER = { ...PODBEAN_EPISODE, id: 'BYHAND001', publish_time: secs('2026-10-13T18:00:00.000Z') };
+    const nextDay = () => new Date('2026-10-14T10:00:00.000Z');
+    const host = fakeHost([tokenReply(), listed([LATER]), ...HAPPY.slice(1)]);
+    const client = createPodbeanClient({ env: ENV, fetch: host.fetchImpl });
+    const patch = await publishEpisodeToHost({ client, readAudio, doc: timedOut(), now: nextDay });
+
+    expect(host.methods()).toContain('POST /v1/episodes');
+    expect(host.methods()).not.toContain('POST /v1/episodes/BYHAND001');
+    expect(patch.host.podbean).not.toHaveProperty('adoptedAt');
+  });
+
+  it('the window ends ATTEMPT_SPAN_MS plus the margin after the last attempt, inclusive', async () => {
+    const edge = secs(FIRST) + (ATTEMPT_SPAN_MS + RECONCILE_WINDOW_MS) / 1000;
+    const listing = {
+      episodes: [
+        { id: 'JUSTPAST', title: PODBEAN_EPISODE.title, publish_time: edge + 1 },
+        { id: 'ATEDGE', title: PODBEAN_EPISODE.title, publish_time: edge },
+      ],
+    };
+    const client = { listEpisodes: vi.fn(async () => listing) };
+    const found = await findUnrecordedEpisode({ client, title: PODBEAN_EPISODE.title, since: FIRST, until: FIRST });
+    expect(found.id).toBe('ATEDGE');
+  });
+
+  it('fails closed, without listing, on an unreadable attempt time: a local data error, not retryable', async () => {
+    const host = fakeHost([tokenReply()]);
+    const client = createPodbeanClient({ env: ENV, fetch: host.fetchImpl });
+    const broken = timedOut();
+    broken.host.podbean.firstAttemptAt = 'not a time';
+    const patch = await publishEpisodeToHost({ client, readAudio, doc: broken, now });
+
+    expect(host.methods()).not.toContain('GET /v1/episodes');
+    expect(host.methods()).not.toContain('POST /v1/episodes');
+    expect(patch.host.podbean.error).toMatchObject({ code: 'VALIDATION', retryable: false });
+    expect(patch.host.podbean.error.message).toMatch(/recorded attempt time is unreadable/);
   });
 });
 

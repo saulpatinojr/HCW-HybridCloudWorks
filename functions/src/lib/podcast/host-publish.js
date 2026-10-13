@@ -51,14 +51,27 @@
  *
  * Before any create on a document that has an earlier attempt on record and
  * no episode id, `findUnrecordedEpisode` reads the show's newest episodes
- * (`GET /v1/episodes`). An episode with the same title, published no earlier
- * than `RECONCILE_WINDOW_MS` before this document's FIRST attempt, is the one
- * that attempt made: it is adopted (its id recorded, `adoptedAt` set) and
- * updated, audio re-sent, never created twice. The lower bound is what keeps
- * an older, unrelated episode with the same title from being taken over: it
- * was published before this document was ever tried. If the listing itself
- * fails, nothing is created. A run that cannot tell whether the episode
- * exists records the failure and leaves the next retry to find out.
+ * (`GET /v1/episodes`). An episode with the same title, published inside
+ * the span this document's attempts could have created it in, is the one
+ * they made. The span runs from `RECONCILE_WINDOW_MS` before the FIRST
+ * attempt to `ATTEMPT_SPAN_MS` plus that margin after the LAST recorded one.
+ * It is adopted (its id recorded, `adoptedAt` set) and updated, audio
+ * re-sent, never created twice.
+ * - **The lower bound** keeps an older, unrelated episode with the same title
+ *   from being taken over: it was published before this document was ever
+ *   tried.
+ * - **The upper bound** does the same for a newer one, published after
+ *   every recorded attempt had ended, perhaps by hand. A late retry must not
+ *   adopt it.
+ * - **Fails closed:** if the listing fails, or a recorded attempt time is
+ *   unreadable, nothing is created. A run that cannot tell whether the
+ *   episode exists records the failure and leaves the next retry to find
+ *   out.
+ *
+ * One case stays open: a process killed after its create landed but before
+ * its record was written leaves no attempt time for that run, so a much later
+ * retry falls outside the upper bound. The job timeout makes that a crash
+ * inside one function invocation, not a lost response.
  *
  * Two runs at once on one document are not this file's concern: the job
  * scheduler refuses a second publish while one is queued or in flight
@@ -282,6 +295,15 @@ async function uploadAudioFor({ client, readAudio, doc }) {
  */
 export const RECONCILE_WINDOW_MS = 10 * 60_000;
 
+/**
+ * How long after its start one attempt can still be creating: the publish
+ * job's timeout (podcast-jobs.js, 10 minutes). With the skew margin above,
+ * an episode published later than `lastAttemptAt` + this + the margin was not
+ * made by any recorded attempt, so a late retry never adopts it (CodeRabbit on
+ * #1117: an unrelated episode published later under the same title).
+ */
+export const ATTEMPT_SPAN_MS = 10 * 60_000;
+
 /** How many of the newest episodes reconciliation reads: one page. */
 export const RECONCILE_LIMIT = 20;
 
@@ -306,9 +328,20 @@ function comparableTitle(value) {
  * @param {{ listEpisodes: Function }} deps.client
  * @param {string} deps.title the title this run would publish under
  * @param {string} deps.since ISO time of the document's first attempt
+ * @param {string} deps.until ISO time of its last recorded attempt
  * @returns {Promise<object|null>} the newest matching Podbean episode
  */
-export async function findUnrecordedEpisode({ client, title, since }) {
+export async function findUnrecordedEpisode({ client, title, since, until }) {
+  // Checked before the listing: an unreadable time is local data, so no call
+  // could help, and NaN bounds would match nothing and let a create through.
+  const sinceMs = Date.parse(since);
+  const untilMs = Date.parse(until);
+  if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs)) {
+    throw new PodbeanError(
+      'Could not tell whether an earlier attempt created the episode: the recorded attempt time is unreadable.',
+      { status: null, code: 'VALIDATION', retryable: false }
+    );
+  }
   const listed = await client.listEpisodes({ limit: RECONCILE_LIMIT });
   if (!Array.isArray(listed?.episodes)) {
     throw new PodbeanError(
@@ -316,7 +349,8 @@ export async function findUnrecordedEpisode({ client, title, since }) {
       { status: null, code: 'UPSTREAM', retryable: true }
     );
   }
-  const floor = Date.parse(since) - RECONCILE_WINDOW_MS;
+  const floor = sinceMs - RECONCILE_WINDOW_MS;
+  const ceiling = untilMs + ATTEMPT_SPAN_MS + RECONCILE_WINDOW_MS;
   const wanted = comparableTitle(title);
   const matches = listed.episodes.filter(
     (episode) =>
@@ -325,7 +359,8 @@ export async function findUnrecordedEpisode({ client, title, since }) {
       episode.id !== null &&
       episode.id !== '' &&
       comparableTitle(episode.title) === wanted &&
-      Number(episode.publish_time) * 1000 >= floor
+      Number(episode.publish_time) * 1000 >= floor &&
+      Number(episode.publish_time) * 1000 <= ceiling
   );
   matches.sort((a, b) => Number(b.publish_time) - Number(a.publish_time));
   return matches[0] ?? null;
@@ -412,6 +447,7 @@ export async function publishEpisodeToHost({ client, readAudio, doc, now = () =>
         client,
         title: metadata.title,
         since: firstAttemptAt,
+        until: previous.lastAttemptAt,
       });
       if (adopted) {
         // Which audio the lost create carried is unknown, so it is sent again.

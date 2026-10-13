@@ -3683,11 +3683,13 @@ This project has not cut a tagged release; entries are grouped under
     - **When:** before any create on a document with an earlier attempt and
       no episode id, the publish lists the show's newest episodes
       (`GET /v1/episodes`).
-    - **Match:** one with the same title, published no earlier than ten
-      minutes before the document's first attempt, is adopted and updated,
-      with the audio re-sent.
+    - **Match:** one with the same title, published between ten minutes
+      before the document's first attempt and twenty minutes after its last
+      recorded one, is adopted and updated, with the audio re-sent. The
+      upper bound keeps a late retry from adopting an unrelated episode
+      published later under the same title.
     - **Fails closed:** a listing that fails or cannot be read creates
-      nothing.
+      nothing, and neither does an unreadable attempt time (non-retryable).
     - **Recorded:** `firstAttemptAt` and `adoptedAt` are kept on the record.
   - **Credentials stay on the server:** no error, log line or recorded
     failure carries the token, the secret or a URL holding either.
