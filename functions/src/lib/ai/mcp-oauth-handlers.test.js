@@ -72,6 +72,51 @@ function hostinger({ token = reply(200, { access_token: 'at-1', refresh_token: '
   return { fetch, http, calls };
 }
 
+const PODBEAN = 'https://mcp.podbean.com';
+
+/**
+ * Podbean, the one Connect server whose metadata names a revocation_endpoint
+ * (`https://mcp.podbean.com/revoke`, read 2026-10-13, #1116). The other
+ * endpoints follow the same shape; `revoke` is the reply (or function) its
+ * revocation endpoint answers with.
+ */
+function podbean({ revoke = reply(200, {}) } = {}) {
+  const calls = [];
+  const routes = {
+    [`POST ${PODBEAN}/mcp`]: (init) =>
+      init.headers?.Authorization === 'Bearer at-1'
+        ? reply(200, { jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'list_episodes', description: 'List', inputSchema: {} }] } })
+        : reply(401, '', { 'www-authenticate': `Bearer resource_metadata="${PODBEAN}/.well-known/oauth-protected-resource"` }),
+    [`GET ${PODBEAN}/.well-known/oauth-protected-resource`]: reply(200, {
+      resource: `${PODBEAN}/mcp`,
+      authorization_servers: [PODBEAN],
+    }),
+    [`GET ${PODBEAN}/.well-known/oauth-authorization-server`]: reply(200, {
+      issuer: PODBEAN,
+      authorization_endpoint: `${PODBEAN}/authorize`,
+      token_endpoint: `${PODBEAN}/token`,
+      registration_endpoint: `${PODBEAN}/register`,
+      revocation_endpoint: `${PODBEAN}/revoke`,
+      revocation_endpoint_auth_methods_supported: ['none'],
+      code_challenge_methods_supported: ['S256'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      token_endpoint_auth_methods_supported: ['none'],
+    }),
+    [`POST ${PODBEAN}/register`]: reply(201, { client_id: 'pb-client-1', token_endpoint_auth_method: 'none' }),
+    [`POST ${PODBEAN}/token`]: reply(200, { access_token: 'at-1', refresh_token: 'rt-1', token_type: 'Bearer', expires_in: 3600 }),
+    [`POST ${PODBEAN}/revoke`]: revoke,
+  };
+  const fetch = vi.fn(async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push({ url, method, headers: init.headers || {}, body: init.body });
+    const handler = routes[`${method} ${url}`];
+    if (!handler) return reply(404, {});
+    return typeof handler === 'function' ? handler(init) : handler;
+  });
+  const http = createOAuthHttp({ fetch, resolve: async () => ({ address: PUBLIC }), dispatcherFor: () => ({ close: async () => {} }) });
+  return { fetch, http, calls };
+}
+
 /** An mcp_servers container with ETags, a state-hash query, and an audit log. */
 function memStore(docs) {
   const data = new Map(docs.map((doc) => [doc.id, { ...doc, _etag: 'e0' }]));
@@ -110,6 +155,35 @@ const hostingerDoc = () => ({
   enabled: false,
   status: 'error',
   lastError: 'fetch failed',
+});
+
+const podbeanDoc = () => ({
+  id: 'podbean-mcp',
+  name: 'Podbean MCP',
+  url: `${PODBEAN}/mcp`,
+  transport: 'http',
+  authType: 'oauth',
+  apiKeyEnvVar: null,
+  enabled: false,
+  status: 'untested',
+});
+
+/** Podbean as a completed Connect leaves it, with the revocation endpoint the sign-in discovered. */
+const connectedPodbeanDoc = (over = {}) => ({
+  ...podbeanDoc(),
+  oauthToken: 'at-1',
+  oauthRefreshToken: 'rt-1',
+  oauthClient: { issuer: PODBEAN, clientId: 'pb-client-1', tokenEndpointAuthMethod: 'none' },
+  oauth: {
+    status: 'connected',
+    issuer: PODBEAN,
+    tokenEndpoint: `${PODBEAN}/token`,
+    revocationEndpoint: `${PODBEAN}/revoke`,
+    clientId: 'pb-client-1',
+    tokenEndpointAuthMethod: 'none',
+    resource: `${PODBEAN}/mcp`,
+    ...over,
+  },
 });
 
 const guardFor = (oid, role = 'super_admin') => ({
@@ -356,14 +430,15 @@ describe('POST cms/mcp/{serverId}/oauth/disconnect', () => {
         ...hostingerDoc(),
         oauthToken: 'at-1',
         oauthRefreshToken: 'rt-1',
-        oauth: { status: 'connected' },
+        oauth: { status: 'connected', issuer: 'https://auth.hostinger.com' },
         oauthPending: { stateHash: 'h' },
         oauthClient: { clientId: 'hst-client-1' },
       },
     ]);
     const net = hostinger();
     const res = await handlersFor({ store, net }).disconnectMcpOAuth(routeRequest('hostinger-mcp'), context);
-    expect(parse(res)).toEqual({ ok: true, disconnected: true });
+    // No revocation_endpoint on the connection (Hostinger advertises none): nowhere to revoke.
+    expect(parse(res)).toEqual({ ok: true, disconnected: true, revoked: null, issuer: 'https://auth.hostinger.com' });
     expect(store.data.get('hostinger-mcp')).toMatchObject({
       oauthToken: null,
       oauthRefreshToken: null,
@@ -373,7 +448,10 @@ describe('POST cms/mcp/{serverId}/oauth/disconnect', () => {
       lastError: null,
       oauthClient: { clientId: 'hst-client-1' },
     });
-    expect(store.audit[0].action).toBe('mcp_oauth_disconnected');
+    expect(store.audit[0]).toMatchObject({
+      action: 'mcp_oauth_disconnected',
+      details: { issuer: 'https://auth.hostinger.com', revoked: null },
+    });
     expect(net.fetch).not.toHaveBeenCalled();
   });
 
@@ -385,6 +463,146 @@ describe('POST cms/mcp/{serverId}/oauth/disconnect', () => {
     );
     expect(res.status).toBe(403);
     expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe('disconnect revokes the grant at the provider (RFC 7009, #1116)', () => {
+  /** Every string every log channel was given, so a token can be looked for in all of them. */
+  const logged = (ctx, h) =>
+    JSON.stringify([...ctx.warn.mock.calls, ...ctx.error.mock.calls, ...h.log.warn.mock.calls, ...h.log.error.mock.calls]);
+  const freshContext = () => ({ error: vi.fn(), warn: vi.fn() });
+  const handlersWithLog = ({ store, net }) => {
+    const log = { warn: vi.fn(), error: vi.fn() };
+    const h = createMcpOAuthHandlers({
+      guard: guardFor('owner-oid'),
+      store,
+      env: {},
+      fetch: net.fetch,
+      now: () => NOW,
+      log,
+      oauthHttp: net.http,
+      uuid: () => 'audit-1',
+    });
+    return { ...h, log };
+  };
+  const revokeCalls = (net) => net.calls.filter((c) => c.url === `${PODBEAN}/revoke`);
+
+  it('stores the revocation endpoint the sign-in discovered, then on Disconnect revokes refresh then access before deleting', async () => {
+    const store = memStore([podbeanDoc()]);
+    const net = podbean();
+    const start = await handlersFor({ store, net }).startMcpOAuth(routeRequest('podbean-mcp'), context);
+    const state = new URL(parse(start).authorizationUrl).searchParams.get('state');
+    expect(store.data.get('podbean-mcp').oauthPending.revocationEndpoint).toBe(`${PODBEAN}/revoke`);
+    const done = await handlersFor({ store, net }).completeMcpOAuth(bodyRequest({ state, code: 'c' }), context);
+    expect(done.status).toBe(200);
+    expect(store.data.get('podbean-mcp').oauth).toMatchObject({
+      status: 'connected',
+      issuer: PODBEAN,
+      revocationEndpoint: `${PODBEAN}/revoke`,
+    });
+
+    // The order of events: both revocations reach the provider before the local delete.
+    const revokedBeforeDelete = [];
+    const realPatch = store.patchDoc.getMockImplementation();
+    store.patchDoc.mockImplementation(async (...args) => {
+      revokedBeforeDelete.push(revokeCalls(net).length);
+      return realPatch(...args);
+    });
+    const ctx = freshContext();
+    const h = handlersWithLog({ store, net });
+    const res = await h.disconnectMcpOAuth(routeRequest('podbean-mcp'), ctx);
+    expect(parse(res)).toEqual({ ok: true, disconnected: true, revoked: true, issuer: PODBEAN });
+    expect(revokedBeforeDelete).toEqual([2]);
+
+    const [refresh, access] = revokeCalls(net);
+    expect(refresh.method).toBe('POST');
+    expect(refresh.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+    expect(refresh.headers).not.toHaveProperty('Authorization');
+    expect(Object.fromEntries(new URLSearchParams(refresh.body))).toEqual({
+      token: 'rt-1',
+      token_type_hint: 'refresh_token',
+      client_id: 'pb-client-1',
+    });
+    expect(Object.fromEntries(new URLSearchParams(access.body))).toEqual({
+      token: 'at-1',
+      token_type_hint: 'access_token',
+      client_id: 'pb-client-1',
+    });
+    expect(store.data.get('podbean-mcp')).toMatchObject({ oauthToken: null, oauthRefreshToken: null, oauth: null });
+    expect(store.audit.at(-1)).toMatchObject({
+      action: 'mcp_oauth_disconnected',
+      details: { issuer: PODBEAN, revoked: true },
+    });
+    expect(logged(ctx, h)).not.toMatch(/at-1|rt-1/);
+    expect(res.body).not.toMatch(/at-1|rt-1/);
+  });
+
+  it('authenticates a confidential client at the revocation endpoint the way the token endpoint is called', async () => {
+    const store = memStore([
+      {
+        ...connectedPodbeanDoc({ tokenEndpointAuthMethod: 'client_secret_basic' }),
+        oauthClientSecret: 'pb-secret',
+      },
+    ]);
+    const net = podbean();
+    const res = await handlersFor({ store, net }).disconnectMcpOAuth(routeRequest('podbean-mcp'), context);
+    expect(parse(res).revoked).toBe(true);
+    for (const call of revokeCalls(net)) {
+      expect(call.headers.Authorization).toBe(`Basic ${Buffer.from('pb-client-1:pb-secret').toString('base64')}`);
+      expect(new URLSearchParams(call.body).has('client_secret')).toBe(false);
+    }
+  });
+
+  it('still deletes the tokens when the provider refuses the revocation, and says the grant may be live', async () => {
+    const store = memStore([connectedPodbeanDoc()]);
+    const net = podbean({ revoke: reply(503, { error: 'temporarily_unavailable' }) });
+    const ctx = freshContext();
+    const h = handlersWithLog({ store, net });
+    const res = await h.disconnectMcpOAuth(routeRequest('podbean-mcp'), ctx);
+    expect(res.status).toBe(200);
+    expect(parse(res)).toMatchObject({ ok: true, disconnected: true, revoked: false, issuer: PODBEAN });
+    expect(parse(res).reason).toMatch(/mcp\.podbean\.com\/revoke answered the refresh token revocation with temporarily_unavailable/);
+    expect(store.data.get('podbean-mcp')).toMatchObject({ oauthToken: null, oauthRefreshToken: null, oauth: null, status: 'untested' });
+    // The access token was still tried after the refresh token was refused.
+    expect(revokeCalls(net)).toHaveLength(2);
+    expect(ctx.warn).toHaveBeenCalledWith(expect.stringMatching(/was not revoked at https:\/\/mcp\.podbean\.com/));
+    expect(logged(ctx, h)).not.toMatch(/at-1|rt-1/);
+    expect(res.body).not.toMatch(/at-1|rt-1/);
+    expect(store.audit.at(-1).details).toEqual({ collection: 'mcp_servers', documentId: 'podbean-mcp', issuer: PODBEAN, revoked: false });
+  });
+
+  it('treats no answer from the provider the same way: deleted here, revoked false, the reason names the address only', async () => {
+    const store = memStore([connectedPodbeanDoc()]);
+    const net = podbean();
+    net.fetch.mockImplementation(async () => {
+      throw new Error('ECONNRESET');
+    });
+    const ctx = freshContext();
+    const res = await handlersFor({ store, net }).disconnectMcpOAuth(routeRequest('podbean-mcp'), ctx);
+    expect(parse(res)).toMatchObject({ revoked: false, issuer: PODBEAN });
+    expect(parse(res).reason).toMatch(/^https:\/\/mcp\.podbean\.com\/revoke could not be reached/);
+    expect(parse(res).reason).not.toMatch(/at-1|rt-1/);
+    expect(store.data.get('podbean-mcp').oauthToken).toBeNull();
+  });
+
+  it('sends no token to a revocation endpoint that is not https, and reports it', async () => {
+    const store = memStore([connectedPodbeanDoc({ revocationEndpoint: 'http://mcp.podbean.com/revoke' })]);
+    const net = podbean();
+    const res = await handlersFor({ store, net }).disconnectMcpOAuth(routeRequest('podbean-mcp'), context);
+    expect(parse(res)).toMatchObject({ revoked: false, issuer: PODBEAN });
+    expect(parse(res).reason).toMatch(/must be an https address/);
+    expect(net.fetch).not.toHaveBeenCalled();
+    expect(store.data.get('podbean-mcp').oauthToken).toBeNull();
+  });
+
+  it('has nowhere to revoke on a connection stored before the endpoint was kept', async () => {
+    const { revocationEndpoint: _none, ...older } = connectedPodbeanDoc().oauth;
+    const store = memStore([{ ...connectedPodbeanDoc(), oauth: older }]);
+    const net = podbean();
+    const res = await handlersFor({ store, net }).disconnectMcpOAuth(routeRequest('podbean-mcp'), context);
+    expect(parse(res)).toEqual({ ok: true, disconnected: true, revoked: null, issuer: PODBEAN });
+    expect(net.fetch).not.toHaveBeenCalled();
+    expect(store.data.get('podbean-mcp').oauthToken).toBeNull();
   });
 });
 

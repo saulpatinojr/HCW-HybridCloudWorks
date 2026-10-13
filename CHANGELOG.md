@@ -19,6 +19,34 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **MCP Disconnect revokes the grant at the provider (RFC 7009).** Closes
+  #1116, raised by CodeRabbit on #1114. Disconnect on an OAuth MCP server
+  deleted the stored token pair and left the grant live at the provider
+  until its refresh token expired or the owner revoked it there.
+  - **Discovery keeps the `revocation_endpoint`** the authorization-server
+    metadata names (RFC 8414), https only, on the pending sign-in and then on
+    the stored connection (`oauth.revocationEndpoint`), beside the token
+    endpoint — so, like the token endpoint, it is set only by the flow and
+    never by a config write. A missing or non-https one is stored as none;
+    it is not a reason to refuse the sign-in. Podbean advertises
+    `https://mcp.podbean.com/revoke` (read 2026-10-13); Replicate and
+    Hostinger did not when read.
+  - **Disconnect revokes first, then deletes.** The refresh token, then the
+    access token, each POSTed as `token` + `token_type_hint` with the client
+    authentication the registration chose (client id in the form for a public
+    client; Basic or in the body for a confidential one), through the same
+    guarded request as every token call: https only, no redirects, one
+    deadline. The local delete happens whatever the provider answers, so an
+    outage cannot keep a token on this side. The response carries `revoked`
+    (`true`, `false` with a short `reason`, or `null` when there is nowhere
+    to revoke) and `issuer`; the audit row records both. No token reaches a
+    log or the response.
+  - **The card says which.** "Disconnected and revoked at mcp.podbean.com",
+    or "Disconnected here; the grant may still be live at mcp.podbean.com —
+    revoke it in your mcp.podbean.com account". A provider without a
+    revocation endpoint gets the plain "disconnected" toast as before. The
+    Podbean card's notes and the Connect runbook say the same.
+
 - **Podbean's MCP server in the AI Engine (Admin → AI Engine → MCP
   Servers).** The show moved to Podbean on 2026-10-13, and Podbean runs a
   hosted MCP server at `https://mcp.podbean.com/mcp`. It covers the show's

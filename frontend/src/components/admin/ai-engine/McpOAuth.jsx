@@ -15,6 +15,11 @@
  * in McpOAuthResultBanner on the MCP Servers tab. Tokens never reach the
  * browser: the card reads `oauth` (status, scope, expiry) and `hasOauthToken`.
  *
+ * Disconnect deletes the token here and, where the provider advertises a
+ * revocation endpoint, revokes the grant there first (#1116). The toast says
+ * which happened: revoked at the provider, or deleted here only — with the
+ * grant possibly still live there, for the owner to revoke in that account.
+ *
  * Plaud is marked OAuth too but is not Connect's: its token is pasted on the
  * Recording Hub's Connect tab (functions/src/lib/ai/mcp-policy.js
  * PASTED_TOKEN_SERVER_IDS, which aiEngine.test.js holds this list to).
@@ -55,6 +60,36 @@ const isHttpsUrl = (value) => {
     return false;
   }
 };
+
+/** The host of an issuer URL ("mcp.podbean.com"), for the toast; the fallback when it is not a URL. */
+export function issuerHost(issuer, fallback) {
+  try {
+    return new URL(issuer).host || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * What the Disconnect toast says, from the API's `{ revoked, issuer, reason }`.
+ * Revoked at the provider, deleted here only (the grant may still be live
+ * there), or — a provider with no revocation endpoint, or an older API —
+ * just the title.
+ */
+export function disconnectToast(name, result) {
+  const title = `${name} disconnected`;
+  const where = issuerHost(result?.issuer, name);
+  if (result?.revoked === true) {
+    return { title, description: `Disconnected and revoked at ${where}.` };
+  }
+  if (result?.revoked === false) {
+    return {
+      title: `${name} disconnected here`,
+      description: `Disconnected here; the grant may still be live at ${where} — revoke it in your ${where} account.`,
+    };
+  }
+  return { title };
+}
 
 const BADGES = {
   connected: { label: 'Connected', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
@@ -98,15 +133,15 @@ export default function McpOAuthPanel({ server }) {
   const disconnect = async () => {
     if (
       !window.confirm(
-        `Disconnect ${name}? Its token is deleted here, and nothing can call it until someone presses Connect again.`
+        `Disconnect ${name}? Its token is deleted here and, where the provider allows it, revoked there; nothing can call it until someone presses Connect again.`
       )
     ) {
       return;
     }
     setBusy('disconnect');
     try {
-      await aiEngine.disconnectMcpOAuth(server.id);
-      toast({ title: `${name} disconnected` });
+      const result = await aiEngine.disconnectMcpOAuth(server.id);
+      toast(disconnectToast(name, result));
     } catch (err) {
       toast({
         title: `Could not disconnect ${name}`,

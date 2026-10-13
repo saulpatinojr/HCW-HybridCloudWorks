@@ -5,7 +5,8 @@
  *   POST cms/mcp/{serverId}/oauth/start       → { ok, authorizationUrl }
  *   POST cms/mcp/oauth/complete  { state, code } → { ok, connected, serverId,
  *                                                  serverName, toolCount }
- *   POST cms/mcp/{serverId}/oauth/disconnect  → { ok, disconnected }
+ *   POST cms/mcp/{serverId}/oauth/disconnect  → { ok, disconnected, revoked,
+ *                                                  issuer, reason? }
  *
  * All three need `super_admin`. A Connect obtains a credential that every
  * editor's mcpProxy call to that server will then carry, which is the same
@@ -22,6 +23,12 @@
  * sign-in started with, and the server must still be at the resource the
  * token is for.
  *
+ * Disconnect revokes the grant at the provider first (RFC 7009, #1116) when
+ * the sign-in's metadata named a revocation endpoint, then deletes the tokens
+ * here whatever the provider answered: `revoked` is true, false (with a
+ * `reason` the card can show — the grant may still be live there) or null
+ * (nowhere to revoke). A provider outage never keeps a token on this side.
+ *
  * Errors use the MCP routes' shape, `{ ok: false, error, code? }`, with a
  * sentence an owner can act on.
  */
@@ -35,6 +42,7 @@ import {
   createOAuthHttp,
   exchangeAuthorizationCode,
   hashState,
+  revokeOAuthGrant,
   startOAuthConnect,
 } from './mcp-oauth.js';
 
@@ -318,7 +326,18 @@ async function disconnectMcpOAuth(ctx, request, context) {
   if (auth.error) return auth.error;
   const loaded = await loadRouteServer(ctx, request, context, 'disconnectMcpOAuth');
   if (loaded.response) return loaded.response;
-  const { serverId } = loaded;
+  const { serverId, server } = loaded;
+  const name = server.name || serverId;
+
+  // Revoke at the provider first, while the tokens are still here to send.
+  // Its outcome is reported, never acted on: the delete below happens
+  // either way, so a provider that is down cannot keep a token on this side.
+  const revocation = await revokeOAuthGrant({ server, serverId, http: ctx.oauthHttp });
+  if (revocation.revoked === false) {
+    context.warn?.(
+      `[disconnectMcpOAuth] ${name}'s grant was not revoked at ${revocation.issuer || 'its provider'}: ${revocation.reason} The token is deleted here regardless.`
+    );
+  }
 
   try {
     // The registration (oauthClient and its secret) stays: it belongs to the
@@ -339,9 +358,15 @@ async function disconnectMcpOAuth(ctx, request, context) {
     action: 'mcp_oauth_disconnected',
     serverId,
     user: auth.user,
-    details: {},
+    details: { issuer: revocation.issuer, revoked: revocation.revoked },
   });
-  return json(200, { ok: true, disconnected: true });
+  return json(200, {
+    ok: true,
+    disconnected: true,
+    revoked: revocation.revoked,
+    issuer: revocation.issuer,
+    ...(revocation.reason ? { reason: revocation.reason } : {}),
+  });
 }
 
 /**

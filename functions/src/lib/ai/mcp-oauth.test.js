@@ -31,6 +31,7 @@ import {
   registrationRequestBody,
   resourceMetadataFromChallenge,
   reusableClient,
+  revokeOAuthGrant,
   sameIssuer,
   startOAuthConnect,
   tokenExpiresWithin,
@@ -232,6 +233,42 @@ describe('discovery (RFC 9728 → RFC 8414)', () => {
     });
     expect(found.scope).toBe('mcp:use');
     expect(net.calls[0].url).toBe('https://mcp.hostinger.com/meta/prm.json');
+  });
+
+  it('keeps an https revocation_endpoint, and none at all for a server without one or with an http one (#1116)', async () => {
+    const withRevocation = (revocation_endpoint) =>
+      network(
+        replicateRoutes({
+          'GET https://mcp.replicate.com/.well-known/oauth-authorization-server': reply(200, {
+            ...REPLICATE_AS,
+            ...(revocation_endpoint === undefined ? {} : { revocation_endpoint }),
+          }),
+        })
+      );
+    const discover = (net) => discoverOAuth({ serverUrl: REPLICATE_URL, http: net.http, name: 'Replicate MCP' });
+    expect((await discover(withRevocation('https://mcp.replicate.com/revoke'))).revocationEndpoint).toBe(
+      'https://mcp.replicate.com/revoke'
+    );
+    // Neither Replicate's nor Hostinger's metadata named one when read (2026-10-08).
+    expect((await discover(withRevocation(undefined))).revocationEndpoint).toBeNull();
+    // A bad address is not a reason to refuse the sign-in; it is just nowhere to revoke.
+    expect((await discover(withRevocation('http://mcp.replicate.com/revoke'))).revocationEndpoint).toBeNull();
+    expect((await discover(withRevocation('https://u:p@mcp.replicate.com/revoke'))).revocationEndpoint).toBeNull();
+    expect((await discover(withRevocation('   '))).revocationEndpoint).toBeNull();
+    // It travels from the pending sign-in onto the stored connection.
+    const { updates } = await startOAuthConnect({
+      server: replicateServer(),
+      serverId: 'replicate-mcp',
+      userId: 'u',
+      http: withRevocation('https://mcp.replicate.com/revoke').http,
+      now,
+    });
+    expect(updates.oauthPending.revocationEndpoint).toBe('https://mcp.replicate.com/revoke');
+    const tokens = { accessToken: 'a', refreshToken: 'r', expiresAt: null, scope: null };
+    expect(connectedUpdates({ pending: updates.oauthPending, tokens, now }).oauth.revocationEndpoint).toBe(
+      'https://mcp.replicate.com/revoke'
+    );
+    expect(connectedUpdates({ pending: { ...updates.oauthPending, revocationEndpoint: undefined }, tokens, now }).oauth.revocationEndpoint).toBeNull();
   });
 
   it('falls back to the OpenID configuration when RFC 8414 metadata is absent', async () => {
@@ -717,6 +754,68 @@ describe('token requests', () => {
     expect(
       parseTokenResponse({ status: 200, text: JSON.stringify({ access_token: 'a' }) }, { name: 'X', grant: 'g', now })
     ).toEqual({ accessToken: 'a', refreshToken: null, expiresAt: null, scope: null });
+  });
+});
+
+describe('revocation (RFC 7009, #1116)', () => {
+  const REVOKE = 'https://mcp.podbean.com/revoke';
+  const connected = (over = {}) => ({
+    id: 'podbean-mcp',
+    name: 'Podbean MCP',
+    oauthToken: 'at-1',
+    oauthRefreshToken: 'rt-1',
+    oauth: {
+      status: 'connected',
+      issuer: 'https://mcp.podbean.com',
+      tokenEndpoint: 'https://mcp.podbean.com/token',
+      revocationEndpoint: REVOKE,
+      clientId: 'pb-client-1',
+      tokenEndpointAuthMethod: 'none',
+    },
+    ...over,
+  });
+  const revoke = (server, net) => revokeOAuthGrant({ server, serverId: 'podbean-mcp', http: net.http });
+
+  it('posts the refresh token, then the access token, each with its hint and the client id', async () => {
+    const net = network({ [`POST ${REVOKE}`]: reply(200, '') });
+    expect(await revoke(connected(), net)).toEqual({ revoked: true, issuer: 'https://mcp.podbean.com' });
+    expect(net.calls.map((c) => Object.fromEntries(new URLSearchParams(c.body)))).toEqual([
+      { token: 'rt-1', token_type_hint: 'refresh_token', client_id: 'pb-client-1' },
+      { token: 'at-1', token_type_hint: 'access_token', client_id: 'pb-client-1' },
+    ]);
+    expect(net.calls.every((c) => c.method === 'POST' && !('Authorization' in c.headers))).toBe(true);
+  });
+
+  it('revokes only what is stored, and has nowhere to revoke without an endpoint or without tokens', async () => {
+    const net = network({ [`POST ${REVOKE}`]: reply(200, '') });
+    expect(await revoke(connected({ oauthRefreshToken: null }), net)).toEqual({ revoked: true, issuer: 'https://mcp.podbean.com' });
+    expect(net.calls.map((c) => new URLSearchParams(c.body).get('token_type_hint'))).toEqual(['access_token']);
+    const none = network({});
+    const { revocationEndpoint: _none, ...withoutEndpoint } = connected().oauth;
+    expect(await revoke(connected({ oauth: withoutEndpoint }), none)).toEqual({ revoked: null, issuer: 'https://mcp.podbean.com' });
+    expect(await revoke(connected({ oauthToken: null, oauthRefreshToken: null }), none)).toEqual({
+      revoked: null,
+      issuer: 'https://mcp.podbean.com',
+    });
+    expect(await revoke({ id: 'x' }, none)).toEqual({ revoked: null, issuer: null });
+    expect(none.fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not follow a redirect from the revocation endpoint, and the reason carries no token', async () => {
+    const net = network({ [`POST ${REVOKE}`]: reply(307, '', { location: 'https://elsewhere.example/revoke' }) });
+    const result = await revoke(connected(), net);
+    expect(result.revoked).toBe(false);
+    expect(result.reason).toMatch(/redirect, which this sign-in does not follow/);
+    expect(result.reason).not.toMatch(/at-1|rt-1/);
+    expect(net.calls.map((c) => c.url)).toEqual([REVOKE, REVOKE]);
+  });
+
+  it('refuses an endpoint that is not https before any request', async () => {
+    const net = network({});
+    const result = await revoke(connected({ oauth: { ...connected().oauth, revocationEndpoint: 'http://mcp.podbean.com/revoke' } }), net);
+    expect(result).toMatchObject({ revoked: false, issuer: 'https://mcp.podbean.com' });
+    expect(result.reason).toMatch(/Podbean MCP's revocation endpoint must be an https address/);
+    expect(net.fetch).not.toHaveBeenCalled();
   });
 });
 

@@ -27,7 +27,9 @@ const {
   default: McpOAuthPanel,
   McpOAuthResultBanner,
   OAuthStateBadge,
+  disconnectToast,
   formatUtc,
+  issuerHost,
   oauthCardState,
   usesOAuthConnect,
 } = await import('./McpOAuth.jsx');
@@ -162,6 +164,61 @@ describe('McpOAuthPanel', () => {
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith({ title: 'Hostinger MCP disconnected' })
     );
+  });
+
+  describe('what Disconnect says about the grant at the provider (#1116)', () => {
+    const podbean = () =>
+      connected({ id: 'podbean-mcp', name: 'Podbean MCP', url: 'https://mcp.podbean.com/mcp' });
+    const pressDisconnect = async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      render(<McpOAuthPanel server={podbean()} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Disconnect Podbean MCP' }));
+      await waitFor(() => expect(toast).toHaveBeenCalled());
+      return toast.mock.calls[0][0];
+    };
+
+    it('revoked at the provider: says so, naming the issuer', async () => {
+      disconnectMcpOAuth.mockResolvedValue({
+        disconnected: true,
+        revoked: true,
+        issuer: 'https://mcp.podbean.com',
+      });
+      expect(await pressDisconnect()).toEqual({
+        title: 'Podbean MCP disconnected',
+        description: 'Disconnected and revoked at mcp.podbean.com.',
+      });
+    });
+
+    it('not revoked: says the grant may still be live there, and where to revoke it', async () => {
+      disconnectMcpOAuth.mockResolvedValue({
+        disconnected: true,
+        revoked: false,
+        issuer: 'https://mcp.podbean.com',
+        reason: 'https://mcp.podbean.com/revoke did not answer in time.',
+      });
+      expect(await pressDisconnect()).toEqual({
+        title: 'Podbean MCP disconnected here',
+        description:
+          'Disconnected here; the grant may still be live at mcp.podbean.com — revoke it in your mcp.podbean.com account.',
+      });
+    });
+
+    it('no revocation endpoint, or an older API: the title alone, as before', () => {
+      expect(
+        disconnectToast('Hostinger MCP', { disconnected: true, revoked: null, issuer: null })
+      ).toEqual({
+        title: 'Hostinger MCP disconnected',
+      });
+      expect(disconnectToast('Hostinger MCP', undefined)).toEqual({
+        title: 'Hostinger MCP disconnected',
+      });
+      // Without a usable issuer the server's name stands in.
+      expect(disconnectToast('Podbean MCP', { revoked: true, issuer: null }).description).toBe(
+        'Disconnected and revoked at Podbean MCP.'
+      );
+      expect(issuerHost('https://auth.hostinger.com', 'x')).toBe('auth.hostinger.com');
+      expect(issuerHost('not a url', 'x')).toBe('x');
+    });
   });
 });
 
