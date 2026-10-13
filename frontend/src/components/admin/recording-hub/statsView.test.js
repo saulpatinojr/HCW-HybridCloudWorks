@@ -14,6 +14,7 @@ import {
   downloadSeries,
   fmtSeconds,
   hasAnyData,
+  hasAnyError,
   periodKeys,
   periodLabel,
   rankedShares,
@@ -190,5 +191,15 @@ describe('hasAnyData', () => {
 
   it('AUDIENCE_ROWS names the three counts the report carries, in order', () => {
     expect(AUDIENCE_ROWS.map((row) => row.key)).toEqual(['followers', 'likes', 'comments']);
+  });
+});
+
+describe('hasAnyError', () => {
+  it('is true when any section recorded a failure, and false for no errors, an empty map or no statistics', () => {
+    expect(hasAnyError({ errors: { countries: { code: 'UPSTREAM', message: 'x' } } })).toBe(true);
+    expect(hasAnyError({ errors: {} })).toBe(false);
+    expect(hasAnyError({ downloads: { total: 3 } })).toBe(false);
+    expect(hasAnyError({ errors: null })).toBe(false);
+    expect(hasAnyError(null)).toBe(false);
   });
 });

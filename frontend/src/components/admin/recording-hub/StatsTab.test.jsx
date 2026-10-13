@@ -184,4 +184,38 @@ describe('StatsTab', () => {
     expect(await screen.findByText(/No data yet/)).toBeInTheDocument();
     expect(screen.queryByTestId('chart')).not.toBeInTheDocument();
   });
+
+  it('every section failing is six failures shown in place, never "no data yet"', async () => {
+    const failed = (status) => ({
+      status,
+      code: 'UPSTREAM',
+      message: `Podbean answered ${status}.`,
+      retryable: true,
+    });
+    getJSON.mockResolvedValue(
+      stats({
+        downloads: null,
+        countries: null,
+        platforms: null,
+        sources: null,
+        retention: null,
+        audience: null,
+        errors: {
+          downloads: failed(503),
+          countries: failed(429),
+          platforms: failed(429),
+          sources: failed(429),
+          retention: failed(500),
+          audience: failed(502),
+        },
+      })
+    );
+    render(<StatsTab />);
+    expect(
+      await screen.findByText('Could not read this from Podbean: Podbean answered 503.')
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Could not read this from Podbean/)).toHaveLength(6);
+    expect(screen.queryByText(/No data yet/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chart')).not.toBeInTheDocument();
+  });
 });

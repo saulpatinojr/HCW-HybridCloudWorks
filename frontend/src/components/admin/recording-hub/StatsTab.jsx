@@ -29,6 +29,7 @@ import {
   downloadSeries,
   fmtSeconds,
   hasAnyData,
+  hasAnyError,
   rankedShares,
   retentionRows,
 } from './statsView';
@@ -107,6 +108,8 @@ function RankedList({ title, map, error, nameOf = (name) => name }) {
 
 /** Downloads over the window: the total and a bar per day or month. */
 function DownloadsCard({ data }) {
+  // The series is one point per period of the window, so a failed read would
+  // still draw a row of zero bars under its own error; the chart needs an answer.
   const series = downloadSeries(data.downloads?.byPeriod, data.window);
   const total = data.downloads?.total;
   return (
@@ -125,7 +128,7 @@ function DownloadsCard({ data }) {
             </span>
           </p>
         )}
-        {series.length > 0 && (
+        {data.downloads && series.length > 0 && (
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={series} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.1} />
@@ -250,7 +253,9 @@ function FetchedLine({ data, loading, onRefresh }) {
 
 /** The figures, once a configured read has answered. */
 function Figures({ data }) {
-  if (!hasAnyData(data)) {
+  // Nothing recorded and nothing failed is "no data yet"; a failure renders the
+  // sections so that each one says what could not be read.
+  if (!hasAnyData(data) && !hasAnyError(data)) {
     return (
       <p className="text-sm text-slate-400 py-6 text-center" role="status">
         No data yet: Podbean has recorded no downloads for this range.

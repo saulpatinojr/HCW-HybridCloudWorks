@@ -193,6 +193,16 @@ export const AUDIENCE_ROWS = Object.freeze([
  * retention cohort or an audience count above zero. A configured show with
  * no listeners yet is "no data yet", not an empty chart and three empty lists.
  */
+/**
+ * Whether any section's read failed. A range whose six reads all failed has
+ * nothing to show and is not "no data yet": the sections render so that each
+ * shows its own failure (CodeRabbit on #1128).
+ */
+export function hasAnyError(stats) {
+  const errors = stats?.errors;
+  return Boolean(errors) && typeof errors === 'object' && Object.keys(errors).length > 0;
+}
+
 export function hasAnyData(stats) {
   if (!stats || typeof stats !== 'object') return false;
   if ((stats.downloads?.total ?? 0) > 0) return true;
