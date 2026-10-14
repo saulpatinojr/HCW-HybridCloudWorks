@@ -101,6 +101,32 @@ describe('the pin sets', () => {
     expect(body).toContain('ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"');
     expect(body).toContain('Refs #949');
     expect(body).not.toMatch(/Closes #|THE_|<your/);
+    // The template's sections, in its order, with only true boxes ticked
+    // (CodeRabbit's Description check warned on #1122 without them).
+    const headings = [...body.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+    expect(headings).toEqual([
+      'Summary',
+      'Evidence',
+      'Not bumped',
+      'Related issue or decision',
+      'Type of change',
+      'Scope and impact',
+      'Verification',
+      'Infrastructure changes only',
+      'Security and data review',
+      'Documentation and operations',
+      'Author checklist',
+    ]);
+    expect(body).toContain('- [x] Dependency update');
+    expect(body).toContain('- [x] Infrastructure or deployment change');
+    expect(body).toContain('- [ ] Breaking change');
+    expect(body).toContain('coder-postgres-backup');
+    expect(body).toContain('- Evidence level: [ ] Static [ ] Local [x] CI [ ] Staging [ ] Production');
+    // The image base is a build input, not infrastructure: no infrastructure section, box unticked.
+    const base = prBody({ set: 'image-base', evidence: 'x', notes: '', runUrl: 'u' });
+    expect(base).not.toContain('## Infrastructure changes only');
+    expect(base).toContain('- [ ] Infrastructure or deployment change');
+    expect(base).toContain('CHECKED_ON');
     const digests = prBody({ set: 'image-digests', evidence: 'x', notes: '', runUrl: 'u' });
     // The host publishes the templates itself with its rotation credential
     // (seeded 2026-10-10): the body asks for no token and no manual push.

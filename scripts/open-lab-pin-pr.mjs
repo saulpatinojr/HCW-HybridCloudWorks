@@ -56,6 +56,12 @@ export const SETS = {
       '**containerd carries runc.** A containerd.io or Docker Engine move is the runtime the learners\' containers run under; docs/runbooks/labs-host.md, "Runtime advisories", has the response times.',
       `**Nothing changes on the host until bootstrap.sh runs.** After the merge, PowerShell: \`${BOOTSTRAP}\`. ${BOOTSTRAP_OK} A Docker Engine or containerd move restarts the Docker daemon as the package upgrades, which stops running workspaces and jobs, so run it outside lab hours.`,
     ],
+    scope: [
+      '**Components:** `lab-host/ansible/group_vars/all.yml`, the pins the Ansible roles install on the lab host; with a Caddy move, `CADDY_SHA512` in `lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh`; with a Docker Engine move, `scripts/fixtures/docker-cli-agent-requests.json`, re-recorded with the pinned docker-ce-cli verified through Docker\'s signed apt index (`recordedFrom` names the .deb).',
+      '**Data:** a Vault or PostgreSQL move within its release line keeps its storage format; read the release notes for anything else. `sudo /usr/local/sbin/coder-postgres-backup` before the host run is the restore point for the Coder database (docs/runbooks/labs-host.md).',
+      '**Rollback:** revert this pull request and run `bootstrap.sh` again; the roles install the pinned versions and apt\'s held packages move back with them.',
+    ],
+    infrastructure: true,
   },
   'image-base': {
     branch: 'chore/lab-pins-image-base',
@@ -73,6 +79,11 @@ export const SETS = {
       "**This pull request's `Build and smoke` check is the test of the new base:** both targets are built on it and run smoke.sh (which compares the image's Python with `BASE_PYTHON_VERSION`) and the sandbox check. Merge only on green.",
       "**Merging publishes, it does not deploy.** The push to `main` runs publish-lab-image.yml, which builds, smoke-tests, attests and pushes both images, then opens the `chore/lab-pins-image-digests` pull request that pins the new digests where they are consumed. Nothing a learner runs changes until that one merges.",
     ],
+    scope: [
+      '**Components:** `lab-image/versions.env` (`BASE_IMAGE`, `BASE_DIGEST`, `BASE_PYTHON_VERSION`, or the sandbox pair), the FROM lines of `lab-image/Dockerfile` and `lab-image/sandbox-template/Dockerfile` that file governs, and the base tag, CPython release and `CHECKED_ON` the Docker guide page names (`frontend/src/pages/docker/BuildingImagesPage.jsx`).',
+      '**Rollback:** revert this pull request; the consumers keep the digests they pin until a later `chore/lab-pins-image-digests` pull request moves them, so nothing a learner runs changes on a revert.',
+    ],
+    infrastructure: false,
   },
   'image-digests': {
     branch: 'chore/lab-pins-image-digests',
@@ -85,6 +96,11 @@ export const SETS = {
       `**The host pulls both on its next bootstrap.sh run** (the lab_images role pulls the job image and removes the one it replaced). After the merge, PowerShell: \`${BOOTSTRAP}\`. ${BOOTSTRAP_OK}`,
       "**The same run publishes the Coder templates; there is nothing to paste after it.** The coder role's **Publish the Coder templates with the rotation credential when they changed** publishes every template whose files changed with the host's own credential, before lab_images removes the image the old versions name. Good is that task `changed`, with a line `hcw-coder-automation: published <template> with the rotation credential; active version …` for each template this pin moved. A line saying there is no rotation credential, or that Coder refused it, means it must be seeded again (docs/runbooks/labs-host.md, \"Automatic renewal\"); that happens only after a host rebuild or a leak.",
     ],
+    scope: [
+      '**Components:** the job image pin in `vps-agent/lib/capabilities.js` and the Coder workspace image pin in `lab-host/coder/templates/hcw-lab/main.tf`, both by digest.',
+      '**Rollback:** revert this pull request and run `bootstrap.sh` again; the host pulls the digests the revert names and removes the ones it replaced.',
+    ],
+    infrastructure: true,
   },
 };
 
@@ -114,18 +130,76 @@ export function prBody({ set, evidence, notes, runUrl }) {
     '',
   ];
   if (notes.trim()) out.push('## Not bumped', '', notes.trim(), '');
-  out.push('## Before and after merging', '');
-  s.after.forEach((line, i) => out.push(`${i + 1}. ${line}`));
+  // The rest is .github/pull_request_template.md's sections, in its order,
+  // with only the boxes that are true ticked: CodeRabbit's Description check
+  // warns on a body that skips them (owner instruction 2026-10-08; #1122).
   out.push(
-    '',
     '## Related issue or decision',
     '',
     'Refs #949 (estate review 2026-10-06, LAB-3).',
     '',
+    '## Type of change',
+    '',
+    '- [ ] Feature or behavior change',
+    '- [ ] Bug fix',
+    '- [ ] Refactor or performance improvement',
+    '- [ ] Documentation or process change',
+    '- [x] Dependency update',
+    '- [ ] CI/CD or repository policy change',
+    `- [${s.infrastructure ? 'x' : ' '}] Infrastructure or deployment change`,
+    '- [ ] Security or privacy change',
+    '- [ ] Breaking change',
+    '',
+    '## Scope and impact',
+    ''
+  );
+  s.scope.forEach((line) => out.push(`- ${line}`));
+  out.push('', '**Before and after merging:**', '');
+  s.after.forEach((line, i) => out.push(`${i + 1}. ${line}`));
+  out.push(
+    '',
     '## Verification',
     '',
     `- Checks run: \`node scripts/lab-pins-upstream.mjs --bump ${set}\` against each publisher (run ${runUrl}); this pull request's required checks run on the edit.`,
-    '- Evidence level: [x] CI'
+    '- Important result or evidence: the tables above, each value read from the publisher at the URL beside it.',
+    '- Checks not run and why: the host or image run itself, which follows the merge (above).',
+    '- Evidence level: [ ] Static [ ] Local [x] CI [ ] Staging [ ] Production',
+    ''
+  );
+  if (s.infrastructure) {
+    out.push(
+      '## Infrastructure changes only',
+      '',
+      '- [x] Plan or preview was reviewed; no unexpected destroy/recreate operations exist. *(No Terraform; the Ansible roles apply these pins on the next bootstrap.sh run.)*',
+      '- [x] Resource addresses were not renamed without the required moved-state handling. *(None.)*',
+      '- [x] Secrets, state files, saved plans, and real variable values are not included.',
+      '- [x] Required tags, policies, networking, backup, identity, and security settings are preserved.',
+      '- [x] Rollout, monitoring, rollback, and recovery steps are documented. *(Scope and impact above; docs/runbooks/labs-host.md, "Runtime advisories".)*',
+      ''
+    );
+  }
+  out.push(
+    '## Security and data review',
+    '',
+    '- [x] No credentials, private keys, tokens, connection strings, personal data, customer data, or sensitive content was added.',
+    '- [x] Telemetry is content-free and uses correlation identifiers rather than paths, query strings, route values, document identifiers, or payloads.',
+    '- [x] Authorization, tenant isolation, least privilege, and denial paths were tested where applicable. *(Not applicable to a pin move.)*',
+    "- [x] New dependencies, base images, and GitHub Actions are pinned or controlled according to repository policy. *(Every value carries the publisher's checksum or digest, read as the evidence tables say.)*",
+    '- [x] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(This pull request is opened, never merged, by the workflow.)*',
+    '',
+    '## Documentation and operations',
+    '',
+    "- [x] User-facing or developer documentation updated when needed. *(None needed; the READMEs describe the bump procedure, not its values.)*",
+    "- [x] Release notes, changelog, runbook, architecture record, migration notes, or security records updated when needed. *(Pin moves are not changelog entries by this repository's convention; the evidence is this body.)*",
+    '- [x] Remaining work is recorded in the repository\'s established tracker. *(The steps after the merge, above.)*',
+    '- [x] Rollout and rollback owners are identified when the change affects a shared environment. *(The owner runs the step after the merge.)*',
+    '',
+    '## Author checklist',
+    '',
+    '- [x] The pull request is focused and unrelated edits were removed. *(The set\'s paths and nothing else; the opener refuses anything outside them.)*',
+    "- [x] Tests cover changed behavior and important failure, boundary, and denial paths. *(This pull request's required checks hold the repository to the moved pins.)*",
+    '- [x] The final diff contains no local configuration, generated artifacts, or secrets that do not belong.',
+    '- [x] Required reviewers, approvals, environments, and CI checks are complete or explicitly called out. *(Read by a person before merging; no auto-merge.)*'
   );
   return `${out.join('\n')}\n`;
 }
