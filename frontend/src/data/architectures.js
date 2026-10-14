@@ -255,6 +255,11 @@ resource "azurerm_private_endpoint" "sql" {
           'Keep bulk export traffic within the regional backbone or attach an ACR/Storage Private Endpoint directly to the data subnet.',
       },
     ],
+    ecosystemPartnerValidation: {
+      validatedWith: 'HashiCorp Terraform 1.9 + Azure Verified Modules (AVM)',
+      ctaLabel: 'Verify in 15-Min Browser Lab',
+      ctaUrl: '/education/labs/terraform-validate',
+    },
     tags: ['Two-Tier', 'WAF', 'Private Link', 'Zero Trust', 'Azure SQL'],
   },
   'enterprise-hub-spoke-landing-zone': {
@@ -329,6 +334,11 @@ resource "azurerm_private_endpoint" "sql" {
   location            = "eastus2"
   parent_resource_id  = data.azurerm_client_config.current.tenant_id
 }`,
+    ecosystemPartnerValidation: {
+      validatedWith: 'HashiCorp Terraform 1.9 + Azure Verified Modules (AVM)',
+      ctaLabel: 'Verify in 15-Min Browser Lab',
+      ctaUrl: '/education/labs/terraform-validate',
+    },
     tags: ['Landing Zone', 'Hub-and-Spoke', 'Azure Firewall', 'AVM'],
   },
   'azure-vmware-estate-migration': {
@@ -371,6 +381,25 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>This pattern combines discovery data with wave planning and replication so on-premises estates move to Azure with predictable downtime and right-sized SKUs.</p>
     `,
+    interactiveLabId: 'landing-zone-builder-output',
+    whenNotToUse: [
+      'Greenfield cloud-native applications that can be re-architected directly onto container services or serverless platforms without VMware hypervisor dependencies.',
+      'Cost-sensitive dev/test environments where the minimum 3-node Azure VMware Solution (AVS) private cloud commitment ($8,000+/mo) exceeds budget.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Azure VMware Solution (AVS) Minimum Node Cluster',
+        trap: 'AVS requires a minimum 3-node cluster commitment per private cloud, running fixed 24/7 billing regardless of VM density or idle capacity.',
+        mitigation:
+          'Maximize VM consolidation ratios, leverage 1-year or 3-year Reserved Instances, and monitor FOCUS 1.4 EffectiveCost to amortize node commitments.',
+      },
+      {
+        service: 'ExpressRoute UltraGateway & Dedicated Peering',
+        trap: 'Over-provisioning ExpressRoute gateway SKUs and dedicated peering circuits incurs high standing hourly charges before migration wave 1 begins.',
+        mitigation:
+          'Start on HighPerformance or Standard ExpressRoute gateways during initial discovery and upgrade dynamically as bulk replication throughput scales.',
+      },
+    ],
     tags: ['Migration', 'VMware', 'Right-Sizing', 'Hybrid'],
   },
   'finops-guardrails-azure': {
@@ -413,6 +442,25 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>Automated FinOps guardrails combine preventive Azure Policy definitions with daily FOCUS 1.4 cost exports and budget alerting.</p>
     `,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Single-subscription exploratory sandboxes or transient hackathons where strict tag-blocking policies and automated shutdown scripts block rapid prototyping.',
+      'Organizations without a centralized cloud center of excellence (CCoE) or FinOps practice to review policy exemption requests.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Storage Account Cost Export Georedundancy',
+        trap: 'Exporting raw daily FOCUS 1.4 billing datasets to GRS/GZRS storage accounts triggers unnecessary geo-replication data processing and write operation charges.',
+        mitigation:
+          'Host cost management export containers in LRS storage within the primary region, applying lifecycle policies to transition historical raw exports to Cold/Archive.',
+      },
+      {
+        service: 'Log Analytics Audit Telemetry Ingestion',
+        trap: 'Streaming high-frequency Azure Policy evaluation audits and diagnostic logs across all resource providers causes data ingestion spikes ($2.30/GB).',
+        mitigation:
+          'Set table-level Log Analytics data retention, enable Basic Logs for verbose diagnostic tables, and filter out low-severity policy evaluation events.',
+      },
+    ],
     tags: ['FinOps', 'Governance', 'Azure Policy', 'FOCUS 1.4'],
   },
   'global-data-tier-cosmos-sql': {
@@ -455,6 +503,25 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>Pairs globally distributed NoSQL storage with geo-replicated relational SQL behind regional Private Endpoints.</p>
     `,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Single-region workloads with low concurrency where Azure SQL single database or Azure Cache for Redis provides sufficient throughput at a fraction of the cost.',
+      'Purely relational workloads requiring complex multi-table distributed cross-partition ACID transactions across geographic boundaries.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Cosmos DB Multi-Region Autoscale RU/s',
+        trap: 'Configuring autoscale with unpinned maximum Request Units (RU/s) across multiple write regions multiplies baseline charges by the number of active regions ($0.016/hr per 100 RU/s per region).',
+        mitigation:
+          'Cap maximum autoscale RU/s based on 95th-percentile load and track FOCUS 1.4 PricingQuantity and EffectiveCost across regional resources.',
+      },
+      {
+        service: 'Azure SQL Cross-Region Auto-Failover Replication Egress',
+        trap: 'Continuous asynchronous replication of high-churn transactional databases generates high cross-region data transfer egress fees ($0.02/GB).',
+        mitigation:
+          'Tune transaction log commit batching, separate static history from high-churn operational tables, and monitor replication bandwidth.',
+      },
+    ],
     tags: ['Database', 'Multi-Region', 'High Availability', 'DR'],
   },
   'zero-trust-identity-control-plane': {
@@ -502,6 +569,25 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>Establishes an identity-first Zero Trust perimeter across human administrators and automated workloads.</p>
     `,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Small businesses or early-stage startups without Microsoft Entra ID P2 licensing or dedicated security operations staff to manage PIM workflow approvals.',
+      'Static headless machine workloads that cannot support modern OIDC Workload Identity Federation and rely on legacy basic authentication.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Microsoft Entra ID P2 & Sentinel Ingestion',
+        trap: 'Ingesting verbose interactive sign-in, non-interactive service principal, and PIM audit streams into Microsoft Sentinel triggers rapid data ingestion overage costs.',
+        mitigation:
+          'Use Auxiliary Logs or Basic Logs in Log Analytics for raw sign-in telemetry, reserving Analytics tier ingestion for security alert rules.',
+      },
+      {
+        service: 'Privileged Identity Management License Sprawl',
+        trap: 'Assigning Entra P2 licenses to every directory user rather than scoping to active administrators elevates monthly subscription overhead.',
+        mitigation:
+          'Audit active and eligible PIM role assignments quarterly, removing unassigned or orphaned security principals.',
+      },
+    ],
     tags: ['Zero Trust', 'Entra ID', 'PIM', 'Security'],
   },
   'event-driven-serverless-mesh': {
@@ -549,6 +635,25 @@ resource "azurerm_private_endpoint" "sql" {
       <h2>Architecture Overview</h2>
       <p>Combines Event Grid push routing with Service Bus enterprise queuing and serverless compute handlers.</p>
     `,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Synchronous low-latency transactional architectures requiring guaranteed sub-10ms request-response SLAs.',
+      'Monolithic workloads where simple in-memory queues (e.g. RabbitMQ or Redis pub/sub) satisfy throughput without distributed cloud orchestration overhead.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Azure Service Bus Premium Messaging Units',
+        trap: 'Provisioning Service Bus Premium Messaging Units ($675/mo per MU) for low-throughput dev/test workloads generates high fixed baseline costs.',
+        mitigation:
+          'Use Service Bus Standard tier for non-production environments with burstable loads, reserving Premium exclusively for VNet integration and partition scaling.',
+      },
+      {
+        service: 'Event Grid Delivery Retry Storms',
+        trap: 'Failing downstream subscriber endpoints cause Event Grid to trigger exponential backoff retries (up to 24 hours), multiplying invocation fees and function execution costs.',
+        mitigation:
+          'Configure dead-letter storage accounts with maximum delivery attempts capped at 3, and establish alerting on dead-letter queue metrics.',
+      },
+    ],
     tags: ['Serverless', 'Event-Driven', 'Service Bus', 'Event Grid'],
   },
 };
@@ -616,6 +721,25 @@ export const awsArchitectures = {
     evaluate_target_health = true
   }
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Regional-only web applications where all end users reside within a single geographic market, making multi-region ingress redundant.',
+      'Static frontend applications that can be delivered globally through Amazon CloudFront edge caching without regional ALBs or Global Accelerator.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'AWS Global Accelerator Fixed & Data Processing Fees',
+        trap: 'Fixed hourly charges ($0.025/hr per accelerator) plus data transfer fees ($0.015 - $0.035/GB) accrue 24/7 across idle accelerators.',
+        mitigation:
+          'Use Route 53 latency-based routing directly to ALBs for cost-sensitive environments, reserving Global Accelerator for UDP/gaming or non-HTTP protocols.',
+      },
+      {
+        service: 'Application Load Balancer LCU Over-Indexing',
+        trap: 'High-frequency short-lived HTTPS connections without keep-alive trigger excessive Load Balancer Capacity Units (LCU) charges.',
+        mitigation:
+          'Enable HTTP/2 and HTTP keep-alive on client connections to amortize connection setup LCUs over multiple HTTP requests.',
+      },
+    ],
     tags: ['High Availability', 'Networking', 'Global'],
   },
   'multi-region-dr': {
@@ -675,6 +799,25 @@ export const awsArchitectures = {
   engine_version            = "5.7.mysql_aurora.2.07.2"
   database_name             = "example_db"
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Non-critical internal back-office applications with generous RTO/RPO targets (> 4 hours) where automated nightly snapshot restores suffice.',
+      'Workloads with strict data residency regulations prohibiting cross-border or cross-region database replication.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Aurora Global Database Replicated Write I/O',
+        trap: 'Every database write operation in the primary region incurs cross-region replicated write I/O charges ($0.20 per million write requests) to each secondary cluster.',
+        mitigation:
+          'Batch write operations, reduce unindexed noisy churn, and track FOCUS 1.4 UsageQuantity and BilledCost per storage operation.',
+      },
+      {
+        service: 'Standby Region Compute Idle Running Costs',
+        trap: 'Running full-capacity warm standby compute instances in the secondary region doubles monthly compute spend for inactive disaster infrastructure.',
+        mitigation:
+          'Adopt a Pilot Light model with autoscaling groups configured to minimum 0 or 1 instance, scaling out only during DR drills or active failover.',
+      },
+    ],
     tags: ['Disaster Recovery', 'Enterprise', 'Compliance'],
   },
   'container-orchestration': {
@@ -735,6 +878,25 @@ export const awsArchitectures = {
   desired_count   = 3
   launch_type     = "FARGATE"
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Simple monolithic applications or single-page static apps where AWS App Runner, Lightsail, or S3/CloudFront provide simpler operations at lower cost.',
+      'HPC or GPU-intensive training workloads requiring bare-metal host access or specialized kernel tuning.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'ECS Fargate vCPU & Memory Right-Sizing',
+        trap: 'Over-allocating memory and vCPU in task definitions (e.g. 2 vCPU / 4 GB for a 50MB Go binary) compounds across auto-scaled tasks.',
+        mitigation:
+          'Profile actual container memory footprints in CloudWatch Container Insights and configure AWS Compute Optimizer recommendations.',
+      },
+      {
+        service: 'NAT Gateway Egress for Container Registry Pulls',
+        trap: 'Routing large container image pulls through public NAT Gateways incurs $0.045/GB NAT data processing plus regional data transfer fees.',
+        mitigation:
+          'Provision VPC Interface Endpoints for Amazon ECR (ecr.api and ecr.dkr) and Gateway Endpoint for S3 to route image layers privately.',
+      },
+    ],
     tags: ['Containers', 'Microservices', 'Fargate'],
   },
   'serverless-api': {
@@ -813,6 +975,12 @@ export const awsArchitectures = {
           'Switch predictable steady-state tables to Provisioned Capacity with auto-scaling to save up to 70%.',
       },
     ],
+    interactiveLabId: 'terraform-validate',
+    ecosystemPartnerValidation: {
+      validatedWith: 'AWS Serverless Application Model (SAM) + Terraform AWS Provider',
+      ctaLabel: 'Verify in 15-Min Browser Lab',
+      ctaUrl: '/education/labs/terraform-validate',
+    },
     tags: ['Serverless', 'API', 'Cost-Effective'],
   },
   'data-lake': {
@@ -873,6 +1041,25 @@ export const awsArchitectures = {
 resource "aws_glue_catalog_database" "main" {
   name = "datalake_db"
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Transactional OLTP workloads requiring high-concurrency, low-latency row-level mutations (ACID point updates).',
+      'Small datasets (< 50 GB) where Amazon RDS PostgreSQL or SQLite in S3 provides simpler querying without Athena or Glue overhead.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Amazon Athena Unpartitioned Scan Costs',
+        trap: 'Running ad-hoc SELECT queries over unpartitioned, uncompressed CSV or JSON data scans entire S3 prefixes at $5.00 per TB scanned.',
+        mitigation:
+          'Convert raw data to compressed columnar Parquet with Snappy or ZSTD, partition by date/region, and enforce per-workgroup query scan limits.',
+      },
+      {
+        service: 'S3 PUT/LIST Request Amplification',
+        trap: 'Ingesting millions of small files (< 128 KB) generates massive S3 API request fees ($0.005 per 1,000 PUTs) and degrades query performance.',
+        mitigation:
+          'Compact streaming micro-batches into 128 MB – 512 MB file chunks before uploading to S3 or run automated compaction jobs.',
+      },
+    ],
     tags: ['Big Data', 'Analytics', 'Data Lake'],
   },
   'hybrid-connectivity': {
@@ -929,6 +1116,25 @@ resource "aws_glue_catalog_database" "main" {
     terraformCode: `resource "aws_ec2_transit_gateway" "main" {
   description = "Central transit gateway"
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Lightweight branch office connectivity where standard AWS Site-to-Site VPN over the public internet provides adequate throughput (< 1 Gbps).',
+      'Cloud-only startups with zero on-premises data centers, private colocation, or mainframe dependencies.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'AWS Direct Connect Dedicated Port Standing Charges',
+        trap: 'Dedicated 1 Gbps ($0.30/hr) and 10 Gbps ($2.25/hr) Direct Connect ports bill continuously whether active traffic is flowing or not.',
+        mitigation:
+          'Start with Hosted Connections from an AWS Direct Connect Partner for sub-1 Gbps speeds, scaling to dedicated ports only when utilization justifies it.',
+      },
+      {
+        service: 'AWS Transit Gateway Attachment & Processing Fees',
+        trap: 'Each VPC attachment incurs a flat hourly charge ($0.05/hr) plus data processing ($0.02/GB), which multiplies across multi-VPC spoke architectures.',
+        mitigation:
+          'Consolidate workload subnets into shared VPCs where appropriate and bypass Transit Gateway for high-volume intra-region traffic using VPC peering.',
+      },
+    ],
     tags: ['Networking', 'Hybrid Cloud', 'Enterprise'],
   },
 };
@@ -1089,6 +1295,12 @@ export const gcpArchitectures = {
           'Deploy identical backend instance groups in all primary operating regions and configure region-affinity routing.',
       },
     ],
+    interactiveLabId: 'terraform-validate',
+    ecosystemPartnerValidation: {
+      validatedWith: 'Google Cloud Foundation Fabric + Terraform Google Provider',
+      ctaLabel: 'Verify in 15-Min Browser Lab',
+      ctaUrl: '/education/labs/terraform-validate',
+    },
     tags: ['Networking', 'Security', 'Global', 'Compute'],
   },
   'bigquery-data-lake': {
@@ -1214,6 +1426,25 @@ export const gcpArchitectures = {
   location                    = "US"
   default_table_expiration_ms = 7776000000
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Operational databases requiring single-millisecond row lookups and high-frequency OLTP inserts (use Cloud Spanner or Cloud SQL).',
+      'Projects with minimal data (< 10 GB) where BigQuery on-demand minimum scans and pipeline infrastructure add unnecessary complexity.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'BigQuery On-Demand Query Data Scanning',
+        trap: 'Running unpartitioned and unclustered SELECT * queries against multi-terabyte tables bills at $6.25 per TB scanned, draining budgets quickly.',
+        mitigation:
+          'Require partition and cluster filters on large tables, enforce maximum bytes billed limits in query jobs, and monitor FOCUS 1.4 EffectiveCost.',
+      },
+      {
+        service: 'Cloud Storage Dual-Region / Multi-Region Replication',
+        trap: 'Storing massive raw staging data in Multi-Region or Dual-Region buckets doubles storage unit costs and cross-region network charges.',
+        mitigation:
+          'Store raw staging layers in Single-Region buckets, applying object lifecycle rules to transition data to Coldline after 30 days.',
+      },
+    ],
     tags: ['Data', 'Analytics', 'Governance', 'BigQuery'],
   },
   'hybrid-interconnect': {
@@ -1346,6 +1577,25 @@ export const gcpArchitectures = {
     asn = 64514
   }
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Development and staging environments where Cloud VPN (IPsec) provides sufficient bandwidth (< 3 Gbps) at a fraction of the cost.',
+      'Cloud-native greenfield environments without on-premises data centers or regulatory requirements for private physical links.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Dedicated Interconnect 10Gbps Link Standing Fees',
+        trap: 'Each 10 Gbps Dedicated Interconnect circuit carries a fixed fee of $1,750/month per port regardless of actual network utilization.',
+        mitigation:
+          'Evaluate Partner Interconnect with sub-gigabit VLAN attachments (50 Mbps – 1 Gbps) before committing to 10 Gbps physical circuits.',
+      },
+      {
+        service: 'Inter-Region Shared VPC Egress Egress',
+        trap: 'Routing data from a European on-premises interconnect into US-based workload subnets triggers premium international backbone egress ($0.08 - $0.12/GB).',
+        mitigation:
+          'Terminate interconnect circuits in the nearest geographic Google Cloud region and keep workload compute collocated with data storage.',
+      },
+    ],
     tags: ['Networking', 'Hybrid Cloud', 'Interconnect', 'Enterprise'],
   },
   'vertex-ai-pipeline': {
@@ -1472,6 +1722,25 @@ export const gcpArchitectures = {
   display_name = "Production Prediction Endpoint"
   location     = "us-central1"
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Simple deterministic batch cron jobs or scikit-learn models that can be packaged in a Cloud Run container or Cloud Functions.',
+      'Exploratory data science research where rapid interactive notebooks are needed rather than strict Kubeflow pipeline orchestration.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Vertex AI Persistent Prediction Endpoints',
+        trap: 'Deploying custom prediction routines onto persistent dedicated GPU instances (e.g. NVIDIA A100/L4) runs 24/7 billing even with zero query traffic.',
+        mitigation:
+          'Enable automated minimum replica scaling to 0 on non-production endpoints or deploy lightweight inference onto Cloud Run with GPU support.',
+      },
+      {
+        service: 'Feature Store Online Serving Node Provisioning',
+        trap: 'Maintaining oversized fixed online serving nodes in Vertex AI Feature Store incurs substantial hourly baseline charges.',
+        mitigation:
+          'Use BigQuery-backed Feature Store with Bigtable cache and scale online serving capacity based on query QPS.',
+      },
+    ],
     tags: ['AI/ML', 'MLOps', 'Vertex AI', 'Pipelines'],
   },
   'zero-trust-security': {
@@ -1601,6 +1870,25 @@ export const gcpArchitectures = {
   role   = "roles/iap.httpsResourceAccessor"
   member = "group:internal-engineers@example.com"
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Public consumer-facing web applications where users authenticate via social logins rather than corporate enterprise identity providers.',
+      'Organizations without Google Workspace or Cloud Identity Premium to manage centralized device context and endpoint verification.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'BeyondCorp Enterprise Per-User Licensing',
+        trap: 'Enabling BeyondCorp Enterprise licenses ($6/user/month) across all directory identities rather than active workforce users inflates recurring SaaS spend.',
+        mitigation:
+          'Scope BeyondCorp Enterprise licensing strictly to operational and technical roles requiring context-aware access to sensitive perimeters.',
+      },
+      {
+        service: 'VPC Service Controls Troubleshooting Ingestion',
+        trap: 'Enabling verbose dry-run audit logging across all enterprise services floods Cloud Logging with petabytes of non-rejection log events.',
+        mitigation:
+          'Apply targeted log exclusion filters in Cloud Logging to capture only high-priority violation events during perimeter onboarding.',
+      },
+    ],
     tags: ['Security', 'Zero Trust', 'BeyondCorp', 'Identity'],
   },
   'cloud-run-microservices': {
@@ -1729,6 +2017,25 @@ export const gcpArchitectures = {
     }
   }
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Long-running stateful daemon processes (e.g. streaming workers, background batch pollers) that exceed Cloud Run timeout limits (60 minutes).',
+      'Workloads requiring persistent local filesystem state or specialized custom network kernel drivers.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Always-On CPU Allocation vs. Request-Based',
+        trap: 'Configuring "CPU always allocated" on low-traffic services causes Cloud Run to charge continuous baseline vCPU/memory fees ($30+/mo per instance).',
+        mitigation:
+          'Keep "CPU allocated during request processing" enabled for standard APIs, allowing instances to scale to zero when idle.',
+      },
+      {
+        service: 'Uncapped Maximum Instance Scaling',
+        trap: 'Uncapped max-instances on public endpoints exposes services to traffic spikes or DDoS attempts that scale hundreds of containers simultaneously.',
+        mitigation:
+          'Set explicit max-instances guardrails on every Cloud Run service and associate Google Cloud Armor security policies at the ingress load balancer.',
+      },
+    ],
     tags: ['Serverless', 'Containers', 'Microservices', 'Event-Driven'],
   },
 };
@@ -1886,6 +2193,12 @@ export const finopsArchitectures = {
           'Evaluate 30-day P99 memory metrics alongside CPU before triggering automated rightsizing recommendations.',
       },
     ],
+    interactiveLabId: 'landing-zone-builder-output',
+    ecosystemPartnerValidation: {
+      validatedWith: 'FinOps Foundation FOCUS 1.4 BigQuery & DuckDB Analytics Engine',
+      ctaLabel: 'Verify in 15-Min Browser Lab',
+      ctaUrl: '/education/labs/landing-zone-builder-output',
+    },
     tags: ['FinOps', 'Multi-Cloud', 'Cost Optimization', 'FOCUS'],
   },
   'real-time-cost-dashboard': {
@@ -2015,6 +2328,25 @@ export const finopsArchitectures = {
     terraformCode: `resource "google_pubsub_topic" "cost_stream" {
   name = "finops-cost-events"
 }`,
+    interactiveLabId: 'landing-zone-builder-output',
+    whenNotToUse: [
+      'Organizations with monthly cloud spend below $25,000 where native portal billing views and daily FOCUS 1.4 exports provide sufficient visibility.',
+      'Batch-oriented workloads where intraday spend changes do not affect operational decision-making.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Dataflow Streaming Worker Baseline',
+        trap: 'Running 24/7 Dataflow streaming workers with unoptimized machine types can cost $400 - $800/month, surpassing the cost anomalies it catches.',
+        mitigation:
+          'Use micro-batch Dataflow jobs scheduled hourly or serverless Cloud Functions for low-volume telemetry streams to avoid standing cluster costs.',
+      },
+      {
+        service: 'BigQuery High-Frequency Streaming Insert Fees',
+        trap: 'Streaming millions of raw usage telemetry rows into BigQuery generates continuous insert fees ($0.05 per GB inserted).',
+        mitigation:
+          'Buffer streaming events in Pub/Sub and use BigQuery Storage Write API with batch commits to minimize insertion costs.',
+      },
+    ],
     tags: ['FinOps', 'Dashboards', 'Streaming', 'Analytics'],
   },
   'chargeback-allocation': {
@@ -2149,6 +2481,25 @@ export const finopsArchitectures = {
   language     = "SQL"
   definition_body = "SELECT 1;"
 }`,
+    interactiveLabId: 'landing-zone-builder-output',
+    whenNotToUse: [
+      'Single-product companies with unified budgets where engineering spend is treated as a shared operational expense rather than charged to departments.',
+      'Teams lacking basic resource tagging hygiene, where unallocated overhead exceeds 60% of total spend.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Over-Engineered Allocation ETL Pipelines',
+        trap: 'Running complex multi-pass BigQuery SQL routines over multi-year FOCUS 1.4 billing datasets without partition pruning runs up compute fees.',
+        mitigation:
+          'Partition allocation staging tables by ChargePeriodStart (DAY) and cluster by ProviderName and SubAccountId to minimize scan costs.',
+      },
+      {
+        service: 'Shared Container Cost Telemetry Overhead',
+        trap: 'Running heavy metric collection daemons on every Kubernetes node consumes 5% to 10% of cluster CPU/memory capacity just for chargeback telemetry.',
+        mitigation:
+          'Adopt lightweight eBPF or OpenTelemetry metrics collectors with downsampled scrape intervals (e.g. 60 seconds) on shared clusters.',
+      },
+    ],
     tags: ['FinOps', 'Chargeback', 'Allocation', 'Unit Economics'],
   },
   'ri-savings-plan-automation': {
@@ -2286,6 +2637,25 @@ export const finopsArchitectures = {
     }
   }
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Dynamic startups undergoing major architecture replatforming (e.g. migrating VM fleets to serverless or Kubernetes within 6 months).',
+      'Workloads with highly seasonal, unpredictable traffic where commitment utilization would fall below break-even thresholds (typically 65-70%).',
+    ],
+    finopsCostTraps: [
+      {
+        service: '3-Year All-Upfront Commitment Lock-in',
+        trap: 'Purchasing 3-year all-upfront instance-specific reservations on aging compute families creates high break-even risk when new instance generations launch.',
+        mitigation:
+          'Favor 1-year No-Upfront or Partial-Upfront Compute Savings Plans and flexible CUDs, maintaining commitment coverage targets around 75% to 80%.',
+      },
+      {
+        service: 'Unmonitored Commitment Waste (Idle Utilization)',
+        trap: 'Underutilized commitments continue to incur amortization charges in FOCUS 1.4 EffectiveCost even when compute instances are terminated.',
+        mitigation:
+          'Configure automated Slack alerts when hourly commitment utilization dips below 90%, and trade unneeded reservations on the AWS Reserved Instance Marketplace.',
+      },
+    ],
     tags: ['FinOps', 'Automation', 'Savings Plans', 'Reserved Instances'],
   },
   'budget-policy-framework': {
@@ -2423,6 +2793,25 @@ export const finopsArchitectures = {
     }
   }
 }`,
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Early-stage rapid prototyping labs where aggressive automated shutdowns or hard resource creation blocks disrupt critical product iterations.',
+      'Organizations without clear escalation paths or budget owners to respond to automated notification thresholds.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Automated Shutdown Data Loss & Recovery Costs',
+        trap: 'Hard containment scripts terminating unbudgeted sandbox instances can destroy uncommitted stateful data, triggering costly engineering recovery.',
+        mitigation:
+          'Implement a graceful containment sequence: stop compute instances first and create automated snapshot backups before permanent volume termination.',
+      },
+      {
+        service: 'Alert Fatigue & Unrouted Notification Sprawl',
+        trap: 'Sending low-threshold (50%) alerts to broad email distribution groups causes engineers to ignore notifications until critical 100% breaches occur.',
+        mitigation:
+          'Route alerts to dedicated engineering Slack/Teams channels using tiered severity and tag-based ownership routing.',
+      },
+    ],
     tags: ['FinOps', 'Governance', 'Budgets', 'Policy'],
   },
   'waste-identification-alerts': {
@@ -2557,6 +2946,25 @@ export const finopsArchitectures = {
   time_zone        = "Etc/UTC"
   attempt_deadline = "320s"
 }`,
+    interactiveLabId: 'landing-zone-builder-output',
+    whenNotToUse: [
+      'Ephemeral, short-lived CI/CD environments where container nodes and disks cycle dynamically and appear "idle" to heuristic scanners.',
+      'Environments without automated tagging or ownership mapping, leaving waste alerts with no actionable team owner.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Indiscriminate Orphaned Snapshot Pruning',
+        trap: 'Automated deletion of "unattached" disks or snapshots without age verification can wipe out manual disaster recovery backups or golden images.',
+        mitigation:
+          'Enforce strict retention rules (e.g. minimum 30 days unattached), tag exemptions (keep-alive=true), and pre-deletion metadata archives.',
+      },
+      {
+        service: 'Resource Graph & Inventory API Query Quotas',
+        trap: 'Polling cloud asset inventory and resource graph APIs every few minutes across thousands of subscriptions triggers API rate-limit throttling fees.',
+        mitigation:
+          'Schedule comprehensive asset crawls once or twice daily during off-peak hours and use event-driven triggers for real-time asset changes.',
+      },
+    ],
     tags: ['FinOps', 'Optimization', 'Waste Reduction', 'Automation'],
   },
 };
