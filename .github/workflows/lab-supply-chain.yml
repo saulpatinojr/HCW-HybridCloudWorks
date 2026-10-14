@@ -377,30 +377,60 @@ jobs:
 
       # The digests the host runs, read from where they are consumed. A tag
       # would scan whatever was pushed last; the digest scans what runs.
+      #
+      # Two renderings of one scan: the full table goes to the run summary,
+      # and the issue gets a compact per-package table, because a full table
+      # for the two images ran past GitHub's 65,536-character issue body on
+      # 2026-10-14 (run 38493246343, `Body is too long`) and the week's
+      # findings were filed nowhere.
       - name: Scan the published lab images the host runs
         id: scan
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
           runner=$(grep -oE "docker\.io/hybridcloudworks/hcw-lab-runner:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}" vps-agent/lib/capabilities.js | head -1)
           full_digest=$(grep -oE 'image_digest\s*=\s*"sha256:[0-9a-f]{64}"' lab-host/coder/templates/hcw-lab/main.tf | grep -oE 'sha256:[0-9a-f]{64}')
           full="docker.io/hybridcloudworks/hcw-lab@${full_digest}"
           test -n "$runner" && test -n "$full_digest"
-          echo "## Lab images against the vulnerability database" > "${RUNNER_TEMP}/scan.md"
-          echo >> "${RUNNER_TEMP}/scan.md"
+          table="${RUNNER_TEMP}/scan.md"
+          compact="${RUNNER_TEMP}/scan-summary.md"
+          echo "## Lab images against the vulnerability database" | tee "$table" > "$compact"
+          echo | tee -a "$table" >> "$compact"
           failed=0
+          n=0
           for image in "$runner" "$full"; do
-            echo "### \`${image}\`" >> "${RUNNER_TEMP}/scan.md"
-            echo >> "${RUNNER_TEMP}/scan.md"
-            echo '```' >> "${RUNNER_TEMP}/scan.md"
-            if trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table "$image" >> "${RUNNER_TEMP}/scan.md" 2>&1; then
-              echo "no HIGH or CRITICAL vulnerability with a fix available" >> "${RUNNER_TEMP}/scan.md"
+            n=$((n+1))
+            report="${RUNNER_TEMP}/scan-${n}.json"
+            echo "### \`${image}\`" | tee -a "$table" >> "$compact"
+            echo | tee -a "$table" >> "$compact"
+            if trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format json -o "$report" "$image" 2> "${RUNNER_TEMP}/scan-${n}.err"; then
+              echo "no HIGH or CRITICAL vulnerability with a fix available" | tee -a "$table" >> "$compact"
+            elif [ ! -s "$report" ]; then
+              failed=1
+              { echo "the scan did not complete:"; echo '```'; cat "${RUNNER_TEMP}/scan-${n}.err"; echo '```'; } | tee -a "$table" >> "$compact"
             else
               failed=1
+              echo '```' >> "$table"
+              trivy convert --quiet --format table "$report" >> "$table" 2>&1
+              echo '```' >> "$table"
+              totals=$(jq -r '[.Results[]?.Vulnerabilities[]?] | group_by(.Severity) | map("\(length) \(.[0].Severity)") | join(", ")' "$report")
+              rows=$(jq -r '[.Results[]? | .Vulnerabilities[]? | {pkg: .PkgName, inst: .InstalledVersion, fix: (.FixedVersion // "-"), sev: .Severity, id: .VulnerabilityID}]
+                | group_by(.pkg) | map({pkg: .[0].pkg, inst: (map(.inst) | unique | join(", ")), fix: (map(.fix) | unique | join(", ")), sev: (map(.sev) | unique | sort | join("/")), ids: (map(.id) | unique)})
+                | sort_by(.sev, .pkg) | .[] | "| `\(.pkg)` | \(.inst) | \(.fix) | \(.sev) | \(.ids | length): \(.ids[0:3] | join(", "))\(if (.ids | length) > 3 then ", …" else "" end) |"' "$report")
+              count=$(printf '%s\n' "$rows" | grep -c '^|' || true)
+              {
+                echo "**${totals}** with a fix available, in ${count} package(s). The full table is the run summary: ${RUN_URL}."
+                echo
+                echo "| Package | Installed | Fixed in | Severity | Vulnerabilities |"
+                echo "| --- | --- | --- | --- | --- |"
+                printf '%s\n' "$rows" | head -40
+                if [ "$count" -gt 40 ]; then echo; echo "… and $((count - 40)) more package(s), in the run summary."; fi
+              } >> "$compact"
             fi
-            echo '```' >> "${RUNNER_TEMP}/scan.md"
-            echo >> "${RUNNER_TEMP}/scan.md"
+            echo | tee -a "$table" >> "$compact"
           done
-          cat "${RUNNER_TEMP}/scan.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "$table" >> "$GITHUB_STEP_SUMMARY"
           echo "failed=${failed}" >> "$GITHUB_OUTPUT"
           exit 0
 
@@ -441,8 +471,15 @@ jobs:
               echo "**Images:** no HIGH or CRITICAL vulnerability with a fix available."
             fi
             echo
-            cat "${RUNNER_TEMP}/scan.md"
+            cat "${RUNNER_TEMP}/scan-summary.md"
           } > "${RUNNER_TEMP}/issue.md"
+          # GitHub refuses an issue body over 65,536 characters; the full
+          # report is the run summary, so the body may be cut and say so.
+          if [ "$(wc -c < "${RUNNER_TEMP}/issue.md")" -gt 60000 ]; then
+            head -c 60000 "${RUNNER_TEMP}/issue.md" > "${RUNNER_TEMP}/issue.cut"
+            printf '\n\n… cut at 60,000 characters; the full report is the run summary: %s\n' "$RUN_URL" >> "${RUNNER_TEMP}/issue.cut"
+            mv "${RUNNER_TEMP}/issue.cut" "${RUNNER_TEMP}/issue.md"
+          fi
           existing=$(gh issue list --repo "$REPO" --state open --search "\"${title}\" in:title" --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/issue.md"

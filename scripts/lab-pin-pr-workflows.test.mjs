@@ -178,6 +178,21 @@ describe('open-lab-pin-pr.mjs', () => {
 describe('lab-supply-chain.yml', () => {
   const source = workflow('lab-supply-chain.yml');
 
+  it('scans once to JSON, renders the full table for the run summary and a compact table for the issue, and cuts an oversize body', () => {
+    const check = source.slice(source.indexOf('  check:'));
+    const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open or update the issue'));
+    expect(scan).toContain('--format json -o "$report"');
+    expect(scan).toContain('trivy convert --quiet --format table "$report" >> "$table"');
+    expect(scan).toContain('cat "$table" >> "$GITHUB_STEP_SUMMARY"');
+    expect(scan).toContain('| Package | Installed | Fixed in | Severity | Vulnerabilities |');
+    expect(scan).toContain('head -40');
+    const issue = check.slice(check.indexOf('- name: Open or update the issue'), check.indexOf('- name: Fail the run when the pin check could not evaluate'));
+    expect(issue).toContain('cat "${RUNNER_TEMP}/scan-summary.md"');
+    expect(issue).not.toContain('cat "${RUNNER_TEMP}/scan.md"');
+    expect(issue).toContain('-gt 60000');
+    expect(issue).toContain('head -c 60000');
+  });
+
   it('records the sets\' paths before the downloaded CLI runs, refuses any change outside them, and judges the patch before the token job applies it', () => {
     const propose = source.slice(source.indexOf('  propose:'), source.indexOf('  pull-request:'));
     const order = [
