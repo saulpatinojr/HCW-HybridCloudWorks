@@ -19,6 +19,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **The Terraform busy guard fails closed** (PLAT-3, #963).
+  `scripts/tfc-workspace-busy.mjs`, which `deploy-functions.yml` runs
+  before any firewall window opens, used to pass with a note when
+  `TFC_TOKEN` was absent, so from the outside a deploy log read the same
+  whether the guard was off or the workspace was idle. It now refuses the
+  deploy and names the secret to seed, and prints "armed" when it can
+  read the workspace. `TFC_TOKEN` has been a repository secret since
+  2026-10-08 (#980), so the deploy job already receives it. The runbook
+  and the workflow comment say so.
 - **Version floors: the weekly pull request moves the `engines.node`
   ranges with the floors, and arrives green.** `update-version-floors.yml`
   used to move `scripts/version-floors.json` alone and open a pull request

@@ -36,12 +36,17 @@
  * later by a feature that quietly read nothing. So this refuses on anything it
  * cannot positively identify as over.
  *
- * ## Self-arming
+ * ## Fails closed (PLAT-3, #963)
  *
- * No `TFC_TOKEN` means this cannot check, and it says so and exits 0 rather
- * than blocking every deploy until the secret is seeded — the same pattern the
- * reader workflows use. A guard that cannot run must not become the reason
- * releases stop.
+ * No `TFC_TOKEN` means this cannot check, and it says so and exits 1. It
+ * used to exit 0 on the self-arming pattern the reader workflows use, so
+ * that a missing secret would not stop releases; the 2026-10-06 estate
+ * review found that this left the guard "silently off" from the outside,
+ * because a deploy log reads the same whether the token was absent or the
+ * workspace was idle. The token has been a repository secret since
+ * 2026-10-08 (#980), so its absence is now a configuration fault to see and
+ * fix, not a reason to deploy unguarded. The run prints "armed" when it can
+ * check, so the log says which of the two happened.
  */
 import { pathToFileURL } from 'node:url';
 import { FINISHED } from './check-tfc-plan.mjs';
@@ -110,15 +115,33 @@ async function tfc(token, path) {
   return (await response.json()).data;
 }
 
+/**
+ * Why this guard cannot run, or null when it can.
+ *
+ * Exported for the test: the direction of the answer is the whole point.
+ * A guard that cannot read the workspace refuses the deploy, naming the
+ * secret to seed, rather than passing with a note nobody reads.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string|null} the refusal, or null when `TFC_TOKEN` is set
+ */
+export function missingTokenMessage(env = process.env) {
+  if (env.TFC_TOKEN) return null;
+  return (
+    'TFC_TOKEN is not set, so this cannot read whether a Terraform apply is running on ' +
+    `${WORKSPACE}, and a deploy that cannot check does not proceed (PLAT-3, #963). ` +
+    'Seed TFC_TOKEN as a repository secret (Settings -> Secrets and variables -> Actions) and re-run.'
+  );
+}
+
 async function main() {
-  const token = process.env.TFC_TOKEN;
-  if (!token) {
-    console.log(
-      'TFC_TOKEN is not set — cannot check whether a Terraform apply is running. ' +
-        'Seed it at Settings -> Secrets and variables -> Actions to arm this guard.'
-    );
-    return 0;
+  const refusal = missingTokenMessage();
+  if (refusal) {
+    console.error(`::error::${refusal}`);
+    return 1;
   }
+  const token = process.env.TFC_TOKEN;
+  console.log(`TFC_TOKEN is set: the apply guard is armed and reading ${WORKSPACE}.`);
 
   const workspace = await tfc(token, `/organizations/${ORGANIZATION}/workspaces/${WORKSPACE}`);
   const runs = await tfc(token, `/workspaces/${workspace.id}/runs?page%5Bsize%5D=20`);

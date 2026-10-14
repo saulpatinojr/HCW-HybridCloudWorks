@@ -93,8 +93,10 @@ jobs:
       # closing write replayed the map it had read before the apply (#454).
       #
       # Deliberately BEFORE the firewall windows open: a refusal here leaves
-      # nothing to unwind. Self-arming — no TFC_TOKEN and it says so and passes,
-      # because a guard that cannot run must not be why releases stop.
+      # nothing to unwind. Fails closed (PLAT-3, #963): no TFC_TOKEN and it
+      # says so and refuses. The token has been a repository secret since
+      # 2026-10-08, so its absence is a configuration fault to fix, not a
+      # reason to deploy unguarded; the log says "armed" when it can check.
       - name: Refuse to deploy while a Terraform apply is running
         env:
           TFC_TOKEN: ${{ secrets.TFC_TOKEN }}
