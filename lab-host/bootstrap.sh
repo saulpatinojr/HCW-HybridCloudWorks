@@ -481,7 +481,8 @@ hcw_partial=
 for arg in "$@"; do
   case "${arg}" in
     --check | -C) hcw_check_mode=1 ;;
-    --tags | --tags=* | -t | --skip-tags | --skip-tags=*) hcw_partial=1 ;;
+    # -t* covers both `-t addons` and the attached form `-taddons`.
+    --tags | --tags=* | -t* | --skip-tags | --skip-tags=*) hcw_partial=1 ;;
   esac
 done
 if [ -n "${hcw_partial}" ] && [ -z "${hcw_check_mode}" ]; then

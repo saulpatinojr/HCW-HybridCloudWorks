@@ -42,7 +42,7 @@ describe('site.yml narrowed runs', () => {
     const post = site.slice(site.indexOf('  post_tasks:'));
     const record = post.slice(post.indexOf('- name: Record the commit this host converged from'));
     expect(record).toContain("when: ansible_run_tags == ['all'] and ansible_skip_tags | length == 0");
-    expect(bootstrap).toContain('--tags | --tags=* | -t | --skip-tags | --skip-tags=*) hcw_partial=1 ;;');
+    expect(bootstrap).toContain('--tags | --tags=* | -t* | --skip-tags | --skip-tags=*) hcw_partial=1 ;;');
     expect(bootstrap).toContain('if [ -z "${hcw_check_mode}" ] && [ -z "${hcw_partial}" ]; then');
   });
 
