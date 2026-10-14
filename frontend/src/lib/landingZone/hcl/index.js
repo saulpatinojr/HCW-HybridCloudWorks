@@ -27,6 +27,9 @@ import { placements } from './subscriptions';
 import { terraformTf } from './terraform';
 import { tfvarsExample, variablesTf } from './variables';
 
+import { emitAwsFiles } from './aws/index';
+import { emitGcpFiles } from './gcp/index';
+
 /** Component → the file it adds, in emission order. */
 const COMPONENT_FILES = [
   ['management-groups', alzTf],
@@ -38,13 +41,9 @@ const COMPONENT_FILES = [
 ];
 
 /**
- * The Terraform files for a build.
- *
- * @param {{ selected?: string[], options?: object }} state
- * @returns {Array<{ path: string, content: string }>}
+ * The Azure Terraform files for a build.
  */
-export function emitFiles(state) {
-  const normalized = normalizeState(state);
+export function emitAzureFiles(normalized) {
   if (!normalized.selected.length) return [readmeMd(normalized, [])];
 
   const files = [terraformTf(), providersTf(normalized)];
@@ -61,3 +60,22 @@ export function emitFiles(state) {
   files.push(readmeMd(normalized, files));
   return files;
 }
+
+/**
+ * The Terraform files for a build across Azure, AWS, and Google Cloud.
+ *
+ * @param {{ selected?: string[], options?: object, cloud?: string }} state
+ * @returns {Array<{ path: string, content: string }>}
+ */
+export function emitFiles(state) {
+  const normalized = normalizeState(state);
+  const cloud = state?.cloud || normalized.cloud || normalized.options?.cloud || 'azure';
+  if (cloud === 'aws') {
+    return emitAwsFiles(normalized);
+  }
+  if (cloud === 'gcp') {
+    return emitGcpFiles(normalized);
+  }
+  return emitAzureFiles(normalized);
+}
+export { emitAwsFiles, emitGcpFiles };

@@ -430,3 +430,69 @@ describe('emitFiles', () => {
     expect(readme).toContain('`Azure/avm-res-network-virtualnetwork/azurerm` 0.22.2');
   });
 });
+
+describe('Multi-Cloud Landing Zone HCL emission (#Deliverable04)', () => {
+  it('emits AWS Landing Zone files with Organizations, SCPs, TGW, and pinned modules', () => {
+    const files = emitFiles({ cloud: 'aws' });
+    const paths = files.map((f) => f.path);
+    expect(paths).toEqual([
+      'terraform.tf',
+      'providers.tf',
+      'organizations.tf',
+      'scp.tf',
+      'logging.tf',
+      'transit-gateway.tf',
+      'network-firewall.tf',
+      'identity.tf',
+      'spokes.tf',
+      'variables.tf',
+      'terraform.tfvars.example',
+      'README.md',
+    ]);
+
+    const byFile = Object.fromEntries(files.map((f) => [f.path, f.content]));
+    expect(byFile['terraform.tf']).toContain('hashicorp/aws');
+    expect(byFile['organizations.tf']).toContain('aws_organizations_organization');
+    expect(byFile['organizations.tf']).toContain('aws_organizations_organizational_unit');
+    expect(byFile['scp.tf']).toContain('SERVICE_CONTROL_POLICY');
+    expect(byFile['scp.tf']).toContain('DenyRootAccountUsage');
+    expect(byFile['transit-gateway.tf']).toContain('terraform-aws-modules/transit-gateway/aws');
+    expect(byFile['network-firewall.tf']).toContain('terraform-aws-modules/network-firewall/aws');
+    expect(byFile['spokes.tf']).toContain('terraform-aws-modules/vpc/aws');
+    expect(byFile['README.md']).toContain('AWS Landing Zone Foundation Architecture');
+  });
+
+  it('emits Google Cloud Landing Zone files with Folders, Org Policies, Shared VPC, and pinned modules', () => {
+    const files = emitFiles({ cloud: 'gcp' });
+    const paths = files.map((f) => f.path);
+    expect(paths).toEqual([
+      'terraform.tf',
+      'providers.tf',
+      'folders.tf',
+      'org-policies.tf',
+      'logging-sink.tf',
+      'shared-vpc.tf',
+      'cloud-ngfw.tf',
+      'identity.tf',
+      'projects.tf',
+      'variables.tf',
+      'terraform.tfvars.example',
+      'README.md',
+    ]);
+
+    const byFile = Object.fromEntries(files.map((f) => [f.path, f.content]));
+    expect(byFile['terraform.tf']).toContain('hashicorp/google');
+    expect(byFile['folders.tf']).toContain('google_folder');
+    expect(byFile['org-policies.tf']).toContain('google_org_policy_policy');
+    expect(byFile['logging-sink.tf']).toContain('terraform-google-modules/log-export/google');
+    expect(byFile['shared-vpc.tf']).toContain('terraform-google-modules/network/google');
+    expect(byFile['cloud-ngfw.tf']).toContain('google_compute_region_network_firewall_policy');
+    expect(byFile['projects.tf']).toContain('terraform-google-modules/project-factory/google');
+    expect(byFile['README.md']).toContain('Google Cloud Landing Zone Foundation Architecture');
+  });
+
+  it('emits only README for empty AWS or GCP selections', () => {
+    expect(emitFiles({ cloud: 'aws', selected: [] }).map((f) => f.path)).toEqual(['README.md']);
+    expect(emitFiles({ cloud: 'gcp', selected: [] }).map((f) => f.path)).toEqual(['README.md']);
+  });
+});

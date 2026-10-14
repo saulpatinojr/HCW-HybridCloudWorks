@@ -192,8 +192,255 @@ function computeFinopsAdvisories(state, totalSpokes) {
   return advisories;
 }
 
+export const AWS_PRESETS = Object.freeze([
+  Object.freeze({
+    id: 'aws-org-tgw-standard',
+    label: 'AWS Multi-Account TGW Baseline',
+    badge: 'Standard Pattern',
+    blueprintSlug: '/aws/architecture-designs/global-load-balancing',
+    blueprintTitle: 'Global Load Balancing & Multi-Region VPC',
+    summary:
+      'AWS Organizations, Service Control Policies, Transit Gateway hub, and one Corp and one Online VPC.',
+    state: normalizeState({
+      cloud: 'aws',
+      selected: COMPONENT_IDS,
+      options: {
+        location: 'us-east-1',
+        rootParentId: '',
+        hubCidr: '10.0.0.0/16',
+        spokeCidr: '10.1.0.0/16',
+        privateDnsZones: true,
+        firewallSku: 'Standard',
+        corpCount: 1,
+        onlineCount: 1,
+      },
+    }),
+  }),
+  Object.freeze({
+    id: 'aws-regulated-firewall',
+    label: 'AWS Network Firewall Inspection',
+    badge: 'High Compliance',
+    blueprintSlug: '/aws/architecture-designs/event-driven-serverless',
+    blueprintTitle: 'Regulated Multi-VPC Architecture',
+    summary:
+      'Dedicated Inspection VPC with AWS Network Firewall and three isolated Corp workload VPCs.',
+    state: normalizeState({
+      cloud: 'aws',
+      selected: [
+        'management-groups',
+        'policy',
+        'management',
+        'connectivity-hub',
+        'firewall',
+        'identity',
+        'corp',
+      ],
+      options: {
+        location: 'us-east-1',
+        rootParentId: '',
+        hubCidr: '10.0.0.0/16',
+        spokeCidr: '10.1.0.0/16',
+        privateDnsZones: true,
+        firewallSku: 'Standard',
+        corpCount: 3,
+        onlineCount: 0,
+      },
+    }),
+  }),
+  Object.freeze({
+    id: 'aws-governance-only',
+    label: 'AWS Organizations & SCPs Only',
+    badge: 'Zero Network Cost',
+    blueprintSlug: '/aws/architecture-designs',
+    blueprintTitle: 'AWS Architecture Catalogue',
+    summary:
+      'Deploys Organizations hierarchy, Security & Workloads OUs, SCP guardrails, and audit CloudTrail without VPCs.',
+    state: normalizeState({
+      cloud: 'aws',
+      selected: ['management-groups', 'policy', 'management'],
+      options: {
+        location: 'us-east-1',
+        rootParentId: '',
+        hubCidr: '10.0.0.0/16',
+        spokeCidr: '10.1.0.0/16',
+        privateDnsZones: false,
+        firewallSku: 'Standard',
+        corpCount: 0,
+        onlineCount: 0,
+      },
+    }),
+  }),
+]);
+
+export const GCP_PRESETS = Object.freeze([
+  Object.freeze({
+    id: 'gcp-enterprise-shared-vpc',
+    label: 'GCP Shared VPC Host & Service Projects',
+    badge: 'Foundation Fabric',
+    blueprintSlug: '/gcp/architecture-designs/global-load-balancing',
+    blueprintTitle: 'Global Load Balancing Architecture',
+    summary:
+      'Platform & Workloads folders, Org Policies, Shared VPC Host network, Cloud NAT, and Corp/Online service projects.',
+    state: normalizeState({
+      cloud: 'gcp',
+      selected: COMPONENT_IDS,
+      options: {
+        location: 'us-central1',
+        rootParentId: '',
+        hubCidr: '10.0.0.0/16',
+        spokeCidr: '10.1.0.0/16',
+        privateDnsZones: true,
+        firewallSku: 'Standard',
+        corpCount: 1,
+        onlineCount: 1,
+      },
+    }),
+  }),
+  Object.freeze({
+    id: 'gcp-cloud-ngfw-inspection',
+    label: 'GCP Cloud NGFW & Private Services',
+    badge: 'Zero Trust Network',
+    blueprintSlug: '/gcp/architecture-designs/zero-trust-security',
+    blueprintTitle: 'Zero Trust Security Architecture',
+    summary:
+      'Regional Cloud NGFW policy on Shared VPC with Workload Identity Federation and two private service projects.',
+    state: normalizeState({
+      cloud: 'gcp',
+      selected: [
+        'management-groups',
+        'policy',
+        'management',
+        'connectivity-hub',
+        'firewall',
+        'identity',
+        'corp',
+      ],
+      options: {
+        location: 'us-central1',
+        rootParentId: '',
+        hubCidr: '10.0.0.0/16',
+        spokeCidr: '10.1.0.0/16',
+        privateDnsZones: true,
+        firewallSku: 'Standard',
+        corpCount: 2,
+        onlineCount: 0,
+      },
+    }),
+  }),
+  Object.freeze({
+    id: 'gcp-org-foundation-only',
+    label: 'GCP Folders & Org Policies Only',
+    badge: 'Zero Network Cost',
+    blueprintSlug: '/gcp/architecture-designs',
+    blueprintTitle: 'GCP Architecture Catalogue',
+    summary:
+      'Deploys Folder hierarchy, Org Policy constraints, and organization audit log export without networks.',
+    state: normalizeState({
+      cloud: 'gcp',
+      selected: ['management-groups', 'policy', 'management'],
+      options: {
+        location: 'us-central1',
+        rootParentId: '',
+        hubCidr: '10.0.0.0/16',
+        spokeCidr: '10.1.0.0/16',
+        privateDnsZones: false,
+        firewallSku: 'Standard',
+        corpCount: 0,
+        onlineCount: 0,
+      },
+    }),
+  }),
+]);
+
+export const MULTI_CLOUD_PRESETS = Object.freeze({
+  azure: LZ_PRESETS,
+  aws: AWS_PRESETS,
+  gcp: GCP_PRESETS,
+});
+
+function estimateAwsBaseline(state) {
+  const items = [];
+  if (isSelected(state, 'management')) {
+    items.push({
+      label: 'Central Audit CloudTrail & KMS Key',
+      monthlyUsd: 40,
+      note: 'Multi-region organization trail with KMS customer-managed key.',
+    });
+  }
+  if (isSelected(state, 'connectivity-hub')) {
+    items.push({
+      label: 'AWS Transit Gateway & Route 53 Resolver',
+      monthlyUsd: 117,
+      note: 'Central interconnect hourly fee and Route 53 Resolver endpoints.',
+    });
+  }
+  if (isSelected(state, 'firewall')) {
+    items.push({
+      label: 'AWS Network Firewall (Stateful inspection)',
+      monthlyUsd: 288,
+      note: 'Hourly base fee in dedicated Inspection VPC.',
+    });
+  }
+  const totalSpokes = countTotalSpokes(state);
+  if (totalSpokes > 0) {
+    items.push({
+      label: `Transit Gateway VPC Attachments (${totalSpokes} spoke${totalSpokes === 1 ? '' : 's'})`,
+      monthlyUsd: totalSpokes * 36,
+      note: 'Hourly fee for connecting workload VPCs to TGW.',
+    });
+  }
+  const totalMonthlyUsd = items.reduce((sum, item) => sum + item.monthlyUsd, 0);
+  const finopsAdvisories = [];
+  if (isSelected(state, 'firewall') && totalSpokes <= 2) {
+    finopsAdvisories.push(
+      'FinOps tip: For low-throughput dev environments, an egress NAT Gateway can be used before deploying stateful Network Firewall.'
+    );
+  }
+  return { items, totalMonthlyUsd, totalSpokes, finopsAdvisories };
+}
+
+function estimateGcpBaseline(state) {
+  const items = [];
+  if (isSelected(state, 'management')) {
+    items.push({
+      label: 'Central Audit Log Export & Storage Bucket',
+      monthlyUsd: 30,
+      note: 'Aggregated organization sink with locked Cloud Storage destination.',
+    });
+  }
+  if (isSelected(state, 'connectivity-hub')) {
+    items.push({
+      label: 'Shared VPC Host, Cloud Router & NAT Gateway',
+      monthlyUsd: 41,
+      note: 'Hourly NAT gateway base charge and Cloud DNS private zones.',
+    });
+  }
+  if (isSelected(state, 'firewall')) {
+    items.push({
+      label: 'Cloud NGFW Enterprise Policy',
+      monthlyUsd: 75,
+      note: 'Intrusion prevention service and regional security rules.',
+    });
+  }
+  const totalSpokes = countTotalSpokes(state);
+  if (totalSpokes > 0) {
+    items.push({
+      label: `Service Projects & PSC Endpoints (${totalSpokes} service project${totalSpokes === 1 ? '' : 's'})`,
+      monthlyUsd: totalSpokes * 15,
+      note: 'Nominal baseline for cross-project Private Service Connect and routing.',
+    });
+  }
+  const totalMonthlyUsd = items.reduce((sum, item) => sum + item.monthlyUsd, 0);
+  const finopsAdvisories = [];
+  return { items, totalMonthlyUsd, totalSpokes, finopsAdvisories };
+}
+
 export function estimateMonthlyBaseline(rawState) {
   const state = normalizeState(rawState);
+  const cloud = rawState?.cloud || state.cloud;
+  if (cloud === 'aws') return estimateAwsBaseline(state);
+  if (cloud === 'gcp') return estimateGcpBaseline(state);
+
   const items = [];
 
   if (isSelected(state, 'management')) {
@@ -244,11 +491,13 @@ export function estimateMonthlyBaseline(rawState) {
   return { items, totalMonthlyUsd, totalSpokes, finopsAdvisories };
 }
 
-/** Checks if the current normalized state matches one of the 5 presets. */
+/** Checks if the current normalized state matches one of the presets. */
 export function activePresetForState(rawState) {
+  const cloud = rawState?.cloud || 'azure';
+  const presets = MULTI_CLOUD_PRESETS[cloud] || LZ_PRESETS;
   const currentQuery = new URLSearchParams(encodeLz(rawState)).toString();
   return (
-    LZ_PRESETS.find(
+    presets.find(
       (preset) => new URLSearchParams(encodeLz(preset.state)).toString() === currentQuery
     ) ?? null
   );
@@ -256,7 +505,8 @@ export function activePresetForState(rawState) {
 
 /** Builds a deep link to `/tools/landing-zone` for a given preset id. */
 export function presetHref(presetId) {
-  const preset = LZ_PRESETS.find((p) => p.id === presetId);
+  const allPresets = [...LZ_PRESETS, ...AWS_PRESETS, ...GCP_PRESETS];
+  const preset = allPresets.find((p) => p.id === presetId);
   if (!preset) return '/tools/landing-zone';
   const query = new URLSearchParams(encodeLz(preset.state)).toString();
   return query ? `/tools/landing-zone?${query}` : '/tools/landing-zone';

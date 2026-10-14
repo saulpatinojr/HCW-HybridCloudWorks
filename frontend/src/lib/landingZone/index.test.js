@@ -525,12 +525,16 @@ describe('the shareable URL', () => {
     expect(decodeLz(new URLSearchParams('lz=corp&corp=0')).options.corpCount).toBe(1);
     expect(decodeLz(new URLSearchParams('dns=false')).options.privateDnsZones).toBe(false);
     expect(decodeLz(new URLSearchParams('dns=true')).options.privateDnsZones).toBe(true);
-    expect(decodeLz(new URLSearchParams('root=')).options.rootParentId).toBe('');
+    expect(decodeLz(new URLSearchParams('cloud=aws')).cloud).toBe('aws');
+    expect(decodeLz(new URLSearchParams('cloud=gcp')).cloud).toBe('gcp');
+    expect(encodeLz({ cloud: 'aws' })).toEqual({ cloud: 'aws' });
+    expect(encodeLz({ cloud: 'azure' })).toEqual({});
   });
 
   it('knows which keys are its own', () => {
     for (const key of [
       'lz',
+      'cloud',
       'hub.cidr',
       'spoke.cidr',
       'fw.sku',
