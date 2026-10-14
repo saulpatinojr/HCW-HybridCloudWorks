@@ -380,11 +380,11 @@ resource "azurerm_private_endpoint" "sql" {
     description:
       'Policy and budget-control pattern with Cost Management exports, Azure Policy enforcement, and automated anomaly alerts.',
     promise:
-      'Continuous cost governance across Azure subscriptions using mandatory cost-center tags, scheduled FOCUS exports, and anomaly alerts.',
+      'Continuous cost governance across Azure subscriptions using mandatory cost-center tags, scheduled FOCUS 1.4 exports, and anomaly alerts.',
     estimatedCost: '$950 / month',
     howItWorks: [
       'Azure Policy requires environment, owner, and cost-center tags on every resource group at creation time and inherits them onto child resources.',
-      'Cost Management exports daily amortized cost and usage data in FOCUS format to an Azure Storage account.',
+      'Cost Management exports daily amortized cost and usage data in FOCUS 1.4 format to an Azure Storage account.',
       'Subscription and resource-group budgets evaluate actual and forecasted spend against monthly thresholds.',
       'Automated anomaly detection alerts engineering leads when daily spend deviates from baseline.',
       'Advisor right-sizing and unattached-disk policies flag idle resources for scheduled cleanup.',
@@ -411,9 +411,9 @@ resource "azurerm_private_endpoint" "sql" {
     ],
     overview: `
       <h2>Architecture Overview</h2>
-      <p>Automated FinOps guardrails combine preventive Azure Policy definitions with daily FOCUS cost exports and budget alerting.</p>
+      <p>Automated FinOps guardrails combine preventive Azure Policy definitions with daily FOCUS 1.4 cost exports and budget alerting.</p>
     `,
-    tags: ['FinOps', 'Governance', 'Azure Policy', 'FOCUS'],
+    tags: ['FinOps', 'Governance', 'Azure Policy', 'FOCUS 1.4'],
   },
   'global-data-tier-cosmos-sql': {
     title: 'Global Data Tier with Cosmos DB + SQL',
@@ -1741,7 +1741,7 @@ export const finopsArchitectures = {
     description:
       'Cross-cloud optimization architecture with shared tagging taxonomy, cost telemetry normalization, and rightsizing recommendation pipelines.',
     promise:
-      'Normalized FOCUS 1.0 cost datasets uniting Azure, AWS, and GCP billing exports with automated rightsizing recommendation feeds.',
+      'Normalized FOCUS 1.4 cost datasets uniting Azure, AWS, and GCP billing exports with automated rightsizing recommendation feeds.',
     estimatedCost: '$1,400 - $2,200 / month',
     topology: {
       caption: 'Multi-cloud cost ingestion, FOCUS normalization, and optimization engine',
@@ -1762,7 +1762,7 @@ export const finopsArchitectures = {
         },
         {
           id: 'normalization-engine',
-          title: 'FOCUS 1.0 Normalization',
+          title: 'FOCUS 1.4 Normalization',
           subtitle:
             'Transforms heterogeneous provider billing rows into standardized cost schemas.',
           boundary: 'Data Transformation',
@@ -1801,7 +1801,7 @@ export const finopsArchitectures = {
         y: 50,
         label: 'FOCUS Normalizer',
         tooltip: 'Schema Standardizer',
-        description: 'Converts billing lines to unified FOCUS 1.0 cost definitions.',
+        description: 'Converts billing lines to unified FOCUS 1.4 cost definitions.',
       },
       {
         id: 'spot-recommend',
@@ -1835,7 +1835,7 @@ export const finopsArchitectures = {
       },
     ],
     practices: [
-      'Adopt the FOCUS 1.0 specification for cross-cloud billing field naming and amortized cost models.',
+      'Adopt the FOCUS 1.4 specification for cross-cloud billing field naming and amortized cost models.',
       'Enforce required organizational tags: CostCenter, Environment, Owner, and Application.',
       'Schedule automated rightsizing audits weekly to prevent idle resource sprawl.',
     ],
@@ -1844,7 +1844,7 @@ export const finopsArchitectures = {
     ],
     overview: `
       <h2>Architecture Overview</h2>
-      <p>This FinOps architecture provides a centralized, normalized cost optimization engine that correlates billing data across Azure, AWS, and Google Cloud using the FinOps Open Cost and Usage Specification (FOCUS).</p>
+      <p>This FinOps architecture provides a centralized, normalized cost optimization engine that correlates billing data across Azure, AWS, and Google Cloud using the FinOps Open Cost and Usage Specification (FOCUS 1.4).</p>
     `,
     waf: {
       security: 92,
@@ -1862,14 +1862,14 @@ export const finopsArchitectures = {
     },
     terraformCode: `resource "google_bigquery_table" "finops_focus" {
   dataset_id = "finops_repository"
-  table_id   = "focus_v1_costs"
+  table_id   = "focus_v1_4_costs"
   time_partitioning {
     type  = "DAY"
     field = "ChargePeriodStart"
   }
 }`,
     whenNotToUse: [
-      'Single-cloud estates with total cloud spend under $10,000/month where custom FOCUS ETL pipelines cost more than native cost tools.',
+      'Single-cloud estates with total cloud spend under $10,000/month where custom FOCUS 1.4 ETL pipelines cost more than native cost tools.',
       'Teams without enforced organizational tagging policies (raw untagged billing records cannot be allocated by business unit).',
     ],
     finopsCostTraps: [

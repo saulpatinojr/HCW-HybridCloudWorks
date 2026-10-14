@@ -11,35 +11,44 @@ import { terraformTf } from './terraform';
 import { transitGatewayTf } from './transitGateway';
 import { tfvarsExample, variablesTf } from './variables';
 
+/**
+ * Emit the AWS landing-zone pack for one builder state: `terraform.tf` and
+ * `providers.tf` always, one file per selected component, then variables,
+ * the tfvars example and a README that lists what was emitted. A state with
+ * nothing selected yields the README alone, which says so.
+ *
+ * @param {object} state the builder state `normalizeState` accepts
+ * @returns {Array<{ path: string, content: string }>} the files, in emit order
+ */
 export function emitAwsFiles(state) {
   const normalized = normalizeState(state);
   if (!normalized.selected.length) return [readmeMd(normalized, [])];
 
-  const files = [terraformTf(), providersTf(normalized)];
+  const files = [terraformTf(), providersTf()];
 
   if (isSelected(normalized, 'management-groups')) {
-    files.push(organizationsTf(normalized));
+    files.push(organizationsTf());
   }
   if (isSelected(normalized, 'policy')) {
-    files.push(scpTf(normalized));
+    files.push(scpTf());
   }
   if (isSelected(normalized, 'management')) {
-    files.push(loggingTf(normalized));
+    files.push(loggingTf());
   }
   if (isSelected(normalized, 'connectivity-hub')) {
-    files.push(transitGatewayTf(normalized));
+    files.push(transitGatewayTf());
   }
   if (isSelected(normalized, 'firewall')) {
-    files.push(networkFirewallTf(normalized));
+    files.push(networkFirewallTf());
   }
   if (isSelected(normalized, 'identity')) {
-    files.push(identityTf(normalized));
+    files.push(identityTf());
   }
   if (isSelected(normalized, 'corp') || isSelected(normalized, 'online')) {
     files.push(spokesTf(normalized));
   }
 
-  files.push(variablesTf(normalized), tfvarsExample(normalized));
+  files.push(variablesTf(), tfvarsExample(normalized));
   files.push(readmeMd(normalized, files));
   return files;
 }
