@@ -14,7 +14,9 @@ argument_specs:
         token (a periodic orphan under a snapshot-only policy) from the owner's Vault token on
         stdin and stores it root-only in backups_vault_token_file, its accessor beside it; one
         seed runs at a time, a token it cannot store is revoked again, and a replaced token it
-        cannot revoke is reported and retried on the next run.
+        cannot revoke is reported and retried on the next run. /usr/local/sbin/hcw-backup-restore
+        is the way back, listing and fetching the container's blobs as the identity and, with
+        --yes, restoring a dump into coder-postgres or a snapshot into Vault (a token on stdin).
       - With backups_enabled true it writes backups_upload_env_file, the three names the
         uploader reads and the switch the coder role's dump script looks for before uploading
         the dump it has just written; it enables the nightly snapshot timer while vault_enabled

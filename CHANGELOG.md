@@ -92,6 +92,22 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Lab host: the way back from the off-host backups (LAB-9, #955, PR 3).**
+  `hcw-backup-restore`, installed by the `backups` role, lists the
+  `host-backups` container as the Arc identity, fetches the newest or a
+  named blob to `/var/backups/restore/` by a `.partial` name until the
+  listed length has arrived, and with `--yes` restores a dump into
+  `coder-postgres` (stop, drop and recreate, load, start) or a snapshot into
+  Vault (`raft snapshot restore -force`, the token on stdin). The reinstall
+  runbook's step 7 gains the restore as its last act and the **Last
+  rehearsed / elapsed** line, "not yet" until the owner rehearses on a fresh
+  VPS. Two corrections from the first seed on 2026-10-14: Vault 2.0 made
+  `generate-root` need a token as well as the recovery keys
+  (CVE-2026-5807), so "The root token" now carries the temporary
+  `enable_unauthenticated_access` switch and its removal; and the encoded
+  token is read from what the third key prints, since the attempt's status
+  is cleared on completion. Tested with stand-in `curl`, `docker` and
+  `vault`.
 - **Lab host: the backups leave the VPS (LAB-9, #955, host side).** A new
   `backups` role, last in `lab-host/ansible/site.yml`, uploads the nightly
   Coder dump as it is written and a nightly Vault raft snapshot

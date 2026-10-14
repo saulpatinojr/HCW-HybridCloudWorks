@@ -177,14 +177,39 @@ one that still does.
 
 ## Restore
 
-The restore and the rehearsed rebuild are the next pull request on
-[#955](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/955):
-a helper that lists the container as the Arc identity, downloads the newest
-dump and snapshot, and restores them into a fresh `coder-postgres` and a
-re-initialised Vault (`vault operator raft snapshot restore -force`; the seal
-key in Key Vault is unchanged, so the restored data unseals). Until then the
-local copies restore as `lab-host/README.md`, "Backups and restore", says,
-and a blob downloads from the portal as any blob does.
+`/usr/local/sbin/hcw-backup-restore` is the way back, root-only like the
+rest, reading the container as the Arc identity by the same `upload.env`:
+
+```text
+hcw-backup-restore list [coder|vault]          what the container holds
+hcw-backup-restore fetch coder|vault [NAME]    download one (the newest without NAME)
+hcw-backup-restore coder [NAME] --yes          fetch, then restore it into coder-postgres
+hcw-backup-restore vault [NAME] --yes          fetch, then restore it into Vault (a Vault token on stdin)
+```
+
+`list` is one container listing per prefix: name, bytes, last modified, in
+name order, so the newest is last. `fetch` downloads to
+`/var/backups/restore/<kind>/<name>`, `root` `0700`, by a `.partial` name
+until the length Azure listed has arrived; a short download is discarded and
+said. The two restores fetch first and then do what `lab-host/README.md`,
+"Backups and restore", does by hand, as one command, and both refuse without
+`--yes` because each replaces what the service holds now:
+
+- **coder** stops the `coder` container, drops and recreates the `coder`
+  database in `coder-postgres`, loads the dump, starts `coder` again. A
+  failure stops at the step that failed and says what state Coder is in.
+- **vault** runs `vault operator raft snapshot restore -force` with a token
+  read from stdin, never an argument: on a rebuilt host, the root token
+  `vault operator init` printed, or one from `generate-root`. Vault's data is
+  then the snapshot's, tokens included: the token just used stops working,
+  the snapshot's revoked root token stays revoked, and the seal key in Key
+  Vault is unchanged, so `sudo systemctl restart vault` unseals the restored
+  data. The snapshot token file went with the disk, so the seed runs again
+  afterwards, with a root token from `generate-root`
+  (`docs/runbooks/labs-host.md`, "The root token").
+
+The rebuild itself, and its **Last rehearsed / elapsed** line, are in
+`docs/runbooks/labs-host.md`, "Reinstalling the host", step 7.
 
 ## Check mode
 

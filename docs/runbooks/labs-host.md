@@ -327,8 +327,43 @@ ADR 0032 rebuilds the host rather than repairing it.
    Portainer gets a new administrator and its licence key (below). Vault is
    new and uninitialised: initialise it (below), and delete the old unseal
    keys and root token from the password manager, because they open nothing
-   now. The Vault snapshot token went with the disk too: seed it again
-   ("Off-host backups", below).
+   now.
+   **Then the restore from the container** ("Off-host backups", below, has
+   what each line does). The `bootstrap.sh` run just made installed
+   `hcw-backup-restore`, and the host is Connected to Arc again, so it reads
+   the container. Bash, on the host, Coder first:
+
+   ```bash
+   sudo /usr/local/sbin/hcw-backup-restore list
+   ```
+
+   ```bash
+   sudo /usr/local/sbin/hcw-backup-restore coder --yes
+   ```
+
+   Success is `restored coder/coder-<UTC stamp>.sql.gz into coder-postgres`
+   and the `buildinfo` line under "Enabling" in `lab-host/README.md`
+   answering within a minute; signed-in learners and the templates are back.
+   Then Vault, with the root token the initialisation just printed, held
+   from PowerShell on the workstation the way the seed's token is:
+
+   ```powershell
+   $t = [Net.NetworkCredential]::new('', (Read-Host 'Vault root token' -AsSecureString)).Password
+   ```
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-backup-restore vault --yes"; $t = $null
+   ```
+
+   Success is `restored vault/vault-<UTC stamp>.snap: Vault's data is now
+   the snapshot's`. That token no longer works, and the snapshot's own root
+   token was revoked when it was made, so the snapshot token file is seeded
+   again with a root token from `generate-root` ("The root token", below,
+   has the Vault 2.x switch it needs; "Off-host backups" has the seed line).
+   **Last rehearsed / elapsed:** not yet. The rehearsal is the owner's, on a
+   fresh VPS: the time from the reinstall click to Coder answering on the
+   restored database and Vault unsealed with the snapshot's data goes here,
+   with the date. Until a date stands here, this restore is untested.
 8. **Retire the old agent record.** If the go-live registered the rebuilt
    host under a new agent id, the old id's card stays on
    https://hybridcloudworks.com/admin/labs?tab=agents, Offline, until it is
@@ -1132,10 +1167,21 @@ been revoked (`could not be renewed` in the journal) is replaced by step 1 as
 it stands: a plain run of the seed replaces a stored token that no longer
 works, and revokes a working one only when `--force` is added.
 
-**Not yet.** The restore from the container, and the rehearsed rebuild with
-its **Last rehearsed / elapsed** line, are the next pull request on #955;
-until then a blob downloads from the portal as any blob does, and
-`lab-host/README.md`, "Backups and restore", restores a local dump.
+**The way back.** `hcw-backup-restore`, installed by the same role, lists
+the container as the Arc identity, fetches the newest (or a named) blob to
+`/var/backups/restore/`, and with `--yes` restores a dump into
+`coder-postgres` or a snapshot into Vault
+(`lab-host/ansible/roles/backups/README.md`, "Restore"). The rebuild that
+uses it is "Reinstalling the host", step 7, above, which carries the **Last
+rehearsed / elapsed** line. To see what is there without changing anything,
+bash, on the host:
+
+```bash
+sudo /usr/local/sbin/hcw-backup-restore list
+```
+
+Good is one line per blob, name, bytes and date, newest last under each of
+`coder/` and `vault/`.
 
 ## Container-runtime privilege separation (LAB-5)
 
@@ -1491,8 +1537,51 @@ the next section).
 **The root token.** `vault login` prompts for it, hidden, and writes it to
 `~/.vault-token`. Use it for what the host needs, then remove that file with
 `rm ~/.vault-token`. Once another way in exists, revoke the root token with
-`vault token revoke -self`; a new one takes three unseal keys and `vault
-operator generate-root`.
+`vault token revoke -self`; a new one takes three unseal (or recovery) keys
+and `vault operator generate-root`.
+
+Since Vault 2.0 that endpoint also needs a token (CVE-2026-5807), so with no
+token left it answers `403 permission denied`. The way through, done
+2026-10-14 for the backup seed, is the configuration switch Vault documents
+for it, on for the minutes this takes and reloaded without a reseal. Bash, on
+the host, in an interactive `ssh hcw-lab` shell:
+
+```bash
+echo 'enable_unauthenticated_access = ["generate-root"]' | sudo tee -a /etc/vault.d/vault.hcl >/dev/null && sudo systemctl reload vault && vault operator generate-root -cancel 2>/dev/null; vault status | grep Sealed
+```
+
+```bash
+init=$(vault operator generate-root -init -format=json); nonce=$(printf '%s' "$init" | sed -n 's/.*"nonce": *"\([^"]*\)".*/\1/p'); otp=$(printf '%s' "$init" | sed -n 's/.*"otp": *"\([^"]*\)".*/\1/p'); echo "nonce ${nonce:0:8}… otp ${#otp} chars"
+```
+
+Then three times, a different recovery key at each hidden prompt, each run
+plainly (inside `$( )` the prompt has no terminal and sends an empty key):
+
+```bash
+vault operator generate-root -nonce="$nonce"
+```
+
+The third prints `Complete true` and an `Encoded Token`, which is useless
+without the one-time pad in `$otp`. Copy that encoded value into the next
+line in place of `ENCODED`, the one value this page cannot compute, because
+the attempt is cleared the moment it completes and `-status` no longer has
+it. Decode it into a variable rather than onto the screen:
+
+```bash
+root=$(vault operator generate-root -decode=ENCODED -otp="$otp"); echo "root token ${#root} chars"
+```
+
+Use `$root` for what was needed (`printf '%s\n' "$root" | sudo
+/usr/local/sbin/hcw-vault-backup-seed`, say), then revoke it and switch the
+endpoint back off:
+
+```bash
+VAULT_TOKEN="$root" vault token revoke -self && sudo sed -i '/^enable_unauthenticated_access = \["generate-root"\]$/d' /etc/vault.d/vault.hcl && sudo systemctl reload vault && sudo grep -c enable_unauthenticated_access /etc/vault.d/vault.hcl; unset root otp nonce init
+```
+
+Success is `Success! Revoked token (if it existed)` and `0`. The file is back
+to what the `vault` role renders, so the next `bootstrap.sh` run reports it
+unchanged.
 
 ## HashiCorp Vault: moving to auto-unseal
 
