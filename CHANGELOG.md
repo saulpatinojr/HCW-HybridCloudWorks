@@ -17,6 +17,20 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Fixed
+
+- **The lab supply-chain issue fits GitHub's body limit.** The weekly
+  `check` job scans the two published lab images with Trivy and files its
+  findings as one issue; on 2026-10-14 the full tables ran past the 65,536-
+  character body limit (`Body is too long`, run 38493246343) and the week's
+  findings were filed nowhere. The scan now writes JSON once per image, the
+  full table (`trivy convert`) goes to the run summary as before, and the
+  issue gets a compact per-package table — totals by severity, up to forty
+  packages with installed and fixed versions and their first CVEs, a pointer
+  to the run for the rest — behind a hard cut at 60,000 characters that
+  names the run summary. `lab-pin-pr-workflows.test.mjs` pins the two
+  renderings and the cut.
+
 ### Added
 
 - **Lab pin bumps carry their dependents (#949).** Three files are held to
