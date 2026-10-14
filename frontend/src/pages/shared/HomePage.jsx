@@ -426,7 +426,7 @@ export default function HomePage() {
             </span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono tracking-tight bg-slate-900/60 dark:bg-slate-800/80 text-purple-400 dark:text-purple-300 border border-purple-500/30">
               <span className="w-1.5 h-1.5 rounded-full bg-purple-400" aria-hidden="true" />
-              FOCUS 1.1 FinOps
+              FOCUS 1.4 FinOps
             </span>
           </div>
         </div>
