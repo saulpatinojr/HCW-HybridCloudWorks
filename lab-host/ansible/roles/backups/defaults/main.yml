@@ -1,0 +1,36 @@
+---
+# backups_enabled, backups_storage_account and backups_container
+# are the switch and the destination; they live in group_vars/all.yml and
+# meta/argument_specs.yml marks them required. vault_enabled is the vault
+# role's switch, read here because the snapshot timer runs only while it is
+# true.
+
+# Where the configuration and the token live. The paths are written into the
+# helpers, the units and the owner's lines too (lab-host/README.md,
+# docs/runbooks/labs-host.md), so none can move alone.
+backups_config_dir: /etc/hcw/backups
+backups_upload_env_file: "{{ backups_config_dir }}/upload.env"
+backups_vault_token_file: "{{ backups_config_dir }}/vault-token"
+
+# The Blob REST version every upload names (x-ms-version). Bearer tokens need
+# 2017-11-09 or later; this is the version the helper was written against.
+backups_blob_api_version: "2024-11-04"
+
+# The nightly Vault raft snapshot: where the local copies go, how long they
+# stay, and when it runs: after the 03:30 Coder dump and its ten minutes of
+# jitter, before the 04:30 unattended-upgrades reboot.
+backups_vault_dir: /var/backups/vault
+backups_vault_keep_days: 7
+backups_vault_on_calendar: "*-*-* 03:45:00"
+backups_vault_unit_name: hcw-vault-backup
+
+# The Vault policy the snapshot token holds, and how long the token lives past
+# each renewal. The unit renews it every night, so one that stops being
+# renewed outlives the two-day no-backup alert by a month rather than failing
+# the morning after one missed night.
+backups_vault_policy_name: hcw-raft-snapshot
+backups_vault_token_period: 720h
+
+# The vault role's login-shell file, whose two exports (VAULT_ADDR and
+# VAULT_CACERT) the snapshot and the seed read.
+backups_vault_env_file: /etc/profile.d/hcw-vault.sh

@@ -110,14 +110,19 @@
     # it runs after the lab services are configured.
     - role: addons
       tags: [addons]
-    # The owner's tools, last: nothing above needs either, so a failure here
-    # leaves the lab services configured. Both are off until the owner turns
+    # The owner's tools, after the lab services: nothing above needs either,
+    # so a failure here leaves them configured. Both are off until the owner turns
     # them on, and both listen on the loopback only (ADR 0032, amendment of
     # 2026-09-26).
     - role: portainer
       tags: [portainer]
     - role: vault
       tags: [vault]
+    # Last: it hooks the dump coder installs, snapshots the Vault vault runs,
+    # and uploads both as the identity arc connected, so it needs the three
+    # and nothing needs it (LAB-9, #955). Off while arc_enabled is.
+    - role: backups
+      tags: [backups]
 
   # After every role and the handlers they notified (the agent's restart out
   # of the docker group among them): the container-runtime privilege

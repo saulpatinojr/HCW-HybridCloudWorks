@@ -1,0 +1,38 @@
+# {{ ansible_managed }}
+#
+# The nightly Vault raft snapshot, from {{ backups_vault_unit_name }}.timer: renews the
+# snapshot token, saves a snapshot under {{ backups_vault_dir }} and uploads
+# it to {{ backups_storage_account }}/{{ backups_container }}/vault/ as the Arc
+# machine's identity (roles/backups/README.md). Nothing it logs holds a token.
+[Unit]
+Description=Snapshot Vault's raft store and upload it off the host ({{ backups_vault_unit_name }})
+Documentation=https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/lab-host/ansible/roles/backups
+After=vault.service network-online.target
+Wants=network-online.target
+# Until the owner has run hcw-vault-backup-seed there is no token to snapshot
+# with, and the run is skipped rather than failed, so no alert fires here
+# every night before then; alert-lab-backup-missing-vault in Azure still says
+# the copy is missing (docs/runbooks/labs-host.md, "Off-host backups").
+ConditionPathExists={{ backups_vault_token_file }}
+# A failed snapshot or upload is one syslog line and an Azure alert, not a
+# silent gap in the container (LAB-2). The notifier is the hardening role's.
+OnFailure=hcw-unit-failed@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/hcw-vault-backup
+Environment=HCW_VAULT_BACKUP_TOKEN_FILE={{ backups_vault_token_file }}
+Environment=HCW_VAULT_BACKUP_DIR={{ backups_vault_dir }}
+Environment=HCW_VAULT_BACKUP_KEEP_DAYS={{ backups_vault_keep_days }}
+Environment=HCW_VAULT_ENV={{ backups_vault_env_file }}
+TimeoutStartSec=10min
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+# Root, because the token and the Arc agent's challenge file are root-only.
+# Everything is read-only to it but the snapshot directory.
+ProtectSystem=strict
+ReadWritePaths={{ backups_vault_dir }}
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

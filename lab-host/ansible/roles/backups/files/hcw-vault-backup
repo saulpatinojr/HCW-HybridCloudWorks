@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# The nightly Vault raft snapshot, run by hcw-vault-backup.service from its
+# timer: renews the snapshot token, saves `vault operator raft snapshot save`
+# to /var/backups/vault/vault-<UTC stamp>.snap, prunes copies older than the
+# kept days and uploads the new one as vault/<name> through hcw-backup-upload,
+# as the Arc machine's identity. Root-only, because the token is. The token
+# reaches the Vault CLI through its environment, never an argument, and
+# `vault token renew` prints it, so that command's output is discarded.
+#
+# The unit sets the HCW_VAULT_BACKUP_* values from the backups role's
+# variables; run by hand, the defaults below are the role's defaults. Success
+# is a new .snap in the directory, one `uploaded vault/...` line from
+# hcw-backup-upload and exit 0. A failure fails the unit, whose OnFailure=
+# says so where Azure can hear it.
+set -euo pipefail
+umask 077
+
+token_file="${HCW_VAULT_BACKUP_TOKEN_FILE:-/etc/hcw/backups/vault-token}"
+env_file="${HCW_VAULT_ENV:-/etc/profile.d/hcw-vault.sh}"
+dir="${HCW_VAULT_BACKUP_DIR:-/var/backups/vault}"
+keep_days="${HCW_VAULT_BACKUP_KEEP_DAYS:-7}"
+vault_bin="${HCW_VAULT_BIN:-/usr/local/bin/vault}"
+upload="${HCW_BACKUP_UPLOAD:-/usr/local/sbin/hcw-backup-upload}"
+
+fail() { printf 'hcw-vault-backup: %s\n' "$*" >&2; exit 1; }
+
+[[ "$keep_days" =~ ^[0-9]+$ ]] || fail "HCW_VAULT_BACKUP_KEEP_DAYS is not a whole number: $keep_days"
+[ -r "$env_file" ] || fail "no $env_file: the vault role has not run on this host"
+# The vault role's login-shell file: two exports, VAULT_ADDR and VAULT_CACERT.
+# shellcheck source=/dev/null
+. "$env_file"
+[ -n "${VAULT_ADDR:-}" ] && [ -n "${VAULT_CACERT:-}" ] || fail "$env_file sets no VAULT_ADDR and VAULT_CACERT"
+export VAULT_ADDR VAULT_CACERT
+[ -f "$token_file" ] || fail "no $token_file: seed the snapshot token with hcw-vault-backup-seed (docs/runbooks/labs-host.md, \"Off-host backups\")"
+VAULT_TOKEN="$(tr -d '\r\n' < "$token_file")"
+[ -n "$VAULT_TOKEN" ] || fail "$token_file is empty: seed it again with hcw-vault-backup-seed --force"
+export VAULT_TOKEN
+
+# A periodic token lives one period past its last renewal; renewing first
+# makes the failure the plain one, with the fix, rather than a refused snapshot.
+"$vault_bin" token renew >/dev/null \
+  || fail 'the snapshot token could not be renewed: it has expired or was revoked, or Vault is sealed (sudo systemctl status vault). Seed a new one with hcw-vault-backup-seed --force'
+
+mkdir -p "$dir"
+chmod 700 "$dir"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+target="${dir}/vault-${stamp}.snap"
+# A .partial until the snapshot completes, so a failed save never looks like a backup.
+if ! "$vault_bin" operator raft snapshot save "${target}.partial"; then
+  rm -f "${target}.partial"
+  fail 'vault operator raft snapshot save failed; nothing was uploaded'
+fi
+mv "${target}.partial" "$target"
+
+find "$dir" -maxdepth 1 -type f -name 'vault-*.snap' -mmin "+$(( keep_days * 1440 ))" -delete
+find "$dir" -maxdepth 1 -type f -name 'vault-*.snap.partial' -mmin '+60' -delete
+
+"$upload" vault "$target"
+printf 'hcw-vault-backup: wrote %s (%s bytes) and uploaded it\n' "$target" "$(stat -c %s "$target")"

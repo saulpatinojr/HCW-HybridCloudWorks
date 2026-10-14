@@ -1287,8 +1287,8 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 | `alert-rbac-definition-mgmt` | not yet | |
 | `alert-lab-vault-unwrap` | not yet | |
 | `alert-lab-ssh-burst` | not yet | |
-| `alert-lab-backup-missing-coder` | not yet | Needs the host side (#955 PR 2); fire test: stop `coder-postgres-backup.timer` for two nights |
-| `alert-lab-backup-missing-vault` | not yet | Needs the host side (#955 PR 2); fire test: stop `hcw-vault-backup.timer` for two nights |
+| `alert-lab-backup-missing-coder` | not yet | Host side landed (#955, the `backups` role); fire test: stop `coder-postgres-backup.timer` for two nights |
+| `alert-lab-backup-missing-vault` | not yet | Host side landed (#955, the `backups` role); fire test: stop `hcw-vault-backup.timer` for two nights |
 
 ### What these still do not cover
 

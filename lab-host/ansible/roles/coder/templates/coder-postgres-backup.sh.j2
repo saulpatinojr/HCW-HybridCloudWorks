@@ -3,7 +3,9 @@
 # Nightly pg_dump of Coder's PostgreSQL into {{ coder_backup_dir }}, keeping
 # {{ coder_backup_keep_days }} days. A convenience against operator error,
 # not a backup promise: the database is rebuildable metadata
-# (docs/architecture/labs-host.md) and this file never leaves the host.
+# (docs/architecture/labs-host.md). While off-host backups are on (the
+# backups role has written /etc/hcw/backups/upload.env) the dump just written
+# is also uploaded to the host-backups container as the Arc identity (LAB-9).
 # Run by {{ coder_backup_unit_name }}.timer; run it by hand with
 #   sudo {{ coder_backup_script_path }}
 # Success is a new coder-<UTC timestamp>.sql.gz in the directory and exit 0.
@@ -26,3 +28,11 @@ mv "${target}.partial" "$target"
 
 find "$backup_dir" -maxdepth 1 -type f -name 'coder-*.sql.gz' -mmin "+${keep_minutes}" -delete
 find "$backup_dir" -maxdepth 1 -type f -name 'coder-*.sql.gz.partial' -mmin '+60' -delete
+
+# Off the host too (roles/backups): while the backups role has written its
+# upload.env, backups_enabled, the dump just written goes to the
+# host-backups container as the Arc identity. A failed upload fails this run,
+# so the timer's OnFailure= says so; the dump stays here either way.
+if [ -r /etc/hcw/backups/upload.env ]; then
+  /usr/local/sbin/hcw-backup-upload coder "$target"
+fi

@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run {{ backups_vault_unit_name }}.service nightly
+
+[Timer]
+OnCalendar={{ backups_vault_on_calendar }}
+# A missed run (host was off at 03:45) runs at the next boot instead of being
+# skipped; the jitter keeps it after the Coder dump's and before the
+# unattended-upgrades reboot at 04:30.
+Persistent=true
+RandomizedDelaySec=10m
+Unit={{ backups_vault_unit_name }}.service
+
+[Install]
+WantedBy=timers.target

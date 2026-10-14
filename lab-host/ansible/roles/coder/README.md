@@ -81,8 +81,13 @@ starts or stops it, adds the Caddy route and keeps a week of nightly dumps.
    compose exec` into `/var/backups/coder/coder-<UTC timestamp>.sql.gz`
    (`root` `0700`), dumps older than seven days deleted, a `.partial` name
    until the dump completes so a failed run never looks like a backup. The
-   timer runs only while enabled. This is the convenience
-   `docs/architecture/labs-host.md` describes, not a backup promise.
+   timer runs only while enabled. While the `backups` role has written
+   `/etc/hcw/backups/upload.env` (off-host backups on, LAB-9), the script
+   then uploads the dump it has just written to the `host-backups` container
+   as the Arc identity, and a failed upload fails the run
+   (`roles/backups/README.md`). The local copies are the convenience
+   `docs/architecture/labs-host.md` describes; the off-host copy is the
+   backup.
 9. Renders `templates/hcw-coder-template-push.j2` to
    `/usr/local/sbin/hcw-coder-template-push`, `root:root` `0750`, enabled or
    not (below). The one templated value is `coder_template_default_ttl`,

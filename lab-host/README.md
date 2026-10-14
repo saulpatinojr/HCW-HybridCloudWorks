@@ -30,6 +30,7 @@ the host has not run yet is
 | `addons` | The tool add-ons (ADR 0035): one hardened container per enabled row of `addons` in `group_vars`, `hcw-addon-<id>`, from `docker.io/hybridcloudworks/hcw-addon-<id>` by digest, published on **127.0.0.1:<port> only** (migration 18081), read-only root, every capability dropped, no volume, no socket, under the user-namespace remap, the row's env plus each secret from the vault key it names; a Caddy route per name with a 503 that is the site's own sentence while the container is stopped, and a direct-visit redirect to the add-on's page on the site. A row with an empty digest is not deployed and the run says so ("Tool add-ons", below) | Containers `hcw-addon-<id>`, `/etc/caddy/conf.d/20-addons.caddy` |
 | `portainer` | Portainer Business Edition 2.45.1 (LTS) by digest, one container with the Docker socket (and `--userns=host`, which the socket needs under the remap), HTTPS on **127.0.0.1:9443 only**, plain HTTP off, no Caddy route; reached through an SSH tunnel. Nothing until `portainer_enabled` is true | Container `portainer`, volume `portainer-data` |
 | `vault` | HashiCorp Vault 2.1.1 host-native as `vault.service` under user `vault`, the download checked against HashiCorp's signature on SHA256SUMS; raft storage; API on **127.0.0.1:8200** and cluster port on **127.0.0.1:8201**, TLS from a certificate generated on the host. For lab-host secrets only; never initialised or unsealed by the role. Nothing until `vault_enabled` is true | `/usr/local/bin/vault`, `/opt/vault/` (downloads, signing key), `/etc/vault.d/vault.hcl` (root:vault, 0640), `/etc/vault.d/tls/`, `/var/lib/vault` (vault, 0700), `/etc/profile.d/hcw-vault.sh` |
+| `backups` | Off-host backups (LAB-9): `hcw-backup-upload`, which puts one file in the `host-backups` container of `stlabhybridprodcus01` as the Arc machine's identity (a token from the agent on 127.0.0.1:40342 by `hcw-arc-token`; no storage key on the host), the Coder dump uploaded after it is written, a nightly Vault raft snapshot (`hcw-vault-backup.timer`, 03:45 UTC) with a token the owner seeds once (`hcw-vault-backup-seed`), and a listing of the container at every run to prove the grant. On while Arc is | `/usr/local/sbin/hcw-backup-upload`, `/usr/local/sbin/hcw-vault-backup-seed`, `/usr/local/libexec/hcw-arc-token`, `/usr/local/libexec/hcw-vault-backup`, `/etc/hcw/backups/`, `/var/backups/vault/`, `hcw-vault-backup.service` and `.timer` |
 | `privilege_checks` (from `post_tasks`) | Nothing but its check script: fails the run unless `hcw-labs-agent` is in no docker group, `docker info` reports `name=userns`, the agent's proxy socket is root:hcw-labs-agent 0660, one shell-echo job run as the agent user through the proxy prints its payload while `docker ps` and a privileged `docker run` are refused, (with Coder on) `coder-docker-proxy` carries every policy key the installed Compose file sets, mounts the sandbox daemon's socket directory alone, and that daemon reports `name=rootless`, and every deployed `hcw-addon-<id>` is read-only, has every capability dropped, is not privileged, has no bind mount, publishes on `127.0.0.1` only and is not in the host's user namespace (ADR 0035) | `/usr/local/libexec/hcw-labs-agent-proxy-check.mjs` |
 
 Each role's `README.md` explains its decisions; `meta/argument_specs.yml` is
@@ -50,9 +51,12 @@ its route is a file in Caddy's `conf.d`, and before `labs_agent`;
 Node.js that role installs and reads the agent's checkout; `addons` after
 `lab_images`, because it needs docker and caddy and nothing of coder's, and
 stops on a row being deployed (enabled, with a digest) whose vault key is
-unset; `portainer` and `vault` last, because nothing above needs either, so a
-failure there leaves the lab services configured; and `privilege_checks` from
-`post_tasks`, after every role and the handlers they notified. Docker
+unset; `portainer` and `vault` after those, because nothing above needs
+either, so a failure there leaves the lab services configured; `backups`
+last, because it hooks the dump `coder` installs, snapshots the Vault `vault`
+runs and uploads both as the identity `arc` connected, and nothing needs it;
+and `privilege_checks` from `post_tasks`, after every role and the handlers
+they notified. Docker
 Compose on this host is for Coder and its PostgreSQL only (ADR 0032); Portainer
 and the tool add-ons are single containers their roles run directly (the
 add-ons by ADR 0035 decision 8, which amends ADR 0032's line), Caddy, the agent
@@ -267,7 +271,7 @@ digest. The third is a Docker Engine or containerd move from the host pin set
 daemon's new socket). The tags are the role names in `ansible/site.yml`:
 `hardening`, `vault_tools`, `arc`, `docker`, `node_exporter`, `caddy`,
 `coder_sandbox`, `coder`, `labs_agent`, `lab_images`, `addons`, `portainer`,
-`vault`.
+`vault`, `backups`.
 
 Two things a narrowed run is not. It is not a convergence: `bootstrap.sh`
 does not record it as a completed run and the play does not write the
@@ -1048,9 +1052,15 @@ until the run recreates the container with the new URL.
 ### Backups and restore
 
 The timer writes `/var/backups/coder/coder-<UTC timestamp>.sql.gz` nightly
-and keeps seven days; it is a convenience against operator error, not a
-backup promise (`docs/architecture/labs-host.md`). Bash, on the host, to
-see them and to take one now:
+and keeps seven days, and, while the host is Connected to Arc, uploads each
+dump as it is written to the `host-backups` container of
+`stlabhybridprodcus01` as the Arc identity (`ansible/roles/backups/README.md`;
+LAB-9). The local copies are the convenience against operator error; the
+off-host copy, immutable for 35 days, is the backup
+(`docs/architecture/labs-host.md`). Vault's raft store is snapshotted to
+`/var/backups/vault/` and uploaded the same way at 03:45 UTC once the owner
+has seeded its token (`docs/runbooks/labs-host.md`, "Off-host backups").
+Bash, on the host, to see the dumps and to take one now:
 
 ```bash
 sudo ls -l /var/backups/coder
@@ -1058,6 +1068,13 @@ sudo ls -l /var/backups/coder
 
 ```bash
 sudo systemctl start coder-postgres-backup.service && sudo systemctl status coder-postgres-backup.service --no-pager
+```
+
+Every upload is one journal line tagged `hcw-backup-upload`; the last three
+nights, bash, on the host:
+
+```bash
+sudo journalctl -t hcw-backup-upload --since -3d --no-pager
 ```
 
 Restore the newest dump into an empty database — three lines, bash, on the

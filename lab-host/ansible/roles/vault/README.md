@@ -244,8 +244,9 @@ The role verifies the file's signature on the host, so a value read from
 anywhere else fails the run. A new pin restarts Vault, sealed. Read
 HashiCorp's upgrade notes for every release between the old pin and the new
 (<https://developer.hashicorp.com/vault/docs/updates/important-changes>),
-and take a raft snapshot first once Vault holds anything (`vault operator
-raft snapshot save`, with a token that may).
+and take a raft snapshot first once Vault holds anything: the `backups`
+role takes one nightly, and `sudo systemctl start hcw-vault-backup.service`
+takes one now, once its token is seeded (`roles/backups/README.md`).
 
 ## Rotating the certificate
 

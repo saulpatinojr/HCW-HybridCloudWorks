@@ -1,0 +1,106 @@
+---
+argument_specs:
+  main:
+    short_description: Off-host backups to Azure Blob Storage as the Arc machine's identity (LAB-9)
+    description:
+      - Installs four root-only helpers whatever the switch, so the owner's lines work on a host
+        where it is off. /usr/local/libexec/hcw-arc-token asks the Azure Connected Machine agent
+        on 127.0.0.1:40342 for the machine identity's token by the challenge the vault role's
+        seal check performs. /usr/local/sbin/hcw-backup-upload puts one file in the host-backups
+        container as coder/<name> or vault/<name> with that token, logging one line tagged
+        hcw-backup-upload. /usr/local/libexec/hcw-vault-backup renews the snapshot token, saves
+        `vault operator raft snapshot save` under backups_vault_dir and uploads it.
+        /usr/local/sbin/hcw-vault-backup-seed is the owner's one-time step, which creates that
+        token (a periodic orphan under a snapshot-only policy) from the owner's Vault token on
+        stdin and stores it root-only in backups_vault_token_file, its accessor beside it; one
+        seed runs at a time, a token it cannot store is revoked again, and a replaced token it
+        cannot revoke is reported and retried on the next run.
+      - With backups_enabled true it writes backups_upload_env_file, the three names the
+        uploader reads and the switch the coder role's dump script looks for before uploading
+        the dump it has just written; it enables the nightly snapshot timer while vault_enabled
+        is also true; and it asks the Arc agent for a storage token and lists the container with
+        it, refusing the run when the identity cannot, so a missing grant stops this run rather
+        than tonight's upload. With it false it removes the env file and stops the timer; the
+        dump then stays on the host, as before this role.
+      - It never holds a storage key or connection string, and it never creates the Vault token
+        itself. That token is the owner's seed; until then the snapshot unit is skipped by its
+        ConditionPathExists, not failed, and alert-lab-backup-missing-vault says the copy is
+        missing.
+    author: HybridCloudWorks
+    options:
+      backups_enabled:
+        type: bool
+        required: true
+        description:
+          - Whether the dump is uploaded and the snapshot timer runs. group_vars ties it to
+            arc_enabled, because the Arc identity is the only principal granted on the container.
+      backups_storage_account:
+        type: str
+        required: true
+        description: The storage account infra/lab-hybrid-backups.tf creates, 3 to 24 lowercase letters and digits.
+      backups_container:
+        type: str
+        required: true
+        description: The container in it, under the immutability policy; host-backups.
+      vault_enabled:
+        type: bool
+        required: true
+        description: The vault role's switch. The snapshot timer runs only while it is true.
+      backups_config_dir:
+        type: path
+        required: false
+        default: /etc/hcw/backups
+        description: Root-only directory holding the upload destination and the snapshot token.
+      backups_upload_env_file:
+        type: path
+        required: false
+        default: /etc/hcw/backups/upload.env
+        description:
+          - Three KEY=value lines (account, container, Blob REST version) the uploader reads.
+            Present exactly while backups_enabled is true; the Coder dump script uploads
+            only while it exists.
+      backups_vault_token_file:
+        type: path
+        required: false
+        default: /etc/hcw/backups/vault-token
+        description: Where the seed stores the snapshot token, root:root 0600, and what the unit's ConditionPathExists tests.
+      backups_blob_api_version:
+        type: str
+        required: false
+        default: "2024-11-04"
+        description: The x-ms-version header every request carries. Bearer tokens need 2017-11-09 or later.
+      backups_vault_dir:
+        type: path
+        required: false
+        default: /var/backups/vault
+        description: Where the snapshots are written, root-only, before upload; kept backups_vault_keep_days.
+      backups_vault_keep_days:
+        type: int
+        required: false
+        default: 7
+        description: Days a local snapshot copy stays. The off-host copies are kept by the container's policy, not by this.
+      backups_vault_on_calendar:
+        type: str
+        required: false
+        default: "*-*-* 03:45:00"
+        description: systemd OnCalendar for the snapshot, after the 03:30 Coder dump and before the 04:30 reboot.
+      backups_vault_unit_name:
+        type: str
+        required: false
+        default: hcw-vault-backup
+        description: The service and timer unit name. The alerting runbook's lines name it.
+      backups_vault_policy_name:
+        type: str
+        required: false
+        default: hcw-raft-snapshot
+        description: The Vault policy the seed writes and the snapshot token holds.
+      backups_vault_token_period:
+        type: str
+        required: false
+        default: 720h
+        description: The token's period; each nightly renewal gives it this long again.
+      backups_vault_env_file:
+        type: path
+        required: false
+        default: /etc/profile.d/hcw-vault.sh
+        description: The vault role's login-shell file, whose VAULT_ADDR and VAULT_CACERT the snapshot and the seed read.

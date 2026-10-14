@@ -841,9 +841,10 @@ rehearsal: Azure Blob Storage.
    03:30 UTC) is uploaded after it is written, to `host-backups/coder/`; a
    nightly `vault operator raft snapshot save` is uploaded to
    `host-backups/vault/`. The snapshot needs a Vault token with a
-   raft-snapshot policy: seeded once with `hcw-vault-set` and renewed by the
-   unit itself, the Coder rotation credential's pattern (one seed, then
-   automatic; owner instruction 2026-10-09). Both units keep
+   raft-snapshot policy: seeded once with `hcw-vault-backup-seed` (the
+   owner's Vault token on stdin; a periodic orphan token stored root-only)
+   and renewed by the unit itself, the Coder rotation credential's pattern
+   (one seed, then automatic; owner instruction 2026-10-09). Both units keep
    `OnFailure=hcw-unit-failed@`, and an alert per kind fires when no blob was
    written in two days: a missing backup is a row, not a silence.
 4. **Not encrypted client-side before upload.** The account is Entra-only,

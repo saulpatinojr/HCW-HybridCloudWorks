@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: backups
+  namespace: hcw
+  author: HybridCloudWorks
+  description: Off-host backups as the Arc identity - the Coder dump uploaded after it is written, a nightly Vault raft snapshot, one seeded token
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - resolute
+        - noble
+  galaxy_tags:
+    - backup
+    - azure
+    - vault
+
+dependencies: []
