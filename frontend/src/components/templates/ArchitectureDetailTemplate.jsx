@@ -101,7 +101,12 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
     architecture?.terraformCode && String(architecture.terraformCode).trim() !== ''
       ? architecture.terraformCode
       : '';
-  const hasImplementation = Boolean(terraformCode || deploymentSteps.length > 0);
+  const hasLabVerification = Boolean(
+    architecture?.interactiveLabId || architecture?.ecosystemPartnerValidation
+  );
+  const hasImplementation = Boolean(
+    terraformCode || deploymentSteps.length > 0 || hasLabVerification
+  );
 
   const estimatedMonthly =
     architecture?.costAnalysis?.estimatedMonthly || architecture?.estimatedCost || '';
@@ -428,6 +433,52 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
             {hasImplementation && (
               <TabsContent value="implementation" className="mt-6">
                 <div className="space-y-6">
+                  {hasLabVerification && (
+                    <Card
+                      className="border-primary/30 bg-primary/5 dark:bg-primary/10"
+                      data-testid="blueprint-lab-verification"
+                    >
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between gap-4 flex-wrap">
+                          <CardTitle className="text-lg flex items-center gap-2">
+                            <FlaskConical className="h-5 w-5 text-primary" />
+                            Verify Topology in Ephemeral Browser Lab
+                          </CardTitle>
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                            ~15 Min • Zero Local Setup
+                          </span>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          {architecture.ecosystemPartnerValidation?.validated_with ||
+                          architecture.ecosystemPartnerValidation?.validatedWith
+                            ? `Co-engineered and validated with ${architecture.ecosystemPartnerValidation.validated_with || architecture.ecosystemPartnerValidation.validatedWith}. `
+                            : 'Validated against multi-cloud production baselines. '}
+                          Launch an ephemeral browser container workspace with pre-installed CLI
+                          toolchains to inspect, lint, and dry-run this architecture without
+                          installing local dependencies.
+                        </p>
+                        <div className="pt-1">
+                          <Button asChild>
+                            <Link
+                              to={
+                                architecture.ecosystemPartnerValidation?.cta_url ||
+                                architecture.ecosystemPartnerValidation?.ctaUrl ||
+                                `/education/labs/${architecture.interactiveLabId}`
+                              }
+                            >
+                              <FlaskConical className="h-4 w-4 mr-2" />
+                              {architecture.ecosystemPartnerValidation?.cta_label ||
+                                architecture.ecosystemPartnerValidation?.ctaLabel ||
+                                'Launch Verification Lab'}
+                            </Link>
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
                   {terraformCode && (
                     <Card className="bg-card/40">
                       <CardHeader>

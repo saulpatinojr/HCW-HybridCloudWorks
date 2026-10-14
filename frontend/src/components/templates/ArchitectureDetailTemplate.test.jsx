@@ -75,6 +75,19 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     expect(screen.getByTestId('blueprint-finops-cost-traps')).toHaveTextContent(
       /Application Gateway.*Capacity Units/i
     );
+
+    // Implementation tab contains Browser Lab verification card
+    fireEvent.click(screen.getByRole('button', { name: /View IaC Code/i }));
+    expect(await screen.findByTestId('blueprint-lab-verification')).toBeInTheDocument();
+    expect(screen.getByTestId('blueprint-lab-verification')).toHaveTextContent(
+      /Verify Topology in Ephemeral Browser Lab/i
+    );
+    expect(screen.getByTestId('blueprint-lab-verification')).toHaveTextContent(
+      /~15 Min • Zero Local Setup/i
+    );
+    expect(screen.getByTestId('blueprint-lab-verification')).toHaveTextContent(
+      /HashiCorp Terraform 1.9 \+ Azure Verified Modules/i
+    );
   });
 
   it('hides empty panes and empty deep-dive tabs instead of rendering placeholder text (#1084 item 3)', async () => {
@@ -202,5 +215,59 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     expect(screen.getByTestId('landing-pane-key-services')).toBeInTheDocument();
     expect(screen.getByTestId('landing-pane-security')).toBeInTheDocument();
     expect(screen.getByTestId('landing-pane-outcome')).toBeInTheDocument();
+  });
+
+  it('guarantees all 25 reference blueprints across Azure, AWS, GCP, and FinOps carry practitioner depth (Stage 5)', async () => {
+    const { architecturesByProvider } = await import('@/data/architectures');
+    const catalogs = Object.entries(architecturesByProvider);
+    expect(catalogs.length).toBe(4);
+
+    let totalCount = 0;
+    for (const [provider, catalog] of catalogs) {
+      for (const [slug, blueprint] of Object.entries(catalog)) {
+        totalCount++;
+
+        // 1. Honest Architectural Trade-Offs (whenNotToUse >= 2)
+        expect(
+          Array.isArray(blueprint.whenNotToUse),
+          `${provider}/${slug} must have whenNotToUse array`
+        ).toBe(true);
+        expect(
+          blueprint.whenNotToUse.length,
+          `${provider}/${slug} must have at least 2 whenNotToUse trade-offs`
+        ).toBeGreaterThanOrEqual(2);
+        for (const item of blueprint.whenNotToUse) {
+          expect(typeof item).toBe('string');
+          expect(item.trim().length).toBeGreaterThan(15);
+        }
+
+        // 2. FinOps Cost Traps (finopsCostTraps >= 2 with service, trap, mitigation)
+        expect(
+          Array.isArray(blueprint.finopsCostTraps),
+          `${provider}/${slug} must have finopsCostTraps array`
+        ).toBe(true);
+        expect(
+          blueprint.finopsCostTraps.length,
+          `${provider}/${slug} must have at least 2 finopsCostTraps`
+        ).toBeGreaterThanOrEqual(2);
+        for (const trap of blueprint.finopsCostTraps) {
+          expect(typeof trap.service).toBe('string');
+          expect(trap.service.trim().length).toBeGreaterThan(0);
+          expect(typeof trap.trap).toBe('string');
+          expect(trap.trap.trim().length).toBeGreaterThan(15);
+          expect(typeof trap.mitigation).toBe('string');
+          expect(trap.mitigation.trim().length).toBeGreaterThan(15);
+        }
+
+        // 3. Browser Lab Verification Link
+        expect(
+          typeof blueprint.interactiveLabId,
+          `${provider}/${slug} must specify interactiveLabId`
+        ).toBe('string');
+        expect(blueprint.interactiveLabId.trim().length).toBeGreaterThan(0);
+      }
+    }
+
+    expect(totalCount).toBe(25);
   });
 });
