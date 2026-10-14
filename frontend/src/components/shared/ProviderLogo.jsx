@@ -31,7 +31,7 @@ export default function ProviderLogo({ provider, className, alt = '', ...imgProp
       <img src={logo.light} alt={alt} className={cn(className, 'dark:hidden')} {...imgProps} />
       <img
         src={logo.dark}
-        alt=""
+        alt={alt}
         aria-hidden="true"
         className={cn(className, 'hidden dark:inline')}
         {...imgProps}
