@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# hcw-backup-restore list [coder|vault]          what the container holds
+# hcw-backup-restore fetch coder|vault [NAME]    download one (the newest without NAME)
+# hcw-backup-restore coder [NAME] --yes          fetch, then restore it into coder-postgres
+# hcw-backup-restore vault [NAME] --yes          fetch, then restore it into Vault (a Vault token on stdin)
+#
+# The other half of hcw-backup-upload: reads the host-backups container as the
+# Arc machine's identity (hcw-arc-token), by the same account, container and
+# REST version in /etc/hcw/backups/upload.env, and puts what it fetches under
+# /var/backups/restore/<kind>/, root-only, by a .partial name until the length
+# Azure listed has arrived. The two restores are the ones lab-host/README.md
+# ("Backups and restore") and roles/backups/README.md ("Restore") describe,
+# run as one command on a rebuilt host (docs/runbooks/labs-host.md,
+# "Reinstalling the host", step 7). Both need --yes, because each replaces
+# what the service holds now:
+#
+#   coder   stops the coder container, drops and recreates the coder
+#           database in coder-postgres, loads the dump, starts coder again.
+#   vault   `vault operator raft snapshot restore -force`, with the token on
+#           stdin (the root token `vault operator init` printed on the fresh
+#           host, or one from generate-root). Vault's data is then the
+#           snapshot's, tokens included: the token used here stops working,
+#           the snapshot's revoked root token stays revoked, and the seal key
+#           in Key Vault is the same, so a restart unseals the restored data.
+#
+# No token is printed, logged or passed as an argument. Exit 0 on success, 1
+# on a refusal from Azure, Docker or Vault (why on stderr), 2 on usage.
+set -euo pipefail
+umask 077
+
+env_file="${HCW_BACKUPS_ENV:-/etc/hcw/backups/upload.env}"
+arc_token="${HCW_ARC_TOKEN:-/usr/local/libexec/hcw-arc-token}"
+curl_bin="${HCW_CURL:-curl}"
+restore_dir="${HCW_RESTORE_DIR:-/var/backups/restore}"
+docker_bin="${HCW_DOCKER:-docker}"
+project_dir="${HCW_CODER_PROJECT_DIR:-/etc/hcw/coder}"
+vault_bin="${HCW_VAULT_BIN:-/usr/local/bin/vault}"
+vault_env_file="${HCW_VAULT_ENV:-/etc/profile.d/hcw-vault.sh}"
+
+say() { printf 'hcw-backup-restore: %s\n' "$*"; }
+fail() { printf 'hcw-backup-restore: %s\n' "$*" >&2; exit 1; }
+usage() {
+  cat >&2 <<'USAGE'
+usage: hcw-backup-restore list [coder|vault]
+       hcw-backup-restore fetch coder|vault [NAME]
+       hcw-backup-restore coder [NAME] --yes
+       hcw-backup-restore vault [NAME] --yes        (a Vault token on stdin)
+USAGE
+  exit 2
+}
+
+command="${1:-}"
+[ -n "$command" ] || usage
+shift
+kind=''
+name=''
+yes=0
+case "$command" in
+  list)
+    [ $# -le 1 ] || usage
+    kind="${1:-}"
+    [ -z "$kind" ] || [ "$kind" = coder ] || [ "$kind" = vault ] || usage ;;
+  fetch)
+    [ $# -ge 1 ] && [ $# -le 2 ] || usage
+    kind="$1"; name="${2:-}"
+    [ "$kind" = coder ] || [ "$kind" = vault ] || usage ;;
+  coder|vault)
+    kind="$command"
+    for arg in "$@"; do
+      case "$arg" in
+        --yes) yes=1 ;;
+        -*) usage ;;
+        *) [ -z "$name" ] || usage; name="$arg" ;;
+      esac
+    done
+    [ "$yes" -eq 1 ] || fail "restoring $kind replaces what the service holds now; add --yes to go ahead (hcw-backup-restore list $kind shows what is there)" ;;
+  *) usage ;;
+esac
+case "$name" in
+  '') ;;
+  "$kind"/*) name="${name#"$kind"/}" ;;
+esac
+case "$name" in
+  .*|*/*|*[!A-Za-z0-9._-]*) fail "refusing the blob name $name (letters, digits, . _ and - only)" ;;
+esac
+
+[ -r "$env_file" ] || fail "no $env_file: the backups role has not run with backups_enabled on this host"
+account=''; container=''; api_version=''
+while IFS='=' read -r key value; do
+  case "$key" in
+    HCW_BACKUPS_ACCOUNT) account="$value" ;;
+    HCW_BACKUPS_CONTAINER) container="$value" ;;
+    HCW_BACKUPS_API_VERSION) api_version="$value" ;;
+  esac
+done < "$env_file"
+[[ "$account" =~ ^[a-z0-9]{3,24}$ ]] || fail "$env_file names no storage account (HCW_BACKUPS_ACCOUNT)"
+[[ "$container" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || fail "$env_file names no container (HCW_BACKUPS_CONTAINER)"
+[[ "$api_version" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || fail "$env_file names no Blob REST version (HCW_BACKUPS_API_VERSION)"
+base="https://${account}.blob.core.windows.net/${container}"
+
+# One restore at a time: two fetching the same name would write one
+# .partial, and two restores would race the service. The lock is not
+# optional: a host without flock (util-linux, always present on Ubuntu) gets
+# a refusal rather than an unlocked restore.
+mkdir -p "$restore_dir"
+chmod 700 "$restore_dir"
+if [ "$command" != list ]; then
+  command -v flock >/dev/null 2>&1 || fail 'flock is not installed, so one restore at a time cannot be guaranteed; nothing was changed'
+  exec 9>"$restore_dir/.lock"
+  flock -n 9 || fail 'another hcw-backup-restore is running; nothing was changed'
+fi
+
+token="$("$arc_token" https://storage.azure.com/)" || fail 'no token for the Arc identity; hcw-arc-token said why above'
+config="$(printf 'header = "Authorization: Bearer %s"\nheader = "x-ms-version: %s"\n' "$token" "$api_version")"
+unset token
+response="$(mktemp)"
+trap 'rm -f "$response"' EXIT
+answer() {
+  local code
+  code="$(tr -d '\n' < "$response" | sed -n 's/.*<Code>\([^<]*\)<\/Code>.*/\1/p' | head -n 1)"
+  printf '%s' "${code:-no error code in the answer}"
+}
+
+# One line per blob under a prefix: name, bytes, last modified. Azure lists
+# blobs in name order, and the names carry their UTC stamp, so the last line
+# is the newest. One page of up to 5000 blobs is more than the two kinds
+# keep in their 35 days; a NextMarker beyond it is reported rather than hidden.
+listing() {
+  local prefix="${1:+$1/}" http
+  http="$(printf '%s\n' "$config" | "$curl_bin" -sS --max-time 60 -K - -o "$response" -w '%{http_code}' \
+    "${base}?restype=container&comp=list&prefix=${prefix}&maxresults=5000")" \
+    || fail "could not reach ${account}.blob.core.windows.net"
+  [ "$http" = 200 ] || fail "listing ${account}/${container} as the Arc identity answered HTTP ${http} ($(answer))"
+  if tr -d '\n' < "$response" | grep -q '<NextMarker>[^<]'; then
+    say "note: the container holds more than one page of blobs; only the first 5000 are listed" >&2
+  fi
+  tr -d '\n' < "$response" | sed 's/<\/Blob>/\n/g' | sed -n 's/.*<Name>\([^<]*\)<\/Name>.*<Last-Modified>\([^<]*\)<\/Last-Modified>.*<Content-Length>\([0-9]*\)<\/Content-Length>.*/\1 \3 \2/p'
+}
+
+if [ "$command" = list ]; then
+  lines="$(listing "$kind")"
+  if [ -z "$lines" ]; then
+    say "nothing under ${kind:+$kind/ in }${account}/${container}"
+    exit 0
+  fi
+  printf '%-48s %12s  %s\n' NAME BYTES 'LAST MODIFIED'
+  printf '%s\n' "$lines" | while read -r blob bytes modified; do printf '%-48s %12s  %s\n' "$blob" "$bytes" "$modified"; done
+  exit 0
+fi
+
+# fetch, coder and vault all start by fetching the newest or the named blob.
+lines="$(listing "$kind")"
+[ -n "$lines" ] || fail "nothing under ${kind}/ in ${account}/${container}; the host has not uploaded a ${kind} backup yet"
+if [ -n "$name" ]; then
+  chosen="$(printf '%s\n' "$lines" | awk -v want="${kind}/${name}" '$1 == want')"
+  [ -n "$chosen" ] || fail "no blob ${kind}/${name} in ${account}/${container}; hcw-backup-restore list ${kind} shows what is there"
+else
+  chosen="$(printf '%s\n' "$lines" | tail -n 1)"
+fi
+blob="$(printf '%s' "$chosen" | awk '{ print $1 }')"
+expected="$(printf '%s' "$chosen" | awk '{ print $2 }')"
+name="${blob#"$kind"/}"
+target_dir="${restore_dir}/${kind}"
+target="${target_dir}/${name}"
+mkdir -p "$target_dir"
+chmod 700 "$restore_dir" "$target_dir"
+http="$(printf '%s\n' "$config" | "$curl_bin" -sS --max-time 600 -K - -o "${target}.partial" -w '%{http_code}' "${base}/${blob}")" \
+  || { rm -f "${target}.partial"; fail "downloading ${blob} did not complete"; }
+if [ "$http" != 200 ]; then
+  cp -f "${target}.partial" "$response" 2>/dev/null || true
+  rm -f "${target}.partial"
+  fail "downloading ${blob} answered HTTP ${http} ($(answer))"
+fi
+got="$(stat -c %s "${target}.partial")"
+[ "$got" = "$expected" ] || { rm -f "${target}.partial"; fail "downloaded ${got} bytes of ${blob}, Azure listed ${expected}; nothing was kept"; }
+mv -f "${target}.partial" "$target"
+say "fetched ${blob} (${got} bytes) to ${target}"
+[ "$command" != fetch ] || exit 0
+
+if [ "$kind" = coder ]; then
+  compose=("$docker_bin" compose --project-directory "$project_dir")
+  say 'stopping coder so nothing writes during the restore'
+  "${compose[@]}" stop coder >/dev/null || fail 'docker compose stop coder failed; the dump stays fetched and nothing was restored'
+  say 'recreating the coder database'
+  "${compose[@]}" exec -T coder-postgres psql -U coder -d postgres -v ON_ERROR_STOP=1 -q -c 'DROP DATABASE coder' -c 'CREATE DATABASE coder OWNER coder' \
+    || fail "recreating the database failed; coder is stopped (docker compose --project-directory $project_dir start coder brings it back on whatever the database holds)"
+  say "loading ${name}"
+  if ! gunzip -c "$target" | "${compose[@]}" exec -T coder-postgres psql -U coder -d coder -v ON_ERROR_STOP=1 -q; then
+    fail "loading the dump failed partway; coder is stopped and the database is incomplete. Run this again with another dump, or recreate the database by hand (lab-host/README.md, \"Backups and restore\")"
+  fi
+  say 'starting coder'
+  "${compose[@]}" start coder >/dev/null || fail 'docker compose start coder failed after a complete restore; sudo docker compose --project-directory /etc/hcw/coder ps says why'
+  say "restored ${blob} into coder-postgres; https://coder.lab.hybridcloudworks.com/api/v2/buildinfo answers again within a minute"
+  exit 0
+fi
+
+# vault
+[ -r "$vault_env_file" ] || fail "no $vault_env_file: the vault role has not run on this host"
+# shellcheck source=/dev/null
+. "$vault_env_file"
+[ -n "${VAULT_ADDR:-}" ] && [ -n "${VAULT_CACERT:-}" ] || fail "$vault_env_file sets no VAULT_ADDR and VAULT_CACERT"
+export VAULT_ADDR VAULT_CACERT
+[ -t 0 ] && fail 'pipe a Vault token in on stdin: the root token "vault operator init" printed on this host, or one from generate-root (docs/runbooks/labs-host.md, "The root token")'
+IFS= read -r line || true
+line="${line#$'\xEF\xBB\xBF'}"
+line="$(printf '%s' "$line" | tr -d '\r' | sed 's/^[[:blank:]]*//; s/[[:blank:]]*$//')"
+[ -n "$line" ] || fail 'the token on stdin was empty; nothing was restored'
+[[ "$line" =~ ^[A-Za-z0-9._-]{20,}$ ]] || fail 'the first line on stdin is not a Vault token (letters, digits, . _ and -); nothing was restored'
+export VAULT_TOKEN="$line"
+unset line
+# The snapshots are taken under the Azure Key Vault seal (#726), and restored
+# data unseals only under the same seal: into a Vault running under Shamir
+# keys, -force would install data nothing on this host can open. The seal is
+# rendered by the vault role once the host's seal fact is written, so that is
+# what to do first (docs/runbooks/labs-host.md, "HashiCorp Vault: moving to
+# auto-unseal", steps 4 and 5, then bootstrap.sh).
+seal_type="$("$vault_bin" status -format=json 2>/dev/null | tr -d '\n' | sed -n 's/.*"type"[[:blank:]]*:[[:blank:]]*"\([^"]*\)".*/\1/p' | head -n 1 || true)"
+[ "$seal_type" = azurekeyvault ] \
+  || fail "Vault reports seal type ${seal_type:-unknown}, and the snapshots were taken under azurekeyvault: restored data would not unseal here. Write the seal fact and run bootstrap.sh first (docs/runbooks/labs-host.md, \"HashiCorp Vault: moving to auto-unseal\", steps 4 and 5); nothing was restored"
+say "restoring ${name} into Vault with -force"
+"$vault_bin" operator raft snapshot restore -force "$target" \
+  || fail "vault operator raft snapshot restore refused (a token that cannot, or Vault sealed: sudo systemctl status vault); nothing was restored"
+unset VAULT_TOKEN
+# Vault accepts the snapshot and then replaces its data; the exit status
+# above is the acceptance, not the completion. What can be read without a
+# token is the seal status, polled for a bounded time, so the owner is told
+# what Vault reports now and what to confirm before relying on it.
+field() { tr -d '\n' | sed -n "s/.*\"$1\"[[:blank:]]*:[[:blank:]]*\([a-z]*\).*/\1/p" | head -n 1; }
+state='gave no status for 60 seconds'
+for _ in $(seq 1 12); do
+  status="$("$vault_bin" status -format=json 2>/dev/null || true)"
+  sealed="$(printf '%s' "$status" | field sealed)"
+  initialized="$(printf '%s' "$status" | field initialized)"
+  if [ -n "$sealed" ]; then
+    state="Initialized ${initialized:-unknown}, Sealed ${sealed}"
+    [ "$sealed" = true ] || break
+  fi
+  sleep 5
+done
+say "Vault accepted ${blob} for restore and now reports ${state}. Its data is being replaced with the snapshot's, tokens included: the token used here no longer works, and the snapshot's revoked root token stays revoked. Before relying on it: sudo journalctl -u vault -n 30 --no-pager should show the restore completed and the seal re-established; if Vault reports Sealed true, sudo systemctl restart vault unseals it with the same seal key. Then seed the snapshot token file again (hcw-vault-backup-seed, with a root token from generate-root: docs/runbooks/labs-host.md, \"The root token\")"

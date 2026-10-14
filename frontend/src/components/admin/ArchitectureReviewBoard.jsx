@@ -35,6 +35,11 @@ export function initialBlueprintForm(blog) {
     keyServices: [['keyServices'], []],
     practices: [['practices'], []],
     outcome: [['outcome'], []],
+    // Practitioner depth & trade-offs (Phase 5)
+    whenNotToUse: [['whenNotToUse'], []],
+    finopsCostTraps: [['finopsCostTraps'], []],
+    landingZonePreset: [['landingZonePreset'], ''],
+    interactiveLabId: [['interactiveLabId'], ''],
     // JSON fields (stored as objects in DB, parsed for editing if needed)
     technicalSpecs: [['technicalSpecs'], { components: [], patterns: [] }],
     costAnalysis: [['costAnalysis'], { estimatedMonthly: '$0', breakdown: [] }],

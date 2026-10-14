@@ -139,7 +139,11 @@ export function normalizeState(partial) {
     if (selected.includes(id)) options[countId] = Math.max(1, options[countId]);
     else options[countId] = 0;
   }
-  return { selected, options, warnings };
+  const result = { selected, options, warnings };
+  if (partial?.cloud) {
+    result.cloud = partial.cloud;
+  }
+  return result;
 }
 
 export const DEFAULT_STATE = Object.freeze(normalizeState({}));
@@ -182,7 +186,7 @@ export function setOption(state, id, value) {
     selected =
       options[id] > 0 ? [...selected, componentId] : selected.filter((s) => s !== componentId);
   }
-  return normalizeState({ selected, options });
+  return normalizeState({ ...current, selected, options });
 }
 
 /** The selected platform components, in catalogue order. */

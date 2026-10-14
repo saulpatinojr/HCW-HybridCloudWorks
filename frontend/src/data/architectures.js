@@ -235,6 +235,26 @@ resource "azurerm_private_endpoint" "sql" {
         { label: 'Key Vault & Log Analytics', share: '$45 / mo' },
       ],
     },
+    landingZonePreset: 'secure-2-tier',
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Low-budget dev/test sandboxes where Application Gateway v2 and Private Endpoint hourly standing charges exceed compute spend.',
+      'Teams without Terraform state management maturity (use App Service with built-in VNet integration first).',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Application Gateway v2 Capacity Units',
+        trap: 'Fixed minimum capacity units cost ~$175/mo even with zero web traffic.',
+        mitigation:
+          'Configure autoscale with minimum capacity 0 in non-production environments to avoid baseline billing.',
+      },
+      {
+        service: 'Private Endpoints & Cross-Subnet Data Transfer',
+        trap: 'Data processing charges ($0.01/GB) compound when transferring large SQL backup files or bulk datasets over Private Link.',
+        mitigation:
+          'Keep bulk export traffic within the regional backbone or attach an ACR/Storage Private Endpoint directly to the data subnet.',
+      },
+    ],
     tags: ['Two-Tier', 'WAF', 'Private Link', 'Zero Trust', 'Azure SQL'],
   },
   'enterprise-hub-spoke-landing-zone': {
@@ -246,6 +266,26 @@ resource "azurerm_private_endpoint" "sql" {
     promise:
       'Centralized hub-and-spoke network topology with Azure Firewall inspection, Private DNS resolution, and policy guardrails across workload subscriptions.',
     estimatedCost: '$2,100 / month',
+    landingZonePreset: 'enterprise-default',
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Single-workload prototypes or early-stage startups where hub operational overhead and Azure Firewall hourly costs ($912/mo) dwarf compute value.',
+      'Isolated edge deployments with zero cross-region or hybrid on-premises connectivity requirements.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Azure Firewall SKU Selection',
+        trap: 'Standard SKU ($912/mo) and Premium SKU ($1,277/mo) run fixed standing costs regardless of throughput.',
+        mitigation:
+          'Start on Basic Firewall ($288/mo) for environments with 2 or fewer spokes and under 100 Mbps aggregate throughput.',
+      },
+      {
+        service: 'Spoke Virtual Network Peering',
+        trap: 'Bi-directional peering data transfer fees ($0.01/GB in + $0.01/GB out) compound when chatty microservices communicate across spoke boundaries.',
+        mitigation:
+          'Consolidate tightly coupled services into a single multi-subnet spoke to keep traffic on local routing.',
+      },
+    ],
     howItWorks: [
       'On-premises and branch traffic terminates in the Connectivity Hub via ExpressRoute or VPN Gateway.',
       'Azure Firewall in the hub inspects east-west traffic between workload spokes and north-south egress.',
@@ -755,6 +795,24 @@ export const awsArchitectures = {
   handler       = "index.handler"
   runtime       = "nodejs20.x"
 }`,
+    whenNotToUse: [
+      'Low-latency legacy systems requiring persistent TCP connections or connection pooling (use ECS Fargate with RDS Proxy).',
+      'Continuous 24/7 high-throughput batch stream processing where sustained Lambda concurrency costs exceed reserved EC2 compute.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Amazon API Gateway HTTP vs. REST APIs',
+        trap: 'REST APIs cost $3.50/million requests plus authorizer execution overhead vs $1.00/million for HTTP APIs.',
+        mitigation:
+          'Adopt HTTP APIs (v2) unless specifically requiring API keys, request validation, or WAF associations.',
+      },
+      {
+        service: 'Amazon DynamoDB On-Demand vs. Provisioned Capacity',
+        trap: 'On-demand mode charges $1.25 per million write request units, which compounds dramatically under predictable sustained workloads.',
+        mitigation:
+          'Switch predictable steady-state tables to Provisioned Capacity with auto-scaling to save up to 70%.',
+      },
+    ],
     tags: ['Serverless', 'API', 'Cost-Effective'],
   },
   'data-lake': {
@@ -875,7 +933,1637 @@ resource "aws_glue_catalog_database" "main" {
   },
 };
 
+export const gcpArchitectures = {
+  'global-load-balancing': {
+    title: 'Global Load Balancing',
+    category: 'Compute & Networking',
+    complexity: 'Production',
+    description:
+      'Global external HTTP(S) load balancing with Cloud Armor, regional failover policies, and CDN edge caching for resilient web workloads.',
+    promise:
+      'Global anycast IP routing, sub-second regional failover, and Cloud Armor edge security across distributed Cloud Run and GCE workloads.',
+    estimatedCost: '$1,800 - $2,800 / month',
+    topology: {
+      caption:
+        'Anycast ingress through Google Front End and Cloud Armor to regional backend services',
+      surrounding: ['Cloud DNS', 'Cloud Armor', 'Cloud Monitoring', 'VPC Network'],
+      stages: [
+        {
+          id: 'users-anycast',
+          title: 'Global Clients & Anycast IP',
+          subtitle: 'Traffic terminates at the nearest Google edge PoP over single anycast VIP.',
+          boundary: 'Edge PoP',
+          guardrail: 'TLS 1.3 + HTTP/2',
+        },
+        {
+          id: 'cloud-armor',
+          title: 'Cloud Armor Security Policy',
+          subtitle: 'Layer-7 filtering against OWASP Top 10 with adaptive rate limiting.',
+          boundary: 'Edge Defense',
+          guardrail: 'WAF Prevention',
+        },
+        {
+          id: 'gfe-url-map',
+          title: 'URL Map & SSL Proxy',
+          subtitle: 'Content-based routing directing traffic to nearest healthy backend region.',
+          boundary: 'Google Front End',
+          guardrail: 'Region Affinity',
+        },
+        {
+          id: 'backend-services',
+          title: 'Multi-Region Backend Services',
+          subtitle: 'Regional managed instance groups and serverless network endpoint groups.',
+          boundary: 'Region Primary & Secondary',
+          guardrail: 'Capacity Health Checks',
+        },
+        {
+          id: 'cloud-cdn',
+          title: 'Cloud CDN Cache Fill',
+          subtitle: 'Edge caching for static assets with signed URL validation for private media.',
+          boundary: 'Edge Cache',
+          guardrail: 'Origin Shield',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-armor',
+        x: 25,
+        y: 35,
+        label: 'Cloud Armor',
+        tooltip: 'Edge DDoS & WAF Rules',
+        description: 'Filters malicious requests before they hit backend capacity.',
+      },
+      {
+        id: 'spot-urlmap',
+        x: 50,
+        y: 50,
+        label: 'Global Forwarding',
+        tooltip: 'Anycast URL Map',
+        description: 'Directs clients to lowest-latency regional backends.',
+      },
+      {
+        id: 'spot-backends',
+        x: 75,
+        y: 65,
+        label: 'Backend Services',
+        tooltip: 'Autoscaling Compute',
+        description: 'Regional instance groups scaling dynamically on CPU load.',
+      },
+    ],
+    services: [
+      {
+        name: 'Global External Application Load Balancer',
+        icon: 'hub',
+        role: 'Distributes HTTP(S) traffic across multiple cloud regions using Google global network.',
+      },
+      {
+        name: 'Google Cloud Armor',
+        icon: 'shield',
+        role: 'Provides enterprise DDoS protection, IP allowlisting, and OWASP rule inspection.',
+      },
+      {
+        name: 'Cloud CDN',
+        icon: 'cached',
+        role: 'Caches static and dynamic content at Google points of presence globally.',
+      },
+      {
+        name: 'Compute Engine MIGs',
+        icon: 'dns',
+        role: 'Autoscaling regional managed instance groups running containerized application tiers.',
+      },
+    ],
+    practices: [
+      'Attach Cloud Armor security policies with calibrated rate limiting to all global forwarding rules.',
+      'Configure multi-region backend services with consistent health check timeouts under 5 seconds.',
+      'Enforce modern TLS profile requiring TLS 1.2+ with restricted cipher suites.',
+    ],
+    outcome: [
+      'Enables resilient multi-region application delivery with sub-second failover and automatic DDoS mitigation.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This reference architecture leverages Google Cloud Global External Application Load Balancer with Cloud Armor to deliver resilient, high-performance web applications across multiple regions.</p>
+      <h3>Core Components</h3>
+      <ul>
+        <li><strong>Global Forwarding Rule:</strong> Single anycast IP address advertising via BGP worldwide.</li>
+        <li><strong>Cloud Armor Policy:</strong> Evaluates incoming requests at the Google edge against OWASP CRS rulesets.</li>
+        <li><strong>Regional Backend Services:</strong> Balances requests across independent regional compute pools based on capacity and proximity.</li>
+      </ul>
+    `,
+    waf: {
+      security: 96,
+      reliability: 95,
+      performance: 97,
+      cost: 88,
+      operational: 92,
+      pillars: {
+        security: {
+          score: 96,
+          notes:
+            'Cloud Armor WAF rules, managed SSL certificates, and private backend VPC peering.',
+        },
+      },
+    },
+    terraformCode: `resource "google_compute_global_forwarding_rule" "default" {
+  name       = "global-alb-rule"
+  target     = google_compute_target_https_proxy.default.id
+  port_range = "443"
+  ip_address = google_compute_global_address.default.address
+}`,
+    whenNotToUse: [
+      'Internal microservices and regional backends that do not accept public edge ingress or multi-region failover.',
+      'Static websites that can be served directly from Cloud Storage and Cloud CDN without dynamic backend services.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Cloud Armor Security Policies',
+        trap: 'Base policy costs $5/mo plus $1 per rule, but request evaluation fees ($0.75 per million requests) compound under high-traffic endpoints.',
+        mitigation:
+          'Combine multiple IP ranges into named IP lists to minimize active rule counts and evaluation hops.',
+      },
+      {
+        service: 'Inter-Region Backend Data Egress',
+        trap: 'Routing user requests from a US edge PoP to an EU backend triggers premium cross-region network egress ($0.08 - $0.12/GB).',
+        mitigation:
+          'Deploy identical backend instance groups in all primary operating regions and configure region-affinity routing.',
+      },
+    ],
+    tags: ['Networking', 'Security', 'Global', 'Compute'],
+  },
+  'bigquery-data-lake': {
+    title: 'BigQuery Data Lake',
+    category: 'Data & Analytics',
+    complexity: 'Production',
+    description:
+      'Unified analytics architecture combining BigQuery, Dataplex, and Cloud Storage lifecycle controls for governed enterprise reporting.',
+    promise:
+      'Serverless petabyte-scale data analytics with Dataplex policy guardrails, automated data lifecycle transitions, and column-level encryption.',
+    estimatedCost: '$1,800 - $2,600 / month',
+    topology: {
+      caption: 'Data lake ingestion, transformation, and governed consumption architecture',
+      surrounding: ['Dataplex Catalog', 'Cloud KMS', 'Cloud IAM', 'VPC Service Controls'],
+      stages: [
+        {
+          id: 'ingest-gcs',
+          title: 'Cloud Storage Raw Lake',
+          subtitle: 'Multi-zone raw data buckets with lifecycle transitions to nearline storage.',
+          boundary: 'Landing Zone',
+          guardrail: 'Object Versioning',
+        },
+        {
+          id: 'dataplex-discovery',
+          title: 'Dataplex Lake Governance',
+          subtitle: 'Automated schema discovery, data quality profiling, and policy tags.',
+          boundary: 'Governance Mesh',
+          guardrail: 'Policy Tag RBAC',
+        },
+        {
+          id: 'bigquery-warehouse',
+          title: 'BigQuery Unified Warehouse',
+          subtitle: 'Partitioned and clustered analytical datasets with customer-managed keys.',
+          boundary: 'Analytics Engine',
+          guardrail: 'Column-Level Encryption',
+        },
+        {
+          id: 'consumption-bi',
+          title: 'Enterprise BI & Looker',
+          subtitle: 'Governed semantic layer connecting business analysts to curated views.',
+          boundary: 'Consumption Tier',
+          guardrail: 'Authorized Views',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-gcs',
+        x: 20,
+        y: 40,
+        label: 'Raw Storage',
+        tooltip: 'Cloud Storage Bucket',
+        description: 'Landing bucket with object lifecycle rules and KMS encryption.',
+      },
+      {
+        id: 'spot-dataplex',
+        x: 50,
+        y: 50,
+        label: 'Dataplex Mesh',
+        tooltip: 'Governance Zone',
+        description: 'Discovers schemas and enforces data classification policies.',
+      },
+      {
+        id: 'spot-bq',
+        x: 80,
+        y: 60,
+        label: 'BigQuery Core',
+        tooltip: 'Serverless SQL',
+        description: 'Optimized partitioned storage for fast SQL queries.',
+      },
+    ],
+    services: [
+      {
+        name: 'BigQuery',
+        icon: 'storage',
+        role: 'Serverless enterprise data warehouse supporting petabyte-scale SQL queries.',
+      },
+      {
+        name: 'Google Cloud Storage',
+        icon: 'folder',
+        role: 'Durable object storage foundation for structured and unstructured data assets.',
+      },
+      {
+        name: 'Dataplex',
+        icon: 'analytics',
+        role: 'Unified data fabric for centralized data discovery, governance, and quality metrics.',
+      },
+      {
+        name: 'Cloud KMS',
+        icon: 'vpn_key',
+        role: 'Provides customer-managed encryption keys for stored data assets.',
+      },
+    ],
+    practices: [
+      'Partition BigQuery tables on ingestion date or timestamp and cluster by high-cardinality query keys.',
+      'Enforce column-level access controls using Dataplex policy tags for sensitive PII data.',
+      'Apply automated Cloud Storage lifecycle rules transitioning raw data to Coldline after 90 days.',
+    ],
+    outcome: [
+      'Delivers a governed, secure analytics platform with automated data cataloging and sub-second query performance.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This reference design establishes a modern enterprise data lakehouse combining Cloud Storage object storage with BigQuery analytics and Dataplex governance.</p>
+    `,
+    waf: {
+      security: 94,
+      reliability: 95,
+      performance: 96,
+      cost: 90,
+      operational: 93,
+      pillars: {
+        security: {
+          score: 94,
+          notes:
+            'Column-level security tags, customer-managed keys, and private network perimeter.',
+        },
+      },
+    },
+    terraformCode: `resource "google_bigquery_dataset" "analytics" {
+  dataset_id                  = "enterprise_lake"
+  friendly_name               = "Governed Data Lake"
+  location                    = "US"
+  default_table_expiration_ms = 7776000000
+}`,
+    tags: ['Data', 'Analytics', 'Governance', 'BigQuery'],
+  },
+  'hybrid-interconnect': {
+    title: 'Hybrid Interconnect',
+    category: 'Networking',
+    complexity: 'Mission Critical',
+    description:
+      'Low-latency private connectivity pattern using Dedicated Interconnect, Cloud Router, and HA VPN fallback for critical hybrid systems.',
+    promise:
+      '99.99% carrier-grade SLA with automated BGP failover between Dedicated Interconnect circuits and HA VPN backup tunnels.',
+    estimatedCost: '$3,200 - $4,800 / month',
+    topology: {
+      caption: 'Hybrid on-premises to Google Cloud routing topology with BGP multi-pathing',
+      surrounding: ['Cloud Router', 'Dedicated Interconnect', 'HA Cloud VPN', 'Cloud Monitoring'],
+      stages: [
+        {
+          id: 'onprem-dc',
+          title: 'Customer Data Center',
+          subtitle: 'Dual redundant edge routers terminating 10 Gbps cross-connect circuits.',
+          boundary: 'On-Premises',
+          guardrail: 'BGP Active-Active',
+        },
+        {
+          id: 'colocation-meet',
+          title: 'Interconnect Co-location Facility',
+          subtitle: 'Diverse physical fiber cross-connects at independent metro facilities.',
+          boundary: 'Partner PoP',
+          guardrail: 'Physical Diversity',
+        },
+        {
+          id: 'cloud-router',
+          title: 'Cloud Router & VLAN Attachments',
+          subtitle: 'Dynamic route exchange with Multi-Exit Discriminator metric controls.',
+          boundary: 'Google Network',
+          guardrail: 'BGP Keepalives',
+        },
+        {
+          id: 'ha-vpn-backup',
+          title: 'HA Cloud VPN Fallback',
+          subtitle: 'Automated IPsec encrypted backup path when physical circuits degrade.',
+          boundary: 'Internet Transport',
+          guardrail: 'IKEv2 Encryption',
+        },
+        {
+          id: 'shared-vpc',
+          title: 'Shared VPC Host Network',
+          subtitle: 'Central hub network distributing connectivity across spoke projects.',
+          boundary: 'Platform Network',
+          guardrail: 'Private Google Access',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-interconnect',
+        x: 25,
+        y: 40,
+        label: 'Dedicated Interconnect',
+        tooltip: '10 Gbps VLAN Attachments',
+        description: 'Primary high-bandwidth fiber connection to Google network.',
+      },
+      {
+        id: 'spot-router',
+        x: 55,
+        y: 50,
+        label: 'Cloud Router',
+        tooltip: 'BGP Peering Engine',
+        description: 'Handles dynamic route advertisement and metric failover.',
+      },
+      {
+        id: 'spot-vpn',
+        x: 80,
+        y: 65,
+        label: 'HA VPN Standby',
+        tooltip: 'Encrypted Fallback',
+        description: 'Standby IPsec tunnels ready for seamless failover.',
+      },
+    ],
+    services: [
+      {
+        name: 'Dedicated Interconnect',
+        icon: 'settings_ethernet',
+        role: 'Provides direct physical fiber cross-connects between on-premises and Google networks.',
+      },
+      {
+        name: 'Cloud Router',
+        icon: 'router',
+        role: 'Exchanges routes between enterprise on-premises networks and Google VPCs via BGP.',
+      },
+      {
+        name: 'HA Cloud VPN',
+        icon: 'vpn_lock',
+        role: 'Delivers 99.99% SLA encrypted backup IPsec tunnels over standard public connectivity.',
+      },
+      {
+        name: 'Shared VPC',
+        icon: 'hub',
+        role: 'Centralizes network administration and connects workloads across multiple service projects.',
+      },
+    ],
+    practices: [
+      'Provision two Dedicated Interconnect circuits across distinct metropolitan colocation facilities.',
+      'Configure Cloud Router BGP keepalive intervals and advertise summary routes only.',
+      'Deploy HA Cloud VPN with automated failover testing to maintain 99.99% availability.',
+    ],
+    outcome: [
+      'Ensures uninterrupted hybrid cloud communication with automated BGP failover and sub-millisecond network jitter.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This mission-critical networking pattern connects corporate data centers to Google Cloud using redundant Dedicated Interconnect circuits backed by high-availability IPsec tunnels.</p>
+    `,
+    waf: {
+      security: 98,
+      reliability: 99,
+      performance: 98,
+      cost: 86,
+      operational: 95,
+      pillars: {
+        reliability: {
+          score: 99,
+          notes: 'Dual-circuit physical diversity with automated BGP failover to HA VPN.',
+        },
+      },
+    },
+    terraformCode: `resource "google_compute_router" "hybrid_router" {
+  name    = "cr-hybrid-hub"
+  network = "shared-vpc"
+  bgp {
+    asn = 64514
+  }
+}`,
+    tags: ['Networking', 'Hybrid Cloud', 'Interconnect', 'Enterprise'],
+  },
+  'vertex-ai-pipeline': {
+    title: 'Vertex AI Pipeline',
+    category: 'AI/ML',
+    complexity: 'Production',
+    description:
+      'End-to-end MLOps blueprint with Vertex AI Pipelines, Feature Store, and model registry promotion across dev/stage/prod projects.',
+    promise:
+      'Reproducible Kubeflow-based machine learning pipelines with unified feature serving and automated CI/CD artifact registration.',
+    estimatedCost: '$2,000 - $3,000 / month',
+    topology: {
+      caption: 'Vertex AI MLOps lifecycle from data ingestion to governed model deployment',
+      surrounding: ['Vertex Model Registry', 'Artifact Registry', 'Cloud Storage', 'Cloud IAM'],
+      stages: [
+        {
+          id: 'data-feature',
+          title: 'Feature Store & Extraction',
+          subtitle: 'Centralized feature registry ensuring training-serving feature consistency.',
+          boundary: 'Feature Store',
+          guardrail: 'Point-in-Time Joins',
+        },
+        {
+          id: 'pipeline-orch',
+          title: 'Vertex AI Pipelines',
+          subtitle:
+            'Serverless workflow execution running orchestrated data validation and training steps.',
+          boundary: 'Workflow Engine',
+          guardrail: 'Artifact Lineage',
+        },
+        {
+          id: 'model-eval',
+          title: 'Automated Evaluation & Registry',
+          subtitle: 'Performance metric gating and model registration with version lineage.',
+          boundary: 'Model Registry',
+          guardrail: 'Approval Gates',
+        },
+        {
+          id: 'endpoint-deploy',
+          title: 'Managed Prediction Endpoint',
+          subtitle:
+            'Private endpoint deployment with autoscaling compute and continuous skew detection.',
+          boundary: 'Serving Cluster',
+          guardrail: 'Model Monitoring',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-pipeline',
+        x: 30,
+        y: 45,
+        label: 'Pipeline Engine',
+        tooltip: 'Serverless Workflows',
+        description: 'Executes repeatable training steps with complete artifact lineage.',
+      },
+      {
+        id: 'spot-registry',
+        x: 60,
+        y: 55,
+        label: 'Model Registry',
+        tooltip: 'Governed Models',
+        description: 'Tracks model versioning, evaluations, and compliance approvals.',
+      },
+      {
+        id: 'spot-serving',
+        x: 85,
+        y: 65,
+        label: 'Prediction Endpoint',
+        tooltip: 'Autoscaling Serving',
+        description: 'Low-latency private inference endpoints with drift monitoring.',
+      },
+    ],
+    services: [
+      {
+        name: 'Vertex AI Pipelines',
+        icon: 'account_tree',
+        role: 'Orchestrates machine learning training and evaluation workflows using Kubeflow components.',
+      },
+      {
+        name: 'Vertex AI Model Registry',
+        icon: 'inventory_2',
+        role: 'Centralizes model lifecycle management, version tracking, and deployment promotion.',
+      },
+      {
+        name: 'Vertex AI Feature Store',
+        icon: 'dataset',
+        role: 'Serves online and offline feature representations with point-in-time correctness.',
+      },
+      {
+        name: 'Cloud Artifact Registry',
+        icon: 'layers',
+        role: 'Houses custom container images and execution packages with vulnerability scanning.',
+      },
+    ],
+    practices: [
+      'Log all pipeline runs with execution metadata and dataset snapshots for full auditability.',
+      'Enforce continuous model monitoring on production endpoints to detect data and concept drift.',
+      'Run training workloads in isolated VPC networks with private Google access enabled.',
+    ],
+    outcome: [
+      'Accelerates reliable model production releases with end-to-end traceability and automated quality gating.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This MLOps blueprint provides a scalable, repeatable foundation for building, evaluating, and deploying machine learning models on Google Cloud Vertex AI.</p>
+    `,
+    waf: {
+      security: 92,
+      reliability: 94,
+      performance: 95,
+      cost: 89,
+      operational: 93,
+      pillars: {
+        operational: {
+          score: 93,
+          notes:
+            'Automated lineage tracking, reproducible pipeline graphs, and model drift alerts.',
+        },
+      },
+    },
+    terraformCode: `resource "google_vertex_ai_endpoint" "prod_endpoint" {
+  name         = "production-prediction-endpoint"
+  display_name = "Production Prediction Endpoint"
+  location     = "us-central1"
+}`,
+    tags: ['AI/ML', 'MLOps', 'Vertex AI', 'Pipelines'],
+  },
+  'zero-trust-security': {
+    title: 'Zero Trust Security',
+    category: 'Security',
+    complexity: 'Mission Critical',
+    description:
+      'Identity-aware proxy and BeyondCorp Enterprise architecture enforcing context-aware access and workload isolation across environments.',
+    promise:
+      'Zero-VPN employee and contractor access enforced by context-aware device health signals, IAM conditions, and VPC Service Controls.',
+    estimatedCost: '$2,400 - $3,400 / month',
+    topology: {
+      caption: 'BeyondCorp context-aware perimeter and zero-trust workload access',
+      surrounding: [
+        'BeyondCorp Enterprise',
+        'Cloud Identity',
+        'VPC Service Controls',
+        'Security Command Center',
+      ],
+      stages: [
+        {
+          id: 'client-context',
+          title: 'Context-Aware Device Ingress',
+          subtitle: 'Endpoint health signals, OS patch status, and geographic geolocation checks.',
+          boundary: 'Endpoint Device',
+          guardrail: 'Device Certificate',
+        },
+        {
+          id: 'iap-perimeter',
+          title: 'Identity-Aware Proxy (IAP)',
+          subtitle: 'Central reverse proxy verifying user identity and access levels per request.',
+          boundary: 'Access Gateway',
+          guardrail: 'Context-Aware Policy',
+        },
+        {
+          id: 'vpc-controls',
+          title: 'VPC Service Controls Perimeter',
+          subtitle: 'Network perimeter preventing unauthorized data exfiltration across services.',
+          boundary: 'Security Perimeter',
+          guardrail: 'Exfiltration Prevention',
+        },
+        {
+          id: 'protected-workload',
+          title: 'Isolated Enterprise Workloads',
+          subtitle:
+            'Internal compute services operating without public IP addresses or jump boxes.',
+          boundary: 'Private Spoke VPC',
+          guardrail: 'Private Service Connect',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-iap',
+        x: 25,
+        y: 40,
+        label: 'Identity Proxy',
+        tooltip: 'Identity-Aware Proxy',
+        description: 'Authenticates and authorizes requests before reaching backend VPCs.',
+      },
+      {
+        id: 'spot-perimeter',
+        x: 55,
+        y: 55,
+        label: 'Service Perimeter',
+        tooltip: 'VPC Service Controls',
+        description: 'Locks down APIs and storage buckets against exfiltration.',
+      },
+      {
+        id: 'spot-workload',
+        x: 80,
+        y: 65,
+        label: 'Private Services',
+        tooltip: 'Internal Workload',
+        description: 'Workload isolated in private subnets accessible only via IAP.',
+      },
+    ],
+    services: [
+      {
+        name: 'Identity-Aware Proxy',
+        icon: 'verified_user',
+        role: 'Controls access to web applications and VMs running on Google Cloud without VPNs.',
+      },
+      {
+        name: 'VPC Service Controls',
+        icon: 'security',
+        role: 'Establishes cryptographic perimeters around Google Cloud resources to prevent exfiltration.',
+      },
+      {
+        name: 'BeyondCorp Enterprise',
+        icon: 'lock',
+        role: 'Enforces real-time context-aware access policies combining user identity and device posture.',
+      },
+      {
+        name: 'Security Command Center',
+        icon: 'policy',
+        role: 'Provides threat detection, vulnerability scanning, and compliance tracking.',
+      },
+    ],
+    practices: [
+      'Require multi-factor authentication and managed device certificates for all internal resources.',
+      'Enforce VPC Service Controls perimeters encompassing BigQuery, Cloud Storage, and Compute APIs.',
+      'Audit access logs continuously through Security Command Center with automated alert routing.',
+    ],
+    outcome: [
+      'Eliminates legacy corporate VPN overhead while enforcing granular, real-time context-aware security policies.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This BeyondCorp zero-trust reference architecture enables secure, context-aware access to corporate applications without traditional VPN concentrators or jump hosts.</p>
+    `,
+    waf: {
+      security: 99,
+      reliability: 96,
+      performance: 94,
+      cost: 91,
+      operational: 96,
+      pillars: {
+        security: {
+          score: 99,
+          notes: 'Context-aware device verification, IAP gateway, and strict VPC Service Controls.',
+        },
+      },
+    },
+    terraformCode: `resource "google_iap_web_type_app_engine" "iap_app" {
+  app_id = "default"
+  role   = "roles/iap.httpsResourceAccessor"
+  member = "group:internal-engineers@example.com"
+}`,
+    tags: ['Security', 'Zero Trust', 'BeyondCorp', 'Identity'],
+  },
+  'cloud-run-microservices': {
+    title: 'Cloud Run Microservices',
+    category: 'Serverless',
+    complexity: 'Production',
+    description:
+      'Containerized microservices pattern using Cloud Run, Eventarc, and Pub/Sub with autoscaling and per-service least-privilege IAM.',
+    promise:
+      'Scale-to-zero serverless microservices with sub-second cold starts, decoupled Eventarc events, and end-to-end TLS encryption.',
+    estimatedCost: '$1,000 - $1,800 / month',
+    topology: {
+      caption: 'Event-driven serverless microservices with Pub/Sub message broker and Cloud Run',
+      surrounding: ['Eventarc', 'Cloud Pub/Sub', 'Cloud Tasks', 'Cloud Trace'],
+      stages: [
+        {
+          id: 'ingress-run',
+          title: 'Public Gateway Service',
+          subtitle: 'Stateless frontend API container auto-scaling from zero on demand.',
+          boundary: 'API Ingress',
+          guardrail: 'mTLS & IAM Tokens',
+        },
+        {
+          id: 'pubsub-broker',
+          title: 'Cloud Pub/Sub Messaging',
+          subtitle: 'High-throughput asynchronous message broker with dead-letter queueing.',
+          boundary: 'Event Backbone',
+          guardrail: 'At-Least-Once Delivery',
+        },
+        {
+          id: 'eventarc-triggers',
+          title: 'Eventarc Event Router',
+          subtitle:
+            'Standardized CloudEvents routing triggers dispatching to worker microservices.',
+          boundary: 'Event Routing',
+          guardrail: 'CloudEvents v1.0',
+        },
+        {
+          id: 'worker-services',
+          title: 'Internal Processing Services',
+          subtitle: 'Private worker containers executing business logic isolated in private VPC.',
+          boundary: 'Internal Microservices',
+          guardrail: 'Internal Ingress Only',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-ingress',
+        x: 20,
+        y: 40,
+        label: 'Cloud Run API',
+        tooltip: 'Serverless API',
+        description: 'Handles ingress HTTP traffic with fast cold-start performance.',
+      },
+      {
+        id: 'spot-pubsub',
+        x: 50,
+        y: 55,
+        label: 'Pub/Sub Broker',
+        tooltip: 'Message Queue',
+        description: 'Decouples service communication with persistent delivery guarantees.',
+      },
+      {
+        id: 'spot-workers',
+        x: 80,
+        y: 65,
+        label: 'Cloud Run Workers',
+        tooltip: 'Private Workers',
+        description: 'Scales horizontally on backlog queue depth without idle compute cost.',
+      },
+    ],
+    services: [
+      {
+        name: 'Google Cloud Run',
+        icon: 'cloud',
+        role: 'Runs stateless containerized microservices that scale down to zero when idle.',
+      },
+      {
+        name: 'Cloud Pub/Sub',
+        icon: 'send',
+        role: 'Decouples microservices through scalable asynchronous event ingestion and delivery.',
+      },
+      {
+        name: 'Eventarc',
+        icon: 'bolt',
+        role: 'Routes events from Cloud Storage, BigQuery, and custom apps in standard CloudEvents format.',
+      },
+      {
+        name: 'Cloud Monitoring & Trace',
+        icon: 'insights',
+        role: 'Provides distributed request tracing and latency waterfall analysis across services.',
+      },
+    ],
+    practices: [
+      'Configure internal microservices with internal ingress to prevent public internet access.',
+      'Attach dead-letter topics and retry policies to every Pub/Sub subscription.',
+      'Leverage Serverless VPC Access connectors to securely query private databases.',
+    ],
+    outcome: [
+      'Provides a highly elastic, cost-efficient microservices architecture with zero idle compute infrastructure.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This event-driven microservices pattern couples Google Cloud Run container execution with Cloud Pub/Sub and Eventarc routing for scalable, decoupled services.</p>
+    `,
+    waf: {
+      security: 95,
+      reliability: 96,
+      performance: 94,
+      cost: 97,
+      operational: 94,
+      pillars: {
+        cost: {
+          score: 97,
+          notes: 'Scale-to-zero compute with no standing server costs during quiet hours.',
+        },
+      },
+    },
+    terraformCode: `resource "google_cloud_run_v2_service" "api_service" {
+  name     = "orders-api"
+  location = "us-central1"
+  template {
+    containers {
+      image = "us-docker.pkg.dev/project/repo/orders-api:v1.0"
+    }
+  }
+}`,
+    tags: ['Serverless', 'Containers', 'Microservices', 'Event-Driven'],
+  },
+};
+
+export const finopsArchitectures = {
+  'multi-cloud-cost-optimization': {
+    title: 'Multi-Cloud Cost Optimization',
+    category: 'Cost Analysis',
+    complexity: 'Production',
+    description:
+      'Cross-cloud optimization architecture with shared tagging taxonomy, cost telemetry normalization, and rightsizing recommendation pipelines.',
+    promise:
+      'Normalized FOCUS 1.0 cost datasets uniting Azure, AWS, and GCP billing exports with automated rightsizing recommendation feeds.',
+    estimatedCost: '$1,400 - $2,200 / month',
+    topology: {
+      caption: 'Multi-cloud cost ingestion, FOCUS normalization, and optimization engine',
+      surrounding: [
+        'FinOps Open Cost Specification',
+        'BigQuery Warehousing',
+        'Tagging Policy',
+        'Automated Recommendations',
+      ],
+      stages: [
+        {
+          id: 'cloud-exports',
+          title: 'Cloud Billing Exports',
+          subtitle:
+            'Daily automated billing feeds from AWS Cost and Usage, Azure Cost Details, and GCP Billing.',
+          boundary: 'Multi-Cloud Ingestion',
+          guardrail: 'Automated Daily Pulls',
+        },
+        {
+          id: 'normalization-engine',
+          title: 'FOCUS 1.0 Normalization',
+          subtitle:
+            'Transforms heterogeneous provider billing rows into standardized cost schemas.',
+          boundary: 'Data Transformation',
+          guardrail: 'Schema Validation',
+        },
+        {
+          id: 'unified-lake',
+          title: 'Unified FinOps Lakehouse',
+          subtitle:
+            'Central repository for multi-cloud queries, commitment tracking, and amortized models.',
+          boundary: 'Cost Repository',
+          guardrail: 'Query Cost Controls',
+        },
+        {
+          id: 'actionable-recommendations',
+          title: 'Optimization Recommendation Engine',
+          subtitle:
+            'Generates cross-cloud rightsizing, idle resource pruning, and purchase commitments.',
+          boundary: 'Action Engine',
+          guardrail: 'Policy Thresholds',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-exports',
+        x: 25,
+        y: 40,
+        label: 'Provider Exports',
+        tooltip: 'Billing Data Ingestion',
+        description: 'Collects raw billing exports from AWS, Azure, and GCP.',
+      },
+      {
+        id: 'spot-focus',
+        x: 55,
+        y: 50,
+        label: 'FOCUS Normalizer',
+        tooltip: 'Schema Standardizer',
+        description: 'Converts billing lines to unified FOCUS 1.0 cost definitions.',
+      },
+      {
+        id: 'spot-recommend',
+        x: 80,
+        y: 65,
+        label: 'Rightsizing Feed',
+        tooltip: 'Optimization Engine',
+        description: 'Flags unallocated resources and rightsizing candidates.',
+      },
+    ],
+    services: [
+      {
+        name: 'BigQuery Cost Warehouse',
+        icon: 'storage',
+        role: 'Centralizes transformed multi-cloud billing datasets for ad-hoc SQL analysis.',
+      },
+      {
+        name: 'Cloud Storage Ingestion',
+        icon: 'folder_open',
+        role: 'Stages raw provider cost detail archives securely across cloud boundaries.',
+      },
+      {
+        name: 'FinOps Policy Controller',
+        icon: 'rule',
+        role: 'Validates tag compliance and allocates shared platform expenses.',
+      },
+      {
+        name: 'Looker Studio / Grafana',
+        icon: 'analytics',
+        role: 'Renders executive cost dashboards and department-level spend reports.',
+      },
+    ],
+    practices: [
+      'Adopt the FOCUS 1.0 specification for cross-cloud billing field naming and amortized cost models.',
+      'Enforce required organizational tags: CostCenter, Environment, Owner, and Application.',
+      'Schedule automated rightsizing audits weekly to prevent idle resource sprawl.',
+    ],
+    outcome: [
+      'Delivers unified cross-cloud spend transparency with measurable monthly cloud waste reduction.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This FinOps architecture provides a centralized, normalized cost optimization engine that correlates billing data across Azure, AWS, and Google Cloud using the FinOps Open Cost and Usage Specification (FOCUS).</p>
+    `,
+    waf: {
+      security: 92,
+      reliability: 94,
+      performance: 93,
+      cost: 98,
+      operational: 94,
+      pillars: {
+        cost: {
+          score: 98,
+          notes:
+            'Identifies unattached volumes, idle load balancers, and rightsizing opportunities.',
+        },
+      },
+    },
+    terraformCode: `resource "google_bigquery_table" "finops_focus" {
+  dataset_id = "finops_repository"
+  table_id   = "focus_v1_costs"
+  time_partitioning {
+    type  = "DAY"
+    field = "ChargePeriodStart"
+  }
+}`,
+    whenNotToUse: [
+      'Single-cloud estates with total cloud spend under $10,000/month where custom FOCUS ETL pipelines cost more than native cost tools.',
+      'Teams without enforced organizational tagging policies (raw untagged billing records cannot be allocated by business unit).',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'BigQuery Billing Export Query Scans',
+        trap: 'Running SELECT * over unpartitioned multi-year billing tables costs $6.25 per TB scanned.',
+        mitigation:
+          'Partition billing tables by export_time (DAY) and cluster by provider, service_id, and cost_center.',
+      },
+      {
+        service: 'Automated Rightsizing Idle Timeouts',
+        trap: 'Downsizing compute without reviewing P99 peak utilization can trigger out-of-memory crashes and auto-recovery churn.',
+        mitigation:
+          'Evaluate 30-day P99 memory metrics alongside CPU before triggering automated rightsizing recommendations.',
+      },
+    ],
+    tags: ['FinOps', 'Multi-Cloud', 'Cost Optimization', 'FOCUS'],
+  },
+  'real-time-cost-dashboard': {
+    title: 'Real-time Cost Dashboard',
+    category: 'Reporting',
+    complexity: 'Production',
+    description:
+      'Streaming dashboard pattern for near real-time cloud spend visibility across business units, products, and environments.',
+    promise:
+      'Sub-minute cloud spend anomaly detection and hourly cost attribution dashboards powered by streaming telemetry.',
+    estimatedCost: '$1,000 - $1,600 / month',
+    topology: {
+      caption: 'Streaming cloud cost telemetry and real-time visualization pipeline',
+      surrounding: [
+        'Pub/Sub Messaging',
+        'Dataflow Streaming',
+        'Real-time Dashboards',
+        'Alert Webhooks',
+      ],
+      stages: [
+        {
+          id: 'stream-ingest',
+          title: 'Cloud Usage Metric Streaming',
+          subtitle:
+            'Captures hourly and streaming usage telemetry from cloud audit and monitoring feeds.',
+          boundary: 'Telemetry Ingress',
+          guardrail: 'Encrypted Streaming',
+        },
+        {
+          id: 'stream-processing',
+          title: 'Stream Transformation & Attribution',
+          subtitle:
+            'Enriches raw usage records with budget thresholds, cost center metadata, and anomaly tags.',
+          boundary: 'Stream Processor',
+          guardrail: 'Windowed Aggregations',
+        },
+        {
+          id: 'timeseries-store',
+          title: 'High-Velocity Cost Store',
+          subtitle: 'Low-latency time-series storage supporting instant slice-and-dice queries.',
+          boundary: 'Analytical Store',
+          guardrail: 'Automated Compaction',
+        },
+        {
+          id: 'executive-dashboard',
+          title: 'Interactive Operations Display',
+          subtitle:
+            'Real-time visualization with sub-minute spend surge alarms and budget burn charts.',
+          boundary: 'Reporting Layer',
+          guardrail: 'Role-Based Access',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-stream',
+        x: 25,
+        y: 40,
+        label: 'Telemetry Stream',
+        tooltip: 'Streaming Ingress',
+        description: 'Collects live metric telemetry and usage events.',
+      },
+      {
+        id: 'spot-enrich',
+        x: 55,
+        y: 55,
+        label: 'Attribution Engine',
+        tooltip: 'Real-time Attribution',
+        description: 'Calculates amortized spend and compares with budget lines.',
+      },
+      {
+        id: 'spot-dash',
+        x: 80,
+        y: 65,
+        label: 'Live Dashboard',
+        tooltip: 'Visualization Board',
+        description: 'Displays live burn rates and cost anomalies per team.',
+      },
+    ],
+    services: [
+      {
+        name: 'Dataflow Streaming Engine',
+        icon: 'water_drop',
+        role: 'Processes streaming cloud usage telemetry with sliding window anomaly detection.',
+      },
+      {
+        name: 'BigQuery Streaming Buffer',
+        icon: 'input',
+        role: 'Receives high-frequency cost events for instant analytical query readiness.',
+      },
+      {
+        name: 'Cloud Pub/Sub',
+        icon: 'send',
+        role: 'Transports usage events and spend alert triggers with low latency.',
+      },
+      {
+        name: 'Looker Studio',
+        icon: 'dashboard',
+        role: 'Delivers real-time executive and engineering spend visualization screens.',
+      },
+    ],
+    practices: [
+      'Establish sliding 1-hour and 24-hour anomaly detection windows to catch unexpected cloud spend spikes.',
+      'Provide team-level filtered views so engineers see their direct deployment budget impact.',
+      'Maintain automated webhook alerts routing to incident management channels when run rates spike.',
+    ],
+    outcome: [
+      'Transforms reactive end-of-month billing surprises into proactive, intraday spend management.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This reference pattern establishes a streaming FinOps reporting pipeline that captures cloud usage events in real time, computes current burn rates, and alerts engineers immediately when anomalous spend occurs.</p>
+    `,
+    waf: {
+      security: 90,
+      reliability: 93,
+      performance: 95,
+      cost: 95,
+      operational: 96,
+      pillars: {
+        operational: {
+          score: 96,
+          notes: 'Real-time alerting and visible team accountability metrics.',
+        },
+      },
+    },
+    terraformCode: `resource "google_pubsub_topic" "cost_stream" {
+  name = "finops-cost-events"
+}`,
+    tags: ['FinOps', 'Dashboards', 'Streaming', 'Analytics'],
+  },
+  'chargeback-allocation': {
+    title: 'Chargeback & Allocation',
+    category: 'Billing',
+    complexity: 'Standard',
+    description:
+      'Allocation framework for unit-economics reporting with cost ownership, shared resource split rules, and monthly chargeback automation.',
+    promise:
+      '100% allocation of shared Kubernetes and network egress costs back to business units using configurable proportionality algorithms.',
+    estimatedCost: '$700 - $1,200 / month',
+    topology: {
+      caption: 'Shared cost pool decomposition and automated chargeback allocation pipeline',
+      surrounding: [
+        'ERP Integration',
+        'Cluster Telemetry',
+        'Shared Network Hub',
+        'Billing Reports',
+      ],
+      stages: [
+        {
+          id: 'shared-pools',
+          title: 'Shared Infrastructure Pools',
+          subtitle:
+            'Aggregates shared costs: Kubernetes clusters, transit gateways, support tiers, and logging.',
+          boundary: 'Shared Cost Pool',
+          guardrail: 'Audit Logging',
+        },
+        {
+          id: 'split-rules',
+          title: 'Allocation Engine & Split Rules',
+          subtitle:
+            'Applies proportional consumption algorithms based on CPU, memory, and network bytes.',
+          boundary: 'Allocation Logic',
+          guardrail: 'Mathematical Reconciliation',
+        },
+        {
+          id: 'unit-economics',
+          title: 'Unit Economics Calculation',
+          subtitle:
+            'Correlates allocated cloud spend with business KPIs such as transactions or active users.',
+          boundary: 'Business Intelligence',
+          guardrail: 'Historical Baseline',
+        },
+        {
+          id: 'ledger-export',
+          title: 'Financial Ledger & Chargeback',
+          subtitle:
+            'Exports clean journal entries to corporate ERP systems for monthly internal billing.',
+          boundary: 'Finance Gateway',
+          guardrail: 'GAAP Compliance',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-pool',
+        x: 25,
+        y: 40,
+        label: 'Shared Pool',
+        tooltip: 'Unallocated Resources',
+        description: 'Centralizes shared network, Kubernetes, and support expenditures.',
+      },
+      {
+        id: 'spot-rules',
+        x: 55,
+        y: 55,
+        label: 'Split Rules',
+        tooltip: 'Proportional Algorithms',
+        description: 'Distributes shared costs based on actual container resource usage.',
+      },
+      {
+        id: 'spot-ledger',
+        x: 80,
+        y: 65,
+        label: 'Finance Ledger',
+        tooltip: 'ERP Journal Export',
+        description: 'Generates automated chargeback reports for finance.',
+      },
+    ],
+    services: [
+      {
+        name: 'Cloud Billing Allocation Engine',
+        icon: 'calculate',
+        role: 'Decomposes shared resource pools into granular cost slices.',
+      },
+      {
+        name: 'Container Cost Telemetry',
+        icon: 'view_in_ar',
+        role: 'Extracts pod-level CPU and memory consumption to calculate cluster chargeback.',
+      },
+      {
+        name: 'BigQuery Financial Models',
+        icon: 'table_chart',
+        role: 'Runs reconciliation queries balancing allocated costs to invoice totals.',
+      },
+      {
+        name: 'Cloud Workflow Scheduler',
+        icon: 'schedule',
+        role: 'Triggers monthly chargeback report generation and journal distribution.',
+      },
+    ],
+    practices: [
+      'Reconcile allocated totals with raw provider invoices to ensure zero untracked unallocated cost.',
+      'Combine static tag allocations with dynamic metric allocations for container workloads.',
+      'Publish transparent allocation formulas to all engineering product owners.',
+    ],
+    outcome: [
+      'Establishes clear financial accountability by distributing 100% of shared cloud infrastructure costs.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This architecture automates the decomposition and chargeback of shared cloud resources, ensuring every dollar spent on shared clusters, networks, and licenses is assigned to a responsible cost center.</p>
+    `,
+    waf: {
+      security: 91,
+      reliability: 92,
+      performance: 90,
+      cost: 97,
+      operational: 93,
+      pillars: {
+        cost: {
+          score: 97,
+          notes: 'Eliminates unassigned overhead with automated proportionality algorithms.',
+        },
+      },
+    },
+    terraformCode: `resource "google_bigquery_routine" "chargeback_split" {
+  dataset_id   = "finops_allocation"
+  routine_id   = "calculate_kubernetes_chargeback"
+  routine_type = "PROCEDURE"
+  language     = "SQL"
+  definition_body = "SELECT 1;"
+}`,
+    tags: ['FinOps', 'Chargeback', 'Allocation', 'Unit Economics'],
+  },
+  'ri-savings-plan-automation': {
+    title: 'RI & Savings Plan Automation',
+    category: 'Automation',
+    complexity: 'Production',
+    description:
+      'Automation workflow for committed-use planning, purchase simulation, and policy-based guardrails to reduce avoidable spend.',
+    promise:
+      'Continuous coverage targeting with risk-managed break-even simulation, minimizing unblended on-demand compute overages.',
+    estimatedCost: '$1,600 - $2,500 / month',
+    topology: {
+      caption: 'Commitment discount evaluation, purchase simulation, and coverage guardrails',
+      surrounding: [
+        'Commitment API',
+        'Risk Modeling Engine',
+        'Approval Gateway',
+        'Expiration Monitor',
+      ],
+      stages: [
+        {
+          id: 'baseline-analysis',
+          title: 'Historical Baseline Analyzer',
+          subtitle:
+            'Evaluates rolling 30/60/90-day stable compute, memory, and database usage footprints.',
+          boundary: 'Usage Profiler',
+          guardrail: 'Seasonality Smoothing',
+        },
+        {
+          id: 'break-even-sim',
+          title: 'Commitment Simulation Engine',
+          subtitle:
+            'Simulates 1-year and 3-year commitment discount curves to identify break-even horizons.',
+          boundary: 'Risk Calculator',
+          guardrail: 'Utilization Floor',
+        },
+        {
+          id: 'approval-dispatch',
+          title: 'Approval & Notification Gate',
+          subtitle:
+            'Dispatches purchase recommendation packets to finance and platform stakeholders.',
+          boundary: 'Governance Gate',
+          guardrail: 'Dual Sign-Off',
+        },
+        {
+          id: 'portfolio-monitor',
+          title: 'Commitment Lifecycle Monitor',
+          subtitle:
+            'Continuously monitors portfolio expiration dates and flags expiring terms 60 days ahead.',
+          boundary: 'Portfolio Tracker',
+          guardrail: 'Expiration Alerts',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-baseline',
+        x: 25,
+        y: 40,
+        label: 'Usage Baseline',
+        tooltip: 'Historical Compute',
+        description: 'Identifies stable continuous compute floor across regions.',
+      },
+      {
+        id: 'spot-sim',
+        x: 55,
+        y: 50,
+        label: 'Discount Simulator',
+        tooltip: 'Break-Even Model',
+        description: 'Models savings vs commitment risk across contract tiers.',
+      },
+      {
+        id: 'spot-alerts',
+        x: 80,
+        y: 65,
+        label: 'Expiration Tracker',
+        tooltip: 'Lifecycle Warnings',
+        description: 'Alerts finance before commitment windows lapse.',
+      },
+    ],
+    services: [
+      {
+        name: 'Cloud Commitment Recommendations API',
+        icon: 'savings',
+        role: 'Surfaces native provider reserved instance and committed use discount recommendations.',
+      },
+      {
+        name: 'Commitment Modeling Engine',
+        icon: 'tune',
+        role: 'Simulates blended compute and flexible savings plan trade-offs.',
+      },
+      {
+        name: 'Automation Worker',
+        icon: 'bolt',
+        role: 'Executes automated recommendation digestion and notification dispatch.',
+      },
+      {
+        name: 'Cloud Monitoring Alerts',
+        icon: 'notifications_active',
+        role: 'Sends 60-day, 30-day, and 15-day commitment expiry notifications.',
+      },
+    ],
+    practices: [
+      'Maintain a target commitment coverage between 70% and 85% of baseline capacity to prevent over-commitment.',
+      'Prioritize flexible compute commitment tiers over rigid single-zone instance reservations.',
+      'Conduct quarterly reviews of expiring commitments to stagger expiration waves.',
+    ],
+    outcome: [
+      'Achieves 30% to 50% compute cost savings through continuous, automated commitment portfolio management.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This automation blueprint optimizes cloud commitment purchases by analyzing baseline compute demand, modeling break-even timelines, and providing structured workflows for reserved capacity management.</p>
+    `,
+    waf: {
+      security: 91,
+      reliability: 93,
+      performance: 91,
+      cost: 99,
+      operational: 94,
+      pillars: {
+        cost: {
+          score: 99,
+          notes: 'Automated break-even simulation driving 30-50% sustained compute discounts.',
+        },
+      },
+    },
+    terraformCode: `resource "google_monitoring_alert_policy" "commitment_expiration" {
+  display_name = "Commitment Expiration Warning (60 Days)"
+  combiner     = "OR"
+  conditions {
+    display_name = "Expiring Commitments"
+    condition_threshold {
+      filter = "resource.type = \\"billing_account\\""
+    }
+  }
+}`,
+    tags: ['FinOps', 'Automation', 'Savings Plans', 'Reserved Instances'],
+  },
+  'budget-policy-framework': {
+    title: 'Budget & Policy Framework',
+    category: 'Governance',
+    complexity: 'Mission Critical',
+    description:
+      'Governance architecture tying budget thresholds to policy enforcement, alert routing, and escalation workflows by cost center.',
+    promise:
+      'Automated policy enforcement shutting down non-production sandbox sprawl when thresholds exceed 100% without business justification.',
+    estimatedCost: '$1,200 - $1,900 / month',
+    topology: {
+      caption:
+        'Hierarchical budget allocation, multi-tier threshold alerting, and policy enforcement',
+      surrounding: [
+        'Budget API',
+        'Cloud Organization Policies',
+        'Notification Routing',
+        'Automated Guardrails',
+      ],
+      stages: [
+        {
+          id: 'hierarchical-budgets',
+          title: 'Hierarchical Budget Allocations',
+          subtitle:
+            'Granular budget scopes tied to billing accounts, projects, folders, and cost centers.',
+          boundary: 'Budget Registry',
+          guardrail: 'Strict Quotas',
+        },
+        {
+          id: 'multi-threshold-alerts',
+          title: 'Graduated Alert Triggers',
+          subtitle:
+            'Configured triggers at 50%, 80%, 100%, and 120% of forecast monthly run rates.',
+          boundary: 'Notification Bus',
+          guardrail: 'Tiered Escalation',
+        },
+        {
+          id: 'policy-guardrail',
+          title: 'Automated Guardrail Enforcement',
+          subtitle: 'Organization Policies restricting expensive VM creation when budgets breach.',
+          boundary: 'Policy Controller',
+          guardrail: 'Policy Constraints',
+        },
+        {
+          id: 'sandbox-management',
+          title: 'Sandbox Auto-Containment',
+          subtitle:
+            'Terminates runaway sandbox test environments when hard spend ceilings are surpassed.',
+          boundary: 'Remediation Worker',
+          guardrail: 'Automated Shutdown',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-budgets',
+        x: 25,
+        y: 40,
+        label: 'Org Budgets',
+        tooltip: 'Hierarchical Quotas',
+        description: 'Enforces budget limits aligned with department cost centers.',
+      },
+      {
+        id: 'spot-thresholds',
+        x: 55,
+        y: 55,
+        label: 'Alert Tiers',
+        tooltip: 'Forecast Triggers',
+        description: 'Notifies cost owners when projected burn exceeds targets.',
+      },
+      {
+        id: 'spot-containment',
+        x: 80,
+        y: 65,
+        label: 'Auto-Containment',
+        tooltip: 'Policy Guardrail',
+        description: 'Disables expensive provisioning in sandbox environments on breach.',
+      },
+    ],
+    services: [
+      {
+        name: 'Cloud Billing Budget API',
+        icon: 'account_balance_wallet',
+        role: 'Defines programmatic budget scopes, forecast thresholds, and alert channels.',
+      },
+      {
+        name: 'Cloud Organization Policies',
+        icon: 'policy',
+        role: 'Enforces resource creation constraints based on project tags and compliance status.',
+      },
+      {
+        name: 'Auto-Remediation Worker',
+        icon: 'build',
+        role: 'Executes automated containment actions for sandbox environments exceeding budgets.',
+      },
+      {
+        name: 'Notification Channels',
+        icon: 'mail',
+        role: 'Routes actionable notifications to Slack, PagerDuty, and email distribution groups.',
+      },
+    ],
+    practices: [
+      'Configure budget thresholds on both actual spend and projected monthly forecast.',
+      'Implement hard limits with automated remediation strictly in sandbox and lab environments.',
+      'Require explicit business justification before raising project budget caps.',
+    ],
+    outcome: [
+      'Prevents unexpected billing shocks and maintains organizational discipline through automated governance.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This governance blueprint establishes a comprehensive budget and policy framework that couples automated alerting with policy enforcement to prevent runaway infrastructure costs.</p>
+    `,
+    waf: {
+      security: 94,
+      reliability: 93,
+      performance: 91,
+      cost: 98,
+      operational: 97,
+      pillars: {
+        cost: {
+          score: 98,
+          notes: 'Tiered budget alerting with automated non-production containment.',
+        },
+      },
+    },
+    terraformCode: `resource "google_billing_budget" "budget" {
+  billing_account = "012345-567890-ABCDEF"
+  display_name    = "Production Department Budget"
+  amount {
+    specified_amount {
+      currency_code = "USD"
+      units         = "10000"
+    }
+  }
+}`,
+    tags: ['FinOps', 'Governance', 'Budgets', 'Policy'],
+  },
+  'waste-identification-alerts': {
+    title: 'Waste Identification & Alerts',
+    category: 'Optimization',
+    complexity: 'Production',
+    description:
+      'Continuous anomaly and idle-resource detection pipeline with actionable alerts for compute, storage, and network waste classes.',
+    promise:
+      'Automated scanning for unattached persistent disks, orphaned load balancers, and idle compute instances saving thousands each billing cycle.',
+    estimatedCost: '$1,100 - $1,700 / month',
+    topology: {
+      caption:
+        'Continuous waste scanning, classification, and automated cleanup recommendation pipeline',
+      surrounding: [
+        'Resource Graph API',
+        'Recommender Service',
+        'Notification Integration',
+        'Cleanup Automation',
+      ],
+      stages: [
+        {
+          id: 'resource-inventory',
+          title: 'Full Asset Inventory Scan',
+          subtitle:
+            'Daily crawl across all subscriptions and projects inventorying live cloud assets.',
+          boundary: 'Crawler Agent',
+          guardrail: 'Read-Only Scanner',
+        },
+        {
+          id: 'waste-classifier',
+          title: 'Heuristic Waste Classifier',
+          subtitle:
+            'Evaluates utilization metrics to flag unattached disks, idle IPs, and dormant VMs.',
+          boundary: 'Classification Engine',
+          guardrail: 'False Positive Filter',
+        },
+        {
+          id: 'digest-generation',
+          title: 'Actionable Digest Routing',
+          subtitle:
+            'Aggregates cleanup candidates into weekly department reports with direct 1-click remediation links.',
+          boundary: 'Digest Publisher',
+          guardrail: 'Owner Attribution',
+        },
+        {
+          id: 'automated-cleanup',
+          title: 'Policy-Based Cleanup Engine',
+          subtitle: 'Deletes orphaned sandbox snapshots and unattached disks older than 30 days.',
+          boundary: 'Execution Worker',
+          guardrail: 'Snapshot Backup First',
+        },
+      ],
+    },
+    hotspots: [
+      {
+        id: 'spot-scan',
+        x: 25,
+        y: 40,
+        label: 'Asset Scan',
+        tooltip: 'Inventory Crawler',
+        description: 'Crawls all active resources to detect unattached or unused assets.',
+      },
+      {
+        id: 'spot-classify',
+        x: 55,
+        y: 55,
+        label: 'Waste Classifier',
+        tooltip: 'Heuristic Rules',
+        description: 'Flags unattached storage, idle load balancers, and dormant compute.',
+      },
+      {
+        id: 'spot-cleanup',
+        x: 80,
+        y: 65,
+        label: 'Cleanup Worker',
+        tooltip: 'Remediation Action',
+        description: 'Executes automated pruning with pre-deletion snapshot backups.',
+      },
+    ],
+    services: [
+      {
+        name: 'Cloud Asset Inventory',
+        icon: 'inventory',
+        role: 'Provides real-time metadata scanning across organizational project hierarchies.',
+      },
+      {
+        name: 'Cloud Recommender',
+        icon: 'auto_fix_high',
+        role: 'Detects idle compute instances, unattached disks, and oversized database tiers.',
+      },
+      {
+        name: 'Eventarc Automation Trigger',
+        icon: 'sync',
+        role: 'Dispatches cleanup candidate notifications to team webhooks and review queues.',
+      },
+      {
+        name: 'Cloud Snapshot Archive',
+        icon: 'camera_alt',
+        role: 'Preserves pre-deletion recovery snapshots before unattached disks are recycled.',
+      },
+    ],
+    practices: [
+      'Enforce mandatory pre-deletion snapshots before any automated disk or volume cleanup.',
+      'Run idle resource scans daily, publishing findings to workload owners for verification.',
+      'Treat unattached static IP addresses and empty load balancers as immediate cleanup priorities.',
+    ],
+    outcome: [
+      'Recovers 15% to 25% of cloud expenditure by eliminating dormant, orphaned, and idle cloud assets.',
+    ],
+    overview: `
+      <h2>Architecture Overview</h2>
+      <p>This automated waste identification blueprint scans cloud environments continuously for unattached storage volumes, dormant virtual machines, idle load balancers, and orphaned IP allocations.</p>
+    `,
+    waf: {
+      security: 91,
+      reliability: 94,
+      performance: 92,
+      cost: 98,
+      operational: 95,
+      pillars: {
+        cost: {
+          score: 98,
+          notes: 'Automated pruning of unattached disks and orphaned network resources.',
+        },
+      },
+    },
+    terraformCode: `resource "google_cloud_scheduler_job" "waste_audit" {
+  name             = "weekly-waste-audit"
+  description      = "Triggers weekly idle resource scan"
+  schedule         = "0 2 * * 1"
+  time_zone        = "Etc/UTC"
+  attempt_deadline = "320s"
+}`,
+    tags: ['FinOps', 'Optimization', 'Waste Reduction', 'Automation'],
+  },
+};
+
 export const architecturesByProvider = {
   aws: awsArchitectures,
   azure: azureArchitectures,
+  gcp: gcpArchitectures,
+  finops: finopsArchitectures,
 };

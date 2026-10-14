@@ -65,6 +65,18 @@
     group: root
     mode: "0750"
 
+# The way back: list and fetch the container's blobs as the identity, and
+# restore a dump into coder-postgres or a snapshot into Vault (README.md
+# beside this role, "Restore"). Each restore replaces what the service holds
+# and needs --yes.
+- name: Install hcw-backup-restore, the restore from the container
+  ansible.builtin.copy:
+    src: hcw-backup-restore
+    dest: /usr/local/sbin/hcw-backup-restore
+    owner: root
+    group: root
+    mode: "0750"
+
 # The file is the switch the Coder dump script reads: while it exists, the
 # dump just written is uploaded; without it the dump stays local, as before
 # this role. It holds names, not secrets.

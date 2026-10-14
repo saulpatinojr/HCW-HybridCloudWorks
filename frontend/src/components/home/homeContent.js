@@ -115,31 +115,77 @@ export function formatPublishedDate(ms) {
 }
 
 /**
+ * Strips redundant "[In preview] Public Preview:" or "[Launched] Generally Available:" duplication.
+ */
+export function cleanFeedTitle(rawTitle) {
+  if (!rawTitle) return '';
+  return rawTitle
+    .replace(/^\[In preview\]\s*(Public Preview:\s*)?/i, 'Public Preview: ')
+    .replace(/^\[Launched\]\s*(Generally Available:\s*)?/i, 'GA: ')
+    .trim();
+}
+
+/**
+ * Truncates summary cleanly at the last complete word before maxLength.
+ */
+export function truncateAtWordBoundary(text, maxLength = 175) {
+  if (!text) return '';
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxLength) return clean;
+  const sliced = clean.slice(0, maxLength);
+  return `${sliced.replace(/\s+\S*$/, '')}…`;
+}
+
+/**
  * Published documents, newest first as the server sends them, reduced to what
  * a card shows. A document with no page to open (no provider or no slug) or no
  * title is left out rather than shown as a dead card, and a page listed twice
- * is shown once.
+ * is shown once. Multi-cloud diversity is preserved by capping any single provider
+ * at maxPerProvider before backfilling.
  */
-export function toLatestItems(docs = [], limit = LATEST_LIMIT) {
+export function toLatestItems(docs = [], limit = LATEST_LIMIT, maxPerProvider = 2) {
   const seen = new Set();
-  const items = [];
+  const candidates = [];
   for (const raw of docs || []) {
-    if (items.length >= limit) break;
     const doc = normalizeContentFields(raw);
     const path = getContentPublicPath(raw);
-    const title = stripHtmlTags(doc?.title || '').trim();
-    if (!path || !title || seen.has(path)) continue;
+    const rawTitle = stripHtmlTags(doc?.title || '').trim();
+    if (!path || !rawTitle || seen.has(path)) continue;
     seen.add(path);
     const published = publishedMillis(raw);
-    items.push({
+    const rawSummary = stripHtmlTags(doc.summary || '').trim();
+    candidates.push({
       path,
-      title,
-      summary: stripHtmlTags(doc.summary || '').trim(),
+      title: cleanFeedTitle(rawTitle),
+      summary: truncateAtWordBoundary(rawSummary, 175),
       provider: canonicalizeProvider(doc.cloudProvider),
       typeLabel: TYPE_LABELS[getCanonicalContentType(raw)] || 'Article',
       publishedIso: published ? new Date(published).toISOString() : '',
       publishedLabel: formatPublishedDate(published),
     });
   }
+
+  // Pass 1: balanced selection up to limit, capping each provider at maxPerProvider
+  const items = [];
+  const providerCounts = {};
+  const remaining = [];
+
+  for (const item of candidates) {
+    if (items.length >= limit) break;
+    const count = providerCounts[item.provider] || 0;
+    if (count < maxPerProvider) {
+      items.push(item);
+      providerCounts[item.provider] = count + 1;
+    } else {
+      remaining.push(item);
+    }
+  }
+
+  // Pass 2: if fewer than limit, backfill from remaining candidates
+  for (const item of remaining) {
+    if (items.length >= limit) break;
+    items.push(item);
+  }
+
   return items;
 }

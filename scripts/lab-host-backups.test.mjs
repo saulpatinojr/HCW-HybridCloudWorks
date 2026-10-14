@@ -18,7 +18,11 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+const dumpGz = gzipSync('select 1;\n');
+const dumpBytes = dumpGz.length;
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ROLE = join(REPO, 'lab-host', 'ansible', 'roles', 'backups');
@@ -35,6 +39,7 @@ const upload = readFileSync(helper('hcw-backup-upload'), 'utf8');
 const arcToken = readFileSync(helper('hcw-arc-token'), 'utf8');
 const vaultBackup = readFileSync(helper('hcw-vault-backup'), 'utf8');
 const seed = readFileSync(helper('hcw-vault-backup-seed'), 'utf8');
+const restoreSource = readFileSync(helper('hcw-backup-restore'), 'utf8');
 const alerting = read('docs', 'runbooks', 'alerting-and-support.md');
 const infra = read('infra', 'lab-hybrid-backups.tf');
 const readme = read('lab-host', 'README.md');
@@ -62,6 +67,7 @@ describe('the backups role in the play', () => {
       ['hcw-backup-upload', '/usr/local/sbin/hcw-backup-upload'],
       ['hcw-vault-backup', '/usr/local/libexec/hcw-vault-backup'],
       ['hcw-vault-backup-seed', '/usr/local/sbin/hcw-vault-backup-seed'],
+      ['hcw-backup-restore', '/usr/local/sbin/hcw-backup-restore'],
     ]) {
       const block = tasks.slice(tasks.indexOf(`src: ${src}\n`), tasks.indexOf(`src: ${src}\n`) + 200);
       expect(block, src).toContain(`dest: ${dest}`);
@@ -113,6 +119,12 @@ describe('the backups role in the play', () => {
     expect(seed).toContain('export VAULT_TOKEN="$line"');
     expect(seed).toContain('-format=json)');
     expect(seed).toContain('json_value client_token');
+    // One seed and one restore at a time, each under a lock beside what it writes.
+    expect(seed).toContain('flock -n 9 || refuse');
+    expect(restoreSource).toContain('flock -n 9 || fail');
+    // The restore's lock is mandatory: no flock, no restore.
+    expect(restoreSource).toContain("command -v flock >/dev/null 2>&1 || fail 'flock is not installed");
+    expect(restoreSource).toContain('export VAULT_TOKEN="$line"');
   });
 });
 
@@ -175,14 +187,42 @@ if [ "\${head:-0}" = 1 ]; then
   esac
   exit 0
 fi
+blob_xml() { printf '<Blob><Name>%s</Name><Properties><Last-Modified>%s</Last-Modified><Content-Length>%s</Content-Length></Properties></Blob>' "$1" "$2" "$3"; }
+dump="$STUB_DIR/dump.gz"; dump_bytes="$(stat -c %s "$dump")"
 case "$url" in
+  *restype=container*comp=list*prefix=coder/*)
+    { printf '<?xml version="1.0"?><EnumerationResults><Blobs>'; blob_xml coder/coder-20261013T033012Z.sql.gz 'Mon, 13 Oct 2026 03:30:14 GMT' "$dump_bytes"; blob_xml coder/coder-20261014T033009Z.sql.gz 'Tue, 14 Oct 2026 03:30:11 GMT' "$dump_bytes"; printf '</Blobs><NextMarker/></EnumerationResults>'; } > "$out"; echo 200 ;;
+  *restype=container*comp=list*prefix=vault/*)
+    { printf '<EnumerationResults><Blobs>'; blob_xml vault/vault-20261014T143509Z.snap 'Tue, 14 Oct 2026 14:35:10 GMT' 19; printf '</Blobs><NextMarker/></EnumerationResults>'; } > "$out"; echo 200 ;;
+  *restype=container*comp=list*prefix='&'*)
+    { printf '<EnumerationResults><Blobs>'; blob_xml coder/coder-20261014T033009Z.sql.gz 'Tue, 14 Oct 2026 03:30:11 GMT' "$dump_bytes"; blob_xml vault/vault-20261014T143509Z.snap 'Tue, 14 Oct 2026 14:35:10 GMT' 19; printf '</Blobs><NextMarker/></EnumerationResults>'; } > "$out"; echo 200 ;;
   *restype=container*comp=list*)
     case "$STUB_SCENARIO" in
       forbidden) printf '<Error><Code>AuthorizationPermissionMismatch</Code></Error>' > "$out"; echo 403 ;;
       *) printf '<EnumerationResults/>' > "$out"; echo 200 ;;
     esac ;;
+  */host-backups/coder/coder-*.sql.gz)
+    case "$STUB_SCENARIO" in
+      short) printf 'short' > "$out" ;;
+      *) cat "$dump" > "$out" ;;
+    esac; echo 200 ;;
+  */host-backups/vault/vault-*.snap) printf 'raft-snapshot-bytes' > "$out"; echo 200 ;;
+  */host-backups/*) printf '<Error><Code>BlobNotFound</Code></Error>' > "$out"; echo 404 ;;
   *) echo 500 ;;
 esac
+`;
+
+/** A stand-in docker: records every call; `compose … exec -T coder-postgres psql` keeps what it was fed. */
+const DOCKER = `#!/usr/bin/env bash
+set -u
+printf '%s\\n' "$*" >> "$STUB_DIR/docker.argv"
+case "$*" in
+  *"exec -T coder-postgres psql"*" -d coder "*) cat > "$STUB_DIR/loaded.sql"; [ "\${STUB_DOCKER_LOAD_FAIL:-0}" = 1 ] && { echo 'ERROR:  syntax error' >&2; exit 3; } ;;
+  *"exec -T coder-postgres psql"*) : ;;
+  *" stop coder") : ;;
+  *" start coder") : ;;
+esac
+exit 0
 `;
 
 /** A stand-in vault CLI: records argv and VAULT_TOKEN, answers the five commands the helpers use. */
@@ -219,7 +259,12 @@ case "$1 $2" in
   "token revoke")
     [ "\${STUB_VAULT_REVOKE_FAIL:-0}" = 1 ] && { echo 'Error revoking token: permission denied' >&2; exit 2; }
     if [ "\${3:-}" = -accessor ]; then echo "accessor:$4" >> "$STUB_DIR/vault.revoked"; else echo "$VAULT_TOKEN" >> "$STUB_DIR/vault.revoked"; fi; exit 0 ;;
-  "operator raft") printf 'raft-snapshot-bytes' > "$5"; exit 0 ;;
+  "status -format=json") printf '{\\n  "type": "%s",\\n  "initialized": true,\\n  "sealed": %s\\n}\\n' "\${STUB_VAULT_SEAL_TYPE:-azurekeyvault}" "\${STUB_VAULT_SEALED:-false}"; exit 0 ;;
+  "operator raft")
+    case "$4" in
+      save) printf 'raft-snapshot-bytes' > "$5"; exit 0 ;;
+      restore) [ "\${STUB_VAULT_RESTORE_FAIL:-0}" = 1 ] && { echo 'Error installing the snapshot: permission denied' >&2; exit 2; }; printf '%s\\n' "$*" >> "$STUB_DIR/vault.restored"; exit 0 ;;
+    esac ;;
 esac
 echo "stand-in vault: unexpected $*" >&2; exit 9
 `;
@@ -238,13 +283,21 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
     writeFileSync(join(dir, 'tokens', 'one.key'), 'Y2hhbGxlbmdlLXNlY3JldA==\n');
     writeFileSync(join(dir, 'curl'), CURL);
     writeFileSync(join(dir, 'vault'), VAULT);
+    writeFileSync(join(dir, 'docker'), DOCKER);
     chmodSync(join(dir, 'curl'), 0o755);
     chmodSync(join(dir, 'vault'), 0o755);
+    chmodSync(join(dir, 'docker'), 0o755);
+    // The restore refuses to run without flock, which Git Bash lacks: a stand-in that always grants the lock.
+    mkdirSync(join(dir, 'bin'));
+    writeFileSync(join(dir, 'bin', 'flock'), '#!/usr/bin/env bash\nexit 0\n');
+    chmodSync(join(dir, 'bin', 'flock'), 0o755);
     writeFileSync(join(dir, 'upload.env'), 'HCW_BACKUPS_ACCOUNT=stlabhybridprodcus01\nHCW_BACKUPS_CONTAINER=host-backups\nHCW_BACKUPS_API_VERSION=2024-11-04\n');
     writeFileSync(join(dir, 'hcw-vault.sh'), 'export VAULT_ADDR=https://127.0.0.1:8200\nexport VAULT_CACERT=/etc/vault.d/tls/vault.crt\n');
     writeFileSync(join(dir, 'coder-20261014T033000Z.sql.gz'), 'not really gzip');
+    // What the stand-in container serves as a Coder dump: a real gzip, so the restore's gunzip reads it.
+    writeFileSync(join(dir, 'dump.gz'), dumpGz);
     env = {
-      PATH: process.env.PATH,
+      PATH: `${dir}/bin${delimiter}${process.env.PATH}`,
       STUB_DIR: dir,
       STUB_SCENARIO: 'ok',
       HCW_CURL: `${dir}/curl`,
@@ -258,6 +311,9 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       HCW_VAULT_BACKUP_TOKEN_FILE: `${dir}/etc/vault-token`,
       HCW_VAULT_BACKUP_DIR: `${dir}/snapshots`,
       HCW_VAULT_BACKUP_KEEP_DAYS: '7',
+      HCW_DOCKER: `${dir}/docker`,
+      HCW_RESTORE_DIR: `${dir}/restore`,
+      HCW_CODER_PROJECT_DIR: '/etc/hcw/coder',
     };
   });
   afterEach(() => dir && rmSync(dir, { recursive: true, force: true }));
@@ -657,6 +713,101 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       expect(rejected.stderr).toContain('Vault did not accept the token on stdin');
       expect(() => statSync(join(dir, 'etc', 'vault-token'))).toThrow();
       expect(() => lines('policy.hcw-raft-snapshot')).toThrow();
+    });
+  });
+
+  // Each test here runs the helper several times, and each run spawns bash, the stand-in curl
+  // and the stand-in docker or vault: well past vitest's five-second default on a slow runner.
+  describe('hcw-backup-restore', { timeout: 60000 }, () => {
+    const restore = helper('hcw-backup-restore');
+
+    it('lists the container as the identity, newest last, with bytes and dates', () => {
+      const all = bash(restore, ['list']);
+      expect(all.stderr).toBe('');
+      expect(all.status).toBe(0);
+      expect(all.stdout).toMatch(/^NAME\s+BYTES\s+LAST MODIFIED\n/);
+      expect(all.stdout).toContain('coder/coder-20261014T033009Z.sql.gz');
+      expect(all.stdout).toContain('vault/vault-20261014T143509Z.snap');
+      expect(lines('curl.urls').at(-1)).toContain('restype=container&comp=list&prefix=&maxresults=5000');
+      const coder = bash(restore, ['list', 'coder']);
+      expect(coder.status).toBe(0);
+      const names = coder.stdout.split('\n').slice(1).filter(Boolean).map((l) => l.split(/\s+/)[0]);
+      expect(names).toEqual(['coder/coder-20261013T033012Z.sql.gz', 'coder/coder-20261014T033009Z.sql.gz']);
+      expect(bash(restore, ['list', 'portainer']).status).toBe(2);
+    });
+
+    it('fetches the newest blob by default, or a named one, checking the length Azure listed', () => {
+      const newest = bash(restore, ['fetch', 'coder']);
+      expect(newest.stderr).toBe('');
+      expect(newest.status).toBe(0);
+      expect(newest.stdout).toContain(`fetched coder/coder-20261014T033009Z.sql.gz (${dumpBytes} bytes) to ${dir}/restore/coder/coder-20261014T033009Z.sql.gz`);
+      expect(readFileSync(join(dir, 'restore', 'coder', 'coder-20261014T033009Z.sql.gz')).equals(dumpGz)).toBe(true);
+      if (process.platform !== 'win32') expect(statSync(join(dir, 'restore')).mode & 0o777).toBe(0o700);
+      const named = bash(restore, ['fetch', 'coder', 'coder-20261013T033012Z.sql.gz']);
+      expect(named.status).toBe(0);
+      expect(lines('curl.urls').at(-1)).toBe('https://stlabhybridprodcus01.blob.core.windows.net/host-backups/coder/coder-20261013T033012Z.sql.gz');
+      const absent = bash(restore, ['fetch', 'coder', 'coder-19990101T000000Z.sql.gz']);
+      expect(absent.status).toBe(1);
+      expect(absent.stderr).toContain('no blob coder/coder-19990101T000000Z.sql.gz');
+      const short = bash(restore, ['fetch', 'vault', 'vault-20261014T143509Z.snap'], { STUB_SCENARIO: 'short' });
+      expect(short.status).toBe(0);
+      const cut = bash(restore, ['fetch', 'coder'], { STUB_SCENARIO: 'short' });
+      expect(cut.status).toBe(1);
+      expect(cut.stderr).toContain(`downloaded 5 bytes of coder/coder-20261014T033009Z.sql.gz, Azure listed ${dumpBytes}; nothing was kept`);
+      expect(() => statSync(join(dir, 'restore', 'coder', 'coder-20261014T033009Z.sql.gz.partial'))).toThrow();
+    });
+
+    it('restores a dump into coder-postgres only with --yes: stop, drop and recreate, load, start', () => {
+      const refused = bash(restore, ['coder']);
+      expect(refused.status).toBe(1);
+      expect(refused.stderr).toContain('add --yes to go ahead');
+      expect(() => lines('docker.argv')).toThrow();
+      const done = bash(restore, ['coder', '--yes']);
+      expect(done.stderr).toBe('');
+      expect(done.status).toBe(0);
+      expect(done.stdout).toContain('restored coder/coder-20261014T033009Z.sql.gz into coder-postgres');
+      const calls = lines('docker.argv');
+      expect(calls[0]).toBe('compose --project-directory /etc/hcw/coder stop coder');
+      expect(calls[1]).toBe('compose --project-directory /etc/hcw/coder exec -T coder-postgres psql -U coder -d postgres -v ON_ERROR_STOP=1 -q -c DROP DATABASE coder -c CREATE DATABASE coder OWNER coder');
+      expect(calls[2]).toBe('compose --project-directory /etc/hcw/coder exec -T coder-postgres psql -U coder -d coder -v ON_ERROR_STOP=1 -q');
+      expect(calls[3]).toBe('compose --project-directory /etc/hcw/coder start coder');
+      expect(readFileSync(join(dir, 'loaded.sql'), 'utf8')).toBe('select 1;\n');
+      const failed = bash(restore, ['coder', '--yes'], { STUB_DOCKER_LOAD_FAIL: '1' });
+      expect(failed.status).toBe(1);
+      expect(failed.stderr).toContain('loading the dump failed partway; coder is stopped');
+      expect(lines('docker.argv').at(-1)).not.toContain('start coder');
+    });
+
+    it('restores a snapshot into Vault with -force and a token from stdin, never from an argument', () => {
+      const refused = bash(restore, ['vault'], {}, 'stand-in-owner-root-token-00000001\n');
+      expect(refused.status).toBe(1);
+      expect(refused.stderr).toContain('add --yes');
+      const empty = bash(restore, ['vault', '--yes'], {}, '\n');
+      expect(empty.status).toBe(1);
+      expect(empty.stderr).toContain('the token on stdin was empty; nothing was restored');
+      expect(() => lines('vault.restored')).toThrow();
+      const done = bash(restore, ['vault', '--yes'], {}, 'stand-in-owner-root-token-00000001\r\n');
+      expect(done.stderr).toBe('');
+      expect(done.status).toBe(0);
+      // Acceptance, not completion: the helper says what Vault reports and what to confirm.
+      expect(done.stdout).toContain('Vault accepted vault/vault-20261014T143509Z.snap for restore and now reports Initialized true, Sealed false');
+      expect(done.stdout).toContain('journalctl -u vault');
+      expect(done.stdout).not.toMatch(/\brestored vault\//);
+      expect(lines('vault.argv')).toContain('status -format=json');
+      expect(lines('vault.restored')).toEqual([`operator raft snapshot restore -force ${dir}/restore/vault/vault-20261014T143509Z.snap`]);
+      // The seal check and the restore run with the token; the status poll after it runs with none.
+      expect(new Set(lines('vault.tokens'))).toEqual(new Set(['stand-in-owner-root-token-00000001', '<unset>']));
+      expect(readFileSync(join(dir, 'vault.argv'), 'utf8')).not.toContain('stand-in-owner-root-token');
+      const denied = bash(restore, ['vault', '--yes'], { STUB_VAULT_RESTORE_FAIL: '1' }, 'stand-in-owner-root-token-00000001\n');
+      expect(denied.status).toBe(1);
+      expect(denied.stderr).toContain('vault operator raft snapshot restore refused');
+      // A Vault under Shamir keys could not open the snapshot's data: refused before -force, with the fix.
+      rmSync(join(dir, 'vault.restored'));
+      const shamir = bash(restore, ['vault', '--yes'], { STUB_VAULT_SEAL_TYPE: 'shamir' }, 'stand-in-owner-root-token-00000001\n');
+      expect(shamir.status).toBe(1);
+      expect(shamir.stderr).toContain('Vault reports seal type shamir, and the snapshots were taken under azurekeyvault');
+      expect(shamir.stderr).toContain('moving to auto-unseal');
+      expect(() => lines('vault.restored')).toThrow();
     });
   });
 });

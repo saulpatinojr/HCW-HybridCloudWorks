@@ -11,7 +11,15 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Download, ExternalLink, Code, Loader2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  Download,
+  ExternalLink,
+  Code,
+  Loader2,
+  FlaskConical,
+  Layers,
+} from 'lucide-react';
 import { architecturesByProvider, awsArchitectures } from '@/data/architectures';
 import { useResolvedHotspots } from '@/hooks/useResolvedHotspots';
 import ContextSidebar from '@/components/layout/ContextSidebar';
@@ -67,8 +75,23 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
   const specPatterns = Array.isArray(architecture?.technicalSpecs?.patterns)
     ? architecture.technicalSpecs.patterns.filter(Boolean)
     : [];
+  const whenNotToUse = Array.isArray(architecture?.whenNotToUse)
+    ? architecture.whenNotToUse.filter((item) => item && String(item).trim() !== '')
+    : [];
+  const hasWhenNotToUse = whenNotToUse.length > 0;
+
+  const finopsCostTraps = Array.isArray(architecture?.finopsCostTraps)
+    ? architecture.finopsCostTraps.filter(
+        (trap) => trap && (trap.service || trap.trap || trap.mitigation)
+      )
+    : [];
+  const hasFinopsCostTraps = finopsCostTraps.length > 0;
+
   const hasOverview = Boolean(
-    String(overviewContent).trim() || specComponents.length > 0 || specPatterns.length > 0
+    String(overviewContent).trim() ||
+    specComponents.length > 0 ||
+    specPatterns.length > 0 ||
+    hasWhenNotToUse
   );
   const hasWaf = Boolean(architecture?.waf);
   const deploymentSteps = Array.isArray(architecture?.deploymentSteps)
@@ -91,7 +114,10 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
       )
     : [];
   const hasCost = Boolean(
-    String(estimatedMonthly).trim() || costOptimizations.length > 0 || costBreakdown.length > 0
+    String(estimatedMonthly).trim() ||
+    costOptimizations.length > 0 ||
+    costBreakdown.length > 0 ||
+    hasFinopsCostTraps
   );
 
   const availableTabs = [
@@ -170,10 +196,19 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
     architecture.complexity && { label: architecture.complexity, variant: 'secondary' },
   ].filter(Boolean);
 
-  const keyServicesFallback =
-    Array.isArray(architecture.keyServices) && architecture.keyServices.length > 0
-      ? architecture.keyServices
-      : specComponents.map((name) => ({ name, role: '' }));
+  let howItWorksFallback = [];
+  if (hasNonEmptyList(architecture.howItWorks)) {
+    howItWorksFallback = architecture.howItWorks;
+  } else if (Array.isArray(architecture.topology?.stages)) {
+    howItWorksFallback = architecture.topology.stages.map((s) => s.subtitle).filter(Boolean);
+  }
+
+  let keyServicesFallback = specComponents.map((name) => ({ name, role: '' }));
+  if (Array.isArray(architecture.keyServices) && architecture.keyServices.length > 0) {
+    keyServicesFallback = architecture.keyServices;
+  } else if (Array.isArray(architecture.services) && architecture.services.length > 0) {
+    keyServicesFallback = architecture.services;
+  }
 
   const practicesFallback = hasNonEmptyList(architecture.practices)
     ? architecture.practices
@@ -243,7 +278,7 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
         diagramUrl={architecture.diagramUrl}
         hotspots={resolvedHotspots}
         topology={architecture.topology}
-        howItWorks={architecture.howItWorks}
+        howItWorks={howItWorksFallback}
         keyServices={keyServicesFallback}
         practices={practicesFallback}
         outcome={architecture.outcome}
@@ -262,6 +297,22 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
               <Button variant="outline" onClick={() => openDeepDiveTab('implementation')}>
                 <Code className="h-4 w-4 mr-2" />
                 View IaC Code
+              </Button>
+            )}
+            {architecture.landingZonePreset && (
+              <Button variant="outline" asChild>
+                <Link to={`/tools/landing-zone?preset=${architecture.landingZonePreset}`}>
+                  <Layers className="h-4 w-4 mr-2" />
+                  Landing Zone Builder
+                </Link>
+              </Button>
+            )}
+            {architecture.interactiveLabId && (
+              <Button variant="outline" asChild>
+                <Link to={`/education/labs/${architecture.interactiveLabId}`}>
+                  <FlaskConical className="h-4 w-4 mr-2" />
+                  Test in Browser Lab
+                </Link>
               </Button>
             )}
             {architecture.demoUrl && (
@@ -338,6 +389,28 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
                       </Card>
                     )}
                   </div>
+                )}
+                {hasWhenNotToUse && (
+                  <Card
+                    className="border-amber-500/30 bg-amber-500/5 dark:bg-amber-950/15"
+                    data-testid="blueprint-when-not-to-use"
+                  >
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-lg text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                        <span className="w-1.5 h-4 bg-amber-500 rounded-full" aria-hidden="true" />
+                        When NOT to Use This Architecture
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="list-disc list-inside text-sm text-slate-700 dark:text-slate-300 space-y-2">
+                        {whenNotToUse.map((reason, idx) => (
+                          <li key={idx} className="leading-relaxed">
+                            {reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </CardContent>
+                  </Card>
                 )}
               </TabsContent>
             )}
@@ -433,6 +506,50 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
                               <span className="font-semibold">
                                 {row.cost || row.share || row.percentage || row.value}
                               </span>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                  {hasFinopsCostTraps && (
+                    <Card
+                      className="border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-950/15 col-span-full"
+                      data-testid="blueprint-finops-cost-traps"
+                    >
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-lg text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+                          <span
+                            className="w-1.5 h-4 bg-emerald-500 rounded-full"
+                            aria-hidden="true"
+                          />
+                          FinOps Cost Traps (FOCUS 1.1 Specification)
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid md:grid-cols-2 gap-4">
+                          {finopsCostTraps.map((trap, idx) => (
+                            <div
+                              key={idx}
+                              className="rounded-lg border border-slate-200 dark:border-slate-800 bg-background/80 p-3.5 flex flex-col gap-1.5"
+                            >
+                              <div className="text-xs font-mono font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                                {trap.service}
+                              </div>
+                              <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                                <span className="font-semibold text-rose-600 dark:text-rose-400">
+                                  Trap:{' '}
+                                </span>
+                                {trap.trap}
+                              </p>
+                              {trap.mitigation && (
+                                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                    Mitigation:{' '}
+                                  </span>
+                                  {trap.mitigation}
+                                </p>
+                              )}
                             </div>
                           ))}
                         </div>

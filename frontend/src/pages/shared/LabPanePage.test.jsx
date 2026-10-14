@@ -218,6 +218,22 @@ describe('LabPanePage sign-in', () => {
     expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
   });
 
+  it('displays pre-flight trust pills and privacy disclosure in the sign-in step (#Audit P2-2)', async () => {
+    renderPane();
+    const trustPills = await screen.findByTestId('lab-preflight-trust');
+    expect(trustPills).toHaveTextContent('15-Min Scenarios');
+    expect(trustPills).toHaveTextContent('Browser Terminal');
+    expect(trustPills).toHaveTextContent('Zero Cloud Account Required');
+
+    const privacy = screen.getByTestId('lab-privacy-assurance');
+    expect(privacy).toHaveTextContent('Privacy & Security Disclosure');
+    expect(privacy).toHaveTextContent('read:user scope');
+
+    const guarantees = screen.getByTestId('lab-trust-guarantees');
+    expect(guarantees).toHaveTextContent('15-Min Scenarios');
+    expect(guarantees).toHaveTextContent('No repository write access');
+  });
+
   it('records which lab the sign-in started from, and says to finish it in the new tab', async () => {
     renderPane();
     fireEvent.click(await screen.findByTestId('lab-sign-in-link'));

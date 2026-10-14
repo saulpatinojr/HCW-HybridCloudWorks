@@ -177,14 +177,48 @@ one that still does.
 
 ## Restore
 
-The restore and the rehearsed rebuild are the next pull request on
-[#955](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/955):
-a helper that lists the container as the Arc identity, downloads the newest
-dump and snapshot, and restores them into a fresh `coder-postgres` and a
-re-initialised Vault (`vault operator raft snapshot restore -force`; the seal
-key in Key Vault is unchanged, so the restored data unseals). Until then the
-local copies restore as `lab-host/README.md`, "Backups and restore", says,
-and a blob downloads from the portal as any blob does.
+`/usr/local/sbin/hcw-backup-restore` is the way back, root-only like the
+rest, reading the container as the Arc identity by the same `upload.env`:
+
+```text
+hcw-backup-restore list [coder|vault]          what the container holds
+hcw-backup-restore fetch coder|vault [NAME]    download one (the newest without NAME)
+hcw-backup-restore coder [NAME] --yes          fetch, then restore it into coder-postgres
+hcw-backup-restore vault [NAME] --yes          fetch, then restore it into Vault (a Vault token on stdin)
+```
+
+`list` is one container listing per prefix: name, bytes, last modified, in
+name order, so the newest is last. `fetch` downloads to
+`/var/backups/restore/<kind>/<name>`, `root` `0700`, by a `.partial` name
+until the length Azure listed has arrived; a short download is discarded and
+said. The two restores fetch first and then do what `lab-host/README.md`,
+"Backups and restore", does by hand, as one command, and both refuse without
+`--yes` because each replaces what the service holds now:
+
+- **coder** stops the `coder` container, drops and recreates the `coder`
+  database in `coder-postgres`, loads the dump, starts `coder` again. A
+  failure stops at the step that failed and says what state Coder is in.
+- **vault** first refuses a Vault whose seal is not `azurekeyvault`, the
+  seal every snapshot was taken under, because restored data unseals only
+  under the same seal and `-force` into a Shamir Vault would install data
+  nothing on the host can open; the fix it names is the seal fact and a
+  `bootstrap.sh` run. Then it runs `vault operator raft snapshot restore
+  -force` with a token read from stdin, never an argument: on a rebuilt
+  host, the root token `vault operator init -recovery-shares=5
+  -recovery-threshold=3` printed. Vault accepts the snapshot and replaces
+  its data in the background, so the helper reports **acceptance**, polls
+  the seal status for up to a minute, prints what Vault reports, and names
+  the log to read before relying on it. Vault's data is then the snapshot's,
+  tokens and recovery keys included: the token just used stops working, the
+  snapshot's revoked root token stays revoked, the snapshot-era recovery
+  keys are the ones that count, and the seal key in Key Vault is unchanged,
+  so a restart unseals the restored data. The snapshot token file went with
+  the disk, so the seed runs again afterwards, with a root token from
+  `generate-root` and three of those recovery keys
+  (`docs/runbooks/labs-host.md`, "The root token").
+
+The rebuild itself, and its **Last rehearsed / elapsed** line, are in
+`docs/runbooks/labs-host.md`, "Reinstalling the host", step 7.
 
 ## Check mode
 

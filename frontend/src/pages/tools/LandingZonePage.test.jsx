@@ -532,3 +532,107 @@ describe('wiring', () => {
     expect(ssr).toContain('<title>Landing Zone Builder | Hybrid Cloud Works</title>');
   });
 });
+
+describe('Engineering Workbench presets and FinOps features', () => {
+  it('renders telemetry strip with standing floor, emitted file count, and peered spokes', () => {
+    renderPage();
+    const strip = screen.getByTestId('lz-telemetry-strip');
+    expect(strip.textContent).toContain('$1151/mo');
+    expect(strip.textContent).toContain('files');
+    expect(strip.textContent).toContain('3');
+  });
+
+  it('renders 1-click architecture preset bar with all 5 presets', () => {
+    renderPage();
+    const presetBar = screen.getByTestId('lz-preset-bar');
+    expect(presetBar.querySelectorAll('button')).toHaveLength(5);
+    expect(presetBar.textContent).toContain('Full Enterprise ALZ');
+    expect(presetBar.textContent).toContain('Cost-Aware Secure Hub (Basic FW)');
+    expect(presetBar.textContent).toContain('FinOps Lean Governance');
+  });
+
+  it('displays Blueprint Context Banner when build matches canonical preset', () => {
+    renderPage();
+    const banner = screen.getByTestId('lz-preset-banner');
+    expect(banner.textContent).toContain('Validated Pattern');
+    expect(banner.textContent).toContain('Enterprise Hub-and-Spoke Landing Zone');
+    expect(banner.querySelector('a').getAttribute('href')).toBe(
+      '/azure/architecture-designs/enterprise-hub-spoke-landing-zone'
+    );
+  });
+
+  it('switches preset on button click and updates URL and FinOps BOM', () => {
+    renderPage();
+    const secureBasicBtn = screen.getByRole('button', { name: /Cost-Aware Secure Hub/i });
+    fireEvent.click(secureBasicBtn);
+
+    expect(checkbox('Azure Firewall').checked).toBe(true);
+    expect(document.getElementById('lz-option-firewallSku').value).toBe('Basic');
+    const bom = screen.getByTestId('lz-finops-bom');
+    expect(bom.textContent).toContain('Azure Firewall (Basic SKU)');
+  });
+});
+
+describe('Multi-Cloud Target Cloud Selector and Architecture Previews (#Phase4)', () => {
+  it('renders target cloud switcher with Azure active and AWS/GCP preview pills', () => {
+    renderPage();
+    const switcher = screen.getByTestId('lz-cloud-switcher');
+    expect(switcher).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Azure \(Active\)/i })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(screen.getByRole('button', { name: /AWS \(Preview\)/i })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
+    expect(screen.getByRole('button', { name: /Google Cloud \(Preview\)/i })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    );
+  });
+
+  it('switches to AWS preview on click and displays 8-component mapping and pinned modules', () => {
+    renderPage();
+    const awsBtn = screen.getByRole('button', { name: /AWS \(Preview\)/i });
+    fireEvent.click(awsBtn);
+
+    const preview = screen.getByTestId('lz-cloud-preview');
+    expect(preview).toBeInTheDocument();
+    expect(preview.textContent).toContain('Amazon Web Services Landing Zone Architecture');
+    expect(preview.textContent).toContain('Universal 8-Component Architecture (AWS)');
+    expect(preview.textContent).toContain('AWS Organizations Root + OUs');
+    expect(preview.textContent).toContain('Service Control Policies (SCPs)');
+    expect(preview.textContent).toContain('terraform-aws-modules/transit-gateway/aws');
+
+    const blueprintLink = preview.querySelector('a');
+    expect(blueprintLink.getAttribute('href')).toBe(
+      '/aws/architecture-designs/global-load-balancing'
+    );
+
+    // Return to Azure workbench
+    const [returnBtn] = screen.getAllByRole('button', { name: /Return to Azure Workbench/i });
+    fireEvent.click(returnBtn);
+    expect(screen.queryByTestId('lz-cloud-preview')).not.toBeInTheDocument();
+    expect(screen.getByTestId('lz-preset-bar')).toBeInTheDocument();
+  });
+
+  it('switches to Google Cloud preview on click and displays Shared VPC architecture mapping', () => {
+    renderPage();
+    const gcpBtn = screen.getByRole('button', { name: /Google Cloud \(Preview\)/i });
+    fireEvent.click(gcpBtn);
+
+    const preview = screen.getByTestId('lz-cloud-preview');
+    expect(preview).toBeInTheDocument();
+    expect(preview.textContent).toContain('Google Cloud Platform Landing Zone Architecture');
+    expect(preview.textContent).toContain('Universal 8-Component Architecture (Google Cloud)');
+    expect(preview.textContent).toContain('Cloud Resource Manager Folders');
+    expect(preview.textContent).toContain('Shared VPC Host Project');
+    expect(preview.textContent).toContain('terraform-google-modules/network/google');
+
+    const blueprintLink = preview.querySelector('a');
+    expect(blueprintLink.getAttribute('href')).toBe(
+      '/gcp/architecture-designs/global-load-balancing'
+    );
+  });
+});
