@@ -130,6 +130,7 @@ import HowLabsWork from '@/components/labs/HowLabsWork';
 import LabArticles from '@/components/labs/LabArticles';
 import LabFacts from '@/components/labs/LabFacts';
 import LabSteps from '@/components/labs/LabSteps';
+import LabPreflightCard from '@/components/labs/LabPreflightCard';
 import WorkspaceStatusBadge from '@/components/labs/WorkspaceStatusBadge';
 import MiniLandingFrame from '@/components/shared/MiniLandingFrame';
 import {
@@ -556,36 +557,8 @@ function SignInStep({ signInHref, backTo, pending, onStart }) {
         </p>
       </div>
 
-      {/* Pre-flight trust pill strip */}
-      <div data-testid="lab-preflight-trust" className="flex flex-wrap items-center gap-2 py-1">
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
-          15-Min Scenarios
-        </span>
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" aria-hidden="true" />
-          Browser Terminal
-        </span>
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-          <span className="w-1.5 h-1.5 rounded-full bg-purple-500" aria-hidden="true" />
-          Zero Cloud Account Required
-        </span>
-      </div>
-
-      {/* Privacy assurance */}
-      <div
-        data-testid="lab-privacy-assurance"
-        className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex flex-col gap-1"
-      >
-        <span className="font-semibold text-slate-900 dark:text-slate-200 flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-primary" aria-hidden="true" />
-          Privacy &amp; Security Disclosure
-        </span>
-        <span>
-          Sign-in checks public GitHub organization membership only (read:user scope). We never
-          request repository access, personal emails, or cloud subscription credentials.
-        </span>
-      </div>
+      {/* Pre-flight card with duration, toolchains, terminal preview and trust disclosures */}
+      <LabPreflightCard compact headingLevel="h3" />
 
       {pending ? (
         <p role="status" className="text-sm text-slate-900 dark:text-slate-100">
