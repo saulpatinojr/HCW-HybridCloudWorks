@@ -532,3 +532,43 @@ describe('wiring', () => {
     expect(ssr).toContain('<title>Landing Zone Builder | Hybrid Cloud Works</title>');
   });
 });
+
+describe('Engineering Workbench presets and FinOps features', () => {
+  it('renders telemetry strip with standing floor, emitted file count, and peered spokes', () => {
+    renderPage();
+    const strip = screen.getByTestId('lz-telemetry-strip');
+    expect(strip.textContent).toContain('$1151/mo');
+    expect(strip.textContent).toContain('files');
+    expect(strip.textContent).toContain('3');
+  });
+
+  it('renders 1-click architecture preset bar with all 5 presets', () => {
+    renderPage();
+    const presetBar = screen.getByTestId('lz-preset-bar');
+    expect(presetBar.querySelectorAll('button')).toHaveLength(5);
+    expect(presetBar.textContent).toContain('Full Enterprise ALZ');
+    expect(presetBar.textContent).toContain('Cost-Aware Secure Hub (Basic FW)');
+    expect(presetBar.textContent).toContain('FinOps Lean Governance');
+  });
+
+  it('displays Blueprint Context Banner when build matches canonical preset', () => {
+    renderPage();
+    const banner = screen.getByTestId('lz-preset-banner');
+    expect(banner.textContent).toContain('Validated Pattern');
+    expect(banner.textContent).toContain('Enterprise Hub-and-Spoke Landing Zone');
+    expect(banner.querySelector('a').getAttribute('href')).toBe(
+      '/azure/architecture-designs/enterprise-hub-spoke-landing-zone'
+    );
+  });
+
+  it('switches preset on button click and updates URL and FinOps BOM', () => {
+    renderPage();
+    const secureBasicBtn = screen.getByRole('button', { name: /Cost-Aware Secure Hub/i });
+    fireEvent.click(secureBasicBtn);
+
+    expect(checkbox('Azure Firewall').checked).toBe(true);
+    expect(document.getElementById('lz-option-firewallSku').value).toBe('Basic');
+    const bom = screen.getByTestId('lz-finops-bom');
+    expect(bom.textContent).toContain('Azure Firewall (Basic SKU)');
+  });
+});
