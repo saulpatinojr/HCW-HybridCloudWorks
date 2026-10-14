@@ -15,31 +15,31 @@ export function emitGcpFiles(state) {
   const normalized = normalizeState(state);
   if (!normalized.selected.length) return [readmeMd(normalized, [])];
 
-  const files = [terraformTf(), providersTf(normalized)];
+  const files = [terraformTf(), providersTf()];
 
   if (isSelected(normalized, 'management-groups')) {
-    files.push(foldersTf(normalized));
+    files.push(foldersTf());
   }
   if (isSelected(normalized, 'policy')) {
-    files.push(orgPoliciesTf(normalized));
+    files.push(orgPoliciesTf());
   }
   if (isSelected(normalized, 'management')) {
-    files.push(loggingSinkTf(normalized));
+    files.push(loggingSinkTf());
   }
   if (isSelected(normalized, 'connectivity-hub')) {
-    files.push(sharedVpcTf(normalized));
+    files.push(sharedVpcTf());
   }
   if (isSelected(normalized, 'firewall')) {
-    files.push(cloudNgfwTf(normalized));
+    files.push(cloudNgfwTf());
   }
   if (isSelected(normalized, 'identity')) {
-    files.push(identityTf(normalized));
+    files.push(identityTf());
   }
   if (isSelected(normalized, 'corp') || isSelected(normalized, 'online')) {
     files.push(projectsTf(normalized));
   }
 
-  files.push(variablesTf(normalized), tfvarsExample(normalized));
+  files.push(variablesTf(), tfvarsExample(normalized));
   files.push(readmeMd(normalized, files));
   return files;
 }
