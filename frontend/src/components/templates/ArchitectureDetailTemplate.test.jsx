@@ -49,10 +49,32 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     expect(screen.getByTestId('landing-pane-security')).toBeInTheDocument();
     expect(screen.getByTestId('landing-pane-outcome')).toBeInTheDocument();
 
+    // Technical action links in MiniLandingFrame
+    expect(screen.getByRole('link', { name: /Landing Zone Builder/i })).toHaveAttribute(
+      'href',
+      '/tools/landing-zone?preset=secure-2-tier'
+    );
+    expect(screen.getByRole('link', { name: /Test in Browser Lab/i })).toHaveAttribute(
+      'href',
+      '/education/labs/terraform-validate'
+    );
+
+    // Overview tab contains "When NOT to Use This Architecture"
+    expect(screen.getByTestId('blueprint-when-not-to-use')).toBeInTheDocument();
+    expect(screen.getByTestId('blueprint-when-not-to-use')).toHaveTextContent(
+      /Low-budget dev\/test sandboxes/i
+    );
+
     // Clicking the Outcome doorway pane switches the deep dive to Cost Analysis
     fireEvent.click(screen.getByTestId('landing-pane-door-outcome'));
     expect(await screen.findByText('Estimated Monthly Cost')).toBeInTheDocument();
     expect(screen.getByText('$680 - $1,250 / month')).toBeInTheDocument();
+
+    // Cost Analysis tab contains FinOps Cost Traps (FOCUS 1.1 Specification)
+    expect(screen.getByTestId('blueprint-finops-cost-traps')).toBeInTheDocument();
+    expect(screen.getByTestId('blueprint-finops-cost-traps')).toHaveTextContent(
+      /Application Gateway.*Capacity Units/i
+    );
   });
 
   it('hides empty panes and empty deep-dive tabs instead of rendering placeholder text (#1084 item 3)', async () => {
@@ -78,10 +100,12 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     ).toBeInTheDocument();
     expect(screen.getByTestId('landing-pane-how-it-works')).toBeInTheDocument();
 
-    // Empty panes are omitted
+    // Empty panes and trade-offs are omitted
     expect(screen.queryByTestId('landing-pane-key-services')).not.toBeInTheDocument();
     expect(screen.queryByTestId('landing-pane-security')).not.toBeInTheDocument();
     expect(screen.queryByTestId('landing-pane-outcome')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('blueprint-when-not-to-use')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('blueprint-finops-cost-traps')).not.toBeInTheDocument();
 
     // Zero placeholder text on the public page
     expect(
@@ -97,7 +121,7 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     expect(screen.queryByText(/Use Reserved Instances/i)).not.toBeInTheDocument();
   });
 
-  it('accepts promise, howItWorks, keyServices, practices, and outcome in initialBlueprintForm (#1084 item 1)', () => {
+  it('accepts promise, howItWorks, keyServices, practices, outcome, whenNotToUse, and finopsCostTraps in initialBlueprintForm (#1084 item 1)', () => {
     const form = initialBlueprintForm({
       title: 'Secure 2-Tier Application on Azure',
       promise: 'Edge WAF + VNet NSGs + Private Endpoint to Azure SQL.',
@@ -105,6 +129,22 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
       keyServices: [{ name: 'Application Gateway', icon: 'shield', role: 'WAF v2' }],
       practices: ['Prevention mode WAF'],
       outcome: ['Zero public database exposure'],
+      whenNotToUse: [
+        {
+          condition: 'Single static site',
+          reason: 'Over-engineered',
+          alternative: 'Azure Storage static website',
+        },
+      ],
+      finopsCostTraps: [
+        {
+          risk: 'Idle WAF instances',
+          impact: '$100+/mo',
+          mitigation: 'Autoscale min instances to 1',
+        },
+      ],
+      landingZonePreset: 'secure-2-tier',
+      interactiveLabId: 'terraform-validate',
     });
 
     expect(form.promise).toBe('Edge WAF + VNet NSGs + Private Endpoint to Azure SQL.');
@@ -114,6 +154,22 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     ]);
     expect(form.practices).toEqual(['Prevention mode WAF']);
     expect(form.outcome).toEqual(['Zero public database exposure']);
+    expect(form.whenNotToUse).toEqual([
+      {
+        condition: 'Single static site',
+        reason: 'Over-engineered',
+        alternative: 'Azure Storage static website',
+      },
+    ]);
+    expect(form.finopsCostTraps).toEqual([
+      {
+        risk: 'Idle WAF instances',
+        impact: '$100+/mo',
+        mitigation: 'Autoscale min instances to 1',
+      },
+    ]);
+    expect(form.landingZonePreset).toBe('secure-2-tier');
+    expect(form.interactiveLabId).toBe('terraform-validate');
   });
 
   it('renders /gcp/architecture-designs/global-load-balancing with Mini Landing Page elements (#Phase4)', async () => {

@@ -73,6 +73,28 @@ export default function HowLabsWork({ headingLevel = 'h2', id = 'how-labs-work' 
           </div>
         ))}
       </dl>
+      <div
+        data-testid="lab-trust-guarantees"
+        className="mt-2 pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-400"
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="inline-flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+            15-Min Scenarios
+          </span>
+          <span className="inline-flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" aria-hidden="true" />
+            Browser Terminal
+          </span>
+          <span className="inline-flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-purple-500" aria-hidden="true" />
+            Zero Cloud Account Required
+          </span>
+        </div>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+          GitHub public identity check only (read:user scope). No repository write access.
+        </p>
+      </div>
     </section>
   );
 }
