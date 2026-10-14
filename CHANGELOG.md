@@ -19,6 +19,14 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **`functions_scm_lock_enabled` defaults to `true`** (PLAT-10, #970).
+  The workspace set it `true` on 2026-08-25, when the SCM window was proven
+  under `Deny`, and the Function App's SCM default action read `Deny` again
+  on 2026-10-14, so the code default now says what the estate does and the
+  plan for the change is empty. The
+  comments in `infra/variables.tf`, `deploy-functions.yml` and
+  `scripts/assert-origin-lock.mjs`, and the required-inputs row, say so
+  instead of describing the 2026-08-25 posture.
 - **Version floors: the weekly pull request moves the `engines.node`
   ranges with the floors, and arrives green.** `update-version-floors.yml`
   used to move `scripts/version-floors.json` alone and open a pull request
@@ -67,6 +75,13 @@ This project has not cut a tagged release; entries are grouped under
   refused ones included, in `admin_audit_logs` with the actor, the path as
   sent and the outcome. `rest-proxy.test.js` sends every request the pages
   make and asserts an unlisted path is refused for every verb.
+- **Landing zone HCL: the AWS and GCP emitters no longer hand state to
+  generators that take none.** Eight calls in each of
+  `frontend/src/lib/landingZone/hcl/aws/index.js` and `.../gcp/index.js`
+  passed the normalised state to functions declared without a parameter,
+  which CodeQL raised as sixteen `js/superfluous-trailing-arguments`
+  alerts after #1157. The arguments are dropped; the emitted files are
+  unchanged.
 - **Lab host: the add-on secrets are read with the `vars` lookup.** The
   `addons` role built each add-on's secret environment with the `vars`
   dictionary, which ansible-core 2.21 warns about on every run and 2.24
