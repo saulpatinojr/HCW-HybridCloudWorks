@@ -102,6 +102,12 @@ resource "azurerm_storage_container" "lab_hybrid_backups" {
   name                  = "host-backups"
   storage_account_id    = azurerm_storage_account.lab_hybrid_backups.id
   container_access_type = "private"
+
+  # The account's guard does not reach its children: a plan that dropped or
+  # replaced this container would take every backup with it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Time-based retention: a blob cannot be deleted or overwritten for 35 days
@@ -113,6 +119,12 @@ resource "azurerm_storage_container_immutability_policy" "lab_hybrid_backups" {
   locked                                = false
   protected_append_writes_enabled       = false
   protected_append_writes_all_enabled   = false
+
+  # Removing the policy would make every backup deletable again; the owner
+  # changes it in the portal, Terraform refuses to drop it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # The Arc identity's second grant (the first is wrap/unwrap on the seal key,
@@ -140,6 +152,10 @@ resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_backups_blob" {
   name                       = "diag-blob-to-logs"
   target_resource_id         = "${azurerm_storage_account.lab_hybrid_backups.id}/blobServices/default"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.hcw.id
+  # Resource-specific tables, so the rows land in StorageBlobLogs — the table
+  # the two alerts below query — and not in AzureDiagnostics (the site's
+  # content_blob setting in observability.tf makes the same choice).
+  log_analytics_destination_type = "Dedicated"
 
   enabled_log {
     category = "StorageWrite"

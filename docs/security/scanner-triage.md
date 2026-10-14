@@ -29,7 +29,7 @@ uvx zizmor --offline .github/workflows
 | radarlint-iac | 19 | 0 | 19 | 0 | 0 | **19** |
 | osv-scanner | 0 | 0 | 0 | 0 | 0 | **0** |
 | trufflehog | 0 | 0 | 0 | 0 | 0 | **0** |
-| **Total** | **121** | **54** | **42** | **25** | **0** | **19** |
+| **Total** | **122** | **54** | **42** | **26** | **0** | **19** |
 
 Corrected 2026-09-18: zizmor's "Before" was 36, counting only the regular and
 pedantic personas. Six medium `secrets-outside-env` findings stood at the
