@@ -175,6 +175,23 @@ stored_accessor=''
 stored_verdict=0
 if [ -n "$stored" ]; then
   stored_accessor="$(vault_verdict "$stored")" || stored_verdict=$?
+  if [ "$stored_verdict" -eq 1 ]; then
+    # "permission denied" from lookup-self is what Vault says of an expired or
+    # revoked token, and also of a valid one whose policy denies the lookup.
+    # The owner's token settles it, by the accessor kept beside the token: a
+    # token Vault still knows by that accessor is valid, and protected.
+    sidecar=''
+    [ -f "$accessor_file" ] && sidecar="$(tr -d '\r\n' < "$accessor_file")"
+    [ -n "$sidecar" ] || fail "Vault refuses the stored snapshot token and no accessor is kept beside it, so an expired token cannot be told from a valid one denied lookup-self; nothing was changed. Revoke it by hand if it is yours, then remove $token_file (nothing else) and seed afresh"
+    if lookup="$("$vault_bin" token lookup -accessor "$sidecar" 2>&1 >/dev/null)"; then
+      stored_accessor="$sidecar"
+      stored_verdict=0
+    elif printf '%s' "$lookup" | grep -qi 'invalid accessor'; then
+      stored_verdict=1
+    else
+      stored_verdict=2
+    fi
+  fi
   [ "$stored_verdict" -ne 2 ] || fail "Vault gave no verdict on the stored snapshot token (sealed or not reachable: sudo systemctl status vault); nothing was changed, and $pending_file was not worked"
 fi
 pending_work "$stored_accessor"

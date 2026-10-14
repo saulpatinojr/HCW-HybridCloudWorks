@@ -129,11 +129,16 @@ still in the file is never revoked from that list: the accessor Vault itself
 reports for it is protected, and a pending record that names it is a
 replacement that did not complete, dropped with a note. Only Vault's answer
 protects a record, and Vault's three answers are kept apart: an accessor
-(the token is valid, its record protected), a refusal (`permission denied`:
-the token is expired or revoked, nothing protected), and no verdict at all
-(sealed, unreachable), which stops the run before the list is touched, since
-the record it would work may be the working token's own. The accessor copy
-kept beside the token is used to record
+(the token is valid, its record protected), a refusal (`permission denied`),
+and no verdict at all (sealed, unreachable), which stops the run before the
+list is touched, since the record it would work may be the working token's
+own. A refusal is what Vault says of an expired or revoked token and also of
+a valid one whose policy denies `lookup-self`, so it is settled with the
+owner's token by the accessor kept beside the token: a token Vault still
+knows by that accessor is valid and protected, `invalid accessor` is the
+expired token, anything else is no verdict; with no accessor beside the
+token the seed stops rather than guess. The accessor copy kept beside the
+token is otherwise used to record
 a retirement when Vault no longer answers for the token being replaced,
 never to spare one, so a stale copy costs at most one revocation Vault
 refuses as invalid. A new token that cannot be stored is revoked again and

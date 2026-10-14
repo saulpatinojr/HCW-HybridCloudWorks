@@ -202,6 +202,8 @@ case "$1 $2" in
       case " \${STUB_VAULT_VALID_ACCESSORS:-} " in *" $4 "*) printf 'Key   Value\\n'; exit 0 ;; *) echo 'Error looking up token: * invalid accessor' >&2; exit 2 ;; esac
     fi
     [ "\${STUB_VAULT_UNREACHABLE:-0}" = 1 ] && { echo 'Error looking up token: dial tcp 127.0.0.1:8200: connect: connection refused' >&2; exit 2; }
+    # A valid token whose policy denies lookup-self answers exactly as an expired one does.
+    case " \${STUB_VAULT_ACL_DENIED:-} " in *" \${VAULT_TOKEN:-} "*) echo 'Error looking up token: permission denied' >&2; exit 2 ;; esac
     case "$valid" in *" \${VAULT_TOKEN:-} "*) ;; *) echo 'Error looking up token: permission denied' >&2; exit 2 ;; esac
     # Each stand-in token has a stand-in accessor that does not contain it.
     case "$VAULT_TOKEN" in
@@ -575,6 +577,32 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       // The three verdicts are kept apart in the script: an accessor, a refusal, and no answer.
       expect(seed).toContain("grep -qiE 'permission denied|invalid token|bad token'");
       expect(seed).toContain('[ "$stored_verdict" -ne 2 ] || fail');
+    });
+
+    it('settles a "permission denied" on the stored token with the owner\'s token by accessor, so a valid token denied lookup-self is still protected', () => {
+      mkdirSync(join(dir, 'etc'));
+      writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-old-working-token-0000001\n');
+      writeFileSync(join(dir, 'etc', 'vault-token.accessor'), 'accessor-old-0000001\n');
+      writeFileSync(join(dir, 'etc', 'revoke-pending'), 'accessor-old-0000001\n');
+      // The stored token answers "permission denied" to lookup-self although Vault still knows its accessor.
+      const denied = { STUB_VAULT_VALID_TOKENS: `${owner} stand-in-fresh-snapshot-token-00001`, STUB_VAULT_ACL_DENIED: 'stand-in-old-working-token-0000001', STUB_VAULT_VALID_ACCESSORS: 'accessor-old-0000001' };
+      const plain = bash(helper('hcw-vault-backup-seed'), [], denied, `${owner}\n`);
+      expect(plain.status).toBe(0);
+      expect(plain.stdout).toContain('the record for accessor accessor-old-0000001 was a replacement that did not complete');
+      // Its self-lookup still fails, so a plain run replaces it, and only then retires it, by that accessor.
+      expect(plain.stdout).toContain('the stored snapshot token no longer works; replacing it');
+      expect(lines('vault.revoked')).toEqual(['accessor:accessor-old-0000001']);
+      expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-fresh-snapshot-token-00001\n');
+      // Without an accessor beside it the two cases cannot be told apart, and the seed stops rather than guess.
+      writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-old-working-token-0000001\n');
+      rmSync(join(dir, 'etc', 'vault-token.accessor'));
+      rmSync(join(dir, 'vault.revoked'));
+      writeFileSync(join(dir, 'etc', 'revoke-pending'), 'accessor-old-0000001\n');
+      const blind = bash(helper('hcw-vault-backup-seed'), [], denied, `${owner}\n`);
+      expect(blind.status).toBe(1);
+      expect(blind.stderr).toContain('cannot be told from a valid one denied lookup-self');
+      expect(() => lines('vault.revoked')).toThrow();
+      expect(readFileSync(join(dir, 'etc', 'revoke-pending'), 'utf8')).toBe('accessor-old-0000001\n');
     });
 
     it('drops a pending accessor Vault no longer knows, and keeps one it cannot ask about', () => {
