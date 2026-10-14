@@ -479,6 +479,13 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/hcw-held-upgradable.test.sh
 
+      # The unattended-upgrades override (LAB-13, #959), rendered with the
+      # role's defaults: the allowed origins are cleared and named by the
+      # role, and the host never reboots while a user is logged in.
+      - name: unattended-upgrades test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/hardening/tests/unattended-upgrades.test.sh
+
       # /usr/local/libexec/hcw-docker-volume-carry copies Coder's PostgreSQL
       # cluster into the daemon's user-namespaced data root on the run that
       # turns userns-remap on (LAB-5), so the file the docker role installs
