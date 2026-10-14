@@ -239,12 +239,28 @@ async function recordProxyAudit(audit, context, { integration, auth, method, bod
  * paths freely; narrowing those would break screens without an enumeration of
  * every path they can build.
  *
- * @param {{paths?: string[], patterns?: RegExp[]}} allowed
+ * An entry may bind its METHODS too (review on #1167): a bare string or
+ * RegExp allows every method the integration allows, while
+ * `{ path, methods }` or `{ pattern, methods }` allows only those on that
+ * path. Publer's five endpoints each answer a known verb, and allowing the
+ * cross-product (`DELETE /posts/schedule`, say) assumed Publer refuses what
+ * the Social Hub never sends.
+ *
+ * @param {{paths?: Array<string|{path: string, methods: string[]}>, patterns?: Array<RegExp|{pattern: RegExp, methods: string[]}>}} allowed
+ * @param {string} pathOnly the path without its query string
+ * @param {string} [method] the request method; omitted, only the path is judged
+ * @returns {boolean}
  */
-export function isAllowedPath(allowed, pathOnly) {
+export function isAllowedPath(allowed, pathOnly, method = null) {
   if (!allowed) return true;
-  if (allowed.paths?.includes(pathOnly)) return true;
-  return Boolean(allowed.patterns?.some((re) => re.test(pathOnly)));
+  const methodOk = (methods) => !methods || method === null || methods.includes(method);
+  const pathHit = (allowed.paths || []).some((entry) =>
+    typeof entry === 'string' ? entry === pathOnly : entry.path === pathOnly && methodOk(entry.methods)
+  );
+  if (pathHit) return true;
+  return (allowed.patterns || []).some((entry) =>
+    entry instanceof RegExp ? entry.test(pathOnly) : entry.pattern.test(pathOnly) && methodOk(entry.methods)
+  );
 }
 
 /**
@@ -342,7 +358,7 @@ export function createRestProxy({
       // The allowlist is checked against the path WITHOUT its query string, so a
       // query cannot be used to disguise an endpoint as an allowed one.
       const pathOnly = path.split('?')[0];
-      if (!isAllowedPath(integration.allowedPaths, pathOnly)) {
+      if (!isAllowedPath(integration.allowedPaths, pathOnly, method)) {
         context.error?.(`${integration.name}Proxy blocked a path outside the allowlist`, {
           path: pathOnly.slice(0, 200),
         });

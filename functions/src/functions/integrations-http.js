@@ -47,18 +47,26 @@ const PUBLER = createIntegration({
   // and the reverse of Publer's documentation. Shared with the timer's client
   // so the two cannot disagree about which light to turn red (#358).
   verdictSettingForStatus: publerSettingForStatus,
-  // The paths and methods the Social Hub sends, enumerated from
-  // frontend/src/components/admin/social/publerApi.js, the Platform settings
-  // Social tab and the Connections card (AP-B3, #938). Before this the proxy
-  // forwarded any verb to any Publer path with the server's key, so an editor
-  // session could reach accounts, members and workspace settings the Social
-  // Hub never touches, with no trail. The allowlist is checked without the
-  // query string: `/posts` covers the list (`?state=…&page=…`) and the delete
-  // (`?post_ids[]=…`). `rest-proxy.test.js` sends every request the pages
-  // make, so widening this is argued there rather than done quietly.
+  // The paths the Social Hub sends, each bound to the verb it sends it with,
+  // enumerated from frontend/src/components/admin/social/publerApi.js, the
+  // Platform settings Social tab and the Connections card (AP-B3, #938).
+  // Before this the proxy forwarded any verb to any Publer path with the
+  // server's key, so an editor session could reach accounts, members and
+  // workspace settings the Social Hub never touches, with no trail. The
+  // allowlist is checked without the query string: `/posts` covers the list
+  // (`GET ?state=…&page=…`) and the delete (`DELETE ?post_ids[]=…`), and
+  // nothing else; `DELETE /posts/schedule` is not a thing the Hub sends, so
+  // it is not a thing the proxy forwards. `rest-proxy.test.js` sends every
+  // request the pages make, so widening this is argued there rather than
+  // done quietly.
   allowedPaths: {
-    paths: ['/accounts', '/posts', '/posts/schedule', '/posts/schedule/publish'],
-    patterns: [/^\/job_status\/[A-Za-z0-9_-]+$/],
+    paths: [
+      { path: '/accounts', methods: ['GET'] },
+      { path: '/posts', methods: ['GET', 'DELETE'] },
+      { path: '/posts/schedule', methods: ['POST'] },
+      { path: '/posts/schedule/publish', methods: ['POST'] },
+    ],
+    patterns: [{ pattern: /^\/job_status\/[A-Za-z0-9_-]+$/, methods: ['GET'] }],
   },
   allowedMethods: ['GET', 'POST', 'DELETE'],
 });

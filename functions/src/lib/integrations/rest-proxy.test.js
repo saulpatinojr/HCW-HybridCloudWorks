@@ -485,8 +485,13 @@ describe('the Publer allowlist (AP-B3, #938)', () => {
   // Platform settings and the Connections card; the methods are the three
   // those files send.
   const PUBLER_ALLOWED = {
-    paths: ['/accounts', '/posts', '/posts/schedule', '/posts/schedule/publish'],
-    patterns: [/^\/job_status\/[A-Za-z0-9_-]+$/],
+    paths: [
+      { path: '/accounts', methods: ['GET'] },
+      { path: '/posts', methods: ['GET', 'DELETE'] },
+      { path: '/posts/schedule', methods: ['POST'] },
+      { path: '/posts/schedule/publish', methods: ['POST'] },
+    ],
+    patterns: [{ pattern: /^\/job_status\/[A-Za-z0-9_-]+$/, methods: ['GET'] }],
   };
   const publer = createIntegration({
     name: 'Publer',
@@ -539,6 +544,43 @@ describe('the Publer allowlist (AP-B3, #938)', () => {
         expect(fetchImpl, `${method} ${path}`).not.toHaveBeenCalled();
       }
     }
+  });
+
+  it('refuses an allowed path with a verb the Social Hub never sends it with (review on #1167)', async () => {
+    // Method and path are bound, not a cross-product: Publer is not assumed
+    // to refuse what the Hub never sends.
+    for (const [path, method] of [
+      ['/posts/schedule', 'DELETE'],
+      ['/posts/schedule/publish', 'DELETE'],
+      ['/accounts', 'POST'],
+      ['/accounts', 'DELETE'],
+      ['/posts', 'POST'],
+      ['/posts/schedule', 'GET'],
+      ['/job_status/j1', 'POST'],
+      ['/job_status/j1', 'DELETE'],
+    ]) {
+      const fetchImpl = vi.fn();
+      const response = await handlerFor(fetchImpl)(makeRequest({ path, method }), context);
+      expect(response.status, `${method} ${path}`).toBe(400);
+      expect(fetchImpl, `${method} ${path}`).not.toHaveBeenCalled();
+    }
+    for (const [path, method] of [
+      ['/posts', 'GET'],
+      ['/posts', 'DELETE'],
+      ['/accounts', 'GET'],
+      ['/job_status/j1', 'GET'],
+    ]) {
+      expect(isAllowedPath(PUBLER_ALLOWED, path, method), `${method} ${path}`).toBe(true);
+    }
+  });
+
+  it('judges a bare string or RegExp entry by path alone, which is what Linkie declares', () => {
+    const bare = { paths: ['/profiles'], patterns: [/^\/profiles\/[^/]+\/posts$/] };
+    for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) {
+      expect(isAllowedPath(bare, '/profiles', method)).toBe(true);
+      expect(isAllowedPath(bare, '/profiles/p1/posts', method)).toBe(true);
+    }
+    expect(isAllowedPath(bare, '/profiles')).toBe(true);
   });
 
   it('refuses PUT and PATCH even on an allowed path, because the Social Hub never sends them', async () => {
