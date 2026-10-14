@@ -19,6 +19,11 @@
  *
  *   node scripts/lab/capture-docker-cli-requests.mjs scripts/fixtures/docker-cli-agent-requests.json
  *
+ * The pin's own moves do this without a person: lab-supply-chain.yml runs
+ * scripts/lab/record-docker-cli-fixture.mjs after the host bump, which
+ * installs the pinned docker-ce-cli into a temporary directory from Docker's
+ * signed apt index and runs this with it first on PATH.
+ *
  * scripts/lab-host-docker-proxy.test.mjs fails when the argv recorded there
  * is no longer the argv buildDockerArgs builds, which is the signal to run
  * this again.

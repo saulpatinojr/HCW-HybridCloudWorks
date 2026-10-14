@@ -284,11 +284,15 @@ async function bumpMain(argv) {
   let plan;
   if (set === 'host') {
     const text = read(bump.GROUP_VARS_PATH);
+    const files = { [bump.CADDY_TEST_PATH]: read(bump.CADDY_TEST_PATH) };
     const { rows } = await check({ pins: readPins(text), readers: sources() });
-    plan = await bump.planHost({ text, rows, http });
+    plan = await bump.planHost({ text, files, rows, http });
   } else if (set === 'image-base') {
     const files = Object.fromEntries(
-      [bump.VERSIONS_ENV_PATH, bump.DOCKERFILE_PATH, bump.SANDBOX_DOCKERFILE_PATH].map((p) => [p, read(p)])
+      [bump.VERSIONS_ENV_PATH, bump.DOCKERFILE_PATH, bump.SANDBOX_DOCKERFILE_PATH, bump.DOCKER_GUIDE_PAGE_PATH].map((p) => [
+        p,
+        read(p),
+      ])
     );
     plan = await bump.planImageBase({ files, http });
   } else {

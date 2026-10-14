@@ -43,10 +43,14 @@ export const SETS = {
   host: {
     branch: 'chore/lab-pins-host',
     workflow: '.github/workflows/lab-supply-chain.yml',
-    paths: ['lab-host/ansible/group_vars/all.yml'],
+    paths: [
+      'lab-host/ansible/group_vars/all.yml',
+      'lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh',
+      'scripts/fixtures/docker-cli-agent-requests.json',
+    ],
     title: 'Lab host: move the pins that are behind upstream, each with its publisher checksum',
     intro:
-      'The weekly lab supply-chain run found lab host pins behind their publishers and moved each one whose checksum or digest the publisher served. It edits `lab-host/ansible/group_vars/all.yml` and nothing else.',
+      'The weekly lab supply-chain run found lab host pins behind their publishers and moved each one whose checksum or digest the publisher served. It edits `lab-host/ansible/group_vars/all.yml`, and with it the two files held to those pins when they moved: `CADDY_SHA512` in the caddy test (the release tarball\'s SHA512 from the publisher\'s checksums file) and the Docker CLI request fixture, re-recorded with the pinned docker-ce-cli installed from Docker\'s signed apt index. Nothing else.',
     after: [
       '**Read the release notes** of every component above before merging; a Coder, PostgreSQL or Vault move can carry a breaking change the version number does not show.',
       '**containerd carries runc.** A containerd.io or Docker Engine move is the runtime the learners\' containers run under; docs/runbooks/labs-host.md, "Runtime advisories", has the response times.',
@@ -56,10 +60,15 @@ export const SETS = {
   'image-base': {
     branch: 'chore/lab-pins-image-base',
     workflow: '.github/workflows/lab-supply-chain.yml',
-    paths: ['lab-image/versions.env', 'lab-image/Dockerfile', 'lab-image/sandbox-template/Dockerfile'],
+    paths: [
+      'lab-image/versions.env',
+      'lab-image/Dockerfile',
+      'lab-image/sandbox-template/Dockerfile',
+      'frontend/src/pages/docker/BuildingImagesPage.jsx',
+    ],
     title: 'Lab image: rebuild on the newest base image digest',
     intro:
-      "The weekly lab supply-chain run found a newer digest for the lab image's base. The base is pinned by digest on every FROM, so its operating system packages never move on their own; this pull request is how the image is rebuilt on the newest one. It edits `lab-image/versions.env` and the FROM lines that file governs, and nothing else.",
+      "The weekly lab supply-chain run found a newer digest for the lab image's base. The base is pinned by digest on every FROM, so its operating system packages never move on their own; this pull request is how the image is rebuilt on the newest one. It edits `lab-image/versions.env`, the FROM lines that file governs and, when the tag moved, the base tag and CPython release the Docker guide page names (`frontend/src/pages/docker/BuildingImagesPage.jsx`, which `DockerGuides.test.jsx` holds to versions.env). Nothing else.",
     after: [
       "**This pull request's `Build and smoke` check is the test of the new base:** both targets are built on it and run smoke.sh (which compares the image's Python with `BASE_PYTHON_VERSION`) and the sandbox check. Merge only on green.",
       "**Merging publishes, it does not deploy.** The push to `main` runs publish-lab-image.yml, which builds, smoke-tests, attests and pushes both images, then opens the `chore/lab-pins-image-digests` pull request that pins the new digests where they are consumed. Nothing a learner runs changes until that one merges.",

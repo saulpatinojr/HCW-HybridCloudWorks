@@ -19,6 +19,30 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Lab pin bumps carry their dependents (#949).** Three files are held to
+  the pins the weekly bumps move, and a bump that moved the pin alone failed
+  its own pull request's checks on 2026-10-13 (#1122 `scripts (operations)`
+  and `ansible-lint (lab-host)`, #1123 `frontend`). Now the host bump that
+  moves Caddy also moves `CADDY_SHA512` in
+  `lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh`, from the
+  release's `caddy_<v>_checksums.txt`; the one that moves Docker Engine
+  re-records `scripts/fixtures/docker-cli-agent-requests.json` with the
+  pinned `docker-ce-cli`, installed into a temporary directory from Docker's
+  apt index — the signing key refused unless it hashes to
+  `docker_apt_key_checksum` (the value the docker role holds the host's
+  keyring to), the InRelease verified against that key with gpgv, the index
+  by the InRelease, the .deb by the SHA256 the index lists
+  (`scripts/lab/record-docker-cli-fixture.mjs`, a step of
+  `lab-supply-chain.yml` that exits with nothing written when the fixture
+  already matches); and the image-base bump rewrites the base tag and
+  CPython release the Docker guide page names
+  (`frontend/src/pages/docker/BuildingImagesPage.jsx`). The three files join
+  their set's paths in `open-lab-pin-pr.mjs`. The tests that named those
+  values by hand — `lab-pin-bumps.test.mjs` against the live `group_vars`,
+  `DockerGuides.test.jsx` against `python:3.14.7-slim-trixie` — read them
+  from the files instead, so a bump pull request is green on its own and a
+  merged bump does not break `main`.
+
 - **Recording Hub: a Stats tab with the show's Podbean statistics.** Closes
   #1115 (the second of two slices; the first added the Distribution tab's
   live status and downloads). The show's figures lived only on Podbean's

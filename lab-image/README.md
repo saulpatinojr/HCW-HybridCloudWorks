@@ -466,8 +466,10 @@ and attests. Where each sum comes from:
   line tag's digest twice (the registry, its bytes hashed, and the Docker
   Hub API), takes the CPython release from the image config, requires the
   patch tag to resolve to the same digest, and opens or updates the
-  `chore/lab-pins-image-base` pull request with all four edits and that
-  evidence. A new minor line (3.15) stays a hand bump, governed by
+  `chore/lab-pins-image-base` pull request with all four edits, the base tag
+  and CPython release the Docker guide page names
+  (`frontend/src/pages/docker/BuildingImagesPage.jsx`, which
+  `DockerGuides.test.jsx` holds to this file), and that evidence. A new minor line (3.15) stays a hand bump, governed by
   `scripts/version-floors.json`. Merging it publishes from `main`, and the
   publish opens the `chore/lab-pins-image-digests` pull request for the
   consumers.

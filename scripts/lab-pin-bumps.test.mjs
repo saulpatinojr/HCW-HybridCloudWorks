@@ -1,18 +1,22 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
+  CADDY_TEST_PATH,
   CAPABILITIES_PATH,
   CODER_TEMPLATE_PATH,
   DOCKERFILE_PATH,
+  DOCKER_GUIDE_PAGE_PATH,
   GROUP_VARS_PATH,
   HOST_BUMPERS,
   SANDBOX_DOCKERFILE_PATH,
   VERSIONS_ENV_PATH,
+  aptIndex,
   aptPick,
   compareDebian,
+  dockerCliDeb,
   goSumHash,
   inReleaseSha256,
   makeHttp,
@@ -26,6 +30,7 @@ import {
   renderEvidence,
   renderNotes,
   renderPlan,
+  replaceEvery,
   replaceFrom,
   resolveTag,
   setEnvValue,
@@ -51,7 +56,23 @@ function fakeFetch(routes) {
 }
 
 describe('editing one line', () => {
-  const groupVars = real(GROUP_VARS_PATH);
+  // A slice shaped as group_vars is, rather than the live file: a pin bump
+  // moves the live values, and a test that named them broke on #1122.
+  const groupVars = [
+    '# docker_release_pins: the same upstream version for both releases.',
+    'docker_release_pins:',
+    '  resolute:',
+    '    engine: "5:29.8.1-1~ubuntu.26.04~resolute"',
+    '    containerd: "2.3.6-1"',
+    '  noble:',
+    '    engine: "5:29.8.1-1~ubuntu.24.04~noble"',
+    '    containerd: "2.3.6-1"',
+    '',
+    'coder_image: ghcr.io/coder/coder',
+    'coder_image_tag: v2.38.0',
+    'coder_postgres_image_tag: "18.6"',
+    '',
+  ].join('\n');
 
   it('moves one codename entry of docker_release_pins and keeps the quotes', () => {
     const { text, from, line } = setYamlScalar(groupVars, ['docker_release_pins', 'noble', 'engine'], '5:29.9.0-1~ubuntu.24.04~noble');
@@ -60,6 +81,19 @@ describe('editing one line', () => {
     const changed = text.split('\n').filter((l, i) => l !== groupVars.split('\n')[i]);
     expect(changed).toHaveLength(1);
     expect(text).toContain('    engine: "5:29.8.1-1~ubuntu.26.04~resolute"');
+  });
+
+  it('the live group_vars has the shape the slice above assumes', () => {
+    const live = real(GROUP_VARS_PATH);
+    for (const codename of ['resolute', 'noble']) {
+      expect(setYamlScalar(live, ['docker_release_pins', codename, 'engine'], 'x').from).toMatch(/^5:\d+\.\d+\.\d+-1~ubuntu\./);
+    }
+    expect(setYamlScalar(live, ['coder_image'], 'x').from).toBe('ghcr.io/coder/coder');
+  });
+
+  it('replaces every occurrence of a literal and refuses none', () => {
+    expect(replaceEvery('a python:1 b python:1', 'python:1', 'python:2', 'tag')).toEqual({ text: 'a python:2 b python:2', from: 'python:1', count: 2 });
+    expect(() => replaceEvery('nothing here', 'python:1', 'python:2', 'tag')).toThrow(/tag: no occurrence/);
   });
 
   it('edits an unquoted top-level scalar and does not confuse a key with its prefix', () => {
@@ -141,6 +175,52 @@ describe('reading publisher indexes', () => {
     expect(inReleaseSha256(inRelease, 'stable/binary-arm64/Packages')).toBeNull();
   });
 
+  it('reads a sha512sum line when asked for 128 hex digits', () => {
+    const sums = `${'c'.repeat(128)}  caddy_9.9.9_linux_amd64.tar.gz\n${'d'.repeat(128)}  caddy_9.9.9_linux_arm64.tar.gz\n`;
+    expect(sumsLine(sums, 'caddy_9.9.9_linux_amd64.tar.gz', 128)).toBe('c'.repeat(128));
+    expect(sumsLine(sums, 'caddy_9.9.9_linux_amd64.tar.gz')).toBeNull();
+  });
+
+  it('aptIndex awaits the InRelease verifier before trusting the list, and a refusal is the read refused', async () => {
+    const base = 'https://download.docker.com/linux/ubuntu/dists/resolute';
+    const packages = 'Package: docker-ce-cli\nVersion: 5:29.9.0-1~ubuntu.26.04~resolute\nSHA256: ' + hex('1') + '\n';
+    const inRelease = `SHA256:\n ${sha(packages).slice(7)} 1 stable/binary-amd64/Packages\n`;
+    const routes = { [`${base}/stable/binary-amd64/Packages`]: packages, [`${base}/InRelease`]: inRelease };
+    const seen = vi.fn();
+    const index = await aptIndex(makeHttp(fakeFetch(routes)), 'https://download.docker.com/linux/ubuntu', 'dists/resolute', 'stable', {
+      verifyInRelease: seen,
+    });
+    expect(seen).toHaveBeenCalledWith(inRelease, `${base}/InRelease`);
+    expect(index.text).toBe(packages);
+    const refusing = () => {
+      throw new Error('BAD signature');
+    };
+    await expect(
+      aptIndex(makeHttp(fakeFetch(routes)), 'https://download.docker.com/linux/ubuntu', 'dists/resolute', 'stable', { verifyInRelease: refusing })
+    ).rejects.toThrow(/BAD signature/);
+  });
+
+  it('names the docker-ce-cli .deb for a pinned version string with the SHA256 the index lists', () => {
+    const index = [
+      'Package: docker-ce-cli',
+      'Version: 5:29.9.0-1~ubuntu.26.04~resolute',
+      'Filename: dists/resolute/pool/stable/amd64/docker-ce-cli_29.9.0-1~ubuntu.26.04~resolute_amd64.deb',
+      `SHA256: ${hex('7')}`,
+      '',
+      'Package: docker-ce-cli',
+      'Version: 5:29.8.1-1~ubuntu.26.04~resolute',
+      'Filename: dists/resolute/pool/stable/amd64/docker-ce-cli_29.8.1-1~ubuntu.26.04~resolute_amd64.deb',
+      `SHA256: ${hex('8')}`,
+      '',
+    ].join('\n');
+    expect(dockerCliDeb(index, '5:29.9.0-1~ubuntu.26.04~resolute')).toEqual({
+      url: 'https://download.docker.com/linux/ubuntu/dists/resolute/pool/stable/amd64/docker-ce-cli_29.9.0-1~ubuntu.26.04~resolute_amd64.deb',
+      sha256: hex('7'),
+      version: '5:29.9.0-1~ubuntu.26.04~resolute',
+    });
+    expect(() => dockerCliDeb(index, '5:30.0.0-1~ubuntu.26.04~resolute')).toThrow(/not in the index/);
+  });
+
   it('reads a sha256sum line and a Go checksum database line', () => {
     expect(sumsLine(`${hex('e')}  vault_2.1.2_linux_amd64.zip\n${hex('f')}  vault_2.1.2_darwin_arm64.zip\n`, 'vault_2.1.2_linux_amd64.zip')).toBe(hex('e'));
     expect(sumsLine('', 'x')).toBeNull();
@@ -195,6 +275,15 @@ describe('registry reads', () => {
 describe('the host plan', () => {
   const text = real(GROUP_VARS_PATH);
   const row = (key, pinned, latest, status = 'BEHIND') => ({ key, label: LABELS[key], pinned, latest, status });
+  // The live pins, so these tests survive the bumps they describe (#1122
+  // moved Docker Engine, Caddy and Vault under a version of this file that
+  // named them).
+  const pinned = (key) => text.match(new RegExp(`^${key}: "?([^"\\n]+?)"?$`, 'm'))[1];
+  const pinnedVault = pinned('vault_version');
+  const pinnedCaddy = pinned('caddy_version').replace(/^v/, '');
+  const coderTagLine = text.match(/^coder_image_tag: .*$/m)[0];
+  const pinnedEngine = text.match(/^ {2}resolute:\n(?: {4}.*\n)*? {4}engine: "5:([0-9.]+)-/m)[1];
+  const nextEngine = pinnedEngine.replace(/^(\d+)\.\d+\.\d+$/, '$1.99.0');
 
   it('has a bump procedure for every pin the check watches', () => {
     expect(Object.keys(HOST_BUMPERS).sort()).toEqual(Object.keys(LABELS).sort());
@@ -204,10 +293,10 @@ describe('the host plan', () => {
     const bumpers = {
       vault: async () => ({
         edits: [
-          { file: GROUP_VARS_PATH, where: 'vault_version', to: '2.1.2', apply: (t) => setYamlScalar(t, ['vault_version'], '2.1.2') },
+          { file: GROUP_VARS_PATH, where: 'vault_version', to: '9.9.9', apply: (t) => setYamlScalar(t, ['vault_version'], '9.9.9') },
           { file: GROUP_VARS_PATH, where: 'vault_checksum', to: `sha256:${hex('e')}`, apply: (t) => setYamlScalar(t, ['vault_checksum'], `sha256:${hex('e')}`) },
         ],
-        evidence: [{ item: 'vault_2.1.2_linux_amd64.zip (SHA256)', value: hex('e'), source: 'https://releases.hashicorp.com/vault/2.1.2/vault_2.1.2_SHA256SUMS' }],
+        evidence: [{ item: 'vault_9.9.9_linux_amd64.zip (SHA256)', value: hex('e'), source: 'https://releases.hashicorp.com/vault/9.9.9/vault_9.9.9_SHA256SUMS' }],
       }),
       coder: async () => {
         throw new Error('ghcr.io/coder/coder:v2.39.0: HTTP 404');
@@ -218,21 +307,21 @@ describe('the host plan', () => {
     };
     const plan = await planHost({
       text,
-      rows: [row('vault', '2.1.1', '2.1.2'), row('coder', '2.38.0', '2.39.0'), row('caddy', '2.11.4', '2.11.4', 'current')],
+      rows: [row('vault', pinnedVault, '9.9.9'), row('coder', '2.38.0', '2.39.0'), row('caddy', pinnedCaddy, pinnedCaddy, 'current')],
       http: null,
       bumpers,
     });
     expect(plan.applied.map((b) => b.key)).toEqual(['vault']);
     const out = plan.files[GROUP_VARS_PATH];
-    expect(out).toContain('vault_version: "2.1.2"\n');
+    expect(out).toContain('vault_version: "9.9.9"\n');
     expect(out).toContain(`vault_checksum: sha256:${hex('e')}\n`);
-    expect(out).toContain('coder_image_tag: v2.38.0\n');
+    expect(out).toContain(`${coderTagLine}\n`);
     expect(plan.notes).toEqual([{ label: LABELS.coder, from: '2.38.0', to: '2.39.0', reason: 'ghcr.io/coder/coder:v2.39.0: HTTP 404' }]);
     expect(renderPlan(plan.applied)).toContain('lab-host/ansible/group_vars/all.yml: vault_checksum: sha256:');
     const evidence = renderEvidence(plan.applied, { set: 'host', date: '2026-10-13' });
     expect(evidence).toContain('`node scripts/lab-pins-upstream.mjs --bump host`');
     expect(evidence).toContain(hex('e'));
-    expect(evidence).toContain('https://releases.hashicorp.com/vault/2.1.2/vault_2.1.2_SHA256SUMS');
+    expect(evidence).toContain('https://releases.hashicorp.com/vault/9.9.9/vault_9.9.9_SHA256SUMS');
     expect(renderNotes(plan.notes)).toContain('**Coder** 2.38.0 → 2.39.0: ghcr.io/coder/coder:v2.39.0: HTTP 404');
   });
 
@@ -286,17 +375,53 @@ describe('the host plan', () => {
       ['resolute', '26.04'],
       ['noble', '24.04'],
     ]) {
-      const v = `5:29.9.0-1~ubuntu.${release}~${codename}`;
+      const v = `5:${nextEngine}-1~ubuntu.${release}~${codename}`;
       const packages = `Package: docker-ce\nVersion: ${v}\nSHA256: ${hex('1')}\n\nPackage: docker-ce-cli\nVersion: ${v}\nSHA256: ${hex('2')}\n\nPackage: docker-ce-rootless-extras\nVersion: ${v}\nSHA256: ${hex('3')}\n`;
       routes[`${base}/${codename}/stable/binary-amd64/Packages`] = packages;
       routes[`${base}/${codename}/InRelease`] = `SHA256:\n ${sha(packages).slice(7)} 1 stable/binary-amd64/Packages\n`;
     }
-    const plan = await planHost({ text, rows: [row('dockerEngine', '29.8.1', '29.9.0')], http: makeHttp(fakeFetch(routes)) });
+    const plan = await planHost({ text, rows: [row('dockerEngine', pinnedEngine, nextEngine)], http: makeHttp(fakeFetch(routes)) });
     expect(plan.notes).toEqual([]);
-    expect(plan.files[GROUP_VARS_PATH]).toContain('    engine: "5:29.9.0-1~ubuntu.26.04~resolute"');
-    expect(plan.files[GROUP_VARS_PATH]).toContain('    engine: "5:29.9.0-1~ubuntu.24.04~noble"');
-    expect(plan.applied[0].evidence.map((e) => e.item)).toContain('docker-ce-cli 5:29.9.0-1~ubuntu.24.04~noble (.deb SHA256)');
-    expect(plan.applied[0].evidence.map((e) => e.item)).toContain('docker-ce-rootless-extras 5:29.9.0-1~ubuntu.26.04~resolute (.deb SHA256)');
+    expect(plan.files[GROUP_VARS_PATH]).toContain(`    engine: "5:${nextEngine}-1~ubuntu.26.04~resolute"`);
+    expect(plan.files[GROUP_VARS_PATH]).toContain(`    engine: "5:${nextEngine}-1~ubuntu.24.04~noble"`);
+    expect(plan.applied[0].evidence.map((e) => e.item)).toContain(`docker-ce-cli 5:${nextEngine}-1~ubuntu.24.04~noble (.deb SHA256)`);
+    expect(plan.applied[0].evidence.map((e) => e.item)).toContain(`docker-ce-rootless-extras 5:${nextEngine}-1~ubuntu.26.04~resolute (.deb SHA256)`);
+  });
+
+  it('moves Caddy with the SHA512 the caddy test verifies its release against, or nothing when that file was not read', async () => {
+    const manifest = JSON.stringify({ schemaVersion: 2, manifests: [] });
+    const sums = `${'c'.repeat(128)}  caddy_9.9.9_linux_amd64.tar.gz\n${'d'.repeat(128)}  caddy_9.9.9_linux_arm64.tar.gz\n`;
+    const routes = {
+      'https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/caddy:pull': { token: 't' },
+      'https://registry-1.docker.io/v2/library/caddy/manifests/9.9.9-builder': manifest,
+      'https://hub.docker.com/v2/repositories/library/caddy/tags/9.9.9-builder': { digest: sha(manifest) },
+      'https://github.com/caddyserver/caddy/releases/download/v9.9.9/caddy_9.9.9_checksums.txt': sums,
+    };
+    const caddyTest = `#!/usr/bin/env bash\nCADDY_SHA512='${'a'.repeat(128)}'\necho "$CADDY_SHA512"\n`;
+    const plan = await planHost({
+      text,
+      files: { [CADDY_TEST_PATH]: caddyTest },
+      rows: [row('caddy', pinnedCaddy, '9.9.9')],
+      http: makeHttp(fakeFetch(routes)),
+    });
+    expect(plan.notes).toEqual([]);
+    expect(plan.files[GROUP_VARS_PATH]).toContain('caddy_version: v9.9.9\n');
+    expect(plan.files[GROUP_VARS_PATH]).toContain('caddy_builder_image_tag: 9.9.9-builder\n');
+    expect(plan.files[GROUP_VARS_PATH]).toContain(`caddy_builder_image_digest: ${sha(manifest)}\n`);
+    expect(plan.files[CADDY_TEST_PATH]).toBe(caddyTest.replace('a'.repeat(128), 'c'.repeat(128)));
+    expect(plan.applied[0].evidence.map((e) => e.item)).toContain(
+      'caddy_9.9.9_linux_amd64.tar.gz (SHA512; caddy-adapt.test.sh verifies the release it runs against it)'
+    );
+    expect(plan.applied[0].evidence.map((e) => e.value)).toContain('c'.repeat(128));
+
+    const without = await planHost({ text, rows: [row('caddy', pinnedCaddy, '9.9.9')], http: makeHttp(fakeFetch(routes)) });
+    expect(without.applied).toEqual([]);
+    expect(without.files[GROUP_VARS_PATH]).toBe(text);
+    expect(without.notes[0].reason).toMatch(/caddy-adapt\.test\.sh was not read/);
+  });
+
+  it('the live caddy test holds one CADDY_SHA512 line in the shape the bump edits', () => {
+    expect(real(CADDY_TEST_PATH).match(/^CADDY_SHA512='[0-9a-f]{128}'$/gm)).toHaveLength(1);
   });
 
   it('refuses an index whose hash InRelease does not list', async () => {
@@ -313,7 +438,9 @@ describe('the host plan', () => {
 });
 
 describe('the image base plan', () => {
-  const files = Object.fromEntries([VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH].map((p) => [p, real(p)]));
+  const files = Object.fromEntries(
+    [VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH].map((p) => [p, real(p)])
+  );
   const env = readEnv(files[VERSIONS_ENV_PATH]);
   const [, major, minor] = env.BASE_PYTHON_VERSION.match(/^(\d+)\.(\d+)\.(\d+)$/);
   const variant = env.BASE_IMAGE.replace(/^python:\d+\.\d+\.\d+/, '');
@@ -356,6 +483,23 @@ describe('the image base plan', () => {
     expect(plan.files[DOCKERFILE_PATH]).toContain(`FROM python:${next}${variant}@${sha(routes._index)} AS runner`);
     expect(plan.files[DOCKERFILE_PATH]).not.toContain(env.BASE_DIGEST);
     expect(base.evidence.map((e) => e.value)).toContain(next);
+    // The guide page names the tag and the CPython release; both move (#1123 failed `frontend` without this).
+    const page = plan.files[DOCKER_GUIDE_PAGE_PATH];
+    expect(page).toContain(`python:${next}${variant}`);
+    expect(page).toContain(`CPython ${next}`);
+    expect(page).not.toContain(env.BASE_IMAGE);
+    expect(page).not.toContain(`CPython ${env.BASE_PYTHON_VERSION}`);
+  });
+
+  it('is a note that edits nothing when the guide page was not read', async () => {
+    const { [DOCKER_GUIDE_PAGE_PATH]: _page, ...withoutPage } = files;
+    const plan = await planImageBase({ files: withoutPage, http: makeHttp(fakeFetch(registry())) });
+    expect(plan.applied.filter((b) => b.key === 'base')).toEqual([]);
+    // The sandbox base still moves on its own; the python base's three lines do not.
+    const after = readEnv(plan.files[VERSIONS_ENV_PATH]);
+    expect([after.BASE_IMAGE, after.BASE_DIGEST, after.BASE_PYTHON_VERSION]).toEqual([env.BASE_IMAGE, env.BASE_DIGEST, env.BASE_PYTHON_VERSION]);
+    expect(plan.files[DOCKERFILE_PATH]).toBe(files[DOCKERFILE_PATH]);
+    expect(plan.notes.map((n) => n.reason).join(' ')).toMatch(/BuildingImagesPage\.jsx was not read/);
   });
 
   it('moves nothing when the patch tag and the line tag have not settled on one digest', async () => {
