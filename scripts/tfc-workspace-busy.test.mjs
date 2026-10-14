@@ -16,6 +16,7 @@ import {
   missingTokenMessage,
 } from './tfc-workspace-busy.mjs';
 
+/** One HCP Terraform run record, in the shape the API lists them. */
 const run = (id, status) => ({ id, attributes: { status } });
 
 describe('isBusy', () => {

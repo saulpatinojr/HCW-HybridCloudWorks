@@ -102,6 +102,13 @@ export function describeBusy({ id, status }) {
   );
 }
 
+/**
+ * One GET against the HCP Terraform API, unwrapped to its `data`.
+ *
+ * @param {string} token a USER or TEAM token with read access to the workspace
+ * @param {string} path the API path after `/api/v2`
+ * @returns {Promise<object>} the response's `data`
+ */
 async function tfc(token, path) {
   const response = await fetch(`${API}${path}`, {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/vnd.api+json' },
