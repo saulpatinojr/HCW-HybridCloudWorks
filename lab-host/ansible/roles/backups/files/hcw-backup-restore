@@ -213,13 +213,16 @@ unset VAULT_TOKEN
 # above is the acceptance, not the completion. What can be read without a
 # token is the seal status, polled for a bounded time, so the owner is told
 # what Vault reports now and what to confirm before relying on it.
+field() { tr -d '\n' | sed -n "s/.*\"$1\"[[:blank:]]*:[[:blank:]]*\([a-z]*\).*/\1/p" | head -n 1; }
 state='gave no status for 60 seconds'
 for _ in $(seq 1 12); do
   status="$("$vault_bin" status -format=json 2>/dev/null || true)"
-  case "$status" in
-    *'"sealed": false'*|*'"sealed":false'*) state='Initialized true, Sealed false'; break ;;
-    *'"sealed": true'*|*'"sealed":true'*) state='Sealed true' ;;
-  esac
+  sealed="$(printf '%s' "$status" | field sealed)"
+  initialized="$(printf '%s' "$status" | field initialized)"
+  if [ -n "$sealed" ]; then
+    state="Initialized ${initialized:-unknown}, Sealed ${sealed}"
+    [ "$sealed" = true ] || break
+  fi
   sleep 5
 done
 say "Vault accepted ${blob} for restore and now reports ${state}. Its data is being replaced with the snapshot's, tokens included: the token used here no longer works, and the snapshot's revoked root token stays revoked. Before relying on it: sudo journalctl -u vault -n 30 --no-pager should show the restore completed and the seal re-established; if Vault reports Sealed true, sudo systemctl restart vault unseals it with the same seal key. Then seed the snapshot token file again (hcw-vault-backup-seed, with a root token from generate-root: docs/runbooks/labs-host.md, \"The root token\")"
