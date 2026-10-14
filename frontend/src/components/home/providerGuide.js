@@ -68,7 +68,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     row: 1,
     website: 'https://azure.microsoft.com',
     description:
-      'Microsoft Azure is the cloud provider this site calls home: every page you read is served from it. We teach it the way we run it, with reference blueprints, study guides built from Microsoft’s exam outlines, and a Landing Zone Builder that assembles an Azure landing zone for you to download.',
+      'Microsoft Azure is our reference enterprise cloud provider. Design and deploy hub-and-spoke landing zones, validate two-tier secure application topologies, and download production Terraform modules aligned to Microsoft’s Cloud Adoption Framework and Azure Verified Modules.',
   }),
   Object.freeze({
     provider: 'aws',
@@ -78,7 +78,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     row: 1,
     website: 'https://aws.amazon.com',
     description:
-      'We teach Amazon Web Services rather than run on it. This cloud provider earns its place through reference blueprints such as a serverless API and multi-region disaster recovery, a catalogue of AWS certifications with learning paths, and a news feed that follows what AWS releases.',
+      'As a premier hyperscale cloud provider, Amazon Web Services powers resilient architectures. Explore reference designs for multi-region disaster recovery, serverless event-driven APIs, and Transit Gateway networks, backed by role-based AWS certification paths.',
   }),
   Object.freeze({
     provider: 'gcp',
@@ -88,7 +88,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     row: 1,
     website: 'https://cloud.google.com',
     description:
-      'Where does Google Cloud fit? As the third hyperscale cloud provider on this site, it is taught through blueprints for workloads like a BigQuery data lake, Cloud Run microservices and zero trust security, a catalogue of Google’s certifications with learning paths, and a news feed.',
+      'Google Cloud is the cloud provider for data and modern app platforms. Explore blueprints for BigQuery analytics lakes, Cloud Run microservices, global HTTPS load balancing, and BeyondCorp zero-trust perimeters, supported by Google Cloud learning paths.',
   }),
   Object.freeze({
     provider: 'vmware',
@@ -98,7 +98,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     row: 1,
     website: 'https://www.vmware.com',
     description:
-      'Private cloud has a cloud provider of its own in VMware by Broadcom. Our VMware pages cover private and hybrid designs on VMware Cloud Foundation with vSphere, vSAN and NSX, the validated designs and frameworks behind them, and certification tracks from associate to advanced professional.',
+      'Private and hybrid architectures find their cloud provider in VMware by Broadcom. Explore VMware Cloud Foundation designs across vSphere, vSAN, and NSX, discover migration patterns into public hyperscalers, and advance through certification tracks.',
   }),
   Object.freeze({
     provider: 'github',
@@ -108,7 +108,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     row: 2,
     website: 'https://github.com',
     description:
-      'Every line of this site lives on GitHub, the framework provider behind how we build. Its workflows test every change and deploy the site, you sign in with GitHub to open a lab workspace, and the lab image is published to its container registry. Our GitHub pages teach those same workflows.',
+      'GitHub serves as our framework provider for secure multi-cloud delivery. Study production GitHub CI/CD workflows for infrastructure deployment, master OpenID Connect (OIDC) cloud federation to eliminate static keys, and explore browser lab environments.',
   }),
   Object.freeze({
     provider: 'finops',
@@ -118,7 +118,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     row: 2,
     website: 'https://www.finops.org',
     description:
-      'Money is where FinOps comes in. The FinOps Foundation is the framework provider behind everything we say about cloud cost: its framework and the FOCUS billing specification shape our cost pages, from allocation and anomaly blueprints to the maturity model and the FinOps tools.',
+      'The FinOps Foundation is the framework provider shaping multi-cloud cost governance. Implement FOCUS 1.1 billing data normalization, eliminate cloud cost traps across Azure, AWS, and GCP, and build organizational maturity with unit economic allocation models.',
   }),
   Object.freeze({
     provider: 'terraform',
@@ -129,7 +129,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     // www.terraform.io redirects here, and this is the canonical URL it names.
     website: 'https://developer.hashicorp.com/terraform',
     description:
-      'Terraform, HashiCorp’s infrastructure-as-code tool, is the service provider we lean on most. It declares this site’s cloud infrastructure, defines the lab workspaces, and powers the Landing Zone Builder, whose download is Terraform built on Azure Verified Modules. Two browser labs teach you to validate it.',
+      'HashiCorp Terraform is the service provider for declarative multi-cloud infrastructure. Generate enterprise landing zones using official verified modules, examine modular state structures, and practice automated syntax and policy validation inside browser labs.',
   }),
   Object.freeze({
     provider: 'docker',
@@ -139,7 +139,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     row: 2,
     website: 'https://www.docker.com',
     description:
-      'Think of Docker as the service provider that packages our labs. A multi-stage Dockerfile builds the hcw-lab image with every tool a lab needs, each lab workspace runs as a container from that image, and Docker Sandboxes let you run a coding agent against your landing zone on your own machine.',
+      'Docker operates as the service provider packaging our container toolchains. Learn multi-stage image builds, inspect the container image that powers every browser lab workspace, and use Docker Sandboxes to run coding agents safely against your landing zone locally.',
   }),
   Object.freeze({
     provider: 'ansible',
@@ -149,7 +149,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     row: 2,
     website: 'https://www.ansible.com',
     description:
-      'A bare server becomes the Hybrid Lab host because of Red Hat Ansible, the service provider behind its setup. Ansible roles harden the machine, install the container runtime and bring up the workspace service, and one browser lab has you syntax-check and lint that same playbook until it passes.',
+      'Red Hat Ansible is the service provider behind automated system configuration and host hardening. Explore production playbooks for enterprise Linux security baselines, and test your configuration playbooks against real cloud environments in browser-based labs.',
   }),
 ]);
 
