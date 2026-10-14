@@ -19,6 +19,23 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Version floors: the weekly pull request moves the `engines.node`
+  ranges with the floors, and arrives green.** `update-version-floors.yml`
+  used to move `scripts/version-floors.json` alone and open a pull request
+  that was red by design, so every Node.js minor left five `engines.node`
+  ranges for a person to move by hand (#1152). The updater now moves each
+  range the new floors leave behind within its line, in its `package.json`
+  and the root entry of the `package-lock.json` beside it, and re-reads the
+  tree to list only what is still behind: an exact pin with a digest or
+  checksum, a `runtime_version`, a `runs-on`, or anything on a new line.
+  The commit job judges the patch before applying it, by a rule written in
+  the workflow: the floors file, and otherwise only a `"node": "<range>"`
+  line of a `package.json` or `package-lock.json`. The pull request body now
+  follows `.github/pull_request_template.md`, and its first item says
+  whether the floors check is the evidence or the work list.
+  `scripts/version-floors.test.mjs` also fails a lockfile whose root
+  `engines.node` differs from its `package.json`.
+
 - **Lab host: a run can be narrowed to the roles that changed.** Every role
   in `lab-host/ansible/site.yml` carries its own name as a tag, so
   `bootstrap.sh --tags lab_images,coder` after a digests merge, or

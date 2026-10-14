@@ -10,8 +10,10 @@
  *   - version-floors.test.mjs runs it against the real tree, so a pin that
  *     falls behind fails CI naming the file, the pin and the floor.
  *   - update-version-floors.mjs moves the floors when endoflife.date lists a
- *     newer release; the pull request it opens then goes red on exactly the
- *     pins that are now behind. That red is the point, not a defect.
+ *     newer release, and with them every pin proposeMove() can move: an
+ *     engines.node range left behind within its line. The pull request it
+ *     opens goes red only on the pins a person has to move (an exact pin
+ *     with its digest or checksum, or a new line), and names each one.
  *
  * THREE FILES. lib/version-math.mjs owns the arithmetic (versions, the N-2
  * floors, npm ranges, Terraform constraints); lib/version-pins.mjs owns
@@ -160,6 +162,34 @@ export function judge(pin, floors) {
   if (pin.range !== undefined) return judgeRange(pin.range, kind, ceiling);
   if (pin.constraint !== undefined) return judgeConstraint(pin.constraint, kind);
   return judgeVersion(pin, kind, ceiling);
+}
+
+/** `26.8.0` as a whole version inside a range, not inside `126.8.0` or `26.8.01`. */
+const writtenVersion = (version) => new RegExp(`(?<![\\d.])${version.replaceAll('.', '\\.')}(?![\\d.])`, 'g');
+
+/**
+ * The range an engines.node pin moves to when its floor moved within its
+ * line, or null when the move is not mechanical and stays on the work list.
+ *
+ * The lowest version the range admits, as it is written, is replaced by the
+ * floor that governs the pin (its platform ceiling's, when it has one), and
+ * the move stands only when the rule then passes. Nothing else moves: an
+ * exact pin carries a digest or checksum this cannot read, a new line's
+ * release notes come first, and a range whose minimum is not written out
+ * (`^26.8`) is a person's to rewrite.
+ */
+export function proposeMove(pin, floors) {
+  if (pin.kind !== 'node' || pin.range === undefined || judge(pin, floors) === null) return null;
+  const floor = ceilingFor(pin, floors)?.floor ?? floors.kinds.node.floor;
+  let minimum;
+  try {
+    minimum = npmRangeMinimum(pin.range);
+  } catch {
+    return null;
+  }
+  if (!minimum || meetsFloor(minimum, floor) || lineOf(minimum) !== lineOf(floor)) return null;
+  const range = pin.range.replace(writtenVersion(minimum), floor);
+  return range !== pin.range && judge({ ...pin, range }, floors) === null ? range : null;
 }
 
 /** Ceiling selectors that match no pin: a renamed job would otherwise move a functions pin under the general floor. */

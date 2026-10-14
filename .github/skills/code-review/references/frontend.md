@@ -48,7 +48,7 @@ hydrated client-side; the admin portal is Entra ID/MSAL-protected
 
 ## Verification commands
 
-Run from `frontend/` (Node 26, 26.8.0 or later; `npm ci` first if needed):
+Run from `frontend/` (Node 26, at or above the floor in `scripts/version-floors.json`; `npm ci` first if needed):
 
 ```bash
 npm run lint

@@ -2,12 +2,17 @@
  * What the weekly version-floors branch is allowed to contain (#715).
  *
  * The same tripwire as avm-versions-workflow.test.mjs, for the same reason:
- * the `commit` job pushes a branch with a GitHub App installation token, and
- * the one `git add <path>` line keeps that branch to the floors file. `-A` or
- * `.` would sweep in whatever the earlier job left in the workspace.
+ * the `commit` job pushes a branch with a GitHub App installation token. Since
+ * #1152 the branch carries the engines.node ranges the new floors leave
+ * behind as well as the floors file, so the job judges the patch before it
+ * applies it and stages only the paths that judgement listed. `-A` or `.`
+ * would sweep in whatever the earlier job left in the workspace. The guard is
+ * run here against real patches, not only read, because its rule is code.
  */
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { afterAll, describe, it, expect } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,12 +24,31 @@ const WORKFLOW = join(
   'update-version-floors.yml'
 );
 const FLOORS_PATH = 'scripts/version-floors.json';
+const GUARD = 'The patch moves only the floors file and engines.node ranges';
+const APPLY = 'Apply the patch; nothing but engines.node moved in a package file';
 
 /** Non-comment lines only, so prose about `git add -A` cannot trip it. */
 function commandLines(source) {
   return String(source)
     .split(/\r?\n/)
     .filter((line) => !/^\s*#/.test(line));
+}
+
+/** Leading whitespace, in characters. */
+const indentOf = (line) => line.length - line.trimStart().length;
+
+/** The `run: |` script of the step with this name, dedented. */
+function stepScript(source, name) {
+  const lines = String(source).split(/\r?\n/);
+  const start = lines.findIndex((l) => l.trim() === `- name: ${name}`);
+  const runAt = lines.findIndex((l, i) => i > start && /^\s*run: \|\s*$/.test(l));
+  const body = [];
+  for (const line of lines.slice(runAt + 1)) {
+    if (line.trim() && indentOf(line) <= indentOf(lines[runAt])) break;
+    body.push(line);
+  }
+  const indent = Math.min(...body.filter((l) => l.trim()).map(indentOf));
+  return body.map((l) => l.slice(indent)).join('\n');
 }
 
 describe('the version floors workflow', () => {
@@ -40,9 +64,11 @@ describe('the version floors workflow', () => {
     expect(lines.some((l) => /^\s*pull_request:/.test(l))).toBe(false);
   });
 
-  it('stages exactly the floors file, and nothing else', () => {
+  it('stages exactly the paths the guard listed, and nothing else', () => {
     const staged = lines.filter((l) => /\bgit add\b/.test(l)).map((l) => l.replace(/^.*\bgit add\s+/, '').trim());
-    expect(staged).toEqual([FLOORS_PATH]);
+    expect(staged).toEqual(['-- "${patched[@]}"']);
+    expect(commitJob).toContain('mapfile -t patched < "${RUNNER_TEMP}/version-floors/patched.txt"');
+    expect(stepScript(source, GUARD)).toContain('> "${dir}/patched.txt"');
   });
 
   it('never stages with a wildcard or commits with -a', () => {
@@ -56,9 +82,23 @@ describe('the version floors workflow', () => {
     for (const check of checks) expect(check).toContain('git status --porcelain');
   });
 
-  it('runs the updater without installing anything', () => {
+  it('runs the updater without installing anything, and hands on a text patch', () => {
     expect(updateJob).toContain('node scripts/update-version-floors.mjs --summary');
     expect(lines.some((l) => /\bnpm (ci|install)\b/.test(l))).toBe(false);
+    expect(updateJob).toContain('git diff > "${RUNNER_TEMP}/version-floors/floors.patch"');
+    expect(lines.filter((l) => /git diff\b.*--binary/.test(l))).toEqual([]);
+  });
+
+  it('judges the patch before it applies it, and compares the result before any repository file runs', () => {
+    const guardAt = commitJob.indexOf(`- name: ${GUARD}`);
+    const applyAt = commitJob.indexOf('git apply "${RUNNER_TEMP}/version-floors/floors.patch"');
+    const compareAt = commitJob.indexOf('The patch changes more than engines.node in');
+    const mintAt = commitJob.indexOf('node scripts/github-app-token.mjs');
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(applyAt);
+    expect(applyAt).toBeLessThan(compareAt);
+    expect(compareAt).toBeLessThan(mintAt);
+    expect(stepScript(source, APPLY)).toContain('git apply');
   });
 
   it('masks the App token before writing it anywhere', () => {
@@ -81,10 +121,10 @@ describe('the version floors workflow', () => {
     expect(lines.filter((l) => /--draft\b/.test(l))).toEqual([]);
   });
 
-  it('tells the reviewer the floors test is expected to fail until the pins move', () => {
-    expect(commitJob).toContain('This pull request is expected to fail');
-    expect(commitJob).toContain('until the pins move');
-    expect(commitJob).toContain('runtime_version');
+  it("opens it with the body the updater wrote in the template's sections, not one written here", () => {
+    expect(updateJob).toContain('--body "${RUNNER_TEMP}/version-floors/pr-body.md" --run-url');
+    expect(commitJob).toContain('--body-file "${RUNNER_TEMP}/version-floors/pr-body.md"');
+    expect(lines.filter((l) => /echo "## /.test(l))).toEqual([]);
   });
 
   it('gives neither job a write permission of its own', () => {
@@ -115,6 +155,178 @@ describe('the version floors workflow', () => {
     const stepStart = updateJob.lastIndexOf('      - name:', uploadAt);
     const uploadStep = updateJob.slice(stepStart);
     expect(uploadStep).toContain("if: steps.changed.outputs.changed == 'true'");
-    expect(uploadStep).toContain(FLOORS_PATH);
+    expect(uploadStep).toContain('path: ${{ runner.temp }}/version-floors/');
+  });
+});
+
+/** A command's exit status and output, as text. */
+const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', ...options });
+// On Windows only a Git Bash (MSYSTEM set) is the bash this script is
+// written for; System32's bash is WSL, which cannot see these paths.
+const bashUsable =
+  (process.platform !== 'win32' || Boolean(process.env.MSYSTEM)) && run('bash', ['-c', 'true']).status === 0;
+
+/** One file's diff: `minus` lines replaced by `plus` lines at the top of the file. */
+const diff = (file, minus, plus) =>
+  [
+    `diff --git a/${file} b/${file}`,
+    `--- a/${file}`,
+    `+++ b/${file}`,
+    `@@ -1,${minus.length} +1,${plus.length} @@`,
+    ...minus.map((l) => `-${l}`),
+    ...plus.map((l) => `+${l}`),
+  ].join('\n');
+
+const FLOORS = diff(FLOORS_PATH, ['      "floor": "26.8.0",'], ['      "floor": "26.9.0",']);
+const ENGINES = (file) => diff(file, ['    "node": ">=26.8.0"'], ['    "node": ">=26.9.0"']);
+
+describe.skipIf(!bashUsable)('the guard, run against patches', () => {
+  const script = stepScript(readFileSync(WORKFLOW, 'utf8'), GUARD);
+  const dir = mkdtempSync(join(tmpdir(), 'version-floors-guard-'));
+  mkdirSync(join(dir, 'version-floors'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** The guard's exit status and output for a patch made of these diffs. */
+  const guard = (...diffs) => {
+    writeFileSync(join(dir, 'version-floors', 'floors.patch'), `${diffs.join('\n')}\n`);
+    const result = run('bash', ['-c', script], { cwd: dir, env: { ...process.env, RUNNER_TEMP: dir }, timeout: 20000 });
+    return { status: result.status, out: `${result.stdout}${result.stderr}` };
+  };
+
+  it('passes the floors file with engines.node ranges in package files, and lists them for staging', () => {
+    const result = guard(FLOORS, ENGINES('scripts/package.json'), diff('scripts/package-lock.json', ['        "node": ">=26.8.0"'], ['        "node": ">=26.9.0"']), ENGINES('package.json'));
+    expect(result.out).toContain('Patched:');
+    expect(result.status).toBe(0);
+    // Compared as a set: `sort` orders by the runner's locale.
+    expect(readFileSync(join(dir, 'version-floors', 'patched.txt'), 'utf8').trim().split('\n').sort()).toEqual(
+      ['package.json', 'scripts/package-lock.json', 'scripts/package.json', FLOORS_PATH].sort()
+    );
+  });
+
+  it('refuses a patch that touches a script, a workflow or any other file', () => {
+    for (const file of ['scripts/update-version-floors.mjs', '.github/workflows/update-version-floors.yml', 'frontend/.nvmrc']) {
+      const result = guard(FLOORS, diff(file, ['a'], ['b']));
+      expect(result.status, file).toBe(1);
+      expect(result.out, file).toContain('touches files other than the floors file and package manifests');
+    }
+  });
+
+  it('refuses a package file line that is not an engines.node range, changed or added', () => {
+    const type = guard(FLOORS, diff('scripts/package.json', ['  "type": "module",'], ['  "type": "commonjs",']));
+    expect(type.status).toBe(1);
+    expect(type.out).toContain('a package file line that is not an engines.node range');
+    const added = guard(FLOORS, diff('scripts/package.json', ['  "dependencies": {'], ['  "dependencies": {', '    "left-pad": "1.3.0",']));
+    expect(added.status).toBe(1);
+    const script = guard(FLOORS, diff('scripts/package.json', ['    "node": ">=26.8.0"'], ['    "node": "$(curl x)"']));
+    expect(script.status).toBe(1);
+  });
+
+  // None of these carries a hunk for the line rule to read (CodeRabbit on #1160).
+  it('refuses a rename, copy, creation, deletion or mode change, even of a file it may touch', () => {
+    const header = (...lines) => [`diff --git a/${FLOORS_PATH} b/${FLOORS_PATH}`, ...lines].join('\n');
+    const cases = {
+      rename: ['diff --git a/scripts/version-floors.json b/package.json', 'similarity index 100%', `rename from ${FLOORS_PATH}`, 'rename to package.json'].join('\n'),
+      copy: ['diff --git a/scripts/version-floors.json b/package.json', 'similarity index 100%', `copy from ${FLOORS_PATH}`, 'copy to package.json'].join('\n'),
+      mode: header('old mode 100644', 'new mode 100755'),
+      deleted: header('deleted file mode 100644'),
+      created: diff('vps-agent/package.json', [], ['    "node": ">=26.9.0"']).replace('--- a/', 'new file mode 100644\n--- a/'),
+    };
+    for (const [name, patch] of Object.entries(cases)) {
+      const result = guard(FLOORS, patch);
+      expect(result.status, name).toBe(1);
+      expect(result.out, name).toContain('renames, copies, creates, deletes or re-modes a file');
+    }
+  });
+
+  it('refuses a patch that does not move the floors file, or that carries a binary change', () => {
+    const noFloors = guard(ENGINES('scripts/package.json'));
+    expect(noFloors.status).toBe(1);
+    expect(noFloors.out).toContain('does not move scripts/version-floors.json');
+    const binary = guard(FLOORS, 'diff --git a/scripts/package.json b/scripts/package.json\nBinary files a/scripts/package.json and b/scripts/package.json differ');
+    expect(binary.status).toBe(1);
+    expect(binary.out).toContain('binary change');
+  });
+});
+
+/**
+ * The second check, on a real repository. Each refused patch passes the line
+ * rule, since every line it changes is a `"node": "<range>"` line, and the
+ * check after the apply is what refuses it: a dependency named node, a
+ * package moved without its lockfile, a move to another line, a range
+ * removed (CodeRabbit on #1160, rounds 2 and 3).
+ */
+describe.skipIf(!bashUsable)('the applied patch, compared as JSON', () => {
+  const source = readFileSync(WORKFLOW, 'utf8');
+  const dir = mkdtempSync(join(tmpdir(), 'version-floors-apply-'));
+  const repo = join(dir, 'repo');
+  mkdirSync(join(repo, 'scripts'), { recursive: true });
+  mkdirSync(join(dir, 'version-floors'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** Git in the scratch repository, as a fixed identity and without line-ending conversion. */
+  const git = (...args) => run('git', ['-c', 'core.autocrlf=false', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: repo });
+  const npm = (value) => `${JSON.stringify(value, null, 2)}\n`;
+  const manifest = (engines, dependency) => npm({ name: 's', engines: { node: engines }, dependencies: { node: dependency } });
+  const lockfile = (engines) => npm({ name: 's', lockfileVersion: 3, packages: { '': { name: 's', engines: { node: engines } } } });
+  const floors = (floor) => npm({ kinds: { node: { floor } } });
+  const MANIFEST = 'scripts/package.json';
+  const LOCK = 'scripts/package-lock.json';
+  writeFileSync(join(repo, MANIFEST), manifest('>=26.8.0', '>=26.8.0'));
+  writeFileSync(join(repo, LOCK), lockfile('>=26.8.0'));
+  writeFileSync(join(repo, FLOORS_PATH), floors('26.8.0'));
+  git('init', '-q');
+  git('config', 'core.autocrlf', 'false');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  const moved = floors('26.9.0');
+
+  /** Edit the files, take the diff as the update job does, reset, and run guard and apply against it. */
+  const attempt = (edits) => {
+    for (const [file, text] of Object.entries(edits)) writeFileSync(join(repo, file), text);
+    const patch = git('diff').stdout;
+    git('checkout', '-q', '--', '.');
+    writeFileSync(join(dir, 'version-floors', 'floors.patch'), patch);
+    const env = { ...process.env, RUNNER_TEMP: dir };
+    const guard = run('bash', ['-c', stepScript(source, GUARD)], { cwd: repo, env, timeout: 20000 });
+    const apply = run('bash', ['-c', stepScript(source, APPLY)], { cwd: repo, env, timeout: 20000 });
+    git('checkout', '-q', '--', '.');
+    return { guard: guard.status, apply: apply.status, out: `${apply.stdout}${apply.stderr}` };
+  };
+
+  it('applies a patch that moves engines.node in the package and its lockfile, and the floors', () => {
+    const result = attempt({ [MANIFEST]: manifest('>=26.9.0', '>=26.8.0'), [LOCK]: lockfile('>=26.9.0'), [FLOORS_PATH]: moved });
+    expect(result).toMatchObject({ guard: 0, apply: 0 });
+    expect(result.out).toMatch(/Only engines\.node moved in: .*scripts\/package\.json/);
+    expect(result.out).toContain(LOCK);
+  });
+
+  // Every case below passes the line rule; the check after the apply refuses it.
+  it('refuses a dependency named node', () => {
+    const result = attempt({ [MANIFEST]: manifest('>=26.8.0', '>=26.9.0'), [FLOORS_PATH]: moved });
+    expect(result).toMatchObject({ guard: 0, apply: 1 });
+    expect(result.out).toContain(`The patch changes more than engines.node in: ${MANIFEST}`);
+  });
+
+  it('refuses a package moved without the tracked lockfile beside it', () => {
+    const result = attempt({ [MANIFEST]: manifest('>=26.9.0', '>=26.8.0'), [FLOORS_PATH]: moved });
+    expect(result).toMatchObject({ guard: 0, apply: 1 });
+    expect(result.out).toContain(`${LOCK} records engines.node ">=26.8.0" where ${MANIFEST} declares ">=26.9.0"`);
+  });
+
+  it('refuses a move to another line, whose release notes come first', () => {
+    const result = attempt({ [MANIFEST]: manifest('>=28.0.0', '>=26.8.0'), [LOCK]: lockfile('>=28.0.0'), [FLOORS_PATH]: moved });
+    expect(result).toMatchObject({ guard: 0, apply: 1 });
+    expect(result.out).toContain(`${MANIFEST}: engines.node moves from ">=26.8.0" to ">=28.0.0", another line`);
+  });
+
+  it('refuses a patch that removes engines.node', () => {
+    const drop = (text, indent) => text.replace(`${' '.repeat(indent)}"node": ">=26.8.0"\n`, '');
+    const result = attempt({
+      [MANIFEST]: drop(manifest('>=26.8.0', '>=26.8.0'), 4),
+      [LOCK]: drop(lockfile('>=26.8.0'), 8),
+      [FLOORS_PATH]: moved,
+    });
+    expect(result).toMatchObject({ guard: 0, apply: 1 });
+    expect(result.out).toContain(`${MANIFEST}: the patch adds or removes engines.node`);
   });
 });

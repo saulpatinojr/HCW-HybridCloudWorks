@@ -13,17 +13,31 @@ name: Update Version Floors
 # a check against what was current, and seven files then pinned `noble`: this
 # is the check.
 #
-# THE PULL REQUEST IS MEANT TO GO RED. A bump moves the floors and nothing
-# else. The same pull request's CI then runs version-floors.test.mjs against
-# the new floors, and every pin now behind fails it by name — which is the
-# work list, printed where the reviewer is already looking. The body lists the
-# same pins. Move them on the branch, or split them into their own pull
-# requests; do not merge the floors ahead of the pins.
+# THE PULL REQUEST MOVES WHAT CAN BE MOVED EXACTLY. A bump moves the floors
+# and, in the same commit, every engines.node range they leave behind within
+# its line, with the root entry of the package-lock.json beside it. Until
+# #1152 it moved the floors alone, and every Node.js minor turned the pull
+# request red on five package.json ranges a person then moved by hand. The
+# same pull request's CI runs version-floors.test.mjs against the new floors,
+# so it goes red only on the pins a person has to move — an exact pin with
+# its digest or checksum, a runtime_version, a runs-on, or a pin on a new
+# line — and names each one; the body lists the same pins. Move them on the
+# branch, or split them into their own pull requests; do not merge the floors
+# ahead of the pins.
 #
-# ONE PATH, ONE PULL REQUEST. The branch carries scripts/version-floors.json
-# and nothing else, staged by name — never `-A`, never `.` — because the
-# branch the App pushes is the one thing its write permission can reach.
-# scripts/version-floors-workflow.test.mjs asserts it.
+# ONE PATCH, JUDGED BEFORE IT IS APPLIED. `update` hands its edits on as a
+# patch. `commit` holds the App token, so before it applies the patch it
+# refuses one that touches anything but scripts/version-floors.json, a
+# package.json or a package-lock.json, or that changes any line of a package
+# file other than an `"node": "…"` line — a rule written here rather than in
+# anything the patch could replace (the lab-supply-chain.yml guard, CodeRabbit
+# on #1129). Once applied, and before anything runs a repository file, each
+# package file must equal HEAD as JSON but for engines.node, which a line rule
+# alone cannot tell from a dependency named node. It then stages the paths
+# that guard listed, by name — never `-A`, never `.` — because the branch the
+# App pushes is the one thing its write permission can reach.
+# scripts/version-floors-workflow.test.mjs asserts all three, and runs both
+# checks against real patches.
 #
 # NOTHING MOVED IS NOT A PULL REQUEST. checkedOn moves only with its entry
 # (the AVM_VERIFIED_ON convention), so most weeks end at "No floor moved".
@@ -87,32 +101,37 @@ jobs:
           package-manager-cache: false
 
       # Exit code 1 and one sentence when a source cannot be read or goes
-      # backwards; nothing is written. The summary also lists every pin in the
-      # tree that the (possibly new) floors leave behind.
+      # backwards; nothing is written. When a floor moved it also moves the
+      # engines.node ranges the new floors leave behind within their line. The
+      # summary lists what moved and every pin still behind; the body is the
+      # pull request template around it.
       - name: Run the updater
-        run: node scripts/update-version-floors.mjs --summary "${RUNNER_TEMP}/version-floors-summary.md"
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/version-floors"
+          node scripts/update-version-floors.mjs --summary "${RUNNER_TEMP}/version-floors/summary.md" --body "${RUNNER_TEMP}/version-floors/pr-body.md" --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
+      # The edits travel as one text patch of the tracked files: the commit
+      # job reads it line by line before it applies it.
       - name: Did a floor move?
         id: changed
         run: |
           set -euo pipefail
-          cat "${RUNNER_TEMP}/version-floors-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "${RUNNER_TEMP}/version-floors/summary.md" >> "$GITHUB_STEP_SUMMARY"
           if [ -z "$(git status --porcelain -- scripts/version-floors.json)" ]; then
             echo "No floor moved."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "changed=true" >> "$GITHUB_OUTPUT"
-          cp "${RUNNER_TEMP}/version-floors-summary.md" version-floors-summary.md
+          git diff > "${RUNNER_TEMP}/version-floors/floors.patch"
 
-      - name: Upload the moved floors and the summary
+      - name: Upload the patch, the summary and the body
         if: steps.changed.outputs.changed == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: version-floors
-          path: |
-            scripts/version-floors.json
-            version-floors-summary.md
+          path: ${{ runner.temp }}/version-floors/
           retention-days: 1
           if-no-files-found: error
 
@@ -138,17 +157,114 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download the moved floors
+      - name: Download the patch
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: version-floors
           path: ${{ runner.temp }}/version-floors
 
+      # This job holds the App token and runs a repository script after the
+      # patch is applied, so the patch is judged before it is applied, by a
+      # rule written here rather than in anything the patch could replace: it
+      # moves the floors file, and may otherwise touch only a package.json or
+      # a package-lock.json, and in those only an `"node": "<range>"` line. No
+      # binary hunk, no other file, no other line (lab-supply-chain.yml's
+      # guard, CodeRabbit on #1129). The updater edits files in place and
+      # nothing else, so a rename, copy, creation, deletion or mode change is
+      # refused too: those carry no hunk for the line rule to read, and a
+      # rename's numstat names only its destination (CodeRabbit on #1160).
+      # The list it writes is what gets staged.
+      - name: The patch moves only the floors file and engines.node ranges
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/version-floors"
+          patch="${dir}/floors.patch"
+          if grep -qE '^(GIT binary patch|Binary files )' "${patch}"; then
+            echo "::error::The patch carries a binary change; refused."
+            exit 1
+          fi
+          if grep -qE '^((rename|copy) (from|to) |(old|new|deleted file|new file) mode |(dis)?similarity index )' "${patch}"; then
+            echo "::error::The patch renames, copies, creates, deletes or re-modes a file; refused."
+            exit 1
+          fi
+          git apply --numstat "${patch}" | cut -f3- | sort -u > "${dir}/patched.txt"
+          if ! grep -qx 'scripts/version-floors.json' "${dir}/patched.txt"; then
+            echo "::error::The patch does not move scripts/version-floors.json; refused."
+            exit 1
+          fi
+          outside="$(grep -vxE 'scripts/version-floors\.json|([^/]+/)*package(-lock)?\.json' "${dir}/patched.txt" || true)"
+          if [ -n "${outside}" ]; then
+            echo "::error::The patch touches files other than the floors file and package manifests: $(echo "${outside}" | tr '\n' ' ')"
+            exit 1
+          fi
+          stray="$(awk '
+            /^diff --git / { file = $NF; sub(/^b\//, "", file); hunk = 0; next }
+            /^@@ / { hunk = 1; next }
+            hunk && /^[-+]/ && file != "scripts/version-floors.json" && $0 !~ /^[-+][[:space:]]*"node": "[-0-9.<>=^~|*xX ]+",?$/ { print file ": " $0 }
+          ' "${patch}")"
+          if [ -n "${stray}" ]; then
+            echo "::error::The patch changes a package file line that is not an engines.node range: ${stray}"
+            exit 1
+          fi
+          echo "Patched: $(tr '\n' ' ' < "${dir}/patched.txt")"
+
+      # The line rule above cannot see where a `"node"` line sits: one under a
+      # dependency named node, or in a lockfile entry other than the root,
+      # reads the same as engines.node. So once the patch is applied, and
+      # before anything runs a repository file, each package file is compared
+      # with HEAD as JSON with engines.node taken out of both sides
+      # (packages[""].engines.node in a lockfile); any other difference
+      # refuses the run (CodeRabbit on #1160). The range itself must have
+      # existed before and still exist, stay on its line, and agree with the
+      # tracked lockfile or package.json beside it: what the updater's
+      # proposeMove() promises, held here without relying on the updater
+      # (CodeRabbit's retained concern, round 3). Inline, for the guard's
+      # reason: nothing the patch touches can change it.
+      - name: Apply the patch; nothing but engines.node moved in a package file
+        run: |
+          set -euo pipefail
+          git apply "${RUNNER_TEMP}/version-floors/floors.patch"
+          node --input-type=commonjs -e '
+            const { execFileSync } = require("node:child_process");
+            const { readFileSync } = require("node:fs");
+            const { posix } = require("node:path");
+            const enginesOf = (file, value) => (file.endsWith("package-lock.json") ? value.packages?.[""]?.engines : value.engines);
+            const rangeOf = (file, value) => enginesOf(file, value)?.node;
+            const withoutRange = (file, value) => {
+              const engines = enginesOf(file, value);
+              if (engines) delete engines.node;
+              return JSON.stringify(value);
+            };
+            const lineOf = (range) => /\d+/.exec(range)?.[0];
+            const git = (...args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 1 << 28 });
+            const packages = readFileSync(process.argv[1], "utf8").split("\n").filter((f) => /(^|\/)package(-lock)?\.json$/.test(f));
+            const problems = [];
+            for (const file of packages) {
+              const before = JSON.parse(git("show", `HEAD:${file}`));
+              const after = JSON.parse(readFileSync(file, "utf8"));
+              const was = rangeOf(file, before);
+              const now = rangeOf(file, after);
+              if (was === undefined || now === undefined) problems.push(`${file}: the patch adds or removes engines.node`);
+              else if (lineOf(was) !== lineOf(now)) problems.push(`${file}: engines.node moves from "${was}" to "${now}", another line`);
+              if (withoutRange(file, before) !== withoutRange(file, after)) problems.push(`The patch changes more than engines.node in: ${file}`);
+            }
+            const tracked = new Set(git("ls-files", "-z").split("\0"));
+            for (const dir of new Set(packages.map((f) => posix.dirname(f)))) {
+              const [manifest, lock] = ["package.json", "package-lock.json"].map((name) => posix.join(dir, name));
+              if (!tracked.has(manifest) || !tracked.has(lock)) continue;
+              const declared = rangeOf(manifest, JSON.parse(readFileSync(manifest, "utf8")));
+              const locked = rangeOf(lock, JSON.parse(readFileSync(lock, "utf8")));
+              if (declared !== locked) problems.push(`${lock} records engines.node "${locked}" where ${manifest} declares "${declared}"`);
+            }
+            for (const problem of problems) console.log(`::error::${problem}`);
+            if (problems.length) process.exit(1);
+            console.log(`Only engines.node moved in: ${packages.join(" ") || "(no package file)"}`);
+          ' "${RUNNER_TEMP}/version-floors/patched.txt"
+
       - name: Did a floor move?
         id: changed
         run: |
           set -euo pipefail
-          cp "${RUNNER_TEMP}/version-floors/scripts/version-floors.json" scripts/version-floors.json
           if [ -z "$(git status --porcelain -- scripts/version-floors.json)" ]; then
             echo "No floor moved."
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -189,8 +305,9 @@ jobs:
           echo "::add-mask::${token}"
           echo "token=${token}" >> "$GITHUB_OUTPUT"
 
-      # `git add <path>` and never `-A` or `.`: the branch this pushes is the
-      # one thing the App's write permission can reach.
+      # `git add -- <paths>`, the list the guard above wrote, and never `-A`
+      # or `.`: the branch this pushes is the one thing the App's write
+      # permission can reach.
       - name: Push the branch
         if: steps.app.outputs.armed == 'true'
         env:
@@ -205,48 +322,27 @@ jobs:
           git config user.name  'hcw-manifest[bot]'
           git config user.email 'hcw-manifest[bot]@users.noreply.github.com'
           git checkout -b "${branch}"
-          git add scripts/version-floors.json
+          mapfile -t patched < "${RUNNER_TEMP}/version-floors/patched.txt"
+          git add -- "${patched[@]}"
           git commit -m "chore: move the version floors (checked ${AS_OF})"
           git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git push origin "${branch}"
 
+      # The body is the updater's: .github/pull_request_template.md's
+      # sections around the summary (renderPullRequestBody, tested).
       - name: Open the pull request
         if: steps.app.outputs.armed == 'true'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           AS_OF: ${{ steps.changed.outputs.as_of }}
-          SUMMARY: ${{ runner.temp }}/version-floors/version-floors-summary.md
         run: |
           set -euo pipefail
-          {
-            echo "## Summary"
-            echo
-            echo "Weekly check of \`scripts/version-floors.json\` against endoflife.date, the Azure Functions Flex Consumption table on Microsoft Learn and the actions/runner-images image list, by \`.github/workflows/update-version-floors.yml\` (#715). Opened by the App rather than pushed to \`main\`, so the required checks run on it. The floors file is the only path it touches."
-            echo
-            cat "${SUMMARY}"
-            echo
-            echo "## Before merging"
-            echo
-            echo "1. **This pull request is expected to fail \`scripts (operations)\` until the pins move.** \`scripts/version-floors.test.mjs\` fails every pin below the new floors by file and line; the list above is the same set. Move each pin on this branch, or in its own pull request first, and merge the floors last. A red floors test on this pull request is the work list, not a defect in it."
-            echo "2. **A moved functions ceiling is a production runtime change.** If a note above says the Flex Consumption ceiling moved, \`runtime_version\` in \`infra/functionapp.tf\` moves with it, which is an HCP Terraform run in \`hcw-azure\`, and the functions deploy that follows builds on the new line."
-            echo "3. **Read the release notes for a new line** (Node.js, Python or Terraform) before moving the pins it governs; a floor that moves within a line is a patch or minor bump."
-            echo "4. **A moved runners ceiling moves every workflow's \`runs-on\`.** Compare the software table in GitHub's announcement for the new image with what each workflow installs or calls, and list the workflows that run only on a schedule or by dispatch: this pull request's CI runs none of them, so their first run on the new image is after the merge."
-            echo
-            echo "## Related issue or decision"
-            echo
-            echo "Refs #715 and #714."
-            echo
-            echo "## Verification"
-            echo
-            echo "- Checks run: \`node scripts/update-version-floors.mjs\` against endoflife.date and learn.microsoft.com (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
-            echo "- Evidence level: [x] CI"
-          } > "${RUNNER_TEMP}/pr-body.md"
           gh pr create \
             --repo "${GITHUB_REPOSITORY}" \
             --base main \
             --head "${branch}" \
             --title "chore: move the version floors (checked ${AS_OF})" \
-            --body-file "${RUNNER_TEMP}/pr-body.md"
+            --body-file "${RUNNER_TEMP}/version-floors/pr-body.md"
 
       # The token lives an hour; the work above takes seconds. `always()`, so
       # a failed push or `gh pr create` still cleans up.
