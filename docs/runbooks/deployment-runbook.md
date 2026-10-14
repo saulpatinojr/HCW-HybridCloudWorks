@@ -421,8 +421,11 @@ integrations that read nothing.
 
 - `deploy-functions.yml` runs `scripts/tfc-workspace-busy.mjs` before it opens
   any firewall window and refuses to continue while `hcw-azure` has a run that
-  is not finished. It is self-arming: without `TFC_TOKEN` it reports that it
-  cannot check and passes, so a missing secret does not stop releases.
+  is not finished. It fails closed (PLAT-3, #963): without `TFC_TOKEN` it
+  reports that it cannot check and refuses the deploy, naming the secret to
+  seed. `TFC_TOKEN` has been a repository secret since 2026-10-08, so its
+  absence is a fault to fix, not a reason to deploy unguarded; the step's
+  log says "armed" when the guard could read the workspace.
 - After the deploy, `scripts/assert-live-app-settings.mjs` compares the live
   settings against every Key Vault reference Terraform declares and fails the
   job naming what is absent. This is the half that catches a run which
