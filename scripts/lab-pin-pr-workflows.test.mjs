@@ -184,7 +184,9 @@ describe('lab-supply-chain.yml', () => {
     expect(scan).toContain('--format json -o "$report"');
     expect(scan).toContain('trivy convert --quiet --format table "$report" >> "$table"');
     expect(scan).toContain('cat "$table" >> "$GITHUB_STEP_SUMMARY"');
-    expect(scan).toContain('| Package | Installed | Fixed in | Severity | Vulnerabilities |');
+    expect(scan).toContain('| Found in | Package | Installed | Fixed in | Severity | Vulnerabilities |');
+    // One row per installation, never one per package name (CodeRabbit on #1132).
+    expect(scan).toContain('group_by([.target, .pkg, .inst])');
     expect(scan).toContain('head -40');
     const issue = check.slice(check.indexOf('- name: Open or update the issue'), check.indexOf('- name: Fail the run when the pin check could not evaluate'));
     expect(issue).toContain('cat "${RUNNER_TEMP}/scan-summary.md"');

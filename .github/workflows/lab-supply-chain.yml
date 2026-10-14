@@ -415,17 +415,21 @@ jobs:
               trivy convert --quiet --format table "$report" >> "$table" 2>&1
               echo '```' >> "$table"
               totals=$(jq -r '[.Results[]?.Vulnerabilities[]?] | group_by(.Severity) | map("\(length) \(.[0].Severity)") | join(", ")' "$report")
-              rows=$(jq -r '[.Results[]? | .Vulnerabilities[]? | {pkg: .PkgName, inst: .InstalledVersion, fix: (.FixedVersion // "-"), sev: .Severity, id: .VulnerabilityID}]
-                | group_by(.pkg) | map({pkg: .[0].pkg, inst: (map(.inst) | unique | join(", ")), fix: (map(.fix) | unique | join(", ")), sev: (map(.sev) | unique | sort | join("/")), ids: (map(.id) | unique)})
-                | sort_by(.sev, .pkg) | .[] | "| `\(.pkg)` | \(.inst) | \(.fix) | \(.sev) | \(.ids | length): \(.ids[0:3] | join(", "))\(if (.ids | length) > 3 then ", …" else "" end) |"' "$report")
+              # One row per installation: the same package name under two
+              # result targets (a Debian package and a Python one, say) or at
+              # two installed versions is two rows, so a fix is never shown
+              # against the wrong installation (CodeRabbit on #1132).
+              rows=$(jq -r '[.Results[]? | .Target as $t | .Type as $y | .Vulnerabilities[]? | {target: $t, type: ($y // "-"), pkg: .PkgName, inst: .InstalledVersion, fix: (.FixedVersion // "-"), sev: .Severity, id: .VulnerabilityID}]
+                | group_by([.target, .pkg, .inst]) | map({target: .[0].target, type: .[0].type, pkg: .[0].pkg, inst: .[0].inst, fix: (map(.fix) | unique | join(", ")), sev: (map(.sev) | unique | sort | join("/")), ids: (map(.id) | unique)})
+                | sort_by(.sev, .target, .pkg) | .[] | "| \(.type): \(.target) | `\(.pkg)` | \(.inst) | \(.fix) | \(.sev) | \(.ids | length): \(.ids[0:3] | join(", "))\(if (.ids | length) > 3 then ", …" else "" end) |"' "$report")
               count=$(printf '%s\n' "$rows" | grep -c '^|' || true)
               {
-                echo "**${totals}** with a fix available, in ${count} package(s). The full table is the run summary: ${RUN_URL}."
+                echo "**${totals}** with a fix available, in ${count} installation(s). The full table is the run summary: ${RUN_URL}."
                 echo
-                echo "| Package | Installed | Fixed in | Severity | Vulnerabilities |"
-                echo "| --- | --- | --- | --- | --- |"
+                echo "| Found in | Package | Installed | Fixed in | Severity | Vulnerabilities |"
+                echo "| --- | --- | --- | --- | --- | --- |"
                 printf '%s\n' "$rows" | head -40
-                if [ "$count" -gt 40 ]; then echo; echo "… and $((count - 40)) more package(s), in the run summary."; fi
+                if [ "$count" -gt 40 ]; then echo; echo "… and $((count - 40)) more installation(s), in the run summary."; fi
               } >> "$compact"
             fi
             echo | tee -a "$table" >> "$compact"
