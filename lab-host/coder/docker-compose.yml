@@ -302,7 +302,8 @@ networks:
 
 volumes:
   # Rebuildable metadata, not data of record (docs/architecture/labs-host.md):
-  # the coder role's nightly pg_dump under /var/backups/coder is the only copy.
+  # the coder role's nightly pg_dump under /var/backups/coder, uploaded off
+  # the host by the backups role (LAB-9), is the copy.
   #
   # External: the coder role creates it (roles/coder/tasks/main.yml), and the
   # docker role's userns carry may already have (LAB-5). Compose owned it until

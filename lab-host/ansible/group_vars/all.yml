@@ -429,3 +429,14 @@ vault_pgp_key_checksum: sha256:c2f5bc1163bd8d15a711616b587bcede212d045a5b8b52df0
 # and key names are the role's defaults, the ones infra/lab-hybrid.tf creates.
 vault_seal_azurekeyvault_enabled: "{{ ansible_facts['ansible_local']['hcw_vault_seal']['enabled'] | default(false) is sameas true }}"
 vault_seal_azurekeyvault_disabled: "{{ ansible_facts['ansible_local']['hcw_vault_seal']['disabled'] | default(false) is sameas true }}"
+
+# Off-host backups (LAB-9, #955; ADR 0032, amendment of 2026-10-14): the Coder
+# dump and a nightly Vault raft snapshot, uploaded to this container as the
+# Arc machine's identity (roles/backups). On exactly when the Arc agent is,
+# because that identity is the only principal granted on the container; a
+# rebuilt host keeps its dumps locally until Arc is re-onboarded, and the two
+# no-backup alerts say the copies are missing. The names are what
+# infra/lab-hybrid-backups.tf creates (output lab_hybrid_backups_storage_account).
+backups_enabled: "{{ arc_enabled }}"
+backups_storage_account: stlabhybridprodcus01
+backups_container: host-backups

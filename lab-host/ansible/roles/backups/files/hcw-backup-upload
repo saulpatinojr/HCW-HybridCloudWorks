@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# hcw-backup-upload KIND FILE   upload FILE to the host-backups container as KIND/<name>
+# hcw-backup-upload --check     prove the Arc identity can list the container
+#
+# One Put Blob, as the Arc machine's identity (hcw-arc-token, beside this in
+# /usr/local/libexec), to https://<account>.blob.core.windows.net/<container>/
+# KIND/<basename of FILE>. KIND is coder or vault: the container's two
+# prefixes, which the two no-backup alerts in infra/lab-hybrid-backups.tf
+# count writes under. The account and container come from
+# /etc/hcw/backups/upload.env, three KEY=value lines the backups role writes
+# while backups_enabled is true and removes otherwise; the Coder dump
+# script uploads only while that file exists.
+#
+# Every outcome is one line on stderr and, where syslog exists, one line
+# tagged hcw-backup-upload at daemon.info or daemon.err, which the Arc data
+# collection rule ships to Log Analytics: `sudo journalctl -t
+# hcw-backup-upload`. No token is printed, logged or passed as an argument;
+# the bearer header reaches curl as a configuration line on stdin. Exit 0 on
+# a 201 (a 200 listing for --check), 1 otherwise, 2 on usage.
+set -euo pipefail
+umask 077
+
+env_file="${HCW_BACKUPS_ENV:-/etc/hcw/backups/upload.env}"
+arc_token="${HCW_ARC_TOKEN:-/usr/local/libexec/hcw-arc-token}"
+curl_bin="${HCW_CURL:-curl}"
+
+log() {
+  local priority="$1"; shift
+  printf 'hcw-backup-upload: %s\n' "$*" >&2
+  if command -v logger >/dev/null 2>&1; then
+    logger -t hcw-backup-upload -p "daemon.${priority}" -- "$*" || true
+  fi
+}
+say() { log info "$@"; }
+fail() { log err "$@"; exit 1; }
+usage() { echo 'usage: hcw-backup-upload coder|vault FILE   or   hcw-backup-upload --check' >&2; exit 2; }
+
+mode=upload
+case "${1:-}" in
+  --check) [ $# -eq 1 ] || usage; mode=check ;;
+  coder|vault) [ $# -eq 2 ] && [ -n "$2" ] || usage; kind="$1"; file="$2" ;;
+  *) usage ;;
+esac
+
+[ -r "$env_file" ] || fail "no $env_file: off-host backups are off on this host (backups_enabled), nothing was uploaded"
+account=''; container=''; api_version=''
+# Three KEY=value lines, read rather than sourced.
+while IFS='=' read -r key value; do
+  case "$key" in
+    HCW_BACKUPS_ACCOUNT) account="$value" ;;
+    HCW_BACKUPS_CONTAINER) container="$value" ;;
+    HCW_BACKUPS_API_VERSION) api_version="$value" ;;
+  esac
+done < "$env_file"
+[[ "$account" =~ ^[a-z0-9]{3,24}$ ]] || fail "$env_file names no storage account (HCW_BACKUPS_ACCOUNT)"
+[[ "$container" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || fail "$env_file names no container (HCW_BACKUPS_CONTAINER)"
+[[ "$api_version" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || fail "$env_file names no Blob REST version (HCW_BACKUPS_API_VERSION)"
+base="https://${account}.blob.core.windows.net/${container}"
+
+if [ "$mode" = upload ]; then
+  [ -f "$file" ] || fail "$file is not a regular file; nothing was uploaded"
+  name="$(basename -- "$file")"
+  case "$name" in
+    .*|*[!A-Za-z0-9._-]*) fail "refusing the blob name $name (letters, digits, . _ and - only, not starting with a dot)" ;;
+  esac
+  size="$(stat -c %s "$file")"
+fi
+
+token="$("$arc_token" https://storage.azure.com/)" || fail 'no token for the Arc identity; hcw-arc-token said why above'
+config="$(printf 'header = "Authorization: Bearer %s"\nheader = "x-ms-version: %s"\n' "$token" "$api_version")"
+unset token
+
+response="$(mktemp)"
+trap 'rm -f "$response"' EXIT
+# Azure's refusals carry an XML <Code>; the one word says which grant or header is wrong.
+answer() {
+  local code
+  code="$(tr -d '\n' < "$response" | sed -n 's/.*<Code>\([^<]*\)<\/Code>.*/\1/p' | head -n 1)"
+  printf '%s' "${code:-no error code in the answer}"
+}
+
+if [ "$mode" = check ]; then
+  http="$(printf '%s\n' "$config" | "$curl_bin" -sS --max-time 30 -K - -o "$response" -w '%{http_code}' \
+    "${base}?restype=container&comp=list&maxresults=1")" \
+    || fail "could not reach ${account}.blob.core.windows.net"
+  case "$http" in
+    200) say "the Arc identity can list ${account}/${container}"; exit 0 ;;
+    403) fail "listing ${account}/${container} as the Arc identity answered HTTP 403 ($(answer)): its Storage Blob Data Contributor grant on the container is missing, or too new to have taken effect (a few minutes). infra/lab-hybrid-backups.tf creates it" ;;
+    *) fail "listing ${account}/${container} as the Arc identity answered HTTP ${http} ($(answer))" ;;
+  esac
+fi
+
+# The dump or snapshot, by one Put Blob; -T makes the request a PUT with the
+# file's length. --retry covers a timeout or a 5xx; a 4xx is final.
+http="$(printf '%s\nheader = "x-ms-blob-type: BlockBlob"\nheader = "Content-Type: application/octet-stream"\n' "$config" \
+  | "$curl_bin" -sS --max-time 600 --retry 2 -K - -T "$file" -o "$response" -w '%{http_code}' \
+    "${base}/${kind}/${name}")" \
+  || fail "uploading ${kind}/${name} to ${account}/${container} did not complete; the dump stays at $file"
+[ "$http" = 201 ] || fail "uploading ${kind}/${name} to ${account}/${container} answered HTTP ${http} ($(answer)); the dump stays at $file"
+say "uploaded ${kind}/${name} (${size} bytes) to ${account}/${container}"

@@ -92,6 +92,22 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Lab host: the backups leave the VPS (LAB-9, #955, host side).** A new
+  `backups` role, last in `lab-host/ansible/site.yml`, uploads the nightly
+  Coder dump as it is written and a nightly Vault raft snapshot
+  (`hcw-vault-backup.timer`, 03:45 UTC) to the `host-backups` container of
+  `stlabhybridprodcus01`, as the Arc machine's identity: `hcw-arc-token`
+  performs the agent's challenge, `hcw-backup-upload` puts one blob under
+  `coder/` or `vault/` and logs one line tagged `hcw-backup-upload`, and no
+  storage key is on the host. The snapshot token is the owner's one seed
+  (`hcw-vault-backup-seed`: the owner's Vault token on stdin, a periodic
+  orphan token under a snapshot-only policy, stored root-only), renewed by
+  the unit itself; until it is seeded the unit is skipped, not failed. The
+  role lists the container as the identity at every run and refuses the run
+  when it cannot. The owner's line is in `docs/runbooks/labs-host.md`,
+  "Off-host backups"; the restore and the rehearsal are the next pull
+  request on #955. The seven creates #1147 declared in
+  `scripts/assert-expected-plan.mjs` are removed, applied on 2026-10-14.
 - **Lab host: where its backups go (LAB-9, #955; owner decision
   2026-10-14).** `infra/lab-hybrid-backups.tf`: a Standard GRS, Cool,
   Entra-only storage account in `rg-lab-hybrid-prod-cus` with one container,

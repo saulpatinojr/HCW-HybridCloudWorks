@@ -249,19 +249,25 @@ Coder's PostgreSQL is the one stateful service, and it is treated as
 **rebuildable metadata, not data of record**: learners are GitHub OAuth users
 and reappear on next sign-in, templates are pushed again from
 `lab-host/coder/templates/`, and workspace records describe containers that
-stop after an hour. Losing it costs a re-push and a re-sign-in. As a
-convenience, not a promise, the Ansible `coder` role runs a nightly `pg_dump`
-into a host directory that keeps seven days, so an operator error can be
-undone without a rebuild; that dump never leaves the host and is not restored
-anywhere else. There is no other backup schedule, and a compromised or broken
-host is destroyed and re-applied. If the host ever acquires data of record,
-that is a revisit trigger in ADR 0032.
+stop after an hour. Losing it costs a re-push and a re-sign-in. The Ansible
+`coder` role runs a nightly `pg_dump` into a host directory that keeps seven
+days, so an operator error can be undone without a rebuild, and since LAB-9
+(#955; ADR 0032, amendment of 2026-10-14) the `backups` role uploads each
+dump as it is written to the `host-backups` container of
+`stlabhybridprodcus01` (`infra/lab-hybrid-backups.tf`), as the Arc machine's
+identity: an immutable, geo-redundant copy off the VPS, which is what a
+rebuild restores from. A compromised or broken host is still destroyed and
+re-applied; the restore is what the rebuild ends with. If the host ever
+acquires data of record, that is a revisit trigger in ADR 0032.
 
-Portainer's volume and Vault's raft data are not backed up either. Portainer
-holds settings that are re-entered by hand. Vault holds lab-host secrets
-only, each of which its issuer can issue again, so it holds no data of
-record; storing in it anything that exists nowhere else would be the revisit
-trigger above.
+Vault's raft store is snapshotted nightly by the same role (`vault operator
+raft snapshot save`, with a token the owner seeds once) and uploaded beside
+the dumps; a snapshot is encrypted under the seal key in Key Vault, so the
+blob alone opens nothing. Portainer's volume is not backed up: it holds
+settings that are re-entered by hand. Vault holds lab-host secrets only,
+each of which its issuer can issue again, so it holds no data of record;
+storing in it anything that exists nowhere else would be the revisit trigger
+above.
 
 ## Identities the host holds
 
@@ -269,7 +275,7 @@ trigger above.
 | --- | --- | --- | --- |
 | Owner and Ansible SSH public keys | `~/.ssh/authorized_keys`, written by Terraform at provisioning and managed by Ansible after | Shell access to the host | planned |
 | `vps-agent` Entra confidential client (certificate) | Private key generated on the host, `/etc/hcw/labs-agent.pem`, owner `root`, group `hcw-labs-agent`, mode `0640`, so the non-root service reads it and nothing else does; only the public certificate goes to the app registration | The `LabAgent` app role on the Functions API — four endpoints (the fourth, since 2026-10-08, hands over a renewed Coder status token the API verifies before storing), no database or Key Vault access | planned |
-| Arc machine identity | System-assigned by Azure at onboarding, held by the Connected Machine agent; processes in the `himds` group can request its tokens | Whatever roles `infra/` grants it: from #726, Key Vault Crypto Service Encryption User (read, wrap and unwrap) on the one key `vault-seal` in `kv-labhybrid-prod-cus-01`, which Vault uses to unseal itself once the owner turns auto-unseal on; nothing else beyond the data collection rule | planned |
+| Arc machine identity | System-assigned by Azure at onboarding, held by the Connected Machine agent; processes in the `himds` group can request its tokens | Whatever roles `infra/` grants it: from #726, Key Vault Crypto Service Encryption User (read, wrap and unwrap) on the one key `vault-seal` in `kv-labhybrid-prod-cus-01`, which Vault uses to unseal itself once the owner turns auto-unseal on; and, from LAB-9 (#955), Storage Blob Data Contributor on the one container `host-backups` in `stlabhybridprodcus01`, which the host's backups are uploaded to; nothing else beyond the data collection rule | planned |
 | Coder GitHub OAuth app secret | Coder's Docker Compose environment | Learner sign-in to Coder; nothing on the site | planned |
 | Coder status token | Issued by Coder; the value is held in Key Vault `kv-site-prod-cus-01` as the secret `CODER-STATUS-TOKEN` (read by the Function App setting `CODER_STATUS_TOKEN`), not on the host | Read-only Coder API for the site's status proxy: scoped `template:read` and `workspace:read`, for a Coder user of its own, `hcw-status`, that holds Template Admin so the running count covers every learner (`lab-host/README.md`, "The status token for the site"). It adds the labs card's templates and running count only; the panes open without it | planned |
 | Caddy ACME account | Caddy's data volume | Issuance and renewal of the one certificate covering `lab`, `*.lab` and `*.coder.lab` | planned |
@@ -277,6 +283,7 @@ trigger above.
 | Portainer administrator and Business Edition licence key | Created and entered by the owner in Portainer's UI; the password is in the owner's password manager, and Portainer keeps its own copy in its volume. Neither is in the repository or Ansible Vault | Full control of the host's Docker daemon, through the loopback only | planned |
 | HashiCorp Vault unseal keys (five, three to unseal) and initial root token | The owner's password manager only, printed once by `vault operator init`. Never on the host, in the repository, in a log or in Ansible Vault | Unsealing and administering the lab host's Vault; after the move to auto-unseal they are recovery keys, which authorise `generate-root`, a rekey or a migration back and can no longer unseal | planned |
 | Vault listener certificate | Generated on the host, `/etc/vault.d/tls/`, key `root:vault` `0640` | TLS for `127.0.0.1:8200`; trusted by the CLI through `VAULT_CACERT` | planned |
+| Vault snapshot token | `/etc/hcw/backups/vault-token`, `root:root` `0600`, written by the owner's one-time `hcw-vault-backup-seed` from the owner's Vault token on stdin; never in the repository, a log or Ansible Vault | A periodic orphan token under the policy `hcw-raft-snapshot`: read `sys/storage/raft/snapshot` and renew, look up and revoke itself, nothing else; renewed nightly by `hcw-vault-backup.service` (`lab-host/ansible/roles/backups/README.md`) | planned |
 
 Identities that are **not** on the host, by design: the Hostinger API token and
 the Terraform-side Cloudflare API token (HCP Terraform workspace variables in

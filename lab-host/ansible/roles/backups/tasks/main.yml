@@ -1,0 +1,176 @@
+---
+# Off-host backups (LAB-9, #955; ADR 0032, amendment of 2026-10-14). The
+# nightly Coder dump the coder role writes and a nightly Vault raft snapshot
+# are uploaded to the host-backups container of backups_storage_account
+# as the Arc machine's identity: no storage key or connection string is ever
+# on the host, and the container's immutability policy means the host can add
+# a copy and cannot remove one. The four helpers are installed whatever the
+# switch, so the owner's lines work on a host where it is off; the upload
+# hook (the env file the Coder dump script looks for) and the snapshot timer
+# follow backups_enabled, which group_vars ties to arc_enabled because the
+# Arc identity is the only writer.
+
+- name: Refuse a storage account or container name Azure could not have issued
+  ansible.builtin.assert:
+    that:
+      - backups_storage_account is match('^[a-z0-9]{3,24}$')
+      - backups_container is match('^[a-z0-9](?!.*--)[a-z0-9-]{1,61}[a-z0-9]$')
+    fail_msg: >-
+      backups_storage_account must be a storage account name (3 to 24 lowercase letters
+      and digits) and backups_container a container name (lowercase letters, digits and
+      single hyphens). The defaults are what infra/lab-hybrid-backups.tf creates.
+    quiet: true
+
+- name: Create the backups configuration directory, root-only
+  ansible.builtin.file:
+    path: "{{ backups_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# The helpers' paths are written here, not variables: the Coder dump script,
+# the units, the seed and the owner's lines in docs/runbooks/labs-host.md name
+# them. hcw-arc-token reads the Arc agent's challenge file, which only root
+# and the himds group may, so it is root-only like the rest.
+- name: Install hcw-arc-token, which asks the Arc agent for the identity's token
+  ansible.builtin.copy:
+    src: hcw-arc-token
+    dest: /usr/local/libexec/hcw-arc-token
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install hcw-backup-upload, which puts one backup in the container
+  ansible.builtin.copy:
+    src: hcw-backup-upload
+    dest: /usr/local/sbin/hcw-backup-upload
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install hcw-vault-backup, the nightly raft snapshot and its upload
+  ansible.builtin.copy:
+    src: hcw-vault-backup
+    dest: /usr/local/libexec/hcw-vault-backup
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install hcw-vault-backup-seed, the owner's one-time step
+  ansible.builtin.copy:
+    src: hcw-vault-backup-seed
+    dest: /usr/local/sbin/hcw-vault-backup-seed
+    owner: root
+    group: root
+    mode: "0750"
+
+# The file is the switch the Coder dump script reads: while it exists, the
+# dump just written is uploaded; without it the dump stays local, as before
+# this role. It holds names, not secrets.
+- name: Write the upload destination while off-host backups are on
+  ansible.builtin.template:
+    src: upload.env.j2
+    dest: "{{ backups_upload_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: backups_enabled | bool
+
+- name: Remove the upload destination while off-host backups are off
+  ansible.builtin.file:
+    path: "{{ backups_upload_env_file }}"
+    state: absent
+  when: not backups_enabled | bool
+
+- name: Create the Vault snapshot directory, root-only
+  ansible.builtin.file:
+    path: "{{ backups_vault_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the Vault snapshot service and timer units
+  ansible.builtin.template:
+    src: "hcw-vault-backup.{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ backups_vault_unit_name }}.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - service
+    - timer
+  notify: Reload systemd for the backup units
+
+# The timer runs while both the uploads and Vault are on. The service itself
+# runs only once the owner has seeded the token (ConditionPathExists in the
+# unit), so an unseeded host skips the run rather than failing it nightly.
+- name: Enable the nightly Vault snapshot timer
+  ansible.builtin.systemd_service:
+    name: "{{ backups_vault_unit_name }}.timer"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: backups_enabled | bool and vault_enabled | bool
+
+- name: Stop the Vault snapshot timer while off-host backups or Vault are off
+  ansible.builtin.systemd_service:
+    name: "{{ backups_vault_unit_name }}.timer"
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: not (backups_enabled | bool and vault_enabled | bool)
+
+# As the uploads will tonight: a token from the Arc agent and one listing of
+# the container with it. A missing grant stops this run, with the fix, rather
+# than the 03:30 dump and a 03:45 alert. Read-only, so it does not run in
+# check mode, which runs no commands.
+- name: Ask the Arc agent for a storage token and list the container with it, as the uploads will
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/hcw-backup-upload
+      - --check
+  register: backups_check
+  changed_when: false
+  failed_when: false
+  when:
+    - backups_enabled | bool
+    - not ansible_check_mode
+
+- name: Refuse off-host backups the Arc identity cannot write
+  ansible.builtin.assert:
+    that:
+      - backups_check.rc == 0
+    fail_msg: >-
+      {{ backups_check.stderr | default('hcw-backup-upload --check failed') | trim }}
+      Until it passes, the nightly dump's upload fails and alert-lab-backup-missing-coder fires
+      after two nights (roles/backups/README.md).
+    quiet: true
+  when:
+    - backups_enabled | bool
+    - not ansible_check_mode
+
+- name: Check whether the Vault snapshot token has been seeded
+  ansible.builtin.stat:
+    path: "{{ backups_vault_token_file }}"
+  register: backups_vault_token_stat
+
+- name: Say how the off-host backups stand
+  ansible.builtin.debug:
+    msg: "{{ backups_state_uploads }} {{ backups_state_token }}"
+  vars:
+    backups_destination: "{{ backups_storage_account }}/{{ backups_container }}"
+    backups_state_uploads: >-
+      {{ 'Off-host backups are on: the nightly Coder dump is uploaded to ' ~ backups_destination
+         ~ '/coder/ as the Arc identity.'
+         if backups_enabled | bool
+         else 'Off-host backups are off (backups_enabled is false: the Arc agent is not on, and its
+         identity is the writer); the Coder dump stays on the host.' }}
+    backups_state_token: >-
+      {{ 'The Vault snapshot token is seeded, and ' ~ backups_vault_unit_name
+         ~ '.timer snapshots Vault nightly to ' ~ backups_destination ~ '/vault/.'
+         if backups_vault_token_stat.stat.exists
+         else 'The Vault snapshot token is not seeded: until the owner runs hcw-vault-backup-seed
+         (docs/runbooks/labs-host.md, "Off-host backups") no Vault snapshot is taken, and
+         alert-lab-backup-missing-vault fires after two nights.' }}

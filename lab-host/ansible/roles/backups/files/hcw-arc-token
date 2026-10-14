@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# hcw-arc-token RESOURCE
+#
+# Prints an access token for the Arc machine's system-assigned identity, for
+# RESOURCE (https://storage.azure.com/, say), by the challenge the Azure
+# Connected Machine agent documents for Linux and roles/vault/tasks/seal.yml
+# performs for the seal key: GET the agent's identity endpoint on
+# 127.0.0.1:40342 with `Metadata: true`, which answers 401 naming a .key file
+# in its token directory that only root and the himds group can read; GET it
+# again with that file's contents as Basic authorization, which answers the
+# token. Root-only, because the challenge file is.
+#
+# The token goes to stdout and nowhere else: not to a log, not to an argument
+# (the challenge answer reaches curl as a configuration line on stdin, so
+# neither secret is ever in a process's argv). Exit 0 with the token on one
+# line; 1 when the agent would not issue one, saying why on stderr; 2 on
+# usage. Installed by roles/backups to /usr/local/libexec/hcw-arc-token.
+set -euo pipefail
+
+resource="${1:-}"
+if [ $# -ne 1 ] || [ -z "$resource" ]; then
+  echo 'usage: hcw-arc-token RESOURCE   (for example https://storage.azure.com/)' >&2
+  exit 2
+fi
+endpoint="${HCW_ARC_TOKEN_URL:-http://127.0.0.1:40342/metadata/identity/oauth2/token?api-version=2020-06-01}"
+tokens_dir="${HCW_ARC_TOKENS_DIR:-/var/opt/azcmagent/tokens}"
+curl_bin="${HCW_CURL:-curl}"
+
+fail() { printf 'hcw-arc-token: %s\n' "$*" >&2; exit 1; }
+
+# Percent-encode every byte outside the unreserved set, so the resource is one
+# query value whatever it holds.
+encode() {
+  local s="$1" out='' i c
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [A-Za-z0-9.~_-]) out+="$c" ;;
+      *) out+="$(printf '%%%02X' "'$c")" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+url="${endpoint}&resource=$(encode "$resource")"
+
+# 1. The challenge: a 401 whose WWW-Authenticate names the key file.
+headers="$("$curl_bin" -sS --max-time 10 -o /dev/null -D - -H 'Metadata: true' "$url")" \
+  || fail "the Arc agent's identity endpoint did not answer at ${endpoint%%\?*}: sudo systemctl status himdsd"
+status="$(printf '%s\n' "$headers" | head -n 1 | tr -d '\r' | awk '{ print $2 }')"
+[ "$status" = 401 ] || fail "the identity endpoint answered ${status:-nothing} rather than a 401 challenge: sudo /opt/azcmagent/bin/azcmagent show"
+realm="$(printf '%s\n' "$headers" | tr -d '\r' | awk 'tolower($1) == "www-authenticate:" { sub(/^[^:]*:[[:blank:]]*/, ""); print }' | sed -n 's/^Basic realm=//p' | head -n 1)"
+[ -n "$realm" ] || fail 'the challenge named no key file'
+case "$realm" in
+  "$tokens_dir"/*.key) ;;
+  *) fail "the challenge named $realm, which is not a .key file in $tokens_dir" ;;
+esac
+case "${realm#"$tokens_dir"/}" in
+  */*) fail "the challenge named $realm, which is not directly in $tokens_dir" ;;
+esac
+[ -f "$realm" ] || fail "the challenge named $realm, which is not a regular file"
+[ "$(stat -c %s "$realm")" -le 4096 ] || fail "the challenge named $realm, which is larger than a key file (4096 bytes)"
+secret="$(tr -d '\r\n' < "$realm")"
+[ -n "$secret" ] || fail "the challenge file $realm is empty"
+
+# 2. The answer. -f makes a refusal an exit status rather than a body.
+body="$(printf 'header = "Authorization: Basic %s"\n' "$secret" \
+  | "$curl_bin" -sS -f --max-time 10 -K - -H 'Metadata: true' "$url")" \
+  || fail 'the Arc agent refused the answered challenge and issued no token: sudo /opt/azcmagent/bin/azcmagent show should report Connected'
+token="$(printf '%s' "$body" | tr -d '\n' | sed -n 's/.*"access_token"[[:blank:]]*:[[:blank:]]*"\([^"]*\)".*/\1/p')"
+[ -n "$token" ] || fail 'the Arc agent answered without an access_token'
+printf '%s\n' "$token"

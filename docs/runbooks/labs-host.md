@@ -327,7 +327,8 @@ ADR 0032 rebuilds the host rather than repairing it.
    Portainer gets a new administrator and its licence key (below). Vault is
    new and uninitialised: initialise it (below), and delete the old unseal
    keys and root token from the password manager, because they open nothing
-   now.
+   now. The Vault snapshot token went with the disk too: seed it again
+   ("Off-host backups", below).
 8. **Retire the old agent record.** If the go-live registered the rebuilt
    host under a new agent id, the old id's card stays on
    https://hybridcloudworks.com/admin/labs?tab=agents, Offline, until it is
@@ -1057,6 +1058,84 @@ on usernames skips deleted users) (review of #1035).
    `Remove-Variable t`, and delete `hcw-setup` in the pane (step 5 of "The
    status token for the site").
 
+## Off-host backups
+
+Owner decision 2026-10-14 (ADR 0032, amendment of that date; estate review
+LAB-9, [#955](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/955)):
+the nightly Coder dump and a nightly Vault raft snapshot are uploaded to the
+`host-backups` container of `stlabhybridprodcus01`, as the Arc machine's
+identity, by the `backups` role (`lab-host/ansible/roles/backups/README.md`).
+The container is immutable for 35 days, so the host can add a copy and cannot
+remove one. The Coder dump needs nothing from the owner: it uploads after
+every dump while the host is Connected to Arc. The Vault snapshot needs one
+token, seeded once; after that `hcw-vault-backup.service` renews it every
+night, and the owner does nothing more.
+
+**Before you start.** The `bootstrap.sh` run that installs the role has run
+with `failed=0`. Its task `backups : Say how the off-host backups stand`
+prints `Off-host backups are on` and `The Vault snapshot token is not
+seeded`. Vault is unsealed (`vault status` over `ssh hcw-lab` says `Sealed
+false`).
+
+**1. Seed the snapshot token, once.** It takes the Vault root token from the
+password manager (creating an orphan periodic token needs it). Hold it in
+PowerShell: paste this line, then paste the token at the masked prompt.
+
+```powershell
+$t = [Net.NetworkCredential]::new('', (Read-Host 'Vault root token' -AsSecureString)).Password
+```
+
+Then seed, take the first snapshot and read the upload's line, PowerShell:
+
+```powershell
+$t | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-vault-backup-seed && sudo -n systemctl start hcw-vault-backup.service && sudo -n journalctl -t hcw-backup-upload -n 1 --no-pager"
+```
+
+`sudo -n` works as it does for `hcw-coder-automation-seed`: `hcwadmin` has
+passwordless sudo. Success is two lines: one starting
+`hcw-vault-backup-seed: stored the snapshot token for policy
+hcw-raft-snapshot in /etc/hcw/backups/vault-token`, and a journal line ending
+`uploaded vault/vault-<UTC stamp>.snap (<bytes> bytes) to
+stlabhybridprodcus01/host-backups`. Then drop the token from the session,
+PowerShell:
+
+```powershell
+$t = $null
+```
+
+A second run prints `a working snapshot token is already stored in
+/etc/hcw/backups/vault-token; nothing was changed (--force replaces it)`.
+The seed never prints a token, and the root token is used for the policy
+and the token and kept nowhere.
+
+**2. The Coder dump uploads on its own.** The next 03:30 dump ends with an
+`uploaded coder/coder-<UTC stamp>.sql.gz` line. To see one now rather than
+tomorrow, bash, on the host:
+
+```bash
+sudo /usr/local/sbin/coder-postgres-backup && sudo journalctl -t hcw-backup-upload -n 1 --no-pager
+```
+
+**What to check later.** Every upload is one journal line, bash, on the host:
+
+```bash
+sudo journalctl -t hcw-backup-upload --since -3d --no-pager
+```
+
+Good is one `uploaded coder/...` and one `uploaded vault/...` line per night.
+A night without one raises `alert-lab-backup-missing-coder` or
+`alert-lab-backup-missing-vault` after two nights
+([alerting-and-support.md](alerting-and-support.md)); the same journal says
+which step failed. `sudo /usr/local/sbin/hcw-backup-upload --check` proves
+the grant without uploading anything. A snapshot token that has expired or
+been revoked (`could not be renewed` in the journal) is replaced with step 1
+and `--force` after the seed's path.
+
+**Not yet.** The restore from the container, and the rehearsed rebuild with
+its **Last rehearsed / elapsed** line, are the next pull request on #955;
+until then a blob downloads from the portal as any blob does, and
+`lab-host/README.md`, "Backups and restore", restores a local dump.
+
 ## Container-runtime privilege separation (LAB-5)
 
 Estate review 2026-10-06, finding LAB-5; ADR 0032, amendment of 2026-10-07.
@@ -1115,7 +1194,9 @@ Bash, on the host (PowerShell `ssh hcw-lab` from the workstation gets there):
 sudo /usr/local/sbin/coder-postgres-backup
 ```
 
-Good is exit status 0 and a new file under `/var/backups/coder/`.
+Good is exit status 0 and a new file under `/var/backups/coder/`; with
+off-host backups on ("Off-host backups", below), also an
+`hcw-backup-upload: uploaded coder/...` line.
 
 ### The run
 
