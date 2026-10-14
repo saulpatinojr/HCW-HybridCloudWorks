@@ -164,7 +164,11 @@
       {{ privilege_checks_agent_run.stdout | default('') }} {{ privilege_checks_agent_run.stderr | default('') }}
       A job failing points at the proxy's allowlist (roles/labs_agent/templates/docker-proxy.haproxy.cfg.j2)
       or at a missing image (the lab_images role); a refusal missing means the proxy is not the one
-      the role writes. Read sudo docker logs {{ privilege_checks_agent_proxy_container }}.
+      the role writes. Every forwarded call answered "503 Service Unavailable" while the refusals still
+      answer means the proxy predates the daemon's current start and holds its old socket (the daemon
+      was restarted under it); the labs_agent role restarts such a proxy, so a run that still ends here
+      has a proxy restarted after the daemon that cannot reach it. Read sudo docker logs
+      {{ privilege_checks_agent_proxy_container }}.
     quiet: true
   when: not ansible_check_mode
 

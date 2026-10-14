@@ -523,6 +523,16 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/caddy/tests/caddy-adapt.test.sh
 
+      # /usr/local/libexec/hcw-docker-proxy-stale says whether the agent's
+      # Docker socket proxy started before the daemon's current start, which
+      # is a proxy holding the daemon's old socket (every forwarded call a
+      # 503; the 2026-10-14 bootstrap). The labs_agent role restarts it on
+      # that answer, so the answer is tested here against stand-ins for
+      # systemctl and docker and the real GNU date. No root needed.
+      - name: hcw-docker-proxy-stale test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/labs_agent/tests/hcw-docker-proxy-stale.test.sh
+
       # The lab agent's Docker socket proxy is HAProxy with a configuration
       # this repository writes (LAB-5). scripts/lab-host-docker-proxy.test.mjs
       # evaluates its rules; this renders it with this job's ansible-core and

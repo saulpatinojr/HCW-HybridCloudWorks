@@ -63,6 +63,37 @@
     group: "{{ labs_agent_group }}"
     mode: "0750"
 
+# The proxy holds the daemon's socket as a bind-mounted FILE, so a daemon
+# restart — a docker-ce upgrade restarts it, and so does the docker role's
+# daemon.json handler, both earlier in this play — leaves a running proxy on
+# the old, unlinked socket inode: its own refusals still answer, and every
+# call it forwards gets HAProxy's 503. The 2026-10-14 bootstrap (Docker
+# 29.8.1 → 29.9.0) failed the privilege check exactly so. A proxy that
+# started before the daemon's current start is restarted below; mounting
+# /var/run as a directory would follow the new inode, but would hand the
+# proxy every socket under it.
+- name: Install the proxy staleness check
+  ansible.builtin.copy:
+    src: hcw-docker-proxy-stale
+    dest: /usr/local/libexec/hcw-docker-proxy-stale
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ask whether a running proxy predates the daemon's current start
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/hcw-docker-proxy-stale
+      - "{{ labs_agent_docker_proxy_container }}"
+  register: labs_agent_docker_proxy_age
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Record whether the proxy must be restarted onto the daemon's new socket
+  ansible.builtin.set_fact:
+    labs_agent_docker_proxy_stale: >-
+      {{ not ansible_check_mode and (labs_agent_docker_proxy_age.stdout | default('') | trim) == 'stale' }}
+
 # --userns=host because the proxy must open the host's Docker socket, which a
 # remapped root cannot (roles/docker/README.md, "User namespaces"). Root in
 # it, but with every capability dropped, no network at all, a read-only root
@@ -74,7 +105,7 @@
     image: "{{ labs_agent_docker_proxy_image_ref }}"
     pull: missing
     state: started
-    restart: "{{ labs_agent_docker_proxy_cfg is changed }}"
+    restart: "{{ labs_agent_docker_proxy_cfg is changed or labs_agent_docker_proxy_stale | bool }}"
     restart_policy: unless-stopped
     userns_mode: host
     user: "0:0"
@@ -98,4 +129,20 @@
   ansible.builtin.wait_for:
     path: "{{ labs_agent_docker_proxy_socket }}"
     timeout: 60
+  when: not ansible_check_mode
+
+# The one forwarded call the allowlist admits with no body, GET /_ping, must
+# reach the daemon through the proxy now: a 503 here is the stale-socket
+# failure above, caught in this role rather than at the privilege check at
+# the end of the play.
+- name: Refuse a proxy that cannot reach the daemon
+  ansible.builtin.uri:
+    url: http://localhost/_ping
+    unix_socket: "{{ labs_agent_docker_proxy_socket }}"
+    method: GET
+    status_code: 200
+  register: labs_agent_docker_proxy_ping
+  retries: 10
+  delay: 3
+  until: labs_agent_docker_proxy_ping.status == 200
   when: not ansible_check_mode
