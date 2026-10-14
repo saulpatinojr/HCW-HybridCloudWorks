@@ -92,9 +92,24 @@ fi
 
 # The dump or snapshot, by one Put Blob; -T makes the request a PUT with the
 # file's length. --retry covers a timeout or a 5xx; a 4xx is final.
+blob="${base}/${kind}/${name}"
 http="$(printf '%s\nheader = "x-ms-blob-type: BlockBlob"\nheader = "Content-Type: application/octet-stream"\n' "$config" \
-  | "$curl_bin" -sS --max-time 600 --retry 2 -K - -T "$file" -o "$response" -w '%{http_code}' \
-    "${base}/${kind}/${name}")" \
+  | "$curl_bin" -sS --max-time 600 --retry 2 -K - -T "$file" -o "$response" -w '%{http_code}' "$blob")" \
   || fail "uploading ${kind}/${name} to ${account}/${container} did not complete; the dump stays at $file"
-[ "$http" = 201 ] || fail "uploading ${kind}/${name} to ${account}/${container} answered HTTP ${http} ($(answer)); the dump stays at $file"
-say "uploaded ${kind}/${name} (${size} bytes) to ${account}/${container}"
+case "$http" in
+  201) say "uploaded ${kind}/${name} (${size} bytes) to ${account}/${container}"; exit 0 ;;
+  409) ;;
+  *) fail "uploading ${kind}/${name} to ${account}/${container} answered HTTP ${http} ($(answer)); the dump stays at $file" ;;
+esac
+# A 409 is the immutability policy refusing to overwrite a blob of this name:
+# a retry after a timeout whose first attempt Azure had in fact stored. The
+# blob's length says whether that is what happened; the same length is the
+# upload done, anything else a real conflict.
+head_code="$(printf '%s\n' "$config" | "$curl_bin" -sS --max-time 30 -K - -I -o "$response" -w '%{http_code}' "$blob")" \
+  || fail "uploading ${kind}/${name} answered HTTP 409 and the blob could not be read back; the dump stays at $file"
+stored="$(tr -d '\r' < "$response" | awk 'tolower($1) == "content-length:" { print $2 }' | head -n 1)"
+if [ "$head_code" = 200 ] && [ "$stored" = "$size" ]; then
+  say "uploaded ${kind}/${name} (${size} bytes) to ${account}/${container}; an earlier attempt had stored it, and the policy refused the repeat"
+  exit 0
+fi
+fail "uploading ${kind}/${name} to ${account}/${container} answered HTTP 409 (a blob of that name exists with ${stored:-no} bytes, this file has ${size}); the dump stays at $file"

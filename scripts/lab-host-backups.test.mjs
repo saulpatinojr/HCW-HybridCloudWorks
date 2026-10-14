@@ -16,7 +16,7 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -111,7 +111,8 @@ describe('the backups role in the play', () => {
     expect(vaultBackup).toContain('export VAULT_TOKEN');
     expect(vaultBackup).toMatch(/token renew >\/dev\/null/);
     expect(seed).toContain('export VAULT_TOKEN="$line"');
-    expect(seed).toContain('-field=token');
+    expect(seed).toContain('-format=json)');
+    expect(seed).toContain('json_value client_token');
   });
 });
 
@@ -134,6 +135,7 @@ while [ "$i" -lt "\${#args[@]}" ]; do
     -o) out="\${args[$((i+1))]}"; i=$((i+1)) ;;
     -T) upload="\${args[$((i+1))]}"; i=$((i+1)) ;;
     -w) code=1; i=$((i+1)) ;;
+    -I) head=1 ;;
   esac
   i=$((i+1))
 done
@@ -160,7 +162,16 @@ if [ -n "$upload" ]; then
   cp "$upload" "$STUB_DIR/uploaded.bin"
   case "$STUB_SCENARIO" in
     forbidden) printf '<Error><Code>AuthorizationPermissionMismatch</Code></Error>' > "$out"; echo 403 ;;
+    conflict*) printf '<Error><Code>BlobImmutableDueToPolicy</Code></Error>' > "$out"; echo 409 ;;
     *) : > "$out"; echo 201 ;;
+  esac
+  exit 0
+fi
+if [ "\${head:-0}" = 1 ]; then
+  case "$STUB_SCENARIO" in
+    conflict) printf 'HTTP/1.1 200 OK\\r\\nContent-Length: 15\\r\\nx-ms-blob-type: BlockBlob\\r\\n\\r\\n' > "$out"; echo 200 ;;
+    conflict-mismatch) printf 'HTTP/1.1 200 OK\\r\\nContent-Length: 99\\r\\n\\r\\n' > "$out"; echo 200 ;;
+    *) : > "$out"; echo 404 ;;
   esac
   exit 0
 fi
@@ -187,10 +198,12 @@ case "$1 $2" in
     printf 'Key    Value\\n---    -----\\ntoken  %s\\n' "$VAULT_TOKEN"; exit 0 ;;
   "token lookup")
     case "$valid" in *" \${VAULT_TOKEN:-} "*) ;; *) echo 'Error looking up token: permission denied' >&2; exit 2 ;; esac
-    if [ "\${3:-}" = -format=json ]; then printf '{\\n  "data": {\\n    "expire_time": "2026-11-13T03:45:00Z"\\n  }\\n}\\n'; else printf 'Key   Value\\n'; fi; exit 0 ;;
+    if [ "\${3:-}" = -format=json ]; then printf '{\\n  "data": {\\n    "accessor": "accessor-via-lookup",\\n    "expire_time": "2026-11-13T03:45:00Z"\\n  }\\n}\\n' "$VAULT_TOKEN"; else printf 'Key   Value\\n'; fi; exit 0 ;;
   "policy write") cat > "$STUB_DIR/policy.$3"; exit 0 ;;
-  "token create") echo 'stand-in-fresh-snapshot-token-00001'; exit 0 ;;
-  "token revoke") echo "$VAULT_TOKEN" >> "$STUB_DIR/vault.revoked"; exit 0 ;;
+  "token create") printf '{\\n  "auth": {\\n    "client_token": "stand-in-fresh-snapshot-token-00001",\\n    "accessor": "accessor-fresh-00001"\\n  }\\n}\\n'; exit 0 ;;
+  "token revoke")
+    [ "\${STUB_VAULT_REVOKE_FAIL:-0}" = 1 ] && { echo 'Error revoking token: permission denied' >&2; exit 2; }
+    if [ "\${3:-}" = -accessor ]; then echo "accessor:$4" >> "$STUB_DIR/vault.revoked"; else echo "$VAULT_TOKEN" >> "$STUB_DIR/vault.revoked"; fi; exit 0 ;;
   "operator raft") printf 'raft-snapshot-bytes' > "$5"; exit 0 ;;
 esac
 echo "stand-in vault: unexpected $*" >&2; exit 9
@@ -305,6 +318,17 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       expect(stderr).toContain('Storage Blob Data Contributor grant on the container is missing');
     });
 
+    it('takes a 409 as done when the blob already there has this file\'s length (a retried PUT), and as a conflict otherwise', () => {
+      const file = join(dir, 'coder-20261014T033000Z.sql.gz');
+      const done = bash(helper('hcw-backup-upload'), ['coder', file], { STUB_SCENARIO: 'conflict' });
+      expect(done.stderr).toContain('uploaded coder/coder-20261014T033000Z.sql.gz (15 bytes) to stlabhybridprodcus01/host-backups; an earlier attempt had stored it');
+      expect(done.status).toBe(0);
+      expect(lines('curl.argv').at(-1)).toContain('-I');
+      const clash = bash(helper('hcw-backup-upload'), ['coder', file], { STUB_SCENARIO: 'conflict-mismatch' });
+      expect(clash.status).toBe(1);
+      expect(clash.stderr).toContain('answered HTTP 409 (a blob of that name exists with 99 bytes, this file has 15)');
+    });
+
     it('refuses an unknown kind, a missing file and a missing env file without asking for a token', () => {
       expect(bash(helper('hcw-backup-upload'), ['portainer', join(dir, 'upload.env')]).status).toBe(2);
       const missing = bash(helper('hcw-backup-upload'), ['coder', join(dir, 'absent.sql.gz')]);
@@ -373,23 +397,66 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       expect(policy).not.toMatch(/secret|sys\/raw|\*/);
       const calls = lines('vault.argv');
       expect(calls).toContain('policy write hcw-raft-snapshot -');
-      expect(calls).toContain('token create -policy=hcw-raft-snapshot -no-default-policy -orphan -period=720h -display-name=hcw-vault-backup -field=token');
+      expect(calls).toContain('token create -policy=hcw-raft-snapshot -no-default-policy -orphan -period=720h -display-name=hcw-vault-backup -format=json');
+      // The accessor identifies the token in Vault without being usable as one.
+      expect(readFileSync(join(dir, 'etc', 'vault-token.accessor'), 'utf8')).toBe('accessor-fresh-00001\n');
+      expect(stdout).toContain('(accessor accessor-fresh-00001)');
       // The owner's token was used for the lookup, the policy and the create, and appears nowhere else.
       expect(readFileSync(join(dir, 'vault.argv'), 'utf8')).not.toContain(owner);
     });
 
-    it('leaves a working token alone, and replaces and revokes it with --force', () => {
+    it('leaves a working token alone, and replaces and revokes it by accessor with --force', () => {
       mkdirSync(join(dir, 'etc'));
       writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-old-working-token-0000001\n');
+      writeFileSync(join(dir, 'etc', 'vault-token.accessor'), 'accessor-of-the-old-token\n');
       const valid = { STUB_VAULT_VALID_TOKENS: `${owner} stand-in-old-working-token-0000001 stand-in-fresh-snapshot-token-00001` };
       const kept = bash(helper('hcw-vault-backup-seed'), [], valid, `${owner}\n`);
       expect(kept.status).toBe(0);
       expect(kept.stdout).toContain('already stored');
       expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-old-working-token-0000001\n');
       const forced = bash(helper('hcw-vault-backup-seed'), ['--force'], valid, `${owner}\n`);
+      expect(forced.stderr).toBe('');
       expect(forced.status).toBe(0);
       expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-fresh-snapshot-token-00001\n');
-      expect(lines('vault.revoked')).toEqual(['stand-in-old-working-token-0000001']);
+      expect(readFileSync(join(dir, 'etc', 'vault-token.accessor'), 'utf8')).toBe('accessor-fresh-00001\n');
+      // Revoked by the accessor kept beside it, with the owner's token, never by the old token's own value.
+      expect(lines('vault.revoked')).toEqual(['accessor:accessor-of-the-old-token']);
+      expect(() => statSync(join(dir, 'etc', 'revoke-pending'))).toThrow();
+    });
+
+    it('says so when the replaced token could not be revoked, keeps its accessor, and retries it next run', () => {
+      mkdirSync(join(dir, 'etc'));
+      writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-old-working-token-0000001\n');
+      writeFileSync(join(dir, 'etc', 'vault-token.accessor'), 'accessor-of-the-old-token\n');
+      const valid = `${owner} stand-in-old-working-token-0000001 stand-in-fresh-snapshot-token-00001`;
+      const forced = bash(helper('hcw-vault-backup-seed'), ['--force'], { STUB_VAULT_VALID_TOKENS: valid, STUB_VAULT_REVOKE_FAIL: '1' }, `${owner}\n`);
+      expect(forced.status).toBe(0);
+      expect(forced.stdout).toContain('stored the snapshot token');
+      expect(forced.stderr).toContain('WARNING: the previous snapshot token is still valid and could not be revoked');
+      expect(forced.stderr).toContain('vault token revoke -accessor accessor-of-the-old-token');
+      expect(readFileSync(join(dir, 'etc', 'revoke-pending'), 'utf8')).toBe('accessor-of-the-old-token\n');
+      // The next run, with revocation working again, clears it before anything else.
+      const next = bash(helper('hcw-vault-backup-seed'), ['--force'], { STUB_VAULT_VALID_TOKENS: valid }, `${owner}\n`);
+      expect(next.status).toBe(0);
+      expect(next.stdout).toContain('revoked the superseded snapshot token with accessor accessor-of-the-old-token');
+      expect(() => statSync(join(dir, 'etc', 'revoke-pending'))).toThrow();
+    });
+
+    it('fails before asking Vault when the token directory cannot be made, and revokes the token it created when it cannot be stored', () => {
+      // A token file whose directory is a regular file: refused before any Vault call.
+      const early = bash(helper('hcw-vault-backup-seed'), [], { STUB_VAULT_VALID_TOKENS: `${owner} stand-in-fresh-snapshot-token-00001`, HCW_VAULT_BACKUP_TOKEN_FILE: `${dir}/upload.env/vault-token` }, `${owner}\n`);
+      expect(early.status).toBe(1);
+      expect(early.stderr).toContain('nothing was asked of Vault');
+      expect(() => lines('vault.argv')).toThrow();
+      // A mktemp that fails after the token exists: the token is revoked again.
+      mkdirSync(join(dir, 'nobin'));
+      writeFileSync(join(dir, 'nobin', 'mktemp'), '#!/usr/bin/env bash\nexit 1\n');
+      chmodSync(join(dir, 'nobin', 'mktemp'), 0o755);
+      const late = bash(helper('hcw-vault-backup-seed'), [], { STUB_VAULT_VALID_TOKENS: `${owner} stand-in-fresh-snapshot-token-00001`, PATH: `${dir}/nobin${delimiter}${process.env.PATH}` }, `${owner}\n`);
+      expect(late.status).toBe(1);
+      expect(late.stderr).toContain('the token just created was revoked again');
+      expect(lines('vault.revoked')).toEqual(['stand-in-fresh-snapshot-token-00001']);
+      expect(() => statSync(join(dir, 'etc', 'vault-token'))).toThrow();
     });
 
     it('refuses an empty line, a non-token and a token Vault rejects, before writing anything', () => {

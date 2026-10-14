@@ -1195,7 +1195,7 @@ sudo /usr/local/sbin/coder-postgres-backup
 ```
 
 Good is exit status 0 and a new file under `/var/backups/coder/`; with
-off-host backups on ("Off-host backups", below), also an
+off-host backups on ("Off-host backups", above), also an
 `hcw-backup-upload: uploaded coder/...` line.
 
 ### The run

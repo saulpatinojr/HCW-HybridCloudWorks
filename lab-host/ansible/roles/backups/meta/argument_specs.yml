@@ -12,7 +12,9 @@ argument_specs:
         `vault operator raft snapshot save` under backups_vault_dir and uploads it.
         /usr/local/sbin/hcw-vault-backup-seed is the owner's one-time step, which creates that
         token (a periodic orphan under a snapshot-only policy) from the owner's Vault token on
-        stdin and stores it root-only in backups_vault_token_file.
+        stdin and stores it root-only in backups_vault_token_file, its accessor beside it; one
+        seed runs at a time, a token it cannot store is revoked again, and a replaced token it
+        cannot revoke is reported and retried on the next run.
       - With backups_enabled true it writes backups_upload_env_file, the three names the
         uploader reads and the switch the coder role's dump script looks for before uploading
         the dump it has just written; it enables the nightly snapshot timer while vault_enabled
