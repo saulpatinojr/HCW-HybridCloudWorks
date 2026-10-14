@@ -89,6 +89,8 @@ export const LAB_WORKSPACES = Object.freeze({
   'ansible-syntax-check-walkthrough': 'lab-asc',
   'wsl-containers-walkthrough': 'lab-wslc',
   'defender-wsl-plugin-walkthrough': 'lab-mde-wsl',
+  'aws-transit-gateway-walkthrough': 'lab-aws-tgw',
+  'gcp-shared-vpc-walkthrough': 'lab-gcp-vpc',
 });
 
 /** Every state this page reports, in the order a visit can move through them. */

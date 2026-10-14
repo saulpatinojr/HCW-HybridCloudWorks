@@ -132,6 +132,16 @@ locals {
       source = ""
       readme = ""
     }
+    "aws-transit-gateway-walkthrough" = {
+      title  = "AWS Transit Gateway walkthrough"
+      source = "lab-image/smoke/providers-only"
+      readme = ""
+    }
+    "gcp-shared-vpc-walkthrough" = {
+      title  = "Google Cloud Shared VPC walkthrough"
+      source = "lab-image/smoke/providers-only"
+      readme = ""
+    }
   }
 
   lab        = local.labs[data.coder_parameter.lab.value]
@@ -176,10 +186,18 @@ data "coder_parameter" "lab" {
     name  = "Defender for Endpoint WSL2 plug-in walkthrough"
     value = "defender-wsl-plugin-walkthrough"
   }
+  option {
+    name  = "AWS Transit Gateway walkthrough"
+    value = "aws-transit-gateway-walkthrough"
+  }
+  option {
+    name  = "Google Cloud Shared VPC walkthrough"
+    value = "gcp-shared-vpc-walkthrough"
+  }
 
   validation {
-    regex = "^(landing-zone-builder-output|terraform-validate-walkthrough|ansible-syntax-check-walkthrough|wsl-containers-walkthrough|defender-wsl-plugin-walkthrough)$"
-    error = "lab must be one of the catalogue ids: landing-zone-builder-output, terraform-validate-walkthrough, ansible-syntax-check-walkthrough, wsl-containers-walkthrough, defender-wsl-plugin-walkthrough."
+    regex = "^(landing-zone-builder-output|terraform-validate-walkthrough|ansible-syntax-check-walkthrough|wsl-containers-walkthrough|defender-wsl-plugin-walkthrough|aws-transit-gateway-walkthrough|gcp-shared-vpc-walkthrough)$"
+    error = "lab must be one of the catalogue ids: landing-zone-builder-output, terraform-validate-walkthrough, ansible-syntax-check-walkthrough, wsl-containers-walkthrough, defender-wsl-plugin-walkthrough, aws-transit-gateway-walkthrough, gcp-shared-vpc-walkthrough."
   }
 }
 

@@ -67,11 +67,13 @@ function templateLabIds() {
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
 
 describe('lab catalogue', () => {
-  it('has the five labs', () => {
+  it('has the seven labs', () => {
     expect(labs.map((lab) => lab.id)).toEqual([
       'landing-zone-builder-output',
       'wsl-containers-walkthrough',
       'defender-wsl-plugin-walkthrough',
+      'aws-transit-gateway-walkthrough',
+      'gcp-shared-vpc-walkthrough',
       'terraform-validate-walkthrough',
       'ansible-syntax-check-walkthrough',
     ]);
@@ -241,6 +243,10 @@ describe('the lists the pages derive', () => {
       'wsl-containers-walkthrough',
       'defender-wsl-plugin-walkthrough',
     ]);
+    expect(labsForProvider('aws').map((lab) => lab.id)).toEqual([
+      'aws-transit-gateway-walkthrough',
+    ]);
+    expect(labsForProvider('gcp').map((lab) => lab.id)).toEqual(['gcp-shared-vpc-walkthrough']);
     expect(labsForProvider('ansible').map((lab) => lab.id)).toEqual([
       'ansible-syntax-check-walkthrough',
     ]);
@@ -257,10 +263,12 @@ describe('the lists the pages derive', () => {
           'defender-wsl-plugin-walkthrough',
         ],
       ],
+      ['aws', ['aws-transit-gateway-walkthrough']],
+      ['gcp', ['gcp-shared-vpc-walkthrough']],
       ['terraform', ['terraform-validate-walkthrough']],
       ['ansible', ['ansible-syntax-check-walkthrough']],
     ]);
-    expect(providersWithLabs()).toEqual(['azure', 'terraform', 'ansible']);
+    expect(providersWithLabs()).toEqual(['azure', 'aws', 'gcp', 'terraform', 'ansible']);
   });
 
   it('knows each lab’s home provider', () => {

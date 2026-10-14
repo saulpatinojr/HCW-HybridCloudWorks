@@ -133,7 +133,7 @@ describe('LabsLearnPage', () => {
     const cards = [...container.querySelectorAll('li[data-lab]')];
     expect(cards.map((card) => card.dataset.lab)).toEqual(labs.map((lab) => lab.id));
     // Each group is headed by its provider and links to that provider's list.
-    for (const provider of ['azure', 'terraform', 'ansible']) {
+    for (const provider of ['azure', 'aws', 'gcp', 'terraform', 'ansible']) {
       const group = screen.getByTestId(`labs-group-${provider}`);
       expect(within(group).getByRole('heading', { level: 3 })).toBeInTheDocument();
       expect(within(group).getByRole('link', { name: /^All .* labs$/ })).toHaveAttribute(

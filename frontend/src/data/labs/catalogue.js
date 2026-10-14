@@ -63,7 +63,7 @@ export const LAB_TOOLS = Object.freeze(['az', 'terraform', 'kubectl', 'helm', 'a
  * (context/ProviderContext.jsx), which the test checks; a lab's first
  * provider is the one its canonical page lives under.
  */
-export const LAB_PROVIDERS = Object.freeze(['azure', 'terraform', 'ansible']);
+export const LAB_PROVIDERS = Object.freeze(['azure', 'aws', 'gcp', 'terraform', 'ansible']);
 
 /** How much a lab assumes, in the order the pages sort by. */
 export const LAB_DIFFICULTIES = Object.freeze(['intro', 'intermediate', 'advanced']);
@@ -299,6 +299,49 @@ const ANSIBLE_SAMPLE = md([
   '        path: "{{ site_root }}"',
   '        state: directory',
   '        mode: "0755"',
+]);
+
+/** A sample root for the AWS multi-account validation runner job. */
+const AWS_TRANSIT_GATEWAY_SAMPLE = md([
+  'terraform {',
+  '  required_version = ">= 1.9"',
+  '  required_providers {',
+  '    aws = {',
+  '      source  = "hashicorp/aws"',
+  '      version = "~> 5.80"',
+  '    }',
+  '  }',
+  '}',
+  '',
+  'provider "aws" {',
+  '  region = "us-east-1"',
+  '}',
+  '',
+  'resource "aws_organizations_organization" "org" {',
+  '  feature_set = "ALL"',
+  '}',
+]);
+
+/** A sample root for the Google Cloud Shared VPC validation runner job. */
+const GCP_SHARED_VPC_SAMPLE = md([
+  'terraform {',
+  '  required_version = ">= 1.9"',
+  '  required_providers {',
+  '    google = {',
+  '      source  = "hashicorp/google"',
+  '      version = "~> 6.15"',
+  '    }',
+  '  }',
+  '}',
+  '',
+  'provider "google" {',
+  '  region = "us-central1"',
+  '}',
+  '',
+  'resource "google_folder" "platform" {',
+  '  display_name = "Platform"',
+  '  parent       = "organizations/123456789012"',
+  '}',
 ]);
 
 export const labs = Object.freeze([
@@ -624,6 +667,162 @@ export const labs = Object.freeze([
     template: LAB_TEMPLATE,
     params: Object.freeze({ lab: 'defender-wsl-plugin-walkthrough' }),
     articleSlugs: Object.freeze([ARTICLE_LANDING_ZONE, ARTICLE_ONE_CONTAINER]),
+  }),
+  Object.freeze({
+    id: 'aws-transit-gateway-walkthrough',
+    workspaceName: 'lab-aws-tgw',
+    title: 'AWS Multi-Account Transit Gateway Walkthrough',
+    summary:
+      'Inspect and validate an enterprise AWS multi-account architecture with AWS Organizations, Service Control Policies, and Transit Gateway routing in an ephemeral container sandbox.',
+    providers: Object.freeze(['aws']),
+    technology: Object.freeze(['aws', 'terraform', 'transit-gateway']),
+    tools: Object.freeze(['terraform']),
+    difficulty: 'intermediate',
+    estimatedMinutes: 15,
+    status: 'available',
+    objectives: Object.freeze([
+      'Inspect AWS Organizations organizational unit hierarchy and SCP policy definitions',
+      'Trace Transit Gateway route table attachments across isolated and shared VPC spokes',
+      'Execute terraform validate to check multi-account HCL syntax and provider constraints',
+    ]),
+    prerequisites: Object.freeze([
+      'Basic understanding of AWS multi-account landing zones and CIDR networking',
+      'A GitHub account to authenticate with the container workspace, or local Docker',
+    ]),
+    steps: Object.freeze([
+      step(
+        'Inspect AWS Organizations & SCP Guardrails',
+        md([
+          'Review the organizational structure under `organizations.tf` and `scp.tf`.',
+          'The baseline provisions Security, Infrastructure, and Workloads OUs with SCP guardrails that disallow root access and restrict unapproved regions.',
+          '',
+          '```bash',
+          'cat organizations.tf',
+          'cat scp.tf',
+          '```',
+        ])
+      ),
+      step(
+        'Review Transit Gateway Route Attachments',
+        md([
+          'Examine `transit-gateway.tf` and `spokes.tf` to see how Workload VPCs attach to the central Transit Gateway hub.',
+          'Notice how East-West traffic is isolated via dedicated Route 53 Resolver and Transit Gateway route tables.',
+          '',
+          '```bash',
+          'cat transit-gateway.tf',
+          'cat spokes.tf',
+          '```',
+        ])
+      ),
+      step(
+        'Validate the Multi-Account Terraform Configuration',
+        md([
+          'Initialize Terraform without a backend and run `terraform validate` to verify the multi-account HCL configuration.',
+          '',
+          '```bash',
+          'terraform init -backend=false',
+          'terraform validate',
+          '```',
+        ]),
+        {
+          jobType: 'terraform-validate',
+          hint: 'The runner checks that all AWS provider blocks and module calls adhere to Terraform HCL constraints offline.',
+        }
+      ),
+    ]),
+    resources: Object.freeze([
+      resource('AWS Architecture Designs', '/aws/architecture-designs'),
+      resource('Landing Zone Builder (AWS Target)', '/tools/landing-zone?cloud=aws'),
+      resource(
+        'AWS Security Reference Architecture',
+        'https://docs.aws.amazon.com/prescriptive-guidance/latest/security-reference-architecture/welcome.html'
+      ),
+    ]),
+    validation: Object.freeze({
+      jobType: 'terraform-validate',
+      payloadEncoding: 'text',
+      samplePayload: AWS_TRANSIT_GATEWAY_SAMPLE,
+    }),
+    template: LAB_TEMPLATE,
+    params: Object.freeze({ lab: 'aws-transit-gateway-walkthrough' }),
+    articleSlugs: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: 'gcp-shared-vpc-walkthrough',
+    workspaceName: 'lab-gcp-vpc',
+    title: 'Google Cloud Shared VPC & Org Policies Walkthrough',
+    summary:
+      'Explore and validate Google Cloud Foundation Fabric Resource Manager folders, Organization Policies, and Shared VPC Host networking in a browser container workspace.',
+    providers: Object.freeze(['gcp']),
+    technology: Object.freeze(['gcp', 'terraform', 'shared-vpc']),
+    tools: Object.freeze(['terraform']),
+    difficulty: 'intermediate',
+    estimatedMinutes: 15,
+    status: 'available',
+    objectives: Object.freeze([
+      'Review Resource Manager folder hierarchy and organization policy constraints',
+      'Examine Shared VPC Host project, subnets, and Private Service Connect configuration',
+      'Execute terraform validate to check Cloud Foundation Fabric module syntax',
+    ]),
+    prerequisites: Object.freeze([
+      'Familiarity with Google Cloud project hierarchies and Shared VPC concepts',
+      'A GitHub account to authenticate with the container workspace, or local Docker',
+    ]),
+    steps: Object.freeze([
+      step(
+        'Review Resource Manager Folders & Organization Policies',
+        md([
+          'Review `folders.tf` and `org-policies.tf`. The configuration defines Platform, Corp, and Online folder hierarchies along with organizational policy constraints that enforce shielded VMs and prevent external IP exposure.',
+          '',
+          '```bash',
+          'cat folders.tf',
+          'cat org-policies.tf',
+          '```',
+        ])
+      ),
+      step(
+        'Inspect Shared VPC Host Network & Subnets',
+        md([
+          'Examine `shared-vpc.tf` and `projects.tf` to see how the Shared VPC Host project shares subnets and Cloud NAT gateways with attached service projects.',
+          '',
+          '```bash',
+          'cat shared-vpc.tf',
+          'cat projects.tf',
+          '```',
+        ])
+      ),
+      step(
+        'Validate Cloud Foundation Fabric Terraform',
+        md([
+          'Run `terraform init -backend=false` and `terraform validate` inside the terminal to verify syntax across all Foundation Fabric resource definitions.',
+          '',
+          '```bash',
+          'terraform init -backend=false',
+          'terraform validate',
+          '```',
+        ]),
+        {
+          jobType: 'terraform-validate',
+          hint: 'The runner checks that all Google Cloud provider blocks and folder module calls validate cleanly.',
+        }
+      ),
+    ]),
+    resources: Object.freeze([
+      resource('Google Cloud Architecture Designs', '/gcp/architecture-designs'),
+      resource('Landing Zone Builder (Google Cloud Target)', '/tools/landing-zone?cloud=gcp'),
+      resource(
+        'Google Cloud Security Foundations',
+        'https://cloud.google.com/architecture/security-foundations'
+      ),
+    ]),
+    validation: Object.freeze({
+      jobType: 'terraform-validate',
+      payloadEncoding: 'text',
+      samplePayload: GCP_SHARED_VPC_SAMPLE,
+    }),
+    template: LAB_TEMPLATE,
+    params: Object.freeze({ lab: 'gcp-shared-vpc-walkthrough' }),
+    articleSlugs: Object.freeze([]),
   }),
   Object.freeze({
     id: 'terraform-validate-walkthrough',
