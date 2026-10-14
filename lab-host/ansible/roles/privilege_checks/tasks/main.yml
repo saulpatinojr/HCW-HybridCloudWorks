@@ -164,13 +164,28 @@
       {{ privilege_checks_agent_run.stdout | default('') }} {{ privilege_checks_agent_run.stderr | default('') }}
       A job failing points at the proxy's allowlist (roles/labs_agent/templates/docker-proxy.haproxy.cfg.j2)
       or at a missing image (the lab_images role); a refusal missing means the proxy is not the one
-      the role writes. Read sudo docker logs {{ privilege_checks_agent_proxy_container }}.
+      the role writes. Every forwarded call answered "503 Service Unavailable" while the refusals still
+      answer means the proxy predates the daemon's current start and holds its old socket (the daemon
+      was restarted under it); the labs_agent role restarts such a proxy, so a run that still ends here
+      has a proxy restarted after the daemon that cannot reach it. Read sudo docker logs
+      {{ privilege_checks_agent_proxy_container }}.
     quiet: true
   when: not ansible_check_mode
 
-- name: Show what the agent proxy check saw
+# In plain words, because the two refusals reach the CLI as "Error response
+# from daemon: … refused …", which reads like a fault and is the proxy doing
+# its job. The raw answers are in the assertion above when the check fails.
+- name: Say what the agent proxy check saw
   ansible.builtin.debug:
-    msg: "{{ privilege_checks_agent_run.stdout | from_json }}"
+    msg: >-
+      The agent's Docker proxy does its job: a shell-echo job run as {{ privilege_checks_agent_user }}
+      through it printed its payload (exit {{ privilege_checks_agent_seen.job.exitCode }});
+      `docker ps` was refused by the allowlist (exit {{ privilege_checks_agent_seen.listing.exitCode }});
+      a privileged `docker run` was refused by the container rules
+      (exit {{ privilege_checks_agent_seen.privileged.exitCode }}). The daemon's words for the two
+      refusals begin "Error response from daemon"; that is the refusal reaching the CLI, not a fault.
+  vars:
+    privilege_checks_agent_seen: "{{ privilege_checks_agent_run.stdout | from_json }}"
   when:
     - not ansible_check_mode
     - privilege_checks_agent_run.rc == 0
