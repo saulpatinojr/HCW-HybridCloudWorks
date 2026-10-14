@@ -84,6 +84,17 @@ This project has not cut a tagged release; entries are grouped under
   that corrects it, and a docs-build gate, `scripts/docs/check_stale_state.py`,
   fails the build on the stale phrases the review found an operator acting
   on ("State: planned", "not yet armed", "delivery is unproven").
+- **The route error boundary recovers on navigation, and a failed sign-in
+  shows its code** (AP-F7 #931, AP-F8 #932). One render error on any admin
+  route kept the failure card on every admin route until a hard refresh,
+  and always blamed stale build chunks; the boundary now resets when the
+  path changes, tells a failed dynamic import from a runtime error in its
+  copy, and shows the error message on admin routes. The sign-in callback
+  page said "the browser console has the detail", which a phone cannot
+  open; it now shows the Entra or MSAL error code with a Copy button that
+  puts the code and the full message on the clipboard, while the message
+  itself, which names the authority and client id, stays off the screen.
+  `App.boundary.test.jsx` and `AuthCallbackPage.test.jsx` pin both.
 - **Admin dashboard and Editor list say when a read failed** (AP-F5 #929,
   AP-F6 #930). The dashboard rendered "You're all caught up" over zero
   counts when the snapshot call failed, with a small red line beneath; it
