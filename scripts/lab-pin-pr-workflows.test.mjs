@@ -125,7 +125,11 @@ describe('the pin sets', () => {
     // checks have not run, no plan was previewed, and the workflow does file
     // the pull request (CodeRabbit on #1131).
     expect(body).toContain('- Evidence level: [ ] Static [ ] Local [ ] CI [ ] Staging [ ] Production — none ticked at opening');
-    expect(body).toContain('- [ ] Plan or preview was reviewed; no unexpected destroy/recreate operations exist. *(Not ticked:');
+    expect(body).toContain('- [ ] Plan or preview was reviewed; no unexpected destroy/recreate operations exist. *(Not ticked: no plan or preview exists for an Ansible pin move.');
+    // Each set says why in its own terms: the digest set updates two consumers, not Ansible pins.
+    const digestsBody = prBody({ set: 'image-digests', evidence: 'x', notes: '', runUrl: 'u' });
+    expect(digestsBody).toContain('*(Not ticked: this digest-only update of the two consumers creates no Terraform or Coder plan or preview.');
+    expect(digestsBody).not.toContain('Ansible pin move');
     expect(body).toContain('- [ ] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(Not ticked:');
     expect(body).not.toMatch(/\[x\] Plan or preview|\[x\] No automated path|\[x\] CI/);
     // The image base is a build input, not infrastructure: no infrastructure section, box unticked.

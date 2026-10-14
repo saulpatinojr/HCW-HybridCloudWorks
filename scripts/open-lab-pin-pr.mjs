@@ -62,6 +62,8 @@ export const SETS = {
       '**Rollback:** revert this pull request and run `bootstrap.sh` again; the roles install the pinned versions and apt\'s held packages move back with them.',
     ],
     infrastructure: true,
+    planNote:
+      'no plan or preview exists for an Ansible pin move. The review is the evidence tables above, by a person, and the host run after the merge, which the owner watches; the roles install exactly the versions pinned here.',
   },
   'image-base': {
     branch: 'chore/lab-pins-image-base',
@@ -101,6 +103,8 @@ export const SETS = {
       '**Rollback:** revert this pull request and run `bootstrap.sh` again; the host pulls the digests the revert names and removes the ones it replaced.',
     ],
     infrastructure: true,
+    planNote:
+      'this digest-only update of the two consumers creates no Terraform or Coder plan or preview. The review is the publisher evidence above and the exact two-line diff, by a person; the next `bootstrap.sh` run is the post-merge operational check.',
   },
 };
 
@@ -170,7 +174,7 @@ export function prBody({ set, evidence, notes, runUrl }) {
     out.push(
       '## Infrastructure changes only',
       '',
-      '- [ ] Plan or preview was reviewed; no unexpected destroy/recreate operations exist. *(Not ticked: no plan or preview exists for an Ansible pin move. The review is the evidence tables above, by a person, and the host run after the merge, which the owner watches; the roles install exactly the versions pinned here.)*',
+      `- [ ] Plan or preview was reviewed; no unexpected destroy/recreate operations exist. *(Not ticked: ${s.planNote})*`,
       '- [x] Resource addresses were not renamed without the required moved-state handling. *(None.)*',
       '- [x] Secrets, state files, saved plans, and real variable values are not included.',
       '- [x] Required tags, policies, networking, backup, identity, and security settings are preserved.',
