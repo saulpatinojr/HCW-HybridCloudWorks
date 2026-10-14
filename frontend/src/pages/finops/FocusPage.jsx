@@ -64,8 +64,8 @@ export default function FinOpsFocusPage() {
 
   return (
     <ContentListingTemplate
-      title="FinOps FOCUS Framework"
-      description="The six core focus areas of the FinOps Foundation framework for cloud cost management maturity."
+      title="FinOps FOCUS 1.4 Framework"
+      description="The six core focus areas of the FinOps Foundation framework and FOCUS 1.4 specification for cloud cost management maturity."
       items={focusAreas}
       itemType="guide"
       categories={categories}

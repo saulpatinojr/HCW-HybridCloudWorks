@@ -171,3 +171,87 @@ describe('Header provider links (Docker, 2026-09-28)', () => {
     expect(within(mobile).getByRole('link', { name: 'Docker' })).toHaveAttribute('href', '/docker');
   });
 });
+
+describe('Header Global Navigation Enhancements (Stage 2 / Audit P1-1)', () => {
+  it('renders the cloud status pill linking to platform health', () => {
+    renderAt('/');
+    const statusLink = screen.getByRole('link', { name: /platform health/i });
+    expect(statusLink).toHaveAttribute('href', '/#platform-health');
+    expect(statusLink).toHaveTextContent(/9\/9 live/i);
+  });
+
+  it('renders the search trigger button and opens the CommandPalette dialog', () => {
+    renderAt('/');
+    const searchBtn = screen.getByRole('button', { name: /search site/i });
+    expect(
+      screen.queryByRole('dialog', { name: /command search palette/i })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(searchBtn);
+    expect(screen.getByRole('dialog', { name: /command search palette/i })).toBeInTheDocument();
+  });
+
+  it('renders the Providers mega-menu with 3-tier categorization and FOCUS 1.4', () => {
+    renderAt('/');
+    const megaMenuBtn = screen.getByRole('button', { name: /toggle providers menu/i });
+    expect(megaMenuBtn).toBeInTheDocument();
+    expect(screen.queryByTestId('providers-megamenu')).not.toBeInTheDocument();
+
+    fireEvent.click(megaMenuBtn);
+    const megaMenu = screen.getByTestId('providers-megamenu');
+    expect(megaMenu).toBeInTheDocument();
+
+    // 3 Tiers
+    expect(within(megaMenu).getByText('Cloud Providers')).toBeInTheDocument();
+    expect(within(megaMenu).getByText('Platform Providers')).toBeInTheDocument();
+    expect(within(megaMenu).getByText('Service Providers')).toBeInTheDocument();
+
+    // Providers in tiers
+    expect(within(megaMenu).getByRole('link', { name: /aws/i })).toHaveAttribute('href', '/aws');
+    expect(within(megaMenu).getByRole('link', { name: /azure/i })).toHaveAttribute(
+      'href',
+      '/azure'
+    );
+    expect(within(megaMenu).getByRole('link', { name: /google cloud/i })).toHaveAttribute(
+      'href',
+      '/gcp'
+    );
+    expect(within(megaMenu).getByRole('link', { name: /vmware/i })).toHaveAttribute(
+      'href',
+      '/vmware'
+    );
+    expect(within(megaMenu).getByRole('link', { name: /terraform/i })).toHaveAttribute(
+      'href',
+      '/terraform'
+    );
+    expect(within(megaMenu).getByRole('link', { name: /ansible/i })).toHaveAttribute(
+      'href',
+      '/ansible'
+    );
+    expect(within(megaMenu).getByRole('link', { name: /docker/i })).toHaveAttribute(
+      'href',
+      '/docker'
+    );
+    expect(within(megaMenu).getByRole('link', { name: /github/i })).toHaveAttribute(
+      'href',
+      '/github'
+    );
+    expect(within(megaMenu).getByRole('link', { name: /finops/i })).toHaveAttribute(
+      'href',
+      '/finops'
+    );
+
+    // FOCUS 1.4 badge in mega-menu
+    expect(within(megaMenu).getByText('FOCUS 1.4')).toBeInTheDocument();
+  });
+
+  it('provides search trigger inside mobile navigation drawer', () => {
+    renderAt('/');
+    fireEvent.click(screen.getByRole('button', { name: /toggle menu/i }));
+    const mobileSearchBtn = screen.getByRole('button', { name: /search blueprints, labs, certs/i });
+    expect(mobileSearchBtn).toBeInTheDocument();
+
+    fireEvent.click(mobileSearchBtn);
+    expect(screen.getByRole('dialog', { name: /command search palette/i })).toBeInTheDocument();
+  });
+});
