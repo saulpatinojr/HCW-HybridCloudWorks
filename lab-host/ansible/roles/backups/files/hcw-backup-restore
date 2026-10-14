@@ -196,8 +196,30 @@ line="$(printf '%s' "$line" | tr -d '\r' | sed 's/^[[:blank:]]*//; s/[[:blank:]]
 [[ "$line" =~ ^[A-Za-z0-9._-]{20,}$ ]] || fail 'the first line on stdin is not a Vault token (letters, digits, . _ and -); nothing was restored'
 export VAULT_TOKEN="$line"
 unset line
+# The snapshots are taken under the Azure Key Vault seal (#726), and restored
+# data unseals only under the same seal: into a Vault running under Shamir
+# keys, -force would install data nothing on this host can open. The seal is
+# rendered by the vault role once the host's seal fact is written, so that is
+# what to do first (docs/runbooks/labs-host.md, "HashiCorp Vault: moving to
+# auto-unseal", steps 4 and 5, then bootstrap.sh).
+seal_type="$("$vault_bin" status -format=json 2>/dev/null | tr -d '\n' | sed -n 's/.*"type"[[:blank:]]*:[[:blank:]]*"\([^"]*\)".*/\1/p' | head -n 1 || true)"
+[ "$seal_type" = azurekeyvault ] \
+  || fail "Vault reports seal type ${seal_type:-unknown}, and the snapshots were taken under azurekeyvault: restored data would not unseal here. Write the seal fact and run bootstrap.sh first (docs/runbooks/labs-host.md, \"HashiCorp Vault: moving to auto-unseal\", steps 4 and 5); nothing was restored"
 say "restoring ${name} into Vault with -force"
 "$vault_bin" operator raft snapshot restore -force "$target" \
   || fail "vault operator raft snapshot restore refused (a token that cannot, or Vault sealed: sudo systemctl status vault); nothing was restored"
 unset VAULT_TOKEN
-say "restored ${blob}: Vault's data is now the snapshot's, tokens included. The token used here no longer works. If vault status says Sealed true, sudo systemctl restart vault unseals it with the same seal key. Then seed the snapshot token file again (hcw-vault-backup-seed, with a root token from generate-root: docs/runbooks/labs-host.md, \"The root token\")"
+# Vault accepts the snapshot and then replaces its data; the exit status
+# above is the acceptance, not the completion. What can be read without a
+# token is the seal status, polled for a bounded time, so the owner is told
+# what Vault reports now and what to confirm before relying on it.
+state='gave no status for 60 seconds'
+for _ in $(seq 1 12); do
+  status="$("$vault_bin" status -format=json 2>/dev/null || true)"
+  case "$status" in
+    *'"sealed": false'*|*'"sealed":false'*) state='Initialized true, Sealed false'; break ;;
+    *'"sealed": true'*|*'"sealed":true'*) state='Sealed true' ;;
+  esac
+  sleep 5
+done
+say "Vault accepted ${blob} for restore and now reports ${state}. Its data is being replaced with the snapshot's, tokens included: the token used here no longer works, and the snapshot's revoked root token stays revoked. Before relying on it: sudo journalctl -u vault -n 30 --no-pager should show the restore completed and the seal re-established; if Vault reports Sealed true, sudo systemctl restart vault unseals it with the same seal key. Then seed the snapshot token file again (hcw-vault-backup-seed, with a root token from generate-root: docs/runbooks/labs-host.md, \"The root token\")"

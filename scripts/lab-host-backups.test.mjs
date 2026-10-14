@@ -252,6 +252,7 @@ case "$1 $2" in
   "token revoke")
     [ "\${STUB_VAULT_REVOKE_FAIL:-0}" = 1 ] && { echo 'Error revoking token: permission denied' >&2; exit 2; }
     if [ "\${3:-}" = -accessor ]; then echo "accessor:$4" >> "$STUB_DIR/vault.revoked"; else echo "$VAULT_TOKEN" >> "$STUB_DIR/vault.revoked"; fi; exit 0 ;;
+  "status -format=json") printf '{\\n  "type": "%s",\\n  "initialized": true,\\n  "sealed": %s\\n}\\n' "\${STUB_VAULT_SEAL_TYPE:-azurekeyvault}" "\${STUB_VAULT_SEALED:-false}"; exit 0 ;;
   "operator raft")
     case "$4" in
       save) printf 'raft-snapshot-bytes' > "$5"; exit 0 ;;
@@ -777,13 +778,25 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       const done = bash(restore, ['vault', '--yes'], {}, 'stand-in-owner-root-token-00000001\r\n');
       expect(done.stderr).toBe('');
       expect(done.status).toBe(0);
-      expect(done.stdout).toContain("restored vault/vault-20261014T143509Z.snap: Vault's data is now the snapshot's");
+      // Acceptance, not completion: the helper says what Vault reports and what to confirm.
+      expect(done.stdout).toContain('Vault accepted vault/vault-20261014T143509Z.snap for restore and now reports Initialized true, Sealed false');
+      expect(done.stdout).toContain('journalctl -u vault');
+      expect(done.stdout).not.toMatch(/\brestored vault\//);
+      expect(lines('vault.argv')).toContain('status -format=json');
       expect(lines('vault.restored')).toEqual([`operator raft snapshot restore -force ${dir}/restore/vault/vault-20261014T143509Z.snap`]);
-      expect(lines('vault.tokens')).toEqual(['stand-in-owner-root-token-00000001']);
+      // The seal check and the restore run with the token; the status poll after it runs with none.
+      expect(new Set(lines('vault.tokens'))).toEqual(new Set(['stand-in-owner-root-token-00000001', '<unset>']));
       expect(readFileSync(join(dir, 'vault.argv'), 'utf8')).not.toContain('stand-in-owner-root-token');
       const denied = bash(restore, ['vault', '--yes'], { STUB_VAULT_RESTORE_FAIL: '1' }, 'stand-in-owner-root-token-00000001\n');
       expect(denied.status).toBe(1);
       expect(denied.stderr).toContain('vault operator raft snapshot restore refused');
+      // A Vault under Shamir keys could not open the snapshot's data: refused before -force, with the fix.
+      rmSync(join(dir, 'vault.restored'));
+      const shamir = bash(restore, ['vault', '--yes'], { STUB_VAULT_SEAL_TYPE: 'shamir' }, 'stand-in-owner-root-token-00000001\n');
+      expect(shamir.status).toBe(1);
+      expect(shamir.stderr).toContain('Vault reports seal type shamir, and the snapshots were taken under azurekeyvault');
+      expect(shamir.stderr).toContain('moving to auto-unseal');
+      expect(() => lines('vault.restored')).toThrow();
     });
   });
 });

@@ -324,10 +324,14 @@ ADR 0032 rebuilds the host rather than repairing it.
    pair is new, and the vault that held its four keys is gone, so run "The
    lab agent's go-live" (below) again: it appends the new certificate and
    writes the four keys back. Re-onboard Arc ("Re-onboarding a rebuilt host", below).
-   Portainer gets a new administrator and its licence key (below). Vault is
-   new and uninitialised: initialise it (below), and delete the old unseal
-   keys and root token from the password manager, because they open nothing
-   now.
+   Portainer gets a new administrator and its licence key (below).
+   **Keep the old Vault recovery keys.** The Vault snapshot about to be
+   restored carries its own recovery authority, and after the restore those
+   five keys, the ones already in the password manager, are the restored
+   Vault's; `generate-root` needs three of them. Nothing from the old Vault
+   is deleted until the restore below has succeeded, and then it is the
+   *fresh* initialisation's keys and root token that are deleted, because
+   they open nothing any more.
    **Then the restore from the container** ("Off-host backups", below, has
    what each line does). The `bootstrap.sh` run just made installed
    `hcw-backup-restore`, and the host is Connected to Arc again, so it reads
@@ -344,8 +348,20 @@ ADR 0032 rebuilds the host rather than repairing it.
    Success is `restored coder/coder-<UTC stamp>.sql.gz into coder-postgres`
    and the `buildinfo` line under "Enabling" in `lab-host/README.md`
    answering within a minute; signed-in learners and the templates are back.
-   Then Vault, with the root token the initialisation just printed, held
-   from PowerShell on the workstation the way the seed's token is:
+   **Vault, in this order, because the snapshot was taken under the Azure
+   Key Vault seal and only a Vault under the same seal can open it.** First
+   put the new host under the seal before Vault holds anything: steps 4 and 5
+   of "HashiCorp Vault: moving to auto-unseal" (the seal fact, then the key
+   read as the Arc identity), then one more `bootstrap.sh` run, which renders
+   the seal into Vault's configuration; `vault status` then says `Seal Type
+   azurekeyvault` and `Initialized false`. Initialise it under the seal:
+
+   ```bash
+   vault operator init -recovery-shares=5 -recovery-threshold=3
+   ```
+
+   Hold its root token in PowerShell on the workstation, the way the seed's
+   token is held, and restore:
 
    ```powershell
    $t = [Net.NetworkCredential]::new('', (Read-Host 'Vault root token' -AsSecureString)).Password
@@ -355,11 +371,26 @@ ADR 0032 rebuilds the host rather than repairing it.
    $t | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-backup-restore vault --yes"; $t = $null
    ```
 
-   Success is `restored vault/vault-<UTC stamp>.snap: Vault's data is now
-   the snapshot's`. That token no longer works, and the snapshot's own root
-   token was revoked when it was made, so the snapshot token file is seeded
-   again with a root token from `generate-root` ("The root token", below,
-   has the Vault 2.x switch it needs; "Off-host backups" has the seed line).
+   The helper refuses a Vault whose seal is not `azurekeyvault`, naming the
+   two steps above. Success is `Vault accepted vault/vault-<UTC stamp>.snap
+   for restore and now reports Initialized true, Sealed false`. That is
+   acceptance, not completion: Vault replaces its data in the background, so
+   before relying on it, bash, on the host:
+
+   ```bash
+   sudo journalctl -u vault -n 30 --no-pager && vault status
+   ```
+
+   Good is the log reporting the restore completed and the seal
+   re-established, `Sealed false`, and `vault status` with no error. If it
+   reports `Sealed true`, `sudo systemctl restart vault` unseals it with the
+   same key. Now the fresh initialisation's five recovery keys and root token
+   can be deleted from the password manager: Vault's data is the snapshot's,
+   whose recovery keys are the old ones. The snapshot's own root token was
+   revoked when the snapshot was taken, so the snapshot token file is seeded
+   again with a root token from `generate-root`, using three of the *old*
+   recovery keys ("The root token", below, has the Vault 2.x switch it
+   needs; "Off-host backups" has the seed line).
    **Last rehearsed / elapsed:** not yet. The rehearsal is the owner's, on a
    fresh VPS: the time from the reinstall click to Coder answering on the
    restored database and Vault unsealed with the snapshot's data goes here,
@@ -1562,26 +1593,32 @@ vault operator generate-root -nonce="$nonce"
 ```
 
 The third prints `Complete true` and an `Encoded Token`, which is useless
-without the one-time pad in `$otp`. Copy that encoded value into the next
-line in place of `ENCODED`, the one value this page cannot compute, because
-the attempt is cleared the moment it completes and `-status` no longer has
-it. Decode it into a variable rather than onto the screen:
+without the one-time pad in `$otp`. The attempt is cleared the moment it
+completes and `-status` no longer has it, so the next line asks for that
+encoded value at a prompt, then decodes it into a variable rather than onto
+the screen:
 
 ```bash
-root=$(vault operator generate-root -decode=ENCODED -otp="$otp"); echo "root token ${#root} chars"
+read -rp 'Encoded Token: ' enc && root=$(vault operator generate-root -decode="$enc" -otp="$otp"); echo "root token ${#root} chars"
 ```
 
 Use `$root` for what was needed (`printf '%s\n' "$root" | sudo
 /usr/local/sbin/hcw-vault-backup-seed`, say), then revoke it and switch the
-endpoint back off:
+endpoint back off. The switch comes off whether or not the revocation
+succeeds, which is why the two are joined by `;` and not `&&`:
 
 ```bash
-VAULT_TOKEN="$root" vault token revoke -self && sudo sed -i '/^enable_unauthenticated_access = \["generate-root"\]$/d' /etc/vault.d/vault.hcl && sudo systemctl reload vault && sudo grep -c enable_unauthenticated_access /etc/vault.d/vault.hcl; unset root otp nonce init
+VAULT_TOKEN="$root" vault token revoke -self; sudo sed -i '/^enable_unauthenticated_access = \["generate-root"\]$/d' /etc/vault.d/vault.hcl && sudo systemctl reload vault && sudo grep -c enable_unauthenticated_access /etc/vault.d/vault.hcl; unset root enc otp nonce init
 ```
 
 Success is `Success! Revoked token (if it existed)` and `0`. The file is back
 to what the `vault` role renders, so the next `bootstrap.sh` run reports it
-unchanged.
+unchanged. If the shell is lost partway (a dropped connection), the switch
+is still on: run that last line again from a new shell, where `$root` is
+empty and the revocation is a no-op, and it comes off; a `bootstrap.sh` run
+removes it too, since the role renders the file without it. An attempt left
+half done is cleared by `vault operator generate-root -cancel` before a new
+`-init`.
 
 ## HashiCorp Vault: moving to auto-unseal
 
