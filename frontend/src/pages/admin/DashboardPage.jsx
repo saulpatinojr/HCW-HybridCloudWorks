@@ -238,6 +238,11 @@ function CountLink({ to, children }) {
   );
 }
 
+/**
+ * The headline, the three header counts, and the honest line beneath them:
+ * the load error with a stale badge and Retry when a re-read failed, the
+ * Recount and New Content actions beside.
+ */
 function DashboardHeader({
   today,
   counts,
