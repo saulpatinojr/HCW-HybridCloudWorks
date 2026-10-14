@@ -11,6 +11,15 @@ import { sharedVpcTf } from './sharedVpc';
 import { terraformTf } from './terraform';
 import { tfvarsExample, variablesTf } from './variables';
 
+/**
+ * Emit the GCP landing-zone pack for one builder state: `terraform.tf` and
+ * `providers.tf` always, one file per selected component, then variables,
+ * the tfvars example and a README that lists what was emitted. A state with
+ * nothing selected yields the README alone, which says so.
+ *
+ * @param {object} state the builder state `normalizeState` accepts
+ * @returns {Array<{ path: string, content: string }>} the files, in emit order
+ */
 export function emitGcpFiles(state) {
   const normalized = normalizeState(state);
   if (!normalized.selected.length) return [readmeMd(normalized, [])];
