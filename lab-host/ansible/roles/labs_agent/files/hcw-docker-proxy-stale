@@ -29,7 +29,10 @@ if [ -z "${daemon_at}" ] || [ "${daemon_at}" = "n/a" ]; then
   echo "docker.service has no ActiveEnterTimestamp; is the daemon running?" >&2
   exit 2
 fi
-daemon_epoch="$(date -d "${daemon_at}" +%s)"
+# systemctl prints `Wed 2026-10-14 00:20:29 UTC`. The weekday goes before
+# parsing: GNU date moves a date forward to the next such weekday when the
+# two disagree, and a verdict must never rest on that.
+daemon_epoch="$(date -d "$(printf '%s' "${daemon_at}" | sed -E 's/^[A-Za-z]{3} //')" +%s)"
 
 if ! state="$(docker inspect --format '{{.State.Running}} {{.State.StartedAt}}' "${name}" 2>/dev/null)"; then
   echo absent

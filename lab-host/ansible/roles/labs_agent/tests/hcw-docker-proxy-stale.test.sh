@@ -31,7 +31,7 @@ mkdir -p "${bin}"
 cat > "${bin}/systemctl" <<'EOF'
 #!/usr/bin/env bash
 [ "$1 $2 $3 $4" = "show docker.service --property=ActiveEnterTimestamp --value" ] || { echo "unexpected systemctl $*" >&2; exit 2; }
-echo "${FAKE_DAEMON_AT-Tue 2026-10-14 00:20:29 UTC}"
+echo "${FAKE_DAEMON_AT-Wed 2026-10-14 00:20:29 UTC}"
 EOF
 # docker inspect prints `<Running> <StartedAt>` for the one container the
 # role names, StartedAt with Docker's nanoseconds; FAKE_CONTAINER_STATE
@@ -52,7 +52,13 @@ check "a proxy started before the daemon's current start is stale" \
   '[ "$(FAKE_CONTAINER_STATE="true 2026-10-13T22:00:00.000000000Z" run hcw-labs-agent-docker-proxy)" = stale ]'
 
 check "the daemon time is read in its own zone, so a proxy started one second before a daemon in UTC+2 is stale" \
-  '[ "$(FAKE_DAEMON_AT="Tue 2026-10-14 02:20:29 +0200" FAKE_CONTAINER_STATE="true 2026-10-14T00:20:28.000000000Z" run x)" = stale ]'
+  '[ "$(FAKE_DAEMON_AT="Wed 2026-10-14 02:20:29 +0200" FAKE_CONTAINER_STATE="true 2026-10-14T00:20:28.000000000Z" run x)" = stale ]'
+
+# GNU date moves a date to the next named weekday when the two disagree; a
+# wrong weekday (this fixture's first version said Tue for a Wednesday) made
+# a fresh proxy read as stale on the runner. The weekday is not consulted.
+check "a weekday that disagrees with the date does not move the daemon's start" \
+  '[ "$(FAKE_DAEMON_AT="Tue 2026-10-14 00:20:29 UTC" run hcw-labs-agent-docker-proxy)" = fresh ]'
 
 check "a proxy that exists but is not running is absent (the role starts it)" \
   '[ "$(FAKE_CONTAINER_STATE="false 2026-10-13T22:00:00.000000000Z" run x)" = absent ]'
