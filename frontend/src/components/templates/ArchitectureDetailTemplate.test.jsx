@@ -70,7 +70,7 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     expect(await screen.findByText('Estimated Monthly Cost')).toBeInTheDocument();
     expect(screen.getByText('$680 - $1,250 / month')).toBeInTheDocument();
 
-    // Cost Analysis tab contains FinOps Cost Traps (FOCUS 1.1 Specification)
+    // Cost Analysis tab contains FinOps Cost Traps (FOCUS 1.4 Specification)
     expect(screen.getByTestId('blueprint-finops-cost-traps')).toBeInTheDocument();
     expect(screen.getByTestId('blueprint-finops-cost-traps')).toHaveTextContent(
       /Application Gateway.*Capacity Units/i
@@ -195,7 +195,7 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
       await screen.findByRole('heading', { name: 'Multi-Cloud Cost Optimization' })
     ).toBeInTheDocument();
     expect(screen.getByTestId('mini-landing-promise')).toHaveTextContent(
-      /Normalized FOCUS 1.0 cost datasets uniting Azure, AWS, and GCP billing exports/i
+      /Normalized FOCUS 1.4 cost datasets uniting Azure, AWS, and GCP billing exports/i
     );
     expect(screen.getByTestId('topology-diagram')).toBeInTheDocument();
     expect(screen.getByTestId('landing-pane-how-it-works')).toBeInTheDocument();
