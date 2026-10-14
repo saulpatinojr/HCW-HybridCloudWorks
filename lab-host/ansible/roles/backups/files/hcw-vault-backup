@@ -33,13 +33,13 @@ fail() { printf 'hcw-vault-backup: %s\n' "$*" >&2; exit 1; }
 export VAULT_ADDR VAULT_CACERT
 [ -f "$token_file" ] || fail "no $token_file: seed the snapshot token with hcw-vault-backup-seed (docs/runbooks/labs-host.md, \"Off-host backups\")"
 VAULT_TOKEN="$(tr -d '\r\n' < "$token_file")"
-[ -n "$VAULT_TOKEN" ] || fail "$token_file is empty: seed it again with hcw-vault-backup-seed --force"
+[ -n "$VAULT_TOKEN" ] || fail "$token_file is empty: run hcw-vault-backup-seed again (docs/runbooks/labs-host.md, \"Off-host backups\")"
 export VAULT_TOKEN
 
 # A periodic token lives one period past its last renewal; renewing first
 # makes the failure the plain one, with the fix, rather than a refused snapshot.
 "$vault_bin" token renew >/dev/null \
-  || fail 'the snapshot token could not be renewed: it has expired or was revoked, or Vault is sealed (sudo systemctl status vault). Seed a new one with hcw-vault-backup-seed --force'
+  || fail 'the snapshot token could not be renewed: it has expired or was revoked, or Vault is sealed (sudo systemctl status vault). Once Vault answers, run hcw-vault-backup-seed again: a plain run replaces a token that no longer works'
 
 mkdir -p "$dir"
 chmod 700 "$dir"

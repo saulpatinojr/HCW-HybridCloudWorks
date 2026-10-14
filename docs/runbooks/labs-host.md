@@ -1128,8 +1128,9 @@ A night without one raises `alert-lab-backup-missing-coder` or
 ([alerting-and-support.md](alerting-and-support.md)); the same journal says
 which step failed. `sudo /usr/local/sbin/hcw-backup-upload --check` proves
 the grant without uploading anything. A snapshot token that has expired or
-been revoked (`could not be renewed` in the journal) is replaced with step 1
-and `--force` after the seed's path.
+been revoked (`could not be renewed` in the journal) is replaced by step 1 as
+it stands: a plain run of the seed replaces a stored token that no longer
+works, and revokes a working one only when `--force` is added.
 
 **Not yet.** The restore from the container, and the rehearsed rebuild with
 its **Last rehearsed / elapsed** line, are the next pull request on #955;

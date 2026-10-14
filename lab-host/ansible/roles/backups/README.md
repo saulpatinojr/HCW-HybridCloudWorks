@@ -114,16 +114,45 @@ usable as it. A stored token that still works is left alone unless `--force`
 is given. The owner's token is used for the policy, the token and the
 revocations and kept nowhere; nothing the seed prints holds a token.
 
-**The lifecycle is kept honest on both sides.** One seed runs at a time (a
-lock beside the token file), so two cannot mint two tokens and store one. A
-token created but not stored (the directory unwritable, the rename refused)
-is revoked again before the seed fails, so no token exists in Vault that no
-file names. `--force` revokes the token it replaces by the accessor kept
-beside it, with the owner's token; when that revocation fails and the old
-token still answers a lookup, the seed says so on stderr with the exact
-`vault token revoke -accessor …` line, keeps the accessor in
-`/etc/hcw/backups/revoke-pending`, and retries it at the start of the next
-run, rather than calling the replacement complete.
+**The lifecycle is a reconciliation, not a hope.** One seed runs at a time
+(a lock beside the token file), so two cannot mint two tokens and store one.
+A token created but not stored (the directory unwritable, the rename
+refused) is revoked again before the seed fails, so no token exists in Vault
+that no file names. Replacing a token is three steps in a fixed order: the
+old token's accessor is recorded in `/etc/hcw/backups/revoke-pending`
+(written whole, by rename), then the new token is published, then
+everything pending is revoked with the owner's token. An interruption
+between the steps leaves the intent on disk, and every run, forced or not,
+works the pending list before anything else; a run with a working token and
+nothing pending is the only one that asks for no token on stdin. The token
+still in the file is never revoked from that list: the accessor Vault itself
+reports for it is protected, and a pending record that names it is a
+replacement that did not complete, dropped with a note. Only Vault's answer
+protects a record, and Vault's three answers are kept apart: an accessor
+(the token is valid, its record protected), a refusal (`permission denied`),
+and no verdict at all (sealed, unreachable), which stops the run before the
+list is touched, since the record it would work may be the working token's
+own. A refusal is what Vault says of an expired or revoked token and also of
+a valid one whose policy denies `lookup-self`, so it is settled with the
+owner's token by the accessor kept beside the token: a token Vault still
+knows by that accessor is valid and protected, `invalid accessor` is the
+expired token, anything else is no verdict; with no accessor beside the
+token the seed stops rather than guess. The accessor copy kept beside the
+token is otherwise used to record
+a retirement when Vault no longer answers for the token being replaced,
+never to spare one, so a stale copy costs at most one revocation Vault
+refuses as invalid. A new token that cannot be stored is revoked again and
+the retirement recorded for its predecessor is withdrawn, so the predecessor
+stays the stored token, untouched; a predecessor whose accessor nothing
+reported is revoked by itself only after the new token is in place. An
+accessor leaves the list only when Vault revoked it or says it no longer
+exists (`invalid accessor`); a revocation that fails for any other reason,
+Vault unreachable included, stays, is said on stderr with the exact `vault
+token revoke -accessor …` line, and is retried next run. Whether the stored
+token works is judged after the list was worked, not before: a plain run
+that finds it broken replaces it and says so, rather than reporting nothing
+changed. The seed never calls a replacement complete while a predecessor
+may still be valid.
 
 **Where it is stored, and why a file.** A root-only file, for the reason the
 Coder rotation credential is one: the unit runs as root at timer time with
@@ -142,7 +171,9 @@ alone opens nothing.
 host off) is one night; the token has a month. `alert-lab-backup-missing-vault`
 fires after two nights, and `sudo journalctl -t hcw-backup-upload -u
 hcw-vault-backup` on the host says which step failed. A token that has
-expired or been revoked is replaced with the seed line and `--force`.
+expired or been revoked is replaced by the seed line as it stands: a plain
+run replaces a stored token that no longer works. `--force` is for replacing
+one that still does.
 
 ## Restore
 
