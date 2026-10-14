@@ -32,6 +32,17 @@ const spokeLabel = (name, options, group, index) =>
 /** Management → its workspace, or null. */
 function managementNode(state) {
   if (!isSelected(state, 'management')) return null;
+  const { cloud } = state;
+  if (cloud === 'aws') {
+    return node('mg:management', 'management-group', 'Security OU', [
+      node('sub:management', 'workspace', 'Log Archive + CloudTrail'),
+    ]);
+  }
+  if (cloud === 'gcp') {
+    return node('mg:management', 'management-group', 'Platform Folder', [
+      node('sub:management', 'workspace', 'Central Audit Log Export'),
+    ]);
+  }
   return node('mg:management', 'management-group', 'Management', [
     node('sub:management', 'workspace', 'Log Analytics + Automation'),
   ]);
@@ -40,7 +51,23 @@ function managementNode(state) {
 /** Connectivity → the hub with its firewall and DNS, or null. */
 function connectivityNode(state) {
   if (!isSelected(state, 'connectivity-hub')) return null;
-  const { options } = state;
+  const { options, cloud } = state;
+  if (cloud === 'aws') {
+    const hub = node('hub', 'vnet', `Transit Gateway ${options.hubCidr}`);
+    if (isSelected(state, 'firewall')) {
+      hub.children.push(node('firewall', 'firewall', 'AWS Network Firewall'));
+    }
+    if (options.privateDnsZones) hub.children.push(node('dns', 'dns', 'Route 53 Resolver'));
+    return node('mg:connectivity', 'management-group', 'Infrastructure OU', [hub]);
+  }
+  if (cloud === 'gcp') {
+    const hub = node('hub', 'vnet', `Shared VPC Host ${options.hubCidr}`);
+    if (isSelected(state, 'firewall')) {
+      hub.children.push(node('firewall', 'firewall', 'Cloud NGFW Policy'));
+    }
+    if (options.privateDnsZones) hub.children.push(node('dns', 'dns', 'Cloud DNS Private Zones'));
+    return node('mg:connectivity', 'management-group', 'Platform Folder', [hub]);
+  }
   const hub = node('hub', 'vnet', `Hub VNet ${options.hubCidr}`);
   if (isSelected(state, 'firewall')) {
     hub.children.push(node('firewall', 'firewall', `Azure Firewall ${options.firewallSku}`));
@@ -52,6 +79,17 @@ function connectivityNode(state) {
 /** Identity → its spoke, or null. */
 function identityNode(state) {
   if (!isSelected(state, 'identity')) return null;
+  const { cloud } = state;
+  if (cloud === 'aws') {
+    return node('mg:identity', 'management-group', 'Shared Services OU', [
+      node('spoke:identity', 'spoke', spokeLabel('Identity spoke', state.options, 'identity')),
+    ]);
+  }
+  if (cloud === 'gcp') {
+    return node('mg:identity', 'management-group', 'Platform Folder', [
+      node('spoke:identity', 'spoke', spokeLabel('Identity / WIF', state.options, 'identity')),
+    ]);
+  }
   return node('mg:identity', 'management-group', 'Identity', [
     node('spoke:identity', 'spoke', spokeLabel('Identity spoke', state.options, 'identity')),
   ]);
@@ -62,7 +100,14 @@ function platformNode(state) {
   const children = [managementNode(state), connectivityNode(state), identityNode(state)].filter(
     Boolean
   );
-  return children.length ? node('mg:platform', 'management-group', 'Platform', children) : null;
+  const { cloud } = state;
+  let label = 'Platform';
+  if (cloud === 'aws') {
+    label = 'Infrastructure OUs';
+  } else if (cloud === 'gcp') {
+    label = 'Platform Folders';
+  }
+  return children.length ? node('mg:platform', 'management-group', label, children) : null;
 }
 
 /** Corp or Online → one spoke per landing zone, or null. */
@@ -70,9 +115,16 @@ function landingZoneGroup(state, id, label) {
   if (!isSelected(state, id)) return null;
   const count = state.options[id === 'corp' ? 'corpCount' : 'onlineCount'];
   const spokes = [];
+  const { cloud } = state;
+  let itemPrefix = label;
+  if (cloud === 'aws') {
+    itemPrefix = `${label} VPC`;
+  } else if (cloud === 'gcp') {
+    itemPrefix = `${label} Project`;
+  }
   for (let i = 1; i <= count; i += 1) {
     spokes.push(
-      node(`spoke:${id}-${i}`, 'spoke', spokeLabel(`${label} ${i}`, state.options, id, i))
+      node(`spoke:${id}-${i}`, 'spoke', spokeLabel(`${itemPrefix} ${i}`, state.options, id, i))
     );
   }
   return node(`mg:${id}`, 'management-group', label, spokes);
@@ -84,17 +136,32 @@ function landingZonesNode(state) {
     landingZoneGroup(state, 'corp', 'Corp'),
     landingZoneGroup(state, 'online', 'Online'),
   ].filter(Boolean);
-  return children.length
-    ? node('mg:landingzones', 'management-group', 'Landing zones', children)
-    : null;
+  const { cloud } = state;
+  let label = 'Landing zones';
+  if (cloud === 'aws') {
+    label = 'Workloads OU';
+  } else if (cloud === 'gcp') {
+    label = 'Workloads Folders';
+  }
+  return children.length ? node('mg:landingzones', 'management-group', label, children) : null;
 }
 
 /** The whole tree for a state, before layout. Null when nothing is selected. */
 function buildTree(state) {
   if (!isSelected(state, 'management-groups')) return null;
   const parent = state.options.rootParentId;
-  const root = node('mg:alz', 'management-group', parent ? `alz under ${parent}` : 'alz');
-  if (isSelected(state, 'policy')) root.children.push(node('policy', 'policy', 'Policy baseline'));
+  const { cloud } = state;
+  let rootLabel = parent ? `alz under ${parent}` : 'alz';
+  let policyLabel = 'Policy baseline';
+  if (cloud === 'aws') {
+    rootLabel = parent ? `AWS Org under ${parent}` : 'AWS Organizations Root';
+    policyLabel = 'Service Control Policies';
+  } else if (cloud === 'gcp') {
+    rootLabel = parent ? `GCP Org under ${parent}` : 'Google Cloud Organization';
+    policyLabel = 'Organization Policies';
+  }
+  const root = node('mg:alz', 'management-group', rootLabel);
+  if (isSelected(state, 'policy')) root.children.push(node('policy', 'policy', policyLabel));
   for (const branch of [platformNode(state), landingZonesNode(state)]) {
     if (branch) root.children.push(branch);
   }

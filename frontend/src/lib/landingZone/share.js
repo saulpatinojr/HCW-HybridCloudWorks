@@ -28,6 +28,8 @@ import {
 
 const SELECTION_KEY = 'lz';
 
+const CLOUD_KEY = 'cloud';
+
 /** Option id → query key, in the order the documented URL lists them. */
 const OPTION_KEYS = Object.freeze({
   hubCidr: 'hub.cidr',
@@ -40,7 +42,7 @@ const OPTION_KEYS = Object.freeze({
   rootParentId: 'root',
 });
 
-const OWN_KEYS = new Set([SELECTION_KEY, ...Object.values(OPTION_KEYS)]);
+const OWN_KEYS = new Set([SELECTION_KEY, CLOUD_KEY, ...Object.values(OPTION_KEYS)]);
 
 /** The query keys this module owns. */
 export function isLzParam(key) {
@@ -61,6 +63,10 @@ function encodeOption(id, value) {
 export function encodeLz(state) {
   const normalized = normalizeState(state);
   const out = {};
+  const cloud = state?.cloud || normalized.cloud;
+  if (cloud && cloud !== 'azure') {
+    out[CLOUD_KEY] = cloud;
+  }
   const platform = selectedPlatform(normalized);
   if (platform.length !== PLATFORM_IDS.length) {
     out[SELECTION_KEY] = platform.map((id) => componentById(id).shortId).join(',');
@@ -111,6 +117,8 @@ function decodeSelection(raw) {
  */
 export function decodeLz(searchParams) {
   const get = (key) => readParam(searchParams, key);
+  const rawCloud = get(CLOUD_KEY);
+  const cloud = rawCloud === 'aws' || rawCloud === 'gcp' ? rawCloud : undefined;
   const options = {};
   for (const id of OPTION_IDS) {
     const value = decodeOption(id, get(OPTION_KEYS[id]));
@@ -122,5 +130,5 @@ export function decodeLz(searchParams) {
     if (counts[countOptionFor(id)] > 0) selected.add(id);
   }
   // Normalised once, here, so the cross-option fallback's warning is the one returned.
-  return normalizeState({ selected: [...selected], options });
+  return normalizeState({ cloud, selected: [...selected], options });
 }

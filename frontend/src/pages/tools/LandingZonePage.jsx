@@ -121,6 +121,8 @@ export default function LandingZonePage() {
           <MultiCloudPreview
             pack={MULTI_CLOUD_PACKS[selectedCloud]}
             onReturn={() => setSelectedCloud('azure')}
+            state={state}
+            write={write}
           />
         ) : (
           <>
