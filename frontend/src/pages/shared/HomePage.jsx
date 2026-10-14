@@ -64,6 +64,7 @@ export const QUICK_ACCESS_HUBS = Object.freeze([
   {
     provider: 'azure',
     label: 'Azure',
+    tag: 'Cloud',
     icon: 'cloud_done',
     glow: 'rgba(0, 120, 212, 0.4)',
     hoverBorder: 'hover:border-l-azure',
@@ -73,6 +74,7 @@ export const QUICK_ACCESS_HUBS = Object.freeze([
   {
     provider: 'aws',
     label: 'AWS',
+    tag: 'Cloud',
     icon: 'rocket_launch',
     glow: 'rgba(255, 153, 0, 0.4)',
     hoverBorder: 'hover:border-l-aws',
@@ -81,7 +83,8 @@ export const QUICK_ACCESS_HUBS = Object.freeze([
   },
   {
     provider: 'gcp',
-    label: 'GCP',
+    label: 'Google Cloud (GCP)',
+    tag: 'Cloud',
     icon: 'query_stats',
     glow: 'rgba(219, 68, 55, 0.4)',
     hoverBorder: 'hover:border-l-gcp',
@@ -92,6 +95,7 @@ export const QUICK_ACCESS_HUBS = Object.freeze([
   {
     provider: 'terraform',
     label: 'Terraform',
+    tag: 'Platform',
     icon: 'layers',
     glow: 'rgba(123, 66, 188, 0.4)',
     hoverBorder: 'hover:border-l-terraform',
@@ -101,6 +105,7 @@ export const QUICK_ACCESS_HUBS = Object.freeze([
   {
     provider: 'github',
     label: 'GitHub',
+    tag: 'Service',
     icon: 'terminal',
     glow: 'rgba(110, 118, 129, 0.4)',
     hoverBorder: 'hover:border-l-github',
@@ -110,6 +115,7 @@ export const QUICK_ACCESS_HUBS = Object.freeze([
   {
     provider: 'finops',
     label: 'FinOps',
+    tag: 'Service',
     icon: 'payments',
     glow: 'rgba(30, 164, 130, 0.4)',
     hoverBorder: 'hover:border-l-finops',
@@ -119,6 +125,7 @@ export const QUICK_ACCESS_HUBS = Object.freeze([
   {
     provider: 'vmware',
     label: 'VMware',
+    tag: 'Cloud',
     icon: 'dns',
     glow: 'rgba(0, 145, 218, 0.4)',
     hoverBorder: 'hover:border-l-vmware',
@@ -128,6 +135,7 @@ export const QUICK_ACCESS_HUBS = Object.freeze([
   {
     provider: 'ansible',
     label: 'Ansible',
+    tag: 'Platform',
     icon: 'terminal',
     glow: 'rgba(238, 0, 0, 0.35)',
     hoverBorder: 'hover:border-l-ansible',
@@ -138,6 +146,7 @@ export const QUICK_ACCESS_HUBS = Object.freeze([
   {
     provider: 'docker',
     label: 'Docker',
+    tag: 'Platform',
     icon: 'deployed_code',
     glow: 'rgba(29, 99, 237, 0.4)',
     hoverBorder: 'hover:border-l-docker',
@@ -481,7 +490,6 @@ export default function HomePage() {
       <NumberedSection number={1} eyebrow="Capabilities" title="Build. Learn. Scale.">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Build and Test */}
-          {/* Build and Test */}
           <div className="glass-panel group rounded-xl p-6 border border-secondary/40 hover:border-accent/80 transition-colors relative min-h-65 overflow-hidden hover:shadow-xl hover:shadow-black/5 dark:hover:shadow-black/20 flex flex-col">
             <div className="h-11 w-11 rounded-lg bg-white/70 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-700 flex items-center justify-center mb-4 transition-transform group-hover:scale-95 group-hover:opacity-0 delay-75 duration-300">
               <span className="material-symbols-outlined text-slate-700 dark:text-(--popover-foreground)">
@@ -501,7 +509,7 @@ export default function HomePage() {
               <h4 className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 font-bold mb-3">
                 Architectures
               </h4>
-              <div className="flex flex-col gap-2 flex-1 justify-center">
+              <div className="flex flex-col gap-2.5 flex-1 justify-center">
                 <Link
                   to={routes.architectureDesigns('azure')}
                   className="flex items-center gap-3 group/link hover:pl-2 transition-all"
@@ -526,16 +534,16 @@ export default function HomePage() {
                 >
                   <span className="w-2 h-2 rounded-full bg-[hsl(var(--gcp-red) / 1)] shadow-[0_0_6px_hsl(var(--gcp-red))]"></span>
                   <span className="font-googlesans font-semibold text-lg tracking-tight text-[hsl(var(--gcp-red))]">
-                    GCP Architectures
+                    Google Cloud (GCP) Architectures
                   </span>
                 </Link>
                 <Link
-                  to={routes.tools('finops')}
+                  to={routes.architectureDesigns('finops')}
                   className="flex items-center gap-3 group/link hover:pl-2 transition-all"
                 >
                   <span className="w-2 h-2 rounded-full bg-finops shadow-[0_0_6px_hsl(var(--finops-green))]"></span>
                   <span className="font-display font-semibold text-lg tracking-tight text-finops">
-                    FinOps Tools
+                    FinOps Architectures
                   </span>
                 </Link>
               </div>
@@ -558,16 +566,16 @@ export default function HomePage() {
 
             {/* Floating Blurry Pane */}
             <div className="absolute inset-0 bg-white/85 dark:bg-slate-900/90 backdrop-blur-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 z-20 flex flex-col p-6 rounded-xl border border-glass-border">
-              <h4 className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 font-bold mb-3">
+              <h4 className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 font-bold mb-2">
                 Learning Hubs
               </h4>
-              <div className="flex flex-col gap-3 flex-1 justify-center">
+              <div className="flex flex-col gap-2 flex-1 justify-center overflow-y-auto pr-1">
                 <Link
                   to={routes.education('azure')}
                   className="flex items-center gap-3 group/link hover:pl-2 transition-all"
                 >
                   <span className="w-2 h-2 rounded-full bg-azure shadow-[0_0_6px_hsl(var(--azure-blue))]"></span>
-                  <span className="font-aptos font-semibold text-lg tracking-tight text-azure">
+                  <span className="font-aptos font-semibold text-base tracking-tight text-azure">
                     Azure Learning
                   </span>
                 </Link>
@@ -576,7 +584,7 @@ export default function HomePage() {
                   className="flex items-center gap-3 group/link hover:pl-2 transition-all"
                 >
                   <span className="w-2 h-2 rounded-full bg-aws shadow-[0_0_6px_hsl(var(--aws-orange))]"></span>
-                  <span className="font-ember font-semibold text-lg tracking-tight text-aws">
+                  <span className="font-ember font-semibold text-base tracking-tight text-aws">
                     AWS Learning
                   </span>
                 </Link>
@@ -585,8 +593,35 @@ export default function HomePage() {
                   className="flex items-center gap-3 group/link hover:pl-2 transition-all"
                 >
                   <span className="w-2 h-2 rounded-full bg-[hsl(var(--gcp-red) / 1)] shadow-[0_0_6px_hsl(var(--gcp-red))]"></span>
-                  <span className="font-googlesans font-semibold text-lg tracking-tight text-[hsl(var(--gcp-red))]">
-                    GCP Learning
+                  <span className="font-googlesans font-semibold text-base tracking-tight text-[hsl(var(--gcp-red))]">
+                    Google Cloud (GCP) Learning
+                  </span>
+                </Link>
+                <Link
+                  to={routes.education('terraform')}
+                  className="flex items-center gap-3 group/link hover:pl-2 transition-all"
+                >
+                  <span className="w-2 h-2 rounded-full bg-terraform shadow-[0_0_6px_hsl(var(--terraform-purple))]"></span>
+                  <span className="font-terraform font-semibold text-base tracking-tight text-terraform">
+                    Terraform Learning
+                  </span>
+                </Link>
+                <Link
+                  to={routes.education('github')}
+                  className="flex items-center gap-3 group/link hover:pl-2 transition-all"
+                >
+                  <span className="w-2 h-2 rounded-full bg-github dark:bg-slate-200"></span>
+                  <span className="font-monasans font-semibold text-base tracking-tight text-github dark:text-slate-200">
+                    GitHub Learning
+                  </span>
+                </Link>
+                <Link
+                  to={routes.education('vmware')}
+                  className="flex items-center gap-3 group/link hover:pl-2 transition-all"
+                >
+                  <span className="w-2 h-2 rounded-full bg-vmware shadow-[0_0_6px_hsl(var(--vmware-blue))]"></span>
+                  <span className="font-sans font-semibold text-base tracking-tight text-vmware">
+                    VMware Learning
                   </span>
                 </Link>
                 <Link
@@ -594,8 +629,8 @@ export default function HomePage() {
                   className="flex items-center gap-3 group/link hover:pl-2 transition-all"
                 >
                   <span className="w-2 h-2 rounded-full bg-finops shadow-[0_0_6px_hsl(var(--finops-green))]"></span>
-                  <span className="font-display font-semibold text-lg tracking-tight text-finops">
-                    FinOps Learning
+                  <span className="font-display font-semibold text-base tracking-tight text-finops">
+                    FinOps (FOCUS 1.4) Learning
                   </span>
                 </Link>
               </div>
@@ -647,7 +682,7 @@ export default function HomePage() {
                 >
                   <span className="w-2 h-2 rounded-full bg-[hsl(var(--gcp-red) / 1)] shadow-[0_0_6px_hsl(var(--gcp-red))]"></span>
                   <span className="font-googlesans font-semibold text-lg tracking-tight text-[hsl(var(--gcp-red))]">
-                    GCP Frameworks
+                    Google Cloud (GCP) Frameworks
                   </span>
                 </Link>
                 <Link
@@ -838,8 +873,17 @@ export default function HomePage() {
                     <div className={`${HUB_ICON} ${hub.iconTone}`}>
                       <span className="material-symbols-outlined text-xl">{hub.icon}</span>
                     </div>
-                    <div className="flex flex-col">
-                      <span className={`${HUB_LABEL} ${hub.labelHover}`}>{hub.label}</span>
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className={`${HUB_LABEL} ${hub.labelHover} truncate`}>
+                          {hub.label}
+                        </span>
+                        {hub.tag && (
+                          <span className="text-[9px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-200/60 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 border border-slate-300/40 dark:border-slate-700/50 shrink-0">
+                            {hub.tag}
+                          </span>
+                        )}
+                      </div>
                       <span className={[HUB_NOTE, hub.noteHover].filter(Boolean).join(' ')}>
                         {feedCountLabel(hub.provider)}
                       </span>
