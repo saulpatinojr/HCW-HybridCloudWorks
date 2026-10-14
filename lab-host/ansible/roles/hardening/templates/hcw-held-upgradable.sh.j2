@@ -19,9 +19,16 @@
 # for apt's locks. What to do about a line is in docs/runbooks/labs-host.md,
 # "Runtime advisories". A failure of apt-mark or apt ends the run non-zero,
 # and the unit's OnFailure= reports that.
+#
+# It also says, at warning, while a reboot is pending and for how long
+# (LAB-13, #959): unattended-upgrades reboots at 04:30 only when nobody is
+# logged in, so a fix that needs the reboot is applied only once a window
+# comes. The owner's window is to log out before 04:30, or to reboot at a
+# time of their choosing (docs/runbooks/labs-host.md, Runtime advisories).
 set -euo pipefail
 
 tag='{{ hardening_held_report_tag }}'
+reboot_required='{{ hardening_reboot_required_path }}'
 {% raw %}
 say() { logger -t "${tag}" -p "daemon.$1" -- "$2"; }
 
@@ -48,5 +55,12 @@ done
 
 if [ "${reported}" -eq 0 ]; then
   say notice "no held package is upgradable: ${#held[@]} held (${held[*]:-none}); package lists from ${lists}"
+fi
+
+if [ -e "${reboot_required}" ]; then
+  since_epoch="$(stat -c %Y "${reboot_required}")"
+  since="$(date -u -d "@${since_epoch}" +%Y-%m-%dT%H:%MZ)"
+  days=$(( ($(date -u +%s) - since_epoch) / 86400 ))
+  say warning "a reboot is pending since ${since} (${days} days): unattended-upgrades reboots at 04:30 only with nobody logged in. Log out before then, or reboot at a time of your choosing (docs/runbooks/labs-host.md, Runtime advisories)."
 fi
 {% endraw %}

@@ -41,10 +41,12 @@ import {
   PAYLOAD_MODE,
   JOB_LABEL,
   TAR_MAX_ENTRIES,
+  DEFAULT_NOFILE,
+  memorySwapFor,
 } from './docker-runner.js';
 import { CAPABILITIES } from './capabilities.js';
 
-const LIMITS = { memory: '512m', cpus: '0.5', pidsLimit: 128 };
+const LIMITS = { memory: '512m', cpus: '0.5', pidsLimit: 128, nofile: 2048 };
 const CTX = {
   jobDir: '/tmp/labjob-test',
   containerName: 'labjob-deadbeef',
@@ -164,6 +166,32 @@ describe('buildDockerArgs — the sandbox boundary', () => {
         assert.equal(argv[at(argv, '--pids-limit') + 1], String(LIMITS.pidsLimit));
       });
 
+      test('states the swap bound: memory-swap is twice the memory limit, which is Docker default made explicit (LAB-13)', () => {
+        assert.equal(argv[at(argv, '--memory-swap') + 1], '1024m');
+        assert.equal(argv[at(argv, '--memory-swap') + 1], memorySwapFor(LIMITS.memory));
+      });
+
+      test('leaves the swap flag out for a memory value it cannot read, so Docker applies its own default', () => {
+        const odd = buildDockerArgs(capability, { ...CTX, encoding }, { ...LIMITS, memory: '512mb' });
+        assert.equal(at(odd, '--memory-swap'), -1);
+        assert.equal(odd[at(odd, '--memory') + 1], '512mb');
+      });
+
+      test('caps open files from config, and from a default when config names none (LAB-13)', () => {
+        assert.equal(argv[at(argv, '--ulimit') + 1], `nofile=${LIMITS.nofile}:${LIMITS.nofile}`);
+        const older = buildDockerArgs(capability, { ...CTX, encoding }, { memory: '512m', cpus: '0.5', pidsLimit: 128 });
+        assert.equal(older[at(older, '--ulimit') + 1], `nofile=${DEFAULT_NOFILE}:${DEFAULT_NOFILE}`);
+      });
+
+      test('falls back to the default for a nofile that is not a positive whole number', () => {
+        // Docker refuses `nofile=Infinity:Infinity` and `nofile=0.5:0.5`, and
+        // `LABS_AGENT_JOB_NOFILE=1e999` reads as Infinity (review on #1172).
+        for (const bad of [0.5, Infinity, -1, 0, NaN, 'abc', '1e999', null]) {
+          const argv = buildDockerArgs(capability, { ...CTX, encoding }, { ...LIMITS, nofile: bad });
+          assert.equal(argv[at(argv, '--ulimit') + 1], `nofile=${DEFAULT_NOFILE}:${DEFAULT_NOFILE}`, `nofile=${String(bad)}`);
+        }
+      });
+
       test('removes the container and names it for the timeout kill path', () => {
         assert.ok(argv.includes('--rm'));
         assert.equal(argv[at(argv, '--name') + 1], CTX.containerName);
@@ -190,7 +218,7 @@ describe('buildDockerArgs — the sandbox boundary', () => {
   }
 
   test('refuses a capability that tries to set a sandbox-controlled flag', () => {
-    for (const bad of ['--network', '--privileged', '--cap-add', '-v', '--user', '--pid', '--label']) {
+    for (const bad of ['--network', '--privileged', '--cap-add', '-v', '--user', '--pid', '--label', '--memory-swap', '--ulimit']) {
       assert.throws(
         () =>
           buildDockerArgs(
@@ -345,5 +373,21 @@ describe('tar payloads', () => {
 describe('output handling', () => {
   test('the output cap is a real bound, not a comment', () => {
     assert.equal(OUTPUT_CAP_BYTES, 64 * 1024);
+  });
+});
+
+describe('memorySwapFor', () => {
+  test('doubles a Docker memory value in its own unit', () => {
+    assert.equal(memorySwapFor('512m'), '1024m');
+    assert.equal(memorySwapFor('1g'), '2g');
+    assert.equal(memorySwapFor('256K'), '512K');
+    assert.equal(memorySwapFor('536870912'), '1073741824');
+    assert.equal(memorySwapFor(512), '1024');
+  });
+
+  test('yields null for a value Docker would not read either', () => {
+    for (const bad of ['512mb', 'lots', '', null, undefined, '1.5g']) {
+      assert.equal(memorySwapFor(bad), null, String(bad));
+    }
   });
 });

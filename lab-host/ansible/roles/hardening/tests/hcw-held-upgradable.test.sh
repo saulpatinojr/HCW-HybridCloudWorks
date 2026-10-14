@@ -51,6 +51,10 @@ PY
 }
 script="${work}/hcw-held-upgradable"
 render hcw-held-upgradable.sh.j2 "${script}"
+# The pending-reboot marker is read from a scratch path here, not from the
+# machine running the test (an Ubuntu runner may well have one pending).
+sed -i "s#^reboot_required='/var/run/reboot-required'\$#reboot_required='${work}/reboot-required'#" "${script}"
+grep -q "^reboot_required='${work}/reboot-required'" "${script}" || { echo "the rendered script does not read the reboot marker from the role's path" >&2; exit 1; }
 render hcw-held-upgradable.service.j2 "${work}/service"
 render hcw-held-upgradable.timer.j2 "${work}/timer"
 chmod +x "${script}"
@@ -137,6 +141,18 @@ run
 check "nothing held is the notice line with none" \
   "grep -qxF '${tag}|daemon.notice|no held package is upgradable: 0 held (none); package lists from unknown' '${work}/log' || grep -qE '0 held \\(none\\); package lists from [0-9]{4}-' '${work}/log'" \
   "$(cat "${work}/log")"
+
+# --- A reboot pending for three days: one more line, at warning, with the date and the age.
+printf '%s\n' docker-ce > "${work}/held"
+: > "${work}/upgradable"
+touch -d '3 days ago' "${work}/reboot-required"
+run
+check "a pending reboot adds one warning line with its age in days" \
+  "[ \"\$(wc -l < '${work}/log')\" -eq 2 ] && grep -qE '^${tag}\\|daemon\\.warning\\|a reboot is pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(3 days\\): unattended-upgrades reboots at 04:30 only with nobody logged in\\. Log out before then, or reboot at a time of your choosing \\(docs/runbooks/labs-host\\.md, Runtime advisories\\)\\.\$' '${work}/log'" \
+  "$(cat "${work}/log")"
+rm -f "${work}/reboot-required"
+run
+check "no pending reboot, no reboot line" "! grep -q 'a reboot is pending' '${work}/log'"
 
 # --- apt fails: the run fails, so the unit fails and the notifier reports it.
 printf '%s\n' docker-ce > "${work}/held"

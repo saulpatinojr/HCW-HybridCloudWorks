@@ -1,11 +1,22 @@
 // {{ ansible_managed }}
-// Overrides for /etc/apt/apt.conf.d/50unattended-upgrades. Only the Ubuntu
-// security and updates origins that file already allows are upgraded; the
-// third-party repositories the docker and labs_agent roles add are pinned and
-// held, so nothing here can move them. hcw-held-upgradable.timer says, daily,
-// when apt has something newer for one of them (LAB-3, #949).
+// Overrides for /etc/apt/apt.conf.d/50unattended-upgrades. The allowed
+// origins are rendered here from hardening_unattended_allowed_origins rather
+// than inherited from that file's defaults (LAB-13, #959), so what may move
+// is written down where tests/unattended-upgrades.test.sh reads it. The
+// third-party repositories the docker and labs_agent roles add are pinned
+// and held, so nothing here can move them. hcw-held-upgradable.timer says,
+// daily, when apt has something newer for one of them (LAB-3, #949).
+#clear Unattended-Upgrade::Allowed-Origins;
+Unattended-Upgrade::Allowed-Origins {
+{% for origin in hardening_unattended_allowed_origins %}
+  "{{ origin }}";
+{% endfor %}
+};
 Unattended-Upgrade::Automatic-Reboot "true";
-Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+// Not while someone is logged in (LAB-13, #959): a session open at the
+// reboot hour is the owner mid-task, and the reboot waits for the next
+// window where nobody is. The upgrade itself still runs.
+Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
 Unattended-Upgrade::Automatic-Reboot-Time "{{ hardening_unattended_reboot_time }}";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";

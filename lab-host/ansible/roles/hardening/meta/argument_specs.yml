@@ -52,6 +52,18 @@ argument_specs:
         required: false
         default: "04:30"
         description: Local time (HH:MM) at which unattended-upgrades may reboot the host.
+      hardening_unattended_allowed_origins:
+        type: list
+        elements: str
+        required: false
+        default:
+          - "${distro_id}:${distro_codename}"
+          - "${distro_id}:${distro_codename}-security"
+          - "${distro_id}ESMApps:${distro_codename}-apps-security"
+          - "${distro_id}ESM:${distro_codename}-infra-security"
+        description:
+          - The apt origins unattended-upgrades may move packages from, rendered into the
+            override as the whole list (LAB-13, issue 959). Ubuntu's own four by default.
       hardening_fail2ban_maxretry:
         type: int
         required: false
@@ -67,6 +79,13 @@ argument_specs:
         required: false
         default: 1h
         description: How long a banned address stays banned.
+      hardening_reboot_required_path:
+        type: path
+        required: false
+        default: /var/run/reboot-required
+        description:
+          - The file unattended-upgrades leaves while a reboot is pending. The daily report logs
+            a warning line with its age while it exists (LAB-13, issue 959).
       hardening_held_report_tag:
         type: str
         required: false
