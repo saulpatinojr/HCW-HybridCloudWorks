@@ -49,7 +49,8 @@ What "After" still counts:
   silence them is `.qlty/qlty.toml`, which #568 (PR #581) owns. The rule to
   add is in [radarlint-iac](#radarlint-iac).
 
-The table is the 2026-09-14 run. Since then #726 (2026-09-29) added rows
+CodeQL is not in the table: its alerts live in code scanning, and
+[CodeQL](#codeql) below records the dismissals. The table is the 2026-09-14 run. Since then #726 (2026-09-29) added rows
 below: three accepted checkov rows and one accepted trivy row on the lab-only
 Key Vault in `infra/lab-hybrid.tf`, two accepted checkov rows and one fixed
 one on the `vault` role's seal checks, and one false-positive gitleaks row.
@@ -453,6 +454,45 @@ Open work lives in GitHub issues (owner decision 2026-09-05). A real TODO in
 `infra/` would name an issue number, not a TODO marker, so silencing S1135
 there hid nothing the repository relied on. With no hits left, it also
 silenced nothing, and leaving S1135 on costs nothing.
+
+## CodeQL
+
+CodeQL runs from `codeql.yml` with `.github/codeql/codeql-config.yml`, which
+has excluded `.claude/` and `.agents/`, the vendored Claude Code harness,
+with its reason in the file since a5d580b6 (2026-08-15). Its alerts are
+dismissed in the code-scanning UI, not in a scanner file, so this section is
+the record a dismissal points to. The rule, from the 2026-10-06 estate
+assessment (SEC-5, #974): **every dismissal carries a one-line note in the
+dismissal comment naming its evidence**: the test that intends the shape, the
+sanitiser the query did not follow, or the path exclusion that makes it moot.
+A session never dismisses an alert (`.claude/CLAUDE.md`, "A code scanning
+alert is fixed in code, or dismissed by the owner"); the owner dismisses, with
+the note. A dismissal made before this rule and without a note is listed
+below with its evidence instead.
+
+Read 2026-10-14 (Git Bash):
+
+```bash
+gh api "repos/saulpatinojr/HCW-HybridCloudWorks/code-scanning/alerts?state=dismissed&per_page=100" --paginate --jq '.[] | [.number, .dismissed_reason, ((.dismissed_comment // "") | length > 0), .most_recent_instance.location.path, .dismissed_at[0:10]] | @tsv'
+```
+
+| Dismissed | Reason | Where | Dismissed on | Per-alert note | Evidence |
+| ---: | --- | --- | --- | --- | --- |
+| 111 | False positive | `.claude/skills/**` | 2026-08-21 | None | The harness's demonstration scripts (67 `py/clear-text-logging-sensitive-data`, 19 `py/insecure-protocol`, 9 `py/clear-text-storage-sensitive-data`, 7 `py/weak-sensitive-data-hashing`, the rest `py/incomplete-url-substring-sanitization`, `py/polynomial-redos`, `py/flask-debug`, `py/bad-tag-filter`): a hash-cracking skill that hashes with MD5, a TLS skill that enables legacy protocols to show them. Never imported or run by the site or its CI. Closed as a class: the paths are excluded from CodeQL by `codeql-config.yml`, and `.claude/skills` is no longer tracked, so none can recur. No note is added to each retroactively; this row is the note |
+| 1 | Mitigated | `.claude/skills/**` | 2026-08-21 | None | As above |
+| 28 | Won't fix | `frontend/src/**` | 2026-08-25 | Each | Per-alert notes in the dismissal comments |
+| 3 | Used in tests | `frontend/src/**` | 2026-08-25 | Each | Per-alert notes |
+| 2 | False positive | `frontend/scripts/**` | 2026-08-25 | Each | Per-alert notes |
+| 1 | False positive | `frontend/src/**` | 2026-08-25 | Yes | Per-alert note |
+| 1 | Won't fix | `functions/src/**` | 2026-08-25 | Yes | Per-alert note |
+| 1 | Used in tests | `functions/src/**` | 2026-08-25 | Yes | Per-alert note |
+| 1 | False positive | `functions/src/**` | 2026-10-08 | Yes | Per-alert note |
+| 1 (#398) | Used in tests | `lab-host/ansible/roles/coder/tests/hcw-coder-automation.test.py:709` | 2026-10-09 | None | `py/overly-permissive-file`: the test makes a file world-readable on purpose to prove `hcw-coder-automation` refuses it (#1035). Recorded in `.claude/CLAUDE.md` as the example of an alert that is right and intended |
+| 1 (#388) | False positive | `scripts/open-lab-pin-pr.mjs:226` | 2026-10-14 | None | `js/file-access-to-http`: the pin-bump script reads a repository file it just wrote (the guide page and the pull-request body) and posts the body to GitHub's API with `gh`, which is the script's purpose; the file's contents are the repository's own, not a secret, and the destination is the repository's pull request (#1129, #1131) |
+
+Counts: 151 dismissed in all; 112 harness, 39 first-party. Of the first-party
+rows the two without a dismissal note have their evidence above. Open alerts
+on `main` on 2026-10-14: none after #1162.
 
 ## Owner decisions 2026-09-14
 

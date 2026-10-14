@@ -182,6 +182,14 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Scanner triage: a CodeQL section** (SEC-5, #974). The triage standard
+  covered Qlty, zizmor, checkov and Trivy but not CodeQL dismissals, of
+  which 151 exist: 112 under the vendored harness, dismissed on 2026-08-21
+  without per-alert notes, and 39 first-party. The section states the
+  rule (every dismissal carries a one-line evidence note, the owner
+  dismisses), records the harness dismissals as a class closed by the
+  `codeql-config.yml` exclusion, and writes the evidence for the two
+  first-party dismissals that have no note (#398, #388).
 - **Lab host: the way back from the off-host backups (LAB-9, #955, PR 3).**
   `hcw-backup-restore`, installed by the `backups` role, lists the
   `host-backups` container as the Arc identity, fetches the newest or a
