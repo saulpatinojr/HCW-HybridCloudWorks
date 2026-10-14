@@ -8,8 +8,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import { FINISHED } from './check-tfc-plan.mjs';
-import { WORKSPACE, describeBusy, firstBusyRun, isBusy } from './tfc-workspace-busy.mjs';
+import {
+  WORKSPACE,
+  describeBusy,
+  firstBusyRun,
+  isBusy,
+  missingTokenMessage,
+} from './tfc-workspace-busy.mjs';
 
+/** One HCP Terraform run record, in the shape the API lists them. */
 const run = (id, status) => ({ id, attributes: { status } });
 
 describe('isBusy', () => {
@@ -97,5 +104,26 @@ describe('describeBusy', () => {
     // An operator reading this in a failed job needs the runs page, not a
     // description of the failure mode alone.
     expect(message).toContain('https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs');
+  });
+});
+
+describe('missingTokenMessage (PLAT-3, #963)', () => {
+  it('refuses when TFC_TOKEN is absent, naming the secret and where to seed it', () => {
+    // The old behaviour passed with a note. From the outside a deploy log
+    // then read the same whether the token was missing or the workspace was
+    // idle, which the 2026-10-06 estate review called "silently off".
+    const refusal = missingTokenMessage({});
+    expect(refusal).toContain('TFC_TOKEN is not set');
+    expect(refusal).toContain(WORKSPACE);
+    expect(refusal).toContain('does not proceed');
+    expect(refusal).toContain('repository secret');
+  });
+
+  it('treats an empty TFC_TOKEN as absent', () => {
+    expect(missingTokenMessage({ TFC_TOKEN: '' })).not.toBeNull();
+  });
+
+  it('is silent when TFC_TOKEN is set, so an armed guard goes on to read the workspace', () => {
+    expect(missingTokenMessage({ TFC_TOKEN: 'user-token' })).toBeNull();
   });
 });
