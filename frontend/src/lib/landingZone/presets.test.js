@@ -106,4 +106,17 @@ describe('Landing Zone Builder architectural presets (presets.js)', () => {
       expect(mappedIds).toEqual(COMPONENT_IDS);
     }
   });
+
+  it('defines AWS and GCP architectural presets and computes accurate FinOps baselines', () => {
+    expect(LZ_PRESETS).toHaveLength(5);
+    // AWS presets
+    const awsBaseline = estimateMonthlyBaseline({ cloud: 'aws' });
+    expect(awsBaseline.totalMonthlyUsd).toBeGreaterThan(400);
+    expect(awsBaseline.items.some((i) => i.label.includes('Transit Gateway'))).toBe(true);
+
+    // GCP presets
+    const gcpBaseline = estimateMonthlyBaseline({ cloud: 'gcp' });
+    expect(gcpBaseline.totalMonthlyUsd).toBeGreaterThan(150);
+    expect(gcpBaseline.items.some((i) => i.label.includes('Shared VPC Host'))).toBe(true);
+  });
 });
