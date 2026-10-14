@@ -128,7 +128,7 @@ describe('isChunkLoadError', () => {
       'Loading chunk of report failed',
       'The chunk of the report failed to load after Loading chunk data',
       'ChunkLoadError is what the user typed into the search box',
-      'Importing a module script failed to be the reason; the module threw',
+      'The report module threw before Importing a module script failed could matter',
     ]) {
       expect(isChunkLoadError(new Error(message)), message).toBe(false);
     }
