@@ -96,15 +96,15 @@ arc_tags:
 # get_url refuses a key that does not match.
 docker_release_pins:
   resolute:
-    engine: "5:29.8.1-1~ubuntu.26.04~resolute"
-    containerd: "2.3.6-1~ubuntu.26.04~resolute"
-    buildx: "0.37.1-1~ubuntu.26.04~resolute"
-    compose: "5.5.1-1~ubuntu.26.04~resolute"
+    engine: "5:29.9.0-1~ubuntu.26.04~resolute"
+    containerd: "2.4.1-2~ubuntu.26.04~resolute"
+    buildx: "0.38.0-1~ubuntu.26.04~resolute"
+    compose: "5.6.0-1~ubuntu.26.04~resolute"
   noble:
-    engine: "5:29.8.1-1~ubuntu.24.04~noble"
-    containerd: "2.3.6-1~ubuntu.24.04~noble"
-    buildx: "0.37.1-1~ubuntu.24.04~noble"
-    compose: "5.5.1-1~ubuntu.24.04~noble"
+    engine: "5:29.9.0-1~ubuntu.24.04~noble"
+    containerd: "2.4.1-2~ubuntu.24.04~noble"
+    buildx: "0.38.0-1~ubuntu.24.04~noble"
+    compose: "5.6.0-1~ubuntu.24.04~noble"
 docker_version: "{{ docker_release_pins[ansible_facts['distribution_release']].engine }}"
 docker_containerd_version: "{{ docker_release_pins[ansible_facts['distribution_release']].containerd }}"
 docker_buildx_version: "{{ docker_release_pins[ansible_facts['distribution_release']].buildx }}"
@@ -139,11 +139,11 @@ docker_userns_remap: true
 # is recorded for humans reading this file. The first twelve hex characters of
 # the digest are part of the built binary's filename, so bumping the builder
 # rebuilds.
-caddy_version: v2.11.4
+caddy_version: v2.11.7
 caddy_cloudflare_module_version: v0.2.4
 caddy_builder_image: caddy
-caddy_builder_image_tag: 2.11.4-builder
-caddy_builder_image_digest: sha256:401121e61853cb9c7df83cba43e532e49a68e30f32921c7bdcb7a4912168c067
+caddy_builder_image_tag: 2.11.7-builder
+caddy_builder_image_digest: sha256:5b98e8a4c3d077585c5980b205cfcc9602d820675d5e0cfdbf5eeff939dc0b4a
 caddy_site_domain: "{{ lab_host_domain }}"
 # The three names ADR 0032 puts on the certificate. DNS-01 for each is answered
 # through the CNAME delegation of _acme-challenge.lab and _acme-challenge.coder.lab
@@ -211,7 +211,7 @@ coder_image_tag: v2.38.0
 coder_image_digest: sha256:38a4cfc548b096484d6d1743e5f1a5af18301ed9a7ffde5150663822f9887026
 coder_postgres_image: postgres
 coder_postgres_image_tag: "18.6"
-coder_postgres_image_digest: sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+coder_postgres_image_digest: sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
 # The Docker socket proxy the coder server reaches the daemon through
 # (LAB-5, 2026-10-06): HAProxy with one allow rule per API section. Image
 # index digest read 2026-10-06 from the registry's Docker-Content-Digest for
@@ -247,7 +247,7 @@ labs_agent_repo_ref: "{{ lookup('ansible.builtin.pipe', 'git -C ' ~ (playbook_di
 # is the newest nodejs in node_26.x/dists/nodistro/main/binary-amd64/Packages,
 # read 2026-09-26. The line itself is labs_agent_node_apt_repository_url in
 # the role defaults, so a major bump moves both.
-labs_agent_node_version: "26.10.0-1nodesource1"
+labs_agent_node_version: "26.11.1-1nodesource1"
 # sha256sum of https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key, read
 # 2026-09-26 and checked with gpgv against node_26.x/dists/nodistro/InRelease;
 # the key that apt trusts for the pinned nodejs package.
@@ -282,8 +282,8 @@ node_exporter_checksum: sha256:b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e83
 # and portainer-ee:lts, :latest and :sts resolved to it that day.
 portainer_enabled: true
 portainer_image: portainer/portainer-ee
-portainer_image_tag: "2.45.1"
-portainer_image_digest: sha256:0cd22f754ac52fcfceb362d5ce8f47ee23a5f6427484db17ebfaa4c8a00f7718
+portainer_image_tag: "2.45.2"
+portainer_image_digest: sha256:64593d0645eec314e84b93c03aba51db67c72ec12c760927335b52b1652765d7
 
 # Tool add-ons (ADR 0035): one container per row, by digest, on the loopback,
 # behind Caddy on <id>.lab.hybridcloudworks.com, framed by the site at
@@ -411,8 +411,8 @@ addons:
 # checks all three links on the host. The vault_ prefix is the role's name:
 # none of these is an Ansible Vault key.
 vault_enabled: true
-vault_version: "2.1.1"
-vault_checksum: sha256:8aa90f9cea46f541fc7baa3d0ec692fc06afde9a248cc1f2dcac46a567c6f56b
+vault_version: "2.1.2"
+vault_checksum: sha256:873bbdac35ca4b0c3e2886c41991ca1272fc452826208d5499f32d12cd2e76e1
 vault_pgp_key_checksum: sha256:c2f5bc1163bd8d15a711616b587bcede212d045a5b8b52df01c74095897cd065
 
 # Auto-unseal through Azure Key Vault and the Arc machine's identity (#726;
