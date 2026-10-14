@@ -12,6 +12,7 @@ import {
   SourceError,
   moveLockfileRange,
   moveManifestRange,
+  movePins,
   proposeFloors,
   readFlexNodeLines,
   readRunnerUbuntuReleases,
@@ -535,6 +536,57 @@ describe('moving a range in its files', () => {
       return [file];
     });
     expect(moved.length).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe('moving a pin in its package and lockfile together', () => {
+  const npm = (value) => `${JSON.stringify(value, null, 2)}\n`;
+  const floors = JSON.parse(readFileSync(join(ROOT, 'scripts', 'fixtures', 'version-floors-2026-09-25.json'), 'utf8'));
+  Object.assign(floors.kinds.node, { newest: '26.11.1', floor: '26.9.0' });
+  const root = join(ROOT, 'no-such-dir');
+  const manifestPath = join(root, 'p', 'package.json');
+  const lockPath = join(root, 'p', 'package-lock.json');
+  const pin = { file: 'p/package.json', line: 3, where: 'p/package.json > engines.node', kind: 'node', raw: '>=26.8.0', range: '>=26.8.0' };
+  const tracked = new Set(['p/package.json', 'p/package-lock.json']);
+
+  /** An in-memory pair; `failOn` names the path whose write throws. */
+  function disk(failOn) {
+    const files = new Map([
+      [manifestPath, npm({ name: 'p', engines: { node: '>=26.8.0' } })],
+      [lockPath, npm({ packages: { '': { name: 'p', engines: { node: '>=26.8.0' } } } })],
+    ]);
+    const original = new Map(files);
+    const io = {
+      readFile: async (p) => files.get(p),
+      writeFile: async (p, text) => {
+        if (p === failOn) throw new Error(`EIO: ${p}`);
+        files.set(p, text);
+      },
+    };
+    return { files, original, io };
+  }
+
+  it('writes both, and reports the move with both files', async () => {
+    const { files, io } = disk(null);
+    const moved = await movePins(floors, [pin], { write: true, root, tracked, io });
+    expect(moved).toEqual([{ file: 'p/package.json', line: 3, where: pin.where, from: '>=26.8.0', to: '>=26.9.0', files: ['p/package.json', 'p/package-lock.json'] }]);
+    expect(JSON.parse(files.get(manifestPath)).engines.node).toBe('>=26.9.0');
+    expect(JSON.parse(files.get(lockPath)).packages[''].engines.node).toBe('>=26.9.0');
+  });
+
+  it('puts the package.json back when the lockfile write fails, and reports no move (CodeRabbit on #1160)', async () => {
+    const { files, original, io } = disk(lockPath);
+    const moved = await movePins(floors, [pin], { write: true, root, tracked, io });
+    expect(moved).toEqual([]);
+    expect(files.get(manifestPath)).toBe(original.get(manifestPath));
+    expect(files.get(lockPath)).toBe(original.get(lockPath));
+  });
+
+  it('writes nothing on a dry run, but still reports what would move', async () => {
+    const { files, original, io } = disk(null);
+    const moved = await movePins(floors, [pin], { write: false, root, tracked, io });
+    expect(moved).toHaveLength(1);
+    expect(files).toEqual(original);
   });
 });
 

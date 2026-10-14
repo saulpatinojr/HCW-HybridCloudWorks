@@ -31,10 +31,13 @@ name: Update Version Floors
 # package.json or a package-lock.json, or that changes any line of a package
 # file other than an `"node": "…"` line — a rule written here rather than in
 # anything the patch could replace (the lab-supply-chain.yml guard, CodeRabbit
-# on #1129). It then stages the paths that guard listed, by name — never
-# `-A`, never `.` — because the branch the App pushes is the one thing its
-# write permission can reach. scripts/version-floors-workflow.test.mjs
-# asserts both.
+# on #1129). Once applied, and before anything runs a repository file, each
+# package file must equal HEAD as JSON but for engines.node, which a line rule
+# alone cannot tell from a dependency named node. It then stages the paths
+# that guard listed, by name — never `-A`, never `.` — because the branch the
+# App pushes is the one thing its write permission can reach.
+# scripts/version-floors-workflow.test.mjs asserts all three, and runs both
+# checks against real patches.
 #
 # NOTHING MOVED IS NOT A PULL REQUEST. checkedOn moves only with its entry
 # (the AVM_VERIFIED_ON convention), so most weeks end at "No floor moved".
@@ -205,11 +208,43 @@ jobs:
           fi
           echo "Patched: $(tr '\n' ' ' < "${dir}/patched.txt")"
 
+      # The line rule above cannot see where a `"node"` line sits: one under a
+      # dependency named node, or in a lockfile entry other than the root,
+      # reads the same as engines.node. So once the patch is applied, and
+      # before anything runs a repository file, each package file is compared
+      # with HEAD as JSON with engines.node taken out of both sides
+      # (packages[""].engines.node in a lockfile); any other difference
+      # refuses the run (CodeRabbit on #1160). Inline, for the guard's reason:
+      # nothing the patch touches can change it.
+      - name: Apply the patch; nothing but engines.node moved in a package file
+        run: |
+          set -euo pipefail
+          git apply "${RUNNER_TEMP}/version-floors/floors.patch"
+          node --input-type=commonjs -e '
+            const { execFileSync } = require("node:child_process");
+            const { readFileSync } = require("node:fs");
+            const withoutRange = (file, value) => {
+              const engines = file.endsWith("package-lock.json") ? value.packages?.[""]?.engines : value.engines;
+              if (engines) delete engines.node;
+              return JSON.stringify(value);
+            };
+            const packages = readFileSync(process.argv[1], "utf8").split("\n").filter((f) => /(^|\/)package(-lock)?\.json$/.test(f));
+            const beyond = packages.filter((file) => {
+              const before = JSON.parse(execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8", maxBuffer: 1 << 28 }));
+              const after = JSON.parse(readFileSync(file, "utf8"));
+              return withoutRange(file, before) !== withoutRange(file, after);
+            });
+            if (beyond.length) {
+              console.log(`::error::The patch changes more than engines.node in: ${beyond.join(" ")}`);
+              process.exit(1);
+            }
+            console.log(`Only engines.node moved in: ${packages.join(" ") || "(no package file)"}`);
+          ' "${RUNNER_TEMP}/version-floors/patched.txt"
+
       - name: Did a floor move?
         id: changed
         run: |
           set -euo pipefail
-          git apply "${RUNNER_TEMP}/version-floors/floors.patch"
           if [ -z "$(git status --porcelain -- scripts/version-floors.json)" ]; then
             echo "No floor moved."
             echo "changed=false" >> "$GITHUB_OUTPUT"

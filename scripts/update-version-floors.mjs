@@ -133,22 +133,32 @@ const findingsAt = (floors) => findViolations(floors, collectPins(ROOT, floors),
 /**
  * Move each pin proposeMove() can move, in its package.json and, when one is
  * tracked beside it, its package-lock.json. Both files are edited before
- * either is written, so a refusal leaves the pair as it was.
+ * either is written, so a refusal leaves the pair as it was; and a write that
+ * fails puts back whatever was already written for that pin, because a pair
+ * half-moved is worse than one not moved (CodeRabbit on #1160). `io` and
+ * `root` are the filesystem, replaced in a test.
  */
-async function movePins(floors, findings, write) {
-  const tracked = new Set(trackedFiles(ROOT));
+export async function movePins(floors, findings, { write, root = ROOT, tracked = new Set(trackedFiles(root)), io = fs }) {
   const moved = [];
   for (const pin of findings) {
     const to = proposeMove(pin, floors);
     if (!to) continue;
     const lockfile = path.posix.join(path.posix.dirname(pin.file), 'package-lock.json');
     const files = [[pin.file, moveManifestRange], ...(tracked.has(lockfile) ? [[lockfile, moveLockfileRange]] : [])];
+    const written = [];
     try {
       const edits = [];
-      for (const [file, move] of files) edits.push([file, move(file, await fs.readFile(path.join(ROOT, file), 'utf8'), pin.range, to)]);
-      if (write) for (const [file, text] of edits) await fs.writeFile(path.join(ROOT, file), text);
-      moved.push({ file: pin.file, line: pin.line, where: pin.where, from: pin.range, to, files: edits.map(([file]) => file) });
+      for (const [file, move] of files) {
+        const original = await io.readFile(path.join(root, file), 'utf8');
+        edits.push({ file, original, text: move(file, original, pin.range, to) });
+      }
+      for (const edit of write ? edits : []) {
+        await io.writeFile(path.join(root, edit.file), edit.text);
+        written.push(edit);
+      }
+      moved.push({ file: pin.file, line: pin.line, where: pin.where, from: pin.range, to, files: edits.map((e) => e.file) });
     } catch (err) {
+      for (const edit of written) await io.writeFile(path.join(root, edit.file), edit.original);
       console.error(`::warning::${err.message}`);
     }
   }
@@ -163,7 +173,7 @@ async function run(args) {
   const proposal = proposeFloors(current, await readSources(), today);
   const found = findingsAt(proposal.next);
   // Pins move only with a floor: a quiet week writes nothing at all.
-  const moved = proposal.changes.length ? await movePins(proposal.next, found, write) : [];
+  const moved = proposal.changes.length ? await movePins(proposal.next, found, { write }) : [];
   // Judged again from the tree once written, so "still behind" is read, not assumed.
   const behind = write && moved.length ? findingsAt(proposal.next) : found.filter((f) => !moved.some((m) => m.where === f.where));
   const summary = renderSummary({ ...proposal, moved, behind, today });

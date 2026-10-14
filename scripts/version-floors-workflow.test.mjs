@@ -25,6 +25,7 @@ const WORKFLOW = join(
 );
 const FLOORS_PATH = 'scripts/version-floors.json';
 const GUARD = 'The patch moves only the floors file and engines.node ranges';
+const APPLY = 'Apply the patch; nothing but engines.node moved in a package file';
 
 /** Non-comment lines only, so prose about `git add -A` cannot trip it. */
 function commandLines(source) {
@@ -88,13 +89,16 @@ describe('the version floors workflow', () => {
     expect(lines.filter((l) => /git diff\b.*--binary/.test(l))).toEqual([]);
   });
 
-  it('judges the patch before it applies it, and applies it before anything else runs', () => {
+  it('judges the patch before it applies it, and compares the result before any repository file runs', () => {
     const guardAt = commitJob.indexOf(`- name: ${GUARD}`);
     const applyAt = commitJob.indexOf('git apply "${RUNNER_TEMP}/version-floors/floors.patch"');
+    const compareAt = commitJob.indexOf('The patch changes more than engines.node in');
     const mintAt = commitJob.indexOf('node scripts/github-app-token.mjs');
     expect(guardAt).toBeGreaterThan(-1);
     expect(guardAt).toBeLessThan(applyAt);
-    expect(applyAt).toBeLessThan(mintAt);
+    expect(applyAt).toBeLessThan(compareAt);
+    expect(compareAt).toBeLessThan(mintAt);
+    expect(stepScript(source, APPLY)).toContain('git apply');
   });
 
   it('masks the App token before writing it anywhere', () => {
@@ -241,5 +245,57 @@ describe.skipIf(!bashUsable)('the guard, run against patches', () => {
     const binary = guard(FLOORS, 'diff --git a/scripts/package.json b/scripts/package.json\nBinary files a/scripts/package.json and b/scripts/package.json differ');
     expect(binary.status).toBe(1);
     expect(binary.out).toContain('binary change');
+  });
+});
+
+/**
+ * The second check, on a real repository: a `"node"` line under a dependency
+ * passes the line rule (it reads the same as engines.node), and the JSON
+ * comparison after the apply is what refuses it (CodeRabbit on #1160).
+ */
+describe.skipIf(!bashUsable)('the applied patch, compared as JSON', () => {
+  const source = readFileSync(WORKFLOW, 'utf8');
+  const dir = mkdtempSync(join(tmpdir(), 'version-floors-apply-'));
+  const repo = join(dir, 'repo');
+  mkdirSync(join(repo, 'scripts'), { recursive: true });
+  mkdirSync(join(dir, 'version-floors'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** Git in the scratch repository, as a fixed identity and without line-ending conversion. */
+  const git = (...args) => run('git', ['-c', 'core.autocrlf=false', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: repo });
+  const npm = (value) => `${JSON.stringify(value, null, 2)}\n`;
+  const manifest = (engines, dependency) => npm({ name: 's', engines: { node: engines }, dependencies: { node: dependency } });
+  const floors = (floor) => npm({ kinds: { node: { floor } } });
+  writeFileSync(join(repo, 'scripts', 'package.json'), manifest('>=26.8.0', '>=26.8.0'));
+  writeFileSync(join(repo, FLOORS_PATH), floors('26.8.0'));
+  git('init', '-q');
+  git('config', 'core.autocrlf', 'false');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+
+  /** Edit the files, take the diff as the update job does, reset, and run guard and apply against it. */
+  const attempt = (edits) => {
+    for (const [file, text] of Object.entries(edits)) writeFileSync(join(repo, file), text);
+    const patch = git('diff').stdout;
+    git('checkout', '-q', '--', '.');
+    writeFileSync(join(dir, 'version-floors', 'floors.patch'), patch);
+    const env = { ...process.env, RUNNER_TEMP: dir };
+    const guard = run('bash', ['-c', stepScript(source, GUARD)], { cwd: repo, env, timeout: 20000 });
+    const apply = run('bash', ['-c', stepScript(source, APPLY)], { cwd: repo, env, timeout: 20000 });
+    git('checkout', '-q', '--', '.');
+    return { guard: guard.status, apply: apply.status, out: `${apply.stdout}${apply.stderr}` };
+  };
+
+  it('applies a patch that moves engines.node and the floors', () => {
+    const result = attempt({ 'scripts/package.json': manifest('>=26.9.0', '>=26.8.0'), [FLOORS_PATH]: floors('26.9.0') });
+    expect(result).toMatchObject({ guard: 0, apply: 0 });
+    expect(result.out).toContain('Only engines.node moved in: scripts/package.json');
+  });
+
+  it('refuses a dependency named node, which the line rule alone lets through', () => {
+    const result = attempt({ 'scripts/package.json': manifest('>=26.8.0', '>=26.9.0'), [FLOORS_PATH]: floors('26.9.0') });
+    expect(result.guard).toBe(0);
+    expect(result.apply).toBe(1);
+    expect(result.out).toContain('The patch changes more than engines.node in: scripts/package.json');
   });
 });
