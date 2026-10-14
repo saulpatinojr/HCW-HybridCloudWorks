@@ -170,10 +170,19 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
     architecture.complexity && { label: architecture.complexity, variant: 'secondary' },
   ].filter(Boolean);
 
-  const keyServicesFallback =
-    Array.isArray(architecture.keyServices) && architecture.keyServices.length > 0
-      ? architecture.keyServices
-      : specComponents.map((name) => ({ name, role: '' }));
+  let howItWorksFallback = [];
+  if (hasNonEmptyList(architecture.howItWorks)) {
+    howItWorksFallback = architecture.howItWorks;
+  } else if (Array.isArray(architecture.topology?.stages)) {
+    howItWorksFallback = architecture.topology.stages.map((s) => s.subtitle).filter(Boolean);
+  }
+
+  let keyServicesFallback = specComponents.map((name) => ({ name, role: '' }));
+  if (Array.isArray(architecture.keyServices) && architecture.keyServices.length > 0) {
+    keyServicesFallback = architecture.keyServices;
+  } else if (Array.isArray(architecture.services) && architecture.services.length > 0) {
+    keyServicesFallback = architecture.services;
+  }
 
   const practicesFallback = hasNonEmptyList(architecture.practices)
     ? architecture.practices
@@ -243,7 +252,7 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
         diagramUrl={architecture.diagramUrl}
         hotspots={resolvedHotspots}
         topology={architecture.topology}
-        howItWorks={architecture.howItWorks}
+        howItWorks={howItWorksFallback}
         keyServices={keyServicesFallback}
         practices={practicesFallback}
         outcome={architecture.outcome}
