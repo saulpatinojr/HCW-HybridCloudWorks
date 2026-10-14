@@ -133,6 +133,17 @@ export function truncateText(text, maxLength = 200) {
   return `${cleaned.substring(0, maxLength).replace(/\s\S*$/, '')}...`;
 }
 
+/**
+ * Strips redundant "[In preview] Public Preview:" or "[Launched] Generally Available:" duplication.
+ */
+export function cleanFeedTitle(rawTitle) {
+  if (!rawTitle) return '';
+  return String(rawTitle)
+    .replace(/^\[In preview\]\s*(Public Preview:\s*)?/i, 'Public Preview: ')
+    .replace(/^\[Launched\]\s*(Generally Available:\s*)?/i, 'GA: ')
+    .trim();
+}
+
 /** "N min" at 200 words a minute, never under one. */
 export function estimateReadTime(content) {
   if (!content) return '3 min';
@@ -209,7 +220,7 @@ export function buildCacheItems(items, feed, max = MAX_CACHE_ITEMS_PER_FEED) {
     })
     .slice(0, max)
     .map((item) => ({
-      title: item.title || 'Untitled',
+      title: cleanFeedTitle(item.title || 'Untitled'),
       link: item.link || '',
       pubDate: item.pubDate || item.isoDate || '',
       summary: truncateText(item.contentSnippet || item.content || ''),
@@ -243,11 +254,11 @@ export function buildRssContentDoc({
     'Created At': stamp,
     Author: item.creator || item.author || feed.name,
     'Cloud Provider': provider.charAt(0).toUpperCase() + provider.slice(1),
-    Title: title,
+    Title: cleanFeedTitle(title),
     Content: bodyText,
     'CD Url': sourceUrl,
     Summary: summary,
-    Slug: generateSlug(title),
+    Slug: generateSlug(cleanFeedTitle(title)),
     Live: false,
     // Only set the article date when the feed actually provides one; a
     // "now" fallback would make fetch time masquerade as the publish date and
@@ -330,8 +341,8 @@ export function buildHomepageFeedItems(
       for (const item of doc.items || []) {
         all.push({
           provider,
-          title: item.title || 'Untitled',
-          description: item.summary || '',
+          title: cleanFeedTitle(item.title || 'Untitled'),
+          description: truncateText(item.summary || '', 180),
           link: item.link || '',
           category: item.category || 'Update',
           pubDate: item.pubDate || '',
