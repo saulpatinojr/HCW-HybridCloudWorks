@@ -220,9 +220,19 @@ const PageLoader = () => (
  * @returns {boolean}
  */
 export function isChunkLoadError(error) {
-  const text = `${error?.name ?? ''} ${error?.message ?? ''}`;
-  return /ChunkLoadError|Loading chunk|Loading CSS chunk|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(
-    text
+  if (!error) return false;
+  // The name webpack-style loaders give it, matched exactly; then the
+  // sentences Vite, Chromium, Firefox and Safari use for a failed dynamic
+  // import, each anchored to its own shape so a runtime error that happens
+  // to mention a chunk ("Loading chunk of report failed") is not read as one
+  // (review on #1170).
+  if (error.name === 'ChunkLoadError') return true;
+  const message = String(error.message ?? '');
+  return (
+    /^Loading (?:CSS )?chunk [\w-]+ failed/i.test(message) ||
+    /^Failed to fetch dynamically imported module/i.test(message) ||
+    /^Importing a module script failed/i.test(message) ||
+    /^error loading dynamically imported module/i.test(message)
   );
 }
 

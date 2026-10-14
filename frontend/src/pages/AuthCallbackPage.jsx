@@ -74,6 +74,7 @@ export function describeAuthFailure(err) {
   return { code, message };
 }
 
+/** Finishes the redirect sign-in, or shows the failure's code with a way to copy the detail. */
 export default function AuthCallbackPage() {
   const [failure, setFailure] = useState(null);
   const [copied, setCopied] = useState('');
@@ -144,6 +145,7 @@ export default function AuthCallbackPage() {
     };
   }, []);
 
+  /** Put the code and the full message on the clipboard; the message is not rendered. */
   const copyDetail = async () => {
     const text = `${failure.code}: ${failure.message}`;
     try {

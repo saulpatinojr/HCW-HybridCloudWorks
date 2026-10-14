@@ -11,10 +11,12 @@ import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RouteErrorBoundary, isChunkLoadError } from './App';
 
+/** A route that fails to render with the given error. */
 function Thrower({ error }) {
   throw error;
 }
 
+/** A route that renders. */
 const Fine = () => <p>Route B renders</p>;
 
 describe('RouteErrorBoundary', () => {
@@ -117,5 +119,21 @@ describe('isChunkLoadError', () => {
     expect(isChunkLoadError(new TypeError('x is not a function'))).toBe(false);
     expect(isChunkLoadError(null)).toBe(false);
     expect(isChunkLoadError(undefined)).toBe(false);
+  });
+
+  it('does not match a runtime error that happens to mention a chunk (near misses)', () => {
+    // These would have matched the first version's loose alternation and
+    // sent an admin to a hard refresh that fixes nothing (review on #1170).
+    for (const message of [
+      'Loading chunk of report failed',
+      'The chunk of the report failed to load after Loading chunk data',
+      'ChunkLoadError is what the user typed into the search box',
+      'Importing a module script failed to be the reason; the module threw',
+    ]) {
+      expect(isChunkLoadError(new Error(message)), message).toBe(false);
+    }
+    const named = new Error('x');
+    named.name = 'NotChunkLoadError';
+    expect(isChunkLoadError(named)).toBe(false);
   });
 });
