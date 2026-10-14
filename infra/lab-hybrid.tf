@@ -18,8 +18,11 @@
 #   - an audit-only machine-configuration assignment of the Linux security
 #     baseline on this group, and, from #726,
 #   - a lab-only Key Vault holding one key, the seal key HashiCorp Vault on the
-#     host unseals itself with, and the Arc machine's one grant: wrap and
-#     unwrap on that key.
+#     host unseals itself with, and the Arc machine's grant to wrap and unwrap
+#     on that key, and, from #955 (LAB-9, lab-hybrid-backups.tf),
+#   - a storage account and immutable container the host ships its nightly
+#     Coder dump and Vault raft snapshot to, with the Arc machine's second
+#     grant: write and read on that container.
 #
 # Nothing else. The Arc machine resource is created by `azcmagent connect` on
 # the host (lab-host/ansible/roles/arc), under that service principal (ADR
