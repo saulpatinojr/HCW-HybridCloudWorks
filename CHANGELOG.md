@@ -39,7 +39,9 @@ This project has not cut a tagged release; entries are grouped under
   (`frontend/src/pages/docker/BuildingImagesPage.jsx`), and sets that page's
   `CHECKED_ON` to the day of the bump, since the pull request's `frontend`
   check is the read of the page against those files. The three files join
-  their set's paths in `open-lab-pin-pr.mjs`. The tests that named those
+  their set's paths in `open-lab-pin-pr.mjs`, whose pull request body now
+  carries the template's sections in order with only the true boxes ticked
+  (CodeRabbit's Description check warned on #1122 without them). The tests that named those
   values by hand — `lab-pin-bumps.test.mjs` against the live `group_vars`,
   `DockerGuides.test.jsx` against `python:3.14.7-slim-trixie` — read them
   from the files instead, so a bump pull request is green on its own and a
