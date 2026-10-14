@@ -63,16 +63,27 @@ import { hardReplace } from '@/lib/hardNavigate';
  * the URL; it goes to the console, and to the clipboard on Copy, where the
  * person asking for help can paste it.
  *
+ * Only a value shaped like a code is shown as one (review on #1170): MSAL's
+ * snake_case `errorCode`, or an `AADSTS` number anywhere in the message.
+ * Anything else, including a plain message whose first clause happens to
+ * end in a colon, falls back to a fixed `unknown_error`, so arbitrary prose
+ * never reaches the screen under the name of a code.
+ *
  * @param {unknown} err
  * @returns {{ code: string, message: string }}
  */
 export function describeAuthFailure(err) {
   const message = String(err?.errorMessage ?? err?.message ?? err ?? '').trim();
   const fromCode = typeof err?.errorCode === 'string' ? err.errorCode.trim() : '';
-  const fromMessage = message.split(':')[0].trim();
-  const code = (fromCode || fromMessage || 'unknown_error').slice(0, 80);
-  return { code, message };
+  const aadsts = message.match(/AADSTS\d{3,}/)?.[0] ?? '';
+  const leading = message.match(/^([a-z][a-z0-9_]{2,63})\s*:/i)?.[1] ?? '';
+  const code =
+    [fromCode, aadsts, leading].find((candidate) => CODE_SHAPE.test(candidate)) || 'unknown_error';
+  return { code: code.slice(0, 80), message };
 }
+
+/** What may be shown as a code: a snake_case MSAL code or an AADSTS number. */
+const CODE_SHAPE = /^(?:[a-z][a-z0-9_]{2,63}|AADSTS\d{3,})$/i;
 
 /** Finishes the redirect sign-in, or shows the failure's code with a way to copy the detail. */
 export default function AuthCallbackPage() {
@@ -164,7 +175,9 @@ export default function AuthCallbackPage() {
         <>
           <h1 className="text-lg font-semibold">Sign-in could not be completed</h1>
           <p className="max-w-md text-sm text-muted-foreground">
-            Try signing in again. If it keeps happening, send this code with your question.
+            Try signing in again. If it keeps happening, send this code with your question. Copy
+            adds the full detail, which names the sign-in service; share it with the person helping
+            you, not in public.
           </p>
           <p className="text-sm" data-testid="auth-error-code">
             Error code:{' '}

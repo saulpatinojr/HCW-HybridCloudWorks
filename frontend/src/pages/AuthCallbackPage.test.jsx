@@ -137,6 +137,26 @@ describe('a failed sign-in', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Copied.');
   });
 
+  it('shows a fixed fallback, not a message prefix, when nothing code-shaped is present', async () => {
+    initializeAuth.mockRejectedValue(
+      new Error('Something went wrong talking to the server: try again')
+    );
+    render(<AuthCallbackPage />);
+
+    const code = await screen.findByTestId('auth-error-code');
+    expect(code).toHaveTextContent('unknown_error');
+    expect(code).not.toHaveTextContent('Something went wrong');
+  });
+
+  it('recognises an AADSTS number inside the message', async () => {
+    initializeAuth.mockRejectedValue(
+      new Error('AADSTS50058: A silent sign-in request was sent but no user is signed in.')
+    );
+    render(<AuthCallbackPage />);
+
+    expect(await screen.findByTestId('auth-error-code')).toHaveTextContent('AADSTS50058');
+  });
+
   it('uses the MSAL error code when the error carries one', async () => {
     const msalError = Object.assign(new Error('Interaction is currently in progress.'), {
       errorCode: 'interaction_in_progress',
