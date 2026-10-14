@@ -118,7 +118,7 @@ export const PROVIDER_GUIDE = Object.freeze([
     row: 2,
     website: 'https://www.finops.org',
     description:
-      'The FinOps Foundation is the framework provider shaping multi-cloud cost governance. Implement FOCUS 1.1 billing data normalization, eliminate cloud cost traps across Azure, AWS, and GCP, and build organizational maturity with unit economic allocation models.',
+      'The FinOps Foundation is the framework provider shaping multi-cloud cost governance. Implement FOCUS 1.4 billing data normalization, eliminate cloud cost traps across Azure, AWS, and GCP, and build organizational maturity with unit economic allocation models.',
   }),
   Object.freeze({
     provider: 'terraform',

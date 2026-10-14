@@ -5,6 +5,8 @@ import { useProvider } from '@/context/ProviderContext';
 import { routes, staticRoutes, parseRoute } from '@/lib/routeFactory';
 import { addonPanePath, availableAddons } from '@/data/addons/catalogue';
 import { SkipToMainContent } from '@/components/accessibility/SkipToMainContent';
+import ProvidersMegaMenu from '@/components/shared/ProvidersMegaMenu';
+import CommandPalette from '@/components/shared/CommandPalette';
 
 /**
  * The two Learn entries: the cross-provider index and the browser labs (#681).
@@ -105,6 +107,7 @@ export default function Header() {
   const location = useLocation();
   const _currentProvider = useProvider();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -380,7 +383,51 @@ export default function Header() {
             room and gives it back when the nav needs it. Held at a fixed
             minimum instead, it forced the logo to give way: on the hubs at
             1024-1280px the logo was squeezed to a few pixels. */}
-        <div className="flex items-center gap-2 ml-auto w-41 min-w-41 lg:min-w-0 justify-end">
+        <div className="flex items-center gap-2 ml-auto justify-end">
+          {/* Cloud Status Pill */}
+          <Link
+            to="/#platform-health"
+            className="hidden 2xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors shrink-0"
+            aria-label="Platform Health: 9/9 Systems Live"
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"
+              aria-hidden="true"
+            />
+            <span>9/9 Live</span>
+          </Link>
+
+          {/* Grouped Providers Mega-Menu (accessible across all pages) */}
+          <div className="hidden lg:block">
+            <ProvidersMegaMenu />
+          </div>
+
+          {/* Search Trigger Button (Desktop & Tablet) */}
+          <button
+            type="button"
+            onClick={() => setCommandPaletteOpen(true)}
+            aria-label="Search site (Cmd+K)"
+            className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-800/60 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-all text-xs cursor-pointer hover:border-slate-300 dark:hover:border-slate-700"
+          >
+            <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
+              search
+            </span>
+            <span className="hidden md:inline font-medium">Search...</span>
+            <kbd className="hidden md:inline-flex items-center px-1.5 py-0.5 text-[9px] font-mono rounded bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-400">
+              ⌘K
+            </kbd>
+          </button>
+
+          {/* Search Icon Trigger (Mobile only) */}
+          <button
+            type="button"
+            onClick={() => setCommandPaletteOpen(true)}
+            aria-label="Search"
+            className="sm:hidden text-slate-700 dark:text-slate-300 h-10 w-10 inline-flex items-center justify-center rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-colors"
+          >
+            <span className="material-symbols-outlined text-lg">search</span>
+          </button>
+
           <button
             className="lg:hidden text-slate-900 dark:text-white h-11 w-11 inline-flex items-center justify-center rounded-md hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-colors"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -393,18 +440,29 @@ export default function Header() {
         </div>
       </div>
 
-      {/* Mobile Nav. Scrolls inside itself when taller than the screen: it
-          hangs from a sticky header, so scrolling the page never brings its
-          last links into view. The home list of nine providers makes it
-          787px tall, past a 740px phone. `*:shrink-0` keeps each link at its
-          44px touch height; without it the column squeezes them to fit
-          instead of scrolling. */}
+      {/* Mobile Nav */}
       {mobileMenuOpen && (
         <nav
           id="mobile-nav"
           aria-label="Mobile"
           className="lg:hidden absolute left-0 right-0 top-16 max-h-[calc(100dvh-4rem)] overflow-y-auto overscroll-contain bg-background/98 backdrop-blur-xl border-b border-glass-border z-50 px-4 py-4 flex flex-col gap-1 *:shrink-0 shadow-xl"
         >
+          {/* Mobile search trigger */}
+          <button
+            type="button"
+            onClick={() => {
+              setMobileMenuOpen(false);
+              setCommandPaletteOpen(true);
+            }}
+            className="flex items-center gap-2 h-11 px-4 mb-1 rounded-lg text-sm font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-base">search</span>
+            <span>Search blueprints, labs, certs...</span>
+            <kbd className="ml-auto px-1.5 py-0.5 text-[10px] font-mono rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-400">
+              ⌘K
+            </kbd>
+          </button>
+
           {hubLinks.map((item) => (
             <Link
               key={item.path}
@@ -446,6 +504,9 @@ export default function Header() {
           </div>
         </nav>
       )}
+
+      {/* Global Command Palette Search Dialog */}
+      <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
     </header>
   );
 }
