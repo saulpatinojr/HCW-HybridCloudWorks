@@ -75,7 +75,7 @@ import { hardReplace } from '@/lib/hardNavigate';
 export function describeAuthFailure(err) {
   const message = String(err?.errorMessage ?? err?.message ?? err ?? '').trim();
   const fromCode = typeof err?.errorCode === 'string' ? err.errorCode.trim() : '';
-  const aadsts = message.match(/AADSTS\d{3,}/)?.[0] ?? '';
+  const aadsts = message.match(/\bAADSTS\d{3,}\b/)?.[0] ?? '';
   const leading = message.match(/^([a-z][a-z0-9_]{2,63})\s*:/i)?.[1] ?? '';
   const code =
     [fromCode, aadsts, leading].find((candidate) => CODE_SHAPE.test(candidate)) || 'unknown_error';

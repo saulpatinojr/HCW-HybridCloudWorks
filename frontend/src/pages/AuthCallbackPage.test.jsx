@@ -157,6 +157,15 @@ describe('a failed sign-in', () => {
     expect(await screen.findByTestId('auth-error-code')).toHaveTextContent('AADSTS50058');
   });
 
+  it('finds an AADSTS number that is not the leading token, which only the word-boundary match can', async () => {
+    initializeAuth.mockRejectedValue(
+      new Error('Sign-in refused (AADSTS700016) by the identity provider')
+    );
+    render(<AuthCallbackPage />);
+
+    expect(await screen.findByTestId('auth-error-code')).toHaveTextContent('AADSTS700016');
+  });
+
   it('uses the MSAL error code when the error carries one', async () => {
     const msalError = Object.assign(new Error('Interaction is currently in progress.'), {
       errorCode: 'interaction_in_progress',
