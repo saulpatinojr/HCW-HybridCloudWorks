@@ -57,6 +57,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Landing zone HCL: the AWS and GCP emitters no longer hand state to
+  generators that take none.** Eight calls in each of
+  `frontend/src/lib/landingZone/hcl/aws/index.js` and `.../gcp/index.js`
+  passed the normalised state to functions declared without a parameter,
+  which CodeQL raised as sixteen `js/superfluous-trailing-arguments`
+  alerts after #1157. The arguments are dropped; the emitted files are
+  unchanged.
 - **Lab host: the add-on secrets are read with the `vars` lookup.** The
   `addons` role built each add-on's secret environment with the `vars`
   dictionary, which ansible-core 2.21 warns about on every run and 2.24
