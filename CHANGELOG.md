@@ -19,6 +19,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **`functions_scm_lock_enabled` defaults to `true`** (PLAT-10, #970).
+  The workspace has set it `true` since 2026-08-25 and the Function App's
+  SCM default action has read `Deny` live since, so the code default now
+  says what the estate does and the plan for the change is empty. The
+  comments in `infra/variables.tf`, `deploy-functions.yml` and
+  `scripts/assert-origin-lock.mjs`, and the required-inputs row, say so
+  instead of describing the 2026-08-25 posture.
 - **Version floors: the weekly pull request moves the `engines.node`
   ranges with the floors, and arrives green.** `update-version-floors.yml`
   used to move `scripts/version-floors.json` alone and open a pull request

@@ -48,8 +48,9 @@
  *      caller's own window did not close.
  *
  * The SCM site's posture is printed and not asserted: `functions_scm_lock_enabled`
- * defaults to false, and deploy-functions.yml's SCM window steps already
- * assert that the posture they found is the posture they left.
+ * governs it (true by default since 2026-10-14, PLAT-10), and
+ * deploy-functions.yml's SCM window steps already assert that the posture
+ * they found is the posture they left.
  *
  * ## Usage
  *
