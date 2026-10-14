@@ -26,6 +26,7 @@
     # that is not in lab_host_ubuntu_releases would otherwise fail later as
     # an undefined dictionary key in the middle of a role.
     - name: Refuse to run on anything but Ubuntu 26.04 LTS or 24.04 LTS
+      tags: [always]
       ansible.builtin.assert:
         that:
           - ansible_facts['distribution'] == 'Ubuntu'
@@ -37,6 +38,7 @@
         quiet: true
 
     - name: Note that this host runs the accepted fallback release, not the target
+      tags: [always]
       ansible.builtin.debug:
         msg: >-
           Ubuntu {{ ansible_facts['distribution_version'] }} is accepted, but the lab host's
@@ -44,6 +46,7 @@
       when: ansible_facts['distribution_release'] != 'resolute'
 
     - name: Refuse to enable Coder with an empty GitHub organisation allowlist
+      tags: [always]
       ansible.builtin.assert:
         that:
           - coder_oauth2_github_allowed_orgs | length > 0
@@ -54,48 +57,67 @@
       when: coder_enabled | bool
 
     - name: Refresh the apt cache
+      tags: [always]
       ansible.builtin.apt:
         update_cache: true
         cache_valid_time: 3600
 
+  # Each role carries its own name as a tag, so `bootstrap.sh --tags <role>`
+  # re-applies one area of a converged host (lab-host/README.md, "Running
+  # part of the play"): no role reads a fact another role set, so a role
+  # stands on the host state the full run left. The pre-flight and the
+  # privilege checks run whatever the tags; the commit record below does not.
   roles:
     - role: hardening
+      tags: [hardening]
     # Straight after hardening: hcw-vault-set is how the owner adds a vault
     # key, and a later role that stops on a missing key should find it already
     # installed. It needs nothing the later roles install.
     - role: vault_tools
+      tags: [vault_tools]
     # Then the Arc agent, a host service that needs nothing the later roles
     # install, so the host shows up in Azure even when a later role fails.
     # It does nothing while arc_enabled is false.
     - role: arc
+      tags: [arc]
     # Restarts the daemon at once when its configuration changes (user
     # namespaces since 2026-10-07, LAB-5), so every role after it creates its
     # containers in the daemon's current data root.
     - role: docker
+      tags: [docker]
     - role: node_exporter
+      tags: [node_exporter]
     - role: caddy
+      tags: [caddy]
     # The rootless daemon Coder's workspaces run on, before the Compose
     # project whose proxy mounts its socket directory (LAB-5).
     - role: coder_sandbox
+      tags: [coder_sandbox]
     - role: coder
+      tags: [coder]
     - role: labs_agent
+      tags: [labs_agent]
     # Straight after the agent: it runs its plan on the Node.js labs_agent
     # installs and reads the agent's checkout, and it pulls every image a job
     # or a workspace runs, so none of them is first downloaded while a
     # visitor waits.
     - role: lab_images
+      tags: [lab_images]
     # Tool add-ons (ADR 0035): one hardened container per row of `addons` in
     # group_vars, by digest, on the loopback, each with a route in Caddy's
     # conf.d. Needs docker and caddy, and nothing of coder's; it stops on a
     # row being deployed (enabled, with a digest) whose vault key is unset, so
     # it runs after the lab services are configured.
     - role: addons
+      tags: [addons]
     # The owner's tools, last: nothing above needs either, so a failure here
     # leaves the lab services configured. Both are off until the owner turns
     # them on, and both listen on the loopback only (ADR 0032, amendment of
     # 2026-09-26).
     - role: portainer
+      tags: [portainer]
     - role: vault
+      tags: [vault]
 
   # After every role and the handlers they notified (the agent's restart out
   # of the docker group among them): the container-runtime privilege
@@ -103,6 +125,7 @@
   # now is, failing the run with what to do (roles/privilege_checks).
   post_tasks:
     - name: Check the container runtime's privilege separation
+      tags: [always]
       ansible.builtin.import_role:
         name: privilege_checks
 
@@ -113,7 +136,10 @@
     # previous record, so the record only ever names a commit the whole
     # playbook converged from, and the site keeps saying the host is behind.
     # Check mode reads the commit and writes nothing.
+    # Only a full run writes the record: a run narrowed with --tags converged
+    # one area, and this record claims the whole playbook did.
     - name: Read the commit this playbook runs from, and its committer date
+      tags: [always]
       ansible.builtin.command:
         argv:
           - git
@@ -127,6 +153,8 @@
       check_mode: false
 
     - name: Record the commit this host converged from, for the agent's heartbeat
+      tags: [always]
+      when: ansible_run_tags == ['all'] and ansible_skip_tags | length == 0
       ansible.builtin.copy:
         dest: "{{ lab_host_applied_commit_file }}"
         content: "{{ lab_host_applied_commit_record | to_nice_json }}\n"

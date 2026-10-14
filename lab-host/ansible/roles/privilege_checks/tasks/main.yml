@@ -172,9 +172,20 @@
     quiet: true
   when: not ansible_check_mode
 
-- name: Show what the agent proxy check saw
+# In plain words, because the two refusals reach the CLI as "Error response
+# from daemon: … refused …", which reads like a fault and is the proxy doing
+# its job. The raw answers are in the assertion above when the check fails.
+- name: Say what the agent proxy check saw
   ansible.builtin.debug:
-    msg: "{{ privilege_checks_agent_run.stdout | from_json }}"
+    msg: >-
+      The agent's Docker proxy does its job: a shell-echo job run as {{ privilege_checks_agent_user }}
+      through it printed its payload (exit {{ privilege_checks_agent_seen.job.exitCode }});
+      `docker ps` was refused by the allowlist (exit {{ privilege_checks_agent_seen.listing.exitCode }});
+      a privileged `docker run` was refused by the container rules
+      (exit {{ privilege_checks_agent_seen.privileged.exitCode }}). The daemon's words for the two
+      refusals begin "Error response from daemon"; that is the refusal reaching the CLI, not a fault.
+  vars:
+    privilege_checks_agent_seen: "{{ privilege_checks_agent_run.stdout | from_json }}"
   when:
     - not ansible_check_mode
     - privilege_checks_agent_run.rc == 0
