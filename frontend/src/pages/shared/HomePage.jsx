@@ -757,16 +757,21 @@ export default function HomePage() {
         </div>
       </NumberedSection>
 
-      {/* Content Grid */}
-      <NumberedSection number={3} eyebrow="Live Signal" title="Active Feeds" id="hubs">
+      {/* Content Grid: Audit P1-3 Editorial Deep-Dives vs. Multi-Cloud Release Wire Split */}
+      <NumberedSection
+        number={3}
+        eyebrow="Editorial & Live Signal"
+        title="Engineering Deep-Dives & Release Wire"
+        id="hubs"
+      >
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full">
-          {/* Latest published articles (components/home/LatestArticles.jsx) */}
-          <div className="lg:col-span-9">
+          {/* Latest published original engineering articles (components/home/LatestArticles.jsx) */}
+          <div className="lg:col-span-8">
             <LatestArticles items={latestItems} loading={latestLoading} error={latestError} />
           </div>
 
           {/* Sidebar */}
-          <aside className="lg:col-span-3 flex flex-col gap-6">
+          <aside className="lg:col-span-4 flex flex-col gap-6">
             <div className="glass-panel rounded-lg p-4 flex flex-col gap-4">
               <div className="flex items-center justify-between border-b border-slate-300/70 dark:border-slate-700/50 pb-2">
                 <div className="flex flex-col">
@@ -812,14 +817,17 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Cloud Ecosystem Stats moved to hero stat blocks */}
-            <div className="mt-3">
-              <div className="flex items-center justify-between mb-2">
+            {/* Multi-Cloud Release Wire (Quick Access Hubs) */}
+            <div className="glass-panel rounded-lg p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between border-b border-slate-300/70 dark:border-slate-700/50 pb-2">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-400">
                   Quick Access Hubs
                 </h4>
+                <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">
+                  Release Wire
+                </span>
               </div>
-              <div className="grid grid-cols-1 gap-3">
+              <div className="grid grid-cols-1 gap-2.5">
                 {QUICK_ACCESS_HUBS.map((hub) => (
                   <Link
                     key={hub.provider}

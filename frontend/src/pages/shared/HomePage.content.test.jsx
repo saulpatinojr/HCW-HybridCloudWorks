@@ -155,6 +155,17 @@ describe('Latest articles', () => {
     expect(document.body).not.toHaveTextContent('HTTP 500');
     consoleError.mockRestore();
   });
+
+  it('differentiates Original Engineering Deep-Dives from Multi-Cloud Release Wire (#Audit P1-3)', async () => {
+    renderHome();
+    expect(
+      await screen.findByRole('heading', { name: /Original Engineering Deep-Dives/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /Engineering Deep-Dives & Release Wire/i })
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Release Wire/i).length).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe('the blueprint carousel', () => {
