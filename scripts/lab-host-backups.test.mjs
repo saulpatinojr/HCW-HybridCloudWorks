@@ -39,6 +39,7 @@ const upload = readFileSync(helper('hcw-backup-upload'), 'utf8');
 const arcToken = readFileSync(helper('hcw-arc-token'), 'utf8');
 const vaultBackup = readFileSync(helper('hcw-vault-backup'), 'utf8');
 const seed = readFileSync(helper('hcw-vault-backup-seed'), 'utf8');
+const restoreSource = readFileSync(helper('hcw-backup-restore'), 'utf8');
 const alerting = read('docs', 'runbooks', 'alerting-and-support.md');
 const infra = read('infra', 'lab-hybrid-backups.tf');
 const readme = read('lab-host', 'README.md');
@@ -118,6 +119,10 @@ describe('the backups role in the play', () => {
     expect(seed).toContain('export VAULT_TOKEN="$line"');
     expect(seed).toContain('-format=json)');
     expect(seed).toContain('json_value client_token');
+    // One seed and one restore at a time, each under a lock beside what it writes.
+    expect(seed).toContain('flock -n 9 || refuse');
+    expect(restoreSource).toContain('flock -n 9 || fail');
+    expect(restoreSource).toContain('export VAULT_TOKEN="$line"');
   });
 });
 

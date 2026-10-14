@@ -1574,11 +1574,13 @@ and `vault operator generate-root`.
 Since Vault 2.0 that endpoint also needs a token (CVE-2026-5807), so with no
 token left it answers `403 permission denied`. The way through, done
 2026-10-14 for the backup seed, is the configuration switch Vault documents
-for it, on for the minutes this takes and reloaded without a reseal. Bash, on
-the host, in an interactive `ssh hcw-lab` shell:
+for it, on for the minutes this takes and reloaded without a reseal. The
+same line schedules the switch's removal twenty minutes later, as a transient
+systemd timer, so a dropped session cannot leave it on. Bash, on the host,
+in an interactive `ssh hcw-lab` shell:
 
 ```bash
-echo 'enable_unauthenticated_access = ["generate-root"]' | sudo tee -a /etc/vault.d/vault.hcl >/dev/null && sudo systemctl reload vault && vault operator generate-root -cancel 2>/dev/null; vault status | grep Sealed
+echo 'enable_unauthenticated_access = ["generate-root"]' | sudo tee -a /etc/vault.d/vault.hcl >/dev/null && sudo systemctl reload vault && sudo systemd-run --quiet --on-active=20min --unit=hcw-generate-root-switch-off --collect /bin/sh -c 'sed -i "/^enable_unauthenticated_access = \[\"generate-root\"\]$/d" /etc/vault.d/vault.hcl && systemctl reload vault' && vault operator generate-root -cancel 2>/dev/null; vault status | grep Sealed
 ```
 
 ```bash
@@ -1602,23 +1604,32 @@ the screen:
 read -rp 'Encoded Token: ' enc && root=$(vault operator generate-root -decode="$enc" -otp="$otp"); echo "root token ${#root} chars"
 ```
 
-Use `$root` for what was needed (`printf '%s\n' "$root" | sudo
-/usr/local/sbin/hcw-vault-backup-seed`, say), then revoke it and switch the
-endpoint back off. The switch comes off whether or not the revocation
-succeeds, which is why the two are joined by `;` and not `&&`:
+Use `$root` for what was needed and revoke it in the same line, so no
+interruption can fall between the two (the seed, say):
 
 ```bash
-VAULT_TOKEN="$root" vault token revoke -self; sudo sed -i '/^enable_unauthenticated_access = \["generate-root"\]$/d' /etc/vault.d/vault.hcl && sudo systemctl reload vault && sudo grep -c enable_unauthenticated_access /etc/vault.d/vault.hcl; unset root enc otp nonce init
+printf '%s\n' "$root" | sudo /usr/local/sbin/hcw-vault-backup-seed; VAULT_TOKEN="$root" vault token revoke -self; unset root enc
 ```
 
-Success is `Success! Revoked token (if it existed)` and `0`. The file is back
-to what the `vault` role renders, so the next `bootstrap.sh` run reports it
-unchanged. If the shell is lost partway (a dropped connection), the switch
-is still on: run that last line again from a new shell, where `$root` is
-empty and the revocation is a no-op, and it comes off; a `bootstrap.sh` run
-removes it too, since the role renders the file without it. An attempt left
-half done is cleared by `vault operator generate-root -cancel` before a new
-`-init`.
+Success is the seed's `stored the snapshot token` line and `Success! Revoked
+token (if it existed)`. Then switch the endpoint back off, which also stops
+the twenty-minute timer, and clear the shell:
+
+```bash
+sudo systemctl stop hcw-generate-root-switch-off.timer 2>/dev/null; sudo sed -i '/^enable_unauthenticated_access = \["generate-root"\]$/d' /etc/vault.d/vault.hcl && sudo systemctl reload vault && sudo grep -c enable_unauthenticated_access /etc/vault.d/vault.hcl; unset otp nonce init
+```
+
+Success is `0`. The file is back to what the `vault` role renders, so the
+next `bootstrap.sh` run reports it unchanged. If the shell is lost partway
+(a dropped connection): the switch comes off by itself when the timer fires,
+or now with the line above from a new shell, and a `bootstrap.sh` run
+renders the file without it too. An attempt left half done is cleared by
+`vault operator generate-root -cancel` before a new `-init`. A root token
+decoded but neither used nor revoked before the drop is unheld: the next
+`generate-root` can find it with `vault list auth/token/accessors` and
+`vault token lookup -accessor` (display name `root`, created at that
+minute) and revoke it with `vault token revoke -accessor`, before that new
+root token is itself revoked.
 
 ## HashiCorp Vault: moving to auto-unseal
 
