@@ -18,9 +18,9 @@
     "node": {
       "rule": "The newest line the platform that runs it allows, among lines that are or will become LTS; within a line, no more than two minor releases behind that line's newest (N-2 minors), and a new line is adopted once its N-2 minor exists. A component whose platform caps the line is held exactly at that ceiling. A pin that names the line only (actions/setup-node '26') resolves to the newest release when it runs; an engines.node range's lowest admitted version must meet the floor and the range must admit the newest release. Owner direction 2026-09-25: the latest current release line.",
       "line": "26",
-      "newest": "26.10.0",
-      "floor": "26.8.0",
-      "checkedOn": "2026-09-25",
+      "newest": "26.11.1",
+      "floor": "26.9.0",
+      "checkedOn": "2026-10-14",
       "source": "https://endoflife.date/api/v1/products/nodejs/",
       "platformCeilings": {
         "functions": {
@@ -103,9 +103,9 @@
     "vault": {
       "rule": "HashiCorp Vault's newest release line, no more than two patch releases behind that line's newest (N-2 patches). A new line is adopted the day it is released, with no wait for its N-2 patch: HashiCorp ends the previous community line then (endoflife.date dates the end of life of 2.0 and 1.21 to 2026-08-31 and 2026-04-13, the dates it gives for the releases of 2.1 and 2.0), so waiting would hold the pin on an unsupported line. A line whose latest release is not MAJOR.MINOR.PATCH is skipped. The pin is vault_version in lab-host/ansible/group_vars/all.yml, which must be exactly MAJOR.MINOR.PATCH because the vault role builds the download and SHA256SUMS names from it. api.releases.hashicorp.com agreed on 2026-09-26 (2.1.1, 2026-09-16, the newest community release). Owner decision 2026-09-26: Vault on the lab host.",
       "line": "2.1",
-      "newest": "2.1.1",
+      "newest": "2.1.2",
       "floor": "2.1.0",
-      "checkedOn": "2026-09-26",
+      "checkedOn": "2026-10-14",
       "source": "https://endoflife.date/api/v1/products/hashicorp-vault/"
     }
   },
