@@ -485,8 +485,11 @@ describe('moving a range in its files', () => {
   /** A value as npm writes it. */
   const npm = (value) => `${JSON.stringify(value, null, 2)}\n`;
   const manifest = { name: 'x', type: 'module', engines: { node: '>=26.8.0', npm: '>=10.0.0' }, dependencies: { a: '^1.0.0' } };
-  /** The lines of `after` that differ from `before` at the same position. */
-  const changedLines = (before, after) => after.split('\n').filter((line, i) => line !== before.split('\n')[i]);
+  /** The lines of `after` that differ from `before` at the same position. Split once: a lockfile runs to thousands of lines. */
+  const changedLines = (before, after) => {
+    const was = before.split('\n');
+    return after.split('\n').filter((line, i) => line !== was[i]);
+  };
 
   it('changes the engines.node line of a package.json and nothing else', () => {
     const before = npm(manifest);
