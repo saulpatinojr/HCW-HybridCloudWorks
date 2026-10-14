@@ -33,6 +33,7 @@ import {
   replaceEvery,
   replaceFrom,
   resolveTag,
+  setCheckedOn,
   setEnvValue,
   setYamlScalar,
   sumsLine,
@@ -473,7 +474,7 @@ describe('the image base plan', () => {
 
   it('moves BASE_IMAGE, BASE_DIGEST, BASE_PYTHON_VERSION and every external FROM together', async () => {
     const routes = registry();
-    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)) });
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)), today: new Date('2026-10-14T12:00:00Z') });
     const base = plan.applied.find((b) => b.key === 'base');
     expect(base).toBeTruthy();
     const newEnv = readEnv(plan.files[VERSIONS_ENV_PATH]);
@@ -489,6 +490,20 @@ describe('the image base plan', () => {
     expect(page).toContain(`CPython ${next}`);
     expect(page).not.toContain(env.BASE_IMAGE);
     expect(page).not.toContain(`CPython ${env.BASE_PYTHON_VERSION}`);
+    // And the day the page was last read against the files is the bump's day (CodeRabbit on #1123).
+    expect(page).toContain("export const CHECKED_ON = Object.freeze({ iso: '2026-10-14', label: '14 October 2026' });");
+    expect(base.changes.find((c) => c.where.startsWith('CHECKED_ON'))).toMatchObject({ to: '2026-10-14' });
+  });
+
+  it('setCheckedOn writes the ISO day and its en-GB label, and refuses a page without exactly one such line', () => {
+    const page = "x\nexport const CHECKED_ON = Object.freeze({ iso: '2026-10-08', label: '8 October 2026' });\ny\n";
+    expect(setCheckedOn(page, new Date('2026-03-01T23:59:00Z'))).toEqual({
+      text: "x\nexport const CHECKED_ON = Object.freeze({ iso: '2026-03-01', label: '1 March 2026' });\ny\n",
+      from: '2026-10-08',
+      to: '2026-03-01',
+    });
+    expect(() => setCheckedOn('nothing', new Date())).toThrow(/CHECKED_ON: expected one line, found 0/);
+    expect(() => setCheckedOn(`${page}${page}`, new Date())).toThrow(/found 2/);
   });
 
   it('is a note that edits nothing when the guide page was not read', async () => {
