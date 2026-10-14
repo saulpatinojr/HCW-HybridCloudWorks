@@ -37,11 +37,18 @@ const INITIAL_FOCUS = 'management-groups';
 export default function LandingZonePage() {
   const [state, write] = useLzState();
   const [focusedId, setFocusedId] = useState(INITIAL_FOCUS);
-  const [selectedCloud, setSelectedCloud] = useState('azure');
+  const selectedCloud = state?.cloud || 'azure';
 
   const activePreset = useMemo(() => activePresetForState(state), [state]);
   const finops = useMemo(() => estimateMonthlyBaseline(state), [state]);
   const fileCount = useMemo(() => emitFiles(state).length, [state]);
+
+  const handleCloudSelect = (cloud) => {
+    write({
+      ...state,
+      cloud: cloud === 'azure' ? undefined : cloud,
+    });
+  };
 
   return (
     <>
@@ -70,7 +77,7 @@ export default function LandingZonePage() {
             >
               <button
                 type="button"
-                onClick={() => setSelectedCloud('azure')}
+                onClick={() => handleCloudSelect('azure')}
                 aria-pressed={selectedCloud === 'azure'}
                 className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
                   selectedCloud === 'azure'
@@ -82,7 +89,7 @@ export default function LandingZonePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setSelectedCloud('aws')}
+                onClick={() => handleCloudSelect('aws')}
                 aria-pressed={selectedCloud === 'aws'}
                 className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
                   selectedCloud === 'aws'
@@ -94,7 +101,7 @@ export default function LandingZonePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setSelectedCloud('gcp')}
+                onClick={() => handleCloudSelect('gcp')}
                 aria-pressed={selectedCloud === 'gcp'}
                 className={`rounded-md px-3 py-1 text-xs font-semibold transition-all ${
                   selectedCloud === 'gcp'
@@ -109,7 +116,7 @@ export default function LandingZonePage() {
           {selectedCloud !== 'azure' && (
             <button
               type="button"
-              onClick={() => setSelectedCloud('azure')}
+              onClick={() => handleCloudSelect('azure')}
               className="text-xs font-medium text-sky-600 dark:text-sky-400 hover:underline"
             >
               ← Return to Azure Workbench
@@ -120,7 +127,7 @@ export default function LandingZonePage() {
         {selectedCloud !== 'azure' ? (
           <MultiCloudPreview
             pack={MULTI_CLOUD_PACKS[selectedCloud]}
-            onReturn={() => setSelectedCloud('azure')}
+            onReturn={() => handleCloudSelect('azure')}
             state={state}
             write={write}
           />

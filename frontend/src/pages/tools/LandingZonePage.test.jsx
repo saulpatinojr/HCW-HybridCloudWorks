@@ -635,4 +635,54 @@ describe('Multi-Cloud Target Cloud Selector and Architecture Previews (#Phase4)'
       '/gcp/architecture-designs/global-load-balancing'
     );
   });
+
+  it('loads directly into AWS workbench when ?cloud=aws is present in URL', () => {
+    renderPage(`${PATH}?cloud=aws`);
+    const preview = screen.getByTestId('lz-cloud-preview');
+    expect(preview).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /AWS \(Preview\)/i })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(preview.textContent).toContain('Amazon Web Services Landing Zone Architecture');
+  });
+
+  it('displays active preset banner and itemized FOCUS 1.4 BOM for AWS presets', () => {
+    renderPage(`${PATH}?cloud=aws`);
+    const preview = screen.getByTestId('lz-cloud-preview');
+    expect(preview).toBeInTheDocument();
+
+    const regulatedBtn = screen.getByTestId('lz-preset-aws-regulated-firewall');
+    expect(regulatedBtn).toBeInTheDocument();
+    fireEvent.click(regulatedBtn);
+
+    // Active preset banner displayed
+    const banner = screen.getByTestId('lz-preset-banner');
+    expect(banner).toBeInTheDocument();
+    expect(banner.textContent).toContain('AWS Network Firewall Inspection');
+    expect(banner.textContent).toContain('Regulated Multi-VPC Architecture');
+
+    // FOCUS 1.4 BOM rendered
+    const bom = screen.getByTestId('lz-finops-bom');
+    expect(bom).toBeInTheDocument();
+    expect(bom.textContent).toContain('AWS Network Firewall (Stateful inspection)');
+    expect(bom.textContent).toContain('Transit Gateway VPC Attachments');
+  });
+
+  it('interactively updates spoke counts and recalculates FinOps baseline', () => {
+    renderPage(`${PATH}?cloud=gcp`);
+    const preview = screen.getByTestId('lz-cloud-preview');
+    expect(preview).toBeInTheDocument();
+
+    // Adjust corp spoke count
+    const corpInput = document.getElementById('lz-multi-corp');
+    expect(corpInput).toBeInTheDocument();
+    fireEvent.change(corpInput, { target: { value: '4' } });
+
+    // FinOps BOM and strip should reflect total 6 spokes (1 identity + 4 corp + 1 online)
+    expect(preview.textContent).toContain('6 service projects');
+    expect(preview.textContent).toContain('Corp Project 4');
+    const bom = screen.getByTestId('lz-finops-bom');
+    expect(bom).toBeInTheDocument();
+  });
 });

@@ -721,7 +721,7 @@ export const awsArchitectures = {
     evaluate_target_health = true
   }
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'aws-transit-gateway-walkthrough',
     whenNotToUse: [
       'Regional-only web applications where all end users reside within a single geographic market, making multi-region ingress redundant.',
       'Static frontend applications that can be delivered globally through Amazon CloudFront edge caching without regional ALBs or Global Accelerator.',
@@ -799,7 +799,7 @@ export const awsArchitectures = {
   engine_version            = "5.7.mysql_aurora.2.07.2"
   database_name             = "example_db"
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'aws-transit-gateway-walkthrough',
     whenNotToUse: [
       'Non-critical internal back-office applications with generous RTO/RPO targets (> 4 hours) where automated nightly snapshot restores suffice.',
       'Workloads with strict data residency regulations prohibiting cross-border or cross-region database replication.',
@@ -878,7 +878,7 @@ export const awsArchitectures = {
   desired_count   = 3
   launch_type     = "FARGATE"
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'aws-transit-gateway-walkthrough',
     whenNotToUse: [
       'Simple monolithic applications or single-page static apps where AWS App Runner, Lightsail, or S3/CloudFront provide simpler operations at lower cost.',
       'HPC or GPU-intensive training workloads requiring bare-metal host access or specialized kernel tuning.',
@@ -975,7 +975,7 @@ export const awsArchitectures = {
           'Switch predictable steady-state tables to Provisioned Capacity with auto-scaling to save up to 70%.',
       },
     ],
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'aws-transit-gateway-walkthrough',
     ecosystemPartnerValidation: {
       validatedWith: 'AWS Serverless Application Model (SAM) + Terraform AWS Provider',
       ctaLabel: 'Verify in 15-Min Browser Lab',
@@ -1041,7 +1041,7 @@ export const awsArchitectures = {
 resource "aws_glue_catalog_database" "main" {
   name = "datalake_db"
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'aws-transit-gateway-walkthrough',
     whenNotToUse: [
       'Transactional OLTP workloads requiring high-concurrency, low-latency row-level mutations (ACID point updates).',
       'Small datasets (< 50 GB) where Amazon RDS PostgreSQL or SQLite in S3 provides simpler querying without Athena or Glue overhead.',
@@ -1116,7 +1116,7 @@ resource "aws_glue_catalog_database" "main" {
     terraformCode: `resource "aws_ec2_transit_gateway" "main" {
   description = "Central transit gateway"
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'aws-transit-gateway-walkthrough',
     whenNotToUse: [
       'Lightweight branch office connectivity where standard AWS Site-to-Site VPN over the public internet provides adequate throughput (< 1 Gbps).',
       'Cloud-only startups with zero on-premises data centers, private colocation, or mainframe dependencies.',
@@ -1295,7 +1295,7 @@ export const gcpArchitectures = {
           'Deploy identical backend instance groups in all primary operating regions and configure region-affinity routing.',
       },
     ],
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'gcp-shared-vpc-walkthrough',
     ecosystemPartnerValidation: {
       validatedWith: 'Google Cloud Foundation Fabric + Terraform Google Provider',
       ctaLabel: 'Verify in 15-Min Browser Lab',
@@ -1426,7 +1426,7 @@ export const gcpArchitectures = {
   location                    = "US"
   default_table_expiration_ms = 7776000000
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'gcp-shared-vpc-walkthrough',
     whenNotToUse: [
       'Operational databases requiring single-millisecond row lookups and high-frequency OLTP inserts (use Cloud Spanner or Cloud SQL).',
       'Projects with minimal data (< 10 GB) where BigQuery on-demand minimum scans and pipeline infrastructure add unnecessary complexity.',
@@ -1577,7 +1577,7 @@ export const gcpArchitectures = {
     asn = 64514
   }
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'gcp-shared-vpc-walkthrough',
     whenNotToUse: [
       'Development and staging environments where Cloud VPN (IPsec) provides sufficient bandwidth (< 3 Gbps) at a fraction of the cost.',
       'Cloud-native greenfield environments without on-premises data centers or regulatory requirements for private physical links.',
@@ -1722,7 +1722,7 @@ export const gcpArchitectures = {
   display_name = "Production Prediction Endpoint"
   location     = "us-central1"
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'gcp-shared-vpc-walkthrough',
     whenNotToUse: [
       'Simple deterministic batch cron jobs or scikit-learn models that can be packaged in a Cloud Run container or Cloud Functions.',
       'Exploratory data science research where rapid interactive notebooks are needed rather than strict Kubeflow pipeline orchestration.',
@@ -1870,7 +1870,7 @@ export const gcpArchitectures = {
   role   = "roles/iap.httpsResourceAccessor"
   member = "group:internal-engineers@example.com"
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'gcp-shared-vpc-walkthrough',
     whenNotToUse: [
       'Public consumer-facing web applications where users authenticate via social logins rather than corporate enterprise identity providers.',
       'Organizations without Google Workspace or Cloud Identity Premium to manage centralized device context and endpoint verification.',
@@ -2017,7 +2017,7 @@ export const gcpArchitectures = {
     }
   }
 }`,
-    interactiveLabId: 'terraform-validate',
+    interactiveLabId: 'gcp-shared-vpc-walkthrough',
     whenNotToUse: [
       'Long-running stateful daemon processes (e.g. streaming workers, background batch pollers) that exceed Cloud Run timeout limits (60 minutes).',
       'Workloads requiring persistent local filesystem state or specialized custom network kernel drivers.',
