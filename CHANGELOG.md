@@ -19,6 +19,24 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab image: the pins the weekly scan could move (#1133).** The first
+  scan the `check` job filed (2026-10-14) named fixable HIGH/CRITICAL
+  findings in the images the host runs. Four of them have a publisher
+  release to move to, and `lab-image/versions.env` moves them with the sums
+  read as the file documents: terraform 1.16.4 → 1.16.5
+  (`releases.hashicorp.com` SHA256SUMS), the azurerm provider 5.7.0 → 5.9.0
+  and azapi 2.12.0 → 2.13.0 (the registry's `download/linux/amd64`
+  `shasum`), and the Azure CLI 2.90.0 → 2.91.0 (published in both the
+  `bookworm` suite the full target installs from and the `resolute` suite
+  the sandbox template uses), which is the bundle that carried PyJWT 2.13.0,
+  cryptography 48.0.1, msgpack, setuptools 70.3.0 and urllib3 2.7.0. The
+  rest of the table — azurerm 4.81.0, alz 0.22.0, random 3.9.1, modtm
+  0.4.0, time 0.14.2, kubeconform 0.8.0, helm 4.3.0, kubectl 1.37.1 — is
+  already each publisher's newest release, so those Go-library findings
+  have nothing to pin yet, and the Debian lines (openssl, libpcre2
+  `~deb13u3`) arrive with the base digest the weekly bump moves. The
+  `README`'s mirror line follows.
+
 - **The lab agent's Docker proxy follows a daemon restart.** The proxy
   (`hcw-labs-agent-docker-proxy`, LAB-5) holds the daemon's socket as a
   bind-mounted file, so when a bootstrap run restarted the daemon under it
