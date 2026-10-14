@@ -57,6 +57,17 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The route error boundary recovers on navigation, and a failed sign-in
+  shows its code** (AP-F7 #931, AP-F8 #932). One render error on any admin
+  route kept the failure card on every admin route until a hard refresh,
+  and always blamed stale build chunks; the boundary now resets when the
+  path changes, tells a failed dynamic import from a runtime error in its
+  copy, and shows the error message on admin routes. The sign-in callback
+  page said "the browser console has the detail", which a phone cannot
+  open; it now shows the Entra or MSAL error code with a Copy button that
+  puts the code and the full message on the clipboard, while the message
+  itself, which names the authority and client id, stays off the screen.
+  `App.boundary.test.jsx` and `AuthCallbackPage.test.jsx` pin both.
 - **Lab host: the add-on secrets are read with the `vars` lookup.** The
   `addons` role built each add-on's secret environment with the `vars`
   dictionary, which ansible-core 2.21 warns about on every run and 2.24

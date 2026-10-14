@@ -51,8 +51,32 @@ import React, { useEffect, useState } from 'react';
 import { AUTH_REDIRECT_PATH } from '@/lib/authRoutes';
 import { hardReplace } from '@/lib/hardNavigate';
 
+/**
+ * What of a failed sign-in goes on screen (AP-F8, #932).
+ *
+ * The CODE is rendered: MSAL's `errorCode` (`endpoints_resolution_error`,
+ * `interaction_in_progress`, an `AADSTS` number inside `errorMessage`), or
+ * the part of a plain message before its first colon. Entra error codes are
+ * not secrets, and a phone cannot open the console that used to hold the
+ * only detail. The MESSAGE stays off the screen, because MSAL's messages
+ * name the authority and the client id and this page answers to anyone with
+ * the URL; it goes to the console, and to the clipboard on Copy, where the
+ * person asking for help can paste it.
+ *
+ * @param {unknown} err
+ * @returns {{ code: string, message: string }}
+ */
+export function describeAuthFailure(err) {
+  const message = String(err?.errorMessage ?? err?.message ?? err ?? '').trim();
+  const fromCode = typeof err?.errorCode === 'string' ? err.errorCode.trim() : '';
+  const fromMessage = message.split(':')[0].trim();
+  const code = (fromCode || fromMessage || 'unknown_error').slice(0, 80);
+  return { code, message };
+}
+
 export default function AuthCallbackPage() {
-  const [error, setError] = useState(false);
+  const [failure, setFailure] = useState(null);
+  const [copied, setCopied] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -112,7 +136,7 @@ export default function AuthCallbackPage() {
         console.error('[auth-callback] sign-in could not be completed:', err);
         if (cancelled) return;
         clearFragment();
-        setError(true);
+        setFailure(describeAuthFailure(err));
       });
 
     return () => {
@@ -120,17 +144,47 @@ export default function AuthCallbackPage() {
     };
   }, []);
 
+  const copyDetail = async () => {
+    const text = `${failure.code}: ${failure.message}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied('Copied.');
+    } catch {
+      // No clipboard (an in-app browser, a denied permission): the code is on
+      // screen and can be read out.
+      setCopied('Copy is not available here; the code above is the detail.');
+    }
+  };
+
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 p-6 text-center">
-      {error ? (
+      {failure ? (
         <>
           <h1 className="text-lg font-semibold">Sign-in could not be completed</h1>
           <p className="max-w-md text-sm text-muted-foreground">
-            Try signing in again. If it keeps happening, the browser console has the detail.
+            Try signing in again. If it keeps happening, send this code with your question.
           </p>
-          <a href="/admin" className="text-sm underline underline-offset-2">
-            Back to the admin portal
-          </a>
+          <p className="text-sm" data-testid="auth-error-code">
+            Error code:{' '}
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{failure.code}</code>
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={copyDetail}
+              className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
+            >
+              Copy the detail
+            </button>
+            <a href="/admin" className="text-sm underline underline-offset-2">
+              Back to the admin portal
+            </a>
+          </div>
+          {copied && (
+            <p role="status" className="text-xs text-muted-foreground">
+              {copied}
+            </p>
+          )}
         </>
       ) : (
         <>

@@ -25,7 +25,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import AuthCallbackPage from './AuthCallbackPage';
 
@@ -104,20 +104,51 @@ describe('a failed sign-in', () => {
     expect(url).not.toContain('code=');
   });
 
-  // MSAL's messages name the authority, the client id and the failure mode, and
-  // this page is reachable by anyone with the URL. Same reasoning as the 401
-  // descriptions in require-role.js (#517).
-  it('does not put the MSAL error on the screen', async () => {
+  // MSAL's MESSAGES name the authority, the client id and the failure mode,
+  // and this page is reachable by anyone with the URL, so the message stays
+  // off the screen (same reasoning as the 401 descriptions in
+  // require-role.js, #517). The CODE goes on screen (AP-F8, #932): a phone
+  // cannot open the console, and an Entra error code is not a secret.
+  it('puts the error code on the screen and keeps the message off it', async () => {
     render(<AuthCallbackPage />);
 
     expect(await screen.findByText(/could not be completed/i)).toBeTruthy();
+    expect(screen.getByTestId('auth-error-code')).toHaveTextContent('endpoints_resolution_error');
 
     // Substring checks on the rendered text, not regexes. A bare host pattern
     // is unanchored by nature and CodeQL flags it as one — correctly, since the
     // same shape in non-test code would match `evil.com/login.microsoftonline.com`.
     const rendered = document.body.textContent ?? '';
-    expect(rendered).not.toContain('endpoints_resolution_error');
     expect(rendered).not.toContain('login.microsoftonline.com');
+    expect(rendered).not.toContain('authority');
+  });
+
+  it('Copy writes the code and the full message to the clipboard', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(<AuthCallbackPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /copy the detail/i }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const [[text]] = writeText.mock.calls;
+    expect(text.startsWith('endpoints_resolution_error: ')).toBe(true);
+    expect(text).toContain('login.microsoftonline.com');
+    expect(await screen.findByRole('status')).toHaveTextContent('Copied.');
+  });
+
+  it('uses the MSAL error code when the error carries one', async () => {
+    const msalError = Object.assign(new Error('Interaction is currently in progress.'), {
+      errorCode: 'interaction_in_progress',
+      errorMessage:
+        'Interaction is currently in progress. Please ensure that this interaction has been completed before calling an interactive API.',
+    });
+    initializeAuth.mockRejectedValue(msalError);
+    render(<AuthCallbackPage />);
+
+    expect(await screen.findByTestId('auth-error-code')).toHaveTextContent(
+      'interaction_in_progress'
+    );
   });
 
   it('logs the detail for whoever is actually debugging', async () => {

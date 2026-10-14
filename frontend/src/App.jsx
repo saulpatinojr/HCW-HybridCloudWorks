@@ -210,31 +210,79 @@ const PageLoader = () => (
   </div>
 );
 
-class RouteErrorBoundary extends React.Component {
+/**
+ * A failed dynamic import, as the browsers and bundlers word it, against a
+ * runtime exception in a page. The two want different advice: a stale chunk
+ * is fixed by a reload, a render error is not, and the boundary used to blame
+ * stale chunks for both (AP-F7, #931).
+ *
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isChunkLoadError(error) {
+  const text = `${error?.name ?? ''} ${error?.message ?? ''}`;
+  return /ChunkLoadError|Loading chunk|Loading CSS chunk|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(
+    text
+  );
+}
+
+/**
+ * Catches a render error below the router.
+ *
+ * It RESETS WHEN THE PATH CHANGES (AP-F7, #931). Before, one render error on
+ * any admin route kept the failure card on every admin route until a hard
+ * refresh, because the flag was set once and never cleared; the menu kept
+ * working and every item led to the same card. Keyed on `pathname` through
+ * `componentDidUpdate` rather than a `key` on the element, so an ordinary
+ * navigation does not remount the routes.
+ */
+export class RouteErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { error: null };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return { error: error ?? new Error('Unknown render error') };
+  }
+
+  componentDidUpdate(prevProps) {
+    if (this.state.error && prevProps.pathname !== this.props.pathname) {
+      this.setState({ error: null });
+    }
   }
 
   render() {
-    if (!this.state.hasError) {
+    if (!this.state.error) {
       return this.props.children;
     }
 
     const { isAdminRoute } = this.props;
+    const { error } = this.state;
+    const chunk = isChunkLoadError(error);
 
     return (
       <div className="flex min-h-[50vh] items-center justify-center px-4 py-10">
-        <div className="w-full max-w-lg rounded-lg border bg-card p-6 text-card-foreground shadow-sm">
-          <h2 className="text-xl font-semibold">Page load failed</h2>
+        <div
+          className="w-full max-w-lg rounded-lg border bg-card p-6 text-card-foreground shadow-sm"
+          role="alert"
+        >
+          <h2 className="text-xl font-semibold">
+            {chunk ? 'Page load failed' : 'This page hit an error'}
+          </h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            A required module failed to load. This is usually caused by an out-of-date cached page
-            referencing old build chunks.
+            {chunk
+              ? 'A required module failed to load. This is usually an out-of-date cached page referencing old build chunks; a hard refresh fetches the current ones.'
+              : 'The page could not be drawn. Open another page from the menu; this one is tried again when you come back to it.'}
           </p>
+          {isAdminRoute && !chunk && error?.message && (
+            // The message is for the admin who can act on it; public routes
+            // keep the generic line. A render error's text names components,
+            // not secrets.
+            <p className="mt-2 break-words rounded bg-muted px-2 py-1 font-mono text-xs">
+              {String(error.message).slice(0, 300)}
+            </p>
+          )}
           {isAdminRoute && (
             <div className="mt-4">
               <button
@@ -242,7 +290,7 @@ class RouteErrorBoundary extends React.Component {
                 onClick={() => window.location.reload()}
                 className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 sm:w-auto"
               >
-                Hard Refresh Admin
+                {chunk ? 'Hard Refresh Admin' : 'Reload this page'}
               </button>
             </div>
           )}
@@ -304,7 +352,7 @@ function App() {
         aria-atomic="true"
       />
       <main id="main-content" tabIndex={-1} className="grow">
-        <RouteErrorBoundary isAdminRoute={isAdminRoute}>
+        <RouteErrorBoundary isAdminRoute={isAdminRoute} pathname={location.pathname}>
           <Suspense fallback={<PageLoader />}>
             <Routes>
               {/* --- Root & Shared --- */}
