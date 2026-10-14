@@ -166,7 +166,7 @@ export function createProxyAuditWriter({
   now = () => new Date().toISOString(),
   uuid = () => randomUUID(),
 }) {
-  return async ({ integration, method, path, outcome, status, user, role }) => {
+  return async ({ integration, method, path, pathTruncated = false, outcome, status, user, role }) => {
     await upsertDoc('admin_audit_logs', {
       id: uuid(),
       action: `${integration.toLowerCase()}_proxy_${method.toLowerCase()}`,
@@ -174,10 +174,27 @@ export function createProxyAuditWriter({
       userName: user?.name || null,
       userEmail: user?.email || user?.preferred_username || null,
       timestamp: now(),
-      details: { integration, method, path, outcome, status, role },
+      details: {
+        integration,
+        method,
+        path,
+        outcome,
+        status,
+        role,
+        ...(pathTruncated ? { pathTruncated: true } : {}),
+      },
     });
   };
 }
+
+/**
+ * The longest path an audit row keeps whole. A `DELETE /posts?post_ids[]=…`
+ * names every post it removes, so the row keeps the path as sent; this is
+ * the ceiling past which the row says it was cut rather than growing
+ * without bound. No page sends a path near it, and the request body
+ * validator bounds the whole request at 120 KB.
+ */
+export const AUDIT_PATH_MAX = 4096;
 
 /**
  * Record one non-GET call, whatever happened to it. Best effort, like the
@@ -187,11 +204,15 @@ export function createProxyAuditWriter({
  */
 async function recordProxyAudit(audit, context, { integration, auth, method, body, outcome, status = null }) {
   if (!audit || method === 'GET') return;
+  const sent = String(body?.path ?? '');
   try {
     await audit({
       integration: integration.name,
       method,
-      path: String(body?.path ?? '').slice(0, 300),
+      // Whole, not a prefix (review on #1167): the ids a delete names are
+      // the audit-identifying part, and they sit at the end.
+      path: sent.length > AUDIT_PATH_MAX ? sent.slice(0, AUDIT_PATH_MAX) : sent,
+      pathTruncated: sent.length > AUDIT_PATH_MAX,
       outcome,
       status,
       user: auth?.user || null,

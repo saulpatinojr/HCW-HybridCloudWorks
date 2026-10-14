@@ -15,6 +15,7 @@ import {
   createProxyAuditWriter,
   assertSafePath,
   isAllowedPath,
+  AUDIT_PATH_MAX,
 } from './rest-proxy.js';
 
 const context = { log: vi.fn(), error: vi.fn() };
@@ -588,11 +589,41 @@ describe('the audit row every non-GET proxy call leaves (AP-B3, #938)', () => {
       integration: 'Publer',
       method: 'DELETE',
       path: '/posts?post_ids[]=p1',
+      pathTruncated: false,
       outcome: 'upstream',
       status: 200,
       user: editor,
       role: 'editor',
     });
+  });
+
+  it('keeps a long path whole, since the ids a delete names sit at its end', async () => {
+    // Sixty ids: the kind of bulk delete the queue can send, well past the
+    // 300-character prefix the first version kept (review on #1167).
+    const ids = Array.from({ length: 60 }, (_, n) => `post_ids[]=post-${String(n).padStart(4, '0')}`);
+    const path = `/posts?${ids.join('&')}`;
+    expect(path.length).toBeGreaterThan(300);
+    const audit = vi.fn(async () => {});
+    await build({ fetchImpl: okFetch(), audit })(makeRequest({ path, method: 'DELETE' }), context);
+    const [entry] = audit.mock.calls[0];
+    expect(entry.path).toBe(path);
+    expect(entry.pathTruncated).toBe(false);
+  });
+
+  it('cuts only a path past the ceiling, and says so on the row', async () => {
+    const path = `/posts?${'x'.repeat(AUDIT_PATH_MAX + 50)}`;
+    const audit = vi.fn(async () => {});
+    // /posts is allowed and the query is not part of the check, so the call
+    // is forwarded whole; only the audit row is cut, at the ceiling, and says so.
+    const fetchImpl = okFetch();
+    await build({ fetchImpl, audit })(makeRequest({ path, method: 'DELETE' }), context);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [entry] = audit.mock.calls[0];
+    expect(entry.path).toHaveLength(AUDIT_PATH_MAX);
+    expect(entry.pathTruncated).toBe(true);
+    const upsertDoc = vi.fn(async () => {});
+    await createProxyAuditWriter({ upsertDoc, now: () => 't', uuid: () => 'r' })(entry);
+    expect(upsertDoc.mock.calls[0][1].details.pathTruncated).toBe(true);
   });
 
   it('records a refused path and a refused method too, since a refusal is the evidence', async () => {
