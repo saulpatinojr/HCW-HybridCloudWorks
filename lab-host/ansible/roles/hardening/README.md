@@ -28,7 +28,9 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    Portainer's `127.0.0.1:9443`, which the `portainer` role refuses to move.
    Jobs run with `--network none`, and Caddy binds 80 and 443 directly.
 4. `unattended-upgrades` with `Automatic-Reboot` at
-   `hardening_unattended_reboot_time`.
+   `hardening_unattended_reboot_time`, never while a user is logged in, and
+   the allowed origins rendered from `hardening_unattended_allowed_origins`
+   rather than inherited (LAB-13, #959).
 5. A fail2ban `sshd` jail on the systemd backend, which reads sshd's
    journal directly, so the jail works on 26.04 and 24.04 whether or not
    rsyslog is installed to write `/var/log/auth.log`.
@@ -42,10 +44,12 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_ufw_allowed_tcp_ports` | `[22, 80, 443]` | Inbound TCP allowlist |
 | `hardening_ufw_logging` | `low` | ufw logging level |
 | `hardening_unattended_reboot_time` | `04:30` | Reboot hour for unattended upgrades |
+| `hardening_unattended_allowed_origins` | Ubuntu's four (`release`, `-security`, ESM apps, ESM infra) | The origins unattended-upgrades may move packages from; rendered into the override, the whole list |
 | `hardening_fail2ban_maxretry` | `5` | Failures before a ban |
 | `hardening_fail2ban_findtime` | `10m` | Counting window |
 | `hardening_fail2ban_bantime` | `1h` | Ban length |
 | `hardening_held_report_tag` | `hcw-held-upgradable` | Syslog tag of the held-package report |
+| `hardening_reboot_required_path` | `/var/run/reboot-required` | The pending-reboot marker the daily report ages |
 | `hardening_held_report_script_path` | `/usr/local/sbin/hcw-held-upgradable` | Where the report script is installed |
 | `hardening_held_report_on_calendar` | `*-*-* 07:15:00` | When the report runs (systemd `OnCalendar`) |
 
@@ -63,6 +67,10 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    window, the script reads `apt-mark showhold` and `apt list --upgradable`
    and logs, under the tag `hcw-held-upgradable`:
 
+   - one line at `daemon.warning` while `/var/run/reboot-required` exists,
+     with the date it appeared and its age in days (LAB-13, #959): the 04:30
+     reboot waits for a window with nobody logged in, and this is the line
+     that says it has waited;
    - one line per held package apt could upgrade, at `daemon.warning`,
      which the Arc data collection rule ships to Log Analytics:
      `held package containerd.io is upgradable: installed <version>,
@@ -86,6 +94,11 @@ systemd for the failure notifier`, `Reload systemd for the held-package
 report`.
 
 ## Tests
+
+`tests/unattended-upgrades.test.sh` renders `52hcw-unattended-upgrades.j2`
+with the role's defaults and asserts the override clears and names the
+allowed origins itself, reboots at the role's hour, and never while a user is
+logged in (LAB-13, #959). Same job, same requirements as the test below.
 
 `tests/hcw-held-upgradable.test.sh` renders the report script and its two
 units with the role's defaults and runs the script against stub `apt-mark`,

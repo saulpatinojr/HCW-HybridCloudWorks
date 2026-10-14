@@ -72,6 +72,10 @@ const config = {
     memory: process.env.LABS_AGENT_JOB_MEMORY || '512m',
     cpus: process.env.LABS_AGENT_JOB_CPUS || '0.5',
     pidsLimit: Number(process.env.LABS_AGENT_JOB_PIDS || 128),
+    // Open files per job container (LAB-13, #959). The swap bound is not a
+    // setting either: the runner writes Docker's own rule (swap at most the
+    // memory limit) into the argv, from this memory value.
+    nofile: Number(process.env.LABS_AGENT_JOB_NOFILE || 1024),
   },
 };
 

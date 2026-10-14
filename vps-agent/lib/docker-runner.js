@@ -106,6 +106,23 @@ export const SANDBOX_FLAGS = [
   ['--user', '65534:65534'],
 ];
 
+/** The file-descriptor ceiling when the agent's config names none (LABS_AGENT_JOB_NOFILE). */
+export const DEFAULT_NOFILE = 1024;
+
+/**
+ * The `--memory-swap` value for a memory limit: twice it, which is Docker's
+ * default (swap at most the memory limit) written out. A limit this cannot
+ * read (`512mb`, text) yields null and the flag is left out, so Docker
+ * applies the same default itself rather than refusing the container.
+ *
+ * @param {string|number} memory the `--memory` value, e.g. `512m`, `1g`, bytes
+ * @returns {string|null}
+ */
+export function memorySwapFor(memory) {
+  const match = String(memory ?? '').match(/^(\d+)([bkmg]?)$/i);
+  return match ? `${Number(match[1]) * 2}${match[2]}` : null;
+}
+
 /** Flags a capability may never set, because they weaken the sandbox. */
 const RESERVED_FLAGS = new Set([
   ...SANDBOX_FLAGS.map(([flag]) => flag),
@@ -116,8 +133,10 @@ const RESERVED_FLAGS = new Set([
   '--cap-add',
   '--device',
   '--memory',
+  '--memory-swap',
   '--cpus',
   '--pids-limit',
+  '--ulimit',
   '--label',
   '-l',
   '-v',
@@ -139,10 +158,25 @@ export function payloadPathFor(capability, encoding) {
  *
  * @param {object} capability entry from lib/capabilities.js
  * @param {object} ctx        { jobDir, containerName, jobId, encoding }
- * @param {object} limits     { memory, cpus, pidsLimit }
+ * @param {object} limits     { memory, cpus, pidsLimit, nofile? }
  * @returns {string[]} argv after the `docker` executable itself
  */
 export function buildDockerArgs(capability, { jobDir, containerName, jobId, encoding = 'text' }, limits) {
+  // A stated swap bound and a file-descriptor ceiling (LAB-13, #959).
+  // `--memory-swap` is written out as twice `--memory`, which is Docker's
+  // own default (swap at most the memory limit) made explicit so the bound
+  // is in the argv the proxy and the tests see. It is NOT pinned to
+  // `--memory`: that reading OOM-killed the Landing Zone Builder's full
+  // validate in the image smoke test on a runner that has swap (#1172), and
+  // on the host, which has no swap, it would change nothing anyway. `nofile`
+  // defaults here, not only in index.js, so a caller that
+  // passes the three older limits (lab-image/sandbox-check.mjs) still emits
+  // the ceiling. Only a positive whole number is used: `0.5`, `Infinity`
+  // (what `1e999` in the env becomes) or text would reach Docker as a
+  // ulimit it refuses, and every job would fail to start (review on #1172).
+  const requested = Number(limits.nofile);
+  const nofile = Number.isInteger(requested) && requested > 0 ? requested : DEFAULT_NOFILE;
+  const swap = memorySwapFor(limits.memory);
   const extra = capability.extraDockerArgs || [];
   const reserved = extra.filter((arg) => RESERVED_FLAGS.has(arg));
   if (reserved.length > 0) {
@@ -167,8 +201,10 @@ export function buildDockerArgs(capability, { jobDir, containerName, jobId, enco
     '--label', `${JOB_LABEL}=${jobId}`,
     ...SANDBOX_FLAGS.flatMap(([flag, value]) => (value === null ? [flag] : [flag, value])),
     '--memory', limits.memory,
+    ...(swap ? ['--memory-swap', swap] : []),
     '--cpus', limits.cpus,
     '--pids-limit', String(limits.pidsLimit),
+    '--ulimit', `nofile=${nofile}:${nofile}`,
     '-v', `${jobDir}:/workspace:ro`,
     ...extra,
     capability.image,
@@ -362,7 +398,7 @@ export async function prepareJobDir(payloadFileName, payload, encoding = 'text')
  * Execute a job in a sandboxed container.
  * @param {object} capability entry from lib/capabilities.js
  * @param {object} job        { id, payload, payloadEncoding? } as claimed from the API
- * @param {object} limits     { memory, cpus, pidsLimit } from env config
+ * @param {object} limits     { memory, cpus, pidsLimit, nofile } from env config
  * @returns {Promise<{exitCode:number, output:string, timedOut:boolean}>}
  */
 export async function runInDocker(capability, job, limits) {
