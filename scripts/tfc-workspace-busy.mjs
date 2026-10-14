@@ -134,6 +134,13 @@ export function missingTokenMessage(env = process.env) {
   );
 }
 
+/**
+ * Refuse without a token, then read the workspace's recent runs and refuse
+ * while one is not positively finished.
+ *
+ * @returns {Promise<number>} the exit code: 0 safe to deploy, 1 refused
+ *   (no token, or a run in progress), and the caller maps a thrown error to 2
+ */
 async function main() {
   const refusal = missingTokenMessage();
   if (refusal) {
