@@ -137,21 +137,26 @@ export default function LatestArticles({ items, loading, error }) {
 
   return (
     <section aria-labelledby="latest-articles-heading" className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 glass-panel rounded-lg">
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 glass-panel rounded-lg border border-slate-200/60 dark:border-slate-800/80">
         <div className="flex items-center gap-3">
-          <span
-            className="material-symbols-outlined text-slate-600 dark:text-slate-400"
-            aria-hidden="true"
-          >
-            article
+          <span className="material-symbols-outlined text-primary text-xl" aria-hidden="true">
+            auto_stories
           </span>
-          <span
-            id="latest-articles-heading"
-            className="eyebrow-label text-slate-700 dark:text-slate-300"
-          >
-            Latest articles
-          </span>
+          <div>
+            <h2
+              id="latest-articles-heading"
+              className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2"
+            >
+              Original Engineering Deep-Dives
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Long-form architectural analysis and production implementation guides
+            </p>
+          </div>
         </div>
+        <span className="text-[11px] font-mono font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
+          Peer-Reviewed Editorial
+        </span>
       </div>
       {body}
     </section>

@@ -3,6 +3,7 @@ import {
   PROVIDER_FEEDS,
   PROVIDERS,
   MAX_CACHE_ITEMS_PER_FEED,
+  cleanFeedTitle,
   categorizeItem,
   normalizeCategories,
   truncateText,
@@ -63,6 +64,21 @@ describe('text helpers', () => {
   it('slugs are lowercase, hyphenated, capped at 60', () => {
     expect(generateSlug('Hello, World! 2026')).toBe('hello-world-2026');
     expect(generateSlug('x'.repeat(80))).toHaveLength(60);
+  });
+
+  it('normalizes preview and launched prefixes without duplicate tags', () => {
+    expect(cleanFeedTitle('[In preview] Public Preview: Azure SQL DB offline')).toBe(
+      'Public Preview: Azure SQL DB offline'
+    );
+    expect(cleanFeedTitle('[In preview] Azure Cosmos DB feature')).toBe(
+      'Public Preview: Azure Cosmos DB feature'
+    );
+    expect(cleanFeedTitle('[Launched] Generally Available: Azure App Service v3')).toBe(
+      'GA: Azure App Service v3'
+    );
+    expect(cleanFeedTitle('[Launched] Azure Functions v4')).toBe('GA: Azure Functions v4');
+    expect(cleanFeedTitle('Standard Announcement Title')).toBe('Standard Announcement Title');
+    expect(cleanFeedTitle('')).toBe('');
   });
 });
 
