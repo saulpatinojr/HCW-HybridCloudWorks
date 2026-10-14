@@ -472,6 +472,9 @@ describe('the agent and the daemons around the proxy', () => {
     expect(roles.indexOf('docker')).toBeLessThan(roles.indexOf('coder_sandbox'));
     expect(roles.indexOf('coder_sandbox')).toBeLessThan(roles.indexOf('coder'));
     expect(roles).not.toContain('privilege_checks');
-    expect(site).toMatch(/^ {2}post_tasks:\n(?: {4}#.*\n)*? {4}- name: [^\n]+\n {6}ansible\.builtin\.import_role:\n {8}name: privilege_checks$/m);
+    // The checks are the first post-task and run whatever the tags (lab-host-site-tags.test.mjs holds the tags).
+    expect(site).toMatch(
+      /^ {2}post_tasks:\n(?: {4}#.*\n)*? {4}- name: [^\n]+\n(?: {6}tags: \[always\]\n)? {6}ansible\.builtin\.import_role:\n {8}name: privilege_checks$/m
+    );
   });
 });
