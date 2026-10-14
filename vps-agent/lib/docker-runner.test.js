@@ -42,6 +42,7 @@ import {
   JOB_LABEL,
   TAR_MAX_ENTRIES,
   DEFAULT_NOFILE,
+  memorySwapFor,
 } from './docker-runner.js';
 import { CAPABILITIES } from './capabilities.js';
 
@@ -165,9 +166,15 @@ describe('buildDockerArgs — the sandbox boundary', () => {
         assert.equal(argv[at(argv, '--pids-limit') + 1], String(LIMITS.pidsLimit));
       });
 
-      test('allows no swap: the swap limit equals the memory limit (LAB-13)', () => {
-        assert.equal(argv[at(argv, '--memory-swap') + 1], LIMITS.memory);
-        assert.equal(argv[at(argv, '--memory-swap') + 1], argv[at(argv, '--memory') + 1]);
+      test('states the swap bound: memory-swap is twice the memory limit, which is Docker default made explicit (LAB-13)', () => {
+        assert.equal(argv[at(argv, '--memory-swap') + 1], '1024m');
+        assert.equal(argv[at(argv, '--memory-swap') + 1], memorySwapFor(LIMITS.memory));
+      });
+
+      test('leaves the swap flag out for a memory value it cannot read, so Docker applies its own default', () => {
+        const odd = buildDockerArgs(capability, { ...CTX, encoding }, { ...LIMITS, memory: '512mb' });
+        assert.equal(at(odd, '--memory-swap'), -1);
+        assert.equal(odd[at(odd, '--memory') + 1], '512mb');
       });
 
       test('caps open files from config, and from a default when config names none (LAB-13)', () => {
@@ -366,5 +373,21 @@ describe('tar payloads', () => {
 describe('output handling', () => {
   test('the output cap is a real bound, not a comment', () => {
     assert.equal(OUTPUT_CAP_BYTES, 64 * 1024);
+  });
+});
+
+describe('memorySwapFor', () => {
+  test('doubles a Docker memory value in its own unit', () => {
+    assert.equal(memorySwapFor('512m'), '1024m');
+    assert.equal(memorySwapFor('1g'), '2g');
+    assert.equal(memorySwapFor('256K'), '512K');
+    assert.equal(memorySwapFor('536870912'), '1073741824');
+    assert.equal(memorySwapFor(512), '1024');
+  });
+
+  test('yields null for a value Docker would not read either', () => {
+    for (const bad of ['512mb', 'lots', '', null, undefined, '1.5g']) {
+      assert.equal(memorySwapFor(bad), null, String(bad));
+    }
   });
 });

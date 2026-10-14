@@ -20,13 +20,14 @@ This project has not cut a tagged release; entries are grouped under
 ### Changed
 
 - **Lab host: no reboot with a user logged in, the upgrade origins rendered
-  by the role, and job containers with no swap and an open-files ceiling**
+  by the role, and job containers with a stated swap bound and an open-files
+  ceiling**
   (LAB-13, #959). The hardening role's unattended-upgrades override now
   clears and names the allowed origins itself
   (`hardening_unattended_allowed_origins`, Ubuntu's four) and sets
   `Automatic-Reboot-WithUsers` to false, with a test that renders it. The
-  job runner pins `--memory-swap` to `--memory`, so the measured 512m is
-  the limit it reads as, and adds `--ulimit nofile`
+  job runner writes `--memory-swap` as twice `--memory` (Docker's default,
+  swap at most the memory limit, made explicit) and adds `--ulimit nofile`
   (`LABS_AGENT_JOB_NOFILE`, default 1024, also in the `labs_agent` role);
   both flags are sandbox-controlled, so a capability cannot set them. On
   the host after the next `bootstrap.sh`. The rest of LAB-13 (a terminal
