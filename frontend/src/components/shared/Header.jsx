@@ -131,14 +131,11 @@ export default function Header() {
   const currentProvider = _routeInfo?.provider || null;
 
   // Shared nav links (consistent across all headers)
+  // The admin portal is now linked from the global Footer, keeping the top header
+  // clean for visitors while remaining discoverable and testable.
   const sharedLinks = [
     { label: 'About', path: staticRoutes.about },
     { label: 'Contact', path: staticRoutes.contact },
-    // The admin portal has had no link into it from the site — reachable only
-    // by typing /admin. It is behind Entra sign-in and a two-gate role check,
-    // so linking it exposes nothing; it just makes the portal reachable, and
-    // testable, the same way every other page is.
-    { label: 'Admin', path: '/admin' },
   ];
 
   // Define navigation groups

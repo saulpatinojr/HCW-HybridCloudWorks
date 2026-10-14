@@ -342,12 +342,68 @@ export default function HomePage() {
               <span className="material-symbols-outlined text-sm">arrow_forward</span>
             </a>
           </div>
+
+          {/* Interactive Workbench Quick Access */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 mt-2 max-w-xl">
+            <Link
+              to="/tools/landing-zone"
+              className="glass-panel group rounded-xl p-4 border border-secondary/40 hover:border-azure/70 transition-all hover:shadow-lg flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-azure">
+                  Interactive Workbench
+                </span>
+                <span
+                  className="material-symbols-outlined text-sm text-azure transition-transform group-hover:translate-x-1"
+                  aria-hidden="true"
+                >
+                  arrow_forward
+                </span>
+              </div>
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white mb-1">
+                  Azure Landing Zone Builder
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Assemble hub-spoke topologies component by component and download verified
+                  Terraform.
+                </p>
+              </div>
+            </Link>
+
+            <Link
+              to="/education/labs"
+              className="glass-panel group rounded-xl p-4 border border-secondary/40 hover:border-terraform/70 transition-all hover:shadow-lg flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-terraform">
+                  Browser Labs
+                </span>
+                <span
+                  className="material-symbols-outlined text-sm text-terraform transition-transform group-hover:translate-x-1"
+                  aria-hidden="true"
+                >
+                  arrow_forward
+                </span>
+              </div>
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white mb-1">
+                  Ephemeral Cloud Labs
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Validate Terraform and Ansible playbooks in isolated container environments with
+                  zero setup.
+                </p>
+              </div>
+            </Link>
+          </div>
+
           {/*
             Glassy stat blocks (Hyoga "Global Reach 35+" style). Counted, not
             typed: homeContent.js says where each comes from, and why the
             modules and uptime tiles that stood here are gone.
           */}
-          <div className="grid grid-cols-2 gap-3 mt-6 max-w-md" data-testid="home-stats">
+          <div className="grid grid-cols-2 gap-3 mt-4 max-w-md" data-testid="home-stats">
             <StatBlock value={BLUEPRINT_COUNT} label="Blueprints" />
             {showArticleTile && <StatBlock value={articleTotal ?? '…'} label="Articles" />}
           </div>
@@ -452,12 +508,12 @@ export default function HomePage() {
                   </span>
                 </Link>
                 <Link
-                  to={routes.frameworks('finops')}
+                  to={routes.tools('finops')}
                   className="flex items-center gap-3 group/link hover:pl-2 transition-all"
                 >
                   <span className="w-2 h-2 rounded-full bg-finops shadow-[0_0_6px_hsl(var(--finops-green))]"></span>
                   <span className="font-display font-semibold text-lg tracking-tight text-finops">
-                    FinOps Frameworks
+                    FinOps Tools
                   </span>
                 </Link>
               </div>
@@ -512,12 +568,12 @@ export default function HomePage() {
                   </span>
                 </Link>
                 <Link
-                  to={routes.frameworks('finops')}
+                  to={routes.education('finops')}
                   className="flex items-center gap-3 group/link hover:pl-2 transition-all"
                 >
                   <span className="w-2 h-2 rounded-full bg-finops shadow-[0_0_6px_hsl(var(--finops-green))]"></span>
                   <span className="font-display font-semibold text-lg tracking-tight text-finops">
-                    FinOps Frameworks
+                    FinOps Learning
                   </span>
                 </Link>
               </div>

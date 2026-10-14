@@ -72,3 +72,8 @@ coverage/
 
 # ansible-galaxy writes collections it installs for a local run under .ansible/ next to the playbook; never source.
 .ansible/
+
+# External review materials and assessment documents
+/doc/analysis/
+/docs/analysis/
+
