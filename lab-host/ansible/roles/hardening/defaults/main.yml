@@ -21,6 +21,18 @@ hardening_ufw_allowed_tcp_ports:
 hardening_ufw_logging: "low"
 
 hardening_unattended_reboot_time: "04:30"
+# The origins unattended-upgrades may move packages from, rendered into
+# 52hcw-unattended-upgrades rather than inherited from 50unattended-upgrades'
+# defaults (LAB-13, #959): what may move is written where the role's test
+# reads it, and `unattended-upgrade --dry-run -d` on the host lists exactly
+# these. They are Ubuntu's own four; `-updates` is left out as Ubuntu leaves
+# it. The third-party repositories the docker and labs_agent roles add are
+# pinned and held, so nothing here can move them.
+hardening_unattended_allowed_origins:
+  - "${distro_id}:${distro_codename}"
+  - "${distro_id}:${distro_codename}-security"
+  - "${distro_id}ESMApps:${distro_codename}-apps-security"
+  - "${distro_id}ESM:${distro_codename}-infra-security"
 
 hardening_fail2ban_maxretry: 5
 hardening_fail2ban_findtime: 10m

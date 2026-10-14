@@ -360,7 +360,7 @@ those four keys is one owner step, `scripts/lab/Register-LabAgent.ps1`
 `LABS_AGENT_API_BASE` · `LABS_AGENT_API_SCOPE` · `LABS_AGENT_CLIENT_ID` ·
 `LABS_AGENT_TENANT_ID` · `LABS_AGENT_CERT_PATH` · `LABS_AGENT_ID` ·
 `LABS_AGENT_MAX_CONCURRENT` · `LABS_AGENT_POLL_MS` · `LABS_AGENT_JOB_CPUS` ·
-`LABS_AGENT_JOB_MEMORY` · `LABS_AGENT_JOB_PIDS`
+`LABS_AGENT_JOB_MEMORY` · `LABS_AGENT_JOB_PIDS` · `LABS_AGENT_JOB_NOFILE`
 
 Status: **SET**, checked on 2026-09-29. `Register-LabAgent.ps1` has run,
 including its step 4, which registers the agent on Admin → Labs → Agents and

@@ -28,7 +28,9 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    Portainer's `127.0.0.1:9443`, which the `portainer` role refuses to move.
    Jobs run with `--network none`, and Caddy binds 80 and 443 directly.
 4. `unattended-upgrades` with `Automatic-Reboot` at
-   `hardening_unattended_reboot_time`.
+   `hardening_unattended_reboot_time`, never while a user is logged in, and
+   the allowed origins rendered from `hardening_unattended_allowed_origins`
+   rather than inherited (LAB-13, #959).
 5. A fail2ban `sshd` jail on the systemd backend, which reads sshd's
    journal directly, so the jail works on 26.04 and 24.04 whether or not
    rsyslog is installed to write `/var/log/auth.log`.
@@ -42,6 +44,7 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_ufw_allowed_tcp_ports` | `[22, 80, 443]` | Inbound TCP allowlist |
 | `hardening_ufw_logging` | `low` | ufw logging level |
 | `hardening_unattended_reboot_time` | `04:30` | Reboot hour for unattended upgrades |
+| `hardening_unattended_allowed_origins` | Ubuntu's four (`release`, `-security`, ESM apps, ESM infra) | The origins unattended-upgrades may move packages from; rendered into the override, the whole list |
 | `hardening_fail2ban_maxretry` | `5` | Failures before a ban |
 | `hardening_fail2ban_findtime` | `10m` | Counting window |
 | `hardening_fail2ban_bantime` | `1h` | Ban length |
@@ -86,6 +89,11 @@ systemd for the failure notifier`, `Reload systemd for the held-package
 report`.
 
 ## Tests
+
+`tests/unattended-upgrades.test.sh` renders `52hcw-unattended-upgrades.j2`
+with the role's defaults and asserts the override clears and names the
+allowed origins itself, reboots at the role's hour, and never while a user is
+logged in (LAB-13, #959). Same job, same requirements as the test below.
 
 `tests/hcw-held-upgradable.test.sh` renders the report script and its two
 units with the role's defaults and runs the script against stub `apt-mark`,

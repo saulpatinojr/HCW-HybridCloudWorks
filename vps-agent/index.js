@@ -72,6 +72,9 @@ const config = {
     memory: process.env.LABS_AGENT_JOB_MEMORY || '512m',
     cpus: process.env.LABS_AGENT_JOB_CPUS || '0.5',
     pidsLimit: Number(process.env.LABS_AGENT_JOB_PIDS || 128),
+    // Open files per job container (LAB-13, #959); no swap is not a setting,
+    // the runner always pins the swap limit to the memory limit.
+    nofile: Number(process.env.LABS_AGENT_JOB_NOFILE || 1024),
   },
 };
 

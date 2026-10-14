@@ -106,6 +106,9 @@ export const SANDBOX_FLAGS = [
   ['--user', '65534:65534'],
 ];
 
+/** The file-descriptor ceiling when the agent's config names none (LABS_AGENT_JOB_NOFILE). */
+export const DEFAULT_NOFILE = 1024;
+
 /** Flags a capability may never set, because they weaken the sandbox. */
 const RESERVED_FLAGS = new Set([
   ...SANDBOX_FLAGS.map(([flag]) => flag),
@@ -116,8 +119,10 @@ const RESERVED_FLAGS = new Set([
   '--cap-add',
   '--device',
   '--memory',
+  '--memory-swap',
   '--cpus',
   '--pids-limit',
+  '--ulimit',
   '--label',
   '-l',
   '-v',
@@ -139,10 +144,18 @@ export function payloadPathFor(capability, encoding) {
  *
  * @param {object} capability entry from lib/capabilities.js
  * @param {object} ctx        { jobDir, containerName, jobId, encoding }
- * @param {object} limits     { memory, cpus, pidsLimit }
+ * @param {object} limits     { memory, cpus, pidsLimit, nofile? }
  * @returns {string[]} argv after the `docker` executable itself
  */
 export function buildDockerArgs(capability, { jobDir, containerName, jobId, encoding = 'text' }, limits) {
+  // No swap and a file-descriptor ceiling (LAB-13, #959). `--memory` alone
+  // lets a container swap up to the same amount again, so the limit the
+  // owner measured (512m, index.js) was really a gigabyte on a host with
+  // swap; `--memory-swap` equal to `--memory` makes it the limit it reads
+  // as. `nofile` defaults here, not only in index.js, so a caller that
+  // passes the three older limits (lab-image/sandbox-check.mjs) still emits
+  // the ceiling.
+  const nofile = Number(limits.nofile) > 0 ? Number(limits.nofile) : DEFAULT_NOFILE;
   const extra = capability.extraDockerArgs || [];
   const reserved = extra.filter((arg) => RESERVED_FLAGS.has(arg));
   if (reserved.length > 0) {
@@ -167,8 +180,10 @@ export function buildDockerArgs(capability, { jobDir, containerName, jobId, enco
     '--label', `${JOB_LABEL}=${jobId}`,
     ...SANDBOX_FLAGS.flatMap(([flag, value]) => (value === null ? [flag] : [flag, value])),
     '--memory', limits.memory,
+    '--memory-swap', limits.memory,
     '--cpus', limits.cpus,
     '--pids-limit', String(limits.pidsLimit),
+    '--ulimit', `nofile=${nofile}:${nofile}`,
     '-v', `${jobDir}:/workspace:ro`,
     ...extra,
     capability.image,
@@ -362,7 +377,7 @@ export async function prepareJobDir(payloadFileName, payload, encoding = 'text')
  * Execute a job in a sandboxed container.
  * @param {object} capability entry from lib/capabilities.js
  * @param {object} job        { id, payload, payloadEncoding? } as claimed from the API
- * @param {object} limits     { memory, cpus, pidsLimit } from env config
+ * @param {object} limits     { memory, cpus, pidsLimit, nofile } from env config
  * @returns {Promise<{exitCode:number, output:string, timedOut:boolean}>}
  */
 export async function runInDocker(capability, job, limits) {

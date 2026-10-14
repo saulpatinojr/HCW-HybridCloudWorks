@@ -41,10 +41,11 @@ import {
   PAYLOAD_MODE,
   JOB_LABEL,
   TAR_MAX_ENTRIES,
+  DEFAULT_NOFILE,
 } from './docker-runner.js';
 import { CAPABILITIES } from './capabilities.js';
 
-const LIMITS = { memory: '512m', cpus: '0.5', pidsLimit: 128 };
+const LIMITS = { memory: '512m', cpus: '0.5', pidsLimit: 128, nofile: 2048 };
 const CTX = {
   jobDir: '/tmp/labjob-test',
   containerName: 'labjob-deadbeef',
@@ -164,6 +165,17 @@ describe('buildDockerArgs — the sandbox boundary', () => {
         assert.equal(argv[at(argv, '--pids-limit') + 1], String(LIMITS.pidsLimit));
       });
 
+      test('allows no swap: the swap limit equals the memory limit (LAB-13)', () => {
+        assert.equal(argv[at(argv, '--memory-swap') + 1], LIMITS.memory);
+        assert.equal(argv[at(argv, '--memory-swap') + 1], argv[at(argv, '--memory') + 1]);
+      });
+
+      test('caps open files from config, and from a default when config names none (LAB-13)', () => {
+        assert.equal(argv[at(argv, '--ulimit') + 1], `nofile=${LIMITS.nofile}:${LIMITS.nofile}`);
+        const older = buildDockerArgs(capability, { ...CTX, encoding }, { memory: '512m', cpus: '0.5', pidsLimit: 128 });
+        assert.equal(older[at(older, '--ulimit') + 1], `nofile=${DEFAULT_NOFILE}:${DEFAULT_NOFILE}`);
+      });
+
       test('removes the container and names it for the timeout kill path', () => {
         assert.ok(argv.includes('--rm'));
         assert.equal(argv[at(argv, '--name') + 1], CTX.containerName);
@@ -190,7 +202,7 @@ describe('buildDockerArgs — the sandbox boundary', () => {
   }
 
   test('refuses a capability that tries to set a sandbox-controlled flag', () => {
-    for (const bad of ['--network', '--privileged', '--cap-add', '-v', '--user', '--pid', '--label']) {
+    for (const bad of ['--network', '--privileged', '--cap-add', '-v', '--user', '--pid', '--label', '--memory-swap', '--ulimit']) {
       assert.throws(
         () =>
           buildDockerArgs(
