@@ -20,9 +20,10 @@ This project has not cut a tagged release; entries are grouped under
 ### Changed
 
 - **`functions_scm_lock_enabled` defaults to `true`** (PLAT-10, #970).
-  The workspace has set it `true` since 2026-08-25 and the Function App's
-  SCM default action has read `Deny` live since, so the code default now
-  says what the estate does and the plan for the change is empty. The
+  The workspace set it `true` on 2026-08-25, when the SCM window was proven
+  under `Deny`, and the Function App's SCM default action read `Deny` again
+  on 2026-10-14, so the code default now says what the estate does and the
+  plan for the change is empty. The
   comments in `infra/variables.tf`, `deploy-functions.yml` and
   `scripts/assert-origin-lock.mjs`, and the required-inputs row, say so
   instead of describing the 2026-08-25 posture.

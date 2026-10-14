@@ -1052,10 +1052,10 @@ variable "functions_origin_lock_enabled" {
 # this runner's IP as an SCM allow rule, deploys, and removes it in an
 # always-run step that asserts the posture it found is the posture it left.
 #
-# Default true since 2026-10-14 (PLAT-10, #970). The workspace has set it
-# true since 2026-08-25, the window was proven under Deny by deploy run
-# 32902534458, and the SCM default action has read Deny live since, so the
-# code default now says what the estate does; the plan for the flip is empty.
+# Default true since 2026-10-14 (PLAT-10, #970). The workspace set it true on
+# 2026-08-25, the window was proven under Deny by deploy run 32902534458 that
+# day, and the SCM default action read Deny on 2026-10-14 (#981), so the code
+# default now says what the estate does; the plan for the flip is empty.
 # For a fresh workspace the order is still not optional: the window must be
 # merged and observed working on a real deploy BEFORE this is true there,
 # because the first deploy after a premature flip is the one that cannot get

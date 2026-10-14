@@ -301,10 +301,12 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # step that asserts the posture it found is the posture it left. That makes
     # Deny survivable, so the posture becomes a variable.
     #
-    # True by default since 2026-10-14 (PLAT-10, #970): the window was merged
-    # and proven under Deny on 2026-08-25 (deploy run 32902534458), the
-    # workspace has set the variable true since that day, and the SCM default
-    # action has read Deny live since. A fresh workspace that lacks the window
+    # True by default since 2026-10-14 (PLAT-10, #970), on two observations:
+    # the window was merged and proven under Deny on 2026-08-25 (deploy run
+    # 32902534458, the day the workspace set the variable true), and the SCM
+    # default action read Deny on 2026-10-14 (#981). The interval between is
+    # not a recorded fact; monitor-functions-registered.yml and the deploy's
+    # SCM window steps are what read it. A fresh workspace that lacks the window
     # steps sets it false first, because the first deploy after a premature
     # Deny is the one that cannot get in to fix it.
     #
