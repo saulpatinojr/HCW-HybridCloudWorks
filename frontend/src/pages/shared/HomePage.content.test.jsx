@@ -111,7 +111,7 @@ describe('the stat row', () => {
     const badges = screen.getByTestId('capability-badges');
     expect(badges).toHaveTextContent('Terraform AVM Generator');
     expect(badges).toHaveTextContent('Ephemeral Container Labs');
-    expect(badges).toHaveTextContent('FOCUS 1.1 FinOps');
+    expect(badges).toHaveTextContent('FOCUS 1.4 FinOps');
   });
 });
 

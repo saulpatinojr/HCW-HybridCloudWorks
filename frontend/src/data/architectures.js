@@ -1741,7 +1741,7 @@ export const finopsArchitectures = {
     description:
       'Cross-cloud optimization architecture with shared tagging taxonomy, cost telemetry normalization, and rightsizing recommendation pipelines.',
     promise:
-      'Normalized FOCUS 1.0 cost datasets uniting Azure, AWS, and GCP billing exports with automated rightsizing recommendation feeds.',
+      'Normalized FOCUS 1.4 cost datasets uniting Azure, AWS, and GCP billing exports with automated rightsizing recommendation feeds.',
     estimatedCost: '$1,400 - $2,200 / month',
     topology: {
       caption: 'Multi-cloud cost ingestion, FOCUS normalization, and optimization engine',
@@ -1762,7 +1762,7 @@ export const finopsArchitectures = {
         },
         {
           id: 'normalization-engine',
-          title: 'FOCUS 1.0 Normalization',
+          title: 'FOCUS 1.4 Normalization',
           subtitle:
             'Transforms heterogeneous provider billing rows into standardized cost schemas.',
           boundary: 'Data Transformation',
@@ -1801,7 +1801,7 @@ export const finopsArchitectures = {
         y: 50,
         label: 'FOCUS Normalizer',
         tooltip: 'Schema Standardizer',
-        description: 'Converts billing lines to unified FOCUS 1.0 cost definitions.',
+        description: 'Converts billing lines to unified FOCUS 1.4 cost definitions.',
       },
       {
         id: 'spot-recommend',
@@ -1835,7 +1835,7 @@ export const finopsArchitectures = {
       },
     ],
     practices: [
-      'Adopt the FOCUS 1.0 specification for cross-cloud billing field naming and amortized cost models.',
+      'Adopt the FOCUS 1.4 specification for cross-cloud billing field naming and amortized cost models.',
       'Enforce required organizational tags: CostCenter, Environment, Owner, and Application.',
       'Schedule automated rightsizing audits weekly to prevent idle resource sprawl.',
     ],
