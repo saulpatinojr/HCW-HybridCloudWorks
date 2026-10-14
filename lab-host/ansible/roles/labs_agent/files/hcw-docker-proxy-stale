@@ -24,7 +24,11 @@ set -euo pipefail
 
 name="${1:?usage: hcw-docker-proxy-stale <container>}"
 
-daemon_at="$(systemctl show docker.service --property=ActiveEnterTimestamp --value)"
+# --timestamp=utc (systemd 248+; the host's 259) so the zone is always the
+# literal UTC: GNU date refuses some local abbreviations (AEDT), and this
+# parse decides whether the proxy is restarted, so it must never fail on the
+# host's zone.
+daemon_at="$(systemctl show docker.service --property=ActiveEnterTimestamp --value --timestamp=utc)"
 if [ -z "${daemon_at}" ] || [ "${daemon_at}" = "n/a" ]; then
   echo "docker.service has no ActiveEnterTimestamp; is the daemon running?" >&2
   exit 2

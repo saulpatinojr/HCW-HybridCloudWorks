@@ -26,11 +26,14 @@ trap 'rm -rf "${work}"' EXIT
 bin="${work}/bin"
 mkdir -p "${bin}"
 
-# systemctl prints the daemon's start the way `systemctl show --value` does:
-# a weekday, a local date and time, a zone. FAKE_DAEMON_AT replaces it.
+# systemctl prints the daemon's start the way `systemctl show --value
+# --timestamp=utc` does: a weekday, a date and time, the literal UTC. The
+# stand-in requires that exact invocation, so a helper that dropped
+# --timestamp=utc (and would then print the host's zone abbreviation, which
+# GNU date can refuse) fails here. FAKE_DAEMON_AT replaces the output.
 cat > "${bin}/systemctl" <<'EOF'
 #!/usr/bin/env bash
-[ "$1 $2 $3 $4" = "show docker.service --property=ActiveEnterTimestamp --value" ] || { echo "unexpected systemctl $*" >&2; exit 2; }
+[ "$1 $2 $3 $4 $5" = "show docker.service --property=ActiveEnterTimestamp --value --timestamp=utc" ] || { echo "unexpected systemctl $*" >&2; exit 2; }
 echo "${FAKE_DAEMON_AT-Wed 2026-10-14 00:20:29 UTC}"
 EOF
 # docker inspect prints `<Running> <StartedAt>` for the one container the
