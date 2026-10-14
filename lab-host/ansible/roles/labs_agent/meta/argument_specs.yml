@@ -100,7 +100,7 @@ argument_specs:
         type: int
         required: false
         default: 1024
-        description: LABS_AGENT_JOB_NOFILE, the open-files ceiling per job container (LAB-13, #959).
+        description: "LABS_AGENT_JOB_NOFILE, the open-files ceiling per job container (LAB-13, issue 959)."
       labs_agent_state_dir:
         type: path
         required: false
