@@ -238,6 +238,45 @@ export function overdueQuery(rows) {
  * has applied. "Declaring an intended change" in the header has the rest.
  */
 export const DECLARED = [
+  // LAB-9 (#955), the lab host's off-host backups (infra/lab-hybrid-backups.tf):
+  // the account, its container and immutability policy, the Arc identity's
+  // grant on the container, the blob logs and the two no-backup alerts. Delete
+  // once the run that creates them has applied.
+  {
+    address: "azurerm_storage_account.lab_hybrid_backups",
+    action: "create",
+    reason: "#955 LAB-9: the account the lab host's backups are shipped to",
+  },
+  {
+    address: "azurerm_storage_container.lab_hybrid_backups",
+    action: "create",
+    reason: "#955 LAB-9: the host-backups container",
+  },
+  {
+    address: "azurerm_storage_container_immutability_policy.lab_hybrid_backups",
+    action: "create",
+    reason: "#955 LAB-9: 35-day time-based retention on host-backups",
+  },
+  {
+    address: "azurerm_role_assignment.lab_hybrid_backups_writer[0]",
+    action: "create",
+    reason: "#955 LAB-9: the Arc identity writes and reads host-backups",
+  },
+  {
+    address: "azurerm_monitor_diagnostic_setting.lab_hybrid_backups_blob",
+    action: "create",
+    reason: "#955 LAB-9: blob read/write/delete logs to the Management workspace",
+  },
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_backup_missing_coder",
+    action: "create",
+    reason: "#955 LAB-9: no Coder dump written in two days",
+  },
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_backup_missing_vault",
+    action: "create",
+    reason: "#955 LAB-9: no Vault raft snapshot written in two days",
+  },
   // The weekly AI provider probe's timer flag (#701): the key applied disarmed
   // ('false', present in state since the 2026-10-06 runs); adding
   // PROBE_AI_PROVIDERS to enabled_timers arms it. Everything else declared
