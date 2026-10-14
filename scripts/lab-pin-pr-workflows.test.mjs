@@ -121,7 +121,13 @@ describe('the pin sets', () => {
     expect(body).toContain('- [x] Infrastructure or deployment change');
     expect(body).toContain('- [ ] Breaking change');
     expect(body).toContain('coder-postgres-backup');
-    expect(body).toContain('- Evidence level: [ ] Static [ ] Local [x] CI [ ] Staging [ ] Production');
+    // Nothing is claimed that has not happened when the body is written: the
+    // checks have not run, no plan was previewed, and the workflow does file
+    // the pull request (CodeRabbit on #1131).
+    expect(body).toContain('- Evidence level: [ ] Static [ ] Local [ ] CI [ ] Staging [ ] Production — none ticked at opening');
+    expect(body).toContain('- [ ] Plan or preview was reviewed; no unexpected destroy/recreate operations exist. *(Not ticked:');
+    expect(body).toContain('- [ ] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(Not ticked:');
+    expect(body).not.toMatch(/\[x\] Plan or preview|\[x\] No automated path|\[x\] CI/);
     // The image base is a build input, not infrastructure: no infrastructure section, box unticked.
     const base = prBody({ set: 'image-base', evidence: 'x', notes: '', runUrl: 'u' });
     expect(base).not.toContain('## Infrastructure changes only');

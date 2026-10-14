@@ -163,14 +163,14 @@ export function prBody({ set, evidence, notes, runUrl }) {
     `- Checks run: \`node scripts/lab-pins-upstream.mjs --bump ${set}\` against each publisher (run ${runUrl}); this pull request's required checks run on the edit.`,
     '- Important result or evidence: the tables above, each value read from the publisher at the URL beside it.',
     '- Checks not run and why: the host or image run itself, which follows the merge (above).',
-    '- Evidence level: [ ] Static [ ] Local [x] CI [ ] Staging [ ] Production',
+    "- Evidence level: [ ] Static [ ] Local [ ] CI [ ] Staging [ ] Production — none ticked at opening: this pull request's required checks are the evidence, and they had not run when this body was written. Read them on the Checks tab before merging.",
     ''
   );
   if (s.infrastructure) {
     out.push(
       '## Infrastructure changes only',
       '',
-      '- [x] Plan or preview was reviewed; no unexpected destroy/recreate operations exist. *(No Terraform; the Ansible roles apply these pins on the next bootstrap.sh run.)*',
+      '- [ ] Plan or preview was reviewed; no unexpected destroy/recreate operations exist. *(Not ticked: no plan or preview exists for an Ansible pin move. The review is the evidence tables above, by a person, and the host run after the merge, which the owner watches; the roles install exactly the versions pinned here.)*',
       '- [x] Resource addresses were not renamed without the required moved-state handling. *(None.)*',
       '- [x] Secrets, state files, saved plans, and real variable values are not included.',
       '- [x] Required tags, policies, networking, backup, identity, and security settings are preserved.',
@@ -185,7 +185,7 @@ export function prBody({ set, evidence, notes, runUrl }) {
     '- [x] Telemetry is content-free and uses correlation identifiers rather than paths, query strings, route values, document identifiers, or payloads.',
     '- [x] Authorization, tenant isolation, least privilege, and denial paths were tested where applicable. *(Not applicable to a pin move.)*',
     "- [x] New dependencies, base images, and GitHub Actions are pinned or controlled according to repository policy. *(Every value carries the publisher's checksum or digest, read as the evidence tables say.)*",
-    '- [x] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(This pull request is opened, never merged, by the workflow.)*',
+    '- [ ] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(Not ticked: this pull request is filed by the scheduled workflow, the arrangement #949 approved for these pin sets. It is never merged, approved or applied by automation; a person reads it and merges it, and the owner runs the step after the merge.)*',
     '',
     '## Documentation and operations',
     '',
