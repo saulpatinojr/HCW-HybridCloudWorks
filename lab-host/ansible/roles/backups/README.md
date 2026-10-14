@@ -125,12 +125,16 @@ everything pending is revoked with the owner's token. An interruption
 between the steps leaves the intent on disk, and every run, forced or not,
 works the pending list before anything else; a run with a working token and
 nothing pending is the only one that asks for no token on stdin. The token
-still in the file is never revoked from that list: its accessor, asked of
-Vault first and read from the copy beside it only when Vault no longer
-answers for it, is protected, and a pending record that names it is a
-replacement that did not complete, dropped with a note. A new token that
-cannot be stored is revoked again and the retirement recorded for its
-predecessor is withdrawn, so the predecessor stays the stored token. An
+still in the file is never revoked from that list: the accessor Vault itself
+reports for it is protected, and a pending record that names it is a
+replacement that did not complete, dropped with a note. Only Vault's answer
+protects a record; the accessor copy kept beside the token is used to record
+a retirement when Vault no longer answers for the token being replaced,
+never to spare one, so a stale copy costs at most one revocation Vault
+refuses as invalid. A new token that cannot be stored is revoked again and
+the retirement recorded for its predecessor is withdrawn, so the predecessor
+stays the stored token, untouched; a predecessor whose accessor nothing
+reported is revoked by itself only after the new token is in place. An
 accessor leaves the list only when Vault revoked it or says it no longer
 exists (`invalid accessor`); a revocation that fails for any other reason,
 Vault unreachable included, stays, is said on stderr with the exact `vault
@@ -157,7 +161,9 @@ alone opens nothing.
 host off) is one night; the token has a month. `alert-lab-backup-missing-vault`
 fires after two nights, and `sudo journalctl -t hcw-backup-upload -u
 hcw-vault-backup` on the host says which step failed. A token that has
-expired or been revoked is replaced with the seed line and `--force`.
+expired or been revoked is replaced by the seed line as it stands: a plain
+run replaces a stored token that no longer works. `--force` is for replacing
+one that still does.
 
 ## Restore
 

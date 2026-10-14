@@ -209,6 +209,7 @@ case "$1 $2" in
       stand-in-seeded-snapshot-token-001) acc=accessor-seeded-001 ;;
       *) acc=accessor-owner ;;
     esac
+    [ "\${STUB_VAULT_NO_ACCESSOR:-0}" = 1 ] && acc=''
     if [ "\${3:-}" = -format=json ]; then printf '{\\n  "data": {\\n    "accessor": "%s",\\n    "expire_time": "2026-11-13T03:45:00Z"\\n  }\\n}\\n' "$acc"; else printf 'Key   Value\\n'; fi; exit 0 ;;
   "policy write") cat > "$STUB_DIR/policy.$3"; exit 0 ;;
   "token create") printf '{\\n  "auth": {\\n    "client_token": "stand-in-fresh-snapshot-token-00001",\\n    "accessor": "accessor-fresh-00001"\\n  }\\n}\\n'; exit 0 ;;
@@ -377,7 +378,8 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       const { status, stderr } = bash(helper('hcw-vault-backup'), [], { STUB_VAULT_RENEW_FAIL: '1' });
       expect(status).toBe(1);
       expect(stderr).toContain('could not be renewed');
-      expect(stderr).toContain('hcw-vault-backup-seed --force');
+      expect(stderr).toContain('run hcw-vault-backup-seed again');
+      expect(stderr).not.toContain('--force');
       expect(lines('vault.argv')).toEqual(['token renew']);
     });
 
@@ -501,6 +503,53 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       expect(lines('vault.revoked')).toEqual(['stand-in-fresh-snapshot-token-00001']);
       expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-old-working-token-0000001\n');
       expect(() => statSync(join(dir, 'etc', 'revoke-pending'))).toThrow();
+    });
+
+    it('spares a pending record only on Vault\'s word: an empty token file or a token Vault no longer answers for protects nothing', () => {
+      mkdirSync(join(dir, 'etc'));
+      // Empty token file, stale sidecar naming a pending accessor: the record is worked, not dropped.
+      writeFileSync(join(dir, 'etc', 'vault-token'), '');
+      writeFileSync(join(dir, 'etc', 'vault-token.accessor'), 'accessor-old-0000001\n');
+      writeFileSync(join(dir, 'etc', 'revoke-pending'), 'accessor-old-0000001\n');
+      const empty = bash(helper('hcw-vault-backup-seed'), [], { STUB_VAULT_VALID_TOKENS: `${owner} stand-in-fresh-snapshot-token-00001` }, `${owner}\n`);
+      expect(empty.status).toBe(0);
+      expect(empty.stdout).toContain('revoked the superseded snapshot token with accessor accessor-old-0000001');
+      expect(empty.stdout).not.toContain('did not complete');
+      expect(lines('vault.revoked')).toEqual(['accessor:accessor-old-0000001']);
+      expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-fresh-snapshot-token-00001\n');
+      // A stored token Vault no longer answers for, its sidecar naming a pending accessor: worked too, and the
+      // broken token's retirement is recorded from the sidecar before the replacement is published.
+      rmSync(join(dir, 'vault.revoked'));
+      writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-old-working-token-0000001\n');
+      writeFileSync(join(dir, 'etc', 'vault-token.accessor'), 'accessor-old-0000001\n');
+      writeFileSync(join(dir, 'etc', 'revoke-pending'), 'accessor-long-gone\n');
+      const broken = bash(helper('hcw-vault-backup-seed'), [], { STUB_VAULT_VALID_TOKENS: `${owner} stand-in-fresh-snapshot-token-00001` }, `${owner}\n`);
+      expect(broken.status).toBe(0);
+      expect(broken.stdout).toContain('the stored snapshot token no longer works; replacing it');
+      expect(lines('vault.revoked')).toEqual(['accessor:accessor-long-gone', 'accessor:accessor-old-0000001']);
+    });
+
+    it('revokes a working predecessor Vault reports no accessor for only after the new token is in place', () => {
+      mkdirSync(join(dir, 'etc'));
+      writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-old-working-token-0000001\n');
+      mkdirSync(join(dir, 'nobin'));
+      writeFileSync(
+        join(dir, 'nobin', 'mktemp'),
+        '#!/usr/bin/env bash\nn=$(cat "$STUB_DIR/mktemp.calls" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$STUB_DIR/mktemp.calls"\n[ "$n" -ge "${STUB_MKTEMP_FAIL_AT:-999}" ] && exit 1\nexec /usr/bin/mktemp "$@"\n'
+      );
+      chmodSync(join(dir, 'nobin', 'mktemp'), 0o755);
+      const valid = { STUB_VAULT_VALID_TOKENS: `${owner} stand-in-old-working-token-0000001 stand-in-fresh-snapshot-token-00001`, STUB_VAULT_NO_ACCESSOR: '1' };
+      // The token write (the first mktemp, since nothing was enqueued) fails: the predecessor must still be untouched.
+      const failed = bash(helper('hcw-vault-backup-seed'), ['--force'], { ...valid, STUB_MKTEMP_FAIL_AT: '1', PATH: `${dir}/nobin${delimiter}${process.env.PATH}` }, `${owner}\n`);
+      expect(failed.status).toBe(1);
+      expect(lines('vault.revoked')).toEqual(['stand-in-fresh-snapshot-token-00001']);
+      expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-old-working-token-0000001\n');
+      // With the write working, the predecessor is revoked by itself, after the new token is stored.
+      rmSync(join(dir, 'vault.revoked'));
+      const ok = bash(helper('hcw-vault-backup-seed'), ['--force'], valid, `${owner}\n`);
+      expect(ok.status).toBe(0);
+      expect(lines('vault.revoked')).toEqual(['stand-in-old-working-token-0000001']);
+      expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-fresh-snapshot-token-00001\n');
     });
 
     it('drops a pending accessor Vault no longer knows, and keeps one it cannot ask about', () => {
