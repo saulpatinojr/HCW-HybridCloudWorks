@@ -182,10 +182,10 @@ about different kinds. The **deployment packages**, in the private
 re-publish reads, are rebuilt by `deploy-functions.yml` from a commit, so
 their loss costs one redeploy: that is the reasoning this section recorded
 in 2026-09, and it still holds. The **host state** (timer schedule status,
-singleton and listener leases, in-flight queue messages) is rebuilt from
-nothing, and ADR 0031 chose GRS so that it survives a regional loss, for
-cents a month on an account holding a few megabytes. Recorded here so
-#231's checkbox has a decision behind it.
+singleton and listener leases, in-flight queue messages) has no commit to
+be rebuilt from, so ADR 0031 chose GRS: the geo copy preserves it through a
+regional loss, for cents a month on an account holding a few megabytes.
+Recorded here so #231's checkbox has a decision behind it.
 
 ## Consequences and accepted risks
 
