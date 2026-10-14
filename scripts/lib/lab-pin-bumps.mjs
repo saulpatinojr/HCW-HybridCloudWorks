@@ -371,6 +371,32 @@ export function replaceEvery(text, from, to, what) {
   return { text: String(text).split(from).join(to), from, count };
 }
 
+/**
+ * Set a guide page's `CHECKED_ON` line to a date — the day the page's claims
+ * were last checked against the files they describe. The image-base bump
+ * moves the page, and the pull request's `frontend` check is that read
+ * (DockerGuides.test.jsx holds the page to versions.env), so the date moves
+ * with it (CodeRabbit on #1123). The label is `en-GB` long form, as the test
+ * requires of it (`14 October 2026`).
+ */
+export function setCheckedOn(text, date) {
+  const iso = date.toISOString().slice(0, 10);
+  const label = new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  const re = /^export const CHECKED_ON = Object\.freeze\(\{ iso: '(\d{4}-\d{2}-\d{2})', label: '[^']+' \}\);$/gm;
+  const hits = [...String(text).matchAll(re)];
+  if (hits.length !== 1) throw new Error(`CHECKED_ON: expected one line, found ${hits.length}`);
+  return {
+    text: String(text).replace(re, `export const CHECKED_ON = Object.freeze({ iso: '${iso}', label: '${label}' });`),
+    from: hits[0][1],
+    to: iso,
+  };
+}
+
 /** Replace the one match of a pattern's first group; refuse zero or two. */
 export function replaceOne(text, pattern, value, what) {
   const re = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
@@ -637,7 +663,7 @@ export async function planHost({ text, files = {}, rows, http, bumpers = HOST_BU
  * is this procedure by hand.
  */
 /** The python base: the line tag's newest digest, its CPython, and the patch tag that must agree. */
-async function planPythonBase(env, http) {
+async function planPythonBase(env, http, today) {
   const base = parseImageRef(env.BASE_IMAGE);
   const tagParts = base?.tag?.match(/^(\d+)\.(\d+)\.(\d+)(-[a-z0-9.-]+)$/);
   if (!base || !tagParts) throw new Error('BASE_IMAGE is not a python:<x.y.z>-<variant> tag');
@@ -686,6 +712,12 @@ async function planPythonBase(env, http) {
         to: `CPython ${pythonVersion}`,
         apply: (t) => replaceEvery(t, `CPython ${env.BASE_PYTHON_VERSION}`, `CPython ${pythonVersion}`, 'BuildingImagesPage CPython'),
       },
+      {
+        file: DOCKER_GUIDE_PAGE_PATH,
+        where: 'CHECKED_ON, the day the page was last read against the files',
+        to: today.toISOString().slice(0, 10),
+        apply: (t) => setCheckedOn(t, today),
+      },
     ],
     evidence: [
       { item: `${base.name}:${lineTag} (index digest)`, value: line.digest, source: line.reads.join('; ') },
@@ -726,7 +758,7 @@ async function planSandboxBase(env, http) {
   };
 }
 
-export async function planImageBase({ files, http }) {
+export async function planImageBase({ files, http, today = new Date() }) {
   const env = readEnv(files[VERSIONS_ENV_PATH]);
   const bumps = [];
   const notes = [];
@@ -735,7 +767,7 @@ export async function planImageBase({ files, http }) {
     [`Sandbox template base (${env.SANDBOX_BASE_IMAGE})`, env.SANDBOX_BASE_DIGEST, planSandboxBase],
   ]) {
     try {
-      const bump = await plan(env, http);
+      const bump = await plan(env, http, today);
       if (bump) bumps.push(bump);
     } catch (error) {
       notes.push({ label, from, to: '—', reason: error?.message || String(error) });
