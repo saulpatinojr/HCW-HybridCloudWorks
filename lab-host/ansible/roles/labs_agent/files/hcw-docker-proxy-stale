@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# hcw-docker-proxy-stale — does a running container predate the Docker
+# daemon's current start?
+#
+# The agent's Docker socket proxy (hcw-labs-agent-docker-proxy, LAB-5) holds
+# the daemon's socket as a bind-mounted FILE. When dockerd restarts — a
+# docker-ce upgrade restarts it, and so does the docker role's daemon.json
+# handler — it unlinks and recreates /var/run/docker.sock, and a proxy that
+# was already running keeps the old inode: its own refusals still answer,
+# every call it forwards gets HAProxy's "503 Service Unavailable". The
+# 2026-10-14 bootstrap that took Docker from 29.8.1 to 29.9.0 failed the
+# privilege check exactly so. The labs_agent role asks this before it
+# decides whether to restart the proxy.
+#
+# Usage: hcw-docker-proxy-stale <container>
+#
+# Prints one word and exits 0:
+#   absent  no such container, or it is not running (the role starts it)
+#   stale   it started before dockerd's ActiveEnterTimestamp
+#   fresh   it started after
+# Exits 2 when the daemon's start time cannot be read. systemctl, docker and
+# date are taken from PATH, so the test runs it against stand-ins.
+set -euo pipefail
+
+name="${1:?usage: hcw-docker-proxy-stale <container>}"
+
+daemon_at="$(systemctl show docker.service --property=ActiveEnterTimestamp --value)"
+if [ -z "${daemon_at}" ] || [ "${daemon_at}" = "n/a" ]; then
+  echo "docker.service has no ActiveEnterTimestamp; is the daemon running?" >&2
+  exit 2
+fi
+daemon_epoch="$(date -d "${daemon_at}" +%s)"
+
+if ! state="$(docker inspect --format '{{.State.Running}} {{.State.StartedAt}}' "${name}" 2>/dev/null)"; then
+  echo absent
+  exit 0
+fi
+running="${state%% *}"
+started_at="${state#* }"
+if [ "${running}" != "true" ]; then
+  echo absent
+  exit 0
+fi
+started_epoch="$(date -d "${started_at}" +%s)"
+
+if [ "${started_epoch}" -lt "${daemon_epoch}" ]; then
+  echo stale
+else
+  echo fresh
+fi

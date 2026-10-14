@@ -19,6 +19,21 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The lab agent's Docker proxy follows a daemon restart.** The proxy
+  (`hcw-labs-agent-docker-proxy`, LAB-5) holds the daemon's socket as a
+  bind-mounted file, so when a bootstrap run restarted the daemon under it
+  — the 2026-10-14 run that took Docker Engine from 29.8.1 to 29.9.0 — it
+  kept the old, unlinked socket inode: its own refusals still answered and
+  every forwarded call got HAProxy's `503 Service Unavailable`, and the run
+  ended at the privilege check. The `labs_agent` role now installs
+  `/usr/local/libexec/hcw-docker-proxy-stale`, which compares the proxy's
+  start with `docker.service`'s `ActiveEnterTimestamp`, restarts a proxy
+  that predates the daemon's current start, and then requires `GET /_ping`
+  through the proxy (`ansible.builtin.uri` on its Unix socket) to answer 200
+  before the play goes on. The privilege
+  check's failure message names the symptom. Tested against stand-ins for
+  `systemctl` and `docker` in `ansible-lint (lab-host)`.
+
 - **The lab supply-chain issue fits GitHub's body limit.** The weekly
   `check` job scans the two published lab images with Trivy and files its
   findings as one issue; on 2026-10-14 the full tables ran past the 65,536-
