@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-13T06:46:39.045Z",
+  "generatedAt": "2026-10-14T06:39:17.439Z",
   "routes": [
     "/azure/blog/azure-foundry-hosted-agents-accelerating-ai-agent-deployment-optimization-featur",
     "/azure/blog/in-preview-public-preview-code-first-observability-for-foundry-agents-in-vs-code",
@@ -996,8 +996,8 @@
       "frameworks": 0,
       "coder-corner": 0,
       "code": 0,
-      "audio": 1,
-      "audio-architecture": 1,
+      "audio": 3,
+      "audio-architecture": 3,
       "architecture-designs": 0
     },
     "azure": {
@@ -1005,8 +1005,8 @@
       "frameworks": 0,
       "coder-corner": 0,
       "code": 0,
-      "audio": 4,
-      "audio-architecture": 4,
+      "audio": 6,
+      "audio-architecture": 6,
       "architecture-designs": 1
     },
     "gcp": {
@@ -1014,8 +1014,8 @@
       "frameworks": 0,
       "coder-corner": 0,
       "code": 0,
-      "audio": 1,
-      "audio-architecture": 1,
+      "audio": 3,
+      "audio-architecture": 3,
       "architecture-designs": 0
     },
     "finops": {
@@ -1023,8 +1023,8 @@
       "frameworks": 0,
       "coder-corner": 0,
       "code": 0,
-      "audio": 1,
-      "audio-architecture": 1,
+      "audio": 3,
+      "audio-architecture": 3,
       "architecture-designs": 0
     },
     "github": {
@@ -1032,8 +1032,8 @@
       "frameworks": 0,
       "coder-corner": 0,
       "code": 0,
-      "audio": 1,
-      "audio-architecture": 1,
+      "audio": 3,
+      "audio-architecture": 3,
       "architecture-designs": 0
     },
     "terraform": {
@@ -1041,8 +1041,8 @@
       "frameworks": 0,
       "coder-corner": 0,
       "code": 0,
-      "audio": 1,
-      "audio-architecture": 1,
+      "audio": 3,
+      "audio-architecture": 3,
       "architecture-designs": 0
     },
     "vmware": {
@@ -1050,8 +1050,8 @@
       "frameworks": 0,
       "coder-corner": 0,
       "code": 0,
-      "audio": 1,
-      "audio-architecture": 1,
+      "audio": 3,
+      "audio-architecture": 3,
       "architecture-designs": 0
     },
     "ansible": {
@@ -1059,8 +1059,8 @@
       "frameworks": 0,
       "coder-corner": 0,
       "code": 0,
-      "audio": 1,
-      "audio-architecture": 1,
+      "audio": 3,
+      "audio-architecture": 3,
       "architecture-designs": 0
     },
     "docker": {
@@ -1068,8 +1068,8 @@
       "frameworks": 0,
       "coder-corner": 0,
       "code": 0,
-      "audio": 1,
-      "audio-architecture": 1,
+      "audio": 3,
+      "audio-architecture": 3,
       "architecture-designs": 0
     },
     "_unattributed": {
