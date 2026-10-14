@@ -99,10 +99,13 @@ done < "$env_file"
 base="https://${account}.blob.core.windows.net/${container}"
 
 # One restore at a time: two fetching the same name would write one
-# .partial, and two restores would race the service.
+# .partial, and two restores would race the service. The lock is not
+# optional: a host without flock (util-linux, always present on Ubuntu) gets
+# a refusal rather than an unlocked restore.
 mkdir -p "$restore_dir"
 chmod 700 "$restore_dir"
-if [ "$command" != list ] && command -v flock >/dev/null 2>&1; then
+if [ "$command" != list ]; then
+  command -v flock >/dev/null 2>&1 || fail 'flock is not installed, so one restore at a time cannot be guaranteed; nothing was changed'
   exec 9>"$restore_dir/.lock"
   flock -n 9 || fail 'another hcw-backup-restore is running; nothing was changed'
 fi

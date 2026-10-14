@@ -122,6 +122,8 @@ describe('the backups role in the play', () => {
     // One seed and one restore at a time, each under a lock beside what it writes.
     expect(seed).toContain('flock -n 9 || refuse');
     expect(restoreSource).toContain('flock -n 9 || fail');
+    // The restore's lock is mandatory: no flock, no restore.
+    expect(restoreSource).toContain("command -v flock >/dev/null 2>&1 || fail 'flock is not installed");
     expect(restoreSource).toContain('export VAULT_TOKEN="$line"');
   });
 });
@@ -285,13 +287,17 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
     chmodSync(join(dir, 'curl'), 0o755);
     chmodSync(join(dir, 'vault'), 0o755);
     chmodSync(join(dir, 'docker'), 0o755);
+    // The restore refuses to run without flock, which Git Bash lacks: a stand-in that always grants the lock.
+    mkdirSync(join(dir, 'bin'));
+    writeFileSync(join(dir, 'bin', 'flock'), '#!/usr/bin/env bash\nexit 0\n');
+    chmodSync(join(dir, 'bin', 'flock'), 0o755);
     writeFileSync(join(dir, 'upload.env'), 'HCW_BACKUPS_ACCOUNT=stlabhybridprodcus01\nHCW_BACKUPS_CONTAINER=host-backups\nHCW_BACKUPS_API_VERSION=2024-11-04\n');
     writeFileSync(join(dir, 'hcw-vault.sh'), 'export VAULT_ADDR=https://127.0.0.1:8200\nexport VAULT_CACERT=/etc/vault.d/tls/vault.crt\n');
     writeFileSync(join(dir, 'coder-20261014T033000Z.sql.gz'), 'not really gzip');
     // What the stand-in container serves as a Coder dump: a real gzip, so the restore's gunzip reads it.
     writeFileSync(join(dir, 'dump.gz'), dumpGz);
     env = {
-      PATH: process.env.PATH,
+      PATH: `${dir}/bin${delimiter}${process.env.PATH}`,
       STUB_DIR: dir,
       STUB_SCENARIO: 'ok',
       HCW_CURL: `${dir}/curl`,
