@@ -198,9 +198,10 @@ case "$1 $2" in
     printf 'Key    Value\\n---    -----\\ntoken  %s\\n' "$VAULT_TOKEN"; exit 0 ;;
   "token lookup")
     if [ "\${3:-}" = -accessor ]; then
-      [ "\${STUB_VAULT_UNREACHABLE:-0}" = 1 ] && { echo 'Error looking up token: dial tcp 127.0.0.1:8200: connect: connection refused' >&2; exit 2; }
+      case "\${STUB_VAULT_UNREACHABLE:-0}" in 1|accessor) echo 'Error looking up token: dial tcp 127.0.0.1:8200: connect: connection refused' >&2; exit 2 ;; esac
       case " \${STUB_VAULT_VALID_ACCESSORS:-} " in *" $4 "*) printf 'Key   Value\\n'; exit 0 ;; *) echo 'Error looking up token: * invalid accessor' >&2; exit 2 ;; esac
     fi
+    [ "\${STUB_VAULT_UNREACHABLE:-0}" = 1 ] && { echo 'Error looking up token: dial tcp 127.0.0.1:8200: connect: connection refused' >&2; exit 2; }
     case "$valid" in *" \${VAULT_TOKEN:-} "*) ;; *) echo 'Error looking up token: permission denied' >&2; exit 2 ;; esac
     # Each stand-in token has a stand-in accessor that does not contain it.
     case "$VAULT_TOKEN" in
@@ -552,6 +553,30 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-fresh-snapshot-token-00001\n');
     });
 
+    it('stops before the pending list when Vault gives no verdict on the stored token, so an indeterminate lookup revokes nothing', () => {
+      mkdirSync(join(dir, 'etc'));
+      writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-old-working-token-0000001\n');
+      writeFileSync(join(dir, 'etc', 'vault-token.accessor'), 'accessor-old-0000001\n');
+      // An interrupted replacement left the working token's own accessor pending, and Vault is not answering.
+      writeFileSync(join(dir, 'etc', 'revoke-pending'), 'accessor-old-0000001\n');
+      const valid = `${owner} stand-in-old-working-token-0000001 stand-in-fresh-snapshot-token-00001`;
+      const down = bash(helper('hcw-vault-backup-seed'), ['--force'], { STUB_VAULT_VALID_TOKENS: valid, STUB_VAULT_UNREACHABLE: '1' }, `${owner}\n`);
+      expect(down.status).toBe(1);
+      expect(down.stderr).toContain('Vault gave no answer: it is sealed or not reachable');
+      expect(() => lines('vault.revoked')).toThrow();
+      expect(readFileSync(join(dir, 'etc', 'revoke-pending'), 'utf8')).toBe('accessor-old-0000001\n');
+      expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-old-working-token-0000001\n');
+      // Vault back: the record is recognised as the working token's own and dropped, nothing revoked.
+      const up = bash(helper('hcw-vault-backup-seed'), [], { STUB_VAULT_VALID_TOKENS: valid }, `${owner}\n`);
+      expect(up.status).toBe(0);
+      expect(up.stdout).toContain('was a replacement that did not complete');
+      expect(() => lines('vault.revoked')).toThrow();
+      expect(() => statSync(join(dir, 'etc', 'revoke-pending'))).toThrow();
+      // The three verdicts are kept apart in the script: an accessor, a refusal, and no answer.
+      expect(seed).toContain("grep -qiE 'permission denied|invalid token|bad token'");
+      expect(seed).toContain('[ "$stored_verdict" -ne 2 ] || fail');
+    });
+
     it('drops a pending accessor Vault no longer knows, and keeps one it cannot ask about', () => {
       mkdirSync(join(dir, 'etc'));
       writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-fresh-snapshot-token-00001\n');
@@ -564,8 +589,8 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       expect(gone.stdout).toContain('accessor accessor-long-gone no longer exists in Vault');
       expect(gone.stderr).toContain('(accessor accessor-unknowable) could not be revoked and may still be valid');
       expect(readFileSync(join(dir, 'etc', 'revoke-pending'), 'utf8')).toBe('accessor-unknowable\n');
-      // Vault unreachable for the lookup: ambiguous, so the entry stays.
-      const unreachable = bash(helper('hcw-vault-backup-seed'), [], { ...valid, STUB_VAULT_UNREACHABLE: '1' }, `${owner}\n`);
+      // Vault refuses the revocation and cannot be asked about the accessor: ambiguous, so the entry stays.
+      const unreachable = bash(helper('hcw-vault-backup-seed'), [], { ...valid, STUB_VAULT_UNREACHABLE: 'accessor' }, `${owner}\n`);
       expect(unreachable.status).toBe(0);
       expect(readFileSync(join(dir, 'etc', 'revoke-pending'), 'utf8')).toBe('accessor-unknowable\n');
       // A working token with nothing pending needs no token on stdin at all.

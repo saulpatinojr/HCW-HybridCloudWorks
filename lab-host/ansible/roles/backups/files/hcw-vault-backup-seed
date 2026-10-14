@@ -82,11 +82,21 @@ pending_remove() {
   kept="$(awk -v drop="$1" 'NF && $0 != drop' "$pending_file")"
   if [ -n "$kept" ]; then printf '%s\n' "$kept" | write_atomically "$pending_file"; else rm -f "$pending_file"; fi
 }
-# The accessor Vault knows a token by, from Vault; empty when Vault does not
-# answer for it (expired, revoked, sealed, unreachable).
-vault_accessor() {
-  [ -n "${1:-}" ] || return 0
-  VAULT_TOKEN="$1" "$vault_bin" token lookup -format=json 2>/dev/null | json_value accessor || true
+# What Vault says of a token: its accessor on stdout and exit 0 when the token
+# is valid; exit 1 when Vault answered that it is not (permission denied: an
+# expired or revoked token); exit 2 when Vault gave no verdict at all (sealed,
+# unreachable, a timeout). The three are kept apart because only the first
+# protects a pending record and only the second licenses working the list
+# without protection; the third stops the run before anything is revoked.
+vault_verdict() {
+  local token="${1:-}" out
+  [ -n "$token" ] || return 1
+  if out="$(VAULT_TOKEN="$token" "$vault_bin" token lookup -format=json 2>&1)"; then
+    printf '%s' "$out" | json_value accessor
+    return 0
+  fi
+  if printf '%s' "$out" | grep -qiE 'permission denied|invalid token|bad token'; then return 1; fi
+  return 2
 }
 # Revoke every accessor recorded as pending, except the one Vault says names
 # the token still in the file ($1, empty when there is no such answer): that
@@ -149,13 +159,24 @@ line="$(printf '%s' "$line" | tr -d '\r' | sed 's/^[[:blank:]]*//; s/[[:blank:]]
 export VAULT_TOKEN="$line"
 unset line
 
-"$vault_bin" token lookup >/dev/null 2>&1 \
-  || fail 'Vault did not accept the token on stdin: it has expired or been revoked, or Vault is sealed (sudo systemctl status vault)'
+owner_verdict=0
+vault_verdict "$VAULT_TOKEN" >/dev/null || owner_verdict=$?
+case "$owner_verdict" in
+  1) fail 'Vault did not accept the token on stdin: it has expired or been revoked' ;;
+  2) fail 'Vault gave no answer: it is sealed or not reachable (sudo systemctl status vault); nothing was changed' ;;
+esac
 
 # Unfinished business first: revocations an earlier run recorded and could
 # not finish. The only record spared is the one Vault itself says names the
-# token in the file; no answer from Vault spares nothing.
-stored_accessor="$(vault_accessor "$stored")"
+# token in the file; a token Vault says is invalid spares nothing; a token
+# Vault gives no verdict on stops the run here, with the list untouched,
+# because the record it names may be the working token's own.
+stored_accessor=''
+stored_verdict=0
+if [ -n "$stored" ]; then
+  stored_accessor="$(vault_verdict "$stored")" || stored_verdict=$?
+  [ "$stored_verdict" -ne 2 ] || fail "Vault gave no verdict on the stored snapshot token (sealed or not reachable: sudo systemctl status vault); nothing was changed, and $pending_file was not worked"
+fi
 pending_work "$stored_accessor"
 
 # Whether the stored token works is judged now, after the list was worked,

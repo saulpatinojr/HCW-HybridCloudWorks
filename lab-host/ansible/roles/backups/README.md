@@ -128,7 +128,12 @@ nothing pending is the only one that asks for no token on stdin. The token
 still in the file is never revoked from that list: the accessor Vault itself
 reports for it is protected, and a pending record that names it is a
 replacement that did not complete, dropped with a note. Only Vault's answer
-protects a record; the accessor copy kept beside the token is used to record
+protects a record, and Vault's three answers are kept apart: an accessor
+(the token is valid, its record protected), a refusal (`permission denied`:
+the token is expired or revoked, nothing protected), and no verdict at all
+(sealed, unreachable), which stops the run before the list is touched, since
+the record it would work may be the working token's own. The accessor copy
+kept beside the token is used to record
 a retirement when Vault no longer answers for the token being replaced,
 never to spare one, so a stale copy costs at most one revocation Vault
 refuses as invalid. A new token that cannot be stored is revoked again and
