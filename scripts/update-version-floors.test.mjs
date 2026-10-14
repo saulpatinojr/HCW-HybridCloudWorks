@@ -482,8 +482,10 @@ describe('the file and the summary', () => {
 });
 
 describe('moving a range in its files', () => {
+  /** A value as npm writes it. */
   const npm = (value) => `${JSON.stringify(value, null, 2)}\n`;
   const manifest = { name: 'x', type: 'module', engines: { node: '>=26.8.0', npm: '>=10.0.0' }, dependencies: { a: '^1.0.0' } };
+  /** The lines of `after` that differ from `before` at the same position. */
   const changedLines = (before, after) => after.split('\n').filter((line, i) => line !== before.split('\n')[i]);
 
   it('changes the engines.node line of a package.json and nothing else', () => {
@@ -537,6 +539,7 @@ describe('the pull request body', () => {
   const template = readFileSync(join(ROOT, '.github', 'pull_request_template.md'), 'utf8');
   // The template less the section it says to drop when infrastructure is untouched.
   const kept = template.replace(/## Infrastructure changes only[\s\S]*?(?=\n## )/, '');
+  /** The second-level headings, in order. */
   const headings = (text) => text.split('\n').filter((l) => l.startsWith('## '));
   const summary = renderSummary({ today: TODAY, changes: [{ kind: 'node', field: 'floor', from: '26.8.0', to: '26.9.0' }], notes: [], behind: [] });
   const runUrl = 'https://github.com/o/r/actions/runs/1';

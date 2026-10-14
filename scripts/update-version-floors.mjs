@@ -155,6 +155,7 @@ async function movePins(floors, findings, write) {
   return moved;
 }
 
+/** One run: read the sources, move the floors and the pins they carry, and write the summary and body asked for. */
 async function run(args) {
   const today = new Date().toISOString().slice(0, 10);
   const write = !args.flags['dry-run'];
@@ -173,6 +174,7 @@ async function run(args) {
   if (proposal.changes.length && write) await fs.writeFile(FLOORS_PATH, serialise(proposal.next));
 }
 
+/** The exit code: 0 done, 1 a source could not be read or went backwards, 2 a bad argument. */
 async function main(argv) {
   let args;
   try {

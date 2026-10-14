@@ -166,7 +166,11 @@ jobs:
       # moves the floors file, and may otherwise touch only a package.json or
       # a package-lock.json, and in those only an `"node": "<range>"` line. No
       # binary hunk, no other file, no other line (lab-supply-chain.yml's
-      # guard, CodeRabbit on #1129). The list it writes is what gets staged.
+      # guard, CodeRabbit on #1129). The updater edits files in place and
+      # nothing else, so a rename, copy, creation, deletion or mode change is
+      # refused too: those carry no hunk for the line rule to read, and a
+      # rename's numstat names only its destination (CodeRabbit on #1160).
+      # The list it writes is what gets staged.
       - name: The patch moves only the floors file and engines.node ranges
         run: |
           set -euo pipefail
@@ -174,6 +178,10 @@ jobs:
           patch="${dir}/floors.patch"
           if grep -qE '^(GIT binary patch|Binary files )' "${patch}"; then
             echo "::error::The patch carries a binary change; refused."
+            exit 1
+          fi
+          if grep -qE '^((rename|copy) (from|to) |(old|new|deleted file|new file) mode |(dis)?similarity index )' "${patch}"; then
+            echo "::error::The patch renames, copies, creates, deletes or re-modes a file; refused."
             exit 1
           fi
           git apply --numstat "${patch}" | cut -f3- | sort -u > "${dir}/patched.txt"

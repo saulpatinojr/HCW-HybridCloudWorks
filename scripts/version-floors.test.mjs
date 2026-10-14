@@ -507,6 +507,7 @@ describe('reading version files and Terraform', () => {
 
 describe('a package-lock.json against its package.json', () => {
   const dir = mkdtempSync(join(tmpdir(), 'version-floors-lock-'));
+  /** A package with these engines, and a lockfile whose root records `lockEngines` and a dependency records `>=18`. */
   const write = (pkg, engines, lockEngines) => {
     mkdirSync(join(dir, pkg), { recursive: true });
     writeFileSync(join(dir, pkg, 'package.json'), JSON.stringify({ name: pkg, engines }));
@@ -546,6 +547,7 @@ describe('moving a pin with its floor', () => {
   const moved = structuredClone(frozenFloors);
   Object.assign(moved.kinds.node, { newest: '26.11.1', floor: '26.9.0' });
   Object.assign(moved.kinds.node.platformCeilings.functions, { newest: '24.22.0', floor: '24.20.0' });
+  /** An engines.node pin as the package.json reader returns it. */
   const engines = (range, file = 'scripts/package.json') => ({ file, line: 15, where: `${file} > engines.node`, kind: 'node', raw: range, range });
 
   it('moves an engines range behind within its line to the floor, as #1152 needed for five packages', () => {

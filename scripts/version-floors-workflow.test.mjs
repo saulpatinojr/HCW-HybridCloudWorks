@@ -33,6 +33,7 @@ function commandLines(source) {
     .filter((line) => !/^\s*#/.test(line));
 }
 
+/** Leading whitespace, in characters. */
 const indentOf = (line) => line.length - line.trimStart().length;
 
 /** The `run: |` script of the step with this name, dedented. */
@@ -154,6 +155,7 @@ describe('the version floors workflow', () => {
   });
 });
 
+/** A command's exit status and output, as text. */
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', ...options });
 // On Windows only a Git Bash (MSYSTEM set) is the bash this script is
 // written for; System32's bash is WSL, which cannot see these paths.
@@ -180,6 +182,7 @@ describe.skipIf(!bashUsable)('the guard, run against patches', () => {
   mkdirSync(join(dir, 'version-floors'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
+  /** The guard's exit status and output for a patch made of these diffs. */
   const guard = (...diffs) => {
     writeFileSync(join(dir, 'version-floors', 'floors.patch'), `${diffs.join('\n')}\n`);
     const result = run('bash', ['-c', script], { cwd: dir, env: { ...process.env, RUNNER_TEMP: dir }, timeout: 20000 });
@@ -212,6 +215,23 @@ describe.skipIf(!bashUsable)('the guard, run against patches', () => {
     expect(added.status).toBe(1);
     const script = guard(FLOORS, diff('scripts/package.json', ['    "node": ">=26.8.0"'], ['    "node": "$(curl x)"']));
     expect(script.status).toBe(1);
+  });
+
+  // None of these carries a hunk for the line rule to read (CodeRabbit on #1160).
+  it('refuses a rename, copy, creation, deletion or mode change, even of a file it may touch', () => {
+    const header = (...lines) => [`diff --git a/${FLOORS_PATH} b/${FLOORS_PATH}`, ...lines].join('\n');
+    const cases = {
+      rename: ['diff --git a/scripts/version-floors.json b/package.json', 'similarity index 100%', `rename from ${FLOORS_PATH}`, 'rename to package.json'].join('\n'),
+      copy: ['diff --git a/scripts/version-floors.json b/package.json', 'similarity index 100%', `copy from ${FLOORS_PATH}`, 'copy to package.json'].join('\n'),
+      mode: header('old mode 100644', 'new mode 100755'),
+      deleted: header('deleted file mode 100644'),
+      created: diff('vps-agent/package.json', [], ['    "node": ">=26.9.0"']).replace('--- a/', 'new file mode 100644\n--- a/'),
+    };
+    for (const [name, patch] of Object.entries(cases)) {
+      const result = guard(FLOORS, patch);
+      expect(result.status, name).toBe(1);
+      expect(result.out, name).toContain('renames, copies, creates, deletes or re-modes a file');
+    }
   });
 
   it('refuses a patch that does not move the floors file, or that carries a binary change', () => {

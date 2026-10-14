@@ -348,6 +348,7 @@ export function proposeFloors(current, sources, today) {
 /** The file form the floors are kept in: two-space JSON and a final newline. */
 export const serialise = (floors) => `${JSON.stringify(floors, null, 2)}\n`;
 
+/** `file:line`, or the file alone when the finding has no line. */
 const at = (f) => `${f.file}${f.line ? `:${f.line}` : ''}`;
 
 /**

@@ -11,14 +11,17 @@
  * writing.
  */
 
+/** A value in the form npm writes package.json and package-lock.json: two-space JSON and a final newline. */
 const npmForm = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
+/** The parsed file, or a refusal when writing it back would change more than the moved field. */
 function parseInNpmForm(file, text) {
   const value = JSON.parse(text);
   if (npmForm(value) !== text) throw new Error(`${file} is not in the form npm writes (two-space JSON, final newline), so it was not moved`);
   return value;
 }
 
+/** Set `engines.node` to `to` in place, refusing unless it is `from` now. */
 function moveIn(file, engines, from, to) {
   if (engines?.node !== from) {
     const recorded = engines?.node === undefined ? 'no engines.node' : `engines.node "${engines.node}"`;
