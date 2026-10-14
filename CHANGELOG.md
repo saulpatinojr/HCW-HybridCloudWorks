@@ -32,6 +32,14 @@ This project has not cut a tagged release; entries are grouped under
   the host after the next `bootstrap.sh`. The rest of LAB-13 (a terminal
   status for a job killed by a reboot, reboot only when no job runs, a
   hash-locked ansible-core) stays open on #959.
+- **`functions_scm_lock_enabled` defaults to `true`** (PLAT-10, #970).
+  The workspace set it `true` on 2026-08-25, when the SCM window was proven
+  under `Deny`, and the Function App's SCM default action read `Deny` again
+  on 2026-10-14, so the code default now says what the estate does and the
+  plan for the change is empty. The
+  comments in `infra/variables.tf`, `deploy-functions.yml` and
+  `scripts/assert-origin-lock.mjs`, and the required-inputs row, say so
+  instead of describing the 2026-08-25 posture.
 - **Version floors: the weekly pull request moves the `engines.node`
   ranges with the floors, and arrives green.** `update-version-floors.yml`
   used to move `scripts/version-floors.json` alone and open a pull request

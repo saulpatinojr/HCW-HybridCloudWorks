@@ -81,10 +81,10 @@ const learningPaths = [
     level: 'Beginner',
     hours: 20,
     description:
-      'Build a strong FinOps foundation with cloud cost fundamentals, the FOCUS schema, allocation strategies, and optimization patterns for practitioners.',
+      'Build a strong FinOps foundation with cloud cost fundamentals, the FOCUS 1.4 schema, allocation strategies, and optimization patterns for practitioners.',
     modules: [
       { title: 'Cloud Cost Fundamentals' },
-      { title: 'FOCUS Schema Overview' },
+      { title: 'FOCUS 1.4 Schema Overview' },
       { title: 'Allocation & Showback' },
       { title: 'Cost Optimization Patterns' },
     ],

@@ -144,8 +144,8 @@ export const certifications = [
     level: 'Practitioner',
     status: 'active',
     description:
-      'Demonstrate foundational knowledge of FinOps principles, cloud cost management, the FOCUS specification, allocation, and optimization patterns. The self-paced course plus exam is $500, the exam alone $325 (50 questions, one hour, 75% to pass), and the credential is valid for 24 months.',
-    topics: ['Cloud Cost Management', 'FOCUS', 'Allocation', 'Optimization'],
+      'Demonstrate foundational knowledge of FinOps principles, cloud cost management, the FOCUS 1.4 specification, allocation, and optimization patterns. The self-paced course plus exam is $500, the exam alone $325 (50 questions, one hour, 75% to pass), and the credential is valid for 24 months.',
+    topics: ['Cloud Cost Management', 'FOCUS 1.4', 'Allocation', 'Optimization'],
     hours: 20,
     prepTime: '~4 weeks',
     featured: true,
@@ -190,8 +190,8 @@ export const certifications = [
     level: 'Professional',
     status: 'active',
     description:
-      'Implement FinOps tooling, FOCUS schema pipelines, and automation to operationalize cloud financial management. The Foundation rates it Intermediate, sizes the self-paced course plus exam at about ten hours, prices that bundle at $500 and the exam alone at $325, and the credential is valid for 24 months.',
-    topics: ['FOCUS Schema', 'Data Pipelines', 'FinOps Tooling', 'Automation'],
+      'Implement FinOps tooling, FOCUS 1.4 schema pipelines, and automation to operationalize cloud financial management. The Foundation rates it Intermediate, sizes the self-paced course plus exam at about ten hours, prices that bundle at $500 and the exam alone at $325, and the credential is valid for 24 months.',
+    topics: ['FOCUS 1.4 Schema', 'Data Pipelines', 'FinOps Tooling', 'Automation'],
     hours: 10,
     prepTime: '~2 weeks',
     featured: false,
@@ -205,8 +205,13 @@ export const certifications = [
     level: 'Professional',
     status: 'active',
     description:
-      'Work with cloud cost and usage data in the vendor-neutral FOCUS format — generating, ingesting, interpreting and analysing billing datasets across providers. The Foundation rates the exam Intermediate, prices it at $400, sizes the self-paced course at about six hours with twelve months of access, and the credential is valid for 24 months.',
-    topics: ['FOCUS Specification', 'Billing Data', 'Usage Datasets', 'Vendor-Neutral Reporting'],
+      'Work with cloud cost and usage data in the vendor-neutral FOCUS 1.4 format — generating, ingesting, interpreting and analysing billing datasets across providers. The Foundation rates the exam Intermediate, prices it at $400, sizes the self-paced course at about six hours with twelve months of access, and the credential is valid for 24 months.',
+    topics: [
+      'FOCUS 1.4 Specification',
+      'Billing Data',
+      'Usage Datasets',
+      'Vendor-Neutral Reporting',
+    ],
     hours: 6,
     prepTime: '~1 week',
     featured: false,
