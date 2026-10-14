@@ -15,6 +15,7 @@ import {
   inReleaseVerifier,
   pinnedEngine,
   recordedCli,
+  withProvenance,
 } from './record-docker-cli-fixture.mjs';
 import { DOCKER_CLI_FIXTURE_PATH, GROUP_VARS_PATH } from '../lib/lab-pin-bumps.mjs';
 
@@ -42,6 +43,17 @@ describe('record-docker-cli-fixture', () => {
     expect(() => pinnedEngine('docker_release_pins:\n  resolute:\n    engine: "latest"\n')).toThrow(
       /not an epoch:upstream-revision/
     );
+  });
+
+  it('writes the .deb the CLI came from beside the recorded version, and leaves the rest of the fixture as it was', () => {
+    const deb = { version: '5:29.9.0-1~ubuntu.26.04~resolute', sha256: 'a'.repeat(64), url: 'https://download.docker.com/x.deb' };
+    const out = JSON.parse(withProvenance('{"dockerCli":"29.9.0","runs":{}}', deb));
+    expect(out).toEqual({
+      dockerCli: '29.9.0',
+      runs: {},
+      recordedFrom: { package: 'docker-ce-cli', version: deb.version, sha256: deb.sha256, url: deb.url },
+    });
+    expect(recordedCli(withProvenance('{"dockerCli":"29.9.0"}', deb))).toBe('29.9.0');
   });
 
   it('reads the CLI a fixture records, and null for anything else', () => {

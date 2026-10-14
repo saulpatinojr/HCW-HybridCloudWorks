@@ -98,6 +98,18 @@ export async function inReleaseVerifier({ http, keyChecksum, workDir, run = exec
   };
 }
 
+/**
+ * The fixture with its provenance: the .deb the CLI came from, by full Debian
+ * version, SHA256 and URL, beside the `dockerCli` the capture wrote. The test
+ * holds the proxy to `dockerCli` (the upstream release, which is what decides
+ * the requests); this says which package build recorded it.
+ */
+export function withProvenance(fixtureText, deb) {
+  const fixture = JSON.parse(String(fixtureText));
+  fixture.recordedFrom = { package: 'docker-ce-cli', version: deb.version, sha256: deb.sha256, url: deb.url };
+  return `${JSON.stringify(fixture, null, 2)}\n`;
+}
+
 /** The CLI version a fixture records, or null for a file that is not one. */
 export function recordedCli(fixtureText) {
   try {
@@ -143,8 +155,10 @@ async function main(argv) {
       stdio: 'inherit',
       env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` },
     });
-    const now = recordedCli(readFileSync(fixtureAt, 'utf8'));
+    const written = readFileSync(fixtureAt, 'utf8');
+    const now = recordedCli(written);
     if (now !== core) throw new Error(`the fixture now records docker CLI ${now}, not the pinned ${core}`);
+    writeFileSync(fixtureAt, withProvenance(written, deb));
     process.stdout.write(
       `re-recorded ${DOCKER_CLI_FIXTURE_PATH} with docker CLI ${core} (${deb.url}, SHA256 ${deb.sha256} as ${index.packagesUrl} lists; ${index.inReleaseUrl} verified against the key docker_apt_key_checksum pins)\n`
     );
