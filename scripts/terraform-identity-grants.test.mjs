@@ -355,6 +355,9 @@ const IN_A_DECLARED_GROUP = new Set([
   'azurerm_static_web_app',
   'azurerm_storage_account',
   'azurerm_storage_container',
+  // The lab backups container's time-based retention (LAB-9, #955): written
+  // on a container in a declared group; Contributor's storage actions cover it.
+  'azurerm_storage_container_immutability_policy',
   'azurerm_storage_management_policy',
   'azurerm_subnet',
   'azurerm_subnet_network_security_group_association',

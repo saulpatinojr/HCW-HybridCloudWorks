@@ -48,6 +48,14 @@
 
 # Account name: 3–24 lowercase alphanumerics, globally unique. stlabhybrid +
 # environment + region is 20 characters for prod/cus.
+#
+# trivy AVD-AZU-0012 (network default Allow, no rules) is accepted on this
+# account for the reason the lab Key Vault accepts AVD-AZU-0013: the writer
+# is a VPS outside Azure whose address infra/ does not own, Entra-only auth
+# and a container-scoped grant gate every call, and an IP rule that drifted
+# would stop the nightly backup silently. docs/security/scanner-triage.md,
+# "trivy". The ignore must be the line directly above the resource.
+#trivy:ignore:AVD-AZU-0012
 resource "azurerm_storage_account" "lab_hybrid_backups" {
   #checkov:skip=CKV_AZURE_59:Public network access stays on: the only writer is the lab VPS, outside Azure with no private path, the same reason given for the lab Key Vault (CKV_AZURE_109 there). Entra-only auth and one container-scoped grant gate every call. ADR 0032 amendment 2026-10-14. docs/security/scanner-triage.md#checkov
   #checkov:skip=CKV2_AZURE_33:No private endpoints: the caller is a VPS outside Azure, which a private endpoint could not serve (ADR 0031 decision, ADR 0032 amendment 2026-10-14). docs/security/scanner-triage.md#checkov

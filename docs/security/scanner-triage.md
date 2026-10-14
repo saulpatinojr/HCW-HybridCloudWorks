@@ -23,7 +23,7 @@ uvx zizmor --offline .github/workflows
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | zizmor | 42 | 42 | 0 | 0 | 0 | **0** |
 | checkov | 38 | 8 | 12 | 18 | 0 | **0** |
-| trivy | 6 | 2 | 2 | 2 | 0 | **0** |
+| trivy | 7 | 2 | 2 | 3 | 0 | **0** |
 | bandit | 7 | 2 | 0 | 5 | 0 | **0** |
 | gitleaks | 9 | 0 | 9 | 0 | 0 | **0** |
 | radarlint-iac | 19 | 0 | 19 | 0 | 0 | **19** |
@@ -352,6 +352,7 @@ finding. No `.trivyignore` is needed.
 | AZU-0061 | `infra/storage.tf` | Accepted | As above, on the Function host account. | Inline ignore, 2026-09-14 |
 | AZU-0058 | `infra/storage.tf` | Fixed | Host storage is GRS. Same change as checkov CKV_AZURE_206. | 2026-09-14 |
 | AZU-0013 | `infra/lab-hybrid.tf` | Accepted | Network default Allow on `azurerm_key_vault.lab_hybrid`, the lab-only Key Vault; the reason is checkov CKV_AZURE_109's row. Without the ignore it is the file's one finding at any severity (CRITICAL), measured with trivy 0.69.3. | Inline ignore, 2026-09-29 (#726) |
+| AZU-0012 | `infra/lab-hybrid-backups.tf` | Accepted | Network default Allow, no rules, on `azurerm_storage_account.lab_hybrid_backups`, the lab host's backup account (LAB-9, #955): the only writer is the lab VPS, outside Azure, whose address infra/ does not own (ADR 0032 decision 1), so an IP rule would drift and stop the nightly backup silently; shared keys are off, OAuth is the default, the Arc identity's grant is container-scoped and the container is immutable for 35 days. The reason the lab Key Vault accepts AZU-0013. Measured with trivy 0.69.3 on #1147: the file's one finding at HIGH or CRITICAL. | Inline ignore, 2026-10-14 (#1147) |
 
 Two trivy ignores on one resource must sit on consecutive lines directly above
 it. A comment line between them drops the upper one, as found locally with
