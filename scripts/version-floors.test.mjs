@@ -30,6 +30,7 @@ import {
   npmRangeMinimum,
   parseNpmRange,
   patchFloor,
+  proposeMove,
   readDockerfile,
   readJobImages,
   readLabHost,
@@ -501,6 +502,81 @@ describe('reading version files and Terraform', () => {
       ['node', '24'],
     ]);
     expect(problems).toEqual([]);
+  });
+});
+
+describe('a package-lock.json against its package.json', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'version-floors-lock-'));
+  const write = (pkg, engines, lockEngines) => {
+    mkdirSync(join(dir, pkg), { recursive: true });
+    writeFileSync(join(dir, pkg, 'package.json'), JSON.stringify({ name: pkg, engines }));
+    writeFileSync(
+      join(dir, pkg, 'package-lock.json'),
+      JSON.stringify({ packages: { '': { name: pkg, engines: lockEngines }, 'node_modules/x': { engines: { node: '>=18' } } } })
+    );
+  };
+  write('same', { node: '>=26.9.0' }, { node: '>=26.9.0' });
+  write('behind', { node: '>=26.9.0' }, { node: '>=26.8.0' });
+  write('bare', { node: '>=26.9.0' }, undefined);
+  const files = ['same', 'behind', 'bare'].flatMap((p) => [`${p}/package.json`, `${p}/package-lock.json`]);
+  const { problems } = collectPins(dir, floors, files);
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("passes a lockfile whose root entry repeats the package.json's engines.node, whatever its dependencies say", () => {
+    expect(problems.filter((p) => p.file.startsWith('same/'))).toEqual([]);
+  });
+
+  it('fails a lockfile that records another range, or none, naming both and the command that fixes it', () => {
+    expect(problems.map((p) => [p.file, p.message])).toEqual([
+      [
+        'behind/package-lock.json',
+        'records engines.node ">=26.8.0" where behind/package.json declares engines.node ">=26.9.0"; run npm install in behind so the two agree',
+      ],
+      [
+        'bare/package-lock.json',
+        'records no engines.node where bare/package.json declares engines.node ">=26.9.0"; run npm install in bare so the two agree',
+      ],
+    ]);
+  });
+});
+
+describe('moving a pin with its floor', () => {
+  // The floors of 2026-10-14 (#1152): Node.js 26.11.1, floor 26.9.0; and a
+  // Flex ceiling moved within 24 for the functions range.
+  const moved = structuredClone(frozenFloors);
+  Object.assign(moved.kinds.node, { newest: '26.11.1', floor: '26.9.0' });
+  Object.assign(moved.kinds.node.platformCeilings.functions, { newest: '24.22.0', floor: '24.20.0' });
+  const engines = (range, file = 'scripts/package.json') => ({ file, line: 15, where: `${file} > engines.node`, kind: 'node', raw: range, range });
+
+  it('moves an engines range behind within its line to the floor, as #1152 needed for five packages', () => {
+    expect(proposeMove(engines('>=26.8.0'), moved)).toBe('>=26.9.0');
+    expect(proposeMove(engines('>= 26.7.2'), moved)).toBe('>= 26.9.0');
+  });
+
+  it("moves the functions range to its platform ceiling's floor, not the general one", () => {
+    expect(proposeMove(engines('^24.19.0', 'functions/package.json'), moved)).toBe('^24.20.0');
+  });
+
+  it('leaves a range that already meets its floor alone', () => {
+    expect(proposeMove(engines('>=26.9.0'), moved)).toBe(null);
+    expect(proposeMove(engines('>=26.10.0'), moved)).toBe(null);
+  });
+
+  it('leaves a new line to a person: its release notes come first', () => {
+    expect(proposeMove(engines('>=24.0.0'), moved)).toBe(null);
+    expect(proposeMove(engines('^22.12.0', 'functions/package.json'), moved)).toBe(null);
+  });
+
+  it('leaves a range whose minimum is not written out, or whose move would not pass the rule', () => {
+    expect(proposeMove(engines('^26.8'), moved)).toBe(null);
+    expect(proposeMove(engines('~26.8.0'), moved)).toBe(null);
+  });
+
+  it('never moves an exact pin: it carries a digest or checksum this cannot read', () => {
+    const exact = (extra) => ({ file: 'f', line: 1, where: 'f', raw: '', ...extra });
+    expect(proposeMove(exact({ kind: 'node', version: '26.8.0' }), moved)).toBe(null);
+    expect(proposeMove(exact({ kind: 'python', version: '3.14.4' }), moved)).toBe(null);
+    expect(proposeMove(exact({ kind: 'node', version: '24', where: 'infra/functionapp.tf > runtime_version' }), moved)).toBe(null);
   });
 });
 

@@ -348,15 +348,114 @@ export function proposeFloors(current, sources, today) {
 /** The file form the floors are kept in: two-space JSON and a final newline. */
 export const serialise = (floors) => `${JSON.stringify(floors, null, 2)}\n`;
 
-/** The Markdown the workflow puts in the step summary and the pull request body. */
-export function renderSummary({ changes, notes, behind, today }) {
+const at = (f) => `${f.file}${f.line ? `:${f.line}` : ''}`;
+
+/**
+ * The Markdown the workflow puts in the step summary and the pull request
+ * body: what moved in the floors file, the pins moved with it, and the pins
+ * still behind, which a person moves.
+ */
+export function renderSummary({ changes, notes, moved = [], behind, today }) {
   const table = changes.length
     ? ['| Kind | Field | Was | Now |', '| --- | --- | --- | --- |', ...changes.map((c) => `| ${c.kind} | ${c.field} | ${c.from ?? '(none)'} | ${c.to} |`)]
     : ['No floor moved.'];
   const noteLines = notes.length ? ['', '#### Notes', '', ...notes.map((n) => `- ${n}`)] : [];
-  const pins = behind.length
-    ? behind.map((f) => `- \`${f.file}${f.line ? `:${f.line}` : ''}\` (${f.where}): ${f.message}`)
-    : ['None.'];
-  const heading = `#### Pins behind the ${changes.length ? 'new ' : ''}floors`;
-  return `${[`### Version floors, checked ${today}`, '', ...table, ...noteLines, '', heading, '', ...pins].join('\n')}\n`;
+  const movedLines = moved.length
+    ? [
+        '',
+        '#### Pins moved with the floors',
+        '',
+        '| Pin | Was | Now | Files |',
+        '| --- | --- | --- | --- |',
+        ...moved.map((m) => `| \`${at(m)}\` engines.node | \`${m.from}\` | \`${m.to}\` | ${m.files.map((f) => `\`${f}\``).join(', ')} |`),
+      ]
+    : [];
+  const pins = behind.length ? behind.map((f) => `- \`${at(f)}\` (${f.where}): ${f.message}`) : ['None.'];
+  const heading = changes.length ? '#### Pins still behind the new floors' : '#### Pins behind the floors';
+  return `${[`### Version floors, checked ${today}`, '', ...table, ...noteLines, ...movedLines, '', heading, '', ...pins].join('\n')}\n`;
+}
+
+/** The first "Before merging" item: what this pull request's floors check will say, and why. */
+function checkExpectation(behind) {
+  if (!behind.length) {
+    return "**Every pin the new floors left behind moved in this pull request.** `scripts (operations)` runs `scripts/version-floors.test.mjs` against the moved pins and the new floors; green there is the evidence that they agree. Merge on green.";
+  }
+  return '**This pull request is expected to fail `scripts (operations)` until the pins under "Pins still behind" move.** They are the pins the updater does not move: an exact pin (an image tag with its digest, a `runtime_version`, a `runs-on`) or a pin on a new line. `scripts/version-floors.test.mjs` names each by file and line. Move them on this branch, or in their own pull request first, and merge the floors last.';
+}
+
+/**
+ * The pull request body, in .github/pull_request_template.md's sections and
+ * order, with only the boxes that are true ticked: CodeRabbit's Description
+ * check warns on a body that skips them (owner instruction 2026-10-08; #1152).
+ */
+export function renderPullRequestBody({ summary, moved = [], behind, runUrl }) {
+  const before = [
+    checkExpectation(behind),
+    '**A moved functions ceiling is a production runtime change.** If a note above says the Flex Consumption ceiling moved, `runtime_version` in `infra/functionapp.tf` moves with it, which is an HCP Terraform run in `hcw-azure`, and the functions deploy that follows builds on the new line.',
+    '**Read the release notes for a new line** (Node.js, Python or Terraform) before moving the pins it governs; a floor that moves within a line is a patch or minor bump.',
+    "**A moved runners ceiling moves every workflow's `runs-on`.** Compare the software table in GitHub's announcement for the new image with what each workflow installs or calls, and list the workflows that run only on a schedule or by dispatch: this pull request's CI runs none of them, so their first run on the new image is after the merge.",
+  ];
+  const out = [
+    '## Summary',
+    '',
+    `Weekly check of \`scripts/version-floors.json\` against endoflife.date, the Azure Functions Flex Consumption table on Microsoft Learn and the actions/runner-images image list, by \`.github/workflows/update-version-floors.yml\` (#715). It moves the floors and, in the same commit, every \`engines.node\` range the new floors leave behind within its line, with the root entry of the \`package-lock.json\` beside it. Nothing else: the workflow refuses a patch that touches any other file or any other line. Opened by the App rather than pushed to \`main\`, so the required checks run on it.`,
+    '',
+    summary.trim(),
+    '',
+    '## Related issue or decision',
+    '',
+    'Refs #715 and #714.',
+    '',
+    '## Type of change',
+    '',
+    '- [ ] Feature or behavior change',
+    '- [ ] Bug fix',
+    '- [ ] Refactor or performance improvement',
+    '- [ ] Documentation or process change',
+    '- [x] Dependency update',
+    '- [ ] CI/CD or repository policy change',
+    '- [ ] Infrastructure or deployment change',
+    '- [ ] Security or privacy change',
+    '- [ ] Breaking change',
+    '',
+    '## Scope and impact',
+    '',
+    `- **Components:** \`scripts/version-floors.json\`${moved.length ? ', and the `engines.node` range of each package under "Pins moved with the floors", in its `package.json` and its lockfile' : ''}.`,
+    "- **Runtime:** none on merge. An `engines.node` range is what npm checks a developer's Node.js against; CI installs Node.js by line (`'26'`), which resolves to the newest release, above any floor.",
+    '- **Rollback:** revert this pull request.',
+    '',
+    '**Before merging:**',
+    '',
+    ...before.map((line, i) => `${i + 1}. ${line}`),
+    '',
+    '## Verification',
+    '',
+    `- Checks run: \`node scripts/update-version-floors.mjs\` against endoflife.date, learn.microsoft.com and the runner-images README (run ${runUrl}); this pull request's required checks run on the result.`,
+    '- Important result or evidence: the tables above, each floor read from the source `scripts/version-floors.json` names beside it.',
+    '- Checks not run and why: the workflows that run only on a schedule or by dispatch, which no pull request runs (item 4 above).',
+    "- Evidence level: [ ] Static [ ] Local [ ] CI [ ] Staging [ ] Production — none ticked at opening: this pull request's required checks are the evidence, and they had not run when this body was written. Read them on the Checks tab before merging.",
+    '',
+    '## Security and data review',
+    '',
+    '- [x] No credentials, private keys, tokens, connection strings, personal data, customer data, or sensitive content was added.',
+    '- [x] Telemetry is content-free and uses correlation identifiers rather than paths, query strings, route values, document identifiers, or payloads. *(No telemetry changes.)*',
+    '- [x] Authorization, tenant isolation, least privilege, and denial paths were tested where applicable. *(Not applicable to a version move.)*',
+    '- [x] New dependencies, base images, and GitHub Actions are pinned or controlled according to repository policy. *(No new dependency; the floors are what the policy pins against.)*',
+    '- [ ] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(Not ticked: this pull request is filed by the scheduled workflow #715 approved. The workflow never merges or approves it.)*',
+    '',
+    '## Documentation and operations',
+    '',
+    '- [x] User-facing or developer documentation updated when needed. *(None needed; the workflow and the floors file describe the procedure, not its values.)*',
+    "- [x] Release notes, changelog, runbook, architecture record, migration notes, or security records updated when needed. *(Floor moves are not changelog entries by this repository's convention; the evidence is this body.)*",
+    "- [x] Remaining work is recorded in the repository's established tracker. *(The pins still behind, above, when there are any.)*",
+    '- [x] Rollout and rollback owners are identified when the change affects a shared environment. *(No shared environment changes on merge.)*',
+    '',
+    '## Author checklist',
+    '',
+    '- [x] The pull request is focused and unrelated edits were removed. *(The floors file and the moved ranges; the workflow refuses anything else.)*',
+    "- [x] Tests cover changed behavior and important failure, boundary, and denial paths. *(This pull request's required checks hold the repository to the new floors.)*",
+    '- [x] The final diff contains no local configuration, generated artifacts, or secrets that do not belong.',
+    '- [x] Required reviewers, approvals, environments, and CI checks are complete or explicitly called out. *(No auto-merge; the checks above.)*',
+  ];
+  return `${out.join('\n')}\n`;
 }

@@ -10,12 +10,16 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   SourceError,
+  moveLockfileRange,
+  moveManifestRange,
   proposeFloors,
   readFlexNodeLines,
   readRunnerUbuntuReleases,
+  renderPullRequestBody,
   renderSummary,
   serialise,
 } from './update-version-floors.mjs';
+import { trackedFiles } from './version-floors.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TODAY = '2026-10-07';
@@ -452,21 +456,114 @@ describe('the file and the summary', () => {
     expect(serialise(JSON.parse(text))).toBe(text);
   });
 
-  it('lists each moved value and each pin the new floors leave behind', () => {
+  it('lists each moved value, each pin moved with it, and each pin still behind', () => {
     const summary = renderSummary({
       today: TODAY,
       changes: [{ kind: 'node', field: 'floor', from: '26.8.0', to: '26.9.0' }],
       notes: ['a note'],
-      behind: [{ file: 'frontend/package.json', line: 7, where: 'frontend/package.json > engines.node', message: 'below the floor' }],
+      moved: [{ file: 'scripts/package.json', line: 15, from: '>=26.8.0', to: '>=26.9.0', files: ['scripts/package.json', 'scripts/package-lock.json'] }],
+      behind: [{ file: 'lab-host/bootstrap.sh', line: 48, where: 'lab-host/bootstrap.sh > python', message: 'below the floor' }],
     });
     expect(summary).toContain('| node | floor | 26.8.0 | 26.9.0 |');
     expect(summary).toContain('- a note');
-    expect(summary).toContain('- `frontend/package.json:7` (frontend/package.json > engines.node): below the floor');
+    expect(summary).toContain('#### Pins moved with the floors');
+    expect(summary).toContain('| `scripts/package.json:15` engines.node | `>=26.8.0` | `>=26.9.0` | `scripts/package.json`, `scripts/package-lock.json` |');
+    expect(summary).toContain('#### Pins still behind the new floors');
+    expect(summary).toContain('- `lab-host/bootstrap.sh:48` (lab-host/bootstrap.sh > python): below the floor');
   });
 
   it('says so plainly when nothing moved', () => {
     const summary = renderSummary({ today: TODAY, changes: [], notes: [], behind: [] });
     expect(summary).toContain('No floor moved.');
+    expect(summary).toContain('#### Pins behind the floors');
     expect(summary).toContain('None.');
+    expect(summary).not.toContain('Pins moved');
+  });
+});
+
+describe('moving a range in its files', () => {
+  const npm = (value) => `${JSON.stringify(value, null, 2)}\n`;
+  const manifest = { name: 'x', type: 'module', engines: { node: '>=26.8.0', npm: '>=10.0.0' }, dependencies: { a: '^1.0.0' } };
+  const changedLines = (before, after) => after.split('\n').filter((line, i) => line !== before.split('\n')[i]);
+
+  it('changes the engines.node line of a package.json and nothing else', () => {
+    const before = npm(manifest);
+    const after = moveManifestRange('x/package.json', before, '>=26.8.0', '>=26.9.0');
+    expect(changedLines(before, after)).toEqual(['    "node": ">=26.9.0",']);
+  });
+
+  it("changes the lockfile's root entry and leaves a dependency recording the same range alone", () => {
+    const lock = {
+      name: 'x',
+      lockfileVersion: 3,
+      packages: { '': { name: 'x', engines: { node: '>=26.8.0' } }, 'node_modules/a': { version: '1.0.0', engines: { node: '>=26.8.0' } } },
+    };
+    const after = JSON.parse(moveLockfileRange('x/package-lock.json', npm(lock), '>=26.8.0', '>=26.9.0'));
+    expect(after.packages[''].engines.node).toBe('>=26.9.0');
+    expect(after.packages['node_modules/a'].engines.node).toBe('>=26.8.0');
+  });
+
+  it('refuses a file not in the form npm writes, rather than reformat it', () => {
+    const fourSpaces = `${JSON.stringify(manifest, null, 4)}\n`;
+    expect(() => moveManifestRange('x/package.json', fourSpaces, '>=26.8.0', '>=26.9.0')).toThrow(/not in the form npm writes/);
+    expect(() => moveManifestRange('x/package.json', npm(manifest).trimEnd(), '>=26.8.0', '>=26.9.0')).toThrow(/not in the form npm writes/);
+  });
+
+  it('refuses a file whose range is not the one being moved', () => {
+    expect(() => moveManifestRange('x/package.json', npm(manifest), '>=26.7.0', '>=26.9.0')).toThrow(/records engines.node ">=26.8.0", not ">=26.7.0"/);
+    const bare = { packages: { '': { name: 'x' } } };
+    expect(() => moveLockfileRange('x/package-lock.json', npm(bare), '>=26.8.0', '>=26.9.0')).toThrow(/records no engines.node, not ">=26.8.0"/);
+  });
+
+  // The weekly run must not meet a refusal: every package file it could move
+  // is already in the form it writes, and moves one line.
+  it('can move every tracked package.json and lockfile that records engines.node, one line each', () => {
+    const files = trackedFiles(ROOT).filter((f) => /(^|\/)package(-lock)?\.json$/.test(f));
+    const moved = files.flatMap((file) => {
+      const text = readFileSync(join(ROOT, file), 'utf8');
+      const value = JSON.parse(text);
+      const lock = file.endsWith('package-lock.json');
+      const range = lock ? value.packages?.['']?.engines?.node : value.engines?.node;
+      if (range === undefined) return [];
+      const after = (lock ? moveLockfileRange : moveManifestRange)(file, text, range, '>=99.0.0');
+      expect(changedLines(text, after), file).toHaveLength(1);
+      return [file];
+    });
+    expect(moved.length).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe('the pull request body', () => {
+  const template = readFileSync(join(ROOT, '.github', 'pull_request_template.md'), 'utf8');
+  // The template less the section it says to drop when infrastructure is untouched.
+  const kept = template.replace(/## Infrastructure changes only[\s\S]*?(?=\n## )/, '');
+  const headings = (text) => text.split('\n').filter((l) => l.startsWith('## '));
+  const summary = renderSummary({ today: TODAY, changes: [{ kind: 'node', field: 'floor', from: '26.8.0', to: '26.9.0' }], notes: [], behind: [] });
+  const runUrl = 'https://github.com/o/r/actions/runs/1';
+  const body = (behind) => renderPullRequestBody({ summary, moved: [], behind, runUrl });
+
+  it("has the template's sections, in its order, less the infrastructure one (CodeRabbit's Description check, #1152)", () => {
+    expect(headings(body([]))).toEqual(headings(kept));
+  });
+
+  it('carries every checkbox the template asks, ticked or not, word for word', () => {
+    const boxes = kept.split('\n').filter((l) => l.startsWith('- [ ] ')).map((l) => l.slice(6));
+    expect(boxes.length).toBeGreaterThan(15);
+    for (const box of boxes) expect(body([]), box).toMatch(new RegExp(`- \\[[ x]\\] ${box.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  });
+
+  it('carries the summary, the run and the issues', () => {
+    const text = body([]);
+    expect(text).toContain(summary.trim());
+    expect(text).toContain(runUrl);
+    expect(text).toContain('Refs #715 and #714.');
+  });
+
+  it('says the floors check is the evidence when every pin moved, and the work list when one did not', () => {
+    expect(body([])).toContain('Every pin the new floors left behind moved in this pull request.');
+    expect(body([])).not.toContain('expected to fail');
+    const red = body([{ file: 'lab-host/bootstrap.sh', line: 48, where: 'w', message: 'm' }]);
+    expect(red).toContain('This pull request is expected to fail `scripts (operations)` until the pins under "Pins still behind" move.');
+    expect(red).toContain('`runtime_version`');
   });
 });

@@ -17,17 +17,25 @@
  *      product for it, and the file's "unsourced" section says so.
  *   2. Works out, per kind, the newest release the rule allows and the floor
  *      it implies (lib/version-floor-proposals.mjs, pure and tested).
- *   3. Writes version-floors.json when any value moved, and prints a Markdown
- *      summary: each kind's old → new, and every pin in the tree that the new
- *      floors leave behind. The pull request the workflow opens carries that
- *      summary; its CI then fails on exactly those pins, which is the point.
+ *   3. Writes version-floors.json when any value moved, and moves every pin
+ *      the new floors leave behind that proposeMove() can move: an
+ *      engines.node range behind within its line, in its package.json and
+ *      the lockfile beside it (lib/version-floor-moves.mjs). Until #1152 the
+ *      pull request carried the floors alone and went red on those ranges
+ *      every time a Node.js minor shipped, for a person to move by hand what
+ *      this can move exactly.
+ *   4. Reads the tree again and prints a Markdown summary: each kind's
+ *      old → new, the pins moved, and every pin still behind, which a person
+ *      moves. `--body` wraps it in the pull request template.
  *
  * Exit 0 and no write when nothing moved: `checkedOn` moves only with its
  * entry, the same convention as AVM_VERIFIED_ON, so a quiet week is not a
  * pull request. `--dry-run` prints without writing; `--summary <path>` also
- * writes the summary to a file. Exit 1 and one sentence, with nothing
+ * writes the summary to a file, and `--body <path>` the pull request body,
+ * with `--run-url` the run it names. Exit 1 and one sentence, with nothing
  * written, when a source cannot be read or goes backwards; exit 2 on a bad
- * argument.
+ * argument. A pin whose files refuse the move (lib/version-floor-moves.mjs
+ * says when) stays behind with a warning, and the run carries on.
  *
  * THE FUNCTIONS CEILING is read from the Learn page's "Supported language
  * stack versions" table, the one place Microsoft states it for Flex. When the
@@ -59,16 +67,19 @@ import {
   proposeFloors,
   readFlexNodeLines,
   readRunnerUbuntuReleases,
+  renderPullRequestBody,
   renderSummary,
   serialise,
 } from './lib/version-floor-proposals.mjs';
-import { ENGINES_EXEMPT, collectPins, findViolations } from './version-floors.mjs';
+import { moveLockfileRange, moveManifestRange } from './lib/version-floor-moves.mjs';
+import { ENGINES_EXEMPT, collectPins, findViolations, proposeMove, trackedFiles } from './version-floors.mjs';
 
 export * from './lib/version-floor-proposals.mjs';
+export * from './lib/version-floor-moves.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FLOORS_PATH = path.join(ROOT, 'scripts', 'version-floors.json');
-const USAGE = 'Usage: node scripts/update-version-floors.mjs [--dry-run] [--summary <path>]';
+const USAGE = 'Usage: node scripts/update-version-floors.mjs [--dry-run] [--summary <path>] [--body <path> --run-url <url>]';
 const USER_AGENT = 'HCW-HybridCloudWorks update-version-floors (+https://github.com/saulpatinojr/HCW-HybridCloudWorks)';
 
 export const eolUrl = (product) => `https://endoflife.date/api/v1/products/${product}/`;
@@ -116,22 +127,57 @@ async function readSources() {
   };
 }
 
+/** Every finding the floors leave in the tree as it is now. */
+const findingsAt = (floors) => findViolations(floors, collectPins(ROOT, floors), { enginesExempt: ENGINES_EXEMPT });
+
+/**
+ * Move each pin proposeMove() can move, in its package.json and, when one is
+ * tracked beside it, its package-lock.json. Both files are edited before
+ * either is written, so a refusal leaves the pair as it was.
+ */
+async function movePins(floors, findings, write) {
+  const tracked = new Set(trackedFiles(ROOT));
+  const moved = [];
+  for (const pin of findings) {
+    const to = proposeMove(pin, floors);
+    if (!to) continue;
+    const lockfile = path.posix.join(path.posix.dirname(pin.file), 'package-lock.json');
+    const files = [[pin.file, moveManifestRange], ...(tracked.has(lockfile) ? [[lockfile, moveLockfileRange]] : [])];
+    try {
+      const edits = [];
+      for (const [file, move] of files) edits.push([file, move(file, await fs.readFile(path.join(ROOT, file), 'utf8'), pin.range, to)]);
+      if (write) for (const [file, text] of edits) await fs.writeFile(path.join(ROOT, file), text);
+      moved.push({ file: pin.file, line: pin.line, where: pin.where, from: pin.range, to, files: edits.map(([file]) => file) });
+    } catch (err) {
+      console.error(`::warning::${err.message}`);
+    }
+  }
+  return moved;
+}
+
 async function run(args) {
   const today = new Date().toISOString().slice(0, 10);
+  const write = !args.flags['dry-run'];
   const current = JSON.parse(await fs.readFile(FLOORS_PATH, 'utf8'));
   const proposal = proposeFloors(current, await readSources(), today);
-  const behind = findViolations(proposal.next, collectPins(ROOT, proposal.next), { enginesExempt: ENGINES_EXEMPT });
-  const summary = renderSummary({ ...proposal, behind, today });
+  const found = findingsAt(proposal.next);
+  // Pins move only with a floor: a quiet week writes nothing at all.
+  const moved = proposal.changes.length ? await movePins(proposal.next, found, write) : [];
+  // Judged again from the tree once written, so "still behind" is read, not assumed.
+  const behind = write && moved.length ? findingsAt(proposal.next) : found.filter((f) => !moved.some((m) => m.where === f.where));
+  const summary = renderSummary({ ...proposal, moved, behind, today });
   process.stdout.write(summary);
   for (const note of proposal.notes.filter((n) => /could not be read/.test(n))) console.error(`::warning::${note}`);
   if (args.options.summary) await fs.writeFile(args.options.summary, summary);
-  if (proposal.changes.length && !args.flags['dry-run']) await fs.writeFile(FLOORS_PATH, serialise(proposal.next));
+  if (args.options.body) await fs.writeFile(args.options.body, renderPullRequestBody({ summary, moved, behind, runUrl: args.options['run-url'] }));
+  if (proposal.changes.length && write) await fs.writeFile(FLOORS_PATH, serialise(proposal.next));
 }
 
 async function main(argv) {
   let args;
   try {
-    args = parseArgs(argv, { flags: ['dry-run', 'help'], options: ['summary'] });
+    args = parseArgs(argv, { flags: ['dry-run', 'help'], options: ['summary', 'body', 'run-url'] });
+    if (args.options.body && !args.options['run-url']) throw new Error('--body needs --run-url, the run the body names');
   } catch (err) {
     console.error(`${err.message}\n${USAGE}`);
     return 2;

@@ -44,6 +44,40 @@ function readPackageJson(root, file) {
   return { pins: [{ file, line, where, kind: 'node', raw: engines, range: engines }], problems: [] };
 }
 
+/**
+ * A package-lock.json's root entry repeats its package.json's engines.node,
+ * and npm rewrites it from there on the next install. One that disagrees is
+ * a finding rather than a pin: left alone, the old range would ride into
+ * whichever unrelated pull request next runs `npm install` in that package.
+ */
+function readLockfile(root, file) {
+  const manifest = posix.join(posix.dirname(file), 'package.json');
+  const where = `${file} > packages[""].engines.node`;
+  let locked;
+  let declared;
+  try {
+    locked = JSON.parse(read(root, file)).packages?.['']?.engines?.node;
+    declared = JSON.parse(read(root, manifest)).engines?.node;
+  } catch (err) {
+    return { pins: [], problems: [{ file, line: 0, where, kind: 'node', raw: '', message: `cannot compare with ${manifest}: ${err.message}` }] };
+  }
+  if (locked === declared) return empty();
+  const shown = (range) => (range === undefined ? 'no engines.node' : `engines.node "${range}"`);
+  return {
+    pins: [],
+    problems: [
+      {
+        file,
+        line: 0,
+        where,
+        kind: 'node',
+        raw: locked ?? '',
+        message: `records ${shown(locked)} where ${manifest} declares ${shown(declared)}; run npm install in ${posix.dirname(file)} so the two agree`,
+      },
+    ],
+  };
+}
+
 const VERSION_FILES = { '.nvmrc': 'node', '.node-version': 'node', '.python-version': 'python' };
 
 /** .nvmrc, .node-version, .python-version: nvm, fnm, volta and pyenv read the first line, `v26` and `26` alike. */
@@ -94,6 +128,7 @@ const FILE_READERS = [
   { owns: (file) => file === JOB_IMAGES_FILE, read: (root, file, floors) => readJobImages(file, read(root, file), floors) },
   { owns: (file, base) => Object.hasOwn(VERSION_FILES, base), read: readVersionFile },
   { owns: (file, base) => base === 'package.json', read: readPackageJson },
+  { owns: (file, base) => base === 'package-lock.json', read: readLockfile },
   { owns: (file) => file.endsWith('.tf'), read: readTerraform },
   {
     owns: (file) => file === AVM,
