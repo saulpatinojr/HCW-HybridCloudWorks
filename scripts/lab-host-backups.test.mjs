@@ -197,6 +197,10 @@ case "$1 $2" in
     [ "\${STUB_VAULT_RENEW_FAIL:-0}" = 1 ] && { echo 'Error renewing token: permission denied' >&2; exit 2; }
     printf 'Key    Value\\n---    -----\\ntoken  %s\\n' "$VAULT_TOKEN"; exit 0 ;;
   "token lookup")
+    if [ "\${3:-}" = -accessor ]; then
+      [ "\${STUB_VAULT_UNREACHABLE:-0}" = 1 ] && { echo 'Error looking up token: dial tcp 127.0.0.1:8200: connect: connection refused' >&2; exit 2; }
+      case " \${STUB_VAULT_VALID_ACCESSORS:-} " in *" $4 "*) printf 'Key   Value\\n'; exit 0 ;; *) echo 'Error looking up token: * invalid accessor' >&2; exit 2 ;; esac
+    fi
     case "$valid" in *" \${VAULT_TOKEN:-} "*) ;; *) echo 'Error looking up token: permission denied' >&2; exit 2 ;; esac
     if [ "\${3:-}" = -format=json ]; then printf '{\\n  "data": {\\n    "accessor": "accessor-via-lookup",\\n    "expire_time": "2026-11-13T03:45:00Z"\\n  }\\n}\\n' "$VAULT_TOKEN"; else printf 'Key   Value\\n'; fi; exit 0 ;;
   "policy write") cat > "$STUB_DIR/policy.$3"; exit 0 ;;
@@ -424,22 +428,50 @@ describe.skipIf(!bashUsable)('the helpers, run', () => {
       expect(() => statSync(join(dir, 'etc', 'revoke-pending'))).toThrow();
     });
 
-    it('says so when the replaced token could not be revoked, keeps its accessor, and retries it next run', () => {
+    it('says so when the replaced token could not be revoked, keeps its accessor, and retries it on the next run, forced or not', () => {
       mkdirSync(join(dir, 'etc'));
       writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-old-working-token-0000001\n');
       writeFileSync(join(dir, 'etc', 'vault-token.accessor'), 'accessor-of-the-old-token\n');
       const valid = `${owner} stand-in-old-working-token-0000001 stand-in-fresh-snapshot-token-00001`;
-      const forced = bash(helper('hcw-vault-backup-seed'), ['--force'], { STUB_VAULT_VALID_TOKENS: valid, STUB_VAULT_REVOKE_FAIL: '1' }, `${owner}\n`);
+      const forced = bash(helper('hcw-vault-backup-seed'), ['--force'], { STUB_VAULT_VALID_TOKENS: valid, STUB_VAULT_VALID_ACCESSORS: 'accessor-of-the-old-token', STUB_VAULT_REVOKE_FAIL: '1' }, `${owner}\n`);
       expect(forced.status).toBe(0);
       expect(forced.stdout).toContain('stored the snapshot token');
-      expect(forced.stderr).toContain('WARNING: the previous snapshot token is still valid and could not be revoked');
+      expect(forced.stderr).toContain('WARNING: a superseded snapshot token (accessor accessor-of-the-old-token) could not be revoked and may still be valid');
       expect(forced.stderr).toContain('vault token revoke -accessor accessor-of-the-old-token');
       expect(readFileSync(join(dir, 'etc', 'revoke-pending'), 'utf8')).toBe('accessor-of-the-old-token\n');
-      // The next run, with revocation working again, clears it before anything else.
-      const next = bash(helper('hcw-vault-backup-seed'), ['--force'], { STUB_VAULT_VALID_TOKENS: valid }, `${owner}\n`);
+      // The intent was recorded before the new token was published: pending_add precedes the token write in the script.
+      expect(seed.indexOf('pending_add "$old_accessor"')).toBeLessThan(seed.indexOf('write_atomically "$token_file"'));
+      // A plain run with a working token does not take the early exit while something is pending:
+      // it asks for the owner's token, retries, clears the list and then says nothing else changed.
+      const next = bash(helper('hcw-vault-backup-seed'), [], { STUB_VAULT_VALID_TOKENS: valid, STUB_VAULT_VALID_ACCESSORS: 'accessor-of-the-old-token' }, `${owner}\n`);
       expect(next.status).toBe(0);
       expect(next.stdout).toContain('revoked the superseded snapshot token with accessor accessor-of-the-old-token');
+      expect(next.stdout).toContain('already stored');
       expect(() => statSync(join(dir, 'etc', 'revoke-pending'))).toThrow();
+      expect(readFileSync(join(dir, 'etc', 'vault-token'), 'utf8')).toBe('stand-in-fresh-snapshot-token-00001\n');
+    });
+
+    it('drops a pending accessor Vault no longer knows, and keeps one it cannot ask about', () => {
+      mkdirSync(join(dir, 'etc'));
+      writeFileSync(join(dir, 'etc', 'vault-token'), 'stand-in-fresh-snapshot-token-00001\n');
+      writeFileSync(join(dir, 'etc', 'vault-token.accessor'), 'accessor-fresh-00001\n');
+      writeFileSync(join(dir, 'etc', 'revoke-pending'), 'accessor-long-gone\naccessor-unknowable\n');
+      const valid = { STUB_VAULT_VALID_TOKENS: `${owner} stand-in-fresh-snapshot-token-00001`, STUB_VAULT_REVOKE_FAIL: '1' };
+      // Revocation refused, lookup says the accessor is invalid: the token is gone, so the entry goes.
+      const gone = bash(helper('hcw-vault-backup-seed'), [], { ...valid, STUB_VAULT_VALID_ACCESSORS: 'accessor-unknowable' }, `${owner}\n`);
+      expect(gone.status).toBe(0);
+      expect(gone.stdout).toContain('accessor accessor-long-gone no longer exists in Vault');
+      expect(gone.stderr).toContain('(accessor accessor-unknowable) could not be revoked and may still be valid');
+      expect(readFileSync(join(dir, 'etc', 'revoke-pending'), 'utf8')).toBe('accessor-unknowable\n');
+      // Vault unreachable for the lookup: ambiguous, so the entry stays.
+      const unreachable = bash(helper('hcw-vault-backup-seed'), [], { ...valid, STUB_VAULT_UNREACHABLE: '1' }, `${owner}\n`);
+      expect(unreachable.status).toBe(0);
+      expect(readFileSync(join(dir, 'etc', 'revoke-pending'), 'utf8')).toBe('accessor-unknowable\n');
+      // A working token with nothing pending needs no token on stdin at all.
+      rmSync(join(dir, 'etc', 'revoke-pending'));
+      const quiet = bash(helper('hcw-vault-backup-seed'), [], { STUB_VAULT_VALID_TOKENS: 'stand-in-fresh-snapshot-token-00001' }, '');
+      expect(quiet.status).toBe(0);
+      expect(quiet.stdout).toContain('nothing was changed (--force replaces it)');
     });
 
     it('fails before asking Vault when the token directory cannot be made, and revokes the token it created when it cannot be stored', () => {

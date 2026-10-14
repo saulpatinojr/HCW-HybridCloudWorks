@@ -114,16 +114,22 @@ usable as it. A stored token that still works is left alone unless `--force`
 is given. The owner's token is used for the policy, the token and the
 revocations and kept nowhere; nothing the seed prints holds a token.
 
-**The lifecycle is kept honest on both sides.** One seed runs at a time (a
-lock beside the token file), so two cannot mint two tokens and store one. A
-token created but not stored (the directory unwritable, the rename refused)
-is revoked again before the seed fails, so no token exists in Vault that no
-file names. `--force` revokes the token it replaces by the accessor kept
-beside it, with the owner's token; when that revocation fails and the old
-token still answers a lookup, the seed says so on stderr with the exact
-`vault token revoke -accessor …` line, keeps the accessor in
-`/etc/hcw/backups/revoke-pending`, and retries it at the start of the next
-run, rather than calling the replacement complete.
+**The lifecycle is a reconciliation, not a hope.** One seed runs at a time
+(a lock beside the token file), so two cannot mint two tokens and store one.
+A token created but not stored (the directory unwritable, the rename
+refused) is revoked again before the seed fails, so no token exists in Vault
+that no file names. Replacing a token is three steps in a fixed order: the
+old token's accessor is recorded in `/etc/hcw/backups/revoke-pending`
+(written whole, by rename), then the new token is published, then
+everything pending is revoked with the owner's token. An interruption
+between the steps leaves the intent on disk, and every run, forced or not,
+works the pending list before anything else; a run with a working token and
+nothing pending is the only one that asks for no token on stdin. An
+accessor leaves the list only when Vault revoked it or says it no longer
+exists (`invalid accessor`); a revocation that fails for any other reason,
+Vault unreachable included, stays, is said on stderr with the exact `vault
+token revoke -accessor …` line, and is retried next run. The seed never
+calls a replacement complete while a predecessor may still be valid.
 
 **Where it is stored, and why a file.** A root-only file, for the reason the
 Coder rotation credential is one: the unit runs as root at timer time with
