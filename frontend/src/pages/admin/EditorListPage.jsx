@@ -36,6 +36,14 @@ import {
   PenTool,
 } from 'lucide-react';
 
+/**
+ * The server's list ceiling (functions/src/lib/cms-content.js LIST_MAX_LIMIT).
+ * A board that comes back exactly this long was cut, and says so (AP-F6,
+ * #930); before that the cut was silent and the search ran over the part
+ * that arrived.
+ */
+export const LIST_PAGE = 500;
+
 const EDITOR_HELP = [
   'What arrives here: items approved in the Review Queue, forge output graded as Forge ready, and anything the inspector marked Needs rework.',
   'Pre-live drafts are the work: open one to edit its text, metadata, images and publish date. Live items are listed below them so a published page can be edited too.',
@@ -195,23 +203,41 @@ export default function EditorListPage() {
   const { authReady } = useAuthReady();
 
   const listContent = (qs) => getJSON(`cms/content?${qs}`).then((res) => res.items || []);
-  const { data: liveItems, loading: liveLoading } = usePublicData(
-    () => listContent('live=true&limit=500'),
-    authReady ? 'editor:live' : ''
+  // Retry re-keys the three reads; usePublicData fetches again on a new key.
+  const [attempt, setAttempt] = useState(0);
+  const {
+    data: liveItems,
+    loading: liveLoading,
+    error: liveError,
+  } = usePublicData(
+    () => listContent(`live=true&limit=${LIST_PAGE}`),
+    authReady ? `editor:live:${attempt}` : ''
   );
-  const { data: archivedItems, loading: archiveLoading } = usePublicData(
-    () => listContent('status=archived&limit=500'),
-    authReady ? 'editor:archived' : ''
+  const {
+    data: archivedItems,
+    loading: archiveLoading,
+    error: archiveError,
+  } = usePublicData(
+    () => listContent(`status=archived&limit=${LIST_PAGE}`),
+    authReady ? `editor:archived:${attempt}` : ''
   );
-  const { data: draftItems, loading: draftLoading } = usePublicData(
-    () => listContent('status=editing,approved,forge_ready,needs_rework&limit=500'),
-    authReady ? 'editor:drafts' : ''
+  const {
+    data: draftItems,
+    loading: draftLoading,
+    error: draftError,
+  } = usePublicData(
+    () => listContent(`status=editing,approved,forge_ready,needs_rework&limit=${LIST_PAGE}`),
+    authReady ? `editor:drafts:${attempt}` : ''
   );
 
   const loading = liveLoading || archiveLoading || draftLoading;
+  // The hooks' errors were read by nobody: a 401 or a 5xx rendered as "No
+  // items match your filters" (AP-F6, #930).
+  const loadError = liveError || draftError || archiveError;
   const liveList = useMemo(() => liveItems ?? [], [liveItems]);
   const draftList = useMemo(() => draftItems ?? [], [draftItems]);
   const archivedList = useMemo(() => archivedItems ?? [], [archivedItems]);
+  const truncated = [liveList, draftList, archivedList].some((list) => list.length >= LIST_PAGE);
 
   // Live board state
   const [search, setSearch] = useState('');
@@ -332,7 +358,26 @@ export default function EditorListPage() {
           </div>
         )}
 
-        {!loading && filteredLive.length === 0 && (
+        {!loading && loadError && (
+          <EmptyState
+            variant="error"
+            title="The editor lists could not be loaded"
+            description={loadError.message || 'The request failed.'}
+            onRetry={() => setAttempt((n) => n + 1)}
+          />
+        )}
+
+        {!loading && !loadError && truncated && (
+          <p
+            role="status"
+            className="mb-0 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            The first {LIST_PAGE} items of a board are shown. Anything older is not in this list or
+            its search.
+          </p>
+        )}
+
+        {!loading && !loadError && filteredLive.length === 0 && (
           <EmptyState
             variant={search || typeFilter !== 'all' ? 'filtered' : 'empty'}
             title={

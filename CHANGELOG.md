@@ -57,6 +57,17 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Admin dashboard and Editor list say when a read failed** (AP-F5 #929,
+  AP-F6 #930). The dashboard rendered "You're all caught up" over zero
+  counts when the snapshot call failed, with a small red line beneath; it
+  now shows an error state with Try again, and a later failed re-read
+  keeps the last numbers with a "Numbers may be stale" badge and a Retry
+  button beside the reason. The Editor list ignored its three reads'
+  errors, so a 401 or a 5xx rendered as "No items match your filters"; it
+  now shows the failure with Try again, which re-reads all three boards,
+  and a board that comes back exactly at the server's 500-item limit
+  carries a banner saying older items are not in the list or its search.
+  `DashboardPage.test.jsx` and a new `EditorListPage.test.jsx` pin both.
 - **Lab host: the add-on secrets are read with the `vars` lookup.** The
   `addons` role built each add-on's secret environment with the `vars`
   dictionary, which ansible-core 2.21 warns about on every run and 2.24

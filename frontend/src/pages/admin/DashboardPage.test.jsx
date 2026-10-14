@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import DashboardPage, { PIPELINE_STAGES } from './DashboardPage';
@@ -225,5 +225,48 @@ describe('DashboardPage', () => {
     screen.getByRole('button', { name: /Recount/ }).click();
     await waitFor(() => expect(postJSON).toHaveBeenCalledWith('recalculateDashboardStats', {}));
     await waitFor(() => expect(postJSON).toHaveBeenCalledWith('getAdminDashboardSnapshot', {}));
+  });
+});
+
+describe('DashboardPage when the snapshot read fails (AP-F5, #929)', () => {
+  beforeEach(() => {
+    postJSON.mockReset();
+  });
+
+  it('shows an error state with a way to try again, never "all caught up"', async () => {
+    postJSON.mockImplementation((route) =>
+      route === 'getAdminDashboardSnapshot'
+        ? Promise.reject(new Error('503 from the API'))
+        : answer(route)
+    );
+    renderDashboard();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The dashboard could not be loaded');
+    expect(alert).toHaveTextContent('503 from the API');
+    expect(screen.queryByText(/all caught up/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/pieces live/)).not.toBeInTheDocument();
+
+    // Try again re-reads; with the backend back the dashboard renders.
+    postJSON.mockImplementation(answer);
+    fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+    expect(await screen.findByText('6 items waiting for you')).toBeInTheDocument();
+  });
+
+  it('keeps the last numbers and marks them stale when a later read fails', async () => {
+    postJSON.mockImplementation(answer);
+    renderDashboard();
+    expect(await screen.findByText('6 items waiting for you')).toBeInTheDocument();
+
+    // Recount: the recalculation succeeds and the re-read fails.
+    postJSON.mockImplementation((route) =>
+      route === 'getAdminDashboardSnapshot' ? Promise.reject(new Error('timed out')) : answer(route)
+    );
+    fireEvent.click(screen.getByRole('button', { name: /recount/i }));
+
+    expect(await screen.findByText('Numbers may be stale')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('timed out');
+    expect(screen.getByText('6 items waiting for you')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^retry$/i })).toBeInTheDocument();
   });
 });
