@@ -124,12 +124,21 @@ old token's accessor is recorded in `/etc/hcw/backups/revoke-pending`
 everything pending is revoked with the owner's token. An interruption
 between the steps leaves the intent on disk, and every run, forced or not,
 works the pending list before anything else; a run with a working token and
-nothing pending is the only one that asks for no token on stdin. An
+nothing pending is the only one that asks for no token on stdin. The token
+still in the file is never revoked from that list: its accessor, asked of
+Vault first and read from the copy beside it only when Vault no longer
+answers for it, is protected, and a pending record that names it is a
+replacement that did not complete, dropped with a note. A new token that
+cannot be stored is revoked again and the retirement recorded for its
+predecessor is withdrawn, so the predecessor stays the stored token. An
 accessor leaves the list only when Vault revoked it or says it no longer
 exists (`invalid accessor`); a revocation that fails for any other reason,
 Vault unreachable included, stays, is said on stderr with the exact `vault
-token revoke -accessor …` line, and is retried next run. The seed never
-calls a replacement complete while a predecessor may still be valid.
+token revoke -accessor …` line, and is retried next run. Whether the stored
+token works is judged after the list was worked, not before: a plain run
+that finds it broken replaces it and says so, rather than reporting nothing
+changed. The seed never calls a replacement complete while a predecessor
+may still be valid.
 
 **Where it is stored, and why a file.** A root-only file, for the reason the
 Coder rotation credential is one: the unit runs as root at timer time with

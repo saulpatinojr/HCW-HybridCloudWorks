@@ -23,12 +23,16 @@
 # old one's accessor in /etc/hcw/backups/revoke-pending, then publishes the
 # new token, then revokes everything pending: an interruption between those
 # steps leaves the intent on disk, and every run, forced or not, works the
-# pending list before anything else, with the owner's token. An accessor
-# leaves the list only when Vault revoked it or says it no longer exists; a
-# revocation that fails for any other reason stays, is said on stderr with
-# the exact line to run by hand, and is retried next run. Nothing printed
-# holds a token. Exit 0 stored or unchanged, 1 when Vault refused, 2 on
-# usage, a refused line or another seed running.
+# pending list before anything else, with the owner's token. The stored
+# token's own accessor is never revoked from that list: a record that still
+# names the token in the file is a replacement that did not happen, and is
+# dropped. An accessor leaves the list only that way, or when Vault revoked
+# it or says it no longer exists; a revocation that fails for any other
+# reason stays, is said on stderr with the exact line to run by hand, and is
+# retried next run. "Nothing was changed" is said only of a stored token that
+# still works after the list was worked. Nothing printed holds a token. Exit
+# 0 stored or unchanged, 1 when Vault refused, 2 on usage, a refused line or
+# another seed running.
 set -euo pipefail
 umask 077
 
@@ -69,14 +73,37 @@ write_atomically() {
 pending_add() {
   { [ -f "$pending_file" ] && cat "$pending_file"; printf '%s\n' "$1"; } | awk 'NF && !seen[$0]++' | write_atomically "$pending_file"
 }
-# Revoke every accessor recorded as pending. An accessor leaves the list when
-# Vault revoked it, or says it no longer exists; anything else (a refused
-# revocation, Vault unreachable) keeps it, said and retried next run.
+pending_remove() {
+  [ -f "$pending_file" ] || return 0
+  local kept
+  kept="$(awk -v drop="$1" 'NF && $0 != drop' "$pending_file")"
+  if [ -n "$kept" ]; then printf '%s\n' "$kept" | write_atomically "$pending_file"; else rm -f "$pending_file"; fi
+}
+# The accessor Vault knows the token in the file by: asked of Vault first
+# (the file beside it is a copy that can go stale), the file when Vault no
+# longer answers for the token.
+stored_accessor() {
+  local token="$1" accessor=''
+  [ -n "$token" ] && accessor="$(VAULT_TOKEN="$token" "$vault_bin" token lookup -format=json 2>/dev/null | json_value accessor || true)"
+  if [ -z "$accessor" ] && [ -f "$accessor_file" ]; then accessor="$(tr -d '\r\n' < "$accessor_file")"; fi
+  printf '%s' "$accessor"
+}
+# Revoke every accessor recorded as pending, except the one that still names
+# the token in the file ($1): that record is a replacement that never
+# completed, and revoking it would take the working token away. An accessor
+# leaves the list when Vault revoked it, or says it no longer exists;
+# anything else (a refused revocation, Vault unreachable) keeps it, said and
+# retried next run.
 pending_work() {
+  local protected="${1:-}"
   [ -s "$pending_file" ] || { rm -f "$pending_file"; return 0; }
   local accessor kept='' lookup
   while IFS= read -r accessor; do
     [ -n "$accessor" ] || continue
+    if [ -n "$protected" ] && [ "$accessor" = "$protected" ]; then
+      say "the record for accessor $accessor was a replacement that did not complete; the stored token keeps working and the record is dropped"
+      continue
+    fi
     if "$vault_bin" token revoke -accessor "$accessor" >/dev/null 2>&1; then
       say "revoked the superseded snapshot token with accessor $accessor"
       continue
@@ -129,12 +156,19 @@ unset line
 "$vault_bin" token lookup >/dev/null 2>&1 \
   || fail 'Vault did not accept the token on stdin: it has expired or been revoked, or Vault is sealed (sudo systemctl status vault)'
 
-# Unfinished business first: revocations an earlier run recorded and could not finish.
-pending_work
+# Unfinished business first: revocations an earlier run recorded and could
+# not finish, never the token still in the file.
+old_accessor="$(stored_accessor "$stored")"
+pending_work "$old_accessor"
 
-if [ "$force" -eq 0 ] && [ "$stored_works" -eq 1 ]; then
+# Whether the stored token works is judged now, after the list was worked,
+# not from the reading taken before it.
+if [ "$force" -eq 0 ] && [ -n "$stored" ] && VAULT_TOKEN="$stored" "$vault_bin" token lookup >/dev/null 2>&1; then
   say "a working snapshot token is already stored in $token_file; nothing else was changed (--force replaces it)"
   exit 0
+fi
+if [ "$force" -eq 0 ] && [ -n "$stored" ]; then
+  say "the stored snapshot token no longer works; replacing it"
 fi
 
 # The policy: the snapshot read and the token's own upkeep, nothing else.
@@ -158,35 +192,39 @@ unset created
 [ -n "$new_accessor" ] || fail 'Vault answered the token create without an accessor'
 
 # A token that exists in Vault and in no file is one nothing renews and
-# nothing can find, so a token that cannot be stored is revoked again.
+# nothing can find, so a token that cannot be stored is revoked again, and
+# the retirement this run recorded for its predecessor is withdrawn: the
+# predecessor stays the stored token.
+enqueued=''
 unpublished() {
   VAULT_TOKEN="$new" "$vault_bin" token revoke -self >/dev/null 2>&1 \
     || warn "the token just created could not be revoked either; revoke it by hand: vault token revoke -accessor $new_accessor"
+  if [ -n "$enqueued" ]; then
+    pending_remove "$enqueued" || warn "the previous token's accessor $enqueued stays in $pending_file; the next run drops it as the stored token's own"
+  fi
   fail "$*"
 }
 
 # Retirement intent before publication: the token being replaced is recorded
 # as pending before the new one is in place, so an interruption between the
 # two leaves a run that finishes the job rather than a stranded predecessor.
-old_accessor=''
-if [ -f "$accessor_file" ]; then old_accessor="$(tr -d '\r\n' < "$accessor_file")"; fi
-if [ -n "$stored" ] && [ -z "$old_accessor" ]; then
-  old_accessor="$(VAULT_TOKEN="$stored" "$vault_bin" token lookup -format=json 2>/dev/null | json_value accessor || true)"
-fi
 if [ -n "$old_accessor" ] && [ "$old_accessor" != "$new_accessor" ]; then
   pending_add "$old_accessor" || unpublished "cannot record the previous token's accessor in $pending_file; the token just created was revoked again"
-elif [ -n "$stored" ] && [ "$stored_works" -eq 1 ]; then
+  enqueued="$old_accessor"
+elif [ -n "$stored" ] && VAULT_TOKEN="$stored" "$vault_bin" token lookup >/dev/null 2>&1; then
   # A valid predecessor whose accessor Vault would not tell: revoke it by itself, now, before it is forgotten.
   VAULT_TOKEN="$stored" "$vault_bin" token revoke -self >/dev/null 2>&1 \
     || warn 'the previous snapshot token could not be revoked and Vault did not report its accessor; it expires unrenewed within its period'
 fi
 
 printf '%s\n' "$new" | write_atomically "$token_file" || unpublished "cannot write $token_file; the token just created was revoked again"
-printf '%s\n' "$new_accessor" | write_atomically "$accessor_file" || warn "the accessor could not be written to $accessor_file; it is $new_accessor"
+printf '%s\n' "$new_accessor" | write_atomically "$accessor_file" \
+  || warn "the accessor could not be written to $accessor_file; it is $new_accessor, and the next run asks Vault for it rather than trusting the file"
 unset new stored
 
-# Now the retirement itself, with the owner's token.
-pending_work
+# Now the retirement itself, with the owner's token. The token just stored is
+# protected by its accessor, which is never on the list.
+pending_work "$new_accessor"
 
 expires="$(VAULT_TOKEN="$(cat "$token_file")" "$vault_bin" token lookup -format=json 2>/dev/null | json_value expire_time || true)"
 say "stored the snapshot token for policy $policy in $token_file (accessor $new_accessor); hcw-vault-backup.service renews it nightly, and unrenewed it expires on ${expires:-a date Vault did not report}. Take the first snapshot now: sudo systemctl start hcw-vault-backup.service"
