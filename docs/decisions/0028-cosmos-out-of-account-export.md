@@ -167,11 +167,25 @@ whole thing, tear it down. Cost model: about $3 in write request units per
 drill, once a quarter. The runbook records what was *restored* and how long it
 took, not what was configured.
 
-### 7. Functions host storage stays LRS
+### 7. Functions host storage: LRS when this was written, GRS since ADR 0031
 
-`stsitefuncprodcus01` holds deployment packages and host state. Every artefact
-in it is rebuilt by `deploy-functions.yml` from a commit, so a loss costs one
-redeploy. Accepted; recorded here so #231's checkbox has a decision behind it.
+> **Superseded on this point by [ADR 0031](0031-security-scanner-owner-decisions.md)
+> (2026-09-14):** the owner chose geo-redundancy for the host account
+> (checkov CKV_AZURE_206, trivy AZU-0058, "Function host storage
+> geo-redundancy: yes"), and `infra/storage.tf` sets `Standard_GRS`. The
+> estate assessment of 2026-10-06 (PLAT-7, #967) read Terraform as
+> disagreeing with this section; it is this section that is older.
+
+`stsitefuncprodcus01` holds two kinds of thing, and the two decisions are
+about different kinds. The **deployment packages**, in the private
+`function-releases` container the deployment runbook's break-glass
+re-publish reads, are rebuilt by `deploy-functions.yml` from a commit, so
+their loss costs one redeploy: that is the reasoning this section recorded
+in 2026-09, and it still holds. The **host state** (timer schedule status,
+singleton and listener leases, in-flight queue messages) has no commit to
+be rebuilt from, so ADR 0031 chose GRS: the geo copy preserves it through a
+regional loss, for cents a month on an account holding a few megabytes.
+Recorded here so #231's checkbox has a decision behind it.
 
 ## Consequences and accepted risks
 

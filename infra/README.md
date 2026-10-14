@@ -109,8 +109,14 @@ non-breaking:
   static-first architecture), Key Vault firewall defaults, and allowed
   regions. Reconcile via policy exemptions or resource changes at absorption
   time — tracked in the Deployment Runbook's ALZ section.
-- **Do not pre-build hub networking.** The VNet here is a workload spoke-in-
-  waiting; peering to an ALZ hub is additive when the hub exists.
+- **Hub networking is the free half only.** `hub.tf` holds the Platform
+  Connectivity hub virtual network, its address plan, network security
+  groups, a route table and the peering to the workload spoke, and nothing
+  with an hourly charge; its header lists what is deliberately absent
+  (Azure Firewall, Bastion, VPN Gateway). Absorption into an ALZ replaces
+  that peering with the ALZ hub's; it does not add a first one. (PLAT-9,
+  #969: this line used to say not to pre-build hub networking while
+  `hub.tf` existed.)
 
 When absorption happens, the sequence is: inventory policy conflicts in audit
 mode → remediate or exempt → move the subscription → verify budget, RBAC and

@@ -91,6 +91,16 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Operator documentation drift** (PLAT-9, #969). `infra/README.md` said not
+  to pre-build hub networking while `hub.tf` existed; the cost analysis
+  called the Management budget "declared, not applied" after the apply had
+  landed (read live 2026-10-14); ADR 0028 section 7 said host storage stays
+  LRS when ADR 0031 (2026-09-14) chose GRS and Terraform sets it; and the
+  lab host page's summary and identity rows still read "planned" for a
+  host that has run since 2026-09-26. Each line is corrected with the read
+  that corrects it, and a docs-build gate, `scripts/docs/check_stale_state.py`,
+  fails the build on the stale phrases the review found an operator acting
+  on ("State: planned", "not yet armed", "delivery is unproven").
 - **The route error boundary recovers on navigation, and a failed sign-in
   shows its code** (AP-F7 #931, AP-F8 #932). One render error on any admin
   route kept the failure card on every admin route until a hard refresh,
