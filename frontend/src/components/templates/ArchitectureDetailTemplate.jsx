@@ -523,7 +523,7 @@ export default function ArchitectureDetailTemplate({ provider = 'aws' }) {
                             className="w-1.5 h-4 bg-emerald-500 rounded-full"
                             aria-hidden="true"
                           />
-                          FinOps Cost Traps (FOCUS 1.1 Specification)
+                          FinOps Cost Traps (FOCUS 1.4 Specification)
                         </CardTitle>
                       </CardHeader>
                       <CardContent>

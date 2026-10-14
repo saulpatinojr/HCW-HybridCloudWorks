@@ -301,9 +301,14 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # step that asserts the posture it found is the posture it left. That makes
     # Deny survivable, so the posture becomes a variable.
     #
-    # Still false by default. The window has to be merged and observed working
-    # on a real deploy before this flips, because the first deploy after a
-    # premature flip is the one that cannot get in to fix it.
+    # True by default since 2026-10-14 (PLAT-10, #970), on two observations:
+    # the window was merged and proven under Deny on 2026-08-25 (deploy run
+    # 32902534458, the day the workspace set the variable true), and the SCM
+    # default action read Deny on 2026-10-14 (#981). The interval between is
+    # not a recorded fact; monitor-functions-registered.yml and the deploy's
+    # SCM window steps are what read it. A fresh workspace that lacks the window
+    # steps sets it false first, because the first deploy after a premature
+    # Deny is the one that cannot get in to fix it.
     #
     # This closes the REACHABILITY half. The credential half is already closed
     # below: basic authentication is off on both SCM and FTP, so anything

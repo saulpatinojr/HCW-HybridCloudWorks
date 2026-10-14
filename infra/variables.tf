@@ -1052,11 +1052,15 @@ variable "functions_origin_lock_enabled" {
 # this runner's IP as an SCM allow rule, deploys, and removes it in an
 # always-run step that asserts the posture it found is the posture it left.
 #
-# Default false, matching the estate today (verified 2026-08-25:
-# scmIpSecurityRestrictionsDefaultAction = Allow). Arming it is a workspace
-# edit, and the order is not optional: the window must be merged and observed
-# working on a real deploy BEFORE this flips, because the first deploy after a
-# premature flip is the one that cannot get in to fix it.
+# Default true since 2026-10-14 (PLAT-10, #970). The workspace set it true on
+# 2026-08-25, the window was proven under Deny by deploy run 32902534458 that
+# day, and the SCM default action read Deny on 2026-10-14 (#981), so the code
+# default now says what the estate does; the plan for the flip is empty.
+# For a fresh workspace the order is still not optional: the window must be
+# merged and observed working on a real deploy BEFORE this is true there,
+# because the first deploy after a premature flip is the one that cannot get
+# in to fix it. Setting it false in a workspace is the way to stand a new
+# estate up.
 #
 # Turning it on does not remove the credential half, which is already closed —
 # basic authentication is off on both SCM and FTP, so anything reaching the
@@ -1064,7 +1068,7 @@ variable "functions_origin_lock_enabled" {
 variable "functions_scm_lock_enabled" {
   description = "Deny SCM/Kudu by default, admitting deploy runners through a per-run firewall window. Requires the SCM window steps in deploy-functions.yml"
   type        = bool
-  default     = false
+  default     = true
 }
 
 

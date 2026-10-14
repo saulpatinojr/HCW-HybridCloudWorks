@@ -170,12 +170,13 @@ jobs:
       # step adds a rule and the close step asserts the posture is unchanged,
       # rather than restoring a Deny it took away.
       #
-      # The baseline is READ rather than assumed. While
-      # infra/variables.tf functions_scm_lock_enabled is false the default
-      # action is Allow and this window is a no-op that costs one API call;
-      # when the owner flips it to Deny the same steps become load-bearing with
-      # no edit here. Asserting "unchanged" works in both postures, where
-      # asserting "Deny is back" would fail every deploy until the flip.
+      # The baseline is READ rather than assumed. With
+      # infra/variables.tf functions_scm_lock_enabled true (the default since
+      # 2026-10-14, and the workspace's value since 2026-08-25) the default
+      # action is Deny and these steps are load-bearing; with it false the
+      # window is a no-op that costs one API call. Asserting "unchanged" works
+      # in both postures, where asserting "Deny is back" would fail every
+      # deploy of a workspace that has the lock off.
       - name: Open SCM firewall window for this runner
         id: scmfw
         env:
