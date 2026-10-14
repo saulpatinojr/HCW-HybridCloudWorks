@@ -63,6 +63,7 @@ import CoderStatusCard from '@/components/labs/CoderStatusCard';
 import HowLabsWork from '@/components/labs/HowLabsWork';
 import LabArticles from '@/components/labs/LabArticles';
 import LabCard from '@/components/labs/LabCard';
+import LabPreflightCard from '@/components/labs/LabPreflightCard';
 import LabsEstateCard from '@/components/labs/LabsEstateCard';
 import LabsSlot from '@/components/labs/LabsSlot';
 import WorkspaceStatusBadge from '@/components/labs/WorkspaceStatusBadge';
@@ -198,6 +199,8 @@ export default function LabsLearnPage() {
         </header>
 
         <HowLabsWork />
+
+        <LabPreflightCard />
 
         {provider ? <ProviderLabs provider={provider} labs={labs} /> : <IndexLabs />}
 
