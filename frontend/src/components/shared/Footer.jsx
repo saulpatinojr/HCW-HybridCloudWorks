@@ -40,28 +40,36 @@ export default function Footer() {
             >
               About
             </Link>
-            <span className="text-slate-400" aria-hidden="true">|</span>
+            <span className="text-slate-400" aria-hidden="true">
+              |
+            </span>
             <Link
               to="/contact"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
             >
               Contact
             </Link>
-            <span className="text-slate-400" aria-hidden="true">|</span>
+            <span className="text-slate-400" aria-hidden="true">
+              |
+            </span>
             <a
               href="/privacy-policy"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
             >
               Privacy Policy
             </a>
-            <span className="text-slate-400" aria-hidden="true">|</span>
+            <span className="text-slate-400" aria-hidden="true">
+              |
+            </span>
             <a
               href="/terms-of-service"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
             >
               Terms
             </a>
-            <span className="text-slate-400" aria-hidden="true">|</span>
+            <span className="text-slate-400" aria-hidden="true">
+              |
+            </span>
             <Link
               to="/admin"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"

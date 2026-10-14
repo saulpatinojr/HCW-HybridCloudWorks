@@ -365,7 +365,8 @@ export default function HomePage() {
                   Azure Landing Zone Builder
                 </h2>
                 <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Assemble hub-spoke topologies component by component and download verified Terraform.
+                  Assemble hub-spoke topologies component by component and download verified
+                  Terraform.
                 </p>
               </div>
             </Link>
@@ -390,7 +391,8 @@ export default function HomePage() {
                   Ephemeral Cloud Labs
                 </h2>
                 <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Validate Terraform and Ansible playbooks in isolated container environments with zero setup.
+                  Validate Terraform and Ansible playbooks in isolated container environments with
+                  zero setup.
                 </p>
               </div>
             </Link>
