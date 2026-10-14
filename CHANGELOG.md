@@ -85,6 +85,16 @@ This project has not cut a tagged release; entries are grouped under
   puts the code and the full message on the clipboard, while the message
   itself, which names the authority and client id, stays off the screen.
   `App.boundary.test.jsx` and `AuthCallbackPage.test.jsx` pin both.
+- **The Publer proxy forwards only the paths and methods the Social Hub
+  sends, and every write through either proxy leaves an audit row** (AP-B3,
+  #938). `publerProxy` forwarded any verb to any Publer path with the
+  server's key and no trail, so an editor session could reach accounts,
+  members and workspace settings the Social Hub never touches.
+  `integrations-http.js` now names its five endpoints and three methods
+  (GET, POST, DELETE), and `rest-proxy.js` records every non-GET call,
+  refused ones included, in `admin_audit_logs` with the actor, the path as
+  sent and the outcome. `rest-proxy.test.js` sends every request the pages
+  make and asserts an unlisted path is refused for every verb.
 - **Landing zone HCL: the AWS and GCP emitters no longer hand state to
   generators that take none.** Eight calls in each of
   `frontend/src/lib/landingZone/hcl/aws/index.js` and `.../gcp/index.js`
