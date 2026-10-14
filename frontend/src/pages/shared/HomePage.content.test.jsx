@@ -264,3 +264,64 @@ describe('Platform Health', () => {
     }
   );
 });
+
+describe('Capabilities Matrix (Audit P1-4 & P3-3)', () => {
+  it('links all 4 provider architecture blueprints under Architectures', () => {
+    renderHome();
+    expect(screen.getByRole('link', { name: /Azure Architectures/i })).toHaveAttribute(
+      'href',
+      '/azure/architecture-designs'
+    );
+    expect(screen.getByRole('link', { name: /AWS Architectures/i })).toHaveAttribute(
+      'href',
+      '/aws/architecture-designs'
+    );
+    expect(
+      screen.getByRole('link', { name: /Google Cloud \(GCP\) Architectures/i })
+    ).toHaveAttribute('href', '/gcp/architecture-designs');
+    expect(screen.getByRole('link', { name: /FinOps Architectures/i })).toHaveAttribute(
+      'href',
+      '/finops/architecture-designs'
+    );
+  });
+
+  it('links all 7 learning hubs including Terraform, GitHub, VMware, and FOCUS 1.4 FinOps', () => {
+    renderHome();
+    expect(screen.getByRole('link', { name: /Azure Learning/i })).toHaveAttribute(
+      'href',
+      '/azure/education'
+    );
+    expect(screen.getByRole('link', { name: /AWS Learning/i })).toHaveAttribute(
+      'href',
+      '/aws/education'
+    );
+    expect(screen.getByRole('link', { name: /Google Cloud \(GCP\) Learning/i })).toHaveAttribute(
+      'href',
+      '/gcp/education'
+    );
+    expect(screen.getByRole('link', { name: /Terraform Learning/i })).toHaveAttribute(
+      'href',
+      '/terraform/education'
+    );
+    expect(screen.getByRole('link', { name: /GitHub Learning/i })).toHaveAttribute(
+      'href',
+      '/github/education'
+    );
+    expect(screen.getByRole('link', { name: /VMware Learning/i })).toHaveAttribute(
+      'href',
+      '/vmware/education'
+    );
+    expect(screen.getByRole('link', { name: /FinOps \(FOCUS 1\.4\) Learning/i })).toHaveAttribute(
+      'href',
+      '/finops/education'
+    );
+  });
+
+  it('standardizes on Google Cloud (GCP) across all capability pillars', () => {
+    renderHome();
+    expect(screen.getByRole('link', { name: /Google Cloud \(GCP\) Frameworks/i })).toHaveAttribute(
+      'href',
+      '/gcp/frameworks'
+    );
+  });
+});

@@ -160,6 +160,24 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     badge: 'Decisions',
     keywords: ['decision matrix', 'architecture', 'tradeoffs', 'evaluator', 'strategy'],
   },
+  {
+    id: 'tool-finops-focus-validator',
+    title: 'FinOps Schema Validator & Spec',
+    subtitle:
+      'FinOps Open Cost & Usage Specification (FOCUS 1.4) billing normalization and schema validator',
+    category: SEARCH_CATEGORIES.TOOLS,
+    path: '/finops/focus',
+    icon: 'center_focus_strong',
+    badge: 'FOCUS 1.4',
+    keywords: [
+      'focus 1.4',
+      'finops schema',
+      'validator',
+      'billing data',
+      'cost export',
+      'open cost',
+    ],
+  },
 
   // Browser Labs
   {
@@ -273,6 +291,17 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     icon: 'verified',
     badge: 'FOCUS 1.4',
     keywords: ['focp', 'finops cert', 'focus 1.4', 'practitioner', 'cost management', 'exam'],
+  },
+  {
+    id: 'cert-finops-fofa',
+    title: 'FinOps Certified FOCUS Analyst (FOCUS 1.4)',
+    subtitle:
+      'Cross-cloud billing dataset ingestion, interpretation, and FOCUS 1.4 schema compliance',
+    category: SEARCH_CATEGORIES.CERTS,
+    path: '/finops/education',
+    icon: 'verified',
+    badge: 'FOCUS 1.4',
+    keywords: ['fofa', 'focus analyst', 'focus 1.4', 'billing data', 'usage datasets', 'exam'],
   },
 ]);
 
