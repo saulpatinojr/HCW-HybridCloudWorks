@@ -34,6 +34,8 @@ import useDashboardCounts from '@/hooks/useDashboardCounts';
 import { NAV_GROUPS } from '@/config/adminNav';
 import DecisionCenter from '@/components/admin/dashboard/DecisionCenter';
 import StatTile from '@/components/admin/shared/StatTile';
+import EmptyState from '@/components/admin/shared/EmptyState';
+import { Badge } from '@/components/ui/badge';
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -236,7 +238,21 @@ function CountLink({ to, children }) {
   );
 }
 
-function DashboardHeader({ today, counts, loadError, recalculating, onRecalculate, onNewContent }) {
+/**
+ * The headline, the three header counts, and the honest line beneath them:
+ * the load error with a stale badge and Retry when a re-read failed, the
+ * Recount and New Content actions beside.
+ */
+function DashboardHeader({
+  today,
+  counts,
+  loadError,
+  stale,
+  onRetry,
+  recalculating,
+  onRecalculate,
+  onNewContent,
+}) {
   // The actions wrap below the text when the column is narrower than both:
   // side by side on a phone, they squeezed the headline onto four lines.
   return (
@@ -266,9 +282,27 @@ function DashboardHeader({ today, counts, loadError, recalculating, onRecalculat
           )}
         </p>
         {loadError && (
-          <p className="mt-2 mb-0 flex items-center gap-1.5 text-sm text-destructive" role="alert">
-            <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" /> {loadError}
-          </p>
+          // A failed re-read keeps the last numbers on screen and says they
+          // may be stale, with the way to try again beside the reason
+          // (AP-F5, #929). The numbers are not wrong, only old.
+          <div
+            className="mt-2 flex flex-wrap items-center gap-2 text-sm text-destructive"
+            role="alert"
+          >
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span>{loadError}</span>
+            {stale && (
+              <Badge variant="outline" className="border-destructive/50 text-destructive">
+                Numbers may be stale
+              </Badge>
+            )}
+            {onRetry && (
+              <Button variant="outline" size="sm" className="h-7" onClick={onRetry}>
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
+                Retry
+              </Button>
+            )}
+          </div>
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
@@ -459,10 +493,11 @@ function DashboardExplore() {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
+/** The admin home: pipeline, decisions, counts by type, and the Explore strip. */
 export default function DashboardPage() {
   const { authReady } = useAuthReady();
   const navigate = useNavigate();
-  const { snapshot, counts, loading, error, recalculate } = useDashboardCounts({
+  const { snapshot, counts, loading, error, refresh, recalculate } = useDashboardCounts({
     enabled: authReady,
     refetchOnNavigate: false,
   });
@@ -498,6 +533,26 @@ export default function DashboardPage() {
     );
   }
 
+  // A first read that failed is an outage, not an empty inbox (AP-F5, #929).
+  // This used to fall through to the celebratory heading over zero counts,
+  // with a small red line beneath, so a backend outage read as "no work":
+  // the unknown-versus-zero confusion the codebase has fixed elsewhere.
+  if (error && !snapshot) {
+    return (
+      <div className="space-y-6">
+        <p className="mb-0 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          {today}
+        </p>
+        <EmptyState
+          variant="error"
+          title="The dashboard could not be loaded"
+          description={error}
+          onRetry={refresh}
+        />
+      </div>
+    );
+  }
+
   // One gap token between sections (24 px). Each section owns its inside
   // spacing; nothing here carries a margin of its own, and the paragraphs
   // that close a block set `mb-0` over the `p` default in index.css.
@@ -507,6 +562,8 @@ export default function DashboardPage() {
         today={today}
         counts={counts}
         loadError={error || recalcError}
+        stale={Boolean(error && snapshot)}
+        onRetry={error ? refresh : null}
         recalculating={recalculating}
         onRecalculate={handleRecalculate}
         onNewContent={() => navigate('/admin/submit')}
