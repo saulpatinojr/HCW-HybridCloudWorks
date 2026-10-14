@@ -214,8 +214,12 @@ jobs:
       # before anything runs a repository file, each package file is compared
       # with HEAD as JSON with engines.node taken out of both sides
       # (packages[""].engines.node in a lockfile); any other difference
-      # refuses the run (CodeRabbit on #1160). Inline, for the guard's reason:
-      # nothing the patch touches can change it.
+      # refuses the run (CodeRabbit on #1160). The range itself must have
+      # existed before and still exist, stay on its line, and agree with the
+      # tracked lockfile or package.json beside it: what the updater's
+      # proposeMove() promises, held here without relying on the updater
+      # (CodeRabbit's retained concern, round 3). Inline, for the guard's
+      # reason: nothing the patch touches can change it.
       - name: Apply the patch; nothing but engines.node moved in a package file
         run: |
           set -euo pipefail
@@ -223,21 +227,37 @@ jobs:
           node --input-type=commonjs -e '
             const { execFileSync } = require("node:child_process");
             const { readFileSync } = require("node:fs");
+            const { posix } = require("node:path");
+            const enginesOf = (file, value) => (file.endsWith("package-lock.json") ? value.packages?.[""]?.engines : value.engines);
+            const rangeOf = (file, value) => enginesOf(file, value)?.node;
             const withoutRange = (file, value) => {
-              const engines = file.endsWith("package-lock.json") ? value.packages?.[""]?.engines : value.engines;
+              const engines = enginesOf(file, value);
               if (engines) delete engines.node;
               return JSON.stringify(value);
             };
+            const lineOf = (range) => /\d+/.exec(range)?.[0];
+            const git = (...args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 1 << 28 });
             const packages = readFileSync(process.argv[1], "utf8").split("\n").filter((f) => /(^|\/)package(-lock)?\.json$/.test(f));
-            const beyond = packages.filter((file) => {
-              const before = JSON.parse(execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8", maxBuffer: 1 << 28 }));
+            const problems = [];
+            for (const file of packages) {
+              const before = JSON.parse(git("show", `HEAD:${file}`));
               const after = JSON.parse(readFileSync(file, "utf8"));
-              return withoutRange(file, before) !== withoutRange(file, after);
-            });
-            if (beyond.length) {
-              console.log(`::error::The patch changes more than engines.node in: ${beyond.join(" ")}`);
-              process.exit(1);
+              const was = rangeOf(file, before);
+              const now = rangeOf(file, after);
+              if (was === undefined || now === undefined) problems.push(`${file}: the patch adds or removes engines.node`);
+              else if (lineOf(was) !== lineOf(now)) problems.push(`${file}: engines.node moves from "${was}" to "${now}", another line`);
+              if (withoutRange(file, before) !== withoutRange(file, after)) problems.push(`The patch changes more than engines.node in: ${file}`);
             }
+            const tracked = new Set(git("ls-files", "-z").split("\0"));
+            for (const dir of new Set(packages.map((f) => posix.dirname(f)))) {
+              const [manifest, lock] = ["package.json", "package-lock.json"].map((name) => posix.join(dir, name));
+              if (!tracked.has(manifest) || !tracked.has(lock)) continue;
+              const declared = rangeOf(manifest, JSON.parse(readFileSync(manifest, "utf8")));
+              const locked = rangeOf(lock, JSON.parse(readFileSync(lock, "utf8")));
+              if (declared !== locked) problems.push(`${lock} records engines.node "${locked}" where ${manifest} declares "${declared}"`);
+            }
+            for (const problem of problems) console.log(`::error::${problem}`);
+            if (problems.length) process.exit(1);
             console.log(`Only engines.node moved in: ${packages.join(" ") || "(no package file)"}`);
           ' "${RUNNER_TEMP}/version-floors/patched.txt"
 

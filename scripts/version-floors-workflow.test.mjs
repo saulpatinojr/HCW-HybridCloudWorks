@@ -249,9 +249,11 @@ describe.skipIf(!bashUsable)('the guard, run against patches', () => {
 });
 
 /**
- * The second check, on a real repository: a `"node"` line under a dependency
- * passes the line rule (it reads the same as engines.node), and the JSON
- * comparison after the apply is what refuses it (CodeRabbit on #1160).
+ * The second check, on a real repository. Each refused patch passes the line
+ * rule, since every line it changes is a `"node": "<range>"` line, and the
+ * check after the apply is what refuses it: a dependency named node, a
+ * package moved without its lockfile, a move to another line, a range
+ * removed (CodeRabbit on #1160, rounds 2 and 3).
  */
 describe.skipIf(!bashUsable)('the applied patch, compared as JSON', () => {
   const source = readFileSync(WORKFLOW, 'utf8');
@@ -265,13 +267,18 @@ describe.skipIf(!bashUsable)('the applied patch, compared as JSON', () => {
   const git = (...args) => run('git', ['-c', 'core.autocrlf=false', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: repo });
   const npm = (value) => `${JSON.stringify(value, null, 2)}\n`;
   const manifest = (engines, dependency) => npm({ name: 's', engines: { node: engines }, dependencies: { node: dependency } });
+  const lockfile = (engines) => npm({ name: 's', lockfileVersion: 3, packages: { '': { name: 's', engines: { node: engines } } } });
   const floors = (floor) => npm({ kinds: { node: { floor } } });
-  writeFileSync(join(repo, 'scripts', 'package.json'), manifest('>=26.8.0', '>=26.8.0'));
+  const MANIFEST = 'scripts/package.json';
+  const LOCK = 'scripts/package-lock.json';
+  writeFileSync(join(repo, MANIFEST), manifest('>=26.8.0', '>=26.8.0'));
+  writeFileSync(join(repo, LOCK), lockfile('>=26.8.0'));
   writeFileSync(join(repo, FLOORS_PATH), floors('26.8.0'));
   git('init', '-q');
   git('config', 'core.autocrlf', 'false');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');
+  const moved = floors('26.9.0');
 
   /** Edit the files, take the diff as the update job does, reset, and run guard and apply against it. */
   const attempt = (edits) => {
@@ -286,16 +293,40 @@ describe.skipIf(!bashUsable)('the applied patch, compared as JSON', () => {
     return { guard: guard.status, apply: apply.status, out: `${apply.stdout}${apply.stderr}` };
   };
 
-  it('applies a patch that moves engines.node and the floors', () => {
-    const result = attempt({ 'scripts/package.json': manifest('>=26.9.0', '>=26.8.0'), [FLOORS_PATH]: floors('26.9.0') });
+  it('applies a patch that moves engines.node in the package and its lockfile, and the floors', () => {
+    const result = attempt({ [MANIFEST]: manifest('>=26.9.0', '>=26.8.0'), [LOCK]: lockfile('>=26.9.0'), [FLOORS_PATH]: moved });
     expect(result).toMatchObject({ guard: 0, apply: 0 });
-    expect(result.out).toContain('Only engines.node moved in: scripts/package.json');
+    expect(result.out).toMatch(/Only engines\.node moved in: .*scripts\/package\.json/);
+    expect(result.out).toContain(LOCK);
   });
 
-  it('refuses a dependency named node, which the line rule alone lets through', () => {
-    const result = attempt({ 'scripts/package.json': manifest('>=26.8.0', '>=26.9.0'), [FLOORS_PATH]: floors('26.9.0') });
-    expect(result.guard).toBe(0);
-    expect(result.apply).toBe(1);
-    expect(result.out).toContain('The patch changes more than engines.node in: scripts/package.json');
+  // Every case below passes the line rule; the check after the apply refuses it.
+  it('refuses a dependency named node', () => {
+    const result = attempt({ [MANIFEST]: manifest('>=26.8.0', '>=26.9.0'), [FLOORS_PATH]: moved });
+    expect(result).toMatchObject({ guard: 0, apply: 1 });
+    expect(result.out).toContain(`The patch changes more than engines.node in: ${MANIFEST}`);
+  });
+
+  it('refuses a package moved without the tracked lockfile beside it', () => {
+    const result = attempt({ [MANIFEST]: manifest('>=26.9.0', '>=26.8.0'), [FLOORS_PATH]: moved });
+    expect(result).toMatchObject({ guard: 0, apply: 1 });
+    expect(result.out).toContain(`${LOCK} records engines.node ">=26.8.0" where ${MANIFEST} declares ">=26.9.0"`);
+  });
+
+  it('refuses a move to another line, whose release notes come first', () => {
+    const result = attempt({ [MANIFEST]: manifest('>=28.0.0', '>=26.8.0'), [LOCK]: lockfile('>=28.0.0'), [FLOORS_PATH]: moved });
+    expect(result).toMatchObject({ guard: 0, apply: 1 });
+    expect(result.out).toContain(`${MANIFEST}: engines.node moves from ">=26.8.0" to ">=28.0.0", another line`);
+  });
+
+  it('refuses a patch that removes engines.node', () => {
+    const drop = (text, indent) => text.replace(`${' '.repeat(indent)}"node": ">=26.8.0"\n`, '');
+    const result = attempt({
+      [MANIFEST]: drop(manifest('>=26.8.0', '>=26.8.0'), 4),
+      [LOCK]: drop(lockfile('>=26.8.0'), 8),
+      [FLOORS_PATH]: moved,
+    });
+    expect(result).toMatchObject({ guard: 0, apply: 1 });
+    expect(result.out).toContain(`${MANIFEST}: the patch adds or removes engines.node`);
   });
 });
