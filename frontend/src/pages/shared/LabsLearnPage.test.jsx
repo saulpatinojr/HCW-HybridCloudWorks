@@ -212,6 +212,19 @@ describe('LabsLearnPage', () => {
     await screen.findByText(NOT_PROVISIONED_SENTENCE);
   });
 
+  it('renders the hybrid lab pre-flight card before the lab catalogue (#Audit P2-2)', async () => {
+    unprovisioned();
+    renderPage();
+    const card = screen.getByTestId('lab-preflight-card');
+    expect(card).toBeInTheDocument();
+    expect(within(card).getByRole('heading', { level: 2 })).toHaveTextContent(
+      'Hybrid Lab Pre-Flight Briefing'
+    );
+    expect(card).toHaveTextContent('15-Min Scenarios');
+    expect(card).toHaveTextContent('read:user scope');
+    await screen.findByText(NOT_PROVISIONED_SENTENCE);
+  });
+
   it('says in one word how the workspaces are doing, in the shared vocabulary', async () => {
     fetchLabsEstate.mockResolvedValue({ configured: false });
     fetchCoderStatus.mockResolvedValue(CODER);

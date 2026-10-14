@@ -325,3 +325,12 @@ describe('Capabilities Matrix (Audit P1-4 & P3-3)', () => {
     );
   });
 });
+
+describe('Interactive Workbench Showcase (Audit P1-2)', () => {
+  it('mounts the flagship workbench showcase directly below the hero section', () => {
+    renderHome();
+    expect(screen.getByTestId('workbench-showcase')).toBeInTheDocument();
+    expect(screen.getByTestId('workbench-card-landing-zone')).toBeInTheDocument();
+    expect(screen.getByTestId('workbench-card-labs')).toBeInTheDocument();
+  });
+});

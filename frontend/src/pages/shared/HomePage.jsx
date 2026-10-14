@@ -11,6 +11,7 @@ import NumberedSection from '@/components/shared/NumberedSection';
 import StatBlock from '@/components/shared/StatBlock';
 import ProviderLogo from '@/components/shared/ProviderLogo';
 import ProviderStrip from '@/components/home/ProviderStrip';
+import WorkbenchShowcase from '@/components/home/WorkbenchShowcase';
 import LatestArticles from '@/components/home/LatestArticles';
 import {
   BLUEPRINT_COUNT,
@@ -352,61 +353,6 @@ export default function HomePage() {
             </a>
           </div>
 
-          {/* Interactive Workbench Quick Access */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 mt-2 max-w-xl">
-            <Link
-              to="/tools/landing-zone"
-              className="glass-panel group rounded-xl p-4 border border-secondary/40 hover:border-azure/70 transition-all hover:shadow-lg flex flex-col justify-between"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-azure">
-                  Interactive Workbench
-                </span>
-                <span
-                  className="material-symbols-outlined text-sm text-azure transition-transform group-hover:translate-x-1"
-                  aria-hidden="true"
-                >
-                  arrow_forward
-                </span>
-              </div>
-              <div>
-                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white mb-1">
-                  Azure Landing Zone Builder
-                </h2>
-                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Assemble hub-spoke topologies component by component and download verified
-                  Terraform.
-                </p>
-              </div>
-            </Link>
-
-            <Link
-              to="/education/labs"
-              className="glass-panel group rounded-xl p-4 border border-secondary/40 hover:border-terraform/70 transition-all hover:shadow-lg flex flex-col justify-between"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-terraform">
-                  Browser Labs
-                </span>
-                <span
-                  className="material-symbols-outlined text-sm text-terraform transition-transform group-hover:translate-x-1"
-                  aria-hidden="true"
-                >
-                  arrow_forward
-                </span>
-              </div>
-              <div>
-                <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white mb-1">
-                  Ephemeral Cloud Labs
-                </h2>
-                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Validate Terraform and Ansible playbooks in isolated container environments with
-                  zero setup.
-                </p>
-              </div>
-            </Link>
-          </div>
-
           {/*
             Glassy stat blocks (Hyoga "Global Reach 35+" style). Counted, not
             typed: homeContent.js says where each comes from, and why the
@@ -482,6 +428,9 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* Flagship Interactive Workbench Showcase (Audit P1-2) */}
+      <WorkbenchShowcase />
 
       {/* Provider strip: two rows of hubs, and a frame that says what each one is */}
       <ProviderStrip />
