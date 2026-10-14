@@ -34,7 +34,10 @@ STALE = [
     ),
     (
         "docs/architecture/labs-host.md",
-        re.compile(r"nothing on this page is provisioned", re.IGNORECASE),
+        # The sentence as the page stated it, at the start of its State line;
+        # a later mention of it ("the page once said ...") is history, not the
+        # statement (review on #1175).
+        re.compile(r"^\*\*State: planned\.\*\* Nothing on this page is provisioned", re.IGNORECASE),
         "the host has run since 2026-09-26 (#1009)",
     ),
     (
@@ -51,6 +54,7 @@ STALE = [
 
 
 def main() -> int:
+    '''Scan each page for its stale pattern, print every finding, and return the exit code.'''
     findings: list[str] = []
     for relative, pattern, record in STALE:
         path = ROOT / relative
