@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { decodeLz, encodeLz } from './share';
 import { normalizeState } from './state';
+import { COMPONENT_IDS } from './components';
 import {
   LZ_PRESETS,
+  MULTI_CLOUD_PACKS,
   STANDING_COSTS_USD,
   activePresetForState,
   estimateMonthlyBaseline,
@@ -88,5 +90,20 @@ describe('Landing Zone Builder architectural presets (presets.js)', () => {
     expect(presetHref('secure-2-tier')).toContain('/tools/landing-zone?');
     expect(presetHref('secure-2-tier')).toContain('fw.sku=Basic');
     expect(presetHref('unknown-id')).toBe('/tools/landing-zone');
+  });
+
+  it('defines universal 8-component multi-cloud packs for Azure, AWS, and GCP', () => {
+    expect(Object.keys(MULTI_CLOUD_PACKS)).toEqual(['azure', 'aws', 'gcp']);
+    expect(MULTI_CLOUD_PACKS.azure.status).toBe('active');
+    expect(MULTI_CLOUD_PACKS.aws.status).toBe('preview');
+    expect(MULTI_CLOUD_PACKS.gcp.status).toBe('preview');
+
+    for (const cloud of ['aws', 'gcp']) {
+      const pack = MULTI_CLOUD_PACKS[cloud];
+      expect(pack.pinnedModules.length).toBeGreaterThanOrEqual(4);
+      expect(pack.componentsMapping).toHaveLength(8);
+      const mappedIds = pack.componentsMapping.map((c) => c.id);
+      expect(mappedIds).toEqual(COMPONENT_IDS);
+    }
   });
 });

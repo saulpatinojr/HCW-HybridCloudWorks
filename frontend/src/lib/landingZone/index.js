@@ -96,6 +96,7 @@ export { BASELINE_ASSIGNMENTS, POLICY_DEFAULTS, groupsAssigning } from './hcl/po
 export { H_GAP, NODE_H, NODE_W, PAD, V_GAP, layoutDiagram } from './diagram';
 export {
   LZ_PRESETS,
+  MULTI_CLOUD_PACKS,
   STANDING_COSTS_USD,
   activePresetForState,
   estimateMonthlyBaseline,

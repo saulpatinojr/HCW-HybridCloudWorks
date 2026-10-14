@@ -26,6 +26,7 @@ export const staticBlueprints = [
     category: 'Cost Analysis',
     categoryColor: 'text-emerald-400',
     title: 'Multi-Cloud Cost Optimization',
+    slug: 'multi-cloud-cost-optimization',
     description:
       'Cross-cloud optimization architecture with shared tagging taxonomy, cost telemetry normalization, and rightsizing recommendation pipelines.',
     rpo: '1h',
@@ -42,6 +43,7 @@ export const staticBlueprints = [
     category: 'Reporting',
     categoryColor: 'text-blue-400',
     title: 'Real-time Cost Dashboard',
+    slug: 'real-time-cost-dashboard',
     description:
       'Streaming dashboard pattern for near real-time cloud spend visibility across business units, products, and environments.',
     rpo: '15m',
@@ -57,6 +59,7 @@ export const staticBlueprints = [
     category: 'Billing',
     categoryColor: 'text-purple-400',
     title: 'Chargeback & Allocation',
+    slug: 'chargeback-allocation',
     description:
       'Allocation framework for unit-economics reporting with cost ownership, shared resource split rules, and monthly chargeback automation.',
     rpo: '1d',
@@ -72,6 +75,7 @@ export const staticBlueprints = [
     category: 'Automation',
     categoryColor: 'text-yellow-400',
     title: 'RI & Savings Plan Automation',
+    slug: 'ri-savings-plan-automation',
     description:
       'Automation workflow for committed-use planning, purchase simulation, and policy-based guardrails to reduce avoidable spend.',
     rpo: '6h',
@@ -87,6 +91,7 @@ export const staticBlueprints = [
     category: 'Governance',
     categoryColor: 'text-red-400',
     title: 'Budget & Policy Framework',
+    slug: 'budget-policy-framework',
     description:
       'Governance architecture tying budget thresholds to policy enforcement, alert routing, and escalation workflows by cost center.',
     rpo: '24h',
@@ -102,6 +107,7 @@ export const staticBlueprints = [
     category: 'Optimization',
     categoryColor: 'text-pink-400',
     title: 'Waste Identification & Alerts',
+    slug: 'waste-identification-alerts',
     description:
       'Continuous anomaly and idle-resource detection pipeline with actionable alerts for compute, storage, and network waste classes.',
     rpo: '30m',

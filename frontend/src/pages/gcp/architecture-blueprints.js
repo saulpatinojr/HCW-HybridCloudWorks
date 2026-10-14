@@ -26,6 +26,7 @@ export const staticBlueprints = [
     category: 'Compute',
     categoryColor: 'text-blue-400',
     title: 'Global Load Balancing',
+    slug: 'global-load-balancing',
     description:
       'Global external HTTP(S) load balancing with Cloud Armor, regional failover policies, and CDN edge caching for resilient web workloads.',
     rpo: '1h',
@@ -42,6 +43,7 @@ export const staticBlueprints = [
     category: 'Data',
     categoryColor: 'text-yellow-400',
     title: 'BigQuery Data Lake',
+    slug: 'bigquery-data-lake',
     description:
       'Unified analytics architecture combining BigQuery, Dataplex, and Cloud Storage lifecycle controls for governed enterprise reporting.',
     rpo: '4h',
@@ -57,6 +59,7 @@ export const staticBlueprints = [
     category: 'Networking',
     categoryColor: 'text-purple-400',
     title: 'Hybrid Interconnect',
+    slug: 'hybrid-interconnect',
     description:
       'Low-latency private connectivity pattern using Dedicated Interconnect, Cloud Router, and HA VPN fallback for critical hybrid systems.',
     rpo: '15m',
@@ -72,6 +75,7 @@ export const staticBlueprints = [
     category: 'AI/ML',
     categoryColor: 'text-pink-400',
     title: 'Vertex AI Pipeline',
+    slug: 'vertex-ai-pipeline',
     description:
       'End-to-end MLOps blueprint with Vertex AI Pipelines, Feature Store, and model registry promotion across dev/stage/prod projects.',
     rpo: '1h',
@@ -87,6 +91,7 @@ export const staticBlueprints = [
     category: 'Security',
     categoryColor: 'text-red-400',
     title: 'Zero Trust Security',
+    slug: 'zero-trust-security',
     description:
       'Identity-aware proxy and BeyondCorp Enterprise architecture enforcing context-aware access and workload isolation across environments.',
     rpo: '30m',
@@ -102,6 +107,7 @@ export const staticBlueprints = [
     category: 'Serverless',
     categoryColor: 'text-cyan-400',
     title: 'Cloud Run Microservices',
+    slug: 'cloud-run-microservices',
     description:
       'Containerized microservices pattern using Cloud Run, Eventarc, and Pub/Sub with autoscaling and per-service least-privilege IAM.',
     rpo: '1h',
