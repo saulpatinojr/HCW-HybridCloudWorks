@@ -219,6 +219,8 @@ workspace makes them page, not sleep.
 | `alert-lab-heartbeat` | 1 | No `Heartbeat` row from `arcs-lab-hybrid-prod-cus-01` in 30 min, evaluated every 15 min (stateful). In `rg-mgmt-plat-prod-cus`, Management subscription | The lab host is down, the Azure Monitor Agent is stopped, or the host cannot reach Azure; public lab submission fails closed meanwhile | `ssh hcw-lab 'systemctl status azuremonitoragent himdsd hcw-labs-agent --no-pager'`; the Hostinger panel if ssh fails |
 | `alert-lab-disk` | 2 | Root filesystem past 85% used, hourly. Management subscription | Docker images, Coder workspaces or pg_dumps filling the disk | `ssh hcw-lab 'df -h /; sudo docker system df; sudo ls -l /var/backups/coder'` |
 | `alert-lab-unit-failed` | 2 | A `hcw-unit-failed` line in `Syslog` from the lab host in the last hour, evaluated every 15 min. Management subscription | The Coder backup, the labs agent, Caddy or Vault entered the failed state; the line names the unit | `ssh hcw-lab 'systemctl --failed --no-pager; sudo journalctl -t hcw-unit-failed --since -2h --no-pager'`, which lists the failed units and the notifier's own lines naming them |
+| `alert-lab-backup-missing-coder` | 2 | No successful blob write under `host-backups/coder/` in `stlabhybridprodcus01` (`StorageBlobLogs`, `PutBlob`/`PutBlockList`) in two days, hourly. Management subscription | The nightly Coder dump or its upload is failing, or the host is down; the 35-day immutable copies stop growing | `ssh hcw-lab 'systemctl status coder-postgres-backup.timer coder-postgres-backup --no-pager; sudo journalctl -t hcw-backup-upload --since -2d --no-pager; sudo ls -l /var/backups/coder'` |
+| `alert-lab-backup-missing-vault` | 2 | No successful blob write under `host-backups/vault/` in `stlabhybridprodcus01` in two days, hourly. Management subscription | The nightly Vault raft snapshot or its upload is failing (its token expired or was revoked), or the host is down | `ssh hcw-lab 'systemctl status hcw-vault-backup.timer hcw-vault-backup --no-pager; sudo journalctl -t hcw-backup-upload --since -2d --no-pager'` |
 
 ### To check what is actually deployed
 
@@ -1285,6 +1287,8 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 | `alert-rbac-definition-mgmt` | not yet | |
 | `alert-lab-vault-unwrap` | not yet | |
 | `alert-lab-ssh-burst` | not yet | |
+| `alert-lab-backup-missing-coder` | not yet | Needs the host side (#955 PR 2); fire test: stop `coder-postgres-backup.timer` for two nights |
+| `alert-lab-backup-missing-vault` | not yet | Needs the host side (#955 PR 2); fire test: stop `hcw-vault-backup.timer` for two nights |
 
 ### What these still do not cover
 

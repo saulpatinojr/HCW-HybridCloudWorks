@@ -283,11 +283,15 @@
       volumes: strict
       mounts: strict
       network_mode: strict
+  # Each secret_env entry names the vault variable that holds its value. The
+  # `vars` lookup reads them by name (ansible-core 2.24 removes the `vars`
+  # dictionary this used until 2026-10-14, and 2.21 warned on every run).
   vars:
+    addon_secret_env_names: "{{ item.secret_env | default({}) | dict2items | map(attribute='key') | list }}"
+    addon_secret_var_names: "{{ item.secret_env | default({}) | dict2items | map(attribute='value') | list }}"
     addon_secret_values: >-
-      {{ dict(item.secret_env | default({}) | dict2items | map(attribute='key')
-              | zip(item.secret_env | default({}) | dict2items | map(attribute='value')
-                    | map('extract', vars))) }}
+      {{ dict(addon_secret_env_names | zip(lookup('vars', *addon_secret_var_names, wantlist=True)))
+         if addon_secret_var_names | length > 0 else {} }}
   no_log: true
   loop: "{{ addons_deployed }}"
   loop_control:

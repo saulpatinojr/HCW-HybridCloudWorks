@@ -275,3 +275,13 @@ output "subnet_id" {
 # nothing writes them and nothing reads them. Clearing them is a repository
 # settings change, not a Terraform one.
 # -----------------------------------------------------------------------------
+
+# The storage account the lab host ships its nightly backups to (LAB-9, #955;
+# infra/lab-hybrid-backups.tf). Copied into lab-host/ansible/group_vars/all.yml
+# as lab_backups_storage_account by the pull request that adds the upload; the
+# host mints its own token for it through the Arc agent, so this is a name,
+# never a credential.
+output "lab_hybrid_backups_storage_account" {
+  description = "Storage account holding the lab host's off-host backups (container host-backups)."
+  value       = azurerm_storage_account.lab_hybrid_backups.name
+}

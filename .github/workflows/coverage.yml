@@ -57,7 +57,7 @@ jobs:
       # supports. The second setup-node puts 24 first on PATH for the steps
       # after it.
       - name: Set up Node.js 26 for the frontend
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '26'
           # No npm cache (#563): a job that runs on pull requests must not
@@ -74,7 +74,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Set up Node.js 24 for functions
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
           package-manager-cache: false # the same reason as above (#563)

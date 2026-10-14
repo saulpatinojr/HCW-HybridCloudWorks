@@ -1,6 +1,6 @@
 # ADR 0032: The learner labs platform — a Terraform-managed Hostinger host under Azure Arc, Docker only, Coder as the learner boundary, and public submission locked to the site's pane
 
-**Status:** Accepted 2026-09-27 (owner: "all have been approved to move forward"); amended 2026-09-26 and 2026-09-28; amendment of 2026-09-29 (Vault auto-unseal, #726) accepted by the owner and live on the host the same day. Decision 6 was revised on 2026-09-28: public submission is open, only from the Landing Zone Builder's pane on the site, locked by the request's origin and a Cloudflare Turnstile token, within decision 6's original bounds, which are unchanged. Also on 2026-09-28 the site began embedding Coder, in a pane on each lab's page, which decision 4 had ruled out and the alternatives had rejected ([amendment of that date](#amendment-2026-09-28-coder-in-the-sites-panes), #750 and #751).
+**Status:** Accepted 2026-09-27 (owner: "all have been approved to move forward"); amended 2026-09-26 and 2026-09-28; amendment of 2026-09-29 (Vault auto-unseal, #726) accepted by the owner and live on the host the same day; [amendment of 2026-10-14](#amendment-2026-10-14-off-host-backups-and-a-rehearsed-rebuild-lab-9) (off-host backups, LAB-9, #955) chosen by the owner that day. Decision 6 was revised on 2026-09-28: public submission is open, only from the Landing Zone Builder's pane on the site, locked by the request's origin and a Cloudflare Turnstile token, within decision 6's original bounds, which are unchanged. Also on 2026-09-28 the site began embedding Coder, in a pane on each lab's page, which decision 4 had ruled out and the alternatives had rejected ([amendment of that date](#amendment-2026-09-28-coder-in-the-sites-panes), #750 and #751).
 **Decision date:** 2026-09-25
 **Owners:** Workload owner and architecture owner
 
@@ -807,6 +807,74 @@ bodies.
   Docker, a device), which reopens item 3 and points at Sysbox;
 - the agent needs a Docker call the proxy refuses, which is a change to the
   allowlist with its own recording, never a wider rule.
+
+## Amendment 2026-10-14: off-host backups and a rehearsed rebuild (LAB-9)
+
+Estate review 2026-10-06, finding LAB-9 (#955): the host's only backups were
+seven days of Coder PostgreSQL dumps on its own disk, Vault's raft store had
+none, and the reinstall runbook had never been rehearsed or timed. The
+amendment of 2026-09-26 above says the host is rebuilt rather than repaired;
+this one says what the rebuild restores from.
+
+**Decision.** Owner, 2026-10-14, choosing among Azure Blob Storage written
+by the Arc identity, the VPS provider's object storage, and local-only with a
+rehearsal: Azure Blob Storage.
+
+1. **Where.** One storage account in the lab's resource group,
+   `rg-lab-hybrid-prod-cus` (`infra/lab-hybrid-backups.tf`): Standard GRS, so
+   the copy is off the VPS and off its region; Cool tier; TLS 1.2; shared
+   keys off and OAuth the default, so the only principal that can write is the
+   one granted; the public endpoint reachable, for the reason the lab Key
+   Vault's is — the writer is a VPS outside Azure with no private path, and
+   Entra plus one container-scoped grant gate every call. One container,
+   `host-backups`, under a 35-day time-based immutability policy (unlocked):
+   the host can write a blob and cannot delete or overwrite one inside the
+   window, so a host that is compromised, and can therefore write backups,
+   cannot destroy them. Versioning and 35-day soft delete behind that.
+2. **Who writes.** The Arc machine's system-assigned identity — the one Vault's
+   seal signs in with — gets its second grant, Storage Blob Data Contributor
+   on that container only. No credential is minted or stored on the host for
+   this: it asks the Arc agent on `127.0.0.1:40342` for a token for
+   `https://storage.azure.com/`, the challenge flow the vault role already
+   performs for the seal key.
+3. **What is shipped.** The nightly Coder dump (`coder-postgres-backup`,
+   03:30 UTC) is uploaded after it is written, to `host-backups/coder/`; a
+   nightly `vault operator raft snapshot save` is uploaded to
+   `host-backups/vault/`. The snapshot needs a Vault token with a
+   raft-snapshot policy: seeded once with `hcw-vault-set` and renewed by the
+   unit itself, the Coder rotation credential's pattern (one seed, then
+   automatic; owner instruction 2026-10-09). Both units keep
+   `OnFailure=hcw-unit-failed@`, and an alert per kind fires when no blob was
+   written in two days: a missing backup is a row, not a silence.
+4. **Not encrypted client-side before upload.** The account is Entra-only,
+   immutable, in the lab subscription, encrypted at rest with Microsoft-managed
+   keys, and its logs name every caller. A client-side key would be one more
+   thing a rebuild must recover before it can restore anything, which is the
+   failure this amendment exists to shorten. Revisit if the Coder database
+   ever holds more than lab metadata and users' OAuth links.
+5. **The rebuild.** The reinstall runbook gains a restore step: a helper
+   lists the container through the Arc identity, downloads the newest (or a
+   named) dump and snapshot, restores the database into the fresh
+   `coder-postgres` and the raft snapshot into the re-initialised Vault
+   (`-force`; the seal key in Key Vault is unchanged, so the restored data
+   unseals). The runbook carries a **Last rehearsed / elapsed** line; the
+   rehearsal is the owner's, on a fresh VPS, and this finding's acceptance is
+   that line, a dated blob in the container, and the failure row.
+
+**Consequences.** The Arc identity holds two grants instead of one, both
+scoped to a single resource. A few megabytes a night in GRS Cool storage.
+`verify-alert-state.yml` picks up the two new rules from the declarations.
+What this does not change: Vault still holds lab-host secrets only, and the
+host is still rebuilt rather than repaired — the restore is what a rebuild
+ends with, not an alternative to it.
+
+**Validation.** (1) `infra/lab-hybrid-backups.tf` applied, the output
+`lab_hybrid_backups_storage_account` naming the account. (2) After the host
+pull request: a blob under `host-backups/coder/` and one under
+`host-backups/vault/` dated the night after the host's run, readable in the
+portal, and a delete attempt on one refused with the immutability policy
+named. (3) The alert's fire test: stop the Coder backup timer for two nights
+and expect the row; re-enable it. (4) The runbook's rehearsal line.
 
 ## Consequences and accepted risks
 

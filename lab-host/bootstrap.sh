@@ -473,14 +473,22 @@ log "running site.yml from ${hcw_repo_sha} against localhost"
 
 # The play finished (set -e ends the script on a failed one). Record which
 # commit the host now runs in the host-check marker, unless this was a check
-# run, which changed nothing the marker should claim.
+# run, which changed nothing the marker should claim, or a run narrowed with
+# --tags / --skip-tags, which converged one area and not the host (the play's
+# own commit record skips those the same way).
 hcw_check_mode=
+hcw_partial=
 for arg in "$@"; do
   case "${arg}" in
     --check | -C) hcw_check_mode=1 ;;
+    # -t* covers both `-t addons` and the attached form `-taddons`.
+    --tags | --tags=* | -t* | --skip-tags | --skip-tags=*) hcw_partial=1 ;;
   esac
 done
-if [ -z "${hcw_check_mode}" ]; then
+if [ -n "${hcw_partial}" ] && [ -z "${hcw_check_mode}" ]; then
+  log "a run narrowed with --tags or --skip-tags is not recorded as a completed run; the next full run is"
+fi
+if [ -z "${hcw_check_mode}" ] && [ -z "${hcw_partial}" ]; then
   {
     grep -v '^completed_' "${HCW_HOST_MARKER}" || true
     echo "completed_on=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
