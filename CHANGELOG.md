@@ -57,6 +57,16 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The Publer proxy forwards only the paths and methods the Social Hub
+  sends, and every write through either proxy leaves an audit row** (AP-B3,
+  #938). `publerProxy` forwarded any verb to any Publer path with the
+  server's key and no trail, so an editor session could reach accounts,
+  members and workspace settings the Social Hub never touches.
+  `integrations-http.js` now names its five endpoints and three methods
+  (GET, POST, DELETE), and `rest-proxy.js` records every non-GET call,
+  refused ones included, in `admin_audit_logs` with the actor, the path as
+  sent and the outcome. `rest-proxy.test.js` sends every request the pages
+  make and asserts an unlisted path is refused for every verb.
 - **Lab host: the add-on secrets are read with the `vars` lookup.** The
   `addons` role built each add-on's secret environment with the `vars`
   dictionary, which ansible-core 2.21 warns about on every run and 2.24

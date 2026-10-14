@@ -36,6 +36,7 @@
  * sees the rejection first. The response is not changed by it: the page that
  * made the call still gets the status and the body it always did.
  */
+import { randomUUID } from 'node:crypto';
 import { createKeyVerdictReporter, isCredentialRejected } from '../key-verdict.js';
 import { readUpstreamError } from './upstream-error.js';
 
@@ -96,6 +97,12 @@ export function createIntegration({
   headers,
   extraEnv = [],
   allowedPaths = null,
+  // Optional per-integration METHOD allowlist, a subset of ALLOWED_METHODS.
+  // Publer's admin UI sends GET, POST and DELETE and nothing else; a key that
+  // can also PUT and PATCH posts, accounts and workspace settings is scope the
+  // page never needs (AP-B3, #938). Null keeps every method ALLOWED_METHODS
+  // names, which is what an integration without the row gets today.
+  allowedMethods = null,
   // Opt-in, not default: a verdict turns a light red on the API-keys page, and
   // the catalogue promises a probe only where one is wired (`secret-catalog.js`
   // and its test hold the two in step). Publer's 401/403 semantics are known;
@@ -115,9 +122,86 @@ export function createIntegration({
     headers,
     extraEnv,
     allowedPaths,
+    allowedMethods: normalizeAllowedMethods(name, allowedMethods),
     reportsKeyVerdict,
     verdictSettingForStatus: verdictSettingForStatus || (() => keyEnv),
   };
+}
+
+/**
+ * A method allowlist is a subset of ALLOWED_METHODS or a developer error. An
+ * integration is repository code, so a typo here fails at module load, where
+ * it is read, rather than at the first request, where it would read as the
+ * upstream refusing.
+ *
+ * @param {string} name
+ * @param {string[]|null} allowedMethods
+ * @returns {readonly string[]|null}
+ */
+function normalizeAllowedMethods(name, allowedMethods) {
+  if (allowedMethods === null || allowedMethods === undefined) return null;
+  const methods = allowedMethods.map((method) => String(method).toUpperCase());
+  const unknown = methods.filter((method) => !ALLOWED_METHODS.includes(method));
+  if (unknown.length > 0) {
+    throw new Error(`${name}: allowedMethods must be a subset of ${ALLOWED_METHODS.join(', ')}; got ${unknown.join(', ')}`);
+  }
+  return Object.freeze(methods);
+}
+
+/**
+ * The audit row every non-GET proxy call leaves (AP-B3, #938).
+ *
+ * Shape and best-effort rule shared with the platform-settings and
+ * integrations writers: the row names the actor, the integration, the method,
+ * the path as sent (query included, since a `DELETE /posts?post_ids[]=…` is
+ * the whole story) and the outcome. A refused call is recorded too: an editor
+ * session reaching for `/workspaces` with a DELETE is tamper evidence, and a
+ * trail that holds only the calls that went through cannot show it.
+ *
+ * @param {{ upsertDoc: Function, now?: () => string, uuid?: () => string }} deps
+ * @returns {(entry: object) => Promise<void>} the writer `createRestProxy` takes as `audit`
+ */
+export function createProxyAuditWriter({
+  upsertDoc,
+  now = () => new Date().toISOString(),
+  uuid = () => randomUUID(),
+}) {
+  return async ({ integration, method, path, outcome, status, user, role }) => {
+    await upsertDoc('admin_audit_logs', {
+      id: uuid(),
+      action: `${integration.toLowerCase()}_proxy_${method.toLowerCase()}`,
+      userId: user?.oid || user?.sub || null,
+      userName: user?.name || null,
+      userEmail: user?.email || user?.preferred_username || null,
+      timestamp: now(),
+      details: { integration, method, path, outcome, status, role },
+    });
+  };
+}
+
+/**
+ * Record one non-GET call, whatever happened to it. Best effort, like the
+ * other audit writers: the proxied call has been answered (or refused) on its
+ * own terms, and a failed audit row must not turn that into a 500 the page
+ * reads as the upstream failing.
+ */
+async function recordProxyAudit(audit, context, { integration, auth, method, body, outcome, status = null }) {
+  if (!audit || method === 'GET') return;
+  try {
+    await audit({
+      integration: integration.name,
+      method,
+      path: String(body?.path ?? '').slice(0, 300),
+      outcome,
+      status,
+      user: auth?.user || null,
+      role: auth?.role || null,
+    });
+  } catch (error) {
+    context.warn?.(
+      `${integration.name}Proxy ${method} was answered but its audit row failed: ${error?.message || error}`
+    );
+  }
 }
 
 /**
@@ -151,6 +235,10 @@ export function isAllowedPath(allowed, pathOnly) {
  * @param {Function|null} [deps.onKeyVerdict] The API-keys page's verdict
  *   writer, in the shape `createAiRouter` takes it. Consulted only for an
  *   integration that declared `reportsKeyVerdict`.
+ * @param {Function|null} [deps.audit] The audit writer `createProxyAuditWriter`
+ *   builds. Called once per non-GET call with the actor, method, path and
+ *   outcome (AP-B3, #938); null writes nothing, which is how the tests that
+ *   are not about auditing build the proxy.
  */
 export function createRestProxy({
   guard,
@@ -158,6 +246,7 @@ export function createRestProxy({
   fetch: fetchImpl = globalThis.fetch,
   readKey,
   onKeyVerdict = null,
+  audit = null,
 }) {
   /** @returns {Function} an Azure Functions handler for one integration. */
   return function handlerFor(integration) {
@@ -196,8 +285,23 @@ export function createRestProxy({
 
       const body = await request.json().catch(() => null);
       const method = String(body?.method || 'GET').toUpperCase();
+      // Every non-GET call leaves an audit row with its actor, path and
+      // outcome, refused ones included (AP-B3, #938).
+      const record = (outcome, extra = {}) =>
+        recordProxyAudit(audit, context, { integration, auth, method, body, outcome, ...extra });
       if (!ALLOWED_METHODS.includes(method)) {
+        await record('refused_method');
         return json(400, { ok: false, error: `method must be one of ${ALLOWED_METHODS.join(', ')}` });
+      }
+      if (integration.allowedMethods && !integration.allowedMethods.includes(method)) {
+        context.error?.(`${integration.name}Proxy refused a method the admin UI never sends`, {
+          method,
+        });
+        await record('refused_method');
+        return json(400, {
+          ok: false,
+          error: `${method} is not an allowed ${integration.name} method`,
+        });
       }
 
       let path;
@@ -210,6 +314,7 @@ export function createRestProxy({
         context.error?.(`${integration.name}Proxy rejected path: ${error.message}`, {
           path: String(body?.path ?? '').slice(0, 200),
         });
+        await record('refused_path');
         return json(400, { ok: false, error: error.message });
       }
 
@@ -220,6 +325,7 @@ export function createRestProxy({
         context.error?.(`${integration.name}Proxy blocked a path outside the allowlist`, {
           path: pathOnly.slice(0, 200),
         });
+        await record('refused_path');
         return json(400, {
           ok: false,
           error: `${pathOnly} is not an allowed ${integration.name} endpoint`,
@@ -268,9 +374,11 @@ export function createRestProxy({
             detail: readUpstreamError(data),
           });
         }
+        await record('upstream', { status: response.status });
         return json(200, { ok: response.ok, status: response.status, data });
       } catch (error) {
         context.error?.(`${integration.name}Proxy ${method} ${path} failed:`, error);
+        await record('failed');
         return json(200, {
           ok: false,
           error: `${integration.name} request failed: ${error?.message || error}`,

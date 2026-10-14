@@ -9,7 +9,13 @@
  * session.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createRestProxy, createIntegration, assertSafePath, isAllowedPath } from './rest-proxy.js';
+import {
+  createRestProxy,
+  createIntegration,
+  createProxyAuditWriter,
+  assertSafePath,
+  isAllowedPath,
+} from './rest-proxy.js';
 
 const context = { log: vi.fn(), error: vi.fn() };
 const allowGuard = { requireRole: vi.fn(async () => ({ role: 'editor', error: null })) };
@@ -259,8 +265,9 @@ describe('per-integration path allowlist', () => {
   });
 
   it('integrations without an allowlist are unrestricted beyond assertSafePath', () => {
-    // Publer builds paths freely in the admin UI; narrowing it would break
-    // screens without an enumeration of every path they construct.
+    // The contract for an integration that declares no allowlist. Publer had
+    // none until AP-B3 (#938) enumerated the Social Hub's calls; the Publer
+    // block below is where its surface is pinned.
     expect(isAllowedPath(null, '/anything/at/all')).toBe(true);
   });
 });
@@ -467,6 +474,186 @@ describe('reporting a credential verdict to the API-keys page (#358)', () => {
       ok: false,
       status: 401,
       data: { error: 'nope' },
+    });
+  });
+});
+
+describe('the Publer allowlist (AP-B3, #938)', () => {
+  // Mirrors integrations-http.js. The paths come from
+  // frontend/src/components/admin/social/publerApi.js, the Social tab of
+  // Platform settings and the Connections card; the methods are the three
+  // those files send.
+  const PUBLER_ALLOWED = {
+    paths: ['/accounts', '/posts', '/posts/schedule', '/posts/schedule/publish'],
+    patterns: [/^\/job_status\/[A-Za-z0-9_-]+$/],
+  };
+  const publer = createIntegration({
+    name: 'Publer',
+    baseUrl: 'https://app.publer.com/api/v1',
+    keyEnv: 'TEST_API_KEY',
+    headers: ({ apiKey }) => ({ Authorization: `Bearer-API ${apiKey}` }),
+    allowedPaths: PUBLER_ALLOWED,
+    allowedMethods: ['GET', 'POST', 'DELETE'],
+  });
+  const handlerFor = (fetchImpl, audit = null) =>
+    createRestProxy({ guard: allowGuard, env: { TEST_API_KEY: 'secret' }, fetch: fetchImpl, readKey, audit })(
+      publer
+    );
+
+  it('passes every request the Social Hub actually sends, so the allowlist needs no widening', async () => {
+    const requests = [
+      { path: '/accounts', method: 'GET' },
+      { path: '/posts?state=scheduled', method: 'GET' },
+      { path: '/posts?state=published&page=1', method: 'GET' },
+      { path: '/posts/schedule', method: 'POST', body: { bulk: { posts: [] } } },
+      { path: '/posts/schedule/publish', method: 'POST', body: { bulk: { posts: [] } } },
+      { path: '/posts?post_ids[]=abc123', method: 'DELETE' },
+      { path: '/job_status/job-9_X', method: 'GET' },
+    ];
+    for (const request of requests) {
+      const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => '{}' }));
+      const response = await handlerFor(fetchImpl)(makeRequest(request), context);
+      const label = `${request.method} ${request.path}`;
+      expect(response.status, label).toBe(200);
+      expect(JSON.parse(response.body).ok, label).toBe(true);
+      expect(fetchImpl, label).toHaveBeenCalledWith(
+        `https://app.publer.com/api/v1${request.path}`,
+        expect.objectContaining({ method: request.method })
+      );
+      const [, options] = fetchImpl.mock.calls[0];
+      if (request.body === undefined) {
+        expect(options.body, label).toBeUndefined();
+      } else {
+        expect(JSON.parse(options.body), label).toEqual(request.body);
+      }
+    }
+  });
+
+  it('refuses an unlisted Publer path for every verb, and never calls fetch', async () => {
+    for (const path of ['/workspaces', '/accounts/acc-1', '/posts/post-1', '/members', '/job_status/j/extra', '/users/me']) {
+      for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+        const fetchImpl = vi.fn();
+        const response = await handlerFor(fetchImpl)(makeRequest({ path, method }), context);
+        expect(response.status, `${method} ${path}`).toBe(400);
+        expect(fetchImpl, `${method} ${path}`).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it('refuses PUT and PATCH even on an allowed path, because the Social Hub never sends them', async () => {
+    for (const method of ['PUT', 'PATCH']) {
+      const fetchImpl = vi.fn();
+      const response = await handlerFor(fetchImpl)(makeRequest({ path: '/posts', method }), context);
+      expect(response.status, method).toBe(400);
+      expect(JSON.parse(response.body).error, method).toContain('not an allowed Publer method');
+      expect(fetchImpl, method).not.toHaveBeenCalled();
+    }
+  });
+
+  it('refuses a method allowlist that names a method the proxy does not forward', () => {
+    expect(() =>
+      createIntegration({
+        name: 'Broken',
+        baseUrl: 'https://x.test',
+        keyEnv: 'K',
+        headers: () => ({}),
+        allowedMethods: ['GET', 'TRACE'],
+      })
+    ).toThrow(/TRACE/);
+  });
+});
+
+describe('the audit row every non-GET proxy call leaves (AP-B3, #938)', () => {
+  const editor = { oid: 'oid-ed', name: 'Ed Itor', email: 'ed@example.test' };
+  const editorGuard = { requireRole: vi.fn(async () => ({ user: editor, role: 'editor', error: null })) };
+  const publer = createIntegration({
+    name: 'Publer',
+    baseUrl: 'https://app.publer.com/api/v1',
+    keyEnv: 'TEST_API_KEY',
+    headers: ({ apiKey }) => ({ Authorization: `Bearer-API ${apiKey}` }),
+    allowedPaths: { paths: ['/posts', '/posts/schedule'] },
+    allowedMethods: ['GET', 'POST', 'DELETE'],
+  });
+  const build = ({ fetchImpl, audit }) =>
+    createRestProxy({ guard: editorGuard, env: { TEST_API_KEY: 'secret' }, fetch: fetchImpl, readKey, audit })(
+      publer
+    );
+  const okFetch = () => vi.fn(async () => ({ ok: true, status: 200, text: async () => '{}' }));
+
+  it('records the actor, method, path (query included) and upstream status of a write', async () => {
+    const audit = vi.fn(async () => {});
+    await build({ fetchImpl: okFetch(), audit })(makeRequest({ path: '/posts?post_ids[]=p1', method: 'DELETE' }), context);
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit).toHaveBeenCalledWith({
+      integration: 'Publer',
+      method: 'DELETE',
+      path: '/posts?post_ids[]=p1',
+      outcome: 'upstream',
+      status: 200,
+      user: editor,
+      role: 'editor',
+    });
+  });
+
+  it('records a refused path and a refused method too, since a refusal is the evidence', async () => {
+    const audit = vi.fn(async () => {});
+    const fetchImpl = vi.fn();
+    await build({ fetchImpl, audit })(makeRequest({ path: '/workspaces', method: 'DELETE' }), context);
+    await build({ fetchImpl, audit })(makeRequest({ path: '/posts', method: 'PATCH' }), context);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(audit.mock.calls.map(([entry]) => [entry.method, entry.path, entry.outcome])).toEqual([
+      ['DELETE', '/workspaces', 'refused_path'],
+      ['PATCH', '/posts', 'refused_method'],
+    ]);
+  });
+
+  it('writes nothing for a GET', async () => {
+    const audit = vi.fn(async () => {});
+    await build({ fetchImpl: okFetch(), audit })(makeRequest({ path: '/posts?state=scheduled' }), context);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('never fails the proxied call because the audit write threw, and warns into the invocation log', async () => {
+    const warn = vi.fn();
+    const audit = vi.fn(async () => {
+      throw new Error('cosmos is away');
+    });
+    const response = await build({ fetchImpl: okFetch(), audit })(
+      makeRequest({ path: '/posts/schedule', method: 'POST', body: { bulk: {} } }),
+      { ...context, warn }
+    );
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body).ok).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('audit row failed'));
+  });
+
+  it('createProxyAuditWriter writes the shared admin_audit_logs shape', async () => {
+    const upsertDoc = vi.fn(async () => {});
+    const write = createProxyAuditWriter({ upsertDoc, now: () => '2026-10-14T18:00:00.000Z', uuid: () => 'row-1' });
+    await write({
+      integration: 'Publer',
+      method: 'POST',
+      path: '/posts/schedule',
+      outcome: 'upstream',
+      status: 201,
+      user: editor,
+      role: 'editor',
+    });
+    expect(upsertDoc).toHaveBeenCalledWith('admin_audit_logs', {
+      id: 'row-1',
+      action: 'publer_proxy_post',
+      userId: 'oid-ed',
+      userName: 'Ed Itor',
+      userEmail: 'ed@example.test',
+      timestamp: '2026-10-14T18:00:00.000Z',
+      details: {
+        integration: 'Publer',
+        method: 'POST',
+        path: '/posts/schedule',
+        outcome: 'upstream',
+        status: 201,
+        role: 'editor',
+      },
     });
   });
 });
