@@ -154,8 +154,11 @@ export function buildDockerArgs(capability, { jobDir, containerName, jobId, enco
   // swap; `--memory-swap` equal to `--memory` makes it the limit it reads
   // as. `nofile` defaults here, not only in index.js, so a caller that
   // passes the three older limits (lab-image/sandbox-check.mjs) still emits
-  // the ceiling.
-  const nofile = Number(limits.nofile) > 0 ? Number(limits.nofile) : DEFAULT_NOFILE;
+  // the ceiling. Only a positive whole number is used: `0.5`, `Infinity`
+  // (what `1e999` in the env becomes) or text would reach Docker as a
+  // ulimit it refuses, and every job would fail to start (review on #1172).
+  const requested = Number(limits.nofile);
+  const nofile = Number.isInteger(requested) && requested > 0 ? requested : DEFAULT_NOFILE;
   const extra = capability.extraDockerArgs || [];
   const reserved = extra.filter((arg) => RESERVED_FLAGS.has(arg));
   if (reserved.length > 0) {

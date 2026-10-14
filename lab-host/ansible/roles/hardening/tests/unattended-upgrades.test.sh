@@ -14,8 +14,11 @@ tasks="${role}/tasks/main.yml"
 
 passed=0
 failed=0
+# ok NAME: count and print a passing check, TAP style.
 ok() { passed=$((passed + 1)); echo "ok ${passed} - $1"; }
+# not_ok NAME [DETAIL]: count and print a failing check, with its detail indented.
 not_ok() { failed=$((failed + 1)); echo "not ok - $1" >&2; [ -z "${2:-}" ] || printf '    %s\n' "$2" >&2; }
+# check NAME COMMAND [DETAIL]: run COMMAND through eval and report it as ok or not ok.
 check() { if eval "$2"; then ok "$1"; else not_ok "$1" "${3:-}"; fi; }
 
 python=''

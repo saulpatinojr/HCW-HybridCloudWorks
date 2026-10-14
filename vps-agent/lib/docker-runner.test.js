@@ -176,6 +176,15 @@ describe('buildDockerArgs — the sandbox boundary', () => {
         assert.equal(older[at(older, '--ulimit') + 1], `nofile=${DEFAULT_NOFILE}:${DEFAULT_NOFILE}`);
       });
 
+      test('falls back to the default for a nofile that is not a positive whole number', () => {
+        // Docker refuses `nofile=Infinity:Infinity` and `nofile=0.5:0.5`, and
+        // `LABS_AGENT_JOB_NOFILE=1e999` reads as Infinity (review on #1172).
+        for (const bad of [0.5, Infinity, -1, 0, NaN, 'abc', '1e999', null]) {
+          const argv = buildDockerArgs(capability, { ...CTX, encoding }, { ...LIMITS, nofile: bad });
+          assert.equal(argv[at(argv, '--ulimit') + 1], `nofile=${DEFAULT_NOFILE}:${DEFAULT_NOFILE}`, `nofile=${String(bad)}`);
+        }
+      });
+
       test('removes the container and names it for the timeout kill path', () => {
         assert.ok(argv.includes('--rm'));
         assert.equal(argv[at(argv, '--name') + 1], CTX.containerName);

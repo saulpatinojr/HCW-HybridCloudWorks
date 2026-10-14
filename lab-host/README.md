@@ -1467,12 +1467,6 @@ The same in bash (Git Bash or Linux), from the repository root:
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd)/lab-host:/work:ro" -w /work/ansible --entrypoint bash ghcr.io/ansible/community-ansible-dev-tools@sha256:775c81d53058009dd47b97872f4a86d3b0a9ce16ad9af3cc48514ce4197aa787 roles/vault_tools/tests/hcw-vault-set.test.sh
 ```
 
-The same job also runs `roles/hardening/tests/unattended-upgrades.test.sh`,
-which renders the unattended-upgrades override with the role's defaults and
-asserts it names the allowed origins itself and never reboots while a user is
-logged in (LAB-13, #959); the two container lines above run it with its
-path in place of the held-package test's.
-
 A passing result has no `not ok` line and ends with
 `hcw-vault-set.test.sh: all` and the number of checks, then `checks passed`.
 
@@ -1532,6 +1526,12 @@ The same in bash (Git Bash or Linux), from the repository root:
 ```bash
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd)/lab-host:/work:ro" -w /work/ansible --entrypoint bash ghcr.io/ansible/community-ansible-dev-tools@sha256:775c81d53058009dd47b97872f4a86d3b0a9ce16ad9af3cc48514ce4197aa787 roles/hardening/tests/hcw-held-upgradable.test.sh
 ```
+
+The same job also runs `roles/hardening/tests/unattended-upgrades.test.sh`,
+which renders the unattended-upgrades override with the role's defaults and
+asserts it names the allowed origins itself and never reboots while a user is
+logged in (LAB-13, #959); the two container lines above run it with its
+path in place of the held-package test's.
 
 A passing result has no `not ok` line and ends with
 `hcw-held-upgradable.test.sh: all` and the number of checks, then
