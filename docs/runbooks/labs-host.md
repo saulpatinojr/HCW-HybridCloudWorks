@@ -1964,7 +1964,13 @@ fix is installed.
   upgrade, at `daemon.warning` with the tag `hcw-held-upgradable`, which the
   Arc data collection rule ships to the Management workspace as a `Syslog`
   row with that `ProcessName`. No line at warning means nothing held has an
-  upgrade waiting; the all-clear line stays on the host at `notice`. An alert
+  upgrade waiting; the all-clear line stays on the host at `notice`. Since
+  #1172 (LAB-13, #959) the same run also logs `a reboot is pending since
+  <date> (<n> days)` at warning while `/var/run/reboot-required` exists:
+  the 04:30 reboot waits for a window with nobody logged in, so the owner's
+  window is to log out before 04:30, or to run `sudo reboot` at a time of
+  their choosing; a pending line a week old is the sign that neither has
+  happened and a fix that needs the reboot is still waiting. An alert
   on those rows is not built yet: that is PLAT-4's work, not this page's.
 - **Tuesdays 05:20 UTC:** `publish-lab-image.yml` rebuilds the lab images and
   publishes them only when the `full` image's Debian packages moved; each

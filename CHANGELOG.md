@@ -25,7 +25,10 @@ This project has not cut a tagged release; entries are grouped under
   (LAB-13, #959). The hardening role's unattended-upgrades override now
   clears and names the allowed origins itself
   (`hardening_unattended_allowed_origins`, Ubuntu's four) and sets
-  `Automatic-Reboot-WithUsers` to false, with a test that renders it. The
+  `Automatic-Reboot-WithUsers` to false, with a test that renders it; the
+  daily held-package report logs `a reboot is pending since <date> (<n>
+  days)` at warning while the reboot waits, and the runbook names the
+  owner's window (log out before 04:30, or reboot when convenient). The
   job runner writes `--memory-swap` as twice `--memory` (Docker's default,
   swap at most the memory limit, made explicit) and adds `--ulimit nofile`
   (`LABS_AGENT_JOB_NOFILE`, default 1024, also in the `labs_agent` role);

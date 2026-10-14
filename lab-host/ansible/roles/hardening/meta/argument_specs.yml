@@ -79,6 +79,13 @@ argument_specs:
         required: false
         default: 1h
         description: How long a banned address stays banned.
+      hardening_reboot_required_path:
+        type: path
+        required: false
+        default: /var/run/reboot-required
+        description:
+          - The file unattended-upgrades leaves while a reboot is pending. The daily report logs
+            a warning line with its age while it exists (LAB-13, issue 959).
       hardening_held_report_tag:
         type: str
         required: false

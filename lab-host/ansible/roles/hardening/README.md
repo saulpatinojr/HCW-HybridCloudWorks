@@ -49,6 +49,7 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_fail2ban_findtime` | `10m` | Counting window |
 | `hardening_fail2ban_bantime` | `1h` | Ban length |
 | `hardening_held_report_tag` | `hcw-held-upgradable` | Syslog tag of the held-package report |
+| `hardening_reboot_required_path` | `/var/run/reboot-required` | The pending-reboot marker the daily report ages |
 | `hardening_held_report_script_path` | `/usr/local/sbin/hcw-held-upgradable` | Where the report script is installed |
 | `hardening_held_report_on_calendar` | `*-*-* 07:15:00` | When the report runs (systemd `OnCalendar`) |
 
@@ -66,6 +67,10 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    window, the script reads `apt-mark showhold` and `apt list --upgradable`
    and logs, under the tag `hcw-held-upgradable`:
 
+   - one line at `daemon.warning` while `/var/run/reboot-required` exists,
+     with the date it appeared and its age in days (LAB-13, #959): the 04:30
+     reboot waits for a window with nobody logged in, and this is the line
+     that says it has waited;
    - one line per held package apt could upgrade, at `daemon.warning`,
      which the Arc data collection rule ships to Log Analytics:
      `held package containerd.io is upgradable: installed <version>,

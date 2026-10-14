@@ -43,6 +43,11 @@ hardening_fail2ban_bantime: 1h
 # daemon facility at warning (one line at notice when there is none). The
 # tag is what a Log Analytics query or alert matches on (ProcessName).
 hardening_held_report_tag: hcw-held-upgradable
+# The same daily run says, at warning, while this file exists, that a reboot
+# is pending and for how long (LAB-13, #959): with Automatic-Reboot-WithUsers
+# off, the 04:30 reboot waits for a window with nobody logged in, and this
+# line is what says it has waited. The path is a variable for the role's test.
+hardening_reboot_required_path: /var/run/reboot-required
 hardening_held_report_script_path: /usr/local/sbin/hcw-held-upgradable
 # Daily, after the 04:30 unattended-upgrades reboot window and early in the
 # working day, with up to 15 minutes of jitter from the timer.
