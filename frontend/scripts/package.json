@@ -4,6 +4,6 @@
   "description": "CommonJS boundary marker for frontend/scripts. Not a real package: it carries no dependencies and no scripts, and exists only because the parent frontend/package.json sets \"type\": \"module\". Without this file, the .js helpers here that use require() (validate-routes.js, validate-provider-pages.js) would be loaded as ESM and fail with \"require is not defined\". Do not delete it without first converting those files to ESM or renaming them to .cjs.",
   "private": true,
   "engines": {
-    "node": ">=26.8.0"
+    "node": ">=26.9.0"
   }
 }
