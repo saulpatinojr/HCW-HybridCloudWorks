@@ -198,6 +198,7 @@ function DraftItemRow({ item }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+/** The Editor: pre-live drafts, the live board with its filters and actions, and the Archive board. */
 export default function EditorListPage() {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();
@@ -306,6 +307,7 @@ export default function EditorListPage() {
     setActionId('');
   };
 
+  /** The search and type filters, the error or truncation line, then the drafts and live rows. */
   function renderLiveBoardSection() {
     return (
       <section className="space-y-3">

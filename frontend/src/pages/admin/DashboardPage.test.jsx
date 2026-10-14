@@ -51,6 +51,7 @@ const DECISIONS = {
 
 const answer = (route) => Promise.resolve(route === 'getDecisionCenter' ? DECISIONS : SNAPSHOT);
 
+/** Render the dashboard inside a router, as the admin shell does. */
 function renderDashboard() {
   return render(
     <MemoryRouter>

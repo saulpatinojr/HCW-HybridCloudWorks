@@ -488,6 +488,7 @@ function DashboardExplore() {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
+/** The admin home: pipeline, decisions, counts by type, and the Explore strip. */
 export default function DashboardPage() {
   const { authReady } = useAuthReady();
   const navigate = useNavigate();

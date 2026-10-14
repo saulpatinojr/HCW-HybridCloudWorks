@@ -28,6 +28,7 @@ vi.mock('./queue/useContentTransitions', () => ({
   useContentTransitions: () => ({ errors: {}, recall: vi.fn(), transition: vi.fn() }),
 }));
 
+/** One live content record, in the shape the list route returns. */
 const liveItem = (n) => ({
   id: `live-${n}`,
   title: `Live item ${n}`,
@@ -37,9 +38,11 @@ const liveItem = (n) => ({
   'Cloud Provider': 'Azure',
 });
 
+/** A getJSON that answers the live board with the given items and the others with nothing. */
 const answerWith = (liveItems) => (path) =>
   Promise.resolve({ items: path.includes('live=true') ? liveItems : [] });
 
+/** Render the page inside a router, as the admin shell does. */
 function renderPage() {
   return render(
     <MemoryRouter>
