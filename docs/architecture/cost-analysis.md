@@ -264,7 +264,7 @@ same API before arming the web test.
 | Budget | Scope | Amount | What it watches |
 | --- | --- | ---: | --- |
 | `hcw-monthly-budget` | Subscription `sub-app-site-prod-cus` | USD 150 | The workload — Static Web Apps, Functions, Cosmos, storage, Key Vault |
-| `plat-mgmt-monthly-budget` | Subscription `sub-plat-mgmt-prod-cus` | USD 25 | Log Analytics ingestion and retention. **Declared, not applied** |
+| `plat-mgmt-monthly-budget` | Subscription `sub-plat-mgmt-prod-cus` | USD 25 | Log Analytics ingestion and retention. Applied: `az consumption budget list` on the Management subscription read it on 2026-10-14 at USD 25 with the month's spend under USD 1 (PLAT-9, #969; this cell said "declared, not applied" after the apply had landed) |
 | `hcw-foundry-monthly-budget` | Resource group `rg-ai-site-prod-cus` | USD 75 | The Microsoft Foundry account and its deployments (#849). **Declared 2026-10-04, applied with the owner's next TFC run**; first measured month pending |
 
 The two subscription budgets carry the same ladder: actual-cost notifications

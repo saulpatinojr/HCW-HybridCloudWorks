@@ -67,6 +67,12 @@ jobs:
       - name: Redaction and link gate
         run: python scripts/docs/check_redaction.py
 
+      # A page may not say a live thing is still planned (PLAT-9, #969): the
+      # phrases the 2026-10-06 review found an operator acting on, each
+      # failing the build once the dated record it contradicts exists.
+      - name: Stale state gate
+        run: python scripts/docs/check_stale_state.py
+
       - name: Build
         run: mkdocs build --strict
 

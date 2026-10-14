@@ -169,6 +169,15 @@ took, not what was configured.
 
 ### 7. Functions host storage stays LRS
 
+> **Superseded on this point by [ADR 0031](0031-security-scanner-owner-decisions.md)
+> (2026-09-14):** the owner chose geo-redundancy for the host account
+> (checkov CKV_AZURE_206, trivy AZU-0058, "Function host storage
+> geo-redundancy: yes"), and `infra/storage.tf` sets `Standard_GRS`. The
+> estate assessment of 2026-10-06 (PLAT-7, #967) read Terraform as
+> disagreeing with this section; it is this section that is older. The
+> reasoning below still holds for the deployment packages; what the geo copy
+> protects is the `releases` container the break-glass re-publish reads.
+
 `stsitefuncprodcus01` holds deployment packages and host state. Every artefact
 in it is rebuilt by `deploy-functions.yml` from a commit, so a loss costs one
 redeploy. Accepted; recorded here so #231's checkbox has a decision behind it.
