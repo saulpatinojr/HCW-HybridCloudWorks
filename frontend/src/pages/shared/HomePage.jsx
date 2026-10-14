@@ -407,6 +407,28 @@ export default function HomePage() {
             <StatBlock value={BLUEPRINT_COUNT} label="Blueprints" />
             {showArticleTile && <StatBlock value={articleTotal ?? '…'} label="Articles" />}
           </div>
+
+          {/* Audit P0-5: Capability Badges merchandising technical differentiators */}
+          <div
+            data-testid="capability-badges"
+            className="flex flex-wrap items-center gap-2 mt-3.5 max-w-xl"
+          >
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono tracking-tight bg-slate-900/60 dark:bg-slate-800/80 text-cyan-400 dark:text-cyan-300 border border-cyan-500/30">
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"
+                aria-hidden="true"
+              />
+              Terraform AVM Generator
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono tracking-tight bg-slate-900/60 dark:bg-slate-800/80 text-emerald-400 dark:text-emerald-300 border border-emerald-500/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+              Ephemeral Container Labs
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono tracking-tight bg-slate-900/60 dark:bg-slate-800/80 text-purple-400 dark:text-purple-300 border border-purple-500/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-400" aria-hidden="true" />
+              FOCUS 1.1 FinOps
+            </span>
+          </div>
         </div>
         <div className="relative h-100 lg:h-130 w-full flex items-center justify-center hero-mesh rounded-2xl border border-glass-border overflow-hidden group">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(172,183,174,0.2),transparent_55%),radial-gradient(circle_at_80%_80%,rgba(194,180,144,0.14),transparent_50%)] opacity-90"></div>

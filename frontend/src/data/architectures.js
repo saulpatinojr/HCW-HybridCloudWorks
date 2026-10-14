@@ -235,6 +235,26 @@ resource "azurerm_private_endpoint" "sql" {
         { label: 'Key Vault & Log Analytics', share: '$45 / mo' },
       ],
     },
+    landingZonePreset: 'secure-2-tier',
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Low-budget dev/test sandboxes where Application Gateway v2 and Private Endpoint hourly standing charges exceed compute spend.',
+      'Teams without Terraform state management maturity (use App Service with built-in VNet integration first).',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Application Gateway v2 Capacity Units',
+        trap: 'Fixed minimum capacity units cost ~$175/mo even with zero web traffic.',
+        mitigation:
+          'Configure autoscale with minimum capacity 0 in non-production environments to avoid baseline billing.',
+      },
+      {
+        service: 'Private Endpoints & Cross-Subnet Data Transfer',
+        trap: 'Data processing charges ($0.01/GB) compound when transferring large SQL backup files or bulk datasets over Private Link.',
+        mitigation:
+          'Keep bulk export traffic within the regional backbone or attach an ACR/Storage Private Endpoint directly to the data subnet.',
+      },
+    ],
     tags: ['Two-Tier', 'WAF', 'Private Link', 'Zero Trust', 'Azure SQL'],
   },
   'enterprise-hub-spoke-landing-zone': {
@@ -246,6 +266,26 @@ resource "azurerm_private_endpoint" "sql" {
     promise:
       'Centralized hub-and-spoke network topology with Azure Firewall inspection, Private DNS resolution, and policy guardrails across workload subscriptions.',
     estimatedCost: '$2,100 / month',
+    landingZonePreset: 'enterprise-default',
+    interactiveLabId: 'terraform-validate',
+    whenNotToUse: [
+      'Single-workload prototypes or early-stage startups where hub operational overhead and Azure Firewall hourly costs ($912/mo) dwarf compute value.',
+      'Isolated edge deployments with zero cross-region or hybrid on-premises connectivity requirements.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Azure Firewall SKU Selection',
+        trap: 'Standard SKU ($912/mo) and Premium SKU ($1,277/mo) run fixed standing costs regardless of throughput.',
+        mitigation:
+          'Start on Basic Firewall ($288/mo) for environments with 2 or fewer spokes and under 100 Mbps aggregate throughput.',
+      },
+      {
+        service: 'Spoke Virtual Network Peering',
+        trap: 'Bi-directional peering data transfer fees ($0.01/GB in + $0.01/GB out) compound when chatty microservices communicate across spoke boundaries.',
+        mitigation:
+          'Consolidate tightly coupled services into a single multi-subnet spoke to keep traffic on local routing.',
+      },
+    ],
     howItWorks: [
       'On-premises and branch traffic terminates in the Connectivity Hub via ExpressRoute or VPN Gateway.',
       'Azure Firewall in the hub inspects east-west traffic between workload spokes and north-south egress.',
@@ -755,6 +795,24 @@ export const awsArchitectures = {
   handler       = "index.handler"
   runtime       = "nodejs20.x"
 }`,
+    whenNotToUse: [
+      'Low-latency legacy systems requiring persistent TCP connections or connection pooling (use ECS Fargate with RDS Proxy).',
+      'Continuous 24/7 high-throughput batch stream processing where sustained Lambda concurrency costs exceed reserved EC2 compute.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Amazon API Gateway HTTP vs. REST APIs',
+        trap: 'REST APIs cost $3.50/million requests plus authorizer execution overhead vs $1.00/million for HTTP APIs.',
+        mitigation:
+          'Adopt HTTP APIs (v2) unless specifically requiring API keys, request validation, or WAF associations.',
+      },
+      {
+        service: 'Amazon DynamoDB On-Demand vs. Provisioned Capacity',
+        trap: 'On-demand mode charges $1.25 per million write request units, which compounds dramatically under predictable sustained workloads.',
+        mitigation:
+          'Switch predictable steady-state tables to Provisioned Capacity with auto-scaling to save up to 70%.',
+      },
+    ],
     tags: ['Serverless', 'API', 'Cost-Effective'],
   },
   'data-lake': {
@@ -1013,6 +1071,24 @@ export const gcpArchitectures = {
   port_range = "443"
   ip_address = google_compute_global_address.default.address
 }`,
+    whenNotToUse: [
+      'Internal microservices and regional backends that do not accept public edge ingress or multi-region failover.',
+      'Static websites that can be served directly from Cloud Storage and Cloud CDN without dynamic backend services.',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'Cloud Armor Security Policies',
+        trap: 'Base policy costs $5/mo plus $1 per rule, but request evaluation fees ($0.75 per million requests) compound under high-traffic endpoints.',
+        mitigation:
+          'Combine multiple IP ranges into named IP lists to minimize active rule counts and evaluation hops.',
+      },
+      {
+        service: 'Inter-Region Backend Data Egress',
+        trap: 'Routing user requests from a US edge PoP to an EU backend triggers premium cross-region network egress ($0.08 - $0.12/GB).',
+        mitigation:
+          'Deploy identical backend instance groups in all primary operating regions and configure region-affinity routing.',
+      },
+    ],
     tags: ['Networking', 'Security', 'Global', 'Compute'],
   },
   'bigquery-data-lake': {
@@ -1792,6 +1868,24 @@ export const finopsArchitectures = {
     field = "ChargePeriodStart"
   }
 }`,
+    whenNotToUse: [
+      'Single-cloud estates with total cloud spend under $10,000/month where custom FOCUS ETL pipelines cost more than native cost tools.',
+      'Teams without enforced organizational tagging policies (raw untagged billing records cannot be allocated by business unit).',
+    ],
+    finopsCostTraps: [
+      {
+        service: 'BigQuery Billing Export Query Scans',
+        trap: 'Running SELECT * over unpartitioned multi-year billing tables costs $6.25 per TB scanned.',
+        mitigation:
+          'Partition billing tables by export_time (DAY) and cluster by provider, service_id, and cost_center.',
+      },
+      {
+        service: 'Automated Rightsizing Idle Timeouts',
+        trap: 'Downsizing compute without reviewing P99 peak utilization can trigger out-of-memory crashes and auto-recovery churn.',
+        mitigation:
+          'Evaluate 30-day P99 memory metrics alongside CPU before triggering automated rightsizing recommendations.',
+      },
+    ],
     tags: ['FinOps', 'Multi-Cloud', 'Cost Optimization', 'FOCUS'],
   },
   'real-time-cost-dashboard': {
