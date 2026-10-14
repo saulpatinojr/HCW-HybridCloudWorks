@@ -1077,8 +1077,26 @@ nights, bash, on the host:
 sudo journalctl -t hcw-backup-upload --since -3d --no-pager
 ```
 
-Restore the newest dump into an empty database — three lines, bash, on the
-host: stop Coder, recreate the database from the dump, start Coder.
+**From the container**, which is what a rebuilt host does
+(`docs/runbooks/labs-host.md`, "Reinstalling the host", step 7):
+`hcw-backup-restore` lists the blobs as the Arc identity, fetches the newest
+(or a named one) to `/var/backups/restore/`, and with `--yes` does the three
+lines below as one command, or restores a Vault snapshot with a token on
+stdin (`ansible/roles/backups/README.md`, "Restore"). Bash, on the host:
+
+```bash
+sudo /usr/local/sbin/hcw-backup-restore list
+```
+
+```bash
+sudo /usr/local/sbin/hcw-backup-restore coder --yes
+```
+
+Success is `restored coder/coder-<UTC stamp>.sql.gz into coder-postgres`.
+
+**From a local copy**, the newest dump into an empty database — three
+lines, bash, on the host: stop Coder, recreate the database from the dump,
+start Coder.
 
 ```bash
 sudo docker compose --project-directory /etc/hcw/coder stop coder
