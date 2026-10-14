@@ -123,17 +123,19 @@ function FocusPanel() {
         </Link>
       </div>
       <ul className="space-y-3">
-        {['Common Schema 1.0', 'Multi-Vendor Support', 'Attribution Standards'].map((item) => (
-          <li
-            key={item}
-            className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300"
-          >
-            <span className="material-symbols-outlined text-primary text-lg" aria-hidden="true">
-              check_circle
-            </span>
-            {item}
-          </li>
-        ))}
+        {['FOCUS 1.4 Common Schema', 'Multi-Vendor Support', 'Attribution Standards'].map(
+          (item) => (
+            <li
+              key={item}
+              className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300"
+            >
+              <span className="material-symbols-outlined text-primary text-lg" aria-hidden="true">
+                check_circle
+              </span>
+              {item}
+            </li>
+          )
+        )}
       </ul>
     </div>
   );
@@ -240,7 +242,7 @@ export default function FinOpsLandingPage() {
         cta: { label: 'Browse Architectures', to: routes.architectureDesigns('finops') },
         stats: [
           { value: '6', label: 'Framework Domains' },
-          { value: '1.0', label: 'FOCUS Schema' },
+          { value: '1.4', label: 'FOCUS Schema' },
           { value: '2', label: 'Learning Paths' },
         ],
       }}
@@ -253,7 +255,7 @@ export default function FinOpsLandingPage() {
         },
         {
           eyebrow: 'OPEN STANDARD',
-          title: 'Focus on FOCUS',
+          title: 'Focus on FOCUS 1.4',
           action: { label: 'FOCUS hub', to: routes.focus('finops') },
           content: <FocusPanel />,
         },

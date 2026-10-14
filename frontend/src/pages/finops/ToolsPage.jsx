@@ -56,11 +56,11 @@ export default function ToolsPage() {
                   </div>
                 </div>
                 <h3 className="text-lg sm:text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">
-                  FOCUS Schema Validator
+                  FOCUS 1.4 Schema Validator
                 </h3>
                 <p className="text-slate-400 text-sm mb-6 flex-1">
                   Validate your billing data against the FinOps Open Cost &amp; Usage Specification
-                  (FOCUS) 1.0 schema. Detects type mismatches and missing mandatory columns.
+                  (FOCUS) 1.4 schema. Detects type mismatches and missing mandatory columns.
                 </p>
                 <div className="bg-black/30 rounded-lg p-3 mb-6 font-mono text-xs text-foreground border border-slate-800">
                   <div className="flex justify-between mb-1">

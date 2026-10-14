@@ -31,45 +31,33 @@ export default function Footer() {
           </span>
         </div>
 
-        {/* Center: grouped links centered (About | Contact | Privacy | Terms | Admin) */}
+        {/* Center: grouped links centered (About · Contact · Privacy · Terms · Admin) */}
         <div className="flex-1 flex items-center justify-center">
-          <nav className="flex items-center gap-4 text-xs">
+          <nav className="flex items-center gap-4 sm:gap-6 text-xs">
             <Link
               to="/about"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
             >
               About
             </Link>
-            <span className="text-slate-400" aria-hidden="true">
-              |
-            </span>
             <Link
               to="/contact"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
             >
               Contact
             </Link>
-            <span className="text-slate-400" aria-hidden="true">
-              |
-            </span>
             <a
               href="/privacy-policy"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
             >
               Privacy Policy
             </a>
-            <span className="text-slate-400" aria-hidden="true">
-              |
-            </span>
             <a
               href="/terms-of-service"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
             >
               Terms
             </a>
-            <span className="text-slate-400" aria-hidden="true">
-              |
-            </span>
             <Link
               to="/admin"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"

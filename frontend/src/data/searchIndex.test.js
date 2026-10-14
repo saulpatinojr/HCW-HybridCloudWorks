@@ -40,6 +40,18 @@ describe('searchIndex', () => {
     expect(finopsCert).toBeDefined();
     expect(finopsCert.title).toContain('FOCUS 1.4');
     expect(finopsCert.badge).toBe('FOCUS 1.4');
+
+    const finopsFofa = STATIC_SEARCH_ITEMS.find((item) => item.id === 'cert-finops-fofa');
+    expect(finopsFofa).toBeDefined();
+    expect(finopsFofa.title).toContain('FOCUS 1.4');
+    expect(finopsFofa.badge).toBe('FOCUS 1.4');
+
+    const finopsValidator = STATIC_SEARCH_ITEMS.find(
+      (item) => item.id === 'tool-finops-focus-validator'
+    );
+    expect(finopsValidator).toBeDefined();
+    expect(finopsValidator.subtitle).toContain('FOCUS 1.4');
+    expect(finopsValidator.badge).toBe('FOCUS 1.4');
   });
 
   it('returns all items when query is empty', () => {
