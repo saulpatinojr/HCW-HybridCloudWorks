@@ -31,7 +31,7 @@
 # except what later stages COPY out of /out. The base already carries
 # ca-certificates and python3 with pip.
 # ---------------------------------------------------------------------------
-FROM python:3.14.7-slim-trixie@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS fetch
+FROM python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS fetch
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl unzip git \
@@ -226,7 +226,7 @@ RUN set -eu; . /build/versions.env; \
 # ---------------------------------------------------------------------------
 # runner
 # ---------------------------------------------------------------------------
-FROM python:3.14.7-slim-trixie@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS runner
+FROM python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS runner
 
 # No apt layer: the base already carries python3 (3.14.7, at /usr/local/bin,
 # with ensurepip for the venv below), ca-certificates, bash and coreutils,
