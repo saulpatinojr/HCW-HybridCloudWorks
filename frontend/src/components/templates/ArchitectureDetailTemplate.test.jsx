@@ -115,4 +115,36 @@ describe('ArchitectureDetailTemplate — Mini Landing Page (#1084)', () => {
     expect(form.practices).toEqual(['Prevention mode WAF']);
     expect(form.outcome).toEqual(['Zero public database exposure']);
   });
+
+  it('renders /gcp/architecture-designs/global-load-balancing with Mini Landing Page elements (#Phase4)', async () => {
+    renderArchitectureRoute('/gcp/architecture-designs/global-load-balancing', 'gcp');
+
+    expect(
+      await screen.findByRole('heading', { name: 'Global Load Balancing' })
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('mini-landing-promise')).toHaveTextContent(
+      /Global anycast IP routing, sub-second regional failover, and Cloud Armor edge security/i
+    );
+    expect(screen.getByTestId('topology-diagram')).toBeInTheDocument();
+    expect(screen.getByTestId('landing-pane-how-it-works')).toBeInTheDocument();
+    expect(screen.getByTestId('landing-pane-key-services')).toBeInTheDocument();
+    expect(screen.getByTestId('landing-pane-security')).toBeInTheDocument();
+    expect(screen.getByTestId('landing-pane-outcome')).toBeInTheDocument();
+  });
+
+  it('renders /finops/architecture-designs/multi-cloud-cost-optimization with Mini Landing Page elements (#Phase4)', async () => {
+    renderArchitectureRoute('/finops/architecture-designs/multi-cloud-cost-optimization', 'finops');
+
+    expect(
+      await screen.findByRole('heading', { name: 'Multi-Cloud Cost Optimization' })
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('mini-landing-promise')).toHaveTextContent(
+      /Normalized FOCUS 1.0 cost datasets uniting Azure, AWS, and GCP billing exports/i
+    );
+    expect(screen.getByTestId('topology-diagram')).toBeInTheDocument();
+    expect(screen.getByTestId('landing-pane-how-it-works')).toBeInTheDocument();
+    expect(screen.getByTestId('landing-pane-key-services')).toBeInTheDocument();
+    expect(screen.getByTestId('landing-pane-security')).toBeInTheDocument();
+    expect(screen.getByTestId('landing-pane-outcome')).toBeInTheDocument();
+  });
 });
