@@ -137,7 +137,7 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
 - **Providers: yes, and symlinked.** `TF_CLI_CONFIG_FILE` points at a
   `provider_installation { filesystem_mirror { ... } }` block with no
   `direct` fallback, so Terraform installs from `/opt/terraform/mirror` and
-  nowhere else. The mirror holds azurerm 5.7.0 and 4.81.0, azapi 2.12.0, alz
+  nowhere else. The mirror holds azurerm 5.9.0 and 4.81.0, azapi 2.13.0, alz
   0.22.0, random 3.9.1, modtm 0.4.0 and time 0.14.2, each zip verified after
   mirroring against the SHA256 the registry publishes for it and then
   unpacked into the directory layout. Unpacked matters: from a packed mirror

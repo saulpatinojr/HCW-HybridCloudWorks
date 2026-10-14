@@ -17,7 +17,66 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Changed
+
+- **Lab host: a run can be narrowed to the roles that changed.** Every role
+  in `lab-host/ansible/site.yml` carries its own name as a tag, so
+  `bootstrap.sh --tags lab_images,coder` after a digests merge, or
+  `--tags addons` after an add-on's digest moved, re-applies one area of a
+  converged host instead of the whole play; the pre-flight checks and the
+  privilege checks run whatever the tags. A narrowed run is not a
+  convergence: neither `bootstrap.sh` nor the play records it as a completed
+  run, so the site keeps saying the host is behind until the next full one.
+  `ansible.posix.profile_tasks` prints the twenty slowest tasks after the
+  recap, so a long run says where its minutes went. `lab-host/README.md`,
+  "Running part of the play", has the tags and the two things a narrowed run
+  is not. Owner ask 2026-10-14, after a run that took most of an hour to
+  move three pins.
+- **Lab host: the proxy check reports in plain words.** The privilege check
+  used to print the three probes' raw answers, two of which the Docker CLI
+  words as `Error response from daemon: … refused …` — the proxy doing its
+  job, read as a fault. It now prints one sentence saying what passed; the
+  raw answers appear only when the check fails.
+
 ### Fixed
+
+- **Lab host: the add-on secrets are read with the `vars` lookup.** The
+  `addons` role built each add-on's secret environment with the `vars`
+  dictionary, which ansible-core 2.21 warns about on every run and 2.24
+  removes; it uses `lookup('vars', …)` now, so the run prints no deprecation
+  warning and does not break on the next ansible-core.
+- **Lab image: the pins the weekly scan could move (#1133).** The first
+  scan the `check` job filed (2026-10-14) named fixable HIGH/CRITICAL
+  findings in the images the host runs. Four of them have a publisher
+  release to move to, and `lab-image/versions.env` moves them with the sums
+  read as the file documents: terraform 1.16.4 → 1.16.5
+  (`releases.hashicorp.com` SHA256SUMS), the azurerm provider 5.7.0 → 5.9.0
+  and azapi 2.12.0 → 2.13.0 (the registry's `download/linux/amd64`
+  `shasum`), and the Azure CLI 2.90.0 → 2.91.0 (published in both the
+  `bookworm` suite the full target installs from and the `resolute` suite
+  the sandbox template uses), which is the bundle that carried PyJWT 2.13.0,
+  cryptography 48.0.1, msgpack, setuptools 70.3.0 and urllib3 2.7.0. The
+  rest of the table — azurerm 4.81.0, alz 0.22.0, random 3.9.1, modtm
+  0.4.0, time 0.14.2, kubeconform 0.8.0, helm 4.3.0, kubectl 1.37.1 — is
+  already each publisher's newest release, so those Go-library findings
+  have nothing to pin yet, and the Debian lines (openssl, libpcre2
+  `~deb13u3`) arrive with the base digest the weekly bump moves. The
+  `README`'s mirror line follows.
+
+- **The lab agent's Docker proxy follows a daemon restart.** The proxy
+  (`hcw-labs-agent-docker-proxy`, LAB-5) holds the daemon's socket as a
+  bind-mounted file, so when a bootstrap run restarted the daemon under it
+  — the 2026-10-14 run that took Docker Engine from 29.8.1 to 29.9.0 — it
+  kept the old, unlinked socket inode: its own refusals still answered and
+  every forwarded call got HAProxy's `503 Service Unavailable`, and the run
+  ended at the privilege check. The `labs_agent` role now installs
+  `/usr/local/libexec/hcw-docker-proxy-stale`, which compares the proxy's
+  start with `docker.service`'s `ActiveEnterTimestamp`, restarts a proxy
+  that predates the daemon's current start, and then requires `GET /_ping`
+  through the proxy (`ansible.builtin.uri` on its Unix socket) to answer 200
+  before the play goes on. The privilege
+  check's failure message names the symptom. Tested against stand-ins for
+  `systemctl` and `docker` in `ansible-lint (lab-host)`.
 
 - **The lab supply-chain issue fits GitHub's body limit.** The weekly
   `check` job scans the two published lab images with Trivy and files its
@@ -32,6 +91,22 @@ This project has not cut a tagged release; entries are grouped under
   renderings and the cut.
 
 ### Added
+
+- **Lab host: where its backups go (LAB-9, #955; owner decision
+  2026-10-14).** `infra/lab-hybrid-backups.tf`: a Standard GRS, Cool,
+  Entra-only storage account in `rg-lab-hybrid-prod-cus` with one container,
+  `host-backups`, under a 35-day time-based immutability policy — the host can
+  write a backup and cannot delete or overwrite one inside the window — with
+  versioning and 35-day soft delete behind it; the Arc machine identity's
+  second grant, Storage Blob Data Contributor on that container only; blob
+  read, write and delete logs to the Management workspace; and one alert per
+  backup kind (`coder/`, `vault/`) when no blob was written in two days. The
+  account name is an output for the host's `group_vars`. ADR 0032 gains the
+  amendment of 2026-10-14, which also records the owner's choice over the VPS
+  provider's object storage and local-only, and why uploads are not encrypted
+  client-side. The host side (upload after the nightly dump, a nightly Vault
+  raft snapshot, the restore helper) and the runbook's rehearsal line follow
+  in their own pull requests once this has applied.
 
 - **Lab pin bumps carry their dependents (#949).** Three files are held to
   the pins the weekly bumps move, and a bump that moved the pin alone failed

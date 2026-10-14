@@ -234,6 +234,50 @@ through (bash, on the host):
 sudo /opt/hcw-src/lab-host/bootstrap.sh --check --diff
 ```
 
+### Running part of the play
+
+A full run is the host's convergence and takes its time (the twenty slowest
+tasks are printed after the recap, so a run says where its minutes went). When
+one area changed — a pin set merged, an add-on's digest moved — the run can be
+narrowed to the roles that own it. Every role carries its own name as a tag;
+the pre-flight checks and the privilege checks run whatever the tags. Bash, on
+the host, one line each:
+
+```bash
+sudo /opt/hcw-src/lab-host/bootstrap.sh --tags lab_images,coder
+```
+
+```bash
+sudo /opt/hcw-src/lab-host/bootstrap.sh --tags addons
+```
+
+```bash
+sudo /opt/hcw-src/lab-host/bootstrap.sh --tags docker,labs_agent
+```
+
+```bash
+sudo /opt/hcw-src/lab-host/bootstrap.sh --tags caddy
+```
+
+The first is a `chore/lab-pins-image-digests` merge (the `lab_images` role
+pulls the new images and removes the ones they replaced; the `coder` role
+republishes the templates that name them). The second is an add-on row's
+digest. The third is a Docker Engine or containerd move from the host pin set
+(the daemon restarts; `labs_agent` restarts the agent's socket proxy onto the
+daemon's new socket). The tags are the role names in `ansible/site.yml`:
+`hardening`, `vault_tools`, `arc`, `docker`, `node_exporter`, `caddy`,
+`coder_sandbox`, `coder`, `labs_agent`, `lab_images`, `addons`, `portainer`,
+`vault`.
+
+Two things a narrowed run is not. It is not a convergence: `bootstrap.sh`
+does not record it as a completed run and the play does not write the
+commit the agent reports, so the site keeps saying the host is behind until
+the next full run — which is the one to run after anything that touched more
+than one area, and in any week nothing else did. And it does not stand in
+for a first run: a role re-applied alone relies on the host state the full
+run left (`docker` installed, the vault present); on a host that never
+converged, run the whole play.
+
 ### Which commit runs
 
 Every run brings the host to the current `main`: to move the host to a

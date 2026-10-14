@@ -1126,8 +1126,25 @@ sudo /opt/hcw-src/lab-host/bootstrap.sh
 ```
 
 Good is a `PLAY RECAP` line for `localhost` with `failed=0`, and before it
-the task **Show what the agent proxy check saw** printing `job`, `listing`
-and `privileged`, each with `ok: true`. The docker role reports `changed`
+the task **Say what the agent proxy check saw** printing one sentence: the
+job printed its payload, `docker ps` was refused by the allowlist, a
+privileged run was refused by the container rules. (The two refusals reach
+the Docker CLI as `Error response from daemon: … refused …`; that is the
+proxy's refusal, not a fault, and the sentence says so rather than quoting
+it. The raw answers are printed only when the check fails.)
+
+A run that moves Docker Engine restarts the daemon, which recreates
+`/var/run/docker.sock`; the agent's proxy holds that socket as a bind-mounted
+file, so a proxy already running would keep the old inode and answer every
+forwarded call with `503 Service Unavailable` while its own refusals still
+answer (the 2026-10-14 run, 29.8.1 → 29.9.0, ended at the privilege check
+with exactly that). The labs_agent role now restarts a proxy that started
+before the daemon's current start (**Ask whether a running proxy predates
+the daemon's current start**, then **Run the agent's Docker socket proxy**
+reporting `changed`) and refuses to go on until `GET /_ping` through the
+proxy answers 200. After a pin set merges, the run can be narrowed to the
+roles that own it (`lab-host/README.md`, "Running part of the play"); a
+narrowed run is not recorded as a convergence. The docker role reports `changed`
 on the stop and the carry tasks on the run that switches (they run once), and
 on **Delete the bridges the running daemon no longer owns** when that run left
 the old root's bridges behind. Compose no longer warns that
