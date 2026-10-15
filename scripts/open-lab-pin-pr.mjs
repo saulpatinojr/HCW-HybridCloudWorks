@@ -38,7 +38,7 @@ const BOOTSTRAP = 'ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"';
 const BOOTSTRAP_OK =
   'A good run ends with a `PLAY RECAP` line for `localhost` showing `failed=0` and `unreachable=0`; `changed=` above zero names the tasks the new pins moved.';
 
-/** The three pin sets: their branch, the only paths they may touch, and what a reviewer needs to know. */
+/** The pin sets, and the Cloudflare ranges set (PLAT-10, #970): their branch, the only paths they may touch, and what a reviewer needs to know. */
 export const SETS = {
   host: {
     branch: 'chore/lab-pins-host',
@@ -105,6 +105,25 @@ export const SETS = {
     infrastructure: true,
     planNote:
       'this digest-only update of the two consumers creates no Terraform or Coder plan or preview. The review is the publisher evidence above and the exact two-line diff, by a person; the next `bootstrap.sh` run is the post-merge operational check.',
+  },
+  'cloudflare-ranges': {
+    branch: 'chore/cloudflare-ranges',
+    workflow: '.github/workflows/cloudflare-ranges.yml',
+    paths: ['infra/variables.tf'],
+    title: 'Origin lock: move cloudflare_ip_ranges to the list Cloudflare publishes',
+    intro:
+      "The weekly Cloudflare ranges run (scripts/cloudflare-ranges.mjs, PLAT-10 #970) found that the IPv4 ranges Cloudflare publishes at https://api.cloudflare.com/client/v4/ips differ from the default of `cloudflare_ip_ranges` in `infra/variables.tf`, the list the origin lock in `infra/functionapp.tf` admits. This pull request rewrites that default to the published list, in Cloudflare's order. The evidence below names every range that moved and what it means at the origin.",
+    after: [
+      "**Apply before the next deploy.** The change is one Allow rule added or removed per range on the Function App, applied by the owner's HCP Terraform run at https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs. `scripts/assert-origin-lock.mjs` holds every deploy to the list in the checkout it runs from, so a merged move that has not been applied fails the next deploy by design: merge, apply, then deploy.",
+      '**A range Cloudflare added is a 403 until the apply.** Visitors routed through a new Cloudflare edge are refused at the origin until its rule exists, which is why this pull request exists and why it should not stay open.',
+    ],
+    scope: [
+      '**Components:** the default of `cloudflare_ip_ranges` in `infra/variables.tf`, read by `infra/functionapp.tf` (one `ip_restriction` per range) and by `scripts/assert-origin-lock.mjs` after every deploy.',
+      '**Rollback:** revert this pull request and apply again; the previous rules return. Nothing else reads the list.',
+    ],
+    infrastructure: true,
+    planNote:
+      'the HCP Terraform plan for the apply is the review of the infrastructure change: one `ip_restriction` added or removed per range named in the evidence, and nothing else. `tfc-plan-check.yml` reads it against the declared permanent diff.',
   },
 };
 

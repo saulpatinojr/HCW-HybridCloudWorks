@@ -22,6 +22,7 @@ import {
   VERSIONS_ENV_PATH,
 } from './lib/lab-pin-bumps.mjs';
 import { BUMP_SETS } from './lab-pins-upstream.mjs';
+import { SET as CLOUDFLARE_SET, VARIABLES_PATH } from './cloudflare-ranges.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const workflow = (name) => readFileSync(join(REPO, '.github', 'workflows', name), 'utf8');
@@ -43,11 +44,13 @@ const job = (source, name, next) => {
 };
 
 describe('the pin sets', () => {
-  it('are the sets lab-pins-upstream.mjs can bump, each on its own branch', () => {
-    expect(Object.keys(SETS).sort()).toEqual([...BUMP_SETS].sort());
+  it('are the sets lab-pins-upstream.mjs can bump plus the Cloudflare ranges set, each on its own branch', () => {
+    expect(Object.keys(SETS).sort()).toEqual([...BUMP_SETS, CLOUDFLARE_SET].sort());
     const branches = Object.values(SETS).map((s) => s.branch);
     expect(new Set(branches).size).toBe(branches.length);
-    for (const s of Object.values(SETS)) expect(s.branch).toMatch(/^chore\/lab-pins-/);
+    for (const [name, s] of Object.entries(SETS)) {
+      expect(s.branch).toMatch(name === CLOUDFLARE_SET ? /^chore\/cloudflare-ranges$/ : /^chore\/lab-pins-/);
+    }
   });
 
   it('may touch exactly the files their planners edit, and each exists', () => {
@@ -56,6 +59,7 @@ describe('the pin sets', () => {
     expect(SETS.host.paths).toEqual([GROUP_VARS_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH]);
     expect(SETS['image-base'].paths).toEqual([VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH]);
     expect(SETS['image-digests'].paths).toEqual([CAPABILITIES_PATH, CODER_TEMPLATE_PATH]);
+    expect(SETS[CLOUDFLARE_SET].paths).toEqual([VARIABLES_PATH]);
     for (const s of Object.values(SETS)) for (const p of s.paths) expect(existsSync(join(REPO, p)), p).toBe(true);
   });
 

@@ -53,6 +53,12 @@ process separation. Supersedes ADR 0004.
 - **Revisit** if: a scheduler workload measurably degrades API latency; a new integration needs a
   permission that would be dangerous in the shared identity; or labs job volume makes the in-app
   broker a noisy neighbour. The split returns worker-first.
+- **The first trigger is measured** since 2026-10-15 (PLAT-10, #970):
+  `alert-export-window-latency` in `infra/observability.tf` compares the API's
+  P95 inside the nightly Cosmos export window (03:00 to 03:45 UTC) with the
+  rest of the same day, daily, and fires when the window's P95 is above 1 s
+  and above twice the day's, over at least 20 requests. A fire is this
+  trigger met.
 
 ## Related decisions and references
 

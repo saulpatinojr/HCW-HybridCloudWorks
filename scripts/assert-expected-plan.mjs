@@ -238,6 +238,14 @@ export function overdueQuery(rows) {
  * has applied. "Declaring an intended change" in the header has the rest.
  */
 export const DECLARED = [
+  // PLAT-10 (#970): alert-export-window-latency, ADR 0019's revisit trigger
+  // measured. Created by the owner's next apply; delete this entry once
+  // verify-alert-state.yml reads the rule OK.
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.export_window_latency",
+    action: "create",
+    reason: "#970: alert-export-window-latency, the nightly export window measured against the day (ADR 0019's revisit trigger)",
+  },
   // The weekly AI provider probe's timer flag (#701): the key applied disarmed
   // ('false', present in state since the 2026-10-06 runs); adding
   // PROBE_AI_PROVIDERS to enabled_timers arms it. Everything else declared

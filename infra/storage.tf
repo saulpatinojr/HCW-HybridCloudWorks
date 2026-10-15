@@ -110,12 +110,19 @@ resource "azurerm_storage_account" "hcw" {
       # previous `https://*.<domain>` and `http://localhost:*` were rejected
       # with "The value for one of the XML nodes is not in the correct
       # format", an error that names neither the field nor the value.
-      # Port is part of an origin, hence localhost:5173 (Vite's default) and
-      # not bare localhost.
+      #
+      # No localhost origin (PLAT-10, #970). `http://localhost:5173` (Vite's
+      # default port) sat here from the first apply, and it let a script on
+      # any developer's machine, or anyone else's, read this account
+      # cross-origin in production. Nothing needs it: the frontend never
+      # fetches from this account by script (read 2026-10-15: no fetch() to
+      # the storage host anywhere under frontend/src), and the images and
+      # media it does load go through <img> and <audio> elements, which CORS
+      # does not govern. A local run sees the same content with or without
+      # the entry.
       allowed_origins = [
         "https://${var.domain}",
         "https://www.${var.domain}",
-        "http://localhost:5173",
       ]
       exposed_headers    = ["Content-Length", "Content-Type"]
       max_age_in_seconds = 3600

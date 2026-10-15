@@ -441,6 +441,7 @@ reasoning beside it.
 | `alert-rbac-definition-mgmt` | — | The same, in the Management subscription | As above | As above, in `sub-plat-mgmt-prod-cus` |
 | `alert-lab-vault-unwrap` | 1 | The lab vault's seal key was asked to wrap or unwrap from an address the lab host has not heartbeated from in the last hour. Management subscription | Vault's identity in use off the host, or the host's address changed | The caller address in the row against the host's `Heartbeat` address |
 | `alert-lab-ssh-burst` | 2 | Failed SSH lines on the lab host in 15 minutes number at least 50 and more than four times the day's quarter-hour average. Management subscription | A distributed attempt that fail2ban's per-address ban does not stop, or a broken key | `ssh hcw-lab 'sudo fail2ban-client status sshd'` |
+| `alert-export-window-latency` | 3 | The API's P95 inside the nightly Cosmos export window (03:00 to 03:45 UTC) was above 1 s and above twice the rest of that day's P95, over at least 20 requests. Daily, stateful, scoped to the Application Insights component | A scheduler degrading the API: ADR 0019's revisit trigger, met | The alert's dimensions carry both P95s (ms) and both request counts; then `requests` split by the window under Application Insights → **Logs**, and ADR 0019's revisit, which returns the split worker-first |
 
 Activity Log alerts carry no severity of their own; their mail shows the
 common schema's default. `alert-kv-config-write` and the two role-assignment
@@ -1289,6 +1290,7 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 | `alert-lab-ssh-burst` | not yet | |
 | `alert-lab-backup-missing-coder` | not yet | Host side landed (#955, the `backups` role); fire test: stop `coder-postgres-backup.timer` for two nights |
 | `alert-lab-backup-missing-vault` | not yet | Host side landed (#955, the `backups` role); fire test: stop `hcw-vault-backup.timer` for two nights |
+| `alert-export-window-latency` | not yet | No fire test: a degraded export window cannot be staged without slowing production. Design test: the rule's query with `windowRequests >= 1` and `windowP95 > 0` under Application Insights → **Logs** returns one row on any night with requests in the window |
 
 ### What these still do not cover
 
