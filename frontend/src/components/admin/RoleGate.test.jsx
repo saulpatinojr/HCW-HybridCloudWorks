@@ -106,4 +106,23 @@ describe('RoleGate', () => {
       )
     ).toThrow(/unknown role "publishor"/);
   });
+  it('gates a control written inside a Fragment, which Children.map does not look into (CodeRabbit on #1183)', () => {
+    const onClick = vi.fn();
+    render(
+      <AdminRoleProvider value="editor">
+        <RoleGate minRole="publisher" reason="Publishing needs the publisher role.">
+          <>
+            <button type="button" onClick={onClick}>
+              Publish
+            </button>
+          </>
+        </RoleGate>
+      </AdminRoleProvider>
+    );
+    const button = screen.getByRole('button', { name: 'Publish' });
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button).toHaveAccessibleDescription('Publishing needs the publisher role.');
+    fireEvent.click(button);
+    expect(onClick).not.toHaveBeenCalled();
+  });
 });

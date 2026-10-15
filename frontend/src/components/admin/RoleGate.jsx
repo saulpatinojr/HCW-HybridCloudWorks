@@ -53,18 +53,7 @@ export default function RoleGate({ minRole, reason, className, children }) {
   if (current === null || satisfiesRole(current, minRole)) return <>{children}</>;
 
   const text = reason || roleGateReason(minRole, current);
-  /** The click below the role: nothing happens, so the request and its 403 never start. */
-  const blocked = (event) => event.preventDefault();
-  const gated = React.Children.map(children, (child) =>
-    React.isValidElement(child)
-      ? React.cloneElement(child, {
-          'aria-disabled': 'true',
-          'aria-describedby': reasonId,
-          onClick: blocked,
-          className: cn(child.props.className, 'cursor-not-allowed opacity-50'),
-        })
-      : child
-  );
+  const gated = gateControls(children, reasonId);
 
   return (
     <span
@@ -77,6 +66,36 @@ export default function RoleGate({ minRole, reason, className, children }) {
       </span>
     </span>
   );
+}
+
+/** The click below the role: nothing happens, so the request and its 403 never start. */
+const blocked = (event) => event.preventDefault();
+
+/**
+ * Each control among the children, gated. `React.Children.map` does not look
+ * inside a Fragment, so a control written as `<><Button /></>` would keep its
+ * own onClick and no aria-disabled, and a below-role user could still start
+ * the request (CodeRabbit on #1183); a Fragment's children are therefore
+ * gated in turn, and the Fragment itself, which takes no props but a key, is
+ * rebuilt around them rather than cloned.
+ */
+function gateControls(children, reasonId) {
+  return React.Children.map(children, (child) => {
+    if (!React.isValidElement(child)) return child;
+    if (child.type === React.Fragment) {
+      return (
+        <React.Fragment key={child.key}>
+          {gateControls(child.props.children, reasonId)}
+        </React.Fragment>
+      );
+    }
+    return React.cloneElement(child, {
+      'aria-disabled': 'true',
+      'aria-describedby': reasonId,
+      onClick: blocked,
+      className: cn(child.props.className, 'cursor-not-allowed opacity-50'),
+    });
+  });
 }
 
 /** The sentence shown when a call site gives none. */
