@@ -432,7 +432,7 @@ describe('deleteContentItem / softDeleteLivePage', () => {
     expect(store.deleteDocIfMatch).not.toHaveBeenCalled();
   });
 
-  it('reports a landed delete as done when only its audit row fails, and logs the failure', async () => {
+  it('reports a landed delete as done when only its audit row fails, and logs the failure content-free', async () => {
     const error = vi.fn();
     const store = makeStore({
       readDoc: vi.fn(async () => stored()),
@@ -446,10 +446,34 @@ describe('deleteContentItem / softDeleteLivePage', () => {
       error,
     });
     expect(res.status).toBe(200);
-    expect(error).toHaveBeenCalledWith(
-      'deleteContentItem: audit row not written for c1:',
-      expect.any(Error)
+    // A fixed sentence and the code, as one argument: no document id, and
+    // no error object whose message or fields could carry the request.
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith('deleteContentItem: the audit row was not written (503)');
+    expect(JSON.stringify(error.mock.calls)).not.toContain('c1');
+  });
+
+  it('reports a landed delete as done when only the counters fail, and logs that content-free too', async () => {
+    const warn = vi.fn();
+    const store = makeStore({ readDoc: vi.fn(async () => stored()) });
+    const onContentDeleted = vi.fn(async () => {
+      throw coded(429);
+    });
+    const h = createContentWorkflowHandlers({
+      guard: guardAs('publisher'),
+      store,
+      onContentDeleted,
+      ...fixed,
+    });
+    const res = await h.deleteContentItem(makeRequest({ contentId: 'c1' }), {
+      ...context,
+      warn,
+    });
+    expect(res.status).toBe(200);
+    expect(warn).toHaveBeenCalledWith(
+      'deleteContentItem: the dashboard counters were not updated (429)'
     );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('c1');
   });
 
   it('soft delete resolves blogId as a legacy content-id alias', async () => {

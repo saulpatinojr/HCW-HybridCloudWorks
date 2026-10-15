@@ -244,19 +244,24 @@ async function deleteContentItem({ guard, store, onContentDeleted, now, uuid }, 
     }
     if (!deleted) return json(200, { success: true, contentId });
 
+    // Both failure lines are content-free (the PR template's telemetry
+    // rule): a fixed sentence and the error's code, never the document id or
+    // the error itself, whose message and fields can carry what was sent.
     await store
       .upsertDoc(
         'audits',
         deletionAuditRow(uuid, { user, request, doc, expectedStatus, nowIso: now().toISOString() })
       )
       .catch((err) =>
-        context.error(`deleteContentItem: audit row not written for ${contentId}:`, err)
+        context.error(`deleteContentItem: the audit row was not written (${err?.code ?? 'error'})`)
       );
     // The change feed never delivers a delete (T-324): move the dashboard
     // counters here, best-effort.
     if (onContentDeleted) {
       await onContentDeleted(contentId).catch((err) =>
-        context.warn?.(`deleteContentItem: counters not updated for ${contentId}: ${err?.message}`)
+        context.warn?.(
+          `deleteContentItem: the dashboard counters were not updated (${err?.code ?? 'error'})`
+        )
       );
     }
     return json(200, { success: true, contentId });
