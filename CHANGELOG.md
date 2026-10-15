@@ -50,6 +50,11 @@ This project has not cut a tagged release; entries are grouped under
   role and registers `Microsoft.ResourceHealth` in `sub-plat-mgmt-prod-cus`,
   unregistered there on 2026-10-15 (`docs/runbooks/alerting-and-support.md`,
   "Resource Health"); until both are done the run fails, naming each step.
+  A refusal is never reported as an unregistered provider: that needs ARM's
+  `MissingSubscriptionRegistration` code or the measured 409 `AuthError`. The
+  runbook's rollout record reads the role's actions, both its assignments and
+  the provider in both subscriptions, works in Windows PowerShell 5.1 as well
+  as 7, and restores the previous action set from `0bd89190` (#1074).
   `Invoke-AlertFireTest.ps1` searched the whole serialized alert context for
   `healthPulse`, and every `condition.allOf[]` entry carries `searchQuery`,
   which names all 26 timers, so any timer's alert would have passed as

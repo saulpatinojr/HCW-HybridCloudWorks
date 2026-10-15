@@ -616,6 +616,33 @@ describe('Resource Health (#964)', () => {
     expect(classifyError(409, { error: { code: 'Conflict', message: 'x' } }).status).toBe('failed');
   });
 
+  it('reads not-registered from the code or the measured 409 AuthError, never from a refusal that only sounds like it', () => {
+    // A 403 is a refusal whatever its text says: its fix is the role, and
+    // telling the owner to register a provider would send them the wrong way.
+    for (const message of [
+      'The client does not have authorization. The subscription is not registered to use namespace Microsoft.ResourceHealth',
+      'Denied. Make sure the resource provider has been registered with this subscription',
+    ]) {
+      const read = classifyError(403, { error: { code: 'AuthorizationFailed', message } });
+      expect(read.status, message).toBe('denied');
+      expect(judge(read, { subscription: MGMT }).problems[0], message).toMatch(/^Resource Health could not be read: this identity may not read it\./);
+      expect(classifyError(403, { code: 'AuthError', message }).status, `403 AuthError: ${message}`).toBe('denied');
+    }
+    // The measured shape, top-level or under `error`, is not-registered.
+    expect(classifyError(409, NOT_REGISTERED_BODY).status).toBe('not-registered');
+    expect(classifyError(409, { error: NOT_REGISTERED_BODY }).status).toBe('not-registered');
+    // ARM's own code, with the message ARM documents for it.
+    expect(
+      classifyError(409, {
+        error: { code: 'MissingSubscriptionRegistration', message: "The subscription is not registered to use namespace 'Microsoft.ResourceHealth'." },
+      }).status
+    ).toBe('not-registered');
+    // The phrase alone, or AuthError alone, is not enough.
+    expect(classifyError(409, { code: 'AuthError', message: 'An error occured in authentication or authorization.' }).status).toBe('failed');
+    expect(classifyError(409, { code: 'Conflict', message: NOT_REGISTERED_BODY.message }).status).toBe('failed');
+    expect(classifyError(409, { code: 'NotMissingSubscriptionRegistration', message: 'x' }).status).toBe('failed');
+  });
+
   it('reads a health read that never happened, and a state it does not know, as unreadable', () => {
     const missing = judge(undefined);
     expect(missing.state).toBe('HEALTH UNREADABLE');

@@ -400,24 +400,87 @@ az role definition update --role-definition '@infra/roles/alert-rule-reader.json
 
 That needs the same rights as the create above, finds the role by its name at
 its first assignable scope, and fires `alert-rbac-definition-app`, as it
-should. Success is the second line below listing six actions, two of them
-`Microsoft.ResourceHealth` (it listed the first four on 2026-10-15); the
-first line computes the subscription id the scope needs:
+should.
+
+**Record the rollout.** Three reads show the change landed where the check
+needs it, and each prints what it read, so their output is the rollout
+record: paste it on #964 with the date. They need only read, and each works in
+PowerShell 7 and in Windows PowerShell 5.1. The role's actions, then how many
+of them are Resource Health reads:
 
 ```powershell
-$sub = az account show --subscription sub-app-site-prod-cus --query id -o tsv
+$rd = (az role definition list --name 'HCW Alert Rule Reader' --custom-role-only true --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json) | Select-Object -First 1; $rd.permissions.actions; 'Resource Health actions: ' + @($rd.permissions.actions | Where-Object { $_ -like 'Microsoft.ResourceHealth/*' }).Count
 ```
 
+Where the role is assigned, one row per subscription:
+
 ```powershell
-az role definition list --name 'HCW Alert Rule Reader' --scope "/subscriptions/$sub/resourceGroups/rg-web-site-prod-cus" --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | Select-Object -ExpandProperty permissions | Select-Object -ExpandProperty actions
+'sub-app-site-prod-cus', 'sub-plat-mgmt-prod-cus' | ForEach-Object { (az role assignment list --all --subscription $_ -o json | ConvertFrom-Json) | Where-Object roleDefinitionName -eq 'HCW Alert Rule Reader' | Select-Object principalType, scope }
 ```
+
+The provider in both subscriptions:
+
+```powershell
+'sub-app-site-prod-cus', 'sub-plat-mgmt-prod-cus' | ForEach-Object { $_ + ': ' + (az provider show --namespace Microsoft.ResourceHealth --subscription $_ --query registrationState -o tsv) }
+```
+
+| Read | Success, after both steps | Read on 2026-10-15, before either |
+| --- | --- | --- |
+| Role actions | Six actions, two of them `Microsoft.ResourceHealth/...`, then `Resource Health actions: 2` | The four `Microsoft.Insights/...` reads, then `Resource Health actions: 0`; the definition unchanged since its create on 2026-10-11 |
+| Assignments | Two `ServicePrincipal` rows, one scope ending `/resourceGroups/rg-web-site-prod-cus` and one ending `/resourceGroups/rg-mgmt-plat-prod-cus` | The same two rows. The update changes the definition, so both assignments carry it with no change of their own |
+| Provider | `sub-app-site-prod-cus: Registered` and `sub-plat-mgmt-prod-cus: Registered` | `Registered` and `NotRegistered` |
 
 Then run
 [Verify Alert Rule State](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/verify-alert-state.yml)
 → **Run workflow**. Success is no `HEALTH UNREADABLE` row. Until the apply that
 replaces its query, `alert-timer-overdue` reads `UNHEALTHY` with
 `Semantic error`, which is the check working; after it, `Available` once the
-rule has evaluated again, within about 15 minutes.
+rule has evaluated again, within about 15 minutes. That run is the evidence
+the definition cannot give: it makes the health read as the workflow's own
+identity, in both resource groups.
+
+**Restore the previous action set** if the update wrote anything other than
+the six actions, or the role must go back to what it held before #964. The
+previous definition is the file at `0bd89190` (#1074), the last commit on
+`main` to change it before #964, and what Azure held from the role's create on
+2026-10-11 until the #964 update. `git show` reads it from git's history, not
+the working tree, so these work on any branch of a clone fetched since
+2026-10-11, run from inside the checkout. This must print `commit` first:
+
+```powershell
+git cat-file -t 0bd891906fbf1dcac64c0179f632cfbdb2b39b76
+```
+
+```powershell
+$pj = Join-Path ([IO.Path]::GetTempPath()) 'alert-rule-reader-0bd89190.json'
+```
+
+```powershell
+git show 0bd891906fbf1dcac64c0179f632cfbdb2b39b76:infra/roles/alert-rule-reader.json | Set-Content -LiteralPath $pj
+```
+
+Before the file goes to Azure, this must print the four
+`Microsoft.Insights/...` reads and nothing else:
+
+```powershell
+(Get-Content -LiteralPath $pj -Raw | ConvertFrom-Json).Actions
+```
+
+```powershell
+az role definition update --role-definition "@$pj" --subscription sub-app-site-prod-cus -o none
+```
+
+Success is the role-actions read above printing those four and
+`Resource Health actions: 0`. The restore fires `alert-rbac-definition-app`
+too, and takes the health reads away, so the next run may read
+`HEALTH UNREADABLE` for the rules that needed them: that is the restore
+working. If it is meant to last, revert the two actions in
+`infra/roles/alert-rule-reader.json` on `main` as well, so the next update
+from the file does not grant them again. Then remove the temporary file:
+
+```powershell
+Remove-Item -LiteralPath $pj
+```
 
 ### Notes that change what you do
 

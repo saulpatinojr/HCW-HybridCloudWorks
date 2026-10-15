@@ -202,8 +202,14 @@ export function classifyError(status, body) {
   // A provider the subscription has not registered. Resource Health answers
   // this as 409 AuthError, "Make sure the resource provider has been
   // registered with this subscription" (sub-plat-mgmt-prod-cus, 2026-10-15);
-  // ARM's own spelling is MissingSubscriptionRegistration.
-  if (/MissingSubscriptionRegistration/i.test(code) || /resource provider has been registered|not registered to use namespace/i.test(message)) {
+  // ARM's own spelling is the code MissingSubscriptionRegistration. The
+  // message counts only in that measured shape: a 403 AuthorizationFailed
+  // whose text happens to name registration is still a refusal, and its fix
+  // is the role, not the provider.
+  if (
+    /^MissingSubscriptionRegistration$/i.test(code) ||
+    (status === 409 && /^AuthError$/i.test(code) && /resource provider has been registered/i.test(message))
+  ) {
     return { status: 'not-registered', reason };
   }
   if (status === 403 || /AuthorizationFailed/i.test(code)) return { status: 'denied', reason };
