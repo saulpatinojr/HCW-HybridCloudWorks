@@ -63,3 +63,11 @@ labs_agent_job_nofile: 1024
 # scripts/lab-job-limits.test.mjs fails on a pair that does not.
 labs_agent_shutdown_timeout_ms: 5000
 labs_agent_timeout_stop_sec: 30
+
+# The host's maintenance hold (LAB-13, #959). hcw-reboot-when-idle, in the
+# hardening role, writes this file before its second look at an idle host,
+# and the agent claims no new job while it holds an expiry in the future
+# (vps-agent/lib/maintenance-hold.js), so no job starts between that look
+# and the reboot. The same path as hardening_reboot_hold_path and the
+# agent's own default; scripts/lab-job-limits.test.mjs fails if they part.
+labs_agent_maintenance_hold_path: /run/hcw-maintenance/reboot-hold

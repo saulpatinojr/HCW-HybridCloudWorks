@@ -155,6 +155,25 @@ Stopping (LAB-13, #959), a pair that has to fit together:
 `scripts/lab-job-limits.test.mjs` fails on defaults that do not fit, and an
 override has to keep the sum itself.
 
+The maintenance hold (LAB-13, #959):
+
+| Variable | Default | Rendered as | What it does |
+| --- | --- | --- | --- |
+| `labs_agent_maintenance_hold_path` | `/run/hcw-maintenance/reboot-hold` | `LABS_AGENT_MAINTENANCE_HOLD_PATH` in `/etc/hcw/labs-agent.env` | The file the agent reads before every claim; it claims no new job while the file holds an expiry in the future |
+
+The hardening role's nightly idle reboot writes that file, root's, before
+its second look at an idle host, so no job starts between that look and the
+reboot (`roles/hardening/README.md`, item 8, "The second look, and the
+maintenance hold"). It must be the same path as
+`hardening_reboot_hold_path`; the agent's own default
+(`vps-agent/lib/maintenance-hold.js`) is that path too, and
+`scripts/lab-job-limits.test.mjs` and `tests/hcw-labs-agent.service.test.sh`
+fail if any of the three part. The agent honours a hold for at most ten
+minutes from its write, an unreadable one included, so a hold whose writer
+died lifts on its own; it says each change in its journal, once. The unit's
+`ProtectSystem=full`, `PrivateTmp` and `ProtectHome` leave `/run` outside
+`/run/user` readable to it, which is where the hold is.
+
 Paths and the unit name are in `defaults/main.yml`;
 `meta/argument_specs.yml` is the contract.
 

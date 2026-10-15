@@ -79,3 +79,31 @@ hardening_reboot_when_idle_tag: hcw-reboot-when-idle
 # a label that drifted would fail a test rather than see no job and reboot
 # through one.
 hardening_reboot_job_label: hcw.lab-job
+# The maintenance hold (CodeRabbit on #1191). One look is not enough: a job
+# claimed after `docker ps` came back empty and before the reboot request
+# would start a container the reboot kills. So when the first look finds the
+# host idle, the script writes this file, root's, holding the epoch second
+# it lapses (hardening_reboot_hold_seconds from now); the labs agent claims
+# no new job while it holds (vps-agent/lib/maintenance-hold.js, through
+# labs_agent_maintenance_hold_path, the same path). The script then waits
+# hardening_reboot_hold_settle_seconds, longer than a claim already sent can
+# take to come back and start its container (the agent's CLAIM_SETTLE_MS,
+# 35 s), looks again, and reboots only if the host is still idle. Every
+# other way out removes the file; on the reboot path it stays until the
+# reboot clears /run. Under /run/<directory>/, which the service creates as
+# its RuntimeDirectory=, the one place it may write.
+# scripts/lab-job-limits.test.mjs holds the path to the agent's and the
+# labs_agent role's, the settle to CLAIM_SETTLE_MS and the hold to the
+# agent's ten-minute cap; the role refuses values outside those bounds.
+hardening_reboot_hold_path: /run/hcw-maintenance/reboot-hold
+hardening_reboot_hold_settle_seconds: 45
+# Longer than the service's TimeoutStartSec (120 s), so the hold never lapses
+# while the script still runs, and within the agent's ten-minute cap.
+hardening_reboot_hold_seconds: 300
+# A reboot pending this many days or more turns each deferral line from
+# warning to err, so a fix that needs the reboot and has waited a week is
+# not one more warning among the nightly ones. Only the line changes: the
+# script still never reboots over a logged-in user or a running job. Seven
+# is the week the runbook already calls the sign that neither the owner's
+# logout nor a reboot by hand has happened (Runtime advisories).
+hardening_reboot_overdue_days: 7

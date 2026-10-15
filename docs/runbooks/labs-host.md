@@ -2034,29 +2034,64 @@ fix is installed.
   `/var/run/reboot-required` exists, logind lists no login session (class
   `user`, or `user-` and a suffix) and `docker ps --filter
   label=hcw.lab-job` lists no lab job container, both asked at the hour
-  itself. unattended-upgrades no longer reboots on its own: it asked `users`
-  when the upgrade ran, some twenty-two hours before the reboot it then
-  scheduled with no further question, and it never asked about jobs. On
-  this host `users` and `who` print nothing even with a session open
-  (rust-coreutils reads utmp, which systemd no longer writes; measured
-  2026-10-15), so that check never deferred anything. One line per night
-  under the tag `hcw-reboot-when-idle`: `rebooting; pending since <date>
-  (<n> days)` and the two `deferred:` lines at `warning`, shipped as
-  `Syslog` rows; `no reboot is pending` at `notice`, on the host. A
-  deferred night tries again the next night. A `loginctl` or a docker that
-  cannot answer fails the unit, and `alert-lab-unit-failed` pages
+  itself, and asked again 45 s later. Between the two looks the script
+  writes `/run/hcw-maintenance/reboot-hold`, and the labs agent claims no
+  new job while it holds, so a job claimed just before the first look is
+  running by the second and defers the night, and no job can start between
+  the second look and the reboot (CodeRabbit on #1191). unattended-upgrades
+  no longer reboots on its own: it asked `users` when the upgrade ran, some
+  twenty-two hours before the reboot it then scheduled with no further
+  question, and it never asked about jobs. On this host `users` and `who`
+  print nothing even with a session open (rust-coreutils reads utmp, which
+  systemd no longer writes; measured 2026-10-15), so that check never
+  deferred anything. One line per night under the tag
+  `hcw-reboot-when-idle`: `rebooting; pending since <date> (<n> days)` and
+  the `deferred:` lines at `warning`, shipped as `Syslog` rows; `no reboot
+  is pending` at `notice`, on the host. A deferred night tries again the
+  next night. **From the seventh day pending, each `deferred:` line is at
+  `err` and ends `overdue at 7: log out before 04:30, or reboot at a time
+  of your choosing`**: that is the line to act on, by logging out before
+  04:30 or running `sudo reboot` once no lab job is running. It is a row in
+  Log Analytics, not a page: no alert rule matches it yet (PLAT-4). An
+  `apt-config`, a `loginctl` or a docker that cannot answer fails the unit,
+  and `alert-lab-unit-failed` pages
   (`docs/runbooks/alerting-and-support.md`). Bash, on the host:
   `journalctl -t hcw-reboot-when-idle --since -7d` is the last week's
   decisions; `lab-host/ansible/roles/hardening/README.md`, item 8, is the
-  whole table. Two checks after the run that applies it, bash, on the host,
-  while logged in over SSH. First, `loginctl list-sessions` lists your
-  login with `CLASS` `user` (on 2026-10-15: session 384, `hcwadmin`,
-  `user`); that row is what defers the reboot, and the `manager` and
-  `manager-early` rows beside it (hcwadmin's service manager and
-  hcw-coder-docker's lingering one) do not. Second, `shutdown --show`
-  prints `No scheduled shutdown.` (a `shutdown -r` unattended-upgrade
-  scheduled before the run still fires once at 04:30, unasked; `sudo
-  shutdown -c` cancels it).
+  whole table.
+
+  The run that applies it hands the reboot over in order: it looks for a
+  reboot unattended-upgrades already scheduled, installs and enables the
+  timer, reads it back active, and only then turns unattended-upgrades'
+  own reboot off. A `shutdown -r` that unattended-upgrades' log names is
+  cancelled; any other scheduled reboot stops the run before anything is
+  written, and the message says what to do (it cannot tell
+  unattended-upgrades' `shutdown -r` from root's own for the same minute
+  without that log line, so it does not guess). Two checks after that run,
+  bash, on the host, while logged in over SSH. First, `loginctl
+  list-sessions` lists your login with `CLASS` `user` (on 2026-10-15:
+  session 384, `hcwadmin`, `user`); that row is what defers the reboot, and
+  the `manager` and `manager-early` rows beside it (hcwadmin's service
+  manager and hcw-coder-docker's lingering one) do not. Second, `shutdown
+  --show` prints `No scheduled shutdown.`.
+
+  **A line that reads `standing down: unattended-upgrades' own
+  Automatic-Reboot is on`** means two reboot mechanisms are installed, and
+  this one is doing nothing: the host was rolled back to a revision before
+  this timer, or a run stopped after enabling it and before writing the
+  override. unattended-upgrades is the one rebooting then, as it did before.
+  To keep it that way, withdraw the timer. Bash, on the host:
+
+  ```bash
+  sudo systemctl disable --now hcw-reboot-when-idle.timer && sudo rm -f /etc/systemd/system/hcw-reboot-when-idle.service /etc/systemd/system/hcw-reboot-when-idle.timer /usr/local/sbin/hcw-reboot-when-idle /run/hcw-maintenance/reboot-hold && sudo systemctl daemon-reload && systemctl list-timers hcw-reboot-when-idle.timer
+  ```
+
+  Success is a line reading `0 timers listed.` (systemd adds a hint about
+  `--all` under it). To have this timer reboot instead,
+  run `bootstrap.sh` from a revision that has it; the stand-down stops on
+  its own once the override turns `Automatic-Reboot` off. Before rolling
+  back on purpose, the same line withdraws it first, so the rollback leaves
+  exactly one mechanism.
 - **Tuesdays 05:20 UTC:** `publish-lab-image.yml` rebuilds the lab images and
   publishes them only when the `full` image's Debian packages moved; each
   publish opens the `chore/lab-pins-image-digests` pull request.

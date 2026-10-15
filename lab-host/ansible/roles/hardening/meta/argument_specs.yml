@@ -6,9 +6,12 @@ argument_specs:
       - Creates a key-only administrative user with passwordless sudo, then disables
         password and root SSH login through a drop-in that sorts before cloud-init's.
       - Sets ufw to deny inbound and allow outbound with an explicit inbound TCP allowlist.
-      - Turns on unattended-upgrades, with its own reboot off.
+      - Turns on unattended-upgrades, with its own reboot off, once the timer that replaces it
+        is verified active; cancels a reboot unattended-upgrades had already scheduled, and stops
+        at one it cannot attribute.
       - Reboots at a fixed hour for a pending upgrade only while nobody is logged in and
-        no lab job container runs (hcw-reboot-when-idle), one syslog line per outcome.
+        no lab job container runs (hcw-reboot-when-idle), asked twice with new lab jobs held
+        between, one syslog line per outcome.
       - Enables a fail2ban sshd jail on the systemd backend.
       - Reports, daily to syslog, every held package apt could upgrade (hcw-held-upgradable).
     author: HybridCloudWorks
@@ -124,10 +127,11 @@ argument_specs:
         default: hcw-reboot-when-idle
         description:
           - The syslog tag (ProcessName in Log Analytics) of the idle reboot's one line per
-            outcome. Deferrals and the reboot itself go to daemon.warning, which the Arc data
-            collection rule ships; the nothing-pending line goes to daemon.notice and stays on
-            the host; a loginctl or a docker that does not answer is daemon.err and a failed
-            run.
+            outcome. Deferrals, the stand-down and the reboot itself go to daemon.warning, which
+            the Arc data collection rule ships, and a deferral once the reboot is overdue
+            (hardening_reboot_overdue_days) to daemon.err; the nothing-pending line goes to
+            daemon.notice and stays on the host; an apt-config, a loginctl or a docker that does
+            not answer, or a hold that cannot be written, is daemon.err and a failed run.
       hardening_reboot_job_label:
         type: str
         required: false
@@ -137,3 +141,40 @@ argument_specs:
             vps-agent/lib/docker-runner.js. The reboot is deferred while docker ps lists any
             container with it. scripts/lab-job-limits.test.mjs holds this default to the agent's
             constant.
+      hardening_reboot_hold_path:
+        type: str
+        required: false
+        default: /run/hcw-maintenance/reboot-hold
+        description:
+          - The maintenance hold (LAB-13, issue 959). When the first look
+            finds the host idle, hcw-reboot-when-idle writes the epoch second the hold lapses here,
+            and the labs agent claims no new job while it holds; the script waits, looks again,
+            and reboots only if the host is still idle. Removed on every way out but the reboot.
+          - Must be /run/<directory>/<file>; the service creates the directory as its
+            RuntimeDirectory=. Must equal labs_agent_maintenance_hold_path and the agent's
+            DEFAULT_HOLD_PATH; scripts/lab-job-limits.test.mjs checks the defaults.
+      hardening_reboot_hold_settle_seconds:
+        type: int
+        required: false
+        default: 45
+        description:
+          - How long the script waits between writing the hold and its second look. At least
+            the agent's CLAIM_SETTLE_MS (35 s, a claim already sent plus its container's start),
+            and at most 90, which leaves the second look 30 s inside the service's 120 s
+            TimeoutStartSec. The role refuses anything else.
+      hardening_reboot_hold_seconds:
+        type: int
+        required: false
+        default: 300
+        description:
+          - How long a hold lasts if nothing removes it, counted from its write. More than the
+            service's 120 s TimeoutStartSec, so it never lapses while the script runs, and at
+            most 600, the agent's own cap on any hold. The role refuses anything else.
+      hardening_reboot_overdue_days:
+        type: int
+        required: false
+        default: 7
+        description:
+          - A reboot pending this many days or more is logged at daemon.err rather than
+            daemon.warning when a night defers it. Logging only; the script never reboots over a
+            logged-in user or a running job.

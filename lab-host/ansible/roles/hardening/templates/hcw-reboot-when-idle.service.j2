@@ -2,10 +2,11 @@
 #
 # The nightly idle reboot (LAB-13, #959): {{ hardening_reboot_when_idle_script_path }}
 # reboots the host for a pending upgrade only when nobody is logged in and no
-# lab job container runs, both asked at the hour itself. unattended-upgrades
-# has Automatic-Reboot off; this unit is what reboots instead. A run that
-# could not ask logind or docker fails, and the failure notifier (LAB-2)
-# reports it, so a reboot that stopped happening is not silence.
+# lab job container runs, both asked at the hour itself and asked again with
+# new lab jobs held. unattended-upgrades has Automatic-Reboot off; this unit
+# is what reboots instead. A run that could not ask logind or docker fails,
+# and the failure notifier (LAB-2) reports it, so a reboot that stopped
+# happening is not silence.
 [Unit]
 Description=Reboot for a pending upgrade when nobody is logged in and no lab job runs
 Documentation=https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/lab-host/ansible/roles/hardening
@@ -15,16 +16,28 @@ OnFailure=hcw-unit-failed@%n.service
 Type=oneshot
 ExecStart={{ hardening_reboot_when_idle_script_path }}
 # A docker that does not answer is a failed run and a page, not a hang
-# through the night.
+# through the night. It covers the hold's settle wait
+# ({{ hardening_reboot_hold_settle_seconds }} s) and both looks; the role refuses a settle that leaves
+# the second look less than 30 s of it, and a hold that lapses before it.
 TimeoutStartSec=2min
 # Root, because `docker ps` needs the host daemon's socket and the reboot
-# needs the manager. Nothing is written, so the file system is read-only to
-# it; a socket on a read-only mount still accepts a connection, the system
-# bus loginctl reaches logind through among them. Home is hidden, as the
-# backup units hide it, which also keeps a docker context in
-# /root/.docker from pointing the question at another daemon: the CLI asks
-# the default socket, the daemon the job containers run on.
+# needs the manager. The file system is read-only to it; a socket on a
+# read-only mount still accepts a connection, the system bus loginctl
+# reaches logind through among them. Home is hidden, as the backup units
+# hide it, which also keeps a docker context in /root/.docker from pointing
+# the question at another daemon: the CLI asks the default socket, the
+# daemon the job containers run on.
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
+# The one thing it writes: the maintenance hold, {{ hardening_reboot_hold_path }},
+# which the labs agent reads before each claim (CodeRabbit on #1191). A
+# RuntimeDirectory= is writable under ProtectSystem=strict and lives on
+# /run's tmpfs, so a reboot clears it; root's, 0755, so the agent's user can
+# read the hold and nobody else can write one. Kept when a run ends, because
+# on the reboot path the hold must outlast the run until the manager stops
+# the agent; every other way out of the script removes the file itself.
+RuntimeDirectory={{ hardening_reboot_hold_path | dirname | basename }}
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes

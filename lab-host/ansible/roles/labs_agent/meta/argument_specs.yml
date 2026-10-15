@@ -213,3 +213,12 @@ argument_specs:
             of the unit."
           - Covers labs_agent_shutdown_timeout_ms plus the two 5 s shutdown heartbeats, with margin. The unit
             sets KillMode=mixed, so SIGTERM reaches the agent alone and never the docker CLI it runs.
+      labs_agent_maintenance_hold_path:
+        type: path
+        required: false
+        default: /run/hcw-maintenance/reboot-hold
+        description:
+          - "LABS_AGENT_MAINTENANCE_HOLD_PATH (LAB-13, issue 959): the file the hardening role's
+            hcw-reboot-when-idle writes before its second look at an idle host. The agent claims no new job
+            while it holds an expiry in the future, and never for longer than ten minutes from its write."
+          - Must equal hardening_reboot_hold_path; scripts/lab-job-limits.test.mjs checks the defaults.

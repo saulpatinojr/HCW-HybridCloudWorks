@@ -32,6 +32,7 @@ done
 [ -n "${python}" ] || { echo "no Python with jinja2 and yaml on PATH; install ansible-core" >&2; exit 1; }
 
 work="$(mktemp -d)"
+# finish: remove the scratch directory, on every way out.
 finish() { rm -rf "${work}"; }
 trap finish EXIT
 

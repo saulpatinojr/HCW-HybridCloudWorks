@@ -20,8 +20,11 @@ dcr="${repo}/infra/lab-hybrid.tf"
 
 passed=0
 failed=0
+# ok NAME: count and print a passing check, TAP style.
 ok() { passed=$((passed + 1)); echo "ok ${passed} - $1"; }
+# not_ok NAME [DETAIL]: count and print a failing check, with its detail indented.
 not_ok() { failed=$((failed + 1)); echo "not ok - $1" >&2; [ -z "${2:-}" ] || printf '    %s\n' "$2" >&2; }
+# check NAME COMMAND [DETAIL]: run COMMAND through eval and report it as ok or not ok.
 check() { if eval "$2"; then ok "$1"; else not_ok "$1" "${3:-}"; fi; }
 
 python=''
@@ -34,6 +37,7 @@ done
 [ -n "${python}" ] || { echo "no Python with jinja2 and yaml on PATH; install ansible-core" >&2; exit 1; }
 
 work="$(mktemp -d)"
+# finish: remove the scratch directory, on every way out.
 finish() { rm -rf "${work}"; }
 trap finish EXIT
 
@@ -106,6 +110,7 @@ printf '%s|%s|%s\n' "\$2" "\$4" "\$6" >> '${work}/log'
 EOF
 chmod +x "${stubs}"/*
 
+# run: run the script against the stubs with the syslog record emptied first; its exit status is the script's.
 run() { : > "${work}/log"; PATH="${stubs}:${PATH}" "${script}"; }
 
 # --- Two held packages, one of them upgradable, and an upgradable package that is not held.

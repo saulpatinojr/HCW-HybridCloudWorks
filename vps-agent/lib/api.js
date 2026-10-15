@@ -26,6 +26,14 @@
 import { ClientCertificateCredential } from '@azure/identity';
 
 /**
+ * How long one call may take, token included, unless the caller names its
+ * own. It bounds a claim already sent, which is what the host's maintenance
+ * hold waits out before its second look (lib/maintenance-hold.js,
+ * CLAIM_SETTLE_MS; LAB-13, #959).
+ */
+export const REQUEST_TIMEOUT_MS = 20000;
+
+/**
  * Build the API client.
  *
  * @param {object} config
@@ -63,7 +71,7 @@ export function createApiClient({
     return `Bearer ${token.token}`;
   }
 
-  async function post(path, body, { timeoutMs = 20000 } = {}) {
+  async function post(path, body, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {

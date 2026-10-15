@@ -30,7 +30,11 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 4. `unattended-upgrades` with the allowed origins rendered from
    `hardening_unattended_allowed_origins` rather than inherited, and its own
    reboot off (LAB-13, #959): the reboot is item 8's, which asks at the hour
-   whether anyone is logged in or any lab job is running.
+   whether anyone is logged in or any lab job is running. The override is
+   the last thing the role writes, once item 8's timer is enabled and read
+   back active, so a run that stops part way leaves unattended-upgrades
+   rebooting as it did rather than nothing rebooting at all (item 8, "Reboot
+   authority").
 5. A fail2ban `sshd` jail on the systemd backend, which reads sshd's
    journal directly, so the jail works on 26.04 and 24.04 whether or not
    rsyslog is installed to write `/var/log/auth.log`.
@@ -55,6 +59,10 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_reboot_when_idle_script_path` | `/usr/local/sbin/hcw-reboot-when-idle` | Where the idle-reboot script is installed |
 | `hardening_reboot_when_idle_tag` | `hcw-reboot-when-idle` | Syslog tag of the idle reboot's one line per outcome |
 | `hardening_reboot_job_label` | `hcw.lab-job` | The Docker label every lab job container carries (`JOB_LABEL` in `vps-agent/lib/docker-runner.js`); the reboot waits while any container has it |
+| `hardening_reboot_hold_path` | `/run/hcw-maintenance/reboot-hold` | The maintenance hold the script writes before its second look; the labs agent claims no new job while it holds. `/run/<directory>/<file>`, the same path as `labs_agent_maintenance_hold_path` |
+| `hardening_reboot_hold_settle_seconds` | `45` | The wait between writing the hold and the second look: 35 to 90, at least a claim already sent plus its container's start |
+| `hardening_reboot_hold_seconds` | `300` | How long a hold lasts if nothing removes it: over 120 (the run's timeout), at most 600 (the agent's cap) |
+| `hardening_reboot_overdue_days` | `7` | From this many days pending, a deferral is logged at `err` instead of `warning` |
 
 `meta/argument_specs.yml` is the contract; the table is a summary of it.
 
@@ -101,24 +109,94 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 
    | The host at the hour | Line | Level | Exit |
    | --- | --- | --- | --- |
+   | `apt-config` says `Unattended-Upgrade::Automatic-Reboot` is on (a rollback) | `standing down: unattended-upgrades' own Automatic-Reboot is on, ...` | `warning`, shipped | 0 |
+   | `apt-config` cannot answer | `not rebooting: apt-config could not say whether ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
    | `/var/run/reboot-required` absent | `no reboot is pending: ...` | `notice`, stays on the host | 0 |
    | `loginctl list-sessions` has a session of class `user` (or `user-` and a suffix) | `deferred: a user is logged in (<names>); a reboot has been pending since <date> (<n> days)` | `warning`, shipped | 0 |
    | `loginctl` cannot list the sessions, or read one | `not rebooting: loginctl could not list the sessions, ...` or `... could not read session <id>, ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
    | `docker ps -q --filter label=hcw.lab-job` lists anything | `deferred: <n> job container(s) running; a reboot has been pending since ...` | `warning`, shipped | 0 |
    | `docker ps` fails, or there is no `docker` to run | `not rebooting: docker could not list the job containers, ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
-   | otherwise | `rebooting; pending since <date> (<n> days): nobody is logged in and no job container is running` | `warning`, shipped | 0, then `systemctl reboot` |
+   | idle: the hold cannot be written | `not rebooting: the hold that keeps new lab jobs from starting could not be written, ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
+   | idle, then, after the settle, a session of class `user` | `deferred: a user logged in while new lab jobs were held (<names>); ...` | `warning`, shipped | 0 |
+   | idle, then, after the settle, a job container | `deferred: <n> job container(s) started while new lab jobs were held; ...` | `warning`, shipped | 0 |
+   | idle at both looks | `rebooting; pending since <date> (<n> days): nobody is logged in and no job container is running, at two looks 45 s apart with new lab jobs held between` | `warning`, shipped | 0, then `systemctl reboot` |
 
    A deferred night tries again the next night; the held report above says
-   how long the wait has been. The timer is `OnCalendar=*-*-* 04:30:00`
+   how long the wait has been. **Once the reboot has been pending
+   `hardening_reboot_overdue_days` (7) days or more, each deferral line goes
+   to `err` instead**, with what to do (`..., overdue at 7: log out before
+   04:30, or reboot at a time of your choosing ...`), so a security fix that
+   has waited a week stands out from the nightly warnings in Log Analytics.
+   Only the line changes: the script never reboots over a logged-in user or
+   a running job. No alert rule matches these rows yet (the lab's one Syslog
+   alert, `alert-lab-unit-failed`, matches the failure notifier's tag); the
+   err row is there for the query or the alert PLAT-4 adds.
+
+   **The second look, and the maintenance hold** (CodeRabbit on #1191). One
+   look left a gap: a job the agent claimed after `docker ps` came back empty,
+   and before the reboot request, started a container the reboot then
+   killed. So when the first look finds the host idle, the script writes
+   `hardening_reboot_hold_path` (`/run/hcw-maintenance/reboot-hold`, root's,
+   0644) holding the epoch second the hold lapses, 300 s on. The labs agent
+   reads it before every claim and claims nothing while it holds
+   (`vps-agent/lib/maintenance-hold.js`, `LABS_AGENT_MAINTENANCE_HOLD_PATH`
+   from the `labs_agent` role, the same path). The script then waits
+   `hardening_reboot_hold_settle_seconds` (45 s), longer than a claim
+   already sent can take to come back and start its container (the API
+   client's 20 s request timeout plus the runner's 15 s start grace), and
+   asks both questions again. A claim in flight is not recalled: its job
+   runs, the second look sees its container, and the night is deferred. The
+   hold is removed on every way out except the reboot: on that path it
+   stays, so no claim lands between the request and the manager stopping
+   the agent, and the reboot clears `/run`. The directory is the service's
+   `RuntimeDirectory=` (kept between runs), the one place it may write. A
+   run that dies without removing the hold cannot keep the agent idle past
+   its expiry, and the agent caps any hold at ten minutes from its write, an
+   unreadable one included; it says each change in the hold, once, in its
+   journal, and an unreadable or expired hold at `warn`.
+
+   **Reboot authority.** Exactly one mechanism reboots the host at a time.
+   The role checks first (the hour, the hold's bounds, a reboot
+   unattended-upgrades already scheduled), installs the script and units,
+   enables the timer, reads it back active and enabled, and only then writes
+   the override that turns unattended-upgrades' own reboot off. A run that
+   stops before that leaves unattended-upgrades rebooting as before. The
+   script **stands down** whenever apt's effective configuration has
+   `Automatic-Reboot` on (`apt-config shell automatic_reboot
+   Unattended-Upgrade::Automatic-Reboot/b`, read the way unattended-upgrade
+   reads it), so a timer installed beside unattended-upgrades' reboot, after
+   a partial run or a rollback to a revision before this one, logs the
+   stand-down each night and reboots nothing. Withdrawing the timer is in
+   `docs/runbooks/labs-host.md`, "Runtime advisories".
+
+   **A reboot unattended-upgrades already scheduled.** Turning its
+   `Automatic-Reboot` off stops it scheduling another, but one it scheduled
+   before the run is logind's (`/run/systemd/shutdown/scheduled`) and fires
+   at its hour without either question. That record cannot tell
+   unattended-upgrades from root: it runs `/sbin/shutdown -r <hour>` as root
+   with no message of its own, the same record as root's own `shutdown -r`
+   for that minute. Its log can: it writes systemd's answer to
+   `/var/log/unattended-upgrades/unattended-upgrades.log` (`Shutdown msg:
+   ... Reboot scheduled for <time>, use 'shutdown -c' to cancel.`), and
+   `shutdown --show` prints the scheduled one in the same words. A reboot
+   whose time that log names is cancelled (`shutdown -c`) and read back
+   gone. A reboot it does not name stops the run before the timer or the
+   override is written, with what to do, because it may be the owner's; a
+   poweroff, a halt or a kexec is never unattended-upgrades' and is left
+   alone.
+
+   The timer is `OnCalendar=*-*-* 04:30:00`
    with `Persistent=false` and no jitter: a run missed while the host was
    off must not reboot it the moment it is back, and the hour is what the
    Coder dump (03:30), the Vault snapshot (03:45) and the held report
    (07:15) are placed around. The service runs as root (the docker socket,
-   the reboot) with the file system read-only to it and home hidden,
-   `TimeoutStartSec=2min` so a docker that hangs is a failed run rather
-   than a night lost, and the failure notifier in `OnFailure=`. The label
-   is the agent's `JOB_LABEL`; `scripts/lab-job-limits.test.mjs` and the
-   test below hold the two together.
+   the reboot) with the file system read-only to it but for the hold's
+   directory and home hidden, `TimeoutStartSec=2min` so a docker that hangs
+   is a failed run rather than a night lost (the settle and both looks fit
+   inside it), and the failure notifier in `OnFailure=`. The label is the
+   agent's `JOB_LABEL` and the hold's path the agent's;
+   `scripts/lab-job-limits.test.mjs` and the test below hold each pair
+   together.
 
    **Who is logged in comes from logind, not `users` or `who`.** On Ubuntu
    26.04 those two are rust-coreutils, which reads utmp, and systemd no
@@ -173,25 +251,43 @@ Docker; CI runs it in the `ansible-lint (lab-host)` job, and
 `lab-host/README.md` ("Validating without a host") has the container line.
 
 `tests/hcw-reboot-when-idle.test.sh` renders the idle-reboot script and its
-two units the same way and runs the script against stub `loginctl`,
-`docker`, `systemctl` and `logger`, with the marker at a scratch path. The
-`loginctl` stub answers from session listings in the host's columns, the
-first of them the one measured on the host above. No marker is the notice
-line and no reboot; that listing (one `user` session for hcwadmin) is the
-deferred line naming hcwadmin once, and so is a second SSH login for the
-same user; root at the console (`user-early`) defers too; only `manager`,
-`manager-early` and `background` sessions do not, so docker is asked
-(docker is not even asked while a user is logged in). A job container
-running is the deferred line; a `loginctl` that cannot list or read a
-session, a docker that cannot answer and a docker the shell cannot find are
-each one `err` line, a non-zero exit and no reboot; an idle host, with the
-lingering managers still listed or with no sessions at all, is the
-rebooting line and exactly one `systemctl reboot`. It also checks that the
-script never calls `users` or `who`, and holds the timer to the role's
-hour and the job label to the agent's `JOB_LABEL` when `vps-agent/` is in
-the checkout. Same job, same requirements.
+two units the same way and runs the script against stub `apt-config`,
+`loginctl`, `docker`, `sleep`, `systemctl` and `logger`, with the marker
+and the hold at scratch paths. The `loginctl` stub answers from session
+listings in the host's columns, the first of them the one measured on the
+host above. `Automatic-Reboot` on is the stand-down line and nothing else
+asked; an `apt-config` that cannot answer is an `err` line and a failed
+run. No marker is the notice line and no reboot; that listing (one `user`
+session for hcwadmin) is the deferred line naming hcwadmin once, and so is
+a second SSH login for the same user; root at the console (`user-early`)
+defers too; only `manager`, `manager-early` and `background` sessions do
+not, so docker is asked (docker is not even asked while a user is logged
+in). A job container running is the deferred line, with no hold written;
+a `loginctl` that cannot list or read a session, a docker that cannot
+answer and a docker the shell cannot find are each one `err` line, a
+non-zero exit and no reboot. The `sleep` stub is the hold window: it
+records the hold as it stood (an expiry 300 s on, mode 0644) and can
+change the host inside it. A job container or a login that appears there
+defers the night and removes the hold; a docker that fails at the second
+look, a stop (SIGTERM) during the wait, and a refused reboot each fail the
+run and remove it; a hold that cannot be written fails the run before the
+wait. An idle host, with the lingering managers still listed or with no
+sessions at all, is the rebooting line, one wait of the role's settle, two
+looks and exactly one `systemctl reboot`, with the hold left in place. A
+reboot pending 7 days is deferred at `err`, 6 days at `warning`. It also
+checks that the script never calls `users` or `who`, that the role deals
+with a scheduled shutdown before it installs the timer and writes the
+override only after reading the timer back, and holds the timer to the
+role's hour, the hold's path to the `labs_agent` role's and the job label
+to the agent's `JOB_LABEL` when `vps-agent/` is in the checkout. Same job,
+same requirements.
 
 ## Check mode
 
 Safe. Every task is a module with check-mode support; `sshd -t` and `visudo -cf`
-run against the rendered temporary file, not the live one.
+run against the rendered temporary file, not the live one. The two reads
+about a scheduled shutdown (`shutdown --show`, and a `grep` of
+unattended-upgrades' log) run in check mode too, because they change
+nothing; `shutdown -c` does not, and neither does the read-back of the
+timer, which a host that has never had it cannot answer before the run that
+installs it.

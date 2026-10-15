@@ -32,6 +32,7 @@ tag='{{ hardening_held_report_tag }}'
 reboot_required='{{ hardening_reboot_required_path }}'
 reboot_hour='{{ hardening_unattended_reboot_time }}'
 {% raw %}
+# say PRIORITY MESSAGE: one line under the tag, to the daemon facility at PRIORITY.
 say() { logger -t "${tag}" -p "daemon.$1" -- "$2"; }
 
 held_text="$(apt-mark showhold | LC_ALL=C sort -u)"

@@ -29,14 +29,19 @@
  * constants are imported rather than read from text.
  *
  * The same reading holds the hardening role's job label to the agent's
- * JOB_LABEL (the last block): the host's nightly reboot gate filters
- * `docker ps` on it (LAB-13, #959).
+ * JOB_LABEL (the last block but one): the host's nightly reboot gate filters
+ * `docker ps` on it (LAB-13, #959). The last block holds the maintenance
+ * hold the gate writes before its second look to the path the agent reads,
+ * and its two waits to the agent's own bounds (CodeRabbit on #1191).
+ * vps-agent/lib/maintenance-hold.js imports nothing but node:fs, so its
+ * constants are imported too.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_SHUTDOWN_TIMEOUT_MS, SHUTDOWN_HEARTBEAT_TIMEOUT_MS } from '../vps-agent/lib/shutdown.js';
+import { CLAIM_SETTLE_MS, DEFAULT_HOLD_PATH, MAX_HOLD_MS } from '../vps-agent/lib/maintenance-hold.js';
 
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...p) => readFileSync(path.join(repo, ...p), 'utf8');
@@ -53,6 +58,9 @@ const LIMITS = {
 
 /** The shutdown budget's env name and role variable; its agent default is lib/shutdown.js's. */
 const SHUTDOWN = ['LABS_AGENT_SHUTDOWN_TIMEOUT_MS', 'labs_agent_shutdown_timeout_ms'];
+
+/** The maintenance hold's env name and labs_agent role variable; its agent default is lib/maintenance-hold.js's. */
+const HOLD = ['LABS_AGENT_MAINTENANCE_HOLD_PATH', 'labs_agent_maintenance_hold_path'];
 
 const unquote = (value) => value.trim().replace(/^(['"])(.*)\1$/, '$2');
 
@@ -115,7 +123,7 @@ describe('lab job limits agree across the agent, its example env and the host ro
 describe('the role writes each name into the agent env file from its own variable', () => {
   const template = read('lab-host', 'ansible', 'roles', 'labs_agent', 'templates', 'labs-agent.env.j2');
 
-  for (const [name, variable] of [...Object.entries(LIMITS), SHUTDOWN]) {
+  for (const [name, variable] of [...Object.entries(LIMITS), SHUTDOWN, HOLD]) {
     it(`${name}={{ ${variable} }}`, () => {
       expect(template).toMatch(new RegExp(`^${name}=\\{\\{ ${variable} \\}\\}$`, 'm'));
     });
@@ -192,4 +200,61 @@ describe('the reboot gate filters on the label the agent writes', () => {
       'argument_specs.yml': label,
     });
   });
+});
+
+/**
+ * The maintenance hold (CodeRabbit on #1191). Before its second look at an
+ * idle host, hcw-reboot-when-idle writes a file the agent reads before every
+ * claim, and claims nothing while it holds. Three things have to agree for
+ * that to close the gap between the look and the reboot: the path (a hold
+ * written anywhere else is a hold the agent never sees, and the reboot goes
+ * through a job started under it), the settle (shorter than a claim already
+ * sent can take to start its container, and the second look misses it), and
+ * the hold's length (longer than the agent's cap, and it lifts before the
+ * role thinks it does). The hardening role writes, the labs_agent role
+ * passes the path to the agent, and the agent has its own default; all three
+ * are held here, with both roles' argument specs.
+ */
+describe('the maintenance hold is one path, and its waits fit the agent (LAB-13, #959)', () => {
+  const example = read('vps-agent', '.env.example');
+  const agentDefaults = read('lab-host', 'ansible', 'roles', 'labs_agent', 'defaults', 'main.yml');
+  const agentSpecs = read('lab-host', 'ansible', 'roles', 'labs_agent', 'meta', 'argument_specs.yml');
+  const hardeningDefaults = read('lab-host', 'ansible', 'roles', 'hardening', 'defaults', 'main.yml');
+  const hardeningSpecs = read('lab-host', 'ansible', 'roles', 'hardening', 'meta', 'argument_specs.yml');
+  const [name, variable] = HOLD;
+
+  it(`${name} / ${variable} / hardening_reboot_hold_path`, () => {
+    expect({
+      '.env.example': envExample(example, name),
+      'labs_agent defaults/main.yml': roleDefault(agentDefaults, variable),
+      'labs_agent argument_specs.yml': specDefault(agentSpecs, variable),
+      'hardening defaults/main.yml': roleDefault(hardeningDefaults, 'hardening_reboot_hold_path', 'hardening'),
+      'hardening argument_specs.yml': specDefault(hardeningSpecs, 'hardening_reboot_hold_path', 'hardening'),
+    }).toEqual({
+      '.env.example': DEFAULT_HOLD_PATH,
+      'labs_agent defaults/main.yml': DEFAULT_HOLD_PATH,
+      'labs_agent argument_specs.yml': DEFAULT_HOLD_PATH,
+      'hardening defaults/main.yml': DEFAULT_HOLD_PATH,
+      'hardening argument_specs.yml': DEFAULT_HOLD_PATH,
+    });
+  });
+
+  for (const [file, valueOf] of [
+    ['defaults/main.yml', (v) => roleDefault(hardeningDefaults, v, 'hardening')],
+    ['argument_specs.yml', (v) => specDefault(hardeningSpecs, v, 'hardening')],
+  ]) {
+    it(`the settle covers a claim already sent and its container's start (CLAIM_SETTLE_MS), in hardening ${file}`, () => {
+      const settle = Number(valueOf('hardening_reboot_hold_settle_seconds'));
+      expect(Number.isInteger(settle), `hardening_reboot_hold_settle_seconds is ${settle}`).toBe(true);
+      expect(settle * 1000).toBeGreaterThanOrEqual(CLAIM_SETTLE_MS);
+    });
+
+    it(`the hold outlasts the settle and stays within the agent's cap (MAX_HOLD_MS), in hardening ${file}`, () => {
+      const settle = Number(valueOf('hardening_reboot_hold_settle_seconds'));
+      const hold = Number(valueOf('hardening_reboot_hold_seconds'));
+      expect(Number.isInteger(hold), `hardening_reboot_hold_seconds is ${hold}`).toBe(true);
+      expect(hold).toBeGreaterThan(settle);
+      expect(hold * 1000).toBeLessThanOrEqual(MAX_HOLD_MS);
+    });
+  }
 });

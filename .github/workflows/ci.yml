@@ -116,7 +116,8 @@ jobs:
           # files are what lab-job-types.test.mjs imports (capabilities.js)
           # and lab-job-limits.test.mjs reads (index.js, .env.example) or
           # imports for the stop budget (shutdown.js, which imports
-          # docker-runner.js; LAB-13), and what lab-host-docker-proxy.test.mjs
+          # docker-runner.js; LAB-13) and for the maintenance hold
+          # (maintenance-hold.js; LAB-13), and what lab-host-docker-proxy.test.mjs
           # imports to hold the agent's Docker proxy to the argv a job really
           # sends (docker-runner.js, capabilities.js; LAB-5).
           # LabPanePage.jsx is what lab-host-visitor-copy.test.mjs reads: the
@@ -128,7 +129,7 @@ jobs:
           # deploy and the registration monitor run (PLAT-2).
           - name: scripts (operations)
             dir: scripts
-            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown)\.js)$|functions/function-inventory\.json$)'
+            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/function-inventory\.json$)'
             lint: npm run lint
             test: npm test
           # vps-agent shells out to `docker run` with a payload that reached
@@ -491,12 +492,17 @@ jobs:
         run: bash roles/hardening/tests/unattended-upgrades.test.sh
 
       # The nightly idle reboot (LAB-13, #959), rendered with the role's
-      # defaults and run against stub loginctl, docker, systemctl and
-      # logger: no reboot without the marker, with a login session (class
-      # user) open or with a lab job container running, none for lingering
-      # service managers, a failed run when loginctl or docker cannot answer,
-      # exactly one `systemctl reboot` when idle, the timer at the role's
-      # hour and the job label the agent's. Needs neither root nor Docker.
+      # defaults and run against stub apt-config, loginctl, docker, sleep,
+      # systemctl and logger: a stand-down while unattended-upgrades' own
+      # reboot is on, no reboot without the marker, with a login session
+      # (class user) open or with a lab job container running, none for
+      # lingering service managers, a failed run when apt-config, loginctl or
+      # docker cannot answer, and, with new lab jobs held, a second look that
+      # defers for a job or a login that appeared during the hold (CodeRabbit
+      # on #1191); exactly one `systemctl reboot` when idle at both looks, the
+      # hold kept only on that path, an overdue deferral at err, the timer at
+      # the role's hour, the hold path the agent's and the job label the
+      # agent's. Needs neither root nor Docker.
       - name: hcw-reboot-when-idle test
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/hcw-reboot-when-idle.test.sh

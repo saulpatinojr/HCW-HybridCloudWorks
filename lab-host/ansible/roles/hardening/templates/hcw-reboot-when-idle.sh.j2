@@ -9,31 +9,62 @@
 # running. A lab job killed at 04:30 is the evidence paragraph of #959. So
 # the override turns Automatic-Reboot off and hcw-reboot-when-idle.timer
 # runs this at the role's reboot hour instead; both questions are asked at
-# the hour itself.
+# the hour itself, and asked twice (below).
 #
-# One syslog line per outcome, under the tag {{ hardening_reboot_when_idle_tag }}
+# In order, one syslog line per outcome, under the tag {{ hardening_reboot_when_idle_tag }}
 # (journalctl -t {{ hardening_reboot_when_idle_tag }}):
 #
-#   no marker                       notice   nothing pending; stays on the host
-#   a user is logged in             warning  deferred; tomorrow's run asks again
-#   a job container runs            warning  deferred; tomorrow's run asks again
-#   loginctl or docker cannot say   err      the run fails and the notifier (LAB-2) pages
-#   idle                            warning  rebooting, with how long it has waited
+#   apt has Automatic-Reboot on      warning  standing down; unattended-upgrades reboots, not this
+#   no marker                        notice   nothing pending; stays on the host
+#   a user is logged in              warning  deferred; tomorrow's run asks again
+#   a job container runs             warning  deferred; tomorrow's run asks again
+#   (idle: new lab jobs are held, the script waits, then asks both again)
+#   a user or a job at that look     warning  deferred; tomorrow's run asks again
+#   apt-config, loginctl or docker
+#   cannot say, or no hold written   err      the run fails and the notifier (LAB-2) pages
+#   idle at both looks               warning  rebooting, with how long it has waited
+#
+# A deferral of a reboot pending {{ hardening_reboot_overdue_days }} days or more is at err instead of
+# warning, so a fix that has waited a week stands out from the nightly
+# lines; the script still never reboots over a person or a job.
 #
 # Warning and err ship to Log Analytics through the Arc data collection
 # rule, so every reboot and every deferral leaves a row there, and the daily
 # held report (LAB-3) says at 07:15 for how long a reboot has been waiting.
-# A check that cannot run has not run: a `loginctl` or a `docker` that
-# fails, docker missing included, ends the run non-zero rather than guessing
-# that nobody is there, and the unit's OnFailure= reports that.
+# A check that cannot run has not run: an apt-config, a `loginctl` or a
+# `docker` that fails, docker missing included, ends the run non-zero rather
+# than guessing, and the unit's OnFailure= reports that.
 set -euo pipefail
 
 tag='{{ hardening_reboot_when_idle_tag }}'
 reboot_required='{{ hardening_reboot_required_path }}'
 job_label='{{ hardening_reboot_job_label }}'
+hold='{{ hardening_reboot_hold_path }}'
+hold_seconds='{{ hardening_reboot_hold_seconds }}'
+settle_seconds='{{ hardening_reboot_hold_settle_seconds }}'
+overdue_days='{{ hardening_reboot_overdue_days }}'
+reboot_hour='{{ hardening_unattended_reboot_time }}'
 systemctl='/usr/bin/systemctl'
 {% raw %}
+# say PRIORITY MESSAGE: one line under the tag, to the daemon facility at PRIORITY.
 say() { logger -t "${tag}" -p "daemon.$1" -- "$2"; }
+
+# One reboot authority at a time (CodeRabbit on #1191). A rollback to a
+# revision before this script turns unattended-upgrades' own reboot back on
+# and leaves this timer installed, and theirs asks nobody anything. So this
+# stands down whenever apt's effective configuration has Automatic-Reboot on,
+# which is that rollback's signature, and says so each night until the timer
+# is withdrawn (docs/runbooks/labs-host.md, Runtime advisories). `/b` reads
+# it the way unattended-upgrade does (FindB: true, yes, on and 1 are on);
+# apt-config prints nothing for a key nobody set, which is off.
+automatic_reboot="$(apt-config shell automatic_reboot Unattended-Upgrade::Automatic-Reboot/b)" || {
+  say err "not rebooting: apt-config could not say whether unattended-upgrades reboots on its own, so the check has not run; its error is in this unit's journal and this run fails"
+  exit 1
+}
+if [ "${automatic_reboot}" = "automatic_reboot='true'" ]; then
+  say warning "standing down: unattended-upgrades' own Automatic-Reboot is on, so it reboots this host and this timer does not; withdraw the timer, or run bootstrap.sh from a revision that turns Automatic-Reboot off (docs/runbooks/labs-host.md, Runtime advisories)"
+  exit 0
+fi
 
 if [ ! -e "${reboot_required}" ]; then
   say notice "no reboot is pending: ${reboot_required} does not exist"
@@ -43,6 +74,16 @@ fi
 since_epoch="$(stat -c %Y "${reboot_required}")"
 since="$(date -u -d "@${since_epoch}" +%Y-%m-%dT%H:%MZ)"
 days=$(( ($(date -u +%s) - since_epoch) / 86400 ))
+
+# defer REASON: say the reboot waits for REASON, at warning or, once it is overdue, at err; end the run successfully.
+defer() {
+  if [ "${days}" -ge "${overdue_days}" ]; then
+    say err "deferred: $1; a reboot has been pending since ${since} (${days} days), overdue at ${overdue_days}: log out before ${reboot_hour}, or reboot at a time of your choosing (docs/runbooks/labs-host.md, Runtime advisories)"
+  else
+    say warning "deferred: $1; a reboot has been pending since ${since} (${days} days)"
+  fi
+  exit 0
+}
 
 # Who is logged in, from logind. `users` and `who` are not asked: on Ubuntu
 # 26.04 they are rust-coreutils, which reads utmp, and systemd no longer
@@ -57,58 +98,117 @@ days=$(( ($(date -u +%s) - since_epoch) / 86400 ))
 # background and background-light are not people: the per-user service
 # managers lingering keeps up (hcw-coder-docker's rootless daemon, or a
 # logged-in user's own manager) and cron-like sessions, so they never defer.
-sessions="$(loginctl list-sessions --no-legend)" || {
-  say err "not rebooting: loginctl could not list the sessions, so the check has not run; its error is in this unit's journal and this run fails"
-  exit 1
-}
-people=''
-while read -r id _; do
-  [ -n "${id}" ] || continue
-  # A session that ends between the list and this read fails it too: that
-  # night is a failed run and a page, not a guess.
-  props="$(loginctl show-session "${id}" -p Class -p Name)" || {
-    say err "not rebooting: loginctl could not read session ${id}, so the check has not run; its error is in this unit's journal and this run fails"
+#
+# logged_in: set people to the names with a login session open, each once; a logind that cannot answer ends the run.
+logged_in() {
+  local sessions props id class name key value
+  people=''
+  sessions="$(loginctl list-sessions --no-legend)" || {
+    say err "not rebooting: loginctl could not list the sessions, so the check has not run; its error is in this unit's journal and this run fails"
     exit 1
   }
-  class=''
-  name=''
-  while IFS='=' read -r key value; do
-    case "${key}" in
-      Class) class="${value}" ;;
-      Name) name="${value}" ;;
-    esac
-  done <<< "${props}"
-  case "${class}" in
-    user | user-*)
-      case " ${people} " in
-        *" ${name} "*) ;;
-        *) people="${people:+${people} }${name}" ;;
+  while read -r id _; do
+    [ -n "${id}" ] || continue
+    # A session that ends between the list and this read fails it too: that
+    # night is a failed run and a page, not a guess.
+    props="$(loginctl show-session "${id}" -p Class -p Name)" || {
+      say err "not rebooting: loginctl could not read session ${id}, so the check has not run; its error is in this unit's journal and this run fails"
+      exit 1
+    }
+    class=''
+    name=''
+    while IFS='=' read -r key value; do
+      case "${key}" in
+        Class) class="${value}" ;;
+        Name) name="${value}" ;;
       esac
-      ;;
-  esac
-done <<< "${sessions}"
-if [ -n "${people}" ]; then
-  say warning "deferred: a user is logged in (${people}); a reboot has been pending since ${since} (${days} days)"
-  exit 0
-fi
+    done <<< "${props}"
+    case "${class}" in
+      user | user-*)
+        case " ${people} " in
+          *" ${name} "*) ;;
+          *) people="${people:+${people} }${name}" ;;
+        esac
+        ;;
+    esac
+  done <<< "${sessions}"
+}
 
 # Every job container carries the agent's label (vps-agent/lib/docker-runner.js,
 # JOB_LABEL), keyed by job id; nothing else on the host does.
-running="$(docker ps -q --filter "label=${job_label}")" || {
-  say err "not rebooting: docker could not list the job containers, so the check has not run; its error is in this unit's journal and this run fails"
+#
+# running_jobs: set job_count to the containers running with the agent's job label; a docker that cannot answer ends the run.
+running_jobs() {
+  local running
+  running="$(docker ps -q --filter "label=${job_label}")" || {
+    say err "not rebooting: docker could not list the job containers, so the check has not run; its error is in this unit's journal and this run fails"
+    exit 1
+  }
+  if [ -n "${running}" ]; then
+    job_count="$(wc -l <<< "${running}" | tr -d ' ')"
+  else
+    job_count=0
+  fi
+}
+
+logged_in
+[ -z "${people}" ] || defer "a user is logged in (${people})"
+running_jobs
+[ "${job_count}" -eq 0 ] || defer "${job_count} job container(s) running"
+
+# The second look (CodeRabbit on #1191). The first one alone left a gap: a
+# job the agent claimed after `docker ps` came back empty, and before the
+# reboot request, started a container the reboot then killed. So the script
+# writes the maintenance hold, under which the labs agent claims no new job
+# (vps-agent/lib/maintenance-hold.js), waits longer than a claim already
+# sent can take to come back and start its container, and asks both
+# questions again. A job such a claim brings back is running by then, so
+# the second look sees it and defers. The hold holds the epoch second it
+# lapses, so a run that dies without removing it cannot keep the agent idle
+# past that, and the agent caps any hold at ten minutes from its write.
+# Every way out of the script removes it except the reboot it asks for: on
+# that path it stays, so no claim lands between the request and the manager
+# stopping the agent, and the reboot clears /run. The service's
+# RuntimeDirectory= is the hold's directory, the one place it may write.
+rebooting=0
+# release_hold: remove the hold on every way out but the reboot this run asked for.
+release_hold() { [ "${rebooting}" -eq 1 ] || rm -f -- "${hold}" "${hold}.new" || true; }
+trap release_hold EXIT
+# A stop (TimeoutStartSec, or `systemctl stop`) is a way out too. Bash
+# already runs the EXIT trap when a signal it does not trap kills it; these
+# say so here rather than leave it to that, and end with the conventional
+# status.
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
+
+# hold_new_jobs: write the hold, the epoch second it lapses, readable by the agent, renamed into place so it is never read half written.
+hold_new_jobs() {
+  printf '%s\n' "$(( $(date -u +%s) + hold_seconds ))" > "${hold}.new" &&
+    chmod 0644 "${hold}.new" &&
+    mv -f -- "${hold}.new" "${hold}"
+}
+
+hold_new_jobs || {
+  say err "not rebooting: the hold that keeps new lab jobs from starting could not be written, so a second look could not be trusted; its error is in this unit's journal and this run fails"
   exit 1
 }
-if [ -n "${running}" ]; then
-  count="$(wc -l <<< "${running}" | tr -d ' ')"
-  say warning "deferred: ${count} job container(s) running; a reboot has been pending since ${since} (${days} days)"
-  exit 0
-fi
+sleep "${settle_seconds}"
+logged_in
+[ -z "${people}" ] || defer "a user logged in while new lab jobs were held (${people})"
+running_jobs
+[ "${job_count}" -eq 0 ] || defer "${job_count} job container(s) started while new lab jobs were held"
 
-say warning "rebooting; pending since ${since} (${days} days): nobody is logged in and no job container is running"
+say warning "rebooting; pending since ${since} (${days} days): nobody is logged in and no job container is running, at two looks ${settle_seconds} s apart with new lab jobs held between"
 # `systemctl reboot` enqueues the job and returns (it is `start reboot.target
 # --job-mode=replace-irreversibly --no-block` with a wall message), so this
-# run ends successfully before the shutdown reaches its unit. A reboot the
-# manager refuses is a non-zero exit here, and so a line from the notifier
-# rather than a night silently skipped.
-"${systemctl}" reboot
+# run ends successfully before the shutdown reaches its unit. The hold stays
+# for that. A reboot the manager refuses is a non-zero exit here, the hold
+# released, and so a line from the notifier rather than a night silently
+# skipped.
+rebooting=1
+"${systemctl}" reboot || {
+  rebooting=0
+  exit 1
+}
 {% endraw %}

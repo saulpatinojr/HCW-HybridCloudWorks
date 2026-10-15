@@ -17,7 +17,7 @@ the host has not run yet is
 
 | Role | Installs | Where |
 | --- | --- | --- |
-| `hardening` | `hcwadmin` key-only login with passwordless sudo, sshd drop-in (`PasswordAuthentication no`, `PermitRootLogin no`, `KbdInteractiveAuthentication no`), ufw deny-in/allow-out with TCP 22, 80, 443, unattended-upgrades with its own reboot off and `hcw-reboot-when-idle.timer` rebooting at 04:30 only with nobody logged in and no lab job container running (LAB-13), fail2ban sshd jail | `/etc/ssh/sshd_config.d/00-hcw-hardening.conf`, `/etc/sudoers.d/90-hcw-admin`, `/etc/apt/apt.conf.d/52hcw-unattended-upgrades`, `/usr/local/sbin/hcw-reboot-when-idle`, `hcw-reboot-when-idle.timer`, `/etc/fail2ban/jail.d/hcw-sshd.local` |
+| `hardening` | `hcwadmin` key-only login with passwordless sudo, sshd drop-in (`PasswordAuthentication no`, `PermitRootLogin no`, `KbdInteractiveAuthentication no`), ufw deny-in/allow-out with TCP 22, 80, 443, unattended-upgrades with its own reboot off and `hcw-reboot-when-idle.timer` rebooting at 04:30 only with nobody logged in and no lab job container running, asked twice with new lab jobs held between (LAB-13), fail2ban sshd jail | `/etc/ssh/sshd_config.d/00-hcw-hardening.conf`, `/etc/sudoers.d/90-hcw-admin`, `/etc/apt/apt.conf.d/52hcw-unattended-upgrades`, `/usr/local/sbin/hcw-reboot-when-idle`, `hcw-reboot-when-idle.timer`, `/run/hcw-maintenance/reboot-hold` (only while the idle reboot holds new lab jobs), `/etc/fail2ban/jail.d/hcw-sshd.local` |
 | `vault_tools` | `hcw-vault-set`, which sets one key of the Ansible vault from stdin and prints no value ("The vault", below), and the vault's directory, root-only. The Ansible vault the playbook reads, not HashiCorp Vault, which is the `vault` role | `/usr/local/sbin/hcw-vault-set` (root:root, 0750), `/etc/hcw/ansible` (root:root, 0700) |
 | `arc` | Azure Connected Machine agent 1.68.03532.1399 from Microsoft's apt repository, held, then `azcmagent connect` to `rg-lab-hybrid-prod-cus` as `arcs-lab-hybrid-prod-cus-01` with the onboarding service principal from the vault, skipped once Connected. Nothing until `arc_enabled` is true, which is the host's own switch: the arc fact `scripts/lab/Register-LabArc.ps1 -Connect` writes ("Azure Arc", below) | `/opt/azcmagent/`, `/etc/apt/sources.list.d/microsoft-prod.sources`; the connect configuration is a temporary root-only file deleted in the same run; the switch is `/etc/ansible/facts.d/hcw_arc.fact` |
 | `docker` | Docker Engine 29.8.1, buildx 0.37.1, compose 5.5.1 and the rootless extras from Docker's apt repository, held; `json-file` logs 10 MB x 3, `live-restore`, **`userns-remap: default`** with the containerd image store off (LAB-5): a container's root is an unprivileged uid on the host. The run that turns the remap on stops the running containers, restarts the daemon at once and carries Coder's PostgreSQL volume and Portainer's into the new data root (`roles/docker/README.md`, "User namespaces") | `/etc/docker/daemon.json`, `/usr/local/libexec/hcw-docker-volume-carry`, `/var/lib/hcw-docker/userns-carry/` |
@@ -1578,11 +1578,14 @@ which renders the unattended-upgrades override with the role's defaults and
 asserts it names the allowed origins itself and leaves the reboot to
 `hcw-reboot-when-idle.timer`, and
 `roles/hardening/tests/hcw-reboot-when-idle.test.sh`, which renders that
-timer's script and units and runs the script against stub `loginctl`,
-`docker`, `systemctl` and `logger`: no reboot with a login session (class
-`user`) open or a lab job container running, none held back by lingering
-service managers, a failed run when `loginctl` or docker cannot answer,
-exactly one `systemctl reboot` when idle (LAB-13, #959). The two container
+timer's script and units and runs the script against stub `apt-config`,
+`loginctl`, `docker`, `sleep`, `systemctl` and `logger`: a stand-down while
+unattended-upgrades' own reboot is on, no reboot with a login session
+(class `user`) open or a lab job container running, none held back by
+lingering service managers, a failed run when `apt-config`, `loginctl` or
+docker cannot answer, a deferral for a job or a login that appears while
+new lab jobs are held before the second look, and exactly one `systemctl
+reboot` when idle at both looks (LAB-13, #959). The two container
 lines above run either with its path in place of the held-package test's;
 mounted alone, `lab-host/` has no `vps-agent/` beside it, so one line of
 the reboot test reads `skip -` instead of comparing the job label with the
