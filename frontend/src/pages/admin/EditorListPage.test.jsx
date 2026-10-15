@@ -6,6 +6,12 @@
  * server's maximum, so a board past that length was cut without a word and the
  * search ran over the part that arrived. These tests pin the error state with
  * its retry and the banner a cut board carries.
+ *
+ * The banner reads only how long each board came back, so the tests at the
+ * limit stand a bare element in for each live row (#1194): five hundred real
+ * rows in jsdom ran past the 5 s timeout in a loaded full run. They still go
+ * through the real reads, counts and banner; only the row's own markup is
+ * skipped, and every other test renders the real row.
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -35,6 +41,18 @@ vi.mock('./queue/useContentTransitions', () => ({
   }),
 }));
 
+// The real row unless a test sets `rows.standIn`; beforeEach puts it back.
+const rows = vi.hoisted(() => ({ standIn: false }));
+
+vi.mock('./editor-list/LiveItemRow', async (importOriginal) => {
+  const { default: LiveItemRow } = await importOriginal();
+  return {
+    /** The real row, or a bare element when a test sets `rows.standIn` (#1194). */
+    default: (props) =>
+      rows.standIn ? <div data-testid="live-item-row" /> : <LiveItemRow {...props} />,
+  };
+});
+
 /** One live content record, in the shape the list route returns. */
 const liveItem = (n) => ({
   id: `live-${n}`,
@@ -60,6 +78,7 @@ function renderPage() {
 
 describe('EditorListPage', () => {
   beforeEach(() => {
+    rows.standIn = false;
     getJSON.mockReset();
     transition.mockReset();
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -87,6 +106,7 @@ describe('EditorListPage', () => {
   });
 
   it('says when a board came back cut at the server limit', async () => {
+    rows.standIn = true;
     getJSON.mockImplementation(
       answerWith(Array.from({ length: LIST_PAGE }, (_, n) => liveItem(n)))
     );
@@ -95,6 +115,18 @@ describe('EditorListPage', () => {
     const banner = await screen.findByRole('status');
     expect(banner).toHaveTextContent(`The first ${LIST_PAGE} items of a board are shown`);
     expect(getJSON).toHaveBeenCalledWith(expect.stringContaining(`limit=${LIST_PAGE}`));
+    expect(screen.getAllByTestId('live-item-row')).toHaveLength(LIST_PAGE);
+  });
+
+  it('carries no banner for a board one short of the limit', async () => {
+    rows.standIn = true;
+    getJSON.mockImplementation(
+      answerWith(Array.from({ length: LIST_PAGE - 1 }, (_, n) => liveItem(n)))
+    );
+    renderPage();
+
+    expect(await screen.findAllByTestId('live-item-row')).toHaveLength(LIST_PAGE - 1);
+    expect(screen.queryByText(/items of a board are shown/)).not.toBeInTheDocument();
   });
 
   it('carries no banner for a board under the limit', async () => {

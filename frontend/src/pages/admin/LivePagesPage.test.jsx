@@ -3,6 +3,12 @@
  * (AP-F6, #930); and the row's Archive, which asks nothing before it acts
  * because the toast it raises carries Undo (AP-F13, #937;
  * livePages/useLivePageArchive.test.jsx has the flow itself).
+ *
+ * The banner reads only how many records came back, so the tests at the limit
+ * stand a bare element in for each row (#1194): five hundred real rows in
+ * jsdom ran past the 5 s timeout in a loaded full run. They still go through
+ * the real read, count and banner; only the row's own markup is skipped, and
+ * every other test renders the real row.
  */
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -40,6 +46,18 @@ vi.mock('./livePages/useLivePageArchive', async (importOriginal) => {
   };
 });
 
+// The real row unless a test sets `rows.standIn`; beforeEach puts it back.
+const rows = vi.hoisted(() => ({ standIn: false }));
+
+vi.mock('./livePages/LivePageRow', async (importOriginal) => {
+  const { default: LivePageRow } = await importOriginal();
+  return {
+    /** The real row, or a bare element when a test sets `rows.standIn` (#1194). */
+    default: (props) =>
+      rows.standIn ? <div data-testid="live-page-row" /> : <LivePageRow {...props} />,
+  };
+});
+
 const liveItem = (n) => ({
   id: `content-${n}`,
   Title: `Live Page ${n}`,
@@ -65,6 +83,7 @@ function renderPage(role = 'publisher') {
 
 describe('LivePagesPage', () => {
   beforeEach(() => {
+    rows.standIn = false;
     getJSON.mockReset();
     fetchPublicContentList.mockReset();
     fetchPublicContentList.mockResolvedValue([]);
@@ -87,6 +106,7 @@ describe('LivePagesPage', () => {
   });
 
   it('displays the truncation banner when 500 or more items are returned', async () => {
+    rows.standIn = true;
     const items = Array.from({ length: 500 }, (_, n) => liveItem(n));
     getJSON.mockResolvedValue({ items });
     renderPage();
@@ -94,6 +114,17 @@ describe('LivePagesPage', () => {
     const banner = await screen.findByRole('status');
     expect(banner).toHaveTextContent('The first 500 items are shown');
     expect(screen.getByText('500 live pages found')).toBeInTheDocument();
+    expect(screen.getAllByTestId('live-page-row')).toHaveLength(500);
+  });
+
+  it('does not display the truncation banner one short of the limit, at 499 items', async () => {
+    rows.standIn = true;
+    getJSON.mockResolvedValue({ items: Array.from({ length: 499 }, (_, n) => liveItem(n)) });
+    renderPage();
+
+    expect(await screen.findByText('499 live pages found')).toBeInTheDocument();
+    expect(screen.getAllByTestId('live-page-row')).toHaveLength(499);
+    expect(screen.queryByText(/The first 500 items are shown/)).not.toBeInTheDocument();
   });
 
   it('does not display truncation banner when items are under 500', async () => {

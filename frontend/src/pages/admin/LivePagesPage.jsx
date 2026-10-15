@@ -1,28 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import { Link } from 'react-router';
-import { Archive, ExternalLink, Globe, Search } from 'lucide-react';
+import { Globe, Search } from 'lucide-react';
 import { useAuthReady } from '@/hooks/useAuthReady';
 import { usePublicData } from '@/hooks/usePublicData';
 import { fetchPublicContentList } from '@/lib/publicApi';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import RoleGate from '@/components/admin/RoleGate';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import PageHeader from '@/components/admin/shared/PageHeader';
-import StatusBadge from '@/components/admin/shared/StatusBadge';
-import TaxonomyChips from '@/components/admin/shared/TaxonomyChips';
 import { getJSON } from '@/lib/api';
-import { safeUrl } from '@/lib/safeUrl';
-import { getLiveUrl } from '@/lib/livePages';
-import {
-  editorTargetId,
-  getProvider,
-  getTitle,
-  getTypeLabel,
-  selectLiveItems,
-} from './livePages/liveItems';
+import { selectLiveItems } from './livePages/liveItems';
+import LivePageRow from './livePages/LivePageRow';
 import { useLivePageArchive } from './livePages/useLivePageArchive';
 
 const LIVE_PAGES_HELP = [
@@ -40,65 +27,6 @@ const LIVE_PAGES_HELP = [
  * orders newest first: every published document carries publishedAt.
  */
 export const LIVE_PAGES_QUERY = 'cms/content?live=true&limit=500&sort=publishedAt';
-
-/** One live page: its title, badges and URL, with Open Editor, Archive and Open Live Page. */
-function LivePageRow({ item, archiving, archiveBlockedReason, onArchive }) {
-  const liveUrl = getLiveUrl(item);
-  return (
-    <div className="flex flex-col gap-3 rounded-lg border p-4 lg:flex-row lg:items-center">
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-medium">{getTitle(item)}</p>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <StatusBadge content={item} />
-          <Badge variant="outline">{getProvider(item)}</Badge>
-          <Badge variant="secondary">{getTypeLabel(item)}</Badge>
-          <TaxonomyChips item={item} />
-        </div>
-        <a
-          href={safeUrl(liveUrl, '#')}
-          target={liveUrl ? '_blank' : undefined}
-          rel={liveUrl ? 'noreferrer' : undefined}
-          className={`mt-2 block truncate text-sm ${liveUrl ? 'text-blue-600 hover:underline' : 'text-muted-foreground'}`}
-        >
-          {liveUrl || 'Live URL unavailable on record'}
-        </a>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="outline" asChild>
-          <Link to={`/admin/editor/${editorTargetId(item)}`}>Open Editor</Link>
-        </Button>
-        {/* No confirm step: Archive is reversible from the toast it raises
-            (AP-F13, #937). A row the API would refuse — a legacy blog with
-            no content record behind it, or a live page in a status with no
-            edge to archived — has the button disabled, and its title says
-            why. Taking a page off the site is a publisher's edge
-            (lib/cms/content-update.js), so below that role the gate says
-            why first (AP-F4). */}
-        <RoleGate minRole="publisher" reason="Taking a page off the site needs the publisher role.">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => onArchive(item)}
-            disabled={archiving || Boolean(archiveBlockedReason)}
-            title={archiveBlockedReason || undefined}
-          >
-            <Archive className="mr-2 h-4 w-4" />
-            {archiving ? 'Archiving…' : 'Archive'}
-          </Button>
-        </RoleGate>
-        {liveUrl && (
-          <Button size="sm" asChild>
-            <a href={safeUrl(liveUrl)} target="_blank" rel="noreferrer">
-              <ExternalLink className="mr-2 h-4 w-4" />
-              Open Live Page
-            </a>
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 /**
  * The Live Pages page: every page the site serves, newest first, each with Open

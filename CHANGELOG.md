@@ -19,6 +19,21 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **The Live Pages and Editor list truncation tests stand a bare element in
+  for each row, so a loaded full run no longer times them out (#1194)**
+  (AP-F6, #930). Both proved the 500-item banner by rendering 500 full rows
+  in jsdom: 0.8 to 1.1 s alone and 2.5 to 3.8 s in a full `npx vitest run`,
+  so other suites on the same machine pushed them past the 5 s default. The
+  banner reads only how many records came back, so `LivePageRow` and the
+  Editor list's `LiveItemRow` move unchanged into
+  `pages/admin/livePages/LivePageRow.jsx` and
+  `pages/admin/editor-list/LiveItemRow.jsx`, where the tests at the limit
+  mock them; every other test in the two files renders the real row. The
+  read, the count check and the banner are still the page's own: a test
+  fails if the banner goes or its `>=` becomes `>`, and a new test at 499
+  items in each file fails if it fires one short. They now take 65 to 117
+  ms in four full runs, two of them with the functions suite running
+  alongside. No timeout was raised.
 - **No raw error text reaches a response body, and a repository-wide guard
   keeps it that way: follow-up to #1198 for #945** (AP-B10). #1198 converted
   fifteen modules and checked those fifteen files for one spelling,
