@@ -6,7 +6,7 @@
  * rather than replace, and the config collection segment is allowlisted.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createAdminIntegrationHandlers } from './admin-integrations.js';
+import { createAdminIntegrationHandlers, normaliseRecordedAt } from './admin-integrations.js';
 
 const context = { log: vi.fn(), error: vi.fn() };
 
@@ -1956,7 +1956,7 @@ describe('AP-B6: mass assignment allowlists on admin integration writes', () => 
     const store = makeStore();
     const h = createAdminIntegrationHandlers({ guard: allowGuard, store, ...fixed });
 
-    // If an unknown field is sent (like status in create), it's rejected:
+    // Any status but the one the server stamps is refused:
     const res = await h.createRecording(
       makeRequest({
         body: { title: 'R', transcript: 'T', status: 'published' },
@@ -1964,8 +1964,97 @@ describe('AP-B6: mass assignment allowlists on admin integration writes', () => 
       context
     );
     expect(res.status).toBe(400);
-    expect(JSON.parse(res.body).error).toMatch(/Unknown field\(s\): status/);
+    expect(JSON.parse(res.body).error).toBe("status on create must be 'new'");
     expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  // The two Recording Hub forms, posted exactly as they send them. #1181's
+  // allowlist answered both with 400 (`Unknown field(s): recordedAt, source,
+  // plaudId, status` and `... source, status`); these fail if a field they
+  // send leaves RECORDING_CREATE_FIELDS again.
+  it('accepts the Plaud routing payload recordingCards.jsx sends, typed', async () => {
+    const store = makeStore();
+    const h = createAdminIntegrationHandlers({ guard: allowGuard, store, ...fixed });
+    const res = await h.createRecording(
+      makeRequest({
+        body: {
+          title: 'Weekly sync',
+          transcript: 'Hello',
+          duration: 1820,
+          recordedAt: '2026-10-14T15:30:00Z',
+          source: 'plaud_mcp',
+          plaudId: 'pl_abc123',
+          status: 'new',
+        },
+      }),
+      context
+    );
+    expect(res.status).toBe(200);
+    expect(store.upsertDoc.mock.calls[0][1]).toMatchObject({
+      title: 'Weekly sync',
+      transcript: 'Hello',
+      duration: 1820,
+      recordedAt: '2026-10-14T15:30:00.000Z',
+      source: 'plaud_mcp',
+      plaudId: 'pl_abc123',
+      status: 'new',
+      id: 'fixed-uuid',
+    });
+  });
+
+  it('accepts the pasted-transcript payload uploadForms.jsx sends', async () => {
+    const store = makeStore();
+    const h = createAdminIntegrationHandlers({ guard: allowGuard, store, ...fixed });
+    const res = await h.createRecording(
+      makeRequest({
+        body: { title: 'Pasted talk', transcript: 'Text', source: 'manual_upload', status: 'new' },
+      }),
+      context
+    );
+    expect(res.status).toBe(200);
+    expect(store.upsertDoc.mock.calls[0][1]).toMatchObject({
+      source: 'manual_upload',
+      status: 'new',
+    });
+  });
+
+  it('types the new create fields: source, plaudId and recordedAt', async () => {
+    const store = makeStore();
+    const h = createAdminIntegrationHandlers({ guard: allowGuard, store, ...fixed });
+    const post = (extra) =>
+      h.createRecording(makeRequest({ body: { title: 'R', transcript: 'T', ...extra } }), context);
+
+    expect(JSON.parse((await post({ source: 'plaud-embedded' })).body).error).toMatch(/^source must be one of/);
+    expect(JSON.parse((await post({ plaudId: '' })).body).error).toMatch(/^plaudId must be/);
+    expect(JSON.parse((await post({ plaudId: 'x'.repeat(201) })).body).error).toMatch(/^plaudId must be/);
+    expect(JSON.parse((await post({ plaudId: 42 })).body).error).toMatch(/^plaudId must be/);
+    expect(JSON.parse((await post({ recordedAt: 'not a date' })).body).error).toMatch(/^recordedAt must be/);
+    expect(JSON.parse((await post({ recordedAt: { at: 1 } })).body).error).toMatch(/^recordedAt must be/);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+
+    const res = await post({ recordedAt: Date.UTC(2026, 9, 14, 15, 30) });
+    expect(res.status).toBe(200);
+    expect(store.upsertDoc.mock.calls[0][1].recordedAt).toBe('2026-10-14T15:30:00.000Z');
+  });
+
+  // CodeRabbit on #1187: `new Date()` rolls 2026-02-30 over to 2 March and
+  // reads a zoneless time in the host's zone.
+  it('normaliseRecordedAt refuses calendar overflow and reads a zoneless time as UTC', () => {
+    expect(normaliseRecordedAt('2026-02-30')).toBeNull();
+    expect(normaliseRecordedAt('2026-02-30T10:00:00')).toBeNull();
+    expect(normaliseRecordedAt('2025-02-29')).toBeNull();
+    expect(normaliseRecordedAt('2026-13-01')).toBeNull();
+    expect(normaliseRecordedAt('2026-10-14T24:00:00')).toBeNull();
+    expect(normaliseRecordedAt('14/10/2026')).toBeNull();
+    expect(normaliseRecordedAt(Number.NaN)).toBeNull();
+    expect(normaliseRecordedAt(Number.POSITIVE_INFINITY)).toBeNull();
+
+    expect(normaliseRecordedAt('2024-02-29')).toBe('2024-02-29T00:00:00.000Z');
+    expect(normaliseRecordedAt('2026-10-14T15:30:00')).toBe('2026-10-14T15:30:00.000Z');
+    expect(normaliseRecordedAt('2026-10-14 15:30')).toBe('2026-10-14T15:30:00.000Z');
+    expect(normaliseRecordedAt('2026-10-14T15:30:00.123Z')).toBe('2026-10-14T15:30:00.123Z');
+    expect(normaliseRecordedAt('2026-10-14T10:30:00-05:00')).toBe('2026-10-14T15:30:00.000Z');
+    expect(normaliseRecordedAt(' 2026-10-14T15:30:00Z ')).toBe('2026-10-14T15:30:00.000Z');
   });
 
   it('putSettings rejects unknown fields with 400', async () => {

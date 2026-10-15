@@ -84,6 +84,17 @@ async function listRecordings(ctx, request, context) {
   }
 }
 
+/**
+ * What `POST cms/recordings` accepts. #1181 (AP-B6) introduced the allowlist
+ * and left out four keys the only two callers send on every save, so both
+ * Recording Hub forms answered 400 from that deploy on: "route a Plaud
+ * recording" (`recording-hub/recordingCards.jsx`: `recordedAt`, `source`,
+ * `plaudId`, `status`) and the pasted-transcript form
+ * (`recording-hub/uploadForms.jsx`: `source`, `status`). `source` is a real
+ * field the hub renders (`recordingView.js` `sourceLabel`). Each is typed
+ * below; `status` is accepted only as `new`, the value the server stamps
+ * anyway, so the body still cannot choose a recording's state.
+ */
 export const RECORDING_CREATE_FIELDS = [
   'title',
   'transcript',
@@ -94,7 +105,52 @@ export const RECORDING_CREATE_FIELDS = [
   'topics',
   'speakers',
   'metadata',
+  'source',
+  'plaudId',
+  'recordedAt',
+  'status',
 ];
+
+/** The two ways an admin puts a recording into the container (`sourceLabel` names both). */
+export const RECORDING_CREATE_SOURCES = ['plaud_mcp', 'manual_upload'];
+
+/** A Plaud file id is an opaque short string; anything longer is not one. */
+export const RECORDING_PLAUD_ID_MAX = 200;
+
+const RECORDED_AT_SHAPE =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?)?(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/**
+ * `recordedAt` as an ISO string, or null when it is not a real moment.
+ *
+ * `new Date()` alone is not a validator: it rolls `2026-02-30` over to
+ * 2 March, and it reads a time with no zone in the host's own zone, so the
+ * same Plaud timestamp would be stored differently on a workstation and on
+ * the Function App. So a string must be an ISO date, optionally with a time
+ * and a zone, whose day exists in its month (checked before parsing) and
+ * whose clock fields are in range; a time with no zone is read as UTC, the
+ * zone every other stamp in this container uses. Epoch milliseconds are
+ * accepted as a finite number.
+ */
+export function normaliseRecordedAt(raw) {
+  if (typeof raw === 'number') {
+    const when = new Date(raw);
+    return Number.isFinite(raw) && !Number.isNaN(when.getTime()) ? when.toISOString() : null;
+  }
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  const match = RECORDED_AT_SHAPE.exec(value);
+  if (!match) return null;
+  const [, y, mo, d, h = '00', mi = '00', s = '00', zone] = match;
+  const year = Number(y);
+  const month = Number(mo);
+  const day = Number(d);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth) return null;
+  if (Number(h) > 23 || Number(mi) > 59 || Number(s) > 59) return null;
+  const when = new Date(zone ? value.replace(' ', 'T') : `${value.replace(' ', 'T')}${match[4] ? '' : 'T00:00'}Z`);
+  return Number.isNaN(when.getTime()) ? null : when.toISOString();
+}
 
 export const RECORDING_PATCH_FIELDS = [
   'title',
@@ -160,6 +216,32 @@ function validateRecordingCreate(body) {
       return { error: 'metadata must be an object' };
     }
     doc.metadata = body.metadata;
+  }
+  // The body may say `new`, because both forms do; it may not say anything
+  // else. The handler stamps `status: 'new'` whatever arrives.
+  if (body.status !== undefined && body.status !== 'new') {
+    return { error: "status on create must be 'new'" };
+  }
+  if (body.source !== undefined) {
+    if (!RECORDING_CREATE_SOURCES.includes(body.source)) {
+      return { error: `source must be one of: ${RECORDING_CREATE_SOURCES.join(', ')}` };
+    }
+    doc.source = body.source;
+  }
+  if (body.plaudId !== undefined) {
+    const plaudId = typeof body.plaudId === 'string' ? body.plaudId.trim() : '';
+    if (!plaudId || plaudId.length > RECORDING_PLAUD_ID_MAX) {
+      return { error: `plaudId must be a non-empty string of at most ${RECORDING_PLAUD_ID_MAX} characters` };
+    }
+    doc.plaudId = plaudId;
+  }
+  if (body.recordedAt !== undefined && body.recordedAt !== null) {
+    // Plaud reports start_at / created_at; stored as ISO, like createdAt.
+    const recordedAt = normaliseRecordedAt(body.recordedAt);
+    if (!recordedAt) {
+      return { error: 'recordedAt must be an ISO date string or epoch milliseconds' };
+    }
+    doc.recordedAt = recordedAt;
   }
   return { doc };
 }
