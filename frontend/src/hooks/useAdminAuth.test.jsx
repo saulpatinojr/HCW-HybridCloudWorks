@@ -136,4 +136,43 @@ describe('useAdminAuth status requests', () => {
       freshToken: true,
     });
   });
+
+  // CodeRabbit on #1182: a re-check that joined a request already flying on
+  // the cached token would answer with the old role.
+  it('a re-check during an unforced request starts its own fresh-token request and its answer wins', async () => {
+    const mountRead = deferred();
+    const forcedRead = deferred();
+    authedFetch.mockReturnValueOnce(mountRead.promise).mockReturnValueOnce(forcedRead.promise);
+
+    const { result } = renderHook(() => useAdminAuth());
+    await waitFor(() => expect(authedFetch).toHaveBeenCalledTimes(1));
+    expect(authedFetch).toHaveBeenLastCalledWith('getCurrentAdminStatus', {
+      method: 'GET',
+      freshToken: false,
+    });
+
+    let recheck;
+    act(() => {
+      recheck = result.current.recheck();
+    });
+    await waitFor(() => expect(authedFetch).toHaveBeenCalledTimes(2));
+    expect(authedFetch).toHaveBeenLastCalledWith('getCurrentAdminStatus', {
+      method: 'GET',
+      freshToken: true,
+    });
+
+    await act(async () => {
+      forcedRead.resolve(answer({ isAdmin: true, role: 'publisher', permissions: [] }));
+      await recheck;
+    });
+    await act(async () => {
+      mountRead.resolve(answer({ isAdmin: true, role: 'editor', permissions: [] }));
+    });
+
+    // The late unforced answer is not cached over the fresh one: a new
+    // instance reads the publisher role without asking again.
+    const second = renderHook(() => useAdminAuth());
+    await waitFor(() => expect(second.result.current.adminStatus?.role).toBe('publisher'));
+    expect(authedFetch).toHaveBeenCalledTimes(2);
+  });
 });

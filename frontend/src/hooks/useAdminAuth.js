@@ -152,10 +152,19 @@ async function fetchAdminStatusFromBackend({ freshToken = false } = {}) {
  *
  * ONE REQUEST IN FLIGHT PER USER (AP-F12, #936). The promise is cached
  * before it settles, so an instance that mounts while the first is still
- * running awaits the same request — forced or not: an answer already on its
- * way is as fresh as a new one would be. When it settles, only its own entry
- * is replaced: a sign-out (clearAdminStatusCache) during the flight dropped
- * it, and a late answer for a user no longer signed in must not put it back.
+ * running awaits the same request. When it settles, only its own entry is
+ * replaced: a sign-out (clearAdminStatusCache) during the flight dropped it,
+ * and a late answer for a user no longer signed in must not put it back.
+ *
+ * A FORCED READ DOES NOT JOIN AN UNFORCED ONE. The explicit re-check (Try
+ * again) asks for a fresh token because the Entra app role is a token claim:
+ * a role granted a minute ago is in a new token and not in the cached one.
+ * Joining a request already flying on the cached token would answer the
+ * re-check with the old role, so a forced read starts its own request and
+ * takes over the entry; the earlier request still answers whoever awaits it,
+ * and its late settle finds the entry no longer its own and caches nothing.
+ * A forced read in flight is joined by anything, forced or not: it is the
+ * freshest answer there is (CodeRabbit on #1182).
  */
 async function getAdminStatus(uid, { force = false } = {}) {
   if (!uid) return fetchAdminStatusFromBackend();
@@ -163,7 +172,7 @@ async function getAdminStatus(uid, { force = false } = {}) {
   const now = Date.now();
   const entry = adminStatusCache.get(uid);
 
-  if (entry?.pending) return entry.pending;
+  if (entry?.pending && (!force || entry.forced)) return entry.pending;
 
   // Return cached if still valid
   if (!force && entry?.result && now - entry.time < ADMIN_STATUS_CACHE_TTL) {
@@ -189,7 +198,7 @@ async function getAdminStatus(uid, { force = false } = {}) {
       throw err;
     }
   );
-  adminStatusCache.set(uid, { pending });
+  adminStatusCache.set(uid, { pending, forced: force });
 
   return pending;
 }
