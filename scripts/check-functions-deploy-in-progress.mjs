@@ -16,9 +16,10 @@
  * The window closed on time, as it was built to.
  *
  * So before the monitor believes an open window, it asks this whether a
- * deploy run is in progress. If one is, the monitor waits for it to finish
- * and reads again. A window still open after its run has ended is the orphan
- * the check exists to find.
+ * deploy run is in progress. If one is, the monitor waits, reading the
+ * firewall again every thirty seconds, until the window closes or the run
+ * ends. A window still open after its run has ended is the orphan the check
+ * exists to find.
  *
  * ## Why a run, not a step
  *
@@ -37,8 +38,17 @@
  * verdict.
  *
  * Exit 0: no deploy run is in progress. Exit 1: at least one is, named.
- * Exit 2: the run history could not be read, which says nothing either way;
- * the monitor then judges the firewall without waiting, as it did before.
+ * Exit 2: the run history could not be read, which says nothing either way.
+ * Before a deploy has been seen, the monitor then treats an open window as it
+ * does with none running: it reads again a minute later, and a window still
+ * open is ❌. Once one has been seen, it keeps waiting through two such
+ * answers, and a third in a row makes the rows ⚠️, naming the run.
+ *
+ * Node exits 1 by itself when it fails before the script runs, so the
+ * monitor believes exit 1 only with a line 1 ending ` in progress`.
+ *
+ * A request that takes longer than `TIMEOUT_MS` is abandoned, and a 5xx, a
+ * 429 or a dropped connection is asked once more before the answer is 2.
  *
  * ## Usage
  *
@@ -87,23 +97,53 @@ export function formatRuns(runs) {
 }
 
 /**
+ * How long one request may take. The monitor polls every thirty seconds, and
+ * an answer that has not come in fifteen is not coming; without this, a
+ * stalled connection waits on undici's five-minute defaults.
+ */
+export const TIMEOUT_MS = 15000;
+
+/** The pause before the one retry a 5xx, a 429 or a dropped connection gets. */
+export const RETRY_DELAY_MS = 2000;
+
+/** Worth asking once more: the server's error or its rate limit, not a refusal. */
+const retryable = (status) => status >= 500 || status === 429;
+
+/** The runs payload, after at most one retry, or an error naming why not. */
+async function getRuns({ url, token, fetchImpl, retryDelayMs }) {
+  for (let attempt = 1; ; attempt += 1) {
+    const last = attempt === 2;
+    let res;
+    try {
+      res = await fetchImpl(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (last) throw new Error(`GitHub did not answer ${url}: ${error?.message || String(error)}`);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      continue;
+    }
+    if (res.ok) return res.json();
+    if (last || !retryable(res.status)) throw new Error(`GitHub answered ${res.status} for ${url}`);
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+  }
+}
+
+/**
  * The runs of `DEPLOY_WORKFLOW` that are in progress, newest first.
  *
  * The API's `status=in_progress` filter is asked for and then checked again
  * on each run, so a payload that ignored the filter cannot make a finished
  * run look live, or hide a live one behind a finished one.
  */
-export async function findDeploysInProgress({ token, owner, repo, fetchImpl = fetch }) {
+export async function findDeploysInProgress({ token, owner, repo, fetchImpl = fetch, retryDelayMs = RETRY_DELAY_MS }) {
   const url = `${API}/repos/${owner}/${repo}/actions/workflows/${DEPLOY_WORKFLOW}/runs?status=in_progress&per_page=${MAX_RUNS}`;
-  const res = await fetchImpl(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-  });
-  if (!res.ok) throw new Error(`GitHub answered ${res.status} for ${url}`);
-  const body = await res.json();
+  const body = await getRuns({ url, token, fetchImpl, retryDelayMs });
   if (!Array.isArray(body?.workflow_runs)) {
     throw new Error(
       'GitHub returned a workflow-runs payload without a `workflow_runs` array. Expected the ' +
@@ -116,7 +156,7 @@ export async function findDeploysInProgress({ token, owner, repo, fetchImpl = fe
 /**
  * Everything but the process: environment in, exit code and stdout lines out.
  */
-export async function run({ args = [], env = {}, fetchImpl = fetch }) {
+export async function run({ args = [], env = {}, fetchImpl = fetch, retryDelayMs = RETRY_DELAY_MS }) {
   if (args.length > 0) {
     return formatUnreadable(`unknown argument(s) ${args.join(' ')}; this script takes none.`);
   }
@@ -126,7 +166,7 @@ export async function run({ args = [], env = {}, fetchImpl = fetch }) {
     return formatUnreadable('it needs GITHUB_TOKEN and GITHUB_REPOSITORY (owner/repo).');
   }
   try {
-    return formatRuns(await findDeploysInProgress({ token, owner, repo, fetchImpl }));
+    return formatRuns(await findDeploysInProgress({ token, owner, repo, fetchImpl, retryDelayMs }));
   } catch (error) {
     return formatUnreadable(error.message);
   }

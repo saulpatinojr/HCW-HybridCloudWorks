@@ -40,36 +40,65 @@ const LIVE = {
   html_url: 'https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/38819173840',
 };
 
-/** A fake GitHub API answering the runs listing with `runs`, or `status`. */
-function github({ runs = [], status = 200, body } = {}) {
+/**
+ * A fake GitHub API answering the runs listing with `runs`. `answers` is the
+ * sequence of HTTP statuses, one per call, the last repeating; `'drop'`
+ * throws as a dropped connection does.
+ */
+function github({ runs = [], answers = [200], body } = {}) {
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, init });
+    const status = answers[Math.min(calls.length, answers.length) - 1];
+    if (status === 'drop') throw new TypeError('fetch failed');
     return { ok: status >= 200 && status < 300, status, json: async () => body ?? { workflow_runs: runs } };
   };
   return { fetchImpl, calls };
 }
+/** findDeploysInProgress with no pause before its retry. */
+const find = (fetchImpl) => findDeploysInProgress({ token: 't0ken', owner: 'o', repo: 'r', fetchImpl, retryDelayMs: 0 });
 
 describe('findDeploysInProgress', () => {
-  it('asks for the in-progress runs of the deploy workflow, with the token', async () => {
+  it('asks for the in-progress runs of the deploy workflow, with the token and a timeout', async () => {
     const { fetchImpl, calls } = github({ runs: [LIVE] });
-    await findDeploysInProgress({ token: 't0ken', owner: 'o', repo: 'r', fetchImpl });
+    await find(fetchImpl);
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe(
       `https://api.github.com/repos/o/r/actions/workflows/${DEPLOY_WORKFLOW}/runs?status=in_progress&per_page=${MAX_RUNS}`
     );
     expect(calls[0].init.headers.Authorization).toBe('Bearer t0ken');
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('asks once more after a 5xx, a 429 or a dropped connection, and takes that answer', async () => {
+    for (const first of [502, 429, 'drop']) {
+      const { fetchImpl, calls } = github({ runs: [LIVE], answers: [first, 200] });
+      expect((await find(fetchImpl)).map((r) => r.id)).toEqual([LIVE.id]);
+      expect(calls).toHaveLength(2);
+    }
+  });
+
+  it('gives up after the second failure, naming it', async () => {
+    const { fetchImpl, calls } = github({ answers: [503] });
+    await expect(find(fetchImpl)).rejects.toThrow(/503/);
+    expect(calls).toHaveLength(2);
+    await expect(find(github({ answers: ['drop'] }).fetchImpl)).rejects.toThrow(/did not answer/);
+  });
+
+  it('does not retry a refusal, which asking again will not change', async () => {
+    const { fetchImpl, calls } = github({ answers: [403] });
+    await expect(find(fetchImpl)).rejects.toThrow(/403/);
+    expect(calls).toHaveLength(1);
   });
 
   it('keeps only runs that are in progress, whatever the filter returned', async () => {
     const { fetchImpl } = github({ runs: [{ ...LIVE, id: 1, status: 'completed' }, LIVE, { ...LIVE, id: 2, status: 'waiting' }] });
-    const found = await findDeploysInProgress({ token: 't0ken', owner: 'o', repo: 'r', fetchImpl });
-    expect(found.map((r) => r.id)).toEqual([LIVE.id]);
+    expect((await find(fetchImpl)).map((r) => r.id)).toEqual([LIVE.id]);
   });
 
   it('refuses a payload without a workflow_runs array rather than reading it as none', async () => {
     const { fetchImpl } = github({ body: { message: 'Not Found' } });
-    await expect(findDeploysInProgress({ token: 't0ken', owner: 'o', repo: 'r', fetchImpl })).rejects.toThrow(/workflow_runs/);
+    await expect(find(fetchImpl)).rejects.toThrow(/workflow_runs/);
   });
 });
 
@@ -102,7 +131,7 @@ describe('run', () => {
   });
 
   it('exits 2, not 0, when GitHub refuses', async () => {
-    const got = await run({ env: ENV, fetchImpl: github({ status: 403 }).fetchImpl });
+    const got = await run({ env: ENV, fetchImpl: github({ answers: [403] }).fetchImpl });
     expect(got.code).toBe(2);
     expect(got.lines[0]).toBe('unreadable');
     expect(got.lines[1]).toContain('403');
@@ -198,7 +227,8 @@ case "$1" in
     case "$(pop deploys)" in
       0) echo none ;;
       1) echo "deploy run #312 in progress"; echo "- deploy run #312 of \\\`deploy-functions.yml\\\`: https://example.invalid/runs/38819173840"; exit 1 ;;
-      *) echo unreadable; echo "Whether a functions deploy is in progress could not be read: GitHub answered 502"; exit 2 ;;
+      2) echo unreadable; echo "Whether a functions deploy is in progress could not be read: GitHub answered 502"; exit 2 ;;
+      crash) exit 1 ;;
     esac ;;
   *) echo "unexpected node $*" >&2; exit 9 ;;
 esac
@@ -225,14 +255,17 @@ describe.skipIf(!bashUsable)('the monitor step, run against a stubbed estate', {
   }
   afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-  /** The step's exit status, report, sleeps and calls for these answer sequences. */
-  const monitor = ({ netaction, cirules, deploys = ['0'] }) => {
+  /**
+   * The step's exit status, report, sleeps and calls for these answer
+   * sequences. Under `bash -e`, as GitHub runs a step with no `shell:`.
+   */
+  const monitor = ({ netaction, cirules, deploys = ['0'], stor = 'stsitefuncprodcus01' }) => {
     const state = mkdtempSync(join(scratch, 'state-'));
     writeFileSync(join(state, 'netaction.seq'), `${netaction.join('\n')}\n`);
     writeFileSync(join(state, 'cirules.seq'), `${cirules.join('\n')}\n`);
     writeFileSync(join(state, 'deploys.seq'), `${deploys.join('\n')}\n`);
     const summary = join(state, 'summary.md');
-    const result = spawnSync('bash', [script], {
+    const result = spawnSync('bash', ['-e', script], {
       cwd: ROOT,
       encoding: 'utf8',
       timeout: 60000,
@@ -242,7 +275,7 @@ describe.skipIf(!bashUsable)('the monitor step, run against a stubbed estate', {
         STATE: state,
         APP: 'func-site-prod-cus-01',
         RG: 'rg-web-site-prod-cus',
-        STOR: 'stsitefuncprodcus01',
+        STOR: stor,
         GITHUB_STEP_SUMMARY: summary,
         ...ENV,
       },
@@ -258,12 +291,33 @@ describe.skipIf(!bashUsable)('the monitor step, run against a stubbed estate', {
     };
   };
 
-  it('2026-10-15: open mid-deploy, it waits for the deploy and passes on the window it closed', () => {
-    const got = monitor({ netaction: ['Allow', 'Deny'], cirules: ['1', '0'], deploys: ['1', '1', '0'] });
+  it('2026-10-15: open mid-deploy, it waits and passes as soon as the deploy closes its window', () => {
+    // The run is still in progress at the second read (it ran on 40 s past
+    // its close step), but the window is closed, and that is the question.
+    const got = monitor({ netaction: ['Allow', 'Allow', 'Deny'], cirules: ['1', '1', '0'], deploys: ['1'] });
     expect(got.out).toContain('waiting for it to close its own window');
     expect(got.sleeps).toEqual(['30', '30']);
-    expect(got.storageReads).toBe(2);
+    expect(got.storageReads).toBe(3);
+    expect(got.deployReads).toBe(2);
     expect(got.report).toContain('| Host storage default action | Deny | ✅ |');
+    expect(got.report).toContain('| IP rules on host storage | 0 | ✅ |');
+    expect(got.status).toBe(0);
+  });
+
+  it('an orphan left by a deploy that ended during the wait is ❌, not held', () => {
+    // A deploy force-cancelled mid-wait: the run ends, its close step never
+    // ran, and the window stays open with nothing left to close it.
+    const got = monitor({ netaction: ['Allow'], cirules: ['1'], deploys: ['1', '0'] });
+    expect(got.sleeps).toEqual(['30', '60']);
+    expect(got.storageReads).toBe(3);
+    expect(got.report).toContain('| Host storage default action | **Allow** | ❌ |');
+    expect(got.report).toContain('| IP rules on host storage | **1** | ❌ |');
+    expect(got.status).toBe(1);
+  });
+
+  it('a deploy that starts during the minute of grace is waited for, not paged', () => {
+    const got = monitor({ netaction: ['Allow', 'Allow', 'Deny'], cirules: ['1', '1', '0'], deploys: ['0', '1'] });
+    expect(got.sleeps).toEqual(['60', '30']);
     expect(got.report).toContain('| IP rules on host storage | 0 | ✅ |');
     expect(got.status).toBe(0);
   });
@@ -290,10 +344,27 @@ describe.skipIf(!bashUsable)('the monitor step, run against a stubbed estate', {
     const got = monitor({ netaction: ['Allow'], cirules: ['1'], deploys: ['1'] });
     expect(got.sleeps).toHaveLength(40);
     expect(got.sleeps.every((s) => s === '30')).toBe(true);
-    expect(got.report).toContain('| Host storage default action | **Allow**, a deploy is still in progress | ⚠️ |');
-    expect(got.report).toContain('| IP rules on host storage | **1**, a deploy is still in progress | ⚠️ |');
+    expect(got.report).toContain('| Host storage default action | **Allow**, held by a deploy in progress | ⚠️ |');
+    expect(got.report).toContain('| IP rules on host storage | **1**, held by a deploy in progress | ⚠️ |');
     expect(got.report).toContain('https://example.invalid/runs/38819173840');
     // No row is ❌; the guidance under the table mentions the mark in prose.
+    expect(got.report).not.toMatch(/\| ❌ \|$/m);
+    expect(got.status).toBe(1);
+  });
+
+  it('one unreadable poll mid-deploy keeps the wait going rather than paging', () => {
+    const got = monitor({ netaction: ['Allow', 'Allow', 'Allow', 'Deny'], cirules: ['1', '1', '1', '0'], deploys: ['1', '2', '1'] });
+    expect(got.sleeps).toEqual(['30', '30', '30']);
+    expect(got.report).toContain('| Host storage default action | Deny | ✅ |');
+    expect(got.status).toBe(0);
+  });
+
+  it('GitHub going quiet mid-deploy is ⚠️ after three unreadable polls, naming the run and why', () => {
+    const got = monitor({ netaction: ['Allow'], cirules: ['1'], deploys: ['1', '2'] });
+    expect(got.sleeps).toEqual(['30', '30', '30']);
+    expect(got.report).toContain('| Host storage default action | **Allow**, held by a deploy in progress | ⚠️ |');
+    expect(got.report).toContain('https://example.invalid/runs/38819173840');
+    expect(got.report).toContain('could not be read: GitHub answered 502');
     expect(got.report).not.toMatch(/\| ❌ \|$/m);
     expect(got.status).toBe(1);
   });
@@ -306,11 +377,29 @@ describe.skipIf(!bashUsable)('the monitor step, run against a stubbed estate', {
     expect(got.status).toBe(1);
   });
 
+  it('a deploy check that crashes with exit 1 is unreadable, not a deploy in progress', () => {
+    // Node exits 1 by itself when the script fails to load. Read as "in
+    // progress", that would hold an orphan as ⚠️ for twenty minutes.
+    const got = monitor({ netaction: ['Allow'], cirules: ['1'], deploys: ['crash'] });
+    expect(got.sleeps).toEqual(['60']);
+    expect(got.report).toContain('| Host storage default action | **Allow** | ❌ |');
+    expect(got.report).toContain('The deploy check exited 1 without naming a run: no output');
+    expect(got.status).toBe(1);
+  });
+
   it('a closed window costs no wait and no question about deploys', () => {
     const got = monitor({ netaction: ['Deny'], cirules: ['0'] });
     expect(got.sleeps).toEqual([]);
     expect(got.storageReads).toBe(1);
     expect(got.deployReads).toBe(0);
+    expect(got.status).toBe(0);
+  });
+
+  it('with no storage account configured, the firewall is not read at all', () => {
+    const got = monitor({ netaction: ['Allow'], cirules: ['1'], stor: '' });
+    expect(got.storageReads).toBe(0);
+    expect(got.deployReads).toBe(0);
+    expect(got.report).not.toContain('Host storage');
     expect(got.status).toBe(0);
   });
 });

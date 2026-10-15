@@ -897,14 +897,18 @@ This project has not cut a tagged release; entries are grouped under
   account at 22:45:38Z, while deploy run 38819173840 held its upload window
   (22:45:18Z to 22:47:35Z). It reported `Allow` and one IP rule as ❌, and
   the window then closed on time. Now an open window is believed only once
-  no `deploy-functions.yml` run is in progress. The monitor waits up to
-  twenty minutes for a running deploy, or reads again a minute later when
-  none is running, and an orphan stays ❌.
-  `scripts/check-functions-deploy-in-progress.mjs` answers the question, and
-  its test runs the monitor's own step against a stubbed `az` through that
-  collision and the cases around it. It does not join the deploy's
-  concurrency group, where a queued monitor run could cancel a deploy
-  waiting its turn.
+  no `deploy-functions.yml` run is in progress. While one is, the monitor
+  reads the firewall again every 30 s for up to twenty minutes and passes
+  as soon as the window closes. With none running, it reads again a minute
+  later. An orphan stays ❌. A deploy still holding the window after the
+  wait is ⚠️ and named, and so is one GitHub stops answering about for
+  three polls. A Node crash is not taken for a deploy in progress.
+  `scripts/check-functions-deploy-in-progress.mjs` answers the question,
+  with a 15 s timeout and one retry. Its test runs the monitor's own step
+  under `bash -e`, against a stubbed `az`, through that collision and the
+  cases around it. The monitor does not join the deploy's concurrency
+  group. There it would queue behind a deploy waiting on approval, and
+  under the default queue a newer pending run cancels the older one.
 - **Operator documentation drift** (PLAT-9, #969). `infra/README.md` said not
   to pre-build hub networking while `hub.tf` existed; the cost analysis
   called the Management budget "declared, not applied" after the apply had

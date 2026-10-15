@@ -352,35 +352,71 @@ jobs:
           read_deploys() {
             deploystatus=0
             deployout=$(node scripts/check-functions-deploy-in-progress.mjs) || deploystatus=$?
+            # Exit 1 is also what Node returns when it fails before the script
+            # runs, so "in progress" is believed only with the line that says
+            # so; anything else is a check that could not answer.
+            case "$deploystatus" in
+              0) ;;
+              1) case "${deployout%%$'\n'*}" in
+                   *" in progress") ;;
+                   *) deployout=$(printf 'unreadable\nThe deploy check exited 1 without naming a run: %s' "${deployout:-no output}")
+                      deploystatus=2 ;;
+                 esac ;;
+              2) ;;
+              *) deployout=$(printf 'unreadable\nThe deploy check exited %s: %s' "$deploystatus" "${deployout:-no output}")
+                 deploystatus=2 ;;
+            esac
           }
 
+          # Storage is read again on every poll, so a window its deploy has
+          # closed passes at once rather than when the whole run ends, and a
+          # deploy that starts during the minute's grace is waited for too.
+          # held: the last readable answer named a deploy in progress (its
+          # lines are in heldrun). An answer that stops coming once a deploy
+          # was seen is three polls of patience, then ⚠️, not ❌: one 502
+          # mid-deploy must not page on the window that deploy holds.
+          #
           # Deploy jobs ran three to eight minutes in October 2026, so twenty
           # is a hung deploy rather than a slow one. Not shared with the
-          # deploy's function-app-host concurrency group: GitHub cancels a
-          # pending run when a newer one queues in its group, and an hourly
-          # monitor must never be able to cancel a deploy waiting its turn.
+          # deploy's function-app-host concurrency group: the monitor would
+          # queue behind a deploy, including one waiting on its approval, a
+          # deploy would queue behind the monitor, and under the group's
+          # default queue a newer pending run cancels the one already
+          # pending, which could be a deploy.
           deploy_wait=1200
           deploystatus=0
           deployout=""
+          held=0
+          heldrun=""
           if [ -n "${STOR:-}" ]; then
-            read_storage
-            if storage_open; then
+            waited=0
+            graced=0
+            misses=0
+            while :; do
+              read_storage
+              storage_open || break
               read_deploys
-              waited=0
-              while [ "$deploystatus" -eq 1 ] && [ "$waited" -lt "$deploy_wait" ]; do
-                echo "host storage is open while ${deployout%%$'\n'*}; waiting for it to close its own window (${waited} of ${deploy_wait} s)"
+              case "$deploystatus" in
+                1) held=1; heldrun=$deployout; misses=0 ;;
+                0) held=0; misses=0 ;;
+                *) [ "$held" -eq 0 ] || misses=$((misses + 1)) ;;
+              esac
+              [ "$misses" -lt 3 ] || break
+              if [ "$held" -eq 1 ]; then
+                [ "$waited" -lt "$deploy_wait" ] || break
+                echo "host storage is open while ${heldrun%%$'\n'*}; waiting for it to close its own window (${waited} of ${deploy_wait} s)"
                 sleep 30
                 waited=$((waited + 30))
-                read_deploys
-              done
-              # With no deploy seen, a run may have been closing its window
-              # as this read it, so the same minute the access windows get.
-              if [ "$waited" -eq 0 ]; then
+              elif [ "$graced" -eq 0 ]; then
+                # No deploy running: one may have been closing its window as
+                # this read it, so the same minute the access windows get.
                 echo "host storage is open and no functions deploy is in progress (${deployout%%$'\n'*}); reading again in 60 s in case a run is closing its own window"
                 sleep 60
+                graced=1
+              else
+                break
               fi
-              read_storage
-            fi
+            done
           fi
 
           # Outside every substitution, so the annotations reach the run without
@@ -442,10 +478,11 @@ jobs:
             elif [ "$netaction" = "UNAUTHORIZED" ] || [ "$netaction" = "ERROR" ]; then
               echo "| Host storage default action | \`$netaction\` | ⚠️ |" >> "$report"
               failed=1
-            elif [ "$deploystatus" -eq 1 ]; then
-              # Still open with a deploy still running after the wait: that
-              # run holds it, so it is not an orphan yet, and not judgeable.
-              echo "| Host storage default action | **${netaction:-unset}**, a deploy is still in progress | ⚠️ |" >> "$report"
+            elif [ "$held" -eq 1 ]; then
+              # Still open with a deploy still running after the wait, or
+              # with GitHub gone quiet while one ran: that run holds it, so it
+              # is not an orphan yet, and not judgeable.
+              echo "| Host storage default action | **${netaction:-unset}**, held by a deploy in progress | ⚠️ |" >> "$report"
               failed=1
             else
               # Allow with no deploy running means a run opened the window
@@ -459,8 +496,8 @@ jobs:
             elif [ "$cirules" = "UNAUTHORIZED" ] || [ "$cirules" = "ERROR" ]; then
               echo "| IP rules on host storage | \`$cirules\` | ⚠️ |" >> "$report"
               failed=1
-            elif [ "$deploystatus" -eq 1 ]; then
-              echo "| IP rules on host storage | **$cirules**, a deploy is still in progress | ⚠️ |" >> "$report"
+            elif [ "$held" -eq 1 ]; then
+              echo "| IP rules on host storage | **$cirules**, held by a deploy in progress | ⚠️ |" >> "$report"
               failed=1
             else
               echo "| IP rules on host storage | **$cirules** | ❌ |" >> "$report"
@@ -490,11 +527,16 @@ jobs:
           fi
 
           # When the host storage window read open, which deploy run held it,
-          # or why that could not be read (#1205).
-          if [ -n "${STOR:-}" ] && storage_open && [ "$deploystatus" -ne 0 ]; then
-            deploydetail=${deployout#*$'\n'}
-            [ "$deploydetail" != "$deployout" ] || deploydetail=$deployout
-            printf '\n%s\n' "$deploydetail" >> "$report"
+          # and why the last answer could not be read, if it could not (#1205).
+          # Line 1 of each answer is its cell value; the rest is the detail.
+          if [ -n "${STOR:-}" ] && storage_open; then
+            unread=""
+            [ "$deploystatus" -ne 2 ] || unread=$deployout
+            for answer in "$heldrun" "$unread"; do
+              deploydetail=${answer#*$'\n'}
+              [ "$deploydetail" != "$answer" ] || continue
+              printf '\n%s\n' "$deploydetail" >> "$report"
+            done
           fi
 
           # A run where nothing could be read is a broken check, not an outage,
@@ -518,7 +560,7 @@ jobs:
               echo
               echo "When the \`ci-*\` access windows row is ❌, a run that opened a one-host window on the Function App ended without closing it, and that address can still reach the origin past the Cloudflare lock. Each orphan is listed above with its run and the exact command that removes it. This monitor only reads, so removing it stays a person's decision: read the rule and its run again first, because a re-run keeps its run id and reopens the same window."
               echo
-              echo "When a host storage row is ❌, the window was still open with no functions deploy run in progress to close it, or with the run history unreadable, which the detail above then says. When it is ⚠️ with a deploy still in progress, that run has held the window for over twenty minutes and is listed above: it closes its window when it ends, so read the run before treating the window as orphaned."
+              echo "When a host storage row is ❌, the window was still open with no functions deploy run in progress to close it, or with the run history unreadable, which the detail above then says. When it is ⚠️ and held by a deploy in progress, that run has held the window for over twenty minutes, or GitHub stopped answering while it ran, and it is listed above: it closes its window when it ends, so read the run before treating the window as orphaned."
               echo
               echo "A ⚠️ row means the check could not run, not that the platform is down. An authorization failure is not an outage."
             fi
