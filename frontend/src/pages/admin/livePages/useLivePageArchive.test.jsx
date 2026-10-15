@@ -240,6 +240,49 @@ describe('useLivePageArchive', () => {
     expect(result.current.locallyArchivedKeys).toEqual({ [KEY]: false });
   });
 
+  // CodeRabbit on #1193: the button's disabled state lands only after a
+  // re-render, so a second click in the same tick posted again, met
+  // `archived`, and showed "Archive failed" under an archived page.
+  it('sends one Archive however often it is clicked in the same tick, and shows no failure', async () => {
+    let finish;
+    postJSON.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    const { result } = renderHook(() => useLivePageArchive());
+    let first;
+    let second;
+    await act(async () => {
+      first = result.current.archiveLivePage(PAGE);
+      second = result.current.archiveLivePage(PAGE);
+    });
+    expect(postJSON).toHaveBeenCalledTimes(1);
+    expect(await second).toBeNull();
+
+    await act(async () => {
+      finish({ success: true });
+      await first;
+    });
+    expect(postJSON).toHaveBeenCalledTimes(1);
+    expect(result.current.archiveError).toBe('');
+    expect(result.current.archivingId).toBe('');
+    expect(result.current.locallyArchivedKeys).toEqual({ [KEY]: true });
+  });
+
+  it('releases the guard when an archive is refused, so the next click is sent', async () => {
+    postJSON.mockRejectedValueOnce(Object.assign(new Error('refused'), { status: 409 }));
+    const { result } = renderHook(() => useLivePageArchive());
+    await act(() => result.current.archiveLivePage(PAGE));
+    expect(result.current.archivingId).toBe('');
+
+    postJSON.mockResolvedValueOnce({ success: true });
+    await act(() => result.current.archiveLivePage(PAGE));
+    expect(postJSON).toHaveBeenCalledTimes(2);
+    expect(result.current.locallyArchivedKeys).toEqual({ [KEY]: true });
+  });
+
   it('guards each page’s Undo on its own', async () => {
     const OTHER = {
       ...PAGE,

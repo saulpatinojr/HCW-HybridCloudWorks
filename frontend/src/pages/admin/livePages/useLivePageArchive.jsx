@@ -123,6 +123,11 @@ export function useLivePageArchive() {
   // The targets whose Undo is in flight. A ref, not state: the guard must
   // hold for a second click in the same tick, before any re-render.
   const undoing = useRef(new Set());
+  // The targets whose Archive is in flight, for the same reason: the button's
+  // disabled state lands only after a re-render, and a second post in the
+  // same tick would meet `archived`, which has no edge to itself, and show
+  // "Archive failed" under a page that was archived (CodeRabbit on #1193).
+  const archiving = useRef(new Set());
 
   const remember = useCallback((key, archived) => {
     if (key) setLocallyArchivedKeys((prev) => ({ ...prev, [key]: archived }));
@@ -160,13 +165,21 @@ export function useLivePageArchive() {
     async (item) => {
       if (archiveBlockedReason(item)) return null;
       const targetId = archiveTargetId(item);
+      if (archiving.current.has(targetId)) return null;
+      archiving.current.add(targetId);
       setArchivingId(item.id);
-      const result = await transitions.transition({ ...item, id: targetId }, ARCHIVED_STATUS, {
-        markLive: false,
-        reviewNotes: 'Archived from Live Pages',
-        label: 'Archive',
-      });
-      setArchivingId('');
+      let result;
+      try {
+        result = await transitions.transition({ ...item, id: targetId }, ARCHIVED_STATUS, {
+          markLive: false,
+          reviewNotes: 'Archived from Live Pages',
+          label: 'Archive',
+        });
+      } finally {
+        // Cleared on a throw too, so the row is never left reading "Archiving…".
+        archiving.current.delete(targetId);
+        setArchivingId('');
+      }
       if (!result) return null;
       remember(liveUrlKey(item), true);
       /** This archive's Undo, which passes itself along so a refused Undo can be offered again. */
