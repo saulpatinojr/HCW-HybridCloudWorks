@@ -587,30 +587,42 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "function_response_tim
 # mail is the readout, and the rule fires at most once a day.
 #
 # `requests` and `duration` (milliseconds), the classic schema, because the
-# scope is the component, as for alert-func-latency above. P1D is the longest
-# evaluation frequency the rule type allows, and a trailing day holds the
-# window exactly once. The dimensions are strings because dimension values
-# are; the numbers are rounded first so the mail reads as milliseconds.
+# scope is the component, as for alert-func-latency above. Only rows with a
+# `url`: the Functions host writes the request URL for HTTP-triggered
+# invocations and leaves it empty for timer and queue work, and the question
+# is what the API's callers saw, not how long the export itself ran. The
+# query anchors itself to the previous whole UTC day (Azure schedules a daily
+# evaluation as an interval, not a clock time, so a trailing day could split
+# one export window across two nights); the two-day lookback is what lets it.
+# The dimensions are strings because dimension values are; the numbers are
+# rounded first so the mail reads as milliseconds.
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "export_window_latency" {
   name                = "alert-export-window-latency-${var.environment}-${var.region_abbreviation}"
   resource_group_name = azurerm_resource_group.app["web"].name
   location            = azurerm_resource_group.app["web"].location
   scopes              = [azurerm_application_insights.hcw.id]
-  description         = "The nightly Cosmos export window (03:00 to 03:45 UTC) degraded the API: its P95 was above 1 s and above twice the rest of the day's, over at least 20 requests. ADR 0019's revisit trigger, met; the split returns worker-first. The dimensions carry both P95s (ms) and both request counts."
+  description         = "The nightly Cosmos export window (03:00 to 03:45 UTC) degraded the API on the previous UTC day: its HTTP P95 was above 1 s and above twice the rest of the day's, over at least 20 requests. ADR 0019's revisit trigger, met; the split returns worker-first. The dimensions carry both P95s (ms) and both request counts."
   severity            = 3
 
   evaluation_frequency = "P1D"
-  window_duration      = "P1D"
+  # Two days, so that whatever time of day the daily evaluation lands the
+  # query can take the previous whole UTC day and find all of it.
+  window_duration = "P2D"
 
-  auto_mitigation_enabled = true
+  # Stateless: automatic mitigation is supported only up to a 12-hour
+  # frequency. At one evaluation a day, stateless means at most one mail per
+  # day the condition holds, which is the cadence wanted anyway.
+  auto_mitigation_enabled = false
 
   criteria {
     query                   = <<-KQL
       requests
+      | where timestamp >= startofday(now(), -1) and timestamp < startofday(now())
+      | where isnotempty(url)
       | extend inWindow = hourofday(timestamp) == 3 and datetime_part("minute", timestamp) < 45
-      | summarize windowP95 = percentileif(duration, 95, inWindow),
+      | summarize windowP95 = percentile(iff(inWindow, duration, double(null)), 95),
                   windowRequests = countif(inWindow),
-                  restP95 = percentileif(duration, 95, not(inWindow)),
+                  restP95 = percentile(iff(inWindow, double(null), duration), 95),
                   restRequests = countif(not(inWindow))
       | where windowRequests >= 20 and windowP95 > 1000 and windowP95 > 2 * restP95
       | project windowP95 = tostring(round(windowP95)), windowRequests = tostring(windowRequests), restP95 = tostring(round(restP95)), restRequests = tostring(restRequests)

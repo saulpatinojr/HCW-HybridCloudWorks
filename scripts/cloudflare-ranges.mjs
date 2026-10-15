@@ -48,13 +48,25 @@ export const SET = 'cloudflare-ranges';
 export const VARIABLES_PATH = 'infra/variables.tf';
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * One IPv4 CIDR rebuilt from its parsed parts, or null: a dotted quad with
+ * octets 0..255 and a prefix 0..32, no leading zeros. What this returns is a
+ * string this script composed from five numbers, which is what reaches the
+ * variables file; the response's own bytes never do (CodeQL on #1179).
+ */
+export function canonicalCidr(value) {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(String(value));
+  if (!match) return null;
+  const parts = match.slice(1).map((p) => ({ text: p, number: Number(p) }));
+  if (parts.some((p) => String(p.number) !== p.text)) return null;
+  const [a, b, c, d, prefix] = parts.map((p) => p.number);
+  if ([a, b, c, d].some((o) => o > 255) || prefix > 32) return null;
+  return `${a}.${b}.${c}.${d}/${prefix}`;
+}
+
 /** True for one IPv4 CIDR: a dotted quad with octets 0..255 and a prefix 0..32. */
 export function isIpv4Cidr(value) {
-  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(String(value));
-  if (!match) return false;
-  const octets = match.slice(1, 5);
-  if (!octets.every((o) => Number(o) <= 255 && String(Number(o)) === o)) return false;
-  return Number(match[5]) <= 32 && String(Number(match[5])) === match[5];
+  return canonicalCidr(value) !== null;
 }
 
 /**
@@ -71,9 +83,9 @@ export function parsePublished(body) {
   if (!doc || doc.success !== true || !doc.result || !Array.isArray(doc.result.ipv4_cidrs)) {
     throw new Error('the answer is not the `success: true` envelope with `result.ipv4_cidrs`');
   }
-  const ranges = doc.result.ipv4_cidrs.map(String);
-  const bad = ranges.filter((r) => !isIpv4Cidr(r));
-  if (bad.length) throw new Error(`not IPv4 CIDRs: ${bad.join(', ')}`);
+  const bad = doc.result.ipv4_cidrs.filter((r) => !isIpv4Cidr(r));
+  if (bad.length) throw new Error(`not IPv4 CIDRs: ${bad.map(String).join(', ')}`);
+  const ranges = doc.result.ipv4_cidrs.map(canonicalCidr);
   if (ranges.length < MIN_DECLARED_RANGES) {
     throw new Error(`only ${ranges.length} ranges, below the floor of ${MIN_DECLARED_RANGES}; refusing to narrow the lock on a short answer`);
   }

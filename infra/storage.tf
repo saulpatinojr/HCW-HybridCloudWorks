@@ -112,14 +112,14 @@ resource "azurerm_storage_account" "hcw" {
       # format", an error that names neither the field nor the value.
       #
       # No localhost origin (PLAT-10, #970). `http://localhost:5173` (Vite's
-      # default port) sat here from the first apply, and it let a script on
-      # any developer's machine, or anyone else's, read this account
-      # cross-origin in production. Nothing needs it: the frontend never
+      # default port) sat here from the first apply and served nothing: CORS
+      # governs what a browser script may read, not who may reach the
+      # account, and the firewall below admits the Functions subnet and the
+      # AzureServices bypass only, so no browser reaches this account at all;
+      # public media is served through the app. The frontend also never
       # fetches from this account by script (read 2026-10-15: no fetch() to
-      # the storage host anywhere under frontend/src), and the images and
-      # media it does load go through <img> and <audio> elements, which CORS
-      # does not govern. A local run sees the same content with or without
-      # the entry.
+      # the storage host anywhere under frontend/src). An unused entry is
+      # removed; a local run sees the same content with or without it.
       allowed_origins = [
         "https://${var.domain}",
         "https://www.${var.domain}",
