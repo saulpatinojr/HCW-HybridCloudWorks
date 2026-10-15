@@ -37,6 +37,36 @@
  * Each service therefore declares the paths it deploys, and drift is measured
  * over commits touching those.
  *
+ * ## The Terraform row reads the APPLY, not a workflow run (PLAT-3, #963)
+ *
+ * `infra/` ships through HCP Terraform: a merge to `main` queues a plan, and
+ * the owner confirms the apply in the HCP Terraform UI. No workflow in this
+ * repository performs that apply, so no workflow run can stand in for it. The
+ * first version of this row (#1178) keyed it on the last successful
+ * `tfc-plan-check.yml` run, and that run succeeds in three cases that apply
+ * nothing: `TFC_TOKEN` unset (it skips, green), a plan nobody confirms (exit 0
+ * on a run that is not awaiting a decision), and a plan the owner never
+ * applies. So `infra/` could keep merging while the row printed ✅ — found by
+ * a read-only review on 2026-10-15. The inverse held too: an apply from the
+ * UI with no dispatch in 24 h read ❌ forever.
+ *
+ * The row now asks HCP Terraform directly: the workspace's newest run in state
+ * `applied` (`filter[status]=applied`, `page[size]=1`), requested with
+ * `include=configuration_version.ingress_attributes`, and the `commit-sha` of
+ * that run's ingress attributes is the deployed baseline — the VCS commit the
+ * applied configuration was planned from — with `status-timestamps.applied-at`
+ * as the date. Drift is then the `infra/` commits on `main` after that commit,
+ * measured as the other rows are. The walk through `included` is
+ * `check-tfc-plan.mjs`'s, imported rather than copied.
+ *
+ * Two readings are refused rather than rendered healthy. A baseline commit
+ * that is not on `main` (the compare API answers `behind` or `diverged`) is
+ * reported as such and fails the report: production is running
+ * infrastructure `main` does not contain, which is worse than drift and would
+ * otherwise have counted as zero of it. And no token, or a read that fails,
+ * renders ⚠️ with the reason — the row is self-arming in the same direction
+ * as the rest of this file, never ✅ on an answer it did not get.
+ *
  * ## On running this from a schedule GitHub delivers unreliably
  *
  * `monitor-functions-registered.yml` is documented as hourly and is delivered
@@ -49,14 +79,20 @@
  */
 import { pathToFileURL } from 'node:url';
 
+import { indexIncluded, ingressCommitFor } from './check-tfc-plan.mjs';
+import { ORGANIZATION, WORKSPACE, tfc } from './tfc-workspace-busy.mjs';
+
 const API = 'https://api.github.com';
 
 /**
  * What each deployable service is, and what it ships.
  *
- * `paths` are prefixes matched against the repository-relative paths the GitHub
- * commits API is filtered by. Adding a service here is the only change a new
- * deploy target needs.
+ * A service names where its deployed baseline comes from: the `workflow`
+ * whose last successful run deployed it, or the `terraform` workspace whose
+ * last applied run did (see the header for why those are different reads).
+ * `paths` are prefixes matched against the repository-relative paths the
+ * GitHub commits API is filtered by. Adding a service here is the only change
+ * a new deploy target needs.
  */
 export const SERVICES = Object.freeze([
   Object.freeze({
@@ -71,8 +107,13 @@ export const SERVICES = Object.freeze([
   }),
   Object.freeze({
     name: 'Terraform Infrastructure',
-    workflow: 'tfc-plan-check.yml',
-    paths: Object.freeze(['infra', 'cosmos-containers.json']),
+    // No `workflow`: nothing in this repository applies, so the baseline is
+    // the newest APPLIED run on the workspace, read from HCP Terraform. One
+    // path: `infra/cosmos-containers.json` sits under `infra`. The first
+    // version also listed `cosmos-containers.json` at the root, which does
+    // not exist and matched nothing (F5, #963).
+    terraform: Object.freeze({ organization: ORGANIZATION, workspace: WORKSPACE }),
+    paths: Object.freeze(['infra']),
   }),
 ]);
 
@@ -115,6 +156,84 @@ export function parseLastSuccessfulRun(body) {
     throw new Error('A workflow run came back with no `head_sha`, so nothing can be compared.');
   }
   return { sha: run.head_sha, runNumber: run.run_number ?? null, at: run.created_at ?? null };
+}
+
+/**
+ * Why the Terraform row cannot be read without a token. The row, not the
+ * whole run: the two deploy rows need nothing from HCP Terraform and still
+ * answer, and a summary that says which row could not be read is worth more
+ * than a job that skipped.
+ */
+export function missingTfcTokenMessage() {
+  return (
+    `TFC_TOKEN is not set, so the last applied run on ${ORGANIZATION}/${WORKSPACE} cannot be ` +
+    'read and this row has no deployed baseline (PLAT-3, #963). Seed TFC_TOKEN as a repository ' +
+    'secret (Settings -> Secrets and variables -> Actions); the check job reads it from the ' +
+    'automation environment.'
+  );
+}
+
+/**
+ * The newest APPLIED run on the Terraform workspace, as a deployed baseline.
+ *
+ * Reads the JSON:API document of
+ * `GET /workspaces/:id/runs?filter[status]=applied&page[size]=1` with
+ * `include=configuration_version.ingress_attributes`, and answers the commit
+ * the run was planned from plus when it applied. Same contract as
+ * `parseLastSuccessfulRun`: null is "this workspace has never applied", a
+ * fact reported as its own row, and every shape that cannot be read THROWS,
+ * so `driftFor` renders ⚠️ rather than a baseline that does not exist.
+ *
+ * The status is checked against the filter rather than trusted to it. If
+ * HCP Terraform ignored or renamed `filter[status]`, the newest run of any
+ * kind would come back — a plan awaiting confirmation, say — and its commit
+ * would read as applied. That is the exact false green this row was reopened
+ * for (F4), arriving by a different door, so the door is shut here.
+ *
+ * A run with no VCS commit (uploaded through the API or CLI) is thrown on,
+ * not skipped: it IS the newest apply, and nothing on `main` can be compared
+ * with it, which is an answer this row cannot give rather than zero drift.
+ */
+export function parseLastAppliedRun(payload) {
+  if (!payload || !Array.isArray(payload.data)) {
+    throw new Error(
+      'HCP Terraform returned a runs payload without a `data` array. Expected the JSON:API ' +
+        'response of GET /workspaces/:id/runs?filter[status]=applied.'
+    );
+  }
+  if (payload.data.length === 0) return null;
+  if (!Array.isArray(payload.included)) {
+    throw new Error(
+      "HCP Terraform returned no `included` section, so the applied run's commit cannot be " +
+        'resolved. The request must carry include=configuration_version.ingress_attributes.'
+    );
+  }
+
+  const [run] = payload.data;
+  const status = run?.attributes?.status;
+  if (status !== 'applied') {
+    throw new Error(
+      `HCP Terraform listed run ${run?.id ?? '(unidentified run)'} in state "${status ?? 'unknown'}" ` +
+        'under filter[status]=applied, so the listing cannot be read as the applied baseline.'
+    );
+  }
+
+  const sha = ingressCommitFor(run, indexIncluded(payload.included));
+  if (sha === null) {
+    throw new Error(
+      `Applied run ${run.id ?? '(unidentified run)'} carries no VCS commit — no configuration ` +
+        'version, or one uploaded without ingress attributes — so it cannot be compared with main.'
+    );
+  }
+
+  return {
+    // Lower-cased once here: GitHub's shas are lower-case hex and the exclusion
+    // in `driftFor` compares by string, so a differently-cased sha from HCP
+    // Terraform would count the deployed commit as one commit of drift.
+    sha: sha.toLowerCase(),
+    runId: run.id ?? null,
+    at: run.attributes?.['status-timestamps']?.['applied-at'] ?? null,
+  };
 }
 
 /** The commit date of a single commit payload, as an ISO string. */
@@ -217,13 +336,22 @@ export function formatReport(results, thresholdHours) {
   const rows = results.map((r) => {
     if (r.error) return `| ${cell(r.name)} | ⚠️ | ${cell(r.error)} |`;
     if (r.neverDeployed) return `| ${cell(r.name)} | ❌ | never deployed |`;
+    // ❌ and not ⚠️: this WAS read. Production is running a commit `main`
+    // does not contain, which is a stronger finding than drift, and the one
+    // a drift count of zero would have hidden.
+    if (r.notOnMain) {
+      return (
+        `| ${cell(r.name)} | ❌ | applied from ${cell(String(r.notOnMain.sha).slice(0, 8))}, ` +
+        `which is not on main (${cell(r.notOnMain.status)}) |`
+      );
+    }
     if (!r.oldest) return `| ${cell(r.name)} | ✅ | up to date |`;
     const stale = isStale(r.hours, thresholdHours);
     return `| ${cell(r.name)} | ${stale ? '❌' : '✅'} | ${r.count} commit(s), oldest ${r.hours}h — ${cell(r.oldest.message)} |`;
   });
 
   const failed = results.some(
-    (r) => r.error || r.neverDeployed || (r.oldest && isStale(r.hours, thresholdHours))
+    (r) => r.error || r.neverDeployed || r.notOnMain || (r.oldest && isStale(r.hours, thresholdHours))
   );
 
   return {
@@ -238,8 +366,9 @@ export function formatReport(results, thresholdHours) {
       ...rows,
       '',
       failed
-        ? '**Deploy the service(s) marked ❌.** Both deploys are dispatch-only by ' +
-          'design, so merging does not ship them — this is the thing that says so. ' +
+        ? '**Deploy the service(s) marked ❌.** The two deploys are dispatch-only by ' +
+          'design and the Terraform apply is confirmed by hand in HCP Terraform, so merging ' +
+          'ships none of the three — this is the thing that says so. ' +
           'A ⚠️ means the check could not read the answer, which is not the same as drift.'
         : 'Every service is within the threshold.',
     ].join('\n'),
@@ -258,16 +387,81 @@ async function ghJson(fetchImpl, url, token) {
   return res.json();
 }
 
-/** Drift for one service. Never throws: a failure is reported as its own row. */
-export async function driftFor(service, { token, owner, repo, nowMs, fetchImpl = fetch }) {
-  try {
-    const runs = await ghJson(
-      fetchImpl,
-      `${API}/repos/${owner}/${repo}/actions/workflows/${service.workflow}/runs?status=success&per_page=1`,
-      token
+/** The head of a workflow's last successful run, or null when it has none. */
+async function workflowBaseline(service, { token, owner, repo, fetchImpl }) {
+  const runs = await ghJson(
+    fetchImpl,
+    `${API}/repos/${owner}/${repo}/actions/workflows/${service.workflow}/runs?status=success&per_page=1`,
+    token
+  );
+  return parseLastSuccessfulRun(runs);
+}
+
+/**
+ * The commit the workspace's newest applied run was planned from, or null
+ * when nothing has applied. Two calls, both reads: the workspace by name for
+ * its id, as the other two HCP Terraform scripts resolve it, then one run.
+ */
+async function appliedBaseline(service, { tfcToken, fetchImpl }) {
+  if (!tfcToken) throw new Error(missingTfcTokenMessage());
+  const { organization, workspace } = service.terraform;
+  const ws = await tfc(tfcToken, `/organizations/${organization}/workspaces/${workspace}`, {
+    fetchImpl,
+  });
+  if (typeof ws?.id !== 'string' || !ws.id) {
+    throw new Error(
+      `HCP Terraform returned no id for workspace ${organization}/${workspace}. Expected the ` +
+        'response of GET /organizations/:org/workspaces/:name.'
     );
-    const last = parseLastSuccessfulRun(runs);
+  }
+  const payload = await tfc(
+    tfcToken,
+    `/workspaces/${ws.id}/runs?filter%5Bstatus%5D=applied&page%5Bsize%5D=1` +
+      '&include=configuration_version.ingress_attributes',
+    { raw: true, fetchImpl }
+  );
+  return parseLastAppliedRun(payload);
+}
+
+/**
+ * Is `sha` on `main`? Asked only of the Terraform baseline. A deploy
+ * workflow's head is `main` by construction — both deploys refuse any other
+ * ref — but HCP Terraform applies whatever commit the workspace was pointed
+ * at, and a baseline off `main` would otherwise count as zero drift.
+ *
+ * `compare/:sha...main` describes main relative to the sha: `ahead` or
+ * `identical` means the sha is an ancestor of main (or main itself);
+ * `behind` or `diverged` means main does not contain it. A status this does
+ * not recognise is thrown on, in the direction the rest of the file takes.
+ */
+async function compareWithMain(sha, { token, owner, repo, fetchImpl }) {
+  const body = await ghJson(fetchImpl, `${API}/repos/${owner}/${repo}/compare/${sha}...main`, token);
+  const status = body?.status;
+  if (status === 'ahead' || status === 'identical') return { onMain: true, status };
+  if (status === 'behind' || status === 'diverged') return { onMain: false, status };
+  throw new Error(
+    `GitHub returned a compare payload with status ${JSON.stringify(status ?? null)} for ${sha}...main. ` +
+      'Expected ahead, identical, behind or diverged from GET /repos/:owner/:repo/compare/:base...:head.'
+  );
+}
+
+/** Drift for one service. Never throws: a failure is reported as its own row. */
+export async function driftFor(
+  service,
+  { token, tfcToken, owner, repo, nowMs, fetchImpl = fetch }
+) {
+  try {
+    const last = service.terraform
+      ? await appliedBaseline(service, { tfcToken, fetchImpl })
+      : await workflowBaseline(service, { token, owner, repo, fetchImpl });
     if (!last) return { name: service.name, neverDeployed: true };
+
+    if (service.terraform) {
+      const { onMain, status } = await compareWithMain(last.sha, { token, owner, repo, fetchImpl });
+      if (!onMain) {
+        return { name: service.name, notOnMain: { sha: last.sha, status, runId: last.runId } };
+      }
+    }
 
     const deployed = await ghJson(
       fetchImpl,
@@ -344,6 +538,9 @@ export async function driftFor(service, { token, owner, repo, nowMs, fetchImpl =
 
 async function main() {
   const token = process.env.GITHUB_TOKEN;
+  // Not refused here when absent: the Terraform row renders ⚠️ with the
+  // reason and the report fails, while the two deploy rows still answer.
+  const tfcToken = process.env.TFC_TOKEN;
   const [owner, repo] = (process.env.GITHUB_REPOSITORY ?? '').split('/');
   const thresholdHours = Number(process.env.DRIFT_THRESHOLD_HOURS || DEFAULT_THRESHOLD_HOURS);
 
@@ -363,7 +560,7 @@ async function main() {
   const nowMs = Date.now();
   const results = [];
   for (const service of SERVICES) {
-    results.push(await driftFor(service, { token, owner, repo, nowMs }));
+    results.push(await driftFor(service, { token, tfcToken, owner, repo, nowMs }));
   }
 
   const { failed, text } = formatReport(results, thresholdHours);

@@ -19,6 +19,101 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **AP-F11: the site's Content-Security-Policy drops `'unsafe-inline'` and
+  the scheme-wide image grant and gains `base-uri`, `object-src` and
+  `form-action`, the admin token cache moves to `sessionStorage`, and no
+  source map ships** (AP-F11, #935). `frontend/staticwebapp.config.json`
+  commits a policy with no `'unsafe-inline'` anywhere and an `img-src` of
+  the hosts the site was measured to load images from — the media route,
+  the certification badge hosts, the show's artwork host and the three
+  hosts published articles still hotlink; `data:` stays for the upload
+  previews and two article bodies, `blob:` goes — beside `base-uri 'self'`,
+  `object-src 'none'` and `form-action 'self' https://login.microsoftonline.com`.
+  `frontend/scripts/stage-swa-config.mjs` finishes the policy after every
+  build instead of copying the file: one `'sha256-…'` per distinct inline
+  `<style>` body in `style-src` and one per distinct `style` attribute
+  value in `style-src-attr 'unsafe-hashes'`, computed from the pre-rendered
+  pages, so a change to a component's `style` prop updates the header on
+  the next build (2026-10-15: 2 elements with one body and 2,969 attributes
+  with 80 values across 230 documents). `frontend/scripts/check-image-hosts.mjs`
+  runs next and fails the build when a page, a stylesheet or an article
+  body references an image host `img-src` does not name, tolerating the
+  retired Firebase bucket only until the last page stops naming it; the
+  measurement and how to repeat it are in
+  `docs/architecture/how-it-is-built.md`. `frontend/src/lib/msalConfig.js`
+  caches MSAL in `sessionStorage`, its own default for a single-page app,
+  so a DOM XSS or a compromised dependency can no longer read a token pair
+  that outlives the tab; the known risk is an in-app browser that loses
+  the session across the redirect, the verification is the owner's sign-in
+  on an iPhone after the deploy, and the rollback is that one line.
+  `deploy-azure-frontend.yml` moves every `.map` out of `dist` after the
+  build, keeps them for thirty days as the run's `source-maps` artifact so
+  a stack trace can still be read, and refuses a payload with one left;
+  `frontend/scripts/deploy-source-maps.test.js` holds the workflow and
+  `vite.config.js` to each other.
+- **The drift monitor's Terraform row reads the last apply from HCP
+  Terraform, and reads ⚠️ rather than ✅ when it cannot** (PLAT-3, #963).
+  The row #1178 added to `scripts/check-deploy-drift.mjs` took the last
+  successful `tfc-plan-check.yml` run's head as the deployed baseline. That
+  workflow is a dispatch-only read of a plan and is green with `TFC_TOKEN`
+  unset, on a plan nobody confirms and on a plan the owner never applies, so
+  `infra/` could keep merging while the row printed ✅, and an apply from the
+  HCP Terraform UI with no dispatch in a day read ❌ (found by a read-only
+  review, 2026-10-15). The row now resolves the `hcw/hcw-azure` workspace
+  and reads its newest run in state `applied`
+  (`filter[status]=applied`, `page[size]=1`,
+  `include=configuration_version.ingress_attributes`), takes the
+  `commit-sha` of that run's ingress attributes as the deployed baseline
+  and its `status-timestamps.applied-at` as the date, and counts the
+  `infra/` commits on `main` after it as the other rows do; the walk through
+  `included` is `check-tfc-plan.mjs`'s, and the API call is
+  `tfc-workspace-busy.mjs`'s, both imported rather than copied. A baseline
+  commit `main` does not contain is reported as such and fails the report
+  instead of counting as zero drift; no token, or a read that fails, renders
+  ⚠️ with the reason and fails the job, never ✅. `monitor-deploy-drift.yml`'s
+  `check` job sits in the `automation` environment and passes `TFC_TOKEN`
+  to the step, the way `tfc-plan-check.yml` receives it; its permissions
+  are unchanged. The entry's `cosmos-containers.json` path, which named a
+  file that does not exist at the root (`infra/cosmos-containers.json` sits
+  under `infra`), is gone, and the report's footer describes three rows
+  rather than "both deploys". Tests cover the token-unset row, an applied
+  baseline with later `infra/` commits, a refused read, a baseline off
+  `main`, a workspace that never applied, a listing whose newest run is not
+  applied, every declared path existing on disk, and the workflow wiring.
+- **Recording Hub saves again: the recordings create allowlist accepts the
+  four fields both forms send, typed** (AP-B6, #941). #1181 put an allowlist
+  on `POST cms/recordings` (`RECORDING_CREATE_FIELDS` in
+  `functions/src/lib/admin-integrations.js`) and left out `source`,
+  `plaudId`, `recordedAt` and `status`, which the only two callers send on
+  every save, so "route a Plaud recording" (`recordingCards.jsx`) and the
+  pasted-transcript form (`uploadForms.jsx`) both answered 400 from that
+  deploy on; the frontend tests mock the API and could not see it. The four
+  keys are allowlisted and typed: `source` is one of `plaud_mcp` and
+  `manual_upload`, `plaudId` a non-empty string of at most 200 characters,
+  `recordedAt` an ISO string or epoch milliseconds stored as ISO, and
+  `status` is accepted only as `new`, the value the handler stamps anyway,
+  so the body still cannot choose a recording's state. Tests post each
+  form's payload verbatim and expect 200, so a field that leaves the list
+  again fails here.
+- **The content list's `search` is answered from the index, bounded, and
+  reads both summary casings** (AP-F6, #930). The predicate #1178 added
+  wrapped each field in `LOWER()`, which Cosmos DB documents as not using
+  the index, so every search loaded all ~70k `content` documents across
+  every partition. It is now `CONTAINS(field, @search, true)`, the
+  case-insensitive form the index serves (a full index scan of the path's
+  distinct values, not a full scan of the container), and the parameter is
+  no longer lowercased. The term is bounded as `sort` and `limit` already
+  were: `LIST_SEARCH_MIN_CHARS` (2) to `LIST_SEARCH_MAX_CHARS` (100),
+  measured after trimming, outside which the list answers the same
+  `{ error }` 400 an unknown sort field gets; a blank term is no search.
+  `Summary`, the second casing the module header names, is searched beside
+  `summary`, so a record whose summary lives only there can match.
+  `cms-content.test.js` pins the clause, the parameter's casing, both
+  bounds at their edges with a blank term and `q`, and a row whose summary
+  lives only in `Summary`. No admin page sends `search` to the server yet:
+  the Editor list and Live Pages still filter the 500 rows they fetch, so
+  the bound has no UI mirror to add until the search moves server-side.
+
 - **PLAT-9 remainder: the Well-Architected assessment's thirty-seven
   `Planned` controls read against the repository and the live estate, and
   the lab host page's Provisioning and Configuration rows read live**
