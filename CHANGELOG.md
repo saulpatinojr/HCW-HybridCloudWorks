@@ -46,18 +46,33 @@ This project has not cut a tagged release; entries are grouped under
   writes a maintenance hold, `/run/hcw-maintenance/reboot-hold`
   (`hardening_reboot_hold_path`, root's, 0644, in the service's
   `RuntimeDirectory=`), holding the epoch second it lapses (300 s on),
-  waits 45 s (`hardening_reboot_hold_settle_seconds`, at least the 20 s
-  claim timeout plus a 15 s margin for the claimed job's container to be
-  created; the agent's Docker proxy refuses pulls, so the image is already
-  there), and looks again. The labs agent reads the hold before every claim
-  and claims nothing while it holds (`vps-agent/lib/maintenance-hold.js`;
-  the claim loop moved from `index.js` to `lib/poll.js` so it has tests;
-  `LABS_AGENT_MAINTENANCE_HOLD_PATH` from the new
-  `labs_agent_maintenance_hold_path`, the same path, held together by
-  `scripts/lab-job-limits.test.mjs`), and caps any hold, unreadable ones
-  included, at ten minutes from its write. A job a claim already in flight
-  starts is created or running by the second look and defers the night;
-  the hold is removed on every way out but the reboot, where it stays until
+  waits for the labs agent to acknowledge it, and looks again. The agent
+  reads the hold on every poll tick and claims nothing while it holds
+  (`vps-agent/lib/maintenance-hold.js`; the claim loop moved from
+  `index.js` to `lib/poll.js` so it has tests; `LABS_AGENT_MAINTENANCE_HOLD_PATH`
+  from the new `labs_agent_maintenance_hold_path`, the same path, held
+  together by `scripts/lab-job-limits.test.mjs`), caps any hold, unreadable
+  ones included, at ten minutes from its write, and reads the time and the
+  expiry from one descriptor, so a hold renamed over between two calls
+  cannot pair one file's cap with the next file's expiry (CodeQL
+  js/file-system-race). On a tick with no claim in flight and no job
+  running it acknowledges the hold, writing its expiry exactly as read to
+  `/run/hcw-labs-agent/maintenance-ack` (`labs_agent_maintenance_ack_path`,
+  `hardening_reboot_ack_path`, `LABS_AGENT_MAINTENANCE_ACK_PATH`, one path),
+  through a temporary file and a rename, in the agent unit's new
+  `RuntimeDirectory=hcw-labs-agent`, which is not preserved, so a stopped
+  agent leaves none behind; it withdraws it when a claim or a job appears,
+  when the hold lifts, and when it stops. The script waits up to 45 s
+  (`hardening_reboot_hold_settle_seconds`, at least a 20 s claim and one
+  15 s poll tick) for an acknowledgement naming its own hold, asking first
+  whether systemd calls the agent inactive or failed, when no wait is
+  needed, and defers the night without one (CodeRabbit's second round on
+  #1191: a fixed wait could not see a claim whose container was slow to
+  appear). An agent that cannot acknowledge, an older or a stuck one, so
+  costs a night's reboot and never a job, and the first `bootstrap.sh`,
+  which enables the timer before it deploys the new agent, defers rather
+  than risks one. The second look still asks logind and both daemons; the
+  hold is removed on every way out but the reboot, where it stays until
   the reboot clears `/run`. One syslog line per outcome under the tag
   `hcw-reboot-when-idle`: the reboot and the deferrals at warning, which
   the Arc rule ships, and a deferral of a reboot pending 7 days or more
@@ -96,10 +111,13 @@ This project has not cut a tagged release; entries are grouped under
   and a hold outside its bounds, and `tests/hcw-reboot-when-idle.test.sh`
   runs the rendered script against stub `apt-config`, `loginctl` (the
   host's measured session listing among its fixtures), `docker` (both
-  daemons, filtering on container state as docker does), `sleep` (the hold
-  window, where a job, a workspace or a login appears), `systemctl` and
-  `logger` in the `ansible-lint (lab-host)` job; `lib/poll.test.js` and
-  `lib/maintenance-hold.test.js` hold the agent's side, and
+  daemons, filtering on container state as docker does), `sleep` (the wait,
+  where the agent acknowledges on a chosen second, with the wrong hold, or
+  never, and where a job, a workspace or a login appears), `systemctl`
+  (the agent's state) and `logger` in the `ansible-lint (lab-host)` job;
+  `lib/poll.test.js` and `lib/maintenance-hold.test.js` hold the agent's
+  side (an acknowledgement only under a hold with nothing in flight or
+  running, written atomically, withdrawn when busy or lifted), and
   `scripts/lab-host-docker-proxy.test.mjs` the sandbox socket. The backup
   and Coder timer comments and the Vault pages that named "the
   unattended-upgrades reboot at 04:30" now name this timer, and the two

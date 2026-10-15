@@ -499,13 +499,16 @@ jobs:
       # started included) or with a Coder workspace up on the sandbox daemon,
       # none for lingering service managers, a failed run when apt-config,
       # loginctl or either docker daemon cannot answer, and, with new lab jobs
-      # held, a second look that defers for a job, a workspace or a login that
-      # appeared during the hold (CodeRabbit on #1191); exactly one
-      # `systemctl reboot` when idle at both looks, the hold kept only on that
-      # path, a stop exiting 143 as a success, the age counted from the first
-      # sight across a rewritten marker, an overdue deferral at err, the timer
-      # at the role's hour, and the hold path, the sandbox socket and both
-      # labels their owners'. Needs neither root nor Docker.
+      # held, a wait for the labs agent's acknowledgement of the hold (none
+      # when systemd says the agent is inactive or failed; the night deferred
+      # when none comes, or one names another hold) and a second look that
+      # defers for a job, a workspace or a login that appeared during the hold
+      # (CodeRabbit on #1191); exactly one `systemctl reboot` when idle at
+      # both looks, the hold kept only on that path, a stop exiting 143 as a
+      # success, the age counted from the first sight across a rewritten
+      # marker, an overdue deferral at err, the timer at the role's hour, and
+      # the hold and acknowledgement paths, the agent's unit, the sandbox
+      # socket and both labels their owners'. Needs neither root nor Docker.
       - name: hcw-reboot-when-idle test
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/hcw-reboot-when-idle.test.sh

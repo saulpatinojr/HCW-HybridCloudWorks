@@ -212,18 +212,21 @@
       hardening_unattended_reboot_time must be HH:MM, host local time; it is rendered into
       hcw-reboot-when-idle.timer's OnCalendar as *-*-* HH:MM:00.
 
-# The bounds each come from something else: the settle from the agent's
-# CLAIM_SETTLE_MS (35 s, a claim already sent plus its container's start)
-# and from the service's TimeoutStartSec=2min, which must leave the second
-# look time to run; the hold from that same timeout, which it must outlast,
-# and from the agent's ten-minute cap on any hold; the path from the
-# service's RuntimeDirectory=, which is one directory directly under /run.
-# scripts/lab-job-limits.test.mjs holds the defaults to the agent's
-# constants; this refuses an override that breaks them.
+# The bounds each come from something else: the wait for the agent's
+# acknowledgement from its ACK_WITHIN_MS (35 s, a claim already sent plus
+# one poll tick) and from the service's TimeoutStartSec=2min, which must
+# leave the second look time to run; the hold from that same timeout, which
+# it must outlast, and from the agent's ten-minute cap on any hold; the
+# hold's path from the service's RuntimeDirectory=, and the
+# acknowledgement's from the agent unit's, each one directory directly
+# under /run. scripts/lab-job-limits.test.mjs holds the defaults to the
+# agent's constants; this refuses an override that breaks them.
 - name: Refuse a maintenance hold the agent would not honour or the run would outlast
   ansible.builtin.assert:
     that:
       - hardening_reboot_hold_path is match('^/run/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$')
+      - hardening_reboot_ack_path is match('^/run/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$')
+      - hardening_reboot_agent_service | length > 0
       - hardening_reboot_hold_settle_seconds | int >= 35
       - hardening_reboot_hold_settle_seconds | int <= 90
       - hardening_reboot_hold_seconds | int > 120
@@ -232,9 +235,11 @@
       - hardening_reboot_workspace_docker_host is match('^unix:///')
       - not (hardening_reboot_workspace_docker_host is match('^unix:///run/user/'))
     fail_msg: >-
-      hardening_reboot_hold_path must be /run/<directory>/<file>; hardening_reboot_hold_settle_seconds
-      must be 35 to 90 (a claim already sent and its container's start, inside the service's 120 s
-      TimeoutStartSec); hardening_reboot_hold_seconds must be over 120 and at most 600 (outlasting
+      hardening_reboot_hold_path and hardening_reboot_ack_path must each be /run/<directory>/<file>,
+      and hardening_reboot_agent_service must name the agent's unit;
+      hardening_reboot_hold_settle_seconds must be 35 to 90 (a claim already sent and one poll tick,
+      inside the service's 120 s TimeoutStartSec); hardening_reboot_hold_seconds must be over 120
+      and at most 600 (outlasting
       the run, within the agent's ten-minute cap); hardening_reboot_overdue_days must be 1 or more;
       hardening_reboot_workspace_docker_host must be a unix:// socket outside /run/user, which the
       service's ProtectHome= hides.

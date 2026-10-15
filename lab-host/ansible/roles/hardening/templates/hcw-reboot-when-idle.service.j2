@@ -16,9 +16,11 @@ OnFailure=hcw-unit-failed@%n.service
 Type=oneshot
 ExecStart={{ hardening_reboot_when_idle_script_path }}
 # A docker that does not answer is a failed run and a page, not a hang
-# through the night. It covers the hold's settle wait
-# ({{ hardening_reboot_hold_settle_seconds }} s) and both looks; the role refuses a settle that leaves
-# the second look less than 30 s of it, and a hold that lapses before it.
+# through the night. It covers the wait for the agent's acknowledgement of
+# the hold (at most {{ hardening_reboot_hold_settle_seconds }} s) and both looks; the role refuses a wait
+# that leaves the second look less than 30 s of it, and a hold that lapses
+# before it. The agent's acknowledgement is read from its own runtime
+# directory under /run, which ProtectSystem=strict leaves readable.
 TimeoutStartSec=2min
 # The script exits 143 when it is stopped (its TERM trap): an owner's
 # `systemctl stop`, or the reboot's own stop job reaching this unit. Neither

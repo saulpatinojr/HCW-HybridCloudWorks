@@ -64,7 +64,9 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_reboot_workspace_docker_host` | `unix:///run/hcw-coder-docker/docker.sock` | The Coder sandbox daemon (`coder_sandbox_docker_host`); the reboot waits while it has a workspace up. No socket, nothing asked |
 | `hardening_reboot_workspace_label` | `coder.workspace_id` | The label every Coder workspace container carries (`lab-host/coder/templates`) |
 | `hardening_reboot_hold_path` | `/run/hcw-maintenance/reboot-hold` | The maintenance hold the script writes before its second look; the labs agent claims no new job while it holds. `/run/<directory>/<file>`, the same path as `labs_agent_maintenance_hold_path` |
-| `hardening_reboot_hold_settle_seconds` | `45` | The wait between writing the hold and the second look: 35 to 90, at least a claim already sent plus its container's start |
+| `hardening_reboot_hold_settle_seconds` | `45` | The longest wait for the agent's acknowledgement before the night is deferred: 35 to 90, at least a claim already sent plus one poll tick |
+| `hardening_reboot_ack_path` | `/run/hcw-labs-agent/maintenance-ack` | Where the labs agent acknowledges the hold (`labs_agent_maintenance_ack_path`, the same path) |
+| `hardening_reboot_agent_service` | `hcw-labs-agent` | The agent's unit (`labs_agent_service_name`); inactive or failed, no acknowledgement is waited for |
 | `hardening_reboot_hold_seconds` | `300` | How long a hold lasts if nothing removes it: over 120 (the run's timeout), at most 600 (the agent's cap) |
 | `hardening_reboot_overdue_days` | `7` | From this many days pending, a deferral is logged at `err` instead of `warning` |
 
@@ -125,10 +127,11 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    | the sandbox daemon is there and cannot answer | `not rebooting: the Coder sandbox daemon could not list its workspaces, ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
    | the first-seen record cannot be written | `not rebooting: the record of when this reboot was first seen could not be written, ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
    | idle: the hold cannot be written | `not rebooting: the hold that keeps new lab jobs from starting could not be written, ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
-   | idle, then, after the settle, a session of class `user` | `deferred: a user logged in while new lab jobs were held (<names>); ...` | `warning`, shipped | 0 |
-   | idle, then, after the settle, a job container | `deferred: <n> job container(s) started while new lab jobs were held; ...` | `warning`, shipped | 0 |
-   | idle, then, after the settle, a Coder workspace | `deferred: <n> Coder workspace(s) started while new lab jobs were held; ...` | `warning`, shipped | 0 |
-   | idle at both looks | `rebooting; pending since <date> (<n> days): nobody is logged in and no job container or Coder workspace is up, at two looks 45 s apart with new lab jobs held between` | `warning`, shipped | 0, then `systemctl reboot` |
+   | idle, the agent running, and no acknowledgement naming this hold within 45 s | `deferred: the lab agent did not confirm it was idle within 45 s; ...` | `warning`, shipped | 0 |
+   | idle, then, at the second look, a session of class `user` | `deferred: a user logged in while new lab jobs were held (<names>); ...` | `warning`, shipped | 0 |
+   | idle, then, at the second look, a job container | `deferred: <n> job container(s) started while new lab jobs were held; ...` | `warning`, shipped | 0 |
+   | idle, then, at the second look, a Coder workspace | `deferred: <n> Coder workspace(s) started while new lab jobs were held; ...` | `warning`, shipped | 0 |
+   | idle at both looks | `rebooting; pending since <date> (<n> days): nobody is logged in and no job container or Coder workspace is up, at both looks, with new lab jobs held between and the lab agent confirmed it was idle` (or `... was not running`) | `warning`, shipped | 0, then `systemctl reboot` |
 
    A container counts while it is up or about to be: `created` (made by
    `docker run` and not started yet) as well as running, paused or
@@ -179,15 +182,27 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    0644) holding the epoch second the hold lapses, 300 s on. The labs agent
    reads it before every claim and claims nothing while it holds
    (`vps-agent/lib/maintenance-hold.js`, `LABS_AGENT_MAINTENANCE_HOLD_PATH`
-   from the `labs_agent` role, the same path). The script then waits
-   `hardening_reboot_hold_settle_seconds` (45 s): at least the API client's
-   20 s request timeout, which bounds a claim already sent, plus a 15 s
-   margin for its job's container to be created (the agent's
-   `CLAIM_SETTLE_MS`; the image is already on the host, because the agent's
-   Docker proxy refuses pulls and the playbook pulls every digest-pinned job
-   image beforehand). Then it asks all three questions again. A claim in
-   flight is not recalled: its job runs, the second look sees its container,
-   created or running, and the night is deferred. The
+   from the `labs_agent` role, the same path). The script then waits for
+   the agent to **acknowledge** the hold (CodeRabbit's second round on
+   #1191). The agent reads the hold on every poll tick; on a tick with no
+   claim in flight and no job running, it writes the hold's expiry, exactly
+   as read, to `hardening_reboot_ack_path`
+   (`/run/hcw-labs-agent/maintenance-ack`, in the agent unit's own runtime
+   directory, which goes when the agent stops), and withdraws it on any
+   tick where that stops being true or the hold lifts. An acknowledgement
+   naming this hold's expiry is the agent's word that nothing is running
+   and, with new claims refused, that nothing can start, so the second look
+   follows at once, with no further wait. The script asks systemd first:
+   an agent that is `inactive` or `failed` cannot have a claim in flight,
+   so it looks again without waiting; in any other state, a systemctl that
+   cannot reach the manager included, it waits, checking once a second, for
+   at most `hardening_reboot_hold_settle_seconds` (45 s, at least the
+   agent's `ACK_WITHIN_MS`: a claim already sent, 20 s, then one 15 s poll
+   tick). No matching acknowledgement in that time (a claim that brought a
+   job still running, a stuck agent, or one too old to acknowledge) defers
+   the night, and the overdue line reports a run of such nights. The second
+   look then asks all three questions again; an acknowledgement does not
+   excuse a container or a login it can see. The
    hold is removed on every way out except the reboot: on that path it
    stays, so no claim lands between the request and the manager stopping
    the agent, and the reboot clears `/run`. The directory is the service's
@@ -241,14 +256,16 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    (07:15) are placed around. The service runs as root (the two docker
    sockets, the reboot) with the file system read-only to it but for the
    hold's directory and home hidden, `TimeoutStartSec=2min` so a docker that
-   hangs is a failed run rather than a night lost (the settle and both looks
-   fit inside it), and the failure notifier in `OnFailure=`. A stop is not a
+   hangs is a failed run rather than a night lost (the wait for the
+   acknowledgement and both looks fit inside it), and the failure notifier
+   in `OnFailure=`. A stop is not a
    failure: the script's TERM trap exits 143, which `SuccessExitStatus=143`
    counts as success, so neither an owner's `systemctl stop` nor the
    reboot's own stop job reaching the unit pages; a `TimeoutStartSec` kill
    still does, as a timeout. The label is the agent's `JOB_LABEL`, the hold's
-   path the agent's, the sandbox socket `coder_sandbox`'s and the workspace
-   label the templates'; `scripts/lab-job-limits.test.mjs`,
+   and the acknowledgement's paths the agent's, the agent unit the
+   `labs_agent` role's, the sandbox socket `coder_sandbox`'s and the
+   workspace label the templates'; `scripts/lab-job-limits.test.mjs`,
    `scripts/lab-host-docker-proxy.test.mjs` and the test below hold each
    pair together.
 
@@ -329,20 +346,32 @@ and not yet started; a workspace up on the sandbox daemon is the workspace
 deferral, the sandbox is not asked when its socket is absent, and a sandbox
 that cannot answer is an `err` line. A `loginctl` that cannot list or read
 a session, a docker that cannot answer and a docker the shell cannot find
-are each one `err` line, a non-zero exit and no reboot. The `sleep` stub is
-the hold window: it records the hold as it stood (an expiry 300 s on, mode
-0644) and can change the host inside it. A job container (running, or
-created and not started), a workspace or a login that appears there defers
-the night and removes the hold; a docker that fails at the second look and
-a refused reboot each fail the run and remove it; a stop (SIGTERM) during
-the wait exits 143 and removes it; a hold or a record that cannot be
-written fails the run before the wait. An idle host, with the lingering
-managers still listed or with no sessions at all, is the rebooting line,
-one wait of the role's settle, two looks at logind and both daemons, and
-exactly one `systemctl reboot`, with the hold left in place. A reboot
-pending 7 days is deferred at `err` (for a login, a job or a workspace), 6
-days at `warning`. It also checks that the script never calls `users` or
-`who`, that the unit counts exit 143 as success, that the role deals with a
+are each one `err` line, a non-zero exit and no reboot. The `systemctl`
+stub answers `is-active` for the agent's unit from a state file, and the
+`sleep` stub, one call per second the script waits, plays the agent: on the
+call the test chooses it writes the hold's expiry to the acknowledgement
+(or another hold's). An agent systemd calls inactive or failed means no
+wait and a reboot; activating, deactivating, or a systemctl that cannot
+reach the manager, means a wait; no acknowledgement in 45 s, or one naming
+another hold, defers the night with no second look; one already there
+means no wait at all, and one that comes on the thirtieth second still
+lets the host reboot. On its first call the `sleep` stub also records the
+hold as it stood (an expiry 300 s on, mode 0644) and can change the host:
+a job container (running, or created and not started), a workspace or a
+login that appears then defers the night at the second look and removes
+the hold; a docker that fails at the second look and a refused reboot each
+fail the run and remove it; a stop (SIGTERM) during the wait exits 143 and
+removes it; a hold or a record that cannot be written fails the run before
+the wait. An idle host, with the lingering managers still listed or with no
+sessions at all, is the rebooting line, one second's wait for the
+acknowledgement, two looks at logind and both daemons, and exactly one
+`systemctl reboot`, with the hold left in place. A reboot pending 7 days is
+deferred at `err` (for a login, a job, a workspace, or an agent that never
+confirms), 6 days at `warning`. It also checks that the script never calls
+`users` or `who`, that its only sleep is the one-second wait for the
+acknowledgement, that it reads the acknowledgement where the `labs_agent`
+role tells the agent to write it and asks about that role's unit, that the
+unit counts exit 143 as success, that the role deals with a
 scheduled shutdown before it installs the timer, keys the cancel's
 read-back on the cancel having run (not on `rc`, which check mode also
 sets), writes the override only after reading the timer back and reads

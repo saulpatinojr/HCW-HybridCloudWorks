@@ -27,9 +27,9 @@ import { ClientCertificateCredential } from '@azure/identity';
 
 /**
  * How long one call may take, token included, unless the caller names its
- * own. It bounds a claim already sent, which is what the host's maintenance
- * hold waits out before its second look (lib/maintenance-hold.js,
- * CLAIM_SETTLE_MS; LAB-13, #959).
+ * own. It bounds a claim already sent, which the agent waits out before it
+ * acknowledges the host's maintenance hold (lib/maintenance-hold.js,
+ * ACK_WITHIN_MS; LAB-13, #959).
  */
 export const REQUEST_TIMEOUT_MS = 20000;
 

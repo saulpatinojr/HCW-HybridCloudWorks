@@ -97,17 +97,35 @@ hardening_reboot_workspace_label: coder.workspace_id
 # it lapses (hardening_reboot_hold_seconds from now); the labs agent claims
 # no new job while it holds (vps-agent/lib/maintenance-hold.js, through
 # labs_agent_maintenance_hold_path, the same path). The script then waits
-# hardening_reboot_hold_settle_seconds, longer than a claim already sent can
-# take to come back and start its container (the agent's CLAIM_SETTLE_MS,
-# 35 s), looks again, and reboots only if the host is still idle. Every
-# other way out removes the file; on the reboot path it stays until the
-# reboot clears /run. Under /run/<directory>/, which the service creates as
-# its RuntimeDirectory=, the one place it may write.
-# scripts/lab-job-limits.test.mjs holds the path to the agent's and the
-# labs_agent role's, the settle to CLAIM_SETTLE_MS and the hold to the
-# agent's ten-minute cap; the role refuses values outside those bounds.
+# for the agent to acknowledge the hold (hardening_reboot_ack_path, below)
+# for at most hardening_reboot_hold_settle_seconds, looks again, and reboots
+# only if the host is still idle. Every other way out removes the file; on
+# the reboot path it stays until the reboot clears /run. Under
+# /run/<directory>/, which the service creates as its RuntimeDirectory=, the
+# one place it may write. scripts/lab-job-limits.test.mjs holds the path to
+# the agent's and the labs_agent role's, the wait to the agent's
+# ACK_WITHIN_MS and the hold to the agent's ten-minute cap; the role refuses
+# values outside those bounds.
 hardening_reboot_hold_path: /run/hcw-maintenance/reboot-hold
+# The longest the script waits for the agent's acknowledgement before it
+# defers the night (CodeRabbit's second round on #1191). At least the
+# agent's ACK_WITHIN_MS (35 s: a claim already sent, 20 s, then one 15 s
+# poll tick); at most 90, so the second look still fits in the service's
+# 120 s TimeoutStartSec.
 hardening_reboot_hold_settle_seconds: 45
+# The agent's acknowledgement (CodeRabbit's second round on #1191): once no
+# claim is in flight and no job is running, the agent writes the hold's
+# expiry here, in its own runtime directory. A matching acknowledgement is
+# the agent's word that no job is running or can start, so the script needs
+# no fixed wait after it; without one, within the wait above, the night is
+# deferred. The same path as labs_agent_maintenance_ack_path and the agent's
+# DEFAULT_ACK_PATH; scripts/lab-job-limits.test.mjs fails if they part.
+hardening_reboot_ack_path: /run/hcw-labs-agent/maintenance-ack
+# The agent's unit, labs_agent_service_name. When systemd says it is
+# inactive or failed, no claim can be in flight and no job can start, so the
+# script looks again at once; in any other state it waits for the
+# acknowledgement.
+hardening_reboot_agent_service: hcw-labs-agent
 # Longer than the service's TimeoutStartSec (120 s), so the hold never lapses
 # while the script still runs, and within the agent's ten-minute cap.
 hardening_reboot_hold_seconds: 300

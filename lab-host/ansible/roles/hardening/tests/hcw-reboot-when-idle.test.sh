@@ -89,7 +89,11 @@ hold_path="$(default hardening_reboot_hold_path)"
 settle="$(default hardening_reboot_hold_settle_seconds)"
 hold_seconds="$(default hardening_reboot_hold_seconds)"
 overdue="$(default hardening_reboot_overdue_days)"
+ack_path="$(default hardening_reboot_ack_path)"
+agent_service="$(default hardening_reboot_agent_service)"
 agent_hold_path="$(sed -n 's/^labs_agent_maintenance_hold_path: \(\/.*\)$/\1/p' "${agent_defaults}")"
+agent_ack_path="$(sed -n 's/^labs_agent_maintenance_ack_path: \(\/.*\)$/\1/p' "${agent_defaults}")"
+agent_unit="$(sed -n 's/^labs_agent_service_name: \(.*\)$/\1/p' "${agent_defaults}")"
 sandbox_dir="$(sed -n 's/^coder_sandbox_socket_dir: \(\/.*\)$/\1/p' "${sandbox_vars}")"
 
 script="${work}/hcw-reboot-when-idle"
@@ -101,6 +105,7 @@ render hcw-reboot-when-idle.sh.j2 "${script}"
 # first-seen record sits beside the hold, so it moves with it.
 hold="${work}/run/hcw-maintenance/reboot-hold"
 record="${work}/run/hcw-maintenance/reboot-pending-since"
+ack="${work}/run/hcw-labs-agent/maintenance-ack"
 ws_sock="${work}/coder-docker.sock"
 sed -i "s#^reboot_required='/var/run/reboot-required'\$#reboot_required='${work}/reboot-required'#" "${script}"
 grep -q "^reboot_required='${work}/reboot-required'" "${script}" || { echo "the rendered script does not read the reboot marker from the role's path" >&2; exit 1; }
@@ -110,6 +115,8 @@ sed -i "s#^hold='${hold_path}'\$#hold='${hold}'#" "${script}"
 grep -q "^hold='${hold}'" "${script}" || { echo "the rendered script does not write the hold at the role's hardening_reboot_hold_path" >&2; exit 1; }
 sed -i "s#^workspace_docker_host='${ws_host}'\$#workspace_docker_host='unix://${ws_sock}'#" "${script}"
 grep -q "^workspace_docker_host='unix://${ws_sock}'" "${script}" || { echo "the rendered script does not ask the role's hardening_reboot_workspace_docker_host" >&2; exit 1; }
+sed -i "s#^ack='${ack_path}'\$#ack='${ack}'#" "${script}"
+grep -q "^ack='${ack}'" "${script}" || { echo "the rendered script does not read the agent's acknowledgement at the role's hardening_reboot_ack_path" >&2; exit 1; }
 render hcw-reboot-when-idle.service.j2 "${work}/service"
 render hcw-reboot-when-idle.timer.j2 "${work}/timer"
 render 52hcw-unattended-upgrades.j2 "${work}/override"
@@ -135,6 +142,15 @@ else
 fi
 check "the hold is written where the labs agent reads it (labs_agent_maintenance_hold_path)" \
   "[ -n '${hold_path}' ] && [ '${hold_path}' = '${agent_hold_path}' ]"
+# The agent's acknowledgement (CodeRabbit's second round on #1191): read
+# where the labs_agent role tells the agent to write it, and the unit asked
+# about is the agent's.
+check "the acknowledgement is read where the labs agent writes it (labs_agent_maintenance_ack_path)" \
+  "[ -n '${ack_path}' ] && [ '${ack_path}' = '${agent_ack_path}' ]"
+check "the unit asked whether the agent runs is the labs agent's (labs_agent_service_name)" \
+  "[ -n '${agent_service}' ] && [ '${agent_service}' = '${agent_unit}' ] && grep -qxF \"agent_service='${agent_service}'\" '${script}'"
+check "no fixed wait is left: the script sleeps only one second at a time, waiting for the acknowledgement" \
+  "[ \"\$(grep -cE '^[^#]*\\bsleep ' '${script}')\" -eq 1 ] && grep -qE '^ +sleep 1\$' '${script}'"
 # Coder's workspaces run on the sandbox daemon (review of #1191): the role
 # asks the socket coder_sandbox makes, which ProtectHome= does not hide, for
 # the label every workspace container in every template carries.
@@ -163,7 +179,7 @@ check "the first-seen record lives beside the hold, on the marker's own tmpfs" \
   "grep -qxF 'first_seen=\"\${hold%/*}/reboot-pending-since\"' '${script}'"
 check "the service cannot hang through the night on a docker that does not answer" \
   "grep -qxF 'TimeoutStartSec=2min' '${work}/service'"
-check "the 2 min leave the second look 30 s after the settle, and the hold outlasts them, within the agent's 10 min cap" \
+check "the 2 min leave the second look 30 s after the longest wait for the acknowledgement, and the hold outlasts them, within the agent's 10 min cap" \
   "[ '${settle}' -ge 35 ] && [ '${settle}' -le 90 ] && [ '${hold_seconds}' -gt 120 ] && [ '${hold_seconds}' -le 600 ]"
 check "the timer fires at the role's reboot hour, is not persistent, has no jitter, and starts the service" \
   "grep -qxF 'OnCalendar=*-*-* ${reboot_time}:00' '${work}/timer' && grep -qxF 'Persistent=false' '${work}/timer' && ! grep -q '^RandomizedDelaySec=' '${work}/timer' && grep -qxF 'Unit=hcw-reboot-when-idle.service' '${work}/timer'"
@@ -304,28 +320,59 @@ done
 [ -n "\${states}" ] || states=' running restarting paused'
 awk -v want="\${states} " 'index(want, " " \$2 " ") { print \$1 }' "\${list}"
 EOF
-# sleep is the hold window: it records how long it was asked to wait and
-# what the hold said then, and does not wait. during-container is a job a
-# claim already in flight creates or starts inside the window,
-# during-workspace a workspace, during-session a login, during-term a stop
-# of the unit (systemd's SIGTERM to the script).
+# fake-agent is the labs agent's acknowledgement: this hold's expiry, as
+# the agent writes it, or, with agent-acks-wrong, another hold's.
+cat > "${stubs}/fake-agent" <<EOF
+#!/usr/bin/env bash
+[ -e '${hold}' ] || exit 0
+mkdir -p '$(dirname "${ack}")'
+value="\$(tr -d '\n' < '${hold}')"
+[ ! -e '${work}/agent-acks-wrong' ] || value="\$(( value + 1 ))"
+printf '%s\n' "\${value}" > '${ack}'
+EOF
+# sleep is the wait for the agent: one call per second the script waits.
+# It does not wait. On its first call it records what the hold said and
+# can change the host inside the window: during-container is a job a claim
+# already in flight creates or starts, during-workspace a workspace,
+# during-session a login, during-term a stop of the unit (systemd's
+# SIGTERM to the script). On the call numbered in agent-acks-at the agent
+# acknowledges the hold (with no such file it never does).
 cat > "${stubs}/sleep" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> '${work}/sleep.log'
-if [ -e '${hold}' ]; then
-  { cat '${hold}'; stat -c %a '${hold}'; } > '${work}/hold-during'
-else
-  echo absent > '${work}/hold-during'
+n="\$(wc -l < '${work}/sleep.log' | tr -d ' ')"
+if [ "\${n}" -eq 1 ]; then
+  if [ -e '${hold}' ]; then
+    { cat '${hold}'; stat -c %a '${hold}'; } > '${work}/hold-during'
+  else
+    echo absent > '${work}/hold-during'
+  fi
+  [ ! -e '${work}/during-container' ] || cat '${work}/during-container' >> '${work}/containers'
+  [ ! -e '${work}/during-workspace' ] || cat '${work}/during-workspace' >> '${work}/workspaces'
+  [ ! -e '${work}/during-session' ] || cat '${work}/during-session' >> '${work}/sessions'
+  [ ! -e '${work}/during-term' ] || kill -TERM "\${PPID}"
 fi
-[ ! -e '${work}/during-container' ] || cat '${work}/during-container' >> '${work}/containers'
-[ ! -e '${work}/during-workspace' ] || cat '${work}/during-workspace' >> '${work}/workspaces'
-[ ! -e '${work}/during-session' ] || cat '${work}/during-session' >> '${work}/sessions'
-[ ! -e '${work}/during-term' ] || kill -TERM "\${PPID}"
+if [ -e '${work}/agent-acks-at' ] && [ "\${n}" -ge "\$(cat '${work}/agent-acks-at')" ]; then
+  '${stubs}/fake-agent'
+fi
 exit 0
 EOF
+# systemctl answers is-active for the agent's unit from agent-state:
+# active (exit 0), inactive, failed, activating or deactivating (exit 3),
+# or unreachable, a manager it cannot reach (no state, exit 1). An agent
+# with agent-acks-at 0 has acknowledged by the time the script asks.
 cat > "${stubs}/systemctl" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> '${work}/systemctl.log'
+if [ "\$1" = is-active ]; then
+  [ "\$2" = '${agent_service}' ] || { echo "unexpected unit: \$2" >&2; exit 64; }
+  if [ -e '${work}/agent-acks-at' ] && [ "\$(cat '${work}/agent-acks-at')" = 0 ]; then '${stubs}/fake-agent'; fi
+  state="\$(cat '${work}/agent-state')"
+  [ "\${state}" != unreachable ] || { echo 'Failed to connect to system scope bus via local transport: No such file or directory' >&2; exit 1; }
+  echo "\${state}"
+  [ "\${state}" = active ] || exit 3
+  exit 0
+fi
 [ ! -e '${work}/systemctl-fails' ] || { echo 'Failed to start reboot.target: Transaction for reboot.target/start is destructive.' >&2; exit 1; }
 EOF
 cat > "${stubs}/logger" <<EOF
@@ -342,7 +389,7 @@ run() {
   : > "${work}/loginctl.log"
   : > "${work}/docker.log"
   : > "${work}/systemctl.log"
-  rm -f "${work}/sleep.log" "${work}/hold-during"
+  rm -f "${work}/sleep.log" "${work}/hold-during" "${ack}"
   PATH="${stubs}:${PATH}" "${script}"
 }
 # reboots: how many reboots the last run asked systemctl for.
@@ -363,6 +410,10 @@ pending='a reboot has been pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-
 up_filters='--filter status=created --filter status=restarting --filter status=running --filter status=paused'
 mkdir -p "$(dirname "${hold}")"
 printf 'false\n' > "${work}/apt-reboot"
+# The agent as on the host: running, and acknowledging the hold on its
+# next tick (the script's first one-second wait).
+printf 'active\n' > "${work}/agent-state"
+printf '1\n' > "${work}/agent-acks-at"
 # The sandbox daemon as on the host: its socket there, no workspace up.
 : > "${ws_sock}"
 : > "${work}/workspaces"
@@ -529,20 +580,21 @@ rm -f "${hold}"
 : > "${ws_sock}"
 
 # --- Idle, with the lingering managers and a background session still
-# listed: the hold written, the settle waited, all three asked again, one
+# listed: the hold written, the agent's acknowledgement waited for (it
+# comes on the first one-second tick here), all three asked again, one
 # warning line saying so and how long it waited, exactly one reboot, the
 # hold kept.
 before="$(date -u +%s)"
 check "an idle host is a successful run" "run"
 after="$(date -u +%s)"
-check "an idle host is one warning line saying it reboots, how long it waited, and that it looked twice" \
-  "[ \"\$(lines)\" -eq 1 ] && grep -qE '^${tag}\\|daemon\\.warning\\|rebooting; pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(3 days\\): nobody is logged in and no job container or Coder workspace is up, at two looks ${settle} s apart with new lab jobs held between\$' '${work}/log'" \
+check "an idle host is one warning line saying it reboots, how long it waited, that it looked twice, and that the agent confirmed" \
+  "[ \"\$(lines)\" -eq 1 ] && grep -qE '^${tag}\\|daemon\\.warning\\|rebooting; pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(3 days\\): nobody is logged in and no job container or Coder workspace is up, at both looks, with new lab jobs held between and the lab agent confirmed it was idle\$' '${work}/log'" \
   "$(cat "${work}/log")"
 check "an idle host requests exactly one reboot, through systemctl" \
   "[ \"\$(reboots)\" -eq 1 ] && grep -qxF 'reboot' '${work}/systemctl.log'" \
   "$(cat "${work}/systemctl.log")"
-check "it waited once, for the role's settle, between the two looks, and asked logind and both daemons at each" \
-  "[ \"\$(slept)\" -eq 1 ] && grep -qxF '${settle}' '${work}/sleep.log' && [ \"\$(host_asks)\" -eq 2 ] && [ \"\$(sandbox_asks)\" -eq 2 ] && [ \"\$(grep -c '^list-sessions ' '${work}/loginctl.log')\" -eq 2 ]" \
+check "it asked whether the agent runs, waited one second for its acknowledgement, and asked logind and both daemons at each look" \
+  "grep -qxF 'is-active ${agent_service}' '${work}/systemctl.log' && [ \"\$(slept)\" -eq 1 ] && grep -qxF '1' '${work}/sleep.log' && [ \"\$(host_asks)\" -eq 2 ] && [ \"\$(sandbox_asks)\" -eq 2 ] && [ \"\$(grep -c '^list-sessions ' '${work}/loginctl.log')\" -eq 2 ]" \
   "slept $(cat "${work}/sleep.log" 2> /dev/null || true); docker $(cat "${work}/docker.log")"
 held_until="$(sed -n 1p "${work}/hold-during" 2> /dev/null || true)"
 held_mode="$(sed -n 2p "${work}/hold-during" 2> /dev/null || true)"
@@ -554,9 +606,59 @@ check "on the reboot path the hold stays, so no claim lands before the manager s
   "[ -e '${hold}' ] && [ ! -e '${hold}.new' ]"
 rm -f "${hold}"
 
+# --- The agent's acknowledgement (CodeRabbit's second round on #1191).
+# An agent systemd calls inactive or failed cannot have a claim in flight:
+# the second look follows at once.
+for state in inactive failed; do
+  printf '%s\n' "${state}" > "${work}/agent-state"
+  check "an agent systemd calls ${state} has no claim in flight: no wait, and the idle host reboots" \
+    "run && [ \"\$(slept)\" -eq 0 ] && [ \"\$(reboots)\" -eq 1 ] && grep -qE 'rebooting; .*, with new lab jobs held between and the lab agent was not running\$' '${work}/log'" \
+    "$(cat "${work}/log")"
+  rm -f "${hold}"
+done
+# In any other state, or when systemctl cannot say, the script waits for an
+# acknowledgement; none comes from these, so the night is deferred. A
+# systemctl that cannot reach the manager is not read as a stopped agent.
+rm -f "${work}/agent-acks-at"
+for state in activating deactivating unreachable; do
+  printf '%s\n' "${state}" > "${work}/agent-state"
+  check "an agent that is ${state} is waited for, and without an acknowledgement the night is deferred" \
+    "run && [ \"\$(slept)\" -eq '${settle}' ] && grep -qE '^${tag}\\|daemon\\.warning\\|deferred: the lab agent did not confirm it was idle within ${settle} s; ${pending}\$' '${work}/log' && [ \"\$(reboots)\" -eq 0 ] && [ ! -e '${hold}' ]" \
+    "$(cat "${work}/log")"
+done
+printf 'active\n' > "${work}/agent-state"
+check "a running agent that never acknowledges: ${settle} one-second waits, then the night is deferred, the hold removed, and no second look" \
+  "run && [ \"\$(slept)\" -eq '${settle}' ] && [ \"\$(lines)\" -eq 1 ] && grep -qE '^${tag}\\|daemon\\.warning\\|deferred: the lab agent did not confirm it was idle within ${settle} s; ${pending}\$' '${work}/log' && [ \"\$(reboots)\" -eq 0 ] && [ ! -e '${hold}' ] && [ \"\$(grep -c '^list-sessions ' '${work}/loginctl.log')\" -eq 1 ]" \
+  "$(cat "${work}/log")"
+# An agent that has acknowledged by the time the script first asks: no
+# wait at all. An acknowledgement means nothing in flight and nothing
+# running, with new claims refused, so a wait after it would see nothing
+# more.
+printf '0\n' > "${work}/agent-acks-at"
+check "an acknowledgement already there: the second look follows at once, and the idle host reboots" \
+  "run && [ \"\$(slept)\" -eq 0 ] && [ \"\$(reboots)\" -eq 1 ] && grep -qE ', with new lab jobs held between and the lab agent confirmed it was idle\$' '${work}/log'" \
+  "$(cat "${work}/log")"
+rm -f "${hold}"
+# An acknowledgement of another hold (another expiry) is not this one's.
+printf '1\n' > "${work}/agent-acks-at"
+touch "${work}/agent-acks-wrong"
+check "an acknowledgement naming another hold's expiry is ignored, and the night is deferred" \
+  "run && [ \"\$(slept)\" -eq '${settle}' ] && grep -qE 'deferred: the lab agent did not confirm it was idle within ${settle} s; ' '${work}/log' && [ \"\$(reboots)\" -eq 0 ] && [ -e '${ack}' ]" \
+  "$(cat "${work}/log")"
+rm -f "${work}/agent-acks-wrong"
+# An acknowledgement that comes late, inside the wait: the agent's claim
+# came back with nothing after some seconds.
+printf '30\n' > "${work}/agent-acks-at"
+check "an acknowledgement that arrives late, inside the wait, still lets the idle host reboot" \
+  "run && [ \"\$(slept)\" -eq 30 ] && [ \"\$(reboots)\" -eq 1 ]" \
+  "$(cat "${work}/log")"
+rm -f "${hold}"
+printf '1\n' > "${work}/agent-acks-at"
+
 # --- The interleaving (CodeRabbit on #1191): a job container that a claim
-# already in flight starts while the hold is in force. The first look found
-# nothing; the second sees it and defers.
+# already in flight starts while the hold is in force. An agent that works
+# would not acknowledge while it runs; the second look is there regardless,
+# so an acknowledgement does not excuse a container it can see.
 printf '%s\n' '5c6d7e8f9a0b running' > "${work}/during-container"
 check "a job container that appears during the hold is a successful run" "run"
 check "a job container that appears during the hold defers the reboot, one warning line with its count" \
@@ -657,6 +759,11 @@ check "an overdue reboot deferred for a workspace left running is an err line, a
   "run && grep -qE '^${tag}\\|daemon\\.err\\|deferred: 1 Coder workspace\\(s\\) up; .*overdue at ${overdue}' '${work}/log' && [ \"\$(reboots)\" -eq 0 ]" \
   "$(cat "${work}/log")"
 : > "${work}/workspaces"
+rm -f "${work}/agent-acks-at"
+check "an overdue reboot the agent never confirms is an err line too, so a run of such nights is reported" \
+  "run && grep -qE '^${tag}\\|daemon\\.err\\|deferred: the lab agent did not confirm it was idle within ${settle} s; .*overdue at ${overdue}' '${work}/log' && [ \"\$(reboots)\" -eq 0 ]" \
+  "$(cat "${work}/log")"
+printf '1\n' > "${work}/agent-acks-at"
 printf '%s\n' '3f2a9c1d7e5b running' > "${work}/containers"
 rm -f "${record}"
 touch -d "$(( overdue - 1 )) days ago" "${work}/reboot-required"

@@ -71,3 +71,12 @@ labs_agent_timeout_stop_sec: 30
 # and the reboot. The same path as hardening_reboot_hold_path and the
 # agent's own default; scripts/lab-job-limits.test.mjs fails if they part.
 labs_agent_maintenance_hold_path: /run/hcw-maintenance/reboot-hold
+# Where the agent acknowledges that hold: once no claim is in flight and no
+# job is running, it writes the hold's expiry here, and the reboot script
+# waits for that before its second look, deferring the night without it
+# (CodeRabbit on #1191). /run/<directory>/<file>: the unit's
+# RuntimeDirectory= is that directory, owned by the agent's user and not
+# preserved, so a stopped agent leaves no acknowledgement behind. The same
+# path as hardening_reboot_ack_path and the agent's own default;
+# scripts/lab-job-limits.test.mjs fails if they part.
+labs_agent_maintenance_ack_path: /run/hcw-labs-agent/maintenance-ack

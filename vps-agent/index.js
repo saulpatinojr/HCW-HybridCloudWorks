@@ -38,7 +38,7 @@ import { createApiClient } from './lib/api.js';
 import { readAppliedCommit } from './lib/applied-commit.js';
 import { missingConfig, readApiConfig } from './lib/config.js';
 import { createLogger } from './lib/log.js';
-import { createHoldGate, holdPath } from './lib/maintenance-hold.js';
+import { ackPath, createAcknowledger, createHoldGate, holdPath } from './lib/maintenance-hold.js';
 import { createPoller } from './lib/poll.js';
 import { createShutdown } from './lib/shutdown.js';
 
@@ -83,6 +83,10 @@ const config = {
   // idle host; no claim is sent while it holds (LAB-13, #959).
   // LABS_AGENT_MAINTENANCE_HOLD_PATH, or the default in lib/maintenance-hold.js.
   maintenanceHoldPath: holdPath(),
+  // Where the agent answers that hold once nothing is in flight or running,
+  // which the script waits for before its second look.
+  // LABS_AGENT_MAINTENANCE_ACK_PATH, or the default in lib/maintenance-hold.js.
+  maintenanceAckPath: ackPath(),
 };
 
 // Every line goes through this, never console.*: the error and warning lines
@@ -163,13 +167,15 @@ const supervisor = createShutdown({
 // every slot taken or promised (T-744), or while the host's maintenance hold
 // is in force: hcw-reboot-when-idle writes it before its second look at an
 // idle host, so no job starts between that look and the reboot (LAB-13,
-// #959; lib/maintenance-hold.js).
+// #959; lib/maintenance-hold.js). Under the hold, a tick with nothing in
+// flight or running acknowledges it, and the script waits for that.
 const poller = createPoller({
   api,
   supervisor,
   log,
   maxConcurrentJobs: config.maxConcurrentJobs,
-  held: createHoldGate({ path: config.maintenanceHoldPath, log }),
+  hold: createHoldGate({ path: config.maintenanceHoldPath, log }),
+  ack: createAcknowledger({ path: config.maintenanceAckPath, log }),
 });
 
 /** Announces the agent idle, then starts the heartbeat and poll timers and polls once at once. */

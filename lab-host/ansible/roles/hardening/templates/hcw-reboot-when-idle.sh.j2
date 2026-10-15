@@ -19,7 +19,9 @@
 #   a user is logged in              warning  deferred; tomorrow's run asks again
 #   a job container is up            warning  deferred; tomorrow's run asks again
 #   a Coder workspace is up          warning  deferred; tomorrow's run asks again
-#   (idle: new lab jobs are held, the script waits, then asks all three again)
+#   (idle: new lab jobs are held, and the script waits for the lab agent to
+#   acknowledge the hold, then asks all three again)
+#   no acknowledgement in time       warning  deferred; tomorrow's run asks again
 #   any of the three at that look    warning  deferred; tomorrow's run asks again
 #   apt-config, loginctl or a docker
 #   daemon cannot say, or no hold or
@@ -47,6 +49,8 @@ job_label='{{ hardening_reboot_job_label }}'
 workspace_docker_host='{{ hardening_reboot_workspace_docker_host }}'
 workspace_label='{{ hardening_reboot_workspace_label }}'
 hold='{{ hardening_reboot_hold_path }}'
+ack='{{ hardening_reboot_ack_path }}'
+agent_service='{{ hardening_reboot_agent_service }}'
 hold_seconds='{{ hardening_reboot_hold_seconds }}'
 settle_seconds='{{ hardening_reboot_hold_settle_seconds }}'
 overdue_days='{{ hardening_reboot_overdue_days }}'
@@ -227,15 +231,13 @@ running_workspaces
 # job the agent claimed after `docker ps` came back empty, and before the
 # reboot request, started a container the reboot then killed. So the script
 # writes the maintenance hold, under which the labs agent claims no new job
-# (vps-agent/lib/maintenance-hold.js), waits longer than a claim already
-# sent can take to come back and start its container, and asks the three
-# questions again. A job such a claim brings back is created or running by
-# then, so the second look sees it and defers. The hold holds the epoch second it
-# lapses, so a run that dies without removing it cannot keep the agent idle
-# past that, and the agent caps any hold at ten minutes from its write.
-# Every way out of the script removes it except the reboot it asks for: on
-# that path it stays, so no claim lands between the request and the manager
-# stopping the agent, and the reboot clears /run. The service's
+# (vps-agent/lib/maintenance-hold.js), waits for the agent to acknowledge
+# it, and asks the three questions again. The hold holds the epoch second
+# it lapses, so a run that dies without removing it cannot keep the agent
+# idle past that, and the agent caps any hold at ten minutes from its
+# write. Every way out of the script removes it except the reboot it asks
+# for: on that path it stays, so no claim lands between the request and
+# the manager stopping the agent, and the reboot clears /run. The service's
 # RuntimeDirectory= is the hold's directory, the one place it may write.
 rebooting=0
 # release_hold: remove the hold on every way out but the reboot this run asked for.
@@ -251,18 +253,63 @@ trap 'exit 143' TERM
 trap 'exit 130' INT
 trap 'exit 129' HUP
 
-# hold_new_jobs: write the hold, the epoch second it lapses, readable by the agent, renamed into place so it is never read half written.
+# hold_new_jobs: write the hold, the epoch second it lapses (kept in hold_expiry), readable by the agent, renamed into place so it is never read half written.
 hold_new_jobs() {
-  printf '%s\n' "$(( $(date -u +%s) + hold_seconds ))" > "${hold}.new" &&
+  hold_expiry="$(( $(date -u +%s) + hold_seconds ))"
+  printf '%s\n' "${hold_expiry}" > "${hold}.new" &&
     chmod 0644 "${hold}.new" &&
     mv -f -- "${hold}.new" "${hold}"
+}
+
+# The agent's acknowledgement (CodeRabbit's second round on #1191). A fixed
+# wait guessed how long a claim already in flight could take to show its
+# container, and nothing bounded that guess. Instead the agent, which
+# reads the hold on every poll tick, writes this hold's expiry to its
+# acknowledgement once no claim is in flight and no job is running. A
+# matching acknowledgement is its word that nothing is running and, with
+# the hold refusing new claims, that nothing can start, so the second look
+# follows at once: no further wait would see anything more. It must name
+# this hold's expiry, so one written for an earlier hold never stands in
+# for this one. None within settle_seconds (an agent with a job still
+# running, a stuck agent, or one too old to acknowledge) defers the night,
+# the safe way to be wrong, and the overdue line says so if it lasts.
+#
+# agent_running: true unless systemd says outright that the labs agent is not running (inactive or failed).
+agent_running() {
+  local state
+  state="$("${systemctl}" is-active "${agent_service}" 2> /dev/null)" || true
+  # The state word, not the exit status: a systemctl that cannot reach the
+  # manager also exits non-zero, and reading that as "not running" would
+  # skip the acknowledgement. Only an agent systemd calls inactive or failed
+  # can have no claim in flight; in any other state the script waits.
+  case "${state}" in
+    inactive | failed) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# acknowledged: true when the agent's acknowledgement names exactly this hold's expiry.
+acknowledged() {
+  local said
+  said="$(head -c 32 -- "${ack}" 2> /dev/null | tr -d '\n')" || said=''
+  [ -n "${said}" ] && [ "${said}" = "${hold_expiry}" ]
 }
 
 hold_new_jobs || {
   say err "not rebooting: the hold that keeps new lab jobs from starting could not be written, so a second look could not be trusted; its error is in this unit's journal and this run fails"
   exit 1
 }
-sleep "${settle_seconds}"
+if agent_running; then
+  waited=0
+  until acknowledged; do
+    [ "${waited}" -lt "${settle_seconds}" ] || defer "the lab agent did not confirm it was idle within ${settle_seconds} s"
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+  agent_said='the lab agent confirmed it was idle'
+else
+  agent_said='the lab agent was not running'
+fi
 logged_in
 [ -z "${people}" ] || defer "a user logged in while new lab jobs were held (${people})"
 running_jobs
@@ -270,7 +317,7 @@ running_jobs
 running_workspaces
 [ "${workspace_count}" -eq 0 ] || defer "${workspace_count} Coder workspace(s) started while new lab jobs were held"
 
-say warning "rebooting; pending since ${since} (${days} days): nobody is logged in and no job container or Coder workspace is up, at two looks ${settle_seconds} s apart with new lab jobs held between"
+say warning "rebooting; pending since ${since} (${days} days): nobody is logged in and no job container or Coder workspace is up, at both looks, with new lab jobs held between and ${agent_said}"
 # `systemctl reboot` enqueues the job and returns (it is `start reboot.target
 # --job-mode=replace-irreversibly --no-block` with a wall message), so this
 # run ends successfully before the shutdown reaches its unit. The hold stays

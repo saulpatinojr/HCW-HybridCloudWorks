@@ -1583,8 +1583,9 @@ timer's script and units and runs the script against stub `apt-config`,
 unattended-upgrades' own reboot is on, no reboot with a login session
 (class `user`) open or a lab job container running, none held back by
 lingering service managers, a failed run when `apt-config`, `loginctl` or
-docker cannot answer, a deferral for a job or a login that appears while
-new lab jobs are held before the second look, and exactly one `systemctl
+docker cannot answer, a deferral when the labs agent does not acknowledge
+the hold in time, a deferral for a job or a login that appears while new
+lab jobs are held before the second look, and exactly one `systemctl
 reboot` when idle at both looks (LAB-13, #959). The two container
 lines above run either with its path in place of the held-package test's;
 mounted alone, `lab-host/` has no `vps-agent/` beside it, so one line of

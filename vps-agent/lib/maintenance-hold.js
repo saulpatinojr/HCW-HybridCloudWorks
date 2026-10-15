@@ -9,16 +9,24 @@
  * `systemctl reboot` started a container the reboot then killed. So the
  * script looks twice. When the first look finds the host idle it writes
  * this file, root's, under /run, holding the epoch second the hold lapses.
- * It then waits longer than a claim already sent can take to come back and
- * start its container (CLAIM_SETTLE_MS), looks again, and reboots only if
- * the host is still idle. Every other way out of the script removes the
- * file. On the reboot path the file stays, so no claim lands between the
- * request and the manager stopping this agent; /run is a tmpfs, so the
- * reboot clears it.
+ * It then waits for this agent to acknowledge the hold, looks again, and
+ * reboots only if the host is still idle. Every other way out of the script
+ * removes the file. On the reboot path the file stays, so no claim lands
+ * between the request and the manager stopping this agent; /run is a
+ * tmpfs, so the reboot clears it.
  *
- * lib/poll.js asks before every claim. A claim already in flight when the
- * hold appears is not recalled: its job runs, and the script's second look
- * sees its container and defers the reboot.
+ * lib/poll.js reads the hold on every tick. While it is in force no claim
+ * is sent, and once no claim is in flight and no job is running, the poll
+ * writes the acknowledgement (createAcknowledger, below): a file in the
+ * agent's own runtime directory holding the hold's expiry, exactly as read,
+ * so an acknowledgement answers one hold and no other. A claim already in
+ * flight when the hold appears is not recalled; until it has come back, and
+ * any job it brought has finished, there is no acknowledgement. The script
+ * waits for one for at most hardening_reboot_hold_settle_seconds and defers
+ * the night without it (CodeRabbit's second round on #1191: a fixed wait
+ * could not see a claim whose container was slow to appear; this needs no
+ * guess about how slow). An agent that cannot acknowledge, an older one or
+ * a stuck one, therefore defers the reboot rather than risking a job.
  *
  * What the file can say, and what the agent does with it:
  *
@@ -49,9 +57,11 @@
  * reading has its time read by path, and nothing else is read from it.
  *
  * Every state change is one journal line with no path and no identifier in
- * it: info when a hold starts or lifts, which stays on the host; warn, which
- * is collected (lib/log.js), when a hold is unreadable, expired without
- * being removed, or cannot be checked.
+ * it: info when a hold starts or lifts, and when an acknowledgement is
+ * written or withdrawn, which stays on the host; warn, which is collected
+ * (lib/log.js), when a hold is unreadable, expired without being removed,
+ * or cannot be checked, or when an acknowledgement cannot be written or
+ * withdrawn.
  *
  * Everything the module touches is injected, so lib/maintenance-hold.test.js
  * runs it against a fake file system and a fake clock.
@@ -72,28 +82,37 @@ export const DEFAULT_HOLD_PATH = '/run/hcw-maintenance/reboot-hold';
 export const MAX_HOLD_MS = 10 * 60 * 1000;
 
 /**
- * A margin, after a claim is answered, for its job's container to be
- * created: the runner stages the payload and spawns `docker run` with no
- * await between that matters, and the image is already on the host (the
- * agent's Docker proxy refuses pulls, and the job images are pinned by
- * digest and pulled by the playbook). Nothing enforces it; it is a choice
- * of how long to wait, not a bound the runner keeps. lib/docker-runner.js's
- * own 15 s is a different thing: padding on each job's wall-clock timeout.
- * The second look also counts a container in `created`, so one that exists
- * and has not started yet is seen.
+ * Where the agent writes its acknowledgement of a hold unless
+ * LABS_AGENT_MAINTENANCE_ACK_PATH names another absolute path: in its own
+ * runtime directory (the unit's RuntimeDirectory=, not preserved, so a
+ * stopped agent leaves no acknowledgement behind). The labs_agent role
+ * passes labs_agent_maintenance_ack_path and the hardening role's script
+ * reads hardening_reboot_ack_path; the three defaults are one path, and
+ * scripts/lab-job-limits.test.mjs fails if they part.
  */
-export const CONTAINER_START_MARGIN_MS = 15000;
+export const DEFAULT_ACK_PATH = '/run/hcw-labs-agent/maintenance-ack';
 
 /**
- * The shortest wait a holder must allow between writing the hold and its
- * second look: lib/api.js's REQUEST_TIMEOUT_MS (20 s), which bounds a claim
- * already sent, plus CONTAINER_START_MARGIN_MS. lib/maintenance-hold.test.js
- * holds the sum to both; scripts/lab-job-limits.test.mjs holds the role's
- * hardening_reboot_hold_settle_seconds to at least this. Written as a sum of
- * literals because lib/api.js imports @azure/identity, which the scripts
- * suite that imports this module does not install.
+ * The agent's default poll interval (LABS_AGENT_POLL_MS in index.js,
+ * labs_agent_poll_ms in the role; scripts/lab-job-limits.test.mjs holds the
+ * three together). The acknowledgement is written on a poll tick, so an
+ * idle agent acknowledges within one interval of the hold appearing.
  */
-export const CLAIM_SETTLE_MS = 20000 + CONTAINER_START_MARGIN_MS;
+export const ACK_POLL_INTERVAL_MS = 15000;
+
+/**
+ * The longest an agent that honours the hold takes to acknowledge it, at
+ * the default poll interval: lib/api.js's REQUEST_TIMEOUT_MS (20 s), which
+ * bounds a claim already sent when the hold appeared, then one poll
+ * interval for the next tick to find nothing in flight. A claim that
+ * brought a job adds that job's run, and the script then rightly defers.
+ * The script's wait, hardening_reboot_hold_settle_seconds, must be at least
+ * this; scripts/lab-job-limits.test.mjs holds the role's default to it and
+ * lib/maintenance-hold.test.js holds the sum to lib/api.js. Written as a
+ * sum of literals because lib/api.js imports @azure/identity, which the
+ * scripts suite that imports this module does not install.
+ */
+export const ACK_WITHIN_MS = 20000 + ACK_POLL_INTERVAL_MS;
 
 /** An expiry is whole epoch seconds, as `date +%s` prints them, and at most one newline. */
 const EXPIRY = /^(\d{1,12})\n?$/;
@@ -110,6 +129,17 @@ const HELD = new Set(['held', 'held-unreadable']);
 export function holdPath(env = process.env) {
   const requested = env.LABS_AGENT_MAINTENANCE_HOLD_PATH;
   return typeof requested === 'string' && requested.startsWith('/') ? requested : DEFAULT_HOLD_PATH;
+}
+
+/**
+ * The acknowledgement's path from the environment: an absolute path, or the default.
+ *
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {string}
+ */
+export function ackPath(env = process.env) {
+  const requested = env.LABS_AGENT_MAINTENANCE_ACK_PATH;
+  return typeof requested === 'string' && requested.startsWith('/') ? requested : DEFAULT_ACK_PATH;
 }
 
 /**
@@ -134,8 +164,9 @@ const unreadable = (now, written) =>
  * @param {object} [options]
  * @param {number} [options.now]  epoch milliseconds
  * @param {HoldFs} [options.fsImpl]  tests only
- * @returns {{ state: 'none'|'held'|'held-unreadable'|'expired'|'unknown', until?: number }}
- *   `until` is the epoch millisecond a held state lapses
+ * @returns {{ state: 'none'|'held'|'held-unreadable'|'expired'|'unknown', until?: number, expiry?: string }}
+ *   `until` is the epoch millisecond a held state lapses; `expiry` is the
+ *   hold's own expiry, the digits exactly as read, for a hold that is `held`
  */
 export function readHold(path, { now = Date.now(), fsImpl = fs } = {}) {
   let fd;
@@ -169,7 +200,7 @@ export function readHold(path, { now = Date.now(), fsImpl = fs } = {}) {
     const found = EXPIRY.exec(text);
     if (!found) return unreadable(now, written);
     const until = Math.min(Number(found[1]) * 1000, written + MAX_HOLD_MS);
-    return now < until ? { state: 'held', until } : { state: 'expired' };
+    return now < until ? { state: 'held', until, expiry: found[1] } : { state: 'expired' };
   } finally {
     try {
       fsImpl.closeSync(fd);
@@ -190,27 +221,29 @@ const LINES = {
 };
 
 /**
- * The check lib/poll.js makes before each claim: true while a hold is in
- * force. Synchronous, so the poll's concurrency guard and its slot
- * reservation keep no await between them (T-744). Says each change of state
- * once, never each poll.
+ * The check lib/poll.js makes on every tick: whether a hold is in force, and
+ * its expiry when it can be read. Synchronous, so the poll's concurrency
+ * guard and its slot reservation keep no await between them (T-744). Says
+ * each change of state once, never each poll.
  *
  * @param {object} deps
  * @param {string} deps.path                                   holdPath()
  * @param {{ info: Function, warn: Function }} deps.log        lib/log.js
  * @param {() => number} [deps.now]                            tests only
  * @param {HoldFs} [deps.fsImpl]                               tests only
- * @returns {() => boolean}
+ * @returns {() => { held: boolean, expiry: string|null }}
  */
 export function createHoldGate({ path, log, now = () => Date.now(), fsImpl = fs }) {
   let last = 'none';
   /**
-   * True while a hold is in force; reads the file once and says a change of state once.
+   * Whether a hold is in force, and its expiry as read (null for a hold
+   * whose content cannot be used, which therefore cannot be acknowledged);
+   * reads the file once and says a change of state once.
    *
-   * @returns {boolean}
+   * @returns {{ held: boolean, expiry: string|null }}
    */
-  return function held() {
-    const { state } = readHold(path, { now: now(), fsImpl });
+  return function hold() {
+    const { state, expiry } = readHold(path, { now: now(), fsImpl });
     if (state !== last) {
       if (state !== 'none' || HELD.has(last)) {
         const [level, line] = LINES[state];
@@ -218,6 +251,93 @@ export function createHoldGate({ path, log, now = () => Date.now(), fsImpl = fs 
       }
       last = state;
     }
-    return HELD.has(state);
+    return { held: HELD.has(state), expiry: expiry ?? null };
+  };
+}
+
+/**
+ * The file system calls the acknowledger makes; node:fs in production.
+ *
+ * @typedef {object} AckFs
+ * @property {(path: string, data: string, options: { mode: number }) => void} writeFileSync  the temporary file
+ * @property {(from: string, to: string) => void} renameSync                                    into place, in one step
+ * @property {(path: string) => void} unlinkSync                                                withdrawal, and a failed write's leftovers
+ */
+
+/**
+ * The agent's acknowledgement of a hold: written by lib/poll.js on a tick
+ * where the hold is in force, no claim is in flight and no job is running,
+ * holding that hold's expiry exactly as read, so it answers one hold and no
+ * other; withdrawn on a tick where any of that stops being true. Written to
+ * a temporary file in the same directory and renamed into place, so the
+ * script never reads half of one. Synchronous and never throws, so the poll
+ * can call it without an await before its slot reservation (T-744). Each
+ * change is one journal line with no path in it; a write or a withdrawal
+ * that fails is said at warn once, until one succeeds.
+ *
+ * @param {object} deps
+ * @param {string} deps.path                                   ackPath()
+ * @param {{ info: Function, warn: Function }} deps.log        lib/log.js
+ * @param {AckFs} [deps.fsImpl]                                tests only
+ * @returns {{ acknowledge: (expiry: string) => void, withdraw: () => void, current: () => string|null }}
+ */
+export function createAcknowledger({ path, log, fsImpl = fs }) {
+  const temporary = `${path}.new`;
+  // The expiry acknowledged now, or null. Only this process writes the file,
+  // and its directory goes when the unit stops, so this is what is on disk.
+  let acknowledged = null;
+  let failing = false;
+
+  /** Says a failure once per run of failures. */
+  function failed(line) {
+    if (!failing) log.warn(line);
+    failing = true;
+  }
+
+  /**
+   * Writes the acknowledgement of the hold whose expiry is `expiry`, unless it is already written.
+   *
+   * @param {string} expiry  the hold's expiry, the digits as read
+   */
+  function acknowledge(expiry) {
+    if (acknowledged === expiry) return;
+    try {
+      fsImpl.writeFileSync(temporary, `${expiry}\n`, { mode: 0o644 });
+      fsImpl.renameSync(temporary, path);
+    } catch {
+      try {
+        fsImpl.unlinkSync(temporary);
+      } catch {
+        // Nothing was left behind, or nothing more can be done.
+      }
+      failed('maintenance hold could not be acknowledged: the idle reboot will defer');
+      return;
+    }
+    acknowledged = expiry;
+    failing = false;
+    log.info('maintenance hold acknowledged: no claim in flight and no job running');
+  }
+
+  /** Removes the acknowledgement, if one is written. */
+  function withdraw() {
+    if (acknowledged === null) return;
+    try {
+      fsImpl.unlinkSync(path);
+    } catch (err) {
+      if (err?.code !== 'ENOENT') {
+        failed('maintenance hold acknowledgement could not be withdrawn');
+        return;
+      }
+    }
+    acknowledged = null;
+    failing = false;
+    log.info('maintenance hold acknowledgement withdrawn');
+  }
+
+  return {
+    acknowledge,
+    withdraw,
+    /** The expiry acknowledged now, or null, for the tests. */
+    current: () => acknowledged,
   };
 }

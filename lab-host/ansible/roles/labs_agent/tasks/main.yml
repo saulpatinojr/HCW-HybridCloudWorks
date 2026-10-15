@@ -219,6 +219,19 @@
       before it reports the jobs it interrupted.
     quiet: true
 
+# The unit's RuntimeDirectory= is rendered from the acknowledgement's
+# directory, which systemd can only create directly under /run (LAB-13,
+# #959). A path anywhere else would be one the agent cannot write, and the
+# idle reboot would defer every night.
+- name: Refuse a maintenance acknowledgement path the unit could not create
+  ansible.builtin.assert:
+    that:
+      - labs_agent_maintenance_ack_path is match('^/run/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$')
+    fail_msg: >-
+      labs_agent_maintenance_ack_path ({{ labs_agent_maintenance_ack_path }}) must be
+      /run/<directory>/<file>: the unit creates that directory as its RuntimeDirectory=.
+    quiet: true
+
 - name: Write the agent environment from the vault
   ansible.builtin.template:
     src: labs-agent.env.j2

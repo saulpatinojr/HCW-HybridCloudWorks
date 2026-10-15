@@ -68,6 +68,17 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
+# The agent's acknowledgement of the host's maintenance hold (LAB-13, #959;
+# vps-agent/lib/maintenance-hold.js): it writes the hold's expiry here once
+# no claim is in flight and no job is running, and hcw-reboot-when-idle
+# reads it, as root, before its second look. A RuntimeDirectory= is the
+# agent user's, writable whatever ProtectSystem= says (full leaves /run
+# alone in any case) and outside /run/user, which ProtectHome= hides; 0755
+# so root's script reads it. Not preserved: systemd removes it whenever the
+# agent stops, a crash or a Restart= included, so no acknowledgement
+# outlives the process that wrote it.
+RuntimeDirectory={{ labs_agent_maintenance_ack_path | dirname | basename }}
+RuntimeDirectoryMode=0755
 # Added 2026-10-06 (LAB-5): the agent is a Node process that spawns the
 # docker CLI, which needs AF_UNIX for the proxy's socket and AF_INET/AF_INET6
 # for the API; nothing else. @system-service is the systemd set a service needs;

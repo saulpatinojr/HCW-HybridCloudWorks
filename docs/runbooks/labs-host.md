@@ -2038,14 +2038,18 @@ fix is installed.
   lists no lab job container up (created, running, paused or restarting),
   and the Coder sandbox daemon (`/run/hcw-coder-docker/docker.sock`, when it
   is there) lists no workspace container up, all asked at the hour itself
-  and asked again 45 s later. Workspaces run on that daemon, which the host
-  daemon does not see, and a person working in one has no logind session,
-  so without this question a workspace in use at 04:30 would be rebooted.
-  Between the two looks the script writes
-  `/run/hcw-maintenance/reboot-hold`, and the labs agent claims no new job
-  while it holds, so a job claimed just before the first look is created or
-  running by the second and defers the night, and no job can start between
-  the second look and the reboot (CodeRabbit on #1191). unattended-upgrades
+  and asked again once the labs agent has confirmed it is idle. Workspaces
+  run on that daemon, which the host daemon does not see, and a person
+  working in one has no logind session, so without this question a
+  workspace in use at 04:30 would be rebooted. Between the two looks the
+  script writes `/run/hcw-maintenance/reboot-hold`, and the labs agent
+  claims no new job while it holds; once it has no claim in flight and no
+  job running, it acknowledges the hold by writing its expiry to
+  `/run/hcw-labs-agent/maintenance-ack`. The script waits up to 45 s for
+  that acknowledgement (none is needed when systemd says the agent is
+  inactive or failed) and defers the night without it, so no job can be
+  running or starting at the second look, or between it and the reboot
+  (CodeRabbit on #1191, two rounds). unattended-upgrades
   no longer reboots on its own: it asked `users` when the upgrade ran, some
   twenty-two hours before the reboot it then scheduled with no further
   question, and it never asked about jobs. On this host `users` and `who`
@@ -2059,7 +2063,11 @@ fix is installed.
   `err` and ends `overdue at 7: log out before 04:30, or reboot at a time
   of your choosing`**: that is the line to act on, by logging out before
   04:30, stopping a workspace left running, or running `sudo reboot` once
-  no lab job is running. The days count from the first night a run saw the
+  no lab job is running. A run of `deferred: the lab agent did not confirm
+  it was idle` nights means the agent has a job that does not end, is
+  stuck, or is older than the acknowledgement; bash, on the host,
+  `systemctl status hcw-labs-agent --no-pager` and `sudo journalctl -u
+  hcw-labs-agent --since -1d` say which. The days count from the first night a run saw the
   marker (kept in `/run/hcw-maintenance/reboot-pending-since`, which a
   reboot clears with the marker), not from the marker's own time, which
   every upgrade that wants a reboot rewrites. It is a row in Log Analytics,
@@ -2113,25 +2121,21 @@ fix is installed.
 
   **What it does not cover, on purpose** (review of #1191):
 
-  - **No handshake with the agent.** The script does not wait for the agent
-    to say it saw the hold; it waits 45 s, a claim's 20 s timeout plus a
-    15 s margin for its container to be created, and counts a container
-    still in `created`. That is enough because the agent's Docker proxy
-    refuses image pulls and every job image is pinned by digest and pulled
-    by the playbook beforehand, so a claimed job's container exists within
-    seconds of the claim. An agent that does not honour the hold at all
-    (one older than this change) is the next point.
+  - **The handshake with the agent is the agent's own word, and nothing
+    more.** The script reboots after an acknowledgement naming its hold,
+    which the agent writes only on a tick with no claim in flight and no
+    job running, and the second look still asks logind and both daemons.
+    It trusts the agent to count its own claims and jobs; the poll tests
+    (`vps-agent/lib/poll.test.js`) are what hold it to that. Without an
+    acknowledgement in 45 s it defers, so the failure modes are a night
+    without a reboot, never a reboot through a job.
   - **The first `bootstrap.sh` that applies this.** `site.yml` runs the
     `hardening` role, which enables the timer, before the `labs_agent`
-    role restarts the agent with the code that honours the hold. If 04:30
-    falls inside that one run, the old agent may claim a job during the
-    hold, and only the second look stands between it and the reboot.
-    Neither cheap fix is safe: `labs_agent` needs the `docker` role's
-    daemon and runs late in `site.yml`, while `hardening` runs first so the
-    host is hardened before anything else can fail; and leaving the timer
-    off until `labs_agent` has run would leave no reboot at all if that
-    role, or any between, fails. Avoid starting `bootstrap.sh` between 04:25
-    and 04:35 host time.
+    role restarts the agent with the code that acknowledges the hold. The
+    old agent, until then, never acknowledges, so a 04:30 inside that one
+    run defers the night instead of rebooting: safe, and the next night
+    asks again with the new agent. Starting `bootstrap.sh` near 04:30 is
+    therefore safe.
   - **unattended-upgrades scheduling during the run.** The check for a
     reboot unattended-upgrades already scheduled runs before the override
     turns its reboot off. If its daily run fires in the minutes between

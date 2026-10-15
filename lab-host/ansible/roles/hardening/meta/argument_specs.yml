@@ -164,8 +164,9 @@ argument_specs:
         description:
           - The maintenance hold (LAB-13, issue 959). When the first look
             finds the host idle, hcw-reboot-when-idle writes the epoch second the hold lapses here,
-            and the labs agent claims no new job while it holds; the script waits, looks again,
-            and reboots only if the host is still idle. Removed on every way out but the reboot.
+            and the labs agent claims no new job while it holds; the script waits for the agent's
+            acknowledgement, looks again, and reboots only if the host is still idle. Removed on
+            every way out but the reboot.
           - Must be /run/<directory>/<file>; the service creates the directory as its
             RuntimeDirectory=. Must equal labs_agent_maintenance_hold_path and the agent's
             DEFAULT_HOLD_PATH; scripts/lab-job-limits.test.mjs checks the defaults.
@@ -174,10 +175,28 @@ argument_specs:
         required: false
         default: 45
         description:
-          - How long the script waits between writing the hold and its second look. At least
-            the agent's CLAIM_SETTLE_MS (35 s, a claim already sent plus its container's start),
-            and at most 90, which leaves the second look 30 s inside the service's 120 s
-            TimeoutStartSec. The role refuses anything else.
+          - The longest the script waits for the agent's acknowledgement of the hold before it
+            defers the night. At least the agent's ACK_WITHIN_MS (35 s, a claim already sent plus
+            one poll tick), and at most 90, which leaves the second look 30 s inside the service's
+            120 s TimeoutStartSec. The role refuses anything else.
+      hardening_reboot_ack_path:
+        type: str
+        required: false
+        default: /run/hcw-labs-agent/maintenance-ack
+        description:
+          - Where the labs agent writes the hold's expiry once no claim is in flight and no job is
+            running. A matching acknowledgement lets the script look again at once; none within
+            hardening_reboot_hold_settle_seconds defers the night.
+          - Must be /run/<directory>/<file>, the agent unit's RuntimeDirectory=. Must equal
+            labs_agent_maintenance_ack_path and the agent's DEFAULT_ACK_PATH;
+            scripts/lab-job-limits.test.mjs checks the defaults.
+      hardening_reboot_agent_service:
+        type: str
+        required: false
+        default: hcw-labs-agent
+        description:
+          - The labs agent's unit (labs_agent_service_name). Inactive or failed, it cannot have a
+            claim in flight, and the script looks again without waiting for an acknowledgement.
       hardening_reboot_hold_seconds:
         type: int
         required: false

@@ -159,7 +159,8 @@ The maintenance hold (LAB-13, #959):
 
 | Variable | Default | Rendered as | What it does |
 | --- | --- | --- | --- |
-| `labs_agent_maintenance_hold_path` | `/run/hcw-maintenance/reboot-hold` | `LABS_AGENT_MAINTENANCE_HOLD_PATH` in `/etc/hcw/labs-agent.env` | The file the agent reads before every claim; it claims no new job while the file holds an expiry in the future |
+| `labs_agent_maintenance_hold_path` | `/run/hcw-maintenance/reboot-hold` | `LABS_AGENT_MAINTENANCE_HOLD_PATH` in `/etc/hcw/labs-agent.env` | The file the agent reads on every poll tick; it claims no new job while the file holds an expiry in the future |
+| `labs_agent_maintenance_ack_path` | `/run/hcw-labs-agent/maintenance-ack` | `LABS_AGENT_MAINTENANCE_ACK_PATH` in `/etc/hcw/labs-agent.env`, and the unit's `RuntimeDirectory=` | Where the agent acknowledges a hold once no claim is in flight and no job is running |
 
 The hardening role's nightly idle reboot writes that file, root's, before
 its second look at an idle host, so no job starts between that look and the
@@ -173,6 +174,24 @@ minutes from its write, an unreadable one included, so a hold whose writer
 died lifts on its own; it says each change in its journal, once. The unit's
 `ProtectSystem=full`, `PrivateTmp` and `ProtectHome` leave `/run` outside
 `/run/user` readable to it, which is where the hold is.
+
+The agent answers the hold (CodeRabbit's second round on #1191). On a poll
+tick where the hold is in force, no claim is in flight and no job is
+running, it writes the hold's expiry, exactly as read, to
+`labs_agent_maintenance_ack_path`: a temporary file renamed into place, so
+it is never read half written. It withdraws it on a tick where a claim or
+a job appears, when the hold lifts, and when it stops. The reboot script
+waits for an acknowledgement naming its own hold before its second look,
+and defers the night without one, so an agent that cannot answer (one
+older than this, or a stuck one) costs a night's reboot, never a job. The
+file lives in the unit's `RuntimeDirectory=` (`/run/hcw-labs-agent`, the
+agent user's, 0755 so root's script reads it), which is not preserved:
+systemd removes it whenever the agent stops, a crash or a restart
+included, so no acknowledgement outlives the process that wrote it. It
+must be the same path as `hardening_reboot_ack_path`; the agent's default
+is that path too, and the same two tests fail if they part. The role
+refuses a path that is not `/run/<directory>/<file>`, since the unit could
+not create anything else.
 
 Paths and the unit name are in `defaults/main.yml`;
 `meta/argument_specs.yml` is the contract.
