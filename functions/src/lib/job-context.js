@@ -11,11 +11,11 @@
  *
  * runJob runs the worker inside the job's context (`runAsJob`), and the
  * shared clients call `refuseWriteAfterJobAbort` before every write: once the
- * signal has fired, a write that starts inside that context throws a
- * refusal carrying the job's reason (as `cause`, with its `code`) instead of
- * reaching the service. Routes, timers and the
- * onComplete hooks, which runJob calls after the terminal write, run outside
- * the context and are not affected. Nothing is threaded through the workers.
+ * signal has fired, a write that starts inside that context throws a refusal
+ * carrying the job's reason (as `cause`, with its `code`) instead of reaching
+ * the service. Routes, timers and the onComplete hooks, which runJob calls
+ * after the terminal write, run outside the context and are not affected.
+ * Nothing is threaded through the workers.
  *
  * The context follows every async operation the worker STARTS, which is
  * more than the worker's own work. A process-wide single-flight, a
@@ -26,13 +26,21 @@
  * ai/mcp-oauth.js is the one today; the AI config cache's single-flight in
  * ai/ai-config.js only reads, which the context never touches).
  *
- * A write already in flight when the signal fires is handed the signal as
- * well: the shared clients pass `writeAbortSignal(container)` as the SDK's
- * `abortSignal`, so the SDK stops waiting for the request and rejects. That
- * stops the client, not the service, which may already have applied the
- * write. Reads are neither refused nor handed the signal: a read changes
- * nothing, and a sequence that reads before its kept record (below) would
- * otherwise lose the record.
+ * Refusal applies only to a write that has not started. A write already
+ * dispatched when the signal fires is allowed to finish, SDK retries of that
+ * same request included, and the job's signal is never handed to the SDK as
+ * an `abortSignal`. Cancelling a dispatched write on the client does not
+ * recall it: the service may apply it anyway while the client promise
+ * rejects, an uncertain commit the job cannot tell from a failure. The forge
+ * save shows the cost: its content write would be applied and rejected, so
+ * the version snapshot and audit row that follow it (kept, below) would never
+ * be attempted. Letting the write finish means a primary write that lands is
+ * followed by its records, and the next write that STARTS is refused.
+ * patchDoc's read-modify-write path checks again before each replace, since
+ * the replace (and its retry after a 412) starts after a read of any length.
+ *
+ * Reads are never refused: a read changes nothing, and a sequence that reads
+ * before its kept record would otherwise lose the record.
  *
  * The rule for what is kept: a write is refused when it IS a side effect,
  * and kept when it RECORDS one that has already happened, because refusing
@@ -84,8 +92,7 @@ export function runAsJob(signal, fn) {
 
 /**
  * Run `fn` outside any job's context, for work that other callers may join:
- * nothing it starts is refused or handed a signal because of the job that
- * happened to start it.
+ * nothing it starts is refused because of the job that happened to start it.
  *
  * @template T
  * @param {() => T} fn
@@ -93,29 +100,6 @@ export function runAsJob(signal, fn) {
  */
 export function outsideJob(fn) {
   return jobContext.exit(fn);
-}
-
-/**
- * The running job's AbortSignal, or undefined outside a job.
- *
- * @returns {AbortSignal|undefined}
- */
-export function currentJobSignal() {
-  return jobContext.getStore()?.signal;
-}
-
-/**
- * The signal a write to `containerName` carries as the SDK's `abortSignal`:
- * the running job's, except for a kept container, whose write must be able
- * to finish after the abort. Undefined outside a job, so a write made there
- * passes exactly the options it always did.
- *
- * @param {string} [containerName] the Cosmos container, when there is one
- * @returns {AbortSignal|undefined}
- */
-export function writeAbortSignal(containerName) {
-  if (containerName && WRITES_KEPT_AFTER_ABORT.includes(containerName)) return undefined;
-  return currentJobSignal();
 }
 
 /**
@@ -133,7 +117,7 @@ export function writeAbortSignal(containerName) {
  * @throws {Error} the refusal, `cause` = the job's abort reason
  */
 export function refuseWriteAfterJobAbort(containerName) {
-  const signal = currentJobSignal();
+  const signal = jobContext.getStore()?.signal;
   if (!signal?.aborted) return;
   if (containerName && WRITES_KEPT_AFTER_ABORT.includes(containerName)) return;
   const reason = signal.reason;

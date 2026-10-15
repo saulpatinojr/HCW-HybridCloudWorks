@@ -228,7 +228,7 @@ describe('a write a timed-out job starts is refused (#942 follow-up)', () => {
     expect(uploadSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('hands the job’s signal to an upload, a stream upload and a delete started inside it', async () => {
+  it('hands Storage no abortSignal for an upload, a stream upload or a delete inside a job', async () => {
     uploadStreamSpy.mockClear();
     deleteSpy.mockClear();
     const job = new AbortController();
@@ -237,24 +237,43 @@ describe('a write a timed-out job starts is refused (#942 follow-up)', () => {
       await uploadBlobFromStream('cosmos-export', 'a.gz', null, 4, 'application/gzip', { tier: 'Cool' });
       await deleteBlob('podcast', 'a.mp3');
     });
-    expect(uploadSpy.mock.calls[0][2]).toMatchObject({
-      conditions: { ifNoneMatch: '*' },
-      abortSignal: job.signal,
-    });
+    expect(uploadSpy.mock.calls[0][2]).toMatchObject({ conditions: { ifNoneMatch: '*' } });
+    expect(uploadSpy.mock.calls[0][2]).not.toHaveProperty('abortSignal');
     // uploadStream(stream, bufferSize, maxConcurrency, options)
-    expect(uploadStreamSpy.mock.calls[0][3]).toMatchObject({ tier: 'Cool', abortSignal: job.signal });
-    expect(deleteSpy.mock.calls[0][0]).toEqual({ abortSignal: job.signal });
+    expect(uploadStreamSpy.mock.calls[0][3]).toMatchObject({ tier: 'Cool' });
+    expect(uploadStreamSpy.mock.calls[0][3]).not.toHaveProperty('abortSignal');
+    expect(deleteSpy.mock.calls[0]).toEqual([]);
   });
 
-  it('sends no abortSignal outside a job', async () => {
-    uploadStreamSpy.mockClear();
-    deleteSpy.mockClear();
-    await uploadBlob('podcast', 'a.mp3', Buffer.from('x'), 'audio/mpeg');
-    await uploadBlobFromStream('cosmos-export', 'a.gz', null, 4, 'application/gzip');
-    await deleteBlob('podcast', 'a.mp3');
-    expect(uploadSpy.mock.calls[0][2]).not.toHaveProperty('abortSignal');
-    expect(uploadStreamSpy.mock.calls[0][3]).not.toHaveProperty('abortSignal');
-    expect(deleteSpy.mock.calls[0][0]?.abortSignal).toBeUndefined();
+  it('lets an upload in flight at the abort finish, then refuses the next one that starts', async () => {
+    // As Storage does when handed an abortSignal: the blob is stored, and the
+    // client promise rejects if the signal fired while the request was pending.
+    const stored = [];
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    uploadSpy.mockImplementationOnce(async (content, _length, options) => {
+      stored.push(content.toString());
+      await gate;
+      if (options?.abortSignal?.aborted) {
+        throw Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+      }
+      return {};
+    });
+    const job = new AbortController();
+    await runAsJob(job.signal, async () => {
+      const inFlight = uploadBlob('podcast', 'a.mp3', Buffer.from('x'), 'audio/mpeg');
+      while (uploadSpy.mock.calls.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+      job.abort(Object.assign(new Error('job timed out'), { code: 'JOB_TIMEOUT' }));
+      release();
+      await expect(inFlight).resolves.toBe('https://hcwmedia.blob.core.windows.net/c/a.mp3');
+      await expect(uploadBlob('podcast', 'b.mp3', Buffer.from('y'), 'audio/mpeg')).rejects.toMatchObject({
+        code: 'JOB_TIMEOUT',
+      });
+    });
+    expect(stored).toEqual(['x']);
+    expect(uploadSpy).toHaveBeenCalledTimes(1);
   });
 });
 

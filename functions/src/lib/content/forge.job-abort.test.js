@@ -10,6 +10,15 @@
  * keeps both containers. A write that is a side effect of its own, such as
  * the day's forge statistics, is still refused.
  *
+ * The transition that matters is the deadline landing while the content
+ * write is in flight (review of #1199). The mocked SDK answers as Cosmos
+ * does when handed an abortSignal: the service applies the write, and the
+ * client promise rejects if the signal fired while the request was pending.
+ * Handing the job's signal to that write would therefore make the forge
+ * save throw over content that did change, and the version and audit rows
+ * would never be attempted. The dispatched write must run to completion;
+ * only a write that STARTS after the deadline is refused.
+ *
  * The real forge pipeline and the real cosmos-client.js run here over a
  * mocked SDK; the drafter and grader are stubs.
  */
@@ -18,7 +27,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const sdk = vi.hoisted(() => ({
   docs: new Map(),
   writes: [],
-  onWrite: null,
+  /** Runs while the content write is in flight, after the service applied it. */
+  whileContentWriteInFlight: null,
 }));
 
 vi.mock('@azure/cosmos', () => ({
@@ -27,9 +37,16 @@ vi.mock('@azure/cosmos', () => ({
       return {
         container: (name) => {
           const key = (id) => `${name}/${id}`;
-          const record = (op, id, resource) => {
+          /**
+           * The write has been applied; answer the client as the SDK does,
+           * rejecting if a signal it was handed fired while it was pending.
+           */
+          const respond = async (op, resource, options) => {
             sdk.writes.push(`${op} ${name}`);
-            sdk.onWrite?.(name, op);
+            if (name === 'content' && op === 'replace') await sdk.whileContentWriteInFlight?.();
+            if (options?.abortSignal?.aborted) {
+              throw Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+            }
             return { resource };
           };
           return {
@@ -37,20 +54,20 @@ vi.mock('@azure/cosmos', () => ({
               read: async () => ({
                 resource: sdk.docs.has(key(id)) ? structuredClone(sdk.docs.get(key(id))) : undefined,
               }),
-              replace: async (doc) => {
+              replace: async (doc, options) => {
                 sdk.docs.set(key(id), { ...doc, _etag: '"next"' });
-                return record('replace', id, doc);
+                return respond('replace', doc, options);
               },
               // The budget claim's conditional increment is the only patch
               // before the save; it answers with the day's count.
-              patch: async () => record('patch', id, { id, today: { forged: 1 } }),
+              patch: async (_body, options) => respond('patch', { id, today: { forged: 1 } }, options),
             }),
             items: {
-              upsert: async (doc) => {
+              upsert: async (doc, options) => {
                 sdk.docs.set(key(doc.id), doc);
-                return record('upsert', doc.id, doc);
+                return respond('upsert', doc, options);
               },
-              create: async (doc) => record('create', doc.id, doc),
+              create: async (doc, options) => respond('create', doc, options),
               query: () => ({ fetchAll: async () => ({ resources: [] }) }),
             },
           };
@@ -107,7 +124,7 @@ function forgeOverCosmos() {
 beforeEach(() => {
   sdk.docs.clear();
   sdk.writes.length = 0;
-  sdk.onWrite = null;
+  sdk.whileContentWriteInFlight = null;
   sdk.docs.set('content/c-1', {
     id: 'c-1',
     Title: 'EBS gp3 migration notes',
@@ -125,28 +142,42 @@ beforeEach(() => {
 });
 
 describe('a forge job whose deadline lands on the content write (#942)', () => {
-  it('still writes the version snapshot and the audit row, and refuses the statistics after them', async () => {
+  it('lets the content write in flight at the deadline finish, then writes its version and audit rows', async () => {
     const job = new AbortController();
-    sdk.onWrite = (container, op) => {
-      if (container === 'content' && op === 'replace') {
-        job.abort(Object.assign(new Error('job timed out'), { code: 'JOB_TIMEOUT' }));
-      }
+    // The deadline fires while the content write is pending at the service.
+    sdk.whileContentWriteInFlight = async () => {
+      job.abort(Object.assign(new Error('job timed out'), { code: 'JOB_TIMEOUT' }));
+      await new Promise((resolve) => setTimeout(resolve, 5));
     };
 
-    const outcome = await runAsJob(job.signal, () =>
-      forgeOverCosmos().runForgePipeline({ contentId: 'c-1', actor: { oid: 'o1' } })
-    );
+    const { outcome, nextWrite } = await runAsJob(job.signal, async () => {
+      const result = await forgeOverCosmos().runForgePipeline({ contentId: 'c-1', actor: { oid: 'o1' } });
+      // A brand-new write to a container that is not kept, started now.
+      const next = await cosmos.upsertDoc('content', { id: 'c-2' }).then(
+        () => 'written',
+        (error) => error
+      );
+      return { outcome: result, nextWrite: next };
+    });
 
     expect(job.signal.aborted).toBe(true);
+    // The write resolved, so the save went on to its records.
     expect(outcome.ok).toBe(true);
+    expect(sdk.docs.get('content/c-1')).toMatchObject({ Title: 'Cut EBS cost: gp2 to gp3' });
     const fromContent = sdk.writes.slice(sdk.writes.indexOf('replace content'));
     expect(fromContent).toEqual([
       'replace content',
       'upsert content_versions',
       'upsert admin_audit_logs',
     ]);
-    const version = sdk.docs.get('content_versions/uuid-1');
-    expect(version).toMatchObject({ contentId: 'c-1', versionReason: 'forge_generated' });
+    expect(sdk.docs.get('content_versions/uuid-1')).toMatchObject({
+      contentId: 'c-1',
+      versionReason: 'forge_generated',
+    });
+    // What starts after the deadline is refused: the day's statistics
+    // (absent above) and the new content write.
+    expect(nextWrite).toMatchObject({ code: 'JOB_TIMEOUT' });
+    expect(sdk.docs.has('content/c-2')).toBe(false);
   });
 
   it('writes the same sequence, statistics included, when the deadline does not arrive', async () => {

@@ -37,7 +37,7 @@ import {
   tokenExpiresWithin,
   tokenRequest,
 } from './mcp-oauth.js';
-import { currentJobSignal, refuseWriteAfterJobAbort, runAsJob } from '../job-context.js';
+import { refuseWriteAfterJobAbort, runAsJob } from '../job-context.js';
 
 const PUBLIC = '93.184.216.34';
 const resolve = async () => ({ address: PUBLIC });
@@ -1052,7 +1052,7 @@ describe('refresh', () => {
 
   it('runs a refresh a job started outside that job, so a route that joins it is not refused (#942)', async () => {
     // The store refuses its write the way the shared Cosmos client refuses
-    // any write it does not keep, and records whose context the write ran in.
+    // any write it does not keep, if the write runs in the aborted job.
     let release;
     const gate = new Promise((r) => (release = r));
     const net = network({
@@ -1064,9 +1064,7 @@ describe('refresh', () => {
     const doc = connected();
     const store = storeFor(doc);
     const write = store.patchDoc.getMockImplementation();
-    const signalsAtWrite = [];
     store.patchDoc.mockImplementation(async (...args) => {
-      signalsAtWrite.push(currentJobSignal());
       refuseWriteAfterJobAbort();
       return write(...args);
     });
@@ -1083,7 +1081,7 @@ describe('refresh', () => {
     expect(rr.ok).toBe(true);
     expect(rj.ok).toBe(true);
     expect(net.fetch).toHaveBeenCalledTimes(1);
-    expect(signalsAtWrite).toEqual([undefined]);
+    expect(store.patchDoc).toHaveBeenCalledTimes(1);
     expect(store.current.oauthToken).toBe('at-new');
   });
 });

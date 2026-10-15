@@ -59,10 +59,13 @@ This project has not cut a tagged release; entries are grouped under
   transcript's `host.podbean` after the job was recorded `timeout`). New
   `lib/job-context.js` runs the worker in the job's context, and
   `cosmos-client.js` and `blob-storage.js` refuse a write that starts there
-  once the signal has fired, check again before a read-modify-write's
-  replace, and hand a write in flight the signal as the SDK's `abortSignal`,
-  so the client stops waiting for it (the service may still apply it). Each
-  refusal is a fresh error with the job's reason as its `cause`. Routes,
+  once the signal has fired, and check again before a read-modify-write's
+  replace and its retry. A write already dispatched when the signal fires
+  runs to completion, SDK retries included, and the job's signal is never
+  handed to the SDK: cancelling it on the client would not recall it from
+  the service, so the write could land while the job saw it fail, and the
+  records that follow it would never be written. Each refusal is a fresh
+  error with the job's reason as its `cause`. Routes,
   timers and the hooks run outside the context, and so does work that other
   callers join: the MCP OAuth token refresh, a process-wide single-flight,
   is started with `outsideJob`. A write that records something already done

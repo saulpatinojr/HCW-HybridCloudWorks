@@ -8,6 +8,11 @@
  * seen if the guard runs again before the replace. These tests hold the read
  * open, fire the job's abort while it is pending, and check what reaches the
  * SDK afterwards.
+ *
+ * The other half: a write already dispatched when the abort fires runs to
+ * completion. The job's signal is never handed to the SDK, because cancelling
+ * a dispatched write on the client leaves it applied by the service and
+ * rejected to the job, an uncertain commit (review of #1199).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -33,7 +38,7 @@ vi.mock('@azure/identity', () => ({ DefaultAzureCredential: class {}, ManagedIde
 
 process.env.COSMOS_ENDPOINT = 'https://example.documents.azure.com';
 
-const { createDoc, deleteDoc, deleteDocIfMatch, incrementIf, patchDoc, readDoc, replaceDocIfMatch, upsertDoc } =
+const { createDoc, deleteDoc, deleteDocIfMatch, incrementIf, patchDoc, replaceDocIfMatch, upsertDoc } =
   await import('./cosmos-client.js');
 const { runAsJob } = await import('./job-context.js');
 
@@ -106,69 +111,68 @@ describe('the read-modify-write path checks the job again before its replace (#9
   });
 });
 
-describe('a write inside a job carries the job’s signal to the SDK (#942)', () => {
-  /** The options object each SDK write method was last called with. */
-  const sent = () => ({
-    upsert: items.upsert.mock.calls.at(-1)?.[1],
-    create: items.create.mock.calls.at(-1)?.[1],
-    patch: item.patch.mock.calls.at(-1)?.[1],
-    replace: item.replace.mock.calls.at(-1)?.[1],
-    delete: item.delete.mock.calls.at(-1)?.[0],
-  });
+describe('a write already dispatched when the job aborts runs to completion (#942)', () => {
+  const ACCESS = { accessCondition: { type: 'IfMatch', condition: '"e1"' } };
+  /** Every argument any SDK write method was called with. */
+  const writeArguments = () =>
+    [
+      ...items.upsert.mock.calls,
+      ...items.create.mock.calls,
+      ...item.patch.mock.calls,
+      ...item.replace.mock.calls,
+      ...item.delete.mock.calls,
+    ].flat();
+  const carriesSignal = (argument) =>
+    argument !== null && typeof argument === 'object' && 'abortSignal' in argument;
 
-  it('passes it as abortSignal on every write path, beside the options the call already sent', async () => {
-    const job = new AbortController();
-    const { signal } = job;
-    await runAsJob(signal, async () => {
-      await upsertDoc('content', { id: 'c1' });
-      expect(sent().upsert).toEqual({ abortSignal: signal });
-      await createDoc('content', { id: 'c2' });
-      expect(sent().create).toEqual({ abortSignal: signal });
-      await patchDoc('content', 'c1', { a: 2 }, { ifMatch: '"e1"' });
-      expect(sent().patch).toEqual({
-        accessCondition: { type: 'IfMatch', condition: '"e1"' },
-        abortSignal: signal,
-      });
-      await incrementIf('content', 'c1', { path: '/n', condition: 'FROM c WHERE c.n < 5' });
-      expect(sent().patch).toEqual({ abortSignal: signal });
-      await patchDoc('content', 'c1', { a: undefined });
-      expect(sent().replace).toEqual({
-        accessCondition: { type: 'IfMatch', condition: '"e1"' },
-        abortSignal: signal,
-      });
-      await replaceDocIfMatch('content', { id: 'c1', _etag: '"e1"' });
-      expect(sent().replace).toEqual({
-        accessCondition: { type: 'IfMatch', condition: '"e1"' },
-        abortSignal: signal,
-      });
-      await deleteDoc('content', 'c1');
-      expect(sent().delete).toEqual({ abortSignal: signal });
-      await deleteDocIfMatch('content', 'c1', '"e1"');
-      expect(sent().delete).toEqual({
-        accessCondition: { type: 'IfMatch', condition: '"e1"' },
-        abortSignal: signal,
-      });
-    });
-  });
-
-  it('does not hand it to a kept container’s write, or to a read', async () => {
+  it('hands the SDK no abortSignal on any write path inside a job, so each call is what it was before', async () => {
     const job = new AbortController();
     await runAsJob(job.signal, async () => {
-      await upsertDoc('ai_usage', { id: 'u1' });
-      expect(sent().upsert).toBeUndefined();
-      await patchDoc('content_versions', 'v1', { a: 2 }, { partitionKey: 'c1' });
-      expect(sent().patch).toBeUndefined();
-      await readDoc('content', 'c1');
-      expect(item.read.mock.calls.at(-1)).toEqual([]);
+      await upsertDoc('content', { id: 'c1' });
+      await createDoc('content', { id: 'c2' });
+      await patchDoc('content', 'c1', { a: 2 }, { ifMatch: '"e1"' });
+      await incrementIf('content', 'c1', { path: '/n', condition: 'FROM c WHERE c.n < 5' });
+      await patchDoc('content', 'c1', { a: undefined });
+      await replaceDocIfMatch('content', { id: 'c1', _etag: '"e1"' });
+      await deleteDoc('content', 'c1');
+      await deleteDocIfMatch('content', 'c1', '"e1"');
     });
+    expect(writeArguments().filter(carriesSignal)).toEqual([]);
+    expect(items.upsert.mock.calls[0]).toEqual([{ id: 'c1' }]);
+    expect(items.create.mock.calls[0]).toEqual([{ id: 'c2' }]);
+    expect(item.patch.mock.calls[0][1]).toEqual(ACCESS);
+    expect(item.patch.mock.calls[1]).toHaveLength(1);
+    expect(item.replace.mock.calls.map(([, options]) => options)).toEqual([ACCESS, ACCESS]);
+    expect(item.delete.mock.calls).toEqual([[], [ACCESS]]);
   });
 
-  it('sends exactly the options it always did outside a job', async () => {
-    await upsertDoc('content', { id: 'c1' });
-    await patchDoc('content', 'c1', { a: 2 });
-    await deleteDoc('content', 'c1');
-    expect(sent()).toMatchObject({ upsert: undefined, patch: undefined, delete: undefined });
-    await deleteDocIfMatch('content', 'c1', '"e1"');
-    expect(sent().delete).toEqual({ accessCondition: { type: 'IfMatch', condition: '"e1"' } });
+  it('lets a write in flight at the abort finish, then refuses the next write that starts', async () => {
+    // The mocked SDK answers as Cosmos does when handed an abortSignal: the
+    // service applies the write, and the client promise rejects if the
+    // signal fired while the request was pending (an uncertain commit).
+    const applied = [];
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    items.upsert.mockImplementationOnce(async (doc, options) => {
+      applied.push(doc.id);
+      await gate;
+      if (options?.abortSignal?.aborted) {
+        throw Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+      }
+      return { resource: doc };
+    });
+    const job = new AbortController();
+    await runAsJob(job.signal, async () => {
+      const inFlight = upsertDoc('content', { id: 'c1' });
+      await calledTimes(items.upsert, 1);
+      job.abort(timeoutReason());
+      release();
+      await expect(inFlight).resolves.toEqual({ id: 'c1' });
+      await expect(upsertDoc('content', { id: 'c2' })).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
+    });
+    expect(applied).toEqual(['c1']);
+    expect(items.upsert).toHaveBeenCalledTimes(1);
   });
 });
