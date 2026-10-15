@@ -248,6 +248,12 @@ export function buildListQuery(query) {
     typeClause(queryLower(query, "type"), parameters),
     kind ? kindFilterClause(kind, parameters) : null,
     ideaOrigin ? ideaOriginFilterClause(ideaOrigin, parameters) : null,
+    (() => {
+      const search = queryLower(query, "search") || queryLower(query, "q");
+      if (!search) return null;
+      parameters.push({ name: "@search", value: search });
+      return '(CONTAINS(LOWER(c.title), @search) OR CONTAINS(LOWER(c["Title"]), @search) OR CONTAINS(LOWER(c.summary), @search))';
+    })(),
   ].filter(Boolean);
 
   let text = `SELECT TOP @limit ${PROJECTION} FROM c`;

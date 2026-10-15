@@ -57,10 +57,11 @@
 # against Microsoft's plan comparison on 2026-09-02, none of them is.
 #
 # What Standard bought and this estate did not use: the 99.95% SLA, bandwidth
-# overage at USD 0.20/GB (Free has none — past 100 GB the site stops serving,
-# which Cloudflare caching in front makes unlikely), networking.allowedIpRanges,
-# bring-your-own-Functions linking, custom auth registrations, private
-# endpoints. About USD 9 a month, the workload's one fixed line.
+# overage at USD 0.20/GB (Free has none — past 100 GB the site stops serving;
+# apex DNS routes directly to SWA, so apex traffic counts against this 100 GB quota
+# directly and is monitored by the swa_bandwidth alert in observability.tf),
+# networking.allowedIpRanges, bring-your-own-Functions linking, custom auth
+# registrations, private endpoints. About USD 9 a month, the workload's one fixed line.
 #
 # Microsoft documents moving between Free and Standard in either direction,
 # so this is a two-way door: a third custom domain or a bandwidth overage is

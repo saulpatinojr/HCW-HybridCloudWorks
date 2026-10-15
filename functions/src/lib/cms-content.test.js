@@ -234,6 +234,21 @@ describe("cms content list taxonomy filters and ordering (ADR 0033)", () => {
     expect(JSON.parse(bad.body).error).toContain(LIST_SORT_FIELDS.join(", "));
     expect(store.queryDocs).toHaveBeenCalledTimes(2);
   });
+
+  it("?search= filters on title or summary with CONTAINS (AP-F6, #930)", async () => {
+    const store = makeStore();
+    const h = createCmsContentHandlers({ guard: allowGuard, store });
+
+    await h.list(makeRequest({ query: { search: "Kubernetes" } }), context);
+    const [, query, params] = store.queryDocs.mock.calls[0];
+    expect(query).toContain("CONTAINS(LOWER(c.title), @search)");
+    expect(query).toContain("CONTAINS(LOWER(c[\"Title\"]), @search)");
+    expect(query).toContain("CONTAINS(LOWER(c.summary), @search)");
+    expect(params).toContainEqual({
+      name: "@search",
+      value: "kubernetes",
+    });
+  });
 });
 
 describe("content versions (ADR 0033 §1: written on every save, read by nothing until now)", () => {

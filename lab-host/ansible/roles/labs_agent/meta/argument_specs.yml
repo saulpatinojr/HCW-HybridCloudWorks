@@ -195,3 +195,8 @@ argument_specs:
         required: false
         default: https://deb.nodesource.com/node_26.x
         description: NodeSource repository for the Node.js 26 line.
+      labs_agent_timeout_stop_sec:
+        type: int
+        required: false
+        default: 240
+        description: systemd TimeoutStopSec for graceful shutdown while jobs finish (LAB-13, #959).

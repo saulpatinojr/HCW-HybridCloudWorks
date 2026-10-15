@@ -243,9 +243,16 @@ async function shutdown(signal) {
   log.info(`${signal} received; finishing active jobs (${activeJobs})...`);
   await sendHeartbeat('stopping');
 
-  const deadline = Date.now() + 60_000;
+  // Longest capability takes up to 195s (lib/capabilities.js). With systemd
+  // TimeoutStopSec=240, 210s gives in-flight jobs room to finish cleanly (LAB-13, #959).
+  const timeoutMs = Number(process.env.LABS_AGENT_SHUTDOWN_TIMEOUT_MS || 210_000);
+  const deadline = Date.now() + timeoutMs;
   while (activeJobs > 0 && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 1000));
+  }
+
+  if (activeJobs > 0) {
+    log.error(`shutdown deadline exceeded with ${activeJobs} active job(s) still running; exiting`);
   }
 
   await sendHeartbeat('offline');
