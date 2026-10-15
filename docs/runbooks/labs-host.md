@@ -2025,8 +2025,11 @@ fix is installed.
   dated from the first night the idle reboot saw it (the marker's own time
   moves with every upgrade that rewrites it): the 04:30 reboot (next
   bullet) waits for a night with nobody logged in and no lab job or Coder
-  workspace up, so the owner's window is to log out before 04:30, or to run
-  `sudo reboot` at a time of their choosing; a pending line a week old is
+  workspace up, so the owner's window is to log out before 04:30, or to
+  reboot at a time of their choosing (bash, on the host,
+  `sudo systemctl start hcw-reboot-when-idle.service` asks the same
+  questions and reboots only when they all come back idle; see the next
+  bullet for `sudo reboot`, which asks none); a pending line a week old is
   the sign that neither has happened and a fix that needs the reboot is
   still waiting. An alert on those rows is not built yet: that is PLAT-4's
   work, not this page's.
@@ -2062,8 +2065,15 @@ fix is installed.
   next night. **From the seventh day pending, each `deferred:` line is at
   `err` and ends `overdue at 7: log out before 04:30, or reboot at a time
   of your choosing`**: that is the line to act on, by logging out before
-  04:30, stopping a workspace left running, or running `sudo reboot` once
-  no lab job is running. A run of `deferred: the lab agent did not confirm
+  04:30, stopping a workspace left running, or rebooting now. To reboot now
+  with every check above, bash, on the host:
+  `sudo systemctl start hcw-reboot-when-idle.service`. Good is the host
+  going down within about a minute; a `deferred:` line in
+  `sudo journalctl -t hcw-reboot-when-idle -n 5 --no-pager` names what is
+  still up. `sudo reboot` is an override that asks nothing: it ends any
+  login session, a running lab job (reported to its visitor as interrupted,
+  LAB-13) and any Coder workspace in use, so use it only when that is
+  intended (CodeRabbit on #1191). A run of `deferred: the lab agent did not confirm
   it was idle` nights means the agent has a job that does not end, is
   stuck, or is older than the acknowledgement; bash, on the host,
   `systemctl status hcw-labs-agent --no-pager` and `sudo journalctl -u
