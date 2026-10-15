@@ -24,7 +24,8 @@ import { roleLabel, roleLevel, satisfiesRole } from '@/config/adminNav';
  * user reads the same sentence under the button. `aria-disabled` rather than
  * `disabled`, deliberately: a `disabled` button leaves the tab order and
  * announces nothing, which is a control that vanished rather than one that
- * explains itself (ConfirmModal.jsx takes the same view of window.confirm).
+ * explains itself (ConfirmModal.jsx takes the same view of the browser's own
+ * confirm dialog).
  *
  * THIS IS NOT A SECURITY CONTROL. The server's requireRole still answers
  * every request on its own; this only stops the admin finding that out from
