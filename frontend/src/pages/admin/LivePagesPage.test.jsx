@@ -52,6 +52,7 @@ const rows = vi.hoisted(() => ({ standIn: false }));
 vi.mock('./livePages/LivePageRow', async (importOriginal) => {
   const { default: LivePageRow } = await importOriginal();
   return {
+    /** The real row, or a bare element when a test sets `rows.standIn` (#1194). */
     default: (props) =>
       rows.standIn ? <div data-testid="live-page-row" /> : <LivePageRow {...props} />,
   };

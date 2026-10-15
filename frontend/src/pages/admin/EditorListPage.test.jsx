@@ -47,6 +47,7 @@ const rows = vi.hoisted(() => ({ standIn: false }));
 vi.mock('./editor-list/LiveItemRow', async (importOriginal) => {
   const { default: LiveItemRow } = await importOriginal();
   return {
+    /** The real row, or a bare element when a test sets `rows.standIn` (#1194). */
     default: (props) =>
       rows.standIn ? <div data-testid="live-item-row" /> : <LiveItemRow {...props} />,
   };
