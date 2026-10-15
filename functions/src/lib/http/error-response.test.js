@@ -49,4 +49,19 @@ describe('errorResponse (AP-B10)', () => {
     const parsed = JSON.parse(res.body);
     expect(parsed.correlationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
+
+  describe('getCorrelationId helper', () => {
+    it('returns invocationId when present', () => {
+      expect(getCorrelationId({ invocationId: 'custom-inv' })).toBe('custom-inv');
+    });
+
+    it('returns traceparent when invocationId is missing', () => {
+      expect(getCorrelationId({ traceContext: { traceparent: 'tp-abc' } })).toBe('tp-abc');
+    });
+
+    it('generates uuid when context is empty or undefined', () => {
+      expect(getCorrelationId(null)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    });
+  });
 });
+
