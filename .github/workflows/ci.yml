@@ -551,6 +551,15 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/labs_agent/tests/hcw-labs-agent.service.test.sh
 
+      # /usr/local/libexec/hcw-labjob-sweep, which the agent's unit runs as
+      # root before the agent starts and after it exits, removes only
+      # containers with the agent's job label, through the daemon's own
+      # socket, and fails when Docker refuses (CodeRabbit on #1188). Run
+      # against a stand-in for docker; needs neither root nor Docker.
+      - name: hcw-labjob-sweep test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/labs_agent/tests/hcw-labjob-sweep.test.sh
+
       # The lab agent's Docker socket proxy is HAProxy with a configuration
       # this repository writes (LAB-5). scripts/lab-host-docker-proxy.test.mjs
       # evaluates its rules; this renders it with this job's ansible-core and

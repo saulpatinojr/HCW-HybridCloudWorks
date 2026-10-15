@@ -155,6 +155,7 @@ const supervisor = createShutdown({
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
+/** One claim attempt per tick, refused while stopping or with every slot taken or promised. */
 async function poll() {
   // The slot is reserved BEFORE the await, not after (T-744). The active
   // count only moves inside the supervisor's execute, which runs after
@@ -187,6 +188,7 @@ async function poll() {
   }
 }
 
+/** Announces the agent idle, then starts the heartbeat and poll timers and polls once at once. */
 async function start() {
   log.info(`agent ${config.agentId} v${AGENT_VERSION} starting against ${config.apiBase}`);
   log.info(
@@ -201,11 +203,15 @@ async function start() {
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
-// systemd delivers SIGTERM to this process alone (KillMode=mixed in
-// hcw-labs-agent.service.j2), never to the docker CLI children; what happens
-// to the jobs is the supervisor's decision, within the budget the unit's
-// TimeoutStopSec covers. The poll timer goes first, so no new claim is sent
-// once stopping has begun.
+/**
+ * The signal handler. systemd delivers SIGTERM to this process alone
+ * (KillMode=mixed in hcw-labs-agent.service.j2), never to the docker CLI
+ * children; what happens to the jobs is the supervisor's decision, within
+ * the budget the unit's TimeoutStopSec covers. The poll timer goes first, so
+ * no new claim is sent once stopping has begun.
+ *
+ * @param {'SIGTERM'|'SIGINT'} signal
+ */
 function stop(signal) {
   for (const timer of timers) clearInterval(timer);
   supervisor.shutdown(signal);

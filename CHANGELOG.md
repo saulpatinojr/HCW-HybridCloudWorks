@@ -42,7 +42,14 @@ This project has not cut a tagged release; entries are grouped under
   `.env.example`. `scripts/lab-job-limits.test.mjs` checks that 30 s
   covers the 5 s budget plus both heartbeats, and that the env template
   renders every limit. `tests/hcw-labs-agent.service.test.sh` renders the
-  unit and env file with the role's values in CI. On the host after the
+  unit and env file with the role's values in CI. The containers are the
+  unit's to clean up, not the process's: a removal can take 10 s, longer
+  than the 5 s window, and a crash removes nothing. The unit therefore runs
+  the new `/usr/local/libexec/hcw-labjob-sweep` as root after the agent
+  exits and before it starts, removing every container labelled
+  `hcw.lab-job` through the daemon's own socket. The proxy allowlist is
+  unchanged, and `tests/hcw-labjob-sweep.test.sh` runs the sweep in CI
+  against a stand-in for `docker`. On the host after the
   next `bootstrap.sh`. Two LAB-13 asks stay open on #959: reboot only when
   no job runs, and a hash-locked ansible-core.
 - **The admin menu is cut to the signed-in role, the role is printed under

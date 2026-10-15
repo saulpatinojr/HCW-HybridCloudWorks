@@ -42,6 +42,13 @@
  * same instant, and a job survived only because the proxy refused the
  * forwarded kill.
  *
+ * The report window is this module's; the containers are not. A removal
+ * may take REMOVE_TIMEOUT_MS (10 s), longer than the default budget, and a
+ * crash removes nothing, so the unit sweeps every container carrying the
+ * job label as root after this process exits and before the next one
+ * starts (roles/labs_agent/files/hcw-labjob-sweep, CodeRabbit on #1188).
+ * The removal here is the fast path; the sweep is the guarantee.
+ *
  * Everything the module touches is injected, so lib/shutdown.test.js runs a
  * shutdown against fake jobs, a fake API and a fake exit with no Docker, no
  * network and no signal.
@@ -109,6 +116,16 @@ export function createShutdown({
   const active = new Set();
   let stopping = false;
 
+  /**
+   * Runs one claimed job and reports its terminal status: refused when no
+   * local recipe matches its type, `failed` with INTERRUPTED_OUTPUT when a
+   * shutdown aborted it or its claim came back after the signal, otherwise
+   * the container's own result. Never throws; a report that cannot be sent
+   * is logged and left to the claim lease.
+   *
+   * @param {{ id: string, claimId: string, type: string }} job  as lib/api.js claimJob returns it
+   * @returns {Promise<void>}
+   */
   async function execute(job) {
     const capability = capabilities[job.type];
 
@@ -205,6 +222,15 @@ export function createShutdown({
     return true;
   }
 
+  /**
+   * The stop, once however many signals arrive: abort every job, send
+   * `stopping` beside their reports, wait for them within the budget, send
+   * `offline`, exit 0. Containers the drain did not see removed are the
+   * unit's sweep's (the module comment says why).
+   *
+   * @param {string} signal  the signal's name, for the journal line
+   * @returns {Promise<void>}
+   */
   async function shutdown(signal) {
     if (stopping) return;
     stopping = true;

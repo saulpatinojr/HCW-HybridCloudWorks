@@ -102,9 +102,15 @@ that made it the right call before the ADR said so:
    its container through the proxy, and reports it `failed` with
    *The lab host was restarting and this job was interrupted. Submit it
    again.* It then waits up to `LABS_AGENT_SHUTDOWN_TIMEOUT_MS` for those
-   reports, says `offline`, and exits. `tests/hcw-labs-agent.service.test.sh`
-   renders the unit and the env file with the role's defaults and checks
-   those lines.
+   reports, says `offline`, and exits. A removal can take longer than that
+   window, and a crash removes nothing, so the unit itself owns the
+   containers: `/usr/local/libexec/hcw-labjob-sweep` (from `files/`) runs as
+   root after the agent exits and before it starts, and removes every
+   container labelled `hcw.lab-job` through the daemon's own socket.
+   `tests/hcw-labs-agent.service.test.sh` renders the unit and the env file
+   with the role's defaults and checks those lines;
+   `tests/hcw-labjob-sweep.test.sh` tests the sweep against a stand-in for
+   `docker`.
 
 `lib/docker-runner.js` stages each job's payload under `os.tmpdir()` and
 bind-mounts that path into the job container. With `PrivateTmp` the unit's

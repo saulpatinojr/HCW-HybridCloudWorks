@@ -38,6 +38,18 @@ ExecStart=/usr/bin/node index.js
 # tests/hcw-labs-agent.service.test.sh the rendered lines.
 KillMode=mixed
 TimeoutStopSec={{ labs_agent_timeout_stop_sec }}
+# The agent's report window is shorter than a container removal can take,
+# and a crash removes nothing, so the containers themselves are this unit's
+# to clean up, not the process's (CodeRabbit on #1188): after the agent
+# exits, for a stop and a crash alike, and again before it starts, so a host
+# that went down mid-job is swept before the first claim, every container
+# with the job label is removed. No agent process runs at either point, so
+# each one is an orphan. `+` runs the sweep as root on the daemon's own
+# socket, because the proxy above lists no containers; the agent itself
+# keeps none of that privilege (files/hcw-labjob-sweep,
+# tests/hcw-labjob-sweep.test.sh).
+ExecStartPre=+/usr/local/libexec/hcw-labjob-sweep
+ExecStopPost=+/usr/local/libexec/hcw-labjob-sweep
 # The agent starts its error lines with <3> and its warnings with <4>
 # (vps-agent/lib/log.js), and journald turns that prefix into the line's
 # priority. systemd's default, written down because the data collection rule

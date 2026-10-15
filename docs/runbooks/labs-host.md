@@ -588,6 +588,12 @@ interrupts every job it holds:
 3. It sends `stopping` and waits up to `LABS_AGENT_SHUTDOWN_TIMEOUT_MS` for
    those reports (5000, the role's `labs_agent_shutdown_timeout_ms`).
 4. It sends `offline` and exits, inside the unit's `TimeoutStopSec=30`.
+5. systemd then runs `/usr/local/libexec/hcw-labjob-sweep` as root, which
+   removes any container still labelled `hcw.lab-job`. It runs again before
+   the agent next starts. A removal can outlast the agent's 5 s window, and
+   a crash removes nothing, so no container outlives the process that ran
+   it. When it removed one, the journal says `removed 1 lab job
+   container(s) that no agent owned`.
 
 A claim already sent when the signal lands is waited for in the same
 budget, and its job is reported the same way without being started. This

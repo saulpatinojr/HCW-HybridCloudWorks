@@ -231,6 +231,17 @@
   when: labs_agent_configured | bool
   notify: Restart hcw-labs-agent
 
+# The unit runs this as root before the agent starts and after it exits, so
+# a job container the agent did not finish removing never outlives it
+# (CodeRabbit on #1188). Installed before the unit that names it.
+- name: Install the orphaned lab job container sweep
+  ansible.builtin.copy:
+    src: hcw-labjob-sweep
+    dest: /usr/local/libexec/hcw-labjob-sweep
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Install the agent systemd unit
   ansible.builtin.template:
     src: hcw-labs-agent.service.j2

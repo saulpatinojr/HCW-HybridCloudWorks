@@ -9,8 +9,10 @@
 # main process is node itself, not a shell that would swallow the signal),
 # the stop timeout is the 30 s that covers the agent's shutdown budget and
 # its two heartbeats (scripts/lab-job-limits.test.mjs holds that sum), the
-# env file carries that budget, and the unit keeps its failure notifier and
-# its Docker dependency. Before #959's fix the unit left KillMode at
+# env file carries that budget, the unit keeps its failure notifier and its
+# Docker dependency, and it sweeps orphaned job containers as root before
+# the agent starts and after it exits (files/hcw-labjob-sweep, which
+# tests/hcw-labjob-sweep.test.sh tests on its own). Before #959's fix the unit left KillMode at
 # control-group, so systemd signalled the docker CLI with the agent, and no
 # test rendered the unit at all.
 #
@@ -100,6 +102,14 @@ check "the env file carries the shutdown budget from the role's defaults" \
   "grep -qxF 'LABS_AGENT_SHUTDOWN_TIMEOUT_MS=${shutdown_ms}' '${envfile}'"
 check "the role installs both templates" \
   "grep -qF 'src: hcw-labs-agent.service.j2' '${role}/tasks/main.yml' && grep -qF 'src: labs-agent.env.j2' '${role}/tasks/main.yml'"
+check "orphaned job containers are swept as root before the agent starts" \
+  "grep -qxF 'ExecStartPre=+/usr/local/libexec/hcw-labjob-sweep' '${unit}'"
+check "and again after it exits, for a stop and a crash alike" \
+  "grep -qxF 'ExecStopPost=+/usr/local/libexec/hcw-labjob-sweep' '${unit}'"
+sweep_at="$(grep -nF 'dest: /usr/local/libexec/hcw-labjob-sweep' "${role}/tasks/main.yml" | cut -d: -f1)"
+unit_at="$(grep -nF 'src: hcw-labs-agent.service.j2' "${role}/tasks/main.yml" | cut -d: -f1)"
+check "the role installs the sweep the unit names, before the unit" \
+  "[ -f '${role}/files/hcw-labjob-sweep' ] && [ -n '${sweep_at}' ] && [ -n '${unit_at}' ] && [ '${sweep_at}' -lt '${unit_at}' ]"
 
 echo "# ${passed} passed, ${failed} failed"
 [ "${failed}" -eq 0 ]
