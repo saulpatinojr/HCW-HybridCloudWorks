@@ -14,6 +14,11 @@
  * reversible action trains the hand to click through it. The URL of an
  * archived row is remembered so it leaves the list without a refetch, and
  * comes back the same way when Undo succeeds.
+ *
+ * Archive needs the publisher role, as the Delete it replaced did: taking a
+ * page off the public site is a publisher's action, and the API refuses an
+ * editor's `published → archived` (content-update.js), as it refuses the
+ * edge back. The refusal is shown under the list like any other.
  */
 import React, { useCallback, useState } from 'react';
 import { ToastAction } from '@/components/ui/toast';

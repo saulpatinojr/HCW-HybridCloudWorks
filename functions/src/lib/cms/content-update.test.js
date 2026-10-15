@@ -310,6 +310,62 @@ describe("transitionContentStatus", () => {
     expect(store.patchDoc).not.toHaveBeenCalled();
   });
 
+  /**
+   * Taking a page off the public site stays a publisher action (AP-F13,
+   * #937): Live Pages' Archive replaced softDeleteLivePage, which required
+   * publisher, so every edge OUT of published is gated like every edge into
+   * it. The document's status is only known after the read, so this refusal
+   * is the transitioner's, after it; an editor keeps every edge that starts
+   * anywhere else.
+   */
+  it("reserves every edge out of published for publishers — an editor's archive gets 403", async () => {
+    const live = () => ({ id: "c1", contentStatus: "published", Live: true });
+    const editor = createContentTransitionHandler({
+      guard: guardAs("editor"),
+      store: makeStore({ readDoc: vi.fn(async () => live()) }),
+      ...fixed,
+    });
+    for (const newStatus of ["archived", "editing", "inspected", "rejected"]) {
+      const res = await editor(makeRequest({ contentId: "c1", newStatus }), context);
+      expect(res.status, newStatus).toBe(403);
+      expect(JSON.parse(res.body).error).toMatch(/publisher access required to take a live page off the site/);
+    }
+
+    const store = makeStore({ readDoc: vi.fn(async () => live()) });
+    const publisher = createContentTransitionHandler({
+      guard: guardAs("publisher"),
+      store,
+      ...fixed,
+    });
+    const res = await publisher(
+      makeRequest({ contentId: "c1", newStatus: "archived", reviewNotes: "Archived from Live Pages" }),
+      context,
+    );
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ from: "published", to: "archived" });
+    expect(store.patchDoc.mock.calls[0][2]).toMatchObject({ contentStatus: "archived", Live: false });
+  });
+
+  it("leaves an editor every edge that starts off the site: archiving a rejected item, rejecting one in review", async () => {
+    for (const [contentStatus, newStatus] of [
+      ["rejected", "archived"],
+      ["in_review", "rejected"],
+      ["inspected", "approved"],
+    ]) {
+      const store = makeStore({
+        readDoc: vi.fn(async () => ({ id: "c1", contentStatus })),
+      });
+      const h = createContentTransitionHandler({
+        guard: guardAs("editor"),
+        store,
+        ...fixed,
+      });
+      const res = await h(makeRequest({ contentId: "c1", newStatus }), context);
+      expect(res.status, `${contentStatus} → ${newStatus}`).toBe(200);
+      expect(store.patchDoc).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("lets a publisher publish from an eligible status, stamping Live and publishedAt", async () => {
     const store = makeStore({
       readDoc: vi.fn(async () => ({
@@ -375,8 +431,11 @@ describe("transitionContentStatus", () => {
         contentStatus: "published_news",
       })),
     });
+    // A publisher, because the normalised status is `published` and leaving
+    // it is a publisher's edge (AP-F13, #937): the legacy spelling is read
+    // as live by the gate too.
     const h = createContentTransitionHandler({
-      guard: guardAs("editor"),
+      guard: guardAs("publisher"),
       store,
       ...fixed,
     });

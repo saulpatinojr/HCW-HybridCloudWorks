@@ -28,7 +28,7 @@ import { useLivePageArchive } from './livePages/useLivePageArchive';
 const LIVE_PAGES_HELP = [
   'What is here: every page visitors can open right now — the records whose Live flag is set, with the URL the site serves them at.',
   'Nothing is drafted or approved here; this is the end of the pipeline. Open Editor to change a page, Open Live Page to see it as a visitor does.',
-  'Archive takes the page off the site at once and lists it on the Editor page’s Archive board; the toast offers Undo for ten seconds. After that, Restore to live and Delete permanently are on the Archive board.',
+  'Archive takes the page off the site at once and lists it on the Editor page’s Archive board; the toast offers Undo for ten seconds. After that, Restore to live and Delete permanently are on the Archive board. Archive, Undo and Restore need the publisher role: taking a page off the site, or putting it back, is a publisher’s action.',
   'Legacy pages from the retired blogs collection can be included with the checkbox; they are read-only here.',
 ];
 

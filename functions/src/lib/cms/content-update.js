@@ -247,6 +247,7 @@ export function createContentStatusTransitioner({
     reviewNotes = "",
     reviewedBy = "admin",
     actor = {},
+    actorRole = null,
     userAgent = null,
     authMethod = "entra_bearer_token",
     legacyBlogId = null,
@@ -266,6 +267,27 @@ export function createContentStatusTransitioner({
     const currentStatus = data.contentStatus || "ingested";
     const normalizedCurrentStatus =
       normalizeCurrentStatusForBlogOnly(currentStatus);
+
+    // Every edge OUT of published is a publisher's, like every edge into it
+    // (transitionRequestRefusal). A document in `published` is on the public
+    // site whatever its Live flag says (public-reads.js PUBLIC_STATUSES), so
+    // archiving it, sending it back to the editor or rejecting it takes a
+    // page off the site — the gate softDeleteLivePage had before Live Pages'
+    // Archive replaced it (AP-F13, #937). Checked here rather than with the
+    // request's other refusals because the request names only where the
+    // document is going; where it is takes the read. A caller that passes no
+    // role (the Telegram bot, which answers one owner chat) is not gated here.
+    if (
+      actorRole !== null &&
+      normalizedCurrentStatus === "published" &&
+      !PUBLISHING_ROLES.includes(String(actorRole || "").toLowerCase())
+    ) {
+      return {
+        ok: false,
+        status: 403,
+        error: "publisher access required to take a live page off the site",
+      };
+    }
 
     // The Drafts stage's edges (drafting -> in_review, in_review -> drafting)
     // belong to lib/cms/drafts-handlers.js, which checks where the article
@@ -374,7 +396,9 @@ const PUBLISHING_ROLES = ["publisher", "super_admin"];
  * What refuses a transition request before any read: the live transition
  * for a non-publisher (403 — the dedicated publishContent endpoint enforces
  * the same boundary), then the request-shape rules of
- * validateTransitionRequest. Null when nothing refuses.
+ * validateTransitionRequest. Null when nothing refuses. The edge OUT of
+ * published is refused for the same role by the transitioner, once the read
+ * has said the document is there (AP-F13, #937).
  */
 function transitionRequestRefusal(auth, { normalizedStatus, ...request }) {
   if (
@@ -505,6 +529,7 @@ export function createContentTransitionHandler({
         reviewNotes,
         reviewedBy,
         actor: user,
+        actorRole: auth.role,
         userAgent: request.headers?.get?.("user-agent") || null,
         legacyBlogId,
       });
