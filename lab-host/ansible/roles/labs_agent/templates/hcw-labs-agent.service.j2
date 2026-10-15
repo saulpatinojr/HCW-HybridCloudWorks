@@ -1,7 +1,9 @@
 # {{ ansible_managed }}
 [Unit]
 Description=HCW Labs VPS agent (vps-agent)
-# When Restart= gives up, say so where Azure can hear it (LAB-2).
+# Say so where Azure can hear it on every failure (LAB-2). With systemd's
+# default RestartMode=normal that includes each one Restart= retries, not
+# only the last (systemd 259; review of #1188).
 OnFailure=hcw-unit-failed@%n.service
 Documentation=https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/vps-agent
 After=network-online.target docker.service
@@ -43,8 +45,11 @@ TimeoutStopSec={{ labs_agent_timeout_stop_sec }}
 # to clean up, not the process's (CodeRabbit on #1188): after the agent
 # exits, for a stop and a crash alike, and again before it starts, so a host
 # that went down mid-job is swept before the first claim, every container
-# with the job label is removed. No agent process runs at either point, so
-# each one is an orphan. `+` runs the sweep as root on the daemon's own
+# with the job label is removed. No agent runs at either point, so each one
+# is an orphan. The sweep judges by what is left running, not by what
+# `docker rm` answered, because the agent's own removal may still be at work
+# when it runs, and fails only on a container still running at its 20 s
+# deadline, inside TimeoutStopSec. `+` runs the sweep as root on the daemon's own
 # socket, because the proxy above lists no containers; the agent itself
 # keeps none of that privilege (files/hcw-labjob-sweep,
 # tests/hcw-labjob-sweep.test.sh).

@@ -11,32 +11,70 @@
 # concurrency limit (CodeRabbit on #1188).
 #
 # hcw-labs-agent.service runs this as root (the `+` prefix) after the agent
-# exits (ExecStopPost=, which systemd runs after a stop and after a crash
-# alike) and before it starts (ExecStartPre=, so a host that went down
-# mid-job is swept before the first claim). At both points no agent process
-# is running, so every labelled container is an orphan. Only labelled
+# exits (ExecStopPost=, which systemd runs after a stop, after a crash and
+# after a failed start alike) and before it starts (ExecStartPre=, so a host
+# that went down mid-job is swept before the first claim). No agent runs at
+# either point, so every labelled container is an orphan. Only labelled
 # containers are touched: Coder workspaces and the socket proxy carry no
 # such label.
+#
+# The verdict is what is left running, not what `docker rm` said. After a
+# graceful stop the agent's own `docker rm -f` may still be at work, and a
+# job run with --rm may be removing itself; a second removal of either gets
+# Docker's "removal of container ... is already in progress" conflict, which
+# `--force` does not forgive, although the container is going. So rm's exit
+# status is ignored, the label is listed again, and the loop ends when
+# nothing labelled is left or at the deadline (20 s, inside the unit's 30 s
+# stop timeout). The run fails only when a labelled container is still
+# running, restarting or paused then. A stopped one Docker cannot remove
+# (a `dead` container) is a warning, not a failure: it holds no CPU or
+# memory, and failing on it would keep the agent from ever starting.
 #
 # The daemon's own socket, not the agent's proxy: the unit's DOCKER_HOST
 # names the proxy, whose allowlist (templates/docker-proxy.haproxy.cfg.j2)
 # has no container listing, and the unit's Environment= applies to these
 # lines too.
 #
-# Prints how many it removed, or nothing. Exits non-zero when Docker cannot
-# list or remove them: that fails the start, which Restart= tries again, or
-# marks the stop failed, which OnFailure= reports. docker is taken from PATH,
-# so tests/hcw-labjob-sweep.test.sh runs it against a stand-in.
+# Journal lines carry counts, never ids. Exits non-zero when Docker cannot
+# list the containers or one is still running at the deadline. On a start
+# that failure is retried by Restart=, and on a start or a stop it reaches
+# Azure through OnFailure=, which systemd 259 fires on every failure,
+# retried or not. docker is taken from PATH, so tests/hcw-labjob-sweep.test.sh
+# runs it against a stand-in; HCW_LABJOB_SWEEP_DEADLINE_S shortens the
+# deadline there.
 set -euo pipefail
 
 export DOCKER_HOST=unix:///var/run/docker.sock
 
 label=hcw.lab-job
-ids="$(docker ps --all --quiet --filter "label=${label}")"
-[ -n "${ids}" ] || exit 0
+deadline=$((SECONDS + ${HCW_LABJOB_SWEEP_DEADLINE_S:-20}))
 
-# Each id is one hex word, so splitting them into arguments is the point.
-# shellcheck disable=SC2086
-set -- ${ids}
-docker rm --force "$@" > /dev/null
-echo "removed $# lab job container(s) that no agent owned"
+found=''
+while :; do
+  ids="$(docker ps --all --quiet --filter "label=${label}")"
+  [ -n "${ids}" ] || break
+  # Each id is one hex word, so splitting them into arguments is the point.
+  # shellcheck disable=SC2086
+  set -- ${ids}
+  [ -n "${found}" ] || found=$#
+  docker rm --force "$@" > /dev/null 2>&1 || true
+  [ "${SECONDS}" -lt "${deadline}" ] || break
+  sleep 1
+done
+[ -n "${found}" ] || exit 0
+
+running="$(docker ps --quiet --filter "label=${label}" --filter status=running --filter status=restarting --filter status=paused)"
+if [ -n "${running}" ]; then
+  # shellcheck disable=SC2086
+  set -- ${running}
+  echo "$# lab job container(s) still running after the sweep; the next lab job may run beside them" >&2
+  exit 1
+fi
+left="$(docker ps --all --quiet --filter "label=${label}")"
+if [ -n "${left}" ]; then
+  # shellcheck disable=SC2086
+  set -- ${left}
+  echo "removed lab job containers that no agent owned; $# stopped one(s) could not be removed and hold no CPU or memory" >&2
+  exit 0
+fi
+echo "removed ${found} lab job container(s) that no agent owned"

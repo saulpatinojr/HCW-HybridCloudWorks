@@ -591,9 +591,12 @@ interrupts every job it holds:
 5. systemd then runs `/usr/local/libexec/hcw-labjob-sweep` as root, which
    removes any container still labelled `hcw.lab-job`. It runs again before
    the agent next starts. A removal can outlast the agent's 5 s window, and
-   a crash removes nothing, so no container outlives the process that ran
-   it. When it removed one, the journal says `removed 1 lab job
-   container(s) that no agent owned`.
+   a crash removes nothing, so the sweep removes what the agent left. When
+   it removed one, the journal says `removed 1 lab job container(s) that no
+   agent owned`. If a labelled container is still running after 20 s, the
+   sweep fails with `1 lab job container(s) still running after the sweep`,
+   and the unit's failure alert fires. A stopped container Docker cannot
+   remove is only a warning, because it holds no CPU or memory.
 
 A claim already sent when the signal lands is waited for in the same
 budget, and its job is reported the same way without being started. This

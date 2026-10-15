@@ -401,7 +401,10 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
-          if grep -qE '^lab-host/|^\.github/workflows/ci\.yml$' <<<"$changed"; then
+          # docker-runner.js too: hcw-labjob-sweep.test.sh checks the
+          # sweep's label against the JOB_LABEL it exports, and a PR that
+          # renamed only the label would otherwise skip that check.
+          if grep -qE '^lab-host/|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$' <<<"$changed"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "lab-host files changed — running all checks"
           else

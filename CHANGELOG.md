@@ -47,8 +47,10 @@ This project has not cut a tagged release; entries are grouped under
   than the 5 s window, and a crash removes nothing. The unit therefore runs
   the new `/usr/local/libexec/hcw-labjob-sweep` as root after the agent
   exits and before it starts, removing every container labelled
-  `hcw.lab-job` through the daemon's own socket. The proxy allowlist is
-  unchanged, and `tests/hcw-labjob-sweep.test.sh` runs the sweep in CI
+  `hcw.lab-job` through the daemon's own socket. It judges by what is left
+  running, since the agent's own removal may still be at work, and fails
+  only when a container is still running at its 20 s deadline. The proxy
+  allowlist is unchanged, and `tests/hcw-labjob-sweep.test.sh` runs the sweep in CI
   against a stand-in for `docker`. On the host after the
   next `bootstrap.sh`. Two LAB-13 asks stay open on #959: reboot only when
   no job runs, and a hash-locked ansible-core.
