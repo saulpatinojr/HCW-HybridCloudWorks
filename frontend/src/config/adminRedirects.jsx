@@ -59,6 +59,11 @@ export function legacyTarget(to, { rest = '', search = '', hash = '' } = {}) {
   return `${path}${query ? `?${query}` : ''}${hash}`;
 }
 
+/**
+ * Replace an old admin path with its new one, carrying the nested segment, the
+ * query and the hash through (legacyTarget), so a bookmarked deep link still
+ * lands where it pointed.
+ */
 function LegacyRedirect({ to }) {
   const { '*': rest = '' } = useParams();
   const { search, hash } = useLocation();

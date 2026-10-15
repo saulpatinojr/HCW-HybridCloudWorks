@@ -348,6 +348,11 @@ function ConnectTab({ isConnected, hasRefreshToken, refreshState, onConnected })
   );
 }
 
+/**
+ * The Recording Hub's Settings tab (see the header): the Plaud connection, what
+ * the refresh timer has done with it, and links to the settings this hub reads
+ * but does not own.
+ */
 export default function SettingsTab({ hub }) {
   return (
     <div className="space-y-8">

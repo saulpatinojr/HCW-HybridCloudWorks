@@ -128,6 +128,12 @@ function applyStatusEditing(updateData, data) {
   }
 }
 
+/**
+ * Going live: the publish dates (the resolved one where there is one, now
+ * otherwise), the target, Live from markLive (true when unsaid), and no
+ * `Status` word on a live page, which a page back from the archive would
+ * otherwise still carry.
+ */
 function applyStatusPublished(updateData, data, ctx) {
   const fallbackTimestamp = ctx.nowIso;
   const resolvedIso = ctx.resolvedPublishedDate ? ctx.resolvedPublishedDate.toISOString() : null;
@@ -172,6 +178,10 @@ function applyStatusRejected(updateData, data, ctx) {
   updateData.scheduledPublishDate = null;
 }
 
+/**
+ * Archiving, under the same two rules as rejecting above: every public gate
+ * turned off, and no schedule left behind.
+ */
 function applyStatusArchived(updateData) {
   updateData.Live = false;
   updateData.Status = 'Archived';

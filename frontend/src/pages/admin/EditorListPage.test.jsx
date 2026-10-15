@@ -120,11 +120,16 @@ describe('EditorListPage', () => {
       archivedAt: '2026-10-15T10:00:00.000Z',
     };
     let live = [liveItem(1)];
+    /**
+     * What the list route answers for a path: the live list, the archived list
+     * with the restored row, or nothing.
+     */
     const board = (path) => {
       if (path.includes('live=true')) return live;
       return path.includes('archived') ? [restored] : [];
     };
     getJSON.mockImplementation((path) => Promise.resolve({ items: board(path) }));
+    /** How many times the page has read the live list, so a restore's re-read can be counted. */
     const liveReads = () =>
       getJSON.mock.calls.filter(([path]) => path.includes('live=true')).length;
     renderPage();

@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { FileText } from 'lucide-react';
 import StatTile from './StatTile';
 
+/** A tile linking to the Review Queue's rejected filter, with `props` overriding any default. */
 function renderTile(props) {
   return render(
     <MemoryRouter>

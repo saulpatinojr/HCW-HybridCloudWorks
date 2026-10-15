@@ -229,6 +229,7 @@ function ReviewLoading() {
   );
 }
 
+/** The review page when its item cannot be read: the reason, Try again, and a way back. */
 function ReviewUnavailable({ error, refresh, navigate }) {
   return (
     <EmptyState
@@ -245,6 +246,10 @@ function ReviewUnavailable({ error, refresh, navigate }) {
   );
 }
 
+/**
+ * The review page for a loaded item: its header, the board for its type and the
+ * sidebar of workflow actions, with the board's last refusal shown.
+ */
 function ReviewContent({ blog, blogId, refresh, navigate, transitions, actions }) {
   const boardLabel = BOARD_LABEL[blog.type] || 'Blog review';
   const boardError = actions.boardError || transitions.errors[blogId] || null;

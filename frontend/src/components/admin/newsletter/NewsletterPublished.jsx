@@ -254,6 +254,11 @@ function IssuePanel({ detail, busy, notice, onCancel, onReschedule, onRetry, onD
   );
 }
 
+/**
+ * The Newsletter Hub's Published tab (see the header): the filtered calendar of
+ * scheduled, sent and failed issues, the chosen issue as sent with its metrics,
+ * and its actions.
+ */
 export default function NewsletterPublished({ initialIssueId = null, today }) {
   const [selectedId, setSelectedId] = useState(initialIssueId);
   const [detail, setDetail] = useState(null);
@@ -308,6 +313,10 @@ export default function NewsletterPublished({ initialIssueId = null, today }) {
   };
 
   const etag = detail?.issue?.etag;
+  /**
+   * Cancel the chosen issue's scheduled send under the detail's ETag; the issue
+   * returns to Drafts.
+   */
   const handleCancel = () =>
     act(
       'cancel',
@@ -333,6 +342,10 @@ export default function NewsletterPublished({ initialIssueId = null, today }) {
         });
       }
     );
+  /**
+   * Send a failed issue back to Drafts as a draft, under the detail's ETag, to
+   * be approved again.
+   */
   const handleRetry = () =>
     act(
       'retry',
@@ -346,6 +359,7 @@ export default function NewsletterPublished({ initialIssueId = null, today }) {
         });
       }
     );
+  /** Copy the chosen issue into a new draft, with a link to Drafts where it lands. */
   const handleDuplicate = () =>
     act(
       'duplicate',

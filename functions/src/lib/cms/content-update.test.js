@@ -322,6 +322,7 @@ describe("transitionContentStatus", () => {
    * anywhere else.
    */
   it("reserves every edge out of published for publishers — an editor's archive gets 403", async () => {
+    /** A published, live page, read afresh for each edge attempted. */
     const live = () => ({ id: "c1", contentStatus: "published", Live: true });
     const editor = createContentTransitionHandler({
       guard: guardAs("editor"),
@@ -744,6 +745,7 @@ function contentAndBlogsStore(initial) {
     ]),
   );
   let version = 0;
+  /** The stored document, or null. */
   const get = (container, id) => docs.get(`${container}/${id}`) ?? null;
   return {
     get,
@@ -791,6 +793,7 @@ function contentAndBlogsStore(initial) {
   };
 }
 
+/** The audit rows a store was asked to write. */
 const auditCalls = (store) =>
   store.upsertDoc.mock.calls.filter(([container]) => container === "audits");
 
@@ -894,6 +897,7 @@ describe("transitionContentStatus under the read's ETag", () => {
   });
 
   it("answers the transitioner's callers the same refusal, and a 404 for a page deleted in between", async () => {
+    /** A store whose content write fails with `code`, read at a fixed ETag. */
     const failWith = (code) =>
       makeStore({
         readDoc: vi.fn(async () => ({
@@ -949,6 +953,10 @@ describe("transitionContentStatus under the read's ETag", () => {
  * exactly those.
  */
 describe("transitionContentStatus and the legacy blogs linked to a page", () => {
+  /**
+   * A live page and four blogs: two linked and public, one linked and not, one
+   * another page's.
+   */
   const initial = () => ({
     "content/c1": {
       id: "c1",
@@ -977,6 +985,7 @@ describe("transitionContentStatus and the legacy blogs linked to a page", () => 
     // Another page's blog.
     "blogs/b4": { id: "b4", sourceContentId: "c9", Live: true },
   });
+  /** The transition handler for a publisher over `store`. */
   const transitionAs = (store) =>
     createContentTransitionHandler({
       guard: guardAs("publisher"),
@@ -987,6 +996,7 @@ describe("transitionContentStatus and the legacy blogs linked to a page", () => 
   it("archives every linked blog the site serves, and Undo brings back exactly those", async () => {
     const store = contentAndBlogsStore(initial());
     const h = transitionAs(store);
+    /** A blog as the store holds it now. */
     const blog = (id) => store.get("blogs", id);
     const b3Before = blog("b3");
 
@@ -1240,6 +1250,9 @@ describe("transitionContentStatus and the legacy blogs linked to a page", () => 
    * last.
    */
   describe("fenced against a transition that lands in between", () => {
+    /**
+     * An archived page and the two linked blogs it archived, stamped with it.
+     */
     const archivedPage = () => ({
       "content/c1": {
         id: "c1",
@@ -1281,6 +1294,7 @@ describe("transitionContentStatus and the legacy blogs linked to a page", () => 
       markLive: false,
       actorRole: "publisher",
     };
+    /** Whether b1 and b2 are on the site, in that order. */
     const blogsPublic = (store) =>
       ["b1", "b2"].map((id) => isPublicDocument(store.get("blogs", id)));
 

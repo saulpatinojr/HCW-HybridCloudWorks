@@ -16,6 +16,7 @@ import { AdminRoleProvider } from '@/hooks/useAdminRole';
 const postJSON = vi.fn();
 vi.mock('@/lib/api', () => ({ postJSON: (...args) => postJSON(...args) }));
 
+/** An archived row, numbered, in the shape the Editor's list route returns it. */
 const archived = (n) => ({
   id: `a${n}`,
   title: `Archived ${n}`,
@@ -42,6 +43,7 @@ function renderOpen(items = [archived(1), archived(2)], { onRestored, role = 'pu
 /** The error authedFetch throws for a refusal: the server's sentence, its status and code. */
 const refusal = (status, message, code) => Object.assign(new Error(message), { status, code });
 
+/** The row a title sits in. */
 const rowOf = (title) => screen.getByText(title).closest('div.rounded-lg');
 
 beforeEach(() => {

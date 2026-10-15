@@ -111,6 +111,11 @@ function undoAction({ pending, onClick }) {
   );
 }
 
+/**
+ * Archive a live page with an Undo toast (see the header): the row in flight,
+ * the rows taken off locally, the last refusal, and why the API would refuse a
+ * row.
+ */
 export function useLivePageArchive() {
   const transitions = useContentTransitions();
   const [archivingId, setArchivingId] = useState('');
@@ -164,6 +169,7 @@ export function useLivePageArchive() {
       setArchivingId('');
       if (!result) return null;
       remember(liveUrlKey(item), true);
+      /** This archive's Undo, which passes itself along so a refused Undo can be offered again. */
       const onUndo = () => undo(item, targetId, handle, onUndo);
       const handle = toast({
         title: 'Archived',

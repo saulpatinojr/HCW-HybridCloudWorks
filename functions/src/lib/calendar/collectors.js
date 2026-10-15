@@ -21,6 +21,9 @@ import {
 const CONTENT_FIELDS =
   'c.id, c.Title, c.title, c.contentStatus, c.Live, c.scheduledPublishDate, c.publishedAt, c.type, c.publishTarget, c["Cloud Provider"], c.cloudProvider, c.publishError, c.scheduledPublishError';
 
+/**
+ * Where a content item opens from the calendar: its page on the Review Queue.
+ */
 const contentHref = (row) => `/admin/review-queue/${encodeURIComponent(row.id)}?source=content`;
 const contentMeta = (row) => ({
   provider: row['Cloud Provider'] || row.cloudProvider || null,
@@ -162,6 +165,10 @@ export async function collectSocialPosts({ store, from, to }) {
 
 // ── speaking ─────────────────────────────────────────────────────────────────
 
+/**
+ * One speaking date as a calendar item, the talk or its CFP deadline, opening
+ * the Speaking page.
+ */
 function speakingItem(row, when, field) {
   const title = row.eventName || row.name || 'Speaking event';
   const common = {

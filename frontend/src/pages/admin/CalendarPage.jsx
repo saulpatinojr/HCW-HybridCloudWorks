@@ -30,6 +30,10 @@ const HELP = [
   'Times are shown in your browser’s time zone, named on the toolbar. The server stores UTC.',
 ];
 
+/**
+ * The Calendar page (see the header): the shared grid, the Unscheduled panel
+ * and the summary links, with both lists read again after every write.
+ */
 export default function CalendarPage() {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();

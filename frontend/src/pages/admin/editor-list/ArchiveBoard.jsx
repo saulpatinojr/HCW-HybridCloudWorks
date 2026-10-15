@@ -64,6 +64,10 @@ const SORT_OPTIONS = [
 
 // ── Archive board row ─────────────────────────────────────────────────────────
 
+/**
+ * One archived page: its title, provider, type and dates, the public URL it
+ * had, and the two ways out of the archive behind the publisher gate.
+ */
 function ArchiveRow({ item, busy, onRestore, onDelete }) {
   const publicUrl = getPublicUrl(item);
   const provider = getProviderDisplay(item);
@@ -255,6 +259,11 @@ function ArchiveContent({ loading, items, filtered, busyId, onRestore, onDelete 
   );
 }
 
+/**
+ * The Archive board (see the header): archived pages behind a disclosure, with
+ * their own search, provider filter and sort, and Restore to live and Delete
+ * permanently on each.
+ */
 export default function ArchiveBoard({ archivedList, loading, onRestored }) {
   const [archiveSearch, setArchiveSearch] = useState('');
   const [archiveProviderFilter, setArchiveProviderFilter] = useState('All');
@@ -272,6 +281,10 @@ export default function ArchiveBoard({ archivedList, loading, onRestored }) {
     deletingId || Object.keys(transitions.loading).find((id) => transitions.loading[id]) || '';
   const actionError = deleteError || Object.values(transitions.errors).find(Boolean) || '';
 
+  /**
+   * Put an archived page back on the site; the row leaves the board, and the
+   * page is asked to read its live list again.
+   */
   const restore = async (item) => {
     const result = await transitions.transition(item, 'published', {
       markLive: true,
@@ -284,6 +297,11 @@ export default function ArchiveBoard({ archivedList, loading, onRestored }) {
     onRestored?.(item);
   };
 
+  /**
+   * Delete the confirmed page for good, only while it is still archived
+   * (expectedStatus), keeping the row and the server's sentence when it
+   * refuses.
+   */
   const deletePermanently = async () => {
     const item = deleteTarget;
     setDeleteTarget(null);
@@ -324,6 +342,7 @@ export default function ArchiveBoard({ archivedList, loading, onRestored }) {
     );
   }, [listed, archiveSearch, archiveProviderFilter, archiveSortField, archiveSortDir]);
 
+  /** Sort by `field`: the same field again flips the direction, a new one starts newest first. */
   function toggleSort(field) {
     if (archiveSortField === field) {
       setArchiveSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));

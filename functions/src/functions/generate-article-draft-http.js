@@ -24,6 +24,10 @@ import {
   createGenerateArticleDraftHandler,
 } from '../lib/content/draft-from-url.js';
 
+/**
+ * generateArticleDraft over the live store and AI, built on each call with the
+ * invocation's context as the drafter's log.
+ */
 const handler = (request, context) =>
   createGenerateArticleDraftHandler({
     guard: getDefaultGuard(),

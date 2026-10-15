@@ -100,6 +100,10 @@ function LivePageRow({ item, archiving, archiveBlockedReason, onArchive }) {
   );
 }
 
+/**
+ * The Live Pages page: every page the site serves, newest first, each with Open
+ * Editor, Archive (a publisher's, with ten seconds of Undo) and Open Live Page.
+ */
 export default function LivePagesPage() {
   const { authReady } = useAuthReady();
   const [includeLegacyPages, setIncludeLegacyPages] = useState(false);

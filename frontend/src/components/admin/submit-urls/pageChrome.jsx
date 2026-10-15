@@ -65,6 +65,10 @@ export function SelectionSummaryCard({
   );
 }
 
+/**
+ * The result banner under the stages: success or error and its message, and on
+ * success a link to the new item in the Review Queue.
+ */
 export default function FeedbackCard({ variant, message, contentId }) {
   const isSuccess = variant === 'success';
   const borderClass = isSuccess

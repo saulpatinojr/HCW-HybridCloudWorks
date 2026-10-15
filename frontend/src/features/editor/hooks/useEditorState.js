@@ -498,6 +498,11 @@ export function useEditorState(blogId, navigate) {
         });
       }
 
+      /**
+       * Move the item to the queue status the editor's publish chose, through
+       * the shared transition, which audits it; live publishing stays on
+       * /admin/publish, so the editor goes there.
+       */
       async function handleQueueTransition() {
         const result = await postJSON('transitionContentStatus', {
           contentId: blogId,

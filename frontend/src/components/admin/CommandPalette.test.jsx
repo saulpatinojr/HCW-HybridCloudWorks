@@ -49,10 +49,14 @@ function renderPalette(role = 'super_admin') {
   );
 }
 
+/** K with a modifier, pressed on the window, where the palette listens. */
 const pressShortcut = (modifier = { ctrlKey: true }) =>
   fireEvent.keyDown(window, { key: 'k', ...modifier });
+/** The palette's search box, by its accessible name. */
 const input = () => screen.getByRole('combobox', { name: 'Search pages and content' });
+/** Every option in the palette's listbox, in order. */
 const options = () => within(screen.getByRole('listbox')).getAllByRole('option');
+/** Set what the search box holds, as typing it would. */
 const type = (value) => fireEvent.change(input(), { target: { value } });
 
 beforeEach(() => {

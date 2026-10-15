@@ -35,6 +35,10 @@ const makeRequest = (body) => ({
   json: async () => body ?? {},
 });
 
+/**
+ * A store whose reads answer an editing item and whose writes succeed, with
+ * `over` replacing any method.
+ */
 function makeStore(over = {}) {
   return {
     readDoc: vi.fn(async () => ({
@@ -288,7 +292,9 @@ describe('unpublishContentToInspected', () => {
 });
 
 describe('deleteContentItem / softDeleteLivePage', () => {
+  /** An error carrying a Cosmos status `code`, as the store throws them. */
   const coded = (code) => Object.assign(new Error(`HTTP ${code}`), { code });
+  /** The archived document a delete reads, with `over` merged in. */
   const stored = (over = {}) => ({
     id: 'c1',
     Title: 'Ten things about Azure',
@@ -296,6 +302,9 @@ describe('deleteContentItem / softDeleteLivePage', () => {
     _etag: '"e7"',
     ...over,
   });
+  /**
+   * deleteContentItem for a publisher over `store`, with `extra` dependencies.
+   */
   const deleteWith = (store, body, extra = {}) =>
     createContentWorkflowHandlers({
       guard: guardAs('publisher'),
@@ -303,6 +312,7 @@ describe('deleteContentItem / softDeleteLivePage', () => {
       ...fixed,
       ...extra,
     }).deleteContentItem(makeRequest(body), context);
+  /** The audit rows a store was asked to write. */
   const auditRows = (store) => store.upsertDoc.mock.calls.filter(([c]) => c === 'audits');
 
   it('hard delete tolerates missing docs like Firestore, before the read and after it', async () => {

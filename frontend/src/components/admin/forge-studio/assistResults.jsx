@@ -158,6 +158,10 @@ function MetadataResult({ result, onApply }) {
   );
 }
 
+/**
+ * The social assist's drafts, one card per network with a copy button, and a
+ * link that opens the Social Hub composer with this piece selected.
+ */
 function SocialResult({ result, contentId }) {
   const posts = listOf(result?.posts);
   return (

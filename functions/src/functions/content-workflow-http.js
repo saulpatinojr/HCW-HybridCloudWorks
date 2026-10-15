@@ -16,6 +16,11 @@ import {
 import { createContentWorkflowHandlers } from '../lib/content-workflow.js';
 import { createDashboardStatsMaintainer } from '../lib/triggers/dashboard-stats.js';
 
+/**
+ * The workflow RPCs over the live store and the default guard, built on each
+ * call, with the dashboard counters moved on a delete the change feed never
+ * delivers.
+ */
 const handlers = () =>
   createContentWorkflowHandlers({
     guard: getDefaultGuard(),

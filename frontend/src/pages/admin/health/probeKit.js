@@ -24,6 +24,7 @@ export const INTEGRATIONS = (group) => ({
   label: 'Integrations',
 });
 export const KEYS = { to: '/admin/integrations?tab=keys', label: 'Keys' };
+/** A fix link to one Platform Settings tab. */
 export const SETTINGS = (tab) => ({
   to: `/admin/platform-settings?tab=${tab}`,
   label: 'Platform Settings',

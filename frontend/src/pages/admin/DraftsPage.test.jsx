@@ -84,6 +84,10 @@ function respond({ drafts = [view(), DOCKER], open = {} } = {}) {
   });
 }
 
+/**
+ * The Drafts page with a link to the Review Queue beside it and a route for it,
+ * so a navigation away from unsaved work has somewhere to land.
+ */
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/admin/drafts']}>

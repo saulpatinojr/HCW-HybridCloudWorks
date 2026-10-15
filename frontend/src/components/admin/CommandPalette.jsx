@@ -85,7 +85,12 @@ export function filterPages(query, items = NAV_ITEMS) {
   });
 }
 
+/** A content result's title, under either casing the list route returns, or "Untitled". */
 const contentTitle = (item) => item.Title || item.title || 'Untitled';
+/**
+ * The line under a content result: its provider and status, so two items with
+ * one title can be told apart.
+ */
 const contentHint = (item) =>
   [item['Cloud Provider'] || item.cloudProvider || item.provider, item.contentStatus]
     .filter(Boolean)
@@ -165,8 +170,16 @@ function PaletteBody({ debounceMs, role, onChoose }) {
     [pages, search.items]
   );
   const activeIndex = Math.min(active, Math.max(options.length - 1, 0));
+  /**
+   * The id an option carries in the DOM, unique to this listbox, which the
+   * combobox names as its active descendant.
+   */
   const optionId = (option) => `${listId}-${option.id}`;
 
+  /**
+   * The combobox's keys: the arrows, Home and End move the highlight while
+   * focus stays in the box, and Enter opens the highlighted entry.
+   */
   const onInputKeyDown = (event) => {
     if (options.length === 0) return;
     if (event.key === 'ArrowDown') {
@@ -294,6 +307,7 @@ export default function CommandPalette({ debounceMs = 250 }) {
   // The shortcut, anywhere in the admin. preventDefault, or the browser
   // answers Ctrl-K with its own address-bar search on top of this.
   useEffect(() => {
+    /** Ctrl-K or Cmd-K toggles the palette from anywhere in the admin. */
     const onKeyDown = (event) => {
       if ((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase() === 'k') {
         event.preventDefault();
@@ -304,6 +318,10 @@ export default function CommandPalette({ debounceMs = 250 }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  /**
+   * Close the palette and go where the chosen option points; with nothing
+   * highlighted there is nowhere to go.
+   */
   const choose = (option) => {
     if (!option) return;
     setOpen(false);

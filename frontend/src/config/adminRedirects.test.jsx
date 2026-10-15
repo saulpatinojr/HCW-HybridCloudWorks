@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { ADMIN_LEGACY_ROUTES, adminLegacyRoutes, legacyTarget } from './adminRedirects';
 import { NAV_ITEMS } from './adminNav';
 
+/** The location the router ends at, path, query and hash, printed for the assertions. */
 function Probe() {
   const { pathname, search, hash } = useLocation();
   return <output data-testid="location">{`${pathname}${search}${hash}`}</output>;

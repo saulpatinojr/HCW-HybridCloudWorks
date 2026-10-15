@@ -51,6 +51,11 @@ const HELP = [
   'Applications are private: nothing here is published. The packet view prints and the export downloads a JSON file you keep.',
 ];
 
+/**
+ * The Ambassador Hub page (see the header): its tabs, chosen by `?tab=`, over
+ * one load of the hub's data, with the selected application and program kept in
+ * the address.
+ */
 export default function AmbassadorPage() {
   const { authReady } = useAuthReady();
   const { toast } = useToast();

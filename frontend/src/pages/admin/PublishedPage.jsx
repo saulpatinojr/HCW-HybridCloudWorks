@@ -224,6 +224,11 @@ function usePublishWorkflow({ navigate, withImageOverride, setLocalLiveOverrides
     }
   };
 
+  /**
+   * Publish an item now through publishContent, to the target its type implies,
+   * show what the server mapped, and open the Social Hub composer when
+   * autoposting is on.
+   */
   const handlePublishNow = async (item) => {
     const selectedProvider = item['Cloud Provider'] || item.cloudProvider || '';
     setPublishError('');

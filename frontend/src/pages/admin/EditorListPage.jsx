@@ -289,6 +289,10 @@ export default function EditorListPage() {
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
+  /**
+   * Recall an item from the Editor board to the Review Queue, noting in the
+   * review the status it left.
+   */
   const doUnpublish = async (item) => {
     setActionError('');
     setActionId(item.id);
@@ -301,6 +305,7 @@ export default function EditorListPage() {
     if (result) navigate('/admin/review-queue');
   };
 
+  /** Archive an item from the Editor board through the shared transition, with Live off. */
   const doArchive = async (item) => {
     setActionError('');
     setActionId(item.id);

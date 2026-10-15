@@ -444,6 +444,10 @@ function typeTile({ types, noun, ...tile }, byType) {
   };
 }
 
+/**
+ * The dashboard's count tiles: one per content type and one for rejected items,
+ * each opening the list it counts.
+ */
 function DashboardStats({ counts }) {
   const tiles = [
     ...TYPE_TILES.map((tile) => typeTile(tile, counts.byType)),

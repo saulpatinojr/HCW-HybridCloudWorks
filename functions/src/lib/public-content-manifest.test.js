@@ -97,6 +97,9 @@ describe('getManifest', () => {
     );
     // Written out whole, not rebuilt from public-reads.js: a permissive edit
     // to the public clause has to fail here too, not ride in by import.
+    /**
+     * The soft-delete clause for one field, as SQL_NOT_SOFT_DELETED spells it.
+     */
     const notSoftDeleted = (field) =>
       `(NOT IS_DEFINED(c.${field}) OR IS_NULL(c.${field}) OR c.${field} = "" OR c.${field} = false OR c.${field} = 0)`;
     expect(PUBLISHED_PREDICATE).toBe(

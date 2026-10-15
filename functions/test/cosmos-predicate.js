@@ -34,8 +34,13 @@ const literal = (raw) => {
   return quoted[2];
 };
 
+/** The literals of an IN list. */
 const listOf = (raw) => raw.split(',').map(literal);
 
+/**
+ * One OR operand's truth for `doc`, in the shapes the header lists; any other
+ * shape throws, so a term this cannot read never passes silently.
+ */
 function term(text, doc) {
   const t = text.trim();
   let m = /^NOT \(c\.(\w+) IN \((.*)\)\)$/.exec(t);

@@ -309,6 +309,11 @@ export class RouteErrorBoundary extends React.Component {
   }
 }
 
+/**
+ * The site's one route table: the public pages, the auth callback, the guarded
+ * admin pages under /admin and, beside them, the old admin paths that redirect
+ * to the renamed ones (config/adminRedirects.jsx).
+ */
 function App() {
   const location = useLocation();
   // NOTHING REACHES MSAL FROM HERE ANY MORE (#531).

@@ -181,6 +181,11 @@ function EditorButton({ canOpenEditor, onClick }) {
   );
 }
 
+/**
+ * The review sidebar's workflow card: the transitions deriveWorkflowFlags
+ * offers for the item's status, disabled while one runs, with the last refusal
+ * shown above them.
+ */
 function WorkflowActionsCard({ blogId, view, actions, navigate }) {
   const flags = deriveWorkflowFlags(view);
   const { transitioning, transitionError } = actions;

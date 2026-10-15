@@ -77,6 +77,7 @@ export const alertHref = (id) => `/admin/health?tab=alerts&alert=${enc(id)}`;
 /** Where the Health Hub lists the Key Vault references that did not resolve. */
 export const UNRESOLVED_SECRETS_HREF = '/admin/health?tab=overview';
 
+/** One reminder, opened on Platform Settings' Reminders tab. */
 export const reminderHref = (id) => `/admin/platform-settings?tab=reminders&reminder=${enc(id)}`;
 
 /** One chapter on the Review tab, its book opened by provider and exam code. */

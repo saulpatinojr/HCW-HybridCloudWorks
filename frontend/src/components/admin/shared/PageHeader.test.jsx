@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import PageHeader from './PageHeader';
 import { NAV_ITEMS } from '@/config/adminNav';
 
+/** The header at `pathname`, so the registry entry it reads is the one that route resolves to. */
 function renderAt(pathname, props = {}) {
   return render(
     <MemoryRouter initialEntries={[pathname]}>

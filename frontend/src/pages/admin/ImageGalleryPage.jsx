@@ -43,6 +43,10 @@ export {
 /** Focuses the upload picker, which UploadPanel renders further down the page. */
 const focusUploadPicker = () => document.getElementById('gallery-files')?.focus();
 
+/**
+ * The Image Gallery page (see the header): the listing, selection and actions
+ * hooks composed over the grid, the pager and the dialogs.
+ */
 export default function ImageGalleryPage() {
   const navigate = useNavigate();
   const location = useLocation();

@@ -30,6 +30,10 @@ const SAVE_STATE_CLASS = {
   error: 'text-destructive',
 };
 
+/**
+ * The note above an article that has left the Drafts stage: where it is now and
+ * how to bring it back, since it is read-only here.
+ */
 function StageNote({ draft }) {
   if (draft.stage === 'in_review') {
     return (

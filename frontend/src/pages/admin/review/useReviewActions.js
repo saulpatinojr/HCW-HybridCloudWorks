@@ -12,6 +12,10 @@ import { useCallback, useState } from 'react';
 import { postJSON } from '@/lib/api';
 import { getPublishTargetForType } from '@/lib/contentModel';
 
+/**
+ * The review page's writes on its item (see the header): save, save then
+ * approve, and the framework delete, each reporting its outcome.
+ */
 export function useReviewActions({ blogId, transitions, navigate, toast }) {
   const [frameworkDeleteOpen, setFrameworkDeleteOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -61,6 +65,10 @@ export function useReviewActions({ blogId, transitions, navigate, toast }) {
     [blogId, navigate, saveFields, transitions]
   );
 
+  /**
+   * Delete the framework the review page shows through the publisher RPC, which
+   * audits the delete itself, and leave only once it landed.
+   */
   const doFrameworkDelete = async () => {
     setFrameworkDeleteOpen(false);
     setSaving('delete');

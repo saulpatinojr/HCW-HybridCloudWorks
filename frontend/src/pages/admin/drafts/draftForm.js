@@ -12,6 +12,7 @@
 export const DRAFTS_ROUTE = 'cms/drafts';
 export const IMPORT_ROUTE = 'cms/drafts/import-repo';
 export const draftRoute = (id) => `${DRAFTS_ROUTE}/${encodeURIComponent(id)}`;
+/** Where an article in review opens: its page on the Review Queue. */
 export const reviewPath = (id) => `/admin/review-queue/${encodeURIComponent(id)}`;
 
 /** The template's two tracks (docs/content/blog-template.md), offered, not enforced. */

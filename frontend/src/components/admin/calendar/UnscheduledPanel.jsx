@@ -15,6 +15,11 @@ import { DRAG_TYPE } from './calendarModel';
 
 const MAX_SHOWN = 12;
 
+/**
+ * The Calendar's Unscheduled panel: approved and forge-ready content with no
+ * publish time, up to MAX_SHOWN of it, each card draggable onto a day or
+ * scheduled from its button.
+ */
 export default function UnscheduledPanel({ items, loading, error, onRetry, onSchedule }) {
   return (
     <Card>
