@@ -32,12 +32,21 @@
  *    it was written. Its existence is root's statement that a reboot is
  *    about to be asked for. Claiming through it could start the very job
  *    the reboot kills; honouring it with no end could stop the host taking
- *    jobs until someone looks. The file's write time bounds it, and `stat`
- *    reads that without reading the file.
- *  - whether it exists cannot be told (stat fails other than not found):
- *    no hold. Refusing every job on a permission fault would take labs down
- *    for visitors, and the cost of the other choice is bounded: a job the
- *    reboot interrupts is reported so within seconds (lib/shutdown.js).
+ *    jobs until someone looks. The file's write time bounds it.
+ *  - whether it exists cannot be told (it cannot be opened for a reason
+ *    other than not found or not permitted, or its descriptor cannot be
+ *    read for its time): no hold. Refusing every job on such a fault would
+ *    take labs down for visitors, and the cost of the other choice is
+ *    bounded: a job the reboot interrupts is reported so within seconds
+ *    (lib/shutdown.js).
+ *
+ * The write time and the expiry come from one open descriptor (CodeQL
+ * js/file-system-race, alert 1404 on #1191). The script replaces the hold
+ * with a rename, so reading the time by path and then the content by path
+ * could pair one file's cap with the next file's expiry. A descriptor keeps
+ * the file it opened, whatever is renamed over the path after, so the pair
+ * is always one file's. Only a file that exists and cannot be opened for
+ * reading has its time read by path, and nothing else is read from it.
  *
  * Every state change is one journal line with no path and no identifier in
  * it: info when a hold starts or lifts, which stays on the host; warn, which
@@ -104,35 +113,71 @@ export function holdPath(env = process.env) {
 }
 
 /**
- * Reads the hold once. Never throws.
+ * The file system calls the reader makes; node:fs in production.
+ *
+ * @typedef {object} HoldFs
+ * @property {(path: string, flags: 'r') => number} openSync         opens the hold once
+ * @property {(fd: number) => { mtimeMs: number }} fstatSync          its write time, from that descriptor
+ * @property {(fd: number, encoding: 'utf8') => string} readFileSync  its content, from that descriptor
+ * @property {(fd: number) => void} closeSync                         on every way out once it is open
+ * @property {(path: string) => { mtimeMs: number }} statSync         only for a hold that exists and cannot be opened
+ */
+
+/** A hold whose content cannot be used: held until its write time plus MAX_HOLD_MS, then expired. */
+const unreadable = (now, written) =>
+  now < written + MAX_HOLD_MS ? { state: 'held-unreadable', until: written + MAX_HOLD_MS } : { state: 'expired' };
+
+/**
+ * Reads the hold once, from one descriptor. Never throws.
  *
  * @param {string} path
  * @param {object} [options]
  * @param {number} [options.now]  epoch milliseconds
- * @param {{ statSync: Function, readFileSync: Function }} [options.fsImpl]  tests only
+ * @param {HoldFs} [options.fsImpl]  tests only
  * @returns {{ state: 'none'|'held'|'held-unreadable'|'expired'|'unknown', until?: number }}
  *   `until` is the epoch millisecond a held state lapses
  */
 export function readHold(path, { now = Date.now(), fsImpl = fs } = {}) {
-  let written;
+  let fd;
   try {
-    written = fsImpl.statSync(path).mtimeMs;
+    fd = fsImpl.openSync(path, 'r');
   } catch (err) {
-    return { state: err?.code === 'ENOENT' || err?.code === 'ENOTDIR' ? 'none' : 'unknown' };
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return { state: 'none' };
+    if (err?.code !== 'EACCES' && err?.code !== 'EPERM') return { state: 'unknown' };
+    // There and not ours to read: its write time still bounds the hold, and
+    // a stat of the path reads that without the content, so there is no
+    // pair to keep together.
+    try {
+      return unreadable(now, fsImpl.statSync(path).mtimeMs);
+    } catch {
+      return { state: 'unknown' };
+    }
   }
-  const cap = written + MAX_HOLD_MS;
-  let text;
   try {
-    text = fsImpl.readFileSync(path, 'utf8');
-  } catch (err) {
-    // Removed between the two reads: the script's own way out.
-    if (err?.code === 'ENOENT') return { state: 'none' };
-    return now < cap ? { state: 'held-unreadable', until: cap } : { state: 'expired' };
+    let written;
+    try {
+      written = fsImpl.fstatSync(fd).mtimeMs;
+    } catch {
+      return { state: 'unknown' };
+    }
+    let text;
+    try {
+      text = fsImpl.readFileSync(fd, 'utf8');
+    } catch {
+      return unreadable(now, written);
+    }
+    const found = EXPIRY.exec(text);
+    if (!found) return unreadable(now, written);
+    const until = Math.min(Number(found[1]) * 1000, written + MAX_HOLD_MS);
+    return now < until ? { state: 'held', until } : { state: 'expired' };
+  } finally {
+    try {
+      fsImpl.closeSync(fd);
+    } catch {
+      // A descriptor that will not close has still been read; the answer
+      // above stands, and this module never throws into the poll.
+    }
   }
-  const found = EXPIRY.exec(text);
-  if (!found) return now < cap ? { state: 'held-unreadable', until: cap } : { state: 'expired' };
-  const until = Math.min(Number(found[1]) * 1000, cap);
-  return now < until ? { state: 'held', until } : { state: 'expired' };
 }
 
 /** The journal line for entering each state, and its level; `none` is said only when a hold lifts. */
@@ -154,7 +199,7 @@ const LINES = {
  * @param {string} deps.path                                   holdPath()
  * @param {{ info: Function, warn: Function }} deps.log        lib/log.js
  * @param {() => number} [deps.now]                            tests only
- * @param {{ statSync: Function, readFileSync: Function }} [deps.fsImpl]  tests only
+ * @param {HoldFs} [deps.fsImpl]                               tests only
  * @returns {() => boolean}
  */
 export function createHoldGate({ path, log, now = () => Date.now(), fsImpl = fs }) {

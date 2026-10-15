@@ -9,6 +9,13 @@
  * script writes, and hold CLAIM_SETTLE_MS to the two timeouts it is the sum
  * of.
  *
+ * The fake models what makes the reader safe against the script's rename
+ * (CodeQL js/file-system-race, alert 1404 on #1191): a descriptor keeps the
+ * file it opened, while the path can be renamed over at any moment. It
+ * counts every call, so each case can also say that the time and the
+ * content came from the descriptor, not the path, and that the descriptor
+ * was closed.
+ *
  * Node's built-in test runner, like the rest of this package: no dependency.
  */
 
@@ -35,45 +42,133 @@ const T0 = Date.UTC(2026, 9, 16, 4, 30, 0);
 const fsError = (code) => Object.assign(new Error(code), { code });
 
 /**
- * A one-file fake of the two fs calls the reader makes. `mtimeMs` is when
- * the file was written; `text` is its content, or an Error to throw on read;
- * `stat` is an Error to throw on stat instead.
+ * A one-path fake of the fs calls the reader may make. `file` is what is at
+ * the path now and can be changed between calls: `text` is its content (an
+ * Error to throw when it is read; undefined for no file), `mtimeMs` its write
+ * time, and `open`, `fstat`, `stat` and `close` are Errors to throw from
+ * those calls. openSync binds a descriptor to the file as it is at that
+ * moment, as a real descriptor keeps its inode. `afterNextCall(fn)` runs fn
+ * once, right after the next call returns or throws: a rename landing
+ * between two of the reader's calls. readFileSync also accepts the path, as
+ * the old reader called it, so the race case can show what that would read.
  */
-function fakeFs({ text, mtimeMs = T0, stat } = {}) {
-  return {
-    statSync(p) {
-      assert.equal(p, HOLD);
-      if (stat) throw stat;
-      if (text === undefined) throw fsError('ENOENT');
-      return { mtimeMs };
-    },
-    readFileSync(p, encoding) {
-      assert.equal(p, HOLD);
-      assert.equal(encoding, 'utf8');
-      if (text instanceof Error) throw text;
-      if (text === undefined) throw fsError('ENOENT');
-      return text;
-    },
+function fakeFs({ text, mtimeMs = T0, open, fstat, stat, close } = {}) {
+  const file = { text, mtimeMs, open, fstat, stat, close };
+  const calls = { open: 0, fstat: 0, readByFd: 0, readByPath: 0, stat: 0, closed: [] };
+  const fds = new Map();
+  let nextFd = 3;
+  let hook = null;
+  /** Runs the pending hook once. */
+  const after = () => {
+    const run = hook;
+    hook = null;
+    if (run) run();
   };
+  /** Wraps a call so the pending hook runs after it, however it ends. */
+  const call = (fn) => {
+    try {
+      return fn();
+    } finally {
+      after();
+    }
+  };
+  return {
+    file,
+    calls,
+    /** Descriptors opened and not closed. */
+    stillOpen: () => [...fds.keys()],
+    afterNextCall: (fn) => {
+      hook = fn;
+    },
+    openSync: (p, flags) =>
+      call(() => {
+        assert.equal(p, HOLD);
+        assert.equal(flags, 'r');
+        calls.open += 1;
+        if (file.open) throw file.open;
+        if (file.text === undefined) throw fsError('ENOENT');
+        const fd = nextFd++;
+        fds.set(fd, { text: file.text, mtimeMs: file.mtimeMs });
+        return fd;
+      }),
+    fstatSync: (fd) =>
+      call(() => {
+        assert.ok(fds.has(fd), `fstat of a descriptor that is not open: ${fd}`);
+        calls.fstat += 1;
+        if (file.fstat) throw file.fstat;
+        return { mtimeMs: fds.get(fd).mtimeMs };
+      }),
+    readFileSync: (target, encoding) =>
+      call(() => {
+        assert.equal(encoding, 'utf8');
+        let content;
+        if (typeof target === 'number') {
+          assert.ok(fds.has(target), `read of a descriptor that is not open: ${target}`);
+          calls.readByFd += 1;
+          content = fds.get(target).text;
+        } else {
+          assert.equal(target, HOLD);
+          calls.readByPath += 1;
+          content = file.text === undefined ? fsError('ENOENT') : file.text;
+        }
+        if (content instanceof Error) throw content;
+        return content;
+      }),
+    closeSync: (fd) =>
+      call(() => {
+        calls.closed.push(fd);
+        assert.ok(fds.delete(fd), `close of a descriptor that is not open: ${fd}`);
+        if (file.close) throw file.close;
+      }),
+    statSync: (p) =>
+      call(() => {
+        assert.equal(p, HOLD);
+        calls.stat += 1;
+        if (file.stat) throw file.stat;
+        if (file.text === undefined) throw fsError('ENOENT');
+        return { mtimeMs: file.mtimeMs };
+      }),
+  };
+}
+
+/** The read came from one descriptor, which was closed, and the path was never stat'ed. */
+function fromOneDescriptor(fake) {
+  assert.equal(fake.calls.open, 1, 'opened once');
+  assert.equal(fake.calls.stat, 0, 'no stat of the path once the file is open');
+  assert.equal(fake.calls.readByPath, 0, 'no read of the path');
+  assert.equal(fake.calls.closed.length, 1, 'closed once');
+  assert.deepEqual(fake.stillOpen(), [], 'nothing left open');
 }
 
 /** The expiry the script writes for a hold lasting `seconds` from T0. */
 const expiry = (seconds) => `${Math.floor(T0 / 1000) + seconds}\n`;
 
 describe('readHold', () => {
-  test('no file is no hold', () => {
-    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fakeFs() }), { state: 'none' });
+  test('no file is no hold, with nothing opened and the path not stat-ed', () => {
+    const fake = fakeFs();
+    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'none' });
+    assert.deepEqual(fake.calls.closed, []);
+    assert.equal(fake.calls.stat, 0);
   });
 
   test('no directory is no hold too', () => {
-    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fakeFs({ stat: fsError('ENOTDIR') }) }), { state: 'none' });
+    const fake = fakeFs({ text: expiry(300), open: fsError('ENOTDIR') });
+    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'none' });
+    assert.equal(fake.calls.stat, 0);
   });
 
-  test('an expiry in the future holds until that second', () => {
-    const fsImpl = fakeFs({ text: expiry(300) });
-    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl }), { state: 'held', until: T0 + 300_000 });
-    assert.equal(readHold(HOLD, { now: T0 + 299_999, fsImpl }).state, 'held');
-    assert.equal(readHold(HOLD, { now: T0 + 300_000, fsImpl }).state, 'expired');
+  test('an expiry in the future holds until that second, read from one descriptor', () => {
+    for (const [now, want] of [
+      [T0, { state: 'held', until: T0 + 300_000 }],
+      [T0 + 299_999, { state: 'held', until: T0 + 300_000 }],
+      [T0 + 300_000, { state: 'expired' }],
+    ]) {
+      const fake = fakeFs({ text: expiry(300) });
+      assert.deepEqual(readHold(HOLD, { now, fsImpl: fake }), want);
+      fromOneDescriptor(fake);
+      assert.equal(fake.calls.fstat, 1);
+      assert.equal(fake.calls.readByFd, 1);
+    }
   });
 
   test('an expiry without its newline reads the same', () => {
@@ -81,38 +176,105 @@ describe('readHold', () => {
   });
 
   test('an expiry in the past is no hold: its writer died without removing it', () => {
-    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fakeFs({ text: expiry(-1) }) }), { state: 'expired' });
+    const fake = fakeFs({ text: expiry(-1) });
+    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'expired' });
+    fromOneDescriptor(fake);
   });
 
-  test('no hold outlasts MAX_HOLD_MS from its write, whatever its expiry says', () => {
-    const fsImpl = fakeFs({ text: expiry(24 * 3600) });
-    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl }), { state: 'held', until: T0 + MAX_HOLD_MS });
-    assert.equal(readHold(HOLD, { now: T0 + MAX_HOLD_MS, fsImpl }).state, 'expired');
+  test("no hold outlasts MAX_HOLD_MS from its write, the descriptor's time, whatever its expiry says", () => {
+    const fake = fakeFs({ text: expiry(24 * 3600) });
+    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'held', until: T0 + MAX_HOLD_MS });
+    fromOneDescriptor(fake);
+    assert.equal(readHold(HOLD, { now: T0 + MAX_HOLD_MS, fsImpl: fakeFs({ text: expiry(24 * 3600) }) }).state, 'expired');
   });
 
-  test('a file that is there but cannot be read holds, for at most MAX_HOLD_MS from its write', () => {
-    const fsImpl = fakeFs({ text: fsError('EACCES') });
-    assert.deepEqual(readHold(HOLD, { now: T0 + 1000, fsImpl }), { state: 'held-unreadable', until: T0 + MAX_HOLD_MS });
-    assert.equal(readHold(HOLD, { now: T0 + MAX_HOLD_MS, fsImpl }).state, 'expired');
+  test('a file that exists and cannot be opened holds until its stat time plus MAX_HOLD_MS, nothing else read', () => {
+    for (const code of ['EACCES', 'EPERM']) {
+      const fake = fakeFs({ text: expiry(300), open: fsError(code) });
+      assert.deepEqual(readHold(HOLD, { now: T0 + 1000, fsImpl: fake }), { state: 'held-unreadable', until: T0 + MAX_HOLD_MS }, code);
+      assert.equal(fake.calls.stat, 1, `${code}: its time is read by path, once`);
+      assert.equal(fake.calls.readByPath + fake.calls.readByFd, 0, `${code}: no content read`);
+      assert.deepEqual(fake.calls.closed, [], `${code}: nothing was opened, so nothing to close`);
+      assert.equal(
+        readHold(HOLD, { now: T0 + MAX_HOLD_MS, fsImpl: fakeFs({ text: expiry(300), open: fsError(code) }) }).state,
+        'expired',
+        code
+      );
+    }
+  });
+
+  test('a file that cannot be opened and whose time cannot be read either cannot be told: no hold', () => {
+    const fake = fakeFs({ text: expiry(300), open: fsError('EACCES'), stat: fsError('EIO') });
+    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'unknown' });
+  });
+
+  test('any other failure to open cannot tell, and is no hold, without a stat', () => {
+    for (const open of [fsError('EIO'), fsError('EMFILE'), fsError('EISDIR'), new Error('odd')]) {
+      const fake = fakeFs({ text: expiry(300), open });
+      assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'unknown' }, String(open.code));
+      assert.equal(fake.calls.stat, 0, String(open.code));
+    }
+  });
+
+  test('a descriptor whose time cannot be read cannot tell: no hold, and it is closed', () => {
+    const fake = fakeFs({ text: expiry(300), fstat: fsError('EIO') });
+    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'unknown' });
+    fromOneDescriptor(fake);
+    assert.equal(fake.calls.readByFd, 0);
+  });
+
+  test('a descriptor that cannot be read holds by its own time, and is closed', () => {
+    for (const code of ['EIO', 'EISDIR', 'EACCES']) {
+      const fake = fakeFs({ text: fsError(code) });
+      assert.deepEqual(readHold(HOLD, { now: T0 + 1000, fsImpl: fake }), { state: 'held-unreadable', until: T0 + MAX_HOLD_MS }, code);
+      fromOneDescriptor(fake);
+      assert.equal(readHold(HOLD, { now: T0 + MAX_HOLD_MS, fsImpl: fakeFs({ text: fsError(code) }) }).state, 'expired', code);
+    }
   });
 
   test('a file that is not an expiry (empty, partly written, or a date) holds the same bounded way', () => {
     for (const text of ['', '\n', 'x1760589000\n', ' 1760589000\n', '2026-10-16T04:35Z\n', '1760589000\n\n', '1760589000.5\n', 'NaN\n']) {
-      const found = readHold(HOLD, { now: T0, fsImpl: fakeFs({ text }) });
+      const fake = fakeFs({ text });
+      const found = readHold(HOLD, { now: T0, fsImpl: fake });
       assert.equal(found.state, 'held-unreadable', JSON.stringify(text));
       assert.equal(found.until, T0 + MAX_HOLD_MS, JSON.stringify(text));
+      fromOneDescriptor(fake);
     }
   });
 
-  test('a file removed between the stat and the read is no hold', () => {
-    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fakeFs({ text: fsError('ENOENT') }) }), { state: 'none' });
+  test('a hold renamed over between two calls still reads as one file: its own time with its own expiry', () => {
+    // The old hold: written 9 minutes before T0 (its cap is T0 + 60 s), and
+    // saying T0 + 30 s. The new one, renamed over it right after the
+    // reader's first call: written at T0, saying T0 + 300 s. Read as one
+    // file each, the answer is T0 + 30 s (the old) or T0 + 300 s (the new).
+    // The old file's cap with the new file's expiry would be T0 + 60 s, a
+    // hold that belongs to neither (CodeQL js/file-system-race on #1191).
+    const fake = fakeFs({ text: expiry(30), mtimeMs: T0 - 9 * 60_000 });
+    fake.afterNextCall(() => {
+      fake.file.text = expiry(300);
+      fake.file.mtimeMs = T0;
+    });
+    const found = readHold(HOLD, { now: T0, fsImpl: fake });
+    assert.notEqual(found.until, T0 + 60_000, "one file's write time paired with the next file's expiry");
+    assert.deepEqual(found, { state: 'held', until: T0 + 30_000 });
+    fromOneDescriptor(fake);
   });
 
-  test('a stat that fails for any other reason cannot tell, and is no hold', () => {
-    for (const code of ['EACCES', 'EIO', undefined]) {
-      const stat = code ? fsError(code) : new Error('odd');
-      assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fakeFs({ stat }) }), { state: 'unknown' }, String(code));
-    }
+  test('a hold removed after it is opened is still read whole, from the descriptor', () => {
+    const fake = fakeFs({ text: expiry(300) });
+    fake.afterNextCall(() => {
+      fake.file.text = undefined;
+    });
+    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'held', until: T0 + 300_000 });
+    fromOneDescriptor(fake);
+    // The next poll sees the removal.
+    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'none' });
+  });
+
+  test('a descriptor that will not close does not throw, and the answer stands', () => {
+    const fake = fakeFs({ text: expiry(300), close: fsError('EIO') });
+    assert.deepEqual(readHold(HOLD, { now: T0, fsImpl: fake }), { state: 'held', until: T0 + 300_000 });
+    assert.equal(fake.calls.closed.length, 1);
   });
 
   test('reads a real file in the exact format the script writes', () => {
@@ -132,18 +294,14 @@ describe('readHold', () => {
 });
 
 describe('createHoldGate', () => {
-  /** A gate over a file whose content the test changes between calls, and the lines it said. */
+  /** A gate over one fake file the test changes between calls, and the lines it said. */
   function gate() {
-    const file = { text: undefined, stat: undefined };
+    const fake = fakeFs();
     const lines = [];
-    const fsImpl = {
-      statSync: (p) => fakeFs({ text: file.text, stat: file.stat }).statSync(p),
-      readFileSync: (p, e) => fakeFs({ text: file.text }).readFileSync(p, e),
-    };
     const log = { info: (line) => lines.push(['info', line]), warn: (line) => lines.push(['warn', line]) };
     let now = T0;
-    const held = createHoldGate({ path: HOLD, log, now: () => now, fsImpl });
-    return { file, lines, held, at: (t) => (now = t) };
+    const held = createHoldGate({ path: HOLD, log, now: () => now, fsImpl: fake });
+    return { fake, file: fake.file, lines, held, at: (t) => (now = t) };
   }
 
   test('true while held, false otherwise, and each change said once, never per poll', () => {
@@ -161,11 +319,12 @@ describe('createHoldGate', () => {
     assert.equal(g.held(), false);
     assert.deepEqual(g.lines.at(-1), ['info', 'maintenance hold lifted: claiming again']);
     assert.equal(g.lines.length, 2);
+    assert.deepEqual(g.fake.stillOpen(), [], 'every poll closed what it opened');
   });
 
   test('an unreadable hold holds and is said at warn, which is collected', () => {
     const g = gate();
-    g.file.text = fsError('EACCES');
+    g.file.text = fsError('EIO');
     assert.equal(g.held(), true);
     assert.deepEqual(g.lines, [
       ['warn', 'maintenance hold present but unreadable: claiming no new job until it is ten minutes old'],
@@ -177,7 +336,8 @@ describe('createHoldGate', () => {
 
   test('a hold that cannot be checked does not hold, and says so at warn', () => {
     const g = gate();
-    g.file.stat = fsError('EACCES');
+    g.file.text = expiry(300);
+    g.file.open = fsError('EIO');
     assert.equal(g.held(), false);
     assert.deepEqual(g.lines, [['warn', 'maintenance hold could not be checked: claiming as usual']]);
   });
@@ -193,11 +353,12 @@ describe('createHoldGate', () => {
 
   test('no line names the path or carries any identifier', () => {
     const g = gate();
-    for (const step of [expiry(300), undefined, fsError('EACCES'), undefined]) {
+    for (const step of [expiry(300), undefined, fsError('EIO'), undefined]) {
       g.file.text = step;
       g.held();
     }
-    g.file.stat = fsError('EIO');
+    g.file.text = expiry(300);
+    g.file.open = fsError('EIO');
     g.held();
     for (const [, line] of g.lines) assert.doesNotMatch(line, /\/|\d{4,}/, line);
   });
