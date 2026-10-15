@@ -98,3 +98,50 @@ describe('outsideJob', () => {
     });
   });
 });
+
+describe('the refusal', () => {
+  it('is a fresh error each time, carrying the job’s reason as its cause and the reason’s code', async () => {
+    const job = new AbortController();
+    const reason = timeoutReason();
+    job.abort(reason);
+    const caught = [];
+    await runAsJob(job.signal, async () => {
+      for (const container of ['content', 'podcast_transcripts']) {
+        try {
+          refuseWriteAfterJobAbort(container);
+        } catch (error) {
+          caught.push(error);
+        }
+      }
+    });
+    expect(caught).toHaveLength(2);
+    const [first, second] = caught;
+    expect(first).not.toBe(second);
+    for (const refusal of caught) {
+      expect(refusal).toBeInstanceOf(Error);
+      expect(refusal).not.toBe(reason);
+      expect(refusal.cause).toBe(reason);
+      expect(refusal.code).toBe('JOB_TIMEOUT');
+      expect(refusal.message).toMatch(/job timed out/);
+    }
+    // Annotating one refusal leaves the reason, and the next refusal, alone.
+    first.extra = 'annotated';
+    expect(reason.extra).toBeUndefined();
+    expect(second.extra).toBeUndefined();
+  });
+
+  it('carries no code when the reason has none', async () => {
+    const job = new AbortController();
+    job.abort(new Error('stopped'));
+    let refusal = null;
+    await runAsJob(job.signal, async () => {
+      try {
+        refuseWriteAfterJobAbort('content');
+      } catch (error) {
+        refusal = error;
+      }
+    });
+    expect(refusal?.message).toMatch(/stopped/);
+    expect(refusal).not.toHaveProperty('code');
+  });
+});

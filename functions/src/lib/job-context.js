@@ -118,15 +118,27 @@ export function writeAbortSignal(containerName) {
 }
 
 /**
- * Throw the running job's abort reason when its signal has fired and the
- * write is to a container that is not kept; do nothing outside a job.
- * Called by the shared clients before every write.
+ * Refuse a write when the running job's signal has fired and the write is to
+ * a container that is not kept; do nothing outside a job. Called by the
+ * shared clients before every write.
+ *
+ * Each refusal is a fresh Error, with the job's abort reason as its `cause`
+ * and the reason's `code` (JOB_TIMEOUT from runJob) copied onto it. The
+ * reason itself is one object shared by every refusal in the job, so
+ * throwing it would hand each catch the same instance to annotate and give
+ * every refusal the stack of the timer that aborted, not of the write.
  *
  * @param {string} [containerName] the Cosmos container, when there is one
+ * @throws {Error} the refusal, `cause` = the job's abort reason
  */
 export function refuseWriteAfterJobAbort(containerName) {
   const signal = currentJobSignal();
   if (!signal?.aborted) return;
   if (containerName && WRITES_KEPT_AFTER_ABORT.includes(containerName)) return;
-  throw signal.reason || new Error('aborted');
+  const reason = signal.reason;
+  const refusal = new Error(`write refused after the job's abort: ${reason?.message || 'aborted'}`, {
+    cause: reason,
+  });
+  if (reason?.code !== undefined) refusal.code = reason.code;
+  throw refusal;
 }
