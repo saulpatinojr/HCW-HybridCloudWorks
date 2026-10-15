@@ -586,7 +586,10 @@ export function createJobHandlers({
             })
           ),
           timeout,
-        ]);
+          // The deadline is the worker's, so it is disarmed the moment the
+          // race settles: a worker that finished just inside it must not have
+          // its signal fire during the terminal write or the hook below.
+        ]).finally(() => clearTimeout(timer));
         await store.patchDoc(JOBS_CONTAINER, jobId, {
           status: 'succeeded',
           finishedAt: now().toISOString(),
@@ -621,6 +624,8 @@ export function createJobHandlers({
         });
         return { jobId, outcome: timedOut ? 'timeout' : 'failed' };
       } finally {
+        // Already cleared when the race settled; this covers a worker that
+        // threw before the race was entered.
         clearTimeout(timer);
       }
     },

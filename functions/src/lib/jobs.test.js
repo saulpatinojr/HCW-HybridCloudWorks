@@ -509,6 +509,40 @@ describe('runJob', () => {
     expect(store.docs['job-abort'].status).toBe('timeout');
   });
 
+  it('disarms the deadline once the worker settles, so a slow terminal write does not fire the signal (#942)', async () => {
+    let capturedSignal = null;
+    let abortedAtHook = null;
+    registerJobType('near-deadline', {
+      role: 'editor',
+      timeoutMs: 30,
+      // Done just inside the budget.
+      worker: async (_payload, { signal }) => {
+        capturedSignal = signal;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { done: true };
+      },
+      onComplete: async () => {
+        abortedAtHook = capturedSignal.aborted;
+      },
+    });
+    const store = makeStore({ 'job-near': { ...queued(), id: 'job-near', type: 'near-deadline' } });
+    const patch = store.patchDoc.getMockImplementation();
+    // The terminal write outlasts what was left of the budget.
+    store.patchDoc.mockImplementation(async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      return patch(...args);
+    });
+    const h = createJobHandlers({ guard: guardAs('editor'), store, ...fixed });
+    expect(await h.runJob({ jobId: 'job-near' }, context)).toEqual({
+      jobId: 'job-near',
+      outcome: 'succeeded',
+    });
+    expect(store.docs['job-near'].status).toBe('succeeded');
+    expect(abortedAtHook).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(capturedSignal.aborted).toBe(false);
+  });
+
   it('noop ends its delay when the job’s signal fires, not when the delay does (#942 follow-up)', async () => {
     const job = new AbortController();
     const started = Date.now();
