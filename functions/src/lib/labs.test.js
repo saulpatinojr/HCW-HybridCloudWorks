@@ -359,9 +359,13 @@ describe('getLabsSnapshot', () => {
     // health/pulse-checks.js imports this module for the online rule, and the
     // frontend's statusParity.test.js imports pulse-checks.js under jsdom; the
     // checks bring the Cosmos and Key Vault clients, which cannot load there.
+    // The door (http/error-response.js, for the correlation id, #945) imports
+    // node:crypto and nothing else, which the second expectation holds.
     const source = readFileSync(new URL('./labs.js', import.meta.url), 'utf8');
     const staticImports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
-    expect(staticImports).toEqual(['node:crypto']);
+    expect(staticImports).toEqual(['node:crypto', './http/error-response.js']);
+    const door = readFileSync(new URL('./http/error-response.js', import.meta.url), 'utf8');
+    expect([...door.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1])).toEqual(['node:crypto']);
   });
 });
 

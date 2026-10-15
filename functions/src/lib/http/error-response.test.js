@@ -77,6 +77,27 @@ describe('errorResponse (AP-B10)', () => {
       expect(getCorrelationId({ traceContext: { traceparent: 'tp-abc' } })).toBe('tp-abc');
     });
 
+    it("reads the v4 worker's traceContext.traceParent, and still the v3 spelling", () => {
+      const tp = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+      expect(getCorrelationId({ traceContext: { traceParent: tp } })).toBe(tp);
+      expect(getCorrelationId({ traceContext: { traceparent: tp } })).toBe(tp);
+    });
+
+    it("uses a caller's header only when it has the id shape (#1200 review L4)", () => {
+      const headers = (values) => ({ headers: { get: (name) => values[name] ?? null } });
+      expect(getCorrelationId({}, headers({ 'x-correlation-id': 'req-42' }))).toBe('req-42');
+      expect(getCorrelationId({}, headers({ 'x-request-id': 'abc.123:x' }))).toBe('abc.123:x');
+      for (const bad of ['two words', 'line\nbreak', '<script>x</script>', 'a'.repeat(129), '']) {
+        const id = getCorrelationId({}, headers({ 'x-correlation-id': bad, 'x-request-id': bad }));
+        expect(id).not.toBe(bad);
+        expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      }
+      // A bad first header falls through to a good second one.
+      expect(getCorrelationId({}, headers({ 'x-correlation-id': 'not ok', 'x-request-id': 'req-7' }))).toBe('req-7');
+      // An invocation id that is not one is passed over as well.
+      expect(getCorrelationId({ invocationId: 'x y' }, headers({ 'x-request-id': 'req-8' }))).toBe('req-8');
+    });
+
     it('generates uuid when context is empty or undefined', () => {
       expect(getCorrelationId(null)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     });

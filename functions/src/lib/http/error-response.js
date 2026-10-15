@@ -28,6 +28,12 @@ const AUTHORED = Symbol.for('hcw.authored-error');
 const CODE_SHAPE = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 /**
+ * A correlation id in a shape that cannot carry a sentence: an invocation
+ * GUID, a W3C traceparent, or a caller's id of the same characters.
+ */
+const CORRELATION_SHAPE = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/**
  * An error whose message this code wrote for the reader of the answer: a
  * validator's sentence, a typed refusal. Only its subclasses' messages pass
  * `authoredMessage`, so wrapping someone else's text in one is the single
@@ -122,20 +128,27 @@ export function codeShaped(value) {
 }
 
 /**
- * Extract or generate a correlation ID for request tracing.
+ * Extract or generate a correlation ID for request tracing: the invocation
+ * id, the W3C traceparent (`traceContext.traceParent` on the v4 worker,
+ * `traceparent` on v3), then a caller's `x-correlation-id` or
+ * `x-request-id`. Each is used only in CORRELATION_SHAPE: a caller's header
+ * goes into a log line, a response header and the answer, so anything else
+ * (a sentence, a newline, a script) is passed over (#1200 review L4). A new
+ * UUID when none fits.
  *
  * @param {object} [context] - Azure Functions invocation context
  * @param {object} [request] - HTTP request object
  * @returns {string}
  */
 export function getCorrelationId(context, request) {
-  return (
-    context?.invocationId ||
-    context?.traceContext?.traceparent ||
-    request?.headers?.get?.('x-correlation-id') ||
-    request?.headers?.get?.('x-request-id') ||
-    randomUUID()
-  );
+  const candidates = [
+    context?.invocationId,
+    context?.traceContext?.traceParent,
+    context?.traceContext?.traceparent,
+    request?.headers?.get?.('x-correlation-id'),
+    request?.headers?.get?.('x-request-id'),
+  ];
+  return candidates.find((id) => typeof id === 'string' && CORRELATION_SHAPE.test(id)) ?? randomUUID();
 }
 
 /**
@@ -204,9 +217,6 @@ export function failureFields(context, fallback, error, request = null) {
     correlationId: logFailure(context, fallback, error, request),
   };
 }
-
-/** A correlation id in a shape that cannot carry a sentence. */
-const CORRELATION_SHAPE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /**
  * What a document stores about a failure, written at the moment of failure

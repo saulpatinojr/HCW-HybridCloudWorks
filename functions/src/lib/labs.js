@@ -24,14 +24,11 @@
  *     to the site's pane by origin and Turnstile (lib/labs/public-lock.js).
  */
 import { randomUUID } from 'node:crypto';
+import { getCorrelationId } from './http/error-response.js';
 
 function errorResponse(context, fallbackMessage, error, status = 500, request = null) {
-  const correlationId =
-    context?.invocationId ||
-    context?.traceContext?.traceparent ||
-    request?.headers?.get?.('x-correlation-id') ||
-    request?.headers?.get?.('x-request-id') ||
-    randomUUID();
+  // The door's id: the v4 traceParent, and a caller's header only in the id shape (#945).
+  const correlationId = getCorrelationId(context, request);
   if (context?.error) {
     context.error(`[${correlationId}] ${fallbackMessage}:`, error);
   }
