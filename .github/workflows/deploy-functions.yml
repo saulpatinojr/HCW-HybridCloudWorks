@@ -145,6 +145,10 @@ jobs:
         run: |
           set -euo pipefail
           RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org)
+          if [[ ! "${RUNNER_IP}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "::error::ipify.org returned invalid IPv4: '${RUNNER_IP}' (PLAT-10, #970)"
+            exit 1
+          fi
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
           az storage account network-rule add \
             --resource-group "${RG}" \
@@ -185,6 +189,10 @@ jobs:
         run: |
           set -euo pipefail
           RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org)
+          if [[ ! "${RUNNER_IP}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "::error::ipify.org returned invalid IPv4: '${RUNNER_IP}' (PLAT-10, #970)"
+            exit 1
+          fi
           RULE="ci-deploy-scm-${GITHUB_RUN_ID}"
 
           # If SCM inherits the main site's rules, an SCM rule is ignored and
@@ -471,6 +479,10 @@ jobs:
         run: |
           set -euo pipefail
           RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org)
+          if [[ ! "${RUNNER_IP}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "::error::ipify.org returned invalid IPv4: '${RUNNER_IP}' (PLAT-10, #970)"
+            exit 1
+          fi
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
           az functionapp config access-restriction add \
             --resource-group "${RG}" \

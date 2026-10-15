@@ -88,13 +88,14 @@ function LivePageRow({ item, deleting, onDelete }) {
 export default function LivePagesPage() {
   const { authReady } = useAuthReady();
   const [includeLegacyPages, setIncludeLegacyPages] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const {
     data: contentItems,
     loading: contentLoading,
     error: contentError,
   } = usePublicData(
     () => getJSON(LIVE_PAGES_QUERY).then((res) => res.items || []),
-    authReady ? 'live-pages:content' : ''
+    authReady ? `live-pages:content:${attempt}` : ''
   );
   // Legacy blogs via the public list — this page only renders live records,
   // which is exactly the server-side public filter.
@@ -181,8 +182,16 @@ export default function LivePagesPage() {
           variant="error"
           title="Live pages could not be loaded"
           description={contentError.message || 'The request failed.'}
-          onRetry={() => window.location.reload()}
+          onRetry={() => setAttempt((n) => n + 1)}
         />
+      )}
+      {!loading && !contentError && (contentItems ?? []).length >= 500 && (
+        <p
+          role="status"
+          className="mb-0 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          The first 500 items are shown. Anything older is not in this list or its search.
+        </p>
       )}
       {!loading && !contentError && liveItems.length === 0 && (
         <EmptyState

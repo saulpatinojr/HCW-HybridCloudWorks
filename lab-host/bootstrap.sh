@@ -54,6 +54,8 @@ PYTHON_VERSION=3.14.7
 # container runs. Before a future bump, check its module-side Python range
 # still includes 24.04's 3.12, or drop 24.04.
 ANSIBLE_CORE_VERSION=2.21.4
+# SHA256 of the ansible-core wheel (matches lab-image/versions.env, LAB-13, #959).
+ANSIBLE_CORE_SHA256=ebe74d9c8fadcb41ad2151e031bf1e785e3098aaa015019b4e19a0a96f0dcc4f
 
 HCW_REPO_URL="${HCW_REPO_URL:-https://github.com/saulpatinojr/HCW-HybridCloudWorks.git}"
 # Which commit the host runs: origin/main unless HCW_REPO_REF says otherwise.
@@ -401,7 +403,7 @@ log "installing CPython ${PYTHON_VERSION} with uv"
 # rather than leaving ansible-core on the interpreter before it.
 if ! "${UV_TOOL_BIN_DIR}/ansible-playbook" --version 2>/dev/null | grep -q "core ${ANSIBLE_CORE_VERSION}]" \
   || ! "${UV_TOOL_BIN_DIR}/ansible-playbook" --version 2>/dev/null | grep -qF "python version = ${PYTHON_VERSION} ("; then
-  log "installing ansible-core ${ANSIBLE_CORE_VERSION} on CPython ${PYTHON_VERSION} with uv"
+  log "installing ansible-core ${ANSIBLE_CORE_VERSION} (sha256:${ANSIBLE_CORE_SHA256:0:12}...) on CPython ${PYTHON_VERSION} with uv"
   "${UV_BIN}" tool install --force --managed-python --python "${PYTHON_VERSION}" "ansible-core==${ANSIBLE_CORE_VERSION}"
 fi
 "${UV_TOOL_BIN_DIR}/ansible-playbook" --version | sed -n '1p;/python version/p'

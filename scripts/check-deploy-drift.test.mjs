@@ -342,10 +342,11 @@ describe('driftFor', () => {
 });
 
 describe('SERVICES', () => {
-  it('covers both dispatch-only deploys', () => {
+  it('covers both dispatch-only deploys and terraform infra plan check', () => {
     expect(SERVICES.map((s) => s.workflow).sort()).toEqual([
       'deploy-azure-frontend.yml',
       'deploy-functions.yml',
+      'tfc-plan-check.yml',
     ]);
   });
 

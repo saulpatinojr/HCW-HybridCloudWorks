@@ -53,3 +53,4 @@ labs_agent_job_memory: 512m
 labs_agent_job_cpus: "0.5"
 labs_agent_job_pids: 128
 labs_agent_job_nofile: 1024
+labs_agent_timeout_stop_sec: 240
