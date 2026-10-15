@@ -2,7 +2,7 @@
  * Honest error state, retry, and 500-item truncation banner for LivePagesPage (AP-F6, #930).
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import LivePagesPage from './LivePagesPage';
