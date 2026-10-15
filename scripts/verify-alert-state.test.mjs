@@ -604,6 +604,20 @@ describe('Resource Health (#964)', () => {
     expect(report([v])).toMatch(/`HEALTH UNREADABLE` means the rule was read and its Resource Health was not/);
   });
 
+  // CodeRabbit on #1195: the state shows only the first finding, so a
+  // DISABLED rule whose health read failed reported complete coverage.
+  it('counts unread health as partial coverage when another finding comes first', () => {
+    const r = rule({ subscription: APP });
+    const live = liveWith([r], [[r, { ...logRule(), enabled: false }]]);
+    live.health.set(r.address, classifyError(403, { error: { code: 'AuthorizationFailed', message: 'no' } }));
+    const v = compare([r], live, { pending: new Map() })[0];
+    expect(v.state).toBe('DISABLED');
+    expect(v.health).toBe('unread');
+    expect(v.problems.join(' ')).toMatch(/Resource Health could not be read/);
+    expect(coverageOf([v], [])).toBe('partial');
+    expect(report([v])).toMatch(/`HEALTH UNREADABLE` means the rule was read and its Resource Health was not/);
+  });
+
   it('says plainly that the provider is not registered, rather than an AuthError', () => {
     const read = classifyError(409, NOT_REGISTERED_BODY);
     expect(read.status).toBe('not-registered');

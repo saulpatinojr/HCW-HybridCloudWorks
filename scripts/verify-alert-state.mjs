@@ -729,7 +729,7 @@ function summaryLines(verdicts, groups, stale) {
         'it under the rule\'s scope → **Logs** to see the error.'
     );
   }
-  if (verdicts.some((v) => v.state === 'HEALTH UNREADABLE')) {
+  if (verdicts.some((v) => v.state === 'HEALTH UNREADABLE' || healthUnread(v))) {
     lines.push(
       '',
       '`HEALTH UNREADABLE` means the rule was read and its Resource Health was not, so whether it can evaluate is ' +
@@ -829,7 +829,7 @@ export function runFails(verdicts, groups, subscriptionsRead, stale = []) {
 /**
  * The `coverage` step output for automated consumers: `complete` when every
  * declared rule and action group was read, `partial` when any was not
- * (UNREADABLE, NOT AUTHORIZED or READ FAILED).
+ * (UNREADABLE, NOT AUTHORIZED, READ FAILED or HEALTH UNREADABLE).
  * A green run with partial coverage is not the same result as a green run
  * with complete coverage, and a reader of the run's outcome alone cannot tell.
  */
@@ -838,7 +838,17 @@ export function coverageOf(verdicts, groups) {
   // (review of #1051): a failing run that read half the estate must not say
   // `complete` to a consumer that reads only this output.
   const unread = (state) => NOT_READ.has(state);
-  return verdicts.some((v) => unread(v.state)) || groups.some((g) => unread(g.state)) ? 'partial' : 'complete';
+  // A rule's health is read apart from the rule, and the state shows only the
+  // first finding, so a DISABLED rule whose health was not read would
+  // otherwise count as read (CodeRabbit on #1195).
+  return verdicts.some((v) => unread(v.state) || healthUnread(v)) || groups.some((g) => unread(g.state))
+    ? 'partial'
+    : 'complete';
+}
+
+/** True when the rule was read and its Resource Health was not, whatever finding the state shows first. */
+function healthUnread(verdict) {
+  return verdict.health === 'unread';
 }
 
 /**
