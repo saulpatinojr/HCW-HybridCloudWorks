@@ -33,9 +33,13 @@
  * THE DOOR. `lib/http/error-response.js` is the only module that may read an
  * error's message for a body: `authoredMessage(error, fallback)` and
  * `failureFields(...)` return the message of an `AuthoredError` (text this code
- * wrote) and the fallback for anything else. Each call is a site too, so
- * every place authored text can surface is listed below and reviewed;
- * constructing an authored error from someone else's text is a site.
+ * wrote) and the fallback for anything else. `storedFailure` and
+ * `recordedFailure` are the same door for a document: the authored message,
+ * or the fallback with the error's code and a log line's reference, written
+ * at the moment of failure so no later read serves someone else's words.
+ * Each call is a site too, so every place authored text can surface is
+ * listed below and reviewed; constructing an authored error from someone
+ * else's text is a site.
  *
  * THE ALLOWLIST. Every site that is not converted is listed in ALLOWED with
  * a class and a one-line reason:
@@ -47,10 +51,12 @@
  *      to the owner, the message of an error that is thrown on, a summary a
  *      timer only logs. Must not sit inside a response body.
  *   s  stored diagnostic: written to a document or a job result now, read
- *      back by an admin page later. Not a same-request leak; listed so the
- *      owner decides each one (see #945). Must not sit inside a response body.
+ *      back by an admin page later. Not a same-request leak, and kept only
+ *      by a recorded decision; every other stored site goes through
+ *      storedFailure or recordedFailure (class b) since #945's second step.
+ *      Must not sit inside a response body.
  *   n  not an error's text at all: the property happens to be `message`
- *      (a git commit's). Must not be a door call.
+ *      (a git commit's, a workflow alert's). Must not be a door call.
  *
  * A new site fails until someone converts it or lists it; an entry that no
  * longer matches anything fails too, so the list cannot rot. Keys are
@@ -69,7 +75,7 @@ const ROOTS = ['lib', 'functions'];
 /** The door module: the one place allowed to read an error's message for a body. */
 const DOOR_MODULE = 'lib/http/error-response.js';
 /** Its exports that return authored text. */
-const DOORS = new Set(['authoredMessage', 'authoredDetails', 'failureFields']);
+const DOORS = new Set(['authoredMessage', 'authoredDetails', 'failureFields', 'storedFailure', 'recordedFailure']);
 /** The authored base class; its subclasses are found in the tree. */
 const AUTHORED_BASE = 'AuthoredError';
 
@@ -1132,7 +1138,7 @@ export function judge(sites, allowed) {
     }
     for (const hit of hits) {
       if (entry.class === 'b' && hit.kind !== 'authored') {
-        misfiled.push(`${entry.site} — class b must go through authoredMessage, authoredDetails or failureFields`);
+        misfiled.push(`${entry.site} — class b must go through the door (authoredMessage, authoredDetails, failureFields, storedFailure, recordedFailure)`);
       }
       if (entry.class !== 'b' && hit.kind === 'authored') {
         misfiled.push(`${entry.site} — a door call is class b`);

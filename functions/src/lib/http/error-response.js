@@ -186,6 +186,47 @@ export function failureFields(context, fallback, error, request = null) {
   };
 }
 
+/** A correlation id in a shape that cannot carry a sentence. */
+const CORRELATION_SHAPE = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/**
+ * What a document stores about a failure, written at the moment of failure
+ * so that no later read can serve someone else's words (#945): an authored
+ * error's own sentence, or the caller's sentence with the error's code and,
+ * when there is one, the correlation id of the log line that has the rest.
+ * Always one string, so a field that held `error.message` keeps its shape.
+ *
+ * @param {unknown} error - anything thrown
+ * @param {string} fallback - what failed, written by the caller
+ * @param {{ correlationId?: string|null }} [options] - the log line's id, when the site logged one
+ * @returns {string} e.g. `The job failed (ECONNRESET; reference inv-123).`
+ */
+export function storedFailure(error, fallback, { correlationId = null } = {}) {
+  if (isAuthoredError(error) && typeof error.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+  const code = errorCode(error);
+  const parts = [code === 'UNKNOWN' ? 'no code' : code];
+  if (typeof correlationId === 'string' && CORRELATION_SHAPE.test(correlationId)) {
+    parts.push(`reference ${correlationId}`);
+  }
+  return `${String(fallback).replace(/\.$/, '')} (${parts.join('; ')}).`;
+}
+
+/**
+ * Log a failure content-free (logFailure) and return what to store about it
+ * (storedFailure), tied together by the same correlation id.
+ *
+ * @param {object} context - invocation context or logger
+ * @param {string} fallback - what failed, written by the caller
+ * @param {unknown} error - anything thrown
+ * @returns {string}
+ */
+export function recordedFailure(context, fallback, error) {
+  const correlationId = logFailure(context, fallback.replace(/\.$/, ''), error);
+  return storedFailure(error, fallback, { correlationId });
+}
+
 /**
  * Build a standardized, sanitized error response. The body always carries
  * the safe sentence, whatever the error was.

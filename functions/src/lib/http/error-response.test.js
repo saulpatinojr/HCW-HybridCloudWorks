@@ -10,6 +10,8 @@ import {
   getCorrelationId,
   isAuthoredError,
   logFailure,
+  recordedFailure,
+  storedFailure,
 } from './error-response.js';
 
 describe('errorResponse (AP-B10)', () => {
@@ -191,5 +193,39 @@ describe('logFailure and failureFields', () => {
   it('takes a caller-supplied id from the request when the context has none', () => {
     const request = { headers: { get: (name) => (name === 'x-correlation-id' ? 'req-1' : null) } };
     expect(logFailure({ error: vi.fn() }, 'x', null, request)).toBe('req-1');
+  });
+});
+
+describe('storedFailure and recordedFailure: what a document keeps (#945 step 2)', () => {
+  it('stores an authored sentence as written', () => {
+    expect(storedFailure(new AuthoredError('Choose the podcast voices first.'), 'The audio failed.')).toBe(
+      'Choose the podcast voices first.'
+    );
+  });
+
+  it("stores the caller's sentence with the code and the reference for anything else", () => {
+    const socket = Object.assign(new Error('connect ECONNREFUSED 10.0.0.4:443'), { code: 'ECONNREFUSED' });
+    expect(storedFailure(socket, 'The feed could not be read.', { correlationId: 'inv-3' })).toBe(
+      'The feed could not be read (ECONNREFUSED; reference inv-3).'
+    );
+    expect(storedFailure(Object.assign(new Error('Request rate is large'), { code: 429 }), 'Saved nothing.')).toBe(
+      'Saved nothing (429).'
+    );
+    expect(storedFailure('a bare string', 'The step failed')).toBe('The step failed (no code).');
+  });
+
+  it('never stores a reference shaped like a sentence', () => {
+    expect(storedFailure(new Error('x'), 'The job failed.', { correlationId: 'not an id; see body' })).toBe(
+      'The job failed (Error).'
+    );
+  });
+
+  it('logs content-free and stores the same reference as the line', () => {
+    const context = { invocationId: 'inv-5', error: vi.fn(), warn: vi.fn() };
+    const stored = recordedFailure(context, 'The cover could not be generated.', new Error('Replicate said: prompt'));
+    expect(stored).toBe('The cover could not be generated (Error; reference inv-5).');
+    expect(context.error).toHaveBeenCalledWith('[inv-5] The cover could not be generated (name=Error)');
+    expect(JSON.stringify([stored, context.error.mock.calls])).not.toContain('Replicate said');
+    expect(recordedFailure(context, 'x', new AuthoredError('The key is not set.'))).toBe('The key is not set.');
   });
 });
