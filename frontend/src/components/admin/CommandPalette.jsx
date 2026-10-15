@@ -23,17 +23,43 @@
  * in typing, not per keystroke, and its answer is kept with the query it
  * answered: a slow reply to an earlier query is simply not the answer to the
  * current one. The pause is a prop so a test can shorten it.
+ *
+ * CUT TO THE ROLE, LIKE THE MENU (AP-F4, #928). The pages listed are the
+ * ones `visibleNavFor` gives the signed-in role, the same set the rail and
+ * the drawer draw, so the palette is not a way round the menu to a page
+ * whose every call the server refuses. The content search reads the list
+ * route the Editor page reads and its results open the Editor, so it is
+ * asked only for a role the Editor is shown to; below that the box offers
+ * the pages alone. A missing role (no AdminRoleProvider, which the guard
+ * always supplies in the app) reads as the viewer's, as the menu reads it.
  */
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { FileText, Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { NAV_ITEMS, navGroupFor } from '@/config/adminNav';
+import {
+  NAV_ITEMS,
+  navGroupFor,
+  navItemById,
+  satisfiesRole,
+  visibleNavFor,
+} from '@/config/adminNav';
+import { useAdminRole } from '@/hooks/useAdminRole';
 import { listContentItems } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-/** How many content items one search lists; the pages are always all listed. */
+/** How many content items one search lists; every page the role is shown is always listed. */
 export const CONTENT_SEARCH_LIMIT = 8;
+
+/** Whether `role` may search content here: the Editor page, where a result opens, is shown to it. */
+export function canSearchContent(role) {
+  return satisfiesRole(role, navItemById('editor')?.minRole);
+}
+
+/** The registry pages `role` is shown, flat and in menu order. */
+export function pagesFor(role) {
+  return visibleNavFor(role).flatMap((group) => group.items);
+}
 /**
  * The content search is asked only for a trimmed term of
  * CONTENT_SEARCH_MIN_LENGTH to CONTENT_SEARCH_MAX_LENGTH characters. These
@@ -70,13 +96,14 @@ const contentHint = (item) =>
  * change. Returns `{ items, error, pending, tooLong }` for the current query
  * only: the answer is stored with the query it answered, so a stale reply is
  * not mistaken for the current one and nothing needs clearing. `query` is
- * already trimmed, as the list route measures it.
+ * already trimmed, as the list route measures it. With `enabled` false
+ * (a role the Editor is not shown to) nothing is ever asked.
  */
-function useContentSearch(query, debounceMs) {
+function useContentSearch(query, debounceMs, enabled) {
   const [answer, setAnswer] = useState(null);
   const sequence = useRef(0);
-  const tooLong = query.length > CONTENT_SEARCH_MAX_LENGTH;
-  const searchable = query.length >= CONTENT_SEARCH_MIN_LENGTH && !tooLong;
+  const tooLong = enabled && query.length > CONTENT_SEARCH_MAX_LENGTH;
+  const searchable = enabled && query.length >= CONTENT_SEARCH_MIN_LENGTH && !tooLong;
 
   useEffect(() => {
     if (!searchable) return undefined;
@@ -105,14 +132,16 @@ function useContentSearch(query, debounceMs) {
   };
 }
 
-/** Everything inside the dialog; mounted fresh each time it opens. */
-function PaletteBody({ debounceMs, onChoose }) {
+/** Everything inside the dialog, for the signed-in `role`; mounted fresh each time it opens. */
+function PaletteBody({ debounceMs, role, onChoose }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const listId = useId();
   const trimmed = query.trim();
-  const pages = useMemo(() => filterPages(trimmed), [trimmed]);
-  const search = useContentSearch(trimmed, debounceMs);
+  const shown = useMemo(() => pagesFor(role), [role]);
+  const pages = useMemo(() => filterPages(trimmed, shown), [trimmed, shown]);
+  const contentAllowed = canSearchContent(role);
+  const search = useContentSearch(trimmed, debounceMs, contentAllowed);
 
   const options = useMemo(
     () => [
@@ -170,8 +199,10 @@ function PaletteBody({ debounceMs, onChoose }) {
     <>
       <DialogTitle className="sr-only">Go to a page or open content</DialogTitle>
       <DialogDescription className="sr-only">
-        Type to filter the admin pages and search content by title. Use the arrow keys to move,
-        Enter to open, Escape to close.
+        {contentAllowed
+          ? 'Type to filter the admin pages and search content by title.'
+          : 'Type to filter the admin pages.'}{' '}
+        Use the arrow keys to move, Enter to open, Escape to close.
       </DialogDescription>
       <div className="flex items-center gap-2 border-b border-border px-3">
         <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -183,7 +214,9 @@ function PaletteBody({ debounceMs, onChoose }) {
           aria-controls={listId}
           aria-activedescendant={options[activeIndex] ? optionId(options[activeIndex]) : undefined}
           aria-label="Search pages and content"
-          placeholder="Go to a page, or search content by title…"
+          placeholder={
+            contentAllowed ? 'Go to a page, or search content by title…' : 'Go to a page…'
+          }
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -249,8 +282,13 @@ function PaletteBody({ debounceMs, onChoose }) {
   );
 }
 
+/**
+ * The palette's button and its dialog, opened by Ctrl-K or Cmd-K, over the
+ * pages the signed-in role is shown (see the header).
+ */
 export default function CommandPalette({ debounceMs = 250 }) {
   const navigate = useNavigate();
+  const role = useAdminRole();
   const [open, setOpen] = useState(false);
 
   // The shortcut, anywhere in the admin. preventDefault, or the browser
@@ -292,7 +330,7 @@ export default function CommandPalette({ debounceMs = 250 }) {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="top-[12vh] translate-y-0 gap-0 p-0 sm:max-w-xl">
-          <PaletteBody debounceMs={debounceMs} onChoose={choose} />
+          <PaletteBody debounceMs={debounceMs} role={role} onChoose={choose} />
         </DialogContent>
       </Dialog>
     </>

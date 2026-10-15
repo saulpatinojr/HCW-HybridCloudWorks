@@ -125,7 +125,11 @@ This project has not cut a tagged release; entries are grouped under
   (`lib/cosmos-client.js`) answers a document gone before its read with
   `code: 404`, as the patch path already did. `deleteContentItem`'s two
   failure lines are a fixed sentence and the error's code, with no
-  document id.
+  document id. Rebased onto the role-cut menu (AP-F4, #928): Live Pages'
+  Archive and the Archive board's Restore to live and Delete permanently
+  sit behind the publisher `RoleGate`, and the command palette lists only
+  the pages `visibleNavFor` gives the signed-in role and asks the content
+  search only for a role the Editor is shown to.
 - **alert-timer-overdue evaluates again, a KQL test refuses what silenced it,
   the weekly check reads every log rule's Resource Health, and the fire test
   matches the timer dimension** (PLAT-4, #964). The rule never evaluated from

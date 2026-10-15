@@ -11,6 +11,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import ArchiveBoard from './ArchiveBoard';
+import { AdminRoleProvider } from '@/hooks/useAdminRole';
 
 const postJSON = vi.fn();
 vi.mock('@/lib/api', () => ({ postJSON: (...args) => postJSON(...args) }));
@@ -25,8 +26,16 @@ const archived = (n) => ({
   archivedAt: '2026-10-15T10:00:00.000Z',
 });
 
-function renderOpen(items = [archived(1), archived(2)], { onRestored } = {}) {
-  render(<ArchiveBoard archivedList={items} loading={false} onRestored={onRestored} />);
+/**
+ * The board, opened, for a publisher unless `role` says otherwise: both
+ * ways out of the archive are a publisher's (AP-F4, #928).
+ */
+function renderOpen(items = [archived(1), archived(2)], { onRestored, role = 'publisher' } = {}) {
+  render(
+    <AdminRoleProvider value={role}>
+      <ArchiveBoard archivedList={items} loading={false} onRestored={onRestored} />
+    </AdminRoleProvider>
+  );
   fireEvent.click(screen.getByRole('button', { name: /^Archive \(/ }));
 }
 
@@ -132,6 +141,22 @@ describe('ArchiveBoard', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(postJSON).not.toHaveBeenCalled();
     expect(screen.getByText('Archived 1')).toBeInTheDocument();
+  });
+
+  it('below publisher, says once why both ways out are unavailable, and a click sends nothing', () => {
+    renderOpen([archived(1)], { role: 'editor' });
+    const row = rowOf('Archived 1');
+    const reason = within(row).getByText(
+      'Restoring or deleting an archived page needs the publisher role.'
+    );
+    for (const name of ['Restore to live', 'Delete permanently']) {
+      const button = within(row).getByRole('button', { name });
+      expect(button, name).toHaveAttribute('aria-disabled', 'true');
+      expect(button, name).toHaveAttribute('aria-describedby', reason.id);
+      fireEvent.click(button);
+    }
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('keeps the row and shows the refusal when the API says no', async () => {

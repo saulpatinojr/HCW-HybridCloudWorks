@@ -320,7 +320,9 @@ function DashboardHeader({
             <CountLink to="/admin/editor">{counts.editor} in editor</CountLink>
             {counts.rejected > 0 && ' · '}
             {counts.rejected > 0 && (
-              <CountLink to="/admin/review-queue?status=rejected">{counts.rejected} rejected</CountLink>
+              <CountLink to="/admin/review-queue?status=rejected">
+                {counts.rejected} rejected
+              </CountLink>
             )}
           </RoleGate>
         </p>

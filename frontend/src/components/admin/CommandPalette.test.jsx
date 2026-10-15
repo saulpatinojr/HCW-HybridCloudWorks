@@ -12,33 +12,40 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import CommandPalette, {
   CONTENT_SEARCH_LIMIT,
   CONTENT_SEARCH_MAX_LENGTH,
+  canSearchContent,
   filterPages,
+  pagesFor,
 } from './CommandPalette';
-import { NAV_ITEMS } from '@/config/adminNav';
+import { NAV_ITEMS, visibleNavFor } from '@/config/adminNav';
+import { AdminRoleProvider } from '@/hooks/useAdminRole';
 
 const listContentItems = vi.fn();
 vi.mock('@/lib/api', () => ({ listContentItems: (...args) => listContentItems(...args) }));
 
+/** The router's current path, printed so a test can read where Enter or a click went. */
 function Probe() {
   const { pathname } = useLocation();
   return <output data-testid="location">{pathname}</output>;
 }
 
-function renderPalette() {
+/** The palette under `role`, as AdminLayout mounts it inside the guard's role provider. */
+function renderPalette(role = 'super_admin') {
   return render(
-    <MemoryRouter initialEntries={['/admin/labs']}>
-      <Routes>
-        <Route
-          path="*"
-          element={
-            <>
-              <CommandPalette debounceMs={30} />
-              <Probe />
-            </>
-          }
-        />
-      </Routes>
-    </MemoryRouter>
+    <AdminRoleProvider value={role}>
+      <MemoryRouter initialEntries={['/admin/labs']}>
+        <Routes>
+          <Route
+            path="*"
+            element={
+              <>
+                <CommandPalette debounceMs={30} />
+                <Probe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>
+    </AdminRoleProvider>
   );
 }
 
@@ -201,6 +208,48 @@ describe('CommandPalette', () => {
     type('   c   ');
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(listContentItems).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The palette is cut to the role the way the menu is (AP-F4, #928): it is
+   * not a way round the menu to a page the server refuses the role.
+   */
+  it('lists a viewer the menu’s pages only, and never asks the content search', async () => {
+    expect(pagesFor('viewer').map((i) => i.label)).toEqual(['Dashboard', 'Health']);
+    expect(canSearchContent('viewer')).toBe(false);
+    renderPalette('viewer');
+    pressShortcut();
+    await screen.findByRole('dialog');
+
+    expect(options().map((o) => o.textContent)).toEqual([
+      expect.stringMatching(/^Dashboard/),
+      expect.stringMatching(/^Health/),
+    ]);
+    expect(input()).toHaveAttribute('placeholder', 'Go to a page…');
+    type('azure');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(listContentItems).not.toHaveBeenCalled();
+    expect(screen.getByRole('status')).toHaveTextContent('No page matches.');
+  });
+
+  it('lists an editor every page but Publish, and searches content for it', async () => {
+    expect(canSearchContent('editor')).toBe(true);
+    renderPalette('editor');
+    pressShortcut();
+    await screen.findByRole('dialog');
+
+    const editorPages = visibleNavFor('editor').flatMap((g) => g.items);
+    expect(options()).toHaveLength(editorPages.length);
+    type('publish');
+    expect(options().map((o) => o.textContent)).not.toContainEqual(
+      expect.stringMatching(/^Publish/)
+    );
+    await waitFor(() => expect(listContentItems).toHaveBeenCalledTimes(1));
+  });
+
+  it('reads a missing role as the viewer’s, as the menu does', () => {
+    expect(pagesFor(null)).toEqual(pagesFor('viewer'));
+    expect(canSearchContent(null)).toBe(false);
   });
 
   it('forgets the query when closed, so the next opening lists every page', async () => {

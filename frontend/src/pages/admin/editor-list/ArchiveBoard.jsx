@@ -35,6 +35,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import ConfirmModal from '@/components/admin/ConfirmModal';
+import RoleGate from '@/components/admin/RoleGate';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import { postJSON } from '@/lib/api';
 import { toDate } from '@/lib/dateUtils';
@@ -121,30 +122,39 @@ function ArchiveRow({ item, busy, onRestore, onDelete }) {
       <Badge variant="secondary" className="text-[10px] shrink-0">
         archived
       </Badge>
-      <Button
-        size="sm"
-        variant="outline"
-        className="gap-1 text-xs shrink-0"
-        disabled={busy}
-        onClick={() => onRestore(item)}
+      {/* Both ways out are a publisher's: Restore to live is the edge into
+          published, Delete permanently the publisher RPC deleteContentItem.
+          One gate, so the row reads the reason once (AP-F4). */}
+      <RoleGate
+        minRole="publisher"
+        reason="Restoring or deleting an archived page needs the publisher role."
+        className="shrink-0"
       >
-        {busy ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <RotateCcw className="h-3.5 w-3.5" />
-        )}
-        Restore to live
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        className="gap-1 text-xs shrink-0 text-destructive hover:text-destructive"
-        disabled={busy}
-        onClick={() => onDelete(item)}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-        Delete permanently
-      </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1 text-xs shrink-0"
+          disabled={busy}
+          onClick={() => onRestore(item)}
+        >
+          {busy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RotateCcw className="h-3.5 w-3.5" />
+          )}
+          Restore to live
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="gap-1 text-xs shrink-0 text-destructive hover:text-destructive"
+          disabled={busy}
+          onClick={() => onDelete(item)}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete permanently
+        </Button>
+      </RoleGate>
     </div>
   );
 }

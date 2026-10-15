@@ -159,11 +159,14 @@ export function roleLabel(role) {
  *   Review Queue       editor     transitionContentStatus (cms/content-update.js) for approve and reject; the
  *                                 snapshot (getQueueSnapshot) is a viewer read; deleteRejectedContent
  *                                 (gallery-images.js) and deleteContentItem (content-workflow.js) are publisher, gated
- *   Editor             editor     cms/content (cms-content.js), saveEditorDraft (content-workflow/editor.js)
+ *   Editor             editor     cms/content (cms-content.js), saveEditorDraft (content-workflow/editor.js); the
+ *                                 Archive board's Restore to live (archived → published, cms/content-update.js) and
+ *                                 Delete permanently (deleteContentItem, content-workflow.js) are publisher, gated
  *   Publish            publisher  publishContent (cms/publish.js), unpublishContentToInspected (content-workflow.js),
  *                                 cms/content/slug (cms/set-slug.js), cms/content/rehost-images POST (cms/rehost-images.js)
- *   Live Pages         editor     cms/content?live=true (cms-content.js); softDeleteLivePage (content-workflow.js)
- *                                 is publisher, gated
+ *   Live Pages         editor     cms/content?live=true (cms-content.js); Archive (published → archived through
+ *                                 transitionContentStatus, cms/content-update.js) is publisher, gated, so the Undo
+ *                                 its toast offers reaches only the publisher who archived
  *   Listen & Learn     editor     cms/listen-and-learn (listen-and-learn/book-handlers.js); approving a chapter with
  *                                 publish is publisher (listen-and-learn/speech-handlers.js), gated
  *   Labs               editor     enqueueLabJob, cancelLabJob (labs.js), cms/labs/agents (labs/agent-registry.js); the
@@ -468,7 +471,7 @@ export const NAV_ITEMS = Object.freeze(NAV_GROUPS.flatMap((group) => group.items
 /**
  * The registry entry for a route, so a page header can show the same
  * description the sidebar does. Exact match first, then the longest prefix
- * (so /admin/queue/abc resolves to Review Queue), never the bare /admin for
+ * (so /admin/review-queue/abc resolves to Review Queue), never the bare /admin for
  * a deeper path.
  */
 export function navItemFor(pathname) {

@@ -9,6 +9,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import LivePagesPage from './LivePagesPage';
+import { AdminRoleProvider } from '@/hooks/useAdminRole';
 
 const getJSON = vi.fn();
 const fetchPublicContentList = vi.fn();
@@ -51,11 +52,14 @@ const liveItem = (n) => ({
   publishedUrl: `https://hybridcloudworks.com/frameworks/live-page-${n}`,
 });
 
-function renderPage() {
+/** The page for a publisher unless `role` says otherwise: Archive is a publisher's edge (AP-F4). */
+function renderPage(role = 'publisher') {
   return render(
-    <MemoryRouter>
-      <LivePagesPage />
-    </MemoryRouter>
+    <AdminRoleProvider value={role}>
+      <MemoryRouter>
+        <LivePagesPage />
+      </MemoryRouter>
+    </AdminRoleProvider>
   );
 }
 
@@ -143,5 +147,19 @@ describe('LivePagesPage', () => {
     const offered = within(publishedRow).getByRole('button', { name: 'Archive' });
     expect(offered).toBeEnabled();
     expect(offered).not.toHaveAttribute('title');
+  });
+
+  it('tells an editor Archive needs the publisher role, and a click archives nothing', async () => {
+    archiveLivePage.mockReset();
+    getJSON.mockResolvedValue({ items: [liveItem(1)] });
+    renderPage('editor');
+
+    const row = (await screen.findByText('Live Page 1')).closest('div.rounded-lg');
+    const reason = within(row).getByText('Taking a page off the site needs the publisher role.');
+    const gated = within(row).getByRole('button', { name: 'Archive' });
+    expect(gated).toHaveAttribute('aria-disabled', 'true');
+    expect(gated).toHaveAttribute('aria-describedby', reason.id);
+    fireEvent.click(gated);
+    expect(archiveLivePage).not.toHaveBeenCalled();
   });
 });
