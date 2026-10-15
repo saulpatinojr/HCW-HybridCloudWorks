@@ -128,7 +128,7 @@
 import { createHash } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
-import { AuthoredError, errorCode } from '../http/error-response.js';
+import { AuthoredError, codeShaped, errorCode } from '../http/error-response.js';
 
 export const PODBEAN_API_BASE_URL = 'https://api.podbean.com/v1';
 
@@ -226,9 +226,6 @@ export class PodbeanError extends AuthoredError {
   }
 }
 
-/** An OAuth `error` code or a socket code has this shape; a sentence does not. */
-const CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
-
 /**
  * `400 invalid_grant`, or `503` when the answer carried no code: the parts
  * of a failed answer a stored sentence may name. The description stays out.
@@ -238,8 +235,8 @@ const CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
  * @returns {string}
  */
 function statusAndCode(status, data) {
-  const code = typeof data?.error === 'string' ? data.error.trim() : '';
-  return CODE_SHAPE.test(code) ? `${status} ${code}` : String(status);
+  const code = codeShaped(data?.error);
+  return code ? `${status} ${code}` : String(status);
 }
 
 /**
@@ -252,7 +249,7 @@ function statusAndCode(status, data) {
  */
 function transportCode(error) {
   for (const candidate of [error?.code, error?.cause?.code]) {
-    if (typeof candidate === 'string' && CODE_SHAPE.test(candidate)) return candidate;
+    if (typeof candidate === 'string' && codeShaped(candidate)) return candidate.trim();
   }
   return errorCode(error);
 }
@@ -368,8 +365,8 @@ function episodeIdOrRefuse(value, where) {
  * @returns {string}
  */
 function codeNote(data) {
-  const code = typeof data?.error === 'string' ? data.error.trim() : '';
-  return CODE_SHAPE.test(code) ? ` (${code})` : '';
+  const code = codeShaped(data?.error);
+  return code ? ` (${code})` : '';
 }
 
 /** `{ error, error_description }` → `error: description`, or the text, cut short. */

@@ -147,6 +147,14 @@ describe("callMcpTool", () => {
       httpStatus: 200,
     });
 
+    // A code that is not one (a sentence where the number belongs) is not kept.
+    const sentenceCode = vi.fn(async () =>
+      response({ jsonrpc: "2.0", error: { code: "token abc expired for user ana@example.com", message: "x" } }),
+    );
+    expect(
+      await callMcpTool({ store: store(), serverId: "plaud", tool: "t", fetch: sentenceCode, env: {}, log: quiet }),
+    ).toMatchObject({ ok: false, code: null });
+
     const isError = vi.fn(async () =>
       response({ jsonrpc: "2.0", result: { isError: true, content: [{ type: "text", text: "no such file" }] } }),
     );

@@ -13,7 +13,7 @@
  * keyless servers, and Plaud's pasted token, take the path they always did.
  */
 import { parseMcpResponseBody } from '../cloud-tools/mcp-parse.js';
-import { AuthoredError, authoredMessage, errorCode } from '../http/error-response.js';
+import { AuthoredError, authoredMessage, codeShaped, errorCode } from '../http/error-response.js';
 import {
   INTEGRATION_KEY_HOSTS,
   KNOWN_INTEGRATION_KEY_NAMES,
@@ -666,11 +666,13 @@ function rpcOnServer({ serverId, server, url, rpcBody, env, options }) {
 /** A tools/call reply as the outcome callMcpTool reports; every shape is a 200. */
 function toolCallOutcome(rpcResult) {
   if (rpcResult?.error) {
-    // The JSON-RPC error code is kept; the server's own sentence is not (#945).
+    // The JSON-RPC error code is kept, when it is one; the server's own
+    // sentence is not (#945).
+    const { code } = rpcResult.error;
     return {
       ok: false,
       error: 'The MCP server answered the call with an error.',
-      code: rpcResult.error.code,
+      code: Number.isInteger(code) ? code : codeShaped(code) || null,
       httpStatus: 200,
     };
   }

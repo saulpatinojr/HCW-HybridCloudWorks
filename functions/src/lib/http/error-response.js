@@ -104,6 +104,24 @@ export function errorCode(error) {
 }
 
 /**
+ * A provider's value as a code a sentence may carry: an integer, or a string
+ * in the code shape (`invalid_grant`, `missing_permissions`, `ENOTFOUND`).
+ * Anything else, a sentence, a URL, echoed request data, an object, is '',
+ * so a sentence this code writes around a provider's value can name its code
+ * and never its words (#945). Callers fall back to the HTTP status or a fixed
+ * word when it is ''.
+ *
+ * @param {unknown} value - the provider's field
+ * @returns {string}
+ */
+export function codeShaped(value) {
+  if (Number.isInteger(value)) return String(value);
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  return CODE_SHAPE.test(trimmed) ? trimmed : '';
+}
+
+/**
  * Extract or generate a correlation ID for request tracing.
  *
  * @param {object} [context] - Azure Functions invocation context

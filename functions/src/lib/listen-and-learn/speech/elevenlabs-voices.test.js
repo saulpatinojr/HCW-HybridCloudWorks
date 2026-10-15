@@ -357,6 +357,15 @@ describe('readVoices', () => {
     expect(caught.message).not.toContain('sk_0123456789abcdef0123');
   });
 
+  it('names the status alone when the refusal\'s code echoes the request (#945)', async () => {
+    const fetchImpl = vi.fn(async () =>
+      refusal(400, JSON.stringify({ detail: { code: 'bad request: GET /v1/voices?page_size=100 key=sk_abcdef0123456789' } }))
+    );
+    const caught = await readVoices({ key: 'echo-key', fetchImpl, sleep: noSleep }).catch((e) => e);
+    expect(caught.message).toBe('Could not list the ElevenLabs voices (HTTP 400).');
+    expect(caught.message).not.toMatch(/page_size|sk_/);
+  });
+
   it('retries a 429 and a 5xx, and reports a refused key and a non-JSON answer', async () => {
     let calls = 0;
     const flaky = vi.fn(async (url) => {
@@ -531,6 +540,11 @@ describe('fetchVoicePreview', () => {
       [
         vi.fn(async () => audioResponse(mp3(), { 'content-type': 'text/html' })),
         /text\/html, not audio/,
+      ],
+      [
+        // A header that is not a media type is not repeated (#945).
+        vi.fn(async () => audioResponse(mp3(), { 'content-type': 'text/<img src=x onerror=alert(1)>' })),
+        /answered an unexpected content type, not audio/,
       ],
       [vi.fn(async () => audioResponse(Uint8Array.from([0x3c, 0x68, 0x74, 0x6d]))), /not MP3/],
     ];

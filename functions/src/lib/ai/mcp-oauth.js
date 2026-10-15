@@ -50,7 +50,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { PRODUCTION_ORIGINS } from '../auth/cors.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
-import { AuthoredError, authoredMessage, errorCode } from '../http/error-response.js';
+import { AuthoredError, authoredMessage, codeShaped, errorCode } from '../http/error-response.js';
 import { outsideJob } from '../job-context.js';
 import { MCP_OAUTH_CALLBACK_PATH, validateMcpUrl } from './mcp-policy.js';
 
@@ -127,14 +127,30 @@ function parseJson(text) {
   }
 }
 
-/** The URL with its query and fragment removed, for messages. */
+/** A path of URL characters only, capped: all of a path an address may show. */
+const PATH_SHAPE = /^\/[A-Za-z0-9._~%/-]{0,120}$/;
+
+/**
+ * An address for a sentence: `scheme://host/path`, with the scheme and the
+ * host held to the door's code shape and the path to URL characters, and no
+ * query, fragment or credentials; a fixed phrase for anything else. Most
+ * addresses named here come from a provider's metadata, so nothing else of
+ * them is repeated, and a value that is not a URL is never echoed (#945).
+ *
+ * @param {unknown} url - the address
+ * @returns {string}
+ */
 function bare(url) {
+  let parsed;
   try {
-    const parsed = new URL(url);
-    return `${parsed.origin}${parsed.pathname}`;
+    parsed = new URL(String(url ?? ''));
   } catch {
-    return String(url);
+    return 'an address that is not a URL';
   }
+  const scheme = codeShaped(parsed.protocol.replace(/:$/, ''));
+  const host = codeShaped(parsed.host);
+  if (!scheme || !host) return 'an address that cannot be shown';
+  return `${scheme}://${host}${PATH_SHAPE.test(parsed.pathname) ? parsed.pathname : '/(path not shown)'}`;
 }
 
 /**
@@ -146,7 +162,9 @@ export function requireHttpsUrl(value, what) {
   try {
     parsed = new URL(String(value ?? ''));
   } catch {
-    throw new McpOAuthError(`${what} is not a valid URL (${String(value ?? '') || 'missing'}).`);
+    // The value is not repeated: it is often a provider's metadata (#945).
+    const blank = value === undefined || value === null || String(value).trim() === '';
+    throw new McpOAuthError(`${what} is ${blank ? 'missing' : 'not a valid URL'}.`);
   }
   if (parsed.protocol !== 'https:') {
     throw new McpOAuthError(`${what} must be an https address; it is ${bare(parsed.href)}.`);
@@ -570,7 +588,7 @@ export function reusableClient(server, { issuer, redirectUri }) {
  * @returns {string}
  */
 function describeOAuthReply(body, status) {
-  const code = typeof body?.error === 'string' && /^[\w.-]{1,64}$/.test(body.error) ? body.error : '';
+  const code = typeof body?.error === 'string' ? codeShaped(body.error) : '';
   return code ? `${code} (HTTP ${status})` : `HTTP ${status}`;
 }
 
@@ -766,8 +784,12 @@ export function parseTokenResponse({ status, text }, { name, grant, now }) {
     });
   }
   if (body.token_type !== undefined && !/^bearer$/i.test(String(body.token_type))) {
+    // Named only when it has the shape of a token type (#945).
+    const tokenType = codeShaped(body.token_type);
     throw new McpOAuthError(
-      `${name}'s sign-in server issued a "${String(body.token_type).slice(0, 40)}" token, not a bearer token.`,
+      tokenType
+        ? `${name}'s sign-in server issued a "${tokenType}" token, not a bearer token.`
+        : `${name}'s sign-in server issued a token that is not a bearer token.`,
       { upstreamStatus: status }
     );
   }

@@ -133,6 +133,18 @@ describe('isFreePlan and errorCode', () => {
     expect(errorCode('<html>bad gateway</html>')).toBe('');
     expect(errorCode('')).toBe('');
   });
+
+  it('names no code that is not shaped like one: an echoed request or a sentence is dropped (#945)', () => {
+    for (const code of [
+      'GET /v1/user/subscription xi-api-key=sk_0123456789abcdef',
+      'Your voice "Ana" is not allowed on this plan',
+      '<b>quota</b>',
+    ]) {
+      expect(errorCode(JSON.stringify({ detail: { code } }))).toBe('');
+      expect(errorCode(JSON.stringify({ detail: { status: code } }))).toBe('');
+    }
+    expect(errorCode(JSON.stringify({ detail: { code: { nested: 'x' } } }))).toBe('');
+  });
 });
 
 describe('dialogueRefusal', () => {

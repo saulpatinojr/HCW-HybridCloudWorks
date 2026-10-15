@@ -3,6 +3,7 @@ import {
   AuthoredError,
   authoredDetails,
   authoredMessage,
+  codeShaped,
   errorCode,
   errorFacts,
   errorResponse,
@@ -193,6 +194,26 @@ describe('logFailure and failureFields', () => {
   it('takes a caller-supplied id from the request when the context has none', () => {
     const request = { headers: { get: (name) => (name === 'x-correlation-id' ? 'req-1' : null) } };
     expect(logFailure({ error: vi.fn() }, 'x', null, request)).toBe('req-1');
+  });
+});
+
+describe('codeShaped: a provider value a sentence may carry (#945)', () => {
+  it.each([
+    ['an OAuth code', 'invalid_grant', 'invalid_grant'],
+    ['a socket code', 'ENOTFOUND', 'ENOTFOUND'],
+    ['a JSON-RPC number', -32603, '-32603'],
+    ['a status', 429, '429'],
+    ['surrounding space', '  quota_exceeded ', 'quota_exceeded'],
+    ['a sentence', 'The grant type is unauthorized for this client_id', ''],
+    ['echoed request data', 'GET /v1/voices?xi-api-key=sk_abc', ''],
+    ['markup', '<script>alert(1)</script>', ''],
+    ['a URL', 'https://attacker.example/x', ''],
+    ['an object', { code: 'x' }, ''],
+    ['a fraction', 1.5, ''],
+    ['too long', 'a'.repeat(65), ''],
+    ['nothing', undefined, ''],
+  ])('%s', (_, value, expected) => {
+    expect(codeShaped(value)).toBe(expected);
   });
 });
 

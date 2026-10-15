@@ -29,10 +29,7 @@
  * with the HTTP status and Plaud's OAuth `error` code, or the error's code
  * and a log line's reference, never Plaud's body or a socket's text (#945).
  */
-import { AuthoredError, recordedFailure } from '../http/error-response.js';
-
-/** An OAuth `error` code has this shape; a sentence does not. */
-const OAUTH_CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
+import { AuthoredError, codeShaped, recordedFailure } from '../http/error-response.js';
 
 /**
  * ` invalid_grant` when the refused answer carried an OAuth `error` code,
@@ -43,8 +40,8 @@ const OAUTH_CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
  */
 function oauthCodeNote(body) {
   try {
-    const code = JSON.parse(body)?.error;
-    return typeof code === 'string' && OAUTH_CODE_SHAPE.test(code) ? ` ${code}` : '';
+    const code = codeShaped(JSON.parse(body)?.error);
+    return code ? ` ${code}` : '';
   } catch {
     return '';
   }

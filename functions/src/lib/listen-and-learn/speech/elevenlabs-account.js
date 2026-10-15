@@ -117,7 +117,7 @@
  * show the sentence whole (`authoredMessage`).
  */
 
-import { AuthoredError, errorCode as failureCode } from '../../http/error-response.js';
+import { AuthoredError, codeShaped, errorCode as failureCode } from '../../http/error-response.js';
 
 export const SUBSCRIPTION_URL = 'https://api.elevenlabs.io/v1/user/subscription';
 
@@ -206,12 +206,17 @@ export class ElevenLabsSpeechError extends AuthoredError {
  * `detail.code` is the current field; `detail.status` is "a legacy field that
  * is no longer used" but older answers still carry it
  * (https://elevenlabs.io/docs/eleven-api/resources/errors). Read as text
- * first, so a non-JSON error page cannot throw here.
+ * first, so a non-JSON error page cannot throw here. Held to the door's code
+ * shape: the account and voices refusals put it in a sentence, so a value
+ * that is not a code (a sentence, echoed request data) is '' (#945).
+ *
+ * @param {string} bodyText - the refusal's body
+ * @returns {string}
  */
 export function errorCode(bodyText) {
   try {
     const detail = JSON.parse(bodyText)?.detail;
-    return String(detail?.code || detail?.status || '').toLowerCase();
+    return codeShaped(String(detail?.code || detail?.status || '').toLowerCase());
   } catch {
     return '';
   }

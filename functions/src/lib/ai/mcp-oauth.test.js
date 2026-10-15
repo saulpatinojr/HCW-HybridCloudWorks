@@ -354,6 +354,28 @@ describe('discovery refuses what this flow cannot use, and says which', () => {
     );
   });
 
+  it('never repeats metadata that is not an address: an issuer, an endpoint or a resource (#945)', async () => {
+    // `echo:` parses as an opaque URL with no host; plain text does not parse.
+    const issuer = await discoverWith({ issuer: 'echo: client_secret=s3cret' }).run.catch((e) => e);
+    expect(issuer.message).toMatch(/names the issuer an address that cannot be shown, not https:\/\//);
+    expect(issuer.message).not.toContain('s3cret');
+    const text = await discoverWith({ issuer: 'issued for ana@example.com' }).run.catch((e) => e);
+    expect(text.message).toMatch(/names the issuer an address that is not a URL, not https:\/\//);
+    expect(text.message).not.toContain('ana@');
+
+    const endpoint = await discoverWith({ token_endpoint: 'token at <script>x</script>' }).run.catch((e) => e);
+    expect(endpoint.message).toMatch(/token endpoint is not a valid URL\.$/);
+    expect(endpoint.message).not.toContain('script');
+
+    const scheme = await discoverWith({ token_endpoint: 'javascript:alert(document.cookie)' }).run.catch((e) => e);
+    expect(scheme.message).toMatch(/token endpoint must be an https address; it is an address that cannot be shown\./);
+    expect(scheme.message).not.toContain('cookie');
+
+    const resource = await discoverWith({}, { resource: 'https://attacker.example/a?echo=s3cret' }).run.catch((e) => e);
+    expect(resource.message).toMatch(/names the resource https:\/\/attacker\.example\/a, which is not its own address/);
+    expect(resource.message).not.toContain('s3cret');
+  });
+
   it('accepts a resource that is the server or a parent of it, and nothing beside it', async () => {
     for (const resource of ['https://mcp.replicate.com', 'https://mcp.replicate.com/sse']) {
       await expect(discoverWith({}, { resource }).run).resolves.toMatchObject({ resource });
@@ -757,6 +779,20 @@ describe('token requests', () => {
         { name: 'X', grant: 'sign-in code', now }
       )
     ).toThrow(/not a bearer token/);
+    // A token_type that is not shaped like one is not repeated (#945).
+    expect(() =>
+      parseTokenResponse(
+        { status: 200, text: JSON.stringify({ access_token: 'a', token_type: 'Bearer; echoed=client_secret' }) },
+        { name: 'X', grant: 'sign-in code', now }
+      )
+    ).toThrow(/^X's sign-in server issued a token that is not a bearer token\.$/);
+    // Nor is an error code that is a sentence.
+    expect(() =>
+      parseTokenResponse(
+        { status: 400, text: JSON.stringify({ error: 'code=abc was echoed back to you' }) },
+        { name: 'X', grant: 'sign-in code', now }
+      )
+    ).toThrow(/refused the sign-in code: HTTP 400\.$/);
     expect(
       parseTokenResponse({ status: 200, text: JSON.stringify({ access_token: 'a' }) }, { name: 'X', grant: 'g', now })
     ).toEqual({ accessToken: 'a', refreshToken: null, expiresAt: null, scope: null });

@@ -5,9 +5,11 @@
  *
  * Nothing here reads a store or Resend. The responses are fixed sentences;
  * the describers decide what a Resend refusal or a thrown error may say in a
- * LOG LINE (its name and status only) and what it may say to the OWNER (its
- * message too, which can echo the broadcast and so is never logged).
+ * LOG LINE and to the OWNER: its status and its machine code, held to the
+ * door's code shape. Resend's own sentence can echo the broadcast, so it is
+ * in neither (#945).
  */
+import { codeShaped } from '../http/error-response.js';
 
 export const json = (status, body) => ({
   status,
@@ -64,10 +66,17 @@ export const errorMeta = (error) => {
   return `${name}${code}`;
 };
 
-/** Resend's refusal for a LOG LINE: status and error name only, never its message. */
+/**
+ * Resend's refusal for a LOG LINE: status and error name only, never its
+ * message. The name is held to the door's code shape, so a value that is not
+ * a machine code is left out (#945).
+ *
+ * @param {{ status?: number, data?: { name?: unknown } }} result - a resend-client answer
+ * @returns {string}
+ */
 export const describeForLog = (result) => {
-  const name = typeof result?.data?.name === 'string' ? ` ${result.data.name}` : '';
-  return `HTTP ${result?.status ?? 0}${name}`;
+  const code = codeShaped(result?.data?.name);
+  return `HTTP ${result?.status ?? 0}${code ? ` ${code}` : ''}`;
 };
 
 /**

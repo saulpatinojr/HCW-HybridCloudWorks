@@ -21,7 +21,7 @@
  * ranking and quota model are unchanged; the module is ESM and the key arrives
  * as a parameter rather than a Firebase secret binding.
  */
-import { AuthoredError, errorCode, storedFailure } from '../http/error-response.js';
+import { AuthoredError, codeShaped, errorCode, storedFailure } from '../http/error-response.js';
 
 const SEARCH_URL = 'https://www.googleapis.com/youtube/v3/search';
 const VIDEOS_URL = 'https://www.googleapis.com/youtube/v3/videos';
@@ -35,9 +35,6 @@ const MAX_DURATION_SECONDS = 3 * 60 * 60;
 
 /** Below this, a video has had no scrutiny from anyone. */
 export const MIN_VIEWS = 500;
-
-/** A YouTube Data API reason code (`quotaExceeded`, `keyInvalid`) has this shape; a sentence does not. */
-const REASON_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
 
 /**
  * A video search that failed, in this module's sentence: the HTTP status and
@@ -140,7 +137,8 @@ async function youtubeGet(url, params, { fetchImpl }) {
     // quotaExceeded is the one worth naming explicitly — it is the failure a
     // bulk regeneration will actually hit, and it is not a bug to chase.
     const detail = reason === 'quotaExceeded' ? ' (daily quota exhausted)' : '';
-    const code = typeof reason === 'string' && REASON_SHAPE.test(reason) ? `: ${reason}` : '';
+    const reasonCode = codeShaped(reason);
+    const code = reasonCode ? `: ${reasonCode}` : '';
     throw new VideoSearchError(`YouTube Data API HTTP ${response.status}${detail}${code}`, {
       status: response.status,
     });

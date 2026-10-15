@@ -5,7 +5,7 @@
  * (router.js, which re-exports the public names here so callers and tests
  * are unchanged); the header of router.js carries the Interactions contract.
  */
-import { AuthoredError } from '../http/error-response.js';
+import { AuthoredError, codeShaped } from '../http/error-response.js';
 import { fenceArticleText } from './prompt-fence.js';
 
 export const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
@@ -249,7 +249,7 @@ export function failedRetrievals(data) {
     .filter((r) => r && typeof r === 'object' && r.status && r.status !== 'success')
     .map((r) => {
       const url = typeof r.url === 'string' && /^https?:\/\/\S+$/.test(r.url) ? r.url.slice(0, 300) : 'a source';
-      const status = typeof r.status === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(r.status) ? r.status : 'unreadable';
+      const status = codeShaped(r.status) || 'unreadable';
       return `${url} (${status})`;
     });
 }

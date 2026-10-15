@@ -205,7 +205,7 @@
  * `@Microsoft.KeyVault(...)` string. That is not a key; `readKey` says so.
  */
 
-import { AuthoredError, errorCode } from '../http/error-response.js';
+import { AuthoredError, codeShaped, errorCode } from '../http/error-response.js';
 import {
   DEFAULT_PROVIDER_ORDER,
   createAiConfigLoader,
@@ -1881,9 +1881,6 @@ function groundedUsageRow(model, usage) {
  */
 export class GroundingIncompleteError extends AuthoredError {}
 
-/** A status Gemini reports has this shape; anything else is not named. */
-const GROUNDED_STATUS_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
-
 /**
  * A grounded generation is used only when the interaction completed and
  * every source was read; otherwise it would be grounded on less than it
@@ -1895,11 +1892,11 @@ const GROUNDED_STATUS_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
 function assertGroundedComplete(data) {
   const status = data?.status;
   if (status !== 'completed') {
-    const named = typeof status === 'string' && GROUNDED_STATUS_SHAPE.test(status) ? status : 'none';
+    const named = codeShaped(status) || 'none';
     // Gemini's error codes, never its messages, which can quote the source.
     const codes = (Array.isArray(data?.errors) ? data.errors : [])
-      .map((entry) => entry?.code)
-      .filter((code) => Number.isInteger(code) || (typeof code === 'string' && GROUNDED_STATUS_SHAPE.test(code)));
+      .map((entry) => codeShaped(entry?.code))
+      .filter(Boolean);
     const note = codes.length ? ` (error code ${codes.join(', ')})` : '';
     throw new GroundingIncompleteError(
       `Gemini reported status '${named}' for the grounded call, not 'completed'${note}.`,

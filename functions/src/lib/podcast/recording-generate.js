@@ -38,6 +38,7 @@
  * can see it and the portal toggle gates it.
  */
 import { callMcpTool } from '../ai/mcp.js';
+import { codeShaped } from '../http/error-response.js';
 import {
   generateRecordingScript,
   normalizePlaudTranscript,
@@ -136,9 +137,6 @@ export function parseToolResult(outcome) {
   }
 }
 
-/** An MCP answer's code (a JSON-RPC number, or ours) has this shape; a sentence does not. */
-const OUTCOME_CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
-
 /**
  * Why a Plaud tool call failed, as the transcript will store it: the connect
  * sentence for a refused credential, else the tool, the recording and the
@@ -151,11 +149,8 @@ const OUTCOME_CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
  */
 function explainToolFailure(outcome, tool, recordingId) {
   if (isPlaudCredentialFailure(outcome)) return new TranscriptError(PLAUD_CONNECT_SENTENCE);
-  const code = outcome?.code;
-  const note =
-    Number.isInteger(code) || (typeof code === 'string' && OUTCOME_CODE_SHAPE.test(code))
-      ? ` (${code})`
-      : '';
+  const code = codeShaped(outcome?.code);
+  const note = code ? ` (${code})` : '';
   return new TranscriptError(`Plaud could not return ${tool} for recording ${recordingId}${note}.`);
 }
 
