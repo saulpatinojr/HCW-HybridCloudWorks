@@ -176,4 +176,29 @@ describe('staging into dist', () => {
     expect(result.styles.elements.size).toBe(1);
     expect(result.styles.attributes.size).toBe(1);
   });
+
+  // The browser's HTML parser turns CR LF and a lone CR into LF before a
+  // <style> body or an attribute value exists, so the hash it checks is of
+  // the LF text. A page written with CRLF must hash the same way, or the
+  // policy carries a hash no browser ever computes.
+  it('hashes a page written with CRLF as the browser reads it, with LF', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hcw-stage-swa-crlf-'));
+    const source = join(root, 'staticwebapp.config.json');
+    const dist = join(root, 'dist');
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(
+      source,
+      JSON.stringify({ globalHeaders: { 'Content-Security-Policy': POLICY } }, null, 2)
+    );
+    writeFileSync(
+      join(dist, 'terms-of-service.html'),
+      '<style>\r\nbody { margin: 0; }\r\n</style>\r\n<p style="color:red;\rbackground:none">x</p>'
+    );
+
+    const { policy } = stageConfig({ source, dist });
+
+    expect(policy).toContain(digest('\nbody { margin: 0; }\n'));
+    expect(policy).toContain(digest('color:red;\nbackground:none'));
+    expect(policy).not.toContain(digest('\r\nbody { margin: 0; }\r\n'));
+  });
 });

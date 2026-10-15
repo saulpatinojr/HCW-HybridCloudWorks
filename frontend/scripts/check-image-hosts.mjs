@@ -23,8 +23,9 @@
  *     `poster` on video, image inputs, and `link` elements that preload an
  *     image or declare an icon. A `preload` with `as="image"` is fetched as an
  *     image and checked against img-src like one.
- *   - The stylesheets in dist: every `url()` that is not a font. A CSS
- *     background is an image request too.
+ *   - The stylesheets in dist, and the CSS the pages carry inline in a
+ *     `<style>` block or a `style` attribute: every `url()` that is not a
+ *     font. A CSS background is an image request too.
  *   - The article bodies in data/content-manifest.json, as HTML `<img>` and
  *     Markdown images. The article pages are pre-rendered from this file, so
  *     dist already carries their markup; the bodies are read as well because
@@ -75,12 +76,34 @@ const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/g;
 const HTML_IMG_SRC = /<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
 const MARKDOWN_IMAGE = /!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
 
-/** The candidates of a srcset. React joins them with ", ", which a data URI never contains. */
+const STYLE_ELEMENT = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+const STYLE_ATTRIBUTE = /\sstyle\s*=\s*"([^"]*)"/gi;
+const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+
+/**
+ * The candidate URLs of a srcset, read the way the HTML specification reads
+ * them: skip whitespace and commas, take the next run of non-whitespace as
+ * the URL, drop any commas it ends with, and unless it ended with one skip
+ * the descriptors up to the next comma. A split on ", " is not that: a hand
+ * written `a.png 1x,b.png 2x` has no space after its comma and would lose
+ * its second candidate, and a data URI carries commas of its own.
+ */
 function srcsetUrls(value) {
-  return value
-    .split(/,\s+/)
-    .map((candidate) => candidate.trim().split(/\s+/)[0])
-    .filter(Boolean);
+  const urls = [];
+  let position = 0;
+  while (position < value.length) {
+    while (position < value.length && /[\s,]/.test(value[position])) position += 1;
+    if (position >= value.length) break;
+    const start = position;
+    while (position < value.length && !/\s/.test(value[position])) position += 1;
+    const token = value.slice(start, position);
+    const url = token.replace(/,+$/, '');
+    if (url) urls.push(url);
+    if (!token.endsWith(',')) {
+      while (position < value.length && value[position] !== ',') position += 1;
+    }
+  }
+  return urls;
 }
 
 /** Every image URL a page's markup fetches, with the element and attribute it came from. */
@@ -113,6 +136,19 @@ export function imageSourcesInHtml(html) {
     }
     const srcset = read('srcset');
     if (srcset) for (const url of srcsetUrls(srcset)) found.push({ url, where: `${tag}.srcset` });
+  }
+  // The CSS a page carries inline fetches images exactly as a stylesheet
+  // does: a background in a <style> block or in a style attribute is an image
+  // request, and the stylesheet scan below would never see it.
+  for (const match of html.matchAll(STYLE_ELEMENT)) {
+    for (const entry of imageSourcesInCss(match[1])) {
+      found.push({ url: entry.url, where: 'style element url()' });
+    }
+  }
+  for (const match of html.matchAll(STYLE_ATTRIBUTE)) {
+    for (const entry of imageSourcesInCss(decodeAttribute(match[1]))) {
+      found.push({ url: entry.url, where: 'style attribute url()' });
+    }
   }
   return found;
 }
@@ -150,22 +186,32 @@ export function imageSourcesInManifest(manifest) {
 }
 
 /**
- * What a URL needs from img-src: `'self'` for a relative path, the scheme
- * token for `data:` and `blob:`, or its origin.
+ * What a URL needs from img-src: `'self'` for a relative path, its origin
+ * for http and https, and otherwise its scheme as a token (`data:`, `blob:`,
+ * and equally `ftp:` or `javascript:`). Only a URL with NO scheme is
+ * relative: anything else goes to `allowedBy` under its own name, so a
+ * scheme the policy never heard of is reported missing rather than waved
+ * through as a page of the site. A protocol-relative URL resolves on https.
  */
 export function imageOrigin(url) {
   const value = url.trim();
-  if (/^data:/i.test(value)) return 'data:';
-  if (/^blob:/i.test(value)) return 'blob:';
-  if (/^https?:\/\//i.test(value)) {
+  if (value.startsWith('//')) {
+    try {
+      return new URL(`https:${value}`).origin;
+    } catch {
+      return value;
+    }
+  }
+  const scheme = SCHEME.exec(value)?.[1].toLowerCase();
+  if (!scheme) return "'self'";
+  if (scheme === 'http' || scheme === 'https') {
     try {
       return new URL(value).origin;
     } catch {
       return value;
     }
   }
-  if (value.startsWith('//')) return `https:${value}`.replace(/^(https:\/\/[^/?#]+).*$/, '$1');
-  return "'self'";
+  return `${scheme}:`;
 }
 
 /**

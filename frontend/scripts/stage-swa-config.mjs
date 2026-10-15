@@ -167,7 +167,15 @@ export function withInlineStyleHashes(policy, { elementHashes = [], attributeHas
   return `${parsed.map(([name, sources]) => [name, ...sources].join(' ')).join('; ')};`;
 }
 
-/** Every HTML document under a directory, as `[relative path, text]`. */
+/**
+ * Every HTML document under a directory, as `[relative path, text]`.
+ *
+ * Line endings are normalised to LF before anything is hashed, because that
+ * is what the browser does: the HTML parser turns CR LF and a lone CR into
+ * LF before a `<style>` body or an attribute value exists to be hashed. The
+ * pre-render writes LF, but a page copied from `public/` on a checkout with
+ * the wrong line endings would otherwise hash to a value no browser computes.
+ */
 export function htmlPages(root) {
   const pages = [];
   const walk = (dir) => {
@@ -175,7 +183,7 @@ export function htmlPages(root) {
       const path = join(dir, name);
       if (statSync(path).isDirectory()) walk(path);
       else if (name.endsWith('.html'))
-        pages.push([relative(root, path), readFileSync(path, 'utf8')]);
+        pages.push([relative(root, path), readFileSync(path, 'utf8').replace(/\r\n?/g, '\n')]);
     }
   };
   walk(root);

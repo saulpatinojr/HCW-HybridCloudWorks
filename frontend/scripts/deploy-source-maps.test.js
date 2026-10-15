@@ -49,11 +49,26 @@ describe('the deploy workflow and source maps', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
-  it('moves every map out of dist, and fails a build that produced none', () => {
+  it('moves every map file out of dist, and fails a build that produced none', () => {
     const aside = step('Set the source maps aside', 'Keep the source maps for thirty days');
-    expect(aside).toMatch(/find dist -name '\*\.map'/);
+    expect(aside).toMatch(/find dist -name '\*\.map' -type f -print0/);
     expect(aside).toMatch(/mv "\$map" "\$target"/);
+    expect(aside).toMatch(/count=\$\(find source-maps -name '\*\.map' -type f \| wc -l\)/);
     expect(aside).toMatch(/\[ "\$count" -gt 0 \]/);
+  });
+
+  // With nothing to move the directory would never exist, `find` on it
+  // fails, and under `set -e` the assignment kills the step before the
+  // error line that explains it can print. The directory is made first, and
+  // made right after the directory from the previous run is removed.
+  it('creates the holding directory before anything is moved, so an empty build fails with its message', () => {
+    const aside = step('Set the source maps aside', 'Keep the source maps for thirty days');
+    const removed = aside.indexOf('rm -rf source-maps');
+    const made = aside.indexOf('mkdir -p source-maps');
+    const moved = aside.indexOf("find dist -name '*.map'");
+    expect(removed).toBeGreaterThan(-1);
+    expect(made).toBeGreaterThan(removed);
+    expect(moved).toBeGreaterThan(made);
   });
 
   it('keeps them as a workflow artifact on the same pinned action as the site, for thirty days', () => {
@@ -70,7 +85,7 @@ describe('the deploy workflow and source maps', () => {
 
   it('refuses a payload with a map left in it', () => {
     const verify = step('Verify the upload payload', 'Upload the verified site');
-    expect(verify).toMatch(/maps=\$\(find dist -name '\*\.map' \| wc -l\)/);
+    expect(verify).toMatch(/maps=\$\(find dist -name '\*\.map' -type f \| wc -l\)/);
     expect(verify).toMatch(/\[ "\$maps" -eq 0 \]/);
   });
 

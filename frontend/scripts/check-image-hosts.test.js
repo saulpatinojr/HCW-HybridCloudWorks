@@ -60,6 +60,34 @@ describe('reading a page', () => {
     const [found] = imageSourcesInHtml('<img src="https://cdn.example/a.png?x=1&amp;y=2">');
     expect(found.url).toBe('https://cdn.example/a.png?x=1&y=2');
   });
+
+  // A hand-written srcset has no space after its commas, and a data URI
+  // carries commas of its own; a split on ", " would lose the second
+  // candidate of the first and keep the first whole only by luck.
+  it('reads every srcset candidate whether or not a space follows the comma, and keeps a data URI whole', () => {
+    const html =
+      '<img src="/a.png" srcset="/a.png 1x,https://cdn.example/b.png 2x,/c.png">' +
+      '<img src="/d.png" srcset="data:image/png;base64,AAAA 1x, /e.png 2x">';
+    expect(imageSourcesInHtml(html).map((entry) => entry.url)).toEqual([
+      '/a.png',
+      '/a.png',
+      'https://cdn.example/b.png',
+      '/c.png',
+      '/d.png',
+      'data:image/png;base64,AAAA',
+      '/e.png',
+    ]);
+  });
+
+  it('reads the url() of a <style> block and of a style attribute, decoded, as image requests', () => {
+    const html =
+      '<style>.hero{background:url(https://cdn.example/bg.png)}@font-face{src:url(/f.woff2)}</style>' +
+      '<div style="background-image:url(&quot;/images/x.png&quot;)"></div>';
+    expect(imageSourcesInHtml(html)).toEqual([
+      { url: 'https://cdn.example/bg.png', where: 'style element url()' },
+      { url: '/images/x.png', where: 'style attribute url()' },
+    ]);
+  });
 });
 
 describe('reading a stylesheet', () => {
@@ -109,7 +137,15 @@ describe('what a URL needs from img-src', () => {
     ['https://images.credly.com/size/340x340/images/x/image.png', 'https://images.credly.com'],
     ['HTTPS://Images.Credly.com/x.png', 'https://images.credly.com'],
     ['//cdn.example/a.png', 'https://cdn.example'],
+    ['//CDN.Example/a.png', 'https://cdn.example'],
     ['http://insecure.example/a.png', 'http://insecure.example'],
+    // Every other scheme is its own token, never a page of the site: a gate
+    // that read these as relative would wave them through on 'self'.
+    ['ftp://files.example/a.png', 'ftp:'],
+    ['file:///C:/a.png', 'file:'],
+    ['javascript:alert(1)', 'javascript:'],
+    ['mailto:someone@example', 'mailto:'],
+    ['FTP://files.example/a.png', 'ftp:'],
   ])('%s needs %s', (url, origin) => {
     expect(imageOrigin(url)).toBe(origin);
   });
@@ -220,6 +256,20 @@ describe('the verdict', () => {
     });
     expect(failures).toHaveLength(1);
     expect(failures[0]).toContain('blob:');
+  });
+
+  it("fails on a scheme the policy never names, instead of reading it as 'self'", () => {
+    const { failures } = evaluate({
+      sources: SOURCES,
+      references: [
+        { url: 'ftp://files.example/a.png', file: 'dist/index.html', where: 'img.src' },
+        { url: 'javascript:alert(1)', file: 'dist/index.html', where: 'img.src' },
+      ],
+      retired: {},
+    });
+    expect(failures).toHaveLength(2);
+    expect(failures[0]).toContain('img-src does not allow ftp:');
+    expect(failures[1]).toContain('img-src does not allow javascript:');
   });
 
   it('fails when a retired host has no reference left, so the entry cannot outlive its reason', () => {
