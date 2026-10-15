@@ -26,8 +26,14 @@ describe('refuseWriteAfterJobAbort', () => {
     });
   });
 
-  it('keeps the containers whose writes record something already spent', async () => {
-    expect(WRITES_KEPT_AFTER_ABORT).toEqual(['ai_usage', 'mcp_servers']);
+  it('keeps the containers whose writes record something that already happened', async () => {
+    expect(WRITES_KEPT_AFTER_ABORT).toEqual([
+      'admin_audit_logs',
+      'ai_usage',
+      'audits',
+      'content_versions',
+      'mcp_servers',
+    ]);
     const job = new AbortController();
     job.abort(timeoutReason());
     await runAsJob(job.signal, async () => {

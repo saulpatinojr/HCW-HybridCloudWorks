@@ -20,19 +20,40 @@
  * This refuses what STARTS after the abort. A request already sent is not
  * recalled, and the service may still complete it.
  *
- * Two containers are written whatever the job's clock says, because
- * refusing them would lose something already spent rather than prevent a
- * side effect: `ai_usage` (a usage row for a model or speech call already
- * billed; recordAiUsage swallows a failed write, so a refused row would
- * vanish), and `mcp_servers` (an OAuth token a provider has already rotated,
- * which is only usable once stored).
+ * The rule for what is kept: a write is refused when it IS a side effect,
+ * and kept when it RECORDS one that has already happened, because refusing
+ * a record cannot undo the thing it records, only lose the record of it.
+ * The kept containers are:
+ *
+ *  - `ai_usage`: a usage row for a model or speech call already billed
+ *    (recordAiUsage swallows a failed write, so a refused row would vanish).
+ *  - `mcp_servers`: an OAuth token a provider has already rotated, which is
+ *    only usable once stored.
+ *  - `content_versions`: the version snapshot of a content write that has
+ *    already landed. The forge save (content/forge.js) patches the content
+ *    and then snapshots it; cms/publish.js does the same on publish. An
+ *    abort between the two would leave changed content with no version to
+ *    restore from.
+ *  - `admin_audit_logs` and `audits`: the audit row of a change that has
+ *    already landed (the forge save writes one after its snapshot). A
+ *    refused row would leave a change with no record of who made it.
+ *
+ * Derived documents that the next run rebuilds (`_snapshots`,
+ * `tool_price_history`) are not kept: refusing them loses nothing that a
+ * later run does not write again.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 const jobContext = new AsyncLocalStorage();
 
 /** Containers whose writes go through after a job's abort; the header says why. */
-export const WRITES_KEPT_AFTER_ABORT = Object.freeze(['ai_usage', 'mcp_servers']);
+export const WRITES_KEPT_AFTER_ABORT = Object.freeze([
+  'admin_audit_logs',
+  'ai_usage',
+  'audits',
+  'content_versions',
+  'mcp_servers',
+]);
 
 /**
  * Run `fn` as a platform job's work: inside it, and in everything it starts,
