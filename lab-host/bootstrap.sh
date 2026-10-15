@@ -81,13 +81,17 @@ HCW_VAULT_PASSWORD_FILE="${HCW_ANSIBLE_STATE_DIR}/vault-password"
 
 # uv, its interpreters and the ansible-core environment live under /opt/uv,
 # outside root's home; the ansible-* commands are linked into /usr/local/bin,
-# where the README's ansible-vault lines expect them. hcw-vault-set
-# (ansible/roles/vault_tools) runs its Python from HCW_ANSIBLE_VENV, and that
-# role's test holds the two paths equal. UV_TOOL_DIR is where an earlier
-# bootstrap.sh kept ansible-core as a uv tool, named here only so the block
-# after the checkout can remove it.
+# where the README's ansible-vault lines expect them. HCW_ANSIBLE_VENV is a
+# symlink to the environment in use, one of the generations under
+# HCW_ANSIBLE_GENERATIONS (the block after the checkout says how it moves).
+# hcw-vault-set (ansible/roles/vault_tools), installed as HCW_VAULT_HELPER,
+# runs its Python through that link, and that role's test holds the two paths
+# equal. UV_TOOL_DIR is where an earlier bootstrap.sh kept ansible-core as a
+# uv tool, named here only so this script can retire it once nothing runs it.
 UV_BIN=/usr/local/bin/uv
 HCW_ANSIBLE_VENV=/opt/uv/ansible-core
+HCW_ANSIBLE_GENERATIONS=/opt/uv/ansible-core-generations
+HCW_VAULT_HELPER=/usr/local/sbin/hcw-vault-set
 export UV_PYTHON_INSTALL_DIR=/opt/uv/python
 export UV_TOOL_DIR=/opt/uv/tools
 export UV_TOOL_BIN_DIR=/usr/local/bin
@@ -445,6 +449,20 @@ git -C "${HCW_SRC_DIR}" checkout --quiet --detach "${hcw_repo_sha}"
 hcw_checked_out_script="${HCW_SRC_DIR}/lab-host/bootstrap.sh"
 if [ -z "${HCW_BOOTSTRAP_HANDED_OVER:-}" ] && [ -f "${hcw_checked_out_script}" ] \
   && [ "$(sha256sum "${hcw_checked_out_script}" | cut -d ' ' -f 1)" != "${self_digest}" ]; then
+  # A bootstrap.sh from before HCW_ANSIBLE_VENV (a host rolled back with
+  # HCW_REPO_REF) installs ansible-core as a uv tool, and skips that install
+  # whenever ${UV_TOOL_BIN_DIR}/ansible-playbook already reports its release
+  # and Python, which the link to HCW_ANSIBLE_VENV does. Its play then
+  # installs the hcw-vault-set that runs the uv tool's Python, which this
+  # script retires, and the helper would stop working. Removing that one link
+  # makes the older script reinstall its uv tool and relink every command, so
+  # the helper it installs has its interpreter. The environment under
+  # HCW_ANSIBLE_GENERATIONS is left as it is, for the next run of this script.
+  if ! grep -q '^HCW_ANSIBLE_VENV=' "${hcw_checked_out_script}" \
+    && [ "$(readlink "${UV_TOOL_BIN_DIR}/ansible-playbook" || true)" = "${HCW_ANSIBLE_VENV}/bin/ansible-playbook" ]; then
+    log "${hcw_repo_sha}'s bootstrap.sh installs ansible-core as a uv tool; removing ${UV_TOOL_BIN_DIR}/ansible-playbook so that it does"
+    rm -f "${UV_TOOL_BIN_DIR}/ansible-playbook"
+  fi
   log "${hcw_repo_sha} carries a different bootstrap.sh; handing over to it"
   HCW_BOOTSTRAP_HANDED_OVER=1 HCW_REPO_REF="${hcw_repo_sha}" exec bash "${hcw_checked_out_script}" "$@"
 fi
@@ -463,12 +481,25 @@ fi
 # `uv tool install`, which takes no hashes, so the SHA256 an earlier
 # bootstrap.sh printed beside it verified nothing.
 #
-# The environment is a plain venv at HCW_ANSIBLE_VENV on the uv interpreter
-# above. It is rebuilt when the requirements differ from the copy kept in it
-# at its last install, or when its ansible-playbook does not report that
-# ansible-core on that Python, so a dependency bump and a Python bump both
-# rebuild it. The count check is the fetch stage's: the environment holds
-# exactly as many packages as the file has lines.
+# The environment is a venv on the uv interpreter above, one generation per
+# set of pins: a directory under HCW_ANSIBLE_GENERATIONS named for its
+# ansible-core release, its Python and the first twelve hex digits of its
+# requirements file's SHA256, so a dependency bump and a Python bump each name
+# a new one. HCW_ANSIBLE_VENV is a symlink to the generation in use, and the
+# four commands and hcw-vault-set reach ansible-core only through it.
+#
+# A generation that is not complete is built beside the one in use, never in
+# its place: installed, checked with `uv pip check`, counted (it holds exactly
+# as many packages as the file has lines, the fetch stage's check), and asked
+# for its ansible-core release and Python. Its copy of the requirements file,
+# written last, marks it complete. Only then is the link switched, by renaming
+# a new link over it, which is atomic, so a download, hash or check failure
+# stops the run with every command and the helper still on the generation
+# that worked (CodeRabbit, #1189). The generation switched away from is kept
+# until the next switch, so holding a host back with HCW_REPO_REF to the
+# commit that pinned it switches back without a download; any older one is
+# removed. The one generation ever rebuilt in place is the one in use when it
+# already fails those checks, so there is nothing working to lose.
 hcw_ansible_requirements="$(mktemp)"
 trap 'rm -f "${hcw_ansible_requirements}"' EXIT
 (
@@ -477,24 +508,52 @@ trap 'rm -f "${hcw_ansible_requirements}"' EXIT
   printf 'ansible-core==%s --hash=sha256:%s\n' "${ANSIBLE_CORE_VERSION}" "${ANSIBLE_CORE_SHA256}"
   printf '%s\n' "${ANSIBLE_CORE_DEPS}" | sed '/^[[:space:]]*$/d'
 ) >"${hcw_ansible_requirements}"
-hcw_ansible_core_version="$(sed -n 's/^ansible-core==\([^ ]*\) --hash=sha256:[0-9a-f]\{64\}$/\1/p' "${hcw_ansible_requirements}")"
+# The release is part of a directory name below, so it may hold only what a
+# version does: no slash, no space.
+hcw_ansible_core_version="$(sed -n 's/^ansible-core==\([0-9][0-9A-Za-z.+!]*\) --hash=sha256:[0-9a-f]\{64\}$/\1/p' "${hcw_ansible_requirements}")"
 if [ -z "${hcw_ansible_core_version}" ]; then
   echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} names no ansible-core version with a SHA256" >&2
   exit 1
 fi
 hcw_ansible_lines="$(wc -l <"${hcw_ansible_requirements}")"
-hcw_ansible_python="${HCW_ANSIBLE_VENV}/bin/python"
-hcw_ansible_record="${HCW_ANSIBLE_VENV}/hcw-requirements.txt"
-if ! cmp -s "${hcw_ansible_requirements}" "${hcw_ansible_record}" \
-  || ! "${HCW_ANSIBLE_VENV}/bin/ansible-playbook" --version 2>/dev/null | grep -qF "[core ${hcw_ansible_core_version}]" \
-  || ! "${HCW_ANSIBLE_VENV}/bin/ansible-playbook" --version 2>/dev/null | grep -qF "python version = ${PYTHON_VERSION} ("; then
-  log "installing ansible-core ${hcw_ansible_core_version} and the $((hcw_ansible_lines - 1)) wheels it depends on into ${HCW_ANSIBLE_VENV} on CPython ${PYTHON_VERSION}, each checked against its SHA256 in lab-image/versions.env"
-  "${UV_BIN}" venv --clear --managed-python --python "${PYTHON_VERSION}" "${HCW_ANSIBLE_VENV}"
+hcw_ansible_generation="${HCW_ANSIBLE_GENERATIONS}/${hcw_ansible_core_version}-py${PYTHON_VERSION}-$(sha256sum "${hcw_ansible_requirements}" | cut -c 1-12)"
+hcw_ansible_python="${hcw_ansible_generation}/bin/python"
+hcw_ansible_record="${hcw_ansible_generation}/hcw-requirements.txt"
+hcw_ansible_in_use="$(readlink "${HCW_ANSIBLE_VENV}" || true)"
+
+# True when a generation's ansible-playbook runs and reports this ansible-core
+# release on this Python. The output is read once, so grep never closes the
+# pipe on a command still writing to it.
+hcw_ansible_answers() {
+  local hcw_version_output
+  hcw_version_output="$("$1/bin/ansible-playbook" --version 2>/dev/null)" || return 1
+  grep -qF "[core ${hcw_ansible_core_version}]" <<<"${hcw_version_output}" \
+    && grep -qF "python version = ${PYTHON_VERSION} (" <<<"${hcw_version_output}"
+}
+
+# The four commands are linked through HCW_ANSIBLE_VENV, not to a generation,
+# so switching that one link moves all of them at once.
+hcw_link_ansible_commands() {
+  local hcw_ansible_command
+  for hcw_ansible_command in ansible ansible-playbook ansible-galaxy ansible-vault; do
+    ln -sfn "${HCW_ANSIBLE_VENV}/bin/${hcw_ansible_command}" "${UV_TOOL_BIN_DIR}/${hcw_ansible_command}"
+  done
+}
+
+if ! cmp -s "${hcw_ansible_requirements}" "${hcw_ansible_record}" || ! hcw_ansible_answers "${hcw_ansible_generation}"; then
+  log "installing ansible-core ${hcw_ansible_core_version} and the $((hcw_ansible_lines - 1)) wheels it depends on into ${hcw_ansible_generation} on CPython ${PYTHON_VERSION}, each checked against its SHA256 in lab-image/versions.env; ${HCW_ANSIBLE_VENV} moves to it only once it passes"
+  rm -rf -- "${hcw_ansible_generation}"
+  install -d -m 0755 -o root -g root "${HCW_ANSIBLE_GENERATIONS}"
+  "${UV_BIN}" venv --managed-python --python "${PYTHON_VERSION}" "${hcw_ansible_generation}"
   "${UV_BIN}" pip install --python "${hcw_ansible_python}" --require-hashes --only-binary :all: -r "${hcw_ansible_requirements}"
   "${UV_BIN}" pip check --python "${hcw_ansible_python}"
   hcw_ansible_installed="$("${UV_BIN}" pip freeze --python "${hcw_ansible_python}" | wc -l)"
   if [ "${hcw_ansible_installed}" -ne "${hcw_ansible_lines}" ]; then
-    echo "refusing to run: ${HCW_ANSIBLE_VENV} holds ${hcw_ansible_installed} packages, and lab-image/versions.env lists ${hcw_ansible_lines}" >&2
+    echo "refusing to run: ${hcw_ansible_generation} holds ${hcw_ansible_installed} packages, and lab-image/versions.env lists ${hcw_ansible_lines}; ${HCW_ANSIBLE_VENV} still points to ${hcw_ansible_in_use:-nothing}" >&2
+    exit 1
+  fi
+  if ! hcw_ansible_answers "${hcw_ansible_generation}"; then
+    echo "refusing to run: ${hcw_ansible_generation}/bin/ansible-playbook does not report ansible-core ${hcw_ansible_core_version} on CPython ${PYTHON_VERSION}; ${HCW_ANSIBLE_VENV} still points to ${hcw_ansible_in_use:-nothing}" >&2
     exit 1
   fi
   install -m 0644 -o root -g root "${hcw_ansible_requirements}" "${hcw_ansible_record}"
@@ -502,17 +561,23 @@ fi
 rm -f "${hcw_ansible_requirements}"
 trap - EXIT
 
-# A host an earlier bootstrap.sh set up has ansible-core as a uv tool under
-# UV_TOOL_DIR, its commands linked into UV_TOOL_BIN_DIR. That environment was
-# installed without hashes, so it is removed, once, before the links below
-# replace its commands; on every later run it is gone and this is skipped.
-if [ -e "${UV_TOOL_DIR}/ansible-core" ]; then
-  log "removing the ansible-core uv tool an earlier bootstrap.sh installed under ${UV_TOOL_DIR}"
-  "${UV_BIN}" tool uninstall ansible-core || true
+if [ "${hcw_ansible_in_use}" != "${hcw_ansible_generation}" ]; then
+  # A venv built in place at HCW_ANSIBLE_VENV, as this change's first
+  # revision did, goes first: rename cannot put a link over a directory.
+  if [ -d "${HCW_ANSIBLE_VENV}" ] && [ ! -L "${HCW_ANSIBLE_VENV}" ]; then
+    rm -rf -- "${HCW_ANSIBLE_VENV}"
+  fi
+  ln -sfn "${hcw_ansible_generation}" "${HCW_ANSIBLE_VENV}.next"
+  mv -T "${HCW_ANSIBLE_VENV}.next" "${HCW_ANSIBLE_VENV}"
+  log "switched ${HCW_ANSIBLE_VENV} to ${hcw_ansible_generation}${hcw_ansible_in_use:+, keeping ${hcw_ansible_in_use} until the next switch}"
+  for hcw_ansible_old in "${HCW_ANSIBLE_GENERATIONS}"/*; do
+    case "${hcw_ansible_old}" in
+      "${hcw_ansible_generation}" | "${hcw_ansible_in_use}") ;;
+      *) rm -rf -- "${hcw_ansible_old}" ;;
+    esac
+  done
 fi
-for hcw_ansible_command in ansible ansible-playbook ansible-galaxy ansible-vault; do
-  ln -sfn "${HCW_ANSIBLE_VENV}/bin/${hcw_ansible_command}" "${UV_TOOL_BIN_DIR}/${hcw_ansible_command}"
-done
+hcw_link_ansible_commands
 "${UV_TOOL_BIN_DIR}/ansible-playbook" --version | sed -n '1p;/python version/p'
 
 cd "${HCW_SRC_DIR}/lab-host/ansible"
@@ -536,6 +601,24 @@ log "running site.yml from ${hcw_repo_sha} against localhost"
 # The play inherits fd 9, so the lock outlives this script if it is killed
 # while the play runs (the block after the root check says why).
 "${UV_TOOL_BIN_DIR}/ansible-playbook" -i inventory/localhost.yml site.yml "${extra_args[@]}" "$@"
+
+# The uv tool an earlier bootstrap.sh installed ansible-core as, without
+# hashes, is retired only once the installed hcw-vault-set no longer runs its
+# Python. The play installs that helper, so until a play has put in the one
+# that runs HCW_ANSIBLE_VENV's Python, the old one still needs the uv tool: a
+# check run, a run whose --tags leave out vault_tools, or a play that stopped
+# before that role has not replaced it (CodeRabbit, #1189). The test is the
+# installed file, not how this run was invoked, so whichever run converges the
+# helper is the one that retires the tool. `uv tool uninstall` removes the
+# commands its receipt names, and those include the four now linked through
+# HCW_ANSIBLE_VENV, so they are linked again straight after.
+if [ -e "${UV_TOOL_DIR}/ansible-core" ] && ! grep -qF "${UV_TOOL_DIR}/ansible-core/" "${HCW_VAULT_HELPER}" 2>/dev/null; then
+  log "removing the ansible-core uv tool an earlier bootstrap.sh installed under ${UV_TOOL_DIR}: ${HCW_VAULT_HELPER} no longer runs its Python"
+  if ! "${UV_BIN}" tool uninstall ansible-core; then
+    log "could not remove the ansible-core uv tool under ${UV_TOOL_DIR}; the next run tries again"
+  fi
+  hcw_link_ansible_commands
+fi
 
 # The play finished (set -e ends the script on a failed one). Record which
 # commit the host now runs in the host-check marker, unless this was a check

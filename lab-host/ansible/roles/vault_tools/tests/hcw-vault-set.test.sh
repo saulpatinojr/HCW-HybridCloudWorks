@@ -44,7 +44,7 @@ check "bootstrap.sh links the ansible-* commands into /usr/local/bin" \
 check "bootstrap.sh keeps the ansible-core environment at ${venv_path}" \
   "grep -qx 'HCW_ANSIBLE_VENV=${venv_path}' '${bootstrap}'"
 check "bootstrap.sh links ansible-vault from that environment" \
-  "grep -qx 'for hcw_ansible_command in ansible ansible-playbook ansible-galaxy ansible-vault; do' '${bootstrap}'"
+  "grep -qxE '[[:space:]]*for hcw_ansible_command in ansible ansible-playbook ansible-galaxy ansible-vault; do' '${bootstrap}'"
 check "the helper checks keys against the checkout at /opt/hcw-src unless HCW_SRC_DIR says otherwise" \
   "grep -qxF 'src=\"\${HCW_SRC_DIR:-/opt/hcw-src}\"' '${helper}'"
 check "bootstrap.sh keeps the playbook's checkout at /opt/hcw-src" \

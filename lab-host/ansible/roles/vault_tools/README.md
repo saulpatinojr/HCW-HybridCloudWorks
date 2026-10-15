@@ -145,8 +145,9 @@ checks:
 
 The `ansible-lint (lab-host)` job in `.github/workflows/ci.yml` runs it with
 `sudo` and the job's own ansible-core. Where `/usr/local/bin/ansible-vault`
-or `/opt/uv/ansible-core/bin/python` (the environment `bootstrap.sh` builds
-from `lab-image/versions.env`, `HCW_ANSIBLE_VENV` there) is missing, the test links it to
+or `/opt/uv/ansible-core/bin/python` (through the link `bootstrap.sh` moves
+to each environment it builds from `lab-image/versions.env` once that
+environment passes its checks, `HCW_ANSIBLE_VENV` there) is missing, the test links it to
 the `ansible-vault` on `PATH` and the Python that runs it, and removes those
 links at the end. It never replaces a file that is there. To run it without
 a host, see `lab-host/README.md`, "Validating without a host".

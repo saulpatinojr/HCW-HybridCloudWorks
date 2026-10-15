@@ -30,22 +30,34 @@ This project has not cut a tagged release; entries are grouped under
   run, it reads `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and
   `ANSIBLE_CORE_DEPS` from that commit's `lab-image/versions.env` in a
   subshell, writes the requirements file with the lab image fetch stage's
-  own two `printf` lines, and installs it into a venv at
-  `/opt/uv/ansible-core` with `uv pip install --require-hashes
-  --only-binary :all:`, then `uv pip check` and the fetch stage's count
-  check; `ansible`, `ansible-playbook`, `ansible-galaxy` and
-  `ansible-vault` are linked into `/usr/local/bin`, and the old uv tool
-  under `/opt/uv/tools` is removed once. The environment is rebuilt when
-  the requirements, the release or the Python change. In an Ubuntu 26.04
-  container with uv 0.12.19 it installed ansible-core 2.21.4 and its eight
-  dependencies on CPython 3.14.7, refused a wrong hash and an unlisted
-  dependency, and installed nothing on a re-run; `hcw-vault-set` runs its
-  Python from the new environment, and its 81 checks passed against it.
-  `scripts/lab-host-bootstrap-ansible-core.test.mjs` holds the script to
-  `versions.env` and to the Dockerfile's `printf` lines. The weekly
-  `chore/lab-pins-image-base` pull request now also moves ansible-core to
-  the newest release in its line, with the wheel's SHA256 from PyPI's JSON
-  API and every `ANSIBLE_CORE_DEPS` hash read back from PyPI, and moves a
+  own two `printf` lines, and installs it with `uv pip install
+  --require-hashes --only-binary :all:`, then `uv pip check` and the fetch
+  stage's count check, into a new venv under
+  `/opt/uv/ansible-core-generations`, one per set of pins, built beside the
+  one in use. Only when that passes, and its `ansible-playbook --version`
+  reports the pinned release on the pinned Python, does the link
+  `/opt/uv/ansible-core` move to it, so a failed download, hash or check
+  leaves the host on the environment that worked; the one moved from is
+  kept until the next move. `ansible`, `ansible-playbook`, `ansible-galaxy`
+  and `ansible-vault` are linked into `/usr/local/bin` through that link,
+  and `hcw-vault-set` runs its Python through it. The old uv tool under
+  `/opt/uv/tools` is removed after the play of the first run that has
+  installed that helper, so a check run, a run narrowed with `--tags` or a
+  failed play never leaves the helper on a removed interpreter; a rollback
+  with `HCW_REPO_REF` to a `bootstrap.sh` from before this change removes
+  the `ansible-playbook` link before handing over, so that script
+  reinstalls its uv tool. The install commands, run in an Ubuntu 26.04
+  container with uv 0.12.19 when first written, installed ansible-core
+  2.21.4 and its eight dependencies on CPython 3.14.7, refused a wrong hash
+  and an unlisted dependency, and installed nothing on a re-run;
+  `hcw-vault-set`'s 81 checks passed with `/opt/uv/ansible-core` a link to
+  a venv. `scripts/lab-host-bootstrap-ansible-core.test.mjs` runs the
+  switch, the retirement and the handover against a stand-in uv, and holds
+  the script to `versions.env` and to the Dockerfile's `printf` lines. The
+  weekly `chore/lab-pins-image-base` pull request now also moves
+  ansible-core to the newest release in its line that has a wheel PyPI has
+  not yanked, with the wheel's SHA256 from PyPI's JSON API and every
+  `ANSIBLE_CORE_DEPS` hash read back from PyPI, and moves a
   dependency only when the new release pins it exactly; a new line, a
   changed requirement or Requires-Python, or a hash PyPI does not serve is
   a note in the weekly issue instead (a dry run on 2026-10-15 proposes
