@@ -4,6 +4,7 @@
  */
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import RoleGate from '@/components/admin/RoleGate';
 import { Loader2, Send } from 'lucide-react';
 import { describePlan } from './issueFormat';
 
@@ -77,14 +78,19 @@ export default function ApprovalBox({ detail, dirty, busy, onApprove }) {
           </Button>
         </div>
       ) : (
-        <Button
-          size="sm"
-          className="gap-1.5"
-          onClick={() => setConfirming(true)}
-          disabled={dirty || Boolean(busy)}
-        >
-          <Send className="h-3.5 w-3.5" /> Approve and schedule
-        </Button>
+        // The approve route is publisher (lib/newsletter/admin-handlers.js);
+        // gating the first step is enough, since the confirmation is only
+        // reached through it.
+        <RoleGate minRole="publisher" reason="Approving a send needs the publisher role.">
+          <Button
+            size="sm"
+            className="gap-1.5"
+            onClick={() => setConfirming(true)}
+            disabled={dirty || Boolean(busy)}
+          >
+            <Send className="h-3.5 w-3.5" /> Approve and schedule
+          </Button>
+        </RoleGate>
       )}
     </div>
   );

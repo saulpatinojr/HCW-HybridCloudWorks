@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import ConfirmModal from '@/components/admin/ConfirmModal';
+import RoleGate from '@/components/admin/RoleGate';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useAuthReady } from '@/hooks/useAuthReady';
 import { Button } from '@/components/ui/button';
@@ -256,20 +257,25 @@ function QueueHeaderActions({
 }) {
   return (
     <div className="flex flex-col items-end gap-2">
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={handleDeleteRejectedNow}
-        disabled={bulkDeletingRejected || statusFilter !== 'rejected' || totalCount === 0}
-        className="gap-1 text-destructive hover:text-destructive"
-      >
-        {bulkDeletingRejected ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Trash2 className="h-4 w-4" />
-        )}
-        Delete Rejected Now
-      </Button>
+      {/* deleteRejectedContent is publisher (lib/gallery-images.js); the
+          approve, reject and forge actions beside it are the page's own
+          editor role and need no gate. */}
+      <RoleGate minRole="publisher" reason="Deleting rejected content needs the publisher role.">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDeleteRejectedNow}
+          disabled={bulkDeletingRejected || statusFilter !== 'rejected' || totalCount === 0}
+          className="gap-1 text-destructive hover:text-destructive"
+        >
+          {bulkDeletingRejected ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          )}
+          Delete Rejected Now
+        </Button>
+      </RoleGate>
       {selectedIds.size > 0 && statusFilter !== 'rejected' && statusFilter !== 'published_live' && (
         <Button
           variant="outline"

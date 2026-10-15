@@ -23,6 +23,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import RoleGate from '@/components/admin/RoleGate';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
 import useLinkedItem from '@/hooks/useLinkedItem';
 import { LINK_PARAMS } from '@/lib/itemLinks';
@@ -399,35 +400,39 @@ function AlertRow({
         </div>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
-        {status === 'open' && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={alertActionId !== ''}
-            onClick={() => handleAlertAction(alert.id, 'acknowledge')}
-          >
-            {alertActionId === `${alert.id}:acknowledge` ? 'Acknowledging...' : 'Acknowledge'}
-          </Button>
-        )}
-        {status !== 'resolved' && (
-          <Button
-            size="sm"
-            disabled={alertActionId !== ''}
-            onClick={() => handleAlertAction(alert.id, 'resolve')}
-          >
-            {alertActionId === `${alert.id}:resolve` ? 'Resolving...' : 'Resolve'}
-          </Button>
-        )}
-        {status === 'resolved' && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={alertActionId !== ''}
-            onClick={() => handleAlertAction(alert.id, 'reopen')}
-          >
-            {alertActionId === `${alert.id}:reopen` ? 'Reopening...' : 'Reopen'}
-          </Button>
-        )}
+        {/* The hub is readable by a viewer; updateWorkflowAlert is publisher
+            (lib/ops-health.js), so the three state changes say so together. */}
+        <RoleGate minRole="publisher" reason="Changing an alert's state needs the publisher role.">
+          {status === 'open' && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={alertActionId !== ''}
+              onClick={() => handleAlertAction(alert.id, 'acknowledge')}
+            >
+              {alertActionId === `${alert.id}:acknowledge` ? 'Acknowledging...' : 'Acknowledge'}
+            </Button>
+          )}
+          {status !== 'resolved' && (
+            <Button
+              size="sm"
+              disabled={alertActionId !== ''}
+              onClick={() => handleAlertAction(alert.id, 'resolve')}
+            >
+              {alertActionId === `${alert.id}:resolve` ? 'Resolving...' : 'Resolve'}
+            </Button>
+          )}
+          {status === 'resolved' && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={alertActionId !== ''}
+              onClick={() => handleAlertAction(alert.id, 'reopen')}
+            >
+              {alertActionId === `${alert.id}:reopen` ? 'Reopening...' : 'Reopen'}
+            </Button>
+          )}
+        </RoleGate>
         <Badge variant="secondary">{status}</Badge>
       </div>
     </div>

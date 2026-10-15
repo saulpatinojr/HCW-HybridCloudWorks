@@ -2,6 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { AdminRoleProvider } from '@/hooks/useAdminRole';
 import DashboardPage, { PIPELINE_STAGES } from './DashboardPage';
 
 const postJSON = vi.fn();
@@ -51,12 +52,18 @@ const DECISIONS = {
 
 const answer = (route) => Promise.resolve(route === 'getDecisionCenter' ? DECISIONS : SNAPSHOT);
 
-/** Render the dashboard inside a router, as the admin shell does. */
-function renderDashboard() {
+/**
+ * Render the dashboard inside a router, as the admin shell does, with the
+ * role AdminAuthGuard provides there (AP-F4) — the owner's, unless a test
+ * asks for a lower one.
+ */
+function renderDashboard(role = 'super_admin') {
   return render(
-    <MemoryRouter>
-      <DashboardPage />
-    </MemoryRouter>
+    <AdminRoleProvider value={role}>
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>
+    </AdminRoleProvider>
   );
 }
 
@@ -216,6 +223,28 @@ describe('DashboardPage', () => {
       'href',
       '/admin/ambassador'
     );
+  });
+
+  it('cuts the Explore strip to the signed-in role and gates Recount for a viewer (AP-F4)', async () => {
+    renderDashboard('viewer');
+    await screen.findByText('6 items waiting for you');
+    const explore = within(screen.getByRole('region', { name: 'Explore ContentForge' }));
+    // Health is the one page after Home a viewer can open, so Platform is
+    // the one card; a group with nothing in it is not drawn.
+    expect(explore.getByText('Platform')).toBeInTheDocument();
+    expect(explore.getByRole('link', { name: /Health/ })).toHaveAttribute('href', '/admin/health');
+    for (const label of ['Pipeline', 'Enhanced', 'Creative', 'Amplify', 'Spotlight']) {
+      expect(explore.queryByText(label)).not.toBeInTheDocument();
+    }
+    expect(explore.queryByRole('link', { name: /Publish/ })).not.toBeInTheDocument();
+    // recalculateDashboardStats is an editor write: the button says so and
+    // does nothing, rather than answering with a 403.
+    const recount = screen.getByRole('button', { name: /Recount/ });
+    expect(recount).toHaveAttribute('aria-disabled', 'true');
+    expect(recount).toHaveAccessibleDescription('Recounting needs the editor role.');
+    postJSON.mockClear();
+    fireEvent.click(recount);
+    expect(postJSON).not.toHaveBeenCalledWith('recalculateDashboardStats', {});
   });
 
   it('recounts through the backend and re-reads the snapshot', async () => {

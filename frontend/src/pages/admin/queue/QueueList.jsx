@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ADMIN_ROUTES } from '@/config/admin';
+import RoleGate from '@/components/admin/RoleGate';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
 import TaxonomyChips from '@/components/admin/shared/TaxonomyChips';
@@ -280,20 +281,23 @@ function QueueItemActions({
             )}
             Restore to Review
           </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => handlePermanentDelete(item.id)}
-            disabled={isLoading}
-            className="gap-1"
-          >
-            {isLoading === 'deleting' ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Trash2 className="h-4 w-4" />
-            )}
-            Delete Permanently
-          </Button>
+          {/* deleteContentItem is publisher (lib/content-workflow.js). */}
+          <RoleGate minRole="publisher" reason="Deleting content needs the publisher role.">
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => handlePermanentDelete(item.id)}
+              disabled={isLoading}
+              className="gap-1"
+            >
+              {isLoading === 'deleting' ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              Delete Permanently
+            </Button>
+          </RoleGate>
         </>
       )}
     </div>

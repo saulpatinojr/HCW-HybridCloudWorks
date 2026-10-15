@@ -18,6 +18,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 
 import AdminAuthGuard from './AdminAuthGuard';
 import { clearAdminStatusCache } from '@/hooks/useAdminAuth';
+import { useAdminRole } from '@/hooks/useAdminRole';
 
 const authedFetch = vi.fn();
 const postJSON = vi.fn();
@@ -208,6 +209,18 @@ describe('an answer from the registry', () => {
 
     expect(await screen.findByText('Admin portal')).toBeTruthy();
     expect(reauthenticateForApi).not.toHaveBeenCalled();
+  });
+
+  it('hands the verified role down to the portal, so the menu and the gates read it (AP-F4)', async () => {
+    answers({ isAdmin: true, role: 'editor', permissions: [] });
+    const RoleReader = () => <div>Role: {useAdminRole() ?? 'none'}</div>;
+    render(
+      <AdminAuthGuard>
+        <RoleReader />
+      </AdminAuthGuard>
+    );
+
+    expect(await screen.findByText('Role: editor')).toBeTruthy();
   });
 
   it('denies a genuine non-admin, and offers no bootstrap when the server says it would fail', async () => {

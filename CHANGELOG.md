@@ -19,6 +19,34 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **The admin menu is cut to the signed-in role, the role is printed under
+  the brand, and a control above that role says so before the round trip**
+  (AP-F4, #928). Every item in `frontend/src/config/adminNav.js` carries a
+  `minRole`, read from the role the server's guard asks for on the routes
+  the page exists to call and recorded item by item in a table beside the
+  registry (viewer: Dashboard and Health; publisher: Publish; editor: the
+  other twenty-five); a row without one fails at module load, as the
+  server's `requireRole` fails on a misspelt role. `visibleNavFor(role)`
+  filters the groups and drops one left empty, and `AdminLayout.jsx` and
+  the dashboard's Explore strip (`DashboardPage.jsx`) both read it, so a
+  viewer no longer learns a page's role from its 403. `AdminAuthGuard.jsx`
+  hands the role it verified down through `hooks/useAdminRole.jsx`, one
+  value for the whole portal rather than a second status check per
+  consumer, and the rail and the phone drawer print it as "Your role: …".
+  `components/admin/RoleGate.jsx` wraps a control the signed-in role cannot
+  use — `aria-disabled`, the click blocked, the reason as visible text the
+  control names through `aria-describedby`, so it stays in the tab order
+  and explains itself — and sits on the actions the server gates above the
+  page's own role: Publish and Unpublish, Set slug, Re-host selected and
+  Delete Live Page; Delete Rejected Now and Delete Permanently on the
+  queue; Acknowledge, Resolve and Reopen on the Health alerts; the
+  Recording Hub's transcript Approve, Return to draft and host Retry; the
+  newsletter's Approve and schedule, Send test, Reschedule, Cancel send and
+  Retry; Listen & Learn's Approve and publish; the calendar's Reschedule
+  and Unschedule; and the dashboard's Recount (an editor write on the one
+  page a viewer opens first). The server's guard is unchanged and still
+  answers every request on its own; the gate is what the admin reads
+  instead of the 403.
 - **Polish defects that compound on a phone: no browser confirm dialog,
   toasts that stack and announce, a toaster that mounts with the admin
   shell, a loading state with a status role, one status request per user,

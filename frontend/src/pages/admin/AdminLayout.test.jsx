@@ -13,6 +13,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import { postJSON } from '@/lib/api';
+import { AdminRoleProvider } from '@/hooks/useAdminRole';
 import AdminLayout, { NAV_GROUPS } from './AdminLayout';
 
 const group = (label) => NAV_GROUPS.find((g) => g.label === label);
@@ -129,17 +130,21 @@ describe('the admin sidebar', () => {
     vi.unstubAllGlobals();
   });
 
-  function renderAdmin(path = '/admin/labs') {
+  // The role is what AdminAuthGuard provides in the app (AP-F4); the whole
+  // menu is the owner's view, so these tests see it as a super_admin.
+  function renderAdmin(path = '/admin/labs', role = 'super_admin') {
     return render(
-      <main id="main-content" tabIndex={-1}>
-        <MemoryRouter initialEntries={[path]}>
-          <Routes>
-            <Route path="/admin" element={<AdminLayout />}>
-              <Route path="labs" element={<h1>Labs page</h1>} />
-            </Route>
-          </Routes>
-        </MemoryRouter>
-      </main>
+      <AdminRoleProvider value={role}>
+        <main id="main-content" tabIndex={-1}>
+          <MemoryRouter initialEntries={[path]}>
+            <Routes>
+              <Route path="/admin" element={<AdminLayout />}>
+                <Route path="labs" element={<h1>Labs page</h1>} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </main>
+      </AdminRoleProvider>
     );
   }
 
@@ -277,6 +282,74 @@ describe('the admin sidebar', () => {
     renderAdmin('/admin/labs');
     expect(document.title).toBe('Labs · ContentForge');
   });
+
+  /**
+   * Role gating (AP-F4, #928): the menu is the registry cut to the role the
+   * guard verified, and the role is printed under the brand. The server still
+   * refuses on its own; this is the viewer not learning that from a 403.
+   */
+  describe('cut to the signed-in role (AP-F4)', () => {
+    const rail = () => within(screen.getByRole('navigation', { name: 'ContentForge' }));
+
+    it('shows a viewer the Dashboard and Health, and none of Publish, Integrations or Platform Settings', () => {
+      const { container } = renderAdmin('/admin/labs', 'viewer');
+      const nav = rail();
+      expect(nav.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/admin');
+      expect(nav.getByRole('link', { name: 'Health' })).toHaveAttribute('href', '/admin/health');
+      for (const hidden of [
+        /^Publish/,
+        /^Integrations/,
+        /^Platform Settings/,
+        /^Review Queue/,
+        /^Editor/,
+        /^Labs/,
+      ]) {
+        expect(nav.queryByRole('link', { name: hidden })).not.toBeInTheDocument();
+      }
+      // A group with nothing left in it is not drawn as a bare heading.
+      for (const heading of ['Pipeline', 'Enhanced', 'Creative', 'Amplify', 'Spotlight']) {
+        expect(nav.queryByText(heading)).not.toBeInTheDocument();
+      }
+      expect(nav.getByText('Platform')).toBeInTheDocument();
+      expect(
+        within(container.querySelector('aside')).getByText('Your role: Viewer')
+      ).toBeInTheDocument();
+    });
+
+    it('shows a publisher the Publish, Integrations and Platform Settings items', async () => {
+      const { container } = renderAdmin('/admin/labs', 'publisher');
+      const nav = rail();
+      expect(await nav.findByRole('link', { name: /^Publish/ })).toHaveAttribute(
+        'href',
+        '/admin/published'
+      );
+      expect(nav.getByRole('link', { name: 'Integrations' })).toBeInTheDocument();
+      expect(nav.getByRole('link', { name: 'Platform Settings' })).toBeInTheDocument();
+      expect(nav.getAllByRole('link')).toHaveLength(NAV_GROUPS.flatMap((g) => g.items).length);
+      expect(
+        within(container.querySelector('aside')).getByText('Your role: Publisher')
+      ).toBeInTheDocument();
+    });
+
+    it('shows an editor everything but Publish', () => {
+      renderAdmin('/admin/labs', 'editor');
+      const nav = rail();
+      expect(nav.queryByRole('link', { name: /^Publish/ })).not.toBeInTheDocument();
+      expect(nav.getByRole('link', { name: 'Integrations' })).toBeInTheDocument();
+      expect(nav.getByRole('link', { name: /^Review Queue/ })).toBeInTheDocument();
+      expect(nav.getAllByRole('link')).toHaveLength(NAV_GROUPS.flatMap((g) => g.items).length - 1);
+    });
+
+    it('shows the viewer menu, and no role line, when no role has been provided', () => {
+      const { container } = renderAdmin('/admin/labs', null);
+      const nav = rail();
+      expect(nav.getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([
+        '/admin',
+        '/admin/health',
+      ]);
+      expect(within(container.querySelector('aside')).queryByText(/Your role/)).toBeNull();
+    });
+  });
 });
 
 /**
@@ -294,18 +367,20 @@ describe('the phone drawer', () => {
     vi.unstubAllGlobals();
   });
 
-  function renderShell() {
+  function renderShell(role = 'super_admin') {
     return render(
-      <main id="main-content" tabIndex={-1}>
-        <MemoryRouter initialEntries={['/admin/labs']}>
-          <Routes>
-            <Route path="/admin" element={<AdminLayout />}>
-              <Route path="labs" element={<h1>Labs page</h1>} />
-              <Route path="queue" element={<h1>Queue page</h1>} />
-            </Route>
-          </Routes>
-        </MemoryRouter>
-      </main>
+      <AdminRoleProvider value={role}>
+        <main id="main-content" tabIndex={-1}>
+          <MemoryRouter initialEntries={['/admin/labs']}>
+            <Routes>
+              <Route path="/admin" element={<AdminLayout />}>
+                <Route path="labs" element={<h1>Labs page</h1>} />
+                <Route path="queue" element={<h1>Queue page</h1>} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </main>
+      </AdminRoleProvider>
     );
   }
 
@@ -334,6 +409,17 @@ describe('the phone drawer', () => {
       .click();
     await screen.findByText('Queue page');
     await vi.waitFor(() => expect(queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('cuts the drawer to the role too, and prints the role in its header (AP-F4)', async () => {
+    renderShell('viewer');
+    screen.getByRole('button', { name: 'Open menu' }).click();
+    const drawer = await screen.findByRole('dialog');
+    expect(within(drawer).getByText('Your role: Viewer')).toBeInTheDocument();
+    const menu = within(within(drawer).getByRole('navigation', { name: 'ContentForge menu' }));
+    expect(menu.getByText('Health')).toBeInTheDocument();
+    expect(menu.queryByText('Platform Settings')).not.toBeInTheDocument();
+    expect(menu.queryByText('Review Queue')).not.toBeInTheDocument();
   });
 
   it('gives the content column phone padding and a wider desktop column than before', () => {

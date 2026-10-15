@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import ConfirmModal from '@/components/admin/ConfirmModal';
+import RoleGate from '@/components/admin/RoleGate';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import PageHeader from '@/components/admin/shared/PageHeader';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
@@ -68,10 +69,18 @@ function LivePageRow({ item, deleting, onDelete }) {
         <Button size="sm" variant="outline" asChild>
           <Link to={`/admin/editor/${editorTargetId(item)}`}>Open Editor</Link>
         </Button>
-        <Button size="sm" variant="destructive" onClick={() => onDelete(item)} disabled={deleting}>
-          <Trash2 className="mr-2 h-4 w-4" />
-          {deleting ? 'Deleting...' : 'Delete Live Page'}
-        </Button>
+        {/* softDeleteLivePage is publisher (lib/content-workflow.js). */}
+        <RoleGate minRole="publisher" reason="Taking a page off the site needs the publisher role.">
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => onDelete(item)}
+            disabled={deleting}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            {deleting ? 'Deleting...' : 'Delete Live Page'}
+          </Button>
+        </RoleGate>
         {liveUrl && (
           <Button size="sm" asChild>
             <a href={safeUrl(liveUrl)} target="_blank" rel="noreferrer">

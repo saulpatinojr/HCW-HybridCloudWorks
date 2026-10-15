@@ -29,6 +29,7 @@ import {
 import { safeUrl } from '@/lib/safeUrl';
 import { LINK_PARAMS } from '@/lib/itemLinks';
 import useLinkedItem from '@/hooks/useLinkedItem';
+import RoleGate from '@/components/admin/RoleGate';
 import { fmtDate } from './recordingView';
 import { HostLine, ReadState, SourceChip, StatusBadge } from './shared';
 
@@ -84,28 +85,36 @@ function TranscriptRow({ item, onOpen, onReview, onRetry, busy }) {
             >
               <FileText className="h-3 w-3 mr-1" /> Review
             </Button>
-            {item.status === 'published' ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs px-2"
-                onClick={() => onReview(item, 'draft')}
-                disabled={busy === `review:${item.id}`}
-              >
-                <Undo2 className="h-3 w-3 mr-1" /> Return to draft
-              </Button>
-            ) : (
-              item.status !== 'failed' && (
+            {/* The review route is publisher either way (lib/podcast/handlers.js
+                reviewTranscript): approving queues the host publish and
+                returning to draft withdraws it. */}
+            <RoleGate
+              minRole="publisher"
+              reason="Approving a transcript for the host needs the publisher role."
+            >
+              {item.status === 'published' ? (
                 <Button
                   size="sm"
+                  variant="outline"
                   className="h-7 text-xs px-2"
-                  onClick={() => onReview(item, 'published')}
+                  onClick={() => onReview(item, 'draft')}
                   disabled={busy === `review:${item.id}`}
                 >
-                  <CheckCircle className="h-3 w-3 mr-1" /> Approve
+                  <Undo2 className="h-3 w-3 mr-1" /> Return to draft
                 </Button>
-              )
-            )}
+              ) : (
+                item.status !== 'failed' && (
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs px-2"
+                    onClick={() => onReview(item, 'published')}
+                    disabled={busy === `review:${item.id}`}
+                  >
+                    <CheckCircle className="h-3 w-3 mr-1" /> Approve
+                  </Button>
+                )
+              )}
+            </RoleGate>
           </div>
         </div>
         {audio && (

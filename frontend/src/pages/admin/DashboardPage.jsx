@@ -31,7 +31,9 @@ import {
   Layers,
 } from 'lucide-react';
 import useDashboardCounts from '@/hooks/useDashboardCounts';
-import { NAV_GROUPS } from '@/config/adminNav';
+import { useAdminRole } from '@/hooks/useAdminRole';
+import { visibleNavFor } from '@/config/adminNav';
+import RoleGate from '@/components/admin/RoleGate';
 import DecisionCenter from '@/components/admin/dashboard/DecisionCenter';
 import StatTile from '@/components/admin/shared/StatTile';
 import EmptyState from '@/components/admin/shared/EmptyState';
@@ -306,20 +308,24 @@ function DashboardHeader({
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onRecalculate}
-          disabled={recalculating}
-          title="Recount every item from the content store. Use it when a number here looks wrong."
-        >
-          {recalculating ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" aria-hidden="true" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
-          )}
-          {recalculating ? 'Recounting…' : 'Recount'}
-        </Button>
+        {/* recalculateDashboardStats is an editor write on a page a viewer can
+            open (lib/admin-snapshots.js), so the one control here says so. */}
+        <RoleGate minRole="editor" reason="Recounting needs the editor role.">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRecalculate}
+            disabled={recalculating}
+            title="Recount every item from the content store. Use it when a number here looks wrong."
+          >
+            {recalculating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" aria-hidden="true" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
+            )}
+            {recalculating ? 'Recounting…' : 'Recount'}
+          </Button>
+        </RoleGate>
         <Button size="sm" onClick={onNewContent}>
           <Zap className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
           New Content
@@ -428,10 +434,12 @@ function DashboardStats({ counts }) {
 
 /**
  * One card per menu group after Home, each carrying the registry's sentence
- * and its items — the whole product explained on the first screen.
+ * and its items — the whole product explained on the first screen. Cut to
+ * the signed-in role as the sidebar is (AP-F4), so the strip never
+ * introduces a page the menu does not offer.
  */
-function DashboardExplore() {
-  const groups = NAV_GROUPS.filter((group) => group.id !== 'home');
+function DashboardExplore({ role }) {
+  const groups = visibleNavFor(role).filter((group) => group.id !== 'home');
   return (
     <section aria-labelledby="explore-heading" className="space-y-3">
       <div>
@@ -496,6 +504,7 @@ function DashboardExplore() {
 /** The admin home: pipeline, decisions, counts by type, and the Explore strip. */
 export default function DashboardPage() {
   const { authReady } = useAuthReady();
+  const role = useAdminRole();
   const navigate = useNavigate();
   const { snapshot, counts, loading, error, refresh, recalculate } = useDashboardCounts({
     enabled: authReady,
@@ -571,7 +580,7 @@ export default function DashboardPage() {
       <DashboardPipeline counts={counts} />
       <DashboardStats counts={counts} />
       <DecisionCenter enabled={authReady} />
-      <DashboardExplore />
+      <DashboardExplore role={role} />
     </div>
   );
 }

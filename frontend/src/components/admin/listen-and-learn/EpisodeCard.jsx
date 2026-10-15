@@ -7,6 +7,7 @@
 import React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import RoleGate from '@/components/admin/RoleGate';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
 import { Loader2, VolumeX } from 'lucide-react';
 import useLinkedItem from '@/hooks/useLinkedItem';
@@ -113,15 +114,18 @@ export default function EpisodeCard({ episode, busy, onReview, onRetry, onKeepCu
 
       {episode.status !== 'failed' && (
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant={published ? 'outline' : 'default'}
-            disabled={busy}
-            onClick={() => onReview(episode, published ? 'draft' : 'published')}
-          >
-            {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-            {published ? 'Withdraw to draft' : 'Approve and publish'}
-          </Button>
+          {/* Publisher only when the review publishes (speech-handlers.js). */}
+          <RoleGate minRole={published ? 'editor' : 'publisher'}>
+            <Button
+              size="sm"
+              variant={published ? 'outline' : 'default'}
+              disabled={busy}
+              onClick={() => onReview(episode, published ? 'draft' : 'published')}
+            >
+              {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+              {published ? 'Withdraw to draft' : 'Approve and publish'}
+            </Button>
+          </RoleGate>
           {published && episode.approvedAt && (
             <span className="text-[11px] text-muted-foreground">
               Approved {new Date(episode.approvedAt).toLocaleDateString()}

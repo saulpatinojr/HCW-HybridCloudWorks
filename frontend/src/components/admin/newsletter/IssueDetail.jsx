@@ -33,6 +33,7 @@ import {
   Sparkles,
   XCircle,
 } from 'lucide-react';
+import RoleGate from '@/components/admin/RoleGate';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
 import { itemStatus } from '@/components/admin/calendar/calendarModel';
 import ApprovalBox from './ApprovalBox';
@@ -294,17 +295,23 @@ function ActionBar({
         <Spin on={busy === 'intro'} icon={Sparkles} />
         Regenerate intro
       </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        className="gap-1.5"
-        onClick={onSendTest}
-        disabled={dirty || locked || secondsLeft > 0}
-        title={saveFirst ?? 'Sends one [TEST] copy to the reply-to address in Newsletter settings'}
-      >
-        <Spin on={busy === 'test'} icon={MailCheck} />
-        {secondsLeft > 0 ? `Send test again in ${secondsLeft}s` : 'Send test to me'}
-      </Button>
+      {/* A test send goes through Resend, so the route is publisher
+          (lib/newsletter/admin-handlers.js testNewsletter). */}
+      <RoleGate minRole="publisher" reason="Sending a test needs the publisher role.">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={onSendTest}
+          disabled={dirty || locked || secondsLeft > 0}
+          title={
+            saveFirst ?? 'Sends one [TEST] copy to the reply-to address in Newsletter settings'
+          }
+        >
+          <Spin on={busy === 'test'} icon={MailCheck} />
+          {secondsLeft > 0 ? `Send test again in ${secondsLeft}s` : 'Send test to me'}
+        </Button>
+      </RoleGate>
       {view === 'review' && (
         <Button
           size="sm"
