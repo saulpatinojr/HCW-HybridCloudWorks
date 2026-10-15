@@ -40,6 +40,7 @@ const EDITOR_HELP = [
   'Where it goes next: the Publish page for anything not yet live; the Archive board, below, for pages taken down for good.',
 ];
 
+/** A pre-live draft: its title, type and status badges, when it was last edited, and Edit. */
 function DraftItemRow({ item }) {
   const type = getContentType(item);
   const provider = getProviderDisplay(item);
