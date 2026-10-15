@@ -26,6 +26,11 @@
  *   - The stylesheets in dist, and the CSS the pages carry inline in a
  *     `<style>` block or a `style` attribute: every `url()` that is not a
  *     font. A CSS background is an image request too.
+ *   - Every attribute above, `style` included, in all three forms the HTML
+ *     parser accepts: double-quoted, single-quoted and unquoted. React writes
+ *     the first; a page copied from `public/` or an article body can carry
+ *     either of the others, and an image the gate cannot see is one it
+ *     cannot fail on.
  *   - The article bodies in data/content-manifest.json, as HTML `<img>` and
  *     Markdown images. The article pages are pre-rendered from this file, so
  *     dist already carries their markup; the bodies are read as well because
@@ -53,11 +58,16 @@
  * `storage.googleapis.com`, is not listed: the first run of this gate found
  * nothing rendered from it, which is exactly the rule.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { decodeAttribute } from './stage-swa-config.mjs';
+import {
+  decodeAttribute,
+  filesUnder,
+  startTags,
+  styleAttributeValues,
+} from './stage-swa-config.mjs';
 
 /**
  * Hosts whose references are reported and tolerated, with the reason. An
@@ -70,14 +80,12 @@ export const RETIRED_IMAGE_HOSTS = Object.freeze({
 });
 
 const FONT_URL = /\.(woff2?|ttf|otf|eot)([?#]|$)|^data:(font\/|application\/(x-)?font)/i;
-const HTML_ELEMENT = /<(img|source|video|input|link)\b([^>]*)>/gi;
-const ATTRIBUTE = (name) => new RegExp(`\\s${name}\\s*=\\s*"([^"]*)"`, 'i');
+const IMAGE_ELEMENTS = new Set(['img', 'source', 'video', 'input', 'link']);
 const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/g;
 const HTML_IMG_SRC = /<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
 const MARKDOWN_IMAGE = /!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
 
 const STYLE_ELEMENT = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
-const STYLE_ATTRIBUTE = /\sstyle\s*=\s*"([^"]*)"/gi;
 const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
 
 /**
@@ -109,13 +117,11 @@ function srcsetUrls(value) {
 /** Every image URL a page's markup fetches, with the element and attribute it came from. */
 export function imageSourcesInHtml(html) {
   const found = [];
-  for (const match of html.matchAll(HTML_ELEMENT)) {
-    const tag = match[1].toLowerCase();
-    const attributes = match[2];
-    const read = (name) => {
-      const value = ATTRIBUTE(name).exec(attributes)?.[1];
-      return value === undefined ? undefined : decodeAttribute(value);
-    };
+  // Attributes are read by startTags, in all three forms and only in
+  // attribute position, so `src=` in an alt text is not taken for the source.
+  for (const { name: tag, attributes } of startTags(html)) {
+    if (!IMAGE_ELEMENTS.has(tag)) continue;
+    const read = (name) => attributes.get(name);
     if (tag === 'link') {
       const rel = (read('rel') || '').toLowerCase();
       const preloadsImage =
@@ -145,8 +151,8 @@ export function imageSourcesInHtml(html) {
       found.push({ url: entry.url, where: 'style element url()' });
     }
   }
-  for (const match of html.matchAll(STYLE_ATTRIBUTE)) {
-    for (const entry of imageSourcesInCss(decodeAttribute(match[1]))) {
+  for (const value of styleAttributeValues(html)) {
+    for (const entry of imageSourcesInCss(value)) {
       found.push({ url: entry.url, where: 'style attribute url()' });
     }
   }
@@ -292,22 +298,6 @@ export function evaluate({ sources, references, retired = RETIRED_IMAGE_HOSTS })
     }
   }
   return { rows, failures };
-}
-
-/** Every file under a directory with one of the extensions, as `[relative path, text]`. */
-function filesUnder(root, extensions) {
-  const files = [];
-  const walk = (dir) => {
-    for (const name of readdirSync(dir)) {
-      const path = join(dir, name);
-      if (statSync(path).isDirectory()) walk(path);
-      else if (extensions.some((extension) => name.endsWith(extension))) {
-        files.push([relative(root, path), readFileSync(path, 'utf8')]);
-      }
-    }
-  };
-  walk(root);
-  return files;
 }
 
 /** The references in a build and its manifest, each with the file it came from. */

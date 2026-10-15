@@ -20,8 +20,11 @@ import { join } from 'node:path';
 import {
   collectInlineStyles,
   decodeAttribute,
+  filesUnder,
+  htmlPages,
   sha256Source,
   stageConfig,
+  styleAttributeValues,
   withInlineStyleHashes,
 } from './stage-swa-config.mjs';
 
@@ -94,6 +97,83 @@ describe('collecting inline styles from pages', () => {
       ['x.html', '<p style = "color:red">a</p><p style="color:red">b</p>'],
     ]);
     expect(styles.attributes.get(digest('color:red')).count).toBe(2);
+  });
+
+  // React writes style="…", but the HTML parser accepts '…' and an unquoted
+  // value too, and a page copied from public/ or an article body can carry
+  // either. A value the scan misses has no hash, so the browser blocks it on
+  // the deployed site while every check here stays green.
+  it('hashes a single-quoted and an unquoted style attribute, each as its own value', () => {
+    const styles = collectInlineStyles([
+      [
+        'x.html',
+        "<p style='color:blue'>a</p><p style=color:green>b</p>" +
+          '<p style=\'font-family:"Fira Code"\'>c</p><p style = color:teal class=x>d</p>',
+      ],
+    ]);
+    expect(styles.attributeCount).toBe(4);
+    for (const value of ['color:blue', 'color:green', 'font-family:"Fira Code"', 'color:teal']) {
+      expect(styles.attributes.get(digest(value))).toMatchObject({ value, count: 1 });
+    }
+  });
+
+  it('reads a style attribute in all three forms, decoded, and only the attribute named style', () => {
+    expect(
+      styleAttributeValues(
+        '<a style="a:1" data-style="b:2"><b style=\'c:&quot;3&quot;\'><i style=d:4&#59;></i></b></a>'
+      )
+    ).toEqual(['a:1', 'c:"3"', 'd:4;']);
+  });
+
+  // Measured on the first build with the unquoted form: the pre-render's seed
+  // attribute carries whole article bodies, escaped, and a search of the whole
+  // page for `style=` found eleven in there and hashed values like `\"width:`.
+  it('reads style only in attribute position, never inside another value or in text', () => {
+    const html =
+      '<div id="root" data-prerendered-seed="{&quot;body&quot;:&quot;&lt;col style=\\&quot;width: 1px\\&quot; /&gt;&quot;}">' +
+      "<p title='set style=x here' style=color:red>write style=bold in prose</p></div>" +
+      '<col style="width: 2px" style="width: 3px" />';
+    expect(styleAttributeValues(html)).toEqual(['color:red', 'width: 2px']);
+  });
+});
+
+describe('walking the build output', () => {
+  // A stat followed by a read is two looks at a path that can change in
+  // between (CodeQL js/file-system-race); the walk branches on the type
+  // readdir hands back with each name instead. These pin what it returns, so
+  // the order and the filtering cannot change with the mechanism.
+  const tree = () => {
+    const root = mkdtempSync(join(tmpdir(), 'hcw-stage-swa-walk-'));
+    mkdirSync(join(root, 'about'));
+    mkdirSync(join(root, 'assets'));
+    mkdirSync(join(root, 'legacy.html'));
+    writeFileSync(join(root, 'index.html'), '<p style="a:1">home</p>');
+    writeFileSync(join(root, 'Zeta.html'), 'zeta');
+    writeFileSync(join(root, 'notes.txt'), 'not a page');
+    writeFileSync(join(root, 'about', 'index.html'), 'about\r\nus');
+    writeFileSync(join(root, 'assets', 'app.css'), '.a{}');
+    writeFileSync(join(root, 'legacy.html', 'page.html'), 'legacy');
+    return root;
+  };
+
+  it('returns every matching file under the root, each level in code-unit order, whatever the filesystem lists first', () => {
+    expect(filesUnder(tree(), ['.html', '.css']).map(([path]) => path)).toEqual([
+      'Zeta.html',
+      join('about', 'index.html'),
+      join('assets', 'app.css'),
+      'index.html',
+      join('legacy.html', 'page.html'),
+    ]);
+  });
+
+  it('walks into a directory whose name ends in .html instead of reading it as a page', () => {
+    const pages = htmlPages(tree());
+    expect(pages).toContainEqual([join('legacy.html', 'page.html'), 'legacy']);
+    expect(pages.map(([path]) => path)).not.toContain('legacy.html');
+  });
+
+  it('reads each page with its line endings normalised to LF', () => {
+    expect(htmlPages(tree())).toContainEqual([join('about', 'index.html'), 'about\nus']);
   });
 });
 

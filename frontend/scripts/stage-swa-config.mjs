@@ -30,12 +30,17 @@
  *
  *   - `<style>` elements — the two legal pages share one block — get one
  *     'sha256-…' per distinct body, appended to style-src.
- *   - `style="…"` attributes — React's `style` prop, framer-motion's initial
+ *   - `style` attributes — React's `style` prop, framer-motion's initial
  *     state, the code highlighter's token colours, the tables in published
  *     articles — get one 'sha256-…' per distinct value, in style-src-attr
  *     behind 'unsafe-hashes'. That keyword is what lets a hash apply to an
  *     attribute at all; the name is the specification's, and the hashes are of
- *     this build's own markup, never of anything a request supplies.
+ *     this build's own markup, never of anything a request supplies. All three
+ *     forms the HTML parser accepts are read — `style="…"`, `style='…'` and an
+ *     unquoted `style=…` — because React writes the first, but a page copied
+ *     from `public/` or an article body from the CMS can carry either of the
+ *     others, and a value this misses is blocked on the deployed site with
+ *     nothing in CI to say so.
  *
  * Styles React sets at runtime go through the CSSOM, which no CSP governs, so
  * hydration and client-side navigation need nothing from this. A `style`
@@ -59,7 +64,14 @@ import { join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const STYLE_ELEMENT = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
-const STYLE_ATTRIBUTE = /\sstyle\s*=\s*"([^"]*)"/gi;
+// A start tag: its name, then everything up to the `>` that closes it. A
+// quoted value may hold a `>` of its own, so a quoted run is taken whole.
+const START_TAG = /<([a-zA-Z][^\s/>]*)((?:"[^"]*"|'[^']*'|[^"'>])*)>/g;
+// One attribute of a start tag: a name and, if it has one, a value in any of
+// the three forms the HTML specification allows — double-quoted,
+// single-quoted or unquoted. The unquoted class excludes what the
+// specification forbids there, so it stops where the parser would.
+const TAG_ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
 /** The entities React and the CMS emit inside an attribute value. */
 const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -81,6 +93,41 @@ export function decodeAttribute(value) {
     }
     return NAMED_ENTITIES[body.toLowerCase()] ?? whole;
   });
+}
+
+/**
+ * Every start tag in a page, with its attributes read the way the HTML parser
+ * reads them: names lower-cased, the first of a repeated name kept, a name
+ * with no value set to the empty string, and each value decoded whichever of
+ * the three forms it is written in.
+ *
+ * Only text in attribute position is an attribute. A search of the whole page
+ * for `style=` also finds it inside another attribute's value — the
+ * pre-render's seed carries whole article bodies, escaped, in one — and in
+ * prose; with an unquoted value allowed, every such hit would put a hash of
+ * nothing real into the policy. Shared with check-image-hosts.mjs, so the
+ * policy and the image gate read a page the same way.
+ */
+export function* startTags(html) {
+  for (const tag of html.matchAll(START_TAG)) {
+    const attributes = new Map();
+    for (const attribute of tag[2].matchAll(TAG_ATTRIBUTE)) {
+      const name = attribute[1].toLowerCase();
+      if (attributes.has(name)) continue;
+      const value = attribute[2] ?? attribute[3] ?? attribute[4] ?? '';
+      attributes.set(name, decodeAttribute(value));
+    }
+    yield { name: tag[1].toLowerCase(), attributes };
+  }
+}
+
+/** The value of every `style` attribute in a page, decoded, in any of the three forms. */
+export function styleAttributeValues(html) {
+  const values = [];
+  for (const { attributes } of startTags(html)) {
+    if (attributes.has('style')) values.push(attributes.get('style'));
+  }
+  return values;
 }
 
 /** The CSP source token for a text: `'sha256-<base64>'` over its UTF-8 bytes. */
@@ -111,9 +158,8 @@ export function collectInlineStyles(pages) {
       if (!entry.files.includes(path)) entry.files.push(path);
       elements.set(hash, entry);
     }
-    for (const match of html.matchAll(STYLE_ATTRIBUTE)) {
+    for (const value of styleAttributeValues(html)) {
       attributeCount += 1;
-      const value = decodeAttribute(match[1]);
       const hash = sha256Source(value);
       const entry = attributes.get(hash) ?? { value, count: 0, files: [] };
       entry.count += 1;
@@ -168,6 +214,36 @@ export function withInlineStyleHashes(policy, { elementHashes = [], attributeHas
 }
 
 /**
+ * Every file under a directory with one of the extensions, as
+ * `[relative path, text]`, each level in code-unit order of its names so the
+ * result is the same on every filesystem. Shared with check-image-hosts.mjs.
+ *
+ * The walk branches on the type readdir returns with each name and reads a
+ * file with no stat before it. A stat followed by a read judges one file and
+ * opens whatever is at the path by the time of the read (CodeQL
+ * js/file-system-race); the entry's own type has no such gap to fall into.
+ * An entry that is neither a directory nor a regular file — a symbolic link
+ * among them — is not followed, and a build writes none.
+ */
+export function filesUnder(root, extensions) {
+  const files = [];
+  const walk = (dir) => {
+    const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+    );
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension))) {
+        files.push([relative(root, path), readFileSync(path, 'utf8')]);
+      }
+    }
+  };
+  walk(root);
+  return files;
+}
+
+/**
  * Every HTML document under a directory, as `[relative path, text]`.
  *
  * Line endings are normalised to LF before anything is hashed, because that
@@ -177,17 +253,7 @@ export function withInlineStyleHashes(policy, { elementHashes = [], attributeHas
  * the wrong line endings would otherwise hash to a value no browser computes.
  */
 export function htmlPages(root) {
-  const pages = [];
-  const walk = (dir) => {
-    for (const name of readdirSync(dir)) {
-      const path = join(dir, name);
-      if (statSync(path).isDirectory()) walk(path);
-      else if (name.endsWith('.html'))
-        pages.push([relative(root, path), readFileSync(path, 'utf8').replace(/\r\n?/g, '\n')]);
-    }
-  };
-  walk(root);
-  return pages;
+  return filesUnder(root, ['.html']).map(([path, text]) => [path, text.replace(/\r\n?/g, '\n')]);
 }
 
 /**

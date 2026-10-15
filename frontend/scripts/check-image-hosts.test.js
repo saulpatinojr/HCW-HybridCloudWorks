@@ -9,10 +9,14 @@
  * already allows.
  */
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   RETIRED_IMAGE_HOSTS,
   allowedBy,
+  collectReferences,
   evaluate,
   imageOrigin,
   imageSourcesInCss,
@@ -86,6 +90,89 @@ describe('reading a page', () => {
     expect(imageSourcesInHtml(html)).toEqual([
       { url: 'https://cdn.example/bg.png', where: 'style element url()' },
       { url: '/images/x.png', where: 'style attribute url()' },
+    ]);
+  });
+
+  // React writes every attribute double-quoted, but the HTML parser also
+  // takes '…' and an unquoted value, and a page copied from public/ or an
+  // article body can carry either. An image the gate cannot see is one it
+  // cannot fail on, so the host would break on the deployed site unannounced.
+  it('reads src and srcset written single-quoted or unquoted, as the parser does', () => {
+    const html =
+      "<img src='https://cdn.example/a.png' srcset='/a-2x.png 2x'>" +
+      '<img src=/b.png alt=b><img alt=c src=https://cdn.example/c.png>';
+    expect(imageSourcesInHtml(html)).toEqual([
+      { url: 'https://cdn.example/a.png', where: 'img.src' },
+      { url: '/a-2x.png', where: 'img.srcset' },
+      { url: '/b.png', where: 'img.src' },
+      { url: 'https://cdn.example/c.png', where: 'img.src' },
+    ]);
+  });
+
+  it('takes src only from attribute position, so an alt text naming one is not read as the source', () => {
+    const html =
+      '<img alt="set src=https://cdn.example/x.png here" src="/a.png">' +
+      '<img src=/b.png src="/ignored.png">';
+    expect(imageSourcesInHtml(html)).toEqual([
+      { url: '/a.png', where: 'img.src' },
+      { url: '/b.png', where: 'img.src' },
+    ]);
+  });
+
+  it('checks the url() of a single-quoted or unquoted style attribute against img-src', () => {
+    const html =
+      '<div style=\'background-image:url("https://cdn.example/bg.png")\'></div>' +
+      '<div style=background:url(/images/y.png)></div>';
+    const found = imageSourcesInHtml(html);
+    expect(found).toEqual([
+      { url: 'https://cdn.example/bg.png', where: 'style attribute url()' },
+      { url: '/images/y.png', where: 'style attribute url()' },
+    ]);
+
+    const { rows, failures } = evaluate({
+      sources: SOURCES,
+      references: found.map((entry) => ({ ...entry, file: 'dist/index.html' })),
+      retired: {},
+    });
+    expect(rows.map(({ origin, status }) => [origin, status])).toEqual([
+      ["'self'", 'allowed'],
+      ['https://cdn.example', 'missing'],
+    ]);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('img-src does not allow https://cdn.example');
+    expect(failures[0]).toContain('style attribute url()');
+  });
+});
+
+describe('reading the build output', () => {
+  // The walk branches on the type readdir hands back with each name, with no
+  // stat before a read (CodeQL js/file-system-race). Pinned here through the
+  // gate's own entry point, so the files it reads and their order hold.
+  it('reads every page and stylesheet under dist, in code-unit order, and nothing else', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hcw-image-hosts-'));
+    const dist = join(root, 'dist');
+    mkdirSync(join(dist, 'assets'), { recursive: true });
+    mkdirSync(join(dist, 'about'));
+    mkdirSync(join(dist, 'old.css'));
+    writeFileSync(join(dist, 'index.html'), '<img src="/a.png">');
+    writeFileSync(join(dist, 'Zeta.html'), '<img src="https://images.credly.com/z.png">');
+    writeFileSync(join(dist, 'about', 'index.html'), "<img src='/b.png'>");
+    writeFileSync(join(dist, 'assets', 'app.css'), '.a{background:url(/c.png)}');
+    writeFileSync(join(dist, 'old.css', 'kept.css'), '.k{background:url(/k.png)}');
+    writeFileSync(join(dist, 'notes.txt'), '<img src="https://cdn.example/n.png">');
+
+    const { references, pages, stylesheets, articles } = collectReferences({
+      dist,
+      manifestPath: join(root, 'no-manifest.json'),
+    });
+
+    expect([pages, stylesheets, articles]).toEqual([3, 2, 0]);
+    expect(references.map(({ url, file }) => [file, url])).toEqual([
+      ['dist/Zeta.html', 'https://images.credly.com/z.png'],
+      [`dist/${join('about', 'index.html')}`, '/b.png'],
+      [`dist/${join('assets', 'app.css')}`, '/c.png'],
+      ['dist/index.html', '/a.png'],
+      [`dist/${join('old.css', 'kept.css')}`, '/k.png'],
     ]);
   });
 });
@@ -273,9 +360,15 @@ describe('the verdict', () => {
   });
 
   it('fails when a retired host has no reference left, so the entry cannot outlive its reason', () => {
+    // Every reference to a retired host is dropped by its parsed origin. A
+    // substring test on 'storage.googleapis.com' happened to drop both, but
+    // only because one host name contains the other.
+    const retiredOrigins = new Set(Object.keys(retired));
     const { failures } = evaluate({
       sources: SOURCES,
-      references: references.filter((entry) => !entry.url.includes('storage.googleapis.com')),
+      references: references.filter(
+        (entry) => !retiredOrigins.has(new URL(entry.url, 'https://self.invalid').origin)
+      ),
       retired,
     });
     expect(failures).toHaveLength(2);
