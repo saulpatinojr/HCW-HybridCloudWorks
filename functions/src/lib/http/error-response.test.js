@@ -85,6 +85,7 @@ describe('errorResponse (AP-B10)', () => {
     });
 
     it("uses a caller's header only when it has the id shape (#1200 review L4)", () => {
+      /** A request whose headers are these values. */
       const headers = (values) => ({ headers: { get: (name) => values[name] ?? null } });
       expect(getCorrelationId({}, headers({ 'x-correlation-id': 'req-42' }))).toBe('req-42');
       expect(getCorrelationId({}, headers({ 'x-request-id': 'abc.123:x' }))).toBe('abc.123:x');

@@ -26,6 +26,17 @@
 import { randomUUID } from 'node:crypto';
 import { getCorrelationId } from './http/error-response.js';
 
+/**
+ * This module's failure answer: the safe sentence and the correlation id,
+ * which comes from the door's getCorrelationId (#945).
+ *
+ * @param {object} context - the invocation context
+ * @param {string} fallbackMessage - the sentence the answer carries
+ * @param {unknown} error - the failure, for the log line
+ * @param {number} [status] - the HTTP status
+ * @param {object} [request] - the request, for a caller's correlation header
+ * @returns {{ status: number, headers: Record<string, string>, body: string }}
+ */
 function errorResponse(context, fallbackMessage, error, status = 500, request = null) {
   // The door's id: the v4 traceParent, and a caller's header only in the id shape (#945).
   const correlationId = getCorrelationId(context, request);
