@@ -27,10 +27,65 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readKey } from './ai/router.js';
-import { stripInternalFields, isSoftDeleted } from './public-reads.js';
+import { PUBLIC_CONTENT_DETAIL_FIELDS, projectFields, isSoftDeleted } from './public-reads.js';
 import { normalizeCurrentStatusForBlogOnly } from './cms/content-update-validation.js';
 
 export const PREVIEW_TTL_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * What a preview returns: the public detail allowlist plus the two fields the
+ * preview banner reads (BlogDetailTemplate in previewMode) — the stage the
+ * draft is at, and its grade, itself projected by `projectForgeGrade`. A
+ * preview shows a draft as the public page will, so it carries nothing the
+ * public page would not, apart from the banner.
+ */
+export const PUBLIC_PREVIEW_FIELDS = Object.freeze([
+  ...PUBLIC_CONTENT_DETAIL_FIELDS,
+  'contentStatus',
+  'forgeGrade',
+]);
+
+/**
+ * The grade as the banner reads it: the overall score, the threshold, and the
+ * advisory SEO findings' key and message. The rest of the stored grade — its
+ * sub-scores, prompt version and grader — stays in the admin portal.
+ *
+ * @param {unknown} grade the stored `forgeGrade`
+ * @returns {object|undefined} undefined when there is no grade object
+ */
+function projectForgeGrade(grade) {
+  if (!grade || typeof grade !== 'object') return undefined;
+  const out = {};
+  if (typeof grade.overall === 'number') out.overall = grade.overall;
+  if (typeof grade.threshold === 'number') out.threshold = grade.threshold;
+  if (Array.isArray(grade.seo?.findings)) {
+    out.seo = {
+      findings: grade.seo.findings
+        .filter((finding) => finding && typeof finding === 'object')
+        .map((finding) => ({
+          key: typeof finding.key === 'string' ? finding.key : '',
+          message: typeof finding.message === 'string' ? finding.message : '',
+        })),
+    };
+  }
+  return out;
+}
+
+/**
+ * A previewable draft projected to PUBLIC_PREVIEW_FIELDS.
+ *
+ * @param {object} doc the stored content document
+ * @returns {object} the preview item
+ */
+export function projectPreviewItem(doc) {
+  const item = projectFields(doc, PUBLIC_PREVIEW_FIELDS);
+  if (item.forgeGrade !== undefined) {
+    const grade = projectForgeGrade(item.forgeGrade);
+    if (grade) item.forgeGrade = grade;
+    else delete item.forgeGrade;
+  }
+  return item;
+}
 
 /** Statuses a preview link may show. Keep in lockstep with the wiki Phase 5 spec. */
 export const PREVIEWABLE_STATUSES = new Set(['forge_ready', 'editing', 'approved']);
@@ -79,7 +134,10 @@ export function createPublicPreviewHandlers({ store, env = process.env, now = Da
    * GET public/preview/{contentId}?t={token}
    * Success: { success: true, item } with Cache-Control: no-store — a preview
    * must always show the live draft, and the link is semi-secret; nothing
-   * should cache it.
+   * should cache it. `item` is the draft projected to PUBLIC_PREVIEW_FIELDS.
+   *
+   * @param {object} request the Functions HTTP request
+   * @returns {Promise<object>} the HTTP response
    */
   async function getPreview(request) {
     const contentId = String(request?.params?.contentId || '').trim();
@@ -97,7 +155,7 @@ export function createPublicPreviewHandlers({ store, env = process.env, now = Da
     return {
       status: 200,
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-      body: JSON.stringify({ success: true, item: stripInternalFields(doc) }),
+      body: JSON.stringify({ success: true, item: projectPreviewItem(doc) }),
     };
   }
 

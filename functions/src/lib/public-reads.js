@@ -33,9 +33,20 @@
  *      vanish. Handlers fetch a bounded window and sort in memory on the
  *      resolved date, exactly as the frontend does today.
  *
- * Detail reads strip a denylist of internal review/audit fields. The old
- * rules exposed whole documents, but no public template reads these fields
- * (verified against components/templates), so this is a strict hardening.
+ * Every handler answers with an ALLOWLIST of fields, never a stored document.
+ * Writers keep operational state on the same documents these routes serve —
+ * a generation or inspection failure, a job id, an actor, a grade, the
+ * provenance of an audio take — and a denylist had to name each of those to
+ * keep it private, so every field a writer added later was public until
+ * someone noticed. Each list below is derived from what the public pages
+ * read, and public-reads.allowlist.test.js pins it against the frontend
+ * source, so a field is public only when it is listed on purpose. Where the
+ * read is a query, the list is also the SQL projection; the code filter runs
+ * either way, so a point read and a query answer the same shape.
+ *
+ * The snapshot read is the exception: its sanitizers in
+ * lib/snapshots-publish.js are the allowlist, applied when a snapshot is
+ * published, and `stripInternalFields` stays here as defence in depth.
  */
 
 const json = (status, body, cacheSeconds = 0) => ({
@@ -249,7 +260,11 @@ export function resolvePublishedDateValue(doc = {}) {
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
 }
 
-/** Internal fields stripped from public detail responses — see header. */
+/**
+ * Internal fields stripped from a published snapshot (getSnapshot) as defence
+ * in depth behind its publish-time sanitizers. No other read relies on this
+ * list: each answers with its own allowlist (`projectFields`) — see header.
+ */
 const INTERNAL_FIELDS = [
   'reviewNotes',
   'reviewedBy',
@@ -266,6 +281,13 @@ const INTERNAL_FIELDS = [
   'critiqueIssues',
 ];
 
+/**
+ * A snapshot document or item without the denylisted fields and Cosmos
+ * system properties. Defence in depth for getSnapshot only — see INTERNAL_FIELDS.
+ *
+ * @param {object} doc
+ * @returns {object} a shallow copy without INTERNAL_FIELDS or `_`-prefixed keys
+ */
 export function stripInternalFields(doc) {
   const out = { ...doc };
   for (const field of INTERNAL_FIELDS) delete out[field];
@@ -274,6 +296,42 @@ export function stripInternalFields(doc) {
     if (key.startsWith('_')) delete out[key];
   }
   return out;
+}
+
+/**
+ * Copy the named fields a document holds, and nothing else: the boundary
+ * between a stored document and an anonymous response.
+ *
+ * Named rather than spread, so a field a writer adds later stays off the
+ * public API until someone lists it. Only own properties are read, and an
+ * undefined field is omitted rather than padded, so the projection of an
+ * older document has the shape it always had.
+ *
+ * @param {object|null|undefined} doc a stored document, or a projected row of one
+ * @param {readonly string[]} fields the allowlist
+ * @returns {object} a new object holding the listed fields `doc` defines
+ */
+export function projectFields(doc, fields) {
+  const out = {};
+  if (!doc || typeof doc !== 'object') return out;
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(doc, field) && doc[field] !== undefined) {
+      out[field] = doc[field];
+    }
+  }
+  return out;
+}
+
+/**
+ * An allowlist as a Cosmos SQL projection, `c["…"]`-quoted so spaced and
+ * cased names (`Published At`, `CD Url`) survive. A function declaration so
+ * the module-level constants below can use it before this line runs.
+ *
+ * @param {readonly string[]} fields
+ * @returns {string} e.g. `c["id"], c["Published At"]`
+ */
+function sqlProjection(fields) {
+  return fields.map((f) => `c["${f}"]`).join(', ');
 }
 
 const LIST_DEFAULT_LIMIT = 60;
@@ -351,7 +409,8 @@ export const SQL_NOT_SOFT_DELETED = `${sqlNotTruthy('softDeletedAt')} AND ${sqlN
  * (:41, :53). `content`/`Content`/`postContent`/`blogDraft`/`overviewHtml`/
  * `codeSnippet`/`commandExample`/`sidebarContent` are read only by DETAIL
  * consumers (blogUtils normalizeContentFields), so this projection must stay
- * scoped to listContent — getContent keeps returning whole documents.
+ * scoped to listContent — getContent answers PUBLIC_CONTENT_DETAIL_FIELDS
+ * below, which adds them.
  */
 export const PUBLIC_CONTENT_LIST_FIELDS = [
   // identity / typing
@@ -478,6 +537,96 @@ export const PUBLIC_CONTENT_LIST_FIELDS = [
 const LIST_PROJECTION = PUBLIC_CONTENT_LIST_FIELDS.map((f) => `c["${f}"]`).join(', ');
 
 /**
+ * The fields `isPublicDocument` reads. The detail query projects them so the
+ * visibility filter can run, and the detail response leaves them out: no
+ * detail template reads them, and a published page has no use for its own
+ * workflow state. The preview adds `contentStatus` back for its banner.
+ */
+const CONTENT_VISIBILITY_FIELDS = Object.freeze([
+  'Live',
+  'Status',
+  'contentStatus',
+  'softDeletedAt',
+  'softDeleteExpiresAt',
+]);
+
+/**
+ * What the public DETAIL endpoint returns per document (getContent), and the
+ * base of the signed preview (public-preview.js PUBLIC_PREVIEW_FIELDS).
+ *
+ * Two parts. First, the list projection less the visibility markers: those
+ * fields are already public for every document this endpoint can return, so
+ * the detail never answers with less than the list did for the same article.
+ * Second, the fields only a detail page reads, from a file-by-file audit of
+ * the three detail templates — BlogDetailTemplate (also the preview's body),
+ * ArchitectureDetailTemplate (with MiniLandingFrame, WafAssessment,
+ * ContextSidebar), FrameworkDetailTemplate — and the pre-render manifest
+ * (public-content-manifest.js ARTICLE_FIELDS), whose items seed the
+ * pre-rendered article.
+ *
+ * public-reads.allowlist.test.js pins this against the templates' source and
+ * against ARTICLE_FIELDS: a template that starts reading a new field fails
+ * there until the field is listed here. Object and array fields project
+ * whole; their element fields ride along, as in the list projection.
+ */
+export const PUBLIC_CONTENT_DETAIL_FIELDS = Object.freeze([
+  ...new Set([
+    ...PUBLIC_CONTENT_LIST_FIELDS.filter((f) => !CONTENT_VISIBILITY_FIELDS.includes(f)),
+    // bodies — BlogDetailTemplate post.body, FrameworkDetailTemplate and
+    // ArchitectureDetailTemplate overview, ContextSidebar
+    'Content',
+    'content',
+    'blogDraft',
+    'postContent',
+    'overviewHtml',
+    'overview',
+    'sidebarContent',
+    // code — BlogDetailTemplate CoderCornerSnippet, the Implementation tabs
+    'code',
+    'codeSnippet',
+    'codeLanguage',
+    'terraformCode',
+    'commandExample',
+    // imagery — BlogDetailTemplate hero and its responsive variants
+    'heroImageUrl',
+    'aiImageUrls',
+    'aiImageVariants',
+    // attribution — the pre-render manifest keeps it
+    'Author',
+    // architecture blueprint — ArchitectureDetailTemplate and MiniLandingFrame
+    'promise',
+    'outcome',
+    'diagramUrl',
+    'diagramXml',
+    'hotspots',
+    'topology',
+    'howItWorks',
+    'keyServices',
+    'services',
+    'practices',
+    'technicalSpecs',
+    'whenNotToUse',
+    'finopsCostTraps',
+    'deploymentSteps',
+    'estimatedCost',
+    'interactiveLabId',
+    'ecosystemPartnerValidation',
+    'landingZonePreset',
+    'demoUrl',
+    'relatedArchitectures',
+    // framework — FrameworkDetailTemplate radar and Pillars tab
+    'maturityScores',
+    'patterns',
+  ]),
+]);
+
+/** The detail query's projection: the response allowlist plus what the visibility filter reads. */
+const CONTENT_DETAIL_PROJECTION = sqlProjection([
+  ...PUBLIC_CONTENT_DETAIL_FIELDS,
+  ...CONTENT_VISIBILITY_FIELDS,
+]);
+
+/**
  * Document ceilings for the feed endpoint (T-203).
  *
  * These are runaway guards, NOT page sizes, and the distinction is the whole
@@ -539,9 +688,10 @@ const LISTEN_AND_LEARN_MAX_EPISODES = 50;
 /**
  * The provider-wide episode list (#349) is a *listing*, so it carries what a
  * player and a list row need and nothing else. The per-certification read
- * above returns whole documents because its page renders the transcript and
- * the videos; the podcast page renders neither, and a transcript is the
- * largest field on the document by an order of magnitude. Allowlisted rather
+ * adds the transcript, takeaways and videos because its page renders them
+ * (PUBLIC_LISTEN_AND_LEARN_EPISODE_FIELDS below); the podcast page renders
+ * none of those, and a transcript is the largest field on the document by an
+ * order of magnitude. Allowlisted rather
  * than denylisted so a field added to the writer later is withheld here
  * until someone decides it belongs on an anonymous list.
  *
@@ -554,8 +704,8 @@ const LISTEN_AND_LEARN_MAX_EPISODES = 50;
  * they were. `sources` is NOT listed: the URLs a source episode was built
  * from belong on a citation page beside the transcript, and no listener-facing
  * page renders one yet; until it exists they stay off the anonymous list.
- * The per-certification read above returns the whole document, sources
- * included, for the same reason it returns the transcript.
+ * The per-certification read keeps carrying `sources`, as it always has, for
+ * the same reason it carries the transcript.
  *
  * Twenty sets of up to eight areas is far more than exists; the cap is a
  * runaway guard on a cross-partition query, not a page size.
@@ -595,6 +745,117 @@ const LISTEN_AND_LEARN_LIST_PROJECTION = [...LISTEN_AND_LEARN_LIST_FIELDS, ...SO
 const LISTEN_AND_LEARN_SET_PROJECTION = ['id', 'certTitle', 'certSlug', ...SOFT_DELETE_MARKERS]
   .map((f) => `c["${f}"]`)
   .join(', ');
+
+/**
+ * What the per-certification read (getListenAndLearn) returns per chapter:
+ * the listing allowlist plus what the study page renders beside the player —
+ * ListenAndLearn.jsx reads `keyTakeaways`, `videos` and `transcript`, and
+ * EpisodePlaylist.jsx reads the listing fields. `sources` is kept because this
+ * read has always carried it (see the note above).
+ *
+ * Everything else on a chapter is operational and stays off: a regeneration
+ * failure kept on a chapter that stays published (`lastError`, `error`,
+ * `audioError`), the take's provenance and cost (`speechProvider`,
+ * `speechModel`, `audioPath`, `versions[]`), the approver and editors, and
+ * the text a chapter was spoken from. public-reads.allowlist.test.js pins the
+ * list against both components' source.
+ */
+export const PUBLIC_LISTEN_AND_LEARN_EPISODE_FIELDS = Object.freeze([
+  ...LISTEN_AND_LEARN_LIST_FIELDS,
+  'keyTakeaways',
+  'transcript',
+  'videos',
+  'sources',
+]);
+const LISTEN_AND_LEARN_EPISODE_PROJECTION = sqlProjection([
+  ...PUBLIC_LISTEN_AND_LEARN_EPISODE_FIELDS,
+  ...SOFT_DELETE_MARKERS,
+]);
+
+/**
+ * What the per-certification read returns of the set (book or course): its
+ * public identity and the Audio Library fields an operator sets for display
+ * (listen-and-learn/library.js). No current page reads `set`, so this keeps
+ * the response's shape without its operational fields — the voice and its
+ * provider, the run's actor, the guide's area slugs.
+ */
+export const PUBLIC_LISTEN_AND_LEARN_SET_FIELDS = Object.freeze([
+  'id',
+  'provider',
+  'examCode',
+  'kind',
+  'certSlug',
+  'certTitle',
+  'title',
+  'author',
+  'description',
+  'coverImageUrl',
+  'tags',
+  'studyGuideUrl',
+  'studyGuideTitle',
+  'areaCount',
+]);
+
+/**
+ * What the podcast list returns per `podcasts` row: the episode shape the
+ * ingest writes (timers/podcasts.js `buildPodcastEpisode`, every field of it
+ * from the show's public feed) plus `createdAt`, and the `pubDate`/`date`
+ * spellings the Recording Hub's episode list falls back to. Consumers:
+ * lib/audioEpisodes.js `normalizeHostEpisode` and
+ * components/admin/recording-hub/EpisodesTab.jsx.
+ */
+export const PUBLIC_PODCAST_FIELDS = Object.freeze([
+  'id',
+  'provider',
+  'title',
+  'description',
+  'longDescription',
+  'mediaUrl',
+  'mimeType',
+  'length',
+  'duration',
+  'image',
+  'link',
+  'guid',
+  'publishedAt',
+  'pubDate',
+  'date',
+  'updatedAt',
+  'createdAt',
+]);
+
+/**
+ * The podcast query's projection: the response allowlist plus what the
+ * filters and the sort read and the response does not carry — the soft-delete
+ * markers, `mediaUnavailableAt` (isPodcastMediaRetired) and the other
+ * published-date aliases (resolvePublishedDateValue).
+ */
+const PODCAST_PROJECTION = sqlProjection([
+  ...PUBLIC_PODCAST_FIELDS,
+  ...SOFT_DELETE_MARKERS,
+  'mediaUnavailableAt',
+  'publishedDate',
+  'datePublished',
+  'Published At',
+  'blogPublishedAt',
+]);
+
+/**
+ * What the feed read returns per `rss_cache` document: the shape the ingest
+ * writes (rss/ingest.js `cacheFeed`), every field of it feed metadata or the
+ * feed's own items. useNewsData reads `items` and `feedName`.
+ */
+export const PUBLIC_FEED_CACHE_FIELDS = Object.freeze([
+  'id',
+  'provider',
+  'feedName',
+  'feedUrl',
+  'items',
+  'itemCount',
+  'lastFetched',
+  'refreshedAt',
+]);
+const FEED_CACHE_PROJECTION = sqlProjection([...PUBLIC_FEED_CACHE_FIELDS, ...SOFT_DELETE_MARKERS]);
 
 /**
  * Certification lifecycle events (#461 item 4). Written by the Friday Skills
@@ -788,10 +1049,13 @@ export function createPublicReadHandlers({ store }) {
   return {
     /**
      * GET /api/public/content?type=&provider=&limit=&offset=&source=
-     * Returns full documents (internal fields stripped) — the list consumers
-     * read far more than card fields (frameworkConcepts, featured,
-     * altCoverImageVariants, curatedSubpagePath, costAnalysis, …), exactly as
-     * they did when Firestore handed them whole documents.
+     * Returns each document projected to PUBLIC_CONTENT_LIST_FIELDS — in SQL,
+     * and again in code — which is far more than card fields
+     * (frameworkConcepts, featured, altCoverImageVariants, curatedSubpagePath,
+     * costAnalysis, …) because the list consumers read them.
+     *
+     * @param {object} request the Functions HTTP request
+     * @param {object} context the invocation context, for error logging
      */
     async listContent(request, context) {
       try {
@@ -857,7 +1121,9 @@ export function createPublicReadHandlers({ store }) {
         const matching = rows
           .filter(isPublicDocument)
           .sort((a, b) => resolvePublishedDateValue(b) - resolvePublishedDateValue(a));
-        const items = matching.slice(offset, offset + limit).map(stripInternalFields);
+        const items = matching
+          .slice(offset, offset + limit)
+          .map((doc) => projectFields(doc, PUBLIC_CONTENT_LIST_FIELDS));
 
         // `total` is the number of matching documents, not the size of this
         // page — it was measured after the slice, so it always equalled
@@ -880,6 +1146,13 @@ export function createPublicReadHandlers({ store }) {
      * GET /api/public/content/{slugOrId} — id, then slug/Slug in content,
      * then the same three lookups in legacy blogs: the fallback chain the
      * detail templates run client-side today, folded server-side.
+     *
+     * The item is projected to PUBLIC_CONTENT_DETAIL_FIELDS: in SQL for the
+     * slug lookups, and in code for both paths, since a point read by id
+     * always returns the whole document.
+     *
+     * @param {object} request the Functions HTTP request
+     * @param {object} context the invocation context, for error logging
      */
     async getContent(request, context) {
       try {
@@ -891,14 +1164,18 @@ export function createPublicReadHandlers({ store }) {
           if (byId && isPublicDocument(byId)) {
             return json(
               200,
-              { success: true, item: stripInternalFields(byId), source: container },
+              {
+                success: true,
+                item: projectFields(byId, PUBLIC_CONTENT_DETAIL_FIELDS),
+                source: container,
+              },
               300
             );
           }
           for (const field of ['slug', 'Slug']) {
             const rows = await store.queryDocs(
               container,
-              `SELECT TOP ${SLUG_CANDIDATES} * FROM c WHERE c["${field}"] = @slug ORDER BY c._ts DESC`,
+              `SELECT TOP ${SLUG_CANDIDATES} ${CONTENT_DETAIL_PROJECTION} FROM c WHERE c["${field}"] = @slug ORDER BY c._ts DESC`,
               [{ name: '@slug', value: slugOrId }]
             );
             // `find`, not `rows[0] && isPublicDocument(...)`. Filtering after
@@ -909,7 +1186,11 @@ export function createPublicReadHandlers({ store }) {
             if (match) {
               return json(
                 200,
-                { success: true, item: stripInternalFields(match), source: container },
+                {
+                  success: true,
+                  item: projectFields(match, PUBLIC_CONTENT_DETAIL_FIELDS),
+                  source: container,
+                },
                 300
               );
             }
@@ -1102,7 +1383,11 @@ export function createPublicReadHandlers({ store }) {
      * no feed of its own. Each row carries its own `provider`, so the page can
      * tell the show from the provider's episodes without asking twice, and a
      * show episode appears exactly once in the list: `main` is a value
-     * `c.provider` takes, not a second copy of a provider's row.
+     * `c.provider` takes, not a second copy of a provider's row. Each row is
+     * projected to PUBLIC_PODCAST_FIELDS, in SQL and in code.
+     *
+     * @param {object} request the Functions HTTP request
+     * @param {object} context the invocation context, for error logging
      */
     async listPodcasts(request, context) {
       try {
@@ -1118,7 +1403,7 @@ export function createPublicReadHandlers({ store }) {
           LIST_MAX_LIMIT
         );
 
-        let query = `SELECT TOP ${FETCH_WINDOW} * FROM c`;
+        let query = `SELECT TOP ${FETCH_WINDOW} ${PODCAST_PROJECTION} FROM c`;
         const parameters = [];
         if (provider) {
           // IN, not two round trips: one query over the same
@@ -1138,7 +1423,9 @@ export function createPublicReadHandlers({ store }) {
         const matching = rows
           .filter((doc) => !isSoftDeleted(doc) && !isPodcastMediaRetired(doc))
           .sort((a, b) => resolvePublishedDateValue(b) - resolvePublishedDateValue(a));
-        const items = matching.slice(0, limit).map(stripInternalFields);
+        const items = matching
+          .slice(0, limit)
+          .map((doc) => projectFields(doc, PUBLIC_PODCAST_FIELDS));
 
         // The provider's configured feed and the site's show (#349), for the
         // RSS subscribe button. One point read; a failure here degrades to
@@ -1184,7 +1471,11 @@ export function createPublicReadHandlers({ store }) {
      * (useNewsData.js). Cache documents are trimmed to their newest items
      * (T-319) and otherwise returned as stored; the flatten/sort across feeds
      * stays client-side where it lives today. Until 2026-09-05 the response
-     * also carried `insights` from `ai_insights` (T-765, retired).
+     * also carried `insights` from `ai_insights` (T-765, retired). Each
+     * document is projected to PUBLIC_FEED_CACHE_FIELDS, in SQL and in code.
+     *
+     * @param {object} request the Functions HTTP request
+     * @param {object} context the invocation context, for error logging
      */
     async getFeed(request, context) {
       try {
@@ -1199,7 +1490,7 @@ export function createPublicReadHandlers({ store }) {
         // ceiling stays, and boundFeedItems below bounds the rest.
         const rssCache = await store.queryDocs(
           'rss_cache',
-          `SELECT TOP ${FEED_CACHE_MAX_DOCS} * FROM c WHERE c.provider = @provider`,
+          `SELECT TOP ${FEED_CACHE_MAX_DOCS} ${FEED_CACHE_PROJECTION} FROM c WHERE c.provider = @provider`,
           [{ name: '@provider', value: provider }]
         );
 
@@ -1213,7 +1504,7 @@ export function createPublicReadHandlers({ store }) {
             // in feeds.
             rssCache: rssCache
               .filter((doc) => !isSoftDeleted(doc))
-              .map((doc) => boundFeedItems(stripInternalFields(doc))),
+              .map((doc) => boundFeedItems(projectFields(doc, PUBLIC_FEED_CACHE_FIELDS))),
           },
           120
         );
@@ -1239,6 +1530,14 @@ export function createPublicReadHandlers({ store }) {
      * than a 404: the certification exists and the page renders its own
      * "nothing published yet" state, which is a different thing from a
      * certification that has never been generated.
+     *
+     * The set is projected to PUBLIC_LISTEN_AND_LEARN_SET_FIELDS and each
+     * chapter to PUBLIC_LISTEN_AND_LEARN_EPISODE_FIELDS (in SQL and in code):
+     * a published chapter whose regeneration failed stays published, and the
+     * failure it records is for the admin card, not for a visitor.
+     *
+     * @param {object} request the Functions HTTP request
+     * @param {object} context the invocation context, for error logging
      */
     async getListenAndLearn(request, context) {
       try {
@@ -1255,7 +1554,7 @@ export function createPublicReadHandlers({ store }) {
           store.readDoc(LISTEN_AND_LEARN_SET_CONTAINER, id, id),
           store.queryDocs(
             LISTEN_AND_LEARN_EPISODE_CONTAINER,
-            `SELECT TOP ${LISTEN_AND_LEARN_MAX_EPISODES} * FROM c WHERE c.setId = @setId AND c.status = @status`,
+            `SELECT TOP ${LISTEN_AND_LEARN_MAX_EPISODES} ${LISTEN_AND_LEARN_EPISODE_PROJECTION} FROM c WHERE c.setId = @setId AND c.status = @status`,
             [
               { name: '@setId', value: id },
               { name: '@status', value: 'published' },
@@ -1273,14 +1572,16 @@ export function createPublicReadHandlers({ store }) {
           200,
           {
             success: true,
-            set: stripInternalFields(set),
+            set: projectFields(set, PUBLIC_LISTEN_AND_LEARN_SET_FIELDS),
             // Study-guide order. Episodes are meant to be heard in the order
             // the exam presents the areas, which is neither the order a query
             // returns nor the order exam weighting would give.
             episodes: episodes
               .filter((doc) => !isSoftDeleted(doc))
-              .map((doc) => ({ ...doc, audioUrl: servableListenAndLearnAudioUrl(doc) }))
-              .map(stripInternalFields)
+              .map((doc) => ({
+                ...projectFields(doc, PUBLIC_LISTEN_AND_LEARN_EPISODE_FIELDS),
+                audioUrl: servableListenAndLearnAudioUrl(doc),
+              }))
               .sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
           },
           300

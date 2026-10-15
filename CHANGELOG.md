@@ -19,6 +19,23 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Public reads return an allowlisted set of fields.** The article detail
+  (`GET public/content/{slugOrId}`), the signed preview, the Listen & Learn
+  certification read, the podcast list and the news feed each answer with a
+  named list of fields, projected in the Cosmos query where the read is a
+  query and filtered in code on every path, instead of a stored document
+  with a denylist removed. A field a writer adds to a document is no longer
+  public until it is listed. The lists are derived from what the public
+  pages read (`PUBLIC_CONTENT_DETAIL_FIELDS`, `PUBLIC_PREVIEW_FIELDS`,
+  `PUBLIC_LISTEN_AND_LEARN_EPISODE_FIELDS`,
+  `PUBLIC_LISTEN_AND_LEARN_SET_FIELDS`, `PUBLIC_PODCAST_FIELDS`,
+  `PUBLIC_FEED_CACHE_FIELDS` in `functions/src/lib/public-reads.js` and
+  `public-preview.js`), and `public-reads.allowlist.test.js` pins each one
+  against the frontend components that read it and fails when a response
+  carries a key its list does not name. The article list keeps its existing
+  projection and now also filters in code; the snapshot read keeps its
+  publish-time sanitizers.
+
 - **Lab host: the nightly reboot asks at the hour, and reboots only an idle
   host (LAB-13, #959).** unattended-upgrades evaluated its logged-in check
   when the upgrade ran, about twenty-two hours before the 04:30 it then
