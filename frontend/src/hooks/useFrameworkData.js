@@ -158,9 +158,6 @@ const normalizeFramework = (doc = {}) => {
     docLink: firstPresent(doc.docLink, ''),
     officialSources,
     architectureRecommendation,
-    frameworkKnowledgePrompt: firstPresent(doc.frameworkKnowledgePrompt, ''),
-    frameworkImagePrompt: firstPresent(doc.frameworkImagePrompt, ''),
-    frameworkDiagramPrompt: firstPresent(doc.frameworkDiagramPrompt, ''),
     concepts,
   };
 };
