@@ -38,6 +38,8 @@ import { createApiClient } from './lib/api.js';
 import { readAppliedCommit } from './lib/applied-commit.js';
 import { missingConfig, readApiConfig } from './lib/config.js';
 import { createLogger } from './lib/log.js';
+import { ackPath, createAcknowledger, createHoldGate, holdPath } from './lib/maintenance-hold.js';
+import { createPoller } from './lib/poll.js';
 import { createShutdown } from './lib/shutdown.js';
 
 const AGENT_VERSION = JSON.parse(
@@ -77,6 +79,14 @@ const config = {
     // memory limit) into the argv, from this memory value.
     nofile: Number(process.env.LABS_AGENT_JOB_NOFILE || 1024),
   },
+  // The file hcw-reboot-when-idle writes while it takes its second look at an
+  // idle host; no claim is sent while it holds (LAB-13, #959).
+  // LABS_AGENT_MAINTENANCE_HOLD_PATH, or the default in lib/maintenance-hold.js.
+  maintenanceHoldPath: holdPath(),
+  // Where the agent answers that hold once nothing is in flight or running,
+  // which the script waits for before its second look.
+  // LABS_AGENT_MAINTENANCE_ACK_PATH, or the default in lib/maintenance-hold.js.
+  maintenanceAckPath: ackPath(),
 };
 
 // Every line goes through this, never console.*: the error and warning lines
@@ -95,10 +105,6 @@ const api = createApiClient(config);
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-// Claims in flight: decided on, not yet owned by the supervisor's execute.
-// Counted separately from its active count so the concurrency guard cannot
-// be raced by a slow claim (T-744).
-let pendingClaims = 0;
 // The interval timers start() arms, cleared at the first signal so no beat
 // of theirs can land after the shutdown's `offline`.
 const timers = [];
@@ -141,52 +147,36 @@ async function sendHeartbeat(status = supervisor.stopping ? 'stopping' : 'idle',
 // result, and at SIGTERM interrupts every job it still holds and reports
 // each one as interrupted within LABS_AGENT_SHUTDOWN_TIMEOUT_MS, so no job
 // is left `claimed` for the lease to recover (LAB-13, #959). Its own file
-// says why it is a module and not this one. It reads pendingClaims so the
-// shutdown also waits, within the same budget, for a claim already sent:
-// the job such a claim brings back is reported interrupted, never started.
+// says why it is a module and not this one. It reads the poller's claims in
+// flight so the shutdown also waits, within the same budget, for a claim
+// already sent: the job such a claim brings back is reported interrupted,
+// never started. The poller is declared below; the shutdown asks only after
+// a signal, by which time it exists.
 const supervisor = createShutdown({
   api,
   log,
   sendHeartbeat,
   capabilities: CAPABILITIES,
   limits: config.limits,
-  claimsInFlight: () => pendingClaims,
+  claimsInFlight: () => poller.inFlight(),
 });
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-/** One claim attempt per tick, refused while stopping or with every slot taken or promised. */
-async function poll() {
-  // The slot is reserved BEFORE the await, not after (T-744). The active
-  // count only moves inside the supervisor's execute, which runs after
-  // claimJob resolves — and claimJob's timeout (20s) is longer than the poll
-  // interval (15s), so a slow claim let a second poll pass this guard with
-  // the counter still at its old value. With the documented
-  // LABS_AGENT_MAX_CONCURRENT=1 and a 512 MB / 0.5 CPU budget per job, two
-  // concurrent Terraform containers is a real resource-exhaustion path on a
-  // small VPS.
-  //
-  // pendingClaims covers exactly the window between "we decided to claim" and
-  // "execute owns the slot", so the guard reflects work already committed
-  // to rather than only work already started.
-  if (supervisor.stopping || supervisor.active() + pendingClaims >= config.maxConcurrentJobs) return;
-
-  pendingClaims += 1;
-  try {
-    const job = await api.claimJob();
-    if (!job) return;
-    supervisor.execute(job); // intentionally not awaited — the poll interval continues
-  } catch (err) {
-    log.fault('warn', 'claim failed', err);
-  } finally {
-    // Released in every path. On the path that takes a slot, execute tracks
-    // the job with no await in front of it, so the handoff from
-    // pendingClaims to the active count has no gap. Its one earlier await is
-    // in the "no capability for this job type" branch, which returns without
-    // taking a slot — nothing to hand over there.
-    pendingClaims -= 1;
-  }
-}
+// One claim attempt per tick (lib/poll.js), refused while stopping, with
+// every slot taken or promised (T-744), or while the host's maintenance hold
+// is in force: hcw-reboot-when-idle writes it before its second look at an
+// idle host, so no job starts between that look and the reboot (LAB-13,
+// #959; lib/maintenance-hold.js). Under the hold, a tick with nothing in
+// flight or running acknowledges it, and the script waits for that.
+const poller = createPoller({
+  api,
+  supervisor,
+  log,
+  maxConcurrentJobs: config.maxConcurrentJobs,
+  hold: createHoldGate({ path: config.maintenanceHoldPath, log }),
+  ack: createAcknowledger({ path: config.maintenanceAckPath, log }),
+});
 
 /** Announces the agent idle, then starts the heartbeat and poll timers and polls once at once. */
 async function start() {
@@ -197,8 +187,8 @@ async function start() {
 
   await sendHeartbeat('idle');
   timers.push(setInterval(() => sendHeartbeat(), config.heartbeatIntervalMs));
-  timers.push(setInterval(poll, config.pollIntervalMs));
-  poll();
+  timers.push(setInterval(poller.poll, config.pollIntervalMs));
+  poller.poll();
 }
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────

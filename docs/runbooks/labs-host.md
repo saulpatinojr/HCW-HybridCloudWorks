@@ -1592,9 +1592,16 @@ bash, on the host:
 clear && printf '\033[3J'
 ```
 
-**Unseal, after initialising and after every restart or reboot.** A restart
-seals Vault, and so does every reboot, including the unattended-upgrades
-reboot at 04:30; until three keys are entered it serves nothing. Bash, on the
+**Unseal, after initialising and after every restart or reboot, under
+Shamir keys only.** Which seal the host is on decides this step. Under
+Shamir keys (`vault status` shows `Seal Type shamir`), a restart seals
+Vault, and so does every reboot, including the nightly idle reboot at 04:30
+(`hcw-reboot-when-idle.timer`); until three keys are entered it serves
+nothing. Under auto-unseal (`Seal Type azurekeyvault` and `Recovery Seal
+Type shamir`), which this host has run since 2026-09-29, a restart or a
+reboot, the idle one included, comes back unsealed by itself, and the five
+keys are recovery keys that cannot unseal it ("HashiCorp Vault: moving to
+auto-unseal", below), so there is nothing to type. Under Shamir keys, bash, on the
 host, three times, pasting a different key at each `Unseal Key (will be
 hidden):` prompt:
 
@@ -2014,12 +2021,138 @@ fix is installed.
   row with that `ProcessName`. No line at warning means nothing held has an
   upgrade waiting; the all-clear line stays on the host at `notice`. Since
   #1172 (LAB-13, #959) the same run also logs `a reboot is pending since
-  <date> (<n> days)` at warning while `/var/run/reboot-required` exists:
-  the 04:30 reboot waits for a window with nobody logged in, so the owner's
-  window is to log out before 04:30, or to run `sudo reboot` at a time of
-  their choosing; a pending line a week old is the sign that neither has
-  happened and a fix that needs the reboot is still waiting. An alert
-  on those rows is not built yet: that is PLAT-4's work, not this page's.
+  <date> (<n> days)` at warning while `/var/run/reboot-required` exists,
+  dated from the first night the idle reboot saw it (the marker's own time
+  moves with every upgrade that rewrites it): the 04:30 reboot (next
+  bullet) waits for a night with nobody logged in and no lab job or Coder
+  workspace up, so the owner's window is to log out before 04:30, or to
+  reboot at a time of their choosing (bash, on the host,
+  `sudo systemctl start hcw-reboot-when-idle.service` asks the same
+  questions and reboots only when they all come back idle; see the next
+  bullet for `sudo reboot`, which asks none); a pending line a week old is
+  the sign that neither has happened and a fix that needs the reboot is
+  still waiting. An alert on those rows is not built yet: that is PLAT-4's
+  work, not this page's.
+- **Every day at 04:30 host time, on the host,** from the playbook run that
+  applies ask 2 of LAB-13 (#959): `hcw-reboot-when-idle.timer` (the
+  `hardening` role) reboots the host for a pending upgrade only when
+  `/var/run/reboot-required` exists, logind lists no login session (class
+  `user`, or `user-` and a suffix), `docker ps --filter label=hcw.lab-job`
+  lists no lab job container up (created, running, paused or restarting),
+  and the Coder sandbox daemon (`/run/hcw-coder-docker/docker.sock`, when it
+  is there) lists no workspace container up, all asked at the hour itself
+  and asked again once the labs agent has confirmed it is idle. Workspaces
+  run on that daemon, which the host daemon does not see, and a person
+  working in one has no logind session, so without this question a
+  workspace in use at 04:30 would be rebooted. Between the two looks the
+  script writes `/run/hcw-maintenance/reboot-hold`, and the labs agent
+  claims no new job while it holds; once it has no claim in flight and no
+  job running, it acknowledges the hold by writing its expiry to
+  `/run/hcw-labs-agent/maintenance-ack`. The script waits up to 45 s for
+  that acknowledgement (none is needed when systemd says the agent is
+  inactive or failed) and defers the night without it, so no job can be
+  running or starting at the second look, or between it and the reboot
+  (CodeRabbit on #1191, two rounds). unattended-upgrades
+  no longer reboots on its own: it asked `users` when the upgrade ran, some
+  twenty-two hours before the reboot it then scheduled with no further
+  question, and it never asked about jobs. On this host `users` and `who`
+  print nothing even with a session open (rust-coreutils reads utmp, which
+  systemd no longer writes; measured 2026-10-15), so that check never
+  deferred anything. One line per night under the tag
+  `hcw-reboot-when-idle`: `rebooting; pending since <date> (<n> days)` and
+  the `deferred:` lines at `warning`, shipped as `Syslog` rows; `no reboot
+  is pending` at `notice`, on the host. A deferred night tries again the
+  next night. **From the seventh day pending, each `deferred:` line is at
+  `err` and ends `overdue at 7: log out before 04:30, or reboot at a time
+  of your choosing`**: that is the line to act on, by logging out before
+  04:30, stopping a workspace left running, or rebooting now. To reboot now
+  with every check above, bash, on the host:
+  `sudo systemctl start hcw-reboot-when-idle.service`. Good is the host
+  going down within about a minute; a `deferred:` line in
+  `sudo journalctl -t hcw-reboot-when-idle -n 5 --no-pager` names what is
+  still up. `sudo reboot` is an override that asks nothing: it ends any
+  login session, a running lab job (reported to its visitor as interrupted,
+  LAB-13) and any Coder workspace in use, so use it only when that is
+  intended (CodeRabbit on #1191). A run of `deferred: the lab agent did not confirm
+  it was idle` nights means the agent has a job that does not end, is
+  stuck, or is older than the acknowledgement; bash, on the host,
+  `systemctl status hcw-labs-agent --no-pager` and `sudo journalctl -u
+  hcw-labs-agent --since -1d` say which. The days count from the first night a run saw the
+  marker (kept in `/run/hcw-maintenance/reboot-pending-since`, which a
+  reboot clears with the marker), not from the marker's own time, which
+  every upgrade that wants a reboot rewrites. It is a row in Log Analytics,
+  not a page: no alert rule matches it yet (PLAT-4). An `apt-config`, a
+  `loginctl` or a docker daemon that cannot answer fails the unit, and
+  `alert-lab-unit-failed` pages (`docs/runbooks/alerting-and-support.md`);
+  stopping the unit by hand does not (it exits 143, which the unit counts
+  as success). Bash, on the host:
+  `journalctl -t hcw-reboot-when-idle --since -7d` is the last week's
+  decisions; `lab-host/ansible/roles/hardening/README.md`, item 8, is the
+  whole table.
+
+  The run that applies it hands the reboot over in order: it looks for a
+  reboot unattended-upgrades already scheduled, installs and enables the
+  timer, reads it back active, turns unattended-upgrades' own reboot off,
+  and reads back the `Automatic-Reboot` apt itself ends up with, stopping
+  if another file in `/etc/apt/apt.conf.d` sets it back on (the message
+  gives the line that finds it). A `shutdown -r` that unattended-upgrades'
+  log names is cancelled; any other scheduled reboot stops the run before
+  anything is written, and the message says what to do (it cannot tell
+  unattended-upgrades' `shutdown -r` from root's own for the same minute
+  without that log line, so it does not guess). A run that cancels such a
+  reboot and then stops before the override leaves that one night with no
+  reboot; unattended-upgrades' next daily run schedules it again, and
+  re-running `bootstrap.sh` completes the hand-over. Two checks after that run,
+  bash, on the host, while logged in over SSH. First, `loginctl
+  list-sessions` lists your login with `CLASS` `user` (on 2026-10-15:
+  session 384, `hcwadmin`, `user`); that row is what defers the reboot, and
+  the `manager` and `manager-early` rows beside it (hcwadmin's service
+  manager and hcw-coder-docker's lingering one) do not. Second, `shutdown
+  --show` prints `No scheduled shutdown.`.
+
+  **A line that reads `standing down: unattended-upgrades' own
+  Automatic-Reboot is on`** means two reboot mechanisms are installed, and
+  this one is doing nothing: the host was rolled back to a revision before
+  this timer, or a run stopped after enabling it and before writing the
+  override. unattended-upgrades is the one rebooting then, as it did before.
+  To keep it that way, withdraw the timer. Bash, on the host:
+
+  ```bash
+  sudo systemctl disable --now hcw-reboot-when-idle.timer && sudo rm -f /etc/systemd/system/hcw-reboot-when-idle.service /etc/systemd/system/hcw-reboot-when-idle.timer /usr/local/sbin/hcw-reboot-when-idle /run/hcw-maintenance/reboot-hold /run/hcw-maintenance/reboot-pending-since && sudo systemctl daemon-reload && systemctl list-timers hcw-reboot-when-idle.timer
+  ```
+
+  Success is a line reading `0 timers listed.` (systemd adds a hint about
+  `--all` under it). To have this timer reboot instead,
+  run `bootstrap.sh` from a revision that has it; the stand-down stops on
+  its own once the override turns `Automatic-Reboot` off. Before rolling
+  back on purpose, the same line withdraws it first: until the rollback's
+  run turns unattended-upgrades' reboot back on, neither reboots, and after
+  it only unattended-upgrades does.
+
+  **What it does not cover, on purpose** (review of #1191):
+
+  - **The handshake with the agent is the agent's own word, and nothing
+    more.** The script reboots after an acknowledgement naming its hold,
+    which the agent writes only on a tick with no claim in flight and no
+    job running, and the second look still asks logind and both daemons.
+    It trusts the agent to count its own claims and jobs; the poll tests
+    (`vps-agent/lib/poll.test.js`) are what hold it to that. Without an
+    acknowledgement in 45 s it defers, so the failure modes are a night
+    without a reboot, never a reboot through a job.
+  - **The first `bootstrap.sh` that applies this.** `site.yml` runs the
+    `hardening` role, which enables the timer, before the `labs_agent`
+    role restarts the agent with the code that acknowledges the hold. The
+    old agent, until then, never acknowledges, so a 04:30 inside that one
+    run defers the night instead of rebooting: safe, and the next night
+    asks again with the new agent. Starting `bootstrap.sh` near 04:30 is
+    therefore safe.
+  - **unattended-upgrades scheduling during the run.** The check for a
+    reboot unattended-upgrades already scheduled runs before the override
+    turns its reboot off. If its daily run fires in the minutes between
+    the two, it can schedule one more `shutdown -r` for 04:30, which fires
+    without either question. The second check after the run, `shutdown
+    --show` printing `No scheduled shutdown.`, is what catches it; bash, on
+    the host, `sudo shutdown -c` cancels it.
 - **Tuesdays 05:20 UTC:** `publish-lab-image.yml` rebuilds the lab images and
   publishes them only when the `full` image's Debian packages moved; each
   publish opens the `chore/lab-pins-image-digests` pull request.

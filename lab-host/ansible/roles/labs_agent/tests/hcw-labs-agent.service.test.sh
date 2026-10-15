@@ -9,7 +9,10 @@
 # main process is node itself, not a shell that would swallow the signal),
 # the stop timeout is the 30 s that covers the agent's shutdown budget and
 # its two heartbeats (scripts/lab-job-limits.test.mjs holds that sum), the
-# env file carries that budget, the unit keeps its failure notifier and its
+# env file carries that budget and the maintenance hold's path, the one the
+# hardening role's idle reboot writes, and the path of the agent's
+# acknowledgement in the unit's own runtime directory, which is not
+# preserved, the unit keeps its failure notifier and its
 # Docker dependency, and it sweeps orphaned job containers as root before
 # the agent starts and after it exits (files/hcw-labjob-sweep, which
 # tests/hcw-labjob-sweep.test.sh tests on its own). Before #959's fix the unit left KillMode at
@@ -45,6 +48,7 @@ done
 [ -n "${python}" ] || { echo "no Python with jinja2 and yaml on PATH; install ansible-core" >&2; exit 1; }
 
 work="$(mktemp -d)"
+# finish: remove the scratch directory, on every way out.
 finish() { rm -rf "${work}"; }
 trap finish EXIT
 
@@ -55,7 +59,7 @@ trap finish EXIT
 # syntax survives catches it if a template uses one.
 render() {
   "${python}" - "$1" "${role}/defaults/main.yml" "${group_vars}" "${role}/vars/main.yml" <<'PY'
-import sys, jinja2, yaml
+import posixpath, sys, jinja2, yaml
 template, defaults, group_vars, role_vars = sys.argv[1:5]
 load = lambda path: yaml.safe_load(open(path, encoding="utf-8")) or {}
 values = dict(load(defaults))
@@ -63,6 +67,9 @@ values.update({k: v for k, v in load(group_vars).items() if k.startswith("labs_a
 values.update(load(role_vars))
 values["ansible_managed"] = "Ansible managed"
 env = jinja2.Environment(undefined=jinja2.StrictUndefined, trim_blocks=True, keep_trailing_newline=True)
+# Ansible's dirname and basename filters are os.path's.
+env.filters["dirname"] = posixpath.dirname
+env.filters["basename"] = posixpath.basename
 for _ in range(10):
     changed = False
     for key, value in list(values.items()):
@@ -85,6 +92,10 @@ render "${role}/templates/hcw-labs-agent.service.j2" > "${unit}"
 render "${role}/templates/labs-agent.env.j2" > "${envfile}"
 
 shutdown_ms="$(sed -n 's/^labs_agent_shutdown_timeout_ms: \([0-9][0-9]*\)$/\1/p' "${role}/defaults/main.yml")"
+hold_path="$(sed -n 's/^labs_agent_maintenance_hold_path: \(\/.*\)$/\1/p' "${role}/defaults/main.yml")"
+hardening_hold_path="$(sed -n 's/^hardening_reboot_hold_path: \(\/.*\)$/\1/p' "${role}/../hardening/defaults/main.yml")"
+ack_path="$(sed -n 's/^labs_agent_maintenance_ack_path: \(\/.*\)$/\1/p' "${role}/defaults/main.yml")"
+hardening_ack_path="$(sed -n 's/^hardening_reboot_ack_path: \(\/.*\)$/\1/p' "${role}/../hardening/defaults/main.yml")"
 
 check "the unit render holds no template syntax" "! grep -qE '\{\{|\{%' '${unit}'"
 check "the env render holds no template syntax" "! grep -qE '\{\{|\{%' '${envfile}'"
@@ -100,6 +111,26 @@ check "the unit still requires Docker" "grep -qxF 'Requires=docker.service' '${u
 check "the role's defaults name a shutdown budget" "[ -n '${shutdown_ms}' ]"
 check "the env file carries the shutdown budget from the role's defaults" \
   "grep -qxF 'LABS_AGENT_SHUTDOWN_TIMEOUT_MS=${shutdown_ms}' '${envfile}'"
+# The idle reboot (hardening role) writes the hold the agent reads before
+# each claim (LAB-13, #959); a path that differed would be a hold the agent
+# never sees. scripts/lab-job-limits.test.mjs holds the agent's default too.
+check "the env file carries the maintenance hold path from the role's defaults" \
+  "[ -n '${hold_path}' ] && grep -qxF 'LABS_AGENT_MAINTENANCE_HOLD_PATH=${hold_path}' '${envfile}'"
+check "the agent reads the hold where the hardening role's idle reboot writes it" \
+  "[ -n '${hardening_hold_path}' ] && [ '${hold_path}' = '${hardening_hold_path}' ]"
+check "the unit hides nothing under /run, where the hold is" \
+  "! grep -qE '^(InaccessiblePaths|TemporaryFileSystem)=.*/run' '${unit}'"
+# The agent acknowledges the hold in its own runtime directory (CodeRabbit
+# on #1191); the reboot script reads it as root. Not preserved: a stopped
+# agent, a crashed one included, must leave no acknowledgement behind.
+check "the env file carries the acknowledgement path from the role's defaults" \
+  "[ -n '${ack_path}' ] && grep -qxF 'LABS_AGENT_MAINTENANCE_ACK_PATH=${ack_path}' '${envfile}'"
+check "the agent acknowledges where the hardening role's idle reboot reads" \
+  "[ -n '${hardening_ack_path}' ] && [ '${ack_path}' = '${hardening_ack_path}' ]"
+check "the unit's runtime directory is the acknowledgement's, directly under /run, 0755, and not preserved" \
+  "grep -qxF \"RuntimeDirectory=\$(basename \"\$(dirname '${ack_path}')\")\" '${unit}' && [ \"\$(dirname \"\$(dirname '${ack_path}')\")\" = /run ] && grep -qxF 'RuntimeDirectoryMode=0755' '${unit}' && ! grep -q '^RuntimeDirectoryPreserve=' '${unit}'"
+check "the role refuses an acknowledgement path the unit could not create" \
+  "grep -qF \"labs_agent_maintenance_ack_path is match('^/run/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\$')\" '${role}/tasks/main.yml'"
 check "the role installs both templates" \
   "grep -qF 'src: hcw-labs-agent.service.j2' '${role}/tasks/main.yml' && grep -qF 'src: labs-agent.env.j2' '${role}/tasks/main.yml'"
 check "orphaned job containers are swept as root before the agent starts" \
@@ -110,6 +141,8 @@ sweep_at="$(grep -nF 'dest: /usr/local/libexec/hcw-labjob-sweep' "${role}/tasks/
 unit_at="$(grep -nF 'src: hcw-labs-agent.service.j2' "${role}/tasks/main.yml" | cut -d: -f1)"
 check "the role installs the sweep the unit names, before the unit" \
   "[ -f '${role}/files/hcw-labjob-sweep' ] && [ -n '${sweep_at}' ] && [ -n '${unit_at}' ] && [ '${sweep_at}' -lt '${unit_at}' ]"
+check "the role refuses hold or acknowledgement paths the idle reboot does not share" \
+  "grep -qF -- '- labs_agent_maintenance_hold_path == hardening_reboot_hold_path' '${role}/tasks/main.yml' && grep -qF -- '- labs_agent_maintenance_ack_path == hardening_reboot_ack_path' '${role}/tasks/main.yml'"
 
 echo "# ${passed} passed, ${failed} failed"
 [ "${failed}" -eq 0 ]

@@ -21,15 +21,22 @@
 # and the unit's OnFailure= reports that.
 #
 # It also says, at warning, while a reboot is pending and for how long
-# (LAB-13, #959): unattended-upgrades reboots at 04:30 only when nobody is
-# logged in, so a fix that needs the reboot is applied only once a window
-# comes. The owner's window is to log out before 04:30, or to reboot at a
-# time of their choosing (docs/runbooks/labs-host.md, Runtime advisories).
+# (LAB-13, #959): hcw-reboot-when-idle reboots at {{ hardening_unattended_reboot_time }}
+# only on a night with nobody logged in and no lab job container or Coder
+# workspace up, so a fix that needs the reboot is applied only once such a
+# night comes. The owner's window is to log out before then, or to reboot at
+# a time of their choosing (docs/runbooks/labs-host.md, Runtime advisories).
+# How long is counted the way the idle reboot counts it: from its record of
+# when it first saw the marker, when there is one, since every upgrade that
+# wants a reboot rewrites the marker's own time (review of #1191).
 set -euo pipefail
 
 tag='{{ hardening_held_report_tag }}'
 reboot_required='{{ hardening_reboot_required_path }}'
+first_seen='{{ hardening_reboot_hold_path | dirname }}/reboot-pending-since'
+reboot_hour='{{ hardening_unattended_reboot_time }}'
 {% raw %}
+# say PRIORITY MESSAGE: one line under the tag, to the daemon facility at PRIORITY.
 say() { logger -t "${tag}" -p "daemon.$1" -- "$2"; }
 
 held_text="$(apt-mark showhold | LC_ALL=C sort -u)"
@@ -59,8 +66,14 @@ fi
 
 if [ -e "${reboot_required}" ]; then
   since_epoch="$(stat -c %Y "${reboot_required}")"
+  recorded=''
+  [ ! -r "${first_seen}" ] || recorded="$(head -c 32 -- "${first_seen}" | tr -d '\n')"
+  case "${recorded}" in
+    '' | *[!0-9]*) ;;
+    *) [ "${recorded}" -ge "${since_epoch}" ] || since_epoch="${recorded}" ;;
+  esac
   since="$(date -u -d "@${since_epoch}" +%Y-%m-%dT%H:%MZ)"
   days=$(( ($(date -u +%s) - since_epoch) / 86400 ))
-  say warning "a reboot is pending since ${since} (${days} days): unattended-upgrades reboots at 04:30 only with nobody logged in. Log out before then, or reboot at a time of your choosing (docs/runbooks/labs-host.md, Runtime advisories)."
+  say warning "a reboot is pending since ${since} (${days} days): hcw-reboot-when-idle reboots at ${reboot_hour} only with nobody logged in and no lab job or Coder workspace up. Log out before then, or reboot at a time of your choosing (docs/runbooks/labs-host.md, Runtime advisories)."
 fi
 {% endraw %}

@@ -6,7 +6,12 @@ argument_specs:
       - Creates a key-only administrative user with passwordless sudo, then disables
         password and root SSH login through a drop-in that sorts before cloud-init's.
       - Sets ufw to deny inbound and allow outbound with an explicit inbound TCP allowlist.
-      - Turns on unattended-upgrades with an automatic reboot at a fixed hour.
+      - Turns on unattended-upgrades, with its own reboot off, once the timer that replaces it
+        is verified active; cancels a reboot unattended-upgrades had already scheduled, and stops
+        at one it cannot attribute.
+      - Reboots at a fixed hour for a pending upgrade only while nobody is logged in and
+        no lab job container runs (hcw-reboot-when-idle), asked twice with new lab jobs held
+        between, one syslog line per outcome.
       - Enables a fail2ban sshd jail on the systemd backend.
       - Reports, daily to syslog, every held package apt could upgrade (hcw-held-upgradable).
     author: HybridCloudWorks
@@ -51,7 +56,10 @@ argument_specs:
         type: str
         required: false
         default: "04:30"
-        description: Local time (HH:MM) at which unattended-upgrades may reboot the host.
+        description:
+          - Host local time (HH:MM) at which hcw-reboot-when-idle.timer asks whether the host
+            may reboot for a pending upgrade (LAB-13, issue 959). The role refuses any other
+            shape, because the timer's OnCalendar is rendered from it.
       hardening_unattended_allowed_origins:
         type: list
         elements: str
@@ -85,7 +93,8 @@ argument_specs:
         default: /var/run/reboot-required
         description:
           - The file unattended-upgrades leaves while a reboot is pending. The daily report logs
-            a warning line with its age while it exists (LAB-13, issue 959).
+            a warning line with its age while it exists, and hcw-reboot-when-idle reboots only
+            while it exists (LAB-13, issue 959).
       hardening_held_report_tag:
         type: str
         required: false
@@ -105,3 +114,102 @@ argument_specs:
         required: false
         default: "*-*-* 07:15:00"
         description: systemd OnCalendar expression for the daily held-package report.
+      hardening_reboot_when_idle_script_path:
+        type: str
+        required: false
+        default: /usr/local/sbin/hcw-reboot-when-idle
+        description:
+          - Where the idle-reboot script is installed; hcw-reboot-when-idle.service runs it at
+            hardening_unattended_reboot_time (LAB-13, issue 959).
+      hardening_reboot_when_idle_tag:
+        type: str
+        required: false
+        default: hcw-reboot-when-idle
+        description:
+          - The syslog tag (ProcessName in Log Analytics) of the idle reboot's one line per
+            outcome. Deferrals, the stand-down and the reboot itself go to daemon.warning, which
+            the Arc data collection rule ships, and a deferral once the reboot is overdue
+            (hardening_reboot_overdue_days) to daemon.err; the nothing-pending line goes to
+            daemon.notice and stays on the host; an apt-config, a loginctl or a docker daemon
+            (the host's or the Coder sandbox's) that does not answer, or a hold or first-seen
+            record that cannot be written, is daemon.err and a failed run.
+      hardening_reboot_job_label:
+        type: str
+        required: false
+        default: hcw.lab-job
+        description:
+          - The Docker label every lab job container carries, JOB_LABEL in
+            vps-agent/lib/docker-runner.js. The reboot is deferred while docker ps lists any
+            container with it. scripts/lab-job-limits.test.mjs holds this default to the agent's
+            constant.
+      hardening_reboot_workspace_docker_host:
+        type: str
+        required: false
+        default: unix:///run/hcw-coder-docker/docker.sock
+        description:
+          - The Coder sandbox daemon's socket (coder_sandbox_docker_host). The reboot is deferred
+            while that daemon has a container with hardening_reboot_workspace_label up; with no
+            socket there, nothing is asked. Must be a unix socket outside /run/user, which the
+            service's ProtectHome= hides.
+      hardening_reboot_workspace_label:
+        type: str
+        required: false
+        default: coder.workspace_id
+        description:
+          - The Docker label every Coder workspace container carries (lab-host/coder/templates).
+      hardening_reboot_hold_path:
+        type: str
+        required: false
+        default: /run/hcw-maintenance/reboot-hold
+        description:
+          - The maintenance hold (LAB-13, issue 959). When the first look
+            finds the host idle, hcw-reboot-when-idle writes the epoch second the hold lapses here,
+            and the labs agent claims no new job while it holds; the script waits for the agent's
+            acknowledgement, looks again, and reboots only if the host is still idle. Removed on
+            every way out but the reboot.
+          - Must be /run/<directory>/<file>; the service creates the directory as its
+            RuntimeDirectory=. Must equal labs_agent_maintenance_hold_path and the agent's
+            DEFAULT_HOLD_PATH; scripts/lab-job-limits.test.mjs checks the defaults.
+      hardening_reboot_hold_settle_seconds:
+        type: int
+        required: false
+        default: 45
+        description:
+          - The longest the script waits for the agent's acknowledgement of the hold before it
+            defers the night. At least the agent's ACK_WITHIN_MS (35 s, a claim already sent plus
+            one poll tick), and at most 90, which leaves the second look 30 s inside the service's
+            120 s TimeoutStartSec. The role refuses anything else.
+      hardening_reboot_ack_path:
+        type: str
+        required: false
+        default: /run/hcw-labs-agent/maintenance-ack
+        description:
+          - Where the labs agent writes the hold's expiry once no claim is in flight and no job is
+            running. A matching acknowledgement lets the script look again at once; none within
+            hardening_reboot_hold_settle_seconds defers the night.
+          - Must be /run/<directory>/<file>, the agent unit's RuntimeDirectory=. Must equal
+            labs_agent_maintenance_ack_path and the agent's DEFAULT_ACK_PATH;
+            scripts/lab-job-limits.test.mjs checks the defaults.
+      hardening_reboot_agent_service:
+        type: str
+        required: false
+        default: hcw-labs-agent
+        description:
+          - The labs agent's unit (labs_agent_service_name). Inactive or failed, it cannot have a
+            claim in flight, and the script looks again without waiting for an acknowledgement.
+      hardening_reboot_hold_seconds:
+        type: int
+        required: false
+        default: 300
+        description:
+          - How long a hold lasts if nothing removes it, counted from its write. More than the
+            service's 120 s TimeoutStartSec, so it never lapses while the script runs, and at
+            most 600, the agent's own cap on any hold. The role refuses anything else.
+      hardening_reboot_overdue_days:
+        type: int
+        required: false
+        default: 7
+        description:
+          - A reboot pending this many days or more is logged at daemon.err rather than
+            daemon.warning when a night defers it. Logging only; the script never reboots over a
+            logged-in user or a running job.

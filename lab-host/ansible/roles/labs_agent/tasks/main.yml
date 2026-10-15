@@ -219,6 +219,41 @@
       before it reports the jobs it interrupted.
     quiet: true
 
+# The unit's RuntimeDirectory= is rendered from the acknowledgement's
+# directory, which systemd can only create directly under /run (LAB-13,
+# #959). A path anywhere else would be one the agent cannot write, and the
+# idle reboot would defer every night.
+- name: Refuse a maintenance acknowledgement path the unit could not create
+  ansible.builtin.assert:
+    that:
+      - labs_agent_maintenance_ack_path is match('^/run/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$')
+    fail_msg: >-
+      labs_agent_maintenance_ack_path ({{ labs_agent_maintenance_ack_path }}) must be
+      /run/<directory>/<file>: the unit creates that directory as its RuntimeDirectory=.
+    quiet: true
+
+# The idle reboot (roles/hardening) writes the hold this agent reads and
+# waits for the acknowledgement this agent writes, each at a path set in its
+# own role. A mismatch is safe, because an agent that never sees the hold
+# never acknowledges it, so every night defers; but it is silent, so it is
+# refused here (CodeRabbit on #1191). hardening runs earlier in site.yml, so
+# its values are defined here; a run tagged without it skips the check.
+- name: Refuse hold or acknowledgement paths the idle reboot does not share
+  ansible.builtin.assert:
+    that:
+      - labs_agent_maintenance_hold_path == hardening_reboot_hold_path
+      - labs_agent_maintenance_ack_path == hardening_reboot_ack_path
+    fail_msg: >-
+      The lab agent and the idle reboot must agree: labs_agent_maintenance_hold_path
+      ({{ labs_agent_maintenance_hold_path }}) must equal hardening_reboot_hold_path
+      ({{ hardening_reboot_hold_path }}), and labs_agent_maintenance_ack_path
+      ({{ labs_agent_maintenance_ack_path }}) must equal hardening_reboot_ack_path
+      ({{ hardening_reboot_ack_path }}); otherwise the reboot defers every night.
+    quiet: true
+  when:
+    - hardening_reboot_hold_path is defined
+    - hardening_reboot_ack_path is defined
+
 - name: Write the agent environment from the vault
   ansible.builtin.template:
     src: labs-agent.env.j2

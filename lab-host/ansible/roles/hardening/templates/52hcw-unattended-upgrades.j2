@@ -12,11 +12,14 @@ Unattended-Upgrade::Allowed-Origins {
   "{{ origin }}";
 {% endfor %}
 };
-Unattended-Upgrade::Automatic-Reboot "true";
-// Not while someone is logged in (LAB-13, #959): a session open at the
-// reboot hour is the owner mid-task, and the reboot waits for the next
-// window where nobody is. The upgrade itself still runs.
-Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
-Unattended-Upgrade::Automatic-Reboot-Time "{{ hardening_unattended_reboot_time }}";
+// The upgrade runs here; the reboot does not (LAB-13, #959). With this on,
+// unattended-upgrade asked `users` when the upgrade ran, about twenty-two
+// hours before the hour, then scheduled `shutdown -r` for that hour with no
+// further question, and it never asked whether a visitor's job container was
+// running. hcw-reboot-when-idle.timer reboots instead, at
+// {{ hardening_unattended_reboot_time }}, asking both at the hour itself.
+// Automatic-Reboot-WithUsers and Automatic-Reboot-Time are read only while
+// this is true, so neither is set.
+Unattended-Upgrade::Automatic-Reboot "false";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";

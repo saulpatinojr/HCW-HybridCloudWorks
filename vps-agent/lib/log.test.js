@@ -109,13 +109,17 @@ describe('createLogger', () => {
   });
 });
 
-describe('index.js and lib/shutdown.js', () => {
-  // The job loop and its lines moved to lib/shutdown.js (LAB-13, #959), so
-  // the two files are held to these rules together.
+describe('index.js, lib/shutdown.js, lib/poll.js and lib/maintenance-hold.js', () => {
+  // The job loop and its lines moved to lib/shutdown.js, and the claim loop
+  // and its `claim failed` line to lib/poll.js, beside the maintenance hold
+  // it reads (LAB-13, #959), so the four files are held to these rules
+  // together.
   const strip = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const index = strip(readFileSync(new URL('../index.js', import.meta.url), 'utf8'));
   const shutdown = strip(readFileSync(new URL('./shutdown.js', import.meta.url), 'utf8'));
-  const code = `${index}\n${shutdown}`;
+  const poll = strip(readFileSync(new URL('./poll.js', import.meta.url), 'utf8'));
+  const hold = strip(readFileSync(new URL('./maintenance-hold.js', import.meta.url), 'utf8'));
+  const code = `${index}\n${shutdown}\n${poll}\n${hold}`;
 
   it('writes nothing past the logger: no console call, no bare log()', () => {
     assert.doesNotMatch(code, /\bconsole\.\w+\(/);

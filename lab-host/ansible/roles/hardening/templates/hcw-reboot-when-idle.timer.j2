@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run hcw-reboot-when-idle.service nightly
+
+[Timer]
+OnCalendar=*-*-* {{ hardening_unattended_reboot_time }}:00
+# Not persistent: a run missed because the host was off must not reboot it
+# the moment it is back. No jitter either: the hour is what the other timers
+# are placed around (the Coder dump at 03:30 and the Vault snapshot at 03:45
+# end before it, the held report at 07:15 starts after it). A night deferred
+# asks again the next night.
+Persistent=false
+Unit=hcw-reboot-when-idle.service
+
+[Install]
+WantedBy=timers.target

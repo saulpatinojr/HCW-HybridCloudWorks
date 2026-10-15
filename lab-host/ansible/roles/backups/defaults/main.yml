@@ -18,7 +18,8 @@ backups_blob_api_version: "2024-11-04"
 
 # The nightly Vault raft snapshot: where the local copies go, how long they
 # stay, and when it runs: after the 03:30 Coder dump and its ten minutes of
-# jitter, before the 04:30 unattended-upgrades reboot.
+# jitter, before the 04:30 idle reboot (the hardening role's
+# hcw-reboot-when-idle).
 backups_vault_dir: /var/backups/vault
 backups_vault_keep_days: 7
 backups_vault_on_calendar: "*-*-* 03:45:00"

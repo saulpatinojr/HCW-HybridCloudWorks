@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Tests ../templates/52hcw-unattended-upgrades.j2 (LAB-13, #959): rendered with
 # the role's defaults, the override names the allowed origins itself (after
-# clearing the list 50unattended-upgrades fills), does not reboot while a user
-# is logged in, and still reboots at the role's hour. No root, no Docker; CI
-# runs it in the `ansible-lint (lab-host)` job with the job's Python, which
+# clearing the list 50unattended-upgrades fills) and leaves the reboot to
+# hcw-reboot-when-idle.timer: Automatic-Reboot off, and neither of the two
+# settings unattended-upgrade reads only while it is on. No root, no Docker;
+# CI runs it in the `ansible-lint (lab-host)` job with the job's Python, which
 # has Jinja2 and PyYAML from ansible-core.
 set -euo pipefail
 
@@ -31,6 +32,7 @@ done
 [ -n "${python}" ] || { echo "no Python with jinja2 and yaml on PATH; install ansible-core" >&2; exit 1; }
 
 work="$(mktemp -d)"
+# finish: remove the scratch directory, on every way out.
 finish() { rm -rf "${work}"; }
 trap finish EXIT
 
@@ -44,7 +46,6 @@ env = jinja2.Environment(undefined=jinja2.StrictUndefined, trim_blocks=True, kee
 sys.stdout.write(env.from_string(open(template, encoding="utf-8").read()).render(**values))
 PY
 
-reboot_time="$(sed -n 's/^hardening_unattended_reboot_time: "\(.*\)"$/\1/p' "${defaults}")"
 origins="${work}/origins"
 "${python}" - "${defaults}" > "${origins}" <<'PY'
 import sys, yaml
@@ -63,11 +64,20 @@ done < "${origins}"
 check "the Ubuntu security origin is among them" "grep -qxF '\${distro_id}:\${distro_codename}-security' '${origins}'"
 check "no origin outside the defaults is rendered" \
   "[ \"\$(grep -cE '^  \".*\";$' '${rendered}')\" -eq \"\$(wc -l < '${origins}')\" ]"
-check "it reboots automatically" "grep -qxF 'Unattended-Upgrade::Automatic-Reboot \"true\";' '${rendered}'"
-check "it does not reboot while a user is logged in" \
-  "grep -qxF 'Unattended-Upgrade::Automatic-Reboot-WithUsers \"false\";' '${rendered}'"
-check "it reboots at the role's hour" \
-  "grep -qxF 'Unattended-Upgrade::Automatic-Reboot-Time \"${reboot_time}\";' '${rendered}'"
+# The reboot is hcw-reboot-when-idle.timer's (tests/hcw-reboot-when-idle.test.sh
+# holds it to the role's hour); unattended-upgrade must not schedule one of its
+# own, which would reboot at the hour without asking. The override's comment
+# names the two settings it leaves out, so these read its settings only.
+settings="${work}/settings"
+grep -v '^[[:space:]]*//' "${rendered}" > "${settings}" || true
+check "unattended-upgrades does not reboot on its own" \
+  "grep -qxF 'Unattended-Upgrade::Automatic-Reboot \"false\";' '${settings}'"
+check "Automatic-Reboot is set once, so no later line turns it back on" \
+  "[ \"\$(grep -cE '::Automatic-Reboot \"' '${settings}')\" -eq 1 ]"
+check "neither of the settings read only while Automatic-Reboot is on is set" \
+  "! grep -qE 'Automatic-Reboot-(WithUsers|Time)' '${settings}'"
+check "the override names the timer that reboots instead" \
+  "grep -qF 'hcw-reboot-when-idle.timer' '${rendered}'"
 check "the role installs the override" \
   "grep -qF 'src: 52hcw-unattended-upgrades.j2' '${tasks}' && grep -qF 'dest: /etc/apt/apt.conf.d/52hcw-unattended-upgrades' '${tasks}'"
 
