@@ -101,7 +101,7 @@
 export const IMAGES = {
   alpine: 'alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6',
   hcwLabRunner:
-    'docker.io/hybridcloudworks/hcw-lab-runner:7a0c7643a25c9adba05215df1fcc2d4c2cc1ac69@sha256:455a8bdac8b1f49f68fa9e51c47b0e864dfbe60d4edcf293cd4b1610016b77f0',
+    'docker.io/hybridcloudworks/hcw-lab-runner:acf057ecfbf656417a531fc38d482af5f2c17f0c@sha256:dd40452d2592011d63885ae6f7bcfd91e2f28ac37f9b2302a71ee4d9a9879f39',
 };
 
 /**
