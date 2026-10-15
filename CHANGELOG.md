@@ -892,6 +892,19 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Monitor Functions Registered no longer fails on a storage window that a
+  running deploy holds (#1205)**. On 2026-10-15 it read the host storage
+  account at 22:45:38Z, while deploy run 38819173840 held its upload window
+  (22:45:18Z to 22:47:35Z). It reported `Allow` and one IP rule as ❌, and
+  the window then closed on time. Now an open window is believed only once
+  no `deploy-functions.yml` run is in progress. The monitor waits up to
+  twenty minutes for a running deploy, or reads again a minute later when
+  none is running, and an orphan stays ❌.
+  `scripts/check-functions-deploy-in-progress.mjs` answers the question, and
+  its test runs the monitor's own step against a stubbed `az` through that
+  collision and the cases around it. It does not join the deploy's
+  concurrency group, where a queued monitor run could cancel a deploy
+  waiting its turn.
 - **Operator documentation drift** (PLAT-9, #969). `infra/README.md` said not
   to pre-build hub networking while `hub.tf` existed; the cost analysis
   called the Management budget "declared, not applied" after the apply had
