@@ -19,6 +19,42 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **A lab job running when the host stops is interrupted and reported
+  within seconds, not left `claimed` (LAB-13, #959)**. This replaces the
+  210 s drain #1178 added: that drain then exited with the job's container
+  still running and nothing reported, so the job sat `claimed` until its
+  15-minute lease ran out. On SIGTERM the agent now aborts every running
+  job: the runner kills the `docker run` child and starts removing the
+  container by name through the agent's Docker proxy (`docker rm -f`, the
+  one DELETE the proxy allows). Each job is reported at once, without
+  waiting for that removal, which may take 10 s: `failed`, exit -1, with
+  *The lab host was restarting and this job was interrupted. Submit it
+  again.* The agent then waits up to `LABS_AGENT_SHUTDOWN_TIMEOUT_MS` for
+  those reports (default 5000; anything but a positive whole number is
+  the default), sends `offline`, and exits. Its `stopping` and `offline`
+  heartbeats time out at 5 s each, and the timeout now covers the token
+  request too. A claim already in flight is waited for within the same
+  budget, and the job it brings back is reported without being started.
+  The job loop moved from `vps-agent/index.js` into
+  `vps-agent/lib/shutdown.js`, so the shutdown has tests. The `labs_agent`
+  unit sets `KillMode=mixed`, so systemd signals the agent and never the
+  `docker` CLI under it, and `TimeoutStopSec=30` (was 240). The new
+  `labs_agent_shutdown_timeout_ms` is written to the env file and listed in
+  `.env.example`. `scripts/lab-job-limits.test.mjs` checks that 30 s
+  covers the 5 s budget plus both heartbeats, and that the env template
+  renders every limit. `tests/hcw-labs-agent.service.test.sh` renders the
+  unit and env file with the role's values in CI. The containers are the
+  unit's to clean up, not the process's: a removal can take 10 s, longer
+  than the 5 s window, and a crash removes nothing. The unit therefore runs
+  the new `/usr/local/libexec/hcw-labjob-sweep` as root after the agent
+  exits and before it starts, removing every container labelled
+  `hcw.lab-job` through the daemon's own socket. It judges by what is left
+  running, since the agent's own removal may still be at work, and fails
+  only when a container is still running at its 20 s deadline. The proxy
+  allowlist is unchanged, and `tests/hcw-labjob-sweep.test.sh` runs the sweep in CI
+  against a stand-in for `docker`. On the host after the
+  next `bootstrap.sh`. Two LAB-13 asks stay open on #959: reboot only when
+  no job runs, and a hash-locked ansible-core.
 - **The admin menu is cut to the signed-in role, the role is printed under
   the brand, and a control above that role says so before the round trip**
   (AP-F4, #928). Every item in `frontend/src/config/adminNav.js` carries a

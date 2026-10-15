@@ -16,12 +16,23 @@
  * not the agent's fallback, so a role default left behind is the limit that
  * is actually in force. None of these files can be imported here (index.js
  * starts the agent; the others are not JavaScript), so each is read from
- * its source text.
+ * its source text, and the role's env template is checked to render each
+ * name from its variable.
+ *
+ * The stop budget is a pair as well (LAB-13, #959). On SIGTERM the agent
+ * waits LABS_AGENT_SHUTDOWN_TIMEOUT_MS for the reports of the jobs it
+ * interrupted, beside and after two heartbeats of
+ * SHUTDOWN_HEARTBEAT_TIMEOUT_MS each, and systemd kills whatever is left at
+ * the unit's TimeoutStopSec. #1178 set 210 s against 240 s, and the
+ * heartbeats' 20 s each made the worst case 250 s, which nothing here
+ * checked. vps-agent/lib/shutdown.js starts nothing on import, so its
+ * constants are imported rather than read from text.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_SHUTDOWN_TIMEOUT_MS, SHUTDOWN_HEARTBEAT_TIMEOUT_MS } from '../vps-agent/lib/shutdown.js';
 
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...p) => readFileSync(path.join(repo, ...p), 'utf8');
@@ -33,7 +44,11 @@ const LIMITS = {
   LABS_AGENT_JOB_MEMORY: 'labs_agent_job_memory',
   LABS_AGENT_JOB_CPUS: 'labs_agent_job_cpus',
   LABS_AGENT_JOB_PIDS: 'labs_agent_job_pids',
+  LABS_AGENT_JOB_NOFILE: 'labs_agent_job_nofile',
 };
+
+/** The shutdown budget's env name and role variable; its agent default is lib/shutdown.js's. */
+const SHUTDOWN = ['LABS_AGENT_SHUTDOWN_TIMEOUT_MS', 'labs_agent_shutdown_timeout_ms'];
 
 const unquote = (value) => value.trim().replace(/^(['"])(.*)\1$/, '$2');
 
@@ -91,4 +106,57 @@ describe('lab job limits agree across the agent, its example env and the host ro
   it('job memory is 512m, the owner decision of 2026-09-27', () => {
     expect(agentDefault(index, 'LABS_AGENT_JOB_MEMORY')).toBe('512m');
   });
+});
+
+describe('the role writes each name into the agent env file from its own variable', () => {
+  const template = read('lab-host', 'ansible', 'roles', 'labs_agent', 'templates', 'labs-agent.env.j2');
+
+  for (const [name, variable] of [...Object.entries(LIMITS), SHUTDOWN]) {
+    it(`${name}={{ ${variable} }}`, () => {
+      expect(template).toMatch(new RegExp(`^${name}=\\{\\{ ${variable} \\}\\}$`, 'm'));
+    });
+  }
+});
+
+describe('the stop budget fits inside the unit (LAB-13, #959)', () => {
+  const example = read('vps-agent', '.env.example');
+  const defaults = read('lab-host', 'ansible', 'roles', 'labs_agent', 'defaults', 'main.yml');
+  const specs = read('lab-host', 'ansible', 'roles', 'labs_agent', 'meta', 'argument_specs.yml');
+  const unit = read('lab-host', 'ansible', 'roles', 'labs_agent', 'templates', 'hcw-labs-agent.service.j2');
+  const [name, variable] = SHUTDOWN;
+
+  it(`${name} / ${variable}`, () => {
+    const agent = String(DEFAULT_SHUTDOWN_TIMEOUT_MS);
+    expect({
+      '.env.example': envExample(example, name),
+      'defaults/main.yml': roleDefault(defaults, variable),
+      'argument_specs.yml': specDefault(specs, variable),
+    }).toEqual({
+      '.env.example': agent,
+      'defaults/main.yml': agent,
+      'argument_specs.yml': agent,
+    });
+  });
+
+  it("the shutdown budget is 5 s, the issue's own acceptance for a terminal status", () => {
+    expect(DEFAULT_SHUTDOWN_TIMEOUT_MS).toBe(5000);
+  });
+
+  it('the unit takes its stop timeout from labs_agent_timeout_stop_sec and signals the agent alone', () => {
+    expect(unit).toMatch(/^TimeoutStopSec=\{\{ labs_agent_timeout_stop_sec \}\}$/m);
+    expect(unit).toMatch(/^KillMode=mixed$/m);
+  });
+
+  for (const [file, valueOf] of [
+    ['defaults/main.yml', (v) => roleDefault(defaults, v)],
+    ['argument_specs.yml', (v) => specDefault(specs, v)],
+  ]) {
+    it(`timeout_stop_sec * 1000 >= shutdown_ms + 2 * the shutdown heartbeat timeout, in ${file}`, () => {
+      const stopSec = Number(valueOf('labs_agent_timeout_stop_sec'));
+      const shutdownMs = Number(valueOf(variable));
+      expect(Number.isInteger(stopSec) && stopSec > 0, `labs_agent_timeout_stop_sec is ${stopSec}`).toBe(true);
+      expect(Number.isInteger(shutdownMs) && shutdownMs > 0, `${variable} is ${shutdownMs}`).toBe(true);
+      expect(stopSec * 1000).toBeGreaterThanOrEqual(shutdownMs + 2 * SHUTDOWN_HEARTBEAT_TIMEOUT_MS);
+    });
+  }
 });

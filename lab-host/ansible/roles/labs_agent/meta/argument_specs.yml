@@ -195,8 +195,21 @@ argument_specs:
         required: false
         default: https://deb.nodesource.com/node_26.x
         description: NodeSource repository for the Node.js 26 line.
+      labs_agent_shutdown_timeout_ms:
+        type: int
+        required: false
+        default: 5000
+        description:
+          - "LABS_AGENT_SHUTDOWN_TIMEOUT_MS (LAB-13, issue 959): how long the agent waits, after SIGTERM, for the
+            reports of the jobs it interrupted before it goes offline and exits."
+          - Must stay within labs_agent_timeout_stop_sec less the two 5 s shutdown heartbeats;
+            scripts/lab-job-limits.test.mjs checks the defaults.
       labs_agent_timeout_stop_sec:
         type: int
         required: false
-        default: 240
-        description: "systemd TimeoutStopSec for graceful shutdown while jobs finish (LAB-13, issue 959)."
+        default: 30
+        description:
+          - "systemd TimeoutStopSec for hcw-labs-agent (LAB-13, issue 959), after which systemd kills what is left
+            of the unit."
+          - Covers labs_agent_shutdown_timeout_ms plus the two 5 s shutdown heartbeats, with margin. The unit
+            sets KillMode=mixed, so SIGTERM reaches the agent alone and never the docker CLI it runs.

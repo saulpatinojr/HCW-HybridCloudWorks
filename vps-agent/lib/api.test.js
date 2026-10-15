@@ -88,6 +88,66 @@ describe('every call', () => {
     assert.equal(Object.hasOwn(calls[1].body, 'applied'), false);
   });
 
+  it('a heartbeat sent with its own timeout gives up at that timeout, not at the 20 s default', async () => {
+    // The two shutdown heartbeats carry one (lib/shutdown.js): a fetch that
+    // never answers is abandoned when the signal fires, and the agent moves
+    // on to the next step of the stop.
+    const abandoned = [];
+    const api = createApiClient({
+      apiBase: API,
+      scope: 'api://hcw/.default',
+      agentId: 'vps-hostinger-01',
+      fetchImpl: (url, init) =>
+        new Promise((_, reject) => {
+          init.signal.addEventListener('abort', () => {
+            abandoned.push(url);
+            reject(init.signal.reason);
+          });
+        }),
+      credential: { getToken: async () => ({ token: 'agent-token' }) },
+    });
+
+    const started = Date.now();
+    await assert.rejects(
+      api.heartbeat({ status: 'offline', activeJobs: 0, hostname: 'h', version: '2.0.0' }, { timeoutMs: 20 }),
+      (error) => error.name === 'AbortError'
+    );
+    assert.ok(Date.now() - started < 5000, 'the heartbeat waited past its own timeout');
+    assert.deepEqual(abandoned, [`${API}/agent/heartbeat`]);
+  });
+
+  it('the timeout covers the token as well: a token request that never answers is abandoned and nothing is sent', async () => {
+    // The certificate credential refreshes its token at Entra about once an
+    // hour. A refresh that hangs must not hold a shutdown heartbeat past its
+    // own timeout, so the request's signal is handed to getToken, which the
+    // SDK honours as `abortSignal`.
+    const sent = [];
+    const api = createApiClient({
+      apiBase: API,
+      scope: 'api://hcw/.default',
+      agentId: 'vps-hostinger-01',
+      fetchImpl: async (url) => {
+        sent.push(url);
+        return { ok: true, status: 200, json: async () => ({}) };
+      },
+      credential: {
+        getToken: (scope, { abortSignal } = {}) =>
+          new Promise((_, reject) => {
+            assert.ok(abortSignal, 'getToken was not given the request signal');
+            abortSignal.addEventListener('abort', () => reject(abortSignal.reason));
+          }),
+      },
+    });
+
+    const started = Date.now();
+    await assert.rejects(
+      api.heartbeat({ status: 'stopping', activeJobs: 1, hostname: 'h', version: '2.0.0' }, { timeoutMs: 20 }),
+      (error) => error.name === 'AbortError'
+    );
+    assert.ok(Date.now() - started < 5000, 'the heartbeat waited on the token past its own timeout');
+    assert.deepEqual(sent, []);
+  });
+
   it('cannot be made to send a different agentId through a body field', async () => {
     // The spread puts agentId first, so a caller-supplied key could replace
     // it. The three methods pass only named fields, which is what keeps it.

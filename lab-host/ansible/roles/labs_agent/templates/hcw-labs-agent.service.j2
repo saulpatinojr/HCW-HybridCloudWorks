@@ -1,7 +1,9 @@
 # {{ ansible_managed }}
 [Unit]
 Description=HCW Labs VPS agent (vps-agent)
-# When Restart= gives up, say so where Azure can hear it (LAB-2).
+# Say so where Azure can hear it on every failure (LAB-2). With systemd's
+# default RestartMode=normal that includes each one Restart= retries, not
+# only the last (systemd 259; review of #1188).
 OnFailure=hcw-unit-failed@%n.service
 Documentation=https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/vps-agent
 After=network-online.target docker.service
@@ -27,8 +29,33 @@ Environment=TMPDIR={{ labs_agent_tmp_dir }}
 Environment=DOCKER_HOST={{ labs_agent_docker_host }}
 ExecStartPre=/usr/bin/test -S {{ labs_agent_docker_proxy_socket }}
 ExecStart=/usr/bin/node index.js
-# Wait for in-flight jobs to finish before SIGKILL during shutdown (LAB-13, #959).
+# Stopping (LAB-13, #959). SIGTERM goes to the agent alone, not to the docker
+# CLI children it spawns: the agent interrupts each running job itself,
+# starts removing its container through the proxy, reports it without
+# waiting for the removal, then exits
+# (vps-agent/lib/shutdown.js). With the default control-group mode the CLI
+# got SIGTERM at the same instant and forwarded it to the job. What is still
+# running when the agent exits, or at TimeoutStopSec, gets SIGKILL. The
+# timeout covers LABS_AGENT_SHUTDOWN_TIMEOUT_MS and the two 5 s shutdown
+# heartbeats with margin; scripts/lab-job-limits.test.mjs holds the sum and
+# tests/hcw-labs-agent.service.test.sh the rendered lines.
+KillMode=mixed
 TimeoutStopSec={{ labs_agent_timeout_stop_sec }}
+# The agent's report window is shorter than a container removal can take,
+# and a crash removes nothing, so the containers themselves are this unit's
+# to clean up, not the process's (CodeRabbit on #1188): after the agent
+# exits, for a stop and a crash alike, and again before it starts, so a host
+# that went down mid-job is swept before the first claim, every container
+# with the job label is removed. No agent runs at either point, so each one
+# is an orphan. The sweep judges by what is left running, not by what
+# `docker rm` answered, because the agent's own removal may still be at work
+# when it runs, and fails only on a container still running at its 20 s
+# deadline, inside TimeoutStopSec. `+` runs the sweep as root on the daemon's own
+# socket, because the proxy above lists no containers; the agent itself
+# keeps none of that privilege (files/hcw-labjob-sweep,
+# tests/hcw-labjob-sweep.test.sh).
+ExecStartPre=+/usr/local/libexec/hcw-labjob-sweep
+ExecStopPost=+/usr/local/libexec/hcw-labjob-sweep
 # The agent starts its error lines with <3> and its warnings with <4>
 # (vps-agent/lib/log.js), and journald turns that prefix into the line's
 # priority. systemd's default, written down because the data collection rule

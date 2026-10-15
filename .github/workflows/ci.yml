@@ -114,10 +114,11 @@ jobs:
           # are what lab-image-avm-vendoring.test.mjs imports: the builder's
           # pins, and its port of the image's rewrite rule. The vps-agent
           # files are what lab-job-types.test.mjs imports (capabilities.js)
-          # and lab-job-limits.test.mjs reads (index.js, .env.example), and
-          # what lab-host-docker-proxy.test.mjs imports to hold the agent's
-          # Docker proxy to the argv a job really sends (docker-runner.js,
-          # capabilities.js; LAB-5).
+          # and lab-job-limits.test.mjs reads (index.js, .env.example) or
+          # imports for the stop budget (shutdown.js, which imports
+          # docker-runner.js; LAB-13), and what lab-host-docker-proxy.test.mjs
+          # imports to hold the agent's Docker proxy to the argv a job really
+          # sends (docker-runner.js, capabilities.js; LAB-5).
           # LabPanePage.jsx is what lab-host-visitor-copy.test.mjs reads: the
           # lab host's "Coder stopped" answer, and the lab launcher's, is the
           # pane's own sentence. catalogue.js is what
@@ -127,7 +128,7 @@ jobs:
           # deploy and the registration monitor run (PLAT-2).
           - name: scripts (operations)
             dir: scripts
-            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner)\.js)$|functions/function-inventory\.json$)'
+            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown)\.js)$|functions/function-inventory\.json$)'
             lint: npm run lint
             test: npm test
           # vps-agent shells out to `docker run` with a payload that reached
@@ -400,7 +401,10 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
-          if grep -qE '^lab-host/|^\.github/workflows/ci\.yml$' <<<"$changed"; then
+          # docker-runner.js too: hcw-labjob-sweep.test.sh checks the
+          # sweep's label against the JOB_LABEL it exports, and a PR that
+          # renamed only the label would otherwise skip that check.
+          if grep -qE '^lab-host/|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$' <<<"$changed"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "lab-host files changed — running all checks"
           else
@@ -539,6 +543,25 @@ jobs:
       - name: hcw-docker-proxy-stale test
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/labs_agent/tests/hcw-docker-proxy-stale.test.sh
+
+      # The agent's unit and env file (LAB-13, #959), rendered with the
+      # role's values and this job's Jinja2: SIGTERM reaches the agent alone
+      # (KillMode=mixed), the stop timeout is the 30 s that covers its
+      # shutdown budget and two heartbeats, the env file carries that budget,
+      # and OnFailure and Requires=docker.service stay. Needs neither root
+      # nor Docker.
+      - name: hcw-labs-agent unit test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/labs_agent/tests/hcw-labs-agent.service.test.sh
+
+      # /usr/local/libexec/hcw-labjob-sweep, which the agent's unit runs as
+      # root before the agent starts and after it exits, removes only
+      # containers with the agent's job label, through the daemon's own
+      # socket, and fails when Docker refuses (CodeRabbit on #1188). Run
+      # against a stand-in for docker; needs neither root nor Docker.
+      - name: hcw-labjob-sweep test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/labs_agent/tests/hcw-labjob-sweep.test.sh
 
       # The lab agent's Docker socket proxy is HAProxy with a configuration
       # this repository writes (LAB-5). scripts/lab-host-docker-proxy.test.mjs

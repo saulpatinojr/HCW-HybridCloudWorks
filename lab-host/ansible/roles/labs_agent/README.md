@@ -96,6 +96,22 @@ that made it the right call before the ADR said so:
    `systemctl start` cannot bring it back on the old credentials — and
    prints what is missing. The identity is an owner step recorded in
    `docs/standards/required-inputs.md` section 4.7.
+   The unit also sets `KillMode=mixed` and `TimeoutStopSec=30` (LAB-13,
+   #959). On a stop or a reboot, SIGTERM reaches the agent alone, never
+   the `docker` CLI it runs. The agent interrupts each running job, starts
+   removing its container through the proxy, and without waiting for that
+   removal reports it `failed` with
+   *The lab host was restarting and this job was interrupted. Submit it
+   again.* It then waits up to `LABS_AGENT_SHUTDOWN_TIMEOUT_MS` for those
+   reports, says `offline`, and exits. A removal can take longer than that
+   window, and a crash removes nothing, so the unit itself owns the
+   containers: `/usr/local/libexec/hcw-labjob-sweep` (from `files/`) runs as
+   root after the agent exits and before it starts, and removes every
+   container labelled `hcw.lab-job` through the daemon's own socket.
+   `tests/hcw-labs-agent.service.test.sh` renders the unit and the env file
+   with the role's defaults and checks those lines;
+   `tests/hcw-labjob-sweep.test.sh` tests the sweep against a stand-in for
+   `docker`.
 
 `lib/docker-runner.js` stages each job's payload under `os.tmpdir()` and
 bind-mounts that path into the job container. With `PrivateTmp` the unit's
@@ -124,7 +140,22 @@ From the vault (each defaults to its `vault_` twin, empty when absent):
 
 Job limits with the `.env.example` defaults: `labs_agent_max_concurrent`,
 `labs_agent_poll_ms`, `labs_agent_job_memory`, `labs_agent_job_cpus`,
-`labs_agent_job_pids`. Paths and the unit name are in `defaults/main.yml`;
+`labs_agent_job_pids`, `labs_agent_job_nofile`.
+
+Stopping (LAB-13, #959), a pair that has to fit together:
+
+| Variable | Default | Rendered as | What it bounds |
+| --- | --- | --- | --- |
+| `labs_agent_shutdown_timeout_ms` | `5000` | `LABS_AGENT_SHUTDOWN_TIMEOUT_MS` in `/etc/hcw/labs-agent.env` | How long the agent waits after SIGTERM for the reports of the jobs it interrupted |
+| `labs_agent_timeout_stop_sec` | `30` | `TimeoutStopSec=` in the unit | How long systemd waits for the agent to exit before it kills what is left of the unit |
+
+`labs_agent_timeout_stop_sec` × 1000 must be at least
+`labs_agent_shutdown_timeout_ms` plus the two 5-second shutdown heartbeats:
+30 000 ≥ 5000 + 2 × 5000 with the defaults.
+`scripts/lab-job-limits.test.mjs` fails on defaults that do not fit, and an
+override has to keep the sum itself.
+
+Paths and the unit name are in `defaults/main.yml`;
 `meta/argument_specs.yml` is the contract.
 
 ## Handlers
