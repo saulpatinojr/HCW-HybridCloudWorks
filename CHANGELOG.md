@@ -19,6 +19,37 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Lab host: ansible-core installed hash-locked from the lab image's own
+  pins, and the weekly pin bump moves it** (LAB-13, #959). The
+  low-hanging-fruit entry below (#1178) says `lab-host/bootstrap.sh`
+  hash-locked the `ansible-core` wheel. It did not: the script printed an
+  `ANSIBLE_CORE_SHA256` it carried as a copy and installed with
+  `uv tool install "ansible-core==2.21.4"`, which takes no hashes, so
+  neither that wheel nor the eight it depends on was checked. The script
+  now keeps no ansible-core pin. After it checks out the commit it will
+  run, it reads `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and
+  `ANSIBLE_CORE_DEPS` from that commit's `lab-image/versions.env` in a
+  subshell, writes the requirements file with the lab image fetch stage's
+  own two `printf` lines, and installs it into a venv at
+  `/opt/uv/ansible-core` with `uv pip install --require-hashes
+  --only-binary :all:`, then `uv pip check` and the fetch stage's count
+  check; `ansible`, `ansible-playbook`, `ansible-galaxy` and
+  `ansible-vault` are linked into `/usr/local/bin`, and the old uv tool
+  under `/opt/uv/tools` is removed once. The environment is rebuilt when
+  the requirements, the release or the Python change. In an Ubuntu 26.04
+  container with uv 0.12.19 it installed ansible-core 2.21.4 and its eight
+  dependencies on CPython 3.14.7, refused a wrong hash and an unlisted
+  dependency, and installed nothing on a re-run; `hcw-vault-set` runs its
+  Python from the new environment, and its 81 checks passed against it.
+  `scripts/lab-host-bootstrap-ansible-core.test.mjs` holds the script to
+  `versions.env` and to the Dockerfile's `printf` lines. The weekly
+  `chore/lab-pins-image-base` pull request now also moves ansible-core to
+  the newest release in its line, with the wheel's SHA256 from PyPI's JSON
+  API and every `ANSIBLE_CORE_DEPS` hash read back from PyPI, and moves a
+  dependency only when the new release pins it exactly; a new line, a
+  changed requirement or Requires-Python, or a hash PyPI does not serve is
+  a note in the weekly issue instead (a dry run on 2026-10-15 proposes
+  2.21.4 to 2.21.5). On the host after the next `bootstrap.sh`.
 - **A Health view inside 30 seconds of the last one is served from the
   cache instead of running the eleven-query fan-out again, and a Platform
   settings save made from a page that is out of date is refused and reloaded

@@ -402,6 +402,19 @@ and attests. Where each sum comes from:
   sum fails with `THESE PACKAGES DO NOT MATCH THE HASHES FROM THE
   REQUIREMENTS FILE` and the `Expected` and `Got` sums (both measured on
   2026-09-25).
+- The three `ANSIBLE_CORE_*` lines are the lab host's too:
+  `lab-host/bootstrap.sh` writes the same requirements file from them and
+  installs it with `uv pip install --require-hashes`, so a move here reaches
+  the host on its next run after the merge (LAB-13, #959). A newer release in
+  the same line is automated: the weekly
+  `node scripts/lab-pins-upstream.mjs --bump image-base` moves
+  `ANSIBLE_CORE_VERSION` and `ANSIBLE_CORE_SHA256` from PyPI's JSON API,
+  reads every `ANSIBLE_CORE_DEPS` hash back from PyPI, and moves a
+  dependency's line only when the new release pins it exactly. A new line,
+  a changed requirement or Requires-Python, or a hash PyPI does not serve is
+  a note in the weekly issue instead, and a hand bump by this section. The
+  `ansible-lint (lab-host)` job in `.github/workflows/ci.yml` pins its own
+  ansible-core and moves by hand.
 - Azure CLI: `AZURE_CLI_VERSION` is the upstream release, the newest package
   `Version` in
   `https://packages.microsoft.com/repos/azure-cli/dists/bookworm/main/binary-amd64/Packages`

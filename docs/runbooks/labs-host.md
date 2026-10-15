@@ -2026,10 +2026,16 @@ fix is installed.
 - **Tuesdays 06:45 UTC:** `lab-supply-chain.yml` compares every lab host pin
   with its publisher, opens or updates the `chore/lab-pins-host` pull
   request with each behind pin moved and its checksum or digest beside it,
-  proposes the newest lab image base digest as `chore/lab-pins-image-base`,
-  scans the two published lab images with Trivy, and opens or comments on
-  one issue when anything is due, including any pin it could not move
-  because the publisher served no checksum to verify it against.
+  proposes the newest lab image base digest and ansible-core's newest
+  release in its line (every wheel's hash read from PyPI) as
+  `chore/lab-pins-image-base`, scans the two published lab images with
+  Trivy, and opens or comments on one issue when anything is due,
+  including any pin it could not move because the publisher served no
+  checksum to verify it against. `bootstrap.sh` installs the host's own
+  ansible-core from the same `lab-image/versions.env` lines with every
+  wheel hash-checked, so a merged ansible-core move reaches the host on the
+  next run, which prints `ansible-playbook [core <that release>]` before
+  the play.
 
 ### What the owner does
 

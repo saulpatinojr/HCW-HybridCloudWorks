@@ -46,16 +46,17 @@ UV_SHA256=23bf5552d220e0842b65c862097b2ebaeba0064b74eda5e565e77fd25969d8c8
 # CPython 3.14.7, the newest release of the newest line. uv 0.12.19 pins its
 # python-build-standalone 20260924 build by SHA256.
 PYTHON_VERSION=3.14.7
-# ansible-core 2.21.4, the newest GA release (2.22.0b1 is a beta); it declares
-# Python 3.12 to 3.14 for the control side. The control side runs on the uv
-# interpreter above on either release, so the 24.04 fallback never holds this
-# pin back: it only decides which Python the modules run on (3.12.3 there,
-# 3.14.4 on 26.04), and 2.21.4 ran every module on both in the 2026-09-26
-# container runs. Before a future bump, check its module-side Python range
-# still includes 24.04's 3.12, or drop 24.04.
-ANSIBLE_CORE_VERSION=2.21.4
-# SHA256 of the ansible-core wheel (matches lab-image/versions.env, LAB-13, #959).
-ANSIBLE_CORE_SHA256=ebe74d9c8fadcb41ad2151e031bf1e785e3098aaa015019b4e19a0a96f0dcc4f
+# ansible-core is not pinned here. Its release, the SHA256 of its wheel and
+# the hash of every wheel it depends on are the ANSIBLE_CORE_VERSION,
+# ANSIBLE_CORE_SHA256 and ANSIBLE_CORE_DEPS lines of lab-image/versions.env,
+# the lines the lab image is built from; the block after the checkout below
+# reads them from the commit the host is about to run, so a bump is an edit
+# there and a re-run, with no copy here to drift (LAB-13, #959). The control
+# side runs on the uv interpreter above on either Ubuntu release, so the
+# 24.04 fallback never holds that pin back: it only decides which Python the
+# modules run on (3.12.3 there, 3.14.4 on 26.04). Before a bump to a new
+# ansible-core line, check its module-side Python range still includes
+# 24.04's 3.12, or drop 24.04.
 
 HCW_REPO_URL="${HCW_REPO_URL:-https://github.com/saulpatinojr/HCW-HybridCloudWorks.git}"
 # Which commit the host runs: origin/main unless HCW_REPO_REF says otherwise.
@@ -80,8 +81,13 @@ HCW_VAULT_PASSWORD_FILE="${HCW_ANSIBLE_STATE_DIR}/vault-password"
 
 # uv, its interpreters and the ansible-core environment live under /opt/uv,
 # outside root's home; the ansible-* commands are linked into /usr/local/bin,
-# where the README's ansible-vault lines expect them.
+# where the README's ansible-vault lines expect them. hcw-vault-set
+# (ansible/roles/vault_tools) runs its Python from HCW_ANSIBLE_VENV, and that
+# role's test holds the two paths equal. UV_TOOL_DIR is where an earlier
+# bootstrap.sh kept ansible-core as a uv tool, named here only so the block
+# after the checkout can remove it.
 UV_BIN=/usr/local/bin/uv
+HCW_ANSIBLE_VENV=/opt/uv/ansible-core
 export UV_PYTHON_INSTALL_DIR=/opt/uv/python
 export UV_TOOL_DIR=/opt/uv/tools
 export UV_TOOL_BIN_DIR=/usr/local/bin
@@ -399,15 +405,6 @@ fi
 log "installing CPython ${PYTHON_VERSION} with uv"
 "${UV_BIN}" python install --no-bin "${PYTHON_VERSION}"
 
-# Reinstalled when either pin moves, so a Python bump rebuilds the environment
-# rather than leaving ansible-core on the interpreter before it.
-if ! "${UV_TOOL_BIN_DIR}/ansible-playbook" --version 2>/dev/null | grep -q "core ${ANSIBLE_CORE_VERSION}]" \
-  || ! "${UV_TOOL_BIN_DIR}/ansible-playbook" --version 2>/dev/null | grep -qF "python version = ${PYTHON_VERSION} ("; then
-  log "installing ansible-core ${ANSIBLE_CORE_VERSION} (sha256:${ANSIBLE_CORE_SHA256:0:12}...) on CPython ${PYTHON_VERSION} with uv"
-  "${UV_BIN}" tool install --force --managed-python --python "${PYTHON_VERSION}" "ansible-core==${ANSIBLE_CORE_VERSION}"
-fi
-"${UV_TOOL_BIN_DIR}/ansible-playbook" --version | sed -n '1p;/python version/p'
-
 if [ -d "${HCW_SRC_DIR}/.git" ]; then
   # A checkout keeps the origin it was cloned from. One made before the
   # repository moved to saulpatinojr (2026-10-07) still names the old
@@ -438,18 +435,85 @@ log "checking out ${HCW_REPO_REF} at ${hcw_repo_sha}"
 git -C "${HCW_SRC_DIR}" checkout --quiet --detach "${hcw_repo_sha}"
 
 # The pins at the top of this file are part of the commit too. When the commit
-# just checked out carries a different bootstrap.sh (a uv, Python or
-# ansible-core bump, say), hand over to it rather than run the rest of the old
-# one, so a change to this file takes effect on the run that fetches it and not
-# one run later. HCW_REPO_REF is passed on as the resolved sha, so the second
-# pass checks out the same commit, and HCW_BOOTSTRAP_HANDED_OVER stops it
-# handing over again.
+# just checked out carries a different bootstrap.sh (a uv or Python bump, say),
+# hand over to it rather than run the rest of the old one, so a change to this
+# file takes effect on the run that fetches it and not one run later.
+# ansible-core's pins need no handover: they are in lab-image/versions.env,
+# which the block below reads from this checkout. HCW_REPO_REF is passed on as
+# the resolved sha, so the second pass checks out the same commit, and
+# HCW_BOOTSTRAP_HANDED_OVER stops it handing over again.
 hcw_checked_out_script="${HCW_SRC_DIR}/lab-host/bootstrap.sh"
 if [ -z "${HCW_BOOTSTRAP_HANDED_OVER:-}" ] && [ -f "${hcw_checked_out_script}" ] \
   && [ "$(sha256sum "${hcw_checked_out_script}" | cut -d ' ' -f 1)" != "${self_digest}" ]; then
   log "${hcw_repo_sha} carries a different bootstrap.sh; handing over to it"
   HCW_BOOTSTRAP_HANDED_OVER=1 HCW_REPO_REF="${hcw_repo_sha}" exec bash "${hcw_checked_out_script}" "$@"
 fi
+
+# ansible-core, every wheel checked against its SHA256 (LAB-13, #959). The
+# pins are the ANSIBLE_CORE_VERSION, ANSIBLE_CORE_SHA256 and ANSIBLE_CORE_DEPS
+# lines of lab-image/versions.env in the commit just checked out, read in a
+# subshell so nothing else from that file reaches this script. The
+# requirements file is written exactly as lab-image/Dockerfile's fetch stage
+# writes it: one `name==version --hash=sha256:<hex>` line for ansible-core and
+# one for every wheel it depends on. `uv pip install --require-hashes`
+# refuses a wheel whose SHA256 differs and any dependency the resolver
+# reaches that the file does not list
+# (https://docs.astral.sh/uv/reference/cli/#uv-pip-install--require-hashes),
+# and `--only-binary :all:` means nothing is built from source. It replaces
+# `uv tool install`, which takes no hashes, so the SHA256 an earlier
+# bootstrap.sh printed beside it verified nothing.
+#
+# The environment is a plain venv at HCW_ANSIBLE_VENV on the uv interpreter
+# above. It is rebuilt when the requirements differ from the copy kept in it
+# at its last install, or when its ansible-playbook does not report that
+# ansible-core on that Python, so a dependency bump and a Python bump both
+# rebuild it. The count check is the fetch stage's: the environment holds
+# exactly as many packages as the file has lines.
+hcw_ansible_requirements="$(mktemp)"
+trap 'rm -f "${hcw_ansible_requirements}"' EXIT
+(
+  # shellcheck source=/dev/null
+  . "${HCW_SRC_DIR}/lab-image/versions.env"
+  printf 'ansible-core==%s --hash=sha256:%s\n' "${ANSIBLE_CORE_VERSION}" "${ANSIBLE_CORE_SHA256}"
+  printf '%s\n' "${ANSIBLE_CORE_DEPS}" | sed '/^[[:space:]]*$/d'
+) >"${hcw_ansible_requirements}"
+hcw_ansible_core_version="$(sed -n 's/^ansible-core==\([^ ]*\) --hash=sha256:[0-9a-f]\{64\}$/\1/p' "${hcw_ansible_requirements}")"
+if [ -z "${hcw_ansible_core_version}" ]; then
+  echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} names no ansible-core version with a SHA256" >&2
+  exit 1
+fi
+hcw_ansible_lines="$(wc -l <"${hcw_ansible_requirements}")"
+hcw_ansible_python="${HCW_ANSIBLE_VENV}/bin/python"
+hcw_ansible_record="${HCW_ANSIBLE_VENV}/hcw-requirements.txt"
+if ! cmp -s "${hcw_ansible_requirements}" "${hcw_ansible_record}" \
+  || ! "${HCW_ANSIBLE_VENV}/bin/ansible-playbook" --version 2>/dev/null | grep -qF "[core ${hcw_ansible_core_version}]" \
+  || ! "${HCW_ANSIBLE_VENV}/bin/ansible-playbook" --version 2>/dev/null | grep -qF "python version = ${PYTHON_VERSION} ("; then
+  log "installing ansible-core ${hcw_ansible_core_version} and the $((hcw_ansible_lines - 1)) wheels it depends on into ${HCW_ANSIBLE_VENV} on CPython ${PYTHON_VERSION}, each checked against its SHA256 in lab-image/versions.env"
+  "${UV_BIN}" venv --clear --managed-python --python "${PYTHON_VERSION}" "${HCW_ANSIBLE_VENV}"
+  "${UV_BIN}" pip install --python "${hcw_ansible_python}" --require-hashes --only-binary :all: -r "${hcw_ansible_requirements}"
+  "${UV_BIN}" pip check --python "${hcw_ansible_python}"
+  hcw_ansible_installed="$("${UV_BIN}" pip freeze --python "${hcw_ansible_python}" | wc -l)"
+  if [ "${hcw_ansible_installed}" -ne "${hcw_ansible_lines}" ]; then
+    echo "refusing to run: ${HCW_ANSIBLE_VENV} holds ${hcw_ansible_installed} packages, and lab-image/versions.env lists ${hcw_ansible_lines}" >&2
+    exit 1
+  fi
+  install -m 0644 -o root -g root "${hcw_ansible_requirements}" "${hcw_ansible_record}"
+fi
+rm -f "${hcw_ansible_requirements}"
+trap - EXIT
+
+# A host an earlier bootstrap.sh set up has ansible-core as a uv tool under
+# UV_TOOL_DIR, its commands linked into UV_TOOL_BIN_DIR. That environment was
+# installed without hashes, so it is removed, once, before the links below
+# replace its commands; on every later run it is gone and this is skipped.
+if [ -e "${UV_TOOL_DIR}/ansible-core" ]; then
+  log "removing the ansible-core uv tool an earlier bootstrap.sh installed under ${UV_TOOL_DIR}"
+  "${UV_BIN}" tool uninstall ansible-core || true
+fi
+for hcw_ansible_command in ansible ansible-playbook ansible-galaxy ansible-vault; do
+  ln -sfn "${HCW_ANSIBLE_VENV}/bin/${hcw_ansible_command}" "${UV_TOOL_BIN_DIR}/${hcw_ansible_command}"
+done
+"${UV_TOOL_BIN_DIR}/ansible-playbook" --version | sed -n '1p;/python version/p'
 
 cd "${HCW_SRC_DIR}/lab-host/ansible"
 

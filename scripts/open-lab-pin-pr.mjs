@@ -74,16 +74,17 @@ export const SETS = {
       'lab-image/sandbox-template/Dockerfile',
       'frontend/src/pages/docker/BuildingImagesPage.jsx',
     ],
-    title: 'Lab image: rebuild on the newest base image digest',
+    title: 'Lab image: rebuild on the newest base image digest and ansible-core patch release',
     intro:
-      "The weekly lab supply-chain run found a newer digest for the lab image's base. The base is pinned by digest on every FROM, so its operating system packages never move on their own; this pull request is how the image is rebuilt on the newest one. It edits `lab-image/versions.env`, the FROM lines that file governs and, when the tag moved, the base tag and CPython release the Docker guide page names (`frontend/src/pages/docker/BuildingImagesPage.jsx`, which `DockerGuides.test.jsx` holds to versions.env). Nothing else.",
+      "The weekly lab supply-chain run found a newer digest for the lab image's base, or a newer ansible-core release in its line, or both. The base is pinned by digest on every FROM, so its operating system packages never move on their own; this pull request is how the image is rebuilt on the newest one. It edits `lab-image/versions.env`, the FROM lines that file governs and, when the tag moved, the base tag and CPython release the Docker guide page names (`frontend/src/pages/docker/BuildingImagesPage.jsx`, which `DockerGuides.test.jsx` holds to versions.env). An ansible-core move edits `ANSIBLE_CORE_VERSION` and `ANSIBLE_CORE_SHA256` (the wheel's SHA256 from PyPI's JSON API), and a line of `ANSIBLE_CORE_DEPS` only when the new release pins that dependency exactly; every `ANSIBLE_CORE_DEPS` hash is read back from PyPI either way. Nothing else.",
     after: [
-      "**This pull request's `Build and smoke` check is the test of the new base:** both targets are built on it and run smoke.sh (which compares the image's Python with `BASE_PYTHON_VERSION`) and the sandbox check. Merge only on green.",
+      "**This pull request's `Build and smoke` check is the test of the new base and the new ansible-core:** both targets are built on them and run smoke.sh (which compares the image's Python with `BASE_PYTHON_VERSION` and its ansible-core with `ANSIBLE_CORE_VERSION`) and the sandbox check. Merge only on green.",
       "**Merging publishes, it does not deploy.** The push to `main` runs publish-lab-image.yml, which builds, smoke-tests, attests and pushes both images, then opens the `chore/lab-pins-image-digests` pull request that pins the new digests where they are consumed. Nothing a learner runs changes until that one merges.",
+      `**An ansible-core move reaches the lab host too.** \`lab-host/bootstrap.sh\` installs the host's ansible-core from these same \`versions.env\` lines, hash-checked, so the host moves on the next run after the merge. PowerShell: \`${BOOTSTRAP}\`. ${BOOTSTRAP_OK} Before the play it prints \`ansible-playbook [core <the new release>]\`. The \`ansible-lint (lab-host)\` job in \`.github/workflows/ci.yml\` pins its own ansible-core, and this pull request does not move it.`,
     ],
     scope: [
-      '**Components:** `lab-image/versions.env` (`BASE_IMAGE`, `BASE_DIGEST`, `BASE_PYTHON_VERSION`, or the sandbox pair), the FROM lines of `lab-image/Dockerfile` and `lab-image/sandbox-template/Dockerfile` that file governs, and the base tag, CPython release and `CHECKED_ON` the Docker guide page names (`frontend/src/pages/docker/BuildingImagesPage.jsx`).',
-      '**Rollback:** revert this pull request; the consumers keep the digests they pin until a later `chore/lab-pins-image-digests` pull request moves them, so nothing a learner runs changes on a revert.',
+      '**Components:** `lab-image/versions.env` (`BASE_IMAGE`, `BASE_DIGEST`, `BASE_PYTHON_VERSION`, the sandbox pair, or the `ANSIBLE_CORE_*` lines), the FROM lines of `lab-image/Dockerfile` and `lab-image/sandbox-template/Dockerfile` that file governs, and the base tag, CPython release and `CHECKED_ON` the Docker guide page names (`frontend/src/pages/docker/BuildingImagesPage.jsx`). The `ANSIBLE_CORE_*` lines are also what `lab-host/bootstrap.sh` installs on the lab host.',
+      '**Rollback:** revert this pull request; the consumers keep the digests they pin until a later `chore/lab-pins-image-digests` pull request moves them, so nothing a learner runs changes on a revert. An ansible-core move that already reached the host goes back with the next `bootstrap.sh` run after the revert.',
     ],
     infrastructure: false,
   },

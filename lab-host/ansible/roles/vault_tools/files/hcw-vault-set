@@ -13,7 +13,7 @@ src="${HCW_SRC_DIR:-/opt/hcw-src}"
 vault="$dir/vault.yml"
 pass="$dir/vault-password"
 next="$dir/.vault.yml.hcw-vault-set.$$"
-py=/opt/uv/tools/ansible-core/bin/python
+py=/opt/uv/ansible-core/bin/python
 av=/usr/local/bin/ansible-vault
 # bootstrap.sh passes vault.yml with -e, and an extra var outranks every other
 # variable, so a key the playbook also defines would silently replace it:

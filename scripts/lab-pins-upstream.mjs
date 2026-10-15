@@ -28,7 +28,9 @@
  *                         and for a current image tag or apt package the
  *                         publisher rebuilt under the same name
  *   --bump image-base     lab-image/versions.env and its FROM lines, to the
- *                         newest digest of the base image's release line
+ *                         newest digest of the base image's release line,
+ *                         and its ANSIBLE_CORE_* lines to ansible-core's
+ *                         newest release in its line (PyPI's wheel hashes)
  *   --bump image-digests  vps-agent/lib/capabilities.js and the Coder
  *                         template, to the two digests named by --runner and
  *                         --full (publish-lab-image.yml passes what it pushed)
