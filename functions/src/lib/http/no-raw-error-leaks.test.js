@@ -21,6 +21,20 @@
  *   - Anything derived from those: an alias, a template literal, `||`/`??`,
  *     a ternary, a string method (`.slice`, `.replace`, ...).
  *   - A whole caught error placed in an object, array or spread.
+ *   - A Promise.allSettled result's `reason`, through `filter`, `map`,
+ *     `for...of` and destructuring (#1200 review M3 e).
+ *   - CARRIED TEXT (#1200 review M3 a): what a function returns when its
+ *     return holds a site the allowlist files as c or s with text in it,
+ *     whether in the returned value or in a call it hands straight back
+ *     (`(e) => result('unknown', e.message)`). Followed to a fixpoint through
+ *     callers that return it on, `await`, aliases, destructuring, fields read
+ *     off it, objects and lists it is stored in, `Promise.all`, `.then` and
+ *     `.catch` handlers, a helper handed a function that returns it
+ *     (`readThroughCache({ read })`), a lazy `import()`, and a dependency
+ *     parameter's default (`readChecks = readLabChecksLazily`). Carried text
+ *     is a site only where it lands in a response body: that is how a stored
+ *     or log-only decision is kept out of an answer. The hub's Podbean reads
+ *     (M1) and the Labs snapshot's lab checks (M2) were both this.
  *
  * WHERE IT MAY NOT GO WITHOUT A DECISION (a "site"): an object property, an
  * array element, a spread, a `return`, a property assignment, a `throw`, or
@@ -29,6 +43,29 @@
  * judged where it lands, and a plain `new Error(...)` re-throw. Passing the
  * text to a helper is a site, so it cannot be laundered through one, and a
  * helper that returns it is a site, so it cannot be laundered out of one.
+ * A site is IN A RESPONSE BODY when it sits in a response object's
+ * `body`/`jsonBody`, in a builder's body argument (a builder is resolved by
+ * import, to a fixpoint), or in the second argument of an unresolved call
+ * whose first is a literal HTTP status, `reply(500, {...})`, which is how an
+ * injected builder is recognised (M3 b). An authored class is resolved
+ * through imports, aliases, re-exports and namespaces, so `new X(e.message)`
+ * for an aliased AuthoredError subclass is a site (M3 d).
+ *
+ * KNOWN LIMITS, each pinned by a self-test that fails when it is lifted:
+ *
+ *   - An injected builder called with a computed status (`reply(status, ...)`)
+ *     is not recognised as one.
+ *   - A whole error handed to a helper that stringifies a parameter not
+ *     named like an error (`describe(x) { return String(x); }`) is not
+ *     followed into the helper's result (M3 c).
+ *
+ * And by design: carried text starts only at a site with text in it, so a
+ * whole error returned on (`return { error }`) is judged where its fields
+ * are read; any field read off carried text counts as carried, so a count
+ * read off a carried object is reported until it is read from elsewhere;
+ * and text written to a document and read back in another request is not
+ * followed at all, which is what class s, and step 2's write-time door, are
+ * for.
  *
  * THE DOOR. `lib/http/error-response.js` is the only module that may read an
  * error's message for a body: `authoredMessage(error, fallback)` and
@@ -151,7 +188,22 @@ const ERROR_NAME = /^(e|err|error|ex|exc|exception|cause|rejection)$|(Error|Err)
 /** `new X(...)` with one of these names re-throws rather than answers. */
 const ERROR_CLASS = /(Error|Exception|Refusal)$/;
 
-const RANK = { text: 4, error: 3, authored: 2, named: 1 };
+/**
+ * Taint kinds, strongest first: `text` (an error's words), `error` (a whole
+ * caught error), `carried` (what a function returns when its return holds a
+ * class-c or class-s site), `authored` (a door's sentence), `named` (a name
+ * that looks like an error) and `settled` (a Promise.allSettled result,
+ * whose `.reason` is an error).
+ */
+const RANK = { text: 4, error: 3, carried: 2.5, authored: 2, named: 1, settled: 0.5 };
+/** Array methods whose result holds the same settled results as their receiver. */
+const SETTLED_PASS = new Set(['filter', 'slice', 'concat', 'flat', 'sort', 'reverse', 'toSorted', 'toReversed']);
+/** Array methods whose first argument is called with each element. */
+const CALLBACK_METHODS = new Set(['map', 'flatMap', 'forEach', 'filter', 'find', 'findLast', 'some', 'every']);
+/** The allowlist classes whose returned sites make a function's result a source (see the header). */
+const CARRIER_CLASSES = new Set(['c', 's']);
+/** A literal HTTP status as a call's first argument: the call is treated as a response builder. */
+const STATUS_RANGE = [100, 599];
 /** The strongest of several taint kinds, by RANK. */
 const strongest = (...kinds) =>
   kinds.reduce((a, b) => ((RANK[b] ?? 0) > (RANK[a] ?? 0) ? b : a), null);
@@ -330,16 +382,23 @@ function resolveImport(file, specifier) {
  *
  * @param {string} file - tree key
  * @param {object} program - the parsed module
- * @returns {{ locals: Map, members: Map, imports: Map, exports: Map, stars: string[] }}
+ * @returns {{ locals: Map, members: Map, classes: Map, imports: Map, exports: Map, stars: string[] }}
  */
 function moduleTable(file, program) {
   const locals = new Map();
   const members = new Map();
+  /** class name → its `extends` expression (or null) */
+  const classes = new Map();
   const imports = new Map();
   const exports = new Map();
   const stars = [];
-  /** Record the module's top-level functions, exports and star re-exports. */
+  /** Record the module's functions, classes, exports and star re-exports. */
   const collect = (node) => {
+    if (node.type === 'ClassDeclaration' && node.id) {
+      classes.set(node.id.name, node.superClass ?? null);
+    } else if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && unwrap(node.init)?.type === 'ClassExpression') {
+      classes.set(node.id.name, unwrap(node.init).superClass ?? null);
+    }
     if (node.type === 'FunctionDeclaration' && node.id) {
       locals.set(node.id.name, node);
     } else if (
@@ -371,7 +430,7 @@ function moduleTable(file, program) {
       }
     } else if (st.type === 'ExportNamedDeclaration') {
       const from = st.source ? resolveImport(file, st.source.value) : null;
-      if (st.declaration?.type === 'FunctionDeclaration') {
+      if (st.declaration?.type === 'FunctionDeclaration' || st.declaration?.type === 'ClassDeclaration') {
         exports.set(st.declaration.id.name, { local: st.declaration.id.name });
       } else if (st.declaration?.type === 'VariableDeclaration') {
         for (const d of st.declaration.declarations) {
@@ -391,6 +450,8 @@ function moduleTable(file, program) {
           locals.set('default', d);
           exports.set('default', { local: 'default' });
         }
+      } else if (d?.type === 'ClassDeclaration' && d.id) {
+        exports.set('default', { local: d.id.name });
       } else if (d?.type === 'Identifier') {
         exports.set('default', { local: d.name });
       }
@@ -399,7 +460,7 @@ function moduleTable(file, program) {
       if (from) stars.push(from);
     }
   }
-  return { locals, members, imports, exports, stars };
+  return { locals, members, classes, imports, exports, stars };
 }
 
 /**
@@ -500,11 +561,11 @@ function slotsThrough(call, slots, params) {
  * the way each module resolves a name, so two unrelated functions that share
  * one stay apart. The door's functions are not builders.
  *
- * @param {Array<{ file: string, program: object }>} parsed - the tree
- * @returns {(file: string, call: object) => Set<string> | null} body argument slots, or null
+ * @param {Map<string, ReturnType<typeof moduleTable>>} tables - every module's table
+ * @returns {{ builderOf: (file: string, call: object) => Set<string> | null,
+ *   resolveCall: (file: string, call: object) => string | null }} body argument slots, and the call resolver
  */
-function responseBuilders(parsed) {
-  const tables = new Map(parsed.map(({ file, program }) => [file, moduleTable(file, program)]));
+function responseBuilders(tables) {
   /** The function a module exports under a name, through re-exports. */
   const resolveExport = (file, name, seen = new Set()) => {
     const table = tables.get(file);
@@ -537,6 +598,11 @@ function responseBuilders(parsed) {
     const property = memberName(callee);
     if (!property) return null;
     const object = unwrap(callee.object);
+    // `(await import('./x.js')).f()`: a lazy import resolves like a static one.
+    if (object?.type === 'ImportExpression' && typeof object.source?.value === 'string') {
+      const from = resolveImport(file, object.source.value);
+      return from ? resolveExport(from, property) : null;
+    }
     const namespace = object?.type === 'Identifier' && tables.get(file)?.imports.get(object.name);
     if (namespace?.namespace) return resolveExport(namespace.from, property);
     return tables.get(file)?.members.has(property) ? `${file}::.${property}` : null;
@@ -586,7 +652,7 @@ function responseBuilders(parsed) {
       }
     }
   }
-  return (file, call) => builders.get(resolveCall(file, call)) ?? null;
+  return { builderOf: (file, call) => builders.get(resolveCall(file, call)) ?? null, resolveCall };
 }
 
 /**
@@ -617,36 +683,71 @@ function loggerAliases(program) {
 }
 
 /**
- * The classes whose instances pass the door: AuthoredError and, by name, any
- * class in the tree that extends one of them.
+ * The classes whose instances pass the door: AuthoredError and every class
+ * in the tree that extends one of them, each resolved the way its module
+ * resolves the name, through imports, aliases (`import { AuthoredError as
+ * Base }`), re-exports and namespaces, so an aliased subclass built from
+ * `e.message` is still a site. A `new X(...)` whose X does not resolve to a
+ * class in the tree falls back to the authored classes' names.
  *
- * @param {Array<{ program: object }>} parsed - the tree
- * @returns {Set<string>}
+ * @param {Map<string, ReturnType<typeof moduleTable>>} tables - every module's table
+ * @returns {(file: string, callee: object) => boolean} whether `new callee(...)` builds an authored error
  */
-function authoredClasses(parsed) {
-  const parents = new Map();
-  for (const { program } of parsed) {
-    /** Record each class and the class it extends. */
-    const collect = (node) => {
-      if ((node.type === 'ClassDeclaration' || node.type === 'ClassExpression') && node.id) {
-        const parent = lastName(node.superClass);
-        if (parent) parents.set(node.id.name, [...(parents.get(node.id.name) ?? []), parent]);
-      }
-      eachChild(node, collect);
-    };
-    collect(program);
-  }
-  const authored = new Set([AUTHORED_BASE]);
+function authoredClasses(tables) {
+  const base = `${DOOR_MODULE}::${AUTHORED_BASE}`;
+  /** The class a module exports under a name, through re-exports. */
+  const resolveExport = (file, name, seen) => {
+    if (file === DOOR_MODULE && name === AUTHORED_BASE) return base;
+    const table = tables.get(file);
+    if (!table || seen.has(`${file}:=${name}`)) return null;
+    seen.add(`${file}:=${name}`);
+    const entry = table.exports.get(name);
+    if (entry?.local) return resolveName(file, entry.local, seen);
+    if (entry?.from) return resolveExport(entry.from, entry.imported, seen);
+    for (const star of table.stars) {
+      const hit = resolveExport(star, name, seen);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  /** The class a local or imported name refers to, as `file::Class`. */
+  const resolveName = (file, name, seen = new Set()) => {
+    if (file === DOOR_MODULE && name === AUTHORED_BASE) return base;
+    const table = tables.get(file);
+    if (!table) return null;
+    if (table.classes.has(name)) return `${file}::${name}`;
+    const imported = table.imports.get(name);
+    if (imported && !imported.namespace) return resolveExport(imported.from, imported.imported, seen);
+    return null;
+  };
+  /** The class an expression (`X`, `ns.X`) refers to. */
+  const resolveNode = (file, node) => {
+    const n = unwrap(node);
+    if (n?.type === 'Identifier') return resolveName(file, n.name);
+    if (n?.type !== 'MemberExpression') return null;
+    const object = unwrap(n.object);
+    const property = memberName(n);
+    const namespace = object?.type === 'Identifier' && tables.get(file)?.imports.get(object.name);
+    return namespace?.namespace && property ? resolveExport(namespace.from, property, new Set()) : null;
+  };
+  const authored = new Set([base]);
   for (let grew = true; grew; ) {
     grew = false;
-    for (const [name, supers] of parents) {
-      if (!authored.has(name) && supers.some((s) => authored.has(s))) {
-        authored.add(name);
-        grew = true;
+    for (const [file, table] of tables) {
+      for (const [name, superClass] of table.classes) {
+        const key = `${file}::${name}`;
+        if (!authored.has(key) && superClass && authored.has(resolveNode(file, superClass))) {
+          authored.add(key);
+          grew = true;
+        }
       }
     }
   }
-  return authored;
+  const names = new Set([...authored].map((key) => key.split('::')[1]));
+  return (file, callee) => {
+    const resolved = resolveNode(file, callee);
+    return resolved ? authored.has(resolved) : names.has(lastName(callee));
+  };
 }
 
 /**
@@ -832,12 +933,35 @@ function bindingsOf(program) {
  * @param {string} file - tree key, for the report
  * @param {object} program - the parsed module
  * @param {string} source - the module text, for lines and snippets
- * @param {{ builderOf: Function, authored: Set<string> }} tree - from the whole tree
- * @returns {Array<{ key: string, file: string, line: number, kind: string, inResponse: boolean }>}
+ * @param {{ builderOf: Function, resolveCall: Function, isAuthoredNew: Function,
+ *   carriers: Set<string>, carrierReturns: Set<string> }} tree - from the whole tree; `carrierReturns`
+ *   collects the functions found returning a carried value this round
+ * @returns {Array<{ key: string, file: string, line: number, kind: string, inResponse: boolean,
+ *   returnsFrom: string | null }>}
  */
-function sitesOf(file, program, source, { builderOf, authored }) {
+function sitesOf(file, program, source, { builderOf, resolveCall, isAuthoredNew, carriers, carrierReturns }) {
   const refs = bindingsOf(program);
   const aliases = loggerAliases(program);
+  // A dependency parameter's default (`readChecks = readLabChecksLazily`):
+  // called by the parameter's name, it resolves to its default.
+  const defaults = new Map();
+  /** Record each `name = otherName` default in a pattern. */
+  const collectDefaults = (node) => {
+    if (node.type === 'AssignmentPattern' && node.left.type === 'Identifier' && unwrap(node.right)?.type === 'Identifier') {
+      defaults.set(node.left.name, unwrap(node.right));
+    }
+    eachChild(node, collectDefaults);
+  };
+  collectDefaults(program);
+  /** The function a call resolves to, through a parameter's default when it names one. */
+  const resolveVia = (call) => {
+    const direct = resolveCall(file, call);
+    if (direct) return direct;
+    const callee = unwrap(call.callee);
+    return callee?.type === 'Identifier' && defaults.has(callee.name)
+      ? resolveCall(file, { callee: defaults.get(callee.name) })
+      : null;
+  };
 
   // The door is the door module's export, reached through an import — not
   // any function that happens to share its name.
@@ -860,7 +984,7 @@ function sitesOf(file, program, source, { builderOf, authored }) {
     return object?.type === 'Identifier' && doorNamespaces.has(object.name) && DOORS.has(memberName(c));
   };
 
-  /** What an expression's value is: 'text', 'error', 'authored', 'named' or null. */
+  /** What an expression's value is: one of the RANK kinds, or null. */
   const kindOf = (node) => {
     const n = unwrap(node);
     if (!n) return null;
@@ -874,6 +998,10 @@ function sitesOf(file, program, source, { builderOf, authored }) {
         if (RAW_FIELDS.has(name)) return 'text';
         const objectKind = kindOf(n.object);
         if (objectKind === 'error') return SAFE_ERROR_FIELDS.has(name) ? null : 'error';
+        // Anything read off a carried value may be the text it carries.
+        if (objectKind === 'carried') return 'carried';
+        // A settled result's `reason` is the rejection: an error.
+        if (objectKind === 'settled') return name === 'reason' ? 'error' : n.computed ? 'settled' : null;
         if ((objectKind === 'text' || objectKind === 'authored') && n.computed) return objectKind;
         return null;
       }
@@ -894,29 +1022,102 @@ function sitesOf(file, program, source, { builderOf, authored }) {
         const stringify =
           STRINGIFIERS.has(name) || (name === 'stringify' && lastName(callee?.object) === 'JSON');
         if (stringify) return asText(strongest(...n.arguments.map(kindOf)));
+        if (name === 'allSettled' && lastName(callee?.object) === 'Promise') return 'settled';
         if (callee?.type === 'MemberExpression') {
           const receiver = kindOf(callee.object);
           if ((receiver === 'text' || receiver === 'authored') && STRING_METHODS.has(name)) return receiver;
           if ((receiver === 'error' || receiver === 'named') && name === 'toString') return 'text';
+          if (receiver === 'settled' && SETTLED_PASS.has(name)) return 'settled';
+          if (receiver === 'carried' && (SETTLED_PASS.has(name) || name === 'map' || name === 'flatMap')) {
+            return 'carried';
+          }
+          // `settled.map((r) => String(r.reason))` holds what its callback returns.
+          const fn = unwrap(n.arguments[0]);
+          if (receiver === 'settled' && (name === 'map' || name === 'flatMap') && isFunction(fn)) {
+            return strongest(...returnsOf(fn).map(kindOf));
+          }
+        }
+        // (a) The result of a function whose return holds a class-c or
+        // class-s site (or another carrier's result) is carried text.
+        if (carriers.size) {
+          const key = resolveVia(n);
+          if (key && carriers.has(key)) return 'carried';
+          // `Promise.all([...])` holds what its list holds; `p.catch(f)` and
+          // `p.then(a, b)` hold what their handlers return, by reference or
+          // inline. Only carried text is followed this way.
+          if (name === 'all' && lastName(callee?.object) === 'Promise') {
+            return kindOf(n.arguments[0]) === 'carried' ? 'carried' : null;
+          }
+          if (callee?.type === 'MemberExpression' && (name === 'catch' || name === 'then' || name === 'finally')) {
+            const kinds = [kindOf(callee.object), ...n.arguments.map(handlerKind)];
+            return kinds.includes('carried') ? 'carried' : null;
+          }
+          // A helper handed a function that returns carried text, directly or
+          // as an option (`readThroughCache({ read: () => fetchOverview() })`),
+          // is taken to return what that function returns.
+          const handed = n.arguments.flatMap((a) => {
+            const arg = unwrap(a.type === 'SpreadElement' ? a.argument : a);
+            if (isFunction(arg)) return [arg];
+            return arg?.type === 'ObjectExpression'
+              ? arg.properties.filter((p) => p.type === 'Property' && isFunction(unwrap(p.value))).map((p) => p.value)
+              : [];
+          });
+          if (handed.some((fn) => handlerKind(fn) === 'carried')) return 'carried';
         }
         return null;
       }
+      case 'ObjectExpression':
+        // A literal holding carried text carries it (`{ ...unreadable(e), agents: {} }`).
+        return n.properties.some((p) => kindOf(p.type === 'SpreadElement' ? p.argument : isFunction(p.value) ? null : p.value) === 'carried')
+          ? 'carried'
+          : null;
+      case 'ArrayExpression':
+        return n.elements.some((el) => el && kindOf(el.type === 'SpreadElement' ? el.argument : el) === 'carried')
+          ? 'carried'
+          : null;
       default:
         return null;
     }
   };
 
+  /** What a promise handler returns: a carrier by reference, or an inline function's returns. */
+  const handlerKind = (arg) => {
+    const fn = unwrap(arg);
+    if (isFunction(fn)) return strongest(...returnsOf(fn).map(kindOf));
+    const key = fn?.type === 'Identifier' || fn?.type === 'MemberExpression' ? resolveCall(file, { callee: fn }) : null;
+    return key && carriers.has(key) ? 'carried' : null;
+  };
+
   // Aliases, to a fixpoint: `const why = e?.message ?? 'x'` makes `why` text.
+  // `each` definitions bind a loop's or a callback's element to its list;
+  // `into` ones raise an object to carried when a carried value is stored in it.
   const definitions = [];
-  /** Record every variable declaration with an initialiser. */
+  /** The variable at the root of a member chain (`out` in `out.errors[x]`), or null. */
+  const rootOf = (node) => {
+    let n = unwrap(node);
+    while (n?.type === 'MemberExpression') n = unwrap(n.object);
+    return n?.type === 'Identifier' ? n : null;
+  };
+  /** Record every variable declaration with an initialiser, and every element and store binding. */
   const collect = (node) => {
-    if (node.type === 'VariableDeclarator' && node.init) definitions.push([node.id, node.init]);
-    if (
-      node.type === 'AssignmentExpression' &&
-      ['=', '||=', '??=', '&&=', '+='].includes(node.operator) &&
-      node.left.type !== 'MemberExpression'
-    ) {
-      definitions.push([node.left, node.right]);
+    if (node.type === 'VariableDeclarator' && node.init) definitions.push([node.id, node.init, 'value']);
+    if (node.type === 'AssignmentExpression' && ['=', '||=', '??=', '&&=', '+='].includes(node.operator)) {
+      if (node.left.type !== 'MemberExpression') definitions.push([node.left, node.right, 'value']);
+      else if (rootOf(node.left)) definitions.push([rootOf(node.left), node.right, 'into']);
+    }
+    if (node.type === 'ForOfStatement' && node.left.type === 'VariableDeclaration') {
+      for (const d of node.left.declarations) definitions.push([d.id, node.right, 'each']);
+    }
+    if (node.type === 'CallExpression') {
+      const callee = unwrap(node.callee);
+      const method = callee?.type === 'MemberExpression' ? memberName(callee) : null;
+      const fn = unwrap(node.arguments[0]);
+      if (CALLBACK_METHODS.has(method) && isFunction(fn) && fn.params[0]) {
+        definitions.push([fn.params[0], callee.object, 'each']);
+      }
+      if ((method === 'push' || method === 'unshift') && rootOf(callee.object)) {
+        for (const a of node.arguments) definitions.push([rootOf(callee.object), a.type === 'SpreadElement' ? a.argument : a, 'into']);
+      }
     }
     eachChild(node, collect);
   };
@@ -927,11 +1128,37 @@ function sitesOf(file, program, source, { builderOf, authored }) {
     binding.kind = kind;
     return true;
   };
+  /**
+   * Raise every name a pattern binds to `kind`; a settled result's
+   * destructured `reason` is an error. True when one changed.
+   */
+  const bindPattern = (pattern, kind) => {
+    let changed = false;
+    /** Raise one pattern element. */
+    const visit = (p, key = null) => {
+      if (!p) return;
+      if (p.type === 'Identifier') changed = raise(refs.get(p), kind === 'settled' && key === 'reason' ? 'error' : kind) || changed;
+      else if (p.type === 'AssignmentPattern') visit(p.left, key);
+      else if (p.type === 'RestElement') visit(p.argument);
+      else if (p.type === 'ArrayPattern') p.elements.forEach((el) => visit(el));
+      else if (p.type === 'ObjectPattern') {
+        for (const q of p.properties) visit(q.type === 'RestElement' ? q.argument : q.value, q.type === 'Property' ? keyName(q) : null);
+      }
+    };
+    visit(pattern);
+    return changed;
+  };
   /** Raise the kind of the bindings an assignment or declaration writes; true when one changed. */
-  const bind = (target, value) => {
+  const bind = (target, value, mode = 'value') => {
+    const kind = kindOf(value);
+    // Only a settled list or a carried value reaches a loop's or a callback's
+    // element, and only a carried value taints the object it is stored in.
+    if (mode === 'each') return kind === 'settled' || kind === 'carried' ? bindPattern(target, kind) : false;
+    if (mode === 'into') return kind === 'carried' ? raise(refs.get(target), 'carried') : false;
     const t = target.type === 'AssignmentPattern' ? target.left : target;
-    if (t.type === 'Identifier') return raise(refs.get(t), kindOf(value));
-    if (t.type !== 'ObjectPattern' || kindOf(value) !== 'error') return false;
+    if (t.type === 'Identifier') return raise(refs.get(t), kind);
+    if (kind === 'settled' || kind === 'carried') return bindPattern(t, kind);
+    if (t.type !== 'ObjectPattern' || kind !== 'error') return false;
     let changed = false;
     for (const p of t.properties) {
       if (p.type !== 'Property') continue;
@@ -945,11 +1172,15 @@ function sitesOf(file, program, source, { builderOf, authored }) {
   };
   for (let grew = true, rounds = 0; grew && rounds < 25; rounds += 1) {
     grew = false;
-    for (const [target, value] of definitions) if (bind(target, value)) grew = true;
+    for (const [target, value, mode] of definitions) if (bind(target, value, mode)) grew = true;
   }
 
   const found = [];
   const names = [];
+  /** The tree key of each function being walked (as moduleTable keys it), innermost last. */
+  const fnKeys = [];
+  /** The function whose return value is being walked, or null outside a return. */
+  let returning = null;
   /** Object arguments of which only some properties land in a builder's body. */
   const partialBodies = new WeakMap();
   let responseDepth = 0;
@@ -964,8 +1195,9 @@ function sitesOf(file, program, source, { builderOf, authored }) {
       key: `${file} › ${fn} › ${what(snippet(node))}`,
       file,
       line: lineOf(node.start),
-      kind: kind === 'named' ? 'error' : kind,
+      kind: kind === 'named' || kind === 'settled' ? 'error' : kind,
       inResponse: responseDepth > 0,
+      returnsFrom: returning,
     });
   };
   /** Run a visit with every site marked as inside a response body. */
@@ -977,15 +1209,33 @@ function sitesOf(file, program, source, { builderOf, authored }) {
       responseDepth -= 1;
     }
   };
-  /** Whether a taint kind makes a site here. */
+  /** Whether a taint kind makes a site here: carried text only inside a response body. */
   const flagged = (kind, wholeErrorCounts) =>
-    kind === 'text' || kind === 'authored' || (wholeErrorCounts && kind === 'error');
+    kind === 'text' ||
+    kind === 'authored' ||
+    (wholeErrorCounts && (kind === 'error' || kind === 'settled')) ||
+    (kind === 'carried' && responseDepth > 0);
 
   /** A value position: report it when it holds error text, else look inside. */
   const value = (node, what, wholeErrorCounts = false) => {
     const kind = kindOf(node);
-    if (flagged(kind, wholeErrorCounts)) report(node, what, kind);
-    else walk(node);
+    // A literal that carries text is reported at the property that holds it.
+    const literal = ['ObjectExpression', 'ArrayExpression'].includes(unwrap(node)?.type);
+    if (flagged(kind, wholeErrorCounts) && !(kind === 'carried' && literal)) {
+      report(node, what, kind);
+      return;
+    }
+    // A carried value returned on is a carrier of its own (next round).
+    if (kind === 'carried' && returning) carrierReturns.add(returning);
+    walk(node);
+  };
+
+  /** The key moduleTable and resolveCall know a function by, or null. */
+  const treeKeyOf = (node, parent) => {
+    if (node.type === 'FunctionDeclaration' && node.id) return `${file}::${node.id.name}`;
+    if (parent?.type === 'VariableDeclarator' && parent.id?.type === 'Identifier') return `${file}::${parent.id.name}`;
+    if (['Property', 'MethodDefinition'].includes(parent?.type) && keyName(parent)) return `${file}::.${keyName(parent)}`;
+    return null;
   };
 
   /** The name a function is known by for a key. */
@@ -1004,10 +1254,18 @@ function sitesOf(file, program, source, { builderOf, authored }) {
       const name = functionName(node, parent);
       if (name) names.push(name);
       const saved = responseDepth;
+      const savedReturning = returning;
       responseDepth = 0;
+      returning = null;
+      fnKeys.push(treeKeyOf(node, parent));
       for (const p of node.params) walk(p, node);
       if (node.body.type === 'BlockStatement') walk(node.body, node);
-      else value(node.body, (t) => `return ${t}`);
+      else {
+        returning = fnKeys.at(-1);
+        value(node.body, (t) => `return ${t}`);
+      }
+      fnKeys.pop();
+      returning = savedReturning;
       responseDepth = saved;
       if (name) names.pop();
       return;
@@ -1041,7 +1299,12 @@ function sitesOf(file, program, source, { builderOf, authored }) {
         }
         return;
       case 'ReturnStatement':
-        if (node.argument) value(node.argument, (t) => `return ${t}`);
+        if (node.argument) {
+          const savedReturning = returning;
+          returning = fnKeys.at(-1) ?? null;
+          value(node.argument, (t) => `return ${t}`);
+          returning = savedReturning;
+        }
         return;
       case 'ThrowStatement':
         value(node.argument, (t) => `throw ${t}`);
@@ -1062,54 +1325,75 @@ function sitesOf(file, program, source, { builderOf, authored }) {
         for (const e of node.quasi.expressions) value(e, (t) => `${lastName(node.tag)}\`${t}\``);
         return;
       case 'CallExpression':
-      case 'NewExpression': {
-        const callee = unwrap(node.callee);
-        const name = lastName(callee) ?? '?';
-        walk(node.callee, node);
-        const logs = isLogger(callee) || (callee?.type === 'Identifier' && aliases.has(callee.name));
-        if (node.type === 'CallExpression' && logs) return;
-        const receiver = callee?.type === 'MemberExpression' ? kindOf(callee.object) : null;
-        const passesThrough =
-          node.type === 'CallExpression' &&
-          (STRINGIFIERS.has(name) ||
-            (name === 'stringify' && lastName(callee?.object) === 'JSON') ||
-            ((receiver === 'text' || receiver === 'authored') && STRING_METHODS.has(name)));
-        const isNew = node.type === 'NewExpression';
-        if (isNew && authored.has(name)) {
-          for (const a of node.arguments) value(a, (t) => `new ${name}(${t})`);
-          return;
-        }
-        if (passesThrough || PREDICATES.has(name) || isDoor(callee) || (isNew && ERROR_CLASS.test(name))) {
-          for (const a of node.arguments) walk(a, node);
-          return;
-        }
-        // A builder's body arguments are in the response; a whole error
-        // handed to one is serialised, so it counts there and nowhere else
-        // (a helper that only reads `error.code` is scanned on its own). An
-        // object argument whose properties the builder destructures is in
-        // the body only for the properties the body uses.
-        const slots = node.type === 'CallExpression' ? builderOf(file, node) : null;
-        node.arguments.forEach((a, index) => {
-          const arg = a.type === 'SpreadElement' ? a.argument : a;
-          const plain = unwrap(arg);
-          const prefix = `${index}.`;
-          const keys = [...(slots ?? [])].filter((s) => s.startsWith(prefix)).map((s) => s.slice(prefix.length));
-          const partial = !slots?.has(String(index)) && keys.length > 0 && plain?.type === 'ObjectExpression';
-          if (partial) partialBodies.set(plain, new Set(keys));
-          const inBody =
-            Boolean(slots?.has(String(index))) ||
-            (keys.length > 0 && !partial) ||
-            (name === 'errorResponse' && index === 1);
-          /** Visit the argument as a site of its own. */
-          const visitArg = () => value(arg, (t) => `${name}(${t})`, inBody);
-          if (inBody) inResponse(visitArg);
-          else visitArg();
-        });
+      case 'NewExpression':
+        // A site in a call inside a return is held by that return too:
+        // `(e) => result('unknown', e.message)` hands it straight back.
+        visitCall(node);
         return;
-      }
       default:
         eachChild(node, (child) => walk(child, node));
     }
+  };
+
+  /** (b) An unresolved call with a literal HTTP status first, `reply(500, {...})`: its second argument is a body. */
+  const statusCall = (node) => {
+    const first = unwrap(node.arguments[0]);
+    return (
+      node.arguments.length >= 2 &&
+      first?.type === 'Literal' &&
+      Number.isInteger(first.value) &&
+      first.value >= STATUS_RANGE[0] &&
+      first.value <= STATUS_RANGE[1] &&
+      !resolveCall(file, node)
+    );
+  };
+
+  /** A call or `new`: its arguments are sites unless it logs, tests, stringifies or is the door. */
+  const visitCall = (node) => {
+    const callee = unwrap(node.callee);
+    const name = lastName(callee) ?? '?';
+    walk(node.callee, node);
+    const logs = isLogger(callee) || (callee?.type === 'Identifier' && aliases.has(callee.name));
+    if (node.type === 'CallExpression' && logs) return;
+    const receiver = callee?.type === 'MemberExpression' ? kindOf(callee.object) : null;
+    const passesThrough =
+      node.type === 'CallExpression' &&
+      (STRINGIFIERS.has(name) ||
+        (name === 'stringify' && lastName(callee?.object) === 'JSON') ||
+        ((receiver === 'text' || receiver === 'authored') && STRING_METHODS.has(name)));
+    const isNew = node.type === 'NewExpression';
+    if (isNew && isAuthoredNew(file, node.callee)) {
+      for (const a of node.arguments) value(a, (t) => `new ${name}(${t})`);
+      return;
+    }
+    if (passesThrough || PREDICATES.has(name) || isDoor(callee) || (isNew && ERROR_CLASS.test(name))) {
+      for (const a of node.arguments) walk(a, node);
+      return;
+    }
+    // A builder's body arguments are in the response; a whole error
+    // handed to one is serialised, so it counts there and nowhere else
+    // (a helper that only reads `error.code` is scanned on its own). An
+    // object argument whose properties the builder destructures is in
+    // the body only for the properties the body uses. A builder injected
+    // as a dependency is not resolvable, so a literal status is its sign.
+    let slots = node.type === 'CallExpression' ? builderOf(file, node) : null;
+    if (!slots && node.type === 'CallExpression' && statusCall(node)) slots = new Set(['1']);
+    node.arguments.forEach((a, index) => {
+      const arg = a.type === 'SpreadElement' ? a.argument : a;
+      const plain = unwrap(arg);
+      const prefix = `${index}.`;
+      const keys = [...(slots ?? [])].filter((s) => s.startsWith(prefix)).map((s) => s.slice(prefix.length));
+      const partial = !slots?.has(String(index)) && keys.length > 0 && plain?.type === 'ObjectExpression';
+      if (partial) partialBodies.set(plain, new Set(keys));
+      const inBody =
+        Boolean(slots?.has(String(index))) ||
+        (keys.length > 0 && !partial) ||
+        (name === 'errorResponse' && index === 1);
+      /** Visit the argument as a site of its own. */
+      const visitArg = () => value(arg, (t) => `${name}(${t})`, inBody);
+      if (inBody) inResponse(visitArg);
+      else visitArg();
+    });
   };
   walk(program);
   return found;
@@ -1118,19 +1402,46 @@ function sitesOf(file, program, source, { builderOf, authored }) {
 /**
  * Scan source strings as if they were the modules of one tree.
  *
+ * (a) Carriers, to a fixpoint: a function whose return value holds a site
+ * the allowlist files as class c or s, or holds another carrier's result, is
+ * a carrier, and what a call to it returns is carried text. Carried text is
+ * a site only where it lands in a response body, which is how a stored or
+ * log-only decision is kept from reaching an answer through a helper's
+ * result (#1200 review M3: the Podbean hub's reads and the lab checks).
+ *
  * @param {Record<string, string>} modules - tree key → source
- * @returns {Array<{ key: string, file: string, line: number, kind: string, inResponse: boolean }>}
+ * @param {{ allowed?: Array<{ site: string, class: string }> }} [options] - the decisions, for the carriers
+ * @returns {Array<{ key: string, file: string, line: number, kind: string, inResponse: boolean,
+ *   returnsFrom: string | null }>}
  */
-export function scanSources(modules) {
+export function scanSources(modules, { allowed = [] } = {}) {
   const parsed = Object.entries(modules).map(([file, source]) => ({
     file,
     source,
     program: parse(file, source),
   }));
-  const tree = { builderOf: responseBuilders(parsed), authored: authoredClasses(parsed) };
-  return parsed
-    .filter((m) => m.file !== DOOR_MODULE)
-    .flatMap((m) => sitesOf(m.file, m.program, m.source, tree));
+  const tables = new Map(parsed.map(({ file, program }) => [file, moduleTable(file, program)]));
+  const { builderOf, resolveCall } = responseBuilders(tables);
+  const isAuthoredNew = authoredClasses(tables);
+  const classOf = new Map(allowed.map((entry) => [entry.site, entry.class]));
+  const scanned = parsed.filter((m) => m.file !== DOOR_MODULE);
+  const carriers = new Set();
+  let sites = [];
+  for (let round = 0; round < 12; round += 1) {
+    const carrierReturns = new Set();
+    const tree = { builderOf, resolveCall, isAuthoredNew, carriers, carrierReturns };
+    sites = scanned.flatMap((m) => sitesOf(m.file, m.program, m.source, tree));
+    const before = carriers.size;
+    // Text, not a whole error: a returned error object is read by its
+    // caller's own rules (its code, its status, the door), and seeding on it
+    // would taint every field of the result.
+    for (const s of sites) {
+      if (s.returnsFrom && s.kind === 'text' && CARRIER_CLASSES.has(classOf.get(s.key))) carriers.add(s.returnsFrom);
+    }
+    for (const key of carrierReturns) carriers.add(key);
+    if (carriers.size === before) break;
+  }
+  return sites;
 }
 
 /**
@@ -1218,7 +1529,7 @@ function realTree() {
  * classes.
  */
 const ALLOWED = [
-  { site: 'functions/listen-and-learn-jobs.js › runSpeakChapter › error: storedFailure(err, \'The chapter could not be voiced.\', { correlationId: context?.invocationId ?? null, })', class: 'b', why: 'stored at write time through the door (#945 step 2): the chapter document\'s error and lastError, with runJob\'s reference' },
+  { site: 'functions/listen-and-learn-jobs.js › runSpeakChapter › error: storedFailure(err, \'The chapter could not be voiced.\', { correlationId: context?.invocationId ?? null, })', class: 'b', why: 'stored at write time through the door (#945 step 2): the chapter\'s error and lastError, with runJob\'s reference; also returned by the public Listen & Learn read for a published chapter today, until the public-reads allowlist (separate PR) strips it' },
   { site: 'functions/public-submissions.js › handleSubmission › error: authoredMessage(err, \'Too many submissions — try again later.\')', class: 'b', why: 'PUBLIC: SubmissionRateLimitError sentence, vendor-free' },
   { site: 'lib/addons/status.js › failureReason › return error.message', class: 'c', why: 'feeds a warn line only' },
   { site: 'lib/admin-integrations/config-collections.js › mcpWriteError › return authoredMessage(error, \'The MCP server settings were refused.\')', class: 'b', why: 'McpPolicyError sentences from the MCP save rules; anything else gets the fixed sentence' },
@@ -1271,8 +1582,8 @@ const ALLOWED = [
   { site: 'lib/content/forge-studio/workspace.js › patchUnderEtag › refuse(failureFields(context, \'The draft could not be saved.\', error))', class: 'b', why: 'failureFields: an authored refusal or the safe sentence, with a correlation id' },
   { site: 'lib/content/forge-studio/workspace.js › saveBrief › json(failureFields(context, \'The brief could not be saved.\', error))', class: 'b', why: 'failureFields: an authored refusal or the safe sentence, with a correlation id' },
   { site: 'lib/content/forge.js › runForgePipeline › error: recordedFailure(log, \'Generation failed.\', err)', class: 'b', why: 'stored at write time through the door (#945 step 2): the forge outcome, stored as the job result and job.error' },
-  { site: 'lib/content/forge.js › runForgePipeline › note: recordedFailure(log, \'Grading failed.\', err)', class: 'b', why: 'stored at write time through the door (#945 step 2): the grade\'s note on the forged document' },
-  { site: 'lib/content/inspect-job.js › run › inspectError: recordedFailure(log, \'The inspection failed.\', error)', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s inspectError' },
+  { site: 'lib/content/forge.js › runForgePipeline › note: recordedFailure(log, \'Grading failed.\', err)', class: 'b', why: 'the grade\'s note, through the door (#945 step 2): kept in memory only; forgeGrade stores overall and subs, not the note' },
+  { site: 'lib/content/inspect-job.js › run › inspectError: recordedFailure(log, \'The inspection failed.\', error)', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s inspectError; also returned by the public content read today (stripInternalFields keeps it), until the public-reads allowlist (separate PR) strips it' },
   { site: 'lib/content/scrape.js › scrapeArticle › failure(reason)', class: 'b', why: 'FetchRefusedError/ScrapeError sentence or the failure\'s code; carried to the draft routes', times: 2 },
   { site: 'lib/decision-center/sources.js › toItem › [row.message]', class: 'n', why: 'a workflow alert\'s own message field, not an error\'s: no writer stores error text there (raiseAlert in link-check and the publishing watchdog, and buildPublishFailureAlert, write none)' },
   { site: 'lib/gallery/import.js › fetchForImport › refuse(`Could not fetch image: ${reason}`)', class: 'b', why: 'FetchRefusedError sentence (URL masked) or the failure\'s code on the 422' },
@@ -1292,11 +1603,11 @@ const ALLOWED = [
   { site: 'lib/labs/drift.js › describeReadError › return isAuthoredError(error) && error.code ? `${error.code}: ${sentence}` : sentence', class: 'b', why: 'stored at write time through the door (#945 step 2): the drift read\'s lastError on the Labs card' },
   { site: 'lib/labs/drift.js › toCommit › title: message.split(\'\\n\')[0].trim().slice(0, MAX_TITLE_LENGTH)', class: 'n', why: 'a GitHub commit\'s title (commit.message), not an error' },
   { site: 'lib/labs/lab-checks.js › unreadable › result(storedFailure(error, "The check\'s data could not be read."))', class: 'b', why: 'stored at write time through the door (#945 step 2): the lab check result the Labs page shows' },
-  { site: 'lib/listen-and-learn/generate.js › generateEpisodes › error: failure', class: 'b', why: 'stored at write time through the door (#945 step 2): the episode document\'s error (persistFailure) and the job result', times: 2 },
+  { site: 'lib/listen-and-learn/generate.js › generateEpisodes › error: failure', class: 'b', why: 'stored at write time through the door (#945 step 2): the episode\'s error and lastError (persistFailure) and the job result; also returned by the public Listen & Learn read for a published chapter today, until the public-reads allowlist (separate PR) strips it', times: 2 },
   { site: 'lib/listen-and-learn/generate.js › generateEpisodes › videoError: videoError', class: 'b', why: 'stored at write time through the door (#945 step 2): the generation job result, read by getJob' },
   { site: 'lib/listen-and-learn/generate.js › renderAudio › error: authoredMessage(err, \'No speech provider is configured.\')', class: 'b', why: 'SpeechNotConfiguredError sentence naming the setting (admin episode state)' },
   { site: 'lib/listen-and-learn/library.js › parseChapterCreate › error: authoredMessage(err, \'The chapter title cannot be made into an id.\')', class: 'b', why: 'EpisodeIdError sentence on the create-chapter 400' },
-  { site: 'lib/listen-and-learn/source-episode.js › generateSourceEpisode › error: storedFailure(err, \'The episode could not be generated.\')', class: 'b', why: 'stored at write time through the door (#945 step 2): the episode document\'s error (persistFailure)' },
+  { site: 'lib/listen-and-learn/source-episode.js › generateSourceEpisode › error: storedFailure(err, \'The episode could not be generated.\')', class: 'b', why: 'stored at write time through the door (#945 step 2): the episode\'s error and lastError (persistFailure); also returned by the public Listen & Learn read for a published chapter today, until the public-reads allowlist (separate PR) strips it' },
   { site: 'lib/listen-and-learn/source-episode.js › parseSourceEpisodePayload › error: authoredMessage(err, \'The episode title cannot be made into an id.\')', class: 'b', why: 'EpisodeIdError sentence on the enqueue 400' },
   { site: 'lib/listen-and-learn/source-episode.js › parseSourceEpisodePayload › error: authoredMessage(err, \'The sources were refused.\')', class: 'b', why: 'InvalidSourcesError sentences about the URLs the editor typed' },
   { site: 'lib/listen-and-learn/speech-handlers.js › taskModelReport › error: authoredMessage(err, \'The speech model could not be chosen.\')', class: 'b', why: 'AI router refusal (not configured, switched off) on the speech options answer' },
@@ -1352,17 +1663,17 @@ const ALLOWED = [
   { site: 'lib/timers/reminders.js › sayReminder › message: message', class: 'c', why: 'the owner\'s Telegram reminder' },
   { site: 'lib/timers/skills-hub.js › run › error: err?.message || String(err)', class: 'c', why: 'the timer run summary, only logged' },
   { site: 'lib/triggers/ai-cover.js › assertImageBudget › cause: cause', class: 'c', why: 'the cause rides on ImageBudgetError (non-enumerable) for the log; never serialised' },
-  { site: 'lib/triggers/ai-cover.js › run › .altCoverImageError = `fallback: default hero (${failure})`', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s altCoverImageError' },
-  { site: 'lib/triggers/ai-cover.js › run › altCoverImageError: failure', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s altCoverImageError' },
+  { site: 'lib/triggers/ai-cover.js › run › .altCoverImageError = `fallback: default hero (${failure})`', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s altCoverImageError; also returned by the public content read today (stripInternalFields keeps it), until the public-reads allowlist (separate PR) strips it' },
+  { site: 'lib/triggers/ai-cover.js › run › altCoverImageError: failure', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s altCoverImageError; also returned by the public content read today (stripInternalFields keeps it), until the public-reads allowlist (separate PR) strips it' },
   { site: 'lib/triggers/ai-cover.js › run › reason: fallbackApplied ? `error_with_default_hero: ${err?.message || err}` : `error: ${err?.message || err}`', class: 'c', why: 'the trigger result, only logged by the change feed' },
   { site: 'lib/triggers/forge-ready-notify.js › run › reason: `error: ${err?.message || err}`', class: 'c', why: 'the trigger result, only logged by the change feed' },
-  { site: 'lib/triggers/handlers.js › content › inspectError: recordedFailure(context, \'The inspection failed.\', err)', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s inspectError' },
+  { site: 'lib/triggers/handlers.js › content › inspectError: recordedFailure(context, \'The inspection failed.\', err)', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s inspectError; also returned by the public content read today (stripInternalFields keeps it), until the public-reads allowlist (separate PR) strips it' },
   { site: 'lib/triggers/handlers.js › runEach › error: err?.message || String(err)', class: 'c', why: 'the change-feed batch results, only logged' },
   { site: 'lib/triggers/handlers.js › socialPosts › syncError: recordedFailure(context, \'The post could not be synced to Publer.\', err)', class: 'b', why: 'stored at write time through the door (#945 step 2): the social post\'s syncError' },
   { site: 'lib/triggers/image-mirror.js › generateTemplateCover › reason: `error: ${err?.message || err}`', class: 'c', why: 'the trigger result, only logged by the change feed' },
   { site: 'lib/triggers/image-mirror.js › mirror › reason: `error: ${err?.message || err}`', class: 'c', why: 'the trigger result, only logged by the change feed' },
   { site: 'lib/triggers/social-caption-trigger.js › run › reason: `error: ${err?.message || err}`', class: 'c', why: 'the trigger result, only logged by the change feed' },
-  { site: 'lib/triggers/social-caption-trigger.js › run › socialCaptionError: recordedFailure(log, \'The social caption could not be written.\', err)', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s socialCaptionError' },
+  { site: 'lib/triggers/social-caption-trigger.js › run › socialCaptionError: recordedFailure(log, \'The social caption could not be written.\', err)', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s socialCaptionError; also returned by the public content read today (stripInternalFields keeps it), until the public-reads allowlist (separate PR) strips it' },
 ];
 
 describe('no raw error text in HTTP response bodies (AP-B10, #945)', () => {
@@ -1370,7 +1681,7 @@ describe('no raw error text in HTTP response bodies (AP-B10, #945)', () => {
     const modules = realTree();
     expect(Object.keys(modules).length).toBeGreaterThan(300);
     expect(modules[DOOR_MODULE]).toBeDefined();
-    const { unlisted, stale, misfiled } = judge(scanSources(modules), ALLOWED);
+    const { unlisted, stale, misfiled } = judge(scanSources(modules, { allowed: ALLOWED }), ALLOWED);
     expect(unlisted, `error text reaches a value that leaves its function:\n${unlisted.join('\n')}`).toEqual([]);
     expect(stale, `allowlist entries that no longer match anything:\n${stale.join('\n')}`).toEqual([]);
     expect(misfiled, `allowlist entries in the wrong class:\n${misfiled.join('\n')}`).toEqual([]);
@@ -1516,6 +1827,179 @@ describe('the scan itself', () => {
         const json = (s, b) => ({ status: s, body: b });
         export function h() { try { go(); } catch (error) { return json(500, { error: authoredMessage(error) }); } }`)
     ).toEqual(['lib/x.js › authoredMessage › return e.message']);
+  });
+
+  it('(a) follows a stored decision out of an awaited helper result into a response body (M1: the hub reads)', () => {
+    const modules = {
+      'lib/podcast/record.js': `export function toRecorded(error) {
+          return { status: null, message: error?.message ? String(error.message) : String(error) };
+        }`,
+      'lib/podcast/reads.js': `import { toRecorded } from './record.js';
+        async function settle(read) {
+          try { return { value: await read() }; } catch (error) { return { error: toRecorded(error) }; }
+        }
+        export async function readOverview(client) {
+          const show = await settle(() => client.getShow());
+          const errors = {};
+          if (show.error) errors.show = show.error;
+          return { show: show.value ?? null, errors };
+        }`,
+      'lib/podcast/handlers.js': `import { readOverview } from './reads.js';
+        const json = (status, body) => ({ status, body: JSON.stringify(body) });
+        export async function getOverview(client) {
+          const overview = await readOverview(client);
+          return json(200, { success: true, ...overview });
+        }`,
+    };
+    const allowed = [
+      {
+        site: 'lib/podcast/record.js › toRecorded › message: error?.message ? String(error.message) : String(error)',
+        class: 's',
+        why: 'stored on the host record',
+      },
+    ];
+    const sites = scanSources(modules, { allowed });
+    expect(sites).toContainEqual(
+      expect.objectContaining({ key: 'lib/podcast/handlers.js › getOverview › ...overview', kind: 'carried', inResponse: true })
+    );
+    expect(judge(sites, allowed).unlisted).toEqual([
+      expect.stringContaining('carried IN RESPONSE — lib/podcast/handlers.js › getOverview › ...overview'),
+    ]);
+    // The decision is what makes the helper a source: undecided, nothing is carried.
+    expect(scanSources(modules).some((s) => s.kind === 'carried')).toBe(false);
+  });
+
+  it('(a) follows a site handed straight back through a helper call (M2: the lab checks)', () => {
+    const modules = {
+      'lib/labs/checks.js': `const result = (status, summary) => ({ status, summary });
+        const unreadable = (error) => result('unknown', \`The check could not be read: \${error?.message || error}\`);
+        export async function readChecks(store) {
+          let drift;
+          try { drift = result('healthy', await store.read('drift')); } catch (error) { drift = unreadable(error); }
+          return { drift };
+        }`,
+      'lib/labs/route.js': `import { readChecks } from './checks.js';
+        const json = (status, body) => ({ status, body: JSON.stringify(body) });
+        export async function getChecks(store) { return json(200, await readChecks(store)); }`,
+    };
+    const allowed = [
+      {
+        site: 'lib/labs/checks.js › unreadable › result(`The check could not be read: ${error?.message || error}`)',
+        class: 's',
+        why: 'stored on the check',
+      },
+    ];
+    expect(scanSources(modules, { allowed })).toContainEqual(
+      expect.objectContaining({
+        key: 'lib/labs/route.js › getChecks › json(await readChecks(store))',
+        kind: 'carried',
+        inResponse: true,
+      })
+    );
+    // A door call returned on is class b, never a carrier.
+    const doored = {
+      ...modules,
+      'lib/http/error-response.js': 'export function storedFailure(e, f) { return f; }',
+      'lib/labs/checks.js': modules['lib/labs/checks.js']
+        .replace('const result', "import { storedFailure } from '../http/error-response.js';\n        const result")
+        .replace('`The check could not be read: ${error?.message || error}`', "storedFailure(error, 'The check could not be read.')"),
+    };
+    expect(scanSources(doored, { allowed }).some((s) => s.kind === 'carried')).toBe(false);
+  });
+
+  it('(a) follows a carrier behind a lazy import and a dependency default (the Labs snapshot)', () => {
+    const modules = {
+      'lib/labs/checks.js': `const unreadable = (error) => ({ status: 'unknown', summary: String(error) });
+        export async function readChecks(store) {
+          const [drift] = await Promise.all([store.read('drift').catch(unreadable)]);
+          return { checks: { drift } };
+        }`,
+      'lib/labs.js': `const readChecksLazily = async (...args) => (await import('./labs/checks.js')).readChecks(...args);
+        const json = (status, body) => ({ status, body: JSON.stringify(body) });
+        export function createLabs({ store, readChecks = readChecksLazily }) {
+          return { async snapshot() { const labChecks = await readChecks(store); return json(200, { checks: labChecks.checks }); } };
+        }`,
+    };
+    const allowed = [{ site: 'lib/labs/checks.js › unreadable › summary: String(error)', class: 's', why: 'stored' }];
+    expect(scanSources(modules, { allowed })).toContainEqual(
+      expect.objectContaining({ key: 'lib/labs.js › snapshot › checks: labChecks.checks', kind: 'carried', inResponse: true })
+    );
+  });
+
+  it('(d) resolves an authored superclass through an aliased import, a re-export and a namespace', () => {
+    const sites = scanSources({
+      'lib/http/error-response.js': 'export class AuthoredError extends Error {}',
+      'lib/errors.js': `import { AuthoredError as Base } from './http/error-response.js';
+        export class Refusal extends Base {}`,
+      'lib/index.js': "export { Refusal as Declined } from './errors.js';",
+      'lib/w.js': `import { Declined } from './index.js';
+        import * as errors from './errors.js';
+        class PlainError extends Error {}
+        export function wrap(e) {
+          if (e.code === 1) throw new PlainError(e.message);
+          if (e.code === 2) throw new errors.Refusal(e.message);
+          throw new Declined(\`no: \${e.message}\`);
+        }`,
+    });
+    expect(sites.map((s) => s.key)).toEqual([
+      'lib/w.js › wrap › new Refusal(e.message)',
+      'lib/w.js › wrap › new Declined(`no: ${e.message}`)',
+    ]);
+  });
+
+  it('(e) reads a Promise.allSettled rejection as an error, through filters, loops and destructuring', () => {
+    expect(
+      sitesIn(`const json = (s, b) => ({ status: s, body: JSON.stringify(b) });
+        export async function h(reads) {
+          const settled = await Promise.allSettled(reads);
+          const [first] = settled;
+          const failures = settled.filter((r) => r.status === 'rejected').map((r) => String(r.reason));
+          for (const r of settled) if (r.reason) return json(500, { error: \`\${r.reason}\` });
+          const { reason } = first;
+          return json(500, { failures, first: reason?.message, why: String(reason), count: settled.length });
+        }`)
+    ).toEqual([
+      'lib/x.js › h › return String(r.reason)',
+      'lib/x.js › h › error: `${r.reason}`',
+      'lib/x.js › h › failures: failures',
+      'lib/x.js › h › first: reason?.message',
+      'lib/x.js › h › why: String(reason)',
+    ]);
+  });
+
+  it('(b) treats an injected builder called with a literal status as a response', () => {
+    const sites = scanSources({
+      'lib/inj.js': `export function create({ reply }) {
+          return async () => { try { await go(); } catch (e) { return reply(500, { error: e.message }); } };
+        }`,
+    });
+    expect(sites).toEqual([
+      expect.objectContaining({ key: 'lib/inj.js › create › error: e.message', inResponse: true }),
+    ]);
+  });
+
+  it('KNOWN LIMIT (b): an injected builder called with a computed status is not recognised', () => {
+    // When this fails because the site is now marked inResponse: true, the
+    // limit is fixed: fold the case into the test above and drop the header note.
+    const sites = scanSources({
+      'lib/inj.js': `export function create({ reply }) {
+          return async (status) => { try { await go(); } catch (e) { return reply(status, { error: e.message }); } };
+        }`,
+    });
+    expect(sites).toEqual([
+      expect.objectContaining({ key: 'lib/inj.js › create › error: e.message', inResponse: false }),
+    ]);
+  });
+
+  it('KNOWN LIMIT (c): a whole error handed to a helper that stringifies a differently named parameter', () => {
+    // describe(x) makes any value text, but x is neither a caught error nor
+    // named like one, so the call's result is not followed into the body.
+    // When this fails because a site is found, the limit is fixed: make it a
+    // positive test and drop the header note.
+    expect(
+      sitesIn(`${handler('return json(500, { error: describe(oops) });')}
+        function describe(x) { return String(x); }`)
+    ).toEqual([]);
   });
 
   it('judges the list: unlisted, stale, wrong class', () => {
