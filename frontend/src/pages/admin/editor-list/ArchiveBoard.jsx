@@ -10,6 +10,14 @@
  * audited by the server) or Delete permanently, the one action with no way
  * back, behind the confirm dialog and the `deleteContentItem` RPC the Review
  * Queue's own delete uses.
+ *
+ * The board's rows are a read, and another session can move a page after
+ * it. So Delete permanently names the status the row was read in, and the
+ * server deletes only while the page is still archived, under that read's
+ * ETag, and audits the delete itself; a page restored meanwhile answers 409,
+ * and the row stays with the refusal shown. A restore here puts the page on
+ * the live board above, so the page is asked to read that list again
+ * (`onRestored`).
  */
 import React, { useMemo, useState } from 'react';
 import {
@@ -34,6 +42,7 @@ import { safeUrl } from '@/lib/safeUrl';
 import { PROVIDER_OPTIONS as ADMIN_PROVIDER_OPTIONS } from '@/config/admin';
 import { useContentTransitions } from '@/pages/admin/queue/useContentTransitions';
 import {
+  ARCHIVED_STATUS,
   TYPE_BADGE,
   filterAndSortArchivedItems,
   getContentType,
@@ -236,7 +245,7 @@ function ArchiveContent({ loading, items, filtered, busyId, onRestore, onDelete 
   );
 }
 
-export default function ArchiveBoard({ archivedList, loading }) {
+export default function ArchiveBoard({ archivedList, loading, onRestored }) {
   const [archiveSearch, setArchiveSearch] = useState('');
   const [archiveProviderFilter, setArchiveProviderFilter] = useState('All');
   const [archiveSortField, setArchiveSortField] = useState('archivedAt');
@@ -259,7 +268,10 @@ export default function ArchiveBoard({ archivedList, loading }) {
       reviewNotes: 'Restored to live from the Archive board',
       label: 'Restore',
     });
-    if (result) setGoneIds((prev) => ({ ...prev, [item.id]: true }));
+    if (!result) return;
+    setGoneIds((prev) => ({ ...prev, [item.id]: true }));
+    // Back on the site, so on the live board, which was read before this.
+    onRestored?.(item);
   };
 
   const deletePermanently = async () => {
@@ -269,10 +281,18 @@ export default function ArchiveBoard({ archivedList, loading }) {
     setDeleteError('');
     setDeletingId(item.id);
     try {
-      await postJSON('deleteContentItem', { contentId: item.id });
+      // Only while it is still archived: the server refuses with 409 a page
+      // another session restored (or moved) since this list was read.
+      await postJSON('deleteContentItem', { contentId: item.id, expectedStatus: ARCHIVED_STATUS });
       setGoneIds((prev) => ({ ...prev, [item.id]: true }));
     } catch (err) {
-      setDeleteError(`Delete failed: ${err?.message || 'Unknown error'}`);
+      // A 409 is the server's own sentence: what changed, and that nothing
+      // was deleted.
+      setDeleteError(
+        err?.status === 409 && err.message
+          ? err.message
+          : `Delete failed: ${err?.message || 'Unknown error'}`
+      );
     } finally {
       setDeletingId('');
     }

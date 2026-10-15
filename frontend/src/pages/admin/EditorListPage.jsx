@@ -207,13 +207,17 @@ export default function EditorListPage() {
   const listContent = (qs) => getJSON(`cms/content?${qs}`).then((res) => res.items || []);
   // Retry re-keys the three reads; usePublicData fetches again on a new key.
   const [attempt, setAttempt] = useState(0);
+  // A restore on the Archive board puts a page back on the site: the live
+  // read alone is re-keyed, so the page shows on the live board without a
+  // reload (the archive board drops its own row).
+  const [liveRead, setLiveRead] = useState(0);
   const {
     data: liveItems,
     loading: liveLoading,
     error: liveError,
   } = usePublicData(
     () => listContent(`live=true&limit=${LIST_PAGE}`),
-    authReady ? `editor:live:${attempt}` : ''
+    authReady ? `editor:live:${attempt}:${liveRead}` : ''
   );
   const {
     data: archivedItems,
@@ -430,7 +434,11 @@ export default function EditorListPage() {
       </PageHeader>
 
       {renderLiveBoardSection()}
-      <ArchiveBoard archivedList={archivedList} loading={archiveLoading} />
+      <ArchiveBoard
+        archivedList={archivedList}
+        loading={archiveLoading}
+        onRestored={() => setLiveRead((n) => n + 1)}
+      />
 
       {/* ── Confirm modals ── */}
       <ConfirmModal

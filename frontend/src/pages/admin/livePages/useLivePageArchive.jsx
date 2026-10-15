@@ -15,6 +15,15 @@
  * archived row is remembered so it leaves the list without a refetch, and
  * comes back the same way when Undo succeeds.
  *
+ * Undo is sent once per target. While its request is in flight the toast's
+ * action is disabled and further clicks return early: a second
+ * `archived → published` would meet `published`, which has no edge to
+ * itself, and its 400 would read "Undo failed" after the first succeeded.
+ *
+ * A legacy blog linked to the page is carried by the server, both ways: the
+ * transition archives every linked `blogs` document the site serves and its
+ * Undo brings back exactly those (lib/cms/content-update.js).
+ *
  * Archive needs the publisher role, as the Delete it replaced did: taking a
  * page off the public site is a publisher's action, and the API refuses an
  * editor's `published → archived` (content-update.js), as it refuses the
@@ -27,7 +36,7 @@
  * transition table has the edge (ARCHIVABLE_STATUSES), and elsewhere it is
  * disabled with a title saying why.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ToastAction } from '@/components/ui/toast';
 import { toast } from '@/components/ui/use-toast';
 import { useContentTransitions } from '@/pages/admin/queue/useContentTransitions';
@@ -89,23 +98,52 @@ export function archiveTargetId(item) {
   return item?.sourceContentId || item?.publishedContentId || '';
 }
 
+/** The toast's Undo: offered, or disabled while its request is in flight. */
+function undoAction({ pending, onClick }) {
+  return (
+    <ToastAction
+      altText="Undo and put the page back on the site"
+      disabled={pending}
+      onClick={onClick}
+    >
+      {pending ? 'Undoing…' : 'Undo'}
+    </ToastAction>
+  );
+}
+
 export function useLivePageArchive() {
   const transitions = useContentTransitions();
   const [archivingId, setArchivingId] = useState('');
   const [locallyArchivedKeys, setLocallyArchivedKeys] = useState({});
+  // The targets whose Undo is in flight. A ref, not state: the guard must
+  // hold for a second click in the same tick, before any re-render.
+  const undoing = useRef(new Set());
 
   const remember = useCallback((key, archived) => {
     if (key) setLocallyArchivedKeys((prev) => ({ ...prev, [key]: archived }));
   }, []);
 
   const undo = useCallback(
-    async (item, targetId, handle) => {
-      const result = await transitions.transition({ ...item, id: targetId }, 'published', {
-        markLive: true,
-        reviewNotes: 'Undo: restored to live from Live Pages',
-        label: 'Undo',
-      });
-      if (!result) return;
+    async (item, targetId, handle, onUndo) => {
+      if (undoing.current.has(targetId)) return;
+      undoing.current.add(targetId);
+      handle.update({ action: undoAction({ pending: true, onClick: onUndo }) });
+      let result;
+      try {
+        result = await transitions.transition({ ...item, id: targetId }, 'published', {
+          markLive: true,
+          reviewNotes: 'Undo: restored to live from Live Pages',
+          label: 'Undo',
+        });
+      } finally {
+        undoing.current.delete(targetId);
+      }
+      if (!result) {
+        // Refused: the failure is shown under the list, and Undo is offered
+        // again while the toast stays.
+        handle.update({ action: undoAction({ pending: false, onClick: onUndo }) });
+        return;
+      }
       handle.dismiss();
       remember(liveUrlKey(item), false);
       toast({ title: 'Back on the site', description: `${getTitle(item)} is live again.` });
@@ -126,18 +164,12 @@ export function useLivePageArchive() {
       setArchivingId('');
       if (!result) return null;
       remember(liveUrlKey(item), true);
+      const onUndo = () => undo(item, targetId, handle, onUndo);
       const handle = toast({
         title: 'Archived',
         description: `${getTitle(item)} is off the site and on the Archive board.`,
         duration: UNDO_WINDOW_MS,
-        action: (
-          <ToastAction
-            altText="Undo and put the page back on the site"
-            onClick={() => undo(item, targetId, handle)}
-          >
-            Undo
-          </ToastAction>
-        ),
+        action: undoAction({ pending: false, onClick: onUndo }),
       });
       return result;
     },

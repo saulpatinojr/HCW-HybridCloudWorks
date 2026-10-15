@@ -183,7 +183,7 @@ describe('useLivePageArchive', () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it('keeps the toast and the row hidden when Undo is refused, with the failure shown', async () => {
+  it('keeps the toast and the row hidden when Undo is refused, with the failure shown and Undo offered again', async () => {
     postJSON.mockResolvedValueOnce({ success: true }).mockRejectedValueOnce(new Error('HTTP 403'));
     const { result } = renderHook(() => useLivePageArchive());
     await act(() => result.current.archiveLivePage(PAGE));
@@ -192,6 +192,74 @@ describe('useLivePageArchive', () => {
     expect(handle.dismiss).not.toHaveBeenCalled();
     expect(result.current.locallyArchivedKeys).toEqual({ [KEY]: true });
     expect(result.current.archiveError).toBe('Undo failed: HTTP 403');
+    const offered = handle.update.mock.calls.at(-1)[0].action;
+    expect(offered.props.disabled).toBe(false);
+    expect(offered.props.children).toBe('Undo');
+
+    // The guard is released: a second try is a second request.
+    postJSON.mockResolvedValueOnce({ success: true });
+    await act(() => offered.props.onClick());
+    expect(postJSON).toHaveBeenCalledTimes(3);
+    expect(handle.dismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends one Undo however often it is clicked while the first is in flight, with the action disabled meanwhile', async () => {
+    postJSON.mockResolvedValueOnce({ success: true });
+    const { result } = renderHook(() => useLivePageArchive());
+    await act(() => result.current.archiveLivePage(PAGE));
+    const [[{ action }]] = toast.mock.calls;
+
+    let finish;
+    postJSON.mockClear();
+    postJSON.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    let first;
+    await act(async () => {
+      first = action.props.onClick();
+      action.props.onClick();
+    });
+
+    expect(postJSON).toHaveBeenCalledTimes(1);
+    const pending = handle.update.mock.calls.at(-1)[0].action;
+    expect(pending.props.disabled).toBe(true);
+    expect(pending.props.children).toBe('Undoing…');
+    await act(() => pending.props.onClick());
+    expect(postJSON).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      finish({ success: true });
+      await first;
+    });
+    expect(postJSON).toHaveBeenCalledTimes(1);
+    expect(handle.dismiss).toHaveBeenCalledTimes(1);
+    expect(result.current.archiveError).toBe('');
+    expect(result.current.locallyArchivedKeys).toEqual({ [KEY]: false });
+  });
+
+  it('guards each page’s Undo on its own', async () => {
+    const OTHER = {
+      ...PAGE,
+      id: 'c2',
+      Title: 'Another page',
+      publishedUrl: 'https://hybridcloudworks.com/azure/blog/another',
+    };
+    postJSON.mockResolvedValue({ success: true });
+    const { result } = renderHook(() => useLivePageArchive());
+    await act(() => result.current.archiveLivePage(PAGE));
+    await act(() => result.current.archiveLivePage(OTHER));
+    const [first, second] = toast.mock.calls.map(([shown]) => shown.action);
+
+    postJSON.mockReset();
+    postJSON.mockImplementation(() => new Promise(() => {}));
+    await act(async () => {
+      first.props.onClick();
+      second.props.onClick();
+    });
+    expect(postJSON.mock.calls.map(([, body]) => body.contentId)).toEqual(['c1', 'c2']);
   });
 
   it('does nothing for a legacy page with no content record behind it', async () => {

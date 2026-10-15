@@ -10,7 +10,6 @@
  */
 import { useCallback, useState } from 'react';
 import { postJSON } from '@/lib/api';
-import { logAdminAction } from '@/lib/auditLog';
 import { getPublishTargetForType } from '@/lib/contentModel';
 
 export function useReviewActions({ blogId, transitions, navigate, toast }) {
@@ -67,9 +66,10 @@ export function useReviewActions({ blogId, transitions, navigate, toast }) {
     setSaving('delete');
     setBoardError(null);
     try {
+      // deleteContentItem writes the audit row itself (`audits`,
+      // content_deleted, with the actor the guard verified), so no client
+      // row is written beside it (AP-F13, #937).
       await postJSON('deleteContentItem', { contentId: blogId });
-      // deleteContentItem writes no server audit row; this one is the record.
-      await logAdminAction('framework_deleted', { contentId: blogId });
       toast({ title: 'Framework deleted' });
       navigate('/admin/review-queue?contentType=framework');
     } catch (err) {

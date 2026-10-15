@@ -95,6 +95,22 @@ This project has not cut a tagged release; entries are grouped under
   rejected page, the statuses with an edge to `archived`, and says why on
   any other; the palette asks the content search only for 2 to 100 trimmed
   characters, the list route's bounds (#1184), and says so past 100.
+  `transitionContentStatus` writes under the `_etag` of the read its gate
+  and edge were decided from, and answers a lost race with a 409 ("The page
+  changed since it was read; reload and try again.") and no audit row, so
+  an editor's reject read before a publisher set a page live cannot land
+  after it. Archiving a page also archives every linked legacy `blogs`
+  document the site serves (`publishedBlogId`, `sourceContentId`,
+  `publishedContentId`), stamped `archivedWithContentId`, and Undo or
+  Restore to live brings back exactly those; `content-update.test.js`
+  checks each with `isPublicDocument`. `deleteContentItem` deletes under
+  the read's ETag (`deleteDocIfMatch`), refuses with a 409 a body's
+  `expectedStatus` the document has left (the Archive board sends
+  `archived`; the Review Queue and the framework review send none and keep
+  their rules), and writes its own `content_deleted` row to `audits`, so
+  the framework review's client audit row for the same delete is gone. The
+  toast's Undo is sent once and disabled while in flight, and a restore on
+  the Archive board re-reads the Editor's live list.
 - **alert-timer-overdue evaluates again, a KQL test refuses what silenced it,
   the weekly check reads every log rule's Resource Health, and the fire test
   matches the timer dimension** (PLAT-4, #964). The rule never evaluated from

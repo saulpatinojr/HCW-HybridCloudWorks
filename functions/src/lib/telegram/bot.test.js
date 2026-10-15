@@ -277,16 +277,18 @@ describe('approval loop (T-606)', () => {
       store: {
         readDoc: vi.fn(async (container, id) =>
           container === 'content' && id === 'doc-9'
-            ? { id: 'doc-9', contentStatus: 'forge_ready', Title: 'Staged post' }
+            ? { id: 'doc-9', contentStatus: 'forge_ready', Title: 'Staged post', _etag: '"e1"' }
             : null
         ),
       },
     });
     await bot.handleUpdate(message('/reject doc-9 too generic'));
+    // Under the read's ETag, as the portal's transition is (AP-F13, #937).
     expect(store.patchDoc).toHaveBeenCalledWith(
       'content',
       'doc-9',
-      expect.objectContaining({ contentStatus: 'rejected', Live: false })
+      expect.objectContaining({ contentStatus: 'rejected', Live: false }),
+      { ifMatch: '"e1"' }
     );
     const auditRow = store.upsertDoc.mock.calls.find((call) => call[0] === 'audits')?.[1];
     expect(auditRow).toBeDefined();
@@ -304,7 +306,13 @@ describe('approval loop (T-606)', () => {
       store: {
         readDoc: vi.fn(async (container, id) =>
           container === 'content' && id === 'doc-9'
-            ? { id: 'doc-9', contentStatus: 'published', Live: true, Title: 'Live post' }
+            ? {
+                id: 'doc-9',
+                contentStatus: 'published',
+                Live: true,
+                Title: 'Live post',
+                _etag: '"e2"',
+              }
             : null
         ),
       },
@@ -313,7 +321,8 @@ describe('approval loop (T-606)', () => {
     expect(store.patchDoc).toHaveBeenCalledWith(
       'content',
       'doc-9',
-      expect.objectContaining({ contentStatus: 'rejected', Live: false, Status: 'Rejected' })
+      expect.objectContaining({ contentStatus: 'rejected', Live: false, Status: 'Rejected' }),
+      { ifMatch: '"e2"' }
     );
     expect(send).toHaveBeenCalledWith(expect.stringContaining('is rejected (was published)'));
   });

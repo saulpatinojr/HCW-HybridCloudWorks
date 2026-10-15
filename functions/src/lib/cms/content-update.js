@@ -238,8 +238,13 @@ export function createContentUpdateHandler({
  * waved through (AP-F13, #937): a forgotten argument must not read as the
  * owner.
  *
+ * The write is conditioned on the read's `_etag`, so a document that moved
+ * between the read and the write is refused with a 409 (`code: 'CONFLICT'`)
+ * and nothing is written; archiving and leaving the archive for `published`
+ * carry the content's linked legacy blogs with it (findLinkedBlogsToCarry).
+ *
  * @returns {{ ok: true, contentId, from, to } |
- *           { ok: false, status: number, error: string, allowedTransitions?: string[] }}
+ *           { ok: false, status: number, error: string, code?: string, allowedTransitions?: string[] }}
  */
 export function createContentStatusTransitioner({
   store,
@@ -359,7 +364,29 @@ export function createContentStatusTransitioner({
       updateData.rejectedAt = null;
     }
 
-    await store.patchDoc("content", contentId, updateData);
+    // Read before any write, so a failed lookup leaves nothing changed.
+    const linkedBlogs = await findLinkedBlogsToCarry(store, data, {
+      contentId,
+      from: normalizedCurrentStatus,
+      to: normalizedStatus,
+    });
+
+    // Under the read's ETag: the publisher gate and the edge check above
+    // were decided from `data`, so the write must land on that version or
+    // not at all (AP-F13, #937). Unconditioned, an editor's `editing →
+    // rejected` read before a publisher set the page live would land after
+    // it and take the page down without the role, and an archive and its
+    // Undo racing each other would overwrite each other. A lost race is
+    // refused, nothing else is written, and the caller reloads.
+    try {
+      await store.patchDoc("content", contentId, updateData, {
+        ifMatch: data._etag,
+      });
+    } catch (error) {
+      const refusal = lostRaceRefusal(error, contentId);
+      if (refusal) return refusal;
+      throw error;
+    }
 
     const changedFields = Object.keys(updateData);
     await store.upsertDoc("audits", {
@@ -382,6 +409,9 @@ export function createContentStatusTransitioner({
       userAgent,
       metadata: {
         ...(legacyBlogId ? { legacyBlogId } : {}),
+        ...(linkedBlogs.length
+          ? { linkedBlogIds: linkedBlogs.map((blog) => blog.id) }
+          : {}),
         authMethod,
         reviewedBy,
       },
@@ -392,6 +422,14 @@ export function createContentStatusTransitioner({
       },
     });
 
+    // After the audit row, so the row names the blogs this transition
+    // carries even if one of these writes then fails (a 500 the caller sees).
+    await carryLinkedBlogs(store, linkedBlogs, updateData, {
+      contentId,
+      to: normalizedStatus,
+      nowIso: nowDate.toISOString(),
+    });
+
     return {
       ok: true,
       contentId,
@@ -399,6 +437,122 @@ export function createContentStatusTransitioner({
       to: normalizedStatus,
     };
   };
+}
+
+/** What a transition that lost a race with another write answers. */
+export const CHANGED_SINCE_READ =
+  "The page changed since it was read; reload and try again.";
+
+/**
+ * The refusal for a guarded write that lost its race, or null for any other
+ * failure: a 412 is the document moving since it was read (409, as the
+ * caller's view is what is stale), a 404 it being deleted in between.
+ */
+function lostRaceRefusal(error, contentId) {
+  if (error?.code === 412) {
+    return {
+      ok: false,
+      status: 409,
+      code: "CONFLICT",
+      error: CHANGED_SINCE_READ,
+    };
+  }
+  if (error?.code === 404) {
+    return { ok: false, status: 404, error: `Content ${contentId} not found` };
+  }
+  return null;
+}
+
+/**
+ * LEGACY BLOGS GO WITH THEIR PAGE (AP-F13, #937). A `blogs` document linked
+ * to a content document — the content's `publishedBlogId`, or a blog naming
+ * it as `sourceContentId` or `publishedContentId`, the links
+ * timers/content-cleanup.js purges by and Live Pages archives a legacy row
+ * through — is served by the public reads on its own `Live`, `Status` and
+ * `contentStatus` (public-reads.js isPublicDocument). Archiving the content
+ * alone left such a blog on the site. So archiving carries every linked blog
+ * the site serves, stamping it `archivedWithContentId`, and leaving the
+ * archive for `published` (Undo, Restore to live) carries back exactly the
+ * blogs so stamped: a linked blog that was not public before the archive is
+ * never made public by its Undo. Done here, on the server, so every caller
+ * of the transition (Live Pages, the Archive board) gets it.
+ */
+const BLOG_VISIBILITY_FIELDS = [
+  "Live",
+  "Status",
+  "contentStatus",
+  "scheduledPublishDate",
+];
+
+/**
+ * The legacy blogs this transition carries with the content: none, those to
+ * archive, or those to bring back.
+ */
+async function findLinkedBlogsToCarry(store, data, { contentId, from, to }) {
+  const archiving = to === "archived";
+  const restoring = from === "archived" && to === "published";
+  if (!archiving && !restoring) return [];
+  const linked = await readLinkedBlogs(store, data, contentId);
+  return linked.filter((blog) =>
+    archiving
+      ? isPublicDocument(blog)
+      : blog.archivedWithContentId === contentId,
+  );
+}
+
+/**
+ * Every blog linked to the content, once each, with the fields the choice
+ * above reads.
+ */
+async function readLinkedBlogs(store, data, contentId) {
+  const byId = new Map();
+  if (data.publishedBlogId) {
+    const blog = await store.readDoc(
+      "blogs",
+      data.publishedBlogId,
+      data.publishedBlogId,
+    );
+    if (blog) byId.set(blog.id, blog);
+  }
+  const rows = await store.queryDocs(
+    "blogs",
+    "SELECT TOP 50 c.id, c.Live, c.Status, c.contentStatus, c.softDeletedAt, c.softDeleteExpiresAt, c.archivedWithContentId FROM c WHERE c.sourceContentId = @id OR c.publishedContentId = @id",
+    [{ name: "@id", value: contentId }],
+  );
+  for (const row of rows || []) if (!byId.has(row.id)) byId.set(row.id, row);
+  return [...byId.values()];
+}
+
+/**
+ * The content's own visibility fields, as the transition just wrote them,
+ * onto each linked blog: archived writes `Live: false`, `Status:
+ * 'Archived'`, `contentStatus: 'archived'` and no schedule; published writes
+ * `Live` and `contentStatus: 'published'` and drops the `Status` word, as
+ * publishing does (content-status.js applyStatusPublished).
+ */
+async function carryLinkedBlogs(
+  store,
+  blogs,
+  updateData,
+  { contentId, to, nowIso },
+) {
+  if (blogs.length === 0) return;
+  const visibility = Object.fromEntries(
+    BLOG_VISIBILITY_FIELDS.filter((field) => field in updateData).map(
+      (field) => [field, updateData[field]],
+    ),
+  );
+  const marker =
+    to === "archived"
+      ? { archivedWithContentId: contentId, archivedAt: nowIso }
+      : { archivedWithContentId: undefined, archivedAt: null };
+  for (const blog of blogs) {
+    await store.patchDoc("blogs", blog.id, {
+      ...visibility,
+      ...marker,
+      updatedAt: nowIso,
+    });
+  }
 }
 
 /** The roles that may make content live; editors stop at the review workflow. */

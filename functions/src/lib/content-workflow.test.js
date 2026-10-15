@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
+  DELETE_CHANGED_SINCE_READ,
   createContentWorkflowHandlers,
   validateSaveEditorDraftBody,
   assertNoEditConflict,
@@ -43,7 +44,7 @@ function makeStore(over = {}) {
     })),
     patchDoc: vi.fn(async (_c, id, u) => ({ id, ...u })),
     upsertDoc: vi.fn(async (_c, d) => d),
-    deleteDoc: vi.fn(async () => {}),
+    deleteDocIfMatch: vi.fn(async () => {}),
     ...over,
   };
 }
@@ -287,21 +288,167 @@ describe('unpublishContentToInspected', () => {
 });
 
 describe('deleteContentItem / softDeleteLivePage', () => {
-  it('hard delete tolerates missing docs like Firestore', async () => {
-    const store = makeStore({
-      deleteDoc: vi.fn(async () => {
-        const err = new Error('nf');
-        err.code = 404;
-        throw err;
-      }),
-    });
-    const h = createContentWorkflowHandlers({
+  const coded = (code) => Object.assign(new Error(`HTTP ${code}`), { code });
+  const stored = (over = {}) => ({
+    id: 'c1',
+    Title: 'Ten things about Azure',
+    contentStatus: 'archived',
+    _etag: '"e7"',
+    ...over,
+  });
+  const deleteWith = (store, body, extra = {}) =>
+    createContentWorkflowHandlers({
       guard: guardAs('publisher'),
       store,
       ...fixed,
+      ...extra,
+    }).deleteContentItem(makeRequest(body), context);
+  const auditRows = (store) => store.upsertDoc.mock.calls.filter(([c]) => c === 'audits');
+
+  it('hard delete tolerates missing docs like Firestore, before the read and after it', async () => {
+    const neverThere = makeStore({ readDoc: vi.fn(async () => null) });
+    expect((await deleteWith(neverThere, { contentId: 'gone' })).status).toBe(200);
+    expect(neverThere.deleteDocIfMatch).not.toHaveBeenCalled();
+
+    const goneMeanwhile = makeStore({
+      readDoc: vi.fn(async () => stored()),
+      deleteDocIfMatch: vi.fn(async () => {
+        throw coded(404);
+      }),
     });
-    expect((await h.deleteContentItem(makeRequest({ contentId: 'gone' }), context)).status).toBe(
-      200
+    expect((await deleteWith(goneMeanwhile, { contentId: 'c1' })).status).toBe(200);
+    // Nobody here deleted it, so nothing here records a delete.
+    expect(auditRows(goneMeanwhile)).toEqual([]);
+  });
+
+  /**
+   * The Archive board's Delete permanently (AP-F13, #937): decided from a
+   * read of an archived row, so it names the status it read and the server
+   * deletes only while the document is still in it, under that read's ETag.
+   */
+  it('deletes an item still in the status the caller read, under the read’s ETag, and audits it', async () => {
+    const onContentDeleted = vi.fn(async () => {});
+    const store = makeStore({ readDoc: vi.fn(async () => stored()) });
+    const res = await deleteWith(
+      store,
+      { contentId: 'c1', expectedStatus: 'archived' },
+      { onContentDeleted }
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.deleteDocIfMatch).toHaveBeenCalledWith('content', 'c1', '"e7"');
+    expect(onContentDeleted).toHaveBeenCalledWith('c1');
+    const rows = auditRows(store);
+    expect(rows).toHaveLength(1);
+    expect(rows[0][1]).toEqual({
+      id: 'fixed-uuid',
+      timestamp: NOW.toISOString(),
+      action: 'content_deleted',
+      resourceType: 'content',
+      resourceId: 'c1',
+      resourceTitle: 'Ten things about Azure',
+      userId: 'u1',
+      userName: null,
+      userEmail: null,
+      changes: {
+        before: { contentStatus: 'archived' },
+        after: null,
+        changedFields: [],
+        notes: '',
+      },
+      ipAddress: null,
+      userAgent: 'vitest',
+      metadata: {
+        expectedStatus: 'archived',
+        authMethod: 'entra_bearer_token',
+        reviewedBy: 'editor@hcw.dev',
+      },
+      compliance: { dataClassification: 'internal', retentionMonths: 24, identityVerified: true },
+    });
+  });
+
+  it('refuses with 409 and keeps an item another session moved out of the status the caller read', async () => {
+    const onContentDeleted = vi.fn(async () => {});
+    // Restored to live from another tab after the Archive board loaded.
+    const store = makeStore({
+      readDoc: vi.fn(async () => stored({ contentStatus: 'published', Live: true })),
+    });
+    const res = await deleteWith(
+      store,
+      { contentId: 'c1', expectedStatus: 'archived' },
+      { onContentDeleted }
+    );
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toMatchObject({
+      code: 'STATUS_CHANGED',
+      currentStatus: 'published',
+    });
+    expect(JSON.parse(res.body).error).toMatch(/is published now, not archived/);
+    expect(store.deleteDocIfMatch).not.toHaveBeenCalled();
+    expect(auditRows(store)).toEqual([]);
+    expect(onContentDeleted).not.toHaveBeenCalled();
+  });
+
+  it('refuses with 409 and writes no audit row when the item moves between the read and the delete', async () => {
+    const onContentDeleted = vi.fn(async () => {});
+    const store = makeStore({
+      readDoc: vi.fn(async () => stored()),
+      deleteDocIfMatch: vi.fn(async () => {
+        throw coded(412);
+      }),
+    });
+    const res = await deleteWith(
+      store,
+      { contentId: 'c1', expectedStatus: 'archived' },
+      { onContentDeleted }
+    );
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: DELETE_CHANGED_SINCE_READ,
+      code: 'CONFLICT',
+    });
+    expect(auditRows(store)).toEqual([]);
+    expect(onContentDeleted).not.toHaveBeenCalled();
+  });
+
+  it('keeps the rules of a caller that names no status: the framework review deletes from review, the queue from rejected', async () => {
+    for (const contentStatus of ['in_review', 'rejected']) {
+      const store = makeStore({ readDoc: vi.fn(async () => stored({ contentStatus })) });
+      const res = await deleteWith(store, { contentId: 'c1' });
+      expect(res.status, contentStatus).toBe(200);
+      expect(store.deleteDocIfMatch).toHaveBeenCalledWith('content', 'c1', '"e7"');
+      const [[, row]] = auditRows(store);
+      expect(row.changes.before).toEqual({ contentStatus });
+      expect(row.metadata).not.toHaveProperty('expectedStatus');
+    }
+  });
+
+  it('400s an expectedStatus that is not a string, before deleting anything', async () => {
+    const store = makeStore({ readDoc: vi.fn(async () => stored()) });
+    const res = await deleteWith(store, { contentId: 'c1', expectedStatus: ['archived'] });
+    expect(res.status).toBe(400);
+    expect(store.deleteDocIfMatch).not.toHaveBeenCalled();
+  });
+
+  it('reports a landed delete as done when only its audit row fails, and logs the failure', async () => {
+    const error = vi.fn();
+    const store = makeStore({
+      readDoc: vi.fn(async () => stored()),
+      upsertDoc: vi.fn(async () => {
+        throw coded(503);
+      }),
+    });
+    const h = createContentWorkflowHandlers({ guard: guardAs('publisher'), store, ...fixed });
+    const res = await h.deleteContentItem(makeRequest({ contentId: 'c1' }), {
+      ...context,
+      error,
+    });
+    expect(res.status).toBe(200);
+    expect(error).toHaveBeenCalledWith(
+      'deleteContentItem: audit row not written for c1:',
+      expect.any(Error)
     );
   });
 
@@ -510,6 +657,6 @@ describe('inspection state RPCs', () => {
     for (const r of reqs) expect((await r).status).toBe(403);
     expect(store.readDoc).not.toHaveBeenCalled();
     expect(store.patchDoc).not.toHaveBeenCalled();
-    expect(store.deleteDoc).not.toHaveBeenCalled();
+    expect(store.deleteDocIfMatch).not.toHaveBeenCalled();
   });
 });

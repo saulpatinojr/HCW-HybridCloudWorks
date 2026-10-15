@@ -24,12 +24,14 @@ vi.mock('@/hooks/useAuthReady', () => ({
   useAuthReady: () => ({ authReady: true }),
 }));
 
+const transition = vi.fn();
+
 vi.mock('./queue/useContentTransitions', () => ({
   useContentTransitions: () => ({
     loading: {},
     errors: {},
     recall: vi.fn(),
-    transition: vi.fn(),
+    transition: (...args) => transition(...args),
   }),
 }));
 
@@ -59,6 +61,7 @@ function renderPage() {
 describe('EditorListPage', () => {
   beforeEach(() => {
     getJSON.mockReset();
+    transition.mockReset();
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -100,5 +103,46 @@ describe('EditorListPage', () => {
 
     expect(await screen.findByText('Live item 1')).toBeInTheDocument();
     expect(screen.queryByText(/items of a board are shown/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * Restore on the Archive board puts a page back on the site (AP-F13,
+   * #937). The board drops its row, and the live board read before the
+   * restore is read again, so the page appears there without a reload.
+   */
+  it('reads the live list again after a restore on the Archive board, and shows the page there', async () => {
+    const restored = {
+      id: 'arch-1',
+      title: 'Brought back',
+      contentStatus: 'archived',
+      Live: false,
+      'Cloud Provider': 'Azure',
+      archivedAt: '2026-10-15T10:00:00.000Z',
+    };
+    let live = [liveItem(1)];
+    const board = (path) => {
+      if (path.includes('live=true')) return live;
+      return path.includes('archived') ? [restored] : [];
+    };
+    getJSON.mockImplementation((path) => Promise.resolve({ items: board(path) }));
+    const liveReads = () =>
+      getJSON.mock.calls.filter(([path]) => path.includes('live=true')).length;
+    renderPage();
+    expect(await screen.findByText('Live item 1')).toBeInTheDocument();
+    expect(liveReads()).toBe(1);
+
+    transition.mockResolvedValueOnce({ success: true, from: 'archived', to: 'published' });
+    live = [liveItem(1), { ...restored, contentStatus: 'published', Live: true }];
+    fireEvent.click(screen.getByRole('button', { name: /^Archive \(1\)/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Restore to live' }));
+
+    await waitFor(() => expect(liveReads()).toBe(2));
+    expect(transition).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'arch-1' }),
+      'published',
+      expect.objectContaining({ markLive: true })
+    );
+    expect(await screen.findByText('Brought back')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Archive (0)' })).toBeInTheDocument();
   });
 });
