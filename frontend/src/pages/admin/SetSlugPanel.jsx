@@ -39,6 +39,7 @@
 import React, { useState } from 'react';
 import { Link2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import RoleGate from '@/components/admin/RoleGate';
 import { postJSON } from '@/lib/api';
 import { logAdminAction } from '@/lib/auditLog';
 import { safeUrl } from '@/lib/safeUrl';
@@ -141,6 +142,7 @@ export function describeSetSlugResult(result = {}) {
   };
 }
 
+/** The slug control for one live article; the write republishes it, so the button is gated at the publisher role the route asks for. */
 export default function SetSlugPanel({ item, onApplied }) {
   const suggested = suggestedSlugFor(item);
   const current = currentSlugOf(item);
@@ -228,10 +230,16 @@ export default function SetSlugPanel({ item, onApplied }) {
           placeholder="article-url-slug"
           className="flex-1 min-w-[16rem] rounded-md border bg-background px-2 py-1 font-mono text-xs"
         />
-        <Button size="sm" onClick={apply} disabled={saving || !value.trim()}>
-          {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-          Set slug &amp; republish
-        </Button>
+        {/* The route republishes, so it is publisher (lib/cms/set-slug.js). */}
+        <RoleGate
+          minRole="publisher"
+          reason="Setting a slug republishes the page, which needs the publisher role."
+        >
+          <Button size="sm" onClick={apply} disabled={saving || !value.trim()}>
+            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            Set slug &amp; republish
+          </Button>
+        </RoleGate>
       </div>
 
       {suggested && suggested !== value && (

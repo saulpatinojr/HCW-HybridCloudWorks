@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import ConfirmModal from '@/components/admin/ConfirmModal';
+import RoleGate from '@/components/admin/RoleGate';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
 import {
@@ -120,6 +121,7 @@ function describeWhen(issue) {
   return '';
 }
 
+/** One sent, scheduled or failed issue, the actions that touch its Resend broadcast gated at publisher and Duplicate left at the page's role. */
 function IssuePanel({ detail, busy, notice, onCancel, onReschedule, onRetry, onDuplicate }) {
   const { issue } = detail;
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -147,8 +149,14 @@ function IssuePanel({ detail, busy, notice, onCancel, onReschedule, onRetry, onD
         </p>
       )}
       <div className="flex flex-wrap gap-2">
+        {/* Cancel, reschedule and retry touch the Resend broadcast, so all
+            three routes are publisher (lib/newsletter/issue-actions.js);
+            Duplicate below is a draft write and stays at the page's role. */}
         {issue.status === 'scheduled' && (
-          <>
+          <RoleGate
+            minRole="publisher"
+            reason="Moving or canceling a scheduled send needs the publisher role."
+          >
             <Button
               variant="outline"
               size="sm"
@@ -167,17 +175,19 @@ function IssuePanel({ detail, busy, notice, onCancel, onReschedule, onRetry, onD
             >
               <XCircle className="h-3.5 w-3.5" /> Cancel send
             </Button>
-          </>
+          </RoleGate>
         )}
         {issue.status === 'failed' && (
-          <Button size="sm" className="gap-1.5" onClick={onRetry} disabled={Boolean(busy)}>
-            {busy === 'retry' ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RotateCcw className="h-3.5 w-3.5" />
-            )}{' '}
-            Retry as a draft
-          </Button>
+          <RoleGate minRole="publisher" reason="Retrying a send needs the publisher role.">
+            <Button size="sm" className="gap-1.5" onClick={onRetry} disabled={Boolean(busy)}>
+              {busy === 'retry' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}{' '}
+              Retry as a draft
+            </Button>
+          </RoleGate>
         )}
         <Button
           variant="outline"

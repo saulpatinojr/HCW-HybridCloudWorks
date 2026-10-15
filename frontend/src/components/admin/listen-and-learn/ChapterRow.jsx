@@ -13,6 +13,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import RoleGate from '@/components/admin/RoleGate';
 import StatusBadge from '@/components/admin/shared/StatusBadge';
 import { EpisodeSources } from '@/pages/admin/SourceGroundingPanel';
 import {
@@ -163,22 +164,27 @@ function ChapterAudio({ chapter, name }) {
   return null;
 }
 
+/** A chapter's actions in the Library, the review gated at the role its route asks for: publisher to publish, editor to withdraw. */
 function ChapterActions({ chapter, noun, busy, progress, renaming, onRenameStart, actions }) {
   const published = chapter.status === 'published';
   const archived = chapter.status === 'archived';
   const failed = chapter.status === 'failed';
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {/* The review route asks for publisher only when the review publishes
+          (lib/listen-and-learn/speech-handlers.js); withdrawing is editor. */}
       {!failed && !archived && (
-        <Button
-          size="sm"
-          variant={published ? 'outline' : 'default'}
-          disabled={busy || (!chapter.audioUrl && !published)}
-          onClick={() => actions.review(chapter, published ? 'draft' : 'published')}
-        >
-          {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-          {published ? 'Withdraw to draft' : 'Approve and publish'}
-        </Button>
+        <RoleGate minRole={published ? 'editor' : 'publisher'}>
+          <Button
+            size="sm"
+            variant={published ? 'outline' : 'default'}
+            disabled={busy || (!chapter.audioUrl && !published)}
+            onClick={() => actions.review(chapter, published ? 'draft' : 'published')}
+          >
+            {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+            {published ? 'Withdraw to draft' : 'Approve and publish'}
+          </Button>
+        </RoleGate>
       )}
       <Button
         size="sm"

@@ -41,6 +41,7 @@ import {
   Share2,
   Trash2,
 } from 'lucide-react';
+import RoleGate from '@/components/admin/RoleGate';
 import { deleteSocialPost, patchSocialPost, unscheduleContent } from './calendarApi';
 import {
   browserTimeZone,
@@ -161,6 +162,7 @@ function LinkAction({ to, icon: Icon, children, primary = false }) {
   );
 }
 
+/** A content item's actions, the two schedule writes gated so an editor on the calendar learns their role before the round trip. */
 function ContentActions({ item, busy, onReschedule, onUnschedule }) {
   const pending = item.status !== 'published';
   return (
@@ -174,27 +176,29 @@ function ContentActions({ item, busy, onReschedule, onUnschedule }) {
       <LinkAction to={socialComposeHref(item.sourceId)} icon={Share2}>
         Schedule social
       </LinkAction>
+      {/* saveContentSchedule and unscheduleContent are publisher
+          (lib/content-workflow/schedule.js); the calendar itself is editor. */}
       {pending && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5"
-          onClick={onReschedule}
-          disabled={busy}
-        >
-          <CalendarClock className="h-3.5 w-3.5" /> Reschedule
-        </Button>
-      )}
-      {pending && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5"
-          onClick={onUnschedule}
-          disabled={busy}
-        >
-          <CalendarX className="h-3.5 w-3.5" /> Unschedule
-        </Button>
+        <RoleGate minRole="publisher" reason="Changing the publish time needs the publisher role.">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={onReschedule}
+            disabled={busy}
+          >
+            <CalendarClock className="h-3.5 w-3.5" /> Reschedule
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={onUnschedule}
+            disabled={busy}
+          >
+            <CalendarX className="h-3.5 w-3.5" /> Unschedule
+          </Button>
+        </RoleGate>
       )}
       {item.status === 'failed' && (
         <LinkAction to="/admin/published" icon={RotateCcw} primary>

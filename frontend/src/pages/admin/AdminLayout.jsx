@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router';
 import { ArrowLeft, ChevronLeft, ChevronRight, LogOut, Menu } from 'lucide-react';
 import { signOutUser } from '@/lib/entraAuth';
-import { NAV_GROUPS, navItemFor } from '@/config/adminNav';
+import { NAV_GROUPS, navItemFor, roleLabel, visibleNavFor } from '@/config/adminNav';
+import { useAdminRole } from '@/hooks/useAdminRole';
 import useDashboardCounts from '@/hooks/useDashboardCounts';
 import {
   Dialog,
@@ -165,11 +166,15 @@ function NavItem({
   );
 }
 
-/** The groups and their items, as the rail and the drawer both render them. */
-function NavGroups({ counts, collapsed, onNavigate }) {
+/**
+ * The groups and their items, as the rail and the drawer both render them.
+ * `groups` is the registry already filtered to the signed-in role
+ * (visibleNavFor, AP-F4): an item the server would refuse is not drawn.
+ */
+function NavGroups({ groups, counts, collapsed, onNavigate }) {
   return (
     <>
-      {NAV_GROUPS.map((group, index) => (
+      {groups.map((group, index) => (
         <div key={group.id} className="space-y-0.5">
           {!collapsed && index > 0 && (
             <p
@@ -236,7 +241,7 @@ function ShellFooter({ collapsed, onSignOut, onNavigate }) {
 
 // ── Main Layout ───────────────────────────────────────────────────────────────
 
-/** The shell every admin route renders inside: the menu, the page, and the toasts it fires. */
+/** The shell every admin route renders inside: the menu, cut to the signed-in role so a page the server would refuse is never offered, the page, and the toasts it fires. */
 export default function AdminLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -251,6 +256,11 @@ export default function AdminLayout() {
   // One snapshot for every badge, re-read on each route change so a page the
   // user just left (approve, publish, reject) is reflected in the menu.
   const { counts } = useDashboardCounts({ refetchOnNavigate: true });
+  // The menu is the registry cut to the role the guard verified (AP-F4,
+  // #928): a viewer sees what a viewer can open, and the role itself is
+  // printed under the brand so the cut is explained rather than mysterious.
+  const role = useAdminRole();
+  const groups = useMemo(() => visibleNavFor(role), [role]);
 
   useEffect(() => {
     try {
@@ -330,12 +340,22 @@ export default function AdminLayout() {
               <DialogDescription className="text-xs leading-4 text-muted-foreground">
                 Influencer CMS
               </DialogDescription>
+              {role && (
+                <p className="mb-0 text-xs leading-4 text-muted-foreground">
+                  Your role: {roleLabel(role)}
+                </p>
+              )}
             </div>
             <nav
               className="flex-1 min-h-0 overflow-y-auto py-3 px-2 space-y-4"
               aria-label="ContentForge menu"
             >
-              <NavGroups counts={counts} collapsed={false} onNavigate={closeDrawer} />
+              <NavGroups
+                groups={groups}
+                counts={counts}
+                collapsed={false}
+                onNavigate={closeDrawer}
+              />
             </nav>
             <ShellFooter collapsed={false} onSignOut={handleSignOut} onNavigate={closeDrawer} />
           </DialogContent>
@@ -360,6 +380,11 @@ export default function AdminLayout() {
             <div className="min-w-0">
               <p className="text-sm font-bold tracking-tight leading-5">ContentForge</p>
               <p className="text-xs leading-4 text-muted-foreground">Influencer CMS</p>
+              {role && (
+                <p className="mb-0 text-xs leading-4 text-muted-foreground">
+                  Your role: {roleLabel(role)}
+                </p>
+              )}
             </div>
           )}
           <button
@@ -381,7 +406,7 @@ export default function AdminLayout() {
           className="flex-1 min-h-0 overflow-y-auto py-3 px-2 space-y-4"
           aria-label="ContentForge"
         >
-          <NavGroups counts={counts} collapsed={isSidebarCollapsed} />
+          <NavGroups groups={groups} counts={counts} collapsed={isSidebarCollapsed} />
         </nav>
 
         <ShellFooter collapsed={isSidebarCollapsed} onSignOut={handleSignOut} />

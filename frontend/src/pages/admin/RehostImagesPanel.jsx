@@ -26,6 +26,7 @@ import { Images, Loader2, RefreshCw } from 'lucide-react';
 import CollapsiblePanel, { PanelLoading } from '@/components/admin/CollapsiblePanel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import RoleGate from '@/components/admin/RoleGate';
 import { getJSON, postJSON } from '@/lib/api';
 import { logAdminAction } from '@/lib/auditLog';
 
@@ -100,6 +101,7 @@ export function shortDate(iso) {
   return Number.isNaN(parsed.getTime()) ? '—' : parsed.toISOString().slice(0, 10);
 }
 
+/** The backfill's panel: listing the candidates is an editor read, and the run republishes, so only the run is gated at publisher. */
 export default function RehostImagesPanel() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -285,10 +287,21 @@ export default function RehostImagesPanel() {
           </ul>
 
           <div className="flex items-center gap-3">
-            <Button size="sm" onClick={runSelected} disabled={running || selectedIds.length === 0}>
-              {running && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Re-host selected ({selectedIds.length})
-            </Button>
+            {/* Listing candidates is editor; the re-host itself republishes
+                each page and is publisher (lib/cms/rehost-images.js). */}
+            <RoleGate
+              minRole="publisher"
+              reason="Re-hosting republishes each page, which needs the publisher role."
+            >
+              <Button
+                size="sm"
+                onClick={runSelected}
+                disabled={running || selectedIds.length === 0}
+              >
+                {running && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Re-host selected ({selectedIds.length})
+              </Button>
+            </RoleGate>
             {progress && <span className="text-xs text-muted-foreground">{progress}</span>}
           </div>
         </>

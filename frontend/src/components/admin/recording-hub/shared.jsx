@@ -19,6 +19,7 @@ import {
   Mic,
   RefreshCw,
 } from 'lucide-react';
+import RoleGate from '@/components/admin/RoleGate';
 import { describeSkip, fmtDate, hostErrorMessage, hostState } from './recordingView';
 
 /** Where a transcript came from, as a chip and a link when there is one. */
@@ -103,24 +104,28 @@ function HostPublished({ host }) {
   );
 }
 
+/** The host's refusal with Retry beside it, so a failed Podbean publish is retried from the row rather than from the logs. */
 function HostError({ host, item, onRetry, retrying }) {
   return (
     <p className="text-xs text-red-700 dark:text-red-300 flex items-center gap-2 flex-wrap">
       <span>Host: {hostErrorMessage(host)}</span>
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-6 text-xs px-2"
-        onClick={() => onRetry(item)}
-        disabled={retrying}
-      >
-        {retrying ? (
-          <Loader2 className="h-3 w-3 animate-spin mr-1" />
-        ) : (
-          <RefreshCw className="h-3 w-3 mr-1" />
-        )}
-        Retry
-      </Button>
+      {/* publishTranscript is publisher (lib/podcast/handlers.js). */}
+      <RoleGate minRole="publisher" reason="Retrying the host publish needs the publisher role.">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 text-xs px-2"
+          onClick={() => onRetry(item)}
+          disabled={retrying}
+        >
+          {retrying ? (
+            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+          ) : (
+            <RefreshCw className="h-3 w-3 mr-1" />
+          )}
+          Retry
+        </Button>
+      </RoleGate>
     </p>
   );
 }

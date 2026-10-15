@@ -25,6 +25,7 @@ import { ImageOrderManager } from '@/components/admin/ImageOrderManager';
 import { ImageGalleryPicker } from '@/components/admin/ImageGalleryPicker';
 import { getOrderedContentImages } from '@/lib/contentImages';
 import PipelineStepper from '@/components/admin/PipelineStepper';
+import RoleGate from '@/components/admin/RoleGate';
 import RehostImagesPanel from './RehostImagesPanel';
 import SetSlugPanel, { SetSlugButton } from './SetSlugPanel';
 
@@ -423,7 +424,7 @@ function PrePublishModal({
   );
 }
 
-/** The Publish stage: what is ready to go live and what already is, read as one snapshot. */
+/** The Publish stage, where content goes live, read as one snapshot; its publish and unpublish buttons are gated because the routes behind them are publisher. */
 export default function PublishedPage() {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();
@@ -741,19 +742,28 @@ export default function PublishedPage() {
                           <Images className="h-4 w-4 mr-2" />
                           Images
                         </Button>
-                        <Button
-                          size="sm"
-                          variant={isLive ? 'outline' : 'default'}
-                          onClick={() =>
-                            isLive ? handleUnpublish(item) : handlePublishRequest(item)
-                          }
-                          disabled={publishingId === item.id || validatingId === item.id}
+                        {/* publishContent and unpublishContentToInspected are
+                            publisher routes (lib/cms/publish.js,
+                            lib/content-workflow.js); below that role the
+                            button says so instead of answering with a 403. */}
+                        <RoleGate
+                          minRole="publisher"
+                          reason="Publishing and unpublishing need the publisher role."
                         >
-                          {getPublishButtonContent(
-                            publishingId === item.id || validatingId === item.id,
-                            isLive
-                          )}
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant={isLive ? 'outline' : 'default'}
+                            onClick={() =>
+                              isLive ? handleUnpublish(item) : handlePublishRequest(item)
+                            }
+                            disabled={publishingId === item.id || validatingId === item.id}
+                          >
+                            {getPublishButtonContent(
+                              publishingId === item.id || validatingId === item.id,
+                              isLive
+                            )}
+                          </Button>
+                        </RoleGate>
                       </div>
                     </div>
 
