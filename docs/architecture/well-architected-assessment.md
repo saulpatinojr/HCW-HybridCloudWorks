@@ -29,7 +29,7 @@ window, and make asynchronous side effects repeatable without duplication.
 | --- | --- | --- | --- |
 | Static failure isolation | Public pages and data are materialized into the frontend artifact | API/Cosmos outage drill leaves public pages readable | Planned |
 | Zone resilience | Declined on cost: Cosmos and the Function App are single-zone, storage is geo-redundant (RA-GRS content, GRS host), not zone-redundant (ADR 0011 amendment 2026-10-06) | Resource configuration; no zone-failure evidence sought | Decided against |
-| Data recovery | Cosmos continuous backup (30 days) plus the nightly out-of-account export (ADR 0028); Blob versioning and soft delete | The restore drill records RTO/RPO (8 h / 24 h); first drill approved 2026-10-06, not yet run | In place, unproven |
+| Data recovery | Cosmos continuous backup (30 days) plus the nightly out-of-account export (ADR 0028); Blob versioning and soft delete | Restore drill records RTO/RPO; drill run 2026-10-13 (RTO 01:39:04, RPO 22 h, 11,971 docs, PLAT-1 #961) | Verified |
 | Retry safety | Idempotency keys, conditional state transitions, bounded retry, poison queues | Duplicate-delivery tests cause one external effect | Planned |
 | Deployment recovery | Immutable artifacts and known-good rollback package | Rollback drill and post-rollback smoke results | Planned |
 | Dependency resilience | Timeouts, circuit/fallback behavior, non-AI degradation | Fault injection for AI and third-party APIs | Planned |
@@ -141,7 +141,7 @@ unbounded cost.
 | Cloudflare over Front Door | Lower fixed cost; preserves current edge | No Azure Private Link origin integration | Origin-bypass incident or stronger compliance need |
 | Serverless Cosmos | Excellent idle/spiky economics | Single-region and migration required for multiregion | RTO/RPO tightens or RU profile becomes sustained |
 | Selective Private Link | Private editorial data and secrets | Endpoint/DNS cost; host state remains public | Threat model or budget justifies full host privatization |
-| Three Function Apps | Least privilege and isolated scaling | More deployment and telemetry configuration | Operating burden exceeds isolation value |
+| Single Function App (ADR 0019) | Consolidated scaling, single telemetry sink, eliminated cold starts | Shared execution runtime across functions | Operating burden or security boundary requires physical isolation |
 | One production environment | Lowest fixed cost and simplest state | Reduced preproduction fidelity | Higher change volume or multiple contributors |
 | ZRS storage | Zone-level durability | Higher cost than LRS | Actual asset recovery value is low or budget pressure persists |
 

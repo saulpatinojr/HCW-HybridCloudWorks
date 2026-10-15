@@ -27,6 +27,8 @@ Environment=TMPDIR={{ labs_agent_tmp_dir }}
 Environment=DOCKER_HOST={{ labs_agent_docker_host }}
 ExecStartPre=/usr/bin/test -S {{ labs_agent_docker_proxy_socket }}
 ExecStart=/usr/bin/node index.js
+# Wait for in-flight jobs to finish before SIGKILL during shutdown (LAB-13, #959).
+TimeoutStopSec={{ labs_agent_timeout_stop_sec }}
 # The agent starts its error lines with <3> and its warnings with <4>
 # (vps-agent/lib/log.js), and journald turns that prefix into the line's
 # priority. systemd's default, written down because the data collection rule

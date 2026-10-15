@@ -69,6 +69,11 @@ export const SERVICES = Object.freeze([
     workflow: 'deploy-azure-frontend.yml',
     paths: Object.freeze(['frontend']),
   }),
+  Object.freeze({
+    name: 'Terraform Infrastructure',
+    workflow: 'tfc-plan-check.yml',
+    paths: Object.freeze(['infra', 'cosmos-containers.json']),
+  }),
 ]);
 
 /** Hours of drift tolerated before this is called stale. */

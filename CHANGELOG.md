@@ -19,6 +19,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Completed low-hanging fruit remediations across Admin Portal, VPS agent, deployment drift, docs, and infra** (AP-F6 #930, LAB-13 #959, PLAT-3 #963, PLAT-9 #969, PLAT-10 #970).
+  - **AP-F6 (#930)**: Added server-side `search` query parameter support in `functions/src/lib/cms-content.js` with Cosmos DB `CONTAINS`, added 500-item truncation notice and retry attempt state in `LivePagesPage.jsx`, and added unit tests in `LivePagesPage.test.jsx`.
+  - **LAB-13 (#959)**: Extended VPS agent shutdown timeout to 210s (`LABS_AGENT_SHUTDOWN_TIMEOUT_MS`) with active job terminal completion handling, added systemd `TimeoutStopSec=240` to `hcw-labs-agent.service.j2` and role defaults, and hash-locked `ansible-core` wheel SHA256 in `lab-host/bootstrap.sh`.
+  - **PLAT-3 (#963)**: Added Terraform Infrastructure (`infra`, `cosmos-containers.json`, `tfc-plan-check.yml`) to deploy drift monitor (`scripts/check-deploy-drift.mjs`) and test suite.
+  - **PLAT-9 (#969)**: Updated Azure Well-Architected assessment (`well-architected-assessment.md`) reflecting single Function App consolidation (ADR 0019) and verified recovery drill controls.
+  - **PLAT-10 (#970)**: Corrected apex DNS direct routing comment in `infra/frontend.tf` regarding SWA 100 GB Free bandwidth limits, and added strict IPv4 format validation for runner IP lookup in CI deployment workflows.
+
 - **Lab host: no reboot with a user logged in, the upgrade origins rendered
   by the role, and job containers with a stated swap bound and an open-files
   ceiling**
