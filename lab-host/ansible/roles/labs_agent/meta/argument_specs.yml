@@ -199,4 +199,4 @@ argument_specs:
         type: int
         required: false
         default: 240
-        description: systemd TimeoutStopSec for graceful shutdown while jobs finish (LAB-13, #959).
+        description: "systemd TimeoutStopSec for graceful shutdown while jobs finish (LAB-13, issue 959)."
