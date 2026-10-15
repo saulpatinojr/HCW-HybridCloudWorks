@@ -453,6 +453,7 @@ describe('the agent and the daemons around the proxy', () => {
     const sandboxVars = read(ansible, 'roles', 'coder_sandbox', 'vars', 'main.yml');
     const coderDefaults = read(ansible, 'roles', 'coder', 'defaults', 'main.yml');
     const labImagesDefaults = read(ansible, 'roles', 'lab_images', 'defaults', 'main.yml');
+    const hardeningDefaults = read(ansible, 'roles', 'hardening', 'defaults', 'main.yml');
     expect(value(checks, 'privilege_checks_agent_socket')).toBe(`${SOCKET_DIR}/docker.sock`);
     expect(value(checks, 'privilege_checks_agent_tmp_dir')).toBe(TMP_DIR);
     expect(value(checks, 'privilege_checks_agent_proxy_container')).toBe(value(agentDefaults, 'labs_agent_docker_proxy_container'));
@@ -460,6 +461,10 @@ describe('the agent and the daemons around the proxy', () => {
     expect(value(checks, 'privilege_checks_sandbox_socket_dir')).toBe(sandboxDir);
     expect(value(checks, 'privilege_checks_sandbox_docker_host')).toBe(`unix://${sandboxDir}/docker.sock`);
     expect(value(labImagesDefaults, 'lab_images_sandbox_docker_host')).toBe(`unix://${sandboxDir}/docker.sock`);
+    // The idle reboot asks the sandbox daemon for running Coder workspaces
+    // (LAB-13, #959); a socket that drifted would see none and reboot
+    // through a workspace in use.
+    expect(value(hardeningDefaults, 'hardening_reboot_workspace_docker_host')).toBe(`unix://${sandboxDir}/docker.sock`);
     expect(value(checks, 'privilege_checks_coder_compose_file')).toBe(
       `${value(coderDefaults, 'coder_project_dir')}/docker-compose.yml`
     );

@@ -495,14 +495,17 @@ jobs:
       # defaults and run against stub apt-config, loginctl, docker, sleep,
       # systemctl and logger: a stand-down while unattended-upgrades' own
       # reboot is on, no reboot without the marker, with a login session
-      # (class user) open or with a lab job container running, none for
-      # lingering service managers, a failed run when apt-config, loginctl or
-      # docker cannot answer, and, with new lab jobs held, a second look that
-      # defers for a job or a login that appeared during the hold (CodeRabbit
-      # on #1191); exactly one `systemctl reboot` when idle at both looks, the
-      # hold kept only on that path, an overdue deferral at err, the timer at
-      # the role's hour, the hold path the agent's and the job label the
-      # agent's. Needs neither root nor Docker.
+      # (class user) open, with a lab job container up (created and not yet
+      # started included) or with a Coder workspace up on the sandbox daemon,
+      # none for lingering service managers, a failed run when apt-config,
+      # loginctl or either docker daemon cannot answer, and, with new lab jobs
+      # held, a second look that defers for a job, a workspace or a login that
+      # appeared during the hold (CodeRabbit on #1191); exactly one
+      # `systemctl reboot` when idle at both looks, the hold kept only on that
+      # path, a stop exiting 143 as a success, the age counted from the first
+      # sight across a rewritten marker, an overdue deferral at err, the timer
+      # at the role's hour, and the hold path, the sandbox socket and both
+      # labels their owners'. Needs neither root nor Docker.
       - name: hcw-reboot-when-idle test
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/hcw-reboot-when-idle.test.sh

@@ -42,23 +42,29 @@ finish() { rm -rf "${work}"; }
 trap finish EXIT
 
 # render TEMPLATE OUT: as the template module does (trim_blocks), from
-# defaults/main.yml plus ansible_managed. An undefined name fails the render.
+# defaults/main.yml plus ansible_managed, with the path filter the template
+# uses (Ansible's dirname is os.path's). An undefined name fails the render.
 render() {
   "${python}" - "${role}/templates/$1" "${defaults}" > "$2" <<'PY'
-import sys, jinja2, yaml
+import posixpath, sys, jinja2, yaml
 template, defaults = sys.argv[1], sys.argv[2]
 values = yaml.safe_load(open(defaults, encoding="utf-8"))
 values["ansible_managed"] = "Ansible managed"
 env = jinja2.Environment(undefined=jinja2.StrictUndefined, trim_blocks=True, keep_trailing_newline=True)
+env.filters["dirname"] = posixpath.dirname
 sys.stdout.write(env.from_string(open(template, encoding="utf-8").read()).render(**values))
 PY
 }
 script="${work}/hcw-held-upgradable"
 render hcw-held-upgradable.sh.j2 "${script}"
-# The pending-reboot marker is read from a scratch path here, not from the
-# machine running the test (an Ubuntu runner may well have one pending).
+# The pending-reboot marker and the idle reboot's first-seen record are read
+# from scratch paths here, not from the machine running the test (an Ubuntu
+# runner may well have a reboot pending).
+hold_dir="$(sed -n 's/^hardening_reboot_hold_path: \(\/.*\)\/[^/]*$/\1/p' "${defaults}")"
 sed -i "s#^reboot_required='/var/run/reboot-required'\$#reboot_required='${work}/reboot-required'#" "${script}"
 grep -q "^reboot_required='${work}/reboot-required'" "${script}" || { echo "the rendered script does not read the reboot marker from the role's path" >&2; exit 1; }
+sed -i "s#^first_seen='${hold_dir}/reboot-pending-since'\$#first_seen='${work}/reboot-pending-since'#" "${script}"
+grep -q "^first_seen='${work}/reboot-pending-since'" "${script}" || { echo "the rendered script does not read the idle reboot's first-seen record beside its hold" >&2; exit 1; }
 render hcw-held-upgradable.service.j2 "${work}/service"
 render hcw-held-upgradable.timer.j2 "${work}/timer"
 chmod +x "${script}"
@@ -154,9 +160,23 @@ touch -d '3 days ago' "${work}/reboot-required"
 run
 reboot_time="$(sed -n 's/^hardening_unattended_reboot_time: "\(.*\)"$/\1/p' "${defaults}")"
 check "a pending reboot adds one warning line with its age in days, naming the idle reboot and its hour" \
-  "[ \"\$(wc -l < '${work}/log')\" -eq 2 ] && grep -qE '^${tag}\\|daemon\\.warning\\|a reboot is pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(3 days\\): hcw-reboot-when-idle reboots at ${reboot_time} only with nobody logged in and no lab job running\\. Log out before then, or reboot at a time of your choosing \\(docs/runbooks/labs-host\\.md, Runtime advisories\\)\\.\$' '${work}/log'" \
+  "[ \"\$(wc -l < '${work}/log')\" -eq 2 ] && grep -qE '^${tag}\\|daemon\\.warning\\|a reboot is pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(3 days\\): hcw-reboot-when-idle reboots at ${reboot_time} only with nobody logged in and no lab job or Coder workspace up\\. Log out before then, or reboot at a time of your choosing \\(docs/runbooks/labs-host\\.md, Runtime advisories\\)\\.\$' '${work}/log'" \
   "$(cat "${work}/log")"
-rm -f "${work}/reboot-required"
+# The marker rewritten today by another upgrade, the idle reboot's record
+# saying it was first seen nine days ago: the age is the record's, as the
+# idle reboot's overdue line counts it (review of #1191).
+touch "${work}/reboot-required"
+echo $(( $(date -u +%s) - 9 * 86400 )) > "${work}/reboot-pending-since"
+run
+check "a rewritten marker is aged from the idle reboot's first-seen record, not its own time" \
+  "grep -qE '^${tag}\\|daemon\\.warning\\|a reboot is pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(9 days\\): ' '${work}/log'" \
+  "$(cat "${work}/log")"
+printf 'garbage\n' > "${work}/reboot-pending-since"
+run
+check "a record that is not a time is ignored, and the marker's own time used" \
+  "grep -qE '^${tag}\\|daemon\\.warning\\|a reboot is pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(0 days\\): ' '${work}/log'" \
+  "$(cat "${work}/log")"
+rm -f "${work}/reboot-required" "${work}/reboot-pending-since"
 run
 check "no pending reboot, no reboot line" "! grep -q 'a reboot is pending' '${work}/log'"
 

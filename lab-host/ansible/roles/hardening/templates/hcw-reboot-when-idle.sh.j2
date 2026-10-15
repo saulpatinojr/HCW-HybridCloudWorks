@@ -17,16 +17,21 @@
 #   apt has Automatic-Reboot on      warning  standing down; unattended-upgrades reboots, not this
 #   no marker                        notice   nothing pending; stays on the host
 #   a user is logged in              warning  deferred; tomorrow's run asks again
-#   a job container runs             warning  deferred; tomorrow's run asks again
-#   (idle: new lab jobs are held, the script waits, then asks both again)
-#   a user or a job at that look     warning  deferred; tomorrow's run asks again
-#   apt-config, loginctl or docker
-#   cannot say, or no hold written   err      the run fails and the notifier (LAB-2) pages
+#   a job container is up            warning  deferred; tomorrow's run asks again
+#   a Coder workspace is up          warning  deferred; tomorrow's run asks again
+#   (idle: new lab jobs are held, the script waits, then asks all three again)
+#   any of the three at that look    warning  deferred; tomorrow's run asks again
+#   apt-config, loginctl or a docker
+#   daemon cannot say, or no hold or
+#   pending record written           err      the run fails and the notifier (LAB-2) pages
 #   idle at both looks               warning  rebooting, with how long it has waited
 #
 # A deferral of a reboot pending {{ hardening_reboot_overdue_days }} days or more is at err instead of
 # warning, so a fix that has waited a week stands out from the nightly
-# lines; the script still never reboots over a person or a job.
+# lines; the script still never reboots over a person, a job or a
+# workspace. How long it has been pending is counted from the first time a
+# run saw the marker, not from the marker's own time, which every upgrade
+# that wants a reboot rewrites (below).
 #
 # Warning and err ship to Log Analytics through the Arc data collection
 # rule, so every reboot and every deferral leaves a row there, and the daily
@@ -39,6 +44,8 @@ set -euo pipefail
 tag='{{ hardening_reboot_when_idle_tag }}'
 reboot_required='{{ hardening_reboot_required_path }}'
 job_label='{{ hardening_reboot_job_label }}'
+workspace_docker_host='{{ hardening_reboot_workspace_docker_host }}'
+workspace_label='{{ hardening_reboot_workspace_label }}'
 hold='{{ hardening_reboot_hold_path }}'
 hold_seconds='{{ hardening_reboot_hold_seconds }}'
 settle_seconds='{{ hardening_reboot_hold_settle_seconds }}'
@@ -66,12 +73,37 @@ if [ "${automatic_reboot}" = "automatic_reboot='true'" ]; then
   exit 0
 fi
 
+# When this pending reboot was first seen (review of #1191). The marker's
+# own time is no measure: every upgrade that wants a reboot rewrites it, so
+# a reboot pending for a fortnight of kernel updates would read a day old
+# and never reach the overdue line. The record keeps the marker's time as
+# the first run that saw it found it, and is removed by the first run that
+# finds no marker. It lives beside the hold, in the service's
+# RuntimeDirectory= under /run, which is the marker's own lifetime: both are
+# on the same tmpfs, so a reboot clears the two together and no record can
+# outlive the reboot it was counting towards (a /var/lib record would, and
+# would date the next boot's marker from the last boot's).
+first_seen="${hold%/*}/reboot-pending-since"
+
 if [ ! -e "${reboot_required}" ]; then
+  rm -f -- "${first_seen}" "${first_seen}.new" || true
   say notice "no reboot is pending: ${reboot_required} does not exist"
   exit 0
 fi
 
-since_epoch="$(stat -c %Y "${reboot_required}")"
+marker_epoch="$(stat -c %Y "${reboot_required}")"
+since_epoch=''
+[ ! -r "${first_seen}" ] || since_epoch="$(head -c 32 -- "${first_seen}" | tr -d '\n')"
+case "${since_epoch}" in
+  '' | *[!0-9]*) since_epoch='' ;;
+esac
+if [ -z "${since_epoch}" ] || [ "${marker_epoch}" -lt "${since_epoch}" ]; then
+  since_epoch="${marker_epoch}"
+  { printf '%s\n' "${since_epoch}" > "${first_seen}.new" && mv -f -- "${first_seen}.new" "${first_seen}"; } || {
+    say err "not rebooting: the record of when this reboot was first seen could not be written, so how long it has waited cannot be told; its error is in this unit's journal and this run fails"
+    exit 1
+  }
+fi
 since="$(date -u -d "@${since_epoch}" +%Y-%m-%dT%H:%MZ)"
 days=$(( ($(date -u +%s) - since_epoch) / 86400 ))
 
@@ -134,13 +166,21 @@ logged_in() {
   done <<< "${sessions}"
 }
 
+# A container counts while it is up or about to be: running, paused,
+# restarting, or created and not yet started (review of #1191). A `status=`
+# filter makes `docker ps` look at every container, not only running ones,
+# so `created` is what lets the second look see a job whose `docker run`
+# has made its container and not started it yet. Exited and dead ones do
+# not count; the agent's unit sweeps those (hcw-labjob-sweep).
+up=(--filter status=created --filter status=restarting --filter status=running --filter status=paused)
+
 # Every job container carries the agent's label (vps-agent/lib/docker-runner.js,
 # JOB_LABEL), keyed by job id; nothing else on the host does.
 #
-# running_jobs: set job_count to the containers running with the agent's job label; a docker that cannot answer ends the run.
+# running_jobs: set job_count to the containers up with the agent's job label; a docker that cannot answer ends the run.
 running_jobs() {
   local running
-  running="$(docker ps -q --filter "label=${job_label}")" || {
+  running="$(docker ps -q --filter "label=${job_label}" "${up[@]}")" || {
     say err "not rebooting: docker could not list the job containers, so the check has not run; its error is in this unit's journal and this run fails"
     exit 1
   }
@@ -151,19 +191,46 @@ running_jobs() {
   fi
 }
 
+# Coder's workspaces run on the rootless sandbox daemon (roles/coder_sandbox),
+# not the host daemon, and a person working in one has no logind session on
+# the host, so neither question above sees them (review of #1191). Every
+# workspace container carries coder.workspace_id (lab-host/coder/templates).
+# Root reaches the daemon's socket as the Ansible roles already do; it is
+# outside /run/user, so ProtectHome= does not hide it. No socket means no
+# sandbox daemon (Coder off, or the daemon down, in which case no workspace
+# runs either); a daemon that is there and cannot answer is a check that has
+# not run. A workspace left running for days defers every night, and the
+# overdue line says so from the seventh.
+#
+# running_workspaces: set workspace_count to the Coder workspaces up on the sandbox daemon; none without its socket, and a daemon that cannot answer ends the run.
+running_workspaces() {
+  local running
+  workspace_count=0
+  [ -e "${workspace_docker_host#unix://}" ] || return 0
+  running="$(docker --host "${workspace_docker_host}" ps -q --filter "label=${workspace_label}" "${up[@]}")" || {
+    say err "not rebooting: the Coder sandbox daemon could not list its workspaces, so the check has not run; its error is in this unit's journal and this run fails"
+    exit 1
+  }
+  if [ -n "${running}" ]; then
+    workspace_count="$(wc -l <<< "${running}" | tr -d ' ')"
+  fi
+}
+
 logged_in
 [ -z "${people}" ] || defer "a user is logged in (${people})"
 running_jobs
-[ "${job_count}" -eq 0 ] || defer "${job_count} job container(s) running"
+[ "${job_count}" -eq 0 ] || defer "${job_count} job container(s) up"
+running_workspaces
+[ "${workspace_count}" -eq 0 ] || defer "${workspace_count} Coder workspace(s) up"
 
 # The second look (CodeRabbit on #1191). The first one alone left a gap: a
 # job the agent claimed after `docker ps` came back empty, and before the
 # reboot request, started a container the reboot then killed. So the script
 # writes the maintenance hold, under which the labs agent claims no new job
 # (vps-agent/lib/maintenance-hold.js), waits longer than a claim already
-# sent can take to come back and start its container, and asks both
-# questions again. A job such a claim brings back is running by then, so
-# the second look sees it and defers. The hold holds the epoch second it
+# sent can take to come back and start its container, and asks the three
+# questions again. A job such a claim brings back is created or running by
+# then, so the second look sees it and defers. The hold holds the epoch second it
 # lapses, so a run that dies without removing it cannot keep the agent idle
 # past that, and the agent caps any hold at ten minutes from its write.
 # Every way out of the script removes it except the reboot it asks for: on
@@ -174,10 +241,12 @@ rebooting=0
 # release_hold: remove the hold on every way out but the reboot this run asked for.
 release_hold() { [ "${rebooting}" -eq 1 ] || rm -f -- "${hold}" "${hold}.new" || true; }
 trap release_hold EXIT
-# A stop (TimeoutStartSec, or `systemctl stop`) is a way out too. Bash
-# already runs the EXIT trap when a signal it does not trap kills it; these
-# say so here rather than leave it to that, and end with the conventional
-# status.
+# A stop (TimeoutStartSec, `systemctl stop`, or the reboot's own stop job
+# reaching this unit) is a way out too. Bash already runs the EXIT trap
+# when a signal it does not trap kills it; these say so here rather than
+# leave it to that, and end with the conventional status. The unit counts
+# 143 as success (SuccessExitStatus=143), so a stop is not a page; a
+# TimeoutStartSec kill still fails the unit, as a timeout.
 trap 'exit 143' TERM
 trap 'exit 130' INT
 trap 'exit 129' HUP
@@ -198,8 +267,10 @@ logged_in
 [ -z "${people}" ] || defer "a user logged in while new lab jobs were held (${people})"
 running_jobs
 [ "${job_count}" -eq 0 ] || defer "${job_count} job container(s) started while new lab jobs were held"
+running_workspaces
+[ "${workspace_count}" -eq 0 ] || defer "${workspace_count} Coder workspace(s) started while new lab jobs were held"
 
-say warning "rebooting; pending since ${since} (${days} days): nobody is logged in and no job container is running, at two looks ${settle_seconds} s apart with new lab jobs held between"
+say warning "rebooting; pending since ${since} (${days} days): nobody is logged in and no job container or Coder workspace is up, at two looks ${settle_seconds} s apart with new lab jobs held between"
 # `systemctl reboot` enqueues the job and returns (it is `start reboot.target
 # --job-mode=replace-irreversibly --no-block` with a wall message), so this
 # run ends successfully before the shutdown reaches its unit. The hold stays

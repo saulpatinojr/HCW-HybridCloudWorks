@@ -130,8 +130,9 @@ argument_specs:
             outcome. Deferrals, the stand-down and the reboot itself go to daemon.warning, which
             the Arc data collection rule ships, and a deferral once the reboot is overdue
             (hardening_reboot_overdue_days) to daemon.err; the nothing-pending line goes to
-            daemon.notice and stays on the host; an apt-config, a loginctl or a docker that does
-            not answer, or a hold that cannot be written, is daemon.err and a failed run.
+            daemon.notice and stays on the host; an apt-config, a loginctl or a docker daemon
+            (the host's or the Coder sandbox's) that does not answer, or a hold or first-seen
+            record that cannot be written, is daemon.err and a failed run.
       hardening_reboot_job_label:
         type: str
         required: false
@@ -141,6 +142,21 @@ argument_specs:
             vps-agent/lib/docker-runner.js. The reboot is deferred while docker ps lists any
             container with it. scripts/lab-job-limits.test.mjs holds this default to the agent's
             constant.
+      hardening_reboot_workspace_docker_host:
+        type: str
+        required: false
+        default: unix:///run/hcw-coder-docker/docker.sock
+        description:
+          - The Coder sandbox daemon's socket (coder_sandbox_docker_host). The reboot is deferred
+            while that daemon has a container with hardening_reboot_workspace_label up; with no
+            socket there, nothing is asked. Must be a unix socket outside /run/user, which the
+            service's ProtectHome= hides.
+      hardening_reboot_workspace_label:
+        type: str
+        required: false
+        default: coder.workspace_id
+        description:
+          - The Docker label every Coder workspace container carries (lab-host/coder/templates).
       hardening_reboot_hold_path:
         type: str
         required: false

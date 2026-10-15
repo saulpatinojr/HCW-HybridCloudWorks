@@ -14,11 +14,12 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
   CLAIM_SETTLE_MS,
+  CONTAINER_START_MARGIN_MS,
   DEFAULT_HOLD_PATH,
   MAX_HOLD_MS,
   createHoldGate,
@@ -211,17 +212,11 @@ describe('the hold path and the settle bound', () => {
     }
   });
 
-  test('CLAIM_SETTLE_MS covers a claim already sent and the runner start grace', () => {
-    // The runner allows its container this many seconds past the
-    // capability's own timeout for the image and the start; read from its
-    // text, because the grace is inline there.
-    const runner = readFileSync(new URL('./docker-runner.js', import.meta.url), 'utf8');
-    const found = runner.match(/\(capability\.timeoutSeconds \+ (\d+)\) \* 1000; \/\/ grace for image pull\/start/);
-    assert.ok(found, 'lib/docker-runner.js no longer states its start grace as (capability.timeoutSeconds + N) * 1000');
-    assert.ok(
-      CLAIM_SETTLE_MS >= REQUEST_TIMEOUT_MS + Number(found[1]) * 1000,
-      `${CLAIM_SETTLE_MS} < ${REQUEST_TIMEOUT_MS} + ${found[1]} s`
-    );
+  test("CLAIM_SETTLE_MS is the API client's request timeout plus the container start margin", () => {
+    // The request timeout is imported, not copied: a longer claim timeout in
+    // lib/api.js must lengthen the wait, or a claim could outlast it.
+    assert.equal(CLAIM_SETTLE_MS, REQUEST_TIMEOUT_MS + CONTAINER_START_MARGIN_MS);
+    assert.ok(CONTAINER_START_MARGIN_MS > 0);
   });
 
   test('the cap is longer than the settle, so a hold always outlives the wait it exists for', () => {

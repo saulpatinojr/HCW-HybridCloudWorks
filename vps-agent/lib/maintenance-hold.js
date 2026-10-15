@@ -63,14 +63,28 @@ export const DEFAULT_HOLD_PATH = '/run/hcw-maintenance/reboot-hold';
 export const MAX_HOLD_MS = 10 * 60 * 1000;
 
 /**
- * The shortest wait a holder must allow between writing the hold and its
- * second look: lib/api.js's REQUEST_TIMEOUT_MS, which bounds a claim already
- * sent, plus the 15 s start grace lib/docker-runner.js allows a job's
- * container, by which the claimed job is running. lib/maintenance-hold.test.js
- * holds the sum to both; scripts/lab-job-limits.test.mjs holds the role's
- * hardening_reboot_hold_settle_seconds to at least this.
+ * A margin, after a claim is answered, for its job's container to be
+ * created: the runner stages the payload and spawns `docker run` with no
+ * await between that matters, and the image is already on the host (the
+ * agent's Docker proxy refuses pulls, and the job images are pinned by
+ * digest and pulled by the playbook). Nothing enforces it; it is a choice
+ * of how long to wait, not a bound the runner keeps. lib/docker-runner.js's
+ * own 15 s is a different thing: padding on each job's wall-clock timeout.
+ * The second look also counts a container in `created`, so one that exists
+ * and has not started yet is seen.
  */
-export const CLAIM_SETTLE_MS = 20000 + 15000;
+export const CONTAINER_START_MARGIN_MS = 15000;
+
+/**
+ * The shortest wait a holder must allow between writing the hold and its
+ * second look: lib/api.js's REQUEST_TIMEOUT_MS (20 s), which bounds a claim
+ * already sent, plus CONTAINER_START_MARGIN_MS. lib/maintenance-hold.test.js
+ * holds the sum to both; scripts/lab-job-limits.test.mjs holds the role's
+ * hardening_reboot_hold_settle_seconds to at least this. Written as a sum of
+ * literals because lib/api.js imports @azure/identity, which the scripts
+ * suite that imports this module does not install.
+ */
+export const CLAIM_SETTLE_MS = 20000 + CONTAINER_START_MARGIN_MS;
 
 /** An expiry is whole epoch seconds, as `date +%s` prints them, and at most one newline. */
 const EXPIRY = /^(\d{1,12})\n?$/;

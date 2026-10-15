@@ -193,11 +193,15 @@
 # The order below is the hand-over of reboot authority (CodeRabbit on
 # #1191): check (the hour, the hold's bounds, a reboot unattended-upgrades
 # already scheduled), install, enable, read the timer back active, and only
-# then turn unattended-upgrades' own reboot off. A run that stops anywhere
-# before the last step leaves unattended-upgrades rebooting as it did, and
-# the script stands down while apt says Automatic-Reboot is on, so at no
-# point do both reboot the host and at no point does neither. Re-running
-# converges from any of those states. A rollback to a revision before this
+# then turn unattended-upgrades' own reboot off, and read apt's effective
+# setting back. A run that stops before the override leaves
+# unattended-upgrades' Automatic-Reboot as it was, and the script stands
+# down while apt says it is on, so at no point do both reboot the host. One
+# case leaves neither for a night: a run that cancels a reboot
+# unattended-upgrades had scheduled and then stops before the override. Its
+# next daily run schedules the reboot again (Automatic-Reboot is still on),
+# and a re-run of bootstrap.sh completes the hand-over; re-running
+# converges from any of these states. A rollback to a revision before this
 # lands in the same stand-down; withdrawing the timer is in
 # docs/runbooks/labs-host.md, Runtime advisories.
 - name: Refuse a reboot hour the timer could not render
@@ -225,11 +229,15 @@
       - hardening_reboot_hold_seconds | int > 120
       - hardening_reboot_hold_seconds | int <= 600
       - hardening_reboot_overdue_days | int >= 1
+      - hardening_reboot_workspace_docker_host is match('^unix:///')
+      - not (hardening_reboot_workspace_docker_host is match('^unix:///run/user/'))
     fail_msg: >-
       hardening_reboot_hold_path must be /run/<directory>/<file>; hardening_reboot_hold_settle_seconds
       must be 35 to 90 (a claim already sent and its container's start, inside the service's 120 s
       TimeoutStartSec); hardening_reboot_hold_seconds must be over 120 and at most 600 (outlasting
-      the run, within the agent's ten-minute cap); hardening_reboot_overdue_days must be 1 or more.
+      the run, within the agent's ten-minute cap); hardening_reboot_overdue_days must be 1 or more;
+      hardening_reboot_workspace_docker_host must be a unix:// socket outside /run/user, which the
+      service's ProtectHome= hides.
     quiet: true
 
 # A reboot unattended-upgrades already scheduled (CodeRabbit on #1191).
@@ -298,14 +306,18 @@
     - hardening_scheduled_shutdown_said is match('Reboot scheduled for ')
     - hardening_scheduled_shutdown_logged.rc | default(1) == 0
 
-# Keyed on the cancel's exit status, which exists only when it ran (not in
-# check mode, not when skipped): a verification, not a handler, because the
-# run must stop here, before the timer and the override, if it failed.
+# Keyed on whether the cancel ran: it is skipped when its conditions do not
+# hold, and in check mode, where `command` registers skipped together with
+# rc 0, so an `rc is defined` test would read back a reboot nothing
+# cancelled and fail the check run (review of #1191; measured on
+# ansible-core 2.21.4). Not `is changed`: a verification, not a handler,
+# because the run must stop here, before the timer and the override, if the
+# cancel did not take.
 - name: Read the schedule back after the cancel
   ansible.builtin.stat:
     path: /run/systemd/shutdown/scheduled
   register: hardening_scheduled_shutdown_after
-  when: hardening_scheduled_shutdown_cancel.rc is defined
+  when: hardening_scheduled_shutdown_cancel is not skipped
 
 - name: Refuse to go on while the cancelled reboot is still scheduled
   ansible.builtin.assert:
@@ -315,7 +327,7 @@
       shutdown -c returned, but /run/systemd/shutdown/scheduled is still there, so the reboot
       unattended-upgrades scheduled may still fire without asking. Nothing below has been written.
       Bash, on the host, shutdown --show says what is scheduled.
-  when: hardening_scheduled_shutdown_cancel.rc is defined
+  when: hardening_scheduled_shutdown_cancel is not skipped
 
 - name: Stop at a scheduled reboot nothing says unattended-upgrades scheduled
   ansible.builtin.fail:
@@ -398,3 +410,35 @@
     group: root
     mode: "0644"
   notify: Restart unattended-upgrades
+
+# The override is one file of many: a file in /etc/apt/apt.conf.d that
+# sorts after 52hcw-unattended-upgrades and sets Automatic-Reboot back to
+# true would keep unattended-upgrades' blind reboot beside the timer, which
+# would then stand down every night (review of #1191). So the setting apt
+# itself ends up with is read back, the way unattended-upgrade reads it
+# (`/b`: true, yes, on and 1 are on; nothing printed means unset, which is
+# off). The read changes nothing and runs in check mode; the assertion does
+# not, because check mode writes no override for apt to read.
+- name: Read back whether unattended-upgrades still reboots on its own
+  ansible.builtin.command:
+    argv:
+      - apt-config
+      - shell
+      - automatic_reboot
+      - Unattended-Upgrade::Automatic-Reboot/b
+  register: hardening_automatic_reboot
+  changed_when: false
+  check_mode: false
+
+- name: Refuse to leave unattended-upgrades rebooting beside the timer
+  ansible.builtin.assert:
+    that:
+      - hardening_automatic_reboot.stdout | trim != "automatic_reboot='true'"
+    fail_msg: >-
+      apt still has Unattended-Upgrade::Automatic-Reboot on after
+      /etc/apt/apt.conf.d/52hcw-unattended-upgrades turned it off, so another file sets it
+      back: unattended-upgrades would keep scheduling its reboot without asking anything, and
+      hcw-reboot-when-idle stands down while it does. Remove that line and run bootstrap.sh
+      again. To find the file, bash, on the host: grep -rn Automatic-Reboot /etc/apt/apt.conf.d/
+    quiet: true
+  when: not ansible_check_mode

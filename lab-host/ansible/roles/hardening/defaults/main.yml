@@ -79,6 +79,17 @@ hardening_reboot_when_idle_tag: hcw-reboot-when-idle
 # a label that drifted would fail a test rather than see no job and reboot
 # through one.
 hardening_reboot_job_label: hcw.lab-job
+# Coder's workspaces (review of #1191). They run on the rootless sandbox
+# daemon, which the host daemon's `docker ps` does not see, and a person
+# working in one has no logind session on the host; so the script also
+# defers while that daemon has a container with this label up. The socket
+# is coder_sandbox's fixed one (roles/coder_sandbox/vars/main.yml), and
+# every workspace container in lab-host/coder/templates carries the label;
+# tests/hcw-reboot-when-idle.test.sh and
+# scripts/lab-host-docker-proxy.test.mjs hold both. With no socket (Coder
+# off) nothing is asked.
+hardening_reboot_workspace_docker_host: unix:///run/hcw-coder-docker/docker.sock
+hardening_reboot_workspace_label: coder.workspace_id
 # The maintenance hold (CodeRabbit on #1191). One look is not enough: a job
 # claimed after `docker ps` came back empty and before the reboot request
 # would start a container the reboot kills. So when the first look finds the

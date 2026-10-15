@@ -19,6 +19,98 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Lab host: the nightly reboot asks at the hour, and reboots only an idle
+  host (LAB-13, #959).** unattended-upgrades evaluated its logged-in check
+  when the upgrade ran, about twenty-two hours before the 04:30 it then
+  scheduled `shutdown -r` for with no further question, and nothing ever
+  asked whether a visitor's lab job container was running; a job killed at
+  the 04:30 reboot is the issue's evidence. The hardening role's override
+  now sets `Automatic-Reboot` to false (the two settings read only while it
+  is on are gone), and a new `hcw-reboot-when-idle.timer` (`*-*-*
+  04:30:00` from `hardening_unattended_reboot_time`, `Persistent=false`, no
+  jitter) runs `/usr/local/sbin/hcw-reboot-when-idle`, a root oneshot with
+  the file system read-only to it, home hidden and the failure notifier in
+  `OnFailure=`. It reboots only while `/var/run/reboot-required` exists,
+  logind lists no login session (`loginctl`, class `user` or `user-` and a
+  suffix; the `manager`, `manager-early` and `background` sessions of
+  lingering service managers and cron do not count), the host daemon has
+  no container with the agent's job label up (`hardening_reboot_job_label`,
+  held to `JOB_LABEL` in `vps-agent/lib/docker-runner.js` by
+  `scripts/lab-job-limits.test.mjs` and by the role's test; up is created,
+  restarting, running or paused, so a job whose container exists and has
+  not started counts), and the Coder sandbox daemon has no workspace
+  container up (`coder.workspace_id` on `/run/hcw-coder-docker/docker.sock`,
+  asked as root when the socket is there: a person working in a workspace
+  has no logind session and the host daemon does not see it). It asks
+  twice (CodeRabbit on #1191): when the first look finds the host idle it
+  writes a maintenance hold, `/run/hcw-maintenance/reboot-hold`
+  (`hardening_reboot_hold_path`, root's, 0644, in the service's
+  `RuntimeDirectory=`), holding the epoch second it lapses (300 s on),
+  waits 45 s (`hardening_reboot_hold_settle_seconds`, at least the 20 s
+  claim timeout plus a 15 s margin for the claimed job's container to be
+  created; the agent's Docker proxy refuses pulls, so the image is already
+  there), and looks again. The labs agent reads the hold before every claim
+  and claims nothing while it holds (`vps-agent/lib/maintenance-hold.js`;
+  the claim loop moved from `index.js` to `lib/poll.js` so it has tests;
+  `LABS_AGENT_MAINTENANCE_HOLD_PATH` from the new
+  `labs_agent_maintenance_hold_path`, the same path, held together by
+  `scripts/lab-job-limits.test.mjs`), and caps any hold, unreadable ones
+  included, at ten minutes from its write. A job a claim already in flight
+  starts is created or running by the second look and defers the night;
+  the hold is removed on every way out but the reboot, where it stays until
+  the reboot clears `/run`. One syslog line per outcome under the tag
+  `hcw-reboot-when-idle`: the reboot and the deferrals at warning, which
+  the Arc rule ships, and a deferral of a reboot pending 7 days or more
+  (`hardening_reboot_overdue_days`) at err, with what to do, never a forced
+  reboot; the days count from the first night a run saw the marker, kept
+  beside the hold in `/run/hcw-maintenance/reboot-pending-since` (cleared
+  with the marker by a reboot), because every upgrade that wants a reboot
+  rewrites the marker's own time, and the held report ages its pending line
+  from the same record; nothing pending at notice; an `apt-config`, a
+  `loginctl` or a docker daemon that cannot answer, docker missing
+  included, or a hold or record that cannot be written, is an err line and
+  a failed run, so the notifier pages rather than the host guessing. A
+  stop exits 143, which the unit counts as success (`SuccessExitStatus=143`),
+  so neither an owner's `systemctl stop` nor the reboot's own stop job
+  pages. It does not ask `users`: on the host that is rust-coreutils, which
+  reads utmp, and systemd no longer writes utmp, so `users` and `who`
+  printed nothing with an SSH session open (measured 2026-10-15).
+  unattended-upgrade's WithUsers check read `users` too, so #1172's "no
+  reboot with a user logged in" never deferred anything there. At most one
+  reboot authority at a time: the role first cancels a `shutdown -r` that
+  unattended-upgrades scheduled before the run (one its log names; any
+  other scheduled reboot stops the run with what to do, because a root
+  `shutdown -r` for the same minute is the same record; the cancel's
+  read-back is keyed on the cancel having run, since check mode registers
+  `rc` 0 for a command it skips), then installs, enables and reads the
+  timer back active, writes the override that turns `Automatic-Reboot` off,
+  and reads apt's effective `Automatic-Reboot` back, stopping if a later
+  file turns it on again. The script stands down with a warning line while
+  apt has `Automatic-Reboot` on, so a partial run or a rollback never has
+  both rebooting; a run that cancels unattended-upgrades' reboot and then
+  stops before the override leaves one night with neither, until
+  unattended-upgrades schedules again or `bootstrap.sh` is re-run, and the
+  runbook has the line that withdraws the timer and the three limits kept
+  on purpose. The daily held report names the timer and its hour in its
+  pending-reboot line, the role refuses a reboot hour that is not `HH:MM`
+  and a hold outside its bounds, and `tests/hcw-reboot-when-idle.test.sh`
+  runs the rendered script against stub `apt-config`, `loginctl` (the
+  host's measured session listing among its fixtures), `docker` (both
+  daemons, filtering on container state as docker does), `sleep` (the hold
+  window, where a job, a workspace or a login appears), `systemctl` and
+  `logger` in the `ansible-lint (lab-host)` job; `lib/poll.test.js` and
+  `lib/maintenance-hold.test.js` hold the agent's side, and
+  `scripts/lab-host-docker-proxy.test.mjs` the sandbox socket. The backup
+  and Coder timer comments and the Vault pages that named "the
+  unattended-upgrades reboot at 04:30" now name this timer, and the two
+  Vault passages that said a reboot needs three unseal keys say that holds
+  under Shamir keys only: this host auto-unseals, so its idle reboot comes
+  back unsealed. `alert-lab-unit-failed` in the alerting runbook lists the
+  idle reboot and the held report among the units that page. The timers'
+  schedules are unchanged. On the host after the next `bootstrap.sh`; the
+  runbook's two checks after it are `loginctl list-sessions` listing the
+  login as class `user` and `shutdown --show` printing `No scheduled
+  shutdown.`. Ask 2 of #959; asks 1 and 3 are their own changes.
 - **A late podcast publish hook clears only its own job's reservation, under
   the version it read** (#942, follow-up to #1198). #1198 made the sweeper
   hand a poisoned or reaped job's `onComplete` the whole document, which made

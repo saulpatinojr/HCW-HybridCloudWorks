@@ -20,24 +20,35 @@ ExecStart={{ hardening_reboot_when_idle_script_path }}
 # ({{ hardening_reboot_hold_settle_seconds }} s) and both looks; the role refuses a settle that leaves
 # the second look less than 30 s of it, and a hold that lapses before it.
 TimeoutStartSec=2min
-# Root, because `docker ps` needs the host daemon's socket and the reboot
-# needs the manager. The file system is read-only to it; a socket on a
-# read-only mount still accepts a connection, the system bus loginctl
-# reaches logind through among them. Home is hidden, as the backup units
-# hide it, which also keeps a docker context in /root/.docker from pointing
-# the question at another daemon: the CLI asks the default socket, the
-# daemon the job containers run on.
+# The script exits 143 when it is stopped (its TERM trap): an owner's
+# `systemctl stop`, or the reboot's own stop job reaching this unit. Neither
+# is a failure, and without this both would page through OnFailure=. A
+# TimeoutStartSec kill is still a failed run: its result is a timeout,
+# whatever the exit status.
+SuccessExitStatus=143
+# Root, because `docker ps` needs the host daemon's socket (and the Coder
+# sandbox daemon's, {{ hardening_reboot_workspace_docker_host }}, which is outside
+# /run/user) and the reboot needs the manager. The file system is read-only
+# to it; a socket on a read-only mount still accepts a connection, the
+# system bus loginctl reaches logind through among them. Home is hidden, as
+# the backup units hide it, which also keeps a docker context in
+# /root/.docker from pointing the question at another daemon: the CLI asks
+# the default socket, the daemon the job containers run on, or the sandbox
+# socket by name.
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
-# The one thing it writes: the maintenance hold, {{ hardening_reboot_hold_path }},
-# which the labs agent reads before each claim (CodeRabbit on #1191). A
+# The one place it writes: the maintenance hold, {{ hardening_reboot_hold_path }},
+# which the labs agent reads before each claim (CodeRabbit on #1191), and
+# beside it the record of when the pending reboot was first seen. A
 # RuntimeDirectory= is writable under ProtectSystem=strict and lives on
-# /run's tmpfs, so a reboot clears it; root's, 0755, so the agent's user can
-# read the hold and nobody else can write one. Kept when a run ends, because
-# on the reboot path the hold must outlast the run until the manager stops
-# the agent; every other way out of the script removes the file itself.
+# /run's tmpfs, so a reboot clears both, as it clears the marker they
+# describe; root's, 0755, so the agent's user can read the hold and nobody
+# else can write one. Kept when a run ends, because on the reboot path the
+# hold must outlast the run until the manager stops the agent, and the
+# record must last from night to night; every other way out of the script
+# removes the hold itself.
 RuntimeDirectory={{ hardening_reboot_hold_path | dirname | basename }}
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
