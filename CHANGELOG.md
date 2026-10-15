@@ -19,6 +19,25 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **The content list's `search` is answered from the index, bounded, and
+  reads both summary casings** (AP-F6, #930). The predicate #1178 added
+  wrapped each field in `LOWER()`, which Cosmos DB documents as not using
+  the index, so every search loaded all ~70k `content` documents across
+  every partition. It is now `CONTAINS(field, @search, true)`, the
+  case-insensitive form the index serves (a full index scan of the path's
+  distinct values, not a full scan of the container), and the parameter is
+  no longer lowercased. The term is bounded as `sort` and `limit` already
+  were: `LIST_SEARCH_MIN_CHARS` (2) to `LIST_SEARCH_MAX_CHARS` (100),
+  measured after trimming, outside which the list answers the same
+  `{ error }` 400 an unknown sort field gets; a blank term is no search.
+  `Summary`, the second casing the module header names, is searched beside
+  `summary`, so a record whose summary lives only there can match.
+  `cms-content.test.js` pins the clause, the parameter's casing, both
+  bounds at their edges with a blank term and `q`, and a row whose summary
+  lives only in `Summary`. No admin page sends `search` to the server yet:
+  the Editor list and Live Pages still filter the 500 rows they fetch, so
+  the bound has no UI mirror to add until the search moves server-side.
+
 - **PLAT-9 remainder: the Well-Architected assessment's thirty-seven
   `Planned` controls read against the repository and the live estate, and
   the lab host page's Provisioning and Configuration rows read live**
