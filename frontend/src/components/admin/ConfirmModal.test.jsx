@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ConfirmModal from './ConfirmModal';
 
+/** Open the modal on a destructive question, overridable per test, and hand back both answers. */
 const renderModal = (over = {}) => {
   const onConfirm = vi.fn();
   const onCancel = vi.fn();

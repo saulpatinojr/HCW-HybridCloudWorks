@@ -423,6 +423,7 @@ function PrePublishModal({
   );
 }
 
+/** The Publish stage: what is ready to go live and what already is, read as one snapshot. */
 export default function PublishedPage() {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();

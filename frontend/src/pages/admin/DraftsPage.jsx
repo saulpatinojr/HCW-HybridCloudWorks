@@ -140,6 +140,7 @@ function PageHeader({ onNew, onImport, importing, onRefresh, refreshing }) {
   );
 }
 
+/** The Drafts stage laid out from its four hooks, asking first on any exit that would lose edits. */
 export default function DraftsPage() {
   const { authReady } = useAuthReady();
   const { toast } = useToast();

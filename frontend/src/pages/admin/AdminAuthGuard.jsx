@@ -41,6 +41,7 @@ import { useAdminAuth, ACCESS_STATE, UNKNOWN_REASON } from '@/hooks/useAdminAuth
 import { postJSON } from '@/lib/api';
 import { signIn, signOutUser, reauthenticateForApi } from '@/lib/entraAuth';
 
+/** Render the admin pages only for an authorized admin, and show each other outcome as its own. */
 export default function AdminAuthGuard({ children }) {
   const {
     authReady,

@@ -63,9 +63,12 @@ export default function ConfirmModal({
   onCancel,
   destructive = true,
 }) {
-  // Radix asks before closing for Escape and for a pointer outside; refusing
-  // there keeps the dialog open while busy. The close button and anything
-  // else that reaches onOpenChange is refused the same way below.
+  /**
+   * Refuse Escape and a pointer outside while busy, so the dialog cannot
+   * close over a request still running: Radix asks before closing for both,
+   * and the close button and anything else that reaches onOpenChange is
+   * refused the same way below.
+   */
   const holdWhileBusy = (event) => {
     if (busy) event.preventDefault();
   };

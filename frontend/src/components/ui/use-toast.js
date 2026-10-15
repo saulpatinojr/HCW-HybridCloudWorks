@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 
 // Three, not one (AP-F12, #936). With one slot a bulk action's outcomes —
 // three publishes, two of them failed — replaced each other faster than they
@@ -7,10 +7,66 @@ import { useState, useEffect, useRef } from 'react';
 // leaves when a fourth arrives.
 export const TOAST_LIMIT = 3;
 
+// A toast's lifetime when it names none, and the longest one it may name.
+const DEFAULT_DURATION = 5000;
+const MAX_DURATION = 30000;
+
 let count = 0;
+/** A fresh id per toast, so a dismiss or an update reaches its own toast and no other. */
 function generateId() {
   count = (count + 1) % Number.MAX_VALUE;
   return count.toString();
+}
+
+/**
+ * How long a toast stays: until dismissed for Infinity, else its own duration
+ * up to thirty seconds, else five.
+ */
+function lifetimeOf(duration) {
+  if (duration === Infinity) return Infinity;
+  return typeof duration === 'number' && duration > 0 && duration <= MAX_DURATION
+    ? duration
+    : DEFAULT_DURATION;
+}
+
+// EXPIRY LIVES WITH THE STORE, NOT WITH A MOUNTED HOOK (AP-F12, #936). Every
+// component that called useToast() — the toaster, and every page that wanted
+// `toast` from it — ran its own timer per toast, and unmounting cleared them.
+// Leaving the admin shell inside a toast's five seconds therefore left the
+// toast in the store, and the next visit showed that old outcome on a fresh
+// clock. One timer per toast here runs whether anything is mounted or not.
+//
+// Each entry keeps the lifetime it was scheduled for, so an update that
+// changes `duration` is seen: Infinity cancels the timer, a new number starts
+// a new clock from the update, and an update that leaves the duration alone
+// keeps the clock the toast already had. The timer calls the store's own
+// removal by id, so no function carried on a toast's props is ever run by it.
+const timers = new Map(); // id -> { lifetime, timeout }
+
+/** Drop a toast's timer, so a toast that left cannot be removed twice or keep the map growing. */
+function clearTimer(id) {
+  const timer = timers.get(id);
+  if (!timer) return;
+  clearTimeout(timer.timeout);
+  timers.delete(id);
+}
+
+/** Bring the timers in line with the toasts the store now holds, after every change to it. */
+function syncTimers(toasts) {
+  const live = new Set(toasts.map((t) => t.id));
+  // A toast that left — closed by hand, swiped, pushed out by a fourth, or
+  // by its own timer — drops its timer.
+  timers.forEach((_, id) => {
+    if (!live.has(id)) clearTimer(id);
+  });
+
+  toasts.forEach(({ id, duration }) => {
+    const lifetime = lifetimeOf(duration);
+    if (timers.get(id)?.lifetime === lifetime) return;
+    clearTimer(id);
+    if (lifetime === Infinity) return;
+    timers.set(id, { lifetime, timeout: setTimeout(() => removeToast(id), lifetime) });
+  });
 }
 
 const toastStore = {
@@ -28,6 +84,7 @@ const toastStore = {
       toastStore.state = { ...toastStore.state, ...nextState };
     }
 
+    syncTimers(toastStore.state.toasts);
     toastStore.listeners.forEach((listener) => listener(toastStore.state));
   },
 
@@ -39,6 +96,18 @@ const toastStore = {
   },
 };
 
+/** Take one toast out of the store, by hand or by its timer, leaving the others where they are. */
+function removeToast(id) {
+  toastStore.setState((state) => ({
+    ...state,
+    toasts: state.toasts.filter((t) => t.id !== id),
+  }));
+}
+
+/**
+ * Show an outcome — newest first, at most TOAST_LIMIT on screen — and hand
+ * back its id, dismiss and update.
+ */
 export const toast = ({ ...props }) => {
   const id = generateId();
 
@@ -48,11 +117,7 @@ export const toast = ({ ...props }) => {
       toasts: state.toasts.map((t) => (t.id === id ? { ...t, ...props } : t)),
     }));
 
-  const dismiss = () =>
-    toastStore.setState((state) => ({
-      ...state,
-      toasts: state.toasts.filter((t) => t.id !== id),
-    }));
+  const dismiss = () => removeToast(id);
 
   toastStore.setState((state) => ({
     ...state,
@@ -66,6 +131,11 @@ export const toast = ({ ...props }) => {
   };
 };
 
+/**
+ * The toasts in the store, kept current for the toaster to draw, and `toast`
+ * for a page that only fires one; it holds no timers, so mounting it or not
+ * changes nothing about when a toast leaves.
+ */
 export function useToast() {
   const [state, setState] = useState(toastStore.getState());
 
@@ -75,50 +145,6 @@ export function useToast() {
     });
 
     return unsubscribe;
-  }, []);
-
-  // One timer per toast, kept across renders. The timers used to be rebuilt
-  // on every store change, which with one slot never showed: with three, a
-  // second toast restarted the first one's clock, so a steady stream of
-  // outcomes kept the oldest on screen for as long as the stream ran.
-  const timersRef = useRef(new Map());
-
-  useEffect(() => {
-    const timers = timersRef.current;
-    const live = new Set(state.toasts.map((t) => t.id));
-
-    // A toast that left — closed by hand, swiped, or by its own timer — drops
-    // its timer, so the map never outgrows what is on screen.
-    timers.forEach((timeout, id) => {
-      if (!live.has(id)) {
-        clearTimeout(timeout);
-        timers.delete(id);
-      }
-    });
-
-    state.toasts.forEach((toast) => {
-      if (toast.duration === Infinity || timers.has(toast.id)) {
-        return;
-      }
-
-      const safeDuration =
-        typeof toast.duration === 'number' && toast.duration > 0 && toast.duration <= 30000
-          ? toast.duration
-          : 5000;
-      const dismissFn =
-        typeof toast.dismiss === 'function' && toast.dismiss.toString().indexOf('eval') === -1
-          ? toast.dismiss
-          : () => {};
-      timers.set(toast.id, setTimeout(dismissFn, safeDuration));
-    });
-  }, [state.toasts]);
-
-  useEffect(() => {
-    const timers = timersRef.current;
-    return () => {
-      timers.forEach((timeout) => clearTimeout(timeout));
-      timers.clear();
-    };
   }, []);
 
   return {

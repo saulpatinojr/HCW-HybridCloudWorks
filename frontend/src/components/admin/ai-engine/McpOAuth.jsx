@@ -144,6 +144,7 @@ export default function McpOAuthPanel({ server }) {
     }
   };
 
+  /** Disconnect once the modal is confirmed, and close it only when the request has settled. */
   const disconnect = async () => {
     setBusy('disconnect');
     try {

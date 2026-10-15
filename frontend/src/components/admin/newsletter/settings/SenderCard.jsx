@@ -18,6 +18,7 @@ import { getJSON, sendJSON } from '@/lib/api';
 
 export const SENDER_ROUTE = 'cms/newsletter-sender';
 
+/** The From address: the stored sender or the code's default, and the server's word on a change. */
 export default function SenderCard() {
   const [stored, setStored] = useState(null);
   const [value, setValue] = useState('');

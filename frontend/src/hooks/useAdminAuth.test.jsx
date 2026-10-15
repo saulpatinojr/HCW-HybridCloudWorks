@@ -34,7 +34,9 @@ const deferred = () => {
   });
   return { promise, resolve, reject };
 };
+/** A 2xx response as authedFetch resolves it: only its JSON body is read. */
 const answer = (body) => ({ json: async () => body });
+/** A refusal as authedFetch throws it: an Error carrying the HTTP status. */
 const failure = (status) => Object.assign(new Error(`HTTP ${status}`), { status });
 
 beforeEach(() => {

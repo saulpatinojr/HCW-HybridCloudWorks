@@ -28,6 +28,10 @@ function listToCsv(arr) {
 const BLANK_SYN = { id: '', canonical: '', patternsCsv: '' };
 const BLANK_AUG = { id: '', label: '', patternsCsv: '', directive: '' };
 
+/**
+ * The keyword matrix behind image prompts: synonym groups and augmentations,
+ * edited in place, with a live tester to show what an article's text would match.
+ */
 export default function KeywordMatrixPanel() {
   const { toast } = useToast();
   const {
@@ -86,6 +90,7 @@ export default function KeywordMatrixPanel() {
     setSynDraft({ id: s.id, canonical: s.canonical, patternsCsv: listToCsv(s.patterns) });
   };
 
+  /** Ask before deleting a synonym group: the delete waits on the modal, not a browser dialog. */
   const handleDeleteSyn = (s) => setPendingDelete({ kind: 'synonym', item: s });
 
   // ---------- Augmentations ----------
@@ -116,14 +121,17 @@ export default function KeywordMatrixPanel() {
     });
   };
 
+  /** Ask before deleting an augmentation: the delete waits on the modal, not a browser dialog. */
   const handleDeleteAug = (a) => setPendingDelete({ kind: 'augmentation', item: a });
 
   // ---------- The confirmed delete ----------
+  /** The modal's title and the toast's name for a pending delete, so both say the same thing. */
   const deleteCopy = (pending) =>
     pending.kind === 'synonym'
       ? { title: `Delete synonym group "${pending.item.canonical}"?`, name: pending.item.canonical }
       : { title: `Delete augmentation "${pending.item.label}"?`, name: pending.item.label };
 
+  /** Run the confirmed delete once, ignoring a second tap while it runs, then close the modal. */
   const confirmDelete = async () => {
     if (!pendingDelete || deleting) return;
     const { kind, item } = pendingDelete;

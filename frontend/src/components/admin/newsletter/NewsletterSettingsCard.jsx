@@ -51,6 +51,7 @@ const EMPTY = {
   templateId: '',
 };
 
+/** The newsletter settings as one form over one document, saved whole so no field is dropped. */
 export default function NewsletterSettingsCard({ onSaved }) {
   const [value, setValue] = useState(EMPTY);
   const [loading, setLoading] = useState(true);

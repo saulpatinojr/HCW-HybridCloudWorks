@@ -1,6 +1,14 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
+// The ring's size, by name: `sm` inside a card, `md` for a page, `lg` for the
+// access check that stands in for the whole admin shell.
+const SIZES = {
+  sm: 'h-5 w-5 border-t-2 border-b-2',
+  md: 'h-8 w-8 border-t-2 border-b-2',
+  lg: 'h-12 w-12 border-t-2 border-b-2',
+};
+
 /**
  * Spinner — a loading state that says so (AP-F12, #936).
  *
@@ -13,12 +21,6 @@ import { cn } from '@/lib/utils';
  * access", "Loading published articles"); the text is visually hidden and the
  * ring is decoration.
  */
-const SIZES = {
-  sm: 'h-5 w-5 border-t-2 border-b-2',
-  md: 'h-8 w-8 border-t-2 border-b-2',
-  lg: 'h-12 w-12 border-t-2 border-b-2',
-};
-
 export function Spinner({ label = 'Loading', size = 'md', className }) {
   return (
     <div role="status" className={cn('flex items-center justify-center', className)}>

@@ -26,6 +26,7 @@ const SKIP_DIRS = new Set(['__tests__', 'node_modules']);
 const BROWSER_CONFIRM =
   /(?:window|globalThis|self|global)\s*\.\s*confirm\b|(?<![\w$.])confirm\s*\(/;
 
+/** Every non-test source file under a directory, so a new file is read without being listed. */
 function sourceFiles(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;

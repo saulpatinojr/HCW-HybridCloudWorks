@@ -23,7 +23,7 @@
  * replaced them, and the selection document is what the router reads.
  */
 
-import React, { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import IntegrationBadge from '@/components/admin/shared/IntegrationBadge';
 import { useNavigate, useSearchParams } from 'react-router';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
@@ -896,6 +896,7 @@ function AddServerForm({ onAdd }) {
   );
 }
 
+/** The MCP Servers tab: each server's card, toggle, sync and removal, and the form to add one. */
 function McpTab({ servers }) {
   const { toast } = useToast();
 
@@ -926,6 +927,7 @@ function McpTab({ servers }) {
   // holds the modal open and busy (AP-F12, #936).
   const [pendingRemove, setPendingRemove] = useState(null);
   const [removing, setRemoving] = useState(false);
+  /** Remove the confirmed server, once: a second tap while the request runs does nothing. */
   const handleRemove = async () => {
     const id = pendingRemove;
     if (!id || removing) return;
@@ -1380,6 +1382,10 @@ function CatalogNotice({ error, onRetry, onDismiss }) {
   );
 }
 
+/**
+ * The AI Engine page: seeds the configuration, reads the catalogue, and holds
+ * the writes its tabs and the drawer share, so no tab keeps a list of its own.
+ */
 export default function AIEnginePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = resolveTab(searchParams.get('tab'));
@@ -1425,20 +1431,30 @@ export default function AIEnginePage() {
   // like a page with no models rather than a page that could not read them.
   const [catalog, setCatalog] = useState(null);
   const [catalogError, setCatalogError] = useState(null);
-  const loadCatalog = useCallback(
-    () =>
-      aiEngine
-        .fetchModelCatalog()
-        .then((next) => {
-          setCatalog(next);
-          setCatalogError(null);
-        })
-        .catch((err) => {
-          console.error('[aiEngine] model catalogue load failed:', err);
-          setCatalogError(err?.message || 'The model catalogue could not be read.');
-        }),
-    []
-  );
+  // ONLY THE LATEST READ LANDS (AP-F12, #936). Try again pressed twice, or a
+  // hide's re-read beside a refresh's, puts two reads in flight, and they can
+  // settle in either order: an earlier failure would bring the notice back
+  // over a later success, and an older catalogue could replace a newer one.
+  // Each read takes a number; one that is no longer the latest is logged if
+  // it failed and otherwise ignored.
+  const catalogRead = useRef(0);
+  /** Read the catalogue and show it, or say it failed — unless a newer read has started since. */
+  const loadCatalog = useCallback(() => {
+    const read = ++catalogRead.current;
+    const latest = () => read === catalogRead.current;
+    return aiEngine
+      .fetchModelCatalog()
+      .then((next) => {
+        if (!latest()) return;
+        setCatalog(next);
+        setCatalogError(null);
+      })
+      .catch((err) => {
+        console.error('[aiEngine] model catalogue load failed:', err);
+        if (!latest()) return;
+        setCatalogError(err?.message || 'The model catalogue could not be read.');
+      });
+  }, []);
   useEffect(() => {
     if (seed.status !== 'ready') return;
     loadCatalog();

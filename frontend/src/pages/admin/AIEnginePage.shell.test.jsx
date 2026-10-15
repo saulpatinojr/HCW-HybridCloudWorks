@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 
 const seedAiEngineIfEmpty = vi.fn();
@@ -163,6 +163,44 @@ const EFFECTIVE = {
   updatedAt: 'r1',
 };
 
+/** A catalogue read the test settles by hand, so two can be made to cross. */
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+/**
+ * Fail the first catalogue read, then press Try again twice, so two reads
+ * are in flight for the test to settle in whichever order it chooses.
+ */
+async function twoRetriesInFlight() {
+  const earlier = deferred();
+  const later = deferred();
+  fetchModelCatalog
+    .mockRejectedValueOnce(new Error('503'))
+    .mockImplementationOnce(() => earlier.promise)
+    .mockImplementationOnce(() => later.promise);
+  renderPage();
+  const notice = (await screen.findByText('The model catalogue could not be loaded.')).closest(
+    '[role="alert"]'
+  );
+  const retry = within(notice).getByRole('button', { name: 'Try again' });
+  fireEvent.click(retry);
+  fireEvent.click(retry);
+  await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(3));
+  return { earlier, later };
+}
+
+/** The values the Priority row's model select offers for a provider. */
+const modelOptions = (name) =>
+  [...screen.getByLabelText(`Model for ${name}`).options].map((o) => o.value);
+
+/** Mount the page under a real router, on the AI Engine route or one of its tabs. */
 function renderPage(entry = '/admin/ai-engine') {
   return render(
     <MemoryRouter initialEntries={[entry]}>
@@ -360,6 +398,46 @@ describe('AIEnginePage shell', () => {
       expect(screen.queryByText('The model catalogue could not be loaded.')).toBeNull()
     );
     expect(await screen.findByRole('button', { name: 'Models for Gemini' })).toBeInTheDocument();
+    silenced.mockRestore();
+  });
+
+  it('an earlier read failing after a later one succeeded does not bring the notice back (AP-F12, #936)', async () => {
+    const silenced = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { earlier, later } = await twoRetriesInFlight();
+
+    // The later read answers first: the notice goes and the lists arrive.
+    await act(async () => later.resolve(CATALOG));
+    expect(screen.queryByText('The model catalogue could not be loaded.')).toBeNull();
+    expect(modelOptions('Gemini')).toContain('gemini-3.6-flash');
+
+    // The earlier read fails after it. It is logged, and nothing on the page
+    // moves: the page stays on the later read's answer.
+    await act(async () => earlier.reject(new Error('timed out')));
+    expect(silenced).toHaveBeenCalledWith(
+      '[aiEngine] model catalogue load failed:',
+      expect.objectContaining({ message: 'timed out' })
+    );
+    expect(screen.queryByText('The model catalogue could not be loaded.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Models for Gemini' })).toBeInTheDocument();
+    expect(modelOptions('Gemini')).toContain('gemini-3.6-flash');
+    silenced.mockRestore();
+  });
+
+  it('an older catalogue landing after a newer one does not replace it (AP-F12, #936)', async () => {
+    const silenced = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { earlier, later } = await twoRetriesInFlight();
+    const older = {
+      ...CATALOG,
+      providers: {
+        ...CATALOG.providers,
+        gemini: { ...CATALOG.providers.gemini, models: { 'gemini-old': model('gemini-old') } },
+      },
+    };
+
+    await act(async () => later.resolve(CATALOG));
+    await act(async () => earlier.resolve(older));
+    expect(modelOptions('Gemini')).toContain('gemini-3.6-flash');
+    expect(modelOptions('Gemini')).not.toContain('gemini-old');
     silenced.mockRestore();
   });
 

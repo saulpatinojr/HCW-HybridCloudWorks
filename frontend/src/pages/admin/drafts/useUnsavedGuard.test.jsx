@@ -3,13 +3,28 @@
  * link click is held as a pending leave for the page's modal, Cancel keeps
  * the page, and confirm replays the click — or, with the link gone, takes
  * the route through the router.
+ *
+ * A confirmed leave through a plain link — one the router does not take, as
+ * a link in the draft's Markdown preview — is a document navigation, and its
+ * own `beforeunload` is not asked a second time. Only that one: a reload
+ * after it is asked, and a leave the router takes in place stands nothing
+ * down.
  */
 import React, { useState } from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { LEAVE_CONFIRM, UNSAVED_MESSAGE, useUnsavedGuard } from './useUnsavedGuard';
 
+// Listeners a test put on the window, removed even when the test fails.
+const windowCleanups = [];
+
+afterEach(() => {
+  windowCleanups.splice(0).forEach((cleanup) => cleanup());
+  vi.restoreAllMocks();
+});
+
+/** A page holding the guard: a router link, a plain link, and the owner's answers as buttons. */
 function Harness({ dirty: initialDirty }) {
   const [dirty, setDirty] = useState(initialDirty);
   const leave = useUnsavedGuard(dirty);
@@ -17,6 +32,7 @@ function Harness({ dirty: initialDirty }) {
   return (
     <>
       {linkShown && <Link to="/queue">Review Queue</Link>}
+      <a href="/drafts-preview-link">Preview link</a>
       <a href="https://example.test/elsewhere">Elsewhere</a>
       <span data-testid="leaving">{String(leave.leaving)}</span>
       <button type="button" onClick={leave.confirmLeave}>
@@ -38,6 +54,7 @@ function Harness({ dirty: initialDirty }) {
   );
 }
 
+/** Mount the guard on the drafts route, so a followed link unmounts it as leaving the page does. */
 const renderGuard = (dirty) =>
   render(
     <MemoryRouter initialEntries={['/drafts']}>
@@ -47,6 +64,42 @@ const renderGuard = (dirty) =>
       </Routes>
     </MemoryRouter>
   );
+
+/** Mount the guard beside the routes, so it is still listening after the router has navigated. */
+const renderGuardBesideRoutes = () =>
+  render(
+    <MemoryRouter initialEntries={['/drafts']}>
+      <Harness dirty />
+      <Routes>
+        <Route path="/drafts" element={<p>Drafts page</p>} />
+        <Route path="/queue" element={<h1>Queue page</h1>} />
+      </Routes>
+    </MemoryRouter>
+  );
+
+/** Fire `beforeunload` as a reload or a tab close does, and say whether the guard asked. */
+function unloadAsks() {
+  const event = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+/**
+ * Stand in for an engine that fires a link navigation's `beforeunload` inside
+ * the click: after every other handler, on a link click nothing cancelled.
+ * Returns what each of those prompts answered, and the listener's removal.
+ */
+function askInsideTheClick() {
+  const asked = [];
+  const listener = (event) => {
+    const followed = event.target?.closest?.('a[href]') && !event.defaultPrevented;
+    if (followed) asked.push(unloadAsks());
+  };
+  const stop = () => window.removeEventListener('click', listener);
+  window.addEventListener('click', listener);
+  windowCleanups.push(stop);
+  return { asked, stop };
+}
 
 describe('useUnsavedGuard', () => {
   it('names the modal copy from the one message', () => {
@@ -98,6 +151,61 @@ describe('useUnsavedGuard', () => {
     // And the withdrawn question's link is not replayed by a later confirm.
     fireEvent.click(screen.getByRole('button', { name: 'confirm' }));
     expect(screen.queryByText('Queue page')).toBeNull();
+  });
+
+  it('dirty: a reload or a tab close is asked', () => {
+    renderGuard(true);
+    expect(unloadAsks()).toBe(true);
+    expect(unloadAsks()).toBe(true);
+  });
+
+  // jsdom does not navigate: a followed plain link prints its "Not
+  // implemented: navigation" line, as the off-site click below always has.
+  it('a confirmed leave through a plain link is not asked again by its beforeunload; a reload after it is', () => {
+    renderGuard(true);
+    fireEvent.click(screen.getByRole('link', { name: 'Preview link' }));
+    expect(screen.getByTestId('leaving')).toHaveTextContent('true');
+    fireEvent.click(screen.getByRole('button', { name: 'confirm' }));
+    // The document navigation the owner just agreed to: not asked again.
+    expect(unloadAsks()).toBe(false);
+    // Anything after it — a reload, a tab close — is asked as before.
+    expect(unloadAsks()).toBe(true);
+  });
+
+  it('the same holds when the browser asks inside the replayed click', () => {
+    renderGuard(true);
+    const inside = askInsideTheClick();
+    fireEvent.click(screen.getByRole('link', { name: 'Preview link' }));
+    // The held click was cancelled, so no prompt came with it.
+    expect(inside.asked).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'confirm' }));
+    inside.stop();
+    // The replayed click's own prompt, fired before click() returned.
+    expect(inside.asked).toEqual([false]);
+    expect(unloadAsks()).toBe(true);
+  });
+
+  it('a confirmed leave whose navigation never unloads the page stands the prompt down only briefly', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    renderGuard(true);
+    fireEvent.click(screen.getByRole('link', { name: 'Preview link' }));
+    fireEvent.click(screen.getByRole('button', { name: 'confirm' }));
+    // No `beforeunload` came; a reload two seconds later is asked.
+    now.mockReturnValue(1_002_000);
+    expect(unloadAsks()).toBe(true);
+  });
+
+  it('a confirmed leave the router takes in place stands nothing down', () => {
+    renderGuardBesideRoutes();
+    const inside = askInsideTheClick();
+    fireEvent.click(screen.getByRole('link', { name: 'Review Queue' }));
+    fireEvent.click(screen.getByRole('button', { name: 'confirm' }));
+    inside.stop();
+    expect(screen.getByText('Queue page')).toBeInTheDocument();
+    // The Link cancelled its click and navigated in place: no prompt came,
+    // and the guard, still mounted, asks on the next reload.
+    expect(inside.asked).toEqual([]);
+    expect(unloadAsks()).toBe(true);
   });
 
   it('a modified click or an off-site link is not held', () => {
