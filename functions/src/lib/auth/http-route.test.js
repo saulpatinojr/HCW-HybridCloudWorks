@@ -184,6 +184,33 @@ describe('httpRoute', () => {
     expect(res.headers.Vary).toBe('Origin');
   });
 
+  it('lets a settings save send If-Match and its page read the ETag it gets back (#946)', async () => {
+    // The Platform settings save, end to end through the registration: the
+    // preflight admits If-Match without running the handler, and the PUT's
+    // answer keeps the handler's ETag beside the header that exposes it.
+    const { routes, register } = recorder();
+    const handler = vi.fn(async () => ({
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ETag: '"v2"' },
+      body: '{}',
+    }));
+    httpRoute('r', { methods: ['PUT'], route: 'x', handler }, { cors: cors(), register });
+
+    const preflight = await routes
+      .get('r')
+      .handler(makeRequest({ method: 'OPTIONS', origin: 'https://hybridcloudworks.com' }), context);
+    expect(preflight.status).toBe(204);
+    expect(handler).not.toHaveBeenCalled();
+    expect(preflight.headers['Access-Control-Allow-Headers']).toMatch(/\bIf-Match\b/);
+    expect(preflight.headers['Access-Control-Allow-Methods']).toMatch(/\bPUT\b/);
+
+    const saved = await routes
+      .get('r')
+      .handler(makeRequest({ method: 'PUT', origin: 'https://hybridcloudworks.com' }), context);
+    expect(saved.headers.ETag).toBe('"v2"');
+    expect(saved.headers['Access-Control-Expose-Headers']).toMatch(/\bETag\b/);
+  });
+
   it('merges CORS headers onto an authorization denial', async () => {
     // A 401 with no Allow-Origin reaches the browser as an opaque network
     // error, so the guard's message never gets shown.

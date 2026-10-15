@@ -14,6 +14,11 @@
  * write state, so a slow first load cannot land over a retry; a save is
  * guarded by a ref as well as the disabled button, so a double click sends
  * one PUT; and a failed load hides the form and clears what it held.
+ *
+ * A save names the version it replaces (#946), as the Platform settings tabs'
+ * do (settingShared.jsx): the read's `etag` goes back as If-Match, and a save
+ * refused because the settings were saved elsewhere since reloads them and
+ * says so instead of overwriting.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
@@ -24,7 +29,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Spinner } from '@/components/ui/spinner';
 import { Loader2, Save } from 'lucide-react';
-import { getJSON, sendJSON } from '@/lib/api';
+import { getJSON } from '@/lib/api';
+import {
+  CHANGED_ELSEWHERE,
+  isStaleSave,
+  putSetting,
+} from '@/components/admin/platform-settings/settingShared';
 import NewsletterContentFields, { contentProblem } from './NewsletterContentFields';
 import NewsletterSignupFields, { signupProblem } from './NewsletterSignupFields';
 import NewsletterTemplateFields from './NewsletterTemplateFields';
@@ -65,6 +75,8 @@ export default function NewsletterSettingsCard({ onSaved }) {
   const [options, setOptions] = useState(null);
   const loadGeneration = useRef(0);
   const savingRef = useRef(false);
+  // The ETag of the settings this card last read or wrote: what a save names.
+  const etagRef = useRef(null);
 
   useEffect(() => {
     const generation = ++loadGeneration.current;
@@ -74,11 +86,13 @@ export default function NewsletterSettingsCard({ onSaved }) {
         if (!current()) return;
         setValue({ ...EMPTY, ...(res?.value || {}) });
         setOptions(res?.options || null);
+        etagRef.current = res?.etag ?? null;
         setLoadError('');
       })
       .catch((err) => {
         if (!current()) return;
         setValue(EMPTY);
+        etagRef.current = null;
         setLoadError(err.message || 'Could not load the newsletter settings.');
       })
       .finally(() => current() && setLoading(false));
@@ -99,6 +113,12 @@ export default function NewsletterSettingsCard({ onSaved }) {
 
   const setContent = (patch) => setValue((current) => ({ ...current, ...patch }));
 
+  /**
+   * Save the whole form under the version this card read; a refusal because
+   * the settings changed elsewhere reloads them instead of overwriting.
+   *
+   * @param {Event} event the form's submit
+   */
   const handleSave = async (event) => {
     event.preventDefault();
     if (savingRef.current) return;
@@ -111,14 +131,17 @@ export default function NewsletterSettingsCard({ onSaved }) {
     setSaving(true);
     setNotice(null);
     try {
-      const res = await sendJSON(NEWSLETTER_SETTINGS_ROUTE, 'PUT', value);
+      const res = await putSetting(NEWSLETTER_SETTINGS_ROUTE, value, etagRef.current);
+      etagRef.current = res?.etag ?? null;
       // What the server stored, after its own clamping, is what the form shows.
       setValue({ ...EMPTY, ...res.value });
       if (res.options) setOptions(res.options);
       setNotice({ ok: true, message: 'Newsletter settings saved.' });
       onSaved?.();
     } catch (err) {
-      setNotice({ ok: false, message: err.message });
+      setNotice({ ok: false, message: isStaleSave(err) ? CHANGED_ELSEWHERE : err.message });
+      // Saved elsewhere since this card read them: load what is stored now.
+      if (isStaleSave(err)) handleRetry();
     } finally {
       savingRef.current = false;
       setSaving(false);

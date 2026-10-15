@@ -115,3 +115,28 @@ describe('authedFetch', () => {
     expect(fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer acquired-here');
   });
 });
+
+describe('sendJSON', () => {
+  it('sends the headers it is given, such as a settings save’s If-Match (#946), and still its own token', async () => {
+    const { sendJSON } = await import('@/lib/api');
+    await sendJSON(
+      'cms/platform-settings/podcast-feeds',
+      'PUT',
+      { feeds: [] },
+      { headers: { 'If-Match': '"v1"', Authorization: 'Bearer forged' } }
+    );
+    const [[url, init]] = fetch.mock.calls;
+    expect(url).toBe('https://api.example.test/api/cms/platform-settings/podcast-feeds');
+    expect(init.method).toBe('PUT');
+    expect(init.body).toBe('{"feeds":[]}');
+    expect(init.headers['If-Match']).toBe('"v1"');
+    expect(init.headers.Authorization).toBe('Bearer acquired-here');
+  });
+
+  it('sends no extra header when given none', async () => {
+    const { sendJSON } = await import('@/lib/api');
+    await sendJSON('cms/platform-settings/podcast-feeds', 'PUT', { feeds: [] });
+    const [[, init]] = fetch.mock.calls;
+    expect(Object.keys(init.headers).sort()).toEqual(['Authorization', 'Content-Type']);
+  });
+});

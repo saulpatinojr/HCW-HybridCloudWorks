@@ -2,24 +2,37 @@
  * CORS for the Cloud Tools / admin API.
  *
  * ===========================================================================
- * DECISION 7 — CORS lives in code, and the platform `cors` block is removed
+ * DECISION 7 — CORS for actual requests lives in code; the platform answers
+ * genuine preflights
  * ===========================================================================
  * Two allowlists is the actual hazard: they drift, and when a request fails you
- * cannot tell which one rejected it. Picking in-code, for three reasons:
+ * cannot tell which one rejected it. Actual requests are decided here, for
+ * three reasons:
  *
  *   1. The platform setting can only allowlist-or-omit. Site-Main's applyCors
  *      (`cloud-tools.js:355-376`) returns 403 on a disallowed origin, turning
  *      an invisible browser-side failure into a server-side signal you can
  *      alert on. Preserve that.
  *   2. The platform list is exact-match and cannot express a localhost port
- *      pattern. The Terraform hardcodes 5173 and 4173 — NARROWER than current
- *      behaviour, so a developer on any other port silently breaks.
+ *      pattern, so a developer on any port but the listed ones would silently
+ *      break.
  *   3. In-code is testable in the same suite as the authorization rules.
  *
- * `support_credentials = true` must also go from the Terraform: it makes the
- * platform intercept OPTIONS preflights itself, so an in-code preflight would
- * never run. It is wrong on its own merits too — this is a bearer-token API,
- * not a cookie API.
+ * The decision first removed the platform `cors` block as well, and that was
+ * wrong about preflights (2026-08-23, recorded in infra/functionapp.tf beside
+ * the block). The Functions host answers a GENUINE preflight itself (OPTIONS
+ * with both `Origin` and `Access-Control-Request-Method`); with no origins
+ * configured it answered 204 with no Access-Control-* headers, and every
+ * browser call failed with "Failed to fetch". So the block is back with the
+ * origins a preflight needs, kept equal to the lists below by
+ * cors-platform-origins.test.js. App Service's CORS allows every method and
+ * header for an origin it lists, which is why that block carries no header
+ * list. The preflight branch in `evaluate` still answers what reaches the
+ * code: an OPTIONS without `Access-Control-Request-Method`, and a local
+ * Functions host.
+ *
+ * `support_credentials` stays false: this is a bearer-token API, not a cookie
+ * API.
  *
  * LOCALHOST DOES NOT SURVIVE TO PRODUCTION. Site-Main includes it
  * unconditionally (`cloud-tools.js:51-53`) and that is a defect not to port:
@@ -111,6 +124,34 @@ const PREVIEW_ORIGINS = ['https://calm-ground-0d0e6a010.7.azurestaticapps.net'];
  */
 const ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 
+/**
+ * Request headers a cross-origin page may send, and nothing else: each one
+ * names the code that reads it, and a header nobody reads stays off the list.
+ *
+ *   Content-Type   every JSON body
+ *   Authorization  the Entra bearer token, which require-role.js verifies
+ *   If-Match       the version a save replaces (#946): the Platform settings
+ *                  page sends the ETag its read returned, and
+ *                  lib/platform-settings.js refuses a save naming a version
+ *                  no longer stored with a 412 instead of overwriting it
+ *
+ * In production a browser's preflight is answered by the platform, which
+ * allows every header for a listed origin (DECISION 7 above), so this list
+ * governs the preflights that reach the code: a local Functions host, and an
+ * OPTIONS without Access-Control-Request-Method. Without If-Match here, the
+ * settings save would fail before reaching the guard wherever this code
+ * answers the preflight.
+ */
+const ALLOW_HEADERS = 'Content-Type, Authorization, If-Match';
+
+/**
+ * Response headers a cross-origin page may read beyond the CORS-safelisted
+ * few. WWW-Authenticate carries why a 401 happened (#517); ETag is the
+ * version a Platform settings read or save returned, beside the `etag` the
+ * body carries (#946).
+ */
+const EXPOSE_HEADERS = 'WWW-Authenticate, ETag';
+
 /** Dev-only origins, any port. Never active when NODE_ENV=production. */
 const LOCALHOST_PATTERN = /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i;
 
@@ -171,7 +212,7 @@ export function createCors({
         // serve one origin's allow header to another.
         Vary: 'Origin',
         'Access-Control-Allow-Methods': ALLOW_METHODS,
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': ALLOW_HEADERS,
         // WITHOUT THIS THE 401 REASON IS INVISIBLE (#517).
         //
         // The admin SPA is served from hybridcloudworks.com and this API from
@@ -183,8 +224,9 @@ export function createCors({
         //
         // It belongs on the ACTUAL response, not just the preflight: the
         // preflight governs what the request may send, this governs what the
-        // response may reveal.
-        'Access-Control-Expose-Headers': 'WWW-Authenticate',
+        // response may reveal. ETag is exposed for the same reason (#946,
+        // EXPOSE_HEADERS above).
+        'Access-Control-Expose-Headers': EXPOSE_HEADERS,
         'Access-Control-Max-Age': '3600',
       };
 

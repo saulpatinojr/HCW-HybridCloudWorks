@@ -25,8 +25,10 @@ import {
   normalizePodcastFeeds,
   normalizePodcastVoices,
   normalizeSocialAutopost,
+  parseIfMatch,
   presentSetting,
   resolveSetting,
+  satisfiesIfMatch,
 } from './platform-settings.js';
 import { pickDefaultHero, DEFAULT_HEROES_CONFIG_ID } from './triggers/ai-cover.js';
 import { AUTOPOST_CONFIG_ID } from './triggers/social-caption-trigger.js';
@@ -389,7 +391,9 @@ describe('podcast voices (#725)', () => {
     );
     expect(res.status).toBe(200);
     expect(parse(res)).toMatchObject({ value: { Maya: MAYA, Elena: ELENA }, stored: 'valid' });
-    const [configCall, auditCall] = store.upsertDoc.mock.calls;
+    // Nothing stored and no If-Match: the save creates the document (#946).
+    const [configCall] = store.createDoc.mock.calls;
+    const [auditCall] = store.upsertDoc.mock.calls;
     expect(configCall).toEqual([
       'admin_config',
       {
@@ -1184,12 +1188,13 @@ describe('handlers', () => {
     expect(templateCache.select).toHaveBeenCalledTimes(1);
   });
 
-  it('GET reads the document at the admin_config partition', async () => {
+  it('GET reads the document at the admin_config partition, with the ETag a save names (#946)', async () => {
     const store = makeStore({
       readDoc: vi.fn(async () => ({
         id: PODCAST_FEEDS_CONFIG_ID,
         configScope: ADMIN_CONFIG_PARTITION,
         feeds: [{ provider: 'azure', url: 'https://x.example/a' }],
+        _etag: '"feeds-v1"',
       })),
     });
     const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
@@ -1206,7 +1211,9 @@ describe('handlers', () => {
       exists: true,
       stored: 'valid',
       updatedAt: null,
+      etag: '"feeds-v1"',
     });
+    expect(res.headers.ETag).toBe('"feeds-v1"');
   });
 
   it('PUT replaces the document with the normalized shape, the partition and provenance, then audits counts only', async () => {
@@ -1230,7 +1237,9 @@ describe('handlers', () => {
       scheduleDelayMinutes: 45,
     });
 
-    const [configCall, auditCall] = store.upsertDoc.mock.calls;
+    // Nothing stored and no If-Match: the save creates the document (#946).
+    const [configCall] = store.createDoc.mock.calls;
+    const [auditCall] = store.upsertDoc.mock.calls;
     expect(configCall[0]).toBe('admin_config');
     expect(configCall[1]).toEqual({
       id: AUTOPOST_CONFIG_ID,
@@ -1285,7 +1294,8 @@ describe('handlers', () => {
 
   it('a failed audit row is a warning, not a 500: the setting was saved', async () => {
     const log = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    // The config write (first upsert) succeeds; the audit write (second) fails.
+    // The config write (a create: nothing stored, no If-Match) succeeds; the
+    // audit write fails.
     const store = makeStore({
       upsertDoc: vi.fn(async (container, doc) => {
         if (container === 'admin_audit_logs') throw new Error('audit container throttled');
@@ -1307,8 +1317,8 @@ describe('handlers', () => {
       value: { feeds: [{ provider: 'azure', url: 'https://x.example/private-feed' }] },
       stored: 'valid',
     });
+    expect(store.createDoc.mock.calls.map(([container]) => container)).toEqual(['admin_config']);
     expect(store.upsertDoc.mock.calls.map(([container]) => container)).toEqual([
-      'admin_config',
       'admin_audit_logs',
     ]);
     expect(log.error).not.toHaveBeenCalled();
@@ -1343,9 +1353,10 @@ describe('handlers', () => {
 
   it('a failed config write is a 500 whose log line names the setting, not the document', async () => {
     const log = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    // The first upsert is the config document itself; nothing was saved.
+    // The config write (a create) fails with an error that is not a
+    // conflict; nothing was saved, so nothing is audited.
     const store = makeStore({
-      upsertDoc: vi.fn(async () => {
+      createDoc: vi.fn(async () => {
         throw new Error('cosmos down');
       }),
     });
@@ -1358,7 +1369,8 @@ describe('handlers', () => {
       log
     );
     expect(res.status).toBe(500);
-    expect(store.upsertDoc).toHaveBeenCalledTimes(1);
+    expect(store.createDoc).toHaveBeenCalledTimes(1);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
     expect(log.warn).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(log.error.mock.calls[0])).not.toContain('private-feed');
@@ -1398,6 +1410,263 @@ describe('handlers', () => {
     expect(okRes.status).toBe(200);
     expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
     expect(store.replaceDocIfMatch.mock.calls[0][1]._etag).toBe('"etag-valid"');
+  });
+});
+
+describe('a save names the version it replaces (#946)', () => {
+  const feedsA = { feeds: [{ provider: 'azure', url: 'https://x.example/a' }] };
+  const feedsB = { feeds: [{ provider: 'aws', url: 'https://x.example/b' }] };
+  const conflict = (code) => Object.assign(new Error('conflict'), { code });
+
+  /** A request for one setting, carrying If-Match only when one is given. */
+  const request = (setting, { ifMatch, body } = {}) => ({
+    params: { setting },
+    headers: new Headers(ifMatch === undefined ? {} : { 'If-Match': ifMatch }),
+    json: async () => body,
+  });
+
+  /**
+   * One stored document whose ETag moves on every write, as Cosmos's does: a
+   * create over an existing document is a 409, and a replace naming any ETag
+   * but the current one is a 412.
+   */
+  function versionedStore(initial = null) {
+    let current = initial;
+    let version = 1;
+    const stamp = (doc) => {
+      version += 1;
+      current = { ...doc, _etag: `"v${version}"` };
+      return { ...current };
+    };
+    return {
+      current: () => current,
+      ...makeStore({
+        readDoc: vi.fn(async () => (current ? { ...current } : null)),
+        createDoc: vi.fn(async (_container, doc) => {
+          if (current) throw conflict(409);
+          return stamp(doc);
+        }),
+        replaceDocIfMatch: vi.fn(async (_container, doc) => {
+          if (!current || doc._etag !== current._etag) throw conflict(412);
+          return stamp(doc);
+        }),
+      }),
+    };
+  }
+
+  const storedFeeds = (value = feedsA) => ({
+    id: PODCAST_FEEDS_CONFIG_ID,
+    configScope: ADMIN_CONFIG_PARTITION,
+    ...value,
+    _etag: '"v1"',
+  });
+  const auditRows = (store) =>
+    store.upsertDoc.mock.calls.filter(([container]) => container === 'admin_audit_logs');
+  const settingUpserts = (store) =>
+    store.upsertDoc.mock.calls.filter(([container]) => container === 'admin_config');
+
+  it('round trip: two pages read v1, the first saves, the second gets a 412 and nothing it sent is written', async () => {
+    const store = versionedStore(storedFeeds());
+    const log = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+
+    const pageA = parse(await h.getSetting(request('podcast-feeds'), log));
+    const pageB = parse(await h.getSetting(request('podcast-feeds'), log));
+    expect(pageA.etag).toBe('"v1"');
+    expect(pageB.etag).toBe('"v1"');
+
+    const savedA = await h.putSetting(
+      request('podcast-feeds', { ifMatch: pageA.etag, body: feedsB }),
+      log
+    );
+    expect(savedA.status).toBe(200);
+    expect(parse(savedA).etag).toBe('"v2"');
+    expect(savedA.headers.ETag).toBe('"v2"');
+
+    const staleB = await h.putSetting(
+      request('podcast-feeds', { ifMatch: pageB.etag, body: feedsA }),
+      log
+    );
+    expect(staleB.status).toBe(412);
+    expect(parse(staleB)).toEqual({
+      code: 'CONFLICT',
+      error: expect.stringMatching(/saved somewhere else.*Nothing was saved/),
+    });
+    expect(store.current()).toMatchObject({ ...feedsB, _etag: '"v2"' });
+    expect(auditRows(store)).toHaveLength(1);
+
+    // Page B reloads, so it now names the version page A wrote, and saves.
+    const reloadedB = parse(await h.getSetting(request('podcast-feeds'), log));
+    expect(reloadedB).toMatchObject({ value: feedsB, etag: '"v2"' });
+    const savedB = await h.putSetting(
+      request('podcast-feeds', { ifMatch: reloadedB.etag, body: feedsA }),
+      log
+    );
+    expect(savedB.status).toBe(200);
+    expect(parse(savedB).etag).toBe('"v3"');
+
+    expect(settingUpserts(store)).toEqual([]);
+    expect(log.error).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('a page saving twice names the ETag its first save returned', async () => {
+    const store = versionedStore(storedFeeds());
+    const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+    const first = parse(
+      await h.putSetting(request('podcast-feeds', { ifMatch: '"v1"', body: feedsB }), context)
+    );
+    const second = await h.putSetting(
+      request('podcast-feeds', { ifMatch: first.etag, body: feedsA }),
+      context
+    );
+    expect(second.status).toBe(200);
+    expect(store.current()).toMatchObject({ ...feedsA, _etag: '"v3"' });
+  });
+
+  it('a write landing between the read and the replace is a 412, not an overwrite', async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => storedFeeds()),
+      replaceDocIfMatch: vi.fn(async () => {
+        throw conflict(412);
+      }),
+    });
+    const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+    const res = await h.putSetting(
+      request('podcast-feeds', { ifMatch: '"v1"', body: feedsB }),
+      context
+    );
+    expect(res.status).toBe(412);
+    expect(parse(res).code).toBe('CONFLICT');
+    expect(store.replaceDocIfMatch.mock.calls[0][1]._etag).toBe('"v1"');
+    expect(auditRows(store)).toEqual([]);
+  });
+
+  it('without If-Match a stored setting is never replaced: 428, nothing written', async () => {
+    const store = versionedStore(storedFeeds());
+    const log = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+    const res = await h.putSetting(request('podcast-feeds', { body: feedsB }), log);
+    expect(res.status).toBe(428);
+    expect(parse(res)).toEqual({
+      code: 'PRECONDITION_REQUIRED',
+      error: expect.stringMatching(/did not name the version.*nothing was saved/),
+    });
+    expect(store.current()).toEqual(storedFeeds());
+    expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('without If-Match and nothing stored, the save creates and returns the first ETag', async () => {
+    const store = versionedStore();
+    const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+    const read = parse(await h.getSetting(request('podcast-feeds'), context));
+    expect(read).toMatchObject({ exists: false, etag: null });
+
+    const res = await h.putSetting(request('podcast-feeds', { body: feedsA }), context);
+    expect(res.status).toBe(200);
+    expect(parse(res).etag).toBe('"v2"');
+    expect(store.createDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it('If-Match: * names no version, so it is a 428 that reads and writes nothing, stored or not (review of #946)', async () => {
+    for (const store of [versionedStore(storedFeeds()), versionedStore()]) {
+      const before = store.current();
+      const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+      const res = await h.putSetting(
+        request('podcast-feeds', { ifMatch: '*', body: feedsB }),
+        context
+      );
+      expect(res.status).toBe(428);
+      expect(parse(res).code).toBe('PRECONDITION_REQUIRED');
+      expect(store.current()).toEqual(before);
+      expect(store.readDoc).not.toHaveBeenCalled();
+      expect(store.createDoc).not.toHaveBeenCalled();
+      expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+    }
+  });
+
+  it('a * inside a list is no wildcard: only the listed versions can match', async () => {
+    const store = versionedStore(storedFeeds());
+    const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+    const res = await h.putSetting(
+      request('podcast-feeds', { ifMatch: '"v0", *', body: feedsB }),
+      context
+    );
+    expect(res.status).toBe(412);
+    expect(store.current()).toEqual(storedFeeds());
+  });
+
+  it('matches a listed strong tag, and never a weak one', async () => {
+    const store = versionedStore(storedFeeds());
+    const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+    const weak = await h.putSetting(
+      request('podcast-feeds', { ifMatch: 'W/"v1"', body: feedsB }),
+      context
+    );
+    expect(weak.status).toBe(412);
+    const listed = await h.putSetting(
+      request('podcast-feeds', { ifMatch: '"v0", "v1"', body: feedsB }),
+      context
+    );
+    expect(listed.status).toBe(200);
+  });
+
+  it('parseIfMatch and satisfiesIfMatch follow RFC 9110: absent, *, lists, strong comparison', () => {
+    expect(parseIfMatch(null)).toBeNull();
+    expect(parseIfMatch('   ')).toBeNull();
+    expect(parseIfMatch('*')).toEqual(['*']);
+    expect(parseIfMatch(' "a" , W/"b", "c" ')).toEqual(['"a"', '"c"']);
+    expect(parseIfMatch('"a", *')).toEqual(['"a"']);
+    expect(parseIfMatch('W/"b"')).toEqual([]);
+    expect(satisfiesIfMatch(['*'], null)).toBe(false);
+    expect(satisfiesIfMatch(['*'], { _etag: '"a"' })).toBe(true);
+    expect(satisfiesIfMatch(['"a"'], { _etag: '"a"' })).toBe(true);
+    expect(satisfiesIfMatch(['"a"'], { _etag: '"b"' })).toBe(false);
+    expect(satisfiesIfMatch(['"a"'], {})).toBe(false);
+    expect(satisfiesIfMatch([], { _etag: '"a"' })).toBe(false);
+  });
+
+  describe('the reminders sheet, guarded by its own read (review of #910)', () => {
+    const sheet = {
+      id: 'reminders',
+      _etag: '"r1"',
+      reminders: [{ id: 'a', title: 'T', dueDate: '2027-01-04', notified: {} }],
+    };
+    const body = {
+      reminders: [{ id: 'a', title: 'T renamed', dueDate: '2027-01-04', notified: {} }],
+    };
+
+    it('offers no ETag, so the page sends none and a timer stamp is merged rather than refused', async () => {
+      const store = makeStore({ readDoc: vi.fn(async () => ({ ...sheet })) });
+      const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+      const res = await h.getSetting(request('reminders'), context);
+      expect(parse(res).etag).toBeNull();
+      expect(res.headers.ETag).toBeUndefined();
+    });
+
+    it('a caller that names a version anyway gets exactly it or a 412, with no re-read', async () => {
+      const stale = makeStore({ readDoc: vi.fn(async () => ({ ...sheet })) });
+      const h = createPlatformSettingsHandlers({ guard: allowGuard, store: stale, ...fixed });
+      const refused = await h.putSetting(request('reminders', { ifMatch: '"r0"', body }), context);
+      expect(refused.status).toBe(412);
+      expect(stale.replaceDocIfMatch).not.toHaveBeenCalled();
+      expect(stale.readDoc).toHaveBeenCalledTimes(1);
+
+      const raced = makeStore({
+        readDoc: vi.fn(async () => ({ ...sheet })),
+        replaceDocIfMatch: vi.fn(async () => {
+          throw conflict(412);
+        }),
+      });
+      const h2 = createPlatformSettingsHandlers({ guard: allowGuard, store: raced, ...fixed });
+      const lost = await h2.putSetting(request('reminders', { ifMatch: '"r1"', body }), context);
+      expect(lost.status).toBe(412);
+      expect(raced.replaceDocIfMatch).toHaveBeenCalledTimes(1);
+      expect(raced.readDoc).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

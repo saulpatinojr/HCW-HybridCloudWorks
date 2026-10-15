@@ -8,10 +8,19 @@ import { getDefaultGuard } from '../lib/auth/default-guard.js';
 import { queryDocs, readDoc, upsertDoc, patchDoc } from '../lib/cosmos-client.js';
 import { createOpsHealthHandlers } from '../lib/ops-health.js';
 
+// One store object for the module's life, not a literal per request: the
+// snapshot cache in lib/ops-health.js is keyed on it, and a new object on
+// every request would be a new key, and so an empty cache, every time (#946).
+const store = Object.freeze({ queryDocs, readDoc, upsertDoc, patchDoc });
+
+/**
+ * A handler set for one request. Built per request so the guard is composed
+ * lazily (lib/auth/default-guard.js); the snapshot cache outlives it.
+ */
 const handlers = () =>
   createOpsHealthHandlers({
     guard: getDefaultGuard(),
-    store: { queryDocs, readDoc, upsertDoc, patchDoc },
+    store,
   });
 
 httpRoute('getOpsHealthSnapshot', {
