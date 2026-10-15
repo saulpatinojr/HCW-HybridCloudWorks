@@ -242,6 +242,16 @@ export function validateMcpUrl(value) {
   if (parsed.username || parsed.password) {
     throw new Error('MCP server URL must not contain embedded credentials');
   }
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === 'localhost' ||
+    host === '::1' ||
+    host === '[::1]' ||
+    host === '0.0.0.0' ||
+    host.startsWith('127.')
+  ) {
+    throw new Error('MCP server URL must not target loopback addresses');
+  }
   if (NO_QUERY_HOSTS.has(parsed.hostname) && parsed.search) {
     throw new Error(
       `MCP server URL for ${parsed.hostname} must not carry a query string; the key goes in its app setting, not the URL`

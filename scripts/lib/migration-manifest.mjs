@@ -185,6 +185,9 @@ export const CONTAINER_TTL_SECONDS = Object.freeze({
   // Transient job records. Long enough to debug a failure after the weekend.
   lab_jobs: 2592000, // 30 days
   jobs: 2592000,
+  // Hardened audit logs: 90 days retention floor
+  admin_audit_logs: 7776000, // 90 days
+  audits: 7776000, // 90 days
 });
 
 /**

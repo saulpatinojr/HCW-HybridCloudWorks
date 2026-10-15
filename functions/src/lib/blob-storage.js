@@ -29,7 +29,7 @@ import {
   BlobSASPermissions,
   SASProtocol,
 } from '@azure/storage-blob';
-import { DefaultAzureCredential } from '@azure/identity';
+import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
 
 let blobServiceClient = null;
 
@@ -87,7 +87,12 @@ export function resolveAccountName(env = process.env) {
 function getBlobService() {
   if (blobServiceClient) return blobServiceClient;
 
-  blobServiceClient = new BlobServiceClient(resolveBlobEndpoint(), new DefaultAzureCredential());
+  const credential =
+    process.env.WEBSITE_INSTANCE_ID || process.env.IDENTITY_ENDPOINT
+      ? new ManagedIdentityCredential()
+      : new DefaultAzureCredential();
+
+  blobServiceClient = new BlobServiceClient(resolveBlobEndpoint(), credential);
   return blobServiceClient;
 }
 

@@ -729,4 +729,72 @@ describe('the audit row every non-GET proxy call leaves (AP-B3, #938)', () => {
       },
     });
   });
+
+  describe('AP-B12: secrets redaction on proxy responses and errors', () => {
+    const publer = createIntegration({
+      name: 'Publer',
+      baseUrl: 'https://api.publer.io/v1',
+      keyEnv: 'TEST_API_KEY',
+      headers: ({ apiKey }) => ({ Authorization: `Bearer-API ${apiKey}` }),
+      allowedPaths: { paths: ['/accounts'] },
+      allowedMethods: ['GET', 'POST', 'DELETE'],
+    });
+    const handler = (fetchImpl) =>
+      createRestProxy({
+        guard: allowGuard,
+        env: { TEST_API_KEY: 'publer-key-secret-12345' },
+        fetch: fetchImpl,
+        readKey,
+      })(publer);
+
+    it('redacts upstream secrets from raw text before returning to client', async () => {
+      const fetchImpl = vi.fn(async () => ({
+        ok: false,
+        status: 500,
+        text: async () => 'Error with key publer-key-secret-12345 in upstream response',
+      }));
+
+      const res = await handler(fetchImpl)(
+        makeRequest({ path: '/accounts', method: 'GET' }),
+        context
+      );
+      expect(res.status).toBe(200);
+      const parsed = JSON.parse(res.body);
+      expect(parsed.data.raw).not.toContain('publer-key-secret-12345');
+      expect(parsed.data.raw).toContain('***');
+    });
+
+    it('redacts secrets from parsed JSON upstream bodies', async () => {
+      const fetchImpl = vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ message: 'Invalid token: publer-key-secret-12345' }),
+      }));
+
+      const res = await handler(fetchImpl)(
+        makeRequest({ path: '/accounts', method: 'GET' }),
+        context
+      );
+      expect(res.status).toBe(200);
+      const parsed = JSON.parse(res.body);
+      expect(parsed.data.message).not.toContain('publer-key-secret-12345');
+      expect(parsed.data.message).toContain('***');
+    });
+
+    it('redacts secrets from network failure error messages', async () => {
+      const fetchImpl = vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED https://publer-key-secret-12345@api.publer.io');
+      });
+
+      const res = await handler(fetchImpl)(
+        makeRequest({ path: '/accounts', method: 'GET' }),
+        context
+      );
+      expect(res.status).toBe(200);
+      const parsed = JSON.parse(res.body);
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error).not.toContain('publer-key-secret-12345');
+      expect(parsed.error).toContain('***');
+    });
+  });
 });

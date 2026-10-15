@@ -9,7 +9,7 @@
  */
 
 import { CosmosClient } from '@azure/cosmos';
-import { DefaultAzureCredential } from '@azure/identity';
+import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
 
 let client = null;
 let database = null;
@@ -89,9 +89,14 @@ export function getCosmosDb() {
     throw new Error('Missing COSMOS_ENDPOINT environment variable');
   }
 
+  const credential =
+    process.env.WEBSITE_INSTANCE_ID || process.env.IDENTITY_ENDPOINT
+      ? new ManagedIdentityCredential()
+      : new DefaultAzureCredential();
+
   client = new CosmosClient({
     endpoint,
-    aadCredentials: new DefaultAzureCredential(),
+    aadCredentials: credential,
   });
   database = client.database(databaseId);
 
@@ -595,6 +600,25 @@ export async function queryDocsPage(containerName, query, parameters = [], optio
 }
 
 /**
+ * Validate a WHERE clause fragment for countDocs.
+ * Rejects illegal SQL injection vectors such as semicolons, comments, or union statements.
+ *
+ * @param {string|undefined} whereClause
+ * @returns {string} Sanitized whereClause
+ */
+export function validateWhereClause(whereClause) {
+  if (!whereClause) return '';
+  const trimmed = String(whereClause).trim();
+  if (!trimmed) return '';
+
+  if (/;|--|\/\*|\*\/|union\s+all|union\s+select/i.test(trimmed)) {
+    throw new Error('countDocs: whereClause contains illegal or unsafe characters');
+  }
+
+  return trimmed;
+}
+
+/**
  * Count documents matching a query.
  * Equivalent to: admin.firestore().collection(name).count().get()
  *
@@ -605,8 +629,9 @@ export async function queryDocsPage(containerName, query, parameters = [], optio
  */
 export async function countDocs(containerName, whereClause, parameters = []) {
   const container = getContainer(containerName);
-  const query = whereClause
-    ? `SELECT VALUE COUNT(1) FROM c WHERE ${whereClause}`
+  const sanitizedWhere = validateWhereClause(whereClause);
+  const query = sanitizedWhere
+    ? `SELECT VALUE COUNT(1) FROM c WHERE ${sanitizedWhere}`
     : 'SELECT VALUE COUNT(1) FROM c';
   const { resources } = await container.items.query({ query, parameters }).fetchAll();
   return resources[0] || 0;

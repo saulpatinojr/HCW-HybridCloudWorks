@@ -109,7 +109,9 @@ describe('certifications', () => {
       context
     );
     expect(res.status).toBe(200);
-    expect(store.upsertDoc).not.toHaveBeenCalled(); // the load-bearing assertion
+    // the load-bearing assertion: patch, not replace (never upserts to certifications)
+    expect(store.upsertDoc.mock.calls.some(([c]) => c === 'certifications')).toBe(false);
+    expect(store.upsertDoc.mock.calls.some(([c, d]) => c === 'admin_audit_logs' && d.action === 'certification_updated')).toBe(true);
     const [container, id, updates] = store.patchDoc.mock.calls[0];
     expect(container).toBe('certifications');
     expect(id).toBe('c1');

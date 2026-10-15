@@ -10,6 +10,7 @@
  * storage, now, uuid); the factory at the bottom only wires them.
  */
 import { json, listAllHandler, validBody } from '../http/admin-handler.js';
+import { recordMutationAudit } from '../audit.js';
 import {
   checkNewCertification,
   isCertImagePath,
@@ -32,6 +33,16 @@ async function createCertification(ctx, request, context) {
       _updatedAt: nowIso,
     };
     await ctx.store.upsertDoc('certifications', doc);
+    await recordMutationAudit(ctx.store, {
+      action: 'certification_created',
+      actor: auth.user,
+      resource: `certifications:${doc.id}`,
+      before: null,
+      after: doc,
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
     return json(200, { success: true, id: doc.id, item: doc });
   } catch (error) {
     context.error('createCertification failed:', error);
@@ -55,7 +66,7 @@ async function prepareCertificationPatch(store, request) {
   const checked = validateCertification(body, existing);
   return checked.error
     ? { error: json(400, { error: checked.error }) }
-    : { id, value: checked.value };
+    : { id, value: checked.value, existing };
 }
 
 /** PATCH /api/cms/certifications/{id} — partial update, stamps _updatedAt. */
@@ -68,6 +79,16 @@ async function patchCertification(ctx, request, context) {
     const updated = await ctx.store.patchDoc('certifications', prepared.id, {
       ...prepared.value,
       _updatedAt: ctx.now().toISOString(),
+    });
+    await recordMutationAudit(ctx.store, {
+      action: 'certification_updated',
+      actor: auth.user,
+      resource: `certifications:${prepared.id}`,
+      before: prepared.existing,
+      after: updated,
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
     });
     return json(200, { success: true, item: updated });
   } catch (error) {
@@ -106,7 +127,20 @@ async function deleteCertificationImage(ctx, request, context) {
   try {
     if (!ctx.storage?.deleteBlob) return json(503, { error: 'Blob storage is not configured' });
     const body = validBody(await request.json().catch(() => null));
-    return await deleteCertImage(ctx, String(body?.path || '').trim());
+    const path = String(body?.path || '').trim();
+    const res = await deleteCertImage(ctx, path);
+    if (res.status === 200) {
+      await recordMutationAudit(ctx.store, {
+        action: 'certification_image_deleted',
+        actor: auth.user,
+        resource: `certifications:image:${path}`,
+        details: { path },
+        now: ctx.now,
+        uuid: ctx.uuid,
+        context,
+      });
+    }
+    return res;
   } catch (error) {
     context.error('deleteCertificationImage failed:', error);
     return json(500, { error: 'Failed to delete certification image' });
@@ -120,7 +154,18 @@ async function deleteCertification(ctx, request, context) {
   try {
     const id = String(request.params.id || '').trim();
     if (!id) return json(400, { error: 'id required' });
+    const existing = await ctx.store.readDoc('certifications', id, id).catch(() => null);
     await ctx.store.deleteDoc('certifications', id);
+    await recordMutationAudit(ctx.store, {
+      action: 'certification_deleted',
+      actor: auth.user,
+      resource: `certifications:${id}`,
+      before: existing,
+      after: null,
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
     return json(200, { success: true });
   } catch (error) {
     context.error('deleteCertification failed:', error);

@@ -375,6 +375,24 @@ describe("property 1 — every route is guarded or explicitly public", () => {
     // wrong about being public — but it means the allowlist is lying.
     expect(surprising).toEqual([]);
   });
+
+  it("returns 401 or 403 for every guarded route on guard refusal", async () => {
+    const unrefused = [];
+
+    for (const [name, options] of httpRegistrations) {
+      if (PUBLIC_ROUTES.has(options.route)) continue;
+
+      for (const method of options.methods.filter((m) => m !== "OPTIONS")) {
+        clearGuards();
+        const res = await invoke(options, makeRequest({ method }));
+        if (!res || (res.status !== 401 && res.status !== 403)) {
+          unrefused.push(`${name} (${method} ${options.route}) returned ${res?.status}`);
+        }
+      }
+    }
+
+    expect(unrefused).toEqual([]);
+  });
 });
 
 /**

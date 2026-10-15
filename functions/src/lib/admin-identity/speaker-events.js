@@ -7,6 +7,7 @@
 import { json } from '../http/admin-handler.js';
 import { errorResponse } from '../http/error-response.js';
 import { checkSpeakerEventUpsert } from './speaker-event-rules.js';
+import { recordMutationAudit } from '../audit.js';
 
 /**
  * The write itself. `merge === false` is `set(..., {merge:false})` — a full
@@ -17,9 +18,10 @@ async function writeSpeakerEvent(store, { docId, payload, merge, created }) {
   const existing = merge === false ? null : await store.readDoc('speakerevents', docId, docId);
   if (existing) {
     await store.patchDoc('speakerevents', docId, payload);
-    return;
+    return { existing, isNew: false };
   }
   await store.upsertDoc('speakerevents', { id: docId, ...payload, ...created });
+  return { existing: null, isNew: true };
 }
 
 /** POST /api/upsertSpeakerEvent — merge by default, replace on merge:false. */
@@ -34,11 +36,23 @@ async function upsertSpeakerEvent(ctx, request, context) {
 
     const nowIso = ctx.now().toISOString();
     const by = ctx.actor(auth.user);
-    await writeSpeakerEvent(ctx.store, {
+    const writeResult = await writeSpeakerEvent(ctx.store, {
       docId: checked.docId,
       merge: checked.merge,
       payload: { ...checked.value, updatedAt: nowIso, updatedBy: by },
       created: { createdAt: nowIso, createdBy: by },
+    });
+
+    await recordMutationAudit(ctx.store, {
+      action: 'speaker_event_upserted',
+      actor: auth.user,
+      resource: `speakerevents:${checked.docId}`,
+      before: writeResult.existing,
+      after: { id: checked.docId, ...checked.value, updatedAt: nowIso, updatedBy: by },
+      details: { docId: checked.docId, merge: checked.merge, isNew: writeResult.isNew },
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
     });
 
     return json(200, { success: true, docId: checked.docId });
@@ -65,6 +79,17 @@ async function deleteSpeakerEvent(ctx, request, context) {
     }
 
     await ctx.store.deleteDoc('speakerevents', docId);
+    await recordMutationAudit(ctx.store, {
+      action: 'speaker_event_deleted',
+      actor: auth.user,
+      resource: `speakerevents:${docId}`,
+      before: existing,
+      after: null,
+      details: { docId },
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
     return json(200, { success: true, docId, deletedBy: ctx.actor(auth.user) });
   } catch (error) {
     return errorResponse(context, 'Failed to delete speaker event', error, 500, request);

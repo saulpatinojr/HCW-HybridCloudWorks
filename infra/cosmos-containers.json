@@ -25,7 +25,7 @@
         "/*"
       ],
       "composite_indexes": [],
-      "default_ttl": null,
+      "default_ttl": 7776000,
       "note": null
     },
     {
@@ -106,7 +106,7 @@
         "/*"
       ],
       "composite_indexes": [],
-      "default_ttl": null,
+      "default_ttl": 7776000,
       "note": null
     },
     {

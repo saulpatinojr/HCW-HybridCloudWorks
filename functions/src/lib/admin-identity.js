@@ -37,6 +37,7 @@ import { actorName } from './auth/actor-name.js';
 import { json } from './http/admin-handler.js';
 import { errorResponse } from './http/error-response.js';
 import { createSpeakerEventHandlers } from './admin-identity/speaker-events.js';
+import { validateClientAuditAction, sanitizeAuditDetails, AUDIT_TTL_SECONDS } from './audit.js';
 
 export {
   SPEAKER_EVENT_FIELDS,
@@ -309,16 +310,6 @@ async function bootstrapCurrentUserAdmin(ctx, request, context) {
   }
 }
 
-/** Why a recordAdminAudit body is refused, or null. */
-function auditBodyError({ action, details }) {
-  if (!action || typeof action !== 'string') return 'action is required';
-  if (String(action).trim().length > 120) return 'action exceeds 120 characters';
-  if (!details || typeof details !== 'object' || Array.isArray(details)) {
-    return 'details must be an object';
-  }
-  return null;
-}
-
 /** POST /api/recordAdminAudit — client-originated audit rows. */
 async function recordAdminAudit(ctx, request, context) {
   const auth = await ctx.guard.requireRole(request, 'editor');
@@ -327,8 +318,11 @@ async function recordAdminAudit(ctx, request, context) {
   try {
     const body = (await request.json().catch(() => null)) || {};
     const { action, details = {} } = body;
-    const problem = auditBodyError({ action, details });
-    if (problem) return json(400, { error: problem });
+    const actionProblem = validateClientAuditAction(action);
+    if (actionProblem) return json(400, { error: actionProblem });
+
+    const detailsResult = sanitizeAuditDetails(details);
+    if (detailsResult.error) return json(400, { error: detailsResult.error });
 
     const { user } = auth;
     const auditId = ctx.uuid();
@@ -341,9 +335,10 @@ async function recordAdminAudit(ctx, request, context) {
       sessionId: details.sessionId || null,
       timestamp: ctx.now().toISOString(),
       clientTimestamp: details.clientTimestamp || null,
-      details,
+      details: detailsResult.details,
       userAgent: request.headers?.get?.('user-agent') || details.userAgent || null,
-      compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true },
+      ttl: AUDIT_TTL_SECONDS,
+      compliance: { schemaVersion: 1, detailsSanitized: true, identityVerified: true, clientOriginated: true, appendOnly: true },
     });
 
     return json(200, { success: true, auditId });

@@ -173,6 +173,14 @@ describe('the Static Web App origin — retained as the break-glass path (#521)'
     expect(cors.isAllowed('https://calm-ground-0d0e6a010.7.azurestaticapps.net')).toBe(true);
   });
 
+  it('can be disabled in production unless allowPreview is true', () => {
+    const prodNoPreview = createCors({ environment: 'production', allowPreview: false });
+    expect(prodNoPreview.isAllowed('https://calm-ground-0d0e6a010.7.azurestaticapps.net')).toBe(false);
+
+    const prodWithPreview = createCors({ environment: 'production', allowPreview: true });
+    expect(prodWithPreview.isAllowed('https://calm-ground-0d0e6a010.7.azurestaticapps.net')).toBe(true);
+  });
+
   it('does not open azurestaticapps.net generally', () => {
     const cors = createCors({});
     expect(cors.isAllowed('https://someone-elses-app.azurestaticapps.net')).toBe(false);

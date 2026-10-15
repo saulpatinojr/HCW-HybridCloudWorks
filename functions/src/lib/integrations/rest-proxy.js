@@ -39,6 +39,7 @@
 import { randomUUID } from 'node:crypto';
 import { createKeyVerdictReporter, isCredentialRejected } from '../key-verdict.js';
 import { readUpstreamError } from './upstream-error.js';
+import { redactSecrets } from './connection-probe.js';
 
 const json = (status, body) => ({
   status,
@@ -379,7 +380,12 @@ export function createRestProxy({
 
       try {
         const response = await fetchImpl(`${integration.baseUrl}${path}`, options);
-        const text = await response.text();
+        const rawText = await response.text();
+        const secretsToRedact = [
+          apiKey,
+          ...integration.extraEnv.map((name) => readKey(env, name)).filter(Boolean),
+        ];
+        const text = redactSecrets(rawText, secretsToRedact);
         let data = null;
         try {
           data = text ? JSON.parse(text) : null;
@@ -414,11 +420,16 @@ export function createRestProxy({
         await record('upstream', { status: response.status });
         return json(200, { ok: response.ok, status: response.status, data });
       } catch (error) {
-        context.error?.(`${integration.name}Proxy ${method} ${path} failed:`, error);
+        const secretsToRedact = [
+          apiKey,
+          ...integration.extraEnv.map((name) => readKey(env, name)).filter(Boolean),
+        ];
+        const safeError = redactSecrets(error?.message || String(error), secretsToRedact);
+        context.error?.(`${integration.name}Proxy ${method} ${path} failed:`, safeError);
         await record('failed');
         return json(200, {
           ok: false,
-          error: `${integration.name} request failed: ${error?.message || error}`,
+          error: `${integration.name} request failed: ${safeError}`,
         });
       }
     };

@@ -6,12 +6,14 @@
 import { httpRoute } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
 import { uploadBlob } from '../lib/blob-storage.js';
+import { upsertDoc } from '../lib/cosmos-client.js';
 import { createAdminUploadHandlers } from '../lib/admin-uploads.js';
 
 const handlers = () =>
   createAdminUploadHandlers({
     guard: getDefaultGuard(),
     storage: { uploadBlob },
+    store: { upsertDoc },
   });
 
 httpRoute('cmsUploadFile', {

@@ -97,6 +97,13 @@ describe('every call', () => {
     assert.deepEqual(Object.keys(calls[0].body).sort(), ['agentId', 'exitCode', 'jobId', 'output', 'status']);
   });
 
+  it('sends claimId when provided in completeJob', async () => {
+    const { api, calls } = client();
+    await api.completeJob({ jobId: 'j1', claimId: 'claim-123', status: 'succeeded', exitCode: 0, output: 'ok' });
+    assert.equal(calls[0].body.claimId, 'claim-123');
+    assert.deepEqual(Object.keys(calls[0].body).sort(), ['agentId', 'claimId', 'exitCode', 'jobId', 'output', 'status']);
+  });
+
   it('refuses to send anything without a token', async () => {
     const { api, calls } = client({ token: null });
     await assert.rejects(api.claimJob(), /failed to acquire an API token/);

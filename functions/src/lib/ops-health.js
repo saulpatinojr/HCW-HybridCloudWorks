@@ -26,6 +26,7 @@ import { readConfigStamp } from './auth/http-route.js';
 import { ADMIN_CONFIG_PARTITION } from './cosmos-client.js';
 import { unresolvedSecretNames } from './secrets-health.js';
 import { errorResponse } from './http/error-response.js';
+import { recordMutationAudit } from './audit.js';
 
 export const OPS_HEALTH_CACHE_TTL_MS = 30_000;
 
@@ -435,6 +436,24 @@ export function createOpsHealthHandlers({
         });
 
         await store.patchDoc('workflow_alerts', alertId, updates);
+
+        await recordMutationAudit(store, {
+          action: `workflow_alert_${action}`,
+          actor: user,
+          resource: `workflow_alerts:${alertId}`,
+          before: {
+            active: alertData?.active ?? true,
+            status: alertData?.status || 'open',
+          },
+          after: updates,
+          details: {
+            alertType: alertData?.alertType || null,
+            notes: normalizedResolutionNote,
+          },
+          now,
+          uuid,
+          context,
+        });
 
         await store.upsertDoc('audits', {
           id: uuid(),

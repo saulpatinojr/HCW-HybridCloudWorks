@@ -145,6 +145,7 @@ async function executeJob(job) {
     await api
       .completeJob({
         jobId: job.id,
+        claimId: job.claimId,
         status: 'failed',
         exitCode: -1,
         output: `agent has no capability for job type ${job.type}`,
@@ -165,6 +166,7 @@ async function executeJob(job) {
 
     await api.completeJob({
       jobId: job.id,
+      claimId: job.claimId,
       status,
       exitCode: result.exitCode,
       output: result.output,
@@ -179,6 +181,7 @@ async function executeJob(job) {
     await api
       .completeJob({
         jobId: job.id,
+        claimId: job.claimId,
         status: 'failed',
         exitCode: -1,
         output: `agent error: ${err.message}`,

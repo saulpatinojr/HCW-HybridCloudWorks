@@ -115,11 +115,18 @@ const ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 const LOCALHOST_PATTERN = /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i;
 
 /**
- * @param {{ environment?: string, extraOrigins?: string[] }} [options]
+ * @param {{ environment?: string, extraOrigins?: string[], allowPreview?: boolean }} [options]
  */
-export function createCors({ environment = process.env.NODE_ENV, extraOrigins = [] } = {}) {
+export function createCors({
+  environment = process.env.NODE_ENV,
+  extraOrigins = [],
+  allowPreview = environment !== 'production' ||
+    process.env.ALLOW_SWA_PREVIEW === 'true' ||
+    process.env.ALLOW_SWA_PREVIEW === '1',
+} = {}) {
   const isProduction = environment === 'production';
-  const allowlist = new Set([...PRODUCTION_ORIGINS, ...PREVIEW_ORIGINS, ...extraOrigins]);
+  const previewOrigins = allowPreview ? PREVIEW_ORIGINS : [];
+  const allowlist = new Set([...PRODUCTION_ORIGINS, ...previewOrigins, ...extraOrigins]);
 
   const isAllowed = (origin) => {
     if (allowlist.has(origin)) return true;

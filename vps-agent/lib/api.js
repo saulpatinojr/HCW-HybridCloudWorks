@@ -113,8 +113,14 @@ export function createApiClient({
     },
 
     /** Terminal result. The server refuses jobs this agent does not hold. */
-    completeJob({ jobId, status, exitCode, output }) {
-      return post('agent/completeLabJob', { jobId, status, exitCode, output });
+    completeJob({ jobId, claimId, status, exitCode, output }) {
+      return post('agent/completeLabJob', {
+        jobId,
+        claimId: claimId ?? undefined,
+        status,
+        exitCode,
+        output,
+      });
     },
 
     /**

@@ -39,6 +39,7 @@ import {
   parseGalleryListParams,
 } from './gallery-images.js';
 import { json, LIST_WINDOW, listAllHandler, validBody } from './http/admin-handler.js';
+import { recordMutationAudit, AUDIT_TTL_SECONDS } from './audit.js';
 import { createAiFeatureHandlers } from './admin-integrations/ai-features.js';
 import { createAiRoutingHandlers } from './admin-integrations/ai-routing.js';
 import { createAiTaskHandlers } from './admin-integrations/ai-tasks.js';
@@ -248,6 +249,16 @@ async function createRecording(ctx, request, context) {
       createdAt: ctx.now().toISOString(),
     };
     await ctx.store.upsertDoc('recordings', doc);
+    await recordMutationAudit(ctx.store, {
+      action: 'recording_created',
+      actor: auth.user,
+      resource: `recordings:${doc.id}`,
+      before: null,
+      after: doc,
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
     return json(200, { success: true, id: doc.id, item: doc });
   } catch (error) {
     context.error('createRecording failed:', error);
@@ -267,7 +278,7 @@ async function prepareRecordingPatch(store, request) {
   if (!existing) return { error: json(404, { error: `recording ${id} not found` }) };
   const checked = validateRecordingPatch(body);
   if (checked.error) return { error: json(400, { error: checked.error }) };
-  return { id, updates: checked.updates };
+  return { id, updates: checked.updates, existing };
 }
 
 /** PATCH /api/cms/recordings/{id} — routing updates (status, contentId). */
@@ -278,6 +289,16 @@ async function patchRecording(ctx, request, context) {
     const prepared = await prepareRecordingPatch(ctx.store, request);
     if (prepared.error) return prepared.error;
     const updated = await ctx.store.patchDoc('recordings', prepared.id, prepared.updates);
+    await recordMutationAudit(ctx.store, {
+      action: 'recording_updated',
+      actor: auth.user,
+      resource: `recordings:${prepared.id}`,
+      before: prepared.existing,
+      after: updated,
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
     return json(200, { success: true, item: updated });
   } catch (error) {
     context.error('patchRecording failed:', error);
@@ -319,6 +340,7 @@ async function auditSpeakerIdChange(ctx, { user, existing, updates, nowIso }, co
       userName: user?.name || null,
       userEmail: user?.email || user?.preferred_username || null,
       timestamp: nowIso,
+      ttl: AUDIT_TTL_SECONDS,
       // A public identifier (it is the Sessionize URL), so the value
       // itself is a choice the history can show.
       details: {
@@ -326,6 +348,7 @@ async function auditSpeakerIdChange(ctx, { user, existing, updates, nowIso }, co
         sessionizeSpeakerId: after || null,
         changed: before !== after,
       },
+      compliance: { schemaVersion: 2, appendOnly: true },
     });
   } catch (auditError) {
     context.warn?.(
@@ -405,6 +428,18 @@ async function putSettings(ctx, request, context) {
 
     if (Object.prototype.hasOwnProperty.call(updates, 'sessionizeSpeakerId')) {
       await auditSpeakerIdChange(ctx, { user: auth.user, existing, updates, nowIso }, context);
+    } else {
+      await recordMutationAudit(ctx.store, {
+        action: INTEGRATIONS_SETTING_AUDIT_ACTION,
+        actor: auth.user,
+        resource: `${SETTINGS_CONTAINER}:${SETTINGS_DOC_ID}`,
+        before: existing,
+        after: settings,
+        details: { setting: INTEGRATIONS_SETTING_NAME, fields: Object.keys(updates) },
+        now: ctx.now,
+        uuid: ctx.uuid,
+        context,
+      });
     }
     return json(200, { success: true, settings });
   } catch (error) {

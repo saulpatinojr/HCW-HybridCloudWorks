@@ -31,6 +31,7 @@ const json = (status, body) => ({
   body: JSON.stringify(body),
 });
 
+import { randomUUID } from 'node:crypto';
 import { AGENT_DOWN_STATUSES } from './labs.js';
 import {
   MAX_CLOCK_SKEW_MS,
@@ -124,6 +125,7 @@ async function claimCandidates(store, capabilities, now) {
 function claimedJobBody(claimed) {
   return {
     id: claimed.id,
+    claimId: claimed.claimId || null,
     type: claimed.type,
     payload: typeof claimed.payload === 'string' ? claimed.payload : '',
     // Written by enqueueLabJob from its allowlist; a document from
@@ -138,13 +140,15 @@ function claimedJobBody(claimed) {
  * agents racing for the same job produce one 412, and the loser simply
  * tries the next candidate.
  */
-async function claimFirstAvailable({ store, now }, context, agentId, ordered) {
+async function claimFirstAvailable({ store, now, uuid = randomUUID }, context, agentId, ordered) {
   for (const job of ordered) {
     try {
+      const claimId = uuid();
       const claimed = await store.replaceDocIfMatch('lab_jobs', {
         ...job,
         status: 'claimed',
         agentId,
+        claimId,
         claimedAt: now().toISOString(),
       });
       return json(200, { ok: true, job: claimedJobBody(claimed) });
@@ -392,7 +396,7 @@ function completionRefusal(jobId, status) {
  * overwrite any job's output — including jobs run by other agents — which
  * turns the results surface into an arbitrary write.
  */
-function heldJobRefusal(job, jobId, agent, context) {
+function heldJobRefusal(job, jobId, agent, context, claimId = undefined) {
   if (!job) return json(404, { ok: false, error: 'Job not found' });
 
   if (job.agentId !== agent.agentId) {
@@ -407,6 +411,17 @@ function heldJobRefusal(job, jobId, agent, context) {
   if (job.status !== 'claimed') {
     return json(409, { ok: false, error: `Job is ${job.status}` });
   }
+
+  // If the agent sent a claimId and the job records one, verify they match.
+  // Fences against the same agent reclaiming a job after lease expiry and a late
+  // result from the first claim landing against the second (#1094).
+  if (claimId && job.claimId && claimId !== job.claimId) {
+    context.warn?.(
+      `agent ${agent.agentId} tried to complete job ${jobId} with stale claimId ${claimId} (current is ${job.claimId})`
+    );
+    return json(409, { ok: false, error: 'Job was claimed under a different claimId' });
+  }
+
   return null;
 }
 
@@ -435,6 +450,7 @@ async function completeLabJob({ guard, store, now }, request, context) {
   const { body, agent } = parsed;
 
   const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : '';
+  const claimId = typeof body.claimId === 'string' ? body.claimId.trim() : undefined;
   const refused = completionRefusal(jobId, body.status);
   if (refused) return refused;
 
@@ -447,7 +463,7 @@ async function completeLabJob({ guard, store, now }, request, context) {
 
   for (let attempt = 1; attempt <= COMPLETION_ATTEMPTS; attempt += 1) {
     const job = await store.readDoc('lab_jobs', jobId, jobId);
-    const notHeld = heldJobRefusal(job, jobId, agent, context);
+    const notHeld = heldJobRefusal(job, jobId, agent, context, claimId);
     if (notHeld) return notHeld;
 
     try {
@@ -493,11 +509,12 @@ export function createLabAgentHandlers({
   guard,
   store,
   now = () => new Date(),
+  uuid = randomUUID,
   notifier = null,
   coderAutomation = {},
 }) {
   const reportAutomation = createCoderAutomationReporter({ store, now, ...coderAutomation });
-  const ctx = { guard, store, now, notifier, reportAutomation };
+  const ctx = { guard, store, now, uuid, notifier, reportAutomation };
   return {
     claimLabJob: (request, context) => claimLabJob(ctx, request, context),
     heartbeatAgent: (request, context) => heartbeatAgent(ctx, request, context),
