@@ -1592,10 +1592,16 @@ bash, on the host:
 clear && printf '\033[3J'
 ```
 
-**Unseal, after initialising and after every restart or reboot.** A restart
-seals Vault, and so does every reboot, including the nightly idle reboot at
-04:30 (`hcw-reboot-when-idle.timer`); until three keys are entered it serves
-nothing. Bash, on the
+**Unseal, after initialising and after every restart or reboot, under
+Shamir keys only.** Which seal the host is on decides this step. Under
+Shamir keys (`vault status` shows `Seal Type shamir`), a restart seals
+Vault, and so does every reboot, including the nightly idle reboot at 04:30
+(`hcw-reboot-when-idle.timer`); until three keys are entered it serves
+nothing. Under auto-unseal (`Seal Type azurekeyvault` and `Recovery Seal
+Type shamir`), which this host has run since 2026-09-29, a restart or a
+reboot, the idle one included, comes back unsealed by itself, and the five
+keys are recovery keys that cannot unseal it ("HashiCorp Vault: moving to
+auto-unseal", below), so there is nothing to type. Under Shamir keys, bash, on the
 host, three times, pasting a different key at each `Unseal Key (will be
 hidden):` prompt:
 

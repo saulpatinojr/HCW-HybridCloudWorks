@@ -1299,11 +1299,16 @@ Owner steps, over SSH, in
 [docs/runbooks/labs-host.md](../docs/runbooks/labs-host.md), "HashiCorp
 Vault: initialising and unsealing": `vault operator init` once, whose five
 unseal keys and root token go to the owner's password manager and nowhere
-else, then `vault operator unseal` three times. **A restart seals Vault**,
-and so does every reboot, including the idle reboot at 04:30
-(`hcw-reboot-when-idle.timer`), so the three unseals are repeated after
-each, until the host moves to
-auto-unseal (next section). The login shell sets
+else, then `vault operator unseal` three times. What a restart does depends
+on the seal. **Under Shamir keys a restart seals Vault**, and so does every
+reboot, including the idle reboot at 04:30 (`hcw-reboot-when-idle.timer`),
+so the three unseals are repeated after each. **Under auto-unseal it
+unseals itself**, the idle reboot included, with no key typed; the five
+keys are recovery keys then and cannot unseal it (next section). This host
+has auto-unsealed since 2026-09-29, so after a reboot there is nothing to
+type; `vault status` says which seal a host is on, `Seal Type
+azurekeyvault` with `Recovery Seal Type shamir` for auto-unseal, `Seal
+Type shamir` alone for keys. The login shell sets
 `VAULT_ADDR=https://127.0.0.1:8200` and `VAULT_CACERT`
 (`/etc/profile.d/hcw-vault.sh`), so `vault status` needs no flags; success
 before initialising is `Initialized false` and `Sealed true`, exit code 2.
