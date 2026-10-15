@@ -41,6 +41,7 @@ import {
   uploadSourceAudio,
 } from './store.js';
 import { recordAiUsageBatch, totalCostUsd, USAGE_SOURCES } from '../ai/usage.js';
+import { AuthoredError, storedFailure } from '../http/error-response.js';
 
 /** Where articles live. The same container `GET /api/cms/content/item` reads. */
 export const ARTICLE_CONTAINER = 'content';
@@ -48,12 +49,12 @@ export const ARTICLE_CONTAINER = 'content';
 /** The platform job that runs this. Shared with the handler that enqueues it. */
 export const TRANSCRIPT_JOB_TYPE = 'generate-podcast-transcript';
 
-export class TranscriptError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'TranscriptError';
-  }
-}
+/**
+ * A transcript this pipeline refuses, in its own sentence (an unpublished
+ * article, a recording that is not there, a Plaud connection to renew).
+ * Authored (#945): the transcript and the job store it as written.
+ */
+export class TranscriptError extends AuthoredError {}
 
 /** Cosmos ids are bounded at 255 bytes; an article id longer than this is not one. */
 export const MAX_ARTICLE_ID_CHARS = 200;
@@ -142,7 +143,7 @@ async function renderAudio({ script, source, store, storage, env, ai, synthesize
     voices = await readVoices(store);
   } catch (err) {
     if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
-    return { error: `The podcast voices could not be read: ${err?.message || err}` };
+    return { error: storedFailure(err, 'The podcast voices could not be read.') };
   }
 
   let model = null;
@@ -151,7 +152,7 @@ async function renderAudio({ script, source, store, storage, env, ai, synthesize
       model = (await ai.modelForTask({ task: 'podcastVoice' })).model;
     } catch (err) {
       if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
-      return { error: err?.message || String(err) };
+      return { error: storedFailure(err, 'The podcast voice model could not be chosen.') };
     }
   }
 
@@ -167,7 +168,7 @@ async function renderAudio({ script, source, store, storage, env, ai, synthesize
     });
   } catch (err) {
     if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
-    return { error: err?.message || String(err) };
+    return { error: storedFailure(err, 'The audio could not be synthesised.') };
   }
   const plan = renderedPlan(rendered);
 
@@ -181,7 +182,7 @@ async function renderAudio({ script, source, store, storage, env, ai, synthesize
     });
   } catch (err) {
     return {
-      error: `Audio was synthesised but not stored: ${err?.message || err}`,
+      error: storedFailure(err, 'Audio was synthesised but not stored.'),
       speechProvider: rendered.provider || null,
       speechModel: rendered.model || null,
       ...plan,
@@ -225,9 +226,12 @@ function renderedPlan(rendered) {
  */
 export async function recordScriptFailure({ store, source, error, now, persistFailure }) {
   if (error?.name === 'AbortError' || error?.message === 'aborted') throw error;
-  await persistFailure(store, { source, error: error?.message || String(error), now }).catch(
-    () => {}
-  );
+  // The transcript stores a sentence, never the provider's words (#945).
+  await persistFailure(store, {
+    source,
+    error: storedFailure(error, 'The script could not be written.'),
+    now,
+  }).catch(() => {});
   throw error;
 }
 

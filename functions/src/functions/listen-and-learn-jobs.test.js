@@ -10,7 +10,10 @@ import { describe, it, expect, vi } from 'vitest';
 
 // The module registers a job type on import, and registerJobType throws on a
 // duplicate — so the registry is faked rather than shared across test files.
-vi.mock('../lib/jobs.js', () => ({ registerJobType: vi.fn() }));
+vi.mock('../lib/jobs.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  registerJobType: vi.fn(),
+}));
 vi.mock('../lib/cosmos-client.js', () => ({
   readDoc: vi.fn(),
   upsertDoc: vi.fn(),

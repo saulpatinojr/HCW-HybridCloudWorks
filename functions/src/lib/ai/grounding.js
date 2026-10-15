@@ -234,13 +234,24 @@ export function groundedOutputText(data) {
  * from the pages it did get, which is a run that "succeeds and quietly says
  * less than it claims". Only results the API actually reported are judged; a
  * missing metadata step is not evidence either way and is not treated as one.
+ *
+ * Each is `url (status)`, and goes into a stored sentence (#945), so only an
+ * http(s) URL and a status shaped like a code are named; anything else is
+ * `a source` and `unreadable`.
+ *
+ * @param {object} data - the interaction Gemini answered
+ * @returns {string[]}
  */
 export function failedRetrievals(data) {
   return (Array.isArray(data?.steps) ? data.steps : [])
     .filter((step) => step?.type === 'url_context_result')
     .flatMap((step) => (Array.isArray(step.result) ? step.result : []))
     .filter((r) => r && typeof r === 'object' && r.status && r.status !== 'success')
-    .map((r) => `${r.url || 'a source'} (${r.status})`);
+    .map((r) => {
+      const url = typeof r.url === 'string' && /^https?:\/\/\S+$/.test(r.url) ? r.url.slice(0, 300) : 'a source';
+      const status = typeof r.status === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(r.status) ? r.status : 'unreadable';
+      return `${url} (${status})`;
+    });
 }
 
 /**

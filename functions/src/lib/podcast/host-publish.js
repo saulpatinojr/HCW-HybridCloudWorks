@@ -102,6 +102,7 @@
  * - No AI flag. RSS.com's `ai_content` has no Podbean counterpart, so it is
  *   dropped rather than smuggled into another field.
  */
+import { storedFailure } from '../http/error-response.js';
 import { PodbeanError } from './podbean.js';
 
 /**
@@ -244,21 +245,22 @@ function normaliseAudio(result) {
  * never the Error itself. Exported so the hub's reads (host-reads.js,
  * host-stats.js) record a failed Podbean call in the one shape the hub
  * already renders.
+ *
+ * `message` is a sentence this code wrote (#945): a PodbeanError's own,
+ * which names the status and the API's code but never its words, or a fixed
+ * one with the error's code for anything else. The hub's reads serve it to
+ * an editor in the same request, so nothing the API or a socket said goes in.
+ *
+ * @param {unknown} error - anything a Podbean step threw
+ * @returns {{ status: number|null, code: string, message: string, retryable: boolean }}
  */
 export function toRecordedError(error) {
-  if (error instanceof PodbeanError) {
-    return {
-      status: error.status ?? null,
-      code: error.code,
-      message: error.message,
-      retryable: Boolean(error.retryable),
-    };
-  }
+  const podbean = error instanceof PodbeanError;
   return {
-    status: null,
-    code: 'UNEXPECTED',
-    message: error?.message ? String(error.message) : String(error),
-    retryable: false,
+    status: podbean ? (error.status ?? null) : null,
+    code: podbean ? error.code : 'UNEXPECTED',
+    message: storedFailure(error, 'The Podbean step failed unexpectedly.'),
+    retryable: podbean && Boolean(error.retryable),
   };
 }
 

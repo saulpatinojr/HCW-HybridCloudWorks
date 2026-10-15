@@ -39,6 +39,7 @@
  * precisely the laundering the first paragraph guards against.
  */
 import { ARTICLE_CLOSE, ARTICLE_OPEN, fenceArticleText } from '../ai/prompt-fence.js';
+import { AuthoredError } from '../http/error-response.js';
 
 /**
  * Total script budget across all turns. Editorial, not technical: see the
@@ -103,12 +104,11 @@ export const SOURCE_DISCLAIMER =
   'It is not the official study guide, and it should not replace studying the core ' +
   'content and the official documentation.';
 
-export class ScriptError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'ScriptError';
-  }
-}
+/**
+ * A script this module refuses, in its own sentence (no dialogue, an unknown
+ * speaker, a missing field). Authored (#945): the episode stores it as written.
+ */
+export class ScriptError extends AuthoredError {}
 
 /** UTF-8 byte length of the text the synthesiser will actually receive. */
 export function dialogueByteLength(turns) {

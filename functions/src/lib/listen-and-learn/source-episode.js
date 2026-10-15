@@ -33,7 +33,7 @@
  * spending. Same sentences each time, because they are the same function.
  */
 import { validateGroundingSources } from '../ai/router.js';
-import { authoredMessage } from '../http/error-response.js';
+import { authoredMessage, storedFailure } from '../http/error-response.js';
 import { recordAiUsageBatch, totalCostUsd, USAGE_SOURCES } from '../ai/usage.js';
 import { generateEpisodeScript } from './script.js';
 import { speechUsageRows, synthesizeDialogue } from './speech/index.js';
@@ -290,11 +290,12 @@ export async function generateSourceEpisode({
       throw err;
     }
     if (!isRefusal(err)) {
+      // A sentence, not the provider's words (#945); runJob logs the code.
       await persistFailure(store, {
         provider: platform,
         examCode,
         area,
-        error: err.message,
+        error: storedFailure(err, 'The episode could not be generated.'),
         order: SOURCE_EPISODE_ORDER,
         now,
         kind: EPISODE_KIND.source,

@@ -348,8 +348,16 @@ export function saveTranscript(store, { article, script, audio, now }) {
  * transcript keeps its text and audio and is merely marked failed — replacing
  * it wholesale would destroy a working transcript because its *re*generation
  * failed.
+ *
+ * `error` is the sentence to store, never an error's own message: the one
+ * caller (generate.js recordScriptFailure) writes it with storedFailure, so
+ * the hub reads the code's words or a fixed sentence with a code (#945).
+ *
+ * @param {object} store - `{ readDoc, upsertDoc }`
+ * @param {{ source: object, error: string, now: string }} failure
+ * @returns {Promise<object>} the stored transcript document
  */
-export async function markTranscriptFailedFor(store, { source, error, now }) {
+export async function markTranscriptFailedFor(store, { source, error: sentence, now }) {
   const id = transcriptIdFor(source);
   const existing = (await store.readDoc(TRANSCRIPT_CONTAINER, id, id)) || {};
 
@@ -362,7 +370,7 @@ export async function markTranscriptFailedFor(store, { source, error, now }) {
     sourceTitle: source.title || existing.sourceTitle || null,
     sourceProvider: source.provider ?? existing.sourceProvider ?? null,
     status: STATUS.failed,
-    error: String(error).slice(0, 500),
+    error: String(sentence).slice(0, 500),
     generatedAt: now,
     host: existing.host ?? null,
   };

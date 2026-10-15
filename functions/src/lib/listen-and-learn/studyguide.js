@@ -19,6 +19,7 @@
  * beyond the move to ESM and to this repository's cheerio import style.
  */
 import { load as loadHtml } from 'cheerio';
+import { AuthoredError } from '../http/error-response.js';
 
 /**
  * "Manage Azure identities and governance (20–25%)" → name, low, high.
@@ -50,12 +51,12 @@ export function slugify(text) {
     .replace(/^-+|-+$/g, '');
 }
 
-export class StudyGuideError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'StudyGuideError';
-  }
-}
+/**
+ * A study guide this module could not read, in its own sentence (a status,
+ * a redirect, a layout with no weighted areas). Authored (#945): the job and
+ * the episode store it as written.
+ */
+export class StudyGuideError extends AuthoredError {}
 
 /** `20–25%`, `15%`, or `''` when the guide states no weighting. */
 export function weightLabel(low, high) {

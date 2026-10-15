@@ -350,13 +350,18 @@ describe('runForgePipeline', () => {
     broken.drafter.generateDraft.mockRejectedValue(new Error('429'));
     expect(
       await createForge(broken).runForgePipeline({ contentId: 'c-1', actor: {} })
-    ).toMatchObject({ ok: false, httpStatus: 502, error: 'Generation failed: 429' });
+    ).toMatchObject({
+      ok: false,
+      httpStatus: 502,
+      error: expect.stringMatching(/^Generation failed \(Error; reference [\w.:-]+\)\.$/),
+    });
     expect(broken.writes.patches).toHaveLength(0);
 
     const ungraded = makeDeps();
     ungraded.grader.gradeArticle.mockRejectedValue(new Error('boom'));
     const r = await createForge(ungraded).runForgePipeline({ contentId: 'c-1', actor: {} });
     expect(r.result).toMatchObject({ status: 'editing', overall: 0 });
+    expect(JSON.stringify(r)).not.toContain('boom');
 
     expect(
       (await createForge(makeDeps()).runForgePipeline({ contentId: 'missing', actor: {} }))

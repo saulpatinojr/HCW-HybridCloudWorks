@@ -22,7 +22,7 @@
  *   change or a regeneration of anything but the audio.
  */
 import { fetchStudyGuide } from './studyguide.js';
-import { authoredMessage } from '../http/error-response.js';
+import { AuthoredError, authoredMessage, storedFailure } from '../http/error-response.js';
 import { findVideosForAreas } from './videos.js';
 import { generateEpisodeScript } from './script.js';
 import { speechUsageRows, synthesizeDialogue, SpeechNotConfiguredError } from './speech/index.js';
@@ -55,12 +55,12 @@ export function isSupportedPlatform(platform) {
   return Object.hasOwn(SUPPORTED_PLATFORMS, String(platform || '').toLowerCase());
 }
 
-export class GenerateError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'GenerateError';
-  }
-}
+/**
+ * A run this module refuses, in its own sentence (an unsupported platform, a
+ * missing exam code, areas the guide does not have). Authored (#945): the
+ * job and the episode store it as written.
+ */
+export class GenerateError extends AuthoredError {}
 
 /** Real implementations unless a caller (or a test) supplies its own. */
 function resolveDeps(deps = {}) {
@@ -358,7 +358,9 @@ export async function generateEpisodes({
     const found = await findVideos(areas, { examCode, apiKey: youtubeApiKey });
     videosByArea = new Map(found.map((r) => [r.areaSlug, r]));
   } catch (err) {
-    videoError = err.message;
+    // The search's sentence when it wrote one, else a fixed one with the
+    // code: the job result is served to the admin page as stored (#945).
+    videoError = storedFailure(err, 'The video search failed.');
   }
 
   const results = [];
@@ -395,11 +397,14 @@ export async function generateEpisodes({
       if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
       // One area failing must not abandon the rest — the spend on the areas
       // that already succeeded is real, and a gap is more useful than nothing.
+      // The episode and the job result store this module's sentence, or a
+      // fixed one with the error's code, never a provider's words (#945).
+      const failure = storedFailure(err, 'The episode could not be generated.');
       await persistFailure(store, {
         provider: platform,
         examCode,
         area,
-        error: err.message,
+        error: failure,
         order,
         now,
       });
@@ -407,7 +412,7 @@ export async function generateEpisodes({
         areaSlug: area.slug,
         areaName: area.name,
         status: STATUS.failed,
-        error: err.message,
+        error: failure,
       });
     }
   }

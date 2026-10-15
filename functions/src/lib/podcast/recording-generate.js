@@ -136,11 +136,27 @@ export function parseToolResult(outcome) {
   }
 }
 
+/** An MCP answer's code (a JSON-RPC number, or ours) has this shape; a sentence does not. */
+const OUTCOME_CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/**
+ * Why a Plaud tool call failed, as the transcript will store it: the connect
+ * sentence for a refused credential, else the tool, the recording and the
+ * answer's code. The tool's own text stays out (#945).
+ *
+ * @param {{ code?: string|number|null }} outcome - callMcpTool's failure
+ * @param {string} tool - the tool called
+ * @param {string} recordingId - the recording asked for
+ * @returns {TranscriptError}
+ */
 function explainToolFailure(outcome, tool, recordingId) {
   if (isPlaudCredentialFailure(outcome)) return new TranscriptError(PLAUD_CONNECT_SENTENCE);
-  return new TranscriptError(
-    `Plaud could not return ${tool} for recording ${recordingId}: ${outcome?.error || 'no result'}`
-  );
+  const code = outcome?.code;
+  const note =
+    Number.isInteger(code) || (typeof code === 'string' && OUTCOME_CODE_SHAPE.test(code))
+      ? ` (${code})`
+      : '';
+  return new TranscriptError(`Plaud could not return ${tool} for recording ${recordingId}${note}.`);
 }
 
 /**

@@ -128,6 +128,7 @@
 import { createHash } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
+import { AuthoredError, errorCode } from '../http/error-response.js';
 
 export const PODBEAN_API_BASE_URL = 'https://api.podbean.com/v1';
 
@@ -177,6 +178,12 @@ const ANALYTIC_TYPES_PARAM = 'types[]';
  * One error type for everything the client raises, so a caller can record it
  * on a document without inspecting the cause.
  *
+ * The message is this module's sentence (#945): the operation, the HTTP
+ * status and the OAuth `error` code, or the socket's code, and never the
+ * API's description, an error body or a socket's text. It is an
+ * AuthoredError, so the transcript's host record and the hub store and
+ * show it as written; what the API said stays on `detail`, in memory.
+ *
  * `status` is the upstream HTTP status, or `null` when no response was had
  * (timeout, DNS, not configured). `detail` is what the API said, flattened
  * from `{ error, error_description }` to one line and scrubbed of the token
@@ -203,18 +210,51 @@ const ANALYTIC_TYPES_PARAM = 'types[]';
  * `retryable` is true when repeating the same call later could succeed
  * without a change on our side.
  */
-export class PodbeanError extends Error {
+export class PodbeanError extends AuthoredError {
+  /**
+   * @param {string} message - the sentence, written in this module
+   * @param {{ status?: number|null, code?: string, detail?: string|null, retryable?: boolean }} [options]
+   */
   constructor(
     message,
     { status = null, code = 'UPSTREAM', detail = null, retryable = false } = {}
   ) {
-    super(message);
-    this.name = 'PodbeanError';
+    super(message, { code, status });
     this.status = status;
-    this.code = code;
     this.detail = detail;
     this.retryable = retryable;
   }
+}
+
+/** An OAuth `error` code or a socket code has this shape; a sentence does not. */
+const CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/**
+ * `400 invalid_grant`, or `503` when the answer carried no code: the parts
+ * of a failed answer a stored sentence may name. The description stays out.
+ *
+ * @param {number} status - the HTTP status
+ * @param {unknown} data - the parsed body, or null
+ * @returns {string}
+ */
+function statusAndCode(status, data) {
+  const code = typeof data?.error === 'string' ? data.error.trim() : '';
+  return CODE_SHAPE.test(code) ? `${status} ${code}` : String(status);
+}
+
+/**
+ * The code a transport failure is known by: its own (`ENOTFOUND`), its
+ * cause's (undici's `fetch failed` keeps the socket code there), or its
+ * class name. Never its message, which can quote the URL it was given.
+ *
+ * @param {unknown} error - what fetch threw
+ * @returns {string}
+ */
+function transportCode(error) {
+  for (const candidate of [error?.code, error?.cause?.code]) {
+    if (typeof candidate === 'string' && CODE_SHAPE.test(candidate)) return candidate;
+  }
+  return errorCode(error);
 }
 
 /**
@@ -320,6 +360,18 @@ function episodeIdOrRefuse(value, where) {
   return id;
 }
 
+/**
+ * ` (server_error)` when the answer carried an OAuth `error` code, else
+ * nothing: the note a stored sentence may append to a status.
+ *
+ * @param {unknown} data - the parsed body, or null
+ * @returns {string}
+ */
+function codeNote(data) {
+  const code = typeof data?.error === 'string' ? data.error.trim() : '';
+  return CODE_SHAPE.test(code) ? ` (${code})` : '';
+}
+
 /** `{ error, error_description }` → `error: description`, or the text, cut short. */
 function describeErrorBody(data, text) {
   if (data && typeof data === 'object') {
@@ -396,23 +448,32 @@ export function createPodbeanClient({
     }
   }
 
-  /** A transport failure (no response) on an api.podbean.com call. */
+  /**
+   * A transport failure (no response) on an api.podbean.com call: the
+   * sentence names the operation and the code; the socket's text, scrubbed,
+   * stays on `detail`.
+   *
+   * @param {string} operation - what was being done, in words
+   * @param {unknown} error - what fetch threw
+   * @returns {PodbeanError}
+   */
   function transportError(operation, error) {
     const detail = scrub(error?.message || String(error));
     if (error?.code === 'FETCH_TIMEOUT') {
-      return new PodbeanError(`Podbean did not answer while ${operation} (${detail}).`, {
-        status: null,
-        code: 'TIMEOUT',
-        detail,
-        retryable: true,
-      });
+      return new PodbeanError(
+        `Podbean did not answer while ${operation} within ${PODBEAN_TIMEOUT_MS} ms.`,
+        {
+          status: null,
+          code: 'TIMEOUT',
+          detail,
+          retryable: true,
+        }
+      );
     }
-    return new PodbeanError(`Podbean could not be reached while ${operation} (${detail}).`, {
-      status: null,
-      code: 'NETWORK',
-      detail,
-      retryable: true,
-    });
+    return new PodbeanError(
+      `Podbean could not be reached while ${operation} (${transportCode(error)}).`,
+      { status: null, code: 'NETWORK', detail, retryable: true }
+    );
   }
 
   /**
@@ -449,7 +510,7 @@ export function createPodbeanClient({
 
     if (!response.ok) {
       const detail = scrub(describeErrorBody(data, text));
-      const suffix = detail ? ` (${response.status} ${detail})` : ` (${response.status})`;
+      const suffix = ` (${statusAndCode(response.status, data)})`;
       const oauthError = typeof data?.error === 'string' ? data.error : '';
       if (
         CREDENTIAL_ERRORS.has(oauthError) ||
@@ -463,7 +524,7 @@ export function createPodbeanClient({
       }
       const { code, retryable } = classify(response.status);
       throw new PodbeanError(
-        `Podbean answered ${response.status} while ${operation}${detail ? `: ${detail}` : ''}.`,
+        `Podbean answered ${response.status} while ${operation}${codeNote(data)}.`,
         { status: response.status, code, detail, retryable }
       );
     }
@@ -541,26 +602,26 @@ export function createPodbeanClient({
       cached = null;
       if (!reauthed) return call(operation, method, path, { query, form }, { reauthed: true });
       throw new PodbeanError(
-        `Podbean refused a freshly issued access token while ${operation} (${response.status} ${detail}).`,
+        `Podbean refused a freshly issued access token while ${operation} (${statusAndCode(response.status, data)}).`,
         { status: response.status, code: 'TOKEN_REJECTED', detail, retryable: false }
       );
     }
     if (oauthError === 'storage_limit_reach') {
       throw new PodbeanError(
-        `Podbean refused the upload: the account's storage allowance is used up (${detail}).`,
+        `Podbean refused the upload: the account's storage allowance is used up (${statusAndCode(response.status, data)}).`,
         { status: response.status, code: 'STORAGE_LIMIT', detail, retryable: false }
       );
     }
     if (response.status === 401 || response.status === 403) {
       throw new PodbeanError(
-        `Podbean refused the app's access while ${operation} (${response.status}${detail ? ` ${detail}` : ''}); ` +
+        `Podbean refused the app's access while ${operation} (${statusAndCode(response.status, data)}); ` +
           "check the app's permissions at developers.podbean.com.",
         { status: response.status, code: 'CREDENTIALS_REJECTED', detail, retryable: false }
       );
     }
     const { code, retryable } = classify(response.status);
     throw new PodbeanError(
-      `Podbean answered ${response.status} while ${operation}${detail ? `: ${detail}` : ''}.`,
+      `Podbean answered ${response.status} while ${operation}${codeNote(data)}.`,
       { status: response.status, code, detail, retryable }
     );
   }
@@ -739,29 +800,32 @@ export function createPodbeanClient({
         // wrong host. The message names the host and never the signed URL.
         const detail = scrub(error?.message || String(error)).split(presignedUrl).join(host);
         const what =
-          error?.code === 'FETCH_TIMEOUT' ? 'did not answer the PUT' : 'could not be reached for the PUT';
+          error?.code === 'FETCH_TIMEOUT'
+            ? `did not answer the PUT within ${PODBEAN_UPLOAD_TIMEOUT_MS} ms`
+            : `could not be reached for the PUT (${transportCode(error)})`;
         throw new PodbeanError(
-          `The upload host ${host} ${what} (${detail}) — re-run to authorise a fresh upload.`,
+          `The upload host ${host} ${what} — re-run to authorise a fresh upload.`,
           { status: null, code: 'UPLOAD_UNREACHABLE', detail, retryable: true }
         );
       }
       if (!response.ok) {
         const text = typeof response.text === 'function' ? await response.text() : '';
+        // The host's own body stays on `detail`; the sentence names the
+        // host and the status only (#945).
         const detail = scrub(String(text || '').slice(0, 300));
-        const suffix = detail ? `: ${detail}` : '';
         if (response.status === 401 || response.status === 403) {
           // That request carries no token, so its refusal must not read as
           // "the token was rejected". The usual cause is an expired URL
           // (Podbean grants ten minutes), and a re-run authorises a new one.
           throw new PodbeanError(
-            `The upload host ${host} refused the PUT (HTTP ${response.status})${suffix} — ` +
+            `The upload host ${host} refused the PUT (HTTP ${response.status}) — ` +
               'the presigned URL may have expired; re-run to authorise a fresh upload.',
             { status: response.status, code: 'UPLOAD_REJECTED', detail, retryable: true }
           );
         }
         const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
         throw new PodbeanError(
-          `The upload host ${host} answered ${response.status} to the PUT${suffix}.`,
+          `The upload host ${host} answered ${response.status} to the PUT.`,
           { status: response.status, code: 'UPLOAD_FAILED', detail, retryable }
         );
       }

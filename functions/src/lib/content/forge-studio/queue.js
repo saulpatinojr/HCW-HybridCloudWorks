@@ -216,7 +216,7 @@ export function applyFields(entry, { fields, kind }, stamp) {
  * document when it succeeded, the error when it did not. A `skipped`
  * duplicate (the forge's 409) is recorded as forged on the duplicate.
  */
-export function outcomeFor({ status, result, error }) {
+export function outcomeFor({ status, result, error: failure }) {
   if (status === 'succeeded' && result && result.success !== false) {
     return { status: 'forged', contentId: result.contentId || null, error: null };
   }
@@ -227,7 +227,7 @@ export function outcomeFor({ status, result, error }) {
       error: result.error ? String(result.error).slice(0, 500) : null,
     };
   }
-  const message = error || result?.error || `the forge job ${status || 'did not finish'}`;
+  const message = failure || result?.error || `the forge job ${status || 'did not finish'}`;
   return {
     status: 'failed',
     contentId: result?.contentId || null,

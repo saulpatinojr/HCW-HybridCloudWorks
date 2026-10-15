@@ -1873,25 +1873,44 @@ function groundedUsageRow(model, usage) {
 }
 
 /**
+ * A grounded generation that was not used, in this module's sentence: the
+ * interaction's status, or the sources that could not be read (the URLs the
+ * owner chose and Gemini's retrieval status code). Authored (#945), so the
+ * episode and the job store it as written; Gemini's own error messages are
+ * never part of it.
+ */
+export class GroundingIncompleteError extends AuthoredError {}
+
+/** A status Gemini reports has this shape; anything else is not named. */
+const GROUNDED_STATUS_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/**
  * A grounded generation is used only when the interaction completed and
  * every source was read; otherwise it would be grounded on less than it
  * claims, and the error says which.
+ *
+ * @param {object} data - the interaction Gemini answered
+ * @returns {void}
  */
 function assertGroundedComplete(data) {
   const status = data?.status;
   if (status !== 'completed') {
-    const detail = (Array.isArray(data?.errors) ? data.errors : [])
-      .map((e) => e?.message)
-      .filter(Boolean)
-      .join('; ');
-    throw new Error(
-      `Gemini reported status '${status || 'none'}' for the grounded call, not 'completed'${detail ? `: ${detail}` : ''}.`
+    const named = typeof status === 'string' && GROUNDED_STATUS_SHAPE.test(status) ? status : 'none';
+    // Gemini's error codes, never its messages, which can quote the source.
+    const codes = (Array.isArray(data?.errors) ? data.errors : [])
+      .map((entry) => entry?.code)
+      .filter((code) => Number.isInteger(code) || (typeof code === 'string' && GROUNDED_STATUS_SHAPE.test(code)));
+    const note = codes.length ? ` (error code ${codes.join(', ')})` : '';
+    throw new GroundingIncompleteError(
+      `Gemini reported status '${named}' for the grounded call, not 'completed'${note}.`,
+      { code: 'AI_GROUNDING_INCOMPLETE' }
     );
   }
   const unread = failedRetrievals(data);
   if (unread.length) {
-    throw new Error(
-      `Gemini could not read ${unread.length === 1 ? 'a source' : `${unread.length} sources`} — ${unread.join(', ')}. The generation was not used, because it would be grounded on less than it claims.`
+    throw new GroundingIncompleteError(
+      `Gemini could not read ${unread.length === 1 ? 'a source' : `${unread.length} sources`} — ${unread.join(', ')}. The generation was not used, because it would be grounded on less than it claims.`,
+      { code: 'AI_GROUNDING_INCOMPLETE' }
     );
   }
 }

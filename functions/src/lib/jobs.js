@@ -44,7 +44,7 @@
 import { randomUUID } from 'node:crypto';
 import { ROLE_NAMES, roleLevel } from './auth/roles.js';
 import { runAsJob } from './job-context.js';
-import { AuthoredError, errorResponse } from './http/error-response.js';
+import { AuthoredError, errorResponse, logFailure, storedFailure } from './http/error-response.js';
 
 export const JOBS_CONTAINER = 'jobs';
 export const JOBS_QUEUE = 'platform-jobs';
@@ -267,6 +267,14 @@ export function jobPayloadBytes(payload) {
  * Listen & Learn queue) keys on the code instead.
  */
 export class JobPayloadTooLargeError extends AuthoredError {}
+
+/**
+ * A worker's own sentence for why its job failed: a payload it refuses, or
+ * the outcome a pipeline already reported in a storable sentence. runJob
+ * stores it as written; any other throw is stored as the safe sentence with
+ * its code and correlation id (#945).
+ */
+export class JobFailedError extends AuthoredError {}
 
 /**
  * A fresh `queued` job document. One shape, shared by `enqueueJob` and every
@@ -635,16 +643,26 @@ export function createJobHandlers({
         return { jobId, outcome: 'succeeded' };
       } catch (error) {
         const timedOut = error?.code === 'JOB_TIMEOUT';
-        const errorText = truncate(error?.message || String(error));
+        // getJob serves this document to the type's role, so it stores the
+        // worker's authored sentence, or a fixed one with the error's code
+        // and the log line's correlation id: never a provider's, the
+        // store's or a socket's own words (#945). The log line is
+        // content-free and carries the same id.
+        const correlationId = logFailure(
+          context,
+          `runJob: ${doc.type} ${timedOut ? 'timed out' : 'failed'}`,
+          error
+        );
+        const errorText = truncate(
+          storedFailure(error, timedOut ? 'The job ran out of time.' : 'The job failed.', {
+            correlationId,
+          })
+        );
         await store.patchDoc(JOBS_CONTAINER, jobId, {
           status: timedOut ? 'timeout' : 'failed',
           finishedAt: now().toISOString(),
           error: errorText,
         });
-        context.error?.(
-          `runJob: job ${jobId} (${doc.type}) ${timedOut ? 'timed out' : 'failed'}:`,
-          error?.message
-        );
         await invokeOnComplete({
           job: claimed,
           status: timedOut ? 'timeout' : 'failed',

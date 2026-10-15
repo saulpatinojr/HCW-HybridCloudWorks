@@ -12,7 +12,8 @@
 import { describe, it, expect, vi } from 'vitest';
 
 const registered = [];
-vi.mock('../lib/jobs.js', () => ({
+vi.mock('../lib/jobs.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   registerJobType: vi.fn((type, spec) => registered.push({ type, spec })),
 }));
 vi.mock('../lib/cosmos-client.js', () => ({

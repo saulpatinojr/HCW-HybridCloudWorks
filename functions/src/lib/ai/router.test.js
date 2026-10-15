@@ -1332,18 +1332,23 @@ describe('source grounding — the call (#433)', () => {
         errors: [{ code: 13, message: 'video too long' }],
       })
     );
-    await expect(
-      createAiRouter({
-        env: keys,
-        fetch: failed,
-        sleep: noSleep,
-        log: quiet,
-      }).generateGroundedJsonResponse({
+    const error = await createAiRouter({
+      env: keys,
+      fetch: failed,
+      sleep: noSleep,
+      log: quiet,
+    })
+      .generateGroundedJsonResponse({
         prompt: 'p',
         sources,
         feature: 'sourceGrounding',
       })
-    ).rejects.toThrow(/status 'failed'.*video too long/);
+      .catch((e) => e);
+    // The status and Gemini's error code, never its message: the episode and
+    // the job store this sentence as written (#945).
+    expect(error.name).toBe('GroundingIncompleteError');
+    expect(error.message).toMatch(/status 'failed'.*[(]error code 13[)]/);
+    expect(error.message).not.toContain('video too long');
 
     const incomplete = vi.fn(async () => interactionReply('{"cut":', { status: 'incomplete' }));
     await expect(

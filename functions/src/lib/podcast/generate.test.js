@@ -145,9 +145,13 @@ describe('the podcast voices (#725)', () => {
     const store = makeStore();
     const report = await run({ store, deps });
     expect(deps.synthesize).not.toHaveBeenCalled();
-    expect(report.audioError).toBe('The podcast voices could not be read: cosmos down');
+    expect(report.audioError).toBe('The podcast voices could not be read (Error).');
     const saved = store.docs[TRANSCRIPT_CONTAINER]['article_picking-a-state-backend'];
-    expect(saved).toMatchObject({ status: STATUS.draft, audioError: 'The podcast voices could not be read: cosmos down' });
+    expect(saved).toMatchObject({
+      status: STATUS.draft,
+      audioError: 'The podcast voices could not be read (Error).',
+    });
+    expect(JSON.stringify(saved)).not.toContain('cosmos down');
   });
 
   it('saves the draft with the provider’s "choose the voices first" sentence when none are chosen', async () => {
@@ -437,7 +441,8 @@ describe('audio failures degrade; the transcript is still saved', () => {
     const saved = store.docs[TRANSCRIPT_CONTAINER]['article_picking-a-state-backend'];
     expect(saved.status).toBe(STATUS.draft);
     expect(saved.audioUrl).toBeNull();
-    expect(saved.audioError).toMatch(/synthesised but not stored.*container does not exist/);
+    // The store's status, not its sentence (#945).
+    expect(saved.audioError).toBe('Audio was synthesised but not stored (HTTP_404).');
     // The synthesis happened and was paid for, so it is still attributed.
     expect(saved.speechProvider).toBe('gemini');
     expect(Object.values(store.docs.ai_usage).map((r) => r.source).sort()).toEqual(
@@ -463,7 +468,7 @@ describe('script failures', () => {
 
     const stored = store.docs[TRANSCRIPT_CONTAINER]['article_picking-a-state-backend'];
     expect(stored.status).toBe(STATUS.failed);
-    expect(stored.error).toBe('model refused');
+    expect(stored.error).toBe('The script could not be written (Error).');
     expect(Object.keys(store.docs.ai_usage)).toHaveLength(0);
   });
 

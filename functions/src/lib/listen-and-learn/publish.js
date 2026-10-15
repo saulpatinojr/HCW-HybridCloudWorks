@@ -518,14 +518,25 @@ export async function saveEpisode(
  * had never succeeded would otherwise be a document with no `kind`, which
  * `episodeKindOf` reads as guide. The caller's kind wins, then the stored
  * one, then the default.
+ *
+ * `error` is the sentence to store, never an error's own message: every
+ * caller writes it with storedFailure, so the admin page reads the code's
+ * words or a fixed sentence with a code and a reference (#945). A caller
+ * that passed `err.message` here is itself a site the repository guard
+ * (no-raw-error-leaks.test.js) refuses.
+ *
+ * @param {object} store - `{ readDoc, upsertDoc }`
+ * @param {{ provider: string, examCode: string, area: { slug: string, name?: string, weightLabel?: string },
+ *   error: string, order?: number, now: string, kind?: string }} failure
+ * @returns {Promise<void>}
  */
 export async function saveEpisodeFailure(
   store,
-  { provider, examCode, area, error, order, now, kind }
+  { provider, examCode, area, error: sentence, order, now, kind }
 ) {
   const id = setId(provider, examCode);
   const existing = (await store.readDoc(EPISODE_CONTAINER, area.slug, id)) || {};
-  const message = String(error).slice(0, 500);
+  const message = String(sentence).slice(0, 500);
   const keepLive = existing.status === STATUS.published || existing.status === STATUS.archived;
 
   await store.upsertDoc(EPISODE_CONTAINER, {

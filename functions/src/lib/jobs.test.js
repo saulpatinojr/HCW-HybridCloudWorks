@@ -17,6 +17,7 @@ import {
   JOBS_CONTAINER,
   TERMINAL_JOB_STATUSES,
 } from './jobs.js';
+import { AuthoredError } from './http/error-response.js';
 
 const context = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
 const USER = { oid: 'u1', email: 'editor@hcw.dev' };
@@ -389,21 +390,40 @@ describe('runJob', () => {
     });
   });
 
-  it('records a worker failure as failed, with the message, and does not throw', async () => {
+  it('records a worker failure as failed, in its own words only when authored, and does not throw (#945)', async () => {
     registerJobType('explode', {
       role: 'editor',
       worker: async () => {
-        throw new Error('boom ' + 'x'.repeat(3000));
+        throw Object.assign(new Error('Request rate is large. ActivityId: 9f ' + 'x'.repeat(3000)), {
+          code: 429,
+        });
       },
     });
-    const store = makeStore({ 'job-1': { ...queued(), type: 'explode' } });
+    registerJobType('refuse', {
+      role: 'editor',
+      worker: async () => {
+        throw new AuthoredError('The source URL answered 404.', { code: 'SOURCE_GONE' });
+      },
+    });
+    const store = makeStore({
+      'job-1': { ...queued(), type: 'explode' },
+      'job-2': { ...queued(), id: 'job-2', type: 'refuse' },
+    });
+    const ctx = { ...context, error: vi.fn(), warn: vi.fn(), invocationId: 'inv-run' };
     const h = createJobHandlers({ guard: guardAs('editor'), store, ...fixed });
-    expect(await h.runJob({ jobId: 'job-1' }, context)).toEqual({
+    expect(await h.runJob({ jobId: 'job-1' }, ctx)).toEqual({
       jobId: 'job-1',
       outcome: 'failed',
     });
     expect(store.docs['job-1'].status).toBe('failed');
-    expect(store.docs['job-1'].error.length).toBeLessThanOrEqual(2001);
+    // getJob serves this field: the store's words never land in it, the
+    // code and the log line's correlation id do.
+    expect(store.docs['job-1'].error).toBe('The job failed (429; reference inv-run).');
+    expect(ctx.error).toHaveBeenCalledWith('[inv-run] runJob: explode failed (name=Error code=429)');
+    expect(JSON.stringify(ctx.error.mock.calls)).not.toContain('ActivityId');
+
+    await h.runJob({ jobId: 'job-2' }, ctx);
+    expect(store.docs['job-2'].error).toBe('The source URL answered 404.');
   });
 
   it('records a timeout as timeout', async () => {
@@ -420,7 +440,7 @@ describe('runJob', () => {
     });
     expect(store.docs['job-1']).toMatchObject({
       status: 'timeout',
-      error: 'job timed out',
+      error: expect.stringMatching(/^The job ran out of time \(JOB_TIMEOUT; reference [\w-]+\)\.$/),
     });
   });
 
@@ -459,7 +479,8 @@ describe('runJob', () => {
     await h.runJob({ jobId: 'job-2' }, context);
     expect(seen).toEqual([
       { status: 'succeeded', result: { done: true }, error: null },
-      { status: 'failed', error: 'nope' },
+      // The hook gets what the document stores, never the raw message (#945).
+      { status: 'failed', error: expect.stringMatching(/^The job failed \(Error; reference [\w-]+\)\.$/) },
     ]);
     // The terminal status was already persisted when each hook ran.
     expect(store.docs['job-1'].status).toBe('succeeded');

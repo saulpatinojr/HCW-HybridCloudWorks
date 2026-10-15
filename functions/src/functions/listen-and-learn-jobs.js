@@ -33,7 +33,8 @@ import {
   modelForTask,
 } from '../lib/ai/router.js';
 import { recordAiUsageBatch, totalCostUsd } from '../lib/ai/usage.js';
-import { registerJobType } from '../lib/jobs.js';
+import { storedFailure } from '../lib/http/error-response.js';
+import { JobFailedError, registerJobType } from '../lib/jobs.js';
 import {
   generateEpisodes,
   isSupportedPlatform,
@@ -263,7 +264,7 @@ export async function resolveRunModel(ai) {
 export async function runListenAndLearnGeneration(payload, { context, job, signal } = {}) {
   if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseGeneratePayload(payload);
-  if (parsed.error) throw new Error(parsed.error);
+  if (parsed.error) throw new JobFailedError(parsed.error);
 
   const store = { readDoc, upsertDoc, patchDoc };
   const ttsModel = await resolveRunModel({ modelForTask });
@@ -350,7 +351,7 @@ export function parseSpeakChapterPayload(payload) {
 export async function runSpeakChapter(payload, { context, job, signal } = {}) {
   if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseSpeakChapterPayload(payload);
-  if (parsed.error) throw new Error(parsed.error);
+  if (parsed.error) throw new JobFailedError(parsed.error);
   const { platform, examCode, chapterId } = parsed.value;
 
   const store = { readDoc, upsertDoc, patchDoc };
@@ -359,9 +360,11 @@ export async function runSpeakChapter(payload, { context, job, signal } = {}) {
     readDoc(SET_CONTAINER, id, id),
     readDoc(EPISODE_CONTAINER, chapterId, id),
   ]);
-  if (!chapter || chapter.softDeletedAt) throw new Error(`No chapter ${chapterId} in ${id}`);
+  if (!chapter || chapter.softDeletedAt) {
+    throw new JobFailedError(`No chapter ${chapterId} in ${id}`);
+  }
   const text = typeof chapter.sourceText === 'string' ? chapter.sourceText.trim() : '';
-  if (!text) throw new Error(`Chapter ${chapterId} has no text to speak`);
+  if (!text) throw new JobFailedError(`Chapter ${chapterId} has no text to speak`);
 
   const now = new Date().toISOString();
   const actorId = job?.requestedBy?.oid || null;
@@ -387,11 +390,15 @@ export async function runSpeakChapter(payload, { context, job, signal } = {}) {
     });
   } catch (err) {
     if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
+    // The chapter stores a sentence, not the provider's words (#945); the
+    // log line holding the code and the id is runJob's, for the rethrow.
     await saveEpisodeFailure(store, {
       provider: platform,
       examCode,
       area: { slug: chapterId, name: chapter.title || chapter.areaName || chapterId },
-      error: err.message,
+      error: storedFailure(err, 'The chapter could not be voiced.', {
+        correlationId: context?.invocationId ?? null,
+      }),
       order: chapter.order,
       now,
       kind: EPISODE_KIND.manual,
