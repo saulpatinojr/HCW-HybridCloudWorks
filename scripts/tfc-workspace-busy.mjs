@@ -105,12 +105,21 @@ export function describeBusy({ id, status }) {
 /**
  * One GET against the HCP Terraform API, unwrapped to its `data`.
  *
+ * EXPORTED, so `check-deploy-drift.mjs` reads the workspace through the same
+ * call rather than a third copy of it (the second lives in
+ * `check-tfc-plan.mjs`, whose 401/403/404 wording is about run ids and
+ * `json-output` and does not fit a listing). `raw` returns the whole JSON:API
+ * document, which a caller needs when it asked for `include=` and must read
+ * `included` beside `data`. `fetchImpl` is for tests; nothing in this
+ * repository calls HCP Terraform with a real token from a test.
+ *
  * @param {string} token a USER or TEAM token with read access to the workspace
  * @param {string} path the API path after `/api/v2`
- * @returns {Promise<object>} the response's `data`
+ * @param {{raw?: boolean, fetchImpl?: typeof fetch}} [options]
+ * @returns {Promise<object>} the response's `data`, or the whole body with `raw`
  */
-async function tfc(token, path) {
-  const response = await fetch(`${API}${path}`, {
+export async function tfc(token, path, { raw = false, fetchImpl = fetch } = {}) {
+  const response = await fetchImpl(`${API}${path}`, {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/vnd.api+json' },
   });
   if (!response.ok) {
@@ -119,7 +128,8 @@ async function tfc(token, path) {
         'TFC_TOKEN must be a USER or TEAM token with read access to the workspace.'
     );
   }
-  return (await response.json()).data;
+  const body = await response.json();
+  return raw ? body : body.data;
 }
 
 /**
