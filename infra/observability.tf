@@ -1456,9 +1456,10 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "cosmos_export_full_mi
 
 locals {
   # The schedule of every timer the Function App registers, as a period and a
-  # moment the schedule is known to fire (an "anchor"), so KQL's bin_at() can
-  # compute the last time each timer was due. NCRONTAB beside each, read from
-  # the code; all are UTC (#416).
+  # moment the schedule is known to fire (an "anchor"), from which
+  # alert-timer-overdue's query computes the last time each timer was due
+  # ("HOW DUE IS COMPUTED", below). NCRONTAB beside each, read from the code;
+  # all are UTC (#416).
   #
   # The set must equal the `timer` list in functions/function-inventory.json,
   # and each pair must match its NCRONTAB in functions/src/functions/:
@@ -1539,14 +1540,26 @@ locals {
 # dimension, so each overdue timer is its own alert naming itself, opens once
 # and resolves once.
 #
-# HOW "DUE" IS COMPUTED. For each timer, bin_at(now() - grace, period, anchor)
-# is the last scheduled time at least `grace` ago. A success (requests, the
-# function's own row, success true) at or after that time means it ran. The
-# grace is 45 minutes: the 30-minute non-HTTP timeout on Flex Consumption,
-# plus ingestion delay, because a request row is written when the invocation
-# ENDS. A disarmed timer still runs and returns early (schedulers.js), and
-# that run succeeds, so the rule watches whether the host is running the
-# timer at all, not whether its flag is on.
+# HOW "DUE" IS COMPUTED. For each timer, lastDue is the last scheduled time at
+# least `grace` ago: anchor + period * tolong((now() - grace - anchor) / period),
+# the anchor moved forward by the whole periods that fit before now() - grace.
+# tolong() truncates, and every anchor is in the past, so the quotient is
+# positive and truncating it rounds down to the last due time. A success
+# (requests, the function's own row, success true) at or after that time
+# means it ran. The grace is 45 minutes: the 30-minute non-HTTP timeout on
+# Flex Consumption, plus ingestion delay, because a request row is written
+# when the invocation ENDS. A disarmed timer still runs and returns early
+# (schedulers.js), and that run succeeds, so the rule watches whether the
+# host is running the timer at all, not whether its flag is on.
+#
+# NOT bin_at(). Kusto requires bin_at()'s bin size and fixed point to be
+# query constants, and here both are per-row columns of the datatable, so
+# from the rule's creation on 2026-10-10 every evaluation failed with SEM0040
+# ("bin_at(): failed to cast argument 2 to scalar constant",
+# https://learn.microsoft.com/kusto/query/bin-at-function) and the rule never
+# fired. Azure accepted it at create, and nothing ran the KQL before that;
+# scripts/kql-alert-columns.test.mjs now refuses a per-row value there, and
+# verify-alert-state.yml reads every log rule's Resource Health (#964).
 #
 # THE 2-DAY CEILING, AGAIN. A log alert cannot read more than two days, so a
 # weekly timer can only be judged for the day after it was due; outside that
@@ -1604,7 +1617,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "timer_overdue" {
         | summarize lastSuccess = max(timestamp) by timer;
       let Overdue = Expected
         | where Ingesting
-        | extend lastDue = bin_at(Now - Grace, period, anchor)
+        | extend lastDue = anchor + period * tolong((Now - Grace - anchor) / period)
         | where lastDue > Now - 1d
         | join kind=leftouter LastSuccess on timer
         | where isnull(lastSuccess) or lastSuccess < lastDue - 1m;

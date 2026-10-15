@@ -23,6 +23,14 @@
  * resource-group-scoped role makes that list show. A subscription named in
  * neither is reported as not visible.
  *
+ * Each live log search rule's Resource Health is read too (#964), one GET of
+ * `{rule}/providers/Microsoft.ResourceHealth/availabilityStatuses/current`.
+ * alert-timer-overdue was live, enabled and wired from 2026-10-10, so this
+ * check read it OK every week, while Kusto refused its query at every
+ * evaluation (SEM0040) and its Resource Health read `Unavailable / Semantic
+ * error`. A rule that cannot evaluate pages nobody, and its health is the
+ * only place Azure says so.
+ *
  * ## What it decides
  *
  *   OK              present, enabled, wired to the declared action group, and
@@ -38,6 +46,16 @@
  *                   or every evaluation, ADR 0022 decision 6, and the reason
  *                   this workflow was first written), or the rule is live
  *                   while GATES records its gate as off.
+ *   UNHEALTHY       a log search rule whose Resource Health is Unavailable
+ *                   or Degraded: Azure reports it cannot evaluate, and the
+ *                   Detail names Azure's title (`Semantic error`, ...). Not
+ *                   for a rule evaluated less often than every 15 minutes
+ *                   whose title gives no reason: Microsoft documents no
+ *                   health for those, and Unknown is not a finding either.
+ *   HEALTH UNREADABLE  the rule was read but its Resource Health was not (a
+ *                   refusal, the provider not registered in the
+ *                   subscription, or an answer with no state this knows).
+ *                   Its ability to evaluate is unknown, never called OK.
  *   NOT AUTHORIZED  the identity may not read the group. Never collapsed
  *                   into MISSING: one means the alert fabric is gone, the
  *                   other that this check's own grant is.
@@ -78,13 +96,20 @@ import { terraformSource } from './terraform-source.mjs';
 
 export const ARM = 'https://management.azure.com';
 
-/** api-version per ARM read, each the GA version its REST reference documents. */
+/**
+ * api-version per ARM read, each the GA version its REST reference documents.
+ * Resource Health's is the one Microsoft's SDKs default to for
+ * AvailabilityStatuses_GetByResource; on 2026-10-15 it returned the same
+ * `availabilityState`, `title` and `summary` for alert-timer-overdue as
+ * 2023-10-01-preview did (`Unavailable`, `Semantic error`).
+ */
 export const API_VERSIONS = {
   'Microsoft.Insights/scheduledQueryRules': '2021-08-01',
   'Microsoft.Insights/metricAlerts': '2018-03-01',
   'Microsoft.Insights/activityLogAlerts': '2020-10-01',
   actionGroups: '2021-09-01',
   subscriptions: '2022-12-01',
+  resourceHealth: '2025-05-01',
 };
 
 /**
@@ -174,6 +199,19 @@ export function classifyError(status, body) {
   const message = body?.error?.message ?? body?.message ?? '';
   const reason = redact(`HTTP ${status}${code ? ` ${code}` : ''}${message ? `: ${message}` : ''}`).slice(0, 300);
   if (status === 401) return { status: 'unauthenticated', reason };
+  // A provider the subscription has not registered. Resource Health answers
+  // this as 409 AuthError, "Make sure the resource provider has been
+  // registered with this subscription" (sub-plat-mgmt-prod-cus, 2026-10-15);
+  // ARM's own spelling is the code MissingSubscriptionRegistration. The
+  // message counts only in that measured shape: a 403 AuthorizationFailed
+  // whose text happens to name registration is still a refusal, and its fix
+  // is the role, not the provider.
+  if (
+    /^MissingSubscriptionRegistration$/i.test(code) ||
+    (status === 409 && /^AuthError$/i.test(code) && /resource provider has been registered/i.test(message))
+  ) {
+    return { status: 'not-registered', reason };
+  }
   if (status === 403 || /AuthorizationFailed/i.test(code)) return { status: 'denied', reason };
   if (status === 404 && /ResourceGroupNotFound/i.test(code)) return { status: 'group-not-found', reason };
   if (status === 404) return { status: 'not-found', reason };
@@ -339,7 +377,117 @@ export async function readLive(rules, { token, fetchImpl = fetch, knownIds = new
     const read = await armGet(path, { token, fetchImpl });
     actionGroups.set(group.address, read.status === 'ok' ? summariseActionGroup(read.body) : read);
   }
-  return { subscriptionsRead, ids, lists, actionGroups };
+
+  // Resource Health for every log search rule that is live (#964). A rule
+  // the lists did not return has nothing to read; its verdict says so.
+  const health = new Map();
+  for (const rule of rules) {
+    if (rule.armType !== 'Microsoft.Insights/scheduledQueryRules') continue;
+    const list = lists.get(listKey(rule.subscription, rule.resourceGroup, rule.armType));
+    const found = list?.status === 'ok' ? list.rules.get(rule.name.toLowerCase()) : null;
+    if (!found) continue;
+    health.set(rule.address, await readHealth(ids.get(rule.subscription), rule.resourceGroup, found.name, { token, fetchImpl }));
+  }
+  return { subscriptionsRead, ids, lists, actionGroups, health };
+}
+
+/** One log search rule's Resource Health, or the classified failure to read it. */
+export async function readHealth(subscriptionId, resourceGroup, ruleName, { token, fetchImpl = fetch }) {
+  const path =
+    `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Insights/scheduledQueryRules/` +
+    `${encodeURIComponent(ruleName)}/providers/Microsoft.ResourceHealth/availabilityStatuses/current` +
+    `?api-version=${API_VERSIONS.resourceHealth}`;
+  const read = await armGet(path, { token, fetchImpl });
+  if (read.status !== 'ok') return read;
+  const p = read.body?.properties ?? {};
+  return { status: 'ok', state: p.availabilityState, title: p.title, summary: p.summary };
+}
+
+/** Minutes in an ISO 8601 duration such as PT15M, PT1H or P1D; null when it is not one. */
+export function durationMinutes(text) {
+  const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(String(text ?? ''));
+  if (!m || text === 'P' || text === 'PT') return null;
+  const [days, hours, minutes, seconds] = m.slice(1).map((part) => Number(part ?? 0));
+  return days * 1440 + hours * 60 + minutes + seconds / 60;
+}
+
+/**
+ * The longest evaluation frequency Resource Health reports on, in minutes.
+ * Microsoft's "Monitor the health of log search alert rules": health is
+ * "supported only for rules with a frequency of 15 minutes or lower", and a
+ * less frequent rule reads Unknown, or, the same page also says,
+ * "Unavailable for unknown reason". Measured on 2026-10-15: both daily Cosmos
+ * export rules read `Unknown`.
+ */
+export const HEALTH_MAX_FREQUENCY_MINUTES = 15;
+
+/**
+ * Titles that carry no reason, which a rule beyond that frequency is given:
+ * "Unknown", "Unknown reason", "Unavailable for unknown reason", "Degraded
+ * due to unknown reason" (the titles that page lists).
+ */
+const REASONLESS_TITLE = /^(?:\w+\s+(?:for|due to)\s+(?:an\s+)?)?unknown(?:\s+reason)?$/i;
+
+/**
+ * What one rule's Resource Health means for its verdict.
+ *
+ * @returns {{shown: string, problem: [string, string]|null, note: string|null}}
+ *   `shown` for the report's Health column; `problem` a failing [state,
+ *   text]; `note` a non-failing remark.
+ */
+export function healthVerdict(health, found, subscription) {
+  if (!health || health.status !== 'ok') {
+    return { shown: 'unread', problem: ['HEALTH UNREADABLE', healthUnreadReason(health, subscription)], note: null };
+  }
+  const state = health.state;
+  const title = redact(String(health.title ?? '')).slice(0, 120);
+  const summary = redact(String(health.summary ?? '')).slice(0, 200);
+  const frequency = durationMinutes(found?.evaluationFrequency);
+  const reported = frequency === null || frequency <= HEALTH_MAX_FREQUENCY_MINUTES;
+  if (state === 'Available') return { shown: 'Available', problem: null, note: null };
+  if (state === 'Unknown') {
+    const why = reported
+      ? `Resource Health: Unknown${title && title !== 'Unknown' ? ` (${title})` : ''}`
+      : `Resource Health: Unknown, as Microsoft documents for a rule evaluated less often than every ${HEALTH_MAX_FREQUENCY_MINUTES} minutes`;
+    return { shown: 'Unknown', problem: null, note: why };
+  }
+  if (state === 'Unavailable' || state === 'Degraded') {
+    if (!reported && (!title || REASONLESS_TITLE.test(title))) {
+      return {
+        shown: state,
+        problem: null,
+        note:
+          `Resource Health: ${state}${title ? `, "${title}"` : ''}, which Microsoft documents for a rule evaluated less ` +
+          `often than every ${HEALTH_MAX_FREQUENCY_MINUTES} minutes; not a finding`,
+      };
+    }
+    const text = `${title || state} (Resource Health: ${state})${summary ? `. ${summary}` : ''}`;
+    return { shown: state, problem: ['UNHEALTHY', text], note: null };
+  }
+  return {
+    shown: 'unread',
+    problem: ['HEALTH UNREADABLE', `Resource Health answered with an availabilityState this check does not know: ${redact(String(state)).slice(0, 40)}`],
+    note: null,
+  };
+}
+
+/** Why a rule's Resource Health could not be read, in words the owner can act on. */
+function healthUnreadReason(read, subscription) {
+  const where = '"Resource Health" in docs/runbooks/alerting-and-support.md';
+  const reason = read?.reason ?? 'not read';
+  if (read?.status === 'not-registered') {
+    return (
+      `Resource Health could not be read: the Microsoft.ResourceHealth provider is not registered in ${subscription}, ` +
+      `so whether this rule can evaluate is unknown, not healthy. The owner registers it once (${where}). (${reason})`
+    );
+  }
+  if (read?.status === 'denied' || read?.status === 'unauthenticated') {
+    return (
+      'Resource Health could not be read: this identity may not read it. HCW Alert Rule Reader carries ' +
+      `Microsoft.ResourceHealth/availabilityStatuses/read once the owner updates the role (${where}). (${reason})`
+    );
+  }
+  return `Resource Health could not be read, so whether this rule can evaluate is unknown. (${reason})`;
 }
 
 /** The key one (subscription, resource group, rule type) list is held under; groups compare case-insensitively. */
@@ -367,13 +515,22 @@ export function summariseActionGroup(body) {
 // ---------------------------------------------------------------------------
 
 /** Rule states that fail the run. UNREADABLE, GATED OFF, ABSENT and OK do not. */
-export const FAILING = new Set(['MISSING', 'DISABLED', 'NOT WIRED', 'DRIFT', 'NOT AUTHORIZED', 'READ FAILED']);
+export const FAILING = new Set([
+  'MISSING',
+  'DISABLED',
+  'NOT WIRED',
+  'DRIFT',
+  'UNHEALTHY',
+  'HEALTH UNREADABLE',
+  'NOT AUTHORIZED',
+  'READ FAILED',
+]);
 
 /** Action-group states that fail the run. */
 const FAILING_GROUP = new Set(['BROKEN', 'NOT AUTHORIZED', 'READ FAILED']);
 
-/** States meaning the rule or group was never read, whatever the reason. */
-const NOT_READ = new Set(['UNREADABLE', 'NOT AUTHORIZED', 'READ FAILED']);
+/** States meaning the rule or group, or a rule's health, was never read, whatever the reason. */
+const NOT_READ = new Set(['UNREADABLE', 'NOT AUTHORIZED', 'READ FAILED', 'HEALTH UNREADABLE']);
 
 /** Read statuses that mean "this identity may not look", as opposed to an error. */
 const REFUSED = new Set(['denied', 'not-visible']);
@@ -450,8 +607,19 @@ function judgeRule(rule, live, { gates, pending, unreadable }) {
   const found = read.rules.get(rule.name.toLowerCase()) ?? null;
   if (!found) return absentVerdict(base, pending);
   const problems = liveProblems(rule, found, expect, live.ids);
-  if (problems.length === 0) return { ...base, live: found, state: 'OK' };
-  return { ...base, live: found, state: problems[0][0], problems: problems.map(([, text]) => text) };
+  const notes = [...base.notes];
+  let health;
+  if (rule.armType === 'Microsoft.Insights/scheduledQueryRules') {
+    // A map with no entry for a live rule means the read never happened,
+    // which is unread, not healthy.
+    const verdict = healthVerdict(live.health?.get(rule.address), found, rule.subscription);
+    health = verdict.shown;
+    if (verdict.problem) problems.push(verdict.problem);
+    if (verdict.note) notes.push(verdict.note);
+  }
+  const judged = { ...base, live: found, health, notes };
+  if (problems.length === 0) return { ...judged, state: 'OK' };
+  return { ...judged, state: problems[0][0], problems: problems.map(([, text]) => text) };
 }
 
 /** One verdict per declared rule. */
@@ -552,6 +720,24 @@ function summaryLines(verdicts, groups, stale) {
         'holds the grants of `github_reader`, the identity this workflow signs in as.'
     );
   }
+  if (verdicts.some((v) => v.state === 'UNHEALTHY')) {
+    lines.push(
+      '',
+      '`UNHEALTHY` means Azure Monitor reports the rule cannot evaluate: its Resource Health is Unavailable or ' +
+        'Degraded, with Azure\'s title first in the Detail column. A rule in that state pages nobody, whatever it is ' +
+        'meant to catch, however live and wired it is. `Semantic error` and `Syntax error` mean the query itself; run ' +
+        'it under the rule\'s scope → **Logs** to see the error.'
+    );
+  }
+  if (verdicts.some((v) => v.state === 'HEALTH UNREADABLE' || healthUnread(v))) {
+    lines.push(
+      '',
+      '`HEALTH UNREADABLE` means the rule was read and its Resource Health was not, so whether it can evaluate is ' +
+        '**unknown**, never healthy. The Detail column says why; the one-time owner steps (registering ' +
+        '`Microsoft.ResourceHealth`, updating *HCW Alert Rule Reader*) are under "Resource Health" in ' +
+        '`docs/runbooks/alerting-and-support.md`.'
+    );
+  }
   for (const subscription of stale) {
     lines.push(
       '',
@@ -606,14 +792,14 @@ export function renderReport({ rules, verdicts, extra, groups, when, subscriptio
       ''
     );
   }
-  lines.push('| Rule | Resource group | State | Enabled | autoMitigate | Every | Window | Sev | Detail |');
-  lines.push('| --- | --- | --- | :---: | :---: | --- | --- | :---: | --- |');
+  lines.push('| Rule | Resource group | State | Enabled | autoMitigate | Every | Window | Sev | Health | Detail |');
+  lines.push('| --- | --- | --- | :---: | :---: | --- | --- | :---: | --- | --- |');
   for (const v of verdicts) {
     const l = v.live ?? {};
     const detail = tableCell([...v.problems, ...v.notes].join('; '));
     lines.push(
       `| \`${v.rule.name}\` | \`${v.rule.resourceGroup}\` | **${v.state}** | ${cell(l.enabled)} | ${cell(l.autoMitigate)} | ` +
-        `${cell(l.evaluationFrequency)} | ${cell(l.windowSize)} | ${cell(l.severity)} | ${detail || ''} |`
+        `${cell(l.evaluationFrequency)} | ${cell(l.windowSize)} | ${cell(l.severity)} | ${cell(v.health)} | ${detail || ''} |`
     );
   }
   lines.push('', '### Action groups', '', '| Action group | Resource group | State | Receivers | Detail |', '| --- | --- | --- | --- | --- |');
@@ -643,7 +829,7 @@ export function runFails(verdicts, groups, subscriptionsRead, stale = []) {
 /**
  * The `coverage` step output for automated consumers: `complete` when every
  * declared rule and action group was read, `partial` when any was not
- * (UNREADABLE, NOT AUTHORIZED or READ FAILED).
+ * (UNREADABLE, NOT AUTHORIZED, READ FAILED or HEALTH UNREADABLE).
  * A green run with partial coverage is not the same result as a green run
  * with complete coverage, and a reader of the run's outcome alone cannot tell.
  */
@@ -652,7 +838,17 @@ export function coverageOf(verdicts, groups) {
   // (review of #1051): a failing run that read half the estate must not say
   // `complete` to a consumer that reads only this output.
   const unread = (state) => NOT_READ.has(state);
-  return verdicts.some((v) => unread(v.state)) || groups.some((g) => unread(g.state)) ? 'partial' : 'complete';
+  // A rule's health is read apart from the rule, and the state shows only the
+  // first finding, so a DISABLED rule whose health was not read would
+  // otherwise count as read (CodeRabbit on #1195).
+  return verdicts.some((v) => unread(v.state) || healthUnread(v)) || groups.some((g) => unread(g.state))
+    ? 'partial'
+    : 'complete';
+}
+
+/** True when the rule was read and its Resource Health was not, whatever finding the state shows first. */
+function healthUnread(verdict) {
+  return verdict.health === 'unread';
 }
 
 /**

@@ -494,17 +494,20 @@ resource "azurerm_role_assignment" "github_manifest_window_read" {
 # ---------------------------------------------------------------------------
 # The weekly check reads every declared alert rule and the action group back
 # from Azure (scripts/verify-alert-state.mjs): one token, the subscription
-# list, the three alert-rule lists in each resource group and each action
-# group, all GETs. It ran as github_reader, which could not read the
-# Management subscription at all, so the capacity rule, the lab rules, the
-# two Management role-change rules and the action group read UNREADABLE every
-# week. Reader on rg-mgmt-plat-prod-cus would have closed that, and it would
+# list, the three alert-rule lists in each resource group, each action group
+# and, since #964, each log search rule's Resource Health, all GETs. It ran as
+# github_reader, which could not read the Management subscription at all, so
+# the capacity rule, the lab rules, the two Management role-change rules and
+# the action group read UNREADABLE every week. Reader on rg-mgmt-plat-prod-cus would have closed that, and it would
 # also have let this identity query every log in the Management workspace
 # (query is a read action) while it already held a Function App config write.
 # The owner chose the narrower shape on 2026-10-11: an identity of its own,
 # holding the custom "HCW Alert Rule Reader" role (infra/roles/
-# alert-rule-reader.json: the four alert-rule and action-group reads, no
-# data action) in the two groups the rules live in, and nothing else.
+# alert-rule-reader.json: the four alert-rule and action-group reads, and
+# since #964 the two Resource Health reads, no data action) in the two groups
+# the rules live in, and nothing else. The owner writes that role
+# (docs/runbooks/alerting-and-support.md, "Resource Health"); Terraform only
+# reads it below.
 #
 # The workflow declares no `environment:`, so it presents the ref-form
 # subject, and both the name and immutable-ID forms of it are trusted, as for
