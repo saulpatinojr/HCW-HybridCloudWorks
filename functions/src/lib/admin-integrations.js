@@ -84,6 +84,17 @@ async function listRecordings(ctx, request, context) {
   }
 }
 
+/**
+ * What `POST cms/recordings` accepts. #1181 (AP-B6) introduced the allowlist
+ * and left out four keys the only two callers send on every save, so both
+ * Recording Hub forms answered 400 from that deploy on: "route a Plaud
+ * recording" (`recording-hub/recordingCards.jsx`: `recordedAt`, `source`,
+ * `plaudId`, `status`) and the pasted-transcript form
+ * (`recording-hub/uploadForms.jsx`: `source`, `status`). `source` is a real
+ * field the hub renders (`recordingView.js` `sourceLabel`). Each is typed
+ * below; `status` is accepted only as `new`, the value the server stamps
+ * anyway, so the body still cannot choose a recording's state.
+ */
 export const RECORDING_CREATE_FIELDS = [
   'title',
   'transcript',
@@ -94,7 +105,17 @@ export const RECORDING_CREATE_FIELDS = [
   'topics',
   'speakers',
   'metadata',
+  'source',
+  'plaudId',
+  'recordedAt',
+  'status',
 ];
+
+/** The two ways an admin puts a recording into the container (`sourceLabel` names both). */
+export const RECORDING_CREATE_SOURCES = ['plaud_mcp', 'manual_upload'];
+
+/** A Plaud file id is an opaque short string; anything longer is not one. */
+export const RECORDING_PLAUD_ID_MAX = 200;
 
 export const RECORDING_PATCH_FIELDS = [
   'title',
@@ -160,6 +181,34 @@ function validateRecordingCreate(body) {
       return { error: 'metadata must be an object' };
     }
     doc.metadata = body.metadata;
+  }
+  // The body may say `new`, because both forms do; it may not say anything
+  // else. The handler stamps `status: 'new'` whatever arrives.
+  if (body.status !== undefined && body.status !== 'new') {
+    return { error: "status on create must be 'new'" };
+  }
+  if (body.source !== undefined) {
+    if (!RECORDING_CREATE_SOURCES.includes(body.source)) {
+      return { error: `source must be one of: ${RECORDING_CREATE_SOURCES.join(', ')}` };
+    }
+    doc.source = body.source;
+  }
+  if (body.plaudId !== undefined) {
+    const plaudId = typeof body.plaudId === 'string' ? body.plaudId.trim() : '';
+    if (!plaudId || plaudId.length > RECORDING_PLAUD_ID_MAX) {
+      return { error: `plaudId must be a non-empty string of at most ${RECORDING_PLAUD_ID_MAX} characters` };
+    }
+    doc.plaudId = plaudId;
+  }
+  if (body.recordedAt !== undefined && body.recordedAt !== null) {
+    // Plaud reports start_at / created_at; an ISO string or epoch
+    // milliseconds both mean a time. Stored as ISO, like createdAt.
+    const raw = body.recordedAt;
+    const when = typeof raw === 'string' || typeof raw === 'number' ? new Date(raw) : null;
+    if (!when || Number.isNaN(when.getTime())) {
+      return { error: 'recordedAt must be an ISO date string or epoch milliseconds' };
+    }
+    doc.recordedAt = when.toISOString();
   }
   return { doc };
 }

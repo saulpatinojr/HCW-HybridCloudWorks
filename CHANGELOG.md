@@ -19,6 +19,21 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Recording Hub saves again: the recordings create allowlist accepts the
+  four fields both forms send, typed** (AP-B6, #941). #1181 put an allowlist
+  on `POST cms/recordings` (`RECORDING_CREATE_FIELDS` in
+  `functions/src/lib/admin-integrations.js`) and left out `source`,
+  `plaudId`, `recordedAt` and `status`, which the only two callers send on
+  every save, so "route a Plaud recording" (`recordingCards.jsx`) and the
+  pasted-transcript form (`uploadForms.jsx`) both answered 400 from that
+  deploy on; the frontend tests mock the API and could not see it. The four
+  keys are allowlisted and typed: `source` is one of `plaud_mcp` and
+  `manual_upload`, `plaudId` a non-empty string of at most 200 characters,
+  `recordedAt` an ISO string or epoch milliseconds stored as ISO, and
+  `status` is accepted only as `new`, the value the handler stamps anyway,
+  so the body still cannot choose a recording's state. Tests post each
+  form's payload verbatim and expect 200, so a field that leaves the list
+  again fails here.
 - **The content list's `search` is answered from the index, bounded, and
   reads both summary casings** (AP-F6, #930). The predicate #1178 added
   wrapped each field in `LOWER()`, which Cosmos DB documents as not using
