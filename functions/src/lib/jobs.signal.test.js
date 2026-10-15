@@ -234,10 +234,12 @@ describe('every registered worker passes its AbortSignal on (#942)', () => {
   });
 });
 
-/** Named in the sample workers above, which are read, never run. */
-function run() {}
-/** As `run`. */
-function createForge() {
-  return { run };
+/** Named in the sample workers above, which are read, never run; it takes what they pass it. */
+function run(payload, options) {
+  return { payload, options };
+}
+/** As `run`: the library factory the sample worker hands its signal to. */
+function createForge(options) {
+  return { run, options };
 }
 const sample = {};
