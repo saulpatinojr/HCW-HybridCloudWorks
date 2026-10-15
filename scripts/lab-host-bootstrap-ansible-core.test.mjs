@@ -263,7 +263,9 @@ const bash = (args, env = {}) => run('bash', args, { env: { ...process.env, ...l
 const linksReady =
   shellReady && bash(['-c', 'd="$(mktemp -d)"; ln -s "$d" "$d/l" && [ -L "$d/l" ]; s=$?; rm -rf "$d"; exit "$s"']).status === 0;
 
-const PYTHON_VERSION = SCRIPT.match(/^PYTHON_VERSION=(\S+)$/m)?.[1];
+// Named apart from the script's own PYTHON_VERSION, which the assertions
+// above quote as bash text, so no string here can read as a JS template.
+const PINNED_PYTHON = SCRIPT.match(/^PYTHON_VERSION=(\S+)$/m)?.[1];
 const SWITCH_BLOCK = cut(SCRIPT, 'hcw_ansible_requirements="$(mktemp)"', '"${UV_TOOL_BIN_DIR}/ansible-playbook" --version | sed -n \'1p;/python version/p\'');
 const LINK_FUNCTION = cut(SCRIPT, 'hcw_link_ansible_commands() {', '}');
 const RETIRE_BLOCK = cut(SCRIPT, 'if [ -e "${UV_TOOL_DIR}/ansible-core" ] && ! grep -qF', 'fi');
@@ -319,7 +321,7 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     'install() { local a=(); while [ "$#" -gt 0 ]; do case "$1" in -o | -g) shift 2 ;; *) a+=("$1"); shift ;; esac; done; command install "${a[@]}"; }',
     'HCW_SRC_DIR="$ROOT/src"',
     'hcw_repo_sha=0123456789abcdef0123456789abcdef01234567',
-    `export PYTHON_VERSION=${PYTHON_VERSION}`,
+    `export PYTHON_VERSION=${PINNED_PYTHON}`,
     `UV_BIN='${scriptAt('uv')}'`,
     'HCW_ANSIBLE_VENV="$ROOT/opt/uv/ansible-core"',
     'HCW_ANSIBLE_GENERATIONS="$ROOT/opt/uv/ansible-core-generations"',
@@ -362,7 +364,7 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     const first = step(VERSIONS_ENV);
     expect(first.status, first.stderr).toBe(0);
     const generation = inUse();
-    expect(generation).toMatch(new RegExp(`^${esc(root)}/opt/uv/ansible-core-generations/${esc(pinned)}-py${esc(PYTHON_VERSION)}-[0-9a-f]{12}$`));
+    expect(generation).toMatch(new RegExp(`^${esc(root)}/opt/uv/ansible-core-generations/${esc(pinned)}-py${esc(PINNED_PYTHON)}-[0-9a-f]{12}$`));
     expect(first.stdout).toContain(`switched ${root}/opt/uv/ansible-core to ${generation}\n`);
     for (const command of COMMANDS) expect(sh(`readlink "$ROOT/bin/${command}"`)).toBe(`${root}/opt/uv/ansible-core/bin/${command}`);
     expect(first.stdout).toContain(`ansible-playbook [core ${pinned}]`);

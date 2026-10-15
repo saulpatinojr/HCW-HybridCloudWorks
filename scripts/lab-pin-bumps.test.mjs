@@ -46,6 +46,9 @@ import {
 } from './lib/lab-pin-bumps.mjs';
 import { LABELS } from './lab-pins-upstream.mjs';
 
+/** A value matched literally inside a RegExp: every metacharacter escaped, not only the dots of a version. */
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const real = (path) => readFileSync(join(REPO, path), 'utf8');
 const sha = (s) => `sha256:${createHash('sha256').update(s).digest('hex')}`;
@@ -733,7 +736,7 @@ describe('the ansible-core plan (image-base, LAB-13)', () => {
         const dep = deps[0];
         routes[`${PYPI}/${dep.name}/${dep.version}/json`] = { info: {}, urls: [depWheel(dep, dep.version, hex('9'))] };
       },
-      new RegExp(`lists no wheel of ${deps[0].name} ${deps[0].version.replace(/\./g, '\\.')} with the SHA256 ANSIBLE_CORE_DEPS pins`),
+      new RegExp(`lists no wheel of ${deps[0].name} ${escapeRegExp(deps[0].version)} with the SHA256 ANSIBLE_CORE_DEPS pins`),
     ],
     [
       'ANSIBLE_CORE_SHA256 is not PyPI\'s digest for the pinned release',
@@ -828,7 +831,7 @@ describe('the ansible-core plan (image-base, LAB-13)', () => {
       const routes = routesPinning({ wheels: [depWheel(dep, to, hex('5'), 'py2-none-any')] });
       const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)) });
       expect(plan.applied.filter((b) => b.key === 'ansible-core')).toEqual([]);
-      expect(ansibleNotes(plan)[0].reason).toMatch(new RegExp(`pins resolvelib==${to.replace(/\./g, '\\.')}, and .* lists 0 wheels with a SHA256 for py3-none-any`));
+      expect(ansibleNotes(plan)[0].reason).toMatch(new RegExp(`pins resolvelib==${escapeRegExp(to)}, and .* lists 0 wheels with a SHA256 for py3-none-any`));
       expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
     });
 
