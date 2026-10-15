@@ -680,15 +680,31 @@ export function createConnectionProbe({
       });
     }
 
-    // `error` names the service and the status; the upstream's own sentence
-    // is no longer copied into it (#945, as the AI proxy in #1198). `data`,
-    // the redacted answer, is still relayed for the page to show (#463).
-    // `unwrapProxy` on the browser side prefers `error`.
-    return json(200, {
-      ok: response.ok,
-      status: response.status,
-      data,
-      ...(response.ok ? {} : { error: `${probe.service} answered HTTP ${response.status}.` }),
-    });
+    // A success relays the redacted answer: the Test runners read the bot's
+    // username or the show's title from it. A failure answers with exactly
+    // PROBE_FAILURE_FIELDS: `error` names the service and the status, and
+    // the upstream's body stays out (#945, #1200 review L2). This route is
+    // editor-level, and the browser never read `data` on a failure
+    // (`unwrapProxy` takes `error`); the provider's own sentence on a 401 or
+    // 403, which #463 and #358 made the diagnosis, is kept where they put
+    // it: the key verdict's lastFailDetail, which only the super_admin
+    // API-keys page reads.
+    if (response.ok) return json(200, { ok: true, status: response.status, data });
+    return json(200, probeFailure(probe, response.status));
   };
+}
+
+/** The only fields a failed probe answers with (#945): no upstream body. */
+export const PROBE_FAILURE_FIELDS = Object.freeze(['ok', 'status', 'error']);
+
+/**
+ * A probe the upstream refused, as the page is told: the service and the
+ * status, in this module's words.
+ *
+ * @param {{ service: string }} probe - the probe that ran
+ * @param {number} status - the upstream's HTTP status
+ * @returns {{ ok: false, status: number, error: string }}
+ */
+export function probeFailure(probe, status) {
+  return { ok: false, status, error: `${probe.service} answered HTTP ${status}.` };
 }

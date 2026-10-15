@@ -12,6 +12,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   PODBEAN_TOKEN_URL,
   PROBES,
+  PROBE_FAILURE_FIELDS,
   PROBE_NAMES,
   assertUrlSafe,
   createConnectionProbe,
@@ -295,23 +296,30 @@ describe('createConnectionProbe', () => {
     });
   });
 
-  it("names the service and status on a failure, and relays the answer only as `data`", async () => {
-    // The upstream's own sentence is no longer copied into `error` (#945, as
-    // the AI proxy in #1198): `error` is this module's, and the redacted
-    // answer stays under `data` for the page to show.
+  it('names the service and status on a failure, and answers with nothing of the upstream body', async () => {
+    // The upstream's own sentence is not copied into `error` (#945, as the AI
+    // proxy in #1198), and since #1200's review (L2) the redacted body is not
+    // relayed either: this route is editor-level and the page never read it
+    // on a failure. The key verdict keeps the provider's sentence for the
+    // super_admin API-keys page (#463).
     const res = await build({
       fetch: respond({
         ok: false,
         status: 401,
-        text: '{"ok":false,"error_code":401,"description":"Unauthorized"}',
+        text: '{"ok":false,"error_code":401,"description":"Unauthorized: bot token 12345 echoed"}',
       }),
     })(req({ probe: 'telegram' }), ctx());
-    expect(bodyOf(res)).toMatchObject({
-      ok: false,
-      status: 401,
-      error: 'Telegram answered HTTP 401.',
-      data: { description: 'Unauthorized' },
-    });
+    const body = bodyOf(res);
+    expect(body).toEqual({ ok: false, status: 401, error: 'Telegram answered HTTP 401.' });
+    expect(Object.keys(body).sort()).toEqual([...PROBE_FAILURE_FIELDS].sort());
+    expect(res.body).not.toMatch(/Unauthorized|echoed/);
+  });
+
+  it('still relays the redacted answer on a success, which the Test runners read', async () => {
+    const res = await build({
+      fetch: respond({ ok: true, status: 200, text: '{"ok":true,"result":{"username":"hcw_bot"}}' }),
+    })(req({ probe: 'telegram' }), ctx());
+    expect(bodyOf(res)).toEqual({ ok: true, status: 200, data: { ok: true, result: { username: 'hcw_bot' } } });
   });
 
   it('records a Telegram rejection against the bot token', async () => {

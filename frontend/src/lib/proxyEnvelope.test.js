@@ -46,6 +46,21 @@ describe('unwrapProxy', () => {
     ).toThrow(/PUBLER_WORKSPACE_ID is not set/);
   });
 
+  it("says a connection probe's failure as the server wrote it, once (#945)", () => {
+    // connectionProbe answers a failure with { ok, status, error } and no
+    // upstream body since #1200's review; its sentence already names the
+    // service and the status.
+    expect(() =>
+      unwrapProxy({ ok: false, status: 401, error: 'Telegram answered HTTP 401.' }, 'Telegram')
+    ).toThrow(/^Telegram answered HTTP 401\.$/);
+    expect(() =>
+      unwrapProxy(
+        { ok: false, error: 'Podbean could not be reached (ENOTFOUND).', correlationId: 'inv-7' },
+        'Podbean'
+      )
+    ).toThrow(/^Podbean could not be reached \(ENOTFOUND\)\. \(reference inv-7\)$/);
+  });
+
   it('still throws when the failure carried no words at all', () => {
     expect(() => unwrapProxy({ ok: false, status: 500, data: {} }, 'Linkie')).toThrow(
       /Linkie answered 500/

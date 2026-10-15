@@ -68,13 +68,23 @@ export function readUpstreamMessage(data) {
  */
 export function unwrapProxy(res, service) {
   if (res && res.ok === false) {
-    // `code` is the proxy's own refusal (a missing app setting), and `error`
-    // its sentence; upstream failures carry a status and a body instead.
-    const upstream = readUpstreamMessage(res.data);
-    const reason =
-      (typeof res.error === 'string' && res.error) || upstream || 'the request was refused';
+    // A server sentence is complete and is said as it is: a proxy's own
+    // refusal (`code`, a missing app setting), "<Service> could not be
+    // reached (<code>).", and every connectionProbe failure, which since
+    // #945 answers `{ ok, status, error }` with no upstream body. Only a
+    // relayed upstream refusal (the Publer and Linkie proxies, #463) is
+    // composed here from its status and the upstream's own sentence. A
+    // correlation id, when the server sent one, is named for the log.
+    const reference =
+      typeof res.correlationId === 'string' && res.correlationId
+        ? ` (reference ${res.correlationId})`
+        : '';
+    if (typeof res.error === 'string' && res.error) throw new Error(`${res.error}${reference}`);
+    const reason = readUpstreamMessage(res.data) || 'the request was refused';
     throw new Error(
-      Number.isFinite(res.status) ? `${service} answered ${res.status} - ${reason}` : reason
+      Number.isFinite(res.status)
+        ? `${service} answered ${res.status} - ${reason}${reference}`
+        : `${reason}${reference}`
     );
   }
   // A shape that is not the envelope at all. Treated as a failure rather than
