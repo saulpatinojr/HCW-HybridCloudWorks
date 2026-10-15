@@ -193,11 +193,38 @@ function registerBuiltins() {
     description: 'Smoke test — echoes the payload after an optional delayMs (max 20000).',
     maxPayloadBytes: 1024,
     timeoutMs: 30_000,
-    worker: async (payload) => {
+    /** Echo the payload; the delay ends with the job's signal, like every worker's wait. */
+    worker: async (payload, { signal } = {}) => {
       const delay = Math.min(Math.max(Number(payload?.delayMs) || 0, 0), 20_000);
-      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      if (delay) await waitUnlessAborted(delay, signal);
       return { echoed: payload ?? null, delayedMs: delay };
     },
+  });
+}
+
+/**
+ * Resolve after `ms`, or reject with the signal's reason as soon as it fires,
+ * so a wait does not hold a job that is already over (#942 follow-up).
+ *
+ * @param {number} ms
+ * @param {AbortSignal|null|undefined} signal
+ * @returns {Promise<void>}
+ */
+function waitUnlessAborted(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason || new Error('aborted'));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason || new Error('aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 

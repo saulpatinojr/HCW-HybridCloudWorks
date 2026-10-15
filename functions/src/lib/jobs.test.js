@@ -508,6 +508,17 @@ describe('runJob', () => {
     expect(abortedAtWorker).toBe(true);
     expect(store.docs['job-abort'].status).toBe('timeout');
   });
+
+  it('noop ends its delay when the job’s signal fires, not when the delay does (#942 follow-up)', async () => {
+    const job = new AbortController();
+    const started = Date.now();
+    const run = getJobType('noop').worker({ delayMs: 20_000 }, { signal: job.signal });
+    job.abort(Object.assign(new Error('job timed out'), { code: 'JOB_TIMEOUT' }));
+    await expect(run).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
+    expect(Date.now() - started).toBeLessThan(1000);
+    // Without a signal the delay is the delay, as before.
+    await expect(getJobType('noop').worker({ delayMs: 1 }, {})).resolves.toMatchObject({ delayedMs: 1 });
+  });
 });
 
 describe('getJob role gating and email redaction (AP-B10)', () => {

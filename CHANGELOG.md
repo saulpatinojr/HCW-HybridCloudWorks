@@ -36,7 +36,13 @@ This project has not cut a tagged release; entries are grouped under
   scheduler and the Telegram /approve command, which wrote object literals,
   now build their documents with it, a Forge Studio entry whose document
   cannot be built is put back to queued, and `jobs.payload-bound.test.js`
-  fails any new job write under `src/` that does not go through it.
+  fails any new job write under `src/` that does not go through it. New
+  `jobs.signal.test.js` keeps #1198's threading in place: it reads every
+  module under `src/` that registers a job type (aliased and namespace
+  imports included), pins the eight modules and the sixteen types, and fails
+  a worker that never passes `signal` on to a call — one that destructures
+  it unused, only checks it first, or names it in a string does not count.
+  `noop` was the one worker that ignored it; its delay now ends with the job.
 - **Admin routes are the menu labels' slugs and page titles are the
   registry's labels, the single-draft RPC file says what it registers,
   deleting a live page archives it with ten seconds of Undo and the Archive
