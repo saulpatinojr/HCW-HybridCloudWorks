@@ -76,8 +76,10 @@ export default function useGalleryActions({ listing, selection, navigate }) {
     }
   };
 
+  /** Start new content with this image, through New Content's reuseImage parameter. */
   const reuse = (item) => {
-    if (item?.imageUrl) navigate(`/admin/submit?reuseImage=${encodeURIComponent(item.imageUrl)}`);
+    if (item?.imageUrl)
+      navigate(`/admin/new-content?reuseImage=${encodeURIComponent(item.imageUrl)}`);
   };
 
   const saveDetails = async (item, fields) => {

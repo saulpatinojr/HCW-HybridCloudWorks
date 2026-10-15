@@ -25,6 +25,30 @@
  */
 import { randomUUID } from 'node:crypto';
 
+function errorResponse(context, fallbackMessage, error, status = 500, request = null) {
+  const correlationId =
+    context?.invocationId ||
+    context?.traceContext?.traceparent ||
+    request?.headers?.get?.('x-correlation-id') ||
+    request?.headers?.get?.('x-request-id') ||
+    randomUUID();
+  if (context?.error) {
+    context.error(`[${correlationId}] ${fallbackMessage}:`, error);
+  }
+  return {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Correlation-ID': correlationId,
+    },
+    body: JSON.stringify({
+      ok: false,
+      error: fallbackMessage,
+      correlationId,
+    }),
+  };
+}
+
 const json = (status, body) => ({
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -240,11 +264,7 @@ export function createLabHandlers({
         context.log('enqueueLabJob', jobId, type);
         return json(200, { jobId, type, status: 'queued' });
       } catch (error) {
-        context.error('enqueueLabJob failed:', error);
-        return json(500, {
-          error: 'Failed to enqueue job',
-          message: error?.message || 'Unknown error',
-        });
+        return errorResponse(context, 'Failed to enqueue job', error, 500, request);
       }
     },
 
@@ -387,11 +407,7 @@ export function createLabHandlers({
           generatedAt: now().toISOString(),
         });
       } catch (error) {
-        context.error('getLabsSnapshot failed:', error);
-        return json(500, {
-          error: 'Failed to build labs snapshot',
-          message: error?.message || 'Unknown error',
-        });
+        return errorResponse(context, 'Failed to build labs snapshot', error, 500, request);
       }
     },
 
@@ -421,8 +437,7 @@ export function createLabHandlers({
         context.log('cancelLabJob', jobId);
         return json(200, { jobId, status: 'cancelled' });
       } catch (error) {
-        context.error('cancelLabJob failed:', error);
-        return json(500, { error: 'Cancel failed', message: error?.message || 'Unknown error' });
+        return errorResponse(context, 'Cancel failed', error, 500, request);
       }
     },
   };

@@ -5,7 +5,7 @@
  * without pulling the lazily loaded page into the main bundle.
  */
 
-export const LINKIE_PATH = '/admin/linkie';
+export const LINKIE_PATH = '/admin/linkie-hub';
 
 export const TABS = Object.freeze([
   { id: 'links', label: 'Links' },

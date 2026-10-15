@@ -186,4 +186,14 @@ describe('processRssFeeds', () => {
     expect(r.homepageItems).toBeNull();
     expect(r.errors).toEqual(['homepage_feeds: 429']);
   });
+
+  it('throws immediately when signal is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const store = makeStore();
+    const parser = { parseURL: vi.fn() };
+    const ingest = createRssIngest({ store, parser, dedup: dedupNone, now: () => NOW });
+    await expect(ingest.processRssFeeds({ feeds, signal: controller.signal })).rejects.toThrow();
+    expect(parser.parseURL).not.toHaveBeenCalled();
+  });
 });

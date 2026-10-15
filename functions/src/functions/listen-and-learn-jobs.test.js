@@ -33,6 +33,8 @@ const {
   speechEstimateForRun,
   MAX_AREAS_PER_RUN,
   TASK_MODEL_NOTE,
+  runListenAndLearnGeneration,
+  runSpeakChapter,
 } = await import('./listen-and-learn-jobs.js');
 const { MAX_SCRIPT_BYTES } = await import('../lib/listen-and-learn/script.js');
 const { estimateGeminiCostUsd } = await import('../lib/listen-and-learn/speech/index.js');
@@ -325,5 +327,23 @@ describe('speechEstimateForRun', () => {
   it('does not throw on a payload the worker would refuse', () => {
     expect(() => speechEstimateForRun(null, GEMINI)).not.toThrow();
     expect(speechEstimateForRun({ areas: 'not-a-list' }, GEMINI).episodes).toBe(MAX_AREAS_PER_RUN);
+  });
+});
+
+describe('listen-and-learn worker abort handling', () => {
+  it('runListenAndLearnGeneration throws if signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      runListenAndLearnGeneration(valid(), { signal: controller.signal })
+    ).rejects.toThrow();
+  });
+
+  it('runSpeakChapter throws if signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      runSpeakChapter({ platform: 'azure', examCode: 'AZ-104', chapterId: 'ch1' }, { signal: controller.signal })
+    ).rejects.toThrow();
   });
 });

@@ -19,6 +19,162 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Admin routes are the menu labels' slugs and page titles are the
+  registry's labels, the single-draft RPC file says what it registers,
+  deleting a live page archives it with ten seconds of Undo and the Archive
+  board carries Restore and Delete permanently, and Ctrl-K opens a command
+  palette over every admin page and the content search** (AP-F13, #937).
+  `frontend/src/config/adminNav.js` is the one place a page's label, route
+  and title come from: eight items routed to a slug that was not their
+  label ("Publish" at `/admin/published`, "Review Queue" at `/admin/queue`,
+  "Newsletter Hub" at `/admin/mailing-list`, "New Content" at
+  `/admin/submit`, "Social Hub" at `/admin/social`, "Linkie Hub" at
+  `/admin/linkie`, "Speaking" at `/admin/speaking-events`, "Platform
+  Settings" at `/admin/platform`), and `adminNav.test.js` now holds every
+  row to `/admin/<slug of its label>`. The old paths live on in
+  `frontend/src/config/adminRedirects.jsx`, which also took over the five
+  redirects `App.jsx` carried inline (#442, #569, #570) and, unlike them,
+  carries the query, the hash and a nested segment through
+  (`/admin/queue/<id>?source=content` still opens the review board);
+  `adminRedirects.test.jsx` walks every entry and reads `App.jsx` for the
+  route each lands on. Every link in `frontend/src`, the two e2e specs and
+  the API's own admin links (`functions/src/lib/decision-center/links.js`,
+  `calendar/collectors.js`, `cms/drafts-handlers.js`,
+  `timers/newsletter-autobuild.js`, the ElevenLabs voice-picker URL) moved
+  with them, since `itemLinks.test.js` holds the two sides equal.
+  `components/admin/shared/PageHeader.jsx` (and `ServicePageHeader.jsx`,
+  the Certifications page's) now render the registry label as the h1 and
+  the document title; seven pages had written their own ("Content Queue",
+  "Health Hub", "Integrations Hub", "Platform Settings Hub", "Speaking
+  Events Hub", "Certifications Hub", "Ambassador Hub"), and
+  `PageHeader.test.jsx` renders the header at every registry route and
+  reads every admin page's source for a literal `title=`.
+  `functions/src/functions/draft-http.js`, one letter from
+  `drafts-http.js` and nothing to do with the Drafts stage, is
+  `generate-article-draft-http.js`; the function name and route are
+  unchanged. On Live Pages, Delete Live Page — one confirm, then
+  `softDeleteLivePage`, which stamped a 24-hour soft delete nothing in the
+  API ever swept — is Archive: `published → archived` through
+  `transitionContentStatus`, which writes the audit row, and a toast with
+  Undo for ten seconds (`pages/admin/livePages/useLivePageArchive.jsx`)
+  that runs the new `archived → published` edge back.
+  `lib/cms/content-status.js` gained that edge (publisher-only, like every
+  edge into `published`; the port's "no resurrect-to-live" pin is reversed
+  with the reason), and its archived and rejected appliers now also write
+  the legacy `Status` word, because `public-reads.js` admits a document on
+  `Status: 'Live'` as well as the flag — `public-reads.test.js` applies the
+  archive patch to a document that says live every way it can and checks
+  nothing serves it. Leaving the archive clears `archivedAt`; every
+  non-rejected transition clears `softDeleteExpiresAt` beside
+  `softDeletedAt`. The Editor's Archive board
+  (`pages/admin/editor-list/ArchiveBoard.jsx`) carries Restore to live and
+  Delete permanently (confirm, then `deleteContentItem`, the publisher RPC
+  the Review Queue's delete uses; `cmsDeleteContent` is an editor-level
+  hard delete and was left alone). MCP server removal keeps its confirm:
+  the OAuth token lives only on the deleted document and is write-only, so
+  nothing could restore it. `components/admin/CommandPalette.jsx`, mounted
+  once in `AdminLayout.jsx`, opens on Ctrl-K, Cmd-K or its button as a
+  Radix dialog — labelled, focus-trapped, Escape closes — listing the
+  registry's pages filtered by what is typed and, from two characters, the
+  content the list route's `search` matches (#1178; `lib/api.js`
+  `listContentItems`), asked once per pause in typing and answered in
+  order; Enter opens a page at its route or a content item in its editor.
+  Every edge out of a page the public site serves is a publisher's:
+  `lib/cms/content-update.js` gates on `published` or `isPublicDocument`,
+  so a live `editing` page or a legacy `Status: 'Live'` one is covered, and
+  a caller that names no role is refused rather than waved through (the
+  Telegram bot's `/reject` names `super_admin`, its caller being the
+  owner's chat). Archive and reject clear `scheduledPublishDate`, as the
+  flows Archive replaced did, so `timers/publishing-watchdog.js` does not
+  count an archived page overdue. The pre-render manifest's
+  `PUBLISHED_PREDICATE` (`lib/public-content-manifest.js`) is now the
+  public API's own `SQL_PUBLIC_CLAUSE` and `SQL_NOT_SOFT_DELETED` with
+  archived, rejected and drafting excluded; its old three words admitted
+  documents the API answers 404 for. `test/cosmos-predicate.js` evaluates
+  it against documents. Live Pages offers Archive only on a published or
+  rejected page, the statuses with an edge to `archived`, and says why on
+  any other; the palette asks the content search only for 2 to 100 trimmed
+  characters, the list route's bounds (#1184), and says so past 100.
+  `transitionContentStatus` writes under the `_etag` of the read its gate
+  and edge were decided from, and answers a lost race with a 409 ("The page
+  changed since it was read; reload and try again.") and no audit row, so
+  an editor's reject read before a publisher set a page live cannot land
+  after it. Archiving a page also archives every linked legacy `blogs`
+  document the site serves (`publishedBlogId`, `sourceContentId`,
+  `publishedContentId`), stamped `archivedWithContentId`, and Undo or
+  Restore to live brings back exactly those; `content-update.test.js`
+  checks each with `isPublicDocument`. `deleteContentItem` deletes under
+  the read's ETag (`deleteDocIfMatch`), refuses with a 409 a body's
+  `expectedStatus` the document has left (the Archive board sends
+  `archived`; the Review Queue and the framework review send none and keep
+  their rules), and writes its own `content_deleted` row to `audits`, so
+  the framework review's client audit row for the same delete is gone. The
+  toast's Undo is sent once and disabled while in flight, and a restore on
+  the Archive board re-reads the Editor's live list. The linked blogs are
+  chosen from reads taken after the page's own write, each written under
+  its read's `_etag`, and settled against the page as it then reads rather
+  than the edge asked for: an archived page takes down every linked blog
+  the site serves, a published one brings back the blogs it archived. Once
+  a round's writes land the page is read again, and if it or a blog moved
+  the round runs again (three at most), so a restore and an archive that
+  cross leave the blogs agreeing with the page's final status; three
+  interleavings are pinned in `content-update.test.js`. A blog deleted in
+  between, or still contested after the third round, is named in the audit
+  row (`linkedBlogIdsSkipped`, `linkedBlogsSettled: false`) and the
+  transition still answers 200. `patchDoc`'s read-modify-write path
+  (`lib/cosmos-client.js`) answers a document gone before its read with
+  `code: 404`, as the patch path already did. `deleteContentItem`'s two
+  failure lines are a fixed sentence and the error's code, with no
+  document id. Rebased onto the role-cut menu (AP-F4, #928): Live Pages'
+  Archive and the Archive board's Restore to live and Delete permanently
+  sit behind the publisher `RoleGate`, and the command palette lists only
+  the pages `visibleNavFor` gives the signed-in role and asks the content
+  search only for a role the Editor is shown to.
+- **alert-timer-overdue evaluates again, a KQL test refuses what silenced it,
+  the weekly check reads every log rule's Resource Health, and the fire test
+  matches the timer dimension** (PLAT-4, #964). The rule never evaluated from
+  its create on 2026-10-10: its query took each timer's last due time from
+  `bin_at(Now - Grace, period, anchor)`, Kusto requires `bin_at()`'s bin size
+  and fixed point to be query constants, and `period` and `anchor` are columns
+  of the rule's datatable. Every evaluation failed with `SEM0040 bin_at():
+  failed to cast argument 2 to scalar constant`, the rule's Resource Health
+  read `Unavailable / Semantic error` from 2026-10-10 22:55Z, and a fire test
+  on 2026-10-15 stopped `healthPulse` for 95 minutes with no alert. Azure
+  accepted the rule at create, and nothing in CI ran the KQL. The line is now
+  `anchor + period * tolong((Now - Grace - anchor) / period)`, checked against
+  `appi-site-prod-cus-01` for every timer due in the last day.
+  `scripts/assert-expected-plan.mjs` declares the in-place update of the
+  rule's `criteria[0].query`, its `before` read back from the live rule
+  character for character, and a new test holds `overdueQuery()` to the
+  heredoc in `infra/`. `scripts/kql-alert-columns.test.mjs` fails any rule
+  that passes a per-row value where Kusto needs a constant: `bin_at()`'s bin
+  size and fixed point, measured against the component (a `let`, `now()` or
+  `toscalar()` is accepted; `bin()` and `floor()` take a column and are not
+  checked). It failed on `timer_overdue` before the fix.
+  `scripts/verify-alert-state.mjs` reads each live log search rule's Resource
+  Health and fails `Unavailable` or `Degraded` as `UNHEALTHY`, naming Azure's
+  title, and a read it could not make as `HEALTH UNREADABLE`, never `OK`.
+  `Unknown` passes, as does a reason-less `Unavailable` on a rule evaluated
+  less often than every 15 minutes, for which Microsoft reports no health.
+  The report gains a Health column. *HCW Alert Rule Reader* gains the two
+  `Microsoft.ResourceHealth/availabilityStatuses` reads. The owner writes the
+  role and registers `Microsoft.ResourceHealth` in `sub-plat-mgmt-prod-cus`,
+  unregistered there on 2026-10-15 (`docs/runbooks/alerting-and-support.md`,
+  "Resource Health"); until both are done the run fails, naming each step.
+  A refusal is never reported as an unregistered provider: that needs ARM's
+  `MissingSubscriptionRegistration` code or the measured 409 `AuthError`. The
+  runbook's rollout record reads the role's actions, both its assignments and
+  the provider in both subscriptions, works in Windows PowerShell 5.1 as well
+  as 7, and restores the previous action set from `0bd89190` (#1074).
+  `Invoke-AlertFireTest.ps1` searched the whole serialized alert context for
+  `healthPulse`, and every `condition.allOf[]` entry carries `searchQuery`,
+  which names all 26 timers, so any timer's alert would have passed as
+  healthPulse's. It now matches the values of
+  `condition.allOf[].dimensions[]`, read at the live nesting
+  (`context.context`) with a fallback one level up, and the Pester fixture
+  takes the live shape, with a case where `searchQuery` names every timer and
+  the dimension another. The Fire record stays "not yet" until the test is
+  re-run after the apply.
 - **Lab host: ansible-core installed hash-locked from the lab image's own
   pins, and the weekly pin bump moves it** (LAB-13, #959). The
   low-hanging-fruit entry below (#1178) says `lab-host/bootstrap.sh`

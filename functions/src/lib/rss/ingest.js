@@ -68,6 +68,7 @@ export function createRssIngest({
   now = () => new Date(),
   uuid = randomUUID,
   log = {},
+  signal: defaultSignal = null,
 }) {
   const info = (...a) => log.log?.(...a);
   const warn = (...a) => log.warn?.(...a);
@@ -88,8 +89,9 @@ export function createRssIngest({
     return cacheItems.length;
   }
 
-  async function draftNewContent(provider, feed, items, results) {
+  async function draftNewContent(provider, feed, items, results, signal) {
     for (const item of (items || []).slice(0, MAX_NEW_CONTENT_PER_FEED)) {
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
       const sourceUrl = item.link || '';
       if (!sourceUrl) continue;
       const title = item.title || 'Untitled';
@@ -119,7 +121,8 @@ export function createRssIngest({
     }
   }
 
-  async function processSingleFeed(provider, feed, results) {
+  async function processSingleFeed(provider, feed, results, signal) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     info(`[rssFetcher] Fetching ${feed.name} (${provider})`);
     let parsed;
     try {
@@ -140,7 +143,7 @@ export function createRssIngest({
     const items = parsed?.items || [];
     const cached = await cacheFeed(provider, feed, items);
     results.cached += 1;
-    await draftNewContent(provider, feed, items, results);
+    await draftNewContent(provider, feed, items, results, signal);
     results.processed += 1;
     info(`[rssFetcher] ${feed.name}: cached ${cached} items`);
   }
@@ -170,9 +173,11 @@ export function createRssIngest({
     /**
      * @param {object} [options]
      * @param {Record<string, {name: string, url: string}[]>} [options.feeds]
+     * @param {AbortSignal} [options.signal]
      * @returns {Promise<{processed: number, cached: number, newContent: number, duplicates: number, skipped: number, homepageItems: number|null, errors: string[]}>}
      */
-    async processRssFeeds({ feeds = PROVIDER_FEEDS } = {}) {
+    async processRssFeeds({ feeds = PROVIDER_FEEDS, signal = defaultSignal } = {}) {
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
       const results = {
         processed: 0,
         cached: 0,
@@ -184,18 +189,22 @@ export function createRssIngest({
       };
       for (const [provider, list] of Object.entries(feeds)) {
         for (const feed of list) {
+          if (signal?.aborted) throw signal.reason || new Error('aborted');
           try {
-            await processSingleFeed(provider, feed, results);
+            await processSingleFeed(provider, feed, results, signal);
           } catch (err) {
+            if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
             // One feed failing must not abandon the sweep.
             results.errors.push(`${provider}/${feed.name}: ${err?.message || err}`);
             warn(`[rssFetcher] Failed ${feed.name} (${provider}): ${err?.message}`);
           }
         }
       }
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
       try {
         results.homepageItems = await rebuildHomepage();
       } catch (err) {
+        if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
         results.errors.push(`homepage_feeds: ${err?.message || err}`);
         warn(`[rssFetcher] homepage_feeds aggregation failed: ${err?.message}`);
       }

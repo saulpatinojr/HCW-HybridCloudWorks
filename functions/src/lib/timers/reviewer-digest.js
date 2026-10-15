@@ -8,6 +8,7 @@
  * `workflow_digests/{YYYY-MM-DD}`.
  */
 import { digestDateOf, mergeDigest } from './workflow-records.js';
+import { errorResponse } from '../http/error-response.js';
 
 export const REVIEW_STATUSES = ['ingested', 'inspected', 'in_review', 'approved'];
 const STATUS_CAP = 200;
@@ -98,15 +99,7 @@ export function createReviewerDigestManualHandler({ guard, store, now = () => ne
         body: JSON.stringify(result),
       };
     } catch (error) {
-      context.error('generateReviewerDigestManual failed:', error);
-      return {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          error: 'Failed to generate reviewer digest',
-          message: error?.message || 'Unknown error',
-        }),
-      };
+      return errorResponse(context, 'Failed to generate reviewer digest', error, 500, request);
     }
   };
 }

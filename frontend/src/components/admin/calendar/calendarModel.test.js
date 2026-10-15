@@ -128,7 +128,7 @@ describe('filters, conflicts and the rest', () => {
   });
 
   it('Share carries the content id to the composer', () => {
-    expect(socialComposeHref('c 1')).toBe('/admin/social?tab=compose&contentId=c%201');
-    expect(socialComposeHref(null)).toBe('/admin/social?tab=compose');
+    expect(socialComposeHref('c 1')).toBe('/admin/social-hub?tab=compose&contentId=c%201');
+    expect(socialComposeHref(null)).toBe('/admin/social-hub?tab=compose');
   });
 });

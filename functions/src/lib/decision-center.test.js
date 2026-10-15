@@ -191,7 +191,7 @@ describe('collectDecisions — categories and order', () => {
       stage: 'review',
       status: 'in_review',
       waitingSince: '2026-10-08T09:00:00.000Z',
-      href: '/admin/queue/sent-1?source=content',
+      href: '/admin/review-queue/sent-1?source=content',
     });
     const reviewWindow = store.queryDocs.mock.calls.find(
       ([container, , params]) => container === 'content' && !param(params, '@type') && param(params, '@statuses').includes('ingested')
@@ -349,12 +349,12 @@ describe('getDecisionCenter', () => {
 
 describe('links', () => {
   it('opens a content item at its stage', () => {
-    expect(contentHref({ id: 'a', contentStatus: 'inspected' })).toBe('/admin/queue/a?source=content');
-    expect(contentHref({ id: 'a', contentStatus: 'in_review' })).toBe('/admin/queue/a?source=content');
+    expect(contentHref({ id: 'a', contentStatus: 'inspected' })).toBe('/admin/review-queue/a?source=content');
+    expect(contentHref({ id: 'a', contentStatus: 'in_review' })).toBe('/admin/review-queue/a?source=content');
     expect(contentHref({ id: 'a', contentStatus: 'approved' })).toBe('/admin/editor/a');
     expect(contentHref({ id: 'a', contentStatus: 'needs_rework' })).toBe('/admin/editor/a');
     expect(contentHref({ id: 'a', contentStatus: 'drafting' })).toBe('/admin/drafts');
-    expect(contentHref({ id: 'a b', contentStatus: 'forge_ready' })).toBe('/admin/queue/a%20b?source=content');
+    expect(contentHref({ id: 'a b', contentStatus: 'forge_ready' })).toBe('/admin/review-queue/a%20b?source=content');
     expect(contentStage({ contentStatus: 'approved', Live: true })).toBe('live');
     expect(contentStage({ contentStatus: 'rejected', Live: true })).toBe('off');
     expect(contentStage({ contentStatus: 'approved_blog' })).toBe('editor');
@@ -362,7 +362,7 @@ describe('links', () => {
   });
 
   it('names the parameter each page focuses an item by', () => {
-    expect(newsletterIssueHref('issue-1', 'drafts')).toBe('/admin/mailing-list?tab=drafts&issue=issue-1');
+    expect(newsletterIssueHref('issue-1', 'drafts')).toBe('/admin/newsletter-hub?tab=drafts&issue=issue-1');
     expect(chapterHref({ provider: 'azure', examCode: 'AZ-104', id: 'storage' })).toBe(
       '/admin/listen-and-learn?tab=review&platform=azure&exam=AZ-104&chapter=storage'
     );

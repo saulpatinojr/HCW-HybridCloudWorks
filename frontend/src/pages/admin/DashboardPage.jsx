@@ -58,7 +58,7 @@ export const PIPELINE_STAGES = Object.freeze([
     id: 'new',
     label: 'New Content',
     description: 'Import or start',
-    to: '/admin/submit',
+    to: '/admin/new-content',
     color:
       'border-sky-200 bg-sky-50/40 text-sky-700 dark:border-sky-900 dark:bg-sky-950/20 dark:text-sky-300',
   },
@@ -74,7 +74,7 @@ export const PIPELINE_STAGES = Object.freeze([
     id: 'review',
     label: 'Review Queue',
     description: 'Decide: approve or reject',
-    to: '/admin/queue',
+    to: '/admin/review-queue',
     countKey: 'queue',
     color:
       'border-amber-200 bg-amber-50/40 text-amber-700 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-300',
@@ -92,7 +92,7 @@ export const PIPELINE_STAGES = Object.freeze([
     id: 'publish',
     label: 'Publish',
     description: 'Go live, now or scheduled',
-    to: '/admin/published',
+    to: '/admin/publish',
     countKey: 'publish',
     color:
       'border-emerald-200 bg-emerald-50/40 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-300',
@@ -302,7 +302,7 @@ function DashboardHeader({
         <h1 className="text-2xl font-bold tracking-tight">
           {counts.queue > 0 ? (
             <RoleGate minRole="editor" reason="Opening the review queue needs the editor role.">
-              <CountLink to="/admin/queue?status=needs_review">
+              <CountLink to="/admin/review-queue?status=needs_review">
                 {`${pluralize(counts.queue, 'item')} waiting for you`}
               </CountLink>
             </RoleGate>
@@ -320,7 +320,9 @@ function DashboardHeader({
             <CountLink to="/admin/editor">{counts.editor} in editor</CountLink>
             {counts.rejected > 0 && ' · '}
             {counts.rejected > 0 && (
-              <CountLink to="/admin/queue?status=rejected">{counts.rejected} rejected</CountLink>
+              <CountLink to="/admin/review-queue?status=rejected">
+                {counts.rejected} rejected
+              </CountLink>
             )}
           </RoleGate>
         </p>
@@ -367,7 +369,7 @@ function DashboardHeader({
             {recalculating ? 'Recounting…' : 'Recount'}
           </Button>
         </RoleGate>
-        {/* New Content opens /admin/submit, whose calls are editor writes
+        {/* New Content opens /admin/new-content, whose calls are editor writes
             (generateArticleDraft, createContentItem; adminNav.js), so a
             viewer is told here rather than by the page's first refusal. */}
         <RoleGate minRole="editor" reason="Creating content needs the editor role.">
@@ -399,7 +401,7 @@ const TYPE_TILES = Object.freeze([
     label: 'Blogs',
     noun: 'blog',
     types: ['blog', 'news'],
-    to: '/admin/queue?contentType=blog&status=needs_review',
+    to: '/admin/review-queue?contentType=blog&status=needs_review',
     icon: FileText,
     iconClassName: 'text-blue-500',
   },
@@ -407,7 +409,7 @@ const TYPE_TILES = Object.freeze([
     label: 'Architecture',
     noun: 'architecture',
     types: ['architecture'],
-    to: '/admin/queue?contentType=architecture&status=needs_review',
+    to: '/admin/review-queue?contentType=architecture&status=needs_review',
     icon: Globe,
     iconClassName: 'text-purple-500',
   },
@@ -442,6 +444,10 @@ function typeTile({ types, noun, ...tile }, byType) {
   };
 }
 
+/**
+ * The dashboard's count tiles: one per content type and one for rejected items,
+ * each opening the list it counts.
+ */
 function DashboardStats({ counts }) {
   const tiles = [
     ...TYPE_TILES.map((tile) => typeTile(tile, counts.byType)),
@@ -450,7 +456,7 @@ function DashboardStats({ counts }) {
       icon: AlertCircle,
       iconClassName: 'text-destructive',
       value: counts.rejected,
-      to: '/admin/queue?status=rejected',
+      to: '/admin/review-queue?status=rejected',
       note: counts.rejected > 0 ? 'Auto-deletes in 24h' : null,
       noteClassName: 'text-red-700 dark:text-red-300',
       ariaLabel: `Rejected: ${counts.rejected}.${counts.rejected > 0 ? ' Auto-deletes in 24h.' : ''} Opens the rejected list.`,
@@ -621,7 +627,7 @@ export default function DashboardPage() {
         onRetry={error ? refresh : null}
         recalculating={recalculating}
         onRecalculate={handleRecalculate}
-        onNewContent={() => navigate('/admin/submit')}
+        onNewContent={() => navigate('/admin/new-content')}
       />
       <DashboardPipeline counts={counts} role={role} />
       <DashboardStats counts={counts} />

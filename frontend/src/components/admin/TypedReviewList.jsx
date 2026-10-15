@@ -6,7 +6,7 @@
  * the transitions and a `published_blog` filter that matched nothing. This is
  * the one copy: the list fetch, the status chips, the confirm modal and the
  * shared transitions hook. Each hub keeps its own card (`renderCard`) and its
- * own words (`title`, `help`, `nouns`).
+ * own words (`help`, `nouns`); the title is the registry's label for the route.
  *
  * Statuses are the canonical ones. "Needs review" is draft + ingested +
  * inspected + in_review, the same set the queue and the dashboard count
@@ -74,7 +74,7 @@ export async function fetchTypedContent(type, statusFilter) {
 /**
  * @param {{
  *   type: 'framework' | 'coder_corner',
- *   title: string, icon: React.ComponentType, help: string[],
+ *   icon: React.ComponentType, help: string[],
  *   nouns: { singular: string, plural: string },
  *   renderCard: (props: {
  *     item, statusFilter, isLoading, itemError, navigate,
@@ -82,7 +82,7 @@ export async function fetchTypedContent(type, statusFilter) {
  *   }) => React.ReactNode,
  * }} props
  */
-export default function TypedReviewList({ type, title, icon, help, nouns, renderCard }) {
+export default function TypedReviewList({ type, icon, help, nouns, renderCard }) {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -148,7 +148,6 @@ export default function TypedReviewList({ type, title, icon, help, nouns, render
     <div className="space-y-6 max-w-5xl">
       <PageHeader
         icon={icon}
-        title={title}
         help={help}
         actions={
           <Button variant="outline" size="sm" onClick={reload} className="gap-1">
@@ -198,7 +197,7 @@ export default function TypedReviewList({ type, title, icon, help, nouns, render
         <EmptyState
           variant="filtered"
           title={`No ${nouns.plural} in this status`}
-          description={`${nouns.plural[0].toUpperCase()}${nouns.plural.slice(1)} arrive from Submit URLs with the matching content type and from the Content Queue. Try another status.`}
+          description={`${nouns.plural[0].toUpperCase()}${nouns.plural.slice(1)} arrive from Submit URLs with the matching content type and from the Review Queue. Try another status.`}
         />
       )}
       {!loading && !loadError && items.length > 0 && (

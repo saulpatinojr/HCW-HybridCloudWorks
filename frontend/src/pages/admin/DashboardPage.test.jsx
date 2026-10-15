@@ -40,7 +40,7 @@ const DECISIONS = {
       status: 'ingested',
       waitingSince: null,
       priority: 'normal',
-      href: '/admin/queue/content-1?source=content',
+      href: '/admin/review-queue/content-1?source=content',
       source: { collection: 'content', id: 'content-1', Live: false },
       detail: 'Azure',
     },
@@ -109,7 +109,7 @@ describe('DashboardPage', () => {
     // that does not list what it counts.
     expect(await screen.findByRole('link', { name: '6 items waiting for you' })).toHaveAttribute(
       'href',
-      '/admin/queue?status=needs_review'
+      '/admin/review-queue?status=needs_review'
     );
     expect(screen.getByRole('link', { name: '14 pieces live' })).toHaveAttribute(
       'href',
@@ -121,7 +121,7 @@ describe('DashboardPage', () => {
     );
     expect(screen.getByRole('link', { name: '9 rejected' })).toHaveAttribute(
       'href',
-      '/admin/queue?status=rejected'
+      '/admin/review-queue?status=rejected'
     );
   });
 
@@ -129,7 +129,7 @@ describe('DashboardPage', () => {
     renderDashboard();
     const row = (await screen.findByText('Queued article')).closest('a');
     expect(postJSON).toHaveBeenCalledWith('getDecisionCenter', {});
-    expect(row).toHaveAttribute('href', '/admin/queue/content-1?source=content');
+    expect(row).toHaveAttribute('href', '/admin/review-queue/content-1?source=content');
     expect(within(row).getByText('Blog · Review · Azure')).toBeInTheDocument();
     const tabs = screen.getByRole('tablist', { name: 'Decisions by area' });
     expect(within(tabs).getAllByRole('tab')).toHaveLength(6);
@@ -144,7 +144,7 @@ describe('DashboardPage', () => {
     }
     // The Review Queue opens on its default view, needs_review, which is the
     // needsReview counter the badge shows (in_review included since #1014).
-    expect(PIPELINE_STAGES.find((s) => s.id === 'review').to).toBe('/admin/queue');
+    expect(PIPELINE_STAGES.find((s) => s.id === 'review').to).toBe('/admin/review-queue');
   });
 
   it('shows ONE pipeline graphic, with six stages from New Content to Live Pages (ADR 0033)', async () => {
@@ -186,7 +186,7 @@ describe('DashboardPage', () => {
     renderDashboard();
     await screen.findByText('6 items waiting for you');
     const publish = screen.getByRole('link', { name: /^Publish: .*2 items$/ });
-    expect(publish).toHaveAttribute('href', '/admin/published');
+    expect(publish).toHaveAttribute('href', '/admin/publish');
     expect(within(publish).getByText('2')).toBeInTheDocument();
   });
 
@@ -207,12 +207,15 @@ describe('DashboardPage', () => {
     // The known mismatch: the Blogs tile showed the total across every stage
     // and opened the queue on its needs-review default without saying so.
     const blogs = screen.getByRole('link', { name: /^Blogs: 12 across every stage, 3 waiting/ });
-    expect(blogs).toHaveAttribute('href', '/admin/queue?contentType=blog&status=needs_review');
+    expect(blogs).toHaveAttribute(
+      'href',
+      '/admin/review-queue?contentType=blog&status=needs_review'
+    );
     expect(within(blogs).getByText('12')).toBeInTheDocument();
     expect(within(blogs).getByText('3 to review')).toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: /^Architecture: 7 across every stage, 2 waiting/ })
-    ).toHaveAttribute('href', '/admin/queue?contentType=architecture&status=needs_review');
+    ).toHaveAttribute('href', '/admin/review-queue?contentType=architecture&status=needs_review');
     expect(
       screen.getByRole('link', { name: /^Frameworks: 6 across every stage, 1 waiting/ })
     ).toHaveAttribute('href', '/admin/frameworks?status=needs_review');
@@ -220,7 +223,7 @@ describe('DashboardPage', () => {
       screen.getByRole('link', { name: /^Coder Corner: 3 across every stage, 0 waiting/ })
     ).toHaveAttribute('href', '/admin/coder-corner?status=needs_review');
     const rejected = screen.getByRole('link', { name: /^Rejected: 9\./ });
-    expect(rejected).toHaveAttribute('href', '/admin/queue?status=rejected');
+    expect(rejected).toHaveAttribute('href', '/admin/review-queue?status=rejected');
     expect(within(rejected).getByText('Auto-deletes in 24h')).toBeInTheDocument();
     // One tile shape: five tiles, each with its note line, filled or held.
     const tiles = screen.getAllByTestId('stat-tile');
@@ -273,13 +276,13 @@ describe('DashboardPage', () => {
     expect(currentLocation()).toBe('/admin');
   });
 
-  it('opens the submit page from New Content for an editor', async () => {
+  it('opens the New Content page from New Content for an editor', async () => {
     renderDashboard('editor');
     await screen.findByText('6 items waiting for you');
     const newContent = screen.getByRole('button', { name: /New Content/ });
     expect(newContent).not.toHaveAttribute('aria-disabled');
     fireEvent.click(newContent);
-    expect(currentLocation()).toBe('/admin/submit');
+    expect(currentLocation()).toBe('/admin/new-content');
   });
 
   it('draws no pipeline for a viewer, who can open none of its stages (AP-F4)', async () => {

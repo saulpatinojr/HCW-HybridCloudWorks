@@ -76,7 +76,7 @@ Instructions:
  * @param {{ generateJsonResponse: Function, getActiveAiProvider: Function }} deps.ai
  * @param {Record<string, string|undefined>} [deps.env]
  */
-export function createDrafter({ store, ai, env = process.env }) {
+export function createDrafter({ store, ai, env = process.env, signal: defaultSignal }) {
   async function generateDraft({
     url,
     cloudProvider,
@@ -99,7 +99,10 @@ export function createDrafter({ store, ai, env = process.env }) {
     // (router.js header, SYNCHRONOUS CALLS HAVE A TIME BUDGET). The forge and
     // the digest pass none and keep the router's full timeouts.
     budgetMs = null,
+    signal: callSignal = null,
   }) {
+    const activeSignal = callSignal || defaultSignal;
+    if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
     const budgetLeft = startBudgetClock(budgetMs);
     const documents = normalizeSupportingDocuments(supportingDocuments);
     const trimmedCustomPrompt = String(customInstructionPrompt || '').trim();
@@ -151,6 +154,7 @@ export function createDrafter({ store, ai, env = process.env }) {
       feature: 'forgeDrafting',
       // What is left after the format lookup above.
       budgetMs: budgetLeft(),
+      signal: activeSignal,
     });
     const aiProvider = usage.slice(usageStart).at(-1)?.provider || ai.getActiveAiProvider();
 

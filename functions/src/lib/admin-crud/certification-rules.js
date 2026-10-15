@@ -92,8 +92,6 @@ export const CERTIFICATION_FIELDS = Object.freeze([
   'renewalRequirements',
   'status',
   'notes',
-  '_createdAt',
-  '_updatedAt',
 ]);
 
 /**

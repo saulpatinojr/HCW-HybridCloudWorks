@@ -347,4 +347,34 @@ describe('forge-from-url with a brief on the payload (the Forge Studio Queue, 20
     expect(spec.maxPayloadBytes).toBe(16384);
     expect(spec.onComplete).toBe(forgeFromUrlComplete);
   });
+
+  it('runForgeFromUrl honors aborted signal', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('aborted'));
+    const deps = {
+      scrape: vi.fn(),
+      forge: { runForgePipeline: vi.fn() },
+      store: { upsertDoc: vi.fn() },
+      now: () => new Date(),
+      uuid: () => 'u1',
+      log: { log: vi.fn() },
+      actor: {},
+      signal: controller.signal,
+    };
+    await expect(runForgeFromUrl({ url: 'https://example.com' }, deps)).rejects.toThrow('aborted');
+    expect(deps.scrape).not.toHaveBeenCalled();
+  });
+
+  it('forge-article worker honors aborted signal', async () => {
+    const spec = registrations.find(([name]) => name === 'forge-article')[1];
+    const controller = new AbortController();
+    controller.abort(new Error('timeout'));
+    await expect(
+      spec.worker(
+        { sourceContentId: 'c-1' },
+        { context: { log: vi.fn() }, job: {}, signal: controller.signal }
+      )
+    ).rejects.toThrow('timeout');
+  });
 });
+

@@ -61,7 +61,7 @@ describe('generationFailure', () => {
     const response = generationFailure(context, 'generateX', new Error('boom'), 'Failed X');
     expect(context.error).toHaveBeenCalledWith('generateX failed:', expect.any(Error));
     expect(response.status).toBe(500);
-    expect(JSON.parse(response.body)).toEqual({ error: 'Failed X', message: 'boom' });
+    expect(JSON.parse(response.body)).toMatchObject({ ok: false, error: 'Failed X' });
   });
 
   it('keeps the image budget\'s own status and code, so the page can say paused', () => {

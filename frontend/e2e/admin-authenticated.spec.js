@@ -18,7 +18,7 @@ import { test, expect, STATUS_ANSWERS, STUB_USER } from './fixtures/entra.js';
  */
 
 /** The routes the phone shell is checked on (AP-F1 acceptance, QA-1). */
-const PHONE_ROUTES = ['/admin', '/admin/queue', '/admin/platform', '/admin/health'];
+const PHONE_ROUTES = ['/admin', '/admin/review-queue', '/admin/platform-settings', '/admin/health'];
 
 /** Main-frame URLs, in order, so a test can see the journey and not only its end. */
 function recordNavigations(page) {
@@ -52,12 +52,12 @@ test.describe('signing in', () => {
     // MSAL 5 returns to the start page with a full navigation, so the page is
     // gone before the fallback line runs.
     const navigations = recordNavigations(page);
-    await identity.signIn('/admin/platform');
+    await identity.signIn('/admin/platform-settings');
 
     await expect(
-      page.locator('#admin-main').getByRole('heading', { level: 1, name: 'Platform Settings Hub' })
+      page.locator('#admin-main').getByRole('heading', { level: 1, name: 'Platform Settings' })
     ).toBeVisible();
-    expect(new URL(page.url()).pathname).toBe('/admin/platform');
+    expect(new URL(page.url()).pathname).toBe('/admin/platform-settings');
     // The authorization response is gone from the address bar and history.
     expect(page.url()).not.toContain('code=');
 
@@ -83,7 +83,7 @@ test.describe('signing in', () => {
     // denial card changes its copy, or a refusal is treated as an expired
     // session (a second trip to /authorize).
     identity.answerAdminStatus(STATUS_ANSWERS.notAdmin);
-    await identity.signIn('/admin/queue');
+    await identity.signIn('/admin/review-queue');
 
     await expect(page.getByText('Access Denied')).toBeVisible();
     await expect(
@@ -92,7 +92,7 @@ test.describe('signing in', () => {
     await expect(page.getByRole('button', { name: 'Bootstrap My Admin Access' })).toHaveCount(0);
     await expect(page.getByRole('navigation', { name: 'ContentForge' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Open menu' })).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: 'Content Queue' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Review Queue' })).toHaveCount(0);
     expect(identity.authorizeRequests).toHaveLength(1);
   });
 
@@ -106,7 +106,7 @@ test.describe('signing in', () => {
     // the card stops showing the API's description, or the renewal loop
     // returns (the status-call bound).
     identity.answerAdminStatus(STATUS_ANSWERS.insufficientScope);
-    await identity.signIn('/admin/queue');
+    await identity.signIn('/admin/review-queue');
 
     await expect(page.getByText('Admin access is misconfigured')).toBeVisible();
     await expect(
@@ -130,7 +130,7 @@ test.describe('signing in', () => {
     // reload step also holds the guard to sessionStorage: a module variable
     // would forget across it (reasoned, not run as a mutation).
     identity.answerAdminStatus(STATUS_ANSWERS.invalidToken);
-    await page.goto('/admin/queue');
+    await page.goto('/admin/review-queue');
     await page.getByRole('button', { name: /sign in with microsoft/i }).click();
 
     await expect(page.getByText('Could not verify your access')).toBeVisible({ timeout: 15_000 });
@@ -138,7 +138,7 @@ test.describe('signing in', () => {
       page.getByText('Your sign-in needs renewing before we can check your admin access.')
     ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
-    expect(new URL(page.url()).pathname).toBe('/admin/queue');
+    expect(new URL(page.url()).pathname).toBe('/admin/review-queue');
 
     // One sign-in, then exactly one re-authentication: no account picker on
     // the second, because it renews the session it has rather than starting

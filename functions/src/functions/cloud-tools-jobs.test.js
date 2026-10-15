@@ -109,4 +109,14 @@ describe('refresh-tool-pricing job type', () => {
       spec.worker({ regions: ['eastus'] }, { context: { log: vi.fn(), error: vi.fn() } })
     ).rejects.toThrow(/unknown region/);
   });
+
+  it('throws when the signal is pre-aborted', async () => {
+    const spec = getJobType(REFRESH_JOB_TYPE);
+    const controller = new AbortController();
+    controller.abort(new Error('timeout'));
+    await expect(
+      spec.worker({}, { context: { log: vi.fn(), error: vi.fn() }, signal: controller.signal })
+    ).rejects.toThrow('timeout');
+  });
 });
+

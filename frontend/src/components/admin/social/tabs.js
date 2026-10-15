@@ -7,7 +7,7 @@
  * A tab is one entry here plus its panel in SocialHubPage's `PANELS`.
  */
 
-export const SOCIAL_PATH = '/admin/social';
+export const SOCIAL_PATH = '/admin/social-hub';
 
 export const TABS = Object.freeze([
   { id: 'compose', label: 'Compose' },

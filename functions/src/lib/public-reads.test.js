@@ -20,6 +20,7 @@ import {
   stripInternalFields,
   CURATED_IMAGE_BATCH_MAX,
 } from './public-reads.js';
+import { buildStatusUpdateData } from './cms/content-status.js';
 
 const context = { log: vi.fn(), error: vi.fn() };
 
@@ -53,6 +54,44 @@ describe('isPublicDocument', () => {
     expect(isPublicDocument({ Live: true, softDeleteExpiresAt: '2026-01-01' })).toBe(false);
     expect(isPublicDocument({})).toBe(false);
     expect(isPublicDocument(null)).toBe(false);
+  });
+
+  /**
+   * The archive is the way a live page leaves the site (AP-F13, #937): Live
+   * Pages' Delete became `published → archived` through the state machine,
+   * with Undo as `archived → published`. The patch the state machine writes
+   * is applied here to a document that says "live" every way a document can,
+   * and the gate must refuse it — and admit it again after Undo.
+   */
+  it('refuses a page the state machine archived, however it said live before, and admits it after Undo', () => {
+    const now = new Date('2026-10-15T12:00:00.000Z');
+    const live = {
+      id: 'c1',
+      Live: true,
+      Status: 'Live',
+      contentStatus: 'published',
+      publishedAt: '2026-10-01T00:00:00.000Z',
+    };
+    expect(isPublicDocument(live)).toBe(true);
+
+    const archived = { ...live, ...buildStatusUpdateData(live, 'archived', 'r', '', { now }) };
+    expect(isPublicDocument(archived)).toBe(false);
+    // Each of SQL_PUBLIC_CLAUSE's three disjuncts, by hand: the SQL cannot
+    // run here, and a document that passes the JS gate but fails the SQL
+    // would be listed by one read and not another.
+    expect(archived.Live).toBe(false);
+    expect(archived.Status).not.toBe('Live');
+    expect(archived.contentStatus).toBe('archived');
+
+    const rejected = { ...live, ...buildStatusUpdateData(live, 'rejected', 'r', '', { now }) };
+    expect(isPublicDocument(rejected)).toBe(false);
+
+    const restored = {
+      ...archived,
+      ...buildStatusUpdateData(archived, 'published', 'r', '', { now }),
+    };
+    expect(isPublicDocument(restored)).toBe(true);
+    expect(restored.publishedAt).toBe('2026-10-01T00:00:00.000Z'); // the original date, kept
   });
 });
 

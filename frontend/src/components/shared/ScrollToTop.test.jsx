@@ -113,14 +113,14 @@ describe('ScrollToTop', () => {
       return null;
     }
     render(
-      <MemoryRouter initialEntries={['/admin/submit']}>
+      <MemoryRouter initialEntries={['/admin/new-content']}>
         <ScrollToTop />
         <Navigator />
       </MemoryRouter>
     );
 
     scrollTop = 1800;
-    await act(async () => goTo('/admin/mailing-list'));
+    await act(async () => goTo('/admin/newsletter-hub'));
     expect(scrollTop).toBe(0);
   });
 

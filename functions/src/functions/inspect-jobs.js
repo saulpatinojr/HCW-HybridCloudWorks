@@ -22,15 +22,16 @@ registerJobType('batch-inspect', {
   maxPayloadBytes: 256,
   // Up to 25 documents × (scrape ≤30 s + two or three model calls + 4 s stagger).
   timeoutMs: 28 * 60 * 1000,
-  worker: (payload, { context }) => {
+  worker: (payload, { context, signal }) => {
     const store = { queryDocs, patchDoc };
     const inspector = createInspector({
       store,
       ai,
-      scrape: (url) => scrapeArticle(url, { log: context }),
-      critic: createCritic({ ai }),
+      scrape: (url, opts) => scrapeArticle(url, { log: context, signal, ...opts }),
+      critic: createCritic({ ai, signal }),
       log: context,
+      signal,
     });
-    return createInspectBatch({ store, inspector, log: context }).run({ limit: payload?.limit });
+    return createInspectBatch({ store, inspector, log: context, signal }).run({ limit: payload?.limit, signal });
   },
 });

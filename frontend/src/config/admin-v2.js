@@ -42,18 +42,18 @@ export const PERMISSIONS = {
 // Admin Routes (UI navigation)
 export const ADMIN_ROUTES = {
   DASHBOARD: '/admin',
-  QUEUE: '/admin/queue',
-  REVIEW: '/admin/queue/:id',
+  QUEUE: '/admin/review-queue',
+  REVIEW: '/admin/review-queue/:id',
   EDITOR: '/admin/editor/:id',
-  PUBLISHED: '/admin/published',
+  PUBLISHED: '/admin/publish',
   LIVE_PAGES: '/admin/live-pages',
   CALENDAR: '/admin/calendar',
-  SUBMIT: '/admin/submit',
+  SUBMIT: '/admin/new-content',
   // Amplify integrations
   RECORDING_HUB: '/admin/recording-hub',
-  SOCIAL_HUB: '/admin/social',
-  LINKIE: '/admin/linkie',
-  MAILING_LIST: '/admin/mailing-list',
+  SOCIAL_HUB: '/admin/social-hub',
+  LINKIE: '/admin/linkie-hub',
+  MAILING_LIST: '/admin/newsletter-hub',
   // Platform
   HEALTH: '/admin/health',
   INTEGRATIONS: '/admin/integrations',

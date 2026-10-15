@@ -257,6 +257,7 @@ export function createForge({
   now = () => new Date(),
   uuid = randomUUID,
   log = {},
+  signal: defaultSignal,
 }) {
   // Fails open: a store hiccup never blocks generation. One fetch serves two
   // consumers — the dedupe gate (titles) and the related-posts interlinker
@@ -489,7 +490,9 @@ export function createForge({
    * `{ ok: false, httpStatus, error, duplicateOf? }`; never throws for a
    * pipeline outcome, only for a store failure on the save.
    */
-  async function runForgePipeline({ contentId, actor, budget }) {
+  async function runForgePipeline({ contentId, actor, budget, signal: callSignal }) {
+    const activeSignal = callSignal || defaultSignal;
+    if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
     const source = resolveForgeSource(
       contentId,
       await store.readDoc('content', contentId, contentId)
@@ -563,6 +566,7 @@ export function createForge({
         voiceBlock: forgeInstruction,
         format,
         usageOut,
+        signal: activeSignal,
       });
     } catch (err) {
       log.error?.(`forge generation failed: ${err.message}`);
@@ -596,7 +600,7 @@ export function createForge({
       grade = await grader.gradeArticle(
         { title: forged.forgedTitle, summary: forged.forgedSummary, content: forged.forgedContent },
         profile,
-        { usageOut }
+        { usageOut, signal: activeSignal }
       );
     } catch (err) {
       log.error?.(`forge grading failed: ${err.message}`);

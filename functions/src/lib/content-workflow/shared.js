@@ -2,6 +2,8 @@
  * What the content workflow routes share: the JSON reply, the actor name,
  * the audit row shape and the body read (PR #841 split of content-workflow.js).
  */
+import { errorResponse } from '../http/error-response.js';
+
 export const json = (status, body) => ({
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -34,7 +36,6 @@ export const auditRow = (
 });
 
 /** The 500 every workflow route answers when a write throws. */
-export function workflowFailure(context, label, error, message) {
-  context.error(`${label} failed:`, error);
-  return json(500, { error: message, message: error?.message || 'Unknown error' });
+export function workflowFailure(context, label, error, message, request = null) {
+  return errorResponse(context, message, error, 500, request);
 }

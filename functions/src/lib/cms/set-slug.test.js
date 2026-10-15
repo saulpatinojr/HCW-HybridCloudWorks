@@ -288,7 +288,7 @@ describe('setContentSlug', () => {
       await handlers.setContentSlug(makeRequest({ contentId: COLLIDED.id, slug: 'x' }), context2)
     );
     expect(status).toBe(500);
-    expect(body.message).toMatch(/without a boolean `moved`/);
+    expect(body.error).toBe('Failed to set the slug');
     expect(context2.error).toHaveBeenCalled();
   });
 

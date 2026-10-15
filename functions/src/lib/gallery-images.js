@@ -52,6 +52,7 @@ import {
   normalizeGalleryRow,
 } from './gallery/listing.js';
 import { applyBulkAction, parseBulkRequest } from './gallery/bulk.js';
+import { errorResponse } from './http/error-response.js';
 import {
   fetchForImport,
   findImportDuplicate,
@@ -157,11 +158,7 @@ const guardedWith =
     try {
       return await run({ request, context, auth, user: auth.user });
     } catch (error) {
-      context.error(`${label} failed:`, error);
-      const body = withMessage
-        ? { error: message, message: error?.message || 'Unknown error' }
-        : { error: message };
-      return json(500, body);
+      return errorResponse(context, message, error, 500, request);
     }
   };
 

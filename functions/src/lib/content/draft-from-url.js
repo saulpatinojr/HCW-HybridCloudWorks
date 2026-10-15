@@ -7,7 +7,7 @@
  *   - The HTTP RPC scrapes and hands the result to `createDrafter` — whose
  *     output shape the Publish-Ready Builder and the editor already expect —
  *     under the caller's 90 s client timeout (the handler enforces its own
- *     budget below that; see draft-http.js).
+ *     budget below that; see generate-article-draft-http.js).
  *   - The job scrapes into a `content` document shaped like the RSS ingest
  *     writes (lib/rss/feeds.js is the field-convention source), lands it
  *     `inspected` with `inspectTrigger: false` — the forge does its own
@@ -90,13 +90,13 @@ export function inferProviderFromUrl(url = '') {
  * `BAD_URL` before any network touch, `SCRAPE_FAILED` with the scraper's own
  * reason after — so callers can map to 400 vs 422 without string-matching.
  */
-export async function scrapeToSource(url, { scrape = scrapeArticle, env, log, resolve } = {}) {
+export async function scrapeToSource(url, { scrape = scrapeArticle, env, log, resolve, signal } = {}) {
   if (!isHttpUrl(url)) {
     const err = new Error('A valid http(s) URL is required.');
     err.code = 'BAD_URL';
     throw err;
   }
-  const scraped = await scrape(String(url).trim(), { env, log, resolve });
+  const scraped = await scrape(String(url).trim(), { env, log, resolve, signal });
   if (!scraped?.success || !String(scraped.markdown || '').trim()) {
     const err = new Error(`Could not extract the article: ${scraped?.error || 'empty result'}`);
     err.code = 'SCRAPE_FAILED';
@@ -117,7 +117,7 @@ export async function scrapeToSource(url, { scrape = scrapeArticle, env, log, re
  * (PDF → base64 inlineData, text → textContent). Returns null on any
  * failure — a KB reference the model does not see degrades the draft, it
  * does not fail it. */
-async function fetchDocumentUrl(url, { fetchImpl = globalThis.fetch, resolve, log = {} } = {}) {
+async function fetchDocumentUrl(url, { fetchImpl = globalThis.fetch, resolve, log = {}, signal } = {}) {
   if (!isHttpUrl(url)) return null;
   try {
     // The URL is the caller's. guardedFetch refuses private, link-local and
@@ -131,6 +131,7 @@ async function fetchDocumentUrl(url, { fetchImpl = globalThis.fetch, resolve, lo
       resolve,
       timeoutMs: DOCUMENT_FETCH_TIMEOUT_MS,
       maxBytes: DOCUMENT_FETCH_LIMIT_BYTES,
+      signal,
     });
     if (!response.ok) return null;
     const contentType = String(response.headers?.get?.('content-type') || '').toLowerCase();

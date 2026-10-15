@@ -102,7 +102,6 @@ export default function RecordingHubPage() {
     <div className="space-y-6">
       <PageHeader
         icon={Radio}
-        title="Recording Hub"
         help={HELP}
         status={
           <>

@@ -381,7 +381,7 @@ describe('ElevenLabsCard', () => {
 
   it('points a paid-only voice at the picker, beside the server’s sentence', async () => {
     const sentence =
-      'ElevenLabs refused this on the current plan (HTTP 402 paid_plan_required): a voice or feature it needs is paid-only. Choose voices your plan allows under Podcast voices at https://hybridcloudworks.com/admin/platform?tab=audio. ElevenLabs said: {"detail":{"code":"paid_plan_required"}}';
+      'ElevenLabs refused this on the current plan (HTTP 402 paid_plan_required): a voice or feature it needs is paid-only. Choose voices your plan allows under Podcast voices at https://hybridcloudworks.com/admin/platform-settings?tab=audio. ElevenLabs said: {"detail":{"code":"paid_plan_required"}}';
     postJSON.mockRejectedValue(Object.assign(new Error(sentence), { code: 'paid_plan_required' }));
     render(<ElevenLabsCard authReady />);
     await confirmRender();

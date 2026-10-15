@@ -226,7 +226,9 @@ export async function generateTranscriptFromRecording({
   env = process.env,
   now = new Date().toISOString(),
   deps = {},
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseRecordingPayload({ recordingId, storedRecordingId });
   if (parsed.error) throw new TranscriptError(parsed.error);
 
@@ -266,6 +268,7 @@ export async function generateTranscriptFromRecording({
       usageOut: scriptUsage,
     });
   } catch (err) {
+    if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
     await recordScriptFailure({ store, source, error: err, now, persistFailure });
   }
 
@@ -279,6 +282,7 @@ export async function generateTranscriptFromRecording({
     env,
     now,
     deps: resolved,
+    signal,
   });
 
   return {

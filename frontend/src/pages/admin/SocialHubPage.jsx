@@ -1,5 +1,5 @@
 /**
- * Social Hub (route `/admin/social`) — schedule HCW articles to LinkedIn, X,
+ * Social Hub (route `/admin/social-hub`) — schedule HCW articles to LinkedIn, X,
  * Facebook, Instagram, Threads and YouTube through Publer, and see what went
  * out.
  *
@@ -94,7 +94,6 @@ export default function SocialHubPage() {
     <div className="space-y-6">
       <PageHeader
         icon={Share2}
-        title="Social Hub"
         help={HELP}
         status={
           <>

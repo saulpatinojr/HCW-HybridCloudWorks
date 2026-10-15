@@ -1575,7 +1575,6 @@ export default function AIEnginePage() {
     <div className="max-w-5xl mx-auto space-y-6">
       <PageHeader
         icon={Bot}
-        title="AI Engine"
         status={
           seed.status === 'ready' ? (
             <span className="text-muted-foreground">

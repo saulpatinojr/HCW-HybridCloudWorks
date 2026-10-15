@@ -221,13 +221,16 @@ export function createContainerExporter({
   plan = exportPlanFor,
   log = {},
   pageSize = PAGE_SIZE,
+  signal: defaultSignal,
 }) {
   /**
    * Export one container for one run and write its marker. Returns the
    * marker (small, id-free) as the job result.
-   * @param {{ runId: string, mode: 'full'|'delta', container: string }} job
+   * @param {{ runId: string, mode: 'full'|'delta', container: string, signal?: AbortSignal }} job
    */
-  async function exportContainer({ runId, mode, container }) {
+  async function exportContainer({ runId, mode, container, signal: callSignal }) {
+    const activeSignal = callSignal || defaultSignal;
+    if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
     const names = blobNames({ mode, runId, container });
     const startedAt = now();
     const stats = { docs: 0, rawBytes: 0, bytes: 0, tsHighWater: 0 };
@@ -252,7 +255,7 @@ export function createContainerExporter({
       });
     }
 
-    const lines = ndjsonLines(source, stats);
+    const lines = ndjsonLines(source, stats, activeSignal);
     const gzip = createGzip();
     const counter = new Transform({
       transform(chunk, _encoding, callback) {
@@ -328,8 +331,9 @@ export function createContainerExporter({
     }
   }
 
-  async function* ndjsonLines(pages, stats) {
+  async function* ndjsonLines(pages, stats, signal) {
     for await (const page of pages) {
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
       for (const doc of page) {
         const line = `${JSON.stringify(doc)}\n`;
         stats.docs += 1;

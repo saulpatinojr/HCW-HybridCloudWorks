@@ -276,6 +276,27 @@ describe('guardedFetch', () => {
       guardedFetch('https://a.example/x', { fetch: stalledText, resolve: publicAddr, dispatcherFor: pin, timeoutMs: 10 })
     ).rejects.toMatchObject({ code: 'FETCH_TIMEOUT' });
   });
+
+  it('aborts when parent signal is aborted (AP-B7)', async () => {
+    const parent = new AbortController();
+    const fetchImpl = vi.fn(
+      (_url, { signal }) =>
+        new Promise((_resolve, reject) => {
+          if (signal?.aborted) {
+            return reject(parent.signal.reason || new Error('aborted'));
+          }
+          signal?.addEventListener('abort', () => reject(parent.signal.reason || new Error('aborted')));
+        })
+    );
+    const promise = guardedFetch('https://a.example/x', {
+      fetch: fetchImpl,
+      resolve: publicAddr,
+      dispatcherFor: pin,
+      signal: parent.signal,
+    });
+    parent.abort(new Error('job timeout'));
+    await expect(promise).rejects.toThrow('job timeout');
+  });
 });
 
 /**

@@ -205,7 +205,7 @@ describe('PublishedPage', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );
@@ -282,7 +282,7 @@ describe('PublishedPage', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );
@@ -325,7 +325,7 @@ describe('PublishedPage', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );
@@ -364,7 +364,7 @@ describe('PublishedPage', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );
@@ -414,7 +414,7 @@ describe('PublishedPage', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );
@@ -462,7 +462,7 @@ describe('PublishedPage', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );
@@ -501,7 +501,7 @@ describe('PublishedPage', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );
@@ -558,7 +558,7 @@ describe('PublishedPage', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );
@@ -591,7 +591,7 @@ describe('PublishedPage', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );
@@ -628,7 +628,7 @@ describe('PublishedPage', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin/publish']}>
         <PublishedPage />
       </MemoryRouter>
     );

@@ -13,15 +13,17 @@ import { createRssIngest, createRssParser } from '../lib/rss/ingest.js';
 import { registerJobType } from '../lib/jobs.js';
 
 /** One ingest run against production dependencies. Used by the job and the timer. */
-export async function runRssIngest(context) {
+export async function runRssIngest(context, { signal } = {}) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parser = await createRssParser();
   const ingest = createRssIngest({
     store: { queryDocs, upsertDoc },
     parser,
     dedup: { findDuplicateContent, buildDedupFields },
     log: context,
+    signal,
   });
-  return ingest.processRssFeeds();
+  return ingest.processRssFeeds({ signal });
 }
 
 registerJobType('fetch-rss-feeds', {
@@ -33,5 +35,5 @@ registerJobType('fetch-rss-feeds', {
   // ~20 feeds at up to 20 s each plus dedup reads: well inside this, and far
   // outside the 230 s an HTTP response gets.
   timeoutMs: 12 * 60 * 1000,
-  worker: (_payload, { context }) => runRssIngest(context),
+  worker: (_payload, { context, signal } = {}) => runRssIngest(context, { signal }),
 });

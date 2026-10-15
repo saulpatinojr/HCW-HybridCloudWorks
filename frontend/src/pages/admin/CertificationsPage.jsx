@@ -121,7 +121,6 @@ export default function CertificationsPage() {
     <div className="space-y-6">
       <ServicePageHeader
         icon={Award}
-        title="Certifications Hub"
         service="Cosmos DB"
         connected={headerStatus(certs)}
         description="Curate the certification showcase on the About page — feature the wins, hide the noise, and stay ahead of renewals."

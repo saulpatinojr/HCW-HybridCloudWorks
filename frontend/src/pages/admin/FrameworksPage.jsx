@@ -167,7 +167,6 @@ export default function FrameworksPage() {
   return (
     <TypedReviewList
       type="framework"
-      title="Frameworks"
       icon={ListChecks}
       help={FRAMEWORKS_HELP}
       nouns={{ singular: 'framework', plural: 'frameworks' }}

@@ -11,6 +11,7 @@
  */
 import { load as loadHtml } from 'cheerio';
 import { guardedFetch } from '../http/guarded-fetch.js';
+import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 import TurndownService from 'turndown';
 
 const BROWSER_HEADERS = {
@@ -38,27 +39,6 @@ const CONTENT_SELECTORS = [
   '#content',
   '.content',
 ];
-
-// Fallback fetches only (the reader and headless services, third parties the
-// platform chose). The page itself is fetched through guardedFetch below.
-async function fetchWithTimeout(fetchImpl, url, { timeoutMs, headers, method = 'GET', body } = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetchImpl(url, {
-      method,
-      headers,
-      body,
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (error?.name === 'AbortError') throw new Error(`timeout after ${timeoutMs} ms`);
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 /** Absolute URL for an image src seen on `pageUrl`. */
 export function absoluteImageUrl(src, pageUrl) {
@@ -126,7 +106,7 @@ function failure(startedAt, message) {
   };
 }
 
-async function tryReaderFallback(url, startedAt, { env, fetchImpl, log }) {
+async function tryReaderFallback(url, startedAt, { env, fetchImpl, log, signal }) {
   if (
     String(env.CONTENTFORGE_SCRAPE_FALLBACK_ENABLED || 'false')
       .toLowerCase()
@@ -139,6 +119,7 @@ async function tryReaderFallback(url, startedAt, { env, fetchImpl, log }) {
     const response = await fetchWithTimeout(fetchImpl, fallbackUrl, {
       timeoutMs: 20000,
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HCW-Bot/1.0)' },
+      signal,
     });
     if (!response.ok) return null;
     const text = (await response.text()).replace(/\s+/g, ' ').trim();
@@ -161,7 +142,7 @@ async function tryReaderFallback(url, startedAt, { env, fetchImpl, log }) {
   }
 }
 
-async function tryHeadlessFallback(url, startedAt, { env, fetchImpl, log }) {
+async function tryHeadlessFallback(url, startedAt, { env, fetchImpl, log, signal }) {
   const enabled =
     String(env.CONTENTFORGE_HEADLESS_FALLBACK_ENABLED || 'false')
       .toLowerCase()
@@ -179,6 +160,7 @@ async function tryHeadlessFallback(url, startedAt, { env, fetchImpl, log }) {
         timeoutMs: 30000,
         userAgent: 'Mozilla/5.0 (compatible; HCW-Bot/1.0)',
       }),
+      signal,
     });
     if (!response.ok) return null;
     const payload = (await response.json().catch(() => ({}))) || {};
@@ -214,10 +196,11 @@ async function tryHeadlessFallback(url, startedAt, { env, fetchImpl, log }) {
  * @param {object} [deps.env]
  * @param {{log?: Function, warn?: Function}} [deps.log]
  * @param {() => number} [deps.now]
+ * @param {AbortSignal} [deps.signal]
  */
 export async function scrapeArticle(
   url,
-  { fetch: fetchImpl = globalThis.fetch, env = process.env, log = {}, now = Date.now, resolve } = {}
+  { fetch: fetchImpl = globalThis.fetch, env = process.env, log = {}, now = Date.now, resolve, signal } = {}
 ) {
   const startedAt = now();
   log.log?.('[scraper] Fetching:', url);
@@ -232,6 +215,7 @@ export async function scrapeArticle(
       resolve,
       timeoutMs: 30000,
       headers: BROWSER_HEADERS,
+      signal,
     });
     if (!response.ok) throw new Error(`Status code ${response.status}`);
     const fullHtml = text();
@@ -256,7 +240,7 @@ export async function scrapeArticle(
     // and headless services would only fetch the same forbidden target from
     // their side, and the answer here is "no", not "try harder".
     if (error?.refused) return failure(startedAt, error.message);
-    const deps = { env, fetchImpl, log };
+    const deps = { env, fetchImpl, log, signal };
     return (
       (await tryReaderFallback(url, startedAt, deps)) ||
       (await tryHeadlessFallback(url, startedAt, deps)) ||

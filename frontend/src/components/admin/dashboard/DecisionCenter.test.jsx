@@ -30,7 +30,7 @@ const ITEMS = [
     title: 'Sent from Drafts',
     stage: 'review',
     status: 'in_review',
-    href: '/admin/queue/sent-1?source=content',
+    href: '/admin/review-queue/sent-1?source=content',
     source: { collection: 'content', id: 'sent-1', Live: false },
   }),
   item({
@@ -170,7 +170,7 @@ describe('DecisionCenter', () => {
       ...ANSWER,
       items: [
         // The API's href is stale; the status says Editor.
-        { ...ITEMS[0], status: 'approved', stage: 'editor', href: '/admin/queue/sent-1' },
+        { ...ITEMS[0], status: 'approved', stage: 'editor', href: '/admin/review-queue/sent-1' },
         ITEMS[1],
         { ...ITEMS[2], href: 'https://evil.example/admin' },
       ],
@@ -290,7 +290,7 @@ describe('DecisionCenter', () => {
     await screen.findByText('Sent from Drafts');
     expect(screen.getByRole('link', { name: 'Review Queue' })).toHaveAttribute(
       'href',
-      '/admin/queue'
+      '/admin/review-queue'
     );
     expect(
       screen.getByText(/Not shown for your role: Reminders due or overdue/)

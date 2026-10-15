@@ -20,7 +20,7 @@ import "./cms-http.js";
 import "./code-quality-http.js";
 import "./drafts-http.js";
 import "./content-workflow-http.js";
-import "./draft-http.js";
+import "./generate-article-draft-http.js";
 import "./forge-config-http.js";
 import "./gallery-images-http.js";
 import "./health-http.js";

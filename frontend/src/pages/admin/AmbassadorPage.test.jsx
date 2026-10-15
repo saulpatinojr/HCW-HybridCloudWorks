@@ -197,7 +197,7 @@ beforeEach(() => {
 describe('header, tabs and the not-provisioned state', () => {
   it('names the hub, explains the goal in its help, and offers five tabs with Settings last', () => {
     render(<AmbassadorPage />);
-    expect(screen.getByRole('heading', { name: /Ambassador Hub/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Ambassador' })).toBeInTheDocument();
     expect(
       hubTabs()
         .getAllByRole('tab')

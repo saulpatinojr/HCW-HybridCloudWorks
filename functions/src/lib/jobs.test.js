@@ -537,6 +537,32 @@ describe('getJob role gating and email redaction (AP-B10)', () => {
     expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'super_admin');
   });
 
+  it('gates editor-tier jobs so a viewer receives 403', async () => {
+    registerJobType('editor-job', { worker: async () => 1, role: 'editor' });
+    const store = makeStore({
+      'job-editor': {
+        id: 'job-editor',
+        type: 'editor-job',
+        status: 'succeeded',
+      },
+    });
+    const guard = {
+      requireRole: vi.fn(async (_r, role) =>
+        role === 'editor'
+          ? { error: { status: 403, body: JSON.stringify({ error: 'Forbidden' }) } }
+          : { user: USER, role: 'viewer', error: null }
+      ),
+    };
+    const h = createJobHandlers({ guard, store, ...fixed });
+    const res = await h.getJob(
+      makeRequest(null, { method: 'GET', query: { jobId: 'job-editor' } }),
+      context
+    );
+    expect(res.status).toBe(403);
+    expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'viewer');
+    expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'editor');
+  });
+
   it('redacts requestedBy email in publicJob', () => {
     const job = publicJob({
       id: 'job-1',

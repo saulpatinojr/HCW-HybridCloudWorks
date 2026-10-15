@@ -34,6 +34,8 @@ vi.mock('@/hooks/useAuthReady', () => ({ useAuthReady: () => ({ authReady: true 
 vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock('react-router', () => ({
   useSearchParams: () => [new URLSearchParams(searchParams), setSearchParams],
+  // The header reads the route for its title (the registry's label).
+  useLocation: () => ({ pathname: '/admin/certifications', search: '' }),
 }));
 
 const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString();
@@ -98,7 +100,7 @@ beforeEach(() => {
 describe('the header and tabs', () => {
   it('names the hub and its provider, and opens Catalog by default', async () => {
     render(<CertificationsPage />);
-    expect(screen.getByRole('heading', { name: /Certifications Hub/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Certifications' })).toBeInTheDocument();
     expect(await screen.findByText('Cosmos DB connected')).toBeInTheDocument();
     // Update Cert Catalog is in the header, beside the Powered-by pill, on
     // every tab — not inside a panel (owner request 2026-10-05).

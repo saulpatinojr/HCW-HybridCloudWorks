@@ -321,10 +321,11 @@ export function buildInputs(turns, voices) {
   });
 }
 
-async function synthesizeOne(inputs, { key, model, fetchImpl, sleep }) {
+async function synthesizeOne(inputs, { key, model, fetchImpl, sleep, signal }) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     let response;
     try {
       response = await fetchImpl(`${DIALOGUE_URL}?output_format=${ELEVENLABS_OUTPUT_FORMAT}`, {
@@ -335,6 +336,7 @@ async function synthesizeOne(inputs, { key, model, fetchImpl, sleep }) {
           Accept: CONTENT_TYPE,
         },
         body: JSON.stringify({ model_id: model, inputs }),
+        signal,
       });
     } catch (err) {
       lastError = new ElevenLabsSpeechError(`Failed to reach ElevenLabs: ${err.message}`);
@@ -386,6 +388,7 @@ export async function synthesizeWithElevenLabs({
   env = process.env,
   fetchImpl = fetch,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  signal,
 } = {}) {
   const turns = (dialogue || []).filter((t) => String(t?.text || '').trim());
   if (turns.length === 0) throw new ElevenLabsSpeechError('No dialogue turns to synthesise');
@@ -429,6 +432,7 @@ export async function synthesizeWithElevenLabs({
   let anyEstimated = false;
   try {
     for (const inputs of chunks) {
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
       // Sequential on purpose: the parts are concatenated in order, and a
       // parallel burst is the reliable way to meet the per-account 429.
       const { audio, billedCharacters } = await synthesizeOne(inputs, {
@@ -436,6 +440,7 @@ export async function synthesizeWithElevenLabs({
         model,
         fetchImpl,
         sleep,
+        signal,
       });
       parts.push(audio);
       if (billedCharacters === null) {

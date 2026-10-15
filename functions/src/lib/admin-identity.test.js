@@ -334,7 +334,7 @@ describe('recordAdminAudit', () => {
     const store = makeStore();
     const h = createAdminIdentityHandlers({ guard: guardWith(), store, ...fixed });
     const res = await h.recordAdminAudit(
-      makeRequest({ action: 'page_view', details: { route: '/admin/queue', sessionId: 's1' } }),
+      makeRequest({ action: 'page_view', details: { route: '/admin/review-queue', sessionId: 's1' } }),
       context
     );
     expect(JSON.parse(res.body)).toEqual({ success: true, auditId: 'fixed-uuid' });
@@ -344,7 +344,7 @@ describe('recordAdminAudit', () => {
       id: 'fixed-uuid',
       action: 'page_view',
       userId: 'oid-1',
-      route: '/admin/queue',
+      route: '/admin/review-queue',
       sessionId: 's1',
       userAgent: 'vitest',
       compliance: { schemaVersion: 1 },

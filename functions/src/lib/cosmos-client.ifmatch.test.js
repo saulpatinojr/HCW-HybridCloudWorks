@@ -61,6 +61,17 @@ describe('patchDoc ifMatch', () => {
     expect(item.replace).not.toHaveBeenCalled();
   });
 
+  it('answers a document gone before the read-modify-write with a 404, as the patch path does', async () => {
+    // A deletion routes through read-modify-write, whose read answers a
+    // missing item with no resource; a caller that skips a deleted document
+    // on 404 (cms/content-update.js, the linked blogs) must see one here too.
+    item.read.mockResolvedValueOnce({ resource: undefined });
+    await expect(
+      patchDoc('blogs', 'b1', { Status: undefined }, { ifMatch: '"live"' })
+    ).rejects.toMatchObject({ code: 404 });
+    expect(item.replace).not.toHaveBeenCalled();
+  });
+
   it('proceeds through read-modify-write when the etag still matches', async () => {
     const updates = Object.fromEntries(
       Array.from({ length: 12 }, (_, i) => [`f${i}`, i])

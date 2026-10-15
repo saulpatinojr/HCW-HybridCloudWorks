@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, LogOut, Menu } from 'lucide-react
 import { signOutUser } from '@/lib/entraAuth';
 import { NAV_GROUPS, navItemFor, roleLabel, visibleNavFor } from '@/config/adminNav';
 import { useAdminRole } from '@/hooks/useAdminRole';
+import CommandPalette from '@/components/admin/CommandPalette';
 import useDashboardCounts from '@/hooks/useDashboardCounts';
 import {
   Dialog,
@@ -418,6 +419,7 @@ export default function AdminLayout() {
           prose narrows itself. Side padding steps down on phones. */}
       <div id="admin-main" className="flex-1 min-w-0 overflow-y-auto">
         <div className="max-w-5xl mx-auto p-4 md:p-6">
+          <CommandPalette />
           <Outlet />
         </div>
       </div>

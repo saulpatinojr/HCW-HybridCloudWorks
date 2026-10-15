@@ -18,6 +18,7 @@ import { safeUrl } from '@/lib/safeUrl';
 import { useContentTransitions } from './queue/useContentTransitions';
 import ArchiveBoard from './editor-list/ArchiveBoard';
 import {
+  ARCHIVED_STATUS,
   TYPE_BADGE,
   filterAndSortDraftItems,
   filterAndSortLiveItems,
@@ -206,20 +207,24 @@ export default function EditorListPage() {
   const listContent = (qs) => getJSON(`cms/content?${qs}`).then((res) => res.items || []);
   // Retry re-keys the three reads; usePublicData fetches again on a new key.
   const [attempt, setAttempt] = useState(0);
+  // A restore on the Archive board puts a page back on the site: the live
+  // read alone is re-keyed, so the page shows on the live board without a
+  // reload (the archive board drops its own row).
+  const [liveRead, setLiveRead] = useState(0);
   const {
     data: liveItems,
     loading: liveLoading,
     error: liveError,
   } = usePublicData(
     () => listContent(`live=true&limit=${LIST_PAGE}`),
-    authReady ? `editor:live:${attempt}` : ''
+    authReady ? `editor:live:${attempt}:${liveRead}` : ''
   );
   const {
     data: archivedItems,
     loading: archiveLoading,
     error: archiveError,
   } = usePublicData(
-    () => listContent(`status=archived&limit=${LIST_PAGE}`),
+    () => listContent(`status=${ARCHIVED_STATUS}&limit=${LIST_PAGE}`),
     authReady ? `editor:archived:${attempt}` : ''
   );
   const {
@@ -284,6 +289,10 @@ export default function EditorListPage() {
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
+  /**
+   * Recall an item from the Editor board to the Review Queue, noting in the
+   * review the status it left.
+   */
   const doUnpublish = async (item) => {
     setActionError('');
     setActionId(item.id);
@@ -293,13 +302,14 @@ export default function EditorListPage() {
       reviewNotes: `Unpublished from Editor board (was ${currentStatus || 'unknown'}) - returned to review queue`,
     });
     setActionId('');
-    if (result) navigate('/admin/queue');
+    if (result) navigate('/admin/review-queue');
   };
 
+  /** Archive an item from the Editor board through the shared transition, with Live off. */
   const doArchive = async (item) => {
     setActionError('');
     setActionId(item.id);
-    await transitions.transition(item, 'archived', {
+    await transitions.transition(item, ARCHIVED_STATUS, {
       markLive: false,
       reviewNotes: 'Archived from Editor board',
       label: 'Archive',
@@ -412,7 +422,6 @@ export default function EditorListPage() {
     <div className="space-y-6">
       <PageHeader
         icon={PenTool}
-        title="Editor"
         help={EDITOR_HELP}
         status={
           <span className="text-muted-foreground">
@@ -430,7 +439,11 @@ export default function EditorListPage() {
       </PageHeader>
 
       {renderLiveBoardSection()}
-      <ArchiveBoard archivedList={archivedList} loading={archiveLoading} />
+      <ArchiveBoard
+        archivedList={archivedList}
+        loading={archiveLoading}
+        onRestored={() => setLiveRead((n) => n + 1)}
+      />
 
       {/* ── Confirm modals ── */}
       <ConfirmModal

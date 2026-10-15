@@ -97,7 +97,7 @@ describe('each linked page focuses its item', () => {
   });
 
   it('Platform Settings → Reminders: ?reminder=<id> rings that reminder', () => {
-    visit('/admin/platform?tab=reminders&reminder=r2');
+    visit('/admin/platform-settings?tab=reminders&reminder=r2');
     const { container } = render(
       <ReminderList
         reminders={[

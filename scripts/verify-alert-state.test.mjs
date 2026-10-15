@@ -22,9 +22,14 @@ import {
   armGet,
   classifyError,
   compare,
+  durationMinutes,
   expectation,
+  FAILING,
+  HEALTH_MAX_FREQUENCY_MINUTES,
+  healthVerdict,
   knownSubscriptionIds,
   pendingCreates,
+  readHealth,
   readLive,
   renderReport,
   readFailureLabel,
@@ -372,9 +377,37 @@ function liveRule(overrides = {}) {
   };
 }
 
-/** A readLive() result holding an empty list for each rule's group, then the given [declared, live] pairs. */
+/** A Resource Health answer for a rule that evaluates, as ARM returned one on 2026-10-15. */
+const AVAILABLE_BODY = {
+  availabilityState: 'Available',
+  title: 'Available',
+  summary: 'There are no known issues affecting this log search alert rule resource.',
+};
+
+/** The same, as readHealth() returns it. */
+const AVAILABLE = { status: 'ok', state: 'Available', title: AVAILABLE_BODY.title, summary: AVAILABLE_BODY.summary };
+
+/** alert-timer-overdue's answer from 2026-10-10 to the fix, read on 2026-10-15. */
+const SEMANTIC_ERROR_BODY = {
+  availabilityState: 'Unavailable',
+  title: 'Semantic error',
+  summary: 'The query keeps failing because of a semantic error. Please review the query and try again.',
+};
+
+/** The Management subscription's answer while Microsoft.ResourceHealth is unregistered there (2026-10-15). */
+const NOT_REGISTERED_BODY = {
+  code: 'AuthError',
+  message:
+    'An error occured in authentication or authorization. Make sure the resource provider has been registered with this subscription',
+};
+
+/**
+ * A readLive() result holding an empty list for each rule's group, then the
+ * given [declared, live] pairs, each log search rule with Available health.
+ */
 function liveWith(rules, entries) {
   const lists = new Map();
+  const health = new Map();
   for (const r of rules) {
     lists.set(`${r.subscription}|${r.resourceGroup.toLowerCase()}|${r.armType}`, { status: 'ok', rules: new Map() });
   }
@@ -383,8 +416,9 @@ function liveWith(rules, entries) {
       live.name.toLowerCase(),
       live
     );
+    if (declared.armType === 'Microsoft.Insights/scheduledQueryRules') health.set(declared.address, AVAILABLE);
   }
-  return { ids: IDS, lists, actionGroups: new Map() };
+  return { ids: IDS, lists, actionGroups: new Map(), health };
 }
 
 describe('compare', () => {
@@ -494,6 +528,192 @@ describe('compare', () => {
   });
 });
 
+describe('Resource Health (#964)', () => {
+  /** A live log search rule evaluated every `evaluationFrequency`. */
+  const logRule = (evaluationFrequency = 'PT15M') => liveRule({ evaluationFrequency });
+  const healthOf = (state, title = state, summary = '') => ({ status: 'ok', state, title, summary });
+  /** The verdict for one log search rule whose health read returned `health` (undefined: no read). */
+  const judge = (health, { evaluationFrequency, subscription = APP } = {}) => {
+    const r = rule({ subscription });
+    const live = liveWith([r], [[r, logRule(evaluationFrequency)]]);
+    if (health === undefined) live.health.delete(r.address);
+    else live.health.set(r.address, health);
+    return compare([r], live, { pending: new Map() })[0];
+  };
+  const report = (verdicts) =>
+    renderReport({ rules: verdicts.map((v) => v.rule), verdicts, extra: [], groups: [], when: 'now', subscriptionsRead: { status: 'ok' } });
+
+  it('passes a rule whose health is Available, and shows it', () => {
+    const v = judge(AVAILABLE);
+    expect(v.state).toBe('OK');
+    expect(v.health).toBe('Available');
+    expect(report([v])).toMatch(/\| `Available` \|/);
+  });
+
+  it('fails a rule whose health is Unavailable, naming Azure\'s title', () => {
+    const v = judge({ status: 'ok', state: 'Unavailable', title: SEMANTIC_ERROR_BODY.title, summary: SEMANTIC_ERROR_BODY.summary });
+    expect(v.state).toBe('UNHEALTHY');
+    expect(v.problems).toEqual([
+      'Semantic error (Resource Health: Unavailable). The query keeps failing because of a semantic error. Please review the query and try again.',
+    ]);
+    expect(FAILING.has('UNHEALTHY')).toBe(true);
+    expect(runFails([v], [], { status: 'ok' })).toBe(true);
+    const text = report([v]);
+    expect(text).toMatch(/\| \*\*UNHEALTHY\*\* \|.*\| `Unavailable` \| Semantic error \(Resource Health: Unavailable\)/);
+    expect(text).toMatch(/`UNHEALTHY` means Azure Monitor reports the rule cannot evaluate/);
+    expect(lastLine(text)).toBe('**1 finding(s).** Each is named in the State column or the paragraphs above.');
+  });
+
+  it('fails Degraded too, on a rule Resource Health reports on', () => {
+    const v = judge(healthOf('Degraded', 'Query is throttled'));
+    expect(v.state).toBe('UNHEALTHY');
+    expect(v.problems[0]).toMatch(/^Query is throttled \(Resource Health: Degraded\)/);
+  });
+
+  it('passes Unknown, at every frequency, with a note', () => {
+    for (const evaluationFrequency of ['PT5M', 'PT15M', 'PT1H', 'P1D']) {
+      const v = judge(healthOf('Unknown', 'Unknown', 'This log search alert rule is currently disabled or in an unknown state.'), { evaluationFrequency });
+      expect(v.state, evaluationFrequency).toBe('OK');
+      expect(v.health).toBe('Unknown');
+      expect(v.notes.join(' '), evaluationFrequency).toMatch(/^Resource Health: Unknown/);
+    }
+    expect(judge(healthOf('Unknown'), { evaluationFrequency: 'P1D' }).notes.join(' ')).toMatch(/less often than every 15 minutes/);
+  });
+
+  it('does not fail a reason-less Unavailable beyond 15 minutes, and still fails one that names a reason', () => {
+    // Microsoft documents no health above a 15-minute frequency, and says such
+    // a rule may read "Unavailable for unknown reason". A named error is still
+    // an error at any frequency.
+    for (const title of ['Unavailable for unknown reason', 'Unknown reason', 'Degraded due to unknown reason', 'Unknown', '']) {
+      const hourly = judge(healthOf('Unavailable', title), { evaluationFrequency: 'PT1H' });
+      expect(hourly.state, `PT1H "${title}"`).toBe('OK');
+      expect(hourly.notes.join(' ')).toMatch(/not a finding/);
+      expect(judge(healthOf('Unavailable', title), { evaluationFrequency: 'PT15M' }).state, `PT15M "${title}"`).toBe('UNHEALTHY');
+    }
+    expect(judge(healthOf('Unavailable', 'Semantic error'), { evaluationFrequency: 'P1D' }).state).toBe('UNHEALTHY');
+  });
+
+  it('reads a 403 as HEALTH UNREADABLE, never OK, and says which role carries the read', () => {
+    const v = judge(classifyError(403, { error: { code: 'AuthorizationFailed', message: 'no' } }));
+    expect(v.state).toBe('HEALTH UNREADABLE');
+    expect(v.health).toBe('unread');
+    expect(v.problems[0]).toMatch(/^Resource Health could not be read: this identity may not read it\. HCW Alert Rule Reader carries Microsoft\.ResourceHealth\/availabilityStatuses\/read/);
+    expect(v.problems[0]).toContain('(HTTP 403 AuthorizationFailed: no)');
+    expect(runFails([v], [], { status: 'ok' })).toBe(true);
+    expect(coverageOf([v], [])).toBe('partial');
+    expect(report([v])).toMatch(/`HEALTH UNREADABLE` means the rule was read and its Resource Health was not/);
+  });
+
+  // CodeRabbit on #1195: the state shows only the first finding, so a
+  // DISABLED rule whose health read failed reported complete coverage.
+  it('counts unread health as partial coverage when another finding comes first', () => {
+    const r = rule({ subscription: APP });
+    const live = liveWith([r], [[r, { ...logRule(), enabled: false }]]);
+    live.health.set(r.address, classifyError(403, { error: { code: 'AuthorizationFailed', message: 'no' } }));
+    const v = compare([r], live, { pending: new Map() })[0];
+    expect(v.state).toBe('DISABLED');
+    expect(v.health).toBe('unread');
+    expect(v.problems.join(' ')).toMatch(/Resource Health could not be read/);
+    expect(coverageOf([v], [])).toBe('partial');
+    expect(report([v])).toMatch(/`HEALTH UNREADABLE` means the rule was read and its Resource Health was not/);
+  });
+
+  it('says plainly that the provider is not registered, rather than an AuthError', () => {
+    const read = classifyError(409, NOT_REGISTERED_BODY);
+    expect(read.status).toBe('not-registered');
+    const v = judge(read, { subscription: MGMT });
+    expect(v.state).toBe('HEALTH UNREADABLE');
+    expect(v.problems[0]).toMatch(
+      /^Resource Health could not be read: the Microsoft\.ResourceHealth provider is not registered in sub-mgmt, so whether this rule can evaluate is unknown, not healthy\. The owner registers it once \("Resource Health" in docs\/runbooks\/alerting-and-support\.md\)\./
+    );
+    expect(classifyError(409, { error: { code: 'MissingSubscriptionRegistration', message: 'x' } }).status).toBe('not-registered');
+    expect(classifyError(409, { error: { code: 'Conflict', message: 'x' } }).status).toBe('failed');
+  });
+
+  it('reads not-registered from the code or the measured 409 AuthError, never from a refusal that only sounds like it', () => {
+    // A 403 is a refusal whatever its text says: its fix is the role, and
+    // telling the owner to register a provider would send them the wrong way.
+    for (const message of [
+      'The client does not have authorization. The subscription is not registered to use namespace Microsoft.ResourceHealth',
+      'Denied. Make sure the resource provider has been registered with this subscription',
+    ]) {
+      const read = classifyError(403, { error: { code: 'AuthorizationFailed', message } });
+      expect(read.status, message).toBe('denied');
+      expect(judge(read, { subscription: MGMT }).problems[0], message).toMatch(/^Resource Health could not be read: this identity may not read it\./);
+      expect(classifyError(403, { code: 'AuthError', message }).status, `403 AuthError: ${message}`).toBe('denied');
+    }
+    // The measured shape, top-level or under `error`, is not-registered.
+    expect(classifyError(409, NOT_REGISTERED_BODY).status).toBe('not-registered');
+    expect(classifyError(409, { error: NOT_REGISTERED_BODY }).status).toBe('not-registered');
+    // ARM's own code, with the message ARM documents for it.
+    expect(
+      classifyError(409, {
+        error: { code: 'MissingSubscriptionRegistration', message: "The subscription is not registered to use namespace 'Microsoft.ResourceHealth'." },
+      }).status
+    ).toBe('not-registered');
+    // The phrase alone, or AuthError alone, is not enough.
+    expect(classifyError(409, { code: 'AuthError', message: 'An error occured in authentication or authorization.' }).status).toBe('failed');
+    expect(classifyError(409, { code: 'Conflict', message: NOT_REGISTERED_BODY.message }).status).toBe('failed');
+    expect(classifyError(409, { code: 'NotMissingSubscriptionRegistration', message: 'x' }).status).toBe('failed');
+  });
+
+  it('reads a health read that never happened, and a state it does not know, as unreadable', () => {
+    const missing = judge(undefined);
+    expect(missing.state).toBe('HEALTH UNREADABLE');
+    expect(missing.problems[0]).toMatch(/could not be read, so whether this rule can evaluate is unknown\. \(not read\)/);
+    expect(judge({ status: 'failed', reason: 'HTTP 500' }).state).toBe('HEALTH UNREADABLE');
+    const odd = judge(healthOf('Sideways'));
+    expect(odd.state).toBe('HEALTH UNREADABLE');
+    expect(odd.problems[0]).toMatch(/availabilityState this check does not know: Sideways/);
+  });
+
+  it('keeps a rule\'s own finding first, and lists the health beside it', () => {
+    const r = rule();
+    const live = liveWith([r], [[r, liveRule({ evaluationFrequency: 'PT15M', enabled: false })]]);
+    live.health.set(r.address, healthOf('Unavailable', 'Semantic error'));
+    const [v] = compare([r], live, { pending: new Map() });
+    expect(v.state).toBe('DISABLED');
+    expect(v.problems).toEqual(['enabled is false', 'Semantic error (Resource Health: Unavailable)']);
+  });
+
+  it('judges no health for a metric or Activity Log rule', () => {
+    for (const armType of ['Microsoft.Insights/metricAlerts', 'Microsoft.Insights/activityLogAlerts']) {
+      const r = rule({ armType, autoMitigate: null });
+      const [v] = compare([r], liveWith([r], [[r, liveRule({ armType, autoMitigate: undefined })]]), { pending: new Map() });
+      expect(v.state, armType).toBe('OK');
+      expect(v.health, armType).toBeUndefined();
+    }
+  });
+
+  it('asks ARM for one rule\'s current status at the GA api-version, and keeps state, title and summary', async () => {
+    const { fetchImpl, calls } = fakeArm([
+      [/availabilityStatuses\/current/, [200, { properties: { ...SEMANTIC_ERROR_BODY, occuredTime: '2026-10-14T22:56:11Z' } }]],
+    ]);
+    const read = await readHealth(IDS.get(APP), 'rg-web', 'alert-r', { token: 't', fetchImpl });
+    expect(read).toEqual({ status: 'ok', state: 'Unavailable', title: 'Semantic error', summary: SEMANTIC_ERROR_BODY.summary });
+    expect(calls.map((c) => c.url)).toEqual([
+      `${ARM}/subscriptions/${IDS.get(APP)}/resourceGroups/rg-web/providers/Microsoft.Insights/scheduledQueryRules/alert-r` +
+        `/providers/Microsoft.ResourceHealth/availabilityStatuses/current?api-version=${API_VERSIONS.resourceHealth}`,
+    ]);
+    expect(API_VERSIONS.resourceHealth).not.toMatch(/preview/);
+  });
+
+  it('reads ISO 8601 frequencies, and no other text', () => {
+    expect(HEALTH_MAX_FREQUENCY_MINUTES).toBe(15);
+    expect(durationMinutes('PT5M')).toBe(5);
+    expect(durationMinutes('PT15M')).toBe(15);
+    expect(durationMinutes('PT1H')).toBe(60);
+    expect(durationMinutes('P1D')).toBe(1440);
+    expect(durationMinutes('P1DT1H')).toBe(1500);
+    expect(durationMinutes('PT30S')).toBe(0.5);
+    for (const text of ['', 'P', 'PT', '15 minutes', undefined, null]) expect(durationMinutes(text), String(text)).toBeNull();
+  });
+
+  it('gives Available neither a problem nor a note, read on its own', () => {
+    expect(healthVerdict(AVAILABLE, logRule(), APP)).toEqual({ shown: 'Available', problem: null, note: null });
+  });
+});
+
 describe('UNREADABLE', () => {
   it('turns only a refusal in a recorded subscription into a non-failing state', () => {
     const recorded = { 'sub-mgmt': { record: 'no grant yet' } };
@@ -531,8 +751,9 @@ describe('tableCell', () => {
     const verdicts = compare([r], live, { pending: new Map() });
     const report = renderReport({ rules: [r], verdicts, extra: [], groups: [], when: 'now', subscriptionsRead: { status: 'ok' } });
     const row = report.split('\n').find((line) => line.startsWith('| `alert-r`'));
-    // Ten unescaped pipes make the nine cells of the row; an escaped one does not count.
-    expect(row.match(/(?<!\\)(?:\\\\)*\|/g)).toHaveLength(10);
+    // Eleven unescaped pipes make the ten cells of the row (Health since
+    // #964); an escaped one does not count.
+    expect(row.match(/(?<!\\)(?:\\\\)*\|/g)).toHaveLength(11);
     expect(row).toContain('C:\\\\x \\| y');
   });
 });
@@ -648,8 +869,9 @@ describe('readLive and the report, end to end on the real inventory', () => {
       });
   }
 
-  function routes({ deny = null } = {}) {
+  function routes({ deny = null, health = [200, { properties: AVAILABLE_BODY }] } = {}) {
     const out = [[/\/subscriptions\?api-version=/, [200, { value: subs }]]];
+    out.push([/\/providers\/Microsoft\.ResourceHealth\/availabilityStatuses\/current\?/, health]);
     out.push([
       /\/actionGroups\//,
       deny === ag.subscription
@@ -861,6 +1083,71 @@ describe('readLive and the report, end to end on the real inventory', () => {
     const verdicts = compare(rules, half, { pending: new Map(), unreadable: {} });
     for (const v of verdicts.filter((x) => x.rule.subscription !== app.displayName)) expect(v.state).toBe('NOT AUTHORIZED');
     expect(runFails(verdicts, actionGroupProblems(rules, half, {}), half.subscriptionsRead)).toBe(true);
+  });
+
+  it('reads the health of every live log search rule once, and of no other rule (#964)', async () => {
+    const { fetchImpl, calls } = fakeArm(routes());
+    const live = await readLive(rules, { token: 't', fetchImpl });
+    const logRules = rules.filter(
+      (r) => r.armType === 'Microsoft.Insights/scheduledQueryRules' && expectation(r).expected !== 'absent'
+    );
+    expect(logRules.length).toBeGreaterThan(10);
+    const healthCalls = calls.filter((c) => c.url.includes('/providers/Microsoft.ResourceHealth/availabilityStatuses/current?'));
+    expect(healthCalls).toHaveLength(logRules.length);
+    for (const call of healthCalls) {
+      expect(call.url).toMatch(/\/providers\/Microsoft\.Insights\/scheduledQueryRules\/[^/]+\/providers\/Microsoft\.ResourceHealth\//);
+      expect(call.url.endsWith(`?api-version=${API_VERSIONS.resourceHealth}`)).toBe(true);
+    }
+    expect([...live.health.keys()].sort()).toEqual(logRules.map((r) => r.address).sort());
+  });
+
+  it('fails alert-timer-overdue as it stood from 2026-10-10: live, enabled, wired, and Unavailable / Semantic error', async () => {
+    // The state this check read as OK every week until #964.
+    const timer = rules.find((r) => r.address === 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue');
+    const { fetchImpl } = fakeArm([
+      [new RegExp(`/scheduledQueryRules/${timer.name}/providers/Microsoft\\.ResourceHealth/`), [200, { properties: SEMANTIC_ERROR_BODY }]],
+      ...routes(),
+    ]);
+    const live = await readLive(rules, { token: 't', fetchImpl });
+    const verdicts = compare(rules, live, { pending: new Map() });
+    const groups = actionGroupProblems(rules, live);
+    expect(verdicts.filter((v) => !['OK', 'GATED OFF'].includes(v.state)).map((v) => [v.rule.name, v.state])).toEqual([
+      [timer.name, 'UNHEALTHY'],
+    ]);
+    expect(runFails(verdicts, groups, live.subscriptionsRead)).toBe(true);
+    const report = renderReport({ rules, verdicts, extra: [], groups, when: 'now', subscriptionsRead: live.subscriptionsRead });
+    const row = report.split('\n').find((line) => line.startsWith(`| \`${timer.name}\``));
+    expect(row).toMatch(/\*\*UNHEALTHY\*\*.*`Unavailable` \| Semantic error \(Resource Health: Unavailable\)\. The query keeps failing/);
+    expect(lastLine(report)).toMatch(/^\*\*1 finding\(s\)\.\*\*/);
+  });
+
+  it('reads an unregistered provider as HEALTH UNREADABLE, says why, and fails', async () => {
+    // sub-plat-mgmt-prod-cus on 2026-10-15: Microsoft.ResourceHealth is not
+    // registered there, and Resource Health answers 409 AuthError.
+    const mgmt = subs.find((s) => s.displayName.includes('mgmt'));
+    const { fetchImpl } = fakeArm([
+      [new RegExp(`/subscriptions/${mgmt.subscriptionId}/.*/availabilityStatuses/current\\?`), [409, NOT_REGISTERED_BODY]],
+      ...routes(),
+    ]);
+    const live = await readLive(rules, { token: 't', fetchImpl });
+    const verdicts = compare(rules, live, { pending: new Map() });
+    const groups = actionGroupProblems(rules, live);
+    const mgmtLogRules = verdicts.filter(
+      (v) => v.rule.subscription === mgmt.displayName && v.rule.armType === 'Microsoft.Insights/scheduledQueryRules' && v.state !== 'GATED OFF'
+    );
+    expect(mgmtLogRules.length).toBeGreaterThan(0);
+    for (const v of mgmtLogRules) {
+      expect(v.state, v.rule.name).toBe('HEALTH UNREADABLE');
+      expect(v.problems[0]).toContain('the Microsoft.ResourceHealth provider is not registered in sub-plat-mgmt-prod-cus');
+    }
+    for (const v of verdicts.filter((x) => x.rule.subscription !== mgmt.displayName)) {
+      expect(['OK', 'GATED OFF'], v.rule.name).toContain(v.state);
+    }
+    expect(runFails(verdicts, groups, live.subscriptionsRead)).toBe(true);
+    expect(coverageOf(verdicts, groups)).toBe('partial');
+    const report = renderReport({ rules, verdicts, extra: [], groups, when: 'now', subscriptionsRead: live.subscriptionsRead });
+    expect(report).toMatch(/`HEALTH UNREADABLE` means the rule was read and its Resource Health was not/);
+    expect(report).toContain('"Resource Health" in `docs/runbooks/alerting-and-support.md`');
   });
 
   it('keeps the id the subscription list gives over one the workflow names', async () => {

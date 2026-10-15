@@ -15,6 +15,11 @@ import { DRAG_TYPE } from './calendarModel';
 
 const MAX_SHOWN = 12;
 
+/**
+ * The Calendar's Unscheduled panel: approved and forge-ready content with no
+ * publish time, up to MAX_SHOWN of it, each card draggable onto a day or
+ * scheduled from its button.
+ */
 export default function UnscheduledPanel({ items, loading, error, onRetry, onSchedule }) {
   return (
     <Card>
@@ -49,7 +54,7 @@ export default function UnscheduledPanel({ items, loading, error, onRetry, onSch
             description="Approve content on the Review Queue and it appears here, ready for a date."
             action={
               <Button asChild variant="outline" size="sm">
-                <Link to="/admin/queue?status=needs_review">Open the Review Queue</Link>
+                <Link to="/admin/review-queue?status=needs_review">Open the Review Queue</Link>
               </Button>
             }
           />
@@ -93,7 +98,7 @@ export default function UnscheduledPanel({ items, loading, error, onRetry, onSch
         {items.length > MAX_SHOWN && (
           <p className="text-xs text-muted-foreground">
             +{items.length - MAX_SHOWN} more —{' '}
-            <Link className="underline" to="/admin/queue?status=approved">
+            <Link className="underline" to="/admin/review-queue?status=approved">
               see them on the Review Queue
             </Link>
           </p>

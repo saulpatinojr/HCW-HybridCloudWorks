@@ -101,4 +101,16 @@ describe('batch-inspect', () => {
     expect((await createInspectBatch({ store, inspector, sleep }).run({})).total).toBe(10);
     expect(store.queryDocs.mock.calls[0][1]).toMatch(/SELECT TOP 25 /);
   });
+
+  it('honors an aborted signal', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('timeout'));
+    const store = makeStore([doc('f1', { inspectTrigger: true })], []);
+    const inspector = { executeInspection: vi.fn() };
+    await expect(
+      createInspectBatch({ store, inspector, signal: controller.signal }).run()
+    ).rejects.toThrow('timeout');
+    expect(inspector.executeInspection).not.toHaveBeenCalled();
+  });
 });
+

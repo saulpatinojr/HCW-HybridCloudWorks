@@ -30,6 +30,10 @@ const HELP = [
   'Times are shown in your browser’s time zone, named on the toolbar. The server stores UTC.',
 ];
 
+/**
+ * The Calendar page (see the header): the shared grid, the Unscheduled panel
+ * and the summary links, with both lists read again after every write.
+ */
 export default function CalendarPage() {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();
@@ -40,32 +44,32 @@ export default function CalendarPage() {
     {
       label: 'Unscheduled',
       value: unscheduled.data.length,
-      to: '/admin/queue?status=approved',
+      to: '/admin/review-queue?status=approved',
       hint: 'Approved content with no publish time, on the Review Queue',
     },
     {
       label: 'Instant Ready',
       value: unscheduled.data.filter((row) => row.contentStatus === 'forge_ready').length,
-      to: '/admin/queue?status=ready_to_publish',
+      to: '/admin/review-queue?status=ready_to_publish',
       hint: 'Forge-ready content, one click from publishing',
     },
     {
       label: 'Social queue',
       value: null,
-      to: '/admin/social?tab=queue',
+      to: '/admin/social-hub?tab=queue',
       hint: 'Open the scheduled social queue',
     },
     {
       label: 'Newsletter',
       value: null,
-      to: '/admin/mailing-list?tab=published',
+      to: '/admin/newsletter-hub?tab=published',
       hint: 'Open the newsletter’s sent and scheduled issues',
     },
   ];
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={Calendar} title="Calendar" help={HELP} />
+      <PageHeader icon={Calendar} help={HELP} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
         <div className="lg:col-span-3">

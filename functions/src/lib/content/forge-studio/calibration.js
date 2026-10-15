@@ -71,8 +71,9 @@ export async function writeSuggestions(store, suggestions) {
  */
 export async function runVoiceCalibration(
   payload,
-  { store, ai, now = () => new Date(), log = {} }
+  { store, ai, now = () => new Date(), log = {}, signal }
 ) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const postCount = Math.max(3, Math.min(15, Number(payload?.postCount) || 10));
   const posts = await store.queryDocs(
     'content',
@@ -96,6 +97,7 @@ export async function runVoiceCalibration(
     prompt: `${CALIBRATION_PROMPT}\n\nArticles (${bodies.length}):\n\n${bodies.join('\n\n---\n\n')}`,
     purpose: 'analysis',
     feature: 'voiceCalibration',
+    signal,
   });
 
   const suggestions = normalizeSuggestions({

@@ -249,10 +249,11 @@ export function buildSsml(turns, { voices, lang = 'en-US', speakingRate = 1 }) {
   return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${escapeXml(lang)}">${body}</speak>`;
 }
 
-async function synthesizeOne(ssml, { endpoint, key, fetchImpl, sleep }) {
+async function synthesizeOne(ssml, { endpoint, key, fetchImpl, sleep, signal }) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     let response;
     try {
       response = await fetchImpl(endpoint, {
@@ -265,6 +266,7 @@ async function synthesizeOne(ssml, { endpoint, key, fetchImpl, sleep }) {
           'User-Agent': 'HybridCloudWorks-ListenAndLearn/1.0',
         },
         body: ssml,
+        signal,
       });
     } catch (err) {
       lastError = new AzureSpeechError(`Failed to reach Azure Speech: ${err.message}`);
@@ -316,6 +318,7 @@ export async function synthesizeWithAzure({
   env = process.env,
   fetchImpl = fetch,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  signal,
 } = {}) {
   const turns = (dialogue || []).filter((t) => String(t?.text || '').trim());
   if (turns.length === 0) throw new AzureSpeechError('No dialogue turns to synthesise');
@@ -340,6 +343,7 @@ export async function synthesizeWithAzure({
   const chunks = chunkTurns(turns);
   const parts = [];
   for (const chunk of chunks) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     // Sequential on purpose: the parts are concatenated in order, and a
     // parallel burst is the reliable way to meet the per-resource 429.
     parts.push(
@@ -348,6 +352,7 @@ export async function synthesizeWithAzure({
         key,
         fetchImpl,
         sleep,
+        signal,
       })
     );
   }

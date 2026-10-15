@@ -410,7 +410,7 @@ export function createJobHandlers({
 
         const spec = types.get(doc.type);
         const requiredRole = spec?.role;
-        if (requiredRole && roleLevel(requiredRole) > roleLevel('editor')) {
+        if (requiredRole) {
           const stricter = await guard.requireRole(request, requiredRole);
           if (stricter.error) return stricter.error;
         }
@@ -610,7 +610,7 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
     const cutoff = new Date(now().getTime() - RUNNING_GRACE_MS).toISOString();
     const running = await store.queryDocs(
       JOBS_CONTAINER,
-      `SELECT TOP ${SWEEP_BATCH} c.id, c.type, c.startedAt, c.attempts, c._etag FROM c WHERE c.status = 'running' AND IS_DEFINED(c.startedAt) AND c.startedAt < @cutoff`,
+      `SELECT TOP ${SWEEP_BATCH} * FROM c WHERE c.status = 'running' AND IS_DEFINED(c.startedAt) AND c.startedAt < @cutoff`,
       [{ name: '@cutoff', value: cutoff }]
     );
     const reaped = [];
@@ -669,7 +669,7 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
       const cutoff = new Date(now().getTime() - STALE_QUEUED_MS).toISOString();
       const stale = await store.queryDocs(
         JOBS_CONTAINER,
-        `SELECT TOP ${SWEEP_BATCH} c.id, c.type, c.requeueCount, c._etag FROM c WHERE c.status = 'queued' AND c.createdAt < @cutoff AND (NOT IS_DEFINED(c.requeuedAt) OR c.requeuedAt < @cutoff)`,
+        `SELECT TOP ${SWEEP_BATCH} * FROM c WHERE c.status = 'queued' AND c.createdAt < @cutoff AND (NOT IS_DEFINED(c.requeuedAt) OR c.requeuedAt < @cutoff)`,
         [{ name: '@cutoff', value: cutoff }]
       );
       const requeued = [];

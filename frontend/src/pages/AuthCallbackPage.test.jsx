@@ -66,17 +66,17 @@ describe('a completed sign-in', () => {
   });
 
   // MSAL's `navigateToLoginRequestUrl` returns the user to whichever page
-  // started sign-in — `/admin/queue`, say — as a client-side history
+  // started sign-in — `/admin/review-queue`, say — as a client-side history
   // navigation, so this component's `.then()` still runs afterwards. Replacing
   // unconditionally would overwrite the destination they actually asked for.
   it('does not override the page MSAL already returned the user to', async () => {
     // The real thing MSAL does, rather than a description of it: a history
     // navigation, which moves `pathname` and drops the fragment together.
-    initializeAuth.mockImplementation(async () => navigate(null, '', '/admin/queue'));
+    initializeAuth.mockImplementation(async () => navigate(null, '', '/admin/review-queue'));
     render(<AuthCallbackPage />);
 
     await waitFor(() => expect(initializeAuth).toHaveBeenCalled());
-    expect(window.location.pathname).toBe('/admin/queue');
+    expect(window.location.pathname).toBe('/admin/review-queue');
     expect(hardReplace).not.toHaveBeenCalled();
   });
 });

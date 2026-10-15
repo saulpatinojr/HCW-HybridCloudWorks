@@ -24,11 +24,15 @@ export const INTEGRATIONS = (group) => ({
   label: 'Integrations',
 });
 export const KEYS = { to: '/admin/integrations?tab=keys', label: 'Keys' };
-export const SETTINGS = (tab) => ({ to: `/admin/platform?tab=${tab}`, label: 'Platform Settings' });
+/** A fix link to one Platform Settings tab. */
+export const SETTINGS = (tab) => ({
+  to: `/admin/platform-settings?tab=${tab}`,
+  label: 'Platform Settings',
+});
 export const AI_ENGINE = { to: '/admin/ai-engine', label: 'AI Engine' };
 export const LABS = { to: '/admin/labs?tab=agents', label: 'Labs' };
-export const NEWSLETTER = { to: '/admin/mailing-list?tab=settings', label: 'Newsletter Hub' };
-export const QUEUE = { to: '/admin/queue', label: 'Review Queue' };
+export const NEWSLETTER = { to: '/admin/newsletter-hub?tab=settings', label: 'Newsletter Hub' };
+export const QUEUE = { to: '/admin/review-queue', label: 'Review Queue' };
 export const GALLERY = { to: '/admin/image-gallery', label: 'Image Gallery' };
 export const FORGE = { to: '/admin/forge-studio', label: 'Forge Studio' };
 export const LIVE_PAGES = { to: '/admin/live-pages', label: 'Live Pages' };

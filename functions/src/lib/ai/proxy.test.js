@@ -233,11 +233,11 @@ describe('testAiProvider', () => {
     );
 
     expect(JSON.parse(response.body)).toMatchObject({ ok: false, status: 'error' });
-    expect(JSON.parse(response.body).error).toMatch(/API key not valid/);
+    expect(JSON.parse(response.body).error).toBe('The provider call failed');
     expect(store.patchDoc).toHaveBeenCalledWith(
       'ai_providers',
       'openai',
-      expect.objectContaining({ status: 'error', lastTestError: 'API key not valid' })
+      expect.objectContaining({ status: 'error', lastTestError: 'The provider call failed' })
     );
   });
 
@@ -315,13 +315,13 @@ describe('testProviderConnection — the Test with no HTTP, shared with the week
       ok: false,
       status: 'error',
       latencyMs: 1_200,
-      error: 'timeout after 45000 ms',
+      error: 'The provider call failed',
       code: null,
     });
     expect(d.store.patchDoc).toHaveBeenCalledWith(
       'ai_providers',
       'nvidia',
-      expect.objectContaining({ status: 'error', lastTestError: 'timeout after 45000 ms' })
+      expect.objectContaining({ status: 'error', lastTestError: 'The provider call failed' })
     );
     expect(d.store.upsertDoc).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledWith('probeAiProviders(nvidia) failed:', expect.any(Error));
@@ -378,7 +378,7 @@ describe('testTaskCandidate — the call half alone, for the Tasks tab’s per-t
       ok: false,
       status: 'error',
       latencyMs: 300,
-      error: 'model not found',
+      error: 'The provider call failed',
       code: 'AI_PROVIDER_ERROR',
     });
     expect(d.store.patchDoc).not.toHaveBeenCalled();

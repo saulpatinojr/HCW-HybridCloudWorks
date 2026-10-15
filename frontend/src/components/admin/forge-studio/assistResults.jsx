@@ -158,6 +158,10 @@ function MetadataResult({ result, onApply }) {
   );
 }
 
+/**
+ * The social assist's drafts, one card per network with a copy button, and a
+ * link that opens the Social Hub composer with this piece selected.
+ */
 function SocialResult({ result, contentId }) {
   const posts = listOf(result?.posts);
   return (
@@ -180,7 +184,7 @@ function SocialResult({ result, contentId }) {
         Paste one into the Social Hub composer:{' '}
         <Link
           className="text-primary underline"
-          to={`/admin/social?tab=compose&contentId=${encodeURIComponent(contentId)}`}
+          to={`/admin/social-hub?tab=compose&contentId=${encodeURIComponent(contentId)}`}
         >
           open the Social Hub with this piece selected
         </Link>

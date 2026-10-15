@@ -55,6 +55,7 @@
  * what was stored.
  */
 import { randomUUID } from 'node:crypto';
+import { errorResponse } from '../http/error-response.js';
 import { SET_SLUG_REASON } from './publish.js';
 
 const json = (status, body) => ({
@@ -222,11 +223,7 @@ export function createSetSlugHandlers({
 
         return response;
       } catch (error) {
-        context.error('setContentSlug failed:', error);
-        return json(500, {
-          error: 'Failed to set the slug',
-          message: error?.message || 'Unknown error',
-        });
+        return errorResponse(context, 'Failed to set the slug', error, 500, request);
       }
     },
   };

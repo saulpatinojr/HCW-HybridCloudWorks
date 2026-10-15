@@ -498,6 +498,11 @@ export function useEditorState(blogId, navigate) {
         });
       }
 
+      /**
+       * Move the item to the queue status the editor's publish chose, through
+       * the shared transition, which audits it; live publishing stays on
+       * /admin/publish, so the editor goes there.
+       */
       async function handleQueueTransition() {
         const result = await postJSON('transitionContentStatus', {
           contentId: blogId,
@@ -510,12 +515,12 @@ export function useEditorState(blogId, navigate) {
           from: result?.from || null,
           to: result?.to || targetStatus,
           contentId: result?.contentId || blogId,
-          note: 'Status transitioned from editor. Final live publishing still occurs from /admin/published.',
+          note: 'Status transitioned from editor. Final live publishing still occurs from /admin/publish.',
         });
 
         // transitionContentStatus writes the `audits` row itself; the client
         // copy that doubled it is gone (ADR 0033 §1).
-        navigate('/admin/published');
+        navigate('/admin/publish');
       }
 
       setPublishing(true);

@@ -244,3 +244,20 @@ describe('recording-side workers', () => {
     );
   });
 });
+
+describe('podcast worker abort handling', () => {
+  it('throws immediately when signal is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const signal = controller.signal;
+    await expect(runTranscriptGeneration({ articleId: 'art-1' }, { signal })).rejects.toThrow();
+    await expect(runTranscriptPublish({ transcriptId: 'tr-1' }, { signal })).rejects.toThrow();
+    await expect(runRecordingGeneration({ recordingId: 'rec-1' }, { signal })).rejects.toThrow();
+    await expect(
+      runUploadTranscription(
+        { uploadPath: 'uploads/0d5c3d3e-1f5a-4a1c-9f6d-2b3c4d5e6f70.mp3', title: 't' },
+        { signal }
+      )
+    ).rejects.toThrow();
+  });
+});

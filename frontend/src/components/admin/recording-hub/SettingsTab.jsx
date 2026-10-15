@@ -348,6 +348,11 @@ function ConnectTab({ isConnected, hasRefreshToken, refreshState, onConnected })
   );
 }
 
+/**
+ * The Recording Hub's Settings tab (see the header): the Plaud connection, what
+ * the refresh timer has done with it, and links to the settings this hub reads
+ * but does not own.
+ */
 export default function SettingsTab({ hub }) {
   return (
     <div className="space-y-8">
@@ -367,7 +372,10 @@ export default function SettingsTab({ hub }) {
         </p>
         <p className="text-sm text-slate-600 dark:text-slate-300">
           <strong className="text-slate-900 dark:text-slate-100">Podcast feeds and voice</strong> —{' '}
-          <RouterLink to="/admin/platform?tab=audio" className="text-violet-600 hover:underline">
+          <RouterLink
+            to="/admin/platform-settings?tab=audio"
+            className="text-violet-600 hover:underline"
+          >
             Platform settings
           </RouterLink>
           . The Podbean credentials are on{' '}

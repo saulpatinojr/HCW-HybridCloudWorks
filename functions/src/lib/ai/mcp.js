@@ -104,10 +104,18 @@ function clearSession(serverId) {
 async function fetchWithTimeout(fetchImpl, url, options, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const parentSignal = options?.signal;
+  const signal = parentSignal
+    ? AbortSignal.any([parentSignal, controller.signal])
+    : controller.signal;
+  if (signal.aborted) {
+    clearTimeout(timer);
+    throw signal.reason || new McpUpstreamError(`MCP request timed out after ${Math.round(timeoutMs / 1000)}s`);
+  }
   try {
-    return await fetchImpl(url, { ...options, signal: controller.signal });
+    return await fetchImpl(url, { ...options, signal });
   } catch (error) {
-    if (error?.name === 'AbortError') {
+    if (error?.name === 'AbortError' && !parentSignal?.aborted) {
       throw new McpUpstreamError(`MCP request timed out after ${Math.round(timeoutMs / 1000)}s`);
     }
     throw error;

@@ -102,7 +102,6 @@ export default function LabsPage() {
     <div className="space-y-6">
       <PageHeader
         icon={FlaskConical}
-        title="Labs"
         description="Hands-on learning environments per provider, and the agent and desktop behind them."
         status={
           <>
