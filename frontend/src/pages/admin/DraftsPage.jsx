@@ -1,10 +1,10 @@
 /**
  * /admin/drafts — the Drafts stage (owner request 2026-10-03), the step
- * before the Content Queue.
+ * before the Review Queue.
  *
  * Articles are written and kept here, saved in the site: a save is one API
  * call from any device, with no GitHub credential and no pull request. When
- * one is ready, Send to In Review moves it onto the Content Queue's In Review
+ * one is ready, Send to In Review moves it onto the Review Queue's In Review
  * filter — the same place the old "Import drafts from the repository" panel
  * landed files — where the provider is set and it goes on to the Publish
  * Queue. An article In Review that came from here can come back with Back to

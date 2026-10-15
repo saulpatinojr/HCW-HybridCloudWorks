@@ -114,7 +114,7 @@ describe('NewsletterPublished', () => {
     expect(await screen.findByText(/The send is canceled/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open Drafts' })).toHaveAttribute(
       'href',
-      '/admin/mailing-list?tab=drafts'
+      '/admin/newsletter-hub?tab=drafts'
     );
   });
 

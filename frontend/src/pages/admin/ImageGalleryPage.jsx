@@ -43,6 +43,10 @@ export {
 /** Focuses the upload picker, which UploadPanel renders further down the page. */
 const focusUploadPicker = () => document.getElementById('gallery-files')?.focus();
 
+/**
+ * The Image Gallery page (see the header): the listing, selection and actions
+ * hooks composed over the grid, the pager and the dialogs.
+ */
 export default function ImageGalleryPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -91,7 +95,6 @@ export default function ImageGalleryPage() {
     <div className="space-y-5">
       <PageHeader
         icon={Images}
-        title="Image Gallery"
         help={HELP}
         status={facets?.counts && <GalleryCounts counts={facets.counts} />}
         actions={
@@ -175,7 +178,7 @@ export default function ImageGalleryPage() {
           onReuse={reuse}
           onCopy={copyText}
           onOpenSet={(name) => navigate(`/admin/image-prompts?set=${encodeURIComponent(name)}`)}
-          onOpenContent={(use) => navigate(`/admin/queue/${encodeURIComponent(use.id)}`)}
+          onOpenContent={(use) => navigate(`/admin/review-queue/${encodeURIComponent(use.id)}`)}
           onOpenVariant={actions.openVariant}
         />
       )}

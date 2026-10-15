@@ -10,15 +10,22 @@ import {
   patchDoc,
   upsertDoc,
   deleteDoc,
+  deleteDocIfMatch,
   replaceDocIfMatch,
 } from '../lib/cosmos-client.js';
 import { createContentWorkflowHandlers } from '../lib/content-workflow.js';
 import { createDashboardStatsMaintainer } from '../lib/triggers/dashboard-stats.js';
 
+/**
+ * The workflow RPCs over the live store and the default guard, built on each
+ * call, with the dashboard counters moved on a delete the change feed never
+ * delivers.
+ */
 const handlers = () =>
   createContentWorkflowHandlers({
     guard: getDefaultGuard(),
-    store: { readDoc, patchDoc, upsertDoc, deleteDoc },
+    // deleteDocIfMatch: deleteContentItem deletes under the read's ETag.
+    store: { readDoc, patchDoc, upsertDoc, deleteDocIfMatch },
     // T-324: the change feed never sees a delete; move the dashboard counters here.
     onContentDeleted: (contentId) =>
       createDashboardStatsMaintainer({

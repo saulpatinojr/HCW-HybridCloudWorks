@@ -44,6 +44,6 @@ describe('resolveTab', () => {
   });
 
   it('builds a link to a tab', () => {
-    expect(tabHref('sources')).toBe('/admin/speaking-events?tab=sources');
+    expect(tabHref('sources')).toBe('/admin/speaking?tab=sources');
   });
 });

@@ -1,6 +1,6 @@
 /**
  * The shell for an admin panel that opens on demand: the Publish page's
- * "Images: re-host hotlinked". (The Content Queue's "Import drafts from the
+ * "Images: re-host hotlinked". (The Review Queue's "Import drafts from the
  * repository" used it too, until that moved to the Drafts page.)
  *
  * A card with a title, a line saying what the panel does, and a toggle

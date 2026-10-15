@@ -81,7 +81,6 @@ export default function IntegrationsPage() {
     <div className="space-y-6">
       <PageHeader
         icon={Plug}
-        title="Integrations Hub"
         description="Every third-party service, whether it is answering, and the keys it answers with; the Directory explains what each one is and brings. Keys are held in Azure Key Vault and can be written here but never read back."
         help={HELP}
       />

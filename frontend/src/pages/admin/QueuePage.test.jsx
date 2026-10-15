@@ -44,12 +44,14 @@ describe('QueuePage', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/admin/queue']}>
+      <MemoryRouter initialEntries={['/admin/review-queue']}>
         <QueuePage />
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('Content Queue')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Review Queue' })
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(postJSON).toHaveBeenCalledWith('getQueueSnapshot', {
         statusFilter: 'needs_review',
@@ -92,7 +94,7 @@ describe('QueuePage', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/admin/queue?status=needs_review']}>
+      <MemoryRouter initialEntries={['/admin/review-queue?status=needs_review']}>
         <QueuePage />
       </MemoryRouter>
     );
@@ -128,7 +130,7 @@ describe('QueuePage', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/admin/queue']}>
+      <MemoryRouter initialEntries={['/admin/review-queue']}>
         <QueuePage />
       </MemoryRouter>
     );
@@ -158,7 +160,7 @@ describe('QueuePage', () => {
     postJSON.mockResolvedValue({ success: true, totalCount: 0, items: [] });
 
     render(
-      <MemoryRouter initialEntries={['/admin/queue']}>
+      <MemoryRouter initialEntries={['/admin/review-queue']}>
         <QueuePage />
       </MemoryRouter>
     );
@@ -180,7 +182,7 @@ describe('QueuePage', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/admin/queue']}>
+      <MemoryRouter initialEntries={['/admin/review-queue']}>
         <QueuePage />
       </MemoryRouter>
     );

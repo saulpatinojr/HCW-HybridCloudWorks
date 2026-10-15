@@ -88,6 +88,10 @@ function SessionStatus({ session }) {
   return <span className="text-muted-foreground">Brief in progress: {session.title}</span>;
 }
 
+/**
+ * The Forge Studio page (see the header): its tabs, chosen by `?tab=`, over one
+ * forge session whose content id is kept in the address.
+ */
 export default function ForgeStudioPage() {
   const { authReady } = useAuthReady();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -215,7 +219,7 @@ export default function ForgeStudioPage() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <PageHeader icon={Flame} title="Forge Studio" status={headerStatus} help={HELP} />
+      <PageHeader icon={Flame} status={headerStatus} help={HELP} />
 
       {session.error && (
         <div

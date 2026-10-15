@@ -11,6 +11,6 @@ import * as tabs from './tabs';
 import { describeTabResolver } from '../tabContract';
 
 describeTabResolver(tabs, {
-  route: '/admin/linkie',
+  route: '/admin/linkie-hub',
   redirects: { connection: 'settings', stats: 'analytics' },
 });

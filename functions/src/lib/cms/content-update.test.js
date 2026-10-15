@@ -6,9 +6,12 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import {
+  CHANGED_SINCE_READ,
   createContentUpdateHandler,
+  createContentStatusTransitioner,
   createContentTransitionHandler,
 } from "./content-update.js";
+import { isPublicDocument } from "../public-reads.js";
 import { defaultTaxonomy } from "./taxonomy.js";
 
 const context = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
@@ -310,6 +313,155 @@ describe("transitionContentStatus", () => {
     expect(store.patchDoc).not.toHaveBeenCalled();
   });
 
+  /**
+   * Taking a page off the public site stays a publisher action (AP-F13,
+   * #937): Live Pages' Archive replaced softDeleteLivePage, which required
+   * publisher, so every edge OUT of published is gated like every edge into
+   * it. The document's status is only known after the read, so this refusal
+   * is the transitioner's, after it; an editor keeps every edge that starts
+   * anywhere else.
+   */
+  it("reserves every edge out of published for publishers — an editor's archive gets 403", async () => {
+    /** A published, live page, read afresh for each edge attempted. */
+    const live = () => ({ id: "c1", contentStatus: "published", Live: true });
+    const editor = createContentTransitionHandler({
+      guard: guardAs("editor"),
+      store: makeStore({ readDoc: vi.fn(async () => live()) }),
+      ...fixed,
+    });
+    for (const newStatus of ["archived", "editing", "inspected", "rejected"]) {
+      const res = await editor(makeRequest({ contentId: "c1", newStatus }), context);
+      expect(res.status, newStatus).toBe(403);
+      expect(JSON.parse(res.body).error).toMatch(
+        /publisher access required to move a page that is on the public site/,
+      );
+    }
+
+    const store = makeStore({ readDoc: vi.fn(async () => live()) });
+    const publisher = createContentTransitionHandler({
+      guard: guardAs("publisher"),
+      store,
+      ...fixed,
+    });
+    const res = await publisher(
+      makeRequest({ contentId: "c1", newStatus: "archived", reviewNotes: "Archived from Live Pages" }),
+      context,
+    );
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ from: "published", to: "archived" });
+    expect(store.patchDoc.mock.calls[0][2]).toMatchObject({ contentStatus: "archived", Live: false });
+  });
+
+  it("leaves an editor every edge that starts off the site: archiving a rejected item, rejecting one in review", async () => {
+    for (const [contentStatus, newStatus] of [
+      ["rejected", "archived"],
+      ["in_review", "rejected"],
+      ["inspected", "approved"],
+    ]) {
+      const store = makeStore({
+        readDoc: vi.fn(async () => ({ id: "c1", contentStatus })),
+      });
+      const h = createContentTransitionHandler({
+        guard: guardAs("editor"),
+        store,
+        ...fixed,
+      });
+      const res = await h(makeRequest({ contentId: "c1", newStatus }), context);
+      expect(res.status, `${contentStatus} → ${newStatus}`).toBe(200);
+      expect(store.patchDoc).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  /**
+   * The gate asks what the public site serves, not what contentStatus says
+   * (AP-F13, #937). isPublicDocument also serves a `Live: true` document in
+   * any status and a legacy `Status: 'Live'` one; gating `published` alone
+   * let an editor take either down through `rejected`.
+   */
+  it("gates a live editing page and a legacy Status 'Live' page like a published one", async () => {
+    const shapes = {
+      "a live editing page": { id: "c1", contentStatus: "editing", Live: true },
+      "a legacy Status 'Live' page": {
+        id: "c1",
+        contentStatus: "in_review",
+        Status: "Live",
+      },
+    };
+    for (const [name, doc] of Object.entries(shapes)) {
+      // The premise: the site serves it, though its status is not published.
+      expect(isPublicDocument(doc), name).toBe(true);
+
+      const refused = makeStore({ readDoc: vi.fn(async () => ({ ...doc })) });
+      const editor = createContentTransitionHandler({
+        guard: guardAs("editor"),
+        store: refused,
+        ...fixed,
+      });
+      const res = await editor(
+        makeRequest({ contentId: "c1", newStatus: "rejected" }),
+        context,
+      );
+      expect(res.status, name).toBe(403);
+      expect(refused.patchDoc, name).not.toHaveBeenCalled();
+      expect(refused.upsertDoc, name).not.toHaveBeenCalled();
+
+      const allowed = makeStore({ readDoc: vi.fn(async () => ({ ...doc })) });
+      const publisher = createContentTransitionHandler({
+        guard: guardAs("publisher"),
+        store: allowed,
+        ...fixed,
+      });
+      const ok = await publisher(
+        makeRequest({ contentId: "c1", newStatus: "rejected" }),
+        context,
+      );
+      expect(ok.status, name).toBe(200);
+      expect(allowed.patchDoc.mock.calls[0][2], name).toMatchObject({
+        contentStatus: "rejected",
+        Live: false,
+        Status: "Rejected",
+      });
+    }
+  });
+
+  it("refuses a caller that names no role on a page on the site, rather than waving it through", async () => {
+    // The transitioner's own contract, below the HTTP guard: the bot and any
+    // future caller must name a role (the bot names super_admin). Undefined
+    // is the forgotten argument; null and "" are the guard's empty answers.
+    for (const actorRole of [undefined, null, ""]) {
+      const store = makeStore({
+        readDoc: vi.fn(async () => ({
+          id: "c1",
+          contentStatus: "published",
+          Live: true,
+        })),
+      });
+      const apply = createContentStatusTransitioner({ store, ...fixed });
+      const request = { contentId: "c1", newStatus: "rejected" };
+      if (actorRole !== undefined) request.actorRole = actorRole;
+      const result = await apply(request);
+      expect(result, String(actorRole)).toMatchObject({ ok: false, status: 403 });
+      expect(store.patchDoc).not.toHaveBeenCalled();
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+    }
+
+    // Named, it is the role that decides.
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({
+        id: "c1",
+        contentStatus: "published",
+        Live: true,
+      })),
+    });
+    const apply = createContentStatusTransitioner({ store, ...fixed });
+    const result = await apply({
+      contentId: "c1",
+      newStatus: "rejected",
+      actorRole: "super_admin",
+    });
+    expect(result).toMatchObject({ ok: true, from: "published", to: "rejected" });
+  });
+
   it("lets a publisher publish from an eligible status, stamping Live and publishedAt", async () => {
     const store = makeStore({
       readDoc: vi.fn(async () => ({
@@ -350,14 +502,20 @@ describe("transitionContentStatus", () => {
       store,
       ...fixed,
     });
+    // archived → editing: the archive opens back onto review or the site
+    // (AP-F13, #937), never straight into the editor.
     const res = await h(
-      makeRequest({ contentId: "c1", newStatus: "published" }),
+      makeRequest({ contentId: "c1", newStatus: "editing" }),
       context,
     );
     expect(res.status).toBe(400);
     const body = JSON.parse(res.body);
-    expect(body.error).toMatch(/Invalid transition: archived → published/);
-    expect(body.allowedTransitions).toEqual(["in_review", "rejected"]);
+    expect(body.error).toMatch(/Invalid transition: archived → editing/);
+    expect(body.allowedTransitions).toEqual([
+      "in_review",
+      "rejected",
+      "published",
+    ]);
     expect(store.patchDoc).not.toHaveBeenCalled();
   });
 
@@ -369,8 +527,11 @@ describe("transitionContentStatus", () => {
         contentStatus: "published_news",
       })),
     });
+    // A publisher, because the normalised status is `published` and leaving
+    // it is a publisher's edge (AP-F13, #937): the legacy spelling is read
+    // as live by the gate too.
     const h = createContentTransitionHandler({
-      guard: guardAs("editor"),
+      guard: guardAs("publisher"),
       store,
       ...fixed,
     });
@@ -440,6 +601,69 @@ describe("transitionContentStatus", () => {
     ).toBe(404);
   });
 
+  /**
+   * Undo on Live Pages and Restore on the Archive board (AP-F13, #937): the
+   * edge back from archived to published, for a publisher, with the stamp
+   * cleared and the audit row written like every other edge.
+   */
+  it("lets a publisher bring an archived page back live, clearing archivedAt, and audits it", async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({
+        id: "c1",
+        Title: "Was live",
+        contentStatus: "archived",
+        Live: false,
+        Status: "Archived",
+        archivedAt: "2026-10-15T11:59:00.000Z",
+        publishedAt: "2026-10-01T00:00:00.000Z",
+      })),
+    });
+    const h = createContentTransitionHandler({
+      guard: guardAs("publisher"),
+      store,
+      ...fixed,
+    });
+    const res = await h(
+      makeRequest({ contentId: "c1", newStatus: "published", reviewNotes: "Undo" }),
+      context,
+    );
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ from: "archived", to: "published" });
+    const patch = store.patchDoc.mock.calls[0][2];
+    expect(patch.contentStatus).toBe("published");
+    expect(patch.Live).toBe(true);
+    expect(patch.archivedAt).toBeNull();
+    expect("Status" in patch && patch.Status === undefined).toBe(true);
+    expect(patch.publishedAt).toBe("2026-10-01T00:00:00.000Z");
+    const auditCall = store.upsertDoc.mock.calls.find(([c]) => c === "audits");
+    expect(auditCall[1]).toMatchObject({
+      action: "status_transition",
+      resourceId: "c1",
+      changes: {
+        before: { contentStatus: "archived" },
+        after: { contentStatus: "published" },
+        notes: "Undo",
+      },
+    });
+  });
+
+  it("keeps the way back from the archive to publishers, like every edge into published", async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: "c1", contentStatus: "archived" })),
+    });
+    const h = createContentTransitionHandler({
+      guard: guardAs("editor"),
+      store,
+      ...fixed,
+    });
+    const res = await h(
+      makeRequest({ contentId: "c1", newStatus: "published" }),
+      context,
+    );
+    expect(res.status).toBe(403);
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
   it("restore from rejected clears the rejection marker with an explicit null", async () => {
     const store = makeStore({
       readDoc: vi.fn(async () => ({
@@ -503,6 +727,674 @@ describe("transitionContentStatus", () => {
     ).toBe(400);
     expect(store.readDoc).not.toHaveBeenCalled();
     expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A store over content and blogs with Cosmos's write semantics where these
+ * tests lean on them: patchDoc deletes on `undefined` and, given `ifMatch`,
+ * refuses a document whose `_etag` moved with a 412; queryDocs answers the
+ * linked-blog query as Cosmos would, projecting only the fields its SELECT
+ * names, so a field the code reads and the query forgets reads as absent.
+ */
+function contentAndBlogsStore(initial) {
+  const docs = new Map(
+    Object.entries(initial).map(([key, doc]) => [
+      key,
+      { ...doc, _etag: '"e0"' },
+    ]),
+  );
+  let version = 0;
+  /** The stored document, or null. */
+  const get = (container, id) => docs.get(`${container}/${id}`) ?? null;
+  return {
+    get,
+    /** Delete a document outright, as another session's hard delete would. */
+    remove: (container, id) => docs.delete(`${container}/${id}`),
+    readDoc: vi.fn(async (container, id) =>
+      structuredClone(get(container, id)),
+    ),
+    patchDoc: vi.fn(async (container, id, updates, { ifMatch } = {}) => {
+      const current = get(container, id);
+      if (!current) throw Object.assign(new Error("missing"), { code: 404 });
+      if (ifMatch && current._etag !== ifMatch) {
+        throw Object.assign(new Error("precondition"), { code: 412 });
+      }
+      const next = { ...current, _etag: `"e${++version}"` };
+      for (const [field, value] of Object.entries(updates)) {
+        if (value === undefined) delete next[field];
+        else next[field] = value;
+      }
+      docs.set(`${container}/${id}`, next);
+      return structuredClone(next);
+    }),
+    queryDocs: vi.fn(async (container, sql, parameters) => {
+      const select = /^SELECT TOP \d+ (.+) FROM c WHERE (.+)$/.exec(sql);
+      if (container !== "blogs" || !select) return [];
+      const fields = select[1]
+        .split(",")
+        .map((f) => f.trim().replace(/^c\./, ""));
+      const id = parameters.find((p) => p.name === "@id").value;
+      return [...docs.entries()]
+        .filter(([key]) => key.startsWith("blogs/"))
+        .map(([, doc]) => doc)
+        .filter(
+          (doc) => doc.sourceContentId === id || doc.publishedContentId === id,
+        )
+        .map((doc) =>
+          Object.fromEntries(
+            fields
+              .filter((f) => f in doc)
+              .map((f) => [f, structuredClone(doc[f])]),
+          ),
+        );
+    }),
+    upsertDoc: vi.fn(async (_c, d) => d),
+  };
+}
+
+/** The audit rows a store was asked to write. */
+const auditCalls = (store) =>
+  store.upsertDoc.mock.calls.filter(([container]) => container === "audits");
+
+/**
+ * Hold the next call to `mock` that `matches` until `release()`. `reached`
+ * resolves once that call has arrived, so a test can run another transition
+ * in the gap, in an order the test fixes rather than one timing happens to
+ * produce. Only the first matching call is held.
+ */
+function pauseBefore(mock, matches) {
+  const run = mock.getMockImplementation();
+  let arrive;
+  let release;
+  const reached = new Promise((resolve) => {
+    arrive = resolve;
+  });
+  const released = new Promise((resolve) => {
+    release = resolve;
+  });
+  let armed = true;
+  mock.mockImplementation(async (...args) => {
+    if (armed && matches(...args)) {
+      armed = false;
+      arrive();
+      await released;
+    }
+    return run(...args);
+  });
+  return { reached, release };
+}
+
+/**
+ * The transition is decided from a read (the publisher gate, the edge), so
+ * it is written under that read's ETag (AP-F13, #937): a document that moved
+ * in between is refused, not overwritten.
+ */
+describe("transitionContentStatus under the read's ETag", () => {
+  it("conditions the write on the _etag it read", async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({
+        id: "c1",
+        contentStatus: "inspected",
+        _etag: '"e3"',
+      })),
+    });
+    const h = createContentTransitionHandler({
+      guard: guardAs("editor"),
+      store,
+      ...fixed,
+    });
+    const res = await h(
+      makeRequest({ contentId: "c1", newStatus: "in_review" }),
+      context,
+    );
+    expect(res.status).toBe(200);
+    expect(store.patchDoc).toHaveBeenCalledWith(
+      "content",
+      "c1",
+      expect.objectContaining({ contentStatus: "in_review" }),
+      { ifMatch: '"e3"' },
+    );
+  });
+
+  it("refuses an editor's reject decided before a publisher set the page live, with a 409 and no audit row", async () => {
+    const store = contentAndBlogsStore({
+      "content/c1": { id: "c1", contentStatus: "editing", Live: false },
+    });
+    // The editor's read sees the page off the site, so the publisher gate
+    // does not apply; the publisher's write lands before the editor's.
+    const read = store.readDoc.getMockImplementation();
+    store.readDoc.mockImplementationOnce(async (...args) => {
+      const seen = await read(...args);
+      await store.patchDoc("content", "c1", { Live: true });
+      return seen;
+    });
+    const h = createContentTransitionHandler({
+      guard: guardAs("editor"),
+      store,
+      ...fixed,
+    });
+
+    const res = await h(
+      makeRequest({ contentId: "c1", newStatus: "rejected" }),
+      context,
+    );
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      code: "CONFLICT",
+      error: CHANGED_SINCE_READ,
+    });
+    expect(CHANGED_SINCE_READ).toBe(
+      "The page changed since it was read; reload and try again.",
+    );
+    expect(store.get("content", "c1")).toMatchObject({
+      contentStatus: "editing",
+      Live: true,
+    });
+    expect(isPublicDocument(store.get("content", "c1"))).toBe(true);
+    expect(auditCalls(store)).toEqual([]);
+  });
+
+  it("answers the transitioner's callers the same refusal, and a 404 for a page deleted in between", async () => {
+    /** A store whose content write fails with `code`, read at a fixed ETag. */
+    const failWith = (code) =>
+      makeStore({
+        readDoc: vi.fn(async () => ({
+          id: "c1",
+          contentStatus: "inspected",
+          _etag: '"e3"',
+        })),
+        patchDoc: vi.fn(async () => {
+          throw Object.assign(new Error(`HTTP ${code}`), { code });
+        }),
+      });
+    const lost = failWith(412);
+    const apply = createContentStatusTransitioner({ store: lost, ...fixed });
+    expect(
+      await apply({
+        contentId: "c1",
+        newStatus: "in_review",
+        actorRole: "editor",
+      }),
+    ).toEqual({
+      ok: false,
+      status: 409,
+      code: "CONFLICT",
+      error: CHANGED_SINCE_READ,
+    });
+    expect(auditCalls(lost)).toEqual([]);
+
+    const gone = failWith(404);
+    expect(
+      await createContentStatusTransitioner({ store: gone, ...fixed })({
+        contentId: "c1",
+        newStatus: "in_review",
+        actorRole: "editor",
+      }),
+    ).toMatchObject({ ok: false, status: 404 });
+    expect(auditCalls(gone)).toEqual([]);
+
+    const broken = failWith(503);
+    await expect(
+      createContentStatusTransitioner({ store: broken, ...fixed })({
+        contentId: "c1",
+        newStatus: "in_review",
+        actorRole: "editor",
+      }),
+    ).rejects.toMatchObject({ code: 503 });
+  });
+});
+
+/**
+ * A legacy `blogs` document linked to a page is served on its own words
+ * (AP-F13, #937): archiving the content alone left it on the site. The
+ * archive carries every linked blog the site serves, and Undo carries back
+ * exactly those.
+ */
+describe("transitionContentStatus and the legacy blogs linked to a page", () => {
+  /**
+   * A live page and four blogs: two linked and public, one linked and not, one
+   * another page's.
+   */
+  const initial = () => ({
+    "content/c1": {
+      id: "c1",
+      Title: "Ten things about Azure",
+      contentStatus: "published",
+      Live: true,
+      publishedBlogId: "b1",
+      publishedAt: "2026-10-01T00:00:00.000Z",
+    },
+    // Linked by the content's publishedBlogId, live every way it can be.
+    "blogs/b1": {
+      id: "b1",
+      Live: true,
+      Status: "Live",
+      contentStatus: "published_blog",
+    },
+    // Linked by its sourceContentId, live by the legacy word alone.
+    "blogs/b2": { id: "b2", sourceContentId: "c1", Status: "Live" },
+    // Linked by its publishedContentId, and not on the site.
+    "blogs/b3": {
+      id: "b3",
+      publishedContentId: "c1",
+      Live: false,
+      Status: "Draft",
+    },
+    // Another page's blog.
+    "blogs/b4": { id: "b4", sourceContentId: "c9", Live: true },
+  });
+  /** The transition handler for a publisher over `store`. */
+  const transitionAs = (store) =>
+    createContentTransitionHandler({
+      guard: guardAs("publisher"),
+      store,
+      ...fixed,
+    });
+
+  it("archives every linked blog the site serves, and Undo brings back exactly those", async () => {
+    const store = contentAndBlogsStore(initial());
+    const h = transitionAs(store);
+    /** A blog as the store holds it now. */
+    const blog = (id) => store.get("blogs", id);
+    const b3Before = blog("b3");
+
+    const archived = await h(
+      makeRequest({ contentId: "c1", newStatus: "archived", markLive: false }),
+      context,
+    );
+    expect(archived.status).toBe(200);
+    expect(isPublicDocument(store.get("content", "c1"))).toBe(false);
+    for (const id of ["b1", "b2"]) {
+      expect(isPublicDocument(blog(id)), id).toBe(false);
+      expect(blog(id), id).toMatchObject({
+        Live: false,
+        Status: "Archived",
+        contentStatus: "archived",
+        scheduledPublishDate: null,
+        archivedWithContentId: "c1",
+        archivedAt: "2026-08-06T12:00:00.000Z",
+      });
+    }
+    expect(blog("b3")).toEqual(b3Before);
+    expect(isPublicDocument(blog("b4"))).toBe(true);
+    expect(auditCalls(store)[0][1].metadata.linkedBlogIds).toEqual([
+      "b1",
+      "b2",
+    ]);
+
+    const undone = await h(
+      makeRequest({
+        contentId: "c1",
+        newStatus: "published",
+        markLive: true,
+        reviewNotes: "Undo: restored to live from Live Pages",
+      }),
+      context,
+    );
+    expect(undone.status).toBe(200);
+    expect(isPublicDocument(store.get("content", "c1"))).toBe(true);
+    for (const id of ["b1", "b2"]) {
+      expect(isPublicDocument(blog(id)), id).toBe(true);
+      expect(blog(id), id).toMatchObject({
+        Live: true,
+        contentStatus: "published",
+        archivedAt: null,
+      });
+      expect(blog(id), id).not.toHaveProperty("Status");
+      expect(blog(id), id).not.toHaveProperty("archivedWithContentId");
+    }
+    // Not public before the archive, so not made public by its Undo.
+    expect(blog("b3")).toEqual(b3Before);
+    expect(isPublicDocument(blog("b3"))).toBe(false);
+    expect(auditCalls(store)[1][1].metadata.linkedBlogIds).toEqual([
+      "b1",
+      "b2",
+    ]);
+  });
+
+  it("leaves the linked blogs where they are on every other edge", async () => {
+    const store = contentAndBlogsStore(initial());
+    const h = transitionAs(store);
+    await h(makeRequest({ contentId: "c1", newStatus: "archived" }), context);
+    store.queryDocs.mockClear();
+
+    // Out of the archive but not back on the site: the blogs stay archived.
+    const res = await h(
+      makeRequest({ contentId: "c1", newStatus: "in_review" }),
+      context,
+    );
+    expect(res.status).toBe(200);
+    expect(store.queryDocs).not.toHaveBeenCalled();
+    expect(isPublicDocument(store.get("blogs", "b1"))).toBe(false);
+    expect(store.get("blogs", "b1").archivedWithContentId).toBe("c1");
+    expect(auditCalls(store)[1][1].metadata).not.toHaveProperty(
+      "linkedBlogIds",
+    );
+  });
+
+  /**
+   * Each blog write is decided from a read, so it is made under that read's
+   * ETag, and the read is taken after the content write (CodeRabbit on
+   * #1193): a blog another session changed in between is decided again from
+   * a fresh read rather than overwritten, and one deleted in between is
+   * skipped and recorded, without failing a transition whose page already
+   * moved.
+   */
+  describe("each blog written under the ETag of a read taken after the page's write", () => {
+    it("projects _etag in the linked-blog query and conditions every blog write on it", async () => {
+      const store = contentAndBlogsStore(initial());
+      await transitionAs(store)(
+        makeRequest({ contentId: "c1", newStatus: "archived" }),
+        context,
+      );
+
+      const queries = store.queryDocs.mock.calls.map(([, sql]) => sql);
+      expect(queries.length).toBeGreaterThan(0);
+      for (const sql of queries) expect(sql).toContain("c._etag");
+      const blogWrites = store.patchDoc.mock.calls
+        .filter(([container]) => container === "blogs")
+        .map(([, id, , options]) => [id, options]);
+      expect(blogWrites).toEqual([
+        ["b1", { ifMatch: '"e0"' }],
+        ["b2", { ifMatch: '"e0"' }],
+      ]);
+      // The blogs that were written were chosen by a read after the page's.
+      const pageWrite = store.patchDoc.mock.calls.findIndex(
+        ([container]) => container === "content",
+      );
+      const pageWriteOrder =
+        store.patchDoc.mock.invocationCallOrder[pageWrite];
+      expect(
+        Math.max(...store.queryDocs.mock.invocationCallOrder),
+      ).toBeGreaterThan(pageWriteOrder);
+    });
+
+    it("leaves a blog another session took down in between as that session left it, unstamped", async () => {
+      const store = contentAndBlogsStore(initial());
+      const apply = createContentStatusTransitioner({ store, ...fixed });
+      const gate = pauseBefore(
+        store.patchDoc,
+        (container, id) => container === "blogs" && id === "b1",
+      );
+
+      const archiving = apply({
+        contentId: "c1",
+        newStatus: "archived",
+        actorRole: "publisher",
+      });
+      await gate.reached;
+      await store.patchDoc("blogs", "b1", {
+        Live: false,
+        Status: "Draft",
+        contentStatus: "draft",
+        Title: "Taken down elsewhere",
+      });
+      gate.release();
+      const result = await archiving;
+
+      expect(result).toMatchObject({
+        ok: true,
+        linkedBlogs: { carried: ["b2"], skipped: [], settled: true },
+      });
+      expect(store.get("blogs", "b1")).toMatchObject({
+        Status: "Draft",
+        Title: "Taken down elsewhere",
+      });
+      expect(store.get("blogs", "b1")).not.toHaveProperty(
+        "archivedWithContentId",
+      );
+      expect(isPublicDocument(store.get("blogs", "b2"))).toBe(false);
+    });
+
+    it("skips and records a blog deleted in between, and the transition still lands", async () => {
+      const store = contentAndBlogsStore(initial());
+      const apply = createContentStatusTransitioner({ store, ...fixed });
+      const gate = pauseBefore(
+        store.patchDoc,
+        (container, id) => container === "blogs" && id === "b1",
+      );
+
+      const archiving = apply({
+        contentId: "c1",
+        newStatus: "archived",
+        actorRole: "publisher",
+      });
+      await gate.reached;
+      store.remove("blogs", "b1");
+      gate.release();
+      const result = await archiving;
+
+      expect(result).toMatchObject({
+        ok: true,
+        to: "archived",
+        linkedBlogs: { carried: ["b2"], skipped: ["b1"], settled: true },
+      });
+      expect(store.get("content", "c1").contentStatus).toBe("archived");
+      expect(auditCalls(store)[0][1].metadata).toMatchObject({
+        linkedBlogIds: ["b2"],
+        linkedBlogIdsSkipped: ["b1"],
+      });
+    });
+
+    it("gives up on a blog that keeps changing after three rounds, says so without naming it, and still answers 200", async () => {
+      const store = contentAndBlogsStore(initial());
+      const run = store.patchDoc.getMockImplementation();
+      store.patchDoc.mockImplementation(async (container, ...rest) => {
+        if (container === "blogs") {
+          throw Object.assign(new Error("precondition"), { code: 412 });
+        }
+        return run(container, ...rest);
+      });
+      const warn = vi.fn();
+
+      const res = await transitionAs(store)(
+        makeRequest({ contentId: "c1", newStatus: "archived" }),
+        { ...context, warn },
+      );
+
+      expect(res.status).toBe(200);
+      expect(store.get("content", "c1").contentStatus).toBe("archived");
+      const blogWrites = store.patchDoc.mock.calls.filter(
+        ([container]) => container === "blogs",
+      );
+      expect(blogWrites).toHaveLength(6);
+      expect(auditCalls(store)[0][1].metadata).toMatchObject({
+        linkedBlogIdsSkipped: ["b1", "b2"],
+        linkedBlogsSettled: false,
+      });
+      expect(auditCalls(store)[0][1].metadata).not.toHaveProperty(
+        "linkedBlogIds",
+      );
+      const line = warn.mock.calls
+        .map(([message]) => message)
+        .find((message) => message.includes("linked blogs"));
+      expect(line).toBe(
+        "transitionContentStatus: linked blogs not settled (2 skipped, settled false)",
+      );
+      expect(line).not.toMatch(/b1|b2/);
+    });
+
+    it("writes the audit row before a blog write's other failure surfaces", async () => {
+      const store = contentAndBlogsStore(initial());
+      const run = store.patchDoc.getMockImplementation();
+      store.patchDoc.mockImplementation(async (container, ...rest) => {
+        if (container === "blogs") {
+          throw Object.assign(new Error("unavailable"), { code: 503 });
+        }
+        return run(container, ...rest);
+      });
+
+      await expect(
+        createContentStatusTransitioner({ store, ...fixed })({
+          contentId: "c1",
+          newStatus: "archived",
+          actorRole: "publisher",
+        }),
+      ).rejects.toMatchObject({ code: 503 });
+      expect(store.get("content", "c1").contentStatus).toBe("archived");
+      expect(auditCalls(store)).toHaveLength(1);
+      expect(auditCalls(store)[0][1].metadata).toMatchObject({
+        linkedBlogsSettled: false,
+      });
+    });
+  });
+
+  /**
+   * The retained concern on #1193: the content's ETag guards only the
+   * content's write, so a transition paused between that write and its blogs
+   * could leave them disagreeing with the page another transition left. Each
+   * case below fixes one interleaving with pauseBefore, and the end state
+   * must agree with the page's final status whichever transition finished
+   * last.
+   */
+  describe("fenced against a transition that lands in between", () => {
+    /**
+     * An archived page and the two linked blogs it archived, stamped with it.
+     */
+    const archivedPage = () => ({
+      "content/c1": {
+        id: "c1",
+        Title: "Ten things about Azure",
+        contentStatus: "archived",
+        Live: false,
+        Status: "Archived",
+        scheduledPublishDate: null,
+        archivedAt: "2026-08-01T00:00:00.000Z",
+        publishedBlogId: "b1",
+      },
+      "blogs/b1": {
+        id: "b1",
+        Live: false,
+        Status: "Archived",
+        contentStatus: "archived",
+        archivedWithContentId: "c1",
+        archivedAt: "2026-08-01T00:00:00.000Z",
+      },
+      "blogs/b2": {
+        id: "b2",
+        sourceContentId: "c1",
+        Live: false,
+        Status: "Archived",
+        contentStatus: "archived",
+        archivedWithContentId: "c1",
+        archivedAt: "2026-08-01T00:00:00.000Z",
+      },
+    });
+    const restoreArgs = {
+      contentId: "c1",
+      newStatus: "published",
+      markLive: true,
+      actorRole: "publisher",
+    };
+    const archiveArgs = {
+      contentId: "c1",
+      newStatus: "archived",
+      markLive: false,
+      actorRole: "publisher",
+    };
+    /** Whether b1 and b2 are on the site, in that order. */
+    const blogsPublic = (store) =>
+      ["b1", "b2"].map((id) => isPublicDocument(store.get("blogs", id)));
+
+    it("a restore paused before its blogs, then an archive: the page and its blogs end archived", async () => {
+      const store = contentAndBlogsStore(archivedPage());
+      const apply = createContentStatusTransitioner({ store, ...fixed });
+      const gate = pauseBefore(store.patchDoc, (container) => container === "blogs");
+
+      const restoring = apply(restoreArgs);
+      await gate.reached;
+      // The restore has published the page and chosen its blogs. An archive
+      // runs to the end in the gap and finds no public blog to carry.
+      expect(isPublicDocument(store.get("content", "c1"))).toBe(true);
+      expect(await apply(archiveArgs)).toMatchObject({
+        ok: true,
+        to: "archived",
+      });
+      gate.release();
+      const restored = await restoring;
+
+      expect(restored).toMatchObject({
+        ok: true,
+        to: "published",
+        linkedBlogs: { settled: true },
+      });
+      expect(isPublicDocument(store.get("content", "c1"))).toBe(false);
+      expect(blogsPublic(store)).toEqual([false, false]);
+      for (const id of ["b1", "b2"]) {
+        expect(store.get("blogs", id).archivedWithContentId, id).toBe("c1");
+      }
+    });
+
+    it("an archive paused before its blogs, then a restore: the page and its blogs end live", async () => {
+      const store = contentAndBlogsStore(initial());
+      const apply = createContentStatusTransitioner({ store, ...fixed });
+      const b3Before = store.get("blogs", "b3");
+      const gate = pauseBefore(store.patchDoc, (container) => container === "blogs");
+
+      const archiving = apply(archiveArgs);
+      await gate.reached;
+      expect(await apply(restoreArgs)).toMatchObject({
+        ok: true,
+        to: "published",
+      });
+      gate.release();
+      const archived = await archiving;
+
+      expect(archived).toMatchObject({
+        ok: true,
+        to: "archived",
+        linkedBlogs: { settled: true },
+      });
+      expect(isPublicDocument(store.get("content", "c1"))).toBe(true);
+      expect(blogsPublic(store)).toEqual([true, true]);
+      for (const id of ["b1", "b2"]) {
+        expect(store.get("blogs", id), id).not.toHaveProperty(
+          "archivedWithContentId",
+        );
+      }
+      // Not public before either transition, so neither made it public.
+      expect(store.get("blogs", "b3")).toEqual(b3Before);
+    });
+
+    it("an archive that read the blogs before a restore carried them, and wrote the page after the restore checked: archived", async () => {
+      // The interleaving a check of only the transition's own work misses:
+      // the restore finds the page unmoved when it checks, and the archive
+      // read the blogs while they were still archived.
+      const store = contentAndBlogsStore(archivedPage());
+      const apply = createContentStatusTransitioner({ store, ...fixed });
+      const restoreGate = pauseBefore(
+        store.patchDoc,
+        (container) => container === "blogs",
+      );
+
+      const restoring = apply(restoreArgs);
+      await restoreGate.reached;
+      const archiveGate = pauseBefore(
+        store.patchDoc,
+        (container, _id, updates) =>
+          container === "content" && updates.contentStatus === "archived",
+      );
+      const archiving = apply(archiveArgs);
+      await archiveGate.reached;
+      // The archive has read the live page and its still-archived blogs.
+      restoreGate.release();
+      expect(await restoring).toMatchObject({
+        ok: true,
+        linkedBlogs: { carried: ["b1", "b2"], settled: true },
+      });
+      expect(blogsPublic(store)).toEqual([true, true]);
+
+      archiveGate.release();
+      expect(await archiving).toMatchObject({
+        ok: true,
+        to: "archived",
+        linkedBlogs: { carried: ["b1", "b2"], settled: true },
+      });
+      expect(isPublicDocument(store.get("content", "c1"))).toBe(false);
+      expect(blogsPublic(store)).toEqual([false, false]);
+    });
   });
 });
 

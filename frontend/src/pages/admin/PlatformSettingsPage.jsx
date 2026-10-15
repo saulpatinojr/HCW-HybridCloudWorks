@@ -1,5 +1,5 @@
 /**
- * Platform Settings Hub (route `/admin/platform`) — the `admin_config`
+ * Platform Settings Hub (route `/admin/platform-settings`) — the `admin_config`
  * documents the pipeline reads on every run, one tab per concern (#571), at
  * the Newsletter Hub's level of separation (components/admin/platform-settings):
  *
@@ -67,7 +67,6 @@ export default function PlatformSettingsPage() {
     <div className="space-y-6">
       <PageHeader
         icon={SlidersHorizontal}
-        title="Platform Settings Hub"
         description="Documents the pipeline reads on every run. Each save is checked against the exact shape the code expects before it is stored, replaces the document whole, and is listed under Change history."
         help={HELP}
       />

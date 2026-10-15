@@ -10,9 +10,12 @@
  */
 import { useCallback, useState } from 'react';
 import { postJSON } from '@/lib/api';
-import { logAdminAction } from '@/lib/auditLog';
 import { getPublishTargetForType } from '@/lib/contentModel';
 
+/**
+ * The review page's writes on its item (see the header): save, save then
+ * approve, and the framework delete, each reporting its outcome.
+ */
 export function useReviewActions({ blogId, transitions, navigate, toast }) {
   const [frameworkDeleteOpen, setFrameworkDeleteOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -54,7 +57,7 @@ export function useReviewActions({ blogId, transitions, navigate, toast }) {
           setBoardError(transitions.errors[blogId] || 'Approve failed.');
           return;
         }
-        navigate(`/admin/queue?contentType=${type}`);
+        navigate(`/admin/review-queue?contentType=${type}`);
       } finally {
         setSaving(false);
       }
@@ -62,16 +65,21 @@ export function useReviewActions({ blogId, transitions, navigate, toast }) {
     [blogId, navigate, saveFields, transitions]
   );
 
+  /**
+   * Delete the framework the review page shows through the publisher RPC, which
+   * audits the delete itself, and leave only once it landed.
+   */
   const doFrameworkDelete = async () => {
     setFrameworkDeleteOpen(false);
     setSaving('delete');
     setBoardError(null);
     try {
+      // deleteContentItem writes the audit row itself (`audits`,
+      // content_deleted, with the actor the guard verified), so no client
+      // row is written beside it (AP-F13, #937).
       await postJSON('deleteContentItem', { contentId: blogId });
-      // deleteContentItem writes no server audit row; this one is the record.
-      await logAdminAction('framework_deleted', { contentId: blogId });
       toast({ title: 'Framework deleted' });
-      navigate('/admin/queue?contentType=framework');
+      navigate('/admin/review-queue?contentType=framework');
     } catch (err) {
       setBoardError(`Delete failed: ${err?.message || 'Unknown error'}`);
       toast({ title: 'Framework not deleted', description: err?.message, variant: 'destructive' });

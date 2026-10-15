@@ -21,7 +21,10 @@ import {
 const CONTENT_FIELDS =
   'c.id, c.Title, c.title, c.contentStatus, c.Live, c.scheduledPublishDate, c.publishedAt, c.type, c.publishTarget, c["Cloud Provider"], c.cloudProvider, c.publishError, c.scheduledPublishError';
 
-const contentHref = (row) => `/admin/queue/${encodeURIComponent(row.id)}?source=content`;
+/**
+ * Where a content item opens from the calendar: its page on the Review Queue.
+ */
+const contentHref = (row) => `/admin/review-queue/${encodeURIComponent(row.id)}?source=content`;
 const contentMeta = (row) => ({
   provider: row['Cloud Provider'] || row.cloudProvider || null,
   publishTarget: row.publishTarget || row.type || null,
@@ -116,7 +119,7 @@ export async function collectNewsletterIssues({ store, from, to }) {
       title: row.subject || row.id,
       start: when.iso,
       status: row.status,
-      href: `/admin/mailing-list?tab=published&issue=${encodeURIComponent(row.id)}`,
+      href: `/admin/newsletter-hub?tab=published&issue=${encodeURIComponent(row.id)}`,
       sourceId: row.id,
       sourceCollection: 'newsletters',
       meta: {
@@ -144,7 +147,7 @@ export async function collectSocialPosts({ store, from, to }) {
       title: row.caption || 'Social post',
       start: when.iso,
       status: failed ? 'failed' : row.status || 'scheduled',
-      href: '/admin/social?tab=queue',
+      href: '/admin/social-hub?tab=queue',
       sourceId: row.id,
       sourceCollection: 'social_posts',
       meta: {
@@ -162,13 +165,17 @@ export async function collectSocialPosts({ store, from, to }) {
 
 // ── speaking ─────────────────────────────────────────────────────────────────
 
+/**
+ * One speaking date as a calendar item, the talk or its CFP deadline, opening
+ * the Speaking page.
+ */
 function speakingItem(row, when, field) {
   const title = row.eventName || row.name || 'Speaking event';
   const common = {
     kind: 'speaking',
     start: when.iso,
     allDay: when.allDay,
-    href: '/admin/speaking-events',
+    href: '/admin/speaking',
     sourceId: row.id,
     sourceCollection: 'speakerevents',
   };

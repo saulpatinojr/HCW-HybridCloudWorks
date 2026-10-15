@@ -5,10 +5,11 @@ import { describe, it, expect } from 'vitest';
 import { FileText } from 'lucide-react';
 import StatTile from './StatTile';
 
+/** A tile linking to the Review Queue's rejected filter, with `props` overriding any default. */
 function renderTile(props) {
   return render(
     <MemoryRouter>
-      <StatTile to="/admin/queue?status=rejected" value={3} label="Rejected" {...props} />
+      <StatTile to="/admin/review-queue?status=rejected" value={3} label="Rejected" {...props} />
     </MemoryRouter>
   );
 }
@@ -17,7 +18,7 @@ describe('StatTile', () => {
   it('is one link to its page, named by its aria-label when given', () => {
     renderTile({ ariaLabel: 'Rejected: 3. Opens the rejected list.' });
     const link = screen.getByRole('link', { name: 'Rejected: 3. Opens the rejected list.' });
-    expect(link).toHaveAttribute('href', '/admin/queue?status=rejected');
+    expect(link).toHaveAttribute('href', '/admin/review-queue?status=rejected');
     expect(within(link).getByText('3')).toBeInTheDocument();
     expect(within(link).getByText('Rejected')).toBeInTheDocument();
   });

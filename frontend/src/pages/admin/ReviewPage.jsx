@@ -1,5 +1,5 @@
 /**
- * /admin/queue/:id — one item, on the board its type calls for (ADR 0033).
+ * /admin/review-queue/:id — one item, on the board its type calls for (ADR 0033).
  *
  *   architecture  → ArchitectureReviewBoard
  *   framework     → FrameworkReviewBoard
@@ -229,6 +229,7 @@ function ReviewLoading() {
   );
 }
 
+/** The review page when its item cannot be read: the reason, Try again, and a way back. */
 function ReviewUnavailable({ error, refresh, navigate }) {
   return (
     <EmptyState
@@ -237,7 +238,7 @@ function ReviewUnavailable({ error, refresh, navigate }) {
       description={error?.message || 'It may have been deleted, or the request failed.'}
       onRetry={refresh}
       action={
-        <Button variant="outline" size="sm" onClick={() => navigate('/admin/queue')}>
+        <Button variant="outline" size="sm" onClick={() => navigate('/admin/review-queue')}>
           Back to Queue
         </Button>
       }
@@ -245,6 +246,10 @@ function ReviewUnavailable({ error, refresh, navigate }) {
   );
 }
 
+/**
+ * The review page for a loaded item: its header, the board for its type and the
+ * sidebar of workflow actions, with the board's last refusal shown.
+ */
 function ReviewContent({ blog, blogId, refresh, navigate, transitions, actions }) {
   const boardLabel = BOARD_LABEL[blog.type] || 'Blog review';
   const boardError = actions.boardError || transitions.errors[blogId] || null;
@@ -264,7 +269,7 @@ function ReviewContent({ blog, blogId, refresh, navigate, transitions, actions }
           </>
         }
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate('/admin/queue')}>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/admin/review-queue')}>
             <ArrowLeft className="h-4 w-4 mr-1" /> Back to Queue
           </Button>
         }

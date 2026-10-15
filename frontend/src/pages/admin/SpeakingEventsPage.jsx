@@ -1,5 +1,5 @@
 /**
- * Speaking Events Hub (route `/admin/speaking-events`) — sessions from
+ * Speaking Events Hub (route `/admin/speaking`) — sessions from
  * Sessionize, enriched and published from here; the Spotlight hub the
  * Ambassador hub imports speaking evidence from (ADR 0033 §5).
  *
@@ -93,7 +93,6 @@ export default function SpeakingEventsPage() {
     <div className="space-y-6">
       <PageHeader
         icon={Mic}
-        title="Speaking Events Hub"
         description={
           <>
             Sessions from <strong>Sessionize</strong>: ID, name, and date come from Sessionize

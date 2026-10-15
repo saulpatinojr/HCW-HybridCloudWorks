@@ -56,6 +56,10 @@ const SUBMIT_HELP = [
   'Where it goes next: the saved item lands in the Review Queue as Inspected, where it is approved or rejected; Create and Open Editor jumps straight to it.',
 ];
 
+/**
+ * The New Content page: the stages from a source to a created item, with the
+ * result banner beneath them.
+ */
 export default function SubmitUrlsPage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -588,7 +592,7 @@ export default function SubmitUrlsPage() {
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <PageHeader icon={FilePlus2} title="New Content" help={SUBMIT_HELP}>
+      <PageHeader icon={FilePlus2} help={SUBMIT_HELP}>
         <WorkflowHeader
           currentStep={currentStep}
           readinessComplete={readinessComplete}

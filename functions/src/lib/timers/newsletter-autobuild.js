@@ -27,8 +27,8 @@ import { SITE_ORIGIN } from '../newsletter/sections.js';
 export const AUTOBUILD_SOURCE = 'buildWeeklyNewsletter';
 export const AUTOBUILD_ACTOR = 'auto-build';
 
-/** Where the admin page shows kept drafts: App.jsx `/admin/mailing-list`, tab `drafts`. */
-export const DRAFTS_PATH = '/admin/mailing-list?tab=drafts';
+/** Where the admin page shows kept drafts: App.jsx `/admin/newsletter-hub`, tab `drafts`. */
+export const DRAFTS_PATH = '/admin/newsletter-hub?tab=drafts';
 
 /** The message the owner reads, exported so the test pins it. */
 export function buildAutoBuildMessage(result, draftsUrl) {

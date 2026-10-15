@@ -125,7 +125,7 @@ export default function AuthCallbackPage() {
         // ONLY IF MSAL DID NOT ALREADY TAKE US SOMEWHERE.
         //
         // `navigateToLoginRequestUrl` defaults to true, so MSAL returns the
-        // browser to whichever page started sign-in — `/admin/queue`, say. That
+        // browser to whichever page started sign-in — `/admin/review-queue`, say. That
         // is a client-side history navigation, so this `.then()` still runs
         // afterwards, and an unconditional replace would overwrite the
         // destination the user actually asked for with the portal root.

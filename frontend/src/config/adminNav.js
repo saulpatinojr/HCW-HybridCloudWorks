@@ -20,6 +20,14 @@
  * beside an item (#566): a badge is state, a tag naming the product behind a
  * page belongs on that page's header.
  *
+ * THE LABEL IS THE ROUTE AND THE TITLE (AP-F13, #937). Each item's path is
+ * `/admin/<slug of its label>` (`labelSlug` below; adminNav.test.js holds every
+ * row to it), and PageHeader renders the label as the page's h1, so the menu
+ * entry, the address bar and the heading cannot say three different things —
+ * which they did: "Publish" opened /admin/published under the title "Publish",
+ * "Review Queue" opened /admin/queue under "Content Queue". The old paths
+ * redirect (config/adminRedirects.jsx), so nothing bookmarked or mailed broke.
+ *
  * The registry is two tables — the groups, and the items with the group each
  * belongs to — joined once below. One row per entry, so adding a page is one
  * line and no group is a copy of another's shape.
@@ -151,11 +159,14 @@ export function roleLabel(role) {
  *   Review Queue       editor     transitionContentStatus (cms/content-update.js) for approve and reject; the
  *                                 snapshot (getQueueSnapshot) is a viewer read; deleteRejectedContent
  *                                 (gallery-images.js) and deleteContentItem (content-workflow.js) are publisher, gated
- *   Editor             editor     cms/content (cms-content.js), saveEditorDraft (content-workflow/editor.js)
+ *   Editor             editor     cms/content (cms-content.js), saveEditorDraft (content-workflow/editor.js); the
+ *                                 Archive board's Restore to live (archived → published, cms/content-update.js) and
+ *                                 Delete permanently (deleteContentItem, content-workflow.js) are publisher, gated
  *   Publish            publisher  publishContent (cms/publish.js), unpublishContentToInspected (content-workflow.js),
  *                                 cms/content/slug (cms/set-slug.js), cms/content/rehost-images POST (cms/rehost-images.js)
- *   Live Pages         editor     cms/content?live=true (cms-content.js); softDeleteLivePage (content-workflow.js)
- *                                 is publisher, gated
+ *   Live Pages         editor     cms/content?live=true (cms-content.js); Archive (published → archived through
+ *                                 transitionContentStatus, cms/content-update.js) is publisher, gated, so the Undo
+ *                                 its toast offers reaches only the publisher who archived
  *   Listen & Learn     editor     cms/listen-and-learn (listen-and-learn/book-handlers.js); approving a chapter with
  *                                 publish is publisher (listen-and-learn/speech-handlers.js), gated
  *   Labs               editor     enqueueLabJob, cancelLabJob (labs.js), cms/labs/agents (labs/agent-registry.js); the
@@ -199,7 +210,7 @@ const ITEMS = [
   // Pipeline, in the order the work happens.
   [
     'pipeline',
-    '/admin/submit',
+    '/admin/new-content',
     Zap,
     'New Content',
     'Start something: import a URL or document, or draft from a source.',
@@ -215,7 +226,7 @@ const ITEMS = [
   ],
   [
     'pipeline',
-    '/admin/queue',
+    '/admin/review-queue',
     ListChecks,
     'Review Queue',
     'Triage what arrived: approve it for editing, send it back, or reject it.',
@@ -231,7 +242,7 @@ const ITEMS = [
   ],
   [
     'pipeline',
-    '/admin/published',
+    '/admin/publish',
     Newspaper,
     'Publish',
     'Push finished content live, now or on a schedule, and see what went out.',
@@ -325,7 +336,7 @@ const ITEMS = [
   ],
   [
     'amplify',
-    '/admin/mailing-list',
+    '/admin/newsletter-hub',
     Mail,
     'Newsletter Hub',
     'Build, review, send and measure newsletter issues; manage who receives them.',
@@ -333,7 +344,7 @@ const ITEMS = [
   ],
   [
     'amplify',
-    '/admin/social',
+    '/admin/social-hub',
     Share2,
     'Social Hub',
     'Schedule live pages to LinkedIn, X and other networks through Publer.',
@@ -341,7 +352,7 @@ const ITEMS = [
   ],
   [
     'amplify',
-    '/admin/linkie',
+    '/admin/linkie-hub',
     Link2,
     'Linkie Hub',
     'The link-in-bio profile: which pages it lists and how they perform.',
@@ -359,7 +370,7 @@ const ITEMS = [
   // Spotlight
   [
     'spotlight',
-    '/admin/speaking-events',
+    '/admin/speaking',
     Mic,
     'Speaking',
     'Talks, proposals and deadlines, synced from Sessionize and published to About.',
@@ -385,7 +396,7 @@ const ITEMS = [
   // Platform
   [
     'platform',
-    '/admin/platform',
+    '/admin/platform-settings',
     SlidersHorizontal,
     'Platform Settings',
     'Defaults the pipeline reads on every run: covers, voices, content types, autoposting — and the reminders sheet.',
@@ -410,6 +421,22 @@ const ITEMS = [
 ];
 
 /**
+ * A label as its route segment: lower case, `&` read as "and", every other
+ * run of non-alphanumerics one hyphen. "Listen & Learn" is listen-and-learn,
+ * "Platform Settings" is platform-settings.
+ */
+export function labelSlug(label) {
+  return String(label || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/** An item's id is its route's last segment; the dashboard, at the bare /admin, is `dashboard`. */
+const navId = (to) => (to === '/admin' ? 'dashboard' : to.slice('/admin/'.length));
+
+/**
  * One row of ITEMS as the registry entry the sidebar and the headers read.
  * A row without a role, or with a misspelt one, fails here at module load
  * rather than quietly showing the page to everyone or to no one — the same
@@ -420,6 +447,7 @@ const navItem = ([, to, icon, label, description, extra = {}]) => {
     throw new Error(`adminNav: ${label} (${to}) needs a minRole from ${ROLE_NAMES.join(', ')}`);
   }
   return {
+    id: navId(to),
     to,
     icon,
     label,
@@ -443,7 +471,7 @@ export const NAV_ITEMS = Object.freeze(NAV_GROUPS.flatMap((group) => group.items
 /**
  * The registry entry for a route, so a page header can show the same
  * description the sidebar does. Exact match first, then the longest prefix
- * (so /admin/queue/abc resolves to Review Queue), never the bare /admin for
+ * (so /admin/review-queue/abc resolves to Review Queue), never the bare /admin for
  * a deeper path.
  */
 export function navItemFor(pathname) {
@@ -455,6 +483,11 @@ export function navItemFor(pathname) {
       (a, b) => b.to.length - a.to.length
     )[0] || null
   );
+}
+
+/** The registry entry with this id (`review-queue`, `dashboard`), or null. */
+export function navItemById(id) {
+  return NAV_ITEMS.find((item) => item.id === id) || null;
 }
 
 /** The group an item belongs to. */

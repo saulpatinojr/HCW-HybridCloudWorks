@@ -93,20 +93,20 @@ export function waitingLabel(iso, nowMs = Date.now()) {
 
 /** The page holding each source's whole list, for "there are more" and "could not be read". */
 export const SOURCE_PAGES = Object.freeze({
-  'review-queue': '/admin/queue',
+  'review-queue': '/admin/review-queue',
   frameworks: '/admin/frameworks',
   'coder-corner': '/admin/coder-corner',
   editor: '/admin/editor',
-  'forge-ready': '/admin/queue?status=forge_ready',
-  'publish-ready': '/admin/published',
+  'forge-ready': '/admin/review-queue?status=forge_ready',
+  'publish-ready': '/admin/publish',
   'podcast-transcripts': '/admin/recording-hub?tab=transcripts',
   'listen-and-learn': '/admin/listen-and-learn?tab=review',
-  newsletters: '/admin/mailing-list?tab=newsletter',
-  social: '/admin/social?tab=queue',
+  newsletters: '/admin/newsletter-hub?tab=newsletter',
+  social: '/admin/social-hub?tab=queue',
   'forge-queue': '/admin/forge-studio?tab=queue',
   'workflow-alerts': '/admin/health?tab=alerts',
   'unresolved-secrets': '/admin/health?tab=overview',
-  reminders: '/admin/platform?tab=reminders',
+  reminders: '/admin/platform-settings?tab=reminders',
   ambassador: '/admin/ambassador?tab=applications',
 });
 

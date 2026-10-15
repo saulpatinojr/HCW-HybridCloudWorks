@@ -277,16 +277,18 @@ describe('approval loop (T-606)', () => {
       store: {
         readDoc: vi.fn(async (container, id) =>
           container === 'content' && id === 'doc-9'
-            ? { id: 'doc-9', contentStatus: 'forge_ready', Title: 'Staged post' }
+            ? { id: 'doc-9', contentStatus: 'forge_ready', Title: 'Staged post', _etag: '"e1"' }
             : null
         ),
       },
     });
     await bot.handleUpdate(message('/reject doc-9 too generic'));
+    // Under the read's ETag, as the portal's transition is (AP-F13, #937).
     expect(store.patchDoc).toHaveBeenCalledWith(
       'content',
       'doc-9',
-      expect.objectContaining({ contentStatus: 'rejected', Live: false })
+      expect.objectContaining({ contentStatus: 'rejected', Live: false }),
+      { ifMatch: '"e1"' }
     );
     const auditRow = store.upsertDoc.mock.calls.find((call) => call[0] === 'audits')?.[1];
     expect(auditRow).toBeDefined();
@@ -295,6 +297,34 @@ describe('approval loop (T-606)', () => {
     expect(auditRow.metadata.reviewedBy).toBe('telegram-bot');
     expect(auditRow.changes.notes).toBe('too generic');
     expect(send).toHaveBeenCalledWith(expect.stringContaining('rejected'));
+  });
+
+  it('/reject takes a live page down: the owner’s chat names the super_admin role the gate asks for', async () => {
+    // The transitioner refuses a call that names no role on a page the site
+    // serves (AP-F13, #937), so this passes only because the bot names one.
+    const { bot, store, send } = makeBot({
+      store: {
+        readDoc: vi.fn(async (container, id) =>
+          container === 'content' && id === 'doc-9'
+            ? {
+                id: 'doc-9',
+                contentStatus: 'published',
+                Live: true,
+                Title: 'Live post',
+                _etag: '"e2"',
+              }
+            : null
+        ),
+      },
+    });
+    await bot.handleUpdate(message('/reject doc-9 out of date'));
+    expect(store.patchDoc).toHaveBeenCalledWith(
+      'content',
+      'doc-9',
+      expect.objectContaining({ contentStatus: 'rejected', Live: false, Status: 'Rejected' }),
+      { ifMatch: '"e2"' }
+    );
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('is rejected (was published)'));
   });
 
   it('/reject refuses an invalid edge and names the allowed next steps', async () => {

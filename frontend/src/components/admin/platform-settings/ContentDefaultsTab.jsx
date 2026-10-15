@@ -136,7 +136,7 @@ export function DefaultCoversCard({ value, onChange, onSave, saving, meta }) {
   );
 }
 
-export const NEWSLETTER_SETTINGS_PATH = '/admin/mailing-list?tab=settings';
+export const NEWSLETTER_SETTINGS_PATH = '/admin/newsletter-hub?tab=settings';
 
 /** A pointer, not a copy: the newsletter's settings are edited in one place. */
 export function NewsletterSettingsLinkCard() {

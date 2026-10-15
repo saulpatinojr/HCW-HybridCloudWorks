@@ -201,7 +201,7 @@ function ContentActions({ item, busy, onReschedule, onUnschedule }) {
         </RoleGate>
       )}
       {item.status === 'failed' && (
-        <LinkAction to="/admin/published" icon={RotateCcw} primary>
+        <LinkAction to="/admin/publish" icon={RotateCcw} primary>
           Retry on Publish
         </LinkAction>
       )}

@@ -144,7 +144,7 @@ export const PAID_PLAN_REQUIRED = 'paid_plan_required';
  * Where the owner picks the podcast voices (#725). A 402 `paid_plan_required`
  * names it, because the fix for a paid-only voice is choosing another one.
  */
-export const VOICE_PICKER_PAGE = 'https://hybridcloudworks.com/admin/platform?tab=audio';
+export const VOICE_PICKER_PAGE = 'https://hybridcloudworks.com/admin/platform-settings?tab=audio';
 
 const FREE_TIER = 'free';
 const FREE_STATUSES = new Set(['free', 'free_disabled']);

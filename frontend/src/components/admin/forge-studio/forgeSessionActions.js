@@ -160,7 +160,7 @@ export function sendToReview(ctx) {
     await loadDoc(ctx, contentId);
     ctx.dispatch({
       type: 'notice',
-      notice: 'Sent to In Review. It is on the Content Queue; nothing was published.',
+      notice: 'Sent to In Review. It is on the Review Queue; nothing was published.',
     });
     return res;
   });

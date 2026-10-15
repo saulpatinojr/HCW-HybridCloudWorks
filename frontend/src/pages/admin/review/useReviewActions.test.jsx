@@ -82,7 +82,7 @@ describe('useReviewActions', () => {
       'c-1',
       expect.objectContaining({ publishTarget: 'blog' })
     );
-    expect(navigate).toHaveBeenCalledWith('/admin/queue?contentType=architecture');
+    expect(navigate).toHaveBeenCalledWith('/admin/review-queue?contentType=architecture');
   });
 
   it('publishFields puts the approve failure on the board and stays put', async () => {
@@ -97,16 +97,20 @@ describe('useReviewActions', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it('doFrameworkDelete deletes, writes the audit row and navigates', async () => {
+  it('doFrameworkDelete deletes and navigates, leaving the audit row to the server', async () => {
     postJSON.mockResolvedValueOnce({ ok: true });
     const { hook, navigate, toast } = setup();
     await act(async () => {
       await hook.result.current.doFrameworkDelete();
     });
+    // From any review status, as before: no expectedStatus is named.
+    expect(postJSON).toHaveBeenCalledTimes(1);
     expect(postJSON).toHaveBeenCalledWith('deleteContentItem', { contentId: 'c-1' });
-    expect(logAdminAction).toHaveBeenCalledWith('framework_deleted', { contentId: 'c-1' });
+    // deleteContentItem audits the delete itself (AP-F13, #937); a client
+    // row beside it would record the same delete twice.
+    expect(logAdminAction).not.toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith({ title: 'Framework deleted' });
-    expect(navigate).toHaveBeenCalledWith('/admin/queue?contentType=framework');
+    expect(navigate).toHaveBeenCalledWith('/admin/review-queue?contentType=framework');
     expect(hook.result.current.frameworkDeleteOpen).toBe(false);
   });
 });

@@ -152,7 +152,7 @@ describe('the podcast voices (#725)', () => {
 
   it('saves the draft with the provider’s "choose the voices first" sentence when none are chosen', async () => {
     const sentence =
-      'Choose the podcast voices first: no ElevenLabs voice is saved for Maya and Elena. Pick two under Podcast voices at https://hybridcloudworks.com/admin/platform?tab=audio, then run it again. Nothing was sent, so no credits were spent.';
+      'Choose the podcast voices first: no ElevenLabs voice is saved for Maya and Elena. Pick two under Podcast voices at https://hybridcloudworks.com/admin/platform-settings?tab=audio, then run it again. Nothing was sent, so no credits were spent.';
     const deps = happyDeps({
       synthesize: vi.fn(async () => {
         throw Object.assign(new SpeechError(sentence), { code: 'voices_not_chosen' });

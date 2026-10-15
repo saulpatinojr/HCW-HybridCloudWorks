@@ -12,7 +12,8 @@
 export const DRAFTS_ROUTE = 'cms/drafts';
 export const IMPORT_ROUTE = 'cms/drafts/import-repo';
 export const draftRoute = (id) => `${DRAFTS_ROUTE}/${encodeURIComponent(id)}`;
-export const reviewPath = (id) => `/admin/queue/${encodeURIComponent(id)}`;
+/** Where an article in review opens: its page on the Review Queue. */
+export const reviewPath = (id) => `/admin/review-queue/${encodeURIComponent(id)}`;
 
 /** The template's two tracks (docs/content/blog-template.md), offered, not enforced. */
 export const TRACK_SUGGESTIONS = Object.freeze(['how-to', 'build-log']);
@@ -184,7 +185,7 @@ export function deleteConfirmCopy(draft) {
     return {
       title: 'Delete this draft and its In Review item?',
       description:
-        'It has been sent to In Review. Deleting it removes it from Drafts and from the Content Queue. This cannot be undone.',
+        'It has been sent to In Review. Deleting it removes it from Drafts and from the Review Queue. This cannot be undone.',
     };
   }
   return {

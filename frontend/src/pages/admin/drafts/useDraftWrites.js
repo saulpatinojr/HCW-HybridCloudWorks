@@ -67,13 +67,17 @@ export function useDraftWrites({ editor, list, toast }) {
     runWrite('save', write, showAnswer());
   };
 
+  /**
+   * Send the draft to In Review under its ETag; the answer says where it went
+   * and that nothing was published.
+   */
   const sendToReview = () =>
     runWrite(
       'send',
       () => postJSON(`${draftRoute(current.id)}/send-to-review`, { etag: current.etag }),
       showAnswer({
         title: 'Sent to In Review',
-        description: 'It is on the Content Queue under In Review. Nothing was published.',
+        description: 'It is on the Review Queue under In Review. Nothing was published.',
       })
     );
 

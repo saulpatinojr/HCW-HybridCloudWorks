@@ -5,7 +5,7 @@
  * without pulling the lazily loaded page into the main bundle.
  */
 
-export const SPEAKING_EVENTS_PATH = '/admin/speaking-events';
+export const SPEAKING_EVENTS_PATH = '/admin/speaking';
 
 export const TABS = Object.freeze([
   { id: 'upcoming', label: 'Upcoming' },

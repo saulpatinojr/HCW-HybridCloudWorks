@@ -133,7 +133,7 @@ describe('voices', () => {
     expect(caught).toMatchObject({ name: 'SpeechError', provider: 'elevenlabs', code: VOICES_NOT_CHOSEN });
     expect(caught.message).toBe(
       'Choose the podcast voices first: no ElevenLabs voice is saved for Maya and Elena. ' +
-        'Pick two under Podcast voices at https://hybridcloudworks.com/admin/platform?tab=audio, then run it again. ' +
+        'Pick two under Podcast voices at https://hybridcloudworks.com/admin/platform-settings?tab=audio, then run it again. ' +
         'Nothing was sent, so no credits were spent.'
     );
     // Not even the account read: the pre-flight comes after the voices.
@@ -605,7 +605,7 @@ describe('out of credit', () => {
     expect(caught.message).toMatch(/refused this on the current plan/);
     // The fix first, pointing at the picker; ElevenLabs's own words after it.
     expect(caught.message).toMatch(
-      /Choose voices your plan allows under Podcast voices at https:\/\/hybridcloudworks\.com\/admin\/platform\?tab=audio\. ElevenLabs said: .*Free users cannot use library voices/
+      /Choose voices your plan allows under Podcast voices at https:\/\/hybridcloudworks\.com\/admin\/platform-settings\?tab=audio\. ElevenLabs said: .*Free users cannot use library voices/
     );
     expect(caught.message).not.toMatch(/out of credit/);
     expect(posted).toHaveBeenCalledTimes(1);

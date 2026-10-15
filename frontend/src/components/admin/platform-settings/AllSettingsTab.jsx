@@ -33,7 +33,7 @@ export const SETTINGS_INDEX = Object.freeze([
     storedAt: 'admin_config/default_heroes',
     editedIn: 'Platform Settings → Content defaults',
     readBy: 'The AI cover trigger, when a post has no cover of its own.',
-    href: '/admin/platform?tab=content',
+    href: '/admin/platform-settings?tab=content',
     history: true,
   },
   {
@@ -42,7 +42,7 @@ export const SETTINGS_INDEX = Object.freeze([
     storedAt: 'admin_config/content_taxonomy',
     editedIn: 'Platform Settings → Content types & origins',
     readBy: 'Every content form and board; absent values derive from the source field.',
-    href: '/admin/platform?tab=taxonomy',
+    href: '/admin/platform-settings?tab=taxonomy',
     history: true,
   },
   {
@@ -51,7 +51,7 @@ export const SETTINGS_INDEX = Object.freeze([
     storedAt: 'admin_config/social_autopost',
     editedIn: 'Platform Settings → Social automation',
     readBy: 'The social caption trigger on a live publish, posting through Publer.',
-    href: '/admin/platform?tab=social',
+    href: '/admin/platform-settings?tab=social',
     history: true,
   },
   {
@@ -60,7 +60,7 @@ export const SETTINGS_INDEX = Object.freeze([
     storedAt: 'admin_config/podcast_feeds',
     editedIn: 'Platform Settings → Audio',
     readBy: 'The podcast ingest timer.',
-    href: '/admin/platform?tab=audio',
+    href: '/admin/platform-settings?tab=audio',
     history: true,
   },
   {
@@ -69,7 +69,7 @@ export const SETTINGS_INDEX = Object.freeze([
     storedAt: 'admin_config/podcast_voices',
     editedIn: 'Platform Settings → Audio',
     readBy: 'Every podcast render and the ElevenLabs live check.',
-    href: '/admin/platform?tab=audio',
+    href: '/admin/platform-settings?tab=audio',
     history: true,
   },
   {
@@ -78,7 +78,7 @@ export const SETTINGS_INDEX = Object.freeze([
     storedAt: 'admin_config/listen_and_learn_speech',
     editedIn: 'Platform Settings → Audio',
     readBy: 'The Listen & Learn episode generator.',
-    href: '/admin/platform?tab=audio',
+    href: '/admin/platform-settings?tab=audio',
     history: true,
   },
   {
@@ -87,7 +87,7 @@ export const SETTINGS_INDEX = Object.freeze([
     storedAt: 'admin_config/reminders',
     editedIn: 'Platform Settings → Reminders',
     readBy: 'The daily reminder check, which says each dated reminder on Telegram.',
-    href: '/admin/platform?tab=reminders',
+    href: '/admin/platform-settings?tab=reminders',
     history: true,
   },
   {
@@ -96,7 +96,7 @@ export const SETTINGS_INDEX = Object.freeze([
     storedAt: 'admin_config/newsletter_settings',
     editedIn: 'Newsletter Hub → Settings',
     readBy: 'Issue building, the send schedule and the public signup box.',
-    href: '/admin/mailing-list?tab=settings',
+    href: '/admin/newsletter-hub?tab=settings',
     history: true,
   },
   {

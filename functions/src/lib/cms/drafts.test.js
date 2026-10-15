@@ -43,6 +43,7 @@ import {
   isPublicDocument,
 } from "../public-reads.js";
 import { PUBLISHED_PREDICATE } from "../public-content-manifest.js";
+import { evaluatePredicate } from "../../../test/cosmos-predicate.js";
 import { PREVIEWABLE_STATUSES } from "../public-preview.js";
 import { classifyContentBucket } from "../triggers/dashboard-stats.js";
 import {
@@ -703,31 +704,10 @@ describe("toDraftSummary", () => {
 
 // ── never public ───────────────────────────────────────────────────────────
 
-/**
- * Evaluate the SQL predicates a public read runs, as written, against a
- * document. Only the forms those predicates use are understood — `c.X = v`,
- * `c.X IN (...)`, joined by OR — and anything else throws, so a predicate
- * that grows a new form fails this test rather than being skipped by it.
- */
-function evaluatePredicate(predicate, doc) {
-  const literal = (raw) => {
-    const value = raw.trim();
-    if (value === "true") return true;
-    if (value === "false") return false;
-    const quoted = /^(["'])(.*)\1$/.exec(value);
-    if (!quoted) throw new Error(`unreadable literal ${value}`);
-    return quoted[2];
-  };
-  const body = predicate.trim().replace(/^\((.*)\)$/s, "$1");
-  return body.split(/\s+OR\s+/).some((term) => {
-    const inList = /^c\.(\w+) IN \((.*)\)$/.exec(term.trim());
-    if (inList)
-      return inList[2].split(",").map(literal).includes(doc[inList[1]]);
-    const equals = /^c\.(\w+) = (.+)$/.exec(term.trim());
-    if (equals) return doc[equals[1]] === literal(equals[2]);
-    throw new Error(`unreadable predicate term ${term}`);
-  });
-}
+// evaluatePredicate (test/cosmos-predicate.js) runs the SQL a public read
+// runs, as written, against a document, and throws on any form it does not
+// understand, so a predicate that grows a new form fails this test rather
+// than being skipped by it.
 
 describe("a draft never reaches a public read", () => {
   const imported = asImportedDraft(

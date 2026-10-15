@@ -241,7 +241,6 @@ export default function ImagePromptsPage() {
     <div className="space-y-5">
       <PageHeader
         icon={ImageIcon}
-        title="Image Prompts"
         help={HELP}
         status={
           library ? (

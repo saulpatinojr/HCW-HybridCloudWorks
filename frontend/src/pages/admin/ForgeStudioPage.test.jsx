@@ -260,7 +260,7 @@ describe('the workspace', () => {
     );
     expect(screen.getByRole('link', { name: 'Open the Social Hub' })).toHaveAttribute(
       'href',
-      '/admin/social?tab=compose&contentId=c1'
+      '/admin/social-hub?tab=compose&contentId=c1'
     );
     expect(screen.getByRole('link', { name: 'Open Image Prompts' })).toHaveAttribute(
       'href',
@@ -272,12 +272,12 @@ describe('the workspace', () => {
     );
     expect(screen.getByRole('link', { name: 'Open Publish' })).toHaveAttribute(
       'href',
-      '/admin/published'
+      '/admin/publish'
     );
     // Staged by the forge, so review happens on the Queue rather than through the Drafts edge.
-    expect(screen.getByRole('link', { name: 'Open on the Content Queue' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Open on the Review Queue' })).toHaveAttribute(
       'href',
-      '/admin/queue/c1'
+      '/admin/review-queue/c1'
     );
   });
 

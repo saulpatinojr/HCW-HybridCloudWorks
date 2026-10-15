@@ -109,7 +109,7 @@ const BUDGETED = [
  * none of these three routes can reach it first.
  */
 const HTTP_ROUTES_THAT_REACH_A_MODEL = Object.freeze({
-  'draft-http.js': 'budget: DRAFT_HTTP_BUDGET_MS',
+  'generate-article-draft-http.js': 'budget: DRAFT_HTTP_BUDGET_MS',
   'recording-content-http.js': 'budget: RECORDING_DRAFT_HTTP_BUDGET_MS',
   'newsletter-admin-http.js': 'budget: NEWSLETTER_AI_BUDGET_MS',
   'social-caption-http.js': 'budget: CAPTION_AI_BUDGET_MS',

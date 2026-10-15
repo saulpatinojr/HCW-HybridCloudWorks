@@ -446,7 +446,11 @@ export function planPatch(updates) {
 async function readModifyWrite(container, id, pk, entries, attempt = 0, ifMatch = null) {
   const { resource: current } = await container.item(id, pk).read();
   if (!current) {
-    throw new Error(`patchDoc: document ${id} does not exist`);
+    // The SDK's read answers a missing item with no resource rather than
+    // throwing, so the code is set here: a caller tells "gone" from "moved"
+    // by `code` on this path exactly as on the patch path, where the SDK
+    // throws its own 404.
+    throw Object.assign(new Error(`patchDoc: document ${id} does not exist`), { code: 404 });
   }
   // The caller decided this update from an earlier read. If the document moved
   // since then, applying the update to what we just read would write a

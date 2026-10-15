@@ -198,7 +198,7 @@ describe('the admin sidebar', () => {
   it('labels the newsletter page Newsletter Hub', () => {
     renderAdmin();
     const link = screen.getByRole('link', { name: 'Newsletter Hub' });
-    expect(link).toHaveAttribute('href', '/admin/mailing-list');
+    expect(link).toHaveAttribute('href', '/admin/newsletter-hub');
     expect(screen.queryByText('Mailing List')).not.toBeInTheDocument();
   });
 
@@ -324,7 +324,7 @@ describe('the admin sidebar', () => {
       const nav = rail();
       expect(await nav.findByRole('link', { name: /^Publish/ })).toHaveAttribute(
         'href',
-        '/admin/published'
+        '/admin/publish'
       );
       expect(nav.getByRole('link', { name: 'Integrations' })).toBeInTheDocument();
       expect(nav.getByRole('link', { name: 'Platform Settings' })).toBeInTheDocument();
@@ -379,7 +379,7 @@ describe('the phone drawer', () => {
             <Routes>
               <Route path="/admin" element={<AdminLayout />}>
                 <Route path="labs" element={<h1>Labs page</h1>} />
-                <Route path="queue" element={<h1>Queue page</h1>} />
+                <Route path="review-queue" element={<h1>Queue page</h1>} />
               </Route>
             </Routes>
           </MemoryRouter>

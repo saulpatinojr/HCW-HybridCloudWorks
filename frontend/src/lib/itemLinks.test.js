@@ -26,16 +26,16 @@ import { REVIEW_DECISION_STATUSES } from '../../../functions/src/lib/cms/content
 describe('contentItemHref — one place maps a stage to its page', () => {
   it('opens each stage where it is worked', () => {
     expect(contentItemHref({ id: 'a', contentStatus: 'ingested' })).toBe(
-      '/admin/queue/a?source=content'
+      '/admin/review-queue/a?source=content'
     );
     expect(contentItemHref({ id: 'a', contentStatus: 'in_review' })).toBe(
-      '/admin/queue/a?source=content'
+      '/admin/review-queue/a?source=content'
     );
     expect(contentItemHref({ id: 'a', contentStatus: 'approved' })).toBe('/admin/editor/a');
     expect(contentItemHref({ id: 'a', contentStatus: 'needs_rework' })).toBe('/admin/editor/a');
     expect(contentItemHref({ id: 'a', contentStatus: 'drafting' })).toBe('/admin/drafts');
     expect(contentItemHref({ id: 'a', contentStatus: 'approved', Live: true })).toBe(
-      '/admin/queue/a?source=content'
+      '/admin/review-queue/a?source=content'
     );
     expect(contentItemHref({ id: 'a/b', contentStatus: 'editing' })).toBe('/admin/editor/a%2Fb');
   });
@@ -69,7 +69,7 @@ describe('decisionHref', () => {
   it('builds a content item’s link from its status, whatever the API sent', () => {
     const item = {
       status: 'approved',
-      href: '/admin/queue/c1?source=content',
+      href: '/admin/review-queue/c1?source=content',
       source: { collection: 'content', id: 'c1', Live: false },
     };
     expect(decisionHref(item)).toBe('/admin/editor/c1');
@@ -84,7 +84,7 @@ describe('decisionHref', () => {
     expect(at('javascript:alert(1)')).toBe('/admin');
     expect(at('/administrator')).toBe('/admin');
     expect(at(undefined)).toBe('/admin');
-    expect(isAdminPath('/admin/queue\\x')).toBe(false);
+    expect(isAdminPath('/admin/review-queue\\x')).toBe(false);
   });
 });
 
@@ -115,7 +115,7 @@ describe('the API’s deep links name a tab and a parameter each page reads', ()
   it('issue → Newsletter Hub, on the tab it waits on', () => {
     for (const view of ['newsletter', 'drafts']) {
       const { path, tab, params } = parse(api.newsletterIssueHref('issue-1', view));
-      expect(path).toBe('/admin/mailing-list');
+      expect(path).toBe('/admin/newsletter-hub');
       expect(tab).toBe(view);
       expect(params.get(LINK_PARAMS.issue)).toBe('issue-1');
     }
@@ -123,7 +123,7 @@ describe('the API’s deep links name a tab and a parameter each page reads', ()
 
   it('reminder → Platform Settings, Reminders', () => {
     const { path, tab, params } = parse(api.reminderHref('r1'));
-    expect(path).toBe('/admin/platform');
+    expect(path).toBe('/admin/platform-settings');
     expect(tab).toBe('reminders');
     expect(params.get(LINK_PARAMS.reminder)).toBe('r1');
   });

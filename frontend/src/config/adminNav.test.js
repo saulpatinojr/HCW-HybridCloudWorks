@@ -3,7 +3,9 @@ import {
   NAV_GROUPS,
   NAV_ITEMS,
   ROLE_NAMES,
+  labelSlug,
   navGroupFor,
+  navItemById,
   navItemFor,
   roleLabel,
   roleLevel,
@@ -14,12 +16,51 @@ import {
 describe('navItemFor', () => {
   it('matches a route exactly, then by longest prefix, never the bare /admin for deeper paths', () => {
     expect(navItemFor('/admin').label).toBe('Dashboard');
-    expect(navItemFor('/admin/queue').label).toBe('Review Queue');
-    expect(navItemFor('/admin/queue/abc123').label).toBe('Review Queue');
+    expect(navItemFor('/admin/review-queue').label).toBe('Review Queue');
+    expect(navItemFor('/admin/review-queue/abc123').label).toBe('Review Queue');
     expect(navItemFor('/admin/editor/abc123').label).toBe('Editor');
     expect(navItemFor('/admin/ai-engine/docs/gemini').label).toBe('AI Engine');
     expect(navItemFor('/admin/nope')).toBeNull();
     expect(navItemFor('')).toBeNull();
+  });
+
+  it('does not read a renamed slug as a prefix of its old one', () => {
+    // /admin/platform-settings must not resolve through /admin/platform (the
+    // old slug, now a redirect) and the reverse; only an exact match or a
+    // deeper path under the item counts.
+    expect(navItemFor('/admin/platform')).toBeNull();
+    expect(navItemFor('/admin/platform-settings').label).toBe('Platform Settings');
+  });
+});
+
+/**
+ * The finding (AP-F13, #937): the menu said "Publish", the address bar said
+ * /admin/published, the heading said something else again. The route is the
+ * label's slug, so the three cannot drift; the old slugs are redirects
+ * (adminRedirects.test.jsx).
+ */
+describe('the route is the label', () => {
+  it('slugs a label the way the routes are spelt', () => {
+    expect(labelSlug('Review Queue')).toBe('review-queue');
+    expect(labelSlug('Listen & Learn')).toBe('listen-and-learn');
+    expect(labelSlug('Platform Settings')).toBe('platform-settings');
+    expect(labelSlug('  Dashboard ')).toBe('dashboard');
+  });
+
+  it('routes every item at /admin/<slug of its label>', () => {
+    for (const item of NAV_ITEMS) {
+      const expected = item.label === 'Dashboard' ? '/admin' : `/admin/${labelSlug(item.label)}`;
+      expect(item.to, item.label).toBe(expected);
+    }
+  });
+
+  it('gives every item a unique id, the route segment, findable by navItemById', () => {
+    const ids = NAV_ITEMS.map((item) => item.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(navItemById('dashboard').to).toBe('/admin');
+    expect(navItemById('review-queue').label).toBe('Review Queue');
+    expect(navItemById('newsletter-hub').to).toBe('/admin/newsletter-hub');
+    expect(navItemById('queue')).toBeNull();
   });
 });
 
