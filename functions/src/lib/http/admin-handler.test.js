@@ -29,20 +29,54 @@ describe('listAllHandler', () => {
     expect(store.queryDocs).not.toHaveBeenCalled();
   });
 
-  it('answers every document of the container with its total', async () => {
+  it('answers every document of the container with its total and deterministic order', async () => {
     const store = { queryDocs: vi.fn(async () => [{ id: 'a' }, { id: 'b' }]) };
     const guard = { requireRole: vi.fn(async () => ({ error: null, user: {} })) };
     const res = await listAllHandler({ guard, store }, spec)({}, context);
     expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'editor');
     expect(store.queryDocs).toHaveBeenCalledWith(
       'things',
-      `SELECT TOP ${LIST_WINDOW} * FROM c`,
+      `SELECT TOP ${LIST_WINDOW} * FROM c ORDER BY c._ts DESC`,
       []
     );
     expect(JSON.parse(res.body)).toEqual({
       success: true,
       items: [{ id: 'a' }, { id: 'b' }],
       total: 2,
+      continuationToken: null,
+    });
+  });
+
+  it('standardizes continuation-token pagination using queryDocsPage (AP-B11)', async () => {
+    const store = {
+      queryDocsPage: vi.fn(async () => ({
+        resources: [{ id: 'item-1' }],
+        continuationToken: 'token-page-2',
+        hasMoreResults: true,
+      })),
+    };
+    const guard = { requireRole: vi.fn(async () => ({ error: null, user: {} })) };
+    const request = {
+      query: {
+        get: (k) => (k === 'limit' ? '25' : k === 'continuationToken' ? 'token-page-1' : null),
+      },
+    };
+    const res = await listAllHandler({ guard, store }, spec)(request, context);
+    expect(res.status).toBe(200);
+    expect(store.queryDocsPage).toHaveBeenCalledWith(
+      'things',
+      'SELECT * FROM c ORDER BY c._ts DESC',
+      [],
+      {
+        maxItemCount: 25,
+        continuationToken: 'token-page-1',
+      }
+    );
+    expect(JSON.parse(res.body)).toEqual({
+      success: true,
+      items: [{ id: 'item-1' }],
+      total: 1,
+      continuationToken: 'token-page-2',
     });
   });
 

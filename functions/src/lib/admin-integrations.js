@@ -84,6 +84,154 @@ async function listRecordings(ctx, request, context) {
   }
 }
 
+export const RECORDING_CREATE_FIELDS = [
+  'title',
+  'transcript',
+  'url',
+  'summary',
+  'audioUrl',
+  'duration',
+  'topics',
+  'speakers',
+  'metadata',
+];
+
+export const RECORDING_PATCH_FIELDS = [
+  'title',
+  'transcript',
+  'url',
+  'summary',
+  'audioUrl',
+  'duration',
+  'topics',
+  'speakers',
+  'metadata',
+  'status',
+  'contentId',
+];
+
+export const RECORDING_STATUSES = ['new', 'processing', 'routed', 'failed', 'archived'];
+
+export const INTEGRATIONS_SETTINGS_FIELDS = ['sessionizeSpeakerId', 'speakerProfile'];
+
+function validateRecordingCreate(body) {
+  const unknown = Object.keys(body).filter((key) => !RECORDING_CREATE_FIELDS.includes(key));
+  if (unknown.length > 0) {
+    return { error: `Unknown field(s): ${unknown.join(', ')}` };
+  }
+  const title = String(body.title || '').trim();
+  const transcript = String(body.transcript || '').trim();
+  if (!title || !transcript) {
+    return { error: 'title and transcript are required' };
+  }
+  const doc = { title, transcript };
+  if (body.url !== undefined) {
+    if (body.url !== null && !/^https?:\/\//i.test(String(body.url).trim())) {
+      return { error: 'url must be http(s) URL' };
+    }
+    doc.url = body.url ? String(body.url).trim() : null;
+  }
+  if (body.audioUrl !== undefined) {
+    if (body.audioUrl !== null && !/^https?:\/\//i.test(String(body.audioUrl).trim())) {
+      return { error: 'audioUrl must be http(s) URL' };
+    }
+    doc.audioUrl = body.audioUrl ? String(body.audioUrl).trim() : null;
+  }
+  if (body.summary !== undefined) doc.summary = String(body.summary || '').trim();
+  if (body.duration !== undefined) {
+    const d = Number(body.duration);
+    if (!Number.isFinite(d) || d < 0) return { error: 'duration must be a non-negative number' };
+    doc.duration = d;
+  }
+  if (body.topics !== undefined) {
+    if (!Array.isArray(body.topics) || body.topics.some((t) => typeof t !== 'string')) {
+      return { error: 'topics must be an array of strings' };
+    }
+    doc.topics = body.topics;
+  }
+  if (body.speakers !== undefined) {
+    if (!Array.isArray(body.speakers) || body.speakers.some((s) => typeof s !== 'string')) {
+      return { error: 'speakers must be an array of strings' };
+    }
+    doc.speakers = body.speakers;
+  }
+  if (body.metadata !== undefined) {
+    if (typeof body.metadata !== 'object' || Array.isArray(body.metadata) || body.metadata === null) {
+      return { error: 'metadata must be an object' };
+    }
+    doc.metadata = body.metadata;
+  }
+  return { doc };
+}
+
+function validateRecordingPatch(body) {
+  const { id: _ignored, ...updates } = body;
+  const unknown = Object.keys(updates).filter((key) => !RECORDING_PATCH_FIELDS.includes(key));
+  if (unknown.length > 0) {
+    return { error: `Unknown field(s): ${unknown.join(', ')}` };
+  }
+  if (Object.keys(updates).length === 0) {
+    return { error: 'Body must contain at least one updatable field' };
+  }
+  const clean = {};
+  if (updates.status !== undefined) {
+    if (!RECORDING_STATUSES.includes(updates.status)) {
+      return { error: `status must be one of: ${RECORDING_STATUSES.join(', ')}` };
+    }
+    clean.status = updates.status;
+  }
+  if (updates.contentId !== undefined) {
+    clean.contentId = updates.contentId === null ? null : String(updates.contentId).trim();
+  }
+  if (updates.title !== undefined) {
+    const title = String(updates.title || '').trim();
+    if (!title) return { error: 'title cannot be empty' };
+    clean.title = title;
+  }
+  if (updates.transcript !== undefined) {
+    const transcript = String(updates.transcript || '').trim();
+    if (!transcript) return { error: 'transcript cannot be empty' };
+    clean.transcript = transcript;
+  }
+  if (updates.url !== undefined) {
+    if (updates.url !== null && !/^https?:\/\//i.test(String(updates.url).trim())) {
+      return { error: 'url must be http(s) URL' };
+    }
+    clean.url = updates.url ? String(updates.url).trim() : null;
+  }
+  if (updates.audioUrl !== undefined) {
+    if (updates.audioUrl !== null && !/^https?:\/\//i.test(String(updates.audioUrl).trim())) {
+      return { error: 'audioUrl must be http(s) URL' };
+    }
+    clean.audioUrl = updates.audioUrl ? String(updates.audioUrl).trim() : null;
+  }
+  if (updates.summary !== undefined) clean.summary = String(updates.summary || '').trim();
+  if (updates.duration !== undefined) {
+    const d = Number(updates.duration);
+    if (!Number.isFinite(d) || d < 0) return { error: 'duration must be a non-negative number' };
+    clean.duration = d;
+  }
+  if (updates.topics !== undefined) {
+    if (!Array.isArray(updates.topics) || updates.topics.some((t) => typeof t !== 'string')) {
+      return { error: 'topics must be an array of strings' };
+    }
+    clean.topics = updates.topics;
+  }
+  if (updates.speakers !== undefined) {
+    if (!Array.isArray(updates.speakers) || updates.speakers.some((s) => typeof s !== 'string')) {
+      return { error: 'speakers must be an array of strings' };
+    }
+    clean.speakers = updates.speakers;
+  }
+  if (updates.metadata !== undefined) {
+    if (typeof updates.metadata !== 'object' || Array.isArray(updates.metadata) || updates.metadata === null) {
+      return { error: 'metadata must be an object' };
+    }
+    clean.metadata = updates.metadata;
+  }
+  return { updates: clean };
+}
+
 /** POST /api/cms/recordings — both page paths require title + transcript. */
 async function createRecording(ctx, request, context) {
   const auth = await ctx.guard.requireRole(request, 'editor');
@@ -91,13 +239,12 @@ async function createRecording(ctx, request, context) {
   try {
     const body = validBody(await request.json().catch(() => null));
     if (!body) return json(400, { error: 'Body must be a JSON object' });
-    if (!String(body.title || '').trim() || !String(body.transcript || '').trim()) {
-      return json(400, { error: 'title and transcript are required' });
-    }
+    const checked = validateRecordingCreate(body);
+    if (checked.error) return json(400, { error: checked.error });
     const doc = {
-      status: 'new',
-      ...body,
+      ...checked.doc,
       id: ctx.uuid(),
+      status: 'new',
       createdAt: ctx.now().toISOString(),
     };
     await ctx.store.upsertDoc('recordings', doc);
@@ -118,8 +265,9 @@ async function prepareRecordingPatch(store, request) {
   }
   const existing = await store.readDoc('recordings', id, id);
   if (!existing) return { error: json(404, { error: `recording ${id} not found` }) };
-  const { id: _ignored, ...updates } = body;
-  return { id, updates };
+  const checked = validateRecordingPatch(body);
+  if (checked.error) return { error: json(400, { error: checked.error }) };
+  return { id, updates: checked.updates };
 }
 
 /** PATCH /api/cms/recordings/{id} — routing updates (status, contentId). */
@@ -186,6 +334,39 @@ async function auditSpeakerIdChange(ctx, { user, existing, updates, nowIso }, co
   }
 }
 
+function validateIntegrationsSettings(body) {
+  const { id: _ignored, ...updates } = body;
+  const unknown = Object.keys(updates).filter((key) => !INTEGRATIONS_SETTINGS_FIELDS.includes(key));
+  if (unknown.length > 0) {
+    return { error: `Unknown field(s): ${unknown.join(', ')}` };
+  }
+  const clean = {};
+  if (updates.sessionizeSpeakerId !== undefined) {
+    clean.sessionizeSpeakerId = updates.sessionizeSpeakerId === null ? null : String(updates.sessionizeSpeakerId).trim();
+  }
+  if (updates.speakerProfile !== undefined) {
+    if (typeof updates.speakerProfile !== 'object' || Array.isArray(updates.speakerProfile) || updates.speakerProfile === null) {
+      return { error: 'speakerProfile must be an object' };
+    }
+    const profile = {};
+    if (updates.speakerProfile.name !== undefined) profile.name = String(updates.speakerProfile.name || '').trim();
+    if (updates.speakerProfile.bio !== undefined) profile.bio = String(updates.speakerProfile.bio || '').trim();
+    if (updates.speakerProfile.headshotUrl !== undefined) {
+      const u = String(updates.speakerProfile.headshotUrl || '').trim();
+      if (u && !/^https?:\/\//i.test(u)) return { error: 'headshotUrl must be http(s) URL' };
+      profile.headshotUrl = u || null;
+    }
+    if (updates.speakerProfile.links !== undefined) {
+      if (!Array.isArray(updates.speakerProfile.links)) return { error: 'speakerProfile.links must be an array' };
+      profile.links = updates.speakerProfile.links
+        .filter((l) => l && typeof l === 'object' && /^https?:\/\//i.test(String(l.url || '')))
+        .map((l) => ({ label: String(l.label || l.url).trim(), url: String(l.url).trim() }));
+    }
+    clean.speakerProfile = profile;
+  }
+  return { updates: clean };
+}
+
 /** PUT /api/cms/settings — merge-save (setDoc merge:true semantics). */
 async function putSettings(ctx, request, context) {
   const auth = await ctx.guard.requireRole(request, 'editor');
@@ -195,13 +376,33 @@ async function putSettings(ctx, request, context) {
     if (!body || Object.keys(body).length === 0) {
       return json(400, { error: 'Body must be a non-empty JSON object' });
     }
-    const { id: _ignored, ...updates } = body;
+    const checked = validateIntegrationsSettings(body);
+    if (checked.error) return json(400, { error: checked.error });
+    const { updates } = checked;
     const nowIso = ctx.now().toISOString();
-    const existing = await ctx.store.readDoc(SETTINGS_CONTAINER, SETTINGS_DOC_ID, SETTINGS_DOC_ID);
-    const fields = { ...updates, updatedAt: nowIso };
-    const settings = existing
-      ? await ctx.store.patchDoc(SETTINGS_CONTAINER, SETTINGS_DOC_ID, fields)
-      : await ctx.store.upsertDoc(SETTINGS_CONTAINER, { id: SETTINGS_DOC_ID, ...fields });
+
+    let settings;
+    let existing;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      existing = await ctx.store.readDoc(SETTINGS_CONTAINER, SETTINGS_DOC_ID, SETTINGS_DOC_ID);
+      const fields = { ...updates, updatedAt: nowIso };
+      try {
+        if (existing) {
+          settings = existing._etag
+            ? await ctx.store.patchDoc(SETTINGS_CONTAINER, SETTINGS_DOC_ID, fields, {
+                ifMatch: existing._etag,
+              })
+            : await ctx.store.patchDoc(SETTINGS_CONTAINER, SETTINGS_DOC_ID, fields);
+        } else {
+          settings = await ctx.store.upsertDoc(SETTINGS_CONTAINER, { id: SETTINGS_DOC_ID, ...fields });
+        }
+        break;
+      } catch (err) {
+        if ((err?.code === 412 || err?.code === 409) && attempt < 2) continue;
+        throw err;
+      }
+    }
+
     if (Object.prototype.hasOwnProperty.call(updates, 'sessionizeSpeakerId')) {
       await auditSpeakerIdChange(ctx, { user: auth.user, existing, updates, nowIso }, context);
     }

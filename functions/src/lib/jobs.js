@@ -236,10 +236,23 @@ export function newJobDoc({ id, type, payload, requestedBy, createdAt }) {
   };
 }
 
+function maskEmail(value) {
+  if (typeof value !== 'string') return null;
+  const at = value.lastIndexOf('@');
+  if (at < 1 || at === value.length - 1) return '***';
+  return `${value[0]}***@${value.slice(at + 1)}`;
+}
+
 /** The document as a client sees it. */
 export function publicJob(doc) {
   const out = {};
   for (const [k, v] of Object.entries(doc)) if (!SYSTEM_FIELDS.has(k)) out[k] = v;
+  if (out.requestedBy && typeof out.requestedBy === 'object') {
+    out.requestedBy = {
+      ...out.requestedBy,
+      email: out.requestedBy.email ? maskEmail(out.requestedBy.email) : null,
+    };
+  }
   return out;
 }
 
@@ -394,6 +407,14 @@ export function createJobHandlers({
       try {
         const doc = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
         if (!doc) return json(404, { ok: false, error: 'Job not found' });
+
+        const spec = types.get(doc.type);
+        const requiredRole = spec?.role;
+        if (requiredRole && roleLevel(requiredRole) > roleLevel('editor')) {
+          const stricter = await guard.requireRole(request, requiredRole);
+          if (stricter.error) return stricter.error;
+        }
+
         return json(200, { ok: true, job: publicJob(doc) });
       } catch (error) {
         context.error?.('getJob failed:', error);
@@ -457,15 +478,22 @@ export function createJobHandlers({
         throw error;
       }
 
+      const controller = new AbortController();
       let timer;
       const timeout = new Promise((_, reject) => {
         timer = setTimeout(
-          () =>
+          () => {
+            controller.abort(
+              Object.assign(new Error('job timed out'), {
+                code: 'JOB_TIMEOUT',
+              })
+            );
             reject(
               Object.assign(new Error('job timed out'), {
                 code: 'JOB_TIMEOUT',
               })
-            ),
+            );
+          },
           spec.timeoutMs
         );
       });
@@ -484,7 +512,13 @@ export function createJobHandlers({
 
       try {
         const result = await Promise.race([
-          spec.worker(doc.payload, { context, job: claimed, now }),
+          spec.worker(doc.payload, {
+            context,
+            job: claimed,
+            now,
+            signal: controller.signal,
+            abortSignal: controller.signal,
+          }),
           timeout,
         ]);
         await store.patchDoc(JOBS_CONTAINER, jobId, {
@@ -537,6 +571,7 @@ export function createJobHandlers({
 
 export const STALE_QUEUED_MS = 10 * 60 * 1000;
 export const SWEEP_BATCH = 20;
+export const MAX_REQUEUE_COUNT = 3;
 /**
  * Margin added to a job type's own timeoutMs before the sweeper will call a
  * `running` job abandoned (T-710). It absorbs clock skew between the worker
@@ -550,8 +585,11 @@ export const RUNNING_GRACE_MS = 5 * 60 * 1000;
  * @param {{ queryDocs: Function, patchDoc: Function }} deps.store
  * @param {() => Date} [deps.now]
  * @param {{ log?: Function, warn?: Function }} [deps.log]
+ * @param {Map<string, object>} [deps.registry]
  */
-export function createJobSweeper({ store, now = () => new Date(), log = {} }) {
+export function createJobSweeper({ store, now = () => new Date(), log = {}, registry: customRegistry } = {}) {
+  const typesToUse = customRegistry || registry;
+
   /**
    * Jobs abandoned in `running` (T-710).
    *
@@ -568,11 +606,11 @@ export function createJobSweeper({ store, now = () => new Date(), log = {} }) {
    * for half an hour. A job is reaped only once its OWN budget plus a grace
    * margin has elapsed, so a slow-but-live worker is never stolen from.
    */
-  async function reapAbandoned(types) {
+  async function reapAbandoned(types = typesToUse) {
     const cutoff = new Date(now().getTime() - RUNNING_GRACE_MS).toISOString();
     const running = await store.queryDocs(
       JOBS_CONTAINER,
-      `SELECT TOP ${SWEEP_BATCH} c.id, c.type, c.startedAt, c.attempts FROM c WHERE c.status = 'running' AND IS_DEFINED(c.startedAt) AND c.startedAt < @cutoff`,
+      `SELECT TOP ${SWEEP_BATCH} c.id, c.type, c.startedAt, c.attempts, c._etag FROM c WHERE c.status = 'running' AND IS_DEFINED(c.startedAt) AND c.startedAt < @cutoff`,
       [{ name: '@cutoff', value: cutoff }]
     );
     const reaped = [];
@@ -596,7 +634,12 @@ export function createJobSweeper({ store, now = () => new Date(), log = {} }) {
         (budget + RUNNING_GRACE_MS) / 60000
       )} minutes (worker process lost)`;
       try {
-        await store.patchDoc(JOBS_CONTAINER, doc.id, { status: 'timeout', finishedAt, error });
+        const update = { status: 'timeout', finishedAt, error };
+        if (doc._etag) {
+          await store.patchDoc(JOBS_CONTAINER, doc.id, update, { ifMatch: doc._etag });
+        } else {
+          await store.patchDoc(JOBS_CONTAINER, doc.id, update);
+        }
         reaped.push({ jobId: doc.id, type: doc.type });
         // Same best-effort contract as runJob's: a throwing hook is logged and
         // never changes the outcome that was already written.
@@ -621,31 +664,68 @@ export function createJobSweeper({ store, now = () => new Date(), log = {} }) {
 
   return {
     reapAbandoned,
-    /** @returns {Promise<{ requeued: {jobId: string, type: string}[] }>} */
+    /** @returns {Promise<{ requeued: {jobId: string, type: string}[], reaped: {jobId: string, type: string}[] }>} */
     async sweep() {
       const cutoff = new Date(now().getTime() - STALE_QUEUED_MS).toISOString();
       const stale = await store.queryDocs(
         JOBS_CONTAINER,
-        `SELECT TOP ${SWEEP_BATCH} c.id, c.type, c.requeueCount FROM c WHERE c.status = 'queued' AND c.createdAt < @cutoff AND (NOT IS_DEFINED(c.requeuedAt) OR c.requeuedAt < @cutoff)`,
+        `SELECT TOP ${SWEEP_BATCH} c.id, c.type, c.requeueCount, c._etag FROM c WHERE c.status = 'queued' AND c.createdAt < @cutoff AND (NOT IS_DEFINED(c.requeuedAt) OR c.requeuedAt < @cutoff)`,
         [{ name: '@cutoff', value: cutoff }]
       );
       const requeued = [];
       for (const doc of stale || []) {
-        try {
-          await store.patchDoc(JOBS_CONTAINER, doc.id, {
-            requeuedAt: now().toISOString(),
-            requeueCount: (doc.requeueCount || 0) + 1,
-          });
-          requeued.push({ jobId: doc.id, type: doc.type });
-        } catch (err) {
-          log.warn?.(`sweep: could not stamp job ${doc.id}: ${err?.message || err}`);
+        const currentCount = Number(doc.requeueCount) || 0;
+        if (currentCount >= MAX_REQUEUE_COUNT) {
+          const finishedAt = now().toISOString();
+          const error = `exceeded maximum requeue attempts (${MAX_REQUEUE_COUNT}); marked as poison message`;
+          try {
+            const failUpdate = { status: 'failed', finishedAt, error };
+            if (doc._etag) {
+              await store.patchDoc(JOBS_CONTAINER, doc.id, failUpdate, { ifMatch: doc._etag });
+            } else {
+              await store.patchDoc(JOBS_CONTAINER, doc.id, failUpdate);
+            }
+            log.warn?.(
+              `sweep: job ${doc.id} reached maximum requeue attempts (${MAX_REQUEUE_COUNT}); marked failed as poison message`
+            );
+            const spec = typesToUse?.get?.(doc.type);
+            if (typeof spec?.onComplete === 'function') {
+              try {
+                await spec.onComplete(
+                  { job: doc, status: 'failed', result: null, error },
+                  { context: log, now }
+                );
+              } catch (hookError) {
+                log.warn?.(
+                  `sweep: onComplete for poison ${doc.type} failed: ${hookError?.message || hookError}`
+                );
+              }
+            }
+          } catch (err) {
+            log.warn?.(`sweep: could not fail poison job ${doc.id}: ${err?.message || err}`);
+          }
+        } else {
+          try {
+            const stampUpdate = {
+              requeuedAt: now().toISOString(),
+              requeueCount: currentCount + 1,
+            };
+            if (doc._etag) {
+              await store.patchDoc(JOBS_CONTAINER, doc.id, stampUpdate, { ifMatch: doc._etag });
+            } else {
+              await store.patchDoc(JOBS_CONTAINER, doc.id, stampUpdate);
+            }
+            requeued.push({ jobId: doc.id, type: doc.type });
+          } catch (err) {
+            log.warn?.(`sweep: could not stamp job ${doc.id}: ${err?.message || err}`);
+          }
         }
       }
       // The queued gap and the running gap are the same failure one state
       // apart, so they are swept together (T-710). Reaping cannot re-enqueue:
       // a job whose worker may have completed real side effects before dying
       // must not be run again silently — it lands `timeout` and visible.
-      const reaped = await reapAbandoned(registry);
+      const reaped = await reapAbandoned(typesToUse);
       return { requeued, reaped };
     },
   };

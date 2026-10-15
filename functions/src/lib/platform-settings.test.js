@@ -1363,6 +1363,42 @@ describe('handlers', () => {
     expect(log.error).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(log.error.mock.calls[0])).not.toContain('private-feed');
   });
+
+  it('enforces If-Match header with replaceDocIfMatch and 412s on mismatch (AP-B11)', async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({
+        id: AUTOPOST_CONFIG_ID,
+        _etag: '"etag-valid"',
+      })),
+      replaceDocIfMatch: vi.fn(async (_c, doc) => doc),
+    });
+    const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+
+    // Mismatched ETag returns 412
+    const failRes = await h.putSetting(
+      {
+        params: { setting: 'social-autopost' },
+        headers: { get: (k) => (k.toLowerCase() === 'if-match' ? '"etag-stale"' : null) },
+        json: async () => ({ enabled: false }),
+      },
+      context
+    );
+    expect(failRes.status).toBe(412);
+    expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+
+    // Matching ETag succeeds with replaceDocIfMatch
+    const okRes = await h.putSetting(
+      {
+        params: { setting: 'social-autopost' },
+        headers: { get: (k) => (k.toLowerCase() === 'if-match' ? '"etag-valid"' : null) },
+        json: async () => ({ enabled: false }),
+      },
+      context
+    );
+    expect(okRes.status).toBe(200);
+    expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
+    expect(store.replaceDocIfMatch.mock.calls[0][1]._etag).toBe('"etag-valid"');
+  });
 });
 
 describe('change history', () => {

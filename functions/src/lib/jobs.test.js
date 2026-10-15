@@ -482,4 +482,71 @@ describe('runJob', () => {
     expect(store.docs['job-1'].status).toBe('succeeded');
     expect(context.warn).toHaveBeenCalledWith(expect.stringContaining('hook boom'));
   });
+
+  it('passes AbortSignal to worker and aborts signal on timeout (AP-B7)', async () => {
+    let capturedSignal = null;
+    let abortedAtWorker = false;
+    registerJobType('abortable-job', {
+      role: 'editor',
+      timeoutMs: 50,
+      worker: async (_payload, { signal }) => {
+        capturedSignal = signal;
+        return new Promise((resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            abortedAtWorker = true;
+            reject(new Error('aborted'));
+          });
+        });
+      },
+    });
+    const store = makeStore({ 'job-abort': { ...queued(), id: 'job-abort', type: 'abortable-job' } });
+    const h = createJobHandlers({ guard: guardAs('editor'), store, ...fixed });
+    const outcome = await h.runJob({ jobId: 'job-abort' }, context);
+    expect(outcome.outcome).toBe('timeout');
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal.aborted).toBe(true);
+    expect(abortedAtWorker).toBe(true);
+    expect(store.docs['job-abort'].status).toBe('timeout');
+  });
 });
+
+describe('getJob role gating and email redaction (AP-B10)', () => {
+  it('gates job inspection on stricter role requirement and returns 403 for unauthorized viewer', async () => {
+    registerJobType('super-job', { worker: async () => 1, role: 'super_admin' });
+    const store = makeStore({
+      'job-super': {
+        id: 'job-super',
+        type: 'super-job',
+        status: 'succeeded',
+      },
+    });
+    const guard = {
+      requireRole: vi.fn(async (_r, role) =>
+        role === 'super_admin'
+          ? { error: { status: 403, body: JSON.stringify({ error: 'Forbidden' }) } }
+          : { user: USER, role: 'viewer', error: null }
+      ),
+    };
+    const h = createJobHandlers({ guard, store, ...fixed });
+    const res = await h.getJob(
+      makeRequest(null, { method: 'GET', query: { jobId: 'job-super' } }),
+      context
+    );
+    expect(res.status).toBe(403);
+    expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'viewer');
+    expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'super_admin');
+  });
+
+  it('redacts requestedBy email in publicJob', () => {
+    const job = publicJob({
+      id: 'job-1',
+      type: 'noop',
+      requestedBy: { oid: 'u1', email: 'editor@hcw.dev' },
+      status: 'queued',
+    });
+    expect(job.requestedBy.oid).toBe('u1');
+    expect(job.requestedBy.email).toBe('e***@hcw.dev');
+    expect(job.requestedBy.email).not.toBe('editor@hcw.dev');
+  });
+});
+

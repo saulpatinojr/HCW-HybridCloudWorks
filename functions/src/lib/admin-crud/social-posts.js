@@ -13,6 +13,7 @@ import { json, LIST_WINDOW, validBody } from '../http/admin-handler.js';
 import {
   SOCIAL_DEFAULT_STATUSES,
   socialPostEditRefusal,
+  validateSocialPostCreate,
   validateSocialPostPatch,
 } from './social-post-rules.js';
 
@@ -73,8 +74,11 @@ async function createSocialPost(ctx, request, context) {
     const body = validBody(await request.json().catch(() => null));
     if (!body) return json(400, { error: 'Body must be a JSON object' });
 
+    const checked = validateSocialPostCreate(body, ctx.now().getTime());
+    if (checked.error) return json(400, { error: checked.error });
+
     const doc = {
-      ...body,
+      ...checked.doc,
       id: ctx.uuid(),
       createdAt: ctx.now().toISOString(),
     };

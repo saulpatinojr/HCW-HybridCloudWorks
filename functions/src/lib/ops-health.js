@@ -25,6 +25,9 @@ import { randomUUID } from 'node:crypto';
 import { readConfigStamp } from './auth/http-route.js';
 import { ADMIN_CONFIG_PARTITION } from './cosmos-client.js';
 import { unresolvedSecretNames } from './secrets-health.js';
+import { errorResponse } from './http/error-response.js';
+
+export const OPS_HEALTH_CACHE_TTL_MS = 30_000;
 
 const json = (status, body) => ({
   status,
@@ -349,6 +352,25 @@ export function createOpsHealthHandlers({
     };
   }
 
+  let cachedSnapshot = null;
+  let cachedSnapshotAt = 0;
+
+  function invalidateCache() {
+    cachedSnapshot = null;
+    cachedSnapshotAt = 0;
+  }
+
+  async function getCachedSnapshot(forceRefresh = false) {
+    const currentTime = now().getTime();
+    if (!forceRefresh && cachedSnapshot && currentTime - cachedSnapshotAt < OPS_HEALTH_CACHE_TTL_MS) {
+      return cachedSnapshot;
+    }
+    const fresh = await buildSnapshot();
+    cachedSnapshot = fresh;
+    cachedSnapshotAt = currentTime;
+    return fresh;
+  }
+
   return {
     /**
      * The snapshot itself, unguarded.
@@ -361,19 +383,26 @@ export function createOpsHealthHandlers({
      * request object carrying a fake identity through requireRole.
      */
     buildSnapshot,
+    getCachedSnapshot,
+    invalidateCache,
 
     /** POST /api/getOpsHealthSnapshot */
     async getOpsHealthSnapshot(request, context) {
       const auth = await guard.requireRole(request, 'viewer');
       if (auth.error) return auth.error;
       try {
-        return json(200, await buildSnapshot());
+        const forceRefresh =
+          request?.query?.get?.('refresh') === 'true' ||
+          request?.query?.refresh === 'true';
+        return json(200, await getCachedSnapshot(forceRefresh));
       } catch (error) {
-        context.error('getOpsHealthSnapshot failed:', error);
-        return json(500, {
-          error: 'Failed to generate operations health snapshot',
-          message: error?.message || 'Unknown error',
-        });
+        return errorResponse(
+          context,
+          'Failed to generate operations health snapshot',
+          error,
+          500,
+          request
+        );
       }
     },
 
@@ -439,13 +468,10 @@ export function createOpsHealthHandlers({
           },
         });
 
+        invalidateCache();
         return json(200, { success: true, alertId, action });
       } catch (error) {
-        context.error('updateWorkflowAlert failed:', error);
-        return json(500, {
-          error: 'Failed to update workflow alert',
-          message: error?.message || 'Unknown error',
-        });
+        return errorResponse(context, 'Failed to update workflow alert', error, 500, request);
       }
     },
   };

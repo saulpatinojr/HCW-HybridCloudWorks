@@ -35,6 +35,7 @@ import { ENTRA_REQUIRED_TOKEN_VERSION } from './auth/verify-token.js';
 import { ENTRA_LAB_AGENT_APP_ROLE } from './auth/require-agent.js';
 import { actorName } from './auth/actor-name.js';
 import { json } from './http/admin-handler.js';
+import { errorResponse } from './http/error-response.js';
 import { createSpeakerEventHandlers } from './admin-identity/speaker-events.js';
 
 export {
@@ -304,11 +305,7 @@ async function bootstrapCurrentUserAdmin(ctx, request, context) {
       note: "Registry record written. The Entra 'Admin' App Role must also be assigned to this user in the directory for API access (guard gate 1).",
     });
   } catch (error) {
-    context.error('bootstrapCurrentUserAdmin failed:', error);
-    return json(500, {
-      error: 'Failed to bootstrap admin',
-      message: error?.message || 'Unknown error',
-    });
+    return errorResponse(context, 'Failed to bootstrap admin', error, 500, request);
   }
 }
 
@@ -351,11 +348,7 @@ async function recordAdminAudit(ctx, request, context) {
 
     return json(200, { success: true, auditId });
   } catch (error) {
-    context.error('recordAdminAudit failed:', error);
-    return json(500, {
-      error: 'Failed to record audit',
-      message: error?.message || 'Unknown error',
-    });
+    return errorResponse(context, 'Failed to record audit', error, 500, request);
   }
 }
 

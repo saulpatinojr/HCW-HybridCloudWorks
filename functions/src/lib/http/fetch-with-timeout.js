@@ -35,17 +35,31 @@ export const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
  *   reads as a timeout in logs rather than as an opaque AbortError.
  */
 export async function fetchWithTimeout(fetchImpl, url, options = {}) {
-  const { timeoutMs = DEFAULT_FETCH_TIMEOUT_MS, ...rest } = options;
+  const { timeoutMs = DEFAULT_FETCH_TIMEOUT_MS, signal: parentSignal, ...rest } = options;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let onParentAbort;
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      clearTimeout(timer);
+      throw parentSignal.reason || new Error('aborted');
+    }
+    onParentAbort = () => controller.abort(parentSignal.reason);
+    parentSignal.addEventListener('abort', onParentAbort, { once: true });
+  }
+
   try {
     return await fetchImpl(url, { ...rest, signal: controller.signal });
   } catch (error) {
-    if (error?.name === 'AbortError') {
+    if (error?.name === 'AbortError' && !parentSignal?.aborted) {
       throw Object.assign(new Error(`timeout after ${timeoutMs} ms`), { code: 'FETCH_TIMEOUT' });
     }
     throw error;
   } finally {
     clearTimeout(timer);
+    if (parentSignal && onParentAbort) {
+      parentSignal.removeEventListener('abort', onParentAbort);
+    }
   }
 }

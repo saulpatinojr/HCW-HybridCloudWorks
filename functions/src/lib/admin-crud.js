@@ -33,11 +33,17 @@ import { createCertificationHandlers } from './admin-crud/certifications.js';
 import { createSocialPostHandlers } from './admin-crud/social-posts.js';
 
 export {
+  CERTIFICATION_FIELDS,
   isCertImagePath,
   toCalendarDate,
   validateCertification,
 } from './admin-crud/certification-rules.js';
-export { socialPostEditRefusal, validateSocialPostPatch } from './admin-crud/social-post-rules.js';
+export {
+  SOCIAL_CREATE_FIELDS,
+  socialPostEditRefusal,
+  validateSocialPostCreate,
+  validateSocialPostPatch,
+} from './admin-crud/social-post-rules.js';
 
 /**
  * @param {object} deps

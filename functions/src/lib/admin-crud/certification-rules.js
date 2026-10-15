@@ -49,15 +49,73 @@ function cleanLinkList(value, max = 50) {
   return value.map(cleanLink).filter(Boolean).slice(0, max);
 }
 
+export const CERTIFICATION_FIELDS = Object.freeze([
+  'id',
+  'name',
+  'Name',
+  'issuer',
+  'Issuer',
+  'issueDate',
+  'issue_date',
+  'IssueDate',
+  'expDate',
+  'exp_date',
+  'ExpDate',
+  'renewalDate',
+  'certState',
+  'isValid',
+  'is_valid',
+  'cert_state',
+  'code',
+  'Code',
+  'verifyUrl',
+  'verify_url',
+  'VerifyUrl',
+  'learnUrl',
+  'image',
+  'Image',
+  'badge',
+  'Badge',
+  'imageUrl',
+  'credentialImage',
+  'displayOrder',
+  'display_order',
+  'DisplayOrder',
+  'tags',
+  'Tags',
+  'featured',
+  'Featured',
+  'display',
+  'Display',
+  'evidence',
+  'relatedLearning',
+  'renewalRequirements',
+  'status',
+  'notes',
+  '_createdAt',
+  '_updatedAt',
+]);
+
 /**
  * The certification fields a write may carry, cleaned, or an error
- * sentence. Not an allowlist — migrated documents carry legacy spellings
- * nothing sends any more — but every field that has a shape is checked:
- * dates become calendar days and the expiry may not precede the issue date
- * (read from `existing` when a partial patch sends only one of them), URLs
- * must be http(s), `display_order` is a whole number and 0 is allowed.
+ * sentence (AP-B6). Unknown keys are refused. Every field that has a shape
+ * is checked: dates become calendar days and the expiry may not precede the
+ * issue date, URLs must be http(s), display_order is a whole number.
  */
 export function validateCertification(body, existing = null) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Body must be a JSON object' };
+  }
+  const unknown = Object.keys(body).filter((key) => !CERTIFICATION_FIELDS.includes(key));
+  if (unknown.length > 0) {
+    return { error: `Unknown field(s) for certification: ${unknown.join(', ')}` };
+  }
+  if (body.display !== undefined && typeof body.display !== 'boolean') {
+    return { error: 'display must be a boolean' };
+  }
+  if (body.featured !== undefined && typeof body.featured !== 'boolean') {
+    return { error: 'featured must be a boolean' };
+  }
   const out = { ...body };
   delete out.id;
   for (const step of CERT_STEPS) {
