@@ -25,7 +25,20 @@
  * An upload or a delete first calls `refuseWriteAfterJobAbort`
  * (job-context.js): inside a platform job whose budget has run out, one
  * that starts now throws the job's reason instead of reaching Storage
- * (#942). Outside a job it does nothing.
+ * (#942). Inside a job, an upload or a delete also carries the job's signal
+ * as the SDK's `abortSignal`, so one still in flight at the deadline is
+ * abandoned by the client. Outside a job neither does anything.
+ *
+ * One property of the SDK that the signal meets, recorded here because it
+ * is not visible from this file: the Blob pipeline hands a request's
+ * `abortSignal` to its credential's token refresh, and core-rest-pipeline
+ * shares one refresh across every request in the process (its token cycler
+ * starts the refresh with the first caller's options). A credential that
+ * honoured the signal could fail other callers' requests when a job aborts
+ * mid-refresh. ManagedIdentityCredential, which this module uses on Azure,
+ * does not pass the signal to its token request (@azure/identity 4.13.3:
+ * MSAL's managed-identity acquireToken takes no signal), so it cannot.
+ * Re-check this before changing the credential.
  */
 
 import {
@@ -35,9 +48,21 @@ import {
   SASProtocol,
 } from '@azure/storage-blob';
 import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
-import { refuseWriteAfterJobAbort } from './job-context.js';
+import { refuseWriteAfterJobAbort, writeAbortSignal } from './job-context.js';
 
 let blobServiceClient = null;
+
+/**
+ * `{ abortSignal }` for a write made inside a platform job, else `{}`: spread
+ * into an upload's or a delete's options (CommonOptions in the SDK), so a
+ * call made outside a job sends exactly the options it always did.
+ *
+ * @returns {{abortSignal?: AbortSignal}}
+ */
+function jobAbortOption() {
+  const abortSignal = writeAbortSignal();
+  return abortSignal ? { abortSignal } : {};
+}
 
 /**
  * Resolve the blob service endpoint from configuration.
@@ -151,6 +176,7 @@ export async function uploadBlob(
     blobHTTPHeaders: { blobContentType: contentType },
     metadata,
     ...(options.overwrite === false ? { conditions: { ifNoneMatch: '*' } } : {}),
+    ...jobAbortOption(),
   });
 
   return blockBlobClient.url;
@@ -191,6 +217,7 @@ export async function uploadBlobFromStream(
     blobHTTPHeaders: { blobContentType: contentType },
     ...(options.metadata ? { metadata: options.metadata } : {}),
     ...(options.tier ? { tier: options.tier } : {}),
+    ...jobAbortOption(),
   });
 
   return blockBlobClient.url;
@@ -377,7 +404,7 @@ export async function deleteBlob(containerName, blobName) {
   refuseWriteAfterJobAbort();
   const containerClient = getContainerClient(containerName);
   const blobClient = containerClient.getBlobClient(blobName);
-  await blobClient.deleteIfExists();
+  await blobClient.deleteIfExists(jobAbortOption());
 }
 
 /**

@@ -9,16 +9,33 @@
  *
  * Every write first calls `refuseWriteAfterJobAbort` (job-context.js): inside
  * a platform job whose budget has run out, a write that starts now throws
- * the job's reason instead of reaching Cosmos (#942). Outside a job it does
- * nothing.
+ * the job's reason instead of reaching Cosmos (#942). Inside a job, a write
+ * also carries the job's signal as the SDK's `abortSignal`, so one still in
+ * flight at the deadline is abandoned by the client. Outside a job neither
+ * does anything, and every call passes exactly the options it always did.
  */
 
 import { CosmosClient } from '@azure/cosmos';
 import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
-import { refuseWriteAfterJobAbort } from './job-context.js';
+import { refuseWriteAfterJobAbort, writeAbortSignal } from './job-context.js';
 
 let client = null;
 let database = null;
+
+/**
+ * The request options a write to `containerName` sends: `options` as given,
+ * plus the running job's signal as `abortSignal` (RequestOptions, via the
+ * SDK's SharedOptions) when there is one and the container is not kept.
+ * Outside a job `options` comes back unchanged, `undefined` included.
+ *
+ * @param {string} containerName
+ * @param {object} [options]
+ * @returns {object|undefined}
+ */
+function writeOptions(containerName, options) {
+  const abortSignal = writeAbortSignal(containerName);
+  return abortSignal ? { ...options, abortSignal } : options;
+}
 
 /**
  * Containers whose partition key is NOT `/id`.
@@ -159,7 +176,7 @@ export async function readDoc(containerName, id, partitionKey) {
 export async function upsertDoc(containerName, document) {
   refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
-  const { resource } = await container.items.upsert(document);
+  const { resource } = await container.items.upsert(document, writeOptions(containerName));
   return resource;
 }
 
@@ -189,9 +206,12 @@ export async function replaceDocIfMatch(containerName, document, options = {}) {
   refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   const pk = resolvePartitionKey(containerName, options.partitionKey, document.id);
-  const { resource } = await container
-    .item(document.id, pk)
-    .replace(document, { accessCondition: { type: 'IfMatch', condition: document._etag } });
+  const { resource } = await container.item(document.id, pk).replace(
+    document,
+    writeOptions(containerName, {
+      accessCondition: { type: 'IfMatch', condition: document._etag },
+    })
+  );
   return resource;
 }
 
@@ -259,10 +279,13 @@ export async function incrementIf(containerName, id, options) {
 
   const container = getContainer(containerName);
   const pk = resolvePartitionKey(containerName, partitionKey, id);
-  const { resource } = await container.item(id, pk).patch({
-    condition: bindConditionValues(condition, conditionValues),
-    operations: [{ op: 'incr', path, value }],
-  });
+  const { resource } = await container.item(id, pk).patch(
+    {
+      condition: bindConditionValues(condition, conditionValues),
+      operations: [{ op: 'incr', path, value }],
+    },
+    writeOptions(containerName)
+  );
   return resource;
 }
 
@@ -314,7 +337,7 @@ export function bindConditionValues(condition, values = {}) {
 export async function createDoc(containerName, document) {
   refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
-  const { resource } = await container.items.create(document);
+  const { resource } = await container.items.create(document, writeOptions(containerName));
   return resource;
 }
 
@@ -398,7 +421,9 @@ export async function patchDoc(containerName, id, updates, options = {}) {
     : undefined;
 
   if (plan.strategy === 'patch') {
-    const { resource } = await container.item(id, pk).patch(plan.operations, accessCondition);
+    const { resource } = await container
+      .item(id, pk)
+      .patch(plan.operations, writeOptions(containerName, accessCondition));
     return resource;
   }
 
@@ -507,9 +532,12 @@ async function readModifyWrite(
 
   refuseWriteAfterJobAbort(containerName);
   try {
-    const { resource } = await container
-      .item(id, pk)
-      .replace(next, { accessCondition: { type: 'IfMatch', condition: current._etag } });
+    const { resource } = await container.item(id, pk).replace(
+      next,
+      writeOptions(containerName, {
+        accessCondition: { type: 'IfMatch', condition: current._etag },
+      })
+    );
     return resource;
   } catch (err) {
     if (err.code === 412 && attempt === 0) {
@@ -553,7 +581,9 @@ export function applyFieldPath(target, segments, value) {
 export async function deleteDoc(containerName, id, partitionKey) {
   refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
-  await container.item(id, resolvePartitionKey(containerName, partitionKey, id)).delete();
+  await container
+    .item(id, resolvePartitionKey(containerName, partitionKey, id))
+    .delete(writeOptions(containerName));
 }
 
 /**
@@ -575,7 +605,7 @@ export async function deleteDocIfMatch(containerName, id, etag, partitionKey) {
   const container = getContainer(containerName);
   await container
     .item(id, resolvePartitionKey(containerName, partitionKey, id))
-    .delete({ accessCondition: { type: 'IfMatch', condition: etag } });
+    .delete(writeOptions(containerName, { accessCondition: { type: 'IfMatch', condition: etag } }));
 }
 
 /**

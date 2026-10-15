@@ -4,7 +4,13 @@
  * outside it, and for the containers kept on purpose, nothing changes.
  */
 import { describe, it, expect } from 'vitest';
-import { WRITES_KEPT_AFTER_ABORT, refuseWriteAfterJobAbort, runAsJob } from './job-context.js';
+import {
+  WRITES_KEPT_AFTER_ABORT,
+  currentJobSignal,
+  refuseWriteAfterJobAbort,
+  runAsJob,
+  writeAbortSignal,
+} from './job-context.js';
 
 /** The reason runJob aborts with: an Error carrying JOB_TIMEOUT. */
 const timeoutReason = () => Object.assign(new Error('job timed out'), { code: 'JOB_TIMEOUT' });
@@ -55,5 +61,22 @@ describe('refuseWriteAfterJobAbort', () => {
     expect(() => refuseWriteAfterJobAbort('content')).not.toThrow();
     // A function made inside but called from outside reads the caller's context.
     expect(() => later()).not.toThrow();
+  });
+});
+
+describe('currentJobSignal and writeAbortSignal', () => {
+  it('give the running job’s signal inside a job, except for a kept container, and nothing outside', async () => {
+    expect(currentJobSignal()).toBeUndefined();
+    expect(writeAbortSignal('content')).toBeUndefined();
+    const job = new AbortController();
+    await runAsJob(job.signal, async () => {
+      await Promise.resolve();
+      expect(currentJobSignal()).toBe(job.signal);
+      expect(writeAbortSignal('content')).toBe(job.signal);
+      expect(writeAbortSignal()).toBe(job.signal);
+      for (const container of WRITES_KEPT_AFTER_ABORT) {
+        expect(writeAbortSignal(container)).toBeUndefined();
+      }
+    });
   });
 });

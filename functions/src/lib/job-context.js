@@ -17,8 +17,13 @@
  * onComplete hooks — which runJob calls outside it, after the terminal
  * write — are not affected. Nothing is threaded through the workers.
  *
- * This refuses what STARTS after the abort. A request already sent is not
- * recalled, and the service may still complete it.
+ * A write already in flight when the signal fires is handed the signal as
+ * well: the shared clients pass `writeAbortSignal(container)` as the SDK's
+ * `abortSignal`, so the SDK stops waiting for the request and rejects. That
+ * stops the client, not the service, which may already have applied the
+ * write. Reads are neither refused nor handed the signal: a read changes
+ * nothing, and a sequence that reads before its kept record (below) would
+ * otherwise lose the record.
  *
  * The rule for what is kept: a write is refused when it IS a side effect,
  * and kept when it RECORDS one that has already happened, because refusing
@@ -69,6 +74,29 @@ export function runAsJob(signal, fn) {
 }
 
 /**
+ * The running job's AbortSignal, or undefined outside a job.
+ *
+ * @returns {AbortSignal|undefined}
+ */
+export function currentJobSignal() {
+  return jobContext.getStore()?.signal;
+}
+
+/**
+ * The signal a write to `containerName` carries as the SDK's `abortSignal`:
+ * the running job's, except for a kept container, whose write must be able
+ * to finish after the abort. Undefined outside a job, so a write made there
+ * passes exactly the options it always did.
+ *
+ * @param {string} [containerName] the Cosmos container, when there is one
+ * @returns {AbortSignal|undefined}
+ */
+export function writeAbortSignal(containerName) {
+  if (containerName && WRITES_KEPT_AFTER_ABORT.includes(containerName)) return undefined;
+  return currentJobSignal();
+}
+
+/**
  * Throw the running job's abort reason when its signal has fired and the
  * write is to a container that is not kept; do nothing outside a job.
  * Called by the shared clients before every write.
@@ -76,7 +104,7 @@ export function runAsJob(signal, fn) {
  * @param {string} [containerName] the Cosmos container, when there is one
  */
 export function refuseWriteAfterJobAbort(containerName) {
-  const signal = jobContext.getStore()?.signal;
+  const signal = currentJobSignal();
   if (!signal?.aborted) return;
   if (containerName && WRITES_KEPT_AFTER_ABORT.includes(containerName)) return;
   throw signal.reason || new Error('aborted');

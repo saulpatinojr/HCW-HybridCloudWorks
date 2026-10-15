@@ -30,6 +30,8 @@ import {
 import { runAsJob } from './job-context.js';
 
 const uploadSpy = vi.hoisted(() => vi.fn());
+const uploadStreamSpy = vi.hoisted(() => vi.fn());
+const deleteSpy = vi.hoisted(() => vi.fn());
 const downloadSpy = vi.hoisted(() => vi.fn());
 const propertiesSpy = vi.hoisted(() => vi.fn());
 
@@ -45,10 +47,12 @@ vi.mock('@azure/storage-blob', async (importOriginal) => {
           getBlockBlobClient: (blobName) => ({
             url: `https://hcwmedia.blob.core.windows.net/c/${blobName}`,
             upload: uploadSpy,
+            uploadStream: uploadStreamSpy,
           }),
           getBlobClient: () => ({
             download: downloadSpy,
             getProperties: propertiesSpy,
+            deleteIfExists: deleteSpy,
           }),
         };
       }
@@ -222,6 +226,35 @@ describe('a write a timed-out job starts is refused (#942 follow-up)', () => {
     await runAsJob(job.signal, () => uploadBlob('podcast', 'a.mp3', Buffer.from('x'), 'audio/mpeg'));
     await uploadBlob('podcast', 'b.mp3', Buffer.from('y'), 'audio/mpeg');
     expect(uploadSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands the job’s signal to an upload, a stream upload and a delete started inside it', async () => {
+    uploadStreamSpy.mockClear();
+    deleteSpy.mockClear();
+    const job = new AbortController();
+    await runAsJob(job.signal, async () => {
+      await uploadBlob('podcast', 'a.mp3', Buffer.from('x'), 'audio/mpeg', {}, { overwrite: false });
+      await uploadBlobFromStream('cosmos-export', 'a.gz', null, 4, 'application/gzip', { tier: 'Cool' });
+      await deleteBlob('podcast', 'a.mp3');
+    });
+    expect(uploadSpy.mock.calls[0][2]).toMatchObject({
+      conditions: { ifNoneMatch: '*' },
+      abortSignal: job.signal,
+    });
+    // uploadStream(stream, bufferSize, maxConcurrency, options)
+    expect(uploadStreamSpy.mock.calls[0][3]).toMatchObject({ tier: 'Cool', abortSignal: job.signal });
+    expect(deleteSpy.mock.calls[0][0]).toEqual({ abortSignal: job.signal });
+  });
+
+  it('sends no abortSignal outside a job', async () => {
+    uploadStreamSpy.mockClear();
+    deleteSpy.mockClear();
+    await uploadBlob('podcast', 'a.mp3', Buffer.from('x'), 'audio/mpeg');
+    await uploadBlobFromStream('cosmos-export', 'a.gz', null, 4, 'application/gzip');
+    await deleteBlob('podcast', 'a.mp3');
+    expect(uploadSpy.mock.calls[0][2]).not.toHaveProperty('abortSignal');
+    expect(uploadStreamSpy.mock.calls[0][3]).not.toHaveProperty('abortSignal');
+    expect(deleteSpy.mock.calls[0][0]?.abortSignal).toBeUndefined();
   });
 });
 
