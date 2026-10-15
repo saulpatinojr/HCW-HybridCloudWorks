@@ -24,11 +24,45 @@
  * refresh (mcp-token-refresh.js); the other half is the standard refresh
  * grant for servers connected through OAuth Connect. Plaud stays here
  * because its endpoint is not the standard one.
+ *
+ * `lastTokenRefreshError` is shown on the Connect tab, so it holds a sentence
+ * with the HTTP status and Plaud's OAuth `error` code, or the error's code
+ * and a log line's reference, never Plaud's body or a socket's text (#945).
  */
+import { AuthoredError, recordedFailure } from '../http/error-response.js';
+
+/** An OAuth `error` code has this shape; a sentence does not. */
+const OAUTH_CODE_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/**
+ * ` invalid_grant` when the refused answer carried an OAuth `error` code,
+ * else nothing.
+ *
+ * @param {string} body - the response text
+ * @returns {string}
+ */
+function oauthCodeNote(body) {
+  try {
+    const code = JSON.parse(body)?.error;
+    return typeof code === 'string' && OAUTH_CODE_SHAPE.test(code) ? ` ${code}` : '';
+  } catch {
+    return '';
+  }
+}
 
 export const PLAUD_REFRESH_URL =
   'https://platform.plaud.ai/developer/api/oauth/third-party/access-token/refresh';
 
+/**
+ * Build the Plaud MCP token refresh.
+ *
+ * @param {object} deps
+ * @param {{ readDoc: Function, patchDoc: Function }} deps.store
+ * @param {typeof fetch} [deps.fetch]
+ * @param {() => Date} [deps.now]
+ * @param {{ log?: Function, warn?: Function, error?: Function }} [deps.log]
+ * @returns {{ run: () => Promise<{ ok: boolean, reason?: string, expiresInSec?: number }> }}
+ */
 export function createPlaudTokenRefresh({
   store,
   fetch: fetchImpl = globalThis.fetch,
@@ -37,6 +71,13 @@ export function createPlaudTokenRefresh({
 }) {
   const patch = (updates) => store.patchDoc('mcp_servers', 'plaud', updates);
 
+  /**
+   * Rotate the pair, or mark the connection disconnected with a stored
+   * sentence: Plaud's status and OAuth code, or the error's code and a
+   * reference, never Plaud's body (#945).
+   *
+   * @returns {Promise<{ ok: boolean, reason?: string, expiresInSec?: number }>}
+   */
   async function run() {
     const doc = await store.readDoc('mcp_servers', 'plaud', 'plaud');
     if (!doc) {
@@ -62,11 +103,14 @@ export function createPlaudTokenRefresh({
       const body = await res.text();
       if (!res.ok) {
         log.error?.(`[refreshPlaudToken] failed: HTTP ${res.status}`);
-        await patch({ status: 'disconnected', lastTokenRefreshError: body.slice(0, 500) });
+        await patch({
+          status: 'disconnected',
+          lastTokenRefreshError: `Plaud refused the token refresh (HTTP ${res.status}${oauthCodeNote(body)}).`,
+        });
         return { ok: false, reason: `http_${res.status}` };
       }
       const parsed = JSON.parse(body);
-      if (!parsed.access_token) throw new Error('No access_token in response');
+      if (!parsed.access_token) throw new AuthoredError('Plaud answered without an access token.');
       const expiresInSec = Number(parsed.expires_in) || 86400;
       await patch({
         oauthToken: parsed.access_token,
@@ -79,10 +123,9 @@ export function createPlaudTokenRefresh({
       log.log?.(`[refreshPlaudToken] success (expires in ${expiresInSec}s)`);
       return { ok: true, expiresInSec };
     } catch (err) {
-      log.error?.(`[refreshPlaudToken] exception: ${err?.message || err}`);
       await patch({
         status: 'disconnected',
-        lastTokenRefreshError: String(err?.message || err).slice(0, 500),
+        lastTokenRefreshError: recordedFailure(log, 'The token refresh failed.', err),
       });
       return { ok: false, reason: 'exception' };
     }

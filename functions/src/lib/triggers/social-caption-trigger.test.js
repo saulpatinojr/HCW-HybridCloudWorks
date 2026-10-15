@@ -176,14 +176,20 @@ describe('createSocialCaptionQueuer', () => {
 
   it('a Publer failure clears the flag with the error — no retry loop, caption path stays manual', async () => {
     const { queuer, store, publer, docs } = makeQueuer();
-    publer.request.mockRejectedValueOnce(new Error('Publer POST /posts/schedule failed with HTTP 429'));
+    // publer-sync's shape: the status rides on the error.
+    publer.request.mockRejectedValueOnce(
+      Object.assign(new Error('Publer POST /posts/schedule failed with HTTP 429'), { status: 429 })
+    );
     const result = await queuer.run('doc-1', 'etag-1');
     expect(result.ran).toBe(false);
     expect(docs.get('doc-1')).toMatchObject({
       socialCaptionTrigger: false,
       socialCaptionRunId: null,
-      socialCaptionError: expect.stringContaining('HTTP 429'),
+      socialCaptionError: expect.stringMatching(
+        /^The social caption could not be written \(HTTP_429; reference [\w.:-]+\)\.$/
+      ),
     });
+    expect(docs.get('doc-1').socialCaptionError).not.toContain('/posts/schedule');
     expect(store.upsertDoc).not.toHaveBeenCalled();
   });
 });

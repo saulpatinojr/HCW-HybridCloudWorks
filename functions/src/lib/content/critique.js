@@ -7,6 +7,7 @@
  * hiccup never blocks ingestion.
  */
 import { scanBannedPhrases } from '../cms/content-modules.js';
+import { storedFailure } from '../http/error-response.js';
 
 export const CRITIQUE_SYSTEM_PROMPT = `You are a skeptical editor for Hybrid Cloud Works reviewing a drafted blog post before it reaches a human reviewer. Judge only what is given — do not rewrite it, do not be polite.
 
@@ -33,6 +34,14 @@ export function normalizeScore(value, fallback) {
  */
 export function createCritic({ ai, signal: defaultSignal }) {
   return {
+    /**
+     * Critique one draft. Fails open: a model failure is a `pass` with the
+     * router's sentence, or a fixed one with the code, under `error` (#945).
+     *
+     * @param {{ title?: string, postContent?: string, signal?: AbortSignal }} draft
+     * @returns {Promise<{ verdict: string, genericityScore: number|null, specificityScore: number|null,
+     *   bannedPhraseHits: string[], issues: string[], error?: string }>}
+     */
     async critiqueDraft({ title, postContent, signal: callSignal }) {
       const activeSignal = callSignal || defaultSignal;
       if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
@@ -72,7 +81,9 @@ export function createCritic({ ai, signal: defaultSignal }) {
           specificityScore: null,
           bannedPhraseHits,
           issues: [],
-          error: err?.message || String(err),
+          // Stored on contentQuality.critique and shown in the editor: the
+          // router's own sentence, or a fixed one with the code (#945).
+          error: storedFailure(err, 'The critique could not run.'),
         };
       }
     },

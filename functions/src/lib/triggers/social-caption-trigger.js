@@ -36,6 +36,7 @@ import { claimRisingEdge, releaseRisingEdgeClaim, SKIP_REASONS } from './rising-
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { generateCaptionText } from '../social-caption.js';
 import { publicUrlOf } from '../cms/publish.js';
+import { recordedFailure } from '../http/error-response.js';
 
 // Lifted to cms/publish.js so the related-posts interlinker shares it;
 // re-exported here because this was its original home.
@@ -63,6 +64,19 @@ export function buildAutopostBulk(accounts, text, scheduledAtIso) {
   };
 }
 
+/**
+ * Build the social caption queuer: a caption written and queued to Publer
+ * once per published document.
+ *
+ * @param {object} deps
+ * @param {object} deps.store - the content and social post containers
+ * @param {object} deps.ai - the router
+ * @param {object|null} deps.publer - the Publer client, or null when unset
+ * @param {() => Date} [deps.now]
+ * @param {() => string} [deps.uuid]
+ * @param {{ log?: Function, warn?: Function, error?: Function }} [deps.log]
+ * @returns {{ run: (contentId: string, eventId: string) => Promise<object> }}
+ */
 export function createSocialCaptionQueuer({
   store,
   ai,
@@ -71,6 +85,14 @@ export function createSocialCaptionQueuer({
   uuid,
   log = {},
 }) {
+  /**
+   * Claim the rising edge, write the caption and queue it. A failure clears
+   * the flag and stores a sentence with a code and a reference (#945).
+   *
+   * @param {string} contentId - the published document
+   * @param {string} eventId - the change feed's event id for the claim
+   * @returns {Promise<{ ran: boolean, reason: string, socialPostId?: string }>}
+   */
   async function run(contentId, eventId) {
     const claim = await claimRisingEdge(store, 'content', contentId, {
       ...SOCIAL_CAPTION_CLAIM_FIELDS,
@@ -160,13 +182,14 @@ export function createSocialCaptionQueuer({
       });
       return { ran: true, reason, socialPostId };
     } catch (err) {
-      log.error?.(`[social-caption] content/${contentId} failed: ${err?.message || err}`);
       // ai-cover discipline: release the claim AND clear the flag — a caption
       // is not worth a retry loop; the Social Hub deep link is the fallback.
+      // The stored error is a sentence with the code and the reference of
+      // the content-free log line (#945).
       await store.patchDoc('content', contentId, {
         ...releaseRisingEdgeClaim(SOCIAL_CAPTION_CLAIM_FIELDS),
         socialCaptionTrigger: false,
-        socialCaptionError: String(err?.message || err).slice(0, 500),
+        socialCaptionError: recordedFailure(log, 'The social caption could not be written.', err),
       });
       return { ran: false, reason: `error: ${err?.message || err}` };
     }

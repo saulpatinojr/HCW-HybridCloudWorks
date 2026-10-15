@@ -176,7 +176,7 @@ describe('the pulse run', () => {
     }).run();
     expect(stored(store, 'cosmos')).toMatchObject({
       status: 'offline',
-      summary: 'The ops-health snapshot could not be read: Request timed out',
+      summary: 'The ops-health snapshot could not be read (408).',
     });
     expect(stored(store, 'queue-sla')).toBeUndefined();
     expect(stored(store, 'runtime-config')).toBeUndefined();
@@ -194,7 +194,10 @@ describe('the pulse run', () => {
     expect(summary.failures).toBe(1);
     expect(stored(store, 'mcp-servers')).toBeUndefined();
     expect(store.data.get(PULSE_DOC_ID).failures).toEqual([
-      { probeId: 'mcp-servers', error: 'mcp_servers query refused' },
+      {
+        probeId: 'mcp-servers',
+        error: expect.stringMatching(/^The check failed \(Error; reference [\w.:-]+\)\.$/),
+      },
     ]);
   });
 

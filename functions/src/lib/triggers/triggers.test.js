@@ -27,6 +27,7 @@ import {
   rederiveMarkers,
 } from './dashboard-stats.js';
 import {
+  CoverGenerationError,
   createAiCoverGenerator,
   pickDefaultHero,
   createReplicateClient,
@@ -633,7 +634,9 @@ describe('AI cover', () => {
     expect((await gen.run('c1', 'ev1')).reason).toBe(SKIP_REASONS.FLAG_NOT_SET);
 
     store.data.content.set('c2', { id: 'c2', altCoverImageTrigger: true, _etag: 'e' });
-    replicate.generate.mockRejectedValueOnce(new Error('Replicate HTTP 503'));
+    replicate.generate.mockRejectedValueOnce(
+      new CoverGenerationError('Replicate HTTP 503', { status: 503 })
+    );
     expect((await gen.run('c2', 'ev2')).reason).toBe('error: Replicate HTTP 503');
     expect(store.data.content.get('c2')).toMatchObject({
       altCoverImageTrigger: false,
@@ -707,13 +710,17 @@ describe('AI cover', () => {
       altCoverImageTrigger: false,
       altCoverImage: '/api/public/media/covers/default-aws.png',
       contentImageUrl: '/api/public/media/covers/default-aws.png',
-      altCoverImageError: 'fallback: default hero (boom)',
+      altCoverImageError: expect.stringMatching(
+        /^fallback: default hero \(The cover could not be generated \(Error; reference [\w.:-]+\)\.\)$/
+      ),
     });
 
     expect((await gen.run('c4', 'ev4')).reason).toBe('error: boom');
     expect(store.data.content.get('c4')).toMatchObject({
       contentImageUrl: '/api/public/media/covers/manual.png',
-      altCoverImageError: 'boom',
+      altCoverImageError: expect.stringMatching(
+        /^The cover could not be generated \(Error; reference [\w.:-]+\)\.$/
+      ),
     });
     expect(store.data.content.get('c4').altCoverImage).toBeUndefined();
   });
@@ -810,7 +817,7 @@ describe('feed handlers', () => {
     expect(r.inspected).toBe('error');
     expect(store.data.content.get('c3')).toMatchObject({
       inspectTrigger: false,
-      inspectError: 'Status code 403',
+      inspectError: expect.stringMatching(/^The inspection failed \(Error; reference [\w.:-]+\)\.$/),
       inspectErrorAt: NOW.toISOString(),
     });
   });
@@ -896,7 +903,9 @@ describe('feed handlers', () => {
     expect(store.data.social_posts.get('s4')).toMatchObject({
       syncStatus: 'failed',
       syncOrigin: 'system',
-      syncError: 'Publer PUT failed',
+      syncError: expect.stringMatching(
+        /^The post could not be synced to Publer \(Error; reference [\w.:-]+\)\.$/
+      ),
     });
     expect(() => buildPublerUpdateBody({})).toThrow(/caption or URL/);
 

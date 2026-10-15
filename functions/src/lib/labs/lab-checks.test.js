@@ -133,7 +133,7 @@ describe('the readers', () => {
     );
     expect(checks[LAB_DRIFT_PROBE]).toEqual({
       status: 'unknown',
-      summary: "The check's data could not be read: Cosmos said 503",
+      summary: "The check's data could not be read (Error).",
       detail: null,
     });
     expect(drift.agents).toEqual({});

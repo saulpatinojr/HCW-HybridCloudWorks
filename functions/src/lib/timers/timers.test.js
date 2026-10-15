@@ -936,10 +936,26 @@ describe('plaud token refresh', () => {
       ok: false,
       reason: 'http_401',
     });
+    // Plaud's status, and its OAuth code when the body carries one, never
+    // the body itself (#945).
     expect(store.data.mcp_servers.get('plaud')).toMatchObject({
       status: 'disconnected',
-      lastTokenRefreshError: 'revoked',
+      lastTokenRefreshError: 'Plaud refused the token refresh (HTTP 401).',
     });
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ error: 'invalid_grant', error_description: 'token r1 expired' }),
+    });
+    await createPlaudTokenRefresh({ store, fetch, now }).run();
+    expect(store.data.mcp_servers.get('plaud').lastTokenRefreshError).toBe(
+      'Plaud refused the token refresh (HTTP 400 invalid_grant).'
+    );
+    fetch.mockRejectedValueOnce(new Error('connect ECONNREFUSED 10.0.0.1:443'));
+    await createPlaudTokenRefresh({ store, fetch, now }).run();
+    expect(store.data.mcp_servers.get('plaud').lastTokenRefreshError).toMatch(
+      /^The token refresh failed \(Error; reference [\w.:-]+\)\.$/
+    );
     expect(await createPlaudTokenRefresh({ store: memStore({}), fetch, now }).run()).toEqual({
       ok: false,
       reason: 'missing_doc',

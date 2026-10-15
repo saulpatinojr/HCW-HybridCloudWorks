@@ -55,6 +55,7 @@ import {
 } from './probe-results.js';
 import { healthProbe } from './probe-catalogue.js';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { recordedFailure } from '../http/error-response.js';
 import {
   CODER_TEMPLATE_PROBE,
   CODER_TOKEN_PROBE,
@@ -171,6 +172,13 @@ export function createHealthPulse({
     });
   }
 
+  /**
+   * One pulse: every check read and recorded, then the heartbeat. A check
+   * that throws, or whose result cannot be written, is a failure on the
+   * heartbeat in a stored sentence with its code and a reference (#945).
+   *
+   * @returns {Promise<{ checks: number, recorded: number, failures: number, durationMs: number }>}
+   */
   async function run() {
     const startedAt = now();
     const started = clock();
@@ -178,9 +186,15 @@ export function createHealthPulse({
     const checkedAt = startedAt.toISOString();
 
     const rows = [...(await snapshotChecks(nowMs)), ...(await registryChecks(nowMs))];
+    // The pulse document is served to the Health view, so each failure is a
+    // sentence with the code and a log line's reference, never the check's
+    // or the store's own words (#945).
     const failures = rows
       .filter((row) => row.error)
-      .map((row) => ({ probeId: row.probeId, error: String(row.error?.message || row.error) }));
+      .map((row) => ({
+        probeId: row.probeId,
+        error: recordedFailure(log, 'The check failed.', row.error),
+      }));
 
     // Sequential: a dozen small writes, each its own ETag'd read and replace.
     // In parallel they would all land in the same second as any Test all a
@@ -191,7 +205,10 @@ export function createHealthPulse({
         await record(checkedAt, row);
         recorded += 1;
       } catch (error) {
-        failures.push({ probeId: row.probeId, error: `not recorded: ${error?.message || error}` });
+        failures.push({
+          probeId: row.probeId,
+          error: recordedFailure(log, 'The check result was not recorded.', error),
+        });
       }
     }
 

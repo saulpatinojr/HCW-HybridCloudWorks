@@ -25,6 +25,7 @@
  */
 import { classifyFailure } from './status-model.js';
 import { isAgentOnline } from '../labs.js';
+import { storedFailure } from '../http/error-response.js';
 
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -67,10 +68,19 @@ export function checkCosmos() {
   return result('healthy', 'Cosmos DB answered the ten-query ops snapshot.');
 }
 
-/** What the pulse records for Cosmos when the snapshot could not be built. */
+/**
+ * What the pulse records for Cosmos when the snapshot could not be built: a
+ * sentence with the error's code, never the store's own words (#945), since
+ * the Health view serves the stored result.
+ *
+ * @param {unknown} error - what building the snapshot threw
+ * @returns {{ status: string, summary: string }}
+ */
 export function cosmosFailure(error) {
-  const message = error?.message || String(error);
-  return result(classifyFailure(error), `The ops-health snapshot could not be read: ${message}`);
+  return result(
+    classifyFailure(error),
+    storedFailure(error, 'The ops-health snapshot could not be read.')
+  );
 }
 
 export function checkRuntimeConfig(snapshot) {

@@ -79,9 +79,10 @@ describe('batch-inspect', () => {
       skipped: 1,
       ids: { inspected: ['c'], failed: ['a'] },
     });
+    // A sentence with the code and the log line's reference (#945).
     expect(store.patchDoc).toHaveBeenCalledWith('content', 'a', {
       inspectTrigger: false,
-      inspectError: 'Status code 403',
+      inspectError: expect.stringMatching(/^The inspection failed \(Error; reference [\w.:-]+\)\.$/),
       inspectErrorAt: NOW.toISOString(),
     });
   });

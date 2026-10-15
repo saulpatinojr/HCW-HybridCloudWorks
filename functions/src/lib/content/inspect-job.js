@@ -8,6 +8,8 @@
  * runs the inspector on each, four seconds apart as upstream staggered its
  * triggers. A failure is recorded on the document and the batch goes on.
  */
+import { recordedFailure } from '../http/error-response.js';
+
 export const DEFAULT_BATCH = 10;
 export const MAX_BATCH = 25;
 export const STAGGER_MS = 4000;
@@ -84,10 +86,11 @@ export function createInspectBatch({
         } catch (error) {
           result.failed += 1;
           result.ids.failed.push(doc.id);
-          log.warn?.(`[batch-inspect] ${doc.id} failed: ${error?.message || error}`);
+          // The editor shows inspectError: the inspector's sentence, or a
+          // fixed one with the code and the log line's reference (#945).
           await store.patchDoc('content', doc.id, {
             inspectTrigger: false,
-            inspectError: String(error?.message || error).slice(0, 2000),
+            inspectError: recordedFailure(log, 'The inspection failed.', error),
             inspectErrorAt: now().toISOString(),
           });
         }

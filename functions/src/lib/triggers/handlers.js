@@ -22,6 +22,7 @@ import { claimRisingEdge, releaseRisingEdgeClaim } from './rising-edge-claim.js'
 import { evaluateActivationNotice, ACTIVATION_NOTIFIED_FIELD } from './activation-notice.js';
 import { markerForFields, shouldProcessValue } from './value-marker.js';
 import { generateSlug } from '../rss/feeds.js';
+import { recordedFailure } from '../http/error-response.js';
 
 export const SLUG_PAGE_CLAIM_FIELDS = Object.freeze({
   flagField: 'createSlugPageTrigger',
@@ -191,6 +192,15 @@ export function createFeedHandlers({
     return { created: true, reason: 'created', slug };
   }
 
+  /**
+   * The content feed: inspection on its flag (a failure stored as a
+   * sentence with a code and a reference, #945), then the cover, the
+   * forge-ready notice and the caption, each isolated.
+   *
+   * @param {object[]} docs - the changed content documents
+   * @param {object} context - the invocation context
+   * @returns {Promise<object[]>}
+   */
   const content = (docs, context) =>
     each(docs, context, 'feed:content', async (doc) => {
       const out = { id: doc.id };
@@ -203,10 +213,11 @@ export function createFeedHandlers({
           });
           out.inspected = r.contentStatus;
         } catch (err) {
-          context.error?.(`[inspect:content] ${doc.id}: ${err?.message || err}`);
+          // The editor shows inspectError: the inspector's sentence, or a
+          // fixed one with the code and the log line's reference (#945).
           await store.patchDoc('content', doc.id, {
             inspectTrigger: false,
-            inspectError: String(err?.message || err).slice(0, 2000),
+            inspectError: recordedFailure(context, 'The inspection failed.', err),
             inspectErrorAt: now().toISOString(),
           });
           out.inspected = 'error';
@@ -300,6 +311,14 @@ export function createFeedHandlers({
       return { id: doc.id, sent: result.sent, reason: result.reason || 'sent' };
     });
 
+  /**
+   * The social posts feed: push a calendar edit to Publer once, and store a
+   * failed push as a sentence with a code and a reference (#945).
+   *
+   * @param {object[]} docs - the changed social posts
+   * @param {object} context - the invocation context
+   * @returns {Promise<object[]>}
+   */
   const socialPosts = (docs, context) =>
     each(docs, context, 'feed:social_posts', async (doc) => {
       const publerPostIds = Array.isArray(doc.publerPostIds) ? doc.publerPostIds : [];
@@ -330,11 +349,13 @@ export function createFeedHandlers({
         });
         return { id: doc.id, pushed: true, reason: 'pushed' };
       } catch (err) {
-        context.error?.(`[syncSocialPostToPubler] ${doc.id}: ${err?.message || err}`);
+        // The calendar shows syncError: a sentence with the code (Publer's
+        // HTTP status) and the log line's reference, never Publer's own
+        // words, which the API-keys page keeps for the owner (#945).
         await store.patchDoc('social_posts', doc.id, {
           syncStatus: 'failed',
           syncOrigin: 'system',
-          syncError: String(err?.message || err).slice(0, 500),
+          syncError: recordedFailure(context, 'The post could not be synced to Publer.', err),
           lastSyncAttemptAt: now().toISOString(),
         });
         return { id: doc.id, pushed: false, reason: 'error' };

@@ -39,6 +39,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
+import { recordedFailure } from '../http/error-response.js';
 
 // Outbound deadline (T-712): Node's fetch has none, and these calls are
 // reached from change-feed handlers where a hung socket holds the lease.
@@ -450,8 +451,10 @@ export function createTelegramBot({
           ? ((await handleCommand(text)) ?? 'Unknown command. Send /help for the list.')
           : await handleFreeform(text);
       } catch (error) {
-        log.error?.(`[telegram] command failed: ${error?.stack || error}`);
-        await logActivity({ command: text.split(/\s+/)[0], ok: false, detail: String(error?.message || error) });
+        // The activity log is an admin read: a sentence with the code and the
+        // log line's reference, and the line itself is content-free (#945).
+        const detail = recordedFailure(log, 'The command failed.', error);
+        await logActivity({ command: text.split(/\s+/)[0], ok: false, detail });
         reply = `Something went wrong: ${error?.message || error}`;
       }
 

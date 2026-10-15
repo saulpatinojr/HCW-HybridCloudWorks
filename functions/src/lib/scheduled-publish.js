@@ -36,6 +36,7 @@
  */
 
 import { digestDateOf, mergeDigest } from './timers/workflow-records.js';
+import { recordedFailure } from './http/error-response.js';
 
 const DEFAULT_BATCH = 25;
 
@@ -170,7 +171,11 @@ export function createScheduledPublisher({ store, publish, now = () => new Date(
             failed: summary.failed,
             hasMore: Boolean(summary.hasMore),
             status: error ? 'failed' : publishingStatus(summary),
-            ...(error ? { error: String(error?.message || error).slice(0, 300) } : {}),
+            // The digest is an admin read: a sentence with the code and the
+            // log line's reference, never the store's own words (#945).
+            ...(error
+              ? { error: recordedFailure(context, 'The scheduled publish run failed.', error) }
+              : {}),
           },
         });
       } catch (recordError) {
@@ -232,7 +237,10 @@ export function createScheduledPublisher({ store, publish, now = () => new Date(
           });
         } catch (error) {
           summary.failed += 1;
-          failures.push({ contentId, error: error?.message || 'Unknown error' });
+          failures.push({
+            contentId,
+            error: recordedFailure(context, 'The publish failed.', error),
+          });
         }
       }
 
