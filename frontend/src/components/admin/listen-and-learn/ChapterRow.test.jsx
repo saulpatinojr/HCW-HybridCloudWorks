@@ -131,10 +131,19 @@ describe('ChapterRow', () => {
   });
 
   it('after a failed regeneration keeps the player and offers Retry and Keep current', () => {
+    // The shape the job stores since #945: a sentence with the error's code
+    // and the log line's reference, never the provider's words.
     const a = renderRow({
-      chapter: { lastError: { message: 'Gemini TTS HTTP 500', at: '2026-10-03T14:00:00.000Z' } },
+      chapter: {
+        lastError: {
+          message: 'The chapter could not be voiced (HTTP_500; reference inv-41).',
+          at: '2026-10-03T14:00:00.000Z',
+        },
+      },
     });
-    expect(screen.getByRole('alert')).toHaveTextContent(/HTTP 500/);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The chapter could not be voiced (HTTP_500; reference inv-41).'
+    );
     expect(screen.getByRole('alert')).toHaveTextContent(/published take is still playing/);
     expect(screen.getByLabelText('Play: Manage identities')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Retry/ }));

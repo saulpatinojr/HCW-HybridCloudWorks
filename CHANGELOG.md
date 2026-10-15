@@ -46,17 +46,32 @@ This project has not cut a tagged release; entries are grouped under
   stringified (`String(e)`, a template literal, `+`), aliases and
   destructuring, scope-resolved by catch and `.catch()` parameter; a site is
   any object field, return, stored field or helper argument it lands in,
-  and a site inside a response builder's body is marked. The 154 remaining
-  sites (none of them raw text in a response body) are listed in 150
-  entries, each with a class and a reason (66 authored through the door, 43
-  that never reach a response, 40 stored diagnostics read back by admin
-  pages, left for an owner decision, and one git commit title), and the
-  list fails on a new site, a stale entry and a wrong class. `getJob` now
-  holds a job whose type is no longer registered at the enqueue floor
-  (editor) instead of the viewer gate, and answers its 500 with a
-  correlation id; the certification routes are pinned to refuse
-  `_createdAt`, `_updatedAt`, `_etag` and `_ts`; and the admin client
-  appends the `correlationId` to a failed call's message
+  and a site inside a response builder's body is marked. Stored failures
+  follow the same rule at the moment they are written: `storedFailure` and
+  `recordedFailure` keep an authored sentence, or store the site's own
+  sentence with the error's code and the reference of the content-free log
+  line (`The job failed (ECONNRESET; reference <id>).`), still one string
+  where a string was. That covers `job.error`, the Listen & Learn and
+  podcast failure fields, the Podbean host record and the hub's reads of
+  it, the cover, caption, inspection and Publer sync errors, the health
+  pulse, the lab checks and the drift read, the Plaud token, the pricing
+  and RSS job results, the Telegram activity log and the scheduled-publish
+  records. The job workers' refusals and the study-guide, script,
+  transcript, video, cover, grounding and Podbean failures are now
+  `AuthoredError`s whose sentences name a status and the provider's code,
+  never its words, so those pages still say what went wrong. Documents
+  already stored keep the text they hold: nothing is migrated. The 148
+  remaining sites (none of them raw text in a response body) are listed in
+  145 entries, each with a class and a reason (100 authored through the
+  door, 42 that never reach a response, two `message` fields that are not
+  an error's, and one stored diagnostic kept by decision: a provider's
+  sentence on a rejected key, which #463 made the diagnosis and only the
+  super_admin API-keys page reads), and the list fails on a new site, a
+  stale entry and a wrong class. `getJob` now holds a job whose type is no
+  longer registered at the enqueue floor (editor) instead of the viewer
+  gate, and answers its 500 with a correlation id; the certification routes
+  are pinned to refuse `_createdAt`, `_updatedAt`, `_etag` and `_ts`; and
+  the admin client appends the `correlationId` to a failed call's message
   (`… (reference <id>)`) and keeps it on the thrown error.
 
 - **Public reads return an allowlisted set of fields.** The article detail
