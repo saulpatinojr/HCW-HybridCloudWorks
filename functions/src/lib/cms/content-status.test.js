@@ -122,6 +122,28 @@ describe('buildStatusUpdateData', () => {
     const staged = buildStatusUpdateData({}, 'published', 'r', '', { now: NOW, markLive: false });
     expect('Status' in staged).toBe(false);
   });
+
+  it('archived and rejected leave no schedule behind, so the watchdog does not count them overdue (AP-F13, #937)', () => {
+    // A page scheduled, published by hand, then archived from Live Pages: the
+    // flows Archive replaced (softDeleteLivePage, unpublishContentToInspected)
+    // wrote scheduledPublishDate: null, and publishing-watchdog.js reads a
+    // past date on a `Live = false` document as a stalled publish.
+    const scheduledThenLive = {
+      contentStatus: 'published',
+      Live: true,
+      scheduledPublishDate: '2026-08-01T09:00:00.000Z',
+    };
+    for (const status of ['archived', 'rejected']) {
+      const out = buildStatusUpdateData(scheduledThenLive, status, 'r', '', { now: NOW });
+      expect(out, status).toHaveProperty('scheduledPublishDate', null);
+      expect(out.Live, status).toBe(false);
+    }
+    // Every other edge leaves the schedule to the scheduler and the Calendar.
+    for (const status of ['editing', 'approved', 'in_review', 'published']) {
+      const out = buildStatusUpdateData(scheduledThenLive, status, 'r', '', { now: NOW });
+      expect('scheduledPublishDate' in out, status).toBe(false);
+    }
+  });
 });
 
 describe('validateTransitionRequest', () => {

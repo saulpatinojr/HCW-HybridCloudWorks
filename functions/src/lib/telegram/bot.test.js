@@ -297,6 +297,27 @@ describe('approval loop (T-606)', () => {
     expect(send).toHaveBeenCalledWith(expect.stringContaining('rejected'));
   });
 
+  it('/reject takes a live page down: the owner’s chat names the super_admin role the gate asks for', async () => {
+    // The transitioner refuses a call that names no role on a page the site
+    // serves (AP-F13, #937), so this passes only because the bot names one.
+    const { bot, store, send } = makeBot({
+      store: {
+        readDoc: vi.fn(async (container, id) =>
+          container === 'content' && id === 'doc-9'
+            ? { id: 'doc-9', contentStatus: 'published', Live: true, Title: 'Live post' }
+            : null
+        ),
+      },
+    });
+    await bot.handleUpdate(message('/reject doc-9 out of date'));
+    expect(store.patchDoc).toHaveBeenCalledWith(
+      'content',
+      'doc-9',
+      expect.objectContaining({ contentStatus: 'rejected', Live: false, Status: 'Rejected' })
+    );
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('is rejected (was published)'));
+  });
+
   it('/reject refuses an invalid edge and names the allowed next steps', async () => {
     // rejected → rejected is not in VALID_TRANSITIONS — the double-tap case.
     const { bot, store, send } = makeBot({

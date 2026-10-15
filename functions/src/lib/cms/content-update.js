@@ -29,6 +29,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { actorName } from "../auth/actor-name.js";
+import { isPublicDocument } from "../public-reads.js";
 import { normalizeContentBodyFields } from "./content-quality.js";
 import { normalizePublishTarget } from "./publish-targets.js";
 import {
@@ -231,6 +232,12 @@ export function createContentUpdateHandler({
  * any other caller is responsible for its own authorization story (the bot's
  * is the webhook secret + chat-id check in lib/telegram/bot.js).
  *
+ * Every caller names the role it acts with, as `actorRole`: the handler
+ * passes the guard's, the bot says `super_admin` for the owner's chat. A
+ * call that names none is refused wherever a role is asked for, rather than
+ * waved through (AP-F13, #937): a forgotten argument must not read as the
+ * owner.
+ *
  * @returns {{ ok: true, contentId, from, to } |
  *           { ok: false, status: number, error: string, allowedTransitions?: string[] }}
  */
@@ -247,7 +254,7 @@ export function createContentStatusTransitioner({
     reviewNotes = "",
     reviewedBy = "admin",
     actor = {},
-    actorRole = null,
+    actorRole,
     userAgent = null,
     authMethod = "entra_bearer_token",
     legacyBlogId = null,
@@ -268,24 +275,29 @@ export function createContentStatusTransitioner({
     const normalizedCurrentStatus =
       normalizeCurrentStatusForBlogOnly(currentStatus);
 
-    // Every edge OUT of published is a publisher's, like every edge into it
-    // (transitionRequestRefusal). A document in `published` is on the public
-    // site whatever its Live flag says (public-reads.js PUBLIC_STATUSES), so
-    // archiving it, sending it back to the editor or rejecting it takes a
-    // page off the site — the gate softDeleteLivePage had before Live Pages'
-    // Archive replaced it (AP-F13, #937). Checked here rather than with the
-    // request's other refusals because the request names only where the
-    // document is going; where it is takes the read. A caller that passes no
-    // role (the Telegram bot, which answers one owner chat) is not gated here.
+    // Every edge OUT of a page the public site serves is a publisher's, like
+    // every edge into published (transitionRequestRefusal). A document in
+    // `published` is on the site whatever its Live flag says
+    // (public-reads.js PUBLIC_STATUSES), and isPublicDocument also serves a
+    // `Live: true` document in any status and a legacy `Status: 'Live'` one,
+    // so a live `editing` page sent to `rejected` comes down as surely as a
+    // `published` one does. Gating the status alone left those two shapes
+    // to an editor. This is the gate softDeleteLivePage had before Live
+    // Pages' Archive replaced it (AP-F13, #937). Checked here rather than
+    // with the request's other refusals because the request names only
+    // where the document is going; where it is takes the read. A missing
+    // role is no role: refused, never a bypass (see the header).
+    const onTheSite =
+      normalizedCurrentStatus === "published" || isPublicDocument(data);
     if (
-      actorRole !== null &&
-      normalizedCurrentStatus === "published" &&
+      onTheSite &&
       !PUBLISHING_ROLES.includes(String(actorRole || "").toLowerCase())
     ) {
       return {
         ok: false,
         status: 403,
-        error: "publisher access required to take a live page off the site",
+        error:
+          "publisher access required to move a page that is on the public site",
       };
     }
 
@@ -396,9 +408,9 @@ const PUBLISHING_ROLES = ["publisher", "super_admin"];
  * What refuses a transition request before any read: the live transition
  * for a non-publisher (403 — the dedicated publishContent endpoint enforces
  * the same boundary), then the request-shape rules of
- * validateTransitionRequest. Null when nothing refuses. The edge OUT of
- * published is refused for the same role by the transitioner, once the read
- * has said the document is there (AP-F13, #937).
+ * validateTransitionRequest. Null when nothing refuses. Every edge OUT of a
+ * page the public site serves is refused for the same role by the
+ * transitioner, once the read has said where the document is (AP-F13, #937).
  */
 function transitionRequestRefusal(auth, { normalizedStatus, ...request }) {
   if (

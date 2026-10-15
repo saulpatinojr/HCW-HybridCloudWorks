@@ -28,7 +28,7 @@ import { useLivePageArchive } from './livePages/useLivePageArchive';
 const LIVE_PAGES_HELP = [
   'What is here: every page visitors can open right now — the records whose Live flag is set, with the URL the site serves them at.',
   'Nothing is drafted or approved here; this is the end of the pipeline. Open Editor to change a page, Open Live Page to see it as a visitor does.',
-  'Archive takes the page off the site at once and lists it on the Editor page’s Archive board; the toast offers Undo for ten seconds. After that, Restore to live and Delete permanently are on the Archive board. Archive, Undo and Restore need the publisher role: taking a page off the site, or putting it back, is a publisher’s action.',
+  'Archive takes the page off the site at once and lists it on the Editor page’s Archive board; the toast offers Undo for ten seconds. After that, Restore to live and Delete permanently are on the Archive board. Archive, Undo and Restore need the publisher role: taking a page off the site, or putting it back, is a publisher’s action. Archive works on a published or rejected page; a live page in another status, such as Editing, is moved on from the Editor first.',
   'Legacy pages from the retired blogs collection can be included with the checkbox; they are read-only here.',
 ];
 
@@ -42,7 +42,7 @@ const LIVE_PAGES_HELP = [
 export const LIVE_PAGES_QUERY = 'cms/content?live=true&limit=500&sort=publishedAt';
 
 /** One live page: its title, badges and URL, with Open Editor, Archive and Open Live Page. */
-function LivePageRow({ item, archiving, canArchive, onArchive }) {
+function LivePageRow({ item, archiving, archiveBlockedReason, onArchive }) {
   const liveUrl = getLiveUrl(item);
   return (
     <div className="flex flex-col gap-3 rounded-lg border p-4 lg:flex-row lg:items-center">
@@ -69,19 +69,19 @@ function LivePageRow({ item, archiving, canArchive, onArchive }) {
           <Link to={`/admin/editor/${editorTargetId(item)}`}>Open Editor</Link>
         </Button>
         {/* No confirm step: Archive is reversible from the toast it raises
-            (AP-F13, #937). A legacy blog with no content record behind it
-            cannot be archived here, and the button says so. Taking a page
-            off the site is a publisher's edge (lib/cms/content-status.js),
-            so below that role the gate says why first (AP-F4). */}
+            (AP-F13, #937). A row the API would refuse — a legacy blog with
+            no content record behind it, or a live page in a status with no
+            edge to archived — has the button disabled, and its title says
+            why. Taking a page off the site is a publisher's edge
+            (lib/cms/content-update.js), so below that role the gate says
+            why first (AP-F4). */}
         <RoleGate minRole="publisher" reason="Taking a page off the site needs the publisher role.">
           <Button
             size="sm"
             variant="outline"
             onClick={() => onArchive(item)}
-            disabled={archiving || !canArchive}
-            title={
-              canArchive ? undefined : 'A legacy page with no content record cannot be archived here'
-            }
+            disabled={archiving || Boolean(archiveBlockedReason)}
+            title={archiveBlockedReason || undefined}
           >
             <Archive className="mr-2 h-4 w-4" />
             {archiving ? 'Archiving…' : 'Archive'}
@@ -119,7 +119,7 @@ export default function LivePagesPage() {
     authReady && includeLegacyPages ? 'live-pages:legacy' : ''
   );
   const [query, setQuery] = useState('');
-  const { archivingId, archiveError, locallyArchivedKeys, archiveLivePage, canArchive } =
+  const { archivingId, archiveError, locallyArchivedKeys, archiveLivePage, archiveBlockedReason } =
     useLivePageArchive();
   const loading = contentLoading || (includeLegacyPages && blogsLoading);
 
@@ -229,7 +229,7 @@ export default function LivePagesPage() {
                 key={item.id}
                 item={item}
                 archiving={archivingId === item.id}
-                canArchive={canArchive(item)}
+                archiveBlockedReason={archiveBlockedReason(item)}
                 onArchive={archiveLivePage}
               />
             ))}

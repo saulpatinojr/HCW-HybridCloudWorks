@@ -7,8 +7,10 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   createContentUpdateHandler,
+  createContentStatusTransitioner,
   createContentTransitionHandler,
 } from "./content-update.js";
+import { isPublicDocument } from "../public-reads.js";
 import { defaultTaxonomy } from "./taxonomy.js";
 
 const context = { log: vi.fn(), error: vi.fn(), warn: vi.fn() };
@@ -328,7 +330,9 @@ describe("transitionContentStatus", () => {
     for (const newStatus of ["archived", "editing", "inspected", "rejected"]) {
       const res = await editor(makeRequest({ contentId: "c1", newStatus }), context);
       expect(res.status, newStatus).toBe(403);
-      expect(JSON.parse(res.body).error).toMatch(/publisher access required to take a live page off the site/);
+      expect(JSON.parse(res.body).error).toMatch(
+        /publisher access required to move a page that is on the public site/,
+      );
     }
 
     const store = makeStore({ readDoc: vi.fn(async () => live()) });
@@ -364,6 +368,96 @@ describe("transitionContentStatus", () => {
       expect(res.status, `${contentStatus} → ${newStatus}`).toBe(200);
       expect(store.patchDoc).toHaveBeenCalledTimes(1);
     }
+  });
+
+  /**
+   * The gate asks what the public site serves, not what contentStatus says
+   * (AP-F13, #937). isPublicDocument also serves a `Live: true` document in
+   * any status and a legacy `Status: 'Live'` one; gating `published` alone
+   * let an editor take either down through `rejected`.
+   */
+  it("gates a live editing page and a legacy Status 'Live' page like a published one", async () => {
+    const shapes = {
+      "a live editing page": { id: "c1", contentStatus: "editing", Live: true },
+      "a legacy Status 'Live' page": {
+        id: "c1",
+        contentStatus: "in_review",
+        Status: "Live",
+      },
+    };
+    for (const [name, doc] of Object.entries(shapes)) {
+      // The premise: the site serves it, though its status is not published.
+      expect(isPublicDocument(doc), name).toBe(true);
+
+      const refused = makeStore({ readDoc: vi.fn(async () => ({ ...doc })) });
+      const editor = createContentTransitionHandler({
+        guard: guardAs("editor"),
+        store: refused,
+        ...fixed,
+      });
+      const res = await editor(
+        makeRequest({ contentId: "c1", newStatus: "rejected" }),
+        context,
+      );
+      expect(res.status, name).toBe(403);
+      expect(refused.patchDoc, name).not.toHaveBeenCalled();
+      expect(refused.upsertDoc, name).not.toHaveBeenCalled();
+
+      const allowed = makeStore({ readDoc: vi.fn(async () => ({ ...doc })) });
+      const publisher = createContentTransitionHandler({
+        guard: guardAs("publisher"),
+        store: allowed,
+        ...fixed,
+      });
+      const ok = await publisher(
+        makeRequest({ contentId: "c1", newStatus: "rejected" }),
+        context,
+      );
+      expect(ok.status, name).toBe(200);
+      expect(allowed.patchDoc.mock.calls[0][2], name).toMatchObject({
+        contentStatus: "rejected",
+        Live: false,
+        Status: "Rejected",
+      });
+    }
+  });
+
+  it("refuses a caller that names no role on a page on the site, rather than waving it through", async () => {
+    // The transitioner's own contract, below the HTTP guard: the bot and any
+    // future caller must name a role (the bot names super_admin). Undefined
+    // is the forgotten argument; null and "" are the guard's empty answers.
+    for (const actorRole of [undefined, null, ""]) {
+      const store = makeStore({
+        readDoc: vi.fn(async () => ({
+          id: "c1",
+          contentStatus: "published",
+          Live: true,
+        })),
+      });
+      const apply = createContentStatusTransitioner({ store, ...fixed });
+      const request = { contentId: "c1", newStatus: "rejected" };
+      if (actorRole !== undefined) request.actorRole = actorRole;
+      const result = await apply(request);
+      expect(result, String(actorRole)).toMatchObject({ ok: false, status: 403 });
+      expect(store.patchDoc).not.toHaveBeenCalled();
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+    }
+
+    // Named, it is the role that decides.
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({
+        id: "c1",
+        contentStatus: "published",
+        Live: true,
+      })),
+    });
+    const apply = createContentStatusTransitioner({ store, ...fixed });
+    const result = await apply({
+      contentId: "c1",
+      newStatus: "rejected",
+      actorRole: "super_admin",
+    });
+    expect(result).toMatchObject({ ok: true, from: "published", to: "rejected" });
   });
 
   it("lets a publisher publish from an eligible status, stamping Live and publishedAt", async () => {

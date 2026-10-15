@@ -153,16 +153,29 @@ function applyStatusPublished(updateData, data, ctx) {
  * archived write the legacy word too, the way softDeleteLivePage always did;
  * public-reads.test.js applies these patches to a legacy document and checks
  * nothing serves it (AP-F13, #937).
+ *
+ * AND NO SCHEDULE LEFT BEHIND. Both also clear scheduledPublishDate, with
+ * null as unscheduleContent writes it and as softDeleteLivePage and
+ * unpublishContentToInspected (content-workflow.js) always did. A schedule
+ * outliving the page is a stall to timers/publishing-watchdog.js, which
+ * counts `Live = false` with a past scheduledPublishDate as overdue and
+ * raises a critical alert on every run: a page scheduled, published by hand
+ * and then archived from Live Pages would alert until someone edited the
+ * document. An item rejected while scheduled is the same document in the
+ * same query, so rejected clears it too; Restore and Undo leave it cleared,
+ * and the Calendar is where a new date is set.
  */
 function applyStatusRejected(updateData, data, ctx) {
   updateData.Live = false;
   updateData.Status = 'Rejected';
   updateData.rejectedAt = ctx.nowIso;
+  updateData.scheduledPublishDate = null;
 }
 
 function applyStatusArchived(updateData) {
   updateData.Live = false;
   updateData.Status = 'Archived';
+  updateData.scheduledPublishDate = null;
 }
 
 function applyStatusForgeReady(updateData) {

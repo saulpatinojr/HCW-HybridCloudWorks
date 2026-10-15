@@ -24,15 +24,20 @@ vi.mock('@/hooks/useAuthReady', () => ({
   useAuthReady: () => ({ authReady: true }),
 }));
 
-vi.mock('./livePages/useLivePageArchive', () => ({
-  useLivePageArchive: () => ({
-    archivingId: '',
-    archiveError: '',
-    locallyArchivedKeys: {},
-    archiveLivePage: (...args) => archiveLivePage(...args),
-    canArchive: (item) => item.__source === 'content',
-  }),
-}));
+// The hook's state is stubbed; which rows may be archived is its real rule.
+vi.mock('./livePages/useLivePageArchive', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useLivePageArchive: () => ({
+      archivingId: '',
+      archiveError: '',
+      locallyArchivedKeys: {},
+      archiveLivePage: (...args) => archiveLivePage(...args),
+      archiveBlockedReason: actual.archiveBlockedReason,
+    }),
+  };
+});
 
 const liveItem = (n) => ({
   id: `content-${n}`,
@@ -115,5 +120,28 @@ describe('LivePagesPage', () => {
     expect(
       screen.getByText(/Archive board; the toast offers Undo for ten seconds/)
     ).toBeInTheDocument();
+  });
+
+  it('disables Archive on a live page in a status with no archive edge, and its title says why', async () => {
+    archiveLivePage.mockReset();
+    getJSON.mockResolvedValue({
+      items: [liveItem(1), { ...liveItem(2), contentStatus: 'editing' }],
+    });
+    renderPage();
+
+    const editingRow = (await screen.findByText('Live Page 2')).closest('div.rounded-lg');
+    const blocked = within(editingRow).getByRole('button', { name: 'Archive' });
+    expect(blocked).toBeDisabled();
+    expect(blocked).toHaveAttribute(
+      'title',
+      'Only a published or rejected page can be archived; this one is Editing. Open Editor to move it on first.'
+    );
+    fireEvent.click(blocked);
+    expect(archiveLivePage).not.toHaveBeenCalled();
+
+    const publishedRow = screen.getByText('Live Page 1').closest('div.rounded-lg');
+    const offered = within(publishedRow).getByRole('button', { name: 'Archive' });
+    expect(offered).toBeEnabled();
+    expect(offered).not.toHaveAttribute('title');
   });
 });

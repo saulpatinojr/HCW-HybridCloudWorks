@@ -32,7 +32,8 @@
  *
  * Each rule below mirrors one hook, filter for filter — the same public
  * predicate (`isPublicDocument`, not this route's own `PUBLISHED_PREDICATE`,
- * which answers a different question for a different consumer), the same type
+ * which is the same clauses narrowed by the archived and rejected statuses,
+ * because a pre-rendered article must not outlive its page), the same type
  * test, the same provider matching. The one liberty taken is that a section's
  * two containers are SUMMED where the hook prefers `content` and falls back to
  * `blogs`. The sum differs from what the page displays whenever both hold

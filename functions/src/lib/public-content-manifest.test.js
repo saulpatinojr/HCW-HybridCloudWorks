@@ -8,11 +8,15 @@ import { fileURLToPath } from 'node:url';
 
 import {
   ARTICLE_FIELDS,
+  OFF_SITE_STATUSES,
   PUBLISHED_PREDICATE,
   PUBLISHED_QUERY,
   createPublicContentManifestHandlers,
   projectArticle,
 } from './public-content-manifest.js';
+import { SQL_NOT_SOFT_DELETED, SQL_PUBLIC_CLAUSE, isPublicDocument } from './public-reads.js';
+import { buildStatusUpdateData } from './cms/content-status.js';
+import { evaluatePredicate } from '../../test/cosmos-predicate.js';
 
 const REPO = join(fileURLToPath(new URL('../../..', import.meta.url)));
 
@@ -91,11 +95,27 @@ describe('getManifest', () => {
     expect(PUBLISHED_QUERY).toBe(
       `SELECT ${projection} FROM c WHERE ${PUBLISHED_PREDICATE}`
     );
+    // Written out whole, not rebuilt from public-reads.js: a permissive edit
+    // to the public clause has to fail here too, not ride in by import.
+    const notSoftDeleted = (field) =>
+      `(NOT IS_DEFINED(c.${field}) OR IS_NULL(c.${field}) OR c.${field} = "" OR c.${field} = false OR c.${field} = 0)`;
     expect(PUBLISHED_PREDICATE).toBe(
-      "c.contentStatus = 'published' OR c.Status = 'Published' OR c.status = 'published'"
+      '(c.Live = true OR c.Status = "Live" OR c.contentStatus IN ("published", "published_blog", "published_news", "published_both"))' +
+        ` AND ${notSoftDeleted('softDeletedAt')}` +
+        ` AND ${notSoftDeleted('softDeleteExpiresAt')}` +
+        ' AND (NOT IS_STRING(c.contentStatus) OR NOT (c.contentStatus IN ("archived", "rejected", "drafting")))'
     );
     expect(PUBLISHED_QUERY).not.toMatch(/--/);
     expect(PUBLISHED_QUERY).not.toMatch(/\/\*/);
+  });
+
+  it('asks the public API’s own question, narrowed by nothing but the off-site statuses (AP-F13, #937)', () => {
+    // By construction: the list route and the section counts query with these
+    // two clauses, so the manifest cannot drift from them.
+    expect(PUBLISHED_PREDICATE.startsWith(`${SQL_PUBLIC_CLAUSE} AND ${SQL_NOT_SOFT_DELETED} AND `)).toBe(
+      true
+    );
+    expect(OFF_SITE_STATUSES).toEqual(['archived', 'rejected', 'drafting']);
   });
 
   it('projects in SQL so unlisted fields never leave Cosmos', () => {
@@ -155,6 +175,76 @@ describe('getManifest', () => {
     await expect(
       handlers(vi.fn().mockResolvedValue([])).getManifest(undefined, undefined)
     ).resolves.toMatchObject({ status: 200 });
+  });
+});
+
+describe('PUBLISHED_PREDICATE, evaluated against documents (AP-F13, #937)', () => {
+  /** A page the site serves, saying so every way a document can. */
+  const liveEveryWay = () => ({
+    id: 'c1',
+    contentStatus: 'published',
+    Live: true,
+    Status: 'Live',
+    status: 'published',
+  });
+  /** The document after a transition's patch: patchDoc's `undefined` deletes. */
+  const applyTransition = (doc, status) => {
+    const patch = buildStatusUpdateData(doc, status, 'r', '', {
+      now: new Date('2026-10-15T00:00:00.000Z'),
+    });
+    const next = { ...doc };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) delete next[key];
+      else next[key] = value;
+    }
+    return next;
+  };
+
+  it.each(['archived', 'rejected'])('leaves out a page %s through the state machine', (status) => {
+    const doc = applyTransition(liveEveryWay(), status);
+    expect(evaluatePredicate(PUBLISHED_PREDICATE, doc)).toBe(false);
+    expect(isPublicDocument(doc)).toBe(false);
+  });
+
+  it('leaves out an archived or rejected page whatever legacy word it still carries', () => {
+    // Taken down before the appliers retired the legacy Status word, or by a
+    // writer that never touched the lowercase one. The old predicate admitted
+    // the first through `status = 'published'`; the other two still say live.
+    for (const contentStatus of ['archived', 'rejected']) {
+      for (const doc of [
+        { contentStatus, Live: false, status: 'published' },
+        { contentStatus, Live: false, Status: 'Live' },
+        { contentStatus, Live: true },
+      ]) {
+        expect(evaluatePredicate(PUBLISHED_PREDICATE, doc), JSON.stringify(doc)).toBe(false);
+      }
+    }
+  });
+
+  it('leaves out what the API answers 404 for, and keeps what it serves', () => {
+    const cases = [
+      // The API does not serve these: only a legacy word, soft-deleted, a draft.
+      [{ Status: 'Published' }, false],
+      [{ status: 'published' }, false],
+      [{ contentStatus: 'published', softDeletedAt: '2026-10-01T00:00:00.000Z' }, false],
+      [{ contentStatus: 'published', softDeleteExpiresAt: '2026-10-02T00:00:00.000Z' }, false],
+      [{ contentStatus: 'drafting', Live: true }, false],
+      [{ contentStatus: 'in_review', Live: false }, false],
+      // It does serve these, and so the pre-render lists them.
+      [{ contentStatus: 'published' }, true],
+      [{ contentStatus: 'published', Live: false }, true],
+      [{ contentStatus: 'published_blog' }, true],
+      [{ contentStatus: 'editing', Live: true }, true],
+      [{ contentStatus: 'in_review', Status: 'Live' }, true],
+      [{ Live: true }, true],
+      [{ contentStatus: null, Live: true }, true],
+      [{ contentStatus: 'published', softDeletedAt: '' }, true],
+    ];
+    for (const [doc, expected] of cases) {
+      expect(evaluatePredicate(PUBLISHED_PREDICATE, doc), JSON.stringify(doc)).toBe(expected);
+      // The API's own answer, so the two agree on every row here.
+      expect(isPublicDocument(doc), JSON.stringify(doc)).toBe(expected);
+    }
   });
 });
 

@@ -50,6 +50,11 @@
  * sections read containers the builder cannot see; see
  * `public-section-counts.js`, which owns every rule.
  */
+import {
+  NEVER_PUBLIC_STATUSES,
+  SQL_NOT_SOFT_DELETED,
+  SQL_PUBLIC_CLAUSE,
+} from './public-reads.js';
 import { countSections } from './public-section-counts.js';
 
 /**
@@ -142,13 +147,52 @@ export function projectArticle(item) {
 }
 
 /**
- * The published-only predicate. Three spellings because the corpus carries all
- * three — the Firestore-era `Status`, the current `contentStatus`, and a
- * lowercase variant. Asserted in the QUERY rather than filtered after, so an
- * unpublished article cannot reach a public URL through an oversight here.
+ * Statuses the manifest never lists, whatever else a document says: archived
+ * and rejected, which are off the site by definition, and the statuses
+ * public-reads.js already never serves (NEVER_PUBLIC_STATUSES, the Drafts
+ * stage).
  */
-export const PUBLISHED_PREDICATE =
-  "c.contentStatus = 'published' OR c.Status = 'Published' OR c.status = 'published'";
+export const OFF_SITE_STATUSES = Object.freeze([
+  'archived',
+  'rejected',
+  ...NEVER_PUBLIC_STATUSES,
+]);
+
+/**
+ * `NOT IS_STRING` first: a document with no contentStatus, or a null one, is
+ * not off the site on that account, and `IN` on a missing field is undefined
+ * in Cosmos, which NOT would leave undefined and the WHERE would drop.
+ */
+const SQL_NOT_OFF_SITE =
+  '(NOT IS_STRING(c.contentStatus) OR NOT (c.contentStatus IN ' +
+  `(${OFF_SITE_STATUSES.map((s) => `"${s}"`).join(', ')})))`;
+
+/**
+ * The published-only predicate: the public API's own clauses, so the manifest
+ * and the API agree by construction (AP-F13, #937), and nothing archived or
+ * rejected. Asserted in the QUERY rather than filtered after, so an
+ * unpublished article cannot reach a public URL through an oversight here.
+ *
+ * `SQL_PUBLIC_CLAUSE` and `SQL_NOT_SOFT_DELETED` are what the public list
+ * route and the section counts query with, and they mirror isPublicDocument,
+ * which the public detail route serves an article by. This predicate used to
+ * be its own three words (`contentStatus = 'published' OR Status =
+ * 'Published' OR status = 'published'`), and they disagreed with the API both
+ * ways: a document archived from Live Pages that still carried a lowercase
+ * `status: 'published'`, a soft-deleted one, or one saying only `Status:
+ * 'Published'` was pre-rendered and listed in the sitemap while the API
+ * answered 404 for it, and a live document in any other status was served
+ * but never pre-rendered. A pre-rendered page is the article's whole body in
+ * static HTML, so the first of those is the one that mattered.
+ *
+ * Narrower than the API by archived and rejected and by nothing else (the
+ * API refuses drafting too). The archive and reject appliers
+ * (cms/content-status.js) write `Live: false` and retire the legacy `Status`
+ * word, so a page taken down since then fails `SQL_PUBLIC_CLAUSE` already;
+ * an older one archived or rejected under a legacy `Status: 'Live'`, or
+ * still flagged `Live: true`, does not, and is kept out here by its status.
+ */
+export const PUBLISHED_PREDICATE = `${SQL_PUBLIC_CLAUSE} AND ${SQL_NOT_SOFT_DELETED} AND ${SQL_NOT_OFF_SITE}`;
 
 /**
  * PROJECTED IN SQL, not just in JavaScript.

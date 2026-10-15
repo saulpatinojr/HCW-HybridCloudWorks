@@ -363,6 +363,13 @@ export function createTelegramBot({
         newStatus: 'rejected',
         reviewNotes: reason,
         reviewedBy: 'telegram-bot',
+        // Named, not implied: the transitioner refuses a call with no role
+        // (AP-F13, #937). A command reaches this handler only from the
+        // owner's own chat (isAuthorizedSender, checked before any command
+        // runs, behind the webhook secret), and the owner is the
+        // super_admin, so /reject can take a live page down as the portal
+        // lets the owner do.
+        actorRole: 'super_admin',
         authMethod: 'telegram_webhook',
       });
       if (!result.ok) {

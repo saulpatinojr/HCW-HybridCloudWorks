@@ -9,7 +9,11 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import CommandPalette, { CONTENT_SEARCH_LIMIT, filterPages } from './CommandPalette';
+import CommandPalette, {
+  CONTENT_SEARCH_LIMIT,
+  CONTENT_SEARCH_MAX_LENGTH,
+  filterPages,
+} from './CommandPalette';
 import { NAV_ITEMS } from '@/config/adminNav';
 
 const listContentItems = vi.fn();
@@ -165,6 +169,38 @@ describe('CommandPalette', () => {
     listContentItems.mockRejectedValue(new Error('HTTP 503'));
     type('nothing at all');
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('HTTP 503'));
+  });
+
+  it('asks the API only for 2 to 100 trimmed characters, and says so past the limit', async () => {
+    // The list route answers 400 for a trimmed term over 100 characters
+    // (cms-content.js LIST_SEARCH_MAX_CHARS, #1184); the palette never sends
+    // one, and says why there are no content results instead.
+    expect(CONTENT_SEARCH_MAX_LENGTH).toBe(100);
+    renderPalette();
+    pressShortcut();
+    await screen.findByRole('dialog');
+
+    type(`  ${'a'.repeat(101)}  `);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Content search takes up to 100 characters; shorten it to search content.'
+    );
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(listContentItems).not.toHaveBeenCalled();
+
+    // Exactly 100 once trimmed, padding and all: asked, with the trimmed term.
+    const hundred = 'b'.repeat(100);
+    type(`   ${hundred}   `);
+    await waitFor(() => expect(listContentItems).toHaveBeenCalledTimes(1));
+    expect(listContentItems).toHaveBeenCalledWith({ search: hundred, limit: CONTENT_SEARCH_LIMIT });
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent('No content is titled like that.')
+    );
+
+    // One trimmed character is below the floor, padded or not.
+    listContentItems.mockClear();
+    type('   c   ');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(listContentItems).not.toHaveBeenCalled();
   });
 
   it('forgets the query when closed, so the next opening lists every page', async () => {

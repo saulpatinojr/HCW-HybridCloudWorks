@@ -19,16 +19,64 @@
  * page off the public site is a publisher's action, and the API refuses an
  * editor's `published → archived` (content-update.js), as it refuses the
  * edge back. The refusal is shown under the list like any other.
+ *
+ * Not every live row can be archived. Live Pages lists every `Live: true`
+ * document, and a live page can be in `editing` (sent back to the editor
+ * while it stays up) or another status with no edge to `archived`; the API
+ * answers that with a 400. So the button is offered only where the
+ * transition table has the edge (ARCHIVABLE_STATUSES), and elsewhere it is
+ * disabled with a title saying why.
  */
 import React, { useCallback, useState } from 'react';
 import { ToastAction } from '@/components/ui/toast';
 import { toast } from '@/components/ui/use-toast';
 import { useContentTransitions } from '@/pages/admin/queue/useContentTransitions';
 import { ARCHIVED_STATUS } from '@/pages/admin/editor-list/editorItems';
+import { contentStatusInfo } from '@/lib/status';
 import { getTitle, liveUrlKey } from './liveItems';
 
 /** How long the Undo stays offered. use-toast.js caps a duration at 30 s. */
 export const UNDO_WINDOW_MS = 10_000;
+
+/**
+ * The contentStatus values the API archives from, as the API reads them:
+ * VALID_TRANSITIONS (functions/src/lib/cms/content-status.js) gives
+ * `archived` as a next step of `published` and `rejected` only, after the
+ * three legacy `published_*` spellings are normalized
+ * (content-update-validation.js). Matched exactly, as the server matches
+ * them. useLivePageArchive.test.jsx reads the server's table and holds this
+ * list to it.
+ */
+export const ARCHIVABLE_STATUSES = Object.freeze([
+  'published',
+  'published_blog',
+  'published_news',
+  'published_both',
+  'rejected',
+]);
+
+export const NO_CONTENT_RECORD_REASON =
+  'A legacy page with no content record cannot be archived here';
+
+/**
+ * Why a row cannot be archived, or '' when it can. A legacy blog row is
+ * judged by its target, not its own status: the content record behind it is
+ * what the transition moves, and its status is not on the row, so the API
+ * decides for it as before.
+ */
+export function archiveBlockedReason(item) {
+  if (!archiveTargetId(item)) return NO_CONTENT_RECORD_REASON;
+  if (item.__source !== 'content') return '';
+  if (ARCHIVABLE_STATUSES.includes(item.contentStatus)) return '';
+  const raw = String(item.contentStatus || '');
+  const { id, label } = contentStatusInfo(raw);
+  // The badge reads `Published` and `published_live` as published; the API
+  // does not, and "this one is Published" would contradict itself.
+  if (id === 'published' || id === 'rejected') {
+    return `This page’s status is written “${raw}”, which Archive does not accept. Open Editor to move it on first.`;
+  }
+  return `Only a published or rejected page can be archived; this one is ${label}. Open Editor to move it on first.`;
+}
 
 /**
  * The content record an archive acts on: the row itself for a content
@@ -67,8 +115,8 @@ export function useLivePageArchive() {
 
   const archiveLivePage = useCallback(
     async (item) => {
+      if (archiveBlockedReason(item)) return null;
       const targetId = archiveTargetId(item);
-      if (!targetId) return null;
       setArchivingId(item.id);
       const result = await transitions.transition({ ...item, id: targetId }, ARCHIVED_STATUS, {
         markLive: false,
@@ -101,6 +149,6 @@ export function useLivePageArchive() {
     archiveError: Object.values(transitions.errors).find(Boolean) || '',
     locallyArchivedKeys,
     archiveLivePage,
-    canArchive: (item) => Boolean(archiveTargetId(item)),
+    archiveBlockedReason,
   };
 }

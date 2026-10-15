@@ -3,8 +3,8 @@
  *
  * Ctrl-K or Cmd-K anywhere in the admin, or the Search button above the
  * page, opens a dialog that lists every page in the navigation registry
- * (config/adminNav.js) and, under them once two characters are typed, the
- * content items whose title or summary match — read from the list route's
+ * (config/adminNav.js) and, under them for two to a hundred typed characters,
+ * the content items whose title or summary match — read from the list route's
  * `search` parameter (#1178, lib/api.js listContentItems). Enter opens the
  * highlighted entry: a page goes to its route, a content item to its editor.
  * Twenty-eight pages and no search was the finding; this is one keystroke to
@@ -34,8 +34,16 @@ import { cn } from '@/lib/utils';
 
 /** How many content items one search lists; the pages are always all listed. */
 export const CONTENT_SEARCH_LIMIT = 8;
-/** Below this many typed characters the content search is not asked. */
+/**
+ * The content search is asked only for a trimmed term of
+ * CONTENT_SEARCH_MIN_LENGTH to CONTENT_SEARCH_MAX_LENGTH characters. These
+ * mirror the list route's own bounds (LIST_SEARCH_MIN_CHARS and
+ * LIST_SEARCH_MAX_CHARS in functions/src/lib/cms-content.js, #1184), which
+ * answers 400 outside them: a term the API would refuse never becomes a
+ * request, and a longer one says so instead of showing the refusal.
+ */
 export const CONTENT_SEARCH_MIN_LENGTH = 2;
+export const CONTENT_SEARCH_MAX_LENGTH = 100;
 
 /** The registry pages whose label, description or group carry every word typed. */
 export function filterPages(query, items = NAV_ITEMS) {
@@ -59,14 +67,16 @@ const contentHint = (item) =>
 
 /**
  * The content items for `query`, asked for once `debounceMs` after the last
- * change. Returns `{ items, error, pending }` for the current query only:
- * the answer is stored with the query it answered, so a stale reply is not
- * mistaken for the current one and nothing needs clearing.
+ * change. Returns `{ items, error, pending, tooLong }` for the current query
+ * only: the answer is stored with the query it answered, so a stale reply is
+ * not mistaken for the current one and nothing needs clearing. `query` is
+ * already trimmed, as the list route measures it.
  */
 function useContentSearch(query, debounceMs) {
   const [answer, setAnswer] = useState(null);
   const sequence = useRef(0);
-  const searchable = query.length >= CONTENT_SEARCH_MIN_LENGTH;
+  const tooLong = query.length > CONTENT_SEARCH_MAX_LENGTH;
+  const searchable = query.length >= CONTENT_SEARCH_MIN_LENGTH && !tooLong;
 
   useEffect(() => {
     if (!searchable) return undefined;
@@ -88,6 +98,7 @@ function useContentSearch(query, debounceMs) {
   const current = searchable && answer?.query === query ? answer : null;
   return {
     searchable,
+    tooLong,
     items: current?.items ?? [],
     error: current?.error ?? '',
     pending: searchable && !current,
@@ -148,7 +159,9 @@ function PaletteBody({ debounceMs, onChoose }) {
   };
 
   let note = '';
-  if (search.error) note = search.error;
+  if (search.tooLong) {
+    note = `Content search takes up to ${CONTENT_SEARCH_MAX_LENGTH} characters; shorten it to search content.`;
+  } else if (search.error) note = search.error;
   else if (search.pending) note = 'Searching content…';
   else if (search.searchable && search.items.length === 0) note = 'No content is titled like that.';
   if (options.length === 0 && !note) note = 'No page matches.';

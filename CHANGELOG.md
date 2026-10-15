@@ -79,6 +79,22 @@ This project has not cut a tagged release; entries are grouped under
   content the list route's `search` matches (#1178; `lib/api.js`
   `listContentItems`), asked once per pause in typing and answered in
   order; Enter opens a page at its route or a content item in its editor.
+  Every edge out of a page the public site serves is a publisher's:
+  `lib/cms/content-update.js` gates on `published` or `isPublicDocument`,
+  so a live `editing` page or a legacy `Status: 'Live'` one is covered, and
+  a caller that names no role is refused rather than waved through (the
+  Telegram bot's `/reject` names `super_admin`, its caller being the
+  owner's chat). Archive and reject clear `scheduledPublishDate`, as the
+  flows Archive replaced did, so `timers/publishing-watchdog.js` does not
+  count an archived page overdue. The pre-render manifest's
+  `PUBLISHED_PREDICATE` (`lib/public-content-manifest.js`) is now the
+  public API's own `SQL_PUBLIC_CLAUSE` and `SQL_NOT_SOFT_DELETED` with
+  archived, rejected and drafting excluded; its old three words admitted
+  documents the API answers 404 for. `test/cosmos-predicate.js` evaluates
+  it against documents. Live Pages offers Archive only on a published or
+  rejected page, the statuses with an edge to `archived`, and says why on
+  any other; the palette asks the content search only for 2 to 100 trimmed
+  characters, the list route's bounds (#1184), and says so past 100.
 - **alert-timer-overdue evaluates again, a KQL test refuses what silenced it,
   the weekly check reads every log rule's Resource Health, and the fire test
   matches the timer dimension** (PLAT-4, #964). The rule never evaluated from

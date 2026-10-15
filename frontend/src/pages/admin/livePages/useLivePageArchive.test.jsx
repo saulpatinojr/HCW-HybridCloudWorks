@@ -3,10 +3,16 @@
  * `archived` transition — the status the Archive board lists — through the
  * shared hook, so the server audits it; the toast offers Undo for ten
  * seconds; Undo is the transition back to `published`, live, and the row
- * returns; a failure shows and nothing is remembered as archived.
+ * returns; a failure shows and nothing is remembered as archived; and a row
+ * the API has no archive edge for is not offered one.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
+import {
+  VALID_STATUSES,
+  VALID_TRANSITIONS,
+} from '../../../../../functions/src/lib/cms/content-status.js';
+import { normalizeCurrentStatusForBlogOnly } from '../../../../../functions/src/lib/cms/content-update-validation.js';
 
 const postJSON = vi.fn();
 vi.mock('@/lib/api', () => ({ postJSON: (...args) => postJSON(...args) }));
@@ -14,8 +20,14 @@ vi.mock('@/lib/api', () => ({ postJSON: (...args) => postJSON(...args) }));
 const toast = vi.fn();
 vi.mock('@/components/ui/use-toast', () => ({ toast: (...args) => toast(...args) }));
 
-const { useLivePageArchive, archiveTargetId, UNDO_WINDOW_MS } =
-  await import('./useLivePageArchive.jsx');
+const {
+  useLivePageArchive,
+  archiveTargetId,
+  archiveBlockedReason,
+  ARCHIVABLE_STATUSES,
+  NO_CONTENT_RECORD_REASON,
+  UNDO_WINDOW_MS,
+} = await import('./useLivePageArchive.jsx');
 const { ARCHIVED_STATUS } = await import('@/pages/admin/editor-list/editorItems');
 
 const PAGE = {
@@ -48,12 +60,73 @@ describe('archiveTargetId', () => {
   });
 });
 
+describe('ARCHIVABLE_STATUSES', () => {
+  it('is exactly the statuses the API archives from, read from its own transition table', () => {
+    // Every status the table knows, the legacy spellings the server
+    // normalizes and some it does not, and the shapes a row might carry
+    // instead of a status (the server reads none as `ingested`).
+    const candidates = [
+      ...VALID_STATUSES,
+      'published_blog',
+      'published_news',
+      'published_both',
+      'published_live',
+      'approved_blog',
+      'approved_news',
+      'ready_to_publish',
+      'Published',
+      '',
+    ];
+    expect(candidates).toEqual(expect.arrayContaining([...ARCHIVABLE_STATUSES]));
+    for (const status of candidates) {
+      const serverArchives = (
+        VALID_TRANSITIONS[normalizeCurrentStatusForBlogOnly(status)] || []
+      ).includes('archived');
+      expect(ARCHIVABLE_STATUSES.includes(status), status || '(none)').toBe(serverArchives);
+    }
+  });
+});
+
+describe('archiveBlockedReason', () => {
+  it('offers Archive on a published or rejected live page, under every spelling the API reads', () => {
+    for (const contentStatus of ARCHIVABLE_STATUSES) {
+      expect(archiveBlockedReason({ ...PAGE, contentStatus }), contentStatus).toBe('');
+    }
+  });
+
+  it('names the spelling, not a contradiction, for a status the badge reads as published and the API does not', () => {
+    for (const contentStatus of ['Published', 'published_live']) {
+      expect(archiveBlockedReason({ ...PAGE, contentStatus }), contentStatus).toBe(
+        `This page’s status is written “${contentStatus}”, which Archive does not accept. Open Editor to move it on first.`
+      );
+    }
+  });
+
+  it('says why a live page in any other status cannot be archived', () => {
+    expect(archiveBlockedReason({ ...PAGE, contentStatus: 'editing' })).toBe(
+      'Only a published or rejected page can be archived; this one is Editing. Open Editor to move it on first.'
+    );
+    expect(archiveBlockedReason({ ...PAGE, contentStatus: 'approved' })).toMatch(
+      /this one is Approved\./
+    );
+    // No status at all is `ingested` to the server.
+    expect(archiveBlockedReason({ ...PAGE, contentStatus: undefined })).toMatch(
+      /this one is Ingested\./
+    );
+  });
+
+  it('judges a legacy blog row by the content behind it, which the API decides', () => {
+    expect(archiveBlockedReason({ id: 'b1', __source: 'blogs', sourceContentId: 'c9' })).toBe('');
+    expect(archiveBlockedReason({ id: 'b1', __source: 'blogs' })).toBe(NO_CONTENT_RECORD_REASON);
+  });
+});
+
 describe('useLivePageArchive', () => {
   it('archives through the status the Archive board lists, hides the row, and offers Undo for ten seconds', async () => {
     postJSON.mockResolvedValue({ success: true, from: 'published', to: 'archived' });
     const { result } = renderHook(() => useLivePageArchive());
 
-    expect(result.current.canArchive(PAGE)).toBe(true);
+    expect(result.current.archiveBlockedReason(PAGE)).toBe('');
     await act(() => result.current.archiveLivePage(PAGE));
 
     expect(ARCHIVED_STATUS).toBe('archived');
@@ -124,9 +197,21 @@ describe('useLivePageArchive', () => {
   it('does nothing for a legacy page with no content record behind it', async () => {
     const { result } = renderHook(() => useLivePageArchive());
     const legacy = { id: 'b1', __source: 'blogs', Live: true };
-    expect(result.current.canArchive(legacy)).toBe(false);
+    expect(result.current.archiveBlockedReason(legacy)).toBe(NO_CONTENT_RECORD_REASON);
     await act(() => result.current.archiveLivePage(legacy));
     expect(postJSON).not.toHaveBeenCalled();
     expect(toast).not.toHaveBeenCalled();
+  });
+
+  it('does not send a live editing page the API would answer 400 for', async () => {
+    // Live Pages lists every Live: true document, and `editing` has no edge
+    // to `archived` (VALID_TRANSITIONS): the request would only fail.
+    const { result } = renderHook(() => useLivePageArchive());
+    const editing = { ...PAGE, contentStatus: 'editing' };
+    expect(result.current.archiveBlockedReason(editing)).toMatch(/this one is Editing/);
+    await act(() => result.current.archiveLivePage(editing));
+    expect(postJSON).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+    expect(result.current.locallyArchivedKeys).toEqual({});
   });
 });
