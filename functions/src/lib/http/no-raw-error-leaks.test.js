@@ -1678,7 +1678,11 @@ const ALLOWED = [
 ];
 
 describe('no raw error text in HTTP response bodies (AP-B10, #945)', () => {
-  it('scans every module under functions/src, and every site is converted or decided', () => {
+  // A parse of every module under functions/src and a fixpoint over carried
+  // text: deterministic work that took 6.1 s on a CI runner (vitest's default
+  // is 5 s) and about half that on a workstation. The budget is for the work,
+  // not for a flake; a scan that grows past it should be made faster.
+  it('scans every module under functions/src, and every site is converted or decided', { timeout: 60_000 }, () => {
     const modules = realTree();
     expect(Object.keys(modules).length).toBeGreaterThan(300);
     expect(modules[DOOR_MODULE]).toBeDefined();
