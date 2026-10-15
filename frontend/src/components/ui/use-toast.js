@@ -41,13 +41,32 @@ function lifetimeOf(duration) {
 // a new clock from the update, and an update that leaves the duration alone
 // keeps the clock the toast already had. The timer calls the store's own
 // removal by id, so no function carried on a toast's props is ever run by it.
-const timers = new Map(); // id -> { lifetime, timeout }
+//
+// PAUSED WHILE IT IS BEING READ (AP-F12, #936). Radix holds the toasts open
+// while the pointer is over them, focus is inside them, or the window is in
+// the background, and says so through each toast's onPause and onResume; the
+// toaster hands those to pauseToast and resumeToast below. A paused toast
+// has no timer, only the time it had left, and resuming runs that out. The
+// store's clock used to run on regardless, and took a toast — and its action
+// button — away from under the pointer of someone about to press it.
+const timers = new Map(); // id -> { lifetime, remaining, startedAt, paused, timeout }
+
+/** Run a toast's clock on the time it has left, noting when, so a pause can tell what remains. */
+function startTimer(id, lifetime, remaining) {
+  timers.set(id, {
+    lifetime,
+    remaining,
+    startedAt: Date.now(),
+    paused: false,
+    timeout: setTimeout(() => removeToast(id), remaining),
+  });
+}
 
 /** Drop a toast's timer, so a toast that left cannot be removed twice or keep the map growing. */
 function clearTimer(id) {
   const timer = timers.get(id);
   if (!timer) return;
-  clearTimeout(timer.timeout);
+  if (!timer.paused) clearTimeout(timer.timeout);
   timers.delete(id);
 }
 
@@ -62,11 +81,41 @@ function syncTimers(toasts) {
 
   toasts.forEach(({ id, duration }) => {
     const lifetime = lifetimeOf(duration);
-    if (timers.get(id)?.lifetime === lifetime) return;
+    const timer = timers.get(id);
+    if (timer?.lifetime === lifetime) return;
+    if (timer?.paused && lifetime !== Infinity) {
+      // Changed while it is being read: still paused, with the whole new
+      // lifetime to run once the reader lets go.
+      timers.set(id, { ...timer, lifetime, remaining: lifetime });
+      return;
+    }
     clearTimer(id);
     if (lifetime === Infinity) return;
-    timers.set(id, { lifetime, timeout: setTimeout(() => removeToast(id), lifetime) });
+    startTimer(id, lifetime, lifetime);
   });
+}
+
+/**
+ * Stop a toast's clock while someone is reading or using it, keeping the time
+ * it has left; nothing happens for an unknown id, an Infinity toast, or one
+ * already paused.
+ */
+export function pauseToast(id) {
+  const timer = timers.get(id);
+  if (!timer || timer.paused) return;
+  clearTimeout(timer.timeout);
+  const remaining = Math.max(0, timer.remaining - (Date.now() - timer.startedAt));
+  timers.set(id, { ...timer, remaining, paused: true, timeout: null });
+}
+
+/**
+ * Run a paused toast's clock again on the time it had left; nothing happens
+ * unless it is paused, so a stray resume cannot restart a running clock.
+ */
+export function resumeToast(id) {
+  const timer = timers.get(id);
+  if (!timer?.paused) return;
+  startTimer(id, timer.lifetime, timer.remaining);
 }
 
 const toastStore = {

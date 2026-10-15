@@ -2,11 +2,13 @@
  * The toast store holds three (AP-F12, #936), newest first, and each toast
  * expires on its own clock rather than on the clock of whichever arrived
  * last. The clock is the store's: an update that changes a toast's duration
- * reschedules it, and nothing has to be mounted for a toast to expire.
+ * reschedules it, and nothing has to be mounted for a toast to expire. It
+ * stops while the toast is being read (pauseToast) and runs out what was left
+ * once it is not (resumeToast).
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { TOAST_LIMIT, toast, useToast } from './use-toast';
+import { TOAST_LIMIT, pauseToast, resumeToast, toast, useToast } from './use-toast';
 
 const fired = [];
 /** Fire a toast and keep its handle, so afterEach can clear what a test left behind. */
@@ -146,6 +148,128 @@ describe('useToast', () => {
     // Mounted after the toast's lifetime: nothing left to show, and no
     // fresh clock started for an old outcome.
     const { result } = renderHook(() => useToast());
+    expect(result.current.toasts).toEqual([]);
+  });
+});
+
+describe('pauseToast and resumeToast', () => {
+  /** Advance the fake clock inside act, so the hook sees each removal. */
+  const advance = (ms) =>
+    act(() => {
+      vi.advanceTimersByTime(ms);
+    });
+  /** The titles the hook currently holds. */
+  const titles = (result) => result.current.toasts.map((t) => t.title);
+
+  it('a paused toast outlives its lifetime, and goes only after resume plus what it had left', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useToast());
+    let handle;
+    act(() => {
+      handle = fire({ title: 'Undo' });
+    });
+    advance(2000);
+    pauseToast(handle.id);
+    // Hovered for a minute: the five seconds pass and it stays.
+    advance(60000);
+    expect(titles(result)).toEqual(['Undo']);
+
+    resumeToast(handle.id);
+    advance(2999);
+    expect(titles(result)).toEqual(['Undo']);
+    advance(1);
+    expect(result.current.toasts).toEqual([]);
+  });
+
+  it('a second pause takes nothing more off what is left', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useToast());
+    let handle;
+    act(() => {
+      handle = fire({ title: 'paused twice' });
+    });
+    advance(1000);
+    pauseToast(handle.id);
+    advance(1000);
+    pauseToast(handle.id);
+    resumeToast(handle.id);
+    advance(3999);
+    expect(titles(result)).toEqual(['paused twice']);
+    advance(1);
+    expect(result.current.toasts).toEqual([]);
+  });
+
+  it('resume on a toast that is not paused does not restart its clock', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useToast());
+    let handle;
+    act(() => {
+      handle = fire({ title: 'running' });
+    });
+    advance(3000);
+    resumeToast(handle.id);
+    advance(2000);
+    expect(result.current.toasts).toEqual([]);
+  });
+
+  it('pause and resume on an unknown id, or on an Infinity toast, do nothing', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useToast());
+    let sticky;
+    act(() => {
+      fire({ title: 'timed' });
+      sticky = fire({ title: 'sticky', duration: Infinity });
+    });
+    expect(() => {
+      pauseToast('no-such-toast');
+      resumeToast('no-such-toast');
+      pauseToast(undefined);
+      resumeToast(undefined);
+      pauseToast(sticky.id);
+      resumeToast(sticky.id);
+    }).not.toThrow();
+
+    // The timed toast's clock never noticed; the sticky one still waits for a hand.
+    advance(5000);
+    expect(titles(result)).toEqual(['sticky']);
+  });
+
+  it('an update that changes the duration while paused keeps it paused, with the new lifetime left', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useToast());
+    let handle;
+    act(() => {
+      handle = fire({ title: 'Undo' });
+    });
+    advance(1000);
+    pauseToast(handle.id);
+    act(() => {
+      handle.update({ duration: 8000 });
+    });
+    advance(60000);
+    expect(titles(result)).toEqual(['Undo']);
+
+    resumeToast(handle.id);
+    advance(7999);
+    expect(titles(result)).toEqual(['Undo']);
+    advance(1);
+    expect(result.current.toasts).toEqual([]);
+  });
+
+  it('a paused toast dismissed by hand leaves, and a later resume finds nothing to run', () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useToast());
+    let handle;
+    act(() => {
+      handle = fire({ title: 'closed while hovered' });
+    });
+    pauseToast(handle.id);
+    act(() => {
+      handle.dismiss();
+    });
+    expect(result.current.toasts).toEqual([]);
+    expect(() => resumeToast(handle.id)).not.toThrow();
+    advance(10000);
     expect(result.current.toasts).toEqual([]);
   });
 });
