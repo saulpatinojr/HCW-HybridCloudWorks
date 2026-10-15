@@ -241,9 +241,11 @@ export function createContentUpdateHandler({
  * The write is conditioned on the read's `_etag`, so a document that moved
  * between the read and the write is refused with a 409 (`code: 'CONFLICT'`)
  * and nothing is written; archiving and leaving the archive for `published`
- * carry the content's linked legacy blogs with it (findLinkedBlogsToCarry).
+ * carry the content's linked legacy blogs with it, settled against the
+ * content as it reads after the write (settleLinkedBlogs), and say what
+ * they moved as `linkedBlogs`.
  *
- * @returns {{ ok: true, contentId, from, to } |
+ * @returns {{ ok: true, contentId, from, to, linkedBlogs?: { carried: string[], skipped: string[], settled: boolean } } |
  *           { ok: false, status: number, error: string, code?: string, allowedTransitions?: string[] }}
  */
 export function createContentStatusTransitioner({
@@ -364,12 +366,17 @@ export function createContentStatusTransitioner({
       updateData.rejectedAt = null;
     }
 
-    // Read before any write, so a failed lookup leaves nothing changed.
-    const linkedBlogs = await findLinkedBlogsToCarry(store, data, {
-      contentId,
-      from: normalizedCurrentStatus,
-      to: normalizedStatus,
-    });
+    // Read before any write, so a lookup that cannot be answered leaves
+    // nothing changed, and a page with no linked blog (nearly every page)
+    // costs nothing more. Which blogs move, and how, is decided again from
+    // reads taken after the write (settleLinkedBlogs): a choice made from
+    // this read can be stale by the time it is carried out.
+    const linkedAtRead = carriesLinkedBlogs(
+      normalizedCurrentStatus,
+      normalizedStatus,
+    )
+      ? await readLinkedBlogs(store, data, contentId)
+      : [];
 
     // Under the read's ETag: the publisher gate and the edge check above
     // were decided from `data`, so the write must land on that version or
@@ -387,6 +394,15 @@ export function createContentStatusTransitioner({
       if (refusal) return refusal;
       throw error;
     }
+
+    // Before the audit row, so the row names the blogs this transition
+    // actually moved. A write that fails for any reason but a lost race or
+    // a deleted blog is held until the row is written, then surfaces as the
+    // 500 the header describes.
+    const linked =
+      linkedAtRead.length > 0
+        ? await settleLinkedBlogs(store, contentId, nowDate.toISOString())
+        : null;
 
     const changedFields = Object.keys(updateData);
     await store.upsertDoc("audits", {
@@ -409,9 +425,7 @@ export function createContentStatusTransitioner({
       userAgent,
       metadata: {
         ...(legacyBlogId ? { legacyBlogId } : {}),
-        ...(linkedBlogs.length
-          ? { linkedBlogIds: linkedBlogs.map((blog) => blog.id) }
-          : {}),
+        ...linkedBlogsAuditMetadata(linked),
         authMethod,
         reviewedBy,
       },
@@ -421,20 +435,22 @@ export function createContentStatusTransitioner({
         identityVerified: true,
       },
     });
-
-    // After the audit row, so the row names the blogs this transition
-    // carries even if one of these writes then fails (a 500 the caller sees).
-    await carryLinkedBlogs(store, linkedBlogs, updateData, {
-      contentId,
-      to: normalizedStatus,
-      nowIso: nowDate.toISOString(),
-    });
+    if (linked?.error) throw linked.error;
 
     return {
       ok: true,
       contentId,
       from: normalizedCurrentStatus,
       to: normalizedStatus,
+      ...(linked
+        ? {
+            linkedBlogs: {
+              carried: linked.carried,
+              skipped: linked.skipped,
+              settled: linked.settled,
+            },
+          }
+        : {}),
     };
   };
 }
@@ -476,6 +492,35 @@ function lostRaceRefusal(error, contentId) {
  * blogs so stamped: a linked blog that was not public before the archive is
  * never made public by its Undo. Done here, on the server, so every caller
  * of the transition (Live Pages, the Archive board) gets it.
+ *
+ * FENCED AGAINST THE NEXT TRANSITION. The content write is guarded by its
+ * ETag; the blogs are a second container, with no transaction across the
+ * two. Carrying what was decided before the write let two transitions
+ * cross: a restore publishes the page and pauses, an archive then finds no
+ * public blog to carry (they are still archived) and archives the page, and
+ * the restore wakes and publishes the blogs, leaving a copy of an archived
+ * page on the site; the mirror order left a live page with its blogs
+ * hidden. Re-checking only the transition's own work afterwards is not
+ * enough either, because the archive can read the blogs before the restore
+ * carries them and write the page after the restore has checked. So the
+ * blogs are settled against the content as it reads AFTER the write, not
+ * against the edge that was asked for (settleLinkedBlogs): an archived page
+ * takes down every linked blog the site serves, a published one brings back
+ * the blogs it archived, and any other status moves none. Each blog is
+ * written under the ETag of the read that chose it, and once the round's
+ * writes are done the content is read again; if it moved, or a blog did, the
+ * round runs again from fresh reads. Every carrying transition settles after
+ * its own write, so the one that wrote the page last settles against its
+ * final status, and an earlier one that wrote a blog from an older read of
+ * the page then finds the page moved and settles again: the blogs end in
+ * agreement with the page's final status.
+ *
+ * What that rests on: each read seeing the latest committed write. The
+ * account runs at Session consistency (infra/cosmos.tf), under which a read
+ * from another instance can trail a write by the replication delay, so the
+ * fence narrows a pause of any length to that delay rather than closing it
+ * outright; the conditional writes themselves are checked against the
+ * current version and are exact.
  */
 const BLOG_VISIBILITY_FIELDS = [
   "Live",
@@ -484,25 +529,21 @@ const BLOG_VISIBILITY_FIELDS = [
   "scheduledPublishDate",
 ];
 
+/** How many times the blogs are settled again when the page or a blog moves underneath them. */
+const MAX_SETTLE_ROUNDS = 3;
+
 /**
- * The legacy blogs this transition carries with the content: none, those to
- * archive, or those to bring back.
+ * Whether an edge moves the linked blogs at all: entering the archive, from
+ * any status, and leaving it for `published`. Every other edge leaves them
+ * where they are, and reads none of them.
  */
-async function findLinkedBlogsToCarry(store, data, { contentId, from, to }) {
-  const archiving = to === "archived";
-  const restoring = from === "archived" && to === "published";
-  if (!archiving && !restoring) return [];
-  const linked = await readLinkedBlogs(store, data, contentId);
-  return linked.filter((blog) =>
-    archiving
-      ? isPublicDocument(blog)
-      : blog.archivedWithContentId === contentId,
-  );
+function carriesLinkedBlogs(from, to) {
+  return to === "archived" || (from === "archived" && to === "published");
 }
 
 /**
  * Every blog linked to the content, once each, with the fields the choice
- * above reads.
+ * below reads and the `_etag` its write is conditioned on.
  */
 async function readLinkedBlogs(store, data, contentId) {
   const byId = new Map();
@@ -516,7 +557,7 @@ async function readLinkedBlogs(store, data, contentId) {
   }
   const rows = await store.queryDocs(
     "blogs",
-    "SELECT TOP 50 c.id, c.Live, c.Status, c.contentStatus, c.softDeletedAt, c.softDeleteExpiresAt, c.archivedWithContentId FROM c WHERE c.sourceContentId = @id OR c.publishedContentId = @id",
+    "SELECT TOP 50 c.id, c._etag, c.Live, c.Status, c.contentStatus, c.softDeletedAt, c.softDeleteExpiresAt, c.archivedWithContentId FROM c WHERE c.sourceContentId = @id OR c.publishedContentId = @id",
     [{ name: "@id", value: contentId }],
   );
   for (const row of rows || []) if (!byId.has(row.id)) byId.set(row.id, row);
@@ -524,35 +565,143 @@ async function readLinkedBlogs(store, data, contentId) {
 }
 
 /**
- * The content's own visibility fields, as the transition just wrote them,
- * onto each linked blog: archived writes `Live: false`, `Status:
- * 'Archived'`, `contentStatus: 'archived'` and no schedule; published writes
- * `Live` and `contentStatus: 'published'` and drops the `Status` word, as
- * publishing does (content-status.js applyStatusPublished).
+ * The linked blogs that disagree with the content as it now reads: under an
+ * archived page, every one the site serves; under a published page, the
+ * ones it archived; under any other status, none.
  */
-async function carryLinkedBlogs(
-  store,
-  blogs,
-  updateData,
-  { contentId, to, nowIso },
-) {
-  if (blogs.length === 0) return;
-  const visibility = Object.fromEntries(
-    BLOG_VISIBILITY_FIELDS.filter((field) => field in updateData).map(
-      (field) => [field, updateData[field]],
-    ),
+function blogsOutOfStep(content, blogs, contentId) {
+  const status = normalizeCurrentStatusForBlogOnly(
+    content.contentStatus || "ingested",
   );
-  const marker =
-    to === "archived"
-      ? { archivedWithContentId: contentId, archivedAt: nowIso }
-      : { archivedWithContentId: undefined, archivedAt: null };
-  for (const blog of blogs) {
-    await store.patchDoc("blogs", blog.id, {
-      ...visibility,
-      ...marker,
-      updatedAt: nowIso,
-    });
+  if (status === "archived") {
+    return blogs.filter((blog) => isPublicDocument(blog));
   }
+  if (status === "published") {
+    return blogs.filter((blog) => blog.archivedWithContentId === contentId);
+  }
+  return [];
+}
+
+/**
+ * The content's own visibility fields, as it now reads, onto a linked blog:
+ * an archived page has `Live: false`, `Status: 'Archived'`, `contentStatus:
+ * 'archived'` and no schedule; a published one has `Live` and `contentStatus:
+ * 'published'` and no `Status` word, as publishing writes it
+ * (content-status.js applyStatusPublished). A field the page does not carry
+ * is removed from the blog. Archiving stamps the blog with the page and the
+ * page's archive time; bringing it back clears both.
+ */
+function blogPatchFor(content, contentId, nowIso) {
+  const visibility = Object.fromEntries(
+    BLOG_VISIBILITY_FIELDS.map((field) => [field, content[field]]),
+  );
+  const archived =
+    normalizeCurrentStatusForBlogOnly(content.contentStatus || "ingested") ===
+    "archived";
+  const marker = archived
+    ? {
+        archivedWithContentId: contentId,
+        archivedAt: content.archivedAt || nowIso,
+      }
+    : { archivedWithContentId: undefined, archivedAt: null };
+  return { ...visibility, ...marker, updatedAt: nowIso };
+}
+
+/**
+ * One blog's write, under the ETag of the read that chose it: `written`;
+ * `changed` when another write landed on the blog since that read (a 412,
+ * so the next round decides again from a fresh read rather than
+ * overwriting it); or `gone` when it was deleted in between (a 404, nothing
+ * left to agree with the page). Any other failure is thrown.
+ */
+async function patchBlogAsRead(store, blog, patch) {
+  try {
+    await store.patchDoc("blogs", blog.id, patch, { ifMatch: blog._etag });
+    return "written";
+  } catch (error) {
+    if (error?.code === 412) return "changed";
+    if (error?.code === 404) return "gone";
+    throw error;
+  }
+}
+
+/** Add `id` to `list` unless it is there already, keeping first-seen order. */
+const addOnce = (list, id) => {
+  if (!list.includes(id)) list.push(id);
+};
+
+/**
+ * One settling round against `content`: every linked blog out of step with
+ * it is written, and the ids that lost a race to another write are returned
+ * for the next round to decide again.
+ */
+async function settleRound(store, content, contentId, nowIso, outcome) {
+  const linked = await readLinkedBlogs(store, content, contentId);
+  const patch = blogPatchFor(content, contentId, nowIso);
+  const changed = [];
+  for (const blog of blogsOutOfStep(content, linked, contentId)) {
+    const result = await patchBlogAsRead(store, blog, patch);
+    if (result === "written") addOnce(outcome.carried, blog.id);
+    else if (result === "gone") addOnce(outcome.skipped, blog.id);
+    else changed.push(blog.id);
+  }
+  return changed;
+}
+
+/**
+ * Bring the content's linked blogs into agreement with the content as it
+ * reads after this transition's write, round by round, until a round ends
+ * with the content unmoved and no blog lost to a race, or the rounds run out
+ * (see the block above). Returns what it did: `carried`, the blogs written;
+ * `skipped`, the blogs deleted in between or still contested when the
+ * rounds ran out; `settled`; and `error`, any failure other than a race,
+ * held for the caller to throw once the audit row is written.
+ */
+async function settleLinkedBlogs(store, contentId, nowIso) {
+  const outcome = { carried: [], skipped: [], settled: false, error: null };
+  try {
+    let content = await store.readDoc("content", contentId, contentId);
+    for (let round = 1; round <= MAX_SETTLE_ROUNDS; round += 1) {
+      // A page deleted in between leaves the blogs nothing to agree with.
+      if (!content) {
+        outcome.settled = true;
+        break;
+      }
+      const changed = await settleRound(
+        store,
+        content,
+        contentId,
+        nowIso,
+        outcome,
+      );
+      const after = await store.readDoc("content", contentId, contentId);
+      if (changed.length === 0 && (!after || after._etag === content._etag)) {
+        outcome.settled = true;
+        break;
+      }
+      if (round === MAX_SETTLE_ROUNDS) {
+        for (const id of changed) addOnce(outcome.skipped, id);
+      }
+      content = after;
+    }
+  } catch (error) {
+    outcome.error = error;
+  }
+  return outcome;
+}
+
+/**
+ * What the audit row records of the blogs a transition settled: the ids it
+ * wrote, the ids it could not settle, and that it did not finish, each only
+ * when there is something to say.
+ */
+function linkedBlogsAuditMetadata(linked) {
+  if (!linked) return {};
+  return {
+    ...(linked.carried.length ? { linkedBlogIds: linked.carried } : {}),
+    ...(linked.skipped.length ? { linkedBlogIdsSkipped: linked.skipped } : {}),
+    ...(linked.settled ? {} : { linkedBlogsSettled: false }),
+  };
 }
 
 /** The roles that may make content live; editors stop at the review workflow. */
@@ -617,6 +766,13 @@ function transitionResponse(
   context.warn(
     `transitionStatus ${resolvedContentId}: ${result.from} → ${result.to} by ${reviewedBy}`,
   );
+  const { skipped = [], settled = true } = result.linkedBlogs || {};
+  if (skipped.length > 0 || !settled) {
+    // Counts only: which blogs is in the audit row, not in the log.
+    context.warn(
+      `transitionContentStatus: linked blogs not settled (${skipped.length} skipped, settled ${settled})`,
+    );
+  }
   return json(200, {
     success: true,
     contentId: resolvedContentId,

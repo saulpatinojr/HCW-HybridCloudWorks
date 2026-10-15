@@ -110,7 +110,22 @@ This project has not cut a tagged release; entries are grouped under
   their rules), and writes its own `content_deleted` row to `audits`, so
   the framework review's client audit row for the same delete is gone. The
   toast's Undo is sent once and disabled while in flight, and a restore on
-  the Archive board re-reads the Editor's live list.
+  the Archive board re-reads the Editor's live list. The linked blogs are
+  chosen from reads taken after the page's own write, each written under
+  its read's `_etag`, and settled against the page as it then reads rather
+  than the edge asked for: an archived page takes down every linked blog
+  the site serves, a published one brings back the blogs it archived. Once
+  a round's writes land the page is read again, and if it or a blog moved
+  the round runs again (three at most), so a restore and an archive that
+  cross leave the blogs agreeing with the page's final status; three
+  interleavings are pinned in `content-update.test.js`. A blog deleted in
+  between, or still contested after the third round, is named in the audit
+  row (`linkedBlogIdsSkipped`, `linkedBlogsSettled: false`) and the
+  transition still answers 200. `patchDoc`'s read-modify-write path
+  (`lib/cosmos-client.js`) answers a document gone before its read with
+  `code: 404`, as the patch path already did. `deleteContentItem`'s two
+  failure lines are a fixed sentence and the error's code, with no
+  document id.
 - **alert-timer-overdue evaluates again, a KQL test refuses what silenced it,
   the weekly check reads every log rule's Resource Health, and the fire test
   matches the timer dimension** (PLAT-4, #964). The rule never evaluated from
