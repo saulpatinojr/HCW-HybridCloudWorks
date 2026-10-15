@@ -19,6 +19,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **`alert-timer-overdue` is seen to fire: thirteen of fifteen alert rules
+  are now on the Fire record (PLAT-4, #964)**. After the owner's apply put
+  #1195's corrected query live (20:42Z on 2026-10-15),
+  `Invoke-AlertFireTest.ps1 -Test timer-overdue` disabled `healthPulse` at
+  20:48Z and the alert opened at 21:52:30Z naming it; the setting was put
+  back as recorded. The runbook's Fire record row is dated. The two
+  backup-missing rules remain, by the owner's call.
 - **The Live Pages and Editor list truncation tests stand a bare element in
   for each row, so a loaded full run no longer times them out (#1194)**
   (AP-F6, #930). Both proved the 500-item banner by rendering 500 full rows
