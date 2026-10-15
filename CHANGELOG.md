@@ -19,6 +19,45 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **PLAT-10 remainder: the Static Web App bandwidth comment reads the live
+  DNS, the runner address is checked before it reaches a firewall argument
+  and the storage window's flip can be measured, Cloudflare's ranges are
+  held to the published list by a weekly pull request, the content account
+  drops its localhost origin, the registration monitor names its real
+  identity and what it counts, and the export window's effect on API latency
+  is an alert rule** (PLAT-10, #970). `infra/frontend.tf` no longer says
+  Cloudflare caching makes a bandwidth overage unlikely: the apex and www
+  resolve straight to the Static Web App (read 2026-10-15), so every byte
+  counts against the Free plan's 100 GB, and `alert-swa-bandwidth` is what
+  watches the pace. `deploy-functions.yml` passes the address it learns from
+  a third party through `scripts/assert-ipv4.mjs` (one dotted quad or the
+  step fails naming what arrived) at all three places it is used, says what
+  Microsoft documents about who writes the package on Flex Consumption, and
+  leaves the host storage account's default action at Deny through the
+  window when the repository variable `FUNCTIONS_STORAGE_OPEN_DEFAULT_ACTION`
+  is the literal `false`, so one deploy measures whether the flip is still
+  needed. `scripts/cloudflare-ranges.mjs` reads Cloudflare's published IPv4
+  list, refuses a short or malformed answer, and rewrites the default of
+  `cloudflare_ip_ranges`; `cloudflare-ranges.yml` runs it on Tuesdays and
+  opens the `chore/cloudflare-ranges` pull request through the App, with the
+  same recorded-paths guard as the lab pin sets (the set lives in
+  `open-lab-pin-pr.mjs`; the pull request body says apply before the next
+  deploy, because `assert-origin-lock.mjs` holds every deploy to the list).
+  `infra/storage.tf` drops `http://localhost:5173` from the content
+  account's CORS: nothing in the frontend fetches from that account by
+  script, and the images and media it loads need no CORS.
+  `monitor-functions-registered.yml` stops saying its identity can write
+  site config (that split landed as #1098) and counts the host storage
+  account's IP rules under that name, since storage IP rules carry no
+  `ci-*` names. `alert-export-window-latency` (`infra/observability.tf`,
+  severity 3, daily) compares the API's P95 inside the nightly Cosmos export
+  window with the rest of the day and fires when the window is above 1 s and
+  above twice the day's over at least 20 requests: ADR 0019's revisit
+  trigger, measured, as a rule rather than the weekly readout the review
+  asked for, because a readout from GitHub needs a workspace query grant the
+  owner declined on 2026-10-11. The rule is a declared create in
+  `assert-expected-plan.mjs` until the owner's apply, and has its rows in
+  the alerting runbook and ADR 0019.
 - **Completed low-hanging fruit remediations across Admin Portal, VPS agent, deployment drift, docs, and infra** (AP-F6 #930, LAB-13 #959, PLAT-3 #963, PLAT-9 #969, PLAT-10 #970).
   - **AP-F6 (#930)**: Added server-side `search` query parameter support in `functions/src/lib/cms-content.js` with Cosmos DB `CONTAINS`, added 500-item truncation notice and retry attempt state in `LivePagesPage.jsx`, and added unit tests in `LivePagesPage.test.jsx`.
   - **LAB-13 (#959)**: Extended VPS agent shutdown timeout to 210s (`LABS_AGENT_SHUTDOWN_TIMEOUT_MS`) with active job terminal completion handling, added systemd `TimeoutStopSec=240` to `hcw-labs-agent.service.j2` and role defaults, and hash-locked `ansible-core` wheel SHA256 in `lab-host/bootstrap.sh`.

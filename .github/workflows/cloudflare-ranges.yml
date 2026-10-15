@@ -1,0 +1,215 @@
+# Weekly: hold `cloudflare_ip_ranges` (infra/variables.tf) to the IPv4 list
+# Cloudflare publishes, by pull request (PLAT-10, #970).
+#
+# WHY. The origin lock in infra/functionapp.tf admits exactly the ranges in
+# that default, one Allow rule each, deny-all behind them. Cloudflare adds or
+# retires a range rarely and without notice: a new one is an edge the origin
+# refuses (a visitor's 403 from a site that is otherwise up), a retired one is
+# a rule nothing reaches through. Until this workflow the list was a literal,
+# checked by hand on the day it was committed and compared by nothing since.
+# scripts/cloudflare-ranges.mjs has the comparison and its refusals: a short
+# or malformed answer never narrows the lock.
+#
+# SHAPE, the same as lab-supply-chain.yml. `propose` reads Cloudflare and
+# edits the checkout with no secret in reach; `pull-request` holds the App
+# token and applies a patch it judges first, against the set's paths recorded
+# from the pristine checkout, so nothing fetched can widen what the App
+# pushes. No `contents: write` or `pull-requests: write` anywhere: the ruleset
+# refuses a direct push to main, and the pull request is opened through the
+# App so the required checks run on it (scripts/github-app-token.mjs).
+#
+# MERGE, APPLY, THEN DEPLOY. scripts/assert-origin-lock.mjs holds every deploy
+# to the list in its checkout, so a merged move that has not been applied
+# fails the next deploy by design. The pull request body says so.
+#
+# NO `environment:` on `propose` and `automation` on `pull-request`, as the
+# other scheduled PR-opening jobs: an approval gate would leave a scheduled
+# run waiting for a human who is not there.
+
+name: Cloudflare Ranges
+
+on:
+  schedule:
+    # Tuesdays, twenty minutes after the lab supply-chain run, so the two
+    # App-token jobs never share a minute.
+    - cron: '5 7 * * 2'
+  # No inputs (checkov CKV_GHA_7): a manual run compares the same two lists.
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  # One comparison at a time; a second run waits rather than racing the
+  # first's pull request.
+  group: cloudflare-ranges
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    name: Compare the declared ranges with the published list
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout only — this job must never be able to push
+    outputs:
+      changed: ${{ steps.patch.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # No npm ci: the script imports node: built-ins and repository modules.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      # The set's paths, read from the pristine checkout before anything
+      # fetched has run: the guard and the patch step use this list, never a
+      # second read of the script.
+      - name: Record the set's paths before anything fetched runs
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/cloudflare-ranges"
+          node scripts/open-lab-pin-pr.mjs --paths cloudflare-ranges | sort -u > "${RUNNER_TEMP}/cloudflare-ranges/paths.txt"
+
+      # Exit 2 is an answer that could not be trusted; that fails the run and
+      # writes nothing. A current list exits 0 with nothing written.
+      - name: Read Cloudflare's list and rewrite the default when it moved
+        run: |
+          set -euo pipefail
+          node scripts/cloudflare-ranges.mjs --bump --evidence "${RUNNER_TEMP}/cloudflare-ranges/evidence.md" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Whatever the fetch returned, only the set's paths may differ now.
+      - name: Nothing outside the set's paths changed
+        run: |
+          set -euo pipefail
+          git status --porcelain=v1 --untracked-files=all \
+            | sed -E 's/^.. //; s/.* -> //; s/^"(.*)"$/\1/' | sort -u > "${RUNNER_TEMP}/cloudflare-ranges/changed.txt"
+          outside="$(comm -13 "${RUNNER_TEMP}/cloudflare-ranges/paths.txt" "${RUNNER_TEMP}/cloudflare-ranges/changed.txt")"
+          if [ -n "${outside}" ]; then
+            echo "::error::The checkout changed outside the set's paths; no patch is made. Changed: $(echo "${outside}" | tr '\n' ' ')"
+            exit 1
+          fi
+
+      - name: One patch, over the set's paths only
+        id: patch
+        run: |
+          set -euo pipefail
+          mapfile -t paths < "${RUNNER_TEMP}/cloudflare-ranges/paths.txt"
+          git diff --binary -- "${paths[@]}" > "${RUNNER_TEMP}/cloudflare-ranges/cloudflare-ranges.patch"
+          if [ -s "${RUNNER_TEMP}/cloudflare-ranges/cloudflare-ranges.patch" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "The declared ranges match the published list; nothing to open." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the patch and evidence
+        if: steps.patch.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cloudflare-ranges
+          path: ${{ runner.temp }}/cloudflare-ranges/
+          retention-days: 7
+          if-no-files-found: error
+
+  pull-request:
+    name: Open or update the pull request
+    needs: propose
+    if: needs.propose.outputs.changed == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    environment: automation
+    permissions:
+      contents: read # checkout only — this job cannot push anywhere on its own
+    steps:
+      # `persist-credentials: false`, or the push authenticates as
+      # github-actions[bot] and is refused.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      - name: Download the patch
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cloudflare-ranges
+          path: ${{ runner.temp }}/cloudflare-ranges
+
+      # Judged before it is applied, by a rule written here rather than in
+      # anything the patch could replace: only the paths recorded in
+      # `propose`, and never a workflow or a script this job runs.
+      - name: The patch touches only the set's recorded paths, and no code this job runs
+        run: |
+          set -euo pipefail
+          patch="${RUNNER_TEMP}/cloudflare-ranges/cloudflare-ranges.patch"
+          git apply --numstat "${patch}" | cut -f3- | sort -u > "${RUNNER_TEMP}/cloudflare-ranges/patched.txt"
+          outside="$(comm -13 "${RUNNER_TEMP}/cloudflare-ranges/paths.txt" "${RUNNER_TEMP}/cloudflare-ranges/patched.txt")"
+          if [ -n "${outside}" ]; then
+            echo "::error::The patch touches paths outside the set: $(echo "${outside}" | tr '\n' ' ')"
+            exit 1
+          fi
+          if grep -E '^(\.github/|scripts/)' "${RUNNER_TEMP}/cloudflare-ranges/patched.txt"; then
+            echo "::error::The patch touches a workflow or a script this job could run; refused."
+            exit 1
+          fi
+          echo "Patched: $(tr '\n' ' ' < "${RUNNER_TEMP}/cloudflare-ranges/patched.txt")"
+
+      - name: Apply the patch
+        run: git apply "${RUNNER_TEMP}/cloudflare-ranges/cloudflare-ranges.patch"
+
+      # Self-arming: before the App exists this reports that it opened
+      # nothing rather than failing every week.
+      - name: Is the App configured?
+        id: app
+        env:
+          MANIFEST_APP_PRIVATE_KEY: ${{ secrets.MANIFEST_APP_PRIVATE_KEY }}
+          MANIFEST_APP_ID: ${{ vars.MANIFEST_APP_ID }}
+        run: |
+          set -euo pipefail
+          if [ -n "${MANIFEST_APP_PRIVATE_KEY}" ] && [ -n "${MANIFEST_APP_ID}" ]; then
+            echo "armed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "armed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::The ranges moved but the App is not configured, so no pull request was opened. Set the MANIFEST_APP_ID variable and the MANIFEST_APP_PRIVATE_KEY secret (T-726)." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # No `npm ci`: the minter imports only node:crypto and node:url.
+      - name: Mint an App installation token
+        id: token
+        if: steps.app.outputs.armed == 'true'
+        env:
+          GITHUB_APP_ID: ${{ vars.MANIFEST_APP_ID }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.MANIFEST_APP_PRIVATE_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          token=$(node scripts/github-app-token.mjs)
+          # Masked BEFORE it is written anywhere, including to GITHUB_OUTPUT.
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "$GITHUB_OUTPUT"
+
+      # Stages the set's one path by name and refuses when anything else in
+      # the checkout changed; one branch, one open pull request.
+      - name: Push the branch and open or update the pull request
+        if: steps.app.outputs.armed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: node scripts/open-lab-pin-pr.mjs --set cloudflare-ranges --evidence "${RUNNER_TEMP}/cloudflare-ranges/evidence.md"
+
+      # The token lives an hour; the work above takes seconds. `always()`, so
+      # a failed push still cleans up.
+      - name: Revoke the installation token
+        if: always() && steps.token.outputs.token != ''
+        env:
+          GITHUB_APP_TOKEN: ${{ steps.token.outputs.token }}
+        run: node scripts/github-app-token.mjs --revoke

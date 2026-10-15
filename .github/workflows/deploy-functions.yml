@@ -123,42 +123,61 @@ jobs:
           tenant-id: ${{ vars.TENANT_ID }}
           subscription-id: ${{ vars.SUBSCRIPTION_ID }}
 
-      # T-503: the Functions host storage account is default-Deny, and this
-      # runner has a public dynamic IP, so the deployment-package upload needs
+      # T-503: the Functions host storage account is default-Deny, and the
+      # package has to land in its deployment container, so the deploy opens
       # a firewall window: add this runner's IP, deploy, remove it in an
       # always-run cleanup. Authorized by the deploy identity's Storage
       # Account Contributor grant scoped to exactly this account (infra/
       # oidc.tf github_deploy_funcsa_network). The rule add is eventually
       # consistent — the short wait lets it propagate before the upload.
       #
-      # An IP rule alone is not enough: GitHub-hosted runners are Azure VMs, and
-      # the storage firewall ignores IP rules for requests from the account's
-      # own region. The default action is opened to Allow for the minutes
-      # of the upload too — data-plane access still needs an Entra token with
-      # a blob role, allowBlobPublicAccess is false — and the always() step
-      # restores Deny first.
+      # The address comes from a third party and is written into `az`
+      # arguments, so scripts/assert-ipv4.mjs stands between the two: one
+      # dotted-quad or the step fails naming what arrived (PLAT-10, #970).
+      #
+      # WHAT THE WINDOW IS FOR, read against Microsoft's deployment page on
+      # 2026-10-15 (PLAT-10, #970). On Flex Consumption a push deployment
+      # sends the package to the app's deployment endpoint; the runner never
+      # writes to the deployment container itself, the deployment service
+      # does, from addresses that are neither this runner's nor the app's
+      # integration subnet. That is why an IP rule alone was never enough
+      # (an earlier version of this comment blamed the runner being an Azure
+      # VM) and why the default action is opened to Allow for the minutes of
+      # the upload — data-plane access still needs an Entra token with a blob
+      # role, allowBlobPublicAccess is false — and the always() step restores
+      # Deny first.
+      #
+      # Whether that flip is still needed is one deploy's measurement, not a
+      # guess: with the repository variable FUNCTIONS_STORAGE_OPEN_DEFAULT_ACTION
+      # set to the literal `false`, this step adds the IP rule and leaves the
+      # default action at Deny, and the deploy step below is the test. If it
+      # succeeds, the flip can go (a follow-up removes it with the evidence);
+      # if it fails, the cleanup has already restored Deny and the site keeps
+      # running the package it had. Unset, or any other value, is today's
+      # behaviour.
       - name: Open storage firewall window for this runner
         id: fw
         env:
           RG: ${{ vars.RESOURCE_GROUP }}
           SA: ${{ vars.FUNCTIONS_STORAGE_ACCOUNT }}
+          OPEN_DEFAULT_ACTION: ${{ vars.FUNCTIONS_STORAGE_OPEN_DEFAULT_ACTION }}
         run: |
           set -euo pipefail
-          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org)
-          if [[ ! "${RUNNER_IP}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "::error::ipify.org returned invalid IPv4: '${RUNNER_IP}' (PLAT-10, #970)"
-            exit 1
-          fi
+          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org | node scripts/assert-ipv4.mjs)
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
           az storage account network-rule add \
             --resource-group "${RG}" \
             --account-name "${SA}" \
             --ip-address "${RUNNER_IP}" \
             --output none
-          az storage account update \
-            --resource-group "${RG}" \
-            --name "${SA}" \
-            --default-action Allow --output none
+          if [ "${OPEN_DEFAULT_ACTION}" = "false" ]; then
+            echo "default action left at Deny for this deploy (FUNCTIONS_STORAGE_OPEN_DEFAULT_ACTION=false): the package upload below is the measurement of whether the flip is needed"
+          else
+            az storage account update \
+              --resource-group "${RG}" \
+              --name "${SA}" \
+              --default-action Allow --output none
+          fi
           sleep 30
       # T-520: SCM (Kudu) is the endpoint this deploy publishes through, and it
       # answers the internet. The credential half is already closed — basic
@@ -188,11 +207,7 @@ jobs:
           RG: ${{ vars.RESOURCE_GROUP }}
         run: |
           set -euo pipefail
-          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org)
-          if [[ ! "${RUNNER_IP}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "::error::ipify.org returned invalid IPv4: '${RUNNER_IP}' (PLAT-10, #970)"
-            exit 1
-          fi
+          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org | node scripts/assert-ipv4.mjs)
           RULE="ci-deploy-scm-${GITHUB_RUN_ID}"
 
           # If SCM inherits the main site's rules, an SCM rule is ignored and
@@ -478,11 +493,7 @@ jobs:
           RG: ${{ vars.RESOURCE_GROUP }}
         run: |
           set -euo pipefail
-          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org)
-          if [[ ! "${RUNNER_IP}" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "::error::ipify.org returned invalid IPv4: '${RUNNER_IP}' (PLAT-10, #970)"
-            exit 1
-          fi
+          RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org | node scripts/assert-ipv4.mjs)
           echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
           az functionapp config access-restriction add \
             --resource-group "${RG}" \

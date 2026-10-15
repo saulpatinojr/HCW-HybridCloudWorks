@@ -62,10 +62,13 @@
 # the SCM site to its run by the id in its name, through the same
 # `actions: read`, and names any whose run has ended. It reads twice, a
 # minute apart, so a run closing its window as this reads is not named.
-# Removing an orphan stays a person's decision. This check only reads; the
-# identity it runs as can write site config, because publish-content-manifest
-# uses it for its own window (infra/oidc.tf, T-718), and separating the two is
-# #1098.
+# Removing an orphan stays a person's decision. This check only reads, and
+# so does the identity it runs as: github_reader holds Reader and HCW
+# Function Settings Reader on rg-web-site-prod-cus and nothing else (live
+# 2026-10-15). An earlier version of this paragraph said the identity could
+# write site config because publish-content-manifest shared it; that split
+# landed as #1098 (github_manifest_window, MANIFEST_WINDOW_CLIENT_ID, closed
+# 2026-10-13) and the sentence outlived it (PLAT-10, #970).
 #
 # The check was never missing — it was manual, or inside deploy-functions.yml,
 # which only runs when someone deploys. Nobody deployed during any of the three
@@ -318,9 +321,15 @@ jobs:
               az storage account show -n "$STOR" -g "$RG" \
                 --query "networkRuleSet.defaultAction" -o tsv) || true
 
-            # The temporary allow-rules are named ci-deploy-scm-* / ci-smoke-*
-            # after the runner IP, so any that survive name a run that died.
-            cirules=$(probe "leftover CI firewall rules" \
+            # Storage IP rules carry no names (the ci-deploy-scm-* / ci-smoke-*
+            # names belong to the Function App's access restrictions, read
+            # above). What this counts is every IP rule on the host storage
+            # account: deploy-functions.yml adds the runner's address for the
+            # upload and removes it in always(), and the steady state in
+            # infra/variables.tf (functions_storage_admin_ip_rules) is empty,
+            # so a non-zero count is a window a run never closed, or an
+            # operator window the next apply empties (PLAT-10, #970).
+            cirules=$(probe "IP rules on host storage" \
               az storage account network-rule list -n "$STOR" -g "$RG" \
                 --query "length(ipRules)" -o tsv) || true
           fi
@@ -391,12 +400,12 @@ jobs:
             fi
 
             if [ "$cirules" = "0" ]; then
-              echo "| Leftover CI firewall rules | 0 | ✅ |" >> "$report"
+              echo "| IP rules on host storage | 0 | ✅ |" >> "$report"
             elif [ "$cirules" = "UNAUTHORIZED" ] || [ "$cirules" = "ERROR" ]; then
-              echo "| Leftover CI firewall rules | \`$cirules\` | ⚠️ |" >> "$report"
+              echo "| IP rules on host storage | \`$cirules\` | ⚠️ |" >> "$report"
               failed=1
             else
-              echo "| Leftover CI firewall rules | **$cirules** | ❌ |" >> "$report"
+              echo "| IP rules on host storage | **$cirules** | ❌ |" >> "$report"
               failed=1
             fi
           fi

@@ -563,6 +563,122 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "function_response_tim
 }
 
 # ---------------------------------------------------------------------------
+# Function App — the export window degrades the API (ADR 0019's revisit trigger)
+# ---------------------------------------------------------------------------
+#
+# ADR 0019 ratified one Function App for the API and the schedulers and named
+# the trigger to revisit it: "a scheduler workload measurably degrades API
+# latency". Until PLAT-10 (#970) nothing measured that. The heaviest scheduler
+# is the nightly Cosmos export (03:00 UTC, ADR 0028 §5), so this rule compares
+# the API's P95 inside that window with its P95 across the rest of the same
+# day, once a day, and fires when the window is slow both in absolute terms
+# and against the day: P95 above 1 s, above twice the rest-of-day P95, over
+# at least 20 requests, so one cold start cannot fire it and a quiet night
+# says nothing.
+#
+# A RULE, NOT THE WEEKLY READOUT #970 ASKED FOR, on purpose. A readout from
+# GitHub needs an identity that can query the workspace from outside Azure,
+# and the owner declined exactly that shape for the GitHub identities on
+# 2026-10-11 (oidc.tf, github_alert_reader: "query is a read action"). This
+# rule runs as alerts_app, which already reads this component, and its mail
+# carries the measurement in the alert's dimensions: both P95s and both
+# request counts. A fire is the ADR's trigger met; the split returns
+# worker-first, as the ADR says. Severity 3, the lowest in this file: the
+# mail is the readout, and the rule fires at most once a day.
+#
+# `requests` and `duration` (milliseconds), the classic schema, because the
+# scope is the component, as for alert-func-latency above. Only rows with a
+# `url`: the Functions host writes the request URL for HTTP-triggered
+# invocations and leaves it empty for timer and queue work, and the question
+# is what the API's callers saw, not how long the export itself ran. The
+# query anchors itself to the previous whole UTC day (Azure schedules a daily
+# evaluation as an interval, not a clock time, so a trailing day could split
+# one export window across two nights); the two-day lookback is what lets it.
+# The dimensions are strings because dimension values are; the numbers are
+# rounded first so the mail reads as milliseconds.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "export_window_latency" {
+  name                = "alert-export-window-latency-${var.environment}-${var.region_abbreviation}"
+  resource_group_name = azurerm_resource_group.app["web"].name
+  location            = azurerm_resource_group.app["web"].location
+  scopes              = [azurerm_application_insights.hcw.id]
+  description         = "The nightly Cosmos export window (03:00 to 03:45 UTC) degraded the API on the previous UTC day: its HTTP P95 was above 1 s and above twice the rest of the day's, over at least 20 requests. ADR 0019's revisit trigger, met; the split returns worker-first. The dimensions carry both P95s (ms) and both request counts."
+  severity            = 3
+
+  evaluation_frequency = "P1D"
+  # Two days, so that whatever time of day the daily evaluation lands the
+  # query can take the previous whole UTC day and find all of it.
+  window_duration = "P2D"
+
+  # Stateless: automatic mitigation is supported only up to a 12-hour
+  # frequency. At one evaluation a day, stateless means at most one mail per
+  # day the condition holds, which is the cadence wanted anyway.
+  auto_mitigation_enabled = false
+
+  criteria {
+    query                   = <<-KQL
+      requests
+      | where timestamp >= startofday(now(), -1) and timestamp < startofday(now())
+      | where isnotempty(url)
+      | extend inWindow = hourofday(timestamp) == 3 and datetime_part("minute", timestamp) < 45
+      | summarize windowP95 = percentile(iff(inWindow, duration, double(null)), 95),
+                  windowRequests = countif(inWindow),
+                  restP95 = percentile(iff(inWindow, double(null), duration), 95),
+                  restRequests = countif(not(inWindow))
+      | where windowRequests >= 20 and windowP95 > 1000 and windowP95 > 2 * restP95
+      | project windowP95 = tostring(round(windowP95)), windowRequests = tostring(windowRequests), restP95 = tostring(round(restP95)), restRequests = tostring(restRequests)
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+
+    dimension {
+      name     = "windowP95"
+      operator = "Include"
+      values   = ["*"]
+    }
+
+    dimension {
+      name     = "windowRequests"
+      operator = "Include"
+      values   = ["*"]
+    }
+
+    dimension {
+      name     = "restP95"
+      operator = "Include"
+      values   = ["*"]
+    }
+
+    dimension {
+      name     = "restRequests"
+      operator = "Include"
+      values   = ["*"]
+    }
+
+    failing_periods {
+      number_of_evaluation_periods             = 1
+      minimum_failing_periods_to_trigger_alert = 1
+    }
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.alerts_app.id]
+  }
+
+  tags = local.tags
+
+  depends_on = [
+    azurerm_role_assignment.alerts_app_workspace,
+    azurerm_role_assignment.alerts_app_component,
+  ]
+}
+
+# ---------------------------------------------------------------------------
 # Cosmos — the account is throttling
 # ---------------------------------------------------------------------------
 #

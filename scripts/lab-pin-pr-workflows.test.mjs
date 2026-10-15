@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BOT, SETS, changedPaths, decide, foreignIdentities, prBody } from './open-lab-pin-pr.mjs';
+import { BOT, SETS, bodyTexts, changedPaths, decide, foreignIdentities, prBody } from './open-lab-pin-pr.mjs';
 import {
   CADDY_TEST_PATH,
   CAPABILITIES_PATH,
@@ -22,6 +22,7 @@ import {
   VERSIONS_ENV_PATH,
 } from './lib/lab-pin-bumps.mjs';
 import { BUMP_SETS } from './lab-pins-upstream.mjs';
+import { SET as CLOUDFLARE_SET, VARIABLES_PATH } from './cloudflare-ranges.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const workflow = (name) => readFileSync(join(REPO, '.github', 'workflows', name), 'utf8');
@@ -43,11 +44,13 @@ const job = (source, name, next) => {
 };
 
 describe('the pin sets', () => {
-  it('are the sets lab-pins-upstream.mjs can bump, each on its own branch', () => {
-    expect(Object.keys(SETS).sort()).toEqual([...BUMP_SETS].sort());
+  it('are the sets lab-pins-upstream.mjs can bump plus the Cloudflare ranges set, each on its own branch', () => {
+    expect(Object.keys(SETS).sort()).toEqual([...BUMP_SETS, CLOUDFLARE_SET].sort());
     const branches = Object.values(SETS).map((s) => s.branch);
     expect(new Set(branches).size).toBe(branches.length);
-    for (const s of Object.values(SETS)) expect(s.branch).toMatch(/^chore\/lab-pins-/);
+    for (const [name, s] of Object.entries(SETS)) {
+      expect(s.branch).toMatch(name === CLOUDFLARE_SET ? /^chore\/cloudflare-ranges$/ : /^chore\/lab-pins-/);
+    }
   });
 
   it('may touch exactly the files their planners edit, and each exists', () => {
@@ -56,7 +59,44 @@ describe('the pin sets', () => {
     expect(SETS.host.paths).toEqual([GROUP_VARS_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH]);
     expect(SETS['image-base'].paths).toEqual([VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH]);
     expect(SETS['image-digests'].paths).toEqual([CAPABILITIES_PATH, CODER_TEMPLATE_PATH]);
+    expect(SETS[CLOUDFLARE_SET].paths).toEqual([VARIABLES_PATH]);
     for (const s of Object.values(SETS)) for (const p of s.paths) expect(existsSync(join(REPO, p)), p).toBe(true);
+  });
+
+  it('writes the Cloudflare ranges body in its own terms, with no lab-pin claim in it, and leaves the lab sets theirs', () => {
+    const body = prBody({ set: CLOUDFLARE_SET, evidence: '| `198.51.100.0/24` | published, not declared | the apply adds its Allow rule |\n', notes: '', runUrl: 'https://example/run/2' });
+    expect(body).toContain('node scripts/cloudflare-ranges.mjs --bump');
+    expect(body).toContain('Refs #970');
+    expect(body).toContain('https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs');
+    expect(body).toContain('assert-origin-lock.mjs');
+    expect(body).toContain('- [ ] Dependency update');
+    expect(body).toContain('- [x] Infrastructure or deployment change');
+    expect(body).toContain('- [ ] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(Not ticked:');
+    for (const lab of ['lab-pins-upstream.mjs', '#949', 'docs/runbooks/labs-host.md', 'Runtime advisories', 'bootstrap.sh', 'checksum', 'digest', 'pin move', 'host or image run', 'moved pins']) {
+      expect(body, lab).not.toContain(lab);
+    }
+    const headings = [...body.matchAll(/^## (.+)$/gm)].map((m) => m[1]);
+    expect(headings).toEqual([
+      'Summary',
+      'Evidence',
+      'Related issue or decision',
+      'Type of change',
+      'Scope and impact',
+      'Verification',
+      'Infrastructure changes only',
+      'Security and data review',
+      'Documentation and operations',
+      'Author checklist',
+    ]);
+    expect(bodyTexts(CLOUDFLARE_SET, 'https://example/run/2').commitTrailer).toBe('Read from Cloudflare by node scripts/cloudflare-ranges.mjs --bump (https://example/run/2). Refs #970.');
+    for (const set of BUMP_SETS) {
+      const lab = prBody({ set, evidence: 'x', notes: '', runUrl: 'u' });
+      expect(lab).toContain(`node scripts/lab-pins-upstream.mjs --bump ${set}`);
+      expect(lab).toContain('Refs #949');
+      expect(lab).toContain('- [x] Dependency update');
+      expect(lab).not.toContain('cloudflare-ranges.mjs');
+      expect(bodyTexts(set, 'u').commitTrailer).toBe(`Read from each publisher by node scripts/lab-pins-upstream.mjs --bump ${set} (u). Refs #949.`);
+    }
   });
 
   it('keeps one pull request per set: open, refresh, push, or comment when someone else committed', () => {

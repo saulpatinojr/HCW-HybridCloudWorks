@@ -38,7 +38,7 @@ const BOOTSTRAP = 'ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"';
 const BOOTSTRAP_OK =
   'A good run ends with a `PLAY RECAP` line for `localhost` showing `failed=0` and `unreachable=0`; `changed=` above zero names the tasks the new pins moved.';
 
-/** The three pin sets: their branch, the only paths they may touch, and what a reviewer needs to know. */
+/** The pin sets, and the Cloudflare ranges set (PLAT-10, #970): their branch, the only paths they may touch, and what a reviewer needs to know. */
 export const SETS = {
   host: {
     branch: 'chore/lab-pins-host',
@@ -106,6 +106,44 @@ export const SETS = {
     planNote:
       'this digest-only update of the two consumers creates no Terraform or Coder plan or preview. The review is the publisher evidence above and the exact two-line diff, by a person; the next `bootstrap.sh` run is the post-merge operational check.',
   },
+  'cloudflare-ranges': {
+    branch: 'chore/cloudflare-ranges',
+    workflow: '.github/workflows/cloudflare-ranges.yml',
+    paths: ['infra/variables.tf'],
+    title: 'Origin lock: move cloudflare_ip_ranges to the list Cloudflare publishes',
+    intro:
+      "The weekly Cloudflare ranges run (scripts/cloudflare-ranges.mjs, PLAT-10 #970) found that the IPv4 ranges Cloudflare publishes at https://api.cloudflare.com/client/v4/ips differ from the default of `cloudflare_ip_ranges` in `infra/variables.tf`, the list the origin lock in `infra/functionapp.tf` admits. This pull request rewrites that default to the published list, in Cloudflare's order. The evidence below names every range that moved and what it means at the origin.",
+    after: [
+      "**Apply before the next deploy.** The change is one Allow rule added or removed per range on the Function App, applied by the owner's HCP Terraform run at https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs. `scripts/assert-origin-lock.mjs` holds every deploy to the list in the checkout it runs from, so a merged move that has not been applied fails the next deploy by design: merge, apply, then deploy.",
+      '**A range Cloudflare added is a 403 until the apply.** Visitors routed through a new Cloudflare edge are refused at the origin until its rule exists, which is why this pull request exists and why it should not stay open.',
+    ],
+    scope: [
+      '**Components:** the default of `cloudflare_ip_ranges` in `infra/variables.tf`, read by `infra/functionapp.tf` (one `ip_restriction` per range) and by `scripts/assert-origin-lock.mjs` after every deploy.',
+      '**Rollback:** revert this pull request and apply again; the previous rules return. Nothing else reads the list.',
+    ],
+    infrastructure: true,
+    planNote:
+      'the HCP Terraform plan for the apply is the review of the infrastructure change: one `ip_restriction` added or removed per range named in the evidence, and nothing else. `tfc-plan-check.yml` reads it against the declared permanent diff.',
+    body: (runUrl) => ({
+      refs: 'Refs #970 (PLAT-10, estate review 2026-10-06); the set was added by #1179.',
+      dependencyUpdate: false,
+      checksRun: `\`node scripts/cloudflare-ranges.mjs --bump\` against https://api.cloudflare.com/client/v4/ips (run ${runUrl}); this pull request's required checks run on the edit, and \`fmt, validate, tflint\` reads the new default.`,
+      evidenceNote: 'the table above: the published list, its etag and every range that moved, read from Cloudflare at the URL beside it.',
+      notRun: "the HCP Terraform apply, which is the owner's run after the merge (above), and the deploy that follows it, whose `assert-origin-lock.mjs` step holds the live rules to this list.",
+      rolloutDoc:
+        'Scope and impact above; the apply at https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs, then `scripts/assert-origin-lock.mjs` on the next deploy, which holds the live rules to the new list.',
+      authNote:
+        'The origin lock is an allowlist; this moves its entries to the published ones and nothing else, and `assert-origin-lock.mjs` denies a deploy whose live rules differ from the list.',
+      pinnedNote: 'No dependency moves; the values are IPv4 ranges, each validated as a CIDR and rebuilt from its parsed parts by `scripts/cloudflare-ranges.mjs` before the file is written.',
+      approvalNote:
+        "this pull request is filed by the scheduled workflow, as the lab pin sets' are (the arrangement the 2026-10-06 estate review approved for scheduled pin pull requests), extended to this set by #1179. It is never merged, approved or applied by automation; a person reads it and merges it, and the owner applies.",
+      docsNote: "None needed; `infra/variables.tf`'s own comment describes the list and `cloudflare-ranges.yml`'s header the procedure.",
+      changelogNote: "A range move is not a changelog entry by this repository's convention; the evidence is this body.",
+      testsNote: '`scripts/cloudflare-ranges.test.mjs` covers the rewrite and its refusals; this pull request\'s required checks run on the edit.',
+      ownersNote: 'The owner applies, then deploys.',
+      commitTrailer: `Read from Cloudflare by node scripts/cloudflare-ranges.mjs --bump (${runUrl}). Refs #970.`,
+    }),
+  },
 };
 
 /**
@@ -118,15 +156,46 @@ export function decide({ pull, remote, localTree }) {
   return pull ? 'push-and-refresh' : 'push-and-open';
 }
 
+/**
+ * What each set's pull request body says in the template's own words. The
+ * lab pin sets share these defaults (a pin read from a publisher, rolled out
+ * by bootstrap.sh); a set whose change is something else overrides every
+ * line that would otherwise claim a publisher checksum, a dependency update
+ * or a host run it does not have (CodeRabbit on #1179, the Cloudflare set).
+ */
+export function bodyTexts(set, runUrl) {
+  const s = SETS[set];
+  const defaults = {
+    refs: 'Refs #949 (estate review 2026-10-06, LAB-3).',
+    dependencyUpdate: true,
+    checksRun: `\`node scripts/lab-pins-upstream.mjs --bump ${set}\` against each publisher (run ${runUrl}); this pull request's required checks run on the edit.`,
+    evidenceNote: 'the tables above, each value read from the publisher at the URL beside it.',
+    notRun: 'the host or image run itself, which follows the merge (above).',
+    rolloutDoc: 'Scope and impact above; docs/runbooks/labs-host.md, "Runtime advisories".',
+    authNote: 'Not applicable to a pin move.',
+    pinnedNote: "Every value carries the publisher's checksum or digest, read as the evidence tables say.",
+    approvalNote:
+      'this pull request is filed by the scheduled workflow, the arrangement #949 approved for these pin sets. It is never merged, approved or applied by automation; a person reads it and merges it, and the owner runs the step after the merge.',
+    docsNote: 'None needed; the READMEs describe the bump procedure, not its values.',
+    changelogNote: "Pin moves are not changelog entries by this repository's convention; the evidence is this body.",
+    testsNote: "This pull request's required checks hold the repository to the moved pins.",
+    ownersNote: 'The owner runs the step after the merge.',
+    commitTrailer: `Read from each publisher by node scripts/lab-pins-upstream.mjs --bump ${set} (${runUrl}). Refs #949.`,
+  };
+  const override = typeof s.body === 'function' ? s.body(runUrl) : (s.body ?? {});
+  return { ...defaults, ...override };
+}
+
 /** The pull request body: what moved, read from where, and what happens after the merge. */
 export function prBody({ set, evidence, notes, runUrl }) {
   const s = SETS[set];
+  const b = bodyTexts(set, runUrl);
   const out = [
     '## Summary',
     '',
     s.intro,
     '',
-    `Opened by \`${s.workflow}\` (run ${runUrl}). One pull request per pin set: while this one is open, each new reading replaces its commit on \`${s.branch}\` and its body, rather than opening another.`,
+    `Opened by \`${s.workflow}\` (run ${runUrl}). One pull request per set: while this one is open, each new reading replaces its commit on \`${s.branch}\` and its body, rather than opening another.`,
     '',
     '## Evidence',
     '',
@@ -140,7 +209,7 @@ export function prBody({ set, evidence, notes, runUrl }) {
   out.push(
     '## Related issue or decision',
     '',
-    'Refs #949 (estate review 2026-10-06, LAB-3).',
+    b.refs,
     '',
     '## Type of change',
     '',
@@ -148,7 +217,7 @@ export function prBody({ set, evidence, notes, runUrl }) {
     '- [ ] Bug fix',
     '- [ ] Refactor or performance improvement',
     '- [ ] Documentation or process change',
-    '- [x] Dependency update',
+    `- [${b.dependencyUpdate ? 'x' : ' '}] Dependency update`,
     '- [ ] CI/CD or repository policy change',
     `- [${s.infrastructure ? 'x' : ' '}] Infrastructure or deployment change`,
     '- [ ] Security or privacy change',
@@ -164,9 +233,9 @@ export function prBody({ set, evidence, notes, runUrl }) {
     '',
     '## Verification',
     '',
-    `- Checks run: \`node scripts/lab-pins-upstream.mjs --bump ${set}\` against each publisher (run ${runUrl}); this pull request's required checks run on the edit.`,
-    '- Important result or evidence: the tables above, each value read from the publisher at the URL beside it.',
-    '- Checks not run and why: the host or image run itself, which follows the merge (above).',
+    `- Checks run: ${b.checksRun}`,
+    `- Important result or evidence: ${b.evidenceNote}`,
+    `- Checks not run and why: ${b.notRun}`,
     "- Evidence level: [ ] Static [ ] Local [ ] CI [ ] Staging [ ] Production — none ticked at opening: this pull request's required checks are the evidence, and they had not run when this body was written. Read them on the Checks tab before merging.",
     ''
   );
@@ -178,7 +247,7 @@ export function prBody({ set, evidence, notes, runUrl }) {
       '- [x] Resource addresses were not renamed without the required moved-state handling. *(None.)*',
       '- [x] Secrets, state files, saved plans, and real variable values are not included.',
       '- [x] Required tags, policies, networking, backup, identity, and security settings are preserved.',
-      '- [x] Rollout, monitoring, rollback, and recovery steps are documented. *(Scope and impact above; docs/runbooks/labs-host.md, "Runtime advisories".)*',
+      `- [x] Rollout, monitoring, rollback, and recovery steps are documented. *(${b.rolloutDoc})*`,
       ''
     );
   }
@@ -187,21 +256,21 @@ export function prBody({ set, evidence, notes, runUrl }) {
     '',
     '- [x] No credentials, private keys, tokens, connection strings, personal data, customer data, or sensitive content was added.',
     '- [x] Telemetry is content-free and uses correlation identifiers rather than paths, query strings, route values, document identifiers, or payloads.',
-    '- [x] Authorization, tenant isolation, least privilege, and denial paths were tested where applicable. *(Not applicable to a pin move.)*',
-    "- [x] New dependencies, base images, and GitHub Actions are pinned or controlled according to repository policy. *(Every value carries the publisher's checksum or digest, read as the evidence tables say.)*",
-    '- [ ] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(Not ticked: this pull request is filed by the scheduled workflow, the arrangement #949 approved for these pin sets. It is never merged, approved or applied by automation; a person reads it and merges it, and the owner runs the step after the merge.)*',
+    `- [x] Authorization, tenant isolation, least privilege, and denial paths were tested where applicable. *(${b.authNote})*`,
+    `- [x] New dependencies, base images, and GitHub Actions are pinned or controlled according to repository policy. *(${b.pinnedNote})*`,
+    `- [ ] No automated path can activate, approve, sign, file, or make an authoritative write unless explicitly approved. *(Not ticked: ${b.approvalNote})*`,
     '',
     '## Documentation and operations',
     '',
-    "- [x] User-facing or developer documentation updated when needed. *(None needed; the READMEs describe the bump procedure, not its values.)*",
-    "- [x] Release notes, changelog, runbook, architecture record, migration notes, or security records updated when needed. *(Pin moves are not changelog entries by this repository's convention; the evidence is this body.)*",
-    '- [x] Remaining work is recorded in the repository\'s established tracker. *(The steps after the merge, above.)*',
-    '- [x] Rollout and rollback owners are identified when the change affects a shared environment. *(The owner runs the step after the merge.)*',
+    `- [x] User-facing or developer documentation updated when needed. *(${b.docsNote})*`,
+    `- [x] Release notes, changelog, runbook, architecture record, migration notes, or security records updated when needed. *(${b.changelogNote})*`,
+    "- [x] Remaining work is recorded in the repository's established tracker. *(The steps after the merge, above.)*",
+    `- [x] Rollout and rollback owners are identified when the change affects a shared environment. *(${b.ownersNote})*`,
     '',
     '## Author checklist',
     '',
-    '- [x] The pull request is focused and unrelated edits were removed. *(The set\'s paths and nothing else; the opener refuses anything outside them.)*',
-    "- [x] Tests cover changed behavior and important failure, boundary, and denial paths. *(This pull request's required checks hold the repository to the moved pins.)*",
+    "- [x] The pull request is focused and unrelated edits were removed. *(The set's paths and nothing else; the opener refuses anything outside them.)*",
+    `- [x] Tests cover changed behavior and important failure, boundary, and denial paths. *(${b.testsNote})*`,
     '- [x] The final diff contains no local configuration, generated artifacts, or secrets that do not belong.',
     '- [x] Required reviewers, approvals, environments, and CI checks are complete or explicitly called out. *(Read by a person before merging; no auto-merge.)*'
   );
@@ -282,7 +351,7 @@ function commitSet(set, s, runUrl) {
   git('config', 'user.email', BOT.email);
   git('checkout', '-B', s.branch);
   git('add', '--', ...s.paths);
-  git('commit', '-m', s.title, '-m', `Read from each publisher by node scripts/lab-pins-upstream.mjs --bump ${set} (${runUrl}). Refs #949.`);
+  git('commit', '-m', s.title, '-m', bodyTexts(set, runUrl).commitTrailer);
   return git('rev-parse', 'HEAD^{tree}');
 }
 
