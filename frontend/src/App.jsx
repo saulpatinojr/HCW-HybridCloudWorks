@@ -33,9 +33,6 @@ const NewsPage = lazyPage(() => import('@/pages/shared/NewsPage'));
 const SharedPodcastPage = lazyPage(() => import('@/pages/shared/PodcastPage'));
 const NotFoundPage = lazyPage(() => import('@/pages/NotFoundPage'));
 const ThemeToggleButton = lazyPage(() => import('@/components/shared/ThemeToggleButton'));
-const Toaster = lazyPage(() =>
-  import('@/components/ui/toaster').then((module) => ({ default: module.Toaster }))
-);
 
 // AWS
 const AWSLandingPage = lazyPage(() => import('@/pages/aws/LandingPage'));
@@ -548,7 +545,12 @@ function App() {
 }
 
 /**
- * The theme toggle and the toaster, mounted once the browser is idle.
+ * The theme toggle, mounted once the browser is idle.
+ *
+ * The toaster used to mount here too, lazily, so a toast fired by an admin
+ * page before the toaster's chunk arrived expired unseen (AP-F12, #936). No
+ * public page fires a toast, so it is a static import of the admin shell
+ * (pages/admin/AdminLayout.jsx) now and nothing of it is here.
  *
  * ITS OWN COMPONENT SO THE IDLE UPDATE CANNOT REACH THE ROUTE (#604). This
  * state used to live in `App`, and `setIdleReached` re-rendered `App` — the
@@ -609,9 +611,6 @@ function DeferredChrome({ immediate }) {
           size="icon"
           className="fixed bottom-5 right-5 z-70 h-11 w-11 rounded-full border-border bg-background/90 text-foreground shadow-lg backdrop-blur supports-backdrop-filter:bg-background/75"
         />
-      </Suspense>
-      <Suspense fallback={null}>
-        <Toaster />
       </Suspense>
     </>
   );

@@ -37,7 +37,7 @@ import { useDraftList } from './drafts/useDraftList';
 import { useOpenDraft } from './drafts/useOpenDraft';
 import { useDraftWrites } from './drafts/useDraftWrites';
 import { useDraftImport } from './drafts/useDraftImport';
-import { useUnsavedGuard } from './drafts/useUnsavedGuard';
+import { LEAVE_CONFIRM, useUnsavedGuard } from './drafts/useUnsavedGuard';
 
 const IMPORT_TONE_CLASS = {
   ok: 'text-green-700 dark:text-green-300',
@@ -140,6 +140,7 @@ function PageHeader({ onNew, onImport, importing, onRefresh, refreshing }) {
   );
 }
 
+/** The Drafts stage laid out from its four hooks, asking first on any exit that would lose edits. */
 export default function DraftsPage() {
   const { authReady } = useAuthReady();
   const { toast } = useToast();
@@ -151,7 +152,9 @@ export default function DraftsPage() {
   const [pendingSwitch, setPendingSwitch] = useState(null);
 
   const { current, dirty } = editor;
-  useUnsavedGuard(dirty);
+  // A link out of the page with unsaved changes asks first, below, with the
+  // same modal the in-page switch uses (AP-F12, #936).
+  const leave = useUnsavedGuard(dirty);
 
   /** Run `next` now, or after the owner agrees to drop unsaved changes. */
   const guardSwitch = (next) => {
@@ -271,6 +274,14 @@ export default function DraftsPage() {
           next?.();
         }}
         onCancel={() => setPendingSwitch(null)}
+      />
+      <ConfirmModal
+        open={leave.leaving}
+        title={LEAVE_CONFIRM.title}
+        description={LEAVE_CONFIRM.description}
+        confirmLabel={LEAVE_CONFIRM.confirmLabel}
+        onConfirm={leave.confirmLeave}
+        onCancel={leave.cancelLeave}
       />
     </div>
   );

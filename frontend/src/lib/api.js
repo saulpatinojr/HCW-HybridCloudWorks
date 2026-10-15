@@ -165,28 +165,36 @@ function attachRefusalHints(error, errData) {
 
 /**
  * Authenticated fetch wrapper.
- * Automatically injects an Entra Bearer token.
- * Admin status forces a token refresh so a newly granted role is visible immediately.
+ * Automatically injects an Entra Bearer token from MSAL's cache, which MSAL
+ * renews on its own once the cached token has expired.
  * Retries once on transient 429/5xx failures with a 2-second backoff.
  *
  * @param {string} fnName - Azure Functions route name
- * @param {object} options - fetch options (method, body, etc.), plus an
- *   optional `token`: a bearer token the caller has ALREADY acquired. When
- *   given, no acquisition happens here — the Admin Diagnostics page needs the
- *   token it decodes and the token it sends to be one acquisition, and a
+ * @param {object} options - fetch options (method, body, etc.), plus:
+ *   `token`: a bearer token the caller has ALREADY acquired. When given, no
+ *   acquisition happens here — the Admin Diagnostics page needs the token it
+ *   decodes and the token it sends to be one acquisition, and a
  *   caller-supplied Authorization header alone did not achieve that (the
- *   acquisition still ran, and was a forced refresh). Nothing else should
- *   need this; every other caller wants the acquisition.
+ *   acquisition still ran). Nothing else should need this; every other
+ *   caller wants the acquisition.
+ *   `freshToken`: acquire with a forced refresh, for a caller that wants a
+ *   token newer than the cache holds. getCurrentAdminStatus used to force one
+ *   on every call so a just-granted App Role showed at once — and every
+ *   mounted instance of useAdminAuth paid a round trip to Entra for it
+ *   (AP-F12, #936). The hook asks for it on an explicit re-check only; a page
+ *   load takes the cached token, renewed by MSAL when it has actually expired.
  * @returns {Promise<Response>}
  */
-export async function authedFetch(fnName, { token: presetToken, ...options } = {}) {
+export async function authedFetch(
+  fnName,
+  { token: presetToken, freshToken = false, ...options } = {}
+) {
   let token = presetToken;
   if (!token) {
     // Throws 'Not authenticated. Please sign in.' with no active account —
-    // same contract as the Firebase version. getCurrentAdminStatus keeps its
-    // forced refresh so a just-granted role is visible immediately.
+    // same contract as the Firebase version.
     const { acquireApiToken } = await import('@/lib/entraAuth');
-    token = await acquireApiToken({ forceRefresh: fnName === 'getCurrentAdminStatus' });
+    token = await acquireApiToken({ forceRefresh: Boolean(freshToken) });
   }
   const url = getEndpoint(fnName);
 

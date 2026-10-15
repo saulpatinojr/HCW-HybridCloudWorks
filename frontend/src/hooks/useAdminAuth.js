@@ -18,7 +18,14 @@ import { authedFetch } from '@/lib/api';
 
 // Cache admin status per-uid to prevent leaking one user's status to another
 // after a sign-out/sign-in within the same tab (OWASP A01 — broken access control).
-const adminStatusCache = new Map(); // uid -> { result, time }
+//
+// One entry per uid: `{ result, time }` once the server has answered, or
+// `{ pending }` while a request is in flight (AP-F12, #936). Every mounted
+// instance of this hook — the guard, a page's useAuthReady, a capability
+// gate — used to send its own request, each behind a forced token refresh,
+// so one admin page load was several round trips to Entra and to the API
+// for one answer. Now the first instance's promise is the one they all await.
+const adminStatusCache = new Map(); // uid -> { result, time } | { pending }
 const ADMIN_STATUS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
@@ -102,15 +109,22 @@ function failureDetail(err) {
  * Fetch admin status from backend.
  * The backend answers from the authoritative admins/{oid} registry.
  *
+ * `freshToken` forces the token refresh. It is asked for on an explicit
+ * re-check only: the token carries the Entra App Role (the guard's gate 1),
+ * so someone pressing Try again after being granted it wants a token newer
+ * than the cache holds. A page load takes the cached token, which MSAL
+ * renews itself once it has expired (AP-F12, #936).
+ *
  * @returns {Promise<{state: string, status?: Object, reason?: string, message?: string}>}
  */
-async function fetchAdminStatusFromBackend() {
+async function fetchAdminStatusFromBackend({ freshToken = false } = {}) {
   try {
     // Call backend function to get current user's admin status. A resolved
     // response is necessarily a 2xx — authedFetch throws on everything else —
     // so reaching here means the registry was actually read.
     const response = await authedFetch('getCurrentAdminStatus', {
       method: 'GET',
+      freshToken,
     });
 
     const status = await response.json();
@@ -135,6 +149,22 @@ async function fetchAdminStatusFromBackend() {
  * An `unknown` result is NEVER cached. Caching it would hold a transient
  * network blip in front of the admin portal for five minutes, and the retry
  * button would do nothing for the first four of them.
+ *
+ * ONE REQUEST IN FLIGHT PER USER (AP-F12, #936). The promise is cached
+ * before it settles, so an instance that mounts while the first is still
+ * running awaits the same request. When it settles, only its own entry is
+ * replaced: a sign-out (clearAdminStatusCache) during the flight dropped it,
+ * and a late answer for a user no longer signed in must not put it back.
+ *
+ * A FORCED READ DOES NOT JOIN AN UNFORCED ONE. The explicit re-check (Try
+ * again) asks for a fresh token because the Entra app role is a token claim:
+ * a role granted a minute ago is in a new token and not in the cached one.
+ * Joining a request already flying on the cached token would answer the
+ * re-check with the old role, so a forced read starts its own request and
+ * takes over the entry; the earlier request still answers whoever awaits it,
+ * and its late settle finds the entry no longer its own and caches nothing.
+ * A forced read in flight is joined by anything, forced or not: it is the
+ * freshest answer there is (CodeRabbit on #1182).
  */
 async function getAdminStatus(uid, { force = false } = {}) {
   if (!uid) return fetchAdminStatusFromBackend();
@@ -142,20 +172,35 @@ async function getAdminStatus(uid, { force = false } = {}) {
   const now = Date.now();
   const entry = adminStatusCache.get(uid);
 
+  if (entry?.pending && (!force || entry.forced)) return entry.pending;
+
   // Return cached if still valid
-  if (!force && entry && now - entry.time < ADMIN_STATUS_CACHE_TTL) {
+  if (!force && entry?.result && now - entry.time < ADMIN_STATUS_CACHE_TTL) {
     return entry.result;
   }
 
   // Fetch fresh
-  const result = await fetchAdminStatusFromBackend();
-  if (result.state === ACCESS_STATE.UNKNOWN) {
-    adminStatusCache.delete(uid);
-  } else {
-    adminStatusCache.set(uid, { result, time: now });
-  }
+  const pending = fetchAdminStatusFromBackend({ freshToken: force }).then(
+    (result) => {
+      if (adminStatusCache.get(uid)?.pending === pending) {
+        if (result.state === ACCESS_STATE.UNKNOWN) {
+          adminStatusCache.delete(uid);
+        } else {
+          adminStatusCache.set(uid, { result, time: now });
+        }
+      }
+      return result;
+    },
+    (err) => {
+      // fetchAdminStatusFromBackend answers `unknown` rather than throwing;
+      // should that ever change, a rejection must not stay cached either.
+      if (adminStatusCache.get(uid)?.pending === pending) adminStatusCache.delete(uid);
+      throw err;
+    }
+  );
+  adminStatusCache.set(uid, { pending, forced: force });
 
-  return result;
+  return pending;
 }
 
 /**
@@ -196,7 +241,8 @@ function markSessionRecoveryAttempted(attempted) {
 
 /**
  * Clear cached admin status (call on logout). Pass a uid to clear only that
- * user; omit to clear the whole cache.
+ * user; omit to clear the whole cache. A request in flight is dropped with
+ * it: whoever awaits it still gets its answer, and the answer is not cached.
  */
 export function clearAdminStatusCache(uid) {
   if (uid) {

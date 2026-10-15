@@ -372,15 +372,31 @@ describe('DraftsPage', () => {
       expect(dirty.defaultPrevented).toBe(true);
     });
 
-    it('asks before following a link out of the page, and stays when told to', async () => {
+    it('asks before following a link out of the page, in the modal, and stays when told to', async () => {
       respond();
-      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
       await openFirstDraft();
       fireEvent.change(screen.getByLabelText('Body (markdown)'), { target: { value: 'edit' } });
       fireEvent.click(screen.getByRole('link', { name: 'Review Queue' }));
-      expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/unsaved changes/));
+      const dialog = await screen.findByRole('dialog', { name: 'Leave this draft?' });
+      expect(dialog).toHaveTextContent(/unsaved changes/);
+      expect(screen.queryByText('Queue page')).not.toBeInTheDocument();
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Leave this draft?' })).not.toBeInTheDocument()
+      );
       expect(screen.queryByText('Queue page')).not.toBeInTheDocument();
       expect(screen.getByLabelText('Body (markdown)')).toHaveValue('edit');
+    });
+
+    it('leaves through the link that was clicked when told to', async () => {
+      respond();
+      await openFirstDraft();
+      fireEvent.change(screen.getByLabelText('Body (markdown)'), { target: { value: 'edit' } });
+      fireEvent.click(screen.getByRole('link', { name: 'Review Queue' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Leave this draft?' });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Leave without saving' }));
+      expect(await screen.findByText('Queue page')).toBeInTheDocument();
     });
   });
 });

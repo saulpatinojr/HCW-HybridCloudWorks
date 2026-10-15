@@ -8,7 +8,7 @@
  * double click sends one delete). The ref is checked before any await, which a
  * disabled button alone cannot promise — React re-renders after the click.
  *
- * CONFIRMATIONS ARE STATE, NOT window.confirm (ADR 0033 §2). A delete asks
+ * CONFIRMATIONS ARE STATE, NOT A BROWSER DIALOG (ADR 0033 §2). A delete asks
  * first through `pendingDelete`, and closing or opening another row while the
  * form has unsaved edits asks through `pendingDiscard`; the page renders both
  * with ConfirmModal. Before this a click on another row's Enrich silently

@@ -247,3 +247,15 @@ describe('no session at all', () => {
     expect(authedFetch).not.toHaveBeenCalled();
   });
 });
+
+describe('while the check runs (AP-F12, #936)', () => {
+  it('shows a loading state with a status role and a label, not a bare ring', async () => {
+    authedFetch.mockImplementation(() => new Promise(() => {}));
+    renderGuard();
+
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent('Checking your access');
+    expect(screen.queryByText('Admin portal')).toBeNull();
+    expect(screen.queryByText('Access Denied')).toBeNull();
+  });
+});

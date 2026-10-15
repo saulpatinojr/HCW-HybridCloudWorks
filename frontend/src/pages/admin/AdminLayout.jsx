@@ -11,6 +11,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+// Static, not lazy (AP-F12, #936): a toast fired before a lazy toaster's chunk
+// arrived expired unseen. This shell is the only place toasts are shown, and
+// leaving it strands none: a toast's clock is the store's (use-toast.js), so
+// one on screen when the shell unmounts still expires on time, unseen.
+import { Toaster } from '@/components/ui/toaster';
 
 // The menu is the navigation registry (config/adminNav.js, ADR 0033 §3):
 // groups, items, routes and the one-line description each item shows on
@@ -231,6 +236,7 @@ function ShellFooter({ collapsed, onSignOut, onNavigate }) {
 
 // ── Main Layout ───────────────────────────────────────────────────────────────
 
+/** The shell every admin route renders inside: the menu, the page, and the toasts it fires. */
 export default function AdminLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -390,6 +396,7 @@ export default function AdminLayout() {
           <Outlet />
         </div>
       </div>
+      <Toaster />
     </div>
   );
 }

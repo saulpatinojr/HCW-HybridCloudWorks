@@ -23,7 +23,7 @@
  * replaced them, and the selection document is what the router reads.
  */
 
-import React, { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import IntegrationBadge from '@/components/admin/shared/IntegrationBadge';
 import { useNavigate, useSearchParams } from 'react-router';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
@@ -57,6 +57,8 @@ import {
   DollarSign,
   BookOpen,
   ToggleLeft,
+  AlertTriangle,
+  X,
 } from 'lucide-react';
 import {
   aiEngine,
@@ -68,6 +70,7 @@ import { catalogEntries, describeRefresh, withCatalogModels } from '@/lib/aiEngi
 import HubTabs from '@/components/admin/HubTabs';
 import PageHeader from '@/components/admin/shared/PageHeader';
 import EmptyState from '@/components/admin/shared/EmptyState';
+import ConfirmModal from '@/components/admin/ConfirmModal';
 import TasksTab from '@/components/admin/ai-engine/TasksTab';
 import PriorityList from '@/components/admin/ai-engine/PriorityList';
 import CatalogDrawer from '@/components/admin/ai-engine/CatalogDrawer';
@@ -893,6 +896,7 @@ function AddServerForm({ onAdd }) {
   );
 }
 
+/** The MCP Servers tab: each server's card, toggle, sync and removal, and the form to add one. */
 function McpTab({ servers }) {
   const { toast } = useToast();
 
@@ -918,8 +922,16 @@ function McpTab({ servers }) {
     }
   };
 
-  const handleRemove = async (id) => {
-    if (!window.confirm('Remove this MCP server?')) return;
+  // The removal waiting on its confirmation (ADR 0033 §2: state, not a
+  // browser dialog): the server id, and whether its request is running, which
+  // holds the modal open and busy (AP-F12, #936).
+  const [pendingRemove, setPendingRemove] = useState(null);
+  const [removing, setRemoving] = useState(false);
+  /** Remove the confirmed server, once: a second tap while the request runs does nothing. */
+  const handleRemove = async () => {
+    const id = pendingRemove;
+    if (!id || removing) return;
+    setRemoving(true);
     try {
       await aiEngine.removeMcpServer(id);
       toast({ title: 'Server removed' });
@@ -929,8 +941,12 @@ function McpTab({ servers }) {
         description: err.message,
         variant: 'destructive',
       });
+    } finally {
+      setRemoving(false);
+      setPendingRemove(null);
     }
   };
+  const pendingRemoveName = servers.find((s) => s.id === pendingRemove)?.name || 'The server';
   const handleAdd = (data) => aiEngine.addMcpServer(data);
 
   const enabledCount = servers.filter((s) => s.enabled).length;
@@ -969,12 +985,23 @@ function McpTab({ servers }) {
             server={s}
             onToggle={handleToggle}
             onSync={handleSync}
-            onRemove={handleRemove}
+            onRemove={setPendingRemove}
           />
         ))}
       </div>
 
       <AddServerForm onAdd={handleAdd} />
+
+      <ConfirmModal
+        open={pendingRemove !== null}
+        title="Remove this MCP server?"
+        description={`${pendingRemoveName} and its tool list leave the configuration; the Playground and the bots can no longer call it.`}
+        confirmLabel="Remove"
+        busy={removing}
+        busyLabel="Removing…"
+        onConfirm={handleRemove}
+        onCancel={() => setPendingRemove(null)}
+      />
     </div>
   );
 }
@@ -1318,6 +1345,47 @@ const HELP = [
   'Usage & Cost lists every recorded call. Since ADR 0033 every call through the router records one row, sourced to its task.',
 ];
 
+/**
+ * The catalogue's failure, shown rather than logged (AP-F12, #936). It names
+ * what still works — every tab, on the lists the stored documents carry —
+ * and what needs the catalogue: the drawer, Hide and Refresh. Dismissible,
+ * and back on the next failed read; the shape is McpOAuthResultBanner's.
+ */
+function CatalogNotice({ error, onRetry, onDismiss }) {
+  return (
+    <div
+      role="alert"
+      className="p-3 border rounded-lg text-sm flex items-start gap-2 bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-300"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
+      <div className="flex-1 min-w-0 space-y-1.5">
+        <p className="font-medium">The model catalogue could not be loaded.</p>
+        <p className="text-xs font-mono break-words">{error}</p>
+        <p className="text-xs">
+          The provider cards and the Tasks tab show the model lists their stored documents carry,
+          and every tab still works. The Model catalogue drawer, hiding a model and refreshing the
+          lists need the catalogue.
+        </p>
+        <Button size="sm" variant="outline" className="h-7 text-xs px-2" onClick={onRetry}>
+          <RefreshCw className="h-3 w-3 mr-1" aria-hidden="true" /> Try again
+        </Button>
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="shrink-0 opacity-70 hover:opacity-100"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The AI Engine page: seeds the configuration, reads the catalogue, and holds
+ * the writes its tabs and the drawer share, so no tab keeps a list of its own.
+ */
 export default function AIEnginePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = resolveTab(searchParams.get('tab'));
@@ -1357,16 +1425,36 @@ export default function AIEnginePage() {
 
   // The model catalogue (#857): read once the seed is ready, and again after
   // a hide or a refresh. A catalogue that cannot be read leaves the cards on
-  // whatever their stored documents carry rather than emptying the selects.
+  // whatever their stored documents carry rather than emptying the selects —
+  // and says so (AP-F12, #936). The failure used to be logged and nothing
+  // else, so a page whose dropdowns held only the provider default looked
+  // like a page with no models rather than a page that could not read them.
   const [catalog, setCatalog] = useState(null);
-  const loadCatalog = useCallback(
-    () =>
-      aiEngine
-        .fetchModelCatalog()
-        .then(setCatalog)
-        .catch((err) => console.error('[aiEngine] model catalogue load failed:', err)),
-    []
-  );
+  const [catalogError, setCatalogError] = useState(null);
+  // ONLY THE LATEST READ LANDS (AP-F12, #936). Try again pressed twice, or a
+  // hide's re-read beside a refresh's, puts two reads in flight, and they can
+  // settle in either order: an earlier failure would bring the notice back
+  // over a later success, and an older catalogue could replace a newer one.
+  // Each read takes a number; one that is no longer the latest is logged if
+  // it failed and otherwise ignored.
+  const catalogRead = useRef(0);
+  /** Read the catalogue and show it, or say it failed — unless a newer read has started since. */
+  const loadCatalog = useCallback(() => {
+    const read = ++catalogRead.current;
+    const latest = () => read === catalogRead.current;
+    return aiEngine
+      .fetchModelCatalog()
+      .then((next) => {
+        if (!latest()) return;
+        setCatalog(next);
+        setCatalogError(null);
+      })
+      .catch((err) => {
+        console.error('[aiEngine] model catalogue load failed:', err);
+        if (!latest()) return;
+        setCatalogError(err?.message || 'The model catalogue could not be read.');
+      });
+  }, []);
   useEffect(() => {
     if (seed.status !== 'ready') return;
     loadCatalog();
@@ -1498,6 +1586,14 @@ export default function AIEnginePage() {
         }
         help={HELP}
       />
+
+      {seed.status === 'ready' && catalogError && (
+        <CatalogNotice
+          error={catalogError}
+          onRetry={loadCatalog}
+          onDismiss={() => setCatalogError(null)}
+        />
+      )}
 
       <HubTabs
         tabs={TABS}

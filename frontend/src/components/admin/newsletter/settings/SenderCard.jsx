@@ -12,11 +12,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
 import { Loader2, Save } from 'lucide-react';
 import { getJSON, sendJSON } from '@/lib/api';
 
 export const SENDER_ROUTE = 'cms/newsletter-sender';
 
+/** The From address: the stored sender or the code's default, and the server's word on a change. */
 export default function SenderCard() {
   const [stored, setStored] = useState(null);
   const [value, setValue] = useState('');
@@ -72,12 +74,7 @@ export default function SenderCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {loading && (
-          <Loader2
-            className="h-5 w-5 animate-spin text-muted-foreground"
-            aria-label="Loading sender"
-          />
-        )}
+        {loading && <Spinner size="sm" label="Loading sender" className="justify-start" />}
         {!loading && loadError && (
           <p role="alert" className="text-sm text-destructive">
             The sender could not be read: {loadError}

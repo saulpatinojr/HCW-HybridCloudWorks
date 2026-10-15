@@ -2,8 +2,9 @@
  * authedFetch's `token` option: a caller that has already acquired a bearer
  * token can hand it over and no acquisition happens. Added for the Admin
  * Diagnostics page, which must decode and send the same acquisition; the
- * default path — acquire here, forced refresh for getCurrentAdminStatus — is
- * pinned alongside so the option cannot quietly become the default.
+ * default path — acquire here, from the cache, with a forced refresh only
+ * for a caller that asks (`freshToken`, AP-F12 #936) — is pinned alongside
+ * so neither option can quietly become the default.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -42,17 +43,24 @@ describe('authedFetch', () => {
     expect('token' in init).toBe(false);
   });
 
-  it('acquires when no token is given, with the forced refresh only for getCurrentAdminStatus', async () => {
+  it('acquires from the cache when no token is given, and forces a refresh only when asked', async () => {
     const { authedFetch } = await import('@/lib/api');
 
+    // No route forces a refresh on its own any more: getCurrentAdminStatus
+    // used to, once per mounted hook instance (AP-F12, #936).
     await authedFetch('getCurrentAdminStatus', { method: 'GET' });
-    expect(acquireApiToken).toHaveBeenLastCalledWith({ forceRefresh: true });
+    expect(acquireApiToken).toHaveBeenLastCalledWith({ forceRefresh: false });
 
     await authedFetch('getLabsSnapshot', { method: 'POST', body: '{}' });
     expect(acquireApiToken).toHaveBeenLastCalledWith({ forceRefresh: false });
 
-    expect(acquireApiToken).toHaveBeenCalledTimes(2);
+    await authedFetch('getCurrentAdminStatus', { method: 'GET', freshToken: true });
+    expect(acquireApiToken).toHaveBeenLastCalledWith({ forceRefresh: true });
+
+    expect(acquireApiToken).toHaveBeenCalledTimes(3);
     expect(fetch.mock.calls[1][1].headers.Authorization).toBe('Bearer acquired-here');
+    // The option is consumed, not forwarded to fetch as a stray field.
+    expect('freshToken' in fetch.mock.calls[2][1]).toBe(false);
   });
 
   it('never lets a caller header replace the Authorization it sends', async () => {

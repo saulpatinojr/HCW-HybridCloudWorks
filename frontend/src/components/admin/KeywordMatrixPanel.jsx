@@ -3,6 +3,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Plus, Save, Trash2, RotateCcw } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import ConfirmModal from '@/components/admin/ConfirmModal';
 import { useImagePrompts } from '@/hooks/useImagePrompts';
 
 function slugify(s) {
@@ -27,6 +28,10 @@ function listToCsv(arr) {
 const BLANK_SYN = { id: '', canonical: '', patternsCsv: '' };
 const BLANK_AUG = { id: '', label: '', patternsCsv: '', directive: '' };
 
+/**
+ * The keyword matrix behind image prompts: synonym groups and augmentations,
+ * edited in place, with a live tester to show what an article's text would match.
+ */
 export default function KeywordMatrixPanel() {
   const { toast } = useToast();
   const {
@@ -43,6 +48,12 @@ export default function KeywordMatrixPanel() {
   const [synDraft, setSynDraft] = useState(BLANK_SYN);
   const [augDraft, setAugDraft] = useState(BLANK_AUG);
   const [testInput, setTestInput] = useState('');
+  // The delete waiting on its confirmation (ADR 0033 §2: state, not a
+  // browser dialog) — `{ kind: 'synonym' | 'augmentation', item }` — and
+  // whether its request is running, which holds the modal open and busy
+  // (AP-F12, #936).
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const reload = useCallback(async () => {
     const [syns, augs] = await Promise.all([fetchKeywordSynonyms(), fetchKeywordAugmentations()]);
@@ -79,14 +90,8 @@ export default function KeywordMatrixPanel() {
     setSynDraft({ id: s.id, canonical: s.canonical, patternsCsv: listToCsv(s.patterns) });
   };
 
-  const handleDeleteSyn = async (s) => {
-    if (!window.confirm(`Delete synonym group "${s.canonical}"?`)) return;
-    const ok = await deleteKeywordSynonym(s.id);
-    if (ok) {
-      toast({ title: 'Deleted', description: s.canonical });
-      reload();
-    }
-  };
+  /** Ask before deleting a synonym group: the delete waits on the modal, not a browser dialog. */
+  const handleDeleteSyn = (s) => setPendingDelete({ kind: 'synonym', item: s });
 
   // ---------- Augmentations ----------
   const handleSaveAug = async () => {
@@ -116,12 +121,33 @@ export default function KeywordMatrixPanel() {
     });
   };
 
-  const handleDeleteAug = async (a) => {
-    if (!window.confirm(`Delete augmentation "${a.label}"?`)) return;
-    const ok = await deleteKeywordAugmentation(a.id);
-    if (ok) {
-      toast({ title: 'Deleted', description: a.label });
-      reload();
+  /** Ask before deleting an augmentation: the delete waits on the modal, not a browser dialog. */
+  const handleDeleteAug = (a) => setPendingDelete({ kind: 'augmentation', item: a });
+
+  // ---------- The confirmed delete ----------
+  /** The modal's title and the toast's name for a pending delete, so both say the same thing. */
+  const deleteCopy = (pending) =>
+    pending.kind === 'synonym'
+      ? { title: `Delete synonym group "${pending.item.canonical}"?`, name: pending.item.canonical }
+      : { title: `Delete augmentation "${pending.item.label}"?`, name: pending.item.label };
+
+  /** Run the confirmed delete once, ignoring a second tap while it runs, then close the modal. */
+  const confirmDelete = async () => {
+    if (!pendingDelete || deleting) return;
+    const { kind, item } = pendingDelete;
+    setDeleting(true);
+    try {
+      const ok =
+        kind === 'synonym'
+          ? await deleteKeywordSynonym(item.id)
+          : await deleteKeywordAugmentation(item.id);
+      if (ok) {
+        toast({ title: 'Deleted', description: deleteCopy(pendingDelete).name });
+        reload();
+      }
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
     }
   };
 
@@ -284,8 +310,9 @@ export default function KeywordMatrixPanel() {
                         variant="destructive"
                         onClick={() => handleDeleteSyn(s)}
                         className="px-2"
+                        aria-label={`Delete synonym group ${s.canonical}`}
                       >
-                        <Trash2 className="h-3 w-3" />
+                        <Trash2 className="h-3 w-3" aria-hidden="true" />
                       </Button>
                     </td>
                   </tr>
@@ -381,8 +408,9 @@ export default function KeywordMatrixPanel() {
                         variant="destructive"
                         onClick={() => handleDeleteAug(a)}
                         className="px-2"
+                        aria-label={`Delete augmentation ${a.label}`}
                       >
-                        <Trash2 className="h-3 w-3" />
+                        <Trash2 className="h-3 w-3" aria-hidden="true" />
                       </Button>
                     </td>
                   </tr>
@@ -392,6 +420,17 @@ export default function KeywordMatrixPanel() {
           </div>
         </section>
       </CardContent>
+
+      <ConfirmModal
+        open={pendingDelete !== null}
+        title={pendingDelete ? deleteCopy(pendingDelete).title : ''}
+        description="This applies to the next generation; images already made keep the prompt they were made with."
+        confirmLabel="Delete"
+        busy={deleting}
+        busyLabel="Deleting…"
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </Card>
   );
 }
