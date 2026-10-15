@@ -691,6 +691,34 @@ describe('the ansible-core plan (image-base, LAB-13)', () => {
     expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
   });
 
+  it('holds PyPI\'s newest release to the same wheel and yank filter, so an unusable newest patch never hides an older valid one', async () => {
+    const newestPatch = `${major}.${minor}.100`;
+    // Its only wheel yanked, then an sdist and no wheel at all.
+    for (const newestFiles of [[coreFile(newestPatch, hex('d'), { yanked: true })], [sdist('ansible_core', newestPatch)]]) {
+      const { urls, fetchImpl } = counting(
+        pypi({
+          latest: newestPatch,
+          releases: { [pinned]: [coreFile(pinned, env.ANSIBLE_CORE_SHA256)], [nextPatch]: [coreFile(nextPatch, nextSha)], [newestPatch]: newestFiles },
+        })
+      );
+      const plan = await planImageBase({ files, http: makeHttp(fetchImpl) });
+      expect(plan.applied.find((b) => b.key === 'ansible-core')).toMatchObject({ from: pinned, to: nextPatch });
+      expect(ansibleNotes(plan)).toEqual([]);
+      expect(urls).not.toContain(`${PYPI}/ansible-core/${newestPatch}/json`);
+    }
+  });
+
+  it('is a note, and moves nothing, when the project JSON no longer carries the releases map PyPI lists as deprecated', async () => {
+    const routes = pypi();
+    delete routes[`${PYPI}/ansible-core/json`].releases;
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)) });
+    expect(plan.applied.filter((b) => b.key === 'ansible-core')).toEqual([]);
+    expect(ansibleNotes(plan)).toEqual([
+      expect.objectContaining({ from: pinned, reason: `${PYPI}/ansible-core/json carries no releases map to choose a release in the ${major}.${minor} line from` }),
+    ]);
+    expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
+  });
+
   it('is a note when PyPI cannot be read, and the base plans go on without it', async () => {
     const plan = await planImageBase({ files, http: makeHttp(fakeFetch({})) });
     expect(ansibleNotes(plan)).toEqual([expect.objectContaining({ from: pinned, reason: `${PYPI}/ansible-core/json: HTTP 404` })]);

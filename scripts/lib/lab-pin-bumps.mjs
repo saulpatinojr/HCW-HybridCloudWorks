@@ -976,12 +976,21 @@ async function planAnsibleCore(env, text, http) {
     });
   }
   // The pinned line's newest stable release with a wheel; `releases` is the
-  // project JSON's map of every version to its files.
-  const inLine = Object.entries(project.releases ?? {})
+  // project JSON's map of every version to its files. `info.version` is one
+  // of its keys, so it passes the same wheel and yank filter as every other
+  // release rather than being added after it: a newest release with only a
+  // yanked wheel, or only an sdist, would otherwise be the target, fail in
+  // ansibleCoreBump and hide an older patch that is a valid bump (CodeRabbit,
+  // #1189). PyPI lists `releases` among its JSON API's deprecated keys
+  // (https://docs.pypi.org/api/json/), so a response without it is a note
+  // rather than a quiet week with nothing to move.
+  if (!project.releases || typeof project.releases !== 'object') {
+    throw new Error(`${projectUrl} carries no releases map to choose a release in the ${lineOf(pinned)} line from`);
+  }
+  const inLine = Object.entries(project.releases)
     .filter(([version]) => STABLE_VERSION.test(version) && lineOf(version) === lineOf(pinned))
     .filter(([, files]) => (files ?? []).some((f) => f.packagetype === 'bdist_wheel' && !f.yanked))
     .map(([version]) => version);
-  if (lineOf(latest) === lineOf(pinned)) inLine.push(latest);
   const target = newest(inLine);
   if (!target || compareVersions(target, pinned) <= 0) return { bump: null, notes };
   try {
