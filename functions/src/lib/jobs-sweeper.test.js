@@ -214,5 +214,39 @@ describe('poison message requeue ceiling (AP-B7)', () => {
       { ifMatch: '"ok1-etag"' }
     );
   });
+
+  it('hands onComplete the full document with payload intact on poison path (AP-B7)', async () => {
+    resetJobTypes();
+    let hookPayload = null;
+    registerJobType('forge-article', {
+      role: 'editor',
+      worker: async () => {},
+      onComplete: async ({ job }) => {
+        hookPayload = job?.payload;
+      },
+    });
+    const store = {
+      queryDocs: vi.fn(async (_c, sql) =>
+        sql.includes("'running'")
+          ? []
+          : [
+              {
+                id: 'p-forge',
+                type: 'forge-article',
+                requeueCount: 3,
+                _etag: '"p-etag"',
+                payload: { queueItemId: 'queue_123', url: 'https://example.com' },
+              },
+            ]
+      ),
+      patchDoc: vi.fn(async () => ({})),
+    };
+    await createJobSweeper({ store, now: () => NOW }).sweep();
+    // Query must select full document (*), not a projected stub
+    expect(store.queryDocs.mock.calls[0][1]).toContain('SELECT TOP');
+    expect(store.queryDocs.mock.calls[0][1]).toContain('* FROM c');
+    // Hook must receive payload so cleanup hooks (e.g. queue status, podbean pending) can run
+    expect(hookPayload).toEqual({ queueItemId: 'queue_123', url: 'https://example.com' });
+  });
 });
 

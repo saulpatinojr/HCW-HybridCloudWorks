@@ -242,7 +242,9 @@ export async function transcribeUpload({
   timeoutMs = 20 * 60 * 1000,
   log = console,
   deps = {},
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseUploadPayload({ uploadPath, title });
   if (parsed.error) throw new PlaudEmbeddedError(parsed.error);
 
@@ -273,8 +275,8 @@ export async function transcribeUpload({
   let result;
   try {
     const fileUrl = publicAudioUrlFor(parsed.value.uploadPath, env);
-    ({ transcriptionId } = await create({ fileUrl, env }));
-    const task = await wait({ transcriptionId, env, timeoutMs });
+    ({ transcriptionId } = await create({ fileUrl, env, ...(signal ? { signal } : {}) }));
+    const task = await wait({ transcriptionId, env, timeoutMs, ...(signal ? { signal } : {}) });
     result = normalizeEmbeddedResult(task.data);
   } catch (err) {
     keepForPlaud = err?.code === 'PLAUD_EMBEDDED_TIMEOUT';

@@ -130,11 +130,13 @@ Include one entry per section key listed above, no extras, no markdown.`;
 /**
  * @param {{ ai: { generateJsonResponse: Function } }} deps
  */
-export function createGrader({ ai }) {
+export function createGrader({ ai, signal: defaultSignal }) {
   /**
    * @returns {Promise<{ overall: number, subs: object[], prescreen: object, skippedLlm: boolean, note?: string }>}
    */
-  async function gradeArticle(article, profile, { usageOut = null } = {}) {
+  async function gradeArticle(article, profile, { usageOut = null, signal: callSignal } = {}) {
+    const activeSignal = callSignal || defaultSignal;
+    if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
     const { hitsBySection, totalHits, sections } = keywordPrescreen(article, profile);
 
     if (!sections.length) {
@@ -167,6 +169,7 @@ export function createGrader({ ai }) {
       systemPrompt:
         'You are a strict, consistent content relevance grader. Respond with valid JSON only.',
       usageOut,
+      signal: activeSignal,
     });
 
     const rawSubs = Array.isArray(response?.subs) ? response.subs : [];

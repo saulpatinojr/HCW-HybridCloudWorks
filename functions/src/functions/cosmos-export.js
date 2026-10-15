@@ -70,14 +70,15 @@ registerJobType(EXPORT_JOB_TYPE, {
   maxPayloadBytes: 1024,
   // Under the 30-minute non-HTTP host limit, with room for the terminal write.
   timeoutMs: 28 * 60 * 1000,
-  worker: async (payload, { context }) => {
+  worker: async (payload, { context, signal }) => {
     const job = parseExportPayload(payload);
     return createContainerExporter({
       cosmos: createCosmosReader(),
       blobs: createExportBlobStore(),
       tracker: createEventTracker({ log: context }),
       log: context,
-    }).exportContainer(job);
+      signal,
+    }).exportContainer({ ...job, signal });
   },
   // A container that fails to export is a missing marker, which the alert
   // will surface in hours; the phone gets it now.

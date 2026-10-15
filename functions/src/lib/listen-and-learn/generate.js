@@ -109,7 +109,9 @@ export async function renderAudio({
   now = new Date().toISOString(),
   synthesize,
   uploadAudio,
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const speech = speechArgsFor(voice || voiceSettingsOf(null), { narrator });
   let rendered;
   try {
@@ -122,6 +124,7 @@ export async function renderAudio({
       lang: speech.lang,
       speakingRate: speech.speakingRate,
       env,
+      signal,
     });
   } catch (err) {
     if (err instanceof SpeechNotConfiguredError || err?.name === 'SpeechNotConfiguredError') {
@@ -190,7 +193,9 @@ async function generateOneArea({
   uploadAudio,
   persistEpisode,
   recordUsage,
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   // The product declares the feature, not the generator — the same shape as
   // lib/podcast/generate.js. A literal call site, because ai-call-sites.test.js
   // reads the source: `listenAndLearn` was declared inside script.js behind
@@ -229,6 +234,7 @@ async function generateOneArea({
     now,
     synthesize,
     uploadAudio,
+    signal,
   });
 
   const saved = await persistEpisode(store, {
@@ -290,7 +296,9 @@ export async function generateEpisodes({
   onlyAreas = null,
   now = new Date().toISOString(),
   deps = {},
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const provider = SUPPORTED_PLATFORMS[String(platform || '').toLowerCase()];
   if (!provider) {
     const supported = Object.keys(SUPPORTED_PLATFORMS).join(', ');
@@ -356,6 +364,7 @@ export async function generateEpisodes({
   const certForScript = { examCode: guide.examCode, title: cert.title || guide.title };
 
   for (const [order, area] of areas.entries()) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     try {
       results.push(
         await generateOneArea({
@@ -378,9 +387,11 @@ export async function generateEpisodes({
           uploadAudio,
           persistEpisode,
           recordUsage,
+          signal,
         })
       );
     } catch (err) {
+      if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
       // One area failing must not abandon the rest — the spend on the areas
       // that already succeeded is real, and a gap is more useful than nothing.
       await persistFailure(store, {

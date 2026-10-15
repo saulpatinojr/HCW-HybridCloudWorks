@@ -82,7 +82,7 @@ describe('generateSocialCaption handler', () => {
     const h = createSocialCaptionHandlers({ guard: guardAs('editor'), store, ai: broken });
     const res = await h.generateSocialCaption(request({ title: 'T' }), context);
     expect(res.status).toBe(500);
-    expect(JSON.parse(res.body).message).toBe('quota');
+    expect(JSON.parse(res.body).error).toBe('Failed to generate caption');
   });
 });
 

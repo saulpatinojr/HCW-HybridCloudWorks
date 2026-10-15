@@ -103,9 +103,11 @@ export function createPricingRefresh({
   clearCaches = clearPricingCaches,
   now = () => new Date(),
   log = {},
+  signal: defaultSignal,
 }) {
   /** Build and write one region's document. */
-  async function refreshRegion(regionId) {
+  async function refreshRegion(regionId, { signal: callSignal } = {}) {
+    const activeSignal = callSignal || defaultSignal;
     const region = regionOption(regionId);
     if (!region) throw new Error(`unknown region ${regionId}`);
 
@@ -113,8 +115,10 @@ export function createPricingRefresh({
     const counts = { live: 0, baseline: 0, unavailable: 0 };
 
     for (const [serviceId, catalog] of Object.entries(BASELINE_COSTS)) {
+      if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
       const rows = await fetchLivePricing(serviceId, region.id, fallbackBaselineFor(serviceId), {
         logger: log,
+        signal: activeSignal,
       });
       const c = countRows(rows);
       counts.live += c.live;
@@ -182,7 +186,8 @@ export function createPricingRefresh({
      *   one that did but could not record history (`error: 'history: …'`);
      *   the latter is ALSO in `regions`, with `changes: null`.
      */
-    async run({ regions } = {}) {
+    async run({ regions, signal: runSignal } = {}) {
+      const activeSignal = runSignal || defaultSignal;
       const started = now().getTime();
       const ids = parseRefreshPayload({ regions }).regions;
       // A stale GCP service list must not outlive one run (pricing/index.js
@@ -192,9 +197,10 @@ export function createPricingRefresh({
       const done = [];
       const failed = [];
       for (const regionId of ids) {
+        if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
         let summary;
         try {
-          summary = await refreshRegion(regionId);
+          summary = await refreshRegion(regionId, { signal: activeSignal });
         } catch (error) {
           const message = error?.message || String(error);
           log.error?.(`[refresh-tool-pricing] ${regionId} FAILED: ${message}`);

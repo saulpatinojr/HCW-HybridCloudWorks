@@ -111,7 +111,7 @@ describe('probeAiProviders', () => {
       status: 'error',
       latencyMs: TEST_TIMEOUT_MS,
       lastTested: NOW.toISOString(),
-      lastTestError: 'timeout after 45000 ms',
+      lastTestError: 'The provider call failed',
       lastTestedBy: 'probe',
     });
     // No answer, no usage row for it; the three that answered have theirs.
@@ -132,7 +132,7 @@ describe('probeAiProviders', () => {
           provider: 'nvidia',
           status: 'error',
           latencyMs: TEST_TIMEOUT_MS,
-          error: 'timeout after 45000 ms',
+          error: 'The provider call failed',
         },
       ],
     });

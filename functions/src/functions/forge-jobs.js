@@ -89,19 +89,21 @@ registerJobType('forge-article', {
   maxPayloadBytes: 2048,
   // Up to 10 documents × (generation + grading, each a long model call).
   timeoutMs: 28 * 60 * 1000,
-  worker: async (payload, { context, job }) => {
+  worker: async (payload, { context, job, signal }) => {
     const ids = resolveForgeTargets(payload);
     const forge = createForge({
       store,
       config,
-      drafter: createDrafter({ store, ai }),
-      grader: createGrader({ ai }),
+      drafter: createDrafter({ store, ai, signal }),
+      grader: createGrader({ ai, signal }),
       log: context,
+      signal,
     });
     const actor = job?.requestedBy || {};
     const outcomes = [];
     for (const contentId of ids) {
-      const outcome = await forge.runForgePipeline({ contentId, actor });
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
+      const outcome = await forge.runForgePipeline({ contentId, actor, signal });
       outcomes.push(
         outcome.ok
           ? outcome.result
@@ -147,15 +149,17 @@ registerJobType('forge-article', {
  * afterwards, as before. A payload without a brief applies none.
  *
  * @param {{ url: string, provider?: string, brief?: object, kind?: string, ideaOrigin?: string, queueItemId?: string }} payload
- * @param {object} deps — { scrape, forge, store, now, uuid, log, actor }
+ * @param {object} deps — { scrape, forge, store, now, uuid, log, actor, signal }
  */
 export async function runForgeFromUrl(
   payload,
-  { scrape, forge, store: docStore, now, uuid, log, actor }
+  { scrape, forge, store: docStore, now, uuid, log, actor, signal }
 ) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const source = await scrapeToSource(String(payload?.url || '').trim(), {
     scrape,
     log,
+    signal,
   });
   const provider = String(payload?.provider || '').trim() || inferProviderFromUrl(source.url);
   const doc = buildUrlSourceDoc({ source, provider, now, uuid });
@@ -176,7 +180,8 @@ export async function runForgeFromUrl(
     log.log?.('[forge-from-url] brief applied from the job payload');
   }
 
-  const outcome = await forge.runForgePipeline({ contentId: doc.id, actor });
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
+  const outcome = await forge.runForgePipeline({ contentId: doc.id, actor, signal });
   log.log?.(`[forge-from-url] ${doc.id} → ${outcome.ok ? outcome.result.status : outcome.error}`);
   // A duplicate (409) is a legitimate answer — the URL's story is already
   // published — so it reports rather than fails, same as forge-article.
@@ -228,21 +233,23 @@ registerJobType('forge-from-url', {
   maxPayloadBytes: 16384,
   // One scrape plus the same generation + grading budget forge-article gets.
   timeoutMs: 28 * 60 * 1000,
-  worker: async (payload, { context, job }) =>
+  worker: async (payload, { context, job, signal }) =>
     runForgeFromUrl(payload, {
       scrape: scrapeArticle,
       forge: createForge({
         store,
         config,
-        drafter: createDrafter({ store, ai }),
-        grader: createGrader({ ai }),
+        drafter: createDrafter({ store, ai, signal }),
+        grader: createGrader({ ai, signal }),
         log: context,
+        signal,
       }),
       store,
       now: () => new Date(),
       uuid: () => crypto.randomUUID(),
       log: context,
       actor: job?.requestedBy || {},
+      signal,
     }),
   onComplete: forgeFromUrlComplete,
 });
@@ -254,7 +261,7 @@ registerJobType('voice-calibration', {
     'Blog Machine: read the owner’s recent published posts and write SUGGESTED voice-profile additions to forge_profile.suggestions — accept/dismiss happens in Forge Studio, never automatically.',
   maxPayloadBytes: 256,
   timeoutMs: 10 * 60 * 1000,
-  worker: (payload, { context }) => runVoiceCalibration(payload || {}, { store, ai, log: context }),
+  worker: (payload, { context, signal }) => runVoiceCalibration(payload || {}, { store, ai, log: context, signal }),
 });
 
 registerJobType('build-newsletter-issue', {
@@ -269,10 +276,11 @@ registerJobType('build-newsletter-issue', {
   // Only `days` is passed through: `keep`/`keptBy` belong to the Monday timer
   // (#504), and a job payload is caller-supplied, so it must not set who a
   // draft was saved by. Saving from the page goes through saveNewsletter.
-  worker: (payload, { context }) =>
+  worker: (payload, { context, signal }) =>
     createIssueBuilder({
       store,
-      drafter: createDrafter({ store, ai }),
+      drafter: createDrafter({ store, ai, signal }),
       log: context,
-    }).build({ days: payload?.days }),
+      signal,
+    }).build({ days: payload?.days, signal }),
 });

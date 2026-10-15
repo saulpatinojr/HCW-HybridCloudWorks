@@ -642,15 +642,24 @@ function stripThinking(text) {
  */
 const CHAT_TIMEOUT_MS = 60_000;
 
-async function postJson(fetchImpl, url, { headers, body, timeoutMs = CHAT_TIMEOUT_MS }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+async function postJson(fetchImpl, url, { headers, body, timeoutMs = CHAT_TIMEOUT_MS, signal: parentSignal }) {
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
+  const signal = parentSignal
+    ? AbortSignal.any([parentSignal, timeoutController.signal])
+    : timeoutController.signal;
+  if (signal.aborted) {
+    clearTimeout(timer);
+    const err = new Error(signal.reason?.message || 'aborted');
+    err.status = 408;
+    throw err;
+  }
   try {
     const response = await fetchImpl(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal,
     });
     const text = await response.text();
     let data = null;
@@ -667,7 +676,7 @@ async function postJson(fetchImpl, url, { headers, body, timeoutMs = CHAT_TIMEOU
     }
     return data;
   } catch (error) {
-    if (error?.name === 'AbortError') {
+    if (error?.name === 'AbortError' && !parentSignal?.aborted) {
       const err = new Error(`timeout after ${timeoutMs} ms`);
       err.status = 408;
       throw err;
@@ -1403,7 +1412,7 @@ const logUsage = (ctx, provider, usage, model, purpose) => {
 
 async function callAnthropic(
   ctx,
-  { prompt, parts, model, purpose, expectJson, systemPrompt, usageOut, timeoutMs }
+  { prompt, parts, model, purpose, expectJson, systemPrompt, usageOut, timeoutMs, signal }
 ) {
   const apiKey = readKey(ctx.env, KEY_ENV.anthropic);
   const selectedModel = model || modelFor(ctx, 'anthropic', purpose);
@@ -1438,6 +1447,7 @@ async function callAnthropic(
     },
     // Undefined keeps postJson's CHAT_TIMEOUT_MS.
     timeoutMs,
+    signal,
   });
   const usage = data?.usage || {};
   recordUsage(usageOut, 'anthropic', selectedModel, usage.input_tokens, usage.output_tokens);
@@ -1499,7 +1509,7 @@ function openAiCompatibleTable(ctx) {
 }
 
 async function callOpenAiCompatible(ctx, provider, args) {
-  const { purpose, usageOut, timeoutMs } = args;
+  const { purpose, usageOut, timeoutMs, signal } = args;
   const spec = ctx.openAiCompatible[provider];
   const selectedModel = args.model || modelFor(ctx, provider, purpose);
   const body = openAiCompatibleBody(spec, selectedModel, args);
@@ -1513,6 +1523,7 @@ async function callOpenAiCompatible(ctx, provider, args) {
     headers,
     body,
     ...timeoutArg(timeoutMs ?? spec.timeoutMs),
+    signal,
   });
   const usage = data?.usage || {};
   recordUsage(usageOut, provider, selectedModel, usage.prompt_tokens, usage.completion_tokens);
@@ -1562,7 +1573,7 @@ const providerTimeoutMs = (ctx, provider) =>
 
 async function callGemini(
   ctx,
-  { prompt, parts, model, purpose, expectJson, systemPrompt, usageOut, timeoutMs }
+  { prompt, parts, model, purpose, expectJson, systemPrompt, usageOut, timeoutMs, signal }
 ) {
   const apiKey = readKey(ctx.env, KEY_ENV.gemini);
   const selectedModel = model || modelFor(ctx, 'gemini', purpose);
@@ -1579,6 +1590,7 @@ async function callGemini(
     },
     // Undefined keeps postJson's CHAT_TIMEOUT_MS.
     timeoutMs,
+    signal,
   });
   const usage = data?.usageMetadata || {};
   // Reasoning tokens bill at the output rate — count them as output.
@@ -1662,6 +1674,7 @@ async function generateText(
     usageOut = null,
     feature = null,
     budgetMs = null,
+    signal = null,
   } = {}
 ) {
   return generate(ctx, {
@@ -1674,6 +1687,7 @@ async function generateText(
     expectJson: false,
     systemPrompt,
     usageOut,
+    signal,
   });
 }
 
@@ -1689,6 +1703,7 @@ async function generateJson(
     usageOut = null,
     feature = null,
     budgetMs = null,
+    signal = null,
   } = {}
 ) {
   const budget = budgetFor(ctx, budgetMs);
@@ -1702,10 +1717,12 @@ async function generateJson(
     expectJson: true,
     systemPrompt,
     usageOut,
+    signal,
   });
   try {
     return parseJsonWithFallbacks(text);
   } catch (parseError) {
+    if (signal?.aborted) throw signal.reason || parseError;
     // One repair round trip, then the original parse error wins. Inside a
     // budget the repair shares the same deadline. It is skipped when it
     // could not have a whole attempt, because the parse error says more
@@ -1724,6 +1741,7 @@ async function generateJson(
       // under the same cached settings keeps the two halves consistent.
       feature,
       budget,
+      signal,
     });
     try {
       return parseJsonWithFallbacks(repaired);
@@ -1752,6 +1770,7 @@ async function generateJson(
  * @param {string|null} [params.model]    Explicit model; wins over the portal pin.
  * @param {Array|null} [params.usageOut]  Receives one usage row, provider `gemini`.
  * @param {string|null} [params.feature]  A key of AI_FEATURES.
+ * @param {AbortSignal} [params.signal]
  */
 async function generateGroundedJson(
   ctx,
@@ -1763,6 +1782,7 @@ async function generateGroundedJson(
     model = null,
     usageOut = null,
     feature = null,
+    signal = null,
   } = {}
 ) {
   // Validation first: a bad list must not cost a configuration read, and a
@@ -1787,7 +1807,7 @@ async function generateGroundedJson(
     systemPrompt,
   });
 
-  const data = await groundedInteraction(ctx, body);
+  const data = await groundedInteraction(ctx, body, { signal });
 
   // Usage before the status check, so a failed-but-billed interaction is
   // still on the spend page.
@@ -1849,7 +1869,7 @@ function assertGroundedComplete(data) {
  * callWithFailover: 401/403 only, and then the call fails here — there is
  * nothing to hand on to.
  */
-async function groundedInteraction(ctx, body) {
+async function groundedInteraction(ctx, body, { signal } = {}) {
   let data;
   try {
     data = await withRetry(ctx.clock, () =>
@@ -1857,6 +1877,7 @@ async function groundedInteraction(ctx, body) {
         headers: { 'x-goog-api-key': readKey(ctx.env, KEY_ENV.gemini) },
         body,
         timeoutMs: GROUNDED_TIMEOUT_MS,
+        signal,
       })
     );
   } catch (error) {
@@ -1881,7 +1902,7 @@ async function groundedInteraction(ctx, body) {
  */
 async function callNamedProvider(
   ctx,
-  { provider, model, prompt, systemPrompt = '', maxTokens, timeoutMs }
+  { provider, model, prompt, systemPrompt = '', maxTokens, timeoutMs, signal }
 ) {
   if (!PROVIDERS.includes(provider))
     throw new AiNotConfiguredError(`Unknown AI provider: ${provider}`);
@@ -1901,6 +1922,7 @@ async function callNamedProvider(
     usageOut,
     maxTokens,
     timeoutMs,
+    signal,
   });
   const usage = usageOut[0] || {};
   return {

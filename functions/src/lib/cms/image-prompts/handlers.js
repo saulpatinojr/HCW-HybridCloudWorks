@@ -5,6 +5,7 @@
  * a module-level function over `ctx` (`{ guard, store, now }`); the factory
  * only binds them (PR #841 split of image-prompts.js).
  */
+import { errorResponse } from '../../http/error-response.js';
 import {
   json,
   KEYWORD_COLLECTIONS,
@@ -65,11 +66,7 @@ async function manageConfig(ctx, request, context) {
       updatedBy: actor(auth.user),
     });
   } catch (error) {
-    context.error('manageImagePromptConfig failed:', error);
-    return json(500, {
-      error: 'Failed to manage image prompt config',
-      message: error?.message || 'Unknown error',
-    });
+    return errorResponse(context, 'Failed to manage image prompt config', error, 500, request);
   }
 }
 

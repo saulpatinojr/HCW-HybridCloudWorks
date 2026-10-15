@@ -242,6 +242,9 @@ describe('certifications', () => {
         imageUrl: '/api/public/media/certifications/c1/images/b.png',
       }).value.imageUrl
     ).toBe('/api/public/media/certifications/c1/images/b.png');
+
+    expect(validateCertification({ _createdAt: '1999-01-01' }).error).toMatch(/Unknown field/);
+    expect(validateCertification({ _updatedAt: '1999-01-01' }).error).toMatch(/Unknown field/);
   });
 
   it('deletes an abandoned upload only at a cert image path nothing references', async () => {

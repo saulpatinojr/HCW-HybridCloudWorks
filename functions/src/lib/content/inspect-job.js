@@ -26,6 +26,7 @@ export function createInspectBatch({
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   now = () => new Date(),
   log = {},
+  signal: defaultSignal,
 }) {
   async function select(limit) {
     const flagged = await store.queryDocs(
@@ -45,10 +46,12 @@ export function createInspectBatch({
 
   return {
     /**
-     * @param {{ limit?: number }} [payload]
+     * @param {{ limit?: number, signal?: AbortSignal }} [payload]
      * @returns {Promise<{total: number, inspected: number, needsRework: number, failed: number, skipped: number, ids: {inspected: string[], failed: string[]}}>}
      */
-    async run({ limit = DEFAULT_BATCH } = {}) {
+    async run({ limit = DEFAULT_BATCH, signal: callSignal } = {}) {
+      const activeSignal = callSignal || defaultSignal;
+      if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
       const batch = Math.min(Math.max(Number(limit) || DEFAULT_BATCH, 1), MAX_BATCH);
       const docs = await select(batch);
       const result = {
@@ -61,6 +64,7 @@ export function createInspectBatch({
       };
 
       for (let i = 0; i < docs.length; i += 1) {
+        if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
         const doc = docs[i];
         const url = doc.url || doc.sourceUrl || doc['CD Url'];
         if (!url) {
@@ -72,6 +76,7 @@ export function createInspectBatch({
             collectionName: 'content',
             docId: doc.id,
             newData: doc,
+            signal: activeSignal,
           });
           result.inspected += 1;
           if (outcome.contentStatus === 'needs_rework') result.needsRework += 1;

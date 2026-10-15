@@ -227,9 +227,7 @@ describe('generateCuratedArticleImage', () => {
       context
     );
     expect(res.status).toBe(500);
-    expect(JSON.parse(res.body).message).toBe(
-      'Generated image refused: Content-Type video/mp4 is not an image'
-    );
+    expect(JSON.parse(res.body).error).toBe('Failed to generate curated image');
     expect(storage.uploadBlob).not.toHaveBeenCalled();
     expect(store.upsertDoc).not.toHaveBeenCalled();
   });

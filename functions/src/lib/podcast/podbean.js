@@ -354,6 +354,7 @@ export function createPodbeanClient({
   env = process.env,
   fetch: fetchImpl = globalThis.fetch,
   now = () => Date.now(),
+  signal = null,
 } = {}) {
   const configured = isConfigured(env);
   const clientId = configured.ok ? readKey(env, CLIENT_ID_SETTING) : '';
@@ -420,6 +421,7 @@ export function createPodbeanClient({
    * `expires_in` is used for this call and not cached, rather than guessed at.
    */
   async function getToken() {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     requireConfigured();
     if (cached && now() < cached.expiresAt) return cached.token;
     cached = null;
@@ -436,8 +438,10 @@ export function createPodbeanClient({
         },
         body: new URLSearchParams({ grant_type: 'client_credentials' }).toString(),
         timeoutMs: PODBEAN_TIMEOUT_MS,
+        signal,
       });
     } catch (error) {
+      if (signal?.aborted || error?.name === 'AbortError') throw error;
       throw transportError(operation, error);
     }
     const text = await response.text();
@@ -488,6 +492,7 @@ export function createPodbeanClient({
    * `invalid_token` — the only repeat in this file.
    */
   async function call(operation, method, path, { query, form } = {}, { reauthed = false } = {}) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     const token = await getToken();
     const url = new URL(`${PODBEAN_API_BASE_URL}${path}`);
     let body;
@@ -519,8 +524,10 @@ export function createPodbeanClient({
         },
         body,
         timeoutMs: PODBEAN_TIMEOUT_MS,
+        signal,
       });
     } catch (error) {
+      if (signal?.aborted || error?.name === 'AbortError') throw error;
       throw transportError(operation, error);
     }
     const text = await response.text();
@@ -692,6 +699,7 @@ export function createPodbeanClient({
      * @param {string} contentType must equal the `content_type` the upload was authorised for
      */
     async uploadMedia(presignedUrl, bytes, contentType) {
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
       requireConfigured();
       let host;
       try {
@@ -721,8 +729,10 @@ export function createPodbeanClient({
           headers: { 'Content-Type': type, 'Content-Length': String(bytes.length) },
           body: bytes,
           timeoutMs: PODBEAN_UPLOAD_TIMEOUT_MS,
+          signal,
         });
       } catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') throw error;
         // The PUT goes to the storage host the presigned URL names, not to
         // api.podbean.com, so a DNS failure or a timeout there must not read
         // as "Podbean could not be reached" — an operator would check the

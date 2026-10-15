@@ -104,13 +104,13 @@ registerJobType(REFRESH_JOB_TYPE, {
   // Ten is generous for the observed run and far under the 30-minute host
   // limit; the sweeper reaps at timeout + 5 minutes.
   timeoutMs: 10 * 60 * 1000,
-  worker: async (payload, { context }) => {
+  worker: async (payload, { context, signal }) => {
     // Validated in the worker rather than at enqueue, like every other type:
     // enqueueJob checks role, size and serialisability only.
     const { regions } = parseRefreshPayload(payload);
     // The whole client: upsertDoc for the three documents per region and
     // readDoc for the history lookup (lib/cloud-tools/history.js).
-    return createPricingRefresh({ store, log: context }).run({ regions });
+    return createPricingRefresh({ store, log: context, signal }).run({ regions, signal });
   },
   // A failed refresh is a page reporting stale prices tomorrow; the phone
   // gets it now, like the export job.

@@ -32,6 +32,7 @@
  * write the `audits` status_transition row transitionContentStatus writes.
  */
 import { randomUUID } from "node:crypto";
+import { errorResponse } from "../http/error-response.js";
 import { REPO_REF } from "./repo-draft.js";
 import {
   DRAFTS_STAGE_STATUS,
@@ -283,12 +284,7 @@ async function countersAfterDelete(deps, id, context) {
 
 /** What an unexpected failure answers: a 500 naming the action, the cause in the log. */
 function failure(context, what, error) {
-  context?.error?.(`[drafts] ${what} failed:`, error);
-  return json(500, {
-    ok: false,
-    error: `Failed to ${what}`,
-    message: error?.message || "Unknown error",
-  });
+  return errorResponse(context, `Failed to ${what}`, error, 500);
 }
 
 /** A thrown refusal or input error is the answer it carries; anything else is a 500. */

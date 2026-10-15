@@ -16,6 +16,7 @@ const json = (status, body) => ({
   body: JSON.stringify(body),
 });
 
+import { errorResponse } from './http/error-response.js';
 import { legacyBadgePath, legacyBadgePathsOf, repointAll } from './legacy-badge-url.js';
 
 export function serializeValue(value) {
@@ -403,11 +404,7 @@ export function createSnapshotPublishHandlers({
         const { results, generatedAt, legacyBadges } = await publishSnapshots();
         return json(200, { ...results, generatedAt, ...(legacyBadges ? { legacyBadges } : {}) });
       } catch (error) {
-        context.error('publishSnapshot failed:', error);
-        return json(500, {
-          error: 'Failed to publish snapshots',
-          message: error?.message || 'Unknown error',
-        });
+        return errorResponse(context, 'Failed to publish snapshots', error, 500, request);
       }
     },
   };

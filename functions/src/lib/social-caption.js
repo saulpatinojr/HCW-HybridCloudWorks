@@ -10,6 +10,7 @@
  */
 
 import { startBudgetClock } from './ai/time-budget.js';
+import { errorResponse } from './http/error-response.js';
 
 export const CAPTION_MAX_CHARS = 900;
 
@@ -106,11 +107,7 @@ export function createSocialCaptionHandlers({
       if (!caption) return json(502, { error: 'Caption generation returned nothing' });
       return json(200, { success: true, caption });
     } catch (error) {
-      context.error('generateSocialCaption failed:', error);
-      return json(500, {
-        error: 'Failed to generate caption',
-        message: error?.message || 'Unknown error',
-      });
+      return errorResponse(context, 'Failed to generate caption', error, 500, request);
     }
   }
   return { generateSocialCaption };

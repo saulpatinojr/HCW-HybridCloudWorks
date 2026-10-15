@@ -205,7 +205,9 @@ export async function generateSourceEpisode({
   actorId = null,
   now = new Date().toISOString(),
   deps = {},
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseSourceEpisodePayload({
     platform: rawPlatform,
     examCode: rawExamCode,
@@ -278,8 +280,12 @@ export async function generateSourceEpisode({
       now,
       synthesize,
       uploadAudio,
+      signal,
     });
   } catch (err) {
+    if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') {
+      throw err;
+    }
     if (!isRefusal(err)) {
       await persistFailure(store, {
         provider: platform,

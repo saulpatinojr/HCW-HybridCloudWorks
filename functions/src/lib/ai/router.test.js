@@ -2181,4 +2181,35 @@ describe('unpriced models (ADR 0033) and the GPT-5 rates (2026-10-05)', () => {
     expect(usageOut[0].costUsd).toBeCloseTo(0.00000045, 12);
     expect(usageOut[0]).not.toHaveProperty('unpriced');
   });
+
+  it('forwards signal to fetchImpl and aborts outbound call (AP-B7)', async () => {
+    const parent = new AbortController();
+    const fetchImpl = vi.fn(
+      async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: async () =>
+          JSON.stringify({
+            choices: [{ message: { content: 'hi' } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          }),
+      })
+    );
+    const r = createAiRouter({
+      env: { OPENAI_API_KEY: 'o' },
+      fetch: fetchImpl,
+      sleep: noSleep,
+      log: quiet,
+    });
+    await r.generateTextResponse({
+      prompt: 'test',
+      feature: 'telegram',
+      signal: parent.signal,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [, init] = fetchImpl.mock.calls[0];
+    expect(init.signal).toBeDefined();
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
 });

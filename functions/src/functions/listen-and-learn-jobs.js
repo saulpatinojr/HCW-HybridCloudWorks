@@ -260,7 +260,8 @@ export async function resolveRunModel(ai) {
 }
 
 /** One generation run against production dependencies. */
-export async function runListenAndLearnGeneration(payload, { context, job } = {}) {
+export async function runListenAndLearnGeneration(payload, { context, job, signal } = {}) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseGeneratePayload(payload);
   if (parsed.error) throw new Error(parsed.error);
 
@@ -280,6 +281,7 @@ export async function runListenAndLearnGeneration(payload, { context, job } = {}
       ai: { generateGroundedJsonResponse, getCostEstimate },
       ttsModel,
       actorId: job?.requestedBy?.oid || null,
+      signal,
     });
     // Exam code and counts only: the episode id is derived from the owner's
     // title, which is content, and the log line is not the place for it.
@@ -303,6 +305,7 @@ export async function runListenAndLearnGeneration(payload, { context, job } = {}
     youtubeApiKey: process.env.YOUTUBE_API_KEY || '',
     actorId: job?.requestedBy?.oid || null,
     onlyAreas: areas,
+    signal,
   });
 
   // The model id is a setting, not content; naming it is what answers "why
@@ -344,7 +347,8 @@ export function parseSpeakChapterPayload(payload) {
  * transcript-only state, not a failure: `audioError` says which setting is
  * missing and nothing else changes.
  */
-export async function runSpeakChapter(payload, { context, job } = {}) {
+export async function runSpeakChapter(payload, { context, job, signal } = {}) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseSpeakChapterPayload(payload);
   if (parsed.error) throw new Error(parsed.error);
   const { platform, examCode, chapterId } = parsed.value;
@@ -379,8 +383,10 @@ export async function runSpeakChapter(payload, { context, job } = {}) {
       now,
       synthesize: synthesizeDialogue,
       uploadAudio: uploadEpisodeAudio,
+      signal,
     });
   } catch (err) {
+    if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
     await saveEpisodeFailure(store, {
       provider: platform,
       examCode,

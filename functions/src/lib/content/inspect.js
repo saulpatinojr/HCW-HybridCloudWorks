@@ -191,10 +191,11 @@ export function createInspector({
   fetchImage: fetchImageImpl = defaultFetchImage,
   now = () => new Date(),
   log = {},
+  signal: defaultSignal,
 }) {
   const metadataOnly = () => env.CONTENTFORGE_METADATA_ONLY === 'true';
 
-  async function analyzeArticle(url, markdownContent, cloudProvider, format, revisionIssues) {
+  async function analyzeArticle(url, markdownContent, cloudProvider, format, revisionIssues, signal) {
     const only = metadataOnly();
     const modelOverride = env.CONTENTFORGE_ANALYSIS_MODEL || null;
     // Recorded on the article and shown in the portal, so it has to be the
@@ -221,6 +222,7 @@ export function createInspector({
       purpose: 'analysis',
       usageOut: usage,
       feature: 'inspector',
+      signal,
     });
     const aiProvider = usage.at(-1)?.provider || ai.getActiveAiProvider();
     log.log?.(`[ai-model] article analysis via ${aiProvider}`);
@@ -241,11 +243,12 @@ export function createInspector({
   }
 
   /** Alt text for up to five images, only when CONTENTFORGE_ALT_TEXT_ENABLED=true. */
-  async function generateAltTexts(imageUrls) {
+  async function generateAltTexts(imageUrls, signal) {
     if (env.CONTENTFORGE_ALT_TEXT_ENABLED !== 'true') return {};
     if (!Array.isArray(imageUrls) || imageUrls.length === 0) return {};
     const results = {};
     for (const url of imageUrls.slice(0, 5)) {
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
       try {
         // These URLs come from `scraped.images` — whatever page sourceUrl
         // pointed at — so they are attacker-influenced. Bare fetch performed no
@@ -274,6 +277,7 @@ export function createInspector({
           ],
           purpose: 'multimodal',
           feature: 'altText',
+          signal,
         });
         if (altText && altText.trim()) results[url] = altText.trim().slice(0, 125);
       } catch (error) {
@@ -283,8 +287,9 @@ export function createInspector({
     return results;
   }
 
-  async function inspectArticleSource(targetUrl, cloudProvider, existingPublishedAt) {
-    const scraped = await scrape(targetUrl);
+  async function inspectArticleSource(targetUrl, cloudProvider, existingPublishedAt, signal) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
+    const scraped = await scrape(targetUrl, { signal });
     if (!scraped.success) throw new Error(scraped.error || 'Scraping failed');
     scraped.images = referenceScrapedImages(scraped.images);
 
@@ -295,32 +300,35 @@ export function createInspector({
     }
 
     const format = await pickNextFormat(store, 'content', cloudProvider);
-    let analysis = await analyzeArticle(targetUrl, scraped.markdown, cloudProvider, format);
+    let analysis = await analyzeArticle(targetUrl, scraped.markdown, cloudProvider, format, null, signal);
 
     // Quality gate: one automatic revision, then the verdict stands.
     let critique = null;
     let revised = false;
     const post = analysis.metadata?.postContent;
     if (typeof post === 'string' && post.trim()) {
-      critique = await critic.critiqueDraft({ title: analysis.metadata.title, postContent: post });
+      critique = await critic.critiqueDraft({ title: analysis.metadata.title, postContent: post, signal });
       if (critique.verdict === 'revise') {
         analysis = await analyzeArticle(
           targetUrl,
           scraped.markdown,
           cloudProvider,
           format,
-          critique.issues
+          critique.issues,
+          signal
         );
         revised = true;
         critique = await critic.critiqueDraft({
           title: analysis.metadata.title,
           postContent: analysis.metadata.postContent,
+          signal,
         });
       }
     }
 
     const imageAltTexts = await generateAltTexts(
-      (scraped.images || []).map((img) => img.original || img.url).filter(Boolean)
+      (scraped.images || []).map((img) => img.original || img.url).filter(Boolean),
+      signal
     );
 
     return {
@@ -340,7 +348,9 @@ export function createInspector({
    * Inspect one document and write the result back. Throws on failure; the
    * caller records the error on the document.
    */
-  async function executeInspection({ collectionName = 'content', docId, newData }) {
+  async function executeInspection({ collectionName = 'content', docId, newData, signal: callSignal }) {
+    const activeSignal = callSignal || defaultSignal;
+    if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
     const targetUrl = newData.url || newData.sourceUrl || newData['CD Url'];
     if (!targetUrl) throw new Error('No URL provided in document (checked url, sourceUrl, CD Url)');
     if (newData.type === 'architecture') throw new Error(ARCHITECTURE_NOT_PORTED);
@@ -351,7 +361,8 @@ export function createInspector({
     const inspection = await inspectArticleSource(
       targetUrl,
       cloudProvider,
-      newData.publishedAt || newData['Published At']
+      newData.publishedAt || newData['Published At'],
+      activeSignal
     );
     const update = buildInspectionUpdateData({ newData, targetUrl, ...inspection, now: now() });
     await store.patchDoc(collectionName, docId, update);

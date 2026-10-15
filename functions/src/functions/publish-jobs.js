@@ -16,7 +16,8 @@ import { createJobFailureOnComplete } from '../lib/job-failure-notify.js';
 import { registerJobType } from '../lib/jobs.js';
 
 /** Split for tests: the worker body with its dependencies injectable. */
-export async function runPublishContent(payload, { job, publish }) {
+export async function runPublishContent(payload, { job, publish, signal } = {}) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const contentId = String(payload?.contentId || '').trim();
   if (!contentId) throw new Error('contentId required');
 
@@ -47,13 +48,14 @@ registerJobType('publish-content', {
     'Publish one content document live through the full processPublishContent pipeline (status, quality, image and metadata gates included). Enqueued by the Telegram /approve command.',
   maxPayloadBytes: 2048,
   timeoutMs: 5 * 60 * 1000,
-  worker: async (payload, { job }) => {
+  worker: async (payload, { job, signal } = {}) => {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     const publish = createPublishHandlers({
       guard: getDefaultGuard(),
       store,
       inlineImages: createDefaultInlineImageRehoster(),
     });
-    return runPublishContent(payload, { job, publish });
+    return runPublishContent(payload, { job, publish, signal });
   },
   // A failed approval-from-the-phone must come back to the phone (T-607).
   onComplete: createJobFailureOnComplete({ store }),

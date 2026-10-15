@@ -135,11 +135,13 @@ export function resolvePipelineDeps(deps = {}, { writeScript = generateArticleSc
  * podcast has one voice and no fallback (ADR 0029 §2b), so there is nothing
  * to read with instead.
  */
-async function renderAudio({ script, source, store, storage, env, ai, synthesize, readVoices, uploadAudio }) {
+async function renderAudio({ script, source, store, storage, env, ai, synthesize, readVoices, uploadAudio, signal = null }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   let voices;
   try {
     voices = await readVoices(store);
   } catch (err) {
+    if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
     return { error: `The podcast voices could not be read: ${err?.message || err}` };
   }
 
@@ -148,14 +150,23 @@ async function renderAudio({ script, source, store, storage, env, ai, synthesize
     try {
       model = (await ai.modelForTask({ task: 'podcastVoice' })).model;
     } catch (err) {
+      if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
       return { error: err?.message || String(err) };
     }
   }
 
   let rendered;
   try {
-    rendered = await synthesize({ product: 'podcast', dialogue: script.dialogue, env, voices, model });
+    rendered = await synthesize({
+      product: 'podcast',
+      dialogue: script.dialogue,
+      env,
+      voices,
+      model,
+      ...(signal ? { signal } : {}),
+    });
   } catch (err) {
+    if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
     return { error: err?.message || String(err) };
   }
   const plan = renderedPlan(rendered);
@@ -213,6 +224,7 @@ function renderedPlan(rendered) {
  * worth reporting.
  */
 export async function recordScriptFailure({ store, source, error, now, persistFailure }) {
+  if (error?.name === 'AbortError' || error?.message === 'aborted') throw error;
   await persistFailure(store, { source, error: error?.message || String(error), now }).catch(
     () => {}
   );
@@ -248,7 +260,9 @@ export async function finishTranscript({
   env,
   now,
   deps,
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const { synthesize, readVoices, uploadAudio, persistTranscript, recordUsage } = deps;
 
   const audio = await renderAudio({
@@ -261,6 +275,7 @@ export async function finishTranscript({
     synthesize,
     readVoices,
     uploadAudio,
+    signal,
   });
 
   const saved = await persistTranscript(store, { source, script, audio, now });
@@ -312,7 +327,9 @@ export async function generateTranscriptFromArticle({
   env = process.env,
   now = new Date().toISOString(),
   deps = {},
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsedId = parseArticleId(articleId);
   if (parsedId.error) throw new TranscriptError(parsedId.error);
   const id = parsedId.value;
@@ -343,6 +360,7 @@ export async function generateTranscriptFromArticle({
       usageOut: scriptUsage,
     });
   } catch (err) {
+    if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
     await recordScriptFailure({ store, source, error: err, now, persistFailure });
   }
 
@@ -356,6 +374,7 @@ export async function generateTranscriptFromArticle({
     env,
     now,
     deps: resolved,
+    signal,
   });
 
   return { ...report, articleId: id };
