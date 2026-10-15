@@ -4,6 +4,8 @@ import {
   ADMIN_CONTENT_SNAPSHOT_FIELDS,
   LIST_DEFAULT_LIMIT,
   LIST_MAX_LIMIT,
+  LIST_SEARCH_MAX_CHARS,
+  LIST_SEARCH_MIN_CHARS,
   LIST_SORT_FIELDS,
   VERSIONS_LIST_LIMIT,
 } from "./cms-content.js";
@@ -235,19 +237,85 @@ describe("cms content list taxonomy filters and ordering (ADR 0033)", () => {
     expect(store.queryDocs).toHaveBeenCalledTimes(2);
   });
 
-  it("?search= filters on title or summary with CONTAINS (AP-F6, #930)", async () => {
+  it("?search= filters on title and summary under both casings, case-insensitively from the index (AP-F6, #930)", async () => {
+    // A record whose summary lives only in `Summary` (the second casing the
+    // module header names) was unreachable by search: the clause read
+    // `summary` alone. The clause now names both, and this row is the one
+    // the old clause could not have matched.
+    const rows = [
+      {
+        id: "s",
+        Title: "Arc on the edge",
+        Summary: "Kubernetes at a branch office",
+      },
+    ];
+    const store = makeStore({ queryDocs: vi.fn(async () => rows) });
+    const h = createCmsContentHandlers({ guard: allowGuard, store });
+
+    const res = await h.list(
+      makeRequest({ query: { search: " Kubernetes " } }),
+      context,
+    );
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body).items).toEqual(rows);
+    const [, query, params] = store.queryDocs.mock.calls[0];
+    expect(query).toContain(
+      '(CONTAINS(c.title, @search, true) OR CONTAINS(c["Title"], @search, true) OR CONTAINS(c.summary, @search, true) OR CONTAINS(c["Summary"], @search, true))',
+    );
+    // LOWER(field) is not index-served: with it every search loaded the
+    // whole container. CONTAINS's case-insensitive argument replaces it, so
+    // the parameter is the trimmed term as typed, not lowercased.
+    expect(query).not.toMatch(/LOWER\(c\.(title|summary)\)/);
+    expect(query).not.toMatch(/LOWER\(c\["(Title|Summary)"\]\)/);
+    expect(params).toContainEqual({ name: "@search", value: "Kubernetes" });
+
+    // `q` is the same parameter, and the clause ANDs with the filters.
+    store.queryDocs.mockClear();
+    await h.list(makeRequest({ query: { q: "arc", live: "true" } }), context);
+    const [, liveQuery, liveParams] = store.queryDocs.mock.calls[0];
+    expect(liveQuery).toMatch(
+      /WHERE c\.Live = true AND \(CONTAINS\(c\.title, @search, true\) OR /,
+    );
+    expect(liveParams).toContainEqual({ name: "@search", value: "arc" });
+  });
+
+  it("400s a search term outside LIST_SEARCH_MIN_CHARS..LIST_SEARCH_MAX_CHARS, as sort does (AP-F6, #930)", async () => {
+    // The values a page mirrors before it sends the term; moving one here
+    // means moving it there.
+    expect([LIST_SEARCH_MIN_CHARS, LIST_SEARCH_MAX_CHARS]).toEqual([2, 100]);
     const store = makeStore();
     const h = createCmsContentHandlers({ guard: allowGuard, store });
 
-    await h.list(makeRequest({ query: { search: "Kubernetes" } }), context);
-    const [, query, params] = store.queryDocs.mock.calls[0];
-    expect(query).toContain("CONTAINS(LOWER(c.title), @search)");
-    expect(query).toContain("CONTAINS(LOWER(c[\"Title\"]), @search)");
-    expect(query).toContain("CONTAINS(LOWER(c.summary), @search)");
-    expect(params).toContainEqual({
-      name: "@search",
-      value: "kubernetes",
-    });
+    for (const search of [
+      "k",
+      " k ",
+      "x".repeat(LIST_SEARCH_MAX_CHARS + 1),
+    ]) {
+      const res = await h.list(makeRequest({ query: { search } }), context);
+      expect(res.status).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({
+        error: `search must be ${LIST_SEARCH_MIN_CHARS} to ${LIST_SEARCH_MAX_CHARS} characters`,
+      });
+    }
+    expect(
+      (await h.list(makeRequest({ query: { q: "k" } }), context)).status,
+    ).toBe(400);
+    expect(store.queryDocs).not.toHaveBeenCalled();
+
+    // Both edges are inside the bounds, and a blank term is no search at
+    // all rather than a short one.
+    for (const query of [
+      { search: "x".repeat(LIST_SEARCH_MIN_CHARS) },
+      { q: "x".repeat(LIST_SEARCH_MAX_CHARS) },
+    ]) {
+      expect((await h.list(makeRequest({ query }), context)).status).toBe(200);
+      expect(store.queryDocs.mock.calls.at(-1)[1]).toContain("@search");
+    }
+    expect(
+      (await h.list(makeRequest({ query: { search: "   " } }), context))
+        .status,
+    ).toBe(200);
+    expect(store.queryDocs.mock.calls.at(-1)[1]).not.toContain("@search");
   });
 });
 

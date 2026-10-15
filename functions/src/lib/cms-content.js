@@ -11,6 +11,10 @@
  *   - `?kind=` and `?ideaOrigin=` (ADR 0033 §4) match the stored field OR,
  *     for a record that predates the taxonomy, the value its `type` /
  *     `source` derives to — so the filter agrees with the chip the list shows.
+ *   - `?search=` (or `?q=`, AP-F6 #930) matches a substring of the title or
+ *     summary under either casing the ingestion paths write, case-
+ *     insensitively and from the index; the term is bounded
+ *     (LIST_SEARCH_MIN_CHARS..LIST_SEARCH_MAX_CHARS) as `sort` and `limit` are.
  *   - list returns the admin snapshot PROJECTION, not whole documents. Content
  *     bodies (postContent etc.) are large; the queue UI reads only these
  *     fields. Firestore `.select(...)` becomes a Cosmos SELECT projection.
@@ -136,6 +140,18 @@ export const LIST_SORT_FIELDS = Object.freeze([
   "createdAt",
 ]);
 
+/**
+ * The bounds on a `?search=` term. `sort` is allowlisted and `limit` is
+ * clamped; before these the term alone was unbounded, so one character
+ * matched most of the container and a multi-kilobyte needle was carried
+ * into the query (AP-F6, #930). Outside them the list answers the 400 the
+ * sort path answers. Measured on the trimmed term; a blank term is no
+ * search at all, not a short one. A page that sends the term mirrors
+ * these, so a keystroke below the minimum never becomes a request.
+ */
+export const LIST_SEARCH_MIN_CHARS = 2;
+export const LIST_SEARCH_MAX_CHARS = 100;
+
 /** The version rows a History dialog lists: everything but the body itself. */
 const VERSION_LIST_PROJECTION = [
   "c.id",
@@ -223,13 +239,50 @@ function typeClause(type, parameters) {
 }
 
 /**
+ * `?search=`: a substring of the title or summary, under both casings the
+ * module header names, compared case-insensitively by CONTAINS's third
+ * argument. The form this replaces, `CONTAINS(LOWER(field), @lowered)`, is
+ * the one Cosmos DB documents as not using the index at all (a full scan:
+ * every item of the container loaded, ~70k here across every partition;
+ * query advisor QA1006), where CONTAINS on the field itself is a full
+ * index scan: the path's distinct indexed values are read and only the
+ * matches are loaded.
+ *   https://learn.microsoft.com/azure/cosmos-db/index-overview#index-usage
+ *   https://learn.microsoft.com/azure/cosmos-db/nosql/query/contains
+ *   https://learn.microsoft.com/azure/cosmos-db/nosql/query/lower
+ * The parameter keeps the caller's casing: the comparison ignores it, and
+ * lowering it here would only suggest the predicate needed it.
+ */
+function searchClause(search, parameters) {
+  if (!search) return null;
+  parameters.push({ name: "@search", value: search });
+  return (
+    "(CONTAINS(c.title, @search, true) OR " +
+    'CONTAINS(c["Title"], @search, true) OR ' +
+    "CONTAINS(c.summary, @search, true) OR " +
+    'CONTAINS(c["Summary"], @search, true))'
+  );
+}
+
+/**
  * GET /api/cms/content's query string as the Cosmos query and its
- * parameters, or `{ error }` for a sort field the list does not offer.
+ * parameters, or `{ error }` for a sort field the list does not offer or
+ * a search term outside LIST_SEARCH_MIN_CHARS..LIST_SEARCH_MAX_CHARS.
  */
 export function buildListQuery(query) {
   const sort = queryText(query, "sort");
   if (sort && !LIST_SORT_FIELDS.includes(sort)) {
     return { error: `sort must be one of: ${LIST_SORT_FIELDS.join(", ")}` };
+  }
+  const search = queryText(query, "search") || queryText(query, "q");
+  if (
+    search &&
+    (search.length < LIST_SEARCH_MIN_CHARS ||
+      search.length > LIST_SEARCH_MAX_CHARS)
+  ) {
+    return {
+      error: `search must be ${LIST_SEARCH_MIN_CHARS} to ${LIST_SEARCH_MAX_CHARS} characters`,
+    };
   }
   // `?limit=abc` produced `TOP NaN` (a 500 carrying raw Cosmos error
   // text) and `?limit=0` produced `TOP 0` (a silently empty list). Same
@@ -248,12 +301,7 @@ export function buildListQuery(query) {
     typeClause(queryLower(query, "type"), parameters),
     kind ? kindFilterClause(kind, parameters) : null,
     ideaOrigin ? ideaOriginFilterClause(ideaOrigin, parameters) : null,
-    (() => {
-      const search = queryLower(query, "search") || queryLower(query, "q");
-      if (!search) return null;
-      parameters.push({ name: "@search", value: search });
-      return '(CONTAINS(LOWER(c.title), @search) OR CONTAINS(LOWER(c["Title"]), @search) OR CONTAINS(LOWER(c.summary), @search))';
-    })(),
+    searchClause(search, parameters),
   ].filter(Boolean);
 
   let text = `SELECT TOP @limit ${PROJECTION} FROM c`;
@@ -308,7 +356,9 @@ export function createCmsContentHandlers({
      * multi-status windows); live=true filters to c.Live = true; type
      * filters case-insensitively (Frameworks/CoderCorner boards); kind and
      * ideaOrigin filter on the taxonomy (stored or derived); sort orders by
-     * one of LIST_SORT_FIELDS, newest first.
+     * one of LIST_SORT_FIELDS, newest first; search (or q) finds a title or
+     * summary substring, case-insensitively, LIST_SEARCH_MIN_CHARS to
+     * LIST_SEARCH_MAX_CHARS long.
      */
     list: guarded(
       guard,
