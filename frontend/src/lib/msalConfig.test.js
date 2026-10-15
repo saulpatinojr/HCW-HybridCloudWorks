@@ -121,3 +121,21 @@ describe('the redirect path', () => {
     expect(msalConfig.auth.redirectUri).not.toBe(window.location.origin);
   });
 });
+
+describe('the token cache', () => {
+  // AP-F11 (#935). sessionStorage, so a DOM XSS or a compromised dependency
+  // cannot read a token pair that outlives the tab; the reasoning, the known
+  // risk and the rollback sit on the setting itself. Pinned because
+  // `localStorage` is the value every MSAL tutorial pastes and the one this
+  // file held until #935, and nothing but a test distinguishes the two.
+  it('lives in sessionStorage and in no cookie', async () => {
+    const { msalConfig } = await loadConfig({
+      VITE_ENTRA_TENANT_ID: TENANT,
+      VITE_ENTRA_CLIENT_ID: CLIENT,
+    });
+    expect(msalConfig.cache).toEqual({
+      cacheLocation: 'sessionStorage',
+      storeAuthStateInCookie: false,
+    });
+  });
+});

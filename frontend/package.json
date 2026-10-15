@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/prerender.mjs",
-    "postbuild": "node scripts/stage-swa-config.mjs",
+    "postbuild": "node scripts/stage-swa-config.mjs && node scripts/check-image-hosts.mjs",
     "build:data": "node scripts/generate-public-data.cjs",
     "data:update:applied-skills": "node scripts/update-applied-skills.mjs",
     "data:update:credentials": "node scripts/update-applied-skills.mjs",

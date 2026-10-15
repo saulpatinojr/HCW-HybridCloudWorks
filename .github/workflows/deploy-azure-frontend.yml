@@ -248,6 +248,47 @@ jobs:
           # NOTE: VITE_COSMOS_* vars are intentionally absent.
           # The frontend never accesses Cosmos directly — all data goes through the API.
 
+      # Hidden source maps are built for every bundle (vite.config.js,
+      # `sourcemap: 'hidden'`) so a stack trace from production can be read
+      # back against the source. They must not be SERVED: the upload below
+      # ships everything under dist, and a map is fetchable by its hashed name
+      # whether or not a bundle advertises it (AP-F11, #935). So they are
+      # moved out of dist here, kept for thirty days as a workflow artifact
+      # in the next step, and the payload check after that refuses a dist
+      # with any left in it.
+      #
+      # A build that produced NO maps fails too. vite.config.js builds them
+      # unconditionally outside development, so none at all means the build
+      # that ran is not the one this workflow was written for, and the step
+      # says so rather than uploading an empty artifact and moving on.
+      - name: Set the source maps aside
+        run: |
+          set -euo pipefail
+          rm -rf source-maps
+          find dist -name '*.map' -print0 | while IFS= read -r -d '' map; do
+            target="source-maps/${map#dist/}"
+            mkdir -p "$(dirname "$target")"
+            mv "$map" "$target"
+          done
+          count=$(find source-maps -name '*.map' 2>/dev/null | wc -l)
+          [ "$count" -gt 0 ] || {
+            echo "::error::the build produced no source maps under dist. vite.config.js builds hidden maps for every bundle; a dist without them is a different build from the one this step expects."
+            exit 1
+          }
+          echo "set aside $count source maps for the source-maps artifact"
+
+      # Thirty days, not one: the site artifact below is a hand-off between
+      # two jobs of one run, while these are the only copy of this build's
+      # maps anywhere, and a stack trace is read days after the deploy that
+      # produced it.
+      - name: Keep the source maps for thirty days
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-maps
+          path: frontend/source-maps
+          retention-days: 30
+          if-no-files-found: error
+
       # The build output must be complete and must be the ONLY thing uploaded.
       # The first run of this workflow failed with "The size of the app content
       # was too large. The limit for this Static Web App is 524288000 bytes":
@@ -262,6 +303,15 @@ jobs:
             exit 1
           }
           test -f dist/index.html || { echo "::error::dist/index.html is missing; the build did not produce a site."; exit 1; }
+
+          # No source map ships (AP-F11, #935). The step above moved them to
+          # the source-maps artifact; one left here would be served by its
+          # hashed name to anyone who asks for it.
+          maps=$(find dist -name '*.map' | wc -l)
+          [ "$maps" -eq 0 ] || {
+            echo "::error::$maps source map(s) are still under dist. They are set aside in the step above; a map that ships is readable by anyone who guesses its hashed name."
+            exit 1
+          }
 
           # A shell builds cleanly, passes component tests, and can look correct
           # in a browser while crawlers receive no page content. Assert the

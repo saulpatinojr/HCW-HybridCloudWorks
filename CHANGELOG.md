@@ -19,6 +19,38 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **AP-F11: the site's Content-Security-Policy drops `'unsafe-inline'` and
+  the scheme-wide image grant and gains `base-uri`, `object-src` and
+  `form-action`, the admin token cache moves to `sessionStorage`, and no
+  source map ships** (AP-F11, #935). `frontend/staticwebapp.config.json`
+  commits a policy with no `'unsafe-inline'` anywhere and an `img-src` of
+  the hosts the site was measured to load images from — the media route,
+  the certification badge hosts, the show's artwork host and the three
+  hosts published articles still hotlink; `data:` stays for the upload
+  previews and two article bodies, `blob:` goes — beside `base-uri 'self'`,
+  `object-src 'none'` and `form-action 'self' https://login.microsoftonline.com`.
+  `frontend/scripts/stage-swa-config.mjs` finishes the policy after every
+  build instead of copying the file: one `'sha256-…'` per distinct inline
+  `<style>` body in `style-src` and one per distinct `style` attribute
+  value in `style-src-attr 'unsafe-hashes'`, computed from the pre-rendered
+  pages, so a change to a component's `style` prop updates the header on
+  the next build (2026-10-15: 2 elements with one body and 2,969 attributes
+  with 80 values across 230 documents). `frontend/scripts/check-image-hosts.mjs`
+  runs next and fails the build when a page, a stylesheet or an article
+  body references an image host `img-src` does not name, tolerating the
+  retired Firebase bucket only until the last page stops naming it; the
+  measurement and how to repeat it are in
+  `docs/architecture/how-it-is-built.md`. `frontend/src/lib/msalConfig.js`
+  caches MSAL in `sessionStorage`, its own default for a single-page app,
+  so a DOM XSS or a compromised dependency can no longer read a token pair
+  that outlives the tab; the known risk is an in-app browser that loses
+  the session across the redirect, the verification is the owner's sign-in
+  on an iPhone after the deploy, and the rollback is that one line.
+  `deploy-azure-frontend.yml` moves every `.map` out of `dist` after the
+  build, keeps them for thirty days as the run's `source-maps` artifact so
+  a stack trace can still be read, and refuses a payload with one left;
+  `frontend/scripts/deploy-source-maps.test.js` holds the workflow and
+  `vite.config.js` to each other.
 - **The drift monitor's Terraform row reads the last apply from HCP
   Terraform, and reads ⚠️ rather than ✅ when it cannot** (PLAT-3, #963).
   The row #1178 added to `scripts/check-deploy-drift.mjs` took the last

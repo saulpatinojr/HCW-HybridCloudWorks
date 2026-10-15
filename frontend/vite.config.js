@@ -351,9 +351,17 @@ export default defineConfig(({ mode }) => {
       // 'hidden' generates source maps without `//# sourceMappingURL=` refs
       // in the bundle output. Lighthouse's `valid-source-maps` audit passes
       // (maps exist), but the public bundle does NOT advertise them, so
-      // browser DevTools won't auto-load the source. The maps are still
-      // available to upload to error-tracking services (Sentry etc.) at
-      // deploy time. See GH #171.
+      // browser DevTools won't auto-load the source. See GH #171.
+      //
+      // BUILT, AND NOT SERVED (AP-F11, #935). A map under dist is fetchable by
+      // its hashed name whether or not a bundle points at it, and the deploy
+      // uploads dist whole. So deploy-azure-frontend.yml moves every .map out
+      // of dist before its payload check, keeps them for thirty days as the
+      // run's `source-maps` artifact — enough to read a stack trace back
+      // against the source — and refuses a dist with one left in it. A
+      // deploy that finds no maps at all fails too: that step and this line
+      // are two halves of one decision, and scripts/deploy-source-maps.test.js
+      // holds them together.
       sourcemap: mode === 'development' ? true : 'hidden',
       minify: 'esbuild',
     },

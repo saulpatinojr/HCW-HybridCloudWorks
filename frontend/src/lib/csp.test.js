@@ -234,6 +234,66 @@ describe('Content-Security-Policy', () => {
     expect(script).not.toContain("'unsafe-inline'");
     expect(script).not.toContain("'unsafe-eval'");
   });
+
+  // AP-F11 (#935). Three directives the audit found absent, each closing a
+  // hole `default-src` does not: `base-uri` stops an injected <base> from
+  // re-pointing every relative URL on the page, `object-src 'none'` keeps
+  // plugin content out, and `form-action` bounds where a form may submit —
+  // default-src never covers it. Every form in the app submits to its own
+  // handler, so 'self' is what the app needs. The identity provider is the
+  // one other destination a page hands the browser to: MSAL's redirect is a
+  // navigation (`window.location.assign` in @azure/msal-browser's
+  // NavigationClient, read 2026-10-15), not a form, so the entry costs
+  // nothing today and keeps the directive honest about where sign-in goes.
+  it('sets base-uri, object-src and form-action, and form-action names only the app and the identity provider', () => {
+    expect(directive('base-uri')).toEqual(["'self'"]);
+    expect(directive('object-src')).toEqual(["'none'"]);
+    expect(directive('form-action')).toEqual(["'self'", 'https://login.microsoftonline.com']);
+  });
+
+  // The committed policy allows no inline style by keyword. What the
+  // pre-rendered pages carry inline is allowed by hash, and the hashes are
+  // computed from dist by scripts/stage-swa-config.mjs on every build — so
+  // none belongs here, and neither does `style-src-attr`, which that script
+  // writes. A hash committed by hand would be stale on the next build, and
+  // 'unsafe-inline' beside a hash makes the hash decorative.
+  it('allows inline style by build-time hash only: no keyword here, and no hash either', () => {
+    expect(directive('style-src')).toEqual(["'self'", 'https://fonts.googleapis.com']);
+    expect(CSP).not.toContain("'unsafe-inline'");
+    expect(CSP).not.toContain("'unsafe-hashes'");
+    expect(CSP).not.toContain('sha256-');
+    expect(directive('style-src-attr')).toEqual([]);
+  });
+
+  // `img-src` was `'self' data: https: blob:`: every HTTPS host on the
+  // internet, which is an exfiltration channel for anything a script on the
+  // page holds. The list is the measured one (docs/architecture/
+  // how-it-is-built.md, 2026-10-15): the media route; the certification
+  // badges the About page renders — Credly, Microsoft Learn, and one badge
+  // each on a CloudFront distribution and on iconape.com, both to drop once
+  // those two are re-hosted through the admin's certification editor; the
+  // show's artwork host; and the three hosts published articles still
+  // hotlink. `data:` stays for the admin upload previews and two article
+  // bodies with inline PNGs. `blob:` goes: object URLs are made for
+  // downloads here, never for an <img>. scripts/check-image-hosts.mjs holds
+  // every build to this list.
+  it('loads images only from the measured hosts, with no scheme-wide grant', () => {
+    expect(directive('img-src')).toEqual([
+      "'self'",
+      'data:',
+      'https://api-azure.hybridcloudworks.com',
+      'https://images.credly.com',
+      'https://learn.microsoft.com',
+      'https://*.podbean.com',
+      'https://msblogs.thesourcemediaassets.com',
+      'https://techcommunity.microsoft.com',
+      'https://d3j0t7vrtr92dk.cloudfront.net',
+      'https://iconape.com',
+    ]);
+    for (const broad of ['https:', 'http:', 'blob:', '*']) {
+      expect(directive('img-src')).not.toContain(broad);
+    }
+  });
 });
 
 describe('indexing headers', () => {
