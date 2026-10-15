@@ -158,7 +158,8 @@ export function extensionOf(path) {
  * @param {string} args.container
  * @param {string} args.path
  * @param {string} args.contentType - already normalized
- * @returns {{ok: true}|{ok: false, message: string}}
+ * @returns {{ok: true}|{ok: false, reason: string}} `reason` is a sentence
+ *   written here, never an error's message, so the route may answer with it.
  */
 export function checkUploadMediaType({ container, path, contentType }) {
   const isPublic = PUBLIC_MEDIA_CONTAINERS.has(container);
@@ -166,7 +167,7 @@ export function checkUploadMediaType({ container, path, contentType }) {
     ALLOWED_UPLOAD_MEDIA_TYPES.get(contentType) ||
     (isPublic ? undefined : PRIVATE_ONLY_MEDIA_TYPES.get(contentType));
   if (!extensions) {
-    return { ok: false, message: 'Unsupported content type' };
+    return { ok: false, reason: 'Unsupported content type' };
   }
   const storedAsIs = !NORMALIZED_UPLOAD_CONTAINERS.has(container);
   if (
@@ -176,11 +177,11 @@ export function checkUploadMediaType({ container, path, contentType }) {
   ) {
     return {
       ok: false,
-      message: 'This content type is not accepted in a publicly served container',
+      reason: 'This content type is not accepted in a publicly served container',
     };
   }
   if (!extensions.includes(extensionOf(path))) {
-    return { ok: false, message: 'File extension does not match the declared content type' };
+    return { ok: false, reason: 'File extension does not match the declared content type' };
   }
   return { ok: true };
 }
@@ -247,7 +248,7 @@ export function createAdminUploadHandlers({
 
         const mediaType = checkUploadMediaType({ container, path, contentType });
         if (!mediaType.ok) {
-          return json(415, { error: mediaType.message });
+          return json(415, { error: mediaType.reason });
         }
 
         if (!dataBase64) {

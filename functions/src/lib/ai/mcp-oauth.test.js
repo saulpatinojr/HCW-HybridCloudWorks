@@ -551,7 +551,7 @@ describe('dynamic client registration (RFC 7591)', () => {
     expect(again.updates.oauthClient.clientId).toBe('rep-client-1');
   });
 
-  it('refuses a registration the server rejects, with its reason', async () => {
+  it('refuses a registration the server rejects, with its OAuth error code (never its sentence, #945)', async () => {
     const net = network(
       replicateRoutes({
         'POST https://mcp.replicate.com/register': reply(400, {
@@ -560,9 +560,14 @@ describe('dynamic client registration (RFC 7591)', () => {
         }),
       })
     );
-    await expect(
-      startOAuthConnect({ server: replicateServer(), serverId: 'replicate-mcp', userId: 'u', http: net.http, now })
-    ).rejects.toThrow(/refused to register this site: invalid_redirect_uri: redirect not allowed/);
+    const refused = startOAuthConnect({
+      server: replicateServer(),
+      serverId: 'replicate-mcp',
+      userId: 'u',
+      http: net.http,
+      now,
+    });
+    await expect(refused).rejects.toThrow(/refused to register this site: invalid_redirect_uri \(HTTP 400\)\.$/);
   });
 });
 
@@ -745,7 +750,7 @@ describe('token requests', () => {
         { status: 400, text: JSON.stringify({ error: 'invalid_grant', error_description: 'code expired' }) },
         { name: 'X', grant: 'sign-in code', now }
       )
-    ).toThrow(/refused the sign-in code: invalid_grant: code expired/);
+    ).toThrow(/refused the sign-in code: invalid_grant \(HTTP 400\)\.$/);
     expect(() =>
       parseTokenResponse(
         { status: 200, text: JSON.stringify({ access_token: 'a', token_type: 'mac' }) },
@@ -811,15 +816,16 @@ describe('revocation (RFC 7009, #1116)', () => {
     expect(net.calls.map((c) => c.url)).toEqual([REVOKE, REVOKE]);
   });
 
-  it('scrubs a token the provider echoes back before it becomes the reason (CodeRabbit on #1124)', async () => {
+  it('never carries what the provider echoes back into the reason (CodeRabbit on #1124, #945)', async () => {
+    // The description is no longer read at all, so an echoed token cannot
+    // reach the reason; the scrub stays as a second line of defence.
     const net = network({
       [`POST ${REVOKE}`]: reply(400, { error: 'invalid_request', error_description: 'token rt-1 is not ours; at-1 neither' }),
     });
     const result = await revoke(connected(), net);
     expect(result.revoked).toBe(false);
-    expect(result.reason).toMatch(/invalid_request/);
-    expect(result.reason).toContain('***');
-    expect(result.reason).not.toMatch(/at-1|rt-1/);
+    expect(result.reason).toMatch(/invalid_request \(HTTP 400\)/);
+    expect(result.reason).not.toMatch(/at-1|rt-1|is not ours/);
   });
 
   it('refuses an endpoint that is not https before any request', async () => {
@@ -925,7 +931,7 @@ describe('refresh', () => {
     expect(result).toEqual({
       ok: false,
       disconnected: true,
-      message:
+      sentence:
         'Sign-in to Hostinger MCP has expired. Press Connect on its card under AI Engine → MCP Servers to sign in again.',
     });
     const [, , updates] = store.patchDoc.mock.calls[0];

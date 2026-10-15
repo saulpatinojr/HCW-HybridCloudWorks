@@ -519,7 +519,8 @@ describe('renderSample', () => {
     expect(body(res)).toMatchObject({
       ok: true,
       audioUrl: null,
-      audioError: expect.stringMatching(/rendered and billed but not stored: container missing/),
+      // The store's own words stay out of the answer (#945); the code says which failure.
+      audioError: 'The sample was rendered and billed but not stored (Error).',
       charactersBilled: 257,
       // Nothing new to replay: the blob still holds the previous sample.
       lastSample: null,

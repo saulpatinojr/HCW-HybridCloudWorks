@@ -295,9 +295,10 @@ describe('createConnectionProbe', () => {
     });
   });
 
-  it("carries the upstream's own sentence on a failure", async () => {
-    // Telegram says `description`, which is why upstream-error.js learned that
-    // field. A bare "HTTP 401" here would lose the point of the exercise.
+  it("names the service and status on a failure, and relays the answer only as `data`", async () => {
+    // The upstream's own sentence is no longer copied into `error` (#945, as
+    // the AI proxy in #1198): `error` is this module's, and the redacted
+    // answer stays under `data` for the page to show.
     const res = await build({
       fetch: respond({
         ok: false,
@@ -308,7 +309,8 @@ describe('createConnectionProbe', () => {
     expect(bodyOf(res)).toMatchObject({
       ok: false,
       status: 401,
-      error: 'Unauthorized',
+      error: 'Telegram answered HTTP 401.',
+      data: { description: 'Unauthorized' },
     });
   });
 
@@ -518,11 +520,11 @@ describe('the Podbean probe', () => {
     });
     const res = await run(fetchImpl);
     expect(res.status).toBe(200);
+    // This module's sentence; the token endpoint's own words stay out (#945).
     expect(bodyOf(res)).toEqual({
       ok: false,
       status: 400,
-      error:
-        'Podbean refused the client ID and secret: invalid_grant: The grant type is unauthorized for this client_id.',
+      error: 'Podbean refused the client ID and secret.',
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });

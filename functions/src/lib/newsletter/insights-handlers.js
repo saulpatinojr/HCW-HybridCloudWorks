@@ -430,11 +430,12 @@ const ref = (context) => `[invocation ${context?.invocationId ?? 'unknown'}]`;
 function refused(route, result, context) {
   const status = result?.status ?? 0;
   context.warn?.(`${route} Resend HTTP ${status} ${ref(context)}`);
+  // Resend's error name (a code such as `validation_error`) and the status;
+  // Resend's own sentence is a provider's words and stays out (#945).
   const name = typeof result?.data?.name === 'string' ? result.data.name : '';
-  const message = typeof result?.data?.message === 'string' ? result.data.message : '';
-  const text =
-    [name, message].filter(Boolean).join(': ') ||
-    (status ? `HTTP ${status}` : 'No answer from Resend');
+  const text = status
+    ? `Resend refused the request (HTTP ${status}${name ? ` ${name}` : ''}).`
+    : `No answer from Resend${name ? ` (${name})` : ''}.`;
   const error = text.slice(0, ERROR_TEXT_LIMIT);
   if (status === 429) {
     const seconds = Number.parseInt(String(result?.retryAfter ?? ''), 10);

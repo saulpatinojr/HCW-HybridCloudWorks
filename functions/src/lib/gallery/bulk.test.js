@@ -76,7 +76,8 @@ describe('applyBulkAction', () => {
       { store, deleteOne: vi.fn() },
       { item, action: 'archive', body: {}, stamps, context: {} }
     );
-    expect(failed).toEqual({ id: 'img-1', ok: false, error: 'boom' });
+    // The store's code, never its sentence (#945).
+    expect(failed).toEqual({ id: 'img-1', ok: false, error: 'failed (Error)' });
   });
 
   it('hands a delete to the row delete and reports its storage outcome', async () => {

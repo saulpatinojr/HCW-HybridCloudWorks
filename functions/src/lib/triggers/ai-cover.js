@@ -56,6 +56,7 @@ import { measureImage } from '../gallery-images.js';
 import { claimRisingEdge, releaseRisingEdgeClaim, SKIP_REASONS } from './rising-edge-claim.js';
 import { fetchImage as defaultFetchImage } from './fetch-image.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
+import { AuthoredError, errorCode } from '../http/error-response.js';
 
 // Deadlines for the Replicate calls (T-712). This runs inside a change-feed
 // handler, so a hung socket does not just fail one cover — it holds the lease
@@ -369,22 +370,25 @@ async function assertImageBudget({
   try {
     used = await monthToDateUsage({ store, now }, IMAGE_PROVIDER);
   } catch (cause) {
-    const err = new Error(
-      `Image generation paused: this month's image spend could not be read (${cause?.message || cause}), and with no account-side limit the budget cannot be enforced blind. Try again shortly.`
+    throw new ImageBudgetError(
+      `Image generation paused: this month's image spend could not be read (${errorCode(cause)}), and with no account-side limit the budget cannot be enforced blind. Try again shortly.`,
+      { code: 'IMAGE_BUDGET_UNKNOWN', status: 503, cause }
     );
-    err.code = 'IMAGE_BUDGET_UNKNOWN';
-    err.status = 503;
-    throw err;
   }
   const pending = costPerImageUsd ?? 0;
   if (used.costUsd + pending <= monthlyBudgetUsd && used.count + 1 <= monthlyMaxImages) return;
-  const err = new Error(
-    `Image generation paused: $${used.costUsd.toFixed(2)} of the $${monthlyBudgetUsd} monthly image budget used, ${used.count} images since ${used.since.slice(0, 10)}. Raise CONTENTFORGE_IMAGE_MONTHLY_BUDGET_USD (or CONTENTFORGE_IMAGE_MONTHLY_MAX) or wait for the first of the month.`
+  throw new ImageBudgetError(
+    `Image generation paused: $${used.costUsd.toFixed(2)} of the $${monthlyBudgetUsd} monthly image budget used, ${used.count} images since ${used.since.slice(0, 10)}. Raise CONTENTFORGE_IMAGE_MONTHLY_BUDGET_USD (or CONTENTFORGE_IMAGE_MONTHLY_MAX) or wait for the first of the month.`,
+    { code: 'IMAGE_BUDGET_EXHAUSTED', status: 429 }
   );
-  err.code = 'IMAGE_BUDGET_EXHAUSTED';
-  err.status = 429;
-  throw err;
 }
+
+/**
+ * The monthly image budget refused a generation (429 exhausted, 503
+ * unreadable). Its sentence is written above and names only settings and
+ * totals, so the manual image routes show it (authored, #945).
+ */
+export class ImageBudgetError extends AuthoredError {}
 
 /**
  * One row per output image, under the task's source with the image slug as

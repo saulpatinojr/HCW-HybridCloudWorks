@@ -43,6 +43,7 @@
  * also holds.
  */
 import { ADMIN_CONFIG_PARTITION } from './cosmos-client.js';
+import { AuthoredError, authoredMessage, isAuthoredError } from './http/error-response.js';
 import { DEFAULT_HEROES_CONFIG_ID } from './triggers/ai-cover.js';
 import { AUTOPOST_CONFIG_ID } from './triggers/social-caption-trigger.js';
 import {
@@ -82,7 +83,6 @@ import {
 } from './cms/taxonomy.js';
 import {
   REMINDERS_CONFIG_ID,
-  RemindersValidationError,
   emptyReminders,
   mergeStoredStamps,
   normalizeReminders,
@@ -108,8 +108,12 @@ const json = (status, body, etag = null) => ({
 
 const MAX_BODY_JSON = 60_000;
 
-/** Thrown by a normalizer; the handler turns it into a 400 with the message. */
-export class PlatformSettingValidationError extends Error {
+/**
+ * Thrown by a normalizer; the handler turns it into a 400 with the message.
+ * Authored (#945): every sentence is written by a normalizer here.
+ */
+export class PlatformSettingValidationError extends AuthoredError {
+  /** @param {string} message - the refusal, naming the field */
   constructor(message) {
     super(message);
     this.name = 'PlatformSettingValidationError';
@@ -651,43 +655,23 @@ export const PLATFORM_SETTINGS = Object.freeze({
   // every picker and list that classifies content (lib/cms/taxonomy.js).
   'content-taxonomy': Object.freeze({
     docId: CONTENT_TAXONOMY_CONFIG_ID,
-    // The taxonomy module throws its own 400-shaped error so it can be read
-    // without this module; re-raised here as the error the PUT handler maps.
-    normalize: (body) => {
-      try {
-        return normalizeContentTaxonomy(body);
-      } catch (error) {
-        if (error?.status === 400) fail(error.message);
-        throw error;
-      }
-    },
+    // The taxonomy module throws its own authored error so it can be read
+    // without this module; the PUT handler maps any authored error to a 400.
+    normalize: (body) => normalizeContentTaxonomy(body),
     empty: defaultTaxonomy,
   }),
   // The owner's dated reminders, said on Telegram by the daily sendReminders
   // timer (owner request 2026-10-06). The timer's own stamps round-trip here.
   reminders: Object.freeze({
     docId: REMINDERS_CONFIG_ID,
-    normalize: (body) => {
-      try {
-        return normalizeReminders(body);
-      } catch (error) {
-        if (error instanceof RemindersValidationError) fail(error.message);
-        throw error;
-      }
-    },
+    // RemindersValidationError is authored, so it reaches the handler's 400 as is.
+    normalize: (body) => normalizeReminders(body),
     empty: emptyReminders,
     // The timer stamps `notified` between the page's load and its save; the
     // save keeps those stamps (review of #910). It also carries the
     // credential register's rows through exactly as stored: a save at this
     // page's role cannot add, change or remove one (review of #1039).
-    merge: (value, stored) => {
-      try {
-        return mergeStoredStamps(value, stored);
-      } catch (error) {
-        if (error instanceof RemindersValidationError) fail(error.message);
-        throw error;
-      }
-    },
+    merge: (value, stored) => mergeStoredStamps(value, stored),
   }),
 });
 
@@ -748,13 +732,13 @@ export function presentSetting(name, doc) {
       updatedAt: updatedAt ?? null,
     };
   } catch (error) {
-    if (error instanceof PlatformSettingValidationError) {
+    if (isAuthoredError(error)) {
       return {
         value: spec.empty(),
         exists: true,
         stored: 'invalid',
         updatedAt: updatedAt ?? null,
-        problem: error.message,
+        problem: authoredMessage(error, 'The stored value no longer passes validation.'),
       };
     }
     throw error;
@@ -956,8 +940,8 @@ function normalizedSettingValue(spec, body) {
   try {
     return { value: spec.normalize(body) };
   } catch (error) {
-    if (error instanceof PlatformSettingValidationError) {
-      return { error: json(400, { error: error.message }) };
+    if (isAuthoredError(error)) {
+      return { error: json(400, { error: authoredMessage(error, 'The setting was refused.') }) };
     }
     throw error;
   }
@@ -1128,8 +1112,8 @@ export function createPlatformSettingsHandlers({
       try {
         value = spec.merge(requested, stored);
       } catch (error) {
-        if (error instanceof PlatformSettingValidationError) {
-          return { error: json(400, { error: error.message }) };
+        if (isAuthoredError(error)) {
+          return { error: json(400, { error: authoredMessage(error, 'The setting was refused.') }) };
         }
         throw error;
       }

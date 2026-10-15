@@ -30,7 +30,7 @@ import {
   checkAudioUpload,
   uploadPathFor,
 } from './recording-upload.js';
-import { PlaudEmbeddedNotConfiguredError, isPlaudEmbeddedConfigured } from './plaud-embedded.js';
+import { PLAUD_EMBEDDED_NOT_CONFIGURED_MESSAGE, isPlaudEmbeddedConfigured } from './plaud-embedded.js';
 import { mediaUrlFor } from '../blob-paths.js';
 
 const MCP_CONTAINER = 'mcp_servers';
@@ -204,7 +204,7 @@ export function createPodcastRecordingHandlers({
         return json(413, { error: TOO_LARGE });
       }
       if (!isPlaudEmbeddedConfigured(env)) {
-        return json(503, { error: new PlaudEmbeddedNotConfiguredError().message });
+        return json(503, { error: PLAUD_EMBEDDED_NOT_CONFIGURED_MESSAGE });
       }
 
       try {
@@ -219,7 +219,7 @@ export function createPodcastRecordingHandlers({
         }
 
         const media = checkAudioUpload({ contentType: body.contentType, fileName: body.fileName });
-        if (!media.ok) return json(415, { error: media.message });
+        if (!media.ok) return json(415, { error: media.reason });
 
         const dataBase64 = String(body.dataBase64 || '');
         if (!dataBase64) return json(400, { error: 'dataBase64 is required' });

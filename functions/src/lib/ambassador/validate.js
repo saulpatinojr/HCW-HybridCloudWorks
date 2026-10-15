@@ -10,6 +10,7 @@
  * touched. The handlers in ./handlers.js never see a value a rule did not
  * pass.
  */
+import { AuthoredError, authoredMessage } from '../http/error-response.js';
 import {
   cleanFiles,
   cleanLinks,
@@ -33,7 +34,8 @@ import {
   toCalendarDate,
 } from './model.js';
 
-class FieldError extends Error {}
+/** A field the API refuses; every sentence is written below (authored, #945). */
+class FieldError extends AuthoredError {}
 
 /** Refuse the value being cleaned with the sentence the API answers with. */
 const refuse = (message) => {
@@ -85,7 +87,7 @@ function validateWith(schema, body, { partial = false } = {}) {
     }
   } catch (error) {
     if (!(error instanceof FieldError)) throw error;
-    return { error: error.message };
+    return { error: authoredMessage(error, 'A field was refused.') };
   }
   return { value: out };
 }

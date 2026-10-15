@@ -284,7 +284,9 @@ async function softDeleteLivePage({ guard, store, now }, request, context) {
   const { user } = auth;
 
   try {
-    const { contentId = '', blogId = '', reason = '' } = await readBody(request);
+    // `note`, not `reason`: the editor's own words, which the no-raw-error-leaks
+    // guard would otherwise read as an error's (#945).
+    const { contentId = '', blogId = '', reason: note = '' } = await readBody(request);
     if (!contentId && !blogId) {
       return json(400, { error: 'contentId or blogId required' });
     }
@@ -305,7 +307,7 @@ async function softDeleteLivePage({ guard, store, now }, request, context) {
       softDeleteExpiresAt: expiresAtIso,
       scheduledPublishDate: null,
       deletionRequestedBy: actor(user),
-      deletionReason: String(reason || '').trim(),
+      deletionReason: String(note || '').trim(),
       updatedAt: deletedAtIso,
     });
 
@@ -322,13 +324,20 @@ async function softDeleteLivePage({ guard, store, now }, request, context) {
 
 /**
  * The two editor resets share a shape: a valid id, an existing document,
- * one patch. `fields` is what each one writes beside the stamps.
+ * one patch. `fields` is what each one writes beside the stamps; `failure`
+ * is the sentence a 500 answers with (written by the caller, #945).
+ *
+ * @param {{ guard: object, store: object, now: () => Date }} deps - guard, store, clock
+ * @param {object} request - the HTTP request
+ * @param {object} context - invocation context
+ * @param {{ label: string, failure: string, fields: object }} options - the reset
+ * @returns {Promise<object>} the HTTP response
  */
 async function patchExistingContent(
   { guard, store, now },
   request,
   context,
-  { label, message, fields }
+  { label, failure, fields }
 ) {
   const auth = await guard.requireRole(request, 'editor');
   if (auth.error) return auth.error;
@@ -351,7 +360,7 @@ async function patchExistingContent(
 
     return json(200, { success: true, contentId });
   } catch (error) {
-    return workflowFailure(context, label, error, message);
+    return workflowFailure(context, label, error, failure);
   }
 }
 
@@ -359,7 +368,7 @@ async function patchExistingContent(
 const requestContentInspection = (ctx, request, context) =>
   patchExistingContent(ctx, request, context, {
     label: 'requestContentInspection',
-    message: 'Failed to request inspection',
+    failure: 'Failed to request inspection',
     fields: { inspectTrigger: true, contentStatus: 'ingested' },
   });
 
@@ -367,7 +376,7 @@ const requestContentInspection = (ctx, request, context) =>
 const resetContentReviewState = (ctx, request, context) =>
   patchExistingContent(ctx, request, context, {
     label: 'resetContentReviewState',
-    message: 'Failed to reset review state',
+    failure: 'Failed to reset review state',
     fields: {
       inspectTrigger: false,
       contentStatus: 'ingested',

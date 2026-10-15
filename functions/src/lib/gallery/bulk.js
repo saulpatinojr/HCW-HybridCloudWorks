@@ -4,6 +4,7 @@
  * of gallery-images.js).
  */
 import { GALLERY_COLLECTIONS, cleanFolder, cleanTagList, refuse } from './shared.js';
+import { errorCode } from '../http/error-response.js';
 import { buildMetadataPatch, validateGalleryImageMetadataRequest } from './metadata.js';
 
 export const BULK_ACTIONS = Object.freeze([
@@ -91,6 +92,7 @@ export async function applyBulkAction(
     await store.patchDoc(item.galleryCollection, item.id, patch);
     return { id: item.id, ok: true, customTags: patch.customTags };
   } catch (error) {
-    return { id: item.id, ok: false, error: error?.message || 'failed' };
+    // Per item in the answer, so the store's code and never its sentence (#945).
+    return { id: item.id, ok: false, error: `failed (${errorCode(error)})` };
   }
 }

@@ -99,11 +99,11 @@ export async function checkSendingDomain(domain, client) {
 
 /** The reason a Resend domain listing could not be read. */
 function listingRefusal(listed) {
-  const message =
-    typeof listed.data?.message === 'string' ? `: ${listed.data.message.slice(0, 200)}` : '';
+  // The status and Resend's error name; its own sentence stays out (#945).
+  const name = typeof listed.data?.name === 'string' ? ` ${listed.data.name}` : '';
   return {
     ok: false,
-    reason: `Resend could not list sending domains (HTTP ${listed.status})${message}`,
+    reason: `Resend could not list sending domains (HTTP ${listed.status}${name})`,
   };
 }
 

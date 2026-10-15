@@ -44,6 +44,7 @@
 import { randomUUID } from 'node:crypto';
 import { ROLE_NAMES, roleLevel } from './auth/roles.js';
 import { runAsJob } from './job-context.js';
+import { AuthoredError } from './http/error-response.js';
 
 export const JOBS_CONTAINER = 'jobs';
 export const JOBS_QUEUE = 'platform-jobs';
@@ -252,6 +253,14 @@ export function jobPayloadBytes(payload) {
 }
 
 /**
+ * A job document over its type's payload bound. The sentence is written in
+ * newJobDoc from the size, the bound and the type, so an admin route may
+ * show it (authored, #945); a route that wants a visitor-safe sentence (the
+ * Listen & Learn queue) keys on the code instead.
+ */
+export class JobPayloadTooLargeError extends AuthoredError {}
+
+/**
  * A fresh `queued` job document. One shape, shared by `enqueueJob` and every
  * route, timer and command that enqueues a job of its own (cms/podcast,
  * Listen & Learn, the Forge Studio queue, the Cosmos export scheduler, the
@@ -268,13 +277,13 @@ export function jobPayloadBytes(payload) {
  * the 64 KiB default for a type this process has not registered.
  *
  * @param {{ id: string, type: string, payload: any, requestedBy?: {oid?: string, email?: string}|null, createdAt: string, maxPayloadBytes?: number }} fields
- * @throws {Error} code `JOB_PAYLOAD_TOO_LARGE`, status 413, for a payload over the limit
+ * @throws {JobPayloadTooLargeError} code `JOB_PAYLOAD_TOO_LARGE`, status 413, for a payload over the limit
  */
 export function newJobDoc({ id, type, payload, requestedBy, createdAt, maxPayloadBytes }) {
   const limit = maxPayloadBytes ?? registry.get(type)?.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
   const bytes = jobPayloadBytes(payload);
   if (bytes > limit) {
-    throw Object.assign(new Error(`Payload too large (${bytes} bytes; max ${limit} for ${type})`), {
+    throw new JobPayloadTooLargeError(`Payload too large (${bytes} bytes; max ${limit} for ${type})`, {
       code: 'JOB_PAYLOAD_TOO_LARGE',
       status: 413,
     });

@@ -193,7 +193,10 @@ export function renderIssueInTemplate(issue, settings, templateHtml) {
   const { parts, text } = renderIssueContent(issue, settings);
   const merged = applyTemplateLayout(templateHtml, parts, settings);
   if (!merged.ok) {
-    return { ...renderIssue(issue, settings), templateProblem: { code: merged.code, message: merged.message } };
+    // Passed through whole: `{ code, message }` from templateUnusableReason,
+    // every sentence of which is written in this module.
+    const { ok: _ok, ...templateProblem } = merged;
+    return { ...renderIssue(issue, settings), templateProblem };
   }
   return { subject: parts.subject, html: merged.html, text, templateProblem: null };
 }

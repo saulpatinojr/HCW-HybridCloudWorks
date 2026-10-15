@@ -377,7 +377,8 @@ describe('Save: one forge-from-url job per entry, the brief on the payload', () 
     expect(order).toEqual(['forging:1', 'job:1', 'forging:2', 'job:2', 'queued:2']);
     expect(body.started).toEqual([{ id: idOf(1), jobId: 'id-1' }]);
     expect(body.notStarted).toEqual([
-      { id: idOf(2), error: 'jobs container unavailable' },
+      // The store's own words stay out of the answer (#945).
+      { id: idOf(2), error: 'The job could not be written; the entry was put back in the queue.' },
       { id: idOf(3), error: 'not attempted after an earlier job write failed' },
     ]);
     expect((await listed(h)).map((i) => i.status).sort()).toEqual(['forging', 'queued', 'queued']);

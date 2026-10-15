@@ -18,6 +18,7 @@
  * existing builder (buildRepoDraftData); ./drafts.js asImportedDraft lays the
  * Drafts stage's status over it.
  */
+import { authoredMessage, errorCode } from '../http/error-response.js';
 import { buildDedupFields } from './content-dedup.js';
 import {
   REPO_NAME,
@@ -91,12 +92,26 @@ function alreadyClaimed(path, rows) {
   };
 }
 
-/** A coded error is the source's and says what happened; anything else is ours. */
+/**
+ * A coded error is the source's and says what happened, in a sentence the
+ * source wrote (RepoSourceError); anything else is ours, and its own words
+ * stay out of the answer (#945).
+ *
+ * @param {{ error?: Function }} log - the importer's logger
+ * @param {string} path - the file that failed
+ * @param {unknown} error - what the import threw
+ * @returns {{ path: string, outcome: 'failed', code: string, error: string }}
+ */
 function importFailure(log, path, error) {
   if (typeof error?.code === 'string') {
-    return { path, outcome: 'failed', code: error.code, error: error.message };
+    return {
+      path,
+      outcome: 'failed',
+      code: error.code,
+      error: authoredMessage(error, 'The file could not be imported.'),
+    };
   }
-  log.error?.(`[drafts] import ${path}: ${error?.message || error}`);
+  log.error?.(`[drafts] import failed (${errorCode(error)})`);
   return {
     path,
     outcome: 'failed',
@@ -111,7 +126,13 @@ function tally(results) {
   return counts;
 }
 
-/** The listing failed: the status and body the route answers. */
+/**
+ * The listing failed: the status and body the route answers. The sentence
+ * is the source's own (RepoSourceError) or this one's, never the error's.
+ *
+ * @param {unknown} error - what the listing threw
+ * @returns {{ status: number, body: object }}
+ */
 function listingFailure(error) {
   const upstream = typeof error?.code === 'string';
   return {
@@ -120,7 +141,7 @@ function listingFailure(error) {
       ok: false,
       code: upstream ? error.code : 'INTERNAL',
       error: upstream
-        ? `Could not list docs/content on GitHub: ${error.message}`
+        ? `Could not list docs/content on GitHub: ${authoredMessage(error, 'the listing failed.')}`
         : 'Failed to list the repository drafts',
     },
   };

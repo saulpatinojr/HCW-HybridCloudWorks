@@ -34,6 +34,7 @@ import {
   staleView,
 } from './admin-responses.js';
 import { parseScheduledAt } from './validate.js';
+import { errorCode } from '../http/error-response.js';
 
 /** A scheduled issue Resend holds: the only kind a cancel or reschedule can act on. */
 export const scheduledWithBroadcast = (issue) =>
@@ -153,7 +154,7 @@ async function createRescheduledBroadcast(
       scheduledAt,
     });
   } catch (error) {
-    return { ok: false, status: 0, data: { message: String(error?.message ?? error) } };
+    return { ok: false, status: 0, data: { name: errorCode(error) } };
   }
 }
 
@@ -200,7 +201,9 @@ async function rescheduleIssue(deps, { issue, client, value: scheduledAt }, cont
       ok: false,
       code: 'TEMPLATE_UNUSABLE',
       templateProblem: rendered.templateProblem,
-      error: `The template chosen in Newsletter settings cannot be used: ${rendered.templateProblem.message}`,
+      // The reason is `templateProblem` beside it (authored in
+      // template-source/template-layout); the sentence does not repeat it.
+      error: 'The template chosen in Newsletter settings cannot be used; templateProblem says why.',
     });
   }
   const deleted = await client.deleteBroadcast(issue.broadcastId);

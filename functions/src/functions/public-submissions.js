@@ -11,6 +11,7 @@
  * here.
  */
 import { httpRoute } from '../lib/auth/http-route.js';
+import { authoredMessage } from '../lib/http/error-response.js';
 import { createClientIdentity } from '../lib/auth/client-identity.js';
 import {
   createDoc,
@@ -77,7 +78,11 @@ export function createSubmissionsHandler({
       await enforceSubmissionQuota(store, clientKey, { now: now() });
     } catch (err) {
       if (err.code === 'SUBMISSION_RATE_LIMIT') {
-        return json(429, { ok: false, error: err.message }, { 'Retry-After': '3600' });
+        return json(
+          429,
+          { ok: false, error: authoredMessage(err, 'Too many submissions — try again later.') },
+          { 'Retry-After': '3600' }
+        );
       }
       throw err;
     }

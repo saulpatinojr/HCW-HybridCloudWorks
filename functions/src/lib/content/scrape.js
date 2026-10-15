@@ -10,6 +10,7 @@
  * certificate failure fails the scrape, it is never bypassed.
  */
 import { load as loadHtml } from 'cheerio';
+import { AuthoredError, authoredMessage, errorCode } from '../http/error-response.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
 import TurndownService from 'turndown';
@@ -91,6 +92,19 @@ export function htmlToMarkdown(html) {
   return turndown.turndown(html || '');
 }
 
+/**
+ * A page that answered with a status this scraper does not read. Authored,
+ * so the reason travels to the draft routes as written here (#945).
+ */
+export class ScrapeError extends AuthoredError {}
+
+/**
+ * The never-throws failure shape.
+ *
+ * @param {number} startedAt - when the scrape began (ms)
+ * @param {string} message - an authored reason
+ * @returns {object}
+ */
 function failure(startedAt, message) {
   return {
     success: false,
@@ -217,7 +231,7 @@ export async function scrapeArticle(
       headers: BROWSER_HEADERS,
       signal,
     });
-    if (!response.ok) throw new Error(`Status code ${response.status}`);
+    if (!response.ok) throw new ScrapeError(`Status code ${response.status}`);
     const fullHtml = text();
     const { articleHtml, contentText, images } = extractArticle(fullHtml, url);
     const markdown = htmlToMarkdown(articleHtml);
@@ -239,12 +253,18 @@ export async function scrapeArticle(
     // A URL the guard refused is not retried through a fallback: the reader
     // and headless services would only fetch the same forbidden target from
     // their side, and the answer here is "no", not "try harder".
-    if (error?.refused) return failure(startedAt, error.message);
+    // The reason travels to the draft routes and onto the document, so it
+    // is the guard's or this module's own sentence, never a socket's (#945).
+    const reason = authoredMessage(
+      error,
+      `The page could not be fetched (${errorCode(error?.cause ?? error)}).`
+    );
+    if (error?.refused) return failure(startedAt, reason);
     const deps = { env, fetchImpl, log, signal };
     return (
       (await tryReaderFallback(url, startedAt, deps)) ||
       (await tryHeadlessFallback(url, startedAt, deps)) ||
-      failure(startedAt, error.message)
+      failure(startedAt, reason)
     );
   }
 }

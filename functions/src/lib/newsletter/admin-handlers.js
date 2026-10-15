@@ -1068,7 +1068,10 @@ async function prepareApproval(ctx, { body, settings, issue }, context) {
         ok: false,
         code: 'TEMPLATE_UNUSABLE',
         templateProblem: problem,
-        error: `The template chosen in Newsletter settings cannot be used: ${problem.message} Fix it in Resend or choose the built-in design, check the preview, then approve.`,
+        // The reason is `templateProblem` beside it (authored); the preview
+        // shows it too. The sentence does not repeat it (#945).
+        error:
+          'The template chosen in Newsletter settings cannot be used. Fix it in Resend or choose the built-in design, check the preview, then approve.',
       }),
     };
   }
@@ -1223,7 +1226,7 @@ async function broadcastClaim(ctx, claim, { apiKey, settings, plan, rendered }, 
   try {
     segmentId = await resolveSegmentId(client);
   } catch (error) {
-    return revertClaim(ctx, claim, error.message, errorMeta(error), context);
+    return revertClaim(ctx, claim, `the audience could not be read (${errorMeta(error)})`, errorMeta(error), context);
   }
   const created = await client.createBroadcast({
     segmentId,

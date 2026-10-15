@@ -27,6 +27,7 @@
  * `MAX_PREVIEW_BYTES`, and hands back the bytes only if they begin like an
  * MP3.
  */
+import { errorCode as failureCode } from '../../http/error-response.js';
 import { ElevenLabsSpeechError } from './elevenlabs-account.js';
 import { isElevenLabsVoiceId } from './elevenlabs-voice-plan.js';
 
@@ -171,7 +172,11 @@ export async function fetchPreviewAudio(previewUrl, { fetchImpl = fetch } = {}) 
       headers: { Accept: 'audio/mpeg' },
     });
   } catch (err) {
-    throw previewError(`Could not fetch the preview: ${err?.message || err}`, PREVIEW_FAILED, 502);
+    throw previewError(
+      `Could not fetch the preview (${failureCode(err?.cause ?? err)}).`,
+      PREVIEW_FAILED,
+      502
+    );
   }
   assertAudioResponse(response);
   const audio = await readCapped(response, MAX_PREVIEW_BYTES);

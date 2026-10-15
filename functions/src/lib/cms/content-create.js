@@ -27,7 +27,7 @@
  *     from its `type` and `source`, so nothing here invents a value.
  */
 import { randomUUID } from "node:crypto";
-import { errorResponse } from "../http/error-response.js";
+import { authoredMessage, errorResponse } from "../http/error-response.js";
 import { actorName } from "../auth/actor-name.js";
 import {
   normalizeContentBodyFields,
@@ -103,7 +103,13 @@ export async function createContentDocument({
     taxonomyFields = await validateTaxonomyFieldsWithStore(store, data);
   } catch (error) {
     if (error instanceof TaxonomyFieldError) {
-      return { status: 400, body: { success: false, error: error.message } };
+      return {
+        status: 400,
+        body: {
+          success: false,
+          error: authoredMessage(error, "The kind or idea origin was refused."),
+        },
+      };
     }
     throw error;
   }

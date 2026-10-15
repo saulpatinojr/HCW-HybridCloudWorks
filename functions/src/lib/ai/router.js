@@ -205,6 +205,7 @@
  * `@Microsoft.KeyVault(...)` string. That is not a key; `readKey` says so.
  */
 
+import { AuthoredError, errorCode } from '../http/error-response.js';
 import {
   DEFAULT_PROVIDER_ORDER,
   createAiConfigLoader,
@@ -313,7 +314,13 @@ export function getCostEstimate(provider, model, promptTokens = 0, completionTok
   );
 }
 
-export class AiNotConfiguredError extends Error {
+/**
+ * No provider can run this call as configured. Every message is written in
+ * this module and names the setting to fix, so an admin route may show it
+ * (`authoredMessage`, #945); a public route keeps its own sentence.
+ */
+export class AiNotConfiguredError extends AuthoredError {
+  /** @param {string} message - the sentence naming what is missing */
   constructor(message) {
     super(message);
     this.name = 'AiNotConfiguredError';
@@ -327,7 +334,8 @@ export class AiNotConfiguredError extends Error {
  * degrade gracefully (skip alt text, publish an ungraded draft) should catch
  * this and carry on, and nothing should page anyone about it.
  */
-export class AiFeatureDisabledError extends Error {
+export class AiFeatureDisabledError extends AuthoredError {
+  /** @param {string} feature - the feature switched off (authored sentence, #945) */
   constructor(feature) {
     super(`The '${feature}' AI feature is turned off in the admin portal.`);
     this.name = 'AiFeatureDisabledError';
@@ -727,18 +735,42 @@ function isProviderUnusable(error, provider = null) {
 function budgetExhausted(budget, attempts, untried) {
   const seconds = Math.round(budget.totalMs / 1000);
   const notTried = untried.map((entry) => entry.provider).join(', ');
+  // Each reason is a code, never the provider's own message, so the sentence
+  // stays this module's and an admin route may show it whole (#945).
   const tried = attempts
-    .map(({ provider, error }) => `${provider} (${error?.message || error})`)
+    .map(({ provider, error }) => `${provider} (${attemptReason(error)})`)
     .join('; ');
-  const err = new Error(
+  return new AiBudgetExhaustedError(
     tried
       ? `This AI call's ${seconds} s budget ran out after ${tried}. Not tried: ${notTried}.`
-      : `This AI call's ${seconds} s budget left too little time to try any provider (${notTried}).`
+      : `This AI call's ${seconds} s budget left too little time to try any provider (${notTried}).`,
+    attempts.length ? attempts.at(-1).error : undefined
   );
-  err.status = 504;
-  err.code = 'AI_BUDGET_EXHAUSTED';
-  if (attempts.length) err.cause = attempts.at(-1).error;
-  return err;
+}
+
+/**
+ * Why one attempt ended, content-free: "timed out" for the router's own
+ * timeout, otherwise the error's code or HTTP status.
+ *
+ * @param {unknown} error - what the attempt threw
+ * @returns {string}
+ */
+function attemptReason(error) {
+  return error?.status === 408 && !error?.code ? 'timed out' : errorCode(error);
+}
+
+/**
+ * The AI call's time budget is spent. Status 504, code AI_BUDGET_EXHAUSTED;
+ * the sentence names the providers and their reasons as codes (authored).
+ */
+export class AiBudgetExhaustedError extends AuthoredError {
+  /**
+   * @param {string} message - the authored sentence
+   * @param {unknown} [cause] - the last attempt's error, for the log
+   */
+  constructor(message, cause) {
+    super(message, { code: 'AI_BUDGET_EXHAUSTED', status: 504, cause });
+  }
 }
 
 /**

@@ -58,7 +58,7 @@
  *     resolveSlug.
  */
 import { randomUUID } from 'node:crypto';
-import { errorResponse } from '../http/error-response.js';
+import { authoredMessage, errorCode, errorResponse } from '../http/error-response.js';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { buildContentQualityReport, buildImageReadinessReport } from './content-quality.js';
 import { normalizePublishTarget, SUPPORTED_PUBLISH_TARGETS } from './publish-targets.js';
@@ -837,6 +837,14 @@ export function createPublishHandlers({
     };
   }
 
+  /**
+   * Publish one document through every gate. Never throws: the result is
+   * `{ error }` (an authored sentence) or the publish outcome.
+   *
+   * @param {string} contentId - the document
+   * @param {object} params - the caller's options (target, flags, reason)
+   * @returns {Promise<object>}
+   */
   async function processPublishContent(contentId, params) {
     try {
       const contentData = await store.readDoc('content', contentId, contentId);
@@ -1052,7 +1060,11 @@ export function createPublishHandlers({
         ...(warning && { warning }),
       };
     } catch (err) {
-      return { error: String(err.message || err) };
+      // This result reaches the publish route's `errors`, set-slug's answer
+      // and the Telegram job, so a Cosmos or system error's own words stay
+      // out of it (#945); the log keeps its code.
+      log.error?.(`[publish] processPublishContent failed (${errorCode(err)})`);
+      return { error: authoredMessage(err, 'Publishing stopped on an unexpected failure.') };
     }
   }
 

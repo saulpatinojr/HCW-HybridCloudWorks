@@ -28,7 +28,7 @@
  *     carried.
  */
 import { randomUUID } from "node:crypto";
-import { errorResponse } from "../http/error-response.js";
+import { authoredMessage, errorResponse } from "../http/error-response.js";
 import { actorName } from "../auth/actor-name.js";
 import { isPublicDocument } from "../public-reads.js";
 import { normalizeContentBodyFields } from "./content-quality.js";
@@ -86,7 +86,11 @@ function parseUpdateBody(body) {
   try {
     validatedUpdates = validateAndNormalizeUpdateContentItemUpdates(updates);
   } catch (error) {
-    return { error: json(400, { error: String(error.message || error) }) };
+    return {
+      error: json(400, {
+        error: authoredMessage(error, "The updates could not be read."),
+      }),
+    };
   }
   return {
     contentId,
@@ -114,7 +118,9 @@ async function taxonomyRefusal(store, normalizedUpdates, currentData) {
     return null;
   } catch (error) {
     if (error instanceof TaxonomyFieldError)
-      return json(400, { error: error.message });
+      return json(400, {
+        error: authoredMessage(error, "The kind or idea origin was refused."),
+      });
     throw error;
   }
 }

@@ -4,7 +4,7 @@
  * named-set read (PR #841 split of manual-images.js).
  */
 import { normalizePromptConfigKey } from '../cms/image-prompts.js';
-import { errorResponse } from '../http/error-response.js';
+import { authoredMessage, errorResponse, logFailure } from '../http/error-response.js';
 
 export const PREVIEW_SLOTS = ['hero', 'secondary1', 'secondary2', 'secondary3'];
 
@@ -52,13 +52,16 @@ export async function readNamedSet(store, setName, promptName) {
  * rather than "server error" (#854).
  */
 export function generationFailure(context, label, error, message, request = null) {
-  context.error(`${label} failed:`, error);
   const budget = typeof error?.code === 'string' && error.code.startsWith('IMAGE_BUDGET_');
   if (budget) {
+    // The budget's own sentence is authored (ImageBudgetError); the log line
+    // is content-free, with the code and the correlation id (#945).
+    const correlationId = logFailure(context, `${label} paused`, error, request);
     return json(error.status || 429, {
       error: message,
       code: error.code,
-      message: error.message,
+      message: authoredMessage(error, 'Image generation is paused by the monthly budget.'),
+      correlationId,
     });
   }
   return errorResponse(context, message, error, 500, request);

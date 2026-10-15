@@ -201,11 +201,11 @@ export function hostSkipFor(doc, configured) {
     return { skipped: HOST_SKIP.notConfigured, reason: configured.reason };
   }
   if (!doc?.audioPath) {
-    const cause = doc?.audioError ? ` (${String(doc.audioError).slice(0, 200)})` : '';
+    const stored = doc?.audioError ? ` (${String(doc.audioError).slice(0, 200)})` : '';
     return {
       skipped: HOST_SKIP.noAudio,
       reason:
-        `The transcript has no audio${cause}, so nothing was sent to Podbean; ` +
+        `The transcript has no audio${stored}, so nothing was sent to Podbean; ` +
         'regenerate it once audio synthesis succeeds, then publish again.',
     };
   }

@@ -24,6 +24,7 @@ import { normalizeSupportingDocuments, MAX_SUPPORTING_DOCUMENTS } from './drafti
 import { generateSlug } from '../rss/feeds.js';
 import { AFTER_MODEL_MARGIN_MS, startBudgetClock } from '../ai/time-budget.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
+import { AuthoredError, failureFields } from '../http/error-response.js';
 
 /** Beyond the primary URL, at most this many extra KB articles are scraped —
  * each is a network fetch plus markdown extraction inside the HTTP budget. */
@@ -86,21 +87,26 @@ export function inferProviderFromUrl(url = '') {
 }
 
 /**
+ * A refusal of the URL drafter, in a sentence written here (the scrape
+ * reason it carries is the scraper's own authored sentence), so the route
+ * may show it (#945).
+ */
+export class UrlDraftError extends AuthoredError {}
+
+/**
  * Scrape one URL into the pieces both consumers need. Throws a coded error —
  * `BAD_URL` before any network touch, `SCRAPE_FAILED` with the scraper's own
  * reason after — so callers can map to 400 vs 422 without string-matching.
  */
 export async function scrapeToSource(url, { scrape = scrapeArticle, env, log, resolve, signal } = {}) {
   if (!isHttpUrl(url)) {
-    const err = new Error('A valid http(s) URL is required.');
-    err.code = 'BAD_URL';
-    throw err;
+    throw new UrlDraftError('A valid http(s) URL is required.', { code: 'BAD_URL' });
   }
   const scraped = await scrape(String(url).trim(), { env, log, resolve, signal });
   if (!scraped?.success || !String(scraped.markdown || '').trim()) {
-    const err = new Error(`Could not extract the article: ${scraped?.error || 'empty result'}`);
-    err.code = 'SCRAPE_FAILED';
-    throw err;
+    throw new UrlDraftError(`Could not extract the article: ${scraped?.error || 'empty result'}`, {
+      code: 'SCRAPE_FAILED',
+    });
   }
   return {
     url: String(url).trim(),
@@ -277,15 +283,23 @@ const STATUS_BY_CODE = {
   AI_BUDGET_EXHAUSTED: 504,
 };
 
+/**
+ * The draft, or a UrlDraftError when it outlives the HTTP budget.
+ *
+ * @param {Promise<object>} promise - the drafting work
+ * @param {number} budgetMs - the budget
+ * @returns {Promise<object>}
+ */
 function withBudget(promise, budgetMs) {
   let timer;
   const deadline = new Promise((_, reject) => {
     timer = setTimeout(() => {
-      const err = new Error(
-        `Draft generation exceeded ${Math.round(budgetMs / 1000)} s. Try again, trim the supporting material, or use the queue's Forge-from-URL box, which runs without a browser timeout.`
+      reject(
+        new UrlDraftError(
+          `Draft generation exceeded ${Math.round(budgetMs / 1000)} s. Try again, trim the supporting material, or use the queue's Forge-from-URL box, which runs without a browser timeout.`,
+          { code: 'DRAFT_BUDGET_EXCEEDED' }
+        )
       );
-      err.code = 'DRAFT_BUDGET_EXCEEDED';
-      reject(err);
     }, budgetMs);
   });
   return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
@@ -317,9 +331,10 @@ export function createGenerateArticleDraftHandler({
       );
       return json(200, { ok: true, ...result });
     } catch (error) {
+      // The drafter's and the router's refusals are authored and shown; a
+      // provider's own words are not (#945). Logged by code and correlation id.
       const status = STATUS_BY_CODE[error?.code] || 502;
-      context?.error?.(`[generateArticleDraft] ${error?.message || error}`);
-      return json(status, { ok: false, error: String(error?.message || error) });
+      return json(status, failureFields(context, 'The draft could not be generated.', error, request));
     }
   };
 }

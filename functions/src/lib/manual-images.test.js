@@ -108,7 +108,8 @@ describe('triggerAiImageGeneration', () => {
     );
     const body = JSON.parse(res.body);
     expect(body.queued).toBe(1);
-    expect(body.errors).toEqual([{ contentId: 'ghost', error: 'not found' }]);
+    // The store's code, never its sentence (#945).
+    expect(body.errors).toEqual([{ contentId: 'ghost', error: 'patch failed (404)' }]);
   });
 });
 

@@ -14,6 +14,7 @@
  * same staleness the manual-Cosmos-seeding era had.
  */
 import { ADMIN_CONFIG_PARTITION } from '../../cosmos-client.js';
+import { failureFields } from '../../http/error-response.js';
 import { actorName as nameActor } from '../../auth/actor-name.js';
 import { normalizeProfile, normalizePrompts } from '../forge-config.js';
 import { FORMAT_LIBRARY } from '../voice.js';
@@ -192,8 +193,7 @@ async function updateForgeConfig(ctx, request, context) {
     if (isObject(body.profile)) await writeProfile(ctx, body, auth.user, changed.profile);
     if (isObject(body.prompts)) await writePrompts(ctx, body, auth.user, changed.prompts);
   } catch (error) {
-    context?.error?.(`[updateForgeConfig] ${error?.message || error}`);
-    return json(502, { ok: false, error: String(error?.message || error) });
+    return json(502, failureFields(context, 'The Forge configuration could not be saved.', error));
   }
 
   ctx.config?.clearForgeConfigCache?.();

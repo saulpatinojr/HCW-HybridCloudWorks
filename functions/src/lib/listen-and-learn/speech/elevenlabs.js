@@ -130,6 +130,7 @@ import {
   invalidateSubscription,
   isQuotaExceeded,
 } from './elevenlabs-account.js';
+import { errorCode as failureCode } from '../../http/error-response.js';
 import { isElevenLabsVoiceId } from './elevenlabs-voice-plan.js';
 import { DEFAULT_SPEAKERS } from '../script.js';
 
@@ -321,6 +322,13 @@ export function buildInputs(turns, voices) {
   });
 }
 
+/**
+ * One Text to Dialogue request, retried on 429, 5xx and no answer.
+ *
+ * @param {object[]} inputs - the turns, each with its voice id
+ * @param {object} options - key, model, fetchImpl, sleep, signal
+ * @returns {Promise<object>}
+ */
 async function synthesizeOne(inputs, { key, model, fetchImpl, sleep, signal }) {
   let lastError = null;
 
@@ -339,7 +347,7 @@ async function synthesizeOne(inputs, { key, model, fetchImpl, sleep, signal }) {
         signal,
       });
     } catch (err) {
-      lastError = new ElevenLabsSpeechError(`Failed to reach ElevenLabs: ${err.message}`);
+      lastError = new ElevenLabsSpeechError(`Failed to reach ElevenLabs (${failureCode(err?.cause ?? err)}).`);
       if (attempt === MAX_ATTEMPTS) throw lastError;
       await sleep(attempt * 500);
       continue;

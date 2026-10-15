@@ -31,6 +31,7 @@
  */
 import { generateCoversForContent, resolveCoverPrompt } from './triggers/ai-cover.js';
 import { fetchImage as defaultFetchImage } from './triggers/fetch-image.js';
+import { errorCode } from './http/error-response.js';
 import { generationFailure, json, modelInfo } from './manual-images/shared.js';
 import { generateCuratedArticleImage } from './manual-images/curated.js';
 import { generatePreviewImages } from './manual-images/preview.js';
@@ -77,7 +78,8 @@ async function armTriggers(store, contentIds, { targets, seed }) {
       });
       queued += 1;
     } catch (error) {
-      errors.push({ contentId, error: error?.message || 'patch failed' });
+      // In the answer, so the store's code and never its sentence (#945).
+      errors.push({ contentId, error: `patch failed (${errorCode(error)})` });
     }
   }
   return { queued, errors };

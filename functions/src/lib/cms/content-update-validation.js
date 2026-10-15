@@ -23,9 +23,28 @@
  * Date instances exactly as the source did; Cosmos JSON-serializes a Date to
  * its ISO string on write, which is the same shape the migration writes.
  */
+import { AuthoredError } from "../http/error-response.js";
 import { PROVIDER_ALIASES } from "../public-reads.js";
 import { normalizePublishTarget } from "./publish-targets.js";
 
+/**
+ * A refusal written here for the editor: every sentence this module throws.
+ * Typed so a handler can show it (`authoredMessage`) while anything else
+ * that escapes a validation block — a Cosmos read, a serialisation fault —
+ * is answered with the handler's own safe sentence (#945).
+ */
+export class ContentValidationError extends AuthoredError {}
+
+/**
+ * A string field within its length.
+ *
+ * @param {unknown} value - the field
+ * @param {string} fieldName - its name, for the refusal
+ * @param {number} maxLength - the ceiling
+ * @param {{ allowEmpty?: boolean }} [options]
+ * @returns {string}
+ * @throws {ContentValidationError}
+ */
 export function assertStringLength(
   value,
   fieldName,
@@ -34,20 +53,28 @@ export function assertStringLength(
 ) {
   const normalized = String(value || "");
   if (!allowEmpty && !normalized.trim()) {
-    throw new Error(`${fieldName} is required`);
+    throw new ContentValidationError(`${fieldName} is required`);
   }
   if (normalized.length > maxLength) {
-    throw new Error(`${fieldName} exceeds ${maxLength} characters`);
+    throw new ContentValidationError(`${fieldName} exceeds ${maxLength} characters`);
   }
   return normalized;
 }
 
+/**
+ * An optional date field as a Date, or null when empty.
+ *
+ * @param {unknown} value - the field
+ * @param {string} fieldName - its name, for the refusal
+ * @returns {Date|null}
+ * @throws {ContentValidationError}
+ */
 export function assertOptionalDateString(value, fieldName) {
   const normalized = String(value || "").trim();
   if (!normalized) return null;
   const parsed = new Date(normalized);
   if (Number.isNaN(parsed.getTime())) {
-    throw new Error(`${fieldName} must be a valid date`);
+    throw new ContentValidationError(`${fieldName} must be a valid date`);
   }
   return parsed;
 }
@@ -56,6 +83,15 @@ export function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * An optional http(s) URL field, trimmed.
+ *
+ * @param {unknown} value - the field
+ * @param {string} fieldName - its name, for the refusal
+ * @param {{ allowEmpty?: boolean }} [options]
+ * @returns {string}
+ * @throws {ContentValidationError}
+ */
 export function assertOptionalHttpUrl(
   value,
   fieldName,
@@ -63,24 +99,33 @@ export function assertOptionalHttpUrl(
 ) {
   const normalized = String(value || "").trim();
   if (!normalized) {
-    if (!allowEmpty) throw new Error(`${fieldName} is required`);
+    if (!allowEmpty) throw new ContentValidationError(`${fieldName} is required`);
     return "";
   }
   if (normalized.length > 2048) {
-    throw new Error(`${fieldName} exceeds 2048 characters`);
+    throw new ContentValidationError(`${fieldName} exceeds 2048 characters`);
   }
   let url;
   try {
     url = new URL(normalized);
   } catch {
-    throw new Error(`${fieldName} must be a valid URL`);
+    throw new ContentValidationError(`${fieldName} must be a valid URL`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`${fieldName} must be an http(s) URL`);
+    throw new ContentValidationError(`${fieldName} must be an http(s) URL`);
   }
   return normalized;
 }
 
+/**
+ * An optional list of strings within its item count and item length.
+ *
+ * @param {unknown} value - the field
+ * @param {string} fieldName - its name, for the refusal
+ * @param {{ maxItems?: number, maxItemLength?: number }} [options]
+ * @returns {string[]|null}
+ * @throws {ContentValidationError}
+ */
 export function assertStringArray(
   value,
   fieldName,
@@ -88,15 +133,15 @@ export function assertStringArray(
 ) {
   if (value === null || value === undefined) return null;
   if (!Array.isArray(value)) {
-    throw new Error(`${fieldName} must be an array`);
+    throw new ContentValidationError(`${fieldName} must be an array`);
   }
   if (value.length > maxItems) {
-    throw new Error(`${fieldName} exceeds ${maxItems} items`);
+    throw new ContentValidationError(`${fieldName} exceeds ${maxItems} items`);
   }
   return value.map((entry) => {
     const normalized = String(entry || "").trim();
     if (normalized.length > maxItemLength) {
-      throw new Error(
+      throw new ContentValidationError(
         `${fieldName} contains an entry that exceeds ${maxItemLength} characters`,
       );
     }
@@ -104,12 +149,21 @@ export function assertStringArray(
   });
 }
 
+/**
+ * A JSON value within its serialised size.
+ *
+ * @param {unknown} value - the field
+ * @param {string} fieldName - its name, for the refusal
+ * @param {number} [maxChars] - the ceiling
+ * @returns {unknown}
+ * @throws {ContentValidationError}
+ */
 export function assertJsonSize(value, fieldName, maxChars = 120_000) {
   if (value === null || value === undefined) return value;
   // Defensive: only JSON-friendly values should be stored.
   const serialized = JSON.stringify(value);
   if (serialized.length > maxChars) {
-    throw new Error(`${fieldName} payload exceeds ${maxChars} characters`);
+    throw new ContentValidationError(`${fieldName} payload exceeds ${maxChars} characters`);
   }
   return value;
 }
@@ -250,10 +304,18 @@ function normalizePairedTextField(normalized, field, value) {
   );
 }
 
+/**
+ * `cloudProvider` as a stored provider value, written as a pair.
+ *
+ * @param {object} normalized - the updates being built
+ * @param {string} _field - the field name (unused)
+ * @param {unknown} value - the value sent
+ * @throws {ContentValidationError}
+ */
 function normalizeCloudProviderField(normalized, _field, value) {
   const provider = normalizeProviderName(value);
   if (!provider) {
-    throw new Error(
+    throw new ContentValidationError(
       `cloudProvider must be one of: ${Object.values(STORED_PROVIDER_VALUES).join(", ")}`,
     );
   }
@@ -278,7 +340,7 @@ function normalizeTaxonomyIdField(normalized, field, value) {
     .trim()
     .toLowerCase();
   if (!TAXONOMY_ID_PATTERN.test(id)) {
-    throw new Error(
+    throw new ContentValidationError(
       `${field} must be a taxonomy id (2-40 lower-case letters, digits or hyphens)`,
     );
   }
@@ -356,6 +418,14 @@ function isLargeStringField(field) {
   return /(Html|Code|Draft)$/i.test(field);
 }
 
+/**
+ * Any other field: a primitive, a bounded string, or bounded JSON.
+ *
+ * @param {object} normalized - the updates being built
+ * @param {string} field - the field name
+ * @param {unknown} value - the value sent
+ * @throws {ContentValidationError}
+ */
 function normalizeGenericField(normalized, field, value) {
   if (typeof value === "boolean" || typeof value === "number") {
     normalized[field] = value;
@@ -372,7 +442,7 @@ function normalizeGenericField(normalized, field, value) {
   }
   if (Array.isArray(value)) {
     if (value.length > 500) {
-      throw new Error(`${field} exceeds 500 items`);
+      throw new ContentValidationError(`${field} exceeds 500 items`);
     }
     normalized[field] = assertJsonSize(value, field);
     return;
@@ -381,19 +451,26 @@ function normalizeGenericField(normalized, field, value) {
     normalized[field] = assertJsonSize(value, field);
     return;
   }
-  throw new Error(`Unsupported value type for ${field}`);
+  throw new ContentValidationError(`Unsupported value type for ${field}`);
 }
 
+/**
+ * An editor's updates object, validated and normalised field by field.
+ *
+ * @param {object} [updates] - the body's `updates`
+ * @returns {object} the normalised updates
+ * @throws {ContentValidationError} with a sentence naming the field (authored, #945)
+ */
 export function validateAndNormalizeUpdateContentItemUpdates(updates = {}) {
   if (!isPlainObject(updates)) {
-    throw new Error("updates must be an object");
+    throw new ContentValidationError("updates must be an object");
   }
   const entries = Object.entries(updates);
   if (entries.length === 0) {
-    throw new Error("updates must include at least one field");
+    throw new ContentValidationError("updates must include at least one field");
   }
   if (entries.length > 80) {
-    throw new Error("updates exceeds 80 fields");
+    throw new ContentValidationError("updates exceeds 80 fields");
   }
 
   const normalized = {};
@@ -412,12 +489,12 @@ export function validateAndNormalizeUpdateContentItemUpdates(updates = {}) {
  */
 function normalizeEntry(normalized, field, value) {
   if (field.length > 120) {
-    throw new Error(
+    throw new ContentValidationError(
       `updates contains a field name that exceeds 120 characters`,
     );
   }
   if (FORBIDDEN_CONTENT_UPDATE_KEYS.has(field)) {
-    throw new Error(`updates cannot modify protected field: ${field}`);
+    throw new ContentValidationError(`updates cannot modify protected field: ${field}`);
   }
   if (value === undefined) return;
   if (value === null) {

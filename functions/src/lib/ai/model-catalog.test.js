@@ -11,6 +11,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   CATALOG_DOC_ID,
+  CatalogListError,
   ENRICHMENT_TABLE,
   RETIRE_AFTER_MISSED,
   STALE_AFTER_MS,
@@ -262,14 +263,12 @@ describe('listModels', () => {
     await expect(listModels(ctx, 'vertex')).rejects.toThrow('Unknown AI provider: vertex');
   });
 
-  it('a refused or malformed answer throws with the status, never the key', async () => {
+  it('a refused or malformed answer throws with the status, never the key or the body (#945)', async () => {
     const ctx = (body, status = 401) => ctxWith(vi.fn(async () => jsonResponse(status, body)));
-    await expect(
-      listModels(ctx({ error: { message: 'Incorrect API key provided' } }), 'openai')
-    ).rejects.toThrow('HTTP 401: Incorrect API key provided');
-    await expect(listModels(ctx('<html>bad gateway</html>', 502), 'nvidia')).rejects.toThrow(
-      'HTTP 502: <html>bad gateway</html>'
-    );
+    const refused = listModels(ctx({ error: { message: 'Incorrect API key provided' } }), 'openai');
+    await expect(refused).rejects.toThrow(/^HTTP 401$/);
+    await expect(refused).rejects.toBeInstanceOf(CatalogListError);
+    await expect(listModels(ctx('<html>bad gateway</html>', 502), 'nvidia')).rejects.toThrow(/^HTTP 502$/);
     await expect(listModels(ctx('not json', 200), 'openai')).rejects.toThrow(
       'List answer was not JSON'
     );
@@ -442,13 +441,16 @@ describe('refreshModelCatalog', () => {
       store,
       now: () => T1,
       providers: ['foundry', 'gemini'],
-      listModels: lists({ foundry: new Error('HTTP 401: token audience'), gemini: ['gemini-3.6-flash'] }),
+      listModels: lists({
+        foundry: new CatalogListError('HTTP 401', { status: 401 }),
+        gemini: ['gemini-3.6-flash'],
+      }),
     });
     const foundry = written(store).providers.foundry;
     expect(foundry.refresh).toEqual({
       lastOk: at,
       lastAttempt: T1.toISOString(),
-      lastError: 'HTTP 401: token audience',
+      lastError: 'HTTP 401',
     });
     expect(foundry.models).toEqual(storedModels);
     // The provider that listed still refreshed, enriched.
@@ -456,9 +458,21 @@ describe('refreshModelCatalog', () => {
     expect(gemini.refresh.lastOk).toBe(T1.toISOString());
     expect(gemini.models['gemini-3.6-flash']).toMatchObject({ status: 'live', pricing: { inputPer1M: 1.5, outputPer1M: 7.5 } });
     expect(summary.providers).toEqual({
-      foundry: { listed: 0, added: 0, retired: 0, error: 'HTTP 401: token audience' },
+      foundry: { listed: 0, added: 0, retired: 0, error: 'HTTP 401' },
       gemini: { listed: 1, added: 1, retired: 0, error: null },
     });
+  });
+
+  it('a list failure the catalogue did not write is stored and answered by its code only (#945)', async () => {
+    const store = makeStore(null);
+    const summary = await refreshModelCatalog({
+      store,
+      now: () => T1,
+      providers: ['foundry'],
+      listModels: lists({ foundry: Object.assign(new Error('getaddrinfo ENOTFOUND x.example'), { code: 'ENOTFOUND' }) }),
+    });
+    expect(summary.providers.foundry.error).toBe('The model list could not be read (ENOTFOUND).');
+    expect(JSON.stringify(written(store))).not.toContain('getaddrinfo');
   });
 
   it('a 200 `{}` from any adapter is a failed refresh: lastError set, every model as stored', async () => {

@@ -34,6 +34,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { json } from '../http/admin-handler.js';
+import { authoredMessage, errorCode } from '../http/error-response.js';
 import { syncMcpServerTools } from './mcp.js';
 import { usesOAuthConnect, validateMcpUrl } from './mcp-policy.js';
 import {
@@ -133,10 +134,10 @@ async function startMcpOAuth(ctx, request, context) {
     return json(200, { ok: true, authorizationUrl });
   } catch (error) {
     if (error instanceof McpOAuthError) {
-      context.warn?.(`[startMcpOAuth] the sign-in was not started: ${error.message}`);
-      return fail(error.status, error.message, error.code);
+      context.warn?.(`[startMcpOAuth] the sign-in was not started (${errorCode(error)})`);
+      return fail(error.status, authoredMessage(error, 'The sign-in was not started.'), error.code);
     }
-    context.error?.('[startMcpOAuth] failed:', error?.message || error);
+    context.error?.(`[startMcpOAuth] failed (${errorCode(error)})`);
     return fail(500, `The sign-in for ${server.name || serverId} could not be started. Try Connect again.`);
   }
 }
@@ -265,11 +266,9 @@ async function completeMcpOAuth(ctx, request, context) {
       name,
     });
   } catch (error) {
-    const message =
-      error instanceof McpOAuthError
-        ? `${error.message} Press Connect on the ${name} card to try again.`
-        : `The sign-in for ${name} could not be completed. Press Connect on its card to try again.`;
-    context.warn?.(`[completeMcpOAuth] the code exchange failed: ${error?.message || error}`);
+    // McpOAuthError is authored; anything else gets this module's sentence (#945).
+    const message = `${authoredMessage(error, `The sign-in for ${name} could not be completed.`)} Press Connect on the ${name} card to try again.`;
+    context.warn?.(`[completeMcpOAuth] the code exchange failed (${errorCode(error)})`);
     return fail(502, message, 'EXCHANGE_FAILED');
   }
 

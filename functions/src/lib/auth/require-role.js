@@ -46,6 +46,7 @@ import {
 // form just put a module-map lookup and a microtask on the path every
 // authenticated request takes (T-408).
 import { bearerTokenFrom } from './verify-token.js';
+import { errorCode } from '../http/error-response.js';
 
 /**
  * Render a value as an RFC 7235 quoted-string body.
@@ -258,7 +259,8 @@ export function createRoleGuard({ verifier, lookupAdmin, auditDenial, now = Date
     try {
       user = await verifier.verify(token);
     } catch (err) {
-      audit({ outcome: 'denied', reason: 'invalid-token', detail: err.message });
+      // The verifier's code, not its sentence: the row is stored (#945).
+      audit({ outcome: 'denied', reason: 'invalid-token', detail: errorCode(err) });
       // A FIXED DESCRIPTION, NOT `err.message`.
       //
       // verify-token.js says of its own assertions that the detail "lands in

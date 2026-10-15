@@ -71,13 +71,13 @@ export const describeForLog = (result) => {
 };
 
 /**
- * Resend's refusal for the OWNER: the log summary plus Resend's own sentence,
- * which is what says what to fix. It can echo the broadcast (subject, body,
- * postal address), so it is stored on the issue and returned to the page, and
- * never logged.
+ * Resend's refusal for the OWNER: the status and Resend's error name (a
+ * machine code such as `validation_error`). Resend's own sentence used to
+ * follow it; it can echo the broadcast (subject, body, postal address) and
+ * is a provider's words, so it no longer reaches the issue or the page
+ * (#945). Stored on the issue and returned to the page.
+ *
+ * @param {{ status?: number, data?: { name?: string } }} result - a resend-client answer
+ * @returns {string}
  */
-export const describeForOwner = (result) => {
-  const message =
-    typeof result?.data?.message === 'string' ? `: ${result.data.message.slice(0, 200)}` : '';
-  return `${describeForLog(result)}${message}`;
-};
+export const describeForOwner = (result) => describeForLog(result);

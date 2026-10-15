@@ -14,6 +14,14 @@
  * (mcp-oauth.js). Every MCP URL is https, with no exception.
  */
 
+import { AuthoredError, authoredMessage } from '../http/error-response.js';
+
+/**
+ * A rule below refusing a URL, a key name or a tool list. Every sentence is
+ * written here (authored, #945), so an admin route may show it.
+ */
+export class McpPolicyError extends AuthoredError {}
+
 /**
  * Treat an environment value as a usable secret only when it is resolved.
  * Azure Key Vault references that fail to resolve arrive as a literal string;
@@ -92,7 +100,7 @@ export function validateMcpKeyBinding({ url, apiKeyEnvVar }) {
   if (!hosts) return keyName;
   const host = hostOf(url);
   if (host && hosts.includes(host)) return keyName;
-  throw new Error(
+  throw new McpPolicyError(
     `${keyName} may only be sent to ${hosts.join(', ')}; "${host || String(url || '')}" is not one of them`
   );
 }
@@ -105,14 +113,14 @@ export function validateMcpKeyBinding({ url, apiKeyEnvVar }) {
 export function validateMcpApiKeyEnvVar(value) {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string') {
-    throw new Error('apiKeyEnvVar must be a string app-setting name or empty');
+    throw new McpPolicyError('apiKeyEnvVar must be a string app-setting name or empty');
   }
   const name = value.trim();
   if (!name) return null;
   if (MCP_KEY_ENV_PATTERN.test(name) || KNOWN_INTEGRATION_KEY_NAMES.includes(name)) {
     return name;
   }
-  throw new Error(
+  throw new McpPolicyError(
     `apiKeyEnvVar must be an MCP_* app setting or one of ${KNOWN_INTEGRATION_KEY_NAMES.join(', ')}; "${name}" is not allowed`
   );
 }
@@ -143,7 +151,7 @@ export function requiresToolAllowlist(apiKeyEnvVar) {
 export function validateMcpAllowedTools(value) {
   if (value === undefined || value === null) return null;
   if (!Array.isArray(value) || value.some((name) => typeof name !== 'string' || !name.trim())) {
-    throw new Error('allowedTools must be an array of tool names');
+    throw new McpPolicyError('allowedTools must be an array of tool names');
   }
   return value.map((name) => name.trim());
 }
@@ -155,7 +163,7 @@ export function validateMcpAllowedTools(value) {
 export function validateMcpToolPolicy({ apiKeyEnvVar, allowedTools }) {
   const list = validateMcpAllowedTools(allowedTools);
   if (requiresToolAllowlist(apiKeyEnvVar) && (!list || list.length === 0)) {
-    throw new Error(
+    throw new McpPolicyError(
       `a server using ${keyNameOf(apiKeyEnvVar)} must name the tools it may call in allowedTools`
     );
   }
@@ -182,7 +190,7 @@ export function mcpToolRefusal({ serverId, server, tool }) {
       allowedTools: server?.allowedTools,
     });
   } catch (error) {
-    return `Tool "${tool}" refused on MCP server "${serverId}": ${error.message}`;
+    return `Tool "${tool}" refused on MCP server "${serverId}": ${authoredMessage(error, 'its tool policy is invalid')}`;
   }
   if (list === null || list.includes(tool)) return null;
   return `Tool "${tool}" is not in the allowedTools of MCP server "${serverId}"`;
@@ -234,13 +242,13 @@ export function validateMcpUrl(value) {
   try {
     parsed = new URL(String(value || '').trim());
   } catch {
-    throw new Error('MCP server URL must be a valid URL');
+    throw new McpPolicyError('MCP server URL must be a valid URL');
   }
   if (parsed.protocol !== 'https:') {
-    throw new Error('MCP server URL must use https');
+    throw new McpPolicyError('MCP server URL must use https');
   }
   if (parsed.username || parsed.password) {
-    throw new Error('MCP server URL must not contain embedded credentials');
+    throw new McpPolicyError('MCP server URL must not contain embedded credentials');
   }
   const host = parsed.hostname.toLowerCase();
   if (
@@ -250,10 +258,10 @@ export function validateMcpUrl(value) {
     host === '0.0.0.0' ||
     host.startsWith('127.')
   ) {
-    throw new Error('MCP server URL must not target loopback addresses');
+    throw new McpPolicyError('MCP server URL must not target loopback addresses');
   }
   if (NO_QUERY_HOSTS.has(parsed.hostname) && parsed.search) {
-    throw new Error(
+    throw new McpPolicyError(
       `MCP server URL for ${parsed.hostname} must not carry a query string; the key goes in its app setting, not the URL`
     );
   }

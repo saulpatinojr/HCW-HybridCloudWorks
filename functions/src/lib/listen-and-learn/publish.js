@@ -52,6 +52,10 @@
  * cannot quietly delete a good episode's transcript.
  */
 import { mediaUrlFor } from '../blob-paths.js';
+import { AuthoredError } from '../http/error-response.js';
+
+/** A title that yields no id; the sentence is written below (authored, #945). */
+export class EpisodeIdError extends AuthoredError {}
 
 export const SET_CONTAINER = 'listen_and_learn';
 export const EPISODE_CONTAINER = 'listen_and_learn_episodes';
@@ -94,9 +98,16 @@ export function episodeKindOf(doc) {
 /** The document id of a hand-made chapter: `manual_<slug of its title>`. */
 export const MANUAL_CHAPTER_ID_PREFIX = 'manual_';
 
+/**
+ * The id of a manual chapter, from its title.
+ *
+ * @param {string} title - the chapter title
+ * @returns {string}
+ * @throws {EpisodeIdError}
+ */
 export function manualChapterId(title) {
   const slug = slugifyTitle(title);
-  if (!slug) throw new Error('A chapter needs a title with at least one letter or digit');
+  if (!slug) throw new EpisodeIdError('A chapter needs a title with at least one letter or digit');
   return `${MANUAL_CHAPTER_ID_PREFIX}${slug}`;
 }
 
@@ -304,10 +315,17 @@ export function slugifyTitle(text) {
     .replace(/^-+|-+$/g, '');
 }
 
+/**
+ * The id of a source-grounded episode, from its title.
+ *
+ * @param {string} title - the episode title
+ * @returns {string}
+ * @throws {EpisodeIdError}
+ */
 export function sourceEpisodeId(title) {
   const slug = slugifyTitle(title);
   if (!slug)
-    throw new Error('A source-grounded episode needs a title with at least one letter or digit');
+    throw new EpisodeIdError('A source-grounded episode needs a title with at least one letter or digit');
   return `${SOURCE_EPISODE_ID_PREFIX}${slug}`;
 }
 

@@ -19,6 +19,7 @@
  * backfill and the taxonomy can be adopted one screen at a time.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { AuthoredError } from '../http/error-response.js';
 
 export const CONTENT_TAXONOMY_CONFIG_ID = 'content_taxonomy';
 
@@ -132,7 +133,9 @@ export function resolveKind(item = {}) {
   return TYPE_TO_KIND[type] || 'article';
 }
 
-class TaxonomyError extends Error {
+/** A taxonomy list the save refuses; every sentence is written below (authored, #945). */
+class TaxonomyError extends AuthoredError {
+  /** @param {string} message - the refusal, naming the field */
   constructor(message) {
     super(message);
     this.status = 400;

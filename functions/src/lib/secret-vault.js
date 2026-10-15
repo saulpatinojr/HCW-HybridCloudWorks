@@ -42,6 +42,7 @@
  */
 
 import { DefaultAzureCredential } from '@azure/identity';
+import { errorCode } from './http/error-response.js';
 
 /** Key Vault data-plane API version. */
 export const VAULT_API_VERSION = '7.4';
@@ -155,6 +156,7 @@ export async function refreshKeyVaultReferences(deps = {}) {
     }
     return { refreshed: true, reason: null };
   } catch (error) {
-    return { refreshed: false, reason: error?.message ?? 'refresh call failed' };
+    // Reaches the secrets page's answer: the code, never the SDK's sentence (#945).
+    return { refreshed: false, reason: `refresh call failed (${errorCode(error)})` };
   }
 }

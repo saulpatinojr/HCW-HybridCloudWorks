@@ -22,6 +22,7 @@
  *   change or a regeneration of anything but the audio.
  */
 import { fetchStudyGuide } from './studyguide.js';
+import { authoredMessage } from '../http/error-response.js';
 import { findVideosForAreas } from './videos.js';
 import { generateEpisodeScript } from './script.js';
 import { speechUsageRows, synthesizeDialogue, SpeechNotConfiguredError } from './speech/index.js';
@@ -128,7 +129,7 @@ export async function renderAudio({
     });
   } catch (err) {
     if (err instanceof SpeechNotConfiguredError || err?.name === 'SpeechNotConfiguredError') {
-      return { error: err.message };
+      return { error: authoredMessage(err, 'No speech provider is configured.') };
     }
     throw err;
   }

@@ -193,7 +193,12 @@ describe('concurrent publish protection (T-301)', () => {
 
     expect(body.published).toBe(0);
     expect(body.skipped).toBe(0);
-    expect(body.errors).toEqual([{ contentId: 'c1', error: 'cosmos down' }]);
+    // Reported, but in this module's words: the store's own text never
+    // reaches the answer (#945).
+    expect(body.errors).toEqual([
+      { contentId: 'c1', error: 'Publishing stopped on an unexpected failure.' },
+    ]);
+    expect(JSON.stringify(body)).not.toContain('cosmos down');
   });
 
   it('exposes processPublishContent for the scheduler, without registering a route', async () => {

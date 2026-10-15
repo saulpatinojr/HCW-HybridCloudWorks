@@ -24,7 +24,7 @@
  * midnight of that day, which the page shows on that day in every time zone.
  */
 import { COLLECTORS } from './calendar/collectors.js';
-import { text } from './calendar/items.js';
+import { errorCode } from './http/error-response.js';
 
 export {
   COLLECTORS,
@@ -84,9 +84,8 @@ export async function collectCalendar({
     if (result.status === 'fulfilled') {
       items.push(...result.value);
     } else {
-      warnings.push(
-        `${kind}: ${text(result.reason?.message ?? result.reason, 200) || 'could not be read'}`
-      );
+      // The collector's code, never its sentence: warnings are in the answer (#945).
+      warnings.push(`${kind}: could not be read (${errorCode(result.reason)})`);
       log?.warn?.(`[calendar] ${kind} collector failed: ${result.reason?.name ?? 'Error'}`);
     }
   });

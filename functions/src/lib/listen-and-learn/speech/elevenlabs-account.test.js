@@ -32,6 +32,7 @@ import {
   normalizeSubscription,
   readSubscription,
 } from './elevenlabs-account.js';
+import { isAuthoredError } from '../../http/error-response.js';
 
 const FREE = {
   tier: 'free',
@@ -148,14 +149,16 @@ describe('dialogueRefusal', () => {
     expect(paid.retryable).toBe(false);
     expect(paid.error).toMatchObject({ status: 402, code: PAID_PLAN_REQUIRED });
     // A paid-only voice is fixed by choosing another, so the sentence says
-    // where, before ElevenLabs's own body (#725).
+    // where (#725). ElevenLabs's own body no longer follows it (#945): the
+    // sentence is authored, and an admin route shows it whole.
     const { message } = paid.error;
     expect(
       message.startsWith('ElevenLabs refused this on the current plan (HTTP 402 paid_plan_required): ')
     ).toBe(true);
-    expect(message).toContain(
-      `Choose voices your plan allows under Podcast voices at ${VOICE_PICKER_PAGE}. ElevenLabs said: `
+    expect(message.endsWith(`Choose voices your plan allows under Podcast voices at ${VOICE_PICKER_PAGE}.`)).toBe(
+      true
     );
+    expect(isAuthoredError(paid.error)).toBe(true);
     expect(VOICE_PICKER_PAGE).toBe('https://hybridcloudworks.com/admin/platform-settings?tab=audio');
   });
 
@@ -188,14 +191,18 @@ describe('dialogueRefusal', () => {
     expect([400, 401, 402, 403, 404].some(isRetryableStatus)).toBe(false);
   });
 
-  it('retries 429 and 5xx only, and reports everything else as the API said it', () => {
+  it('retries 429 and 5xx only, and reports everything else by status and code, never the body (#945)', () => {
     for (const status of [429, 500, 502, 503, 504]) {
       expect(dialogueRefusal(status, 'busy').retryable).toBe(true);
     }
     const bad = dialogueRefusal(400, 'bad inputs');
     expect(bad).toMatchObject({ retryable: false, error: { status: 400, code: null } });
-    expect(bad.error.message).toBe('ElevenLabs HTTP 400: bad inputs');
-    expect(dialogueRefusal(404, '').error.message).toBe('ElevenLabs HTTP 404: no detail');
+    expect(bad.error.message).toBe('ElevenLabs answered HTTP 400.');
+    expect(dialogueRefusal(404, '').error.message).toBe('ElevenLabs answered HTTP 404.');
+    expect(
+      dialogueRefusal(422, JSON.stringify({ detail: { code: 'invalid_voice', message: 'voice gone' } })).error
+        .message
+    ).toBe('ElevenLabs answered HTTP 422 invalid_voice.');
   });
 });
 
@@ -282,7 +289,7 @@ describe('readSubscription', () => {
     const sleep = vi.fn(async () => {});
     const fiveHundreds = vi.fn(async () => fail(502, 'upstream'));
     await expect(readSubscription({ key: 'k', fetchImpl: fiveHundreds, sleep })).rejects.toThrow(
-      /Could not read the ElevenLabs subscription \(HTTP 502: upstream\)/
+      /Could not read the ElevenLabs subscription \(HTTP 502\); /
     );
     expect(fiveHundreds).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
@@ -290,8 +297,9 @@ describe('readSubscription', () => {
     const offline = vi.fn(async () => {
       throw new Error('ENOTFOUND');
     });
+    // The socket's own text stays out; its code (here the class) says which failure (#945).
     await expect(readSubscription({ key: 'k', fetchImpl: offline, sleep: noSleep })).rejects.toThrow(
-      /could not reach ElevenLabs: ENOTFOUND/
+      /could not reach ElevenLabs \(Error\)/
     );
     expect(offline).toHaveBeenCalledTimes(3);
   });

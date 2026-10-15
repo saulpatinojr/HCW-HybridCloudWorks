@@ -14,6 +14,7 @@
  *                            routes no longer accept once the forge has
  *                            moved it to forge_ready or editing
  */
+import { failureFields } from '../../http/error-response.js';
 import { actorName, json } from './config.js';
 import { briefHasSubstance, normalizeBrief, text } from './brief.js';
 import { ASSIST_ACTIONS, parseAssistRequest, refuse, runAssist } from './assist.js';
@@ -145,8 +146,7 @@ async function saveBrief(ctx, body, auth, context) {
       etag: written?._etag || null,
     });
   } catch (error) {
-    context?.error?.(`[forge/brief] ${error?.message || error}`);
-    return json(502, { ok: false, error: String(error?.message || error) });
+    return json(502, failureFields(context, 'The brief could not be saved.', error));
   }
 }
 
@@ -237,8 +237,7 @@ async function patchUnderEtag(store, contentId, update, etag, context) {
           'This draft changed in another tab or on another device since you opened it. Nothing was saved; reload it to see the latest version.',
       });
     }
-    context?.error?.(`[forge/save] ${error?.message || error}`);
-    return refuse(502, { ok: false, error: String(error?.message || error) });
+    return refuse(502, failureFields(context, 'The draft could not be saved.', error));
   }
 }
 

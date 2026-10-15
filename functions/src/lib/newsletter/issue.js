@@ -40,6 +40,7 @@
  * the Monday timer both pass no `days`, so both follow the saved window.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { authoredMessage, errorCode } from '../http/error-response.js';
 import { presentSetting } from '../platform-settings.js';
 import { SECTIONS, collectSections, plainText } from './sections.js';
 import {
@@ -114,8 +115,16 @@ export function buildIntroContext(sections) {
     .join('\n\n');
 }
 
-/** An AI failure as the owner reads it: the message, capped. */
-export const describeAiError = (error) => String(error?.message ?? error).slice(0, 300);
+/**
+ * An AI failure as the owner reads it: the router's own sentence for a
+ * refusal it states (not configured, switched off, out of budget), and a
+ * fixed one for anything a provider said (#945).
+ *
+ * @param {unknown} error - what the AI call threw
+ * @returns {string}
+ */
+export const describeAiError = (error) =>
+  authoredMessage(error, `the AI call failed (${errorCode(error)})`).slice(0, 300);
 
 /**
  * Draft an intro, and a subject, for an issue's sections. The builder and the
@@ -311,7 +320,7 @@ async function draftIntroIfEnabled({ drafter, settings, sections, subject, log, 
   } catch (error) {
     if (signal?.aborted) throw signal.reason || error;
     const introError = describeAiError(error);
-    log?.warn?.(`[newsletter] intro not drafted: ${introError}`);
+    log?.warn?.(`[newsletter] intro not drafted (${errorCode(error)})`);
     return { subject, intro: '', introError };
   }
 }

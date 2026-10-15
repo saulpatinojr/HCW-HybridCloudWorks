@@ -29,6 +29,7 @@
  */
 import { createHash } from 'node:crypto';
 import { ADMIN_CONFIG_PARTITION } from '../../cosmos-client.js';
+import { authoredMessage, errorCode, failureFields } from '../../http/error-response.js';
 import { JOBS_CONTAINER, TERMINAL_JOB_STATUSES, newJobDoc } from '../../jobs.js';
 import { actorName, json } from './config.js';
 import { normalizeBrief, text } from './brief.js';
@@ -489,11 +490,17 @@ async function forgeOne(ctx, id, { user, stamp, context, io }) {
     jobDoc = jobFor(entry, { jobId, user, stamp });
     await ctx.store.upsertDoc(JOBS_CONTAINER, jobDoc);
   } catch (error) {
-    context?.error?.(`[forge/queue] job write failed: ${error?.message || error}`);
+    // `failed` reaches the page as this entry's reason: newJobDoc's own
+    // payload refusal (authored) is shown, the store's words are not (#945).
+    // The log keeps the code.
+    context?.error?.(`[forge/queue] job write failed (${errorCode(error)})`);
     const reverted = await updateEntry(ctx.store, id, (current) =>
       current.jobId === jobId ? { status: 'queued', jobId: null, updatedAt: stamp } : null
     ).catch(() => null);
-    return { failed: String(error?.message || error).slice(0, 300), entry: reverted || entry };
+    return {
+      failed: authoredMessage(error, 'The job could not be written; the entry was put back in the queue.'),
+      entry: reverted || entry,
+    };
   }
   io.enqueue({ jobId: jobDoc.id, type: jobDoc.type });
   return { started: { id, jobId }, entry };
@@ -544,14 +551,20 @@ export function createForgeQueueHandlers({
   uuid = () => crypto.randomUUID(),
 }) {
   const ctx = { store, now, uuid };
+  /**
+   * A queue route: the editor gate, then the work, inside a catch that
+   * answers through the door (#945).
+   *
+   * @param {Function} fn - the route body
+   * @returns {Function}
+   */
   const guarded = (fn) => async (request, context, io) => {
     const auth = await guard.requireRole(request, 'editor');
     if (auth.error) return auth.error;
     try {
       return await fn(request, auth, context, io);
     } catch (error) {
-      context?.error?.(`[forge/queue] ${error?.message || error}`);
-      return json(502, { ok: false, error: String(error?.message || error) });
+      return json(502, failureFields(context, 'The queue could not be updated.', error, request));
     }
   };
   return {

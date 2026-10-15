@@ -19,6 +19,7 @@
  * from the sheet never makes a reminder fire twice.
  */
 
+import { AuthoredError } from '../http/error-response.js';
 import { STAGES, parseDateOnly } from './calendar.js';
 
 // The calendar (dates, stages) lives beside this file; re-exported so a
@@ -50,8 +51,9 @@ export const DEFAULT_LEAD_DAYS = 7;
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Thrown by the normalizer; platform-settings.js turns it into a 400. */
-export class RemindersValidationError extends Error {
+/** Thrown by the normalizer; platform-settings.js turns it into a 400 (authored, #945). */
+export class RemindersValidationError extends AuthoredError {
+  /** @param {string} message - the refusal, naming the field */
   constructor(message) {
     super(message);
     this.name = 'RemindersValidationError';

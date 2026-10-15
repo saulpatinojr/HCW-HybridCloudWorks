@@ -32,11 +32,14 @@
  * write the `audits` status_transition row transitionContentStatus writes.
  */
 import { randomUUID } from "node:crypto";
-import { errorResponse } from "../http/error-response.js";
+import {
+  authoredMessage,
+  errorResponse,
+  isAuthoredError,
+} from "../http/error-response.js";
 import { REPO_REF } from "./repo-draft.js";
 import {
   DRAFTS_STAGE_STATUS,
-  DraftInputError,
   REVIEW_STATUS,
   backToDraftsRefusal,
   buildBackToDraftsPatch,
@@ -57,10 +60,7 @@ import {
   editorOf,
   publishedWithTitle,
 } from "./drafts-import.js";
-import {
-  TaxonomyFieldError,
-  validateTaxonomyFieldsWithStore,
-} from "./taxonomy-fields.js";
+import { validateTaxonomyFieldsWithStore } from "./taxonomy-fields.js";
 
 export { publishedWithTitle };
 
@@ -287,11 +287,24 @@ function failure(context, what, error) {
   return errorResponse(context, `Failed to ${what}`, error, 500);
 }
 
-/** A thrown refusal or input error is the answer it carries; anything else is a 500. */
+/**
+ * A thrown refusal or input error is the answer it carries; anything else is
+ * a 500. Input errors are authored (DraftInputError, TaxonomyFieldError, the
+ * validators' ContentValidationError), so their sentence is the 400's (#945).
+ *
+ * @param {unknown} error - what the route threw
+ * @param {object} context - invocation context, for the 500's log line
+ * @param {string} what - the action, for the 500's sentence
+ * @returns {{ status: number, headers: object, body: string }}
+ */
 function answerFor(error, context, what) {
   if (error instanceof Refusal) return error.response;
-  if (error instanceof DraftInputError || error instanceof TaxonomyFieldError) {
-    return refused({ status: 400, code: "INVALID", error: error.message });
+  if (isAuthoredError(error)) {
+    return refused({
+      status: 400,
+      code: "INVALID",
+      error: authoredMessage(error, `Could not ${what}.`),
+    });
   }
   return failure(context, what, error);
 }

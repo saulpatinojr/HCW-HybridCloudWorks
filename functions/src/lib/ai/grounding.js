@@ -5,6 +5,7 @@
  * (router.js, which re-exports the public names here so callers and tests
  * are unchanged); the header of router.js carries the Interactions contract.
  */
+import { AuthoredError } from '../http/error-response.js';
 import { fenceArticleText } from './prompt-fence.js';
 
 export const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
@@ -60,11 +61,25 @@ function isYouTubeHost(url) {
   }
 }
 
+/**
+ * A source list the router refuses before spending. The sentences are
+ * written in this module for the person who typed the URLs (#945).
+ */
+export class InvalidSourcesError extends AuthoredError {
+  /** @param {string} message - the refusal, naming the source */
+  constructor(message) {
+    super(message, { code: 'AI_INVALID_SOURCES', status: 400 });
+  }
+}
+
+/**
+ * The refusal for one bad source.
+ *
+ * @param {string} message - the authored sentence
+ * @returns {InvalidSourcesError}
+ */
 function invalidSources(message) {
-  const err = new Error(message);
-  err.status = 400;
-  err.code = 'AI_INVALID_SOURCES';
-  return err;
+  return new InvalidSourcesError(message);
 }
 
 /** The url parses and is http(s); otherwise the sentence that refuses it. */

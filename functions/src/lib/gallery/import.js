@@ -7,6 +7,7 @@ import { mediaUrlFor } from '../blob-paths.js';
 import { measureImage } from './measure.js';
 import { LICENSES } from './metadata.js';
 import { cleanFolder, cleanTagList, lower, refuse } from './shared.js';
+import { authoredMessage, errorCode } from '../http/error-response.js';
 
 /** Why an import cannot start: a non-http(s) URL, or a route with no upload. */
 export function importRefusal(url, storage) {
@@ -23,7 +24,12 @@ export async function fetchForImport(fetchImage, url) {
   try {
     fetched = await fetchImage(url);
   } catch (error) {
-    const reason = String(error?.message || error).replace(url, '[url]');
+    // The guard's own refusal (authored) or the failure's code; a socket's
+    // sentence never reaches the 422 (#945). The URL is still masked.
+    const reason = authoredMessage(error, `the request failed (${errorCode(error?.cause ?? error)})`).replace(
+      url,
+      '[url]'
+    );
     return refuse(422, `Could not fetch image: ${reason}`);
   }
   if (fetched.refused) return refuse(415, fetched.reason);

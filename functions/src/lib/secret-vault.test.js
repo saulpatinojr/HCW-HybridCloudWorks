@@ -145,11 +145,11 @@ describe('refreshKeyVaultReferences never throws: the secret is already written'
     const noToken = { getToken: vi.fn(async () => { throw new Error('no identity'); }) };
     await expect(
       refreshKeyVaultReferences({ fetch: vi.fn(), credential: noToken, resourceId })
-    ).resolves.toEqual({ refreshed: false, reason: 'no identity' });
+    ).resolves.toEqual({ refreshed: false, reason: 'refresh call failed (Error)' });
 
     const down = vi.fn(async () => { throw new Error('ECONNRESET'); });
     await expect(
       refreshKeyVaultReferences({ fetch: down, credential: credential(), resourceId })
-    ).resolves.toEqual({ refreshed: false, reason: 'ECONNRESET' });
+    ).resolves.toEqual({ refreshed: false, reason: 'refresh call failed (Error)' });
   });
 });

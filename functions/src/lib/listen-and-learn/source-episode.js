@@ -33,6 +33,7 @@
  * spending. Same sentences each time, because they are the same function.
  */
 import { validateGroundingSources } from '../ai/router.js';
+import { authoredMessage } from '../http/error-response.js';
 import { recordAiUsageBatch, totalCostUsd, USAGE_SOURCES } from '../ai/usage.js';
 import { generateEpisodeScript } from './script.js';
 import { speechUsageRows, synthesizeDialogue } from './speech/index.js';
@@ -119,7 +120,7 @@ export function parseSourceEpisodePayload(payload) {
   try {
     areaSlug = sourceEpisodeId(title);
   } catch (err) {
-    return { error: err.message };
+    return { error: authoredMessage(err, 'The episode title cannot be made into an id.') };
   }
 
   let sources;
@@ -128,7 +129,9 @@ export function parseSourceEpisodePayload(payload) {
   } catch (err) {
     // The router's refusals are sentences written for the person typing the
     // URLs; anything else is a fault and stays one.
-    if (err?.code === 'AI_INVALID_SOURCES') return { error: err.message };
+    if (err?.code === 'AI_INVALID_SOURCES') {
+      return { error: authoredMessage(err, 'The sources were refused.') };
+    }
     throw err;
   }
 

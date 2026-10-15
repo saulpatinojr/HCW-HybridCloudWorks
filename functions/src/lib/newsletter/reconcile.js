@@ -23,6 +23,8 @@
  * schedule.
  */
 
+import { errorCode } from '../http/error-response.js';
+
 /** A `failed` issue reads as one whose send is over without a send. */
 export const FAILED_STATUS = 'failed';
 
@@ -165,7 +167,8 @@ export async function reconcileIssues({
       else if (outcome.reason) warnings.push(`${issue.id}: ${outcome.reason}`);
     } catch (error) {
       log?.warn?.(`[newsletter] reconcile failed: ${error?.name ?? 'Error'}`);
-      warnings.push(`${issue.id}: ${String(error?.message ?? error).slice(0, 200)}`);
+      // The page shows these: the failure's code, never its sentence (#945).
+      warnings.push(`${issue.id}: the reconcile failed (${errorCode(error)})`);
     }
   }
   return { reconciled: wanted.length, changed, warnings };

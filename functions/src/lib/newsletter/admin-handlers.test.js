@@ -10,6 +10,7 @@ import {
   parseIssuePatch,
 } from './admin-handlers.js';
 import { NEWSLETTER_FROM } from './handlers.js';
+import { AiFeatureDisabledError } from '../ai/router.js';
 import { INTRO_INSTRUCTION, introInstruction } from './issue.js';
 import { createTemplateCache } from './template-source.js';
 import { fakeResend as makeResend } from './fake-resend.test-helper.js';
@@ -354,7 +355,7 @@ describe('approve', () => {
     expect(store.docs.get(`newsletters/${ID}`).status).toBe('draft');
   });
 
-  it("returns the issue to draft with Resend's reason, and clears the approval, when the broadcast is refused", async () => {
+  it("returns the issue to draft with Resend's status and error name, and clears the approval, when the broadcast is refused", async () => {
     const { handlers, store } = build({
       role: 'publisher',
       resend: makeResend({ failBroadcast: true }),
@@ -362,12 +363,14 @@ describe('approve', () => {
     const ctx = context();
     const res = await handlers.approve(request(approveBody), ctx);
     expect(res.status).toBe(502);
-    // The owner gets Resend's sentence; the log gets status and error name only.
+    // The owner and the log get the status and error name; Resend's own
+    // sentence (which can echo the broadcast) reaches neither (#945).
     const logged = ctx.error.mock.calls.flat().join('\n');
     expect(logged).toContain('HTTP 422 validation_error');
     expect(logged).not.toContain('PO Box');
     expect(logged).not.toContain('Landing zones');
-    expect(bodyOf(res).error).toContain('from domain not verified');
+    expect(bodyOf(res).error).toBe('Resend did not accept the newsletter: HTTP 422 validation_error');
+    expect(res.body).not.toContain('from domain not verified');
     expect(store.docs.get(`newsletters/${ID}`)).toMatchObject({
       status: 'draft',
       lastError: expect.stringContaining('validation_error'),
@@ -866,15 +869,22 @@ describe('intro', () => {
   });
 
   it('stores nothing and answers 502 with a readable error when the AI fails', async () => {
-    const drafter = makeDrafter(new Error('AI feature newsletterIntro is disabled'));
+    // The router's own refusal is authored and read whole; a provider's
+    // sentence is not (#945).
+    const drafter = makeDrafter(new AiFeatureDisabledError('newsletterIntro'));
     const { handlers, store } = build({ drafter });
     const ctx = { ...context(), invocationId: 'inv-7' };
     const res = await handlers.intro(request({ body: { etag: 'e1' } }), ctx);
     expect(res.status).toBe(502);
     expect(bodyOf(res)).toMatchObject({
       code: 'AI_FAILED',
-      error: expect.stringContaining('disabled'),
+      error: "The intro was not regenerated: The 'newsletterIntro' AI feature is turned off in the admin portal.",
     });
+    const raw = await build({ drafter: makeDrafter(new Error('429 quota for org-abc')) }).handlers.intro(
+      request({ body: { etag: 'e1' } }),
+      ctx
+    );
+    expect(bodyOf(raw).error).toBe('The intro was not regenerated: the AI call failed (Error)');
     expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
     expect(store.docs.get(`newsletters/${ID}`).intro).toBe('We covered a lot.');
     const logged = ctx.error.mock.calls.flat().join('\n');
@@ -1148,12 +1158,14 @@ describe('test send', () => {
     }
   });
 
-  it("answers 502 with Resend's reason on a refusal, logging only the status and error name", async () => {
+  it("answers 502 with Resend's status and error name on a refusal, and logs only those", async () => {
     const { handlers } = build({ role: 'publisher', resend: makeResend({ failEmail: true }) });
     const ctx = { ...context(), invocationId: 'inv-5' };
     const res = await handlers.test(testBody(), ctx);
     expect(res.status).toBe(502);
-    expect(bodyOf(res).error).toContain('not verified');
+    // Resend's own sentence stays out of the answer too (#945).
+    expect(bodyOf(res).error).toBe('Resend did not accept the test email: HTTP 403 validation_error');
+    expect(res.body).not.toContain('not verified');
     const logged = [...ctx.log.mock.calls, ...ctx.error.mock.calls].flat().join('\n');
     expect(logged).toContain('HTTP 403 validation_error');
     expect(logged).toContain('inv-5');

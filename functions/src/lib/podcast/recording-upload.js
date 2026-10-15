@@ -131,7 +131,8 @@ function extensionOf(fileName) {
  * Decide the stored media type and extension for an upload, or refuse.
  *
  * @param {{ contentType: unknown, fileName: unknown }} args
- * @returns {{ ok: true, contentType: string, extension: string } | { ok: false, message: string }}
+ * @returns {{ ok: true, contentType: string, extension: string } | { ok: false, reason: string }}
+ *   `reason` is a sentence written here, never an error's message.
  */
 export function checkAudioUpload({ contentType, fileName }) {
   const declared = normalizeMediaType(contentType);
@@ -140,11 +141,11 @@ export function checkAudioUpload({ contentType, fileName }) {
   if (!byType) {
     return {
       ok: false,
-      message: `Unsupported audio type; send an ${ACCEPTED_AUDIO_EXTENSIONS.join(', ')} file`,
+      reason: `Unsupported audio type; send an ${ACCEPTED_AUDIO_EXTENSIONS.join(', ')} file`,
     };
   }
   if (!byType.extensions.includes(extension)) {
-    return { ok: false, message: 'File extension does not match the declared audio type' };
+    return { ok: false, reason: 'File extension does not match the declared audio type' };
   }
   return { ok: true, contentType: byType.canonical, extension };
 }

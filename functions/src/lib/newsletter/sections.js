@@ -27,6 +27,7 @@
  * that the site itself would not render.
  */
 import { publicUrlOf } from '../cms/publish.js';
+import { errorCode } from '../http/error-response.js';
 // history.js, not refresh.js: the document id and container name without
 // the three provider SDKs behind the refresh.
 import { CACHE_CONTAINER, priceChangesDocId } from '../cloud-tools/history.js';
@@ -419,8 +420,10 @@ export async function collectSections({
       const items = (await section.collect({ store, since, until })).slice(0, limit);
       if (items.length > 0) out.push({ id: section.id, title: section.title, items });
     } catch (error) {
-      problems.push(`${section.id}: ${error?.message ?? error}`);
-      log?.warn?.(`[newsletter] section ${section.id} failed: ${error?.message ?? error}`);
+      // Stored on the issue and shown: the failure's code, never its
+      // sentence; the log line is content-free too (#945).
+      problems.push(`${section.id}: could not be collected (${errorCode(error)})`);
+      log?.warn?.(`[newsletter] section ${section.id} failed (${errorCode(error)})`);
     }
   }
   return { sections: out, problems };

@@ -1640,8 +1640,10 @@ describe('a time budget for synchronous callers (router header)', () => {
       feature: 'forgeDrafting',
       budgetMs: 60_000,
     });
+    // Reasons are codes, never a provider's message, so the sentence is the
+    // router's own and an admin route may show it whole (#945).
     const settled = expect(call).rejects.toThrow(
-      "This AI call's 60 s budget ran out after nvidia (timeout after 30000 ms); gemini (timeout after 30000 ms). Not tried: openai, anthropic."
+      "This AI call's 60 s budget ran out after nvidia (timed out); gemini (timed out). Not tried: openai, anthropic."
     );
     await vi.advanceTimersByTimeAsync(60_000);
     await settled;

@@ -48,6 +48,7 @@
  * `Resource Not Found` sends someone looking at the wrong thing.
  */
 import { mediaUrlFor } from '../blob-paths.js';
+import { AuthoredError } from '../http/error-response.js';
 import { resolveArticleSlug, resolveArticleTitle } from '../listen-and-learn/article-script.js';
 
 export const TRANSCRIPT_CONTAINER = 'podcast_transcripts';
@@ -91,11 +92,21 @@ export const SOURCE_KINDS = Object.freeze({
  */
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+/** A source that cannot be keyed; the sentence names the id (authored, #945). */
+export class TranscriptKeyError extends AuthoredError {}
+
+/**
+ * The article's transcript key: its slug, or its id, when either passes.
+ *
+ * @param {object} article - the content document
+ * @returns {string}
+ * @throws {TranscriptKeyError}
+ */
 export function articleKey(article) {
   for (const candidate of [resolveArticleSlug(article), String(article?.id || '').trim()]) {
     if (candidate && KEY_PATTERN.test(candidate)) return candidate;
   }
-  throw new Error(
+  throw new TranscriptKeyError(
     `Article ${article?.id || '(no id)'} has neither a slug nor an id usable as a transcript key`
   );
 }
@@ -108,7 +119,7 @@ export function articleKey(article) {
 export function recordingKey(recordingId) {
   const candidate = String(recordingId ?? '').trim();
   if (candidate && KEY_PATTERN.test(candidate)) return candidate;
-  throw new Error(`Recording id ${JSON.stringify(candidate)} is not usable as a transcript key`);
+  throw new TranscriptKeyError(`Recording id ${JSON.stringify(candidate)} is not usable as a transcript key`);
 }
 
 /**

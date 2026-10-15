@@ -50,6 +50,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { PRODUCTION_ORIGINS } from '../auth/cors.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
+import { AuthoredError, authoredMessage, errorCode } from '../http/error-response.js';
 import { outsideJob } from '../job-context.js';
 import { MCP_OAUTH_CALLBACK_PATH, validateMcpUrl } from './mcp-policy.js';
 
@@ -83,7 +84,11 @@ const GRANT_REJECTIONS = new Set(['invalid_grant', 'invalid_client', 'unauthoriz
  * what this API answers for it; `upstreamStatus` and `oauthError` are what the
  * vendor said, kept so the refresh path can tell a dead grant from an outage.
  */
-export class McpOAuthError extends Error {
+export class McpOAuthError extends AuthoredError {
+  /**
+   * @param {string} message - the authored sentence (#945: no provider sentence or socket text)
+   * @param {object} [options] - status, upstreamStatus, oauthError, code
+   */
   constructor(message, { status = 502, upstreamStatus = null, oauthError = null, code = 'OAUTH_FAILED' } = {}) {
     super(message);
     this.name = 'McpOAuthError';
@@ -99,7 +104,8 @@ export class McpOAuthError extends Error {
  * nothing is sent without a token and the card can say "press Connect"
  * instead of a red HTTP 401.
  */
-export class McpOAuthNotConnectedError extends Error {
+export class McpOAuthNotConnectedError extends AuthoredError {
+  /** @param {string} message - the authored "press Connect" sentence */
   constructor(message) {
     super(message);
     this.name = 'McpOAuthNotConnectedError';
@@ -151,15 +157,26 @@ export function requireHttpsUrl(value, what) {
   return parsed;
 }
 
+/**
+ * Why an outbound request got no usable answer, in this module's words: the
+ * guard's own refusal sentence, or the failure's code — never a socket's
+ * text (#945).
+ *
+ * @param {string} url - the address that was asked
+ * @param {unknown} error - what guardedFetch threw
+ * @returns {string}
+ */
 function describeFetchFailure(url, error) {
   const where = bare(url);
   if (error?.code === 'FETCH_TIMEOUT') return `${where} did not answer in time.`;
   if (error?.code === 'REDIRECT_LIMIT' || error?.code === 'REDIRECT_NO_LOCATION') {
     return `${where} answered with a redirect, which this sign-in does not follow.`;
   }
-  if (error?.refused) return `${where} is not an address this site fetches (${error.message}).`;
+  if (error?.refused) {
+    return `${where} is not an address this site fetches (${authoredMessage(error, 'refused')}).`;
+  }
   if (error?.code === 'BODY_TOO_LARGE') return `${where} answered with more data than expected.`;
-  return `${where} could not be reached (${error?.message || error}).`;
+  return `${where} could not be reached (${errorCode(error?.cause ?? error)}).`;
 }
 
 /**
@@ -303,10 +320,19 @@ async function firstDocument(urls, http, accept) {
   return { failure: answered ? null : failure };
 }
 
+/**
+ * A metadata document no candidate address answered.
+ *
+ * @param {string} name - the server's name
+ * @param {string} what - the document
+ * @param {unknown} failure - the last McpOAuthError (authored)
+ * @returns {McpOAuthError}
+ */
 function unreachable(name, what, failure) {
-  return new McpOAuthError(`${name}'s ${what} could not be read: ${failure.message}`, {
-    code: 'UNREACHABLE',
-  });
+  return new McpOAuthError(
+    `${name}'s ${what} could not be read: ${authoredMessage(failure, 'no address answered.')}`,
+    { code: 'UNREACHABLE' }
+  );
 }
 
 /**
@@ -534,9 +560,18 @@ export function reusableClient(server, { issuer, redirectUri }) {
   return client;
 }
 
+/**
+ * An OAuth endpoint's refusal as its status and RFC 6749 error code. The
+ * `error_description` is the provider's own sentence and is not carried
+ * (#945); the code (`invalid_grant`) is what an owner acts on.
+ *
+ * @param {object|null} body - the parsed answer
+ * @param {number} status - its HTTP status
+ * @returns {string}
+ */
 function describeOAuthReply(body, status) {
-  const text = [body?.error, body?.error_description].filter((part) => typeof part === 'string' && part.trim());
-  return text.length ? text.join(': ').slice(0, 300) : `HTTP ${status}`;
+  const code = typeof body?.error === 'string' && /^[\w.-]{1,64}$/.test(body.error) ? body.error : '';
+  return code ? `${code} (HTTP ${status})` : `HTTP ${status}`;
 }
 
 async function registerClient({ discovery, redirectUri, http, now, name }) {
@@ -643,7 +678,10 @@ export async function startOAuthConnect({
   try {
     serverUrl = validateMcpUrl(server?.url);
   } catch (error) {
-    throw new McpOAuthError(`${name}: ${error.message}`, { status: 400, code: 'BAD_URL' });
+    throw new McpOAuthError(`${name}: ${authoredMessage(error, 'the server URL was refused.')}`, {
+      status: 400,
+      code: 'BAD_URL',
+    });
   }
   const challenge = await probeChallenge(serverUrl, http);
   const discovery = await discoverOAuth({ serverUrl, challenge, http, name });
@@ -850,7 +888,7 @@ export async function revokeOAuthGrant({ server, serverId, http }) {
   try {
     requireHttpsUrl(endpoint, `${name}'s revocation endpoint`);
   } catch (error) {
-    return { revoked: false, issuer, reason: error.message };
+    return { revoked: false, issuer, reason: authoredMessage(error, `${name}'s revocation endpoint was refused.`) };
   }
 
   // Every token this call sends, so a provider body or a transport error that
@@ -885,7 +923,7 @@ export async function revokeOAuthGrant({ server, serverId, http }) {
         );
       }
     } catch (error) {
-      reason ??= scrub(error?.message || String(error));
+      reason ??= scrub(authoredMessage(error, `${bare(endpoint)} could not be reached for the revocation.`));
     }
   }
   return reason ? { revoked: false, issuer, reason } : { revoked: true, issuer };
@@ -945,14 +983,14 @@ const readServer = (store, serverId) => store.readDoc(MCP_CONTAINER, serverId, s
  * On a conflict the document is read again, and a newer connection there is
  * the answer; otherwise the refusal stands and the next call decides again.
  */
-async function markDisconnected({ store, serverId, server, now, message }) {
+async function markDisconnected({ store, serverId, server, now, sentence }) {
   const at = now().toISOString();
   const updates = {
     oauthToken: null,
     oauthRefreshToken: null,
     oauth: { ...(server.oauth || {}), status: 'disconnected', disconnectedAt: at, disconnectReason: 'refresh_failed' },
     status: 'needs_connection',
-    lastError: message,
+    lastError: sentence,
     lastTested: at,
   };
   try {
@@ -964,7 +1002,7 @@ async function markDisconnected({ store, serverId, server, now, message }) {
     }
     // Otherwise the refusal is the useful result; a failed status write must not mask it.
   }
-  return { ok: false, disconnected: true, message };
+  return { ok: false, disconnected: true, sentence };
 }
 
 /**
@@ -983,7 +1021,7 @@ async function storeRefreshed({ store, serverId, server, updates, name }) {
     // A document without an ETag cannot be written safely, so it is not;
     // the stored token is used until the next try. Cosmos always sends one.
     if (!current._etag) {
-      return { ok: false, transient: true, message: `${name}'s renewed sign-in could not be stored safely; the next call tries again.` };
+      return { ok: false, transient: true, sentence: `${name}'s renewed sign-in could not be stored safely; the next call tries again.` };
     }
     try {
       const written = await store.patchDoc(MCP_CONTAINER, serverId, updates, { ifMatch: current._etag });
@@ -1000,16 +1038,23 @@ async function storeRefreshed({ store, serverId, server, updates, name }) {
     ok: false,
     disconnected: true,
     changed: true,
-    message: `${name} changed while its sign-in was being renewed, so the renewal was not kept. ${notConnectedMessage(current, serverId)}`,
+    sentence: `${name} changed while its sign-in was being renewed, so the renewal was not kept. ${notConnectedMessage(current, serverId)}`,
   };
 }
 
+/**
+ * One token refresh against the server's token endpoint: the stored tokens
+ * on success, or `{ ok: false, sentence }` with an authored sentence (#945).
+ *
+ * @param {object} args - store, serverId, server, http, now, log
+ * @returns {Promise<object>}
+ */
 async function performRefresh({ store, serverId, server, http, now, log }) {
   const name = server?.name || serverId;
   const oauth = server?.oauth || {};
   const refreshToken = server?.oauthRefreshToken;
   const expiredMessage = `Sign-in to ${name} has expired. Press Connect on its card under AI Engine → MCP Servers to sign in again.`;
-  if (!refreshToken) return markDisconnected({ store, serverId, server, now, message: expiredMessage });
+  if (!refreshToken) return markDisconnected({ store, serverId, server, now, sentence: expiredMessage });
 
   let tokens;
   try {
@@ -1024,8 +1069,12 @@ async function performRefresh({ store, serverId, server, http, now, log }) {
     tokens = parseTokenResponse(res, { name, grant: 'token refresh', now });
   } catch (error) {
     if (!isGrantRejection(error)) {
-      log?.warn?.(`[mcp-oauth] a token refresh did not complete: ${error?.message || error}`);
-      return { ok: false, transient: true, message: error?.message || String(error) };
+      log?.warn?.(`[mcp-oauth] a token refresh did not complete (${errorCode(error)})`);
+      return {
+        ok: false,
+        transient: true,
+        sentence: authoredMessage(error, `The sign-in to ${name} could not be renewed just now.`),
+      };
     }
     // Refresh tokens rotate: another instance may have spent this one a
     // moment ago and stored the next. Its result is as good as ours. The
@@ -1036,10 +1085,10 @@ async function performRefresh({ store, serverId, server, http, now, log }) {
     // Moved, switched or disconnected meanwhile: nothing of this connection
     // is left to clear, and writing would put a stale status on the new one.
     if (latest && !sameConnection(latest, server)) {
-      return { ok: false, disconnected: true, message: notConnectedMessage(latest, serverId) };
+      return { ok: false, disconnected: true, sentence: notConnectedMessage(latest, serverId) };
     }
     log?.warn?.('[mcp-oauth] a token refresh was refused; marking the server disconnected');
-    return markDisconnected({ store, serverId, server: latest || server, now, message: expiredMessage });
+    return markDisconnected({ store, serverId, server: latest || server, now, sentence: expiredMessage });
   }
 
   const updates = {
@@ -1063,9 +1112,9 @@ const inflight = new Map();
 /**
  * Refresh one server's access token with the standard refresh grant.
  * Resolves `{ ok: true, server }` with the updated document;
- * `{ ok: false, disconnected: true, message }` when the grant is dead (the
+ * `{ ok: false, disconnected: true, sentence }` when the grant is dead (the
  * document is then marked as needing a connection, tokens cleared); or
- * `{ ok: false, transient: true, message }` when the server could not be
+ * `{ ok: false, transient: true, sentence }` when the server could not be
  * reached, which leaves everything as it was.
  *
  * The refresh is shared by every caller in the process, so it runs outside
