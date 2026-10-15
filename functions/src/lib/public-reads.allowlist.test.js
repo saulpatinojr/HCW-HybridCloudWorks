@@ -54,10 +54,14 @@ const makeRequest = ({ query = {}, params = {} } = {}) => ({
  * sentinel. Named from the writers: triggers/social-caption-trigger.js,
  * triggers/ai-cover.js, triggers/handlers.js and content/inspect-job.js
  * (inspectError/inspectErrorAt), content/forge.js (forgeMeta, forgeGrade,
- * contentQuality, imageReadiness), the editorial workflow's actor stamps, and
- * the publish integrations' job ids and sync errors.
+ * contentQuality, imageReadiness), the editorial workflow's actor stamps, the
+ * publish integrations' job ids and sync errors, and the framework builder's
+ * generation prompts (admin/submit-urls persistStage.js).
  */
 const INTERNAL_CONTENT_FIELDS = Object.freeze({
+  frameworkKnowledgePrompt: `${SENTINEL} knowledge prompt`,
+  frameworkImagePrompt: `${SENTINEL} image prompt`,
+  frameworkDiagramPrompt: `${SENTINEL} diagram prompt`,
   socialCaption: `${SENTINEL} caption text`,
   socialCaptionError: `${SENTINEL} caption provider refused`,
   socialCaptionTrigger: false,
@@ -228,8 +232,26 @@ describe('getContent — the public article detail', () => {
   });
 
   it('names no operational field', () => {
-    const operational = /(Error|ErrorAt|Trigger|Attempts|JobId|By)$|^(error|lastError|inspect|forge|critique|review)|Quality$|Readiness$|Lineage$/;
+    const operational = /(Error|ErrorAt|Trigger|Attempts|JobId|By|Prompt)$|^(error|lastError|inspect|forge|critique|review)|Quality$|Readiness$|Lineage$/;
     expect(PUBLIC_CONTENT_DETAIL_FIELDS.filter((f) => operational.test(f))).toEqual([]);
+  });
+
+  it('carries no generation prompt on any public content list', () => {
+    // The framework builder stores the prompts it generated with; they are
+    // admin-side inputs, read only through the editor-gated cms routes.
+    for (const [name, fields] of [
+      ['PUBLIC_CONTENT_LIST_FIELDS', PUBLIC_CONTENT_LIST_FIELDS],
+      ['PUBLIC_CONTENT_DETAIL_FIELDS', PUBLIC_CONTENT_DETAIL_FIELDS],
+      ['PUBLIC_PREVIEW_FIELDS', PUBLIC_PREVIEW_FIELDS],
+    ]) {
+      expect(fields.filter((f) => /prompt/i.test(f)), name).toEqual([]);
+    }
+  });
+
+  it('covers every field useFrameworkData reads from a list row (pinned against the source)', () => {
+    const read = fieldsReadIn('hooks/useFrameworkData.js', ['doc']);
+    expect(read.size).toBeGreaterThan(30);
+    expect(missingFrom(PUBLIC_CONTENT_LIST_FIELDS, read)).toEqual([]);
   });
 
   it('serves at least what the list serves for the same document, less the visibility markers', () => {

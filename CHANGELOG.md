@@ -33,8 +33,10 @@ This project has not cut a tagged release; entries are grouped under
   `public-preview.js`), and `public-reads.allowlist.test.js` pins each one
   against the frontend components that read it and fails when a response
   carries a key its list does not name. The article list keeps its existing
-  projection and now also filters in code; the snapshot read keeps its
-  publish-time sanitizers.
+  projection, less the framework builder's three generation prompts (no
+  public page renders them, and `useFrameworkData` no longer maps them), and
+  now also filters in code; the snapshot read keeps its publish-time
+  sanitizers.
 
 - **Lab host: the nightly reboot asks at the hour, and reboots only an idle
   host (LAB-13, #959).** unattended-upgrades evaluated its logged-in check

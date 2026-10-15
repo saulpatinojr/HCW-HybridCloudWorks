@@ -523,9 +523,9 @@ export const PUBLIC_CONTENT_LIST_FIELDS = [
   'architectureRecommendation',
   'recommendation',
   'summaryRecommendation',
-  'frameworkKnowledgePrompt',
-  'frameworkImagePrompt',
-  'frameworkDiagramPrompt',
+  // Not the framework builder's generation prompts (`framework*Prompt`): they
+  // are admin-side inputs, no public page renders them, and the review board
+  // and the builder read them through the editor-gated cms routes.
   // cross-document identity (LivePages delete path, SocialHub dedup)
   'sourceContentId',
   'publishedContentId',

@@ -94,7 +94,9 @@ async function publicGet(pathAndQuery) {
  * @param {number} [options.limit]
  * @param {number} [options.offset]
  * @param {string} [options.source] - 'blogs' for the legacy fallback container
- * @returns {Promise<object[]>} full documents, internal fields stripped
+ * @returns {Promise<object[]>} published documents, each projected by the
+ *   server to an allowlist of fields (PUBLIC_CONTENT_LIST_FIELDS in
+ *   functions/src/lib/public-reads.js); a field not on it is never sent
  */
 export async function fetchPublicContentList(options = {}) {
   return (await fetchPublicContentPage(options)).items;
@@ -127,7 +129,10 @@ export async function fetchPublicContentPage({ type, provider, limit, offset, so
 /**
  * GET public/content/{slugOrId} — the server folds the whole client-side
  * fallback chain (id → slug → Slug, content then legacy blogs) and 404s
- * anything non-public. Returns null when not found.
+ * anything non-public. Returns null when not found. The item is projected to
+ * an allowlist (PUBLIC_CONTENT_DETAIL_FIELDS in functions/src/lib/
+ * public-reads.js), so a field a detail template starts reading must be added
+ * there first.
  */
 export async function fetchPublicContentItem(slugOrId) {
   if (!slugOrId) return null;
