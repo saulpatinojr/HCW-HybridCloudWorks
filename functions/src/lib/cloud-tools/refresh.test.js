@@ -250,12 +250,20 @@ describe('createPricingRefresh', () => {
         ['us-east-1', null],
         ['us-west-2', null],
       ]);
+      // A sentence with the code and the log line's reference, and a
+      // content-free log line: the store's words reach neither (#945).
+      const historyFailed = expect.stringMatching(
+        /^The region's price history could not be written \(Error; reference [\w.:-]+\)\.$/
+      );
       expect(summary.failed).toEqual([
-        { region: 'us-east-1', error: 'history: history container missing' },
-        { region: 'us-west-2', error: 'history: history container missing' },
+        { region: 'us-east-1', error: historyFailed },
+        { region: 'us-west-2', error: historyFailed },
       ]);
       expect(log.error).toHaveBeenCalledWith(
-        expect.stringContaining('us-east-1 history FAILED: history container missing')
+        expect.stringMatching(/The region's price history could not be written \(name=Error( at=[^)]+)?\)$/)
+      );
+      expect(JSON.stringify([summary.failed, log.error.mock.calls])).not.toContain(
+        'history container missing'
       );
     });
   });
@@ -343,9 +351,17 @@ describe('createPricingRefresh', () => {
     }).run();
 
     expect(summary.regions.map((r) => r.region)).toEqual(['us-east-1', 'westeurope']);
-    expect(summary.failed).toEqual([{ region: 'us-west-2', error: 'cosmos 503' }]);
+    expect(summary.failed).toEqual([
+      {
+        region: 'us-west-2',
+        error: expect.stringMatching(/^The region could not be refreshed \(Error; reference [\w.:-]+\)\.$/),
+      },
+    ]);
     expect(store.docs.has(`${CACHE_CONTAINER}/pricing:westeurope`)).toBe(true);
-    expect(log.error).toHaveBeenCalledWith(expect.stringContaining('us-west-2 FAILED'));
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringMatching(/The region could not be refreshed \(name=Error( at=[^)]+)?\)$/)
+    );
+    expect(JSON.stringify(summary.failed)).not.toContain('cosmos 503');
   });
 
   it('clears the memoised provider state once per run, before fetching', async () => {

@@ -56,6 +56,7 @@
  * must not leak into the document shape.
  */
 import { getCostEstimate } from '../../ai/router.js';
+import { AuthoredError, authoredMessage } from '../../http/error-response.js';
 import { USAGE_SOURCES, featureSource } from '../../ai/usage.js';
 import {
   synthesizeWithElevenLabs,
@@ -125,7 +126,16 @@ export function speechUsageRows(product, audio) {
 /** True for an id in ElevenLabs's own space (`eleven_*`); any other is Gemini's. */
 const isElevenLabsModel = (model) => /^eleven_/i.test(String(model || ''));
 
-export class SpeechError extends Error {
+/**
+ * A speech failure this module states: no turns, no provider configured, a
+ * pin that cannot run. Every sentence is written here (authored, #945); a
+ * provider's own errors are its module's classes, not this one.
+ */
+export class SpeechError extends AuthoredError {
+  /**
+   * @param {string} message - the authored sentence
+   * @param {{ status?: number|null, provider?: string|null }} [options]
+   */
   constructor(message, { status = null, provider = null } = {}) {
     super(message);
     this.name = 'SpeechError';
@@ -319,7 +329,7 @@ export function describeSpeechProviders(env = process.env, { product } = {}) {
     wouldRun = resolveSpeechProvider(env, { product: name })?.name || null;
   } catch (err) {
     if (err?.name !== 'SpeechNotConfiguredError') throw err;
-    pinError = err.message;
+    pinError = authoredMessage(err, 'The pinned speech provider cannot run.');
   }
   return {
     product: name,

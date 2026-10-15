@@ -16,6 +16,7 @@
  * casing — rather than tidying it and silently breaking the queue.
  */
 
+import { AuthoredError } from './http/error-response.js';
 import { sanitizeSubmittedHtml } from './sanitize-html.js';
 
 /** Mirrors MAX_CONTENT_LENGTH in the submission pages. */
@@ -282,10 +283,25 @@ export function composeSubmissionDoc(value, { nowIso = new Date().toISOString(),
  */
 const QUOTA_MAX_ATTEMPTS = 4;
 
+/**
+ * The anonymous quota is spent. Its sentence is written here for the visitor
+ * and names nothing behind the site, so a public route may answer with it
+ * (`authoredMessage`, #945).
+ */
+export class SubmissionRateLimitError extends AuthoredError {
+  /** One fixed sentence, code SUBMISSION_RATE_LIMIT. */
+  constructor() {
+    super('Submission rate limit exceeded — try again later', { code: 'SUBMISSION_RATE_LIMIT' });
+  }
+}
+
+/**
+ * The refusal enforceSubmissionQuota throws.
+ *
+ * @returns {SubmissionRateLimitError}
+ */
 function rateLimitError() {
-  const err = new Error('Submission rate limit exceeded — try again later');
-  err.code = 'SUBMISSION_RATE_LIMIT';
-  return err;
+  return new SubmissionRateLimitError();
 }
 
 /**
@@ -324,7 +340,7 @@ function rateLimitError() {
  * @param {{readDoc: Function, incrementIf: Function, createDoc: Function, replaceDocIfMatch: Function}} store
  * @param {string} key hashed client identity (client-identity.js anonymousKey)
  * @param {{ now?: number, limit?: number }} [options]
- * @throws {Error} code SUBMISSION_RATE_LIMIT when over quota
+ * @throws {SubmissionRateLimitError} code SUBMISSION_RATE_LIMIT when over quota
  */
 export async function enforceSubmissionQuota(
   store,

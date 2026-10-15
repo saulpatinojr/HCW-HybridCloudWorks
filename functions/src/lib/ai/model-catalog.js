@@ -59,6 +59,7 @@ import {
   readKey,
 } from './router.js';
 import { KNOWN_PROVIDERS as PROVIDERS } from './provider-order.js';
+import { AuthoredError, authoredMessage, errorCode } from '../http/error-response.js';
 import { MEDIA_DEFAULT_MODELS } from './model-tables.js';
 import { SETTINGS_CONTAINER } from './containers.js';
 import {
@@ -105,14 +106,23 @@ const MAX_PAGES = 20;
 
 // ── list adapters ────────────────────────────────────────────────────────────
 
-/** Upstream text, shortened: the error line names the status, not the body. */
-function shortDetail(data, text) {
-  const message = data?.error?.message || data?.message || (typeof text === 'string' ? text : '');
-  return String(message || '')
-    .replace(/\s+/g, ' ')
-    .slice(0, 160);
-}
+/**
+ * A list that could not be read, in a sentence written here: the status, or
+ * what was wrong with the answer. The provider's own error text is not
+ * carried (#945); the refresh answer and the card's lastError show this.
+ */
+export class CatalogListError extends AuthoredError {}
 
+/**
+ * GET one list endpoint as JSON, or throw a CatalogListError naming the
+ * status or the shape (never the provider's own text, #945).
+ *
+ * @param {Function} fetchImpl - fetch
+ * @param {string} url - the list endpoint
+ * @param {object} headers - request headers (the key)
+ * @param {number} timeoutMs - the deadline
+ * @returns {Promise<object>}
+ */
 async function getJson(fetchImpl, url, headers, timeoutMs) {
   const response = await fetchImpl(url, {
     method: 'GET',
@@ -127,11 +137,10 @@ async function getJson(fetchImpl, url, headers, timeoutMs) {
     data = null;
   }
   if (!response.ok) {
-    const detail = shortDetail(data, text);
-    throw new Error(`HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+    throw new CatalogListError(`HTTP ${response.status}`, { status: response.status });
   }
   if (data === null || typeof data !== 'object') {
-    throw new Error('List answer was not JSON');
+    throw new CatalogListError('List answer was not JSON');
   }
   return data;
 }
@@ -144,7 +153,7 @@ async function getJson(fetchImpl, url, headers, timeoutMs) {
  */
 function collectionOf(data, field) {
   if (!Array.isArray(data?.[field])) {
-    throw new Error(`Malformed list: no "${field}" array in the answer`);
+    throw new CatalogListError(`Malformed list: no "${field}" array in the answer`);
   }
   return data[field];
 }
@@ -220,7 +229,7 @@ const LISTERS = {
       { 'xi-api-key': readKey(ctx.env, MEDIA_KEY_ENV.elevenlabs) },
       ctx.timeoutMs
     );
-    if (!Array.isArray(data)) throw new Error('Malformed list: the answer was not an array of models');
+    if (!Array.isArray(data)) throw new CatalogListError('Malformed list: the answer was not an array of models');
     return data
       .map((row) => (typeof row?.model_id === 'string' ? row.model_id.trim() : ''))
       .filter(Boolean);
@@ -412,7 +421,11 @@ async function listEveryProvider(providers, list) {
       const ids = await list(provider);
       outcomes[provider] = ids === null ? { skipped: true } : { ids };
     } catch (error) {
-      outcomes[provider] = { error: String(error?.message || error) };
+      // Shown on the refresh answer and stored as the card's lastError: the
+      // failure's code, never the provider's sentence (#945).
+      outcomes[provider] = {
+        error: authoredMessage(error, `The model list could not be read (${errorCode(error)}).`),
+      };
     }
   }
   return outcomes;

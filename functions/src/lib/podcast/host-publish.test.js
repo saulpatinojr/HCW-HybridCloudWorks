@@ -529,7 +529,7 @@ describe('publishEpisodeToHost — failure is recorded, never thrown', () => {
           error: {
             status: 503,
             code: 'UPSTREAM',
-            message: 'Podbean answered 503 while creating the episode: server_error: busy.',
+            message: 'Podbean answered 503 while creating the episode (server_error).',
             retryable: true,
           },
         },
@@ -581,7 +581,7 @@ describe('publishEpisodeToHost — failure is recorded, never thrown', () => {
       code: 'CREDENTIALS_REJECTED',
       message:
         'Podbean refused the client ID and secret while requesting an access token ' +
-        '(400 invalid_client: unknown client).',
+        '(400 invalid_client).',
       retryable: false,
     });
   });
@@ -633,7 +633,7 @@ describe('publishEpisodeToHost — failure is recorded, never thrown', () => {
     expect(patch.host.podbean.error).toEqual({
       status: null,
       code: 'UNEXPECTED',
-      message: 'BlobNotFound',
+      message: 'The Podbean step failed unexpectedly (Error).',
       retryable: false,
     });
   });

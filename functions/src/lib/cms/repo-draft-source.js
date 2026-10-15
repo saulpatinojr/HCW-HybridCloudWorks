@@ -23,6 +23,7 @@
  * clears its timer when the headers arrive, so a body that trickles would be
  * bounded only by the runtime's own five-minute body timeout.
  */
+import { AuthoredError } from '../http/error-response.js';
 import {
   API_ORIGIN,
   API_PATH_PREFIX,
@@ -45,8 +46,23 @@ export const MAX_API_BYTES = 512 * 1024;
 const USER_AGENT = 'HybridCloudWorks-CMS-repo-import';
 const GITHUB_JSON = 'application/vnd.github+json';
 
+/**
+ * A failure of the GitHub exchange, in a sentence written here (#945): the
+ * import shows it per file and on a failed listing, so it never carries a
+ * socket's or GitHub's own words.
+ */
+export class RepoSourceError extends AuthoredError {}
+
+/**
+ * One coded failure.
+ *
+ * @param {string} code - machine-readable reason
+ * @param {string} message - the authored sentence
+ * @param {object} [extra] - fields such as `retryAfterSeconds`
+ * @returns {RepoSourceError}
+ */
 function coded(code, message, extra = {}) {
-  return Object.assign(new Error(message), { code, ...extra });
+  return Object.assign(new RepoSourceError(message, { code }), extra);
 }
 
 /**
@@ -133,18 +149,25 @@ function assertServedFrom(response, url) {
   }
 }
 
-/** Any failure from the exchange, as one coded error. */
+/**
+ * Any failure from the exchange, as one coded error. A socket's own message
+ * stays out of the sentence (#945); its code is the log line's.
+ *
+ * @param {unknown} error - what the fetch threw
+ * @param {{ aborted: boolean, timeoutMs: number }} state - whether the timer fired
+ * @returns {RepoSourceError}
+ */
 function toFetchError(error, { aborted, timeoutMs }) {
   if (error?.name === 'AbortError' || aborted) {
     return coded('TIMEOUT', `GitHub did not answer within ${timeoutMs} ms.`);
   }
-  if (typeof error?.code === 'string') return error;
+  if (error instanceof RepoSourceError) return error;
   // undici rejects `redirect: 'error'` as TypeError('fetch failed') with the
   // reason on `cause`; name it, or a moved file reads as an outage.
   if (/redirect/i.test(String(error?.cause?.message || ''))) {
     return coded('REDIRECTED', 'GitHub answered with a redirect; redirects are not followed.');
   }
-  return coded('FETCH_FAILED', `Could not reach GitHub: ${error?.message || error}`);
+  return coded('FETCH_FAILED', 'Could not reach GitHub: the request failed before GitHub answered.');
 }
 
 function headersFor(accept) {

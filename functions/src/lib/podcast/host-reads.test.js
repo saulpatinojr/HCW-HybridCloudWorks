@@ -262,7 +262,7 @@ describe('fetchHostOverview', () => {
     expect(out.errors.episodes).toEqual({
       status: null,
       code: 'UNEXPECTED',
-      message: 'fetch failed',
+      message: 'The Podbean step failed unexpectedly (TypeError).',
       retryable: false,
     });
   });

@@ -37,6 +37,7 @@
  */
 import { createHash } from 'node:crypto';
 import { readKey } from '../ai/router.js';
+import { errorCode } from '../http/error-response.js';
 import { enforceSubmissionQuota } from '../submissions.js';
 import { createResendClient } from './resend-client.js';
 import { normalizeEmail } from './email.js';
@@ -414,7 +415,7 @@ async function confirmSubscriber(ctx, client, subscriber, context) {
   try {
     segment = await ctx.segmentId(client);
   } catch (error) {
-    return failed(error.message);
+    return failed(errorCode(error));
   }
   const ensured = await ensureConfirmedContact({
     client,

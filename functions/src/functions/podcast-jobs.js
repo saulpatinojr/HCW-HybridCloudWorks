@@ -21,7 +21,7 @@ import { readDoc, upsertDoc, patchDoc } from '../lib/cosmos-client.js';
 import { deleteBlob, readBlobForDelivery, uploadBlob } from '../lib/blob-storage.js';
 import { generateJsonResponse, getCostEstimate, modelForTask } from '../lib/ai/router.js';
 import { publicUrlOf } from '../lib/cms/publish.js';
-import { registerJobType } from '../lib/jobs.js';
+import { JobFailedError, registerJobType } from '../lib/jobs.js';
 import {
   ARTICLE_CONTAINER,
   TRANSCRIPT_JOB_TYPE,
@@ -64,7 +64,7 @@ export function parseTranscriptPayload(payload) {
 export async function runTranscriptGeneration(payload, { context, signal } = {}) {
   if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseTranscriptPayload(payload);
-  if (parsed.error) throw new Error(parsed.error);
+  if (parsed.error) throw new JobFailedError(parsed.error);
 
   const report = await generateTranscriptFromArticle({
     articleId: parsed.value.articleId,
@@ -131,7 +131,7 @@ async function resolveArticleUrl(doc, { context, jobId }) {
 export async function runTranscriptPublish(payload, { context, job, signal } = {}) {
   if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parsePublishPayload(payload);
-  if (parsed.error) throw new Error(parsed.error);
+  if (parsed.error) throw new JobFailedError(parsed.error);
   const id = parsed.value.transcriptId;
   const jobId = job?.id ?? null;
 
@@ -209,7 +209,7 @@ registerJobType(PUBLISH_JOB_TYPE, {
 export async function runRecordingGeneration(payload, { context, signal } = {}) {
   if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseRecordingPayload(payload);
-  if (parsed.error) throw new Error(parsed.error);
+  if (parsed.error) throw new JobFailedError(parsed.error);
 
   const report = await generateTranscriptFromRecording({
     ...parsed.value,
@@ -251,7 +251,7 @@ const UPLOAD_POLL_BUDGET_MS = UPLOAD_JOB_TIMEOUT_MS - 60 * 1000;
 export async function runUploadTranscription(payload, { context, signal } = {}) {
   if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseUploadPayload(payload);
-  if (parsed.error) throw new Error(parsed.error);
+  if (parsed.error) throw new JobFailedError(parsed.error);
 
   const report = await transcribeUpload({
     ...parsed.value,

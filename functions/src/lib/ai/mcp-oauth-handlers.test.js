@@ -401,13 +401,14 @@ describe('POST cms/mcp/oauth/complete', () => {
     expect(net.calls.some((c) => c.url.endsWith('/token'))).toBe(false);
   });
 
-  it('says what the vendor said when the exchange is refused, and stores nothing', async () => {
+  it("names the vendor's OAuth error code when the exchange is refused, never its sentence, and stores nothing", async () => {
     const store = memStore([hostingerDoc()]);
     const net = hostinger({ token: reply(400, { error: 'invalid_grant', error_description: 'code expired' }) });
     const { state } = await started({ store, net });
     const res = await handlersFor({ store, net }).completeMcpOAuth(bodyRequest({ state, code: 'c' }), context);
     expect(res.status).toBe(502);
-    expect(parse(res).error).toMatch(/refused the sign-in code: invalid_grant: code expired.*Press Connect/);
+    expect(parse(res).error).toMatch(/refused the sign-in code: invalid_grant \(HTTP 400\)\..*Press Connect/);
+    expect(parse(res).error).not.toMatch(/code expired/);
     expect(store.data.get('hostinger-mcp').oauthToken).toBeUndefined();
   });
 

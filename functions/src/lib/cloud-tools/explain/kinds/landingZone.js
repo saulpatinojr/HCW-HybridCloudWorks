@@ -21,6 +21,8 @@
  * for: the prompt forbids both.
  */
 
+import { AuthoredError, authoredMessage } from '../../../http/error-response.js';
+
 /** The AI_FEATURES key (lib/ai/ai-config.js) this kind runs under. */
 export const LANDING_ZONE_EXPLAIN_FEATURE = 'landingZoneExplain';
 
@@ -149,8 +151,11 @@ export const LANDING_ZONE_OPTION_KEYS = Object.freeze([
   'rootParentId',
 ]);
 
-/** A refusal in the validator: a sentence naming the field, never the value. */
-class Refusal extends Error {}
+/**
+ * A refusal in the validator: a sentence naming the field, never the value.
+ * Authored (#945): the public route answers with it.
+ */
+class Refusal extends AuthoredError {}
 const refuse = (message) => {
   throw new Refusal(message);
 };
@@ -273,7 +278,7 @@ export function validateLandingZoneExplainRequest(raw) {
   try {
     return { value: body(raw) };
   } catch (error) {
-    if (error instanceof Refusal) return { error: error.message };
+    if (error instanceof Refusal) return { error: authoredMessage(error, 'The request was refused.') };
     throw error;
   }
 }

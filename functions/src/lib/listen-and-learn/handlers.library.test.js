@@ -11,6 +11,7 @@ import { createListenAndLearnHandlers, SPEAK_CHAPTER_JOB_TYPE } from './handlers
 import { EPISODE_CONTAINER, SET_CONTAINER, STATUS } from './publish.js';
 import { LISTEN_AND_LEARN_JOB_TYPE } from './source-episode.js';
 import { JOBS_CONTAINER } from '../jobs.js';
+import { AiFeatureDisabledError } from '../ai/router.js';
 
 const context = { log: vi.fn(), error: vi.fn() };
 const NOW = '2026-10-03T14:05:09.000Z';
@@ -753,8 +754,8 @@ describe('speech options and the estimate', () => {
     });
     expect(res.model.perEpisodeUsd).toBeGreaterThan(0);
 
-    const off = new Error("The 'listenAndLearnSpeech' AI feature is turned off in the admin portal.");
-    off.code = 'AI_FEATURE_DISABLED';
+    // The router's own (authored) refusal is shown whole (#945).
+    const off = new AiFeatureDisabledError('listenAndLearnSpeech');
     const refused = { modelForTask: vi.fn(async () => Promise.reject(off)) };
     const said = parse(
       await handlers(store, editor, { ai: refused }).speechOptions(makeRequest(), context)

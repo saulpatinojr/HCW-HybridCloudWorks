@@ -1546,6 +1546,41 @@ automated detectors this failure class has. When the strip's two reads are
 healthy and functions are still missing, the strip is not the cause: the named
 functions failed to start, and the host log says why.
 
+## A failure an admin page names by its reference
+
+An admin page that says `… (reference <id>)`, a stored failure such as a job's
+`The job failed (ECONNRESET; reference <id>).`, and every failure answer's
+`correlationId` all point at one log line. Since #945 that line is the only
+record of the failure on the server, and it is content-free: the sentence the
+code wrote, the error's class name, code, HTTP status, Cosmos substatus and
+its cause's code, and up to three places in this repository's code
+(`at=src/lib/jobs.js:657`). The error's message and its stack are not logged.
+
+Paste the reference when the first command asks for it; the workspace is
+looked up, not typed. PowerShell:
+
+```powershell
+$ref = Read-Host 'Reference from the admin page'; $ws = (az monitor log-analytics workspace show -n log-plat-prod-cus-01 -g rg-mgmt-plat-prod-cus --subscription sub-plat-mgmt-prod-cus -o json | ConvertFrom-Json).customerId; az monitor log-analytics query -w $ws --analytics-query "AppTraces | where TimeGenerated > ago(7d) | where Message startswith '[$ref]' | project TimeGenerated, SeverityLevel, Message" -o json | ConvertFrom-Json | Format-Table -Wrap
+```
+
+Success is a row for each failure logged under that reference, usually one,
+whose `Message` reads `[<id>] <sentence> (name=… code=… at=…)`. An empty
+result does not prove the line was never written: the reference may be older
+than the seven days asked for (widen `ago(7d)`), or the failure may have
+happened in a worker that had not yet sent its telemetry.
+
+Most references are the function invocation's id, a GUID. For one of those,
+every line that invocation wrote, the host's included, is the second command,
+in the same window (it reuses `$ref` and `$ws`):
+
+```powershell
+az monitor log-analytics query -w $ws --analytics-query "AppTraces | where TimeGenerated > ago(7d) | where tostring(Properties.InvocationId) == '$ref' | order by TimeGenerated asc | project TimeGenerated, SeverityLevel, Message" -o json | ConvertFrom-Json | Format-Table -Wrap
+```
+
+A reference that is not a GUID is a caller's `x-correlation-id` or
+`x-request-id` header, or the W3C traceparent; only the first query finds
+those.
+
 ## Break-glass: storage after shared-key authentication is disabled
 
 `shared_access_key_enabled = false` on both production storage accounts,

@@ -11,6 +11,7 @@ import {
 } from './draft-from-recording.js';
 import { createContentDocument } from '../cms/content-create.js';
 import { AFTER_MODEL_MARGIN_MS } from '../ai/time-budget.js';
+import { AiBudgetExhaustedError } from '../ai/router.js';
 
 const NOW = new Date('2026-09-06T12:00:00.000Z');
 const now = () => NOW;
@@ -310,7 +311,11 @@ describe('createContentFromRecording', () => {
     });
     expect(
       parse(await r.handler(request({ recordingId: 'rec-1', contentType: 'blog_post' }), ctx))
-    ).toMatchObject({ status: 502, body: { code: 'GENERATION_FAILED', error: 'boom' } });
+    ).toMatchObject({
+      status: 502,
+      // A provider's own words ('boom') never reach the answer (#945).
+      body: { code: 'GENERATION_FAILED', error: 'The draft could not be created from this recording.' },
+    });
   });
 
   it('hands the drafter its HTTP budget less the after-model margin, which the body cannot set', async () => {
@@ -326,12 +331,10 @@ describe('createContentFromRecording', () => {
     expect(budgetMs).toBeGreaterThan(ceiling - 1_000);
   });
 
-  it("maps the router's AI_BUDGET_EXHAUSTED to 504 with its own message", async () => {
-    const exhausted = new Error(
-      "This AI call's 70 s budget ran out after nvidia (timeout after 35000 ms); " +
-        'gemini (timeout after 35000 ms). Not tried: openai.'
+  it("maps the router's AI_BUDGET_EXHAUSTED to 504 with its own (authored) message", async () => {
+    const exhausted = new AiBudgetExhaustedError(
+      "This AI call's 70 s budget ran out after nvidia (timed out); gemini (timed out). Not tried: openai."
     );
-    exhausted.code = 'AI_BUDGET_EXHAUSTED';
     const r = build({
       drafter: {
         generateDraft: vi.fn(async () => {
@@ -395,7 +398,12 @@ describe('createContentFromRecording', () => {
     const c = { error: vi.fn(), warn: vi.fn(), log: vi.fn() };
     const { handler } = build();
     await handler(request({ recordingId: 'missing-id-xyz', contentType: 'blog_post' }), c);
-    expect(c.warn).toHaveBeenCalledWith('[createContentFromRecording] 404 RECORDING_NOT_FOUND');
+    // Content-free: the sentence, the code and the correlation id (#945).
+    expect(c.warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[[^\]]+\] The draft could not be created from this recording\. \(name=RecordingDraftError code=RECORDING_NOT_FOUND( at=[^)]+)?\)$/
+      )
+    );
     expect(JSON.stringify(c.warn.mock.calls)).not.toContain('missing-id-xyz');
     const boom = build({
       drafter: {
@@ -405,7 +413,9 @@ describe('createContentFromRecording', () => {
       },
     });
     await boom.handler(request({ recordingId: 'rec-1', contentType: 'blog_post' }), c);
-    expect(c.error).toHaveBeenCalledWith('[createContentFromRecording] 502 GENERATION_FAILED');
+    expect(c.error).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[[^\]]+\] The draft could not be created from this recording\. \(name=Error( at=[^)]+)?\)$/)
+    );
     expect(JSON.stringify(c.error.mock.calls)).not.toContain('secret text');
   });
 

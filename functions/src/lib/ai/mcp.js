@@ -13,6 +13,7 @@
  * keyless servers, and Plaud's pasted token, take the path they always did.
  */
 import { parseMcpResponseBody } from '../cloud-tools/mcp-parse.js';
+import { AuthoredError, authoredMessage, codeShaped, errorCode } from '../http/error-response.js';
 import {
   INTEGRATION_KEY_HOSTS,
   KNOWN_INTEGRATION_KEY_NAMES,
@@ -51,7 +52,17 @@ const json = (status, body) => ({
   body: JSON.stringify(body),
 });
 
-class McpUpstreamError extends Error {
+/**
+ * A transport-level MCP failure: a timeout, an HTTP status, a stream that
+ * ended. Every sentence is written in this module (authored, #945); the
+ * server's body rides on `responseBody` for the OAuth error code and never
+ * reaches a sentence.
+ */
+class McpUpstreamError extends AuthoredError {
+  /**
+   * @param {string} message - the authored sentence
+   * @param {{ status?: number, responseBody?: string }} [options]
+   */
   constructor(message, { status = 0, responseBody = '' } = {}) {
     super(message);
     this.name = 'McpUpstreamError';
@@ -428,6 +439,13 @@ function normalizeMcpTools(rpcResult) {
   }));
 }
 
+/**
+ * The status and the OAuth error code an upstream failure carries. The
+ * server's `error_description` is its own sentence and is not read (#945).
+ *
+ * @param {unknown} error - what the transport threw
+ * @returns {{ status: number|undefined, upstreamError: string|undefined }}
+ */
 function errorFields(error) {
   let upstream = {};
   try {
@@ -438,23 +456,29 @@ function errorFields(error) {
   return {
     status: error.status,
     upstreamError: upstream.error,
-    upstreamDescription: upstream.error_description,
-    message: error.message || '',
   };
 }
 
+/**
+ * A failed MCP call as `{ error, code }`: a credential refusal says so in a
+ * fixed sentence; anything else is the transport's authored sentence or the
+ * caller's fallback, never the server's own words (#945).
+ *
+ * @param {unknown} error - what the transport threw
+ * @param {string} fallback - the caller's sentence
+ * @returns {{ error: string, code: string|null }}
+ */
 function mcpAuthError(error, fallback) {
   const fields = errorFields(error);
   if ([401, 402, 403].includes(fields.status) || fields.upstreamError === 'invalid_token') {
     return {
       error:
-        fields.upstreamDescription ||
         'MCP authentication failed. Check the Azure Function App setting or stored OAuth token for this server.',
       code: 'UNAUTHENTICATED',
     };
   }
   return {
-    error: fields.upstreamDescription || fields.message || fallback,
+    error: authoredMessage(error, fallback),
     code: null,
   };
 }
@@ -527,7 +551,7 @@ function validatedMcpUrl(server) {
     validateMcpKeyBinding({ url, apiKeyEnvVar: server.apiKeyEnvVar });
     return { url };
   } catch (error) {
-    return { error: error.message };
+    return { error: authoredMessage(error, 'The MCP server URL or key binding was refused.') };
   }
 }
 
@@ -595,7 +619,7 @@ async function rpcWithOAuth({ serverId, server, send, options }) {
   if (tokenExpiresWithin(current, REFRESH_SKEW_MS, now)) {
     const refreshed = await refresh(current);
     if (refreshed.ok) current = refreshed.server;
-    else if (refreshed.disconnected) throw new McpOAuthNotConnectedError(refreshed.message);
+    else if (refreshed.disconnected) throw new McpOAuthNotConnectedError(refreshed.sentence);
     // Transient: the stored token may still have a minute in it; try it.
   }
 
@@ -605,7 +629,7 @@ async function rpcWithOAuth({ serverId, server, send, options }) {
     if (!isTokenRejection(error)) throw error;
     const refreshed = await refresh(current);
     if (!refreshed.ok) {
-      if (refreshed.disconnected) throw new McpOAuthNotConnectedError(refreshed.message);
+      if (refreshed.disconnected) throw new McpOAuthNotConnectedError(refreshed.sentence);
       throw error;
     }
     // One retry. A second rejection is reported as the auth failure it is.
@@ -642,10 +666,13 @@ function rpcOnServer({ serverId, server, url, rpcBody, env, options }) {
 /** A tools/call reply as the outcome callMcpTool reports; every shape is a 200. */
 function toolCallOutcome(rpcResult) {
   if (rpcResult?.error) {
+    // The JSON-RPC error code is kept, when it is one; the server's own
+    // sentence is not (#945).
+    const { code } = rpcResult.error;
     return {
       ok: false,
-      error: rpcResult.error.message || 'MCP error',
-      code: rpcResult.error.code,
+      error: 'The MCP server answered the call with an error.',
+      code: Number.isInteger(code) ? code : codeShaped(code) || null,
       httpStatus: 200,
     };
   }
@@ -756,7 +783,12 @@ export async function callMcpTool({
   } catch (error) {
     if (error instanceof McpOAuthNotConnectedError) {
       log.warn?.('[mcp] tools/call refused: the server signs in with Connect and is not connected');
-      return { ok: false, error: error.message, code: 'UNAUTHENTICATED', httpStatus: 200 };
+      return {
+        ok: false,
+        error: authoredMessage(error, 'The server is not connected; press Connect on its card.'),
+        code: 'UNAUTHENTICATED',
+        httpStatus: 200,
+      };
     }
     // Content-free on purpose: a McpUpstreamError carries `responseBody`,
     // which for a tool call can be the tool's output — a transcript — and
@@ -782,7 +814,10 @@ async function syncFailed({ store, now }, serverId, message) {
 
 /** A tools/list reply as the tools it carries, or the message refusing it. */
 function toolListOutcome(rpcResult) {
-  if (rpcResult?.error) return { error: rpcResult.error.message || 'MCP error' };
+  // The JSON-RPC error code is kept; the server's own sentence is not (#945).
+  if (rpcResult?.error) {
+    return { error: `The MCP server answered tools/list with an error (code ${Number(rpcResult.error.code) || 'none'}).` };
+  }
   if (!rpcResult || !Object.hasOwn(rpcResult, 'result')) {
     return { error: 'MCP server returned no tool list' };
   }
@@ -822,11 +857,14 @@ async function syncToolListOutcome(ctx, context, { serverId, server, url }) {
     return { ok: true, tools: outcome.tools };
   } catch (error) {
     if (error instanceof McpOAuthNotConnectedError) {
-      await markServerNeedsConnection(store, serverId, error.message, now);
-      return { ok: false, error: error.message, code: 'UNAUTHENTICATED' };
+      const notConnected = authoredMessage(error, 'The server is not connected; press Connect on its card.');
+      await markServerNeedsConnection(store, serverId, notConnected, now);
+      return { ok: false, error: notConnected, code: 'UNAUTHENTICATED' };
     }
-    const message = error.message || 'MCP tool sync failed';
-    context.error?.('[syncMcpTools] upstream call failed:', error);
+    // The transport's authored sentence, or the fallback; the log line is
+    // content-free (#945).
+    const message = authoredMessage(error, 'MCP tool sync failed.');
+    context.error?.(`[syncMcpTools] upstream call failed (${errorCode(error)})`);
     await markServerError(store, serverId, message, now);
     return failureBody(mcpAuthError(error, message));
   }

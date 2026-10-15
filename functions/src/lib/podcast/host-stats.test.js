@@ -148,7 +148,12 @@ describe('fetchHostStats', () => {
         message: 'Podbean answered 429 while reading.',
         retryable: true,
       },
-      audience: { status: null, code: 'UNEXPECTED', message: 'fetch failed', retryable: false },
+      audience: {
+        status: null,
+        code: 'UNEXPECTED',
+        message: 'The Podbean step failed unexpectedly (TypeError).',
+        retryable: false,
+      },
     });
     expect(out.downloads.total).toBe(5);
     expect(out.platforms).toEqual(PLATFORMS);

@@ -40,6 +40,7 @@ import { CODER_AUTOMATION_DOC_ID } from './coder-automation.js';
 import { LAB_CANARY_DOC_ID, UNREACHED_OUTCOMES } from './canary.js';
 import { TOKEN_OPERATIONS, TOKEN_STATE_DOC_ID, isRefusing } from './coder-status.js';
 import { LAB_DRIFT_DOC_ID, agoText, labDriftVerdict } from './drift.js';
+import { storedFailure } from '../http/error-response.js';
 
 export const LAB_DRIFT_PROBE = 'lab-drift';
 export const CODER_TEMPLATE_PROBE = 'coder-template';
@@ -285,9 +286,15 @@ export async function readCoderToken(store, nowMs) {
   );
 }
 
-/** A check that could not be read is said as such, never as healthy. */
+/**
+ * A check that could not be read is said as such, never as healthy: a
+ * sentence with the error's code, never the store's own words (#945).
+ *
+ * @param {unknown} error - what the read threw
+ * @returns {{ status: string, summary: string }}
+ */
 const unreadable = (error) =>
-  result('unknown', `The check's data could not be read: ${error?.message || error}`);
+  result('unknown', storedFailure(error, "The check's data could not be read."));
 
 /**
  * Every check, for the Labs snapshot: `{ checks, drift }`, where `drift` is

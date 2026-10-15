@@ -794,7 +794,11 @@ describe('the audit row every non-GET proxy call leaves (AP-B3, #938)', () => {
       const parsed = JSON.parse(res.body);
       expect(parsed.ok).toBe(false);
       expect(parsed.error).not.toContain('publer-key-secret-12345');
-      expect(parsed.error).toContain('***');
+      // Stronger than redaction: no transport text at all reaches the answer
+      // (#945), only the service, the failure's code and a correlation id.
+      expect(parsed.error).toBe('Publer could not be reached (Error).');
+      expect(parsed.correlationId).toEqual(expect.any(String));
+      expect(res.body).not.toContain('ECONNREFUSED https://');
     });
 
     it('redacts secrets containing characters that are JSON-escaped in raw upstream text', async () => {

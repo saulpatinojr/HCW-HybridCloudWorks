@@ -11,6 +11,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { AuthoredError, authoredMessage } from '../../http/error-response.js';
 
 import { PROVIDERS } from '../pricing/baseline.js';
 import { regionOption } from '../pricing/regions.js';
@@ -26,8 +27,12 @@ const BODY_KEYS = ['region', 'scenarioId', 'scenarioLabel', 'extras', 'egressGb'
 const RESULT_KEYS = ['provider', 'total', 'base', 'segments', 'unavailable'];
 const SEGMENT_KEYS = ['extraId', 'label', 'cost'];
 
-/** A refusal in the validator: a sentence naming the field, never the value. */
-class Refusal extends Error {}
+/**
+ * A refusal in the validator: a sentence naming the field, never the value.
+ * Authored (#945): the public route answers with it, and
+ * public-visitor-copy.test.js holds every sentence to visitor language.
+ */
+class Refusal extends AuthoredError {}
 const refuse = (message) => {
   throw new Refusal(message);
 };
@@ -126,7 +131,7 @@ export function validateExplainRequest(raw) {
   try {
     return { value: body(raw) };
   } catch (error) {
-    if (error instanceof Refusal) return { error: error.message };
+    if (error instanceof Refusal) return { error: authoredMessage(error, 'The request was refused.') };
     throw error;
   }
 }

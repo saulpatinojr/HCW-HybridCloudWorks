@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 
+import { RepoSourceError } from '../cms/repo-draft-source.js';
 import {
   COMMITS_PER_PATH,
   DRIFT_LAG_LIMIT_MS,
@@ -379,7 +380,8 @@ describe('refreshDriftRecord', () => {
     const store = driftStore(drift({ lastAttemptAt: hoursAgo(2), lastSuccessAt: hoursAgo(2), hostCommits: kept }));
     const failing = {
       hostCommits: vi.fn(async () => {
-        throw Object.assign(new Error("GitHub's unauthenticated rate limit is used up."), { code: 'RATE_LIMITED' });
+        // fetchPinned's shape: a coded RepoSourceError, written in this repository.
+        throw new RepoSourceError("GitHub's unauthenticated rate limit is used up.", { code: 'RATE_LIMITED' });
       }),
     };
     const log = { warn: vi.fn() };
@@ -397,6 +399,17 @@ describe('refreshDriftRecord', () => {
     const line = log.warn.mock.calls[0][0];
     expect(line).not.toContain(APPLIED.commit);
     expect(line).not.toContain(LAB_DRIFT_DOC_ID);
+  });
+
+  it("stores a socket's failure as a sentence with its code, never the socket's words (#945)", async () => {
+    const store = driftStore(drift({ lastAttemptAt: hoursAgo(2) }));
+    const failing = {
+      hostCommits: vi.fn(async () => {
+        throw Object.assign(new Error('connect ECONNREFUSED 140.82.112.6:443'), { code: 'ECONNREFUSED' });
+      }),
+    };
+    await refreshDriftRecord({ store, reader: failing, agents: [agent()], now: () => NOW, log: { warn: vi.fn() } });
+    expect(store.doc.lastError).toBe("main's lab-host history could not be read (ECONNREFUSED).");
   });
 
   it('leaves the record to whoever wrote it in between', async () => {

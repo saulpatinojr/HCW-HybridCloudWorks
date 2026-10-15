@@ -393,7 +393,7 @@ describe('validation happens before any fetch', () => {
 });
 
 describe('Resend refusals', () => {
-  it('map to 502 with Resend name and message, trimmed, and log status only', async () => {
+  it("map to 502 with Resend's status and error name, never its sentence, and log status only", async () => {
     const long = `Domain ${SUBSCRIBER} is invalid ${'x'.repeat(400)}`;
     const resend = makeResend({
       'GET /domains': () => reply(422, { name: 'validation_error', message: long }),
@@ -405,8 +405,9 @@ describe('Resend refusals', () => {
     const body = bodyOf(res);
     expect(body.ok).toBe(false);
     expect(body.status).toBe(422);
-    expect(body.error.startsWith('validation_error: Domain')).toBe(true);
-    expect(body.error.length).toBe(200);
+    // A provider's own words stay out of the answer (#945).
+    expect(body.error).toBe('Resend refused the request (HTTP 422 validation_error).');
+    expect(res.body).not.toContain(SUBSCRIBER);
     const logged = loggedText(ctx);
     expect(logged).toContain('mailingListDomains');
     expect(logged).toContain('422');

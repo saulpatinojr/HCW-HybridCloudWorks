@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { fetchForImport, importBlobPath, importFileName, importRefusal } from './import.js';
+import { FetchRefusedError } from '../http/guarded-fetch.js';
 
 describe('importRefusal', () => {
   it('refuses a non-http(s) URL before looking at the route', () => {
@@ -22,15 +23,27 @@ describe('importRefusal', () => {
 });
 
 describe('fetchForImport', () => {
-  it('maps a thrown fetch to 422 with the URL redacted from the reason', async () => {
+  it("maps a thrown fetch to 422 by its code, never the socket's sentence (#945)", async () => {
     const fetchImage = vi.fn(async (url) => {
-      throw new Error(`timed out reading ${url}`);
+      throw Object.assign(new Error(`timed out reading ${url}`), { code: 'FETCH_TIMEOUT' });
     });
     const result = await fetchForImport(fetchImage, 'https://example.test/a.png');
     expect(result).toEqual({
       ok: false,
       status: 422,
-      error: 'Could not fetch image: timed out reading [url]',
+      error: 'Could not fetch image: the request failed (FETCH_TIMEOUT)',
+    });
+  });
+
+  it("keeps the guard's own refusal, with the URL redacted", async () => {
+    const url = 'https://example.test/a.png';
+    const fetchImage = vi.fn(async () => {
+      throw new FetchRefusedError(`Only https is fetched here: ${url}`);
+    });
+    expect(await fetchForImport(fetchImage, url)).toEqual({
+      ok: false,
+      status: 422,
+      error: 'Could not fetch image: Only https is fetched here: [url]',
     });
   });
 

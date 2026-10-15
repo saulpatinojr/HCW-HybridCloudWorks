@@ -36,7 +36,7 @@ import {
 } from '../lib/content/forge-studio.js';
 import { actorName } from '../lib/auth/actor-name.js';
 import { createJobFailureOnComplete } from '../lib/job-failure-notify.js';
-import { registerJobType } from '../lib/jobs.js';
+import { JobFailedError, registerJobType } from '../lib/jobs.js';
 
 export const FORGE_MAX_BATCH = 10;
 
@@ -75,9 +75,9 @@ export function resolveForgeTargets(payload = {}) {
       ? [payload.sourceContentId]
       : [];
   const clean = [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))];
-  if (!clean.length) throw new Error('sourceContentId (or sourceContentIds) required');
+  if (!clean.length) throw new JobFailedError('sourceContentId (or sourceContentIds) required');
   if (clean.length > FORGE_MAX_BATCH)
-    throw new Error(`At most ${FORGE_MAX_BATCH} documents per forge job`);
+    throw new JobFailedError(`At most ${FORGE_MAX_BATCH} documents per forge job`);
   return clean;
 }
 
@@ -121,8 +121,10 @@ registerJobType('forge-article', {
     }
     // A single-document job that did not forge is a failed job, as upstream's
     // HTTP status was; a batch reports per document.
+    // The outcome's error is already a storable sentence (forge.js writes
+    // it authored, or through recordedFailure), so it is the job's own.
     if (ids.length === 1 && !outcomes[0].success && !outcomes[0].skipped)
-      throw new Error(outcomes[0].error);
+      throw new JobFailedError(outcomes[0].error);
     return ids.length === 1
       ? outcomes[0]
       : {
@@ -185,7 +187,7 @@ export async function runForgeFromUrl(
   log.log?.(`[forge-from-url] ${doc.id} → ${outcome.ok ? outcome.result.status : outcome.error}`);
   // A duplicate (409) is a legitimate answer — the URL's story is already
   // published — so it reports rather than fails, same as forge-article.
-  if (!outcome.ok && outcome.httpStatus !== 409) throw new Error(outcome.error);
+  if (!outcome.ok && outcome.httpStatus !== 409) throw new JobFailedError(outcome.error);
   return outcome.ok
     ? { ...outcome.result, sourceUrl: source.url }
     : {

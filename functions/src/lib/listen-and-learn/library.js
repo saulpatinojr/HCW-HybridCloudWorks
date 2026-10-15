@@ -12,6 +12,7 @@
  * testable without a store. The handlers (handlers.js) do the I/O.
  */
 import { STATUS, manualChapterId, slugifyTitle } from './publish.js';
+import { authoredMessage } from '../http/error-response.js';
 import { normalizeVoiceSettings, voiceSettingsOf } from './speech-settings.js';
 import {
   checkBoolean,
@@ -181,7 +182,7 @@ export function parseChapterCreate(body) {
   try {
     id = manualChapterId(title.value);
   } catch (err) {
-    return { error: err.message };
+    return { error: authoredMessage(err, 'The chapter title cannot be made into an id.') };
   }
 
   const speak = body?.speak === undefined ? Boolean(sourceText || contentId) : Boolean(body.speak);

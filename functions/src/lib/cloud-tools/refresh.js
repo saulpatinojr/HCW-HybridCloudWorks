@@ -37,6 +37,7 @@ import { fetchLivePricing as liveFetch, clearPricingCaches } from './pricing/ind
 import { BASELINE_COSTS, PROVIDERS, fallbackBaselineFor } from './pricing/baseline.js';
 import { REGION_OPTIONS, SERVICE_LABELS, pricingDocId, regionOption } from './pricing/regions.js';
 import { DEFAULT_CACHE_TTL_MINUTES } from './freshness.js';
+import { recordedFailure } from '../http/error-response.js';
 import {
   CACHE_CONTAINER,
   HISTORY_CONTAINER,
@@ -202,9 +203,13 @@ export function createPricingRefresh({
         try {
           summary = await refreshRegion(regionId, { signal: activeSignal });
         } catch (error) {
-          const message = error?.message || String(error);
-          log.error?.(`[refresh-tool-pricing] ${regionId} FAILED: ${message}`);
-          failed.push({ region: regionId, error: message });
+          // The job result is served to the admin page by getJob, so it
+          // holds a sentence with the code and the log line's reference; the
+          // line itself is content-free (#945).
+          failed.push({
+            region: regionId,
+            error: recordedFailure(log, 'The region could not be refreshed.', error),
+          });
           continue;
         }
         const { services, ...result } = summary;
@@ -222,9 +227,10 @@ export function createPricingRefresh({
           // The cache document is written and the page is served; what is
           // missing is today's snapshot and the change feed. Say so, count
           // it, and keep going.
-          const message = error?.message || String(error);
-          log.error?.(`[refresh-tool-pricing] ${regionId} history FAILED: ${message}`);
-          failed.push({ region: regionId, error: `history: ${message}` });
+          failed.push({
+            region: regionId,
+            error: recordedFailure(log, "The region's price history could not be written.", error),
+          });
         }
         done.push({ ...result, changes });
       }

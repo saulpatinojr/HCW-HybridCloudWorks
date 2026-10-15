@@ -66,6 +66,7 @@
  * of the button.
  */
 import { createKeyVerdictReporter, isCredentialRejected } from '../key-verdict.js';
+import { AuthoredError, authoredMessage, errorCode, logFailure } from '../http/error-response.js';
 import { readUpstreamError } from './upstream-error.js';
 
 const json = (status, body) => ({
@@ -74,8 +75,6 @@ const json = (status, body) => ({
   body: JSON.stringify(body),
 });
 
-/** Long enough for any upstream sentence, short enough for a toast. */
-const MAX_ERROR_LENGTH = 300;
 
 /**
  * A probe should answer in seconds or be reported as unreachable. Without a
@@ -117,8 +116,12 @@ export function redactSecrets(text, secrets = []) {
   return out;
 }
 
-/** Thrown when a credential could not be put in a URL without reshaping it. */
-export class UnusableCredentialError extends Error {
+/**
+ * Thrown when a credential could not be put in a URL without reshaping it.
+ * The sentence is written here and never quotes the value (authored, #945).
+ */
+export class UnusableCredentialError extends AuthoredError {
+  /** @param {string} message - what is wrong with the value, not the value */
   constructor(message) {
     super(message);
     this.name = 'UnusableCredentialError';
@@ -203,9 +206,15 @@ export function createProbe({
 /**
  * A token exchange that was refused, or answered without a token. `status`
  * is the token endpoint's HTTP status (or null), and `detail` its own
- * sentence, built from text that was redacted before it was parsed.
+ * sentence, built from text that was redacted before it was parsed. The
+ * message is this module's (authored, #945); `detail` is the provider's and
+ * stays out of the answer.
  */
-export class ProbeAuthenticationError extends Error {
+export class ProbeAuthenticationError extends AuthoredError {
+  /**
+   * @param {string} message - the authored sentence
+   * @param {{ status?: number|null, detail?: string }} [options] - the endpoint's status and words
+   */
   constructor(message, { status = null, detail = '' } = {}) {
     super(message);
     this.name = 'ProbeAuthenticationError';
@@ -564,25 +573,30 @@ export function createConnectionProbe({
       // fault: 200 with ok:false, and a sentence that names the setting so the
       // operator knows which box to look in. The value itself is never quoted.
       const setting = probe.settings[0];
-      context.warn?.(`${probe.name}Probe refused ${setting}: ${error.message}`);
+      context.warn?.(`${probe.name}Probe refused ${setting} (${errorCode(error)})`);
       return json(200, {
         ok: false,
-        error: `${probe.service} cannot be tested: ${setting} ${error.message}`,
+        error: `${probe.service} cannot be tested: ${setting} ${authoredMessage(error, 'cannot be used in the request')}`,
         code: 'INTEGRATION_NOT_CONFIGURED',
       });
     }
 
-    /** The 200 `{ ok: false }` answer for a probe whose request got no response. */
+    /**
+     * The 200 `{ ok: false }` answer for a probe whose request got no response.
+     * The transport's own text stays out of the answer and the log (#945): an
+     * undici failure quotes its request target in `cause`, and for three of
+     * these probes that target contains a credential. Its code says which
+     * failure it was, and the correlation id finds the line.
+     *
+     * @param {unknown} error - what the fetch threw
+     * @returns {object} the HTTP response
+     */
     const unreachable = (error) => {
-      // The URL is deliberately absent from this message, and redaction runs
-      // over what is left. An undici failure quotes its request target in
-      // `cause`, and for three of these probes that target contains a
-      // credential.
-      const reason = redactSecrets(error?.message ?? String(error), secrets);
-      context.error?.(`${probe.name}Probe could not reach ${probe.service}: ${reason}`);
+      const correlationId = logFailure(context, `${probe.name}Probe could not reach ${probe.service}`, error, request);
       return json(200, {
         ok: false,
-        error: `${probe.service} could not be reached: ${reason}`.slice(0, MAX_ERROR_LENGTH),
+        error: `${probe.service} could not be reached (${errorCode(error?.cause ?? error)}).`,
+        correlationId,
       });
     };
 
@@ -600,13 +614,14 @@ export function createConnectionProbe({
       // ok:false, like a refused GET, so the page renders "not connected"
       // with the provider's own sentence. No `data`: nothing past this point
       // needs the token endpoint's body.
+      // The sentence is this module's; the token endpoint's own words
+      // (`detail`) are the provider's and stay out of the answer (#945).
       const { refused } = step;
-      const detail = redactSecrets(refused.detail || '', secrets);
       context.warn?.(`${probe.name}Probe: token exchange refused (${refused.status ?? 'no status'})`);
       return json(200, {
         ok: false,
         ...(refused.status ? { status: refused.status } : {}),
-        error: `${refused.message}${detail ? `: ${detail}` : ''}.`.slice(0, MAX_ERROR_LENGTH),
+        error: `${authoredMessage(refused, 'The token exchange was refused')}.`,
       });
     }
     const { minted } = step;
@@ -665,16 +680,31 @@ export function createConnectionProbe({
       });
     }
 
-    // `error` carries the upstream's own sentence, so the page prints what the
-    // provider said rather than a bare status. `unwrapProxy` on the browser
-    // side prefers this field, which is what keeps the three new runners from
-    // needing to know each API's error shape (#463 item 4).
-    const detail = readUpstreamError(data);
-    return json(200, {
-      ok: response.ok,
-      status: response.status,
-      data,
-      ...(response.ok || !detail ? {} : { error: detail.slice(0, MAX_ERROR_LENGTH) }),
-    });
+    // A success relays the redacted answer: the Test runners read the bot's
+    // username or the show's title from it. A failure answers with exactly
+    // PROBE_FAILURE_FIELDS: `error` names the service and the status, and
+    // the upstream's body stays out (#945, #1200 review L2). This route is
+    // editor-level, and the browser never read `data` on a failure
+    // (`unwrapProxy` takes `error`); the provider's own sentence on a 401 or
+    // 403, which #463 and #358 made the diagnosis, is kept where they put
+    // it: the key verdict's lastFailDetail, which only the super_admin
+    // API-keys page reads.
+    if (response.ok) return json(200, { ok: true, status: response.status, data });
+    return json(200, probeFailure(probe, response.status));
   };
+}
+
+/** The only fields a failed probe answers with (#945): no upstream body. */
+export const PROBE_FAILURE_FIELDS = Object.freeze(['ok', 'status', 'error']);
+
+/**
+ * A probe the upstream refused, as the page is told: the service and the
+ * status, in this module's words.
+ *
+ * @param {{ service: string }} probe - the probe that ran
+ * @param {number} status - the upstream's HTTP status
+ * @returns {{ ok: false, status: number, error: string }}
+ */
+export function probeFailure(probe, status) {
+  return { ok: false, status, error: `${probe.service} answered HTTP ${status}.` };
 }

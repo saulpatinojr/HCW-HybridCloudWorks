@@ -52,6 +52,10 @@
  * cannot quietly delete a good episode's transcript.
  */
 import { mediaUrlFor } from '../blob-paths.js';
+import { AuthoredError } from '../http/error-response.js';
+
+/** A title that yields no id; the sentence is written below (authored, #945). */
+export class EpisodeIdError extends AuthoredError {}
 
 export const SET_CONTAINER = 'listen_and_learn';
 export const EPISODE_CONTAINER = 'listen_and_learn_episodes';
@@ -94,9 +98,16 @@ export function episodeKindOf(doc) {
 /** The document id of a hand-made chapter: `manual_<slug of its title>`. */
 export const MANUAL_CHAPTER_ID_PREFIX = 'manual_';
 
+/**
+ * The id of a manual chapter, from its title.
+ *
+ * @param {string} title - the chapter title
+ * @returns {string}
+ * @throws {EpisodeIdError}
+ */
 export function manualChapterId(title) {
   const slug = slugifyTitle(title);
-  if (!slug) throw new Error('A chapter needs a title with at least one letter or digit');
+  if (!slug) throw new EpisodeIdError('A chapter needs a title with at least one letter or digit');
   return `${MANUAL_CHAPTER_ID_PREFIX}${slug}`;
 }
 
@@ -304,10 +315,17 @@ export function slugifyTitle(text) {
     .replace(/^-+|-+$/g, '');
 }
 
+/**
+ * The id of a source-grounded episode, from its title.
+ *
+ * @param {string} title - the episode title
+ * @returns {string}
+ * @throws {EpisodeIdError}
+ */
 export function sourceEpisodeId(title) {
   const slug = slugifyTitle(title);
   if (!slug)
-    throw new Error('A source-grounded episode needs a title with at least one letter or digit');
+    throw new EpisodeIdError('A source-grounded episode needs a title with at least one letter or digit');
   return `${SOURCE_EPISODE_ID_PREFIX}${slug}`;
 }
 
@@ -500,14 +518,25 @@ export async function saveEpisode(
  * had never succeeded would otherwise be a document with no `kind`, which
  * `episodeKindOf` reads as guide. The caller's kind wins, then the stored
  * one, then the default.
+ *
+ * `error` is the sentence to store, never an error's own message: every
+ * caller writes it with storedFailure, so the admin page reads the code's
+ * words or a fixed sentence with a code and a reference (#945). A caller
+ * that passed `err.message` here is itself a site the repository guard
+ * (no-raw-error-leaks.test.js) refuses.
+ *
+ * @param {object} store - `{ readDoc, upsertDoc }`
+ * @param {{ provider: string, examCode: string, area: { slug: string, name?: string, weightLabel?: string },
+ *   error: string, order?: number, now: string, kind?: string }} failure
+ * @returns {Promise<void>}
  */
 export async function saveEpisodeFailure(
   store,
-  { provider, examCode, area, error, order, now, kind }
+  { provider, examCode, area, error: sentence, order, now, kind }
 ) {
   const id = setId(provider, examCode);
   const existing = (await store.readDoc(EPISODE_CONTAINER, area.slug, id)) || {};
-  const message = String(error).slice(0, 500);
+  const message = String(sentence).slice(0, 500);
   const keepLive = existing.status === STATUS.published || existing.status === STATUS.archived;
 
   await store.upsertDoc(EPISODE_CONTAINER, {

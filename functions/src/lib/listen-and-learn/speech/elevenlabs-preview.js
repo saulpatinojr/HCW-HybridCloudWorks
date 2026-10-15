@@ -27,6 +27,7 @@
  * `MAX_PREVIEW_BYTES`, and hands back the bytes only if they begin like an
  * MP3.
  */
+import { codeShaped, errorCode as failureCode } from '../../http/error-response.js';
 import { ElevenLabsSpeechError } from './elevenlabs-account.js';
 import { isElevenLabsVoiceId } from './elevenlabs-voice-plan.js';
 
@@ -130,7 +131,27 @@ async function readCapped(response, limit) {
   return bytes;
 }
 
-/** Refuse a response that is not a successful audio answer. */
+/**
+ * A Content-Type header as a sentence may name it: `type/subtype` when both
+ * halves have the door's code shape, else a fixed phrase. The header is the
+ * host's, so nothing else of it is repeated (#945).
+ *
+ * @param {string} header - the response's Content-Type
+ * @returns {string}
+ */
+function namedMediaType(header) {
+  const [type = '', subtype = ''] = header.split(';')[0].trim().toLowerCase().split('/');
+  const a = codeShaped(type);
+  const b = codeShaped(subtype);
+  return a && b ? `${a}/${b}` : 'an unexpected content type';
+}
+
+/**
+ * Refuse a response that is not a successful audio answer.
+ *
+ * @param {Response} response - the preview host's answer
+ * @returns {void}
+ */
 function assertAudioResponse(response) {
   if (!response.ok) {
     throw previewError(`The preview host answered HTTP ${response.status}.`, PREVIEW_FAILED, 502);
@@ -138,7 +159,7 @@ function assertAudioResponse(response) {
   const type = String(response.headers?.get?.('content-type') || '');
   if (type && !PREVIEW_CONTENT_TYPES.some((pattern) => pattern.test(type))) {
     throw previewError(
-      `The preview host answered ${type.slice(0, 60)}, not audio.`,
+      `The preview host answered ${namedMediaType(type)}, not audio.`,
       PREVIEW_FAILED,
       502
     );
@@ -171,7 +192,11 @@ export async function fetchPreviewAudio(previewUrl, { fetchImpl = fetch } = {}) 
       headers: { Accept: 'audio/mpeg' },
     });
   } catch (err) {
-    throw previewError(`Could not fetch the preview: ${err?.message || err}`, PREVIEW_FAILED, 502);
+    throw previewError(
+      `Could not fetch the preview (${failureCode(err?.cause ?? err)}).`,
+      PREVIEW_FAILED,
+      502
+    );
   }
   assertAudioResponse(response);
   const audio = await readCapped(response, MAX_PREVIEW_BYTES);

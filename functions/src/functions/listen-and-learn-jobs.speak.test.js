@@ -6,7 +6,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const registered = [];
-vi.mock('../lib/jobs.js', () => ({
+vi.mock('../lib/jobs.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   registerJobType: vi.fn((type, spec) => registered.push({ type, spec })),
 }));
 
@@ -157,10 +158,13 @@ describe('runSpeakChapter', () => {
     const doc = docs.listen_and_learn_episodes.manual_x;
     expect(doc.status).toBe(STATUS.published);
     expect(doc.audioUrl).toBe('/u/old');
+    // The chapter stores a sentence with the error's code, never the
+    // provider's words (#945).
     expect(doc.lastError).toMatchObject({
-      message: 'Gemini TTS HTTP 500: boom',
+      message: 'The chapter could not be voiced (SpeechError).',
       attempt: 'regeneration',
     });
+    expect(JSON.stringify(doc)).not.toContain('boom');
     expect(uploadBlob).not.toHaveBeenCalled();
   });
 

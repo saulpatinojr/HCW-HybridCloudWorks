@@ -31,6 +31,7 @@ import {
   suggestSubjects,
 } from './issue.js';
 import { INTRO_TONES } from './settings.js';
+import { AiFeatureDisabledError } from '../ai/router.js';
 import { UNSUBSCRIBE_PLACEHOLDER, renderIssue } from './render.js';
 
 const NOW = new Date('2026-09-14T12:00:00Z');
@@ -353,7 +354,8 @@ describe('sections', () => {
     const empty = { id: 'empty', title: 'Empty', collect: async () => [] };
     const result = await collectSections({ store: {}, since: SINCE, until: NOW, sections: [broken, ok, empty], log: { warn } });
     expect(result.sections.map((s) => s.id)).toEqual(['ok']);
-    expect(result.problems).toEqual(['broken: container gone']);
+    // The failure's code, never its sentence: problems are stored and shown (#945).
+    expect(result.problems).toEqual(['broken: could not be collected (Error)']);
     expect(warn).toHaveBeenCalled();
   });
 
@@ -404,7 +406,7 @@ describe('createIssueBuilder', () => {
 
   it('still builds the issue when the AI is off, with a dated subject and no intro', async () => {
     const store = makeStore({ content: [article] });
-    const d = { generateDraft: vi.fn(async () => { throw new Error('forgeDrafting is disabled'); }) };
+    const d = { generateDraft: vi.fn(async () => { throw new AiFeatureDisabledError('forgeDrafting'); }) };
     const result = await createIssueBuilder({ store, drafter: d, now: () => NOW, log: { warn: vi.fn() } }).build({});
     expect(result.success).toBe(true);
     // The page is Newsletter Hub in the menu (#566); the message names it that way.
@@ -412,7 +414,7 @@ describe('createIssueBuilder', () => {
     const doc = store.written.get('newsletters/issue-2026-09-14');
     expect(doc.subject).toBe('HybridCloudWorks Weekly: Sep 7 – Sep 14');
     expect(doc.intro).toBe('');
-    expect(doc.introError).toMatch(/disabled/);
+    expect(doc.introError).toMatch(/turned off/);
   });
 
   it('refreshes a same-day draft but keeps the owner’s note', async () => {

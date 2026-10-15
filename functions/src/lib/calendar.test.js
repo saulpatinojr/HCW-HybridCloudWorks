@@ -295,7 +295,8 @@ describe('collectCalendar', () => {
       log,
     });
     expect(items.map((i) => i.id)).toEqual(['audio:1', 'content:1']);
-    expect(warnings).toEqual(['social: Cosmos down']);
+    // The collector's code, never its sentence: warnings reach the page (#945).
+    expect(warnings).toEqual(['social: could not be read (Error)']);
     expect(log.warn).toHaveBeenCalledTimes(1);
   });
 
@@ -359,7 +360,7 @@ describe('route', () => {
     const body = JSON.parse(res.body);
     expect(res.status).toBe(200);
     expect(body.items).toHaveLength(1);
-    expect(body.warnings).toEqual(['speaking: nope']);
+    expect(body.warnings).toEqual(['speaking: could not be read (Error)']);
     expect(body.total).toBe(1);
   });
 });

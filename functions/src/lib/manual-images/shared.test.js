@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { compact, generationFailure, modelInfo, readNamedSet } from './shared.js';
+import { ImageBudgetError } from '../triggers/ai-cover.js';
 
 describe('compact', () => {
   it('reduces an ISO stamp to its 14 digits', () => {
@@ -56,17 +57,18 @@ describe('readNamedSet', () => {
 });
 
 describe('generationFailure', () => {
-  it('logs under the label and answers the 500 with the message and the cause', () => {
-    const context = { error: vi.fn() };
+  it('answers the 500 with the message, logging only the code and the correlation id', () => {
+    const context = { error: vi.fn(), invocationId: 'inv-1' };
     const response = generationFailure(context, 'generateX', new Error('boom'), 'Failed X');
-    expect(context.error).toHaveBeenCalledWith('generateX failed:', expect.any(Error));
+    expect(context.error).toHaveBeenCalledWith('[inv-1] Failed X (name=Error)');
+    expect(JSON.stringify(context.error.mock.calls)).not.toContain('boom');
     expect(response.status).toBe(500);
-    expect(JSON.parse(response.body)).toMatchObject({ ok: false, error: 'Failed X' });
+    expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'Failed X', correlationId: 'inv-1' });
   });
 
-  it('keeps the image budget\'s own status and code, so the page can say paused', () => {
-    const context = { error: vi.fn() };
-    const paused = Object.assign(new Error('Image generation paused: $10.00 of the $10 budget used'), {
+  it('keeps the image budget\'s own status, code and (authored) sentence, so the page can say paused', () => {
+    const context = { error: vi.fn(), warn: vi.fn(), invocationId: 'inv-2' };
+    const paused = new ImageBudgetError('Image generation paused: $10.00 of the $10 budget used', {
       code: 'IMAGE_BUDGET_EXHAUSTED',
       status: 429,
     });
@@ -76,6 +78,23 @@ describe('generationFailure', () => {
       error: 'Failed X',
       code: 'IMAGE_BUDGET_EXHAUSTED',
       message: 'Image generation paused: $10.00 of the $10 budget used',
+      correlationId: 'inv-2',
     });
+    expect(context.warn).toHaveBeenCalledWith(
+      '[inv-2] generateX paused (name=ImageBudgetError code=IMAGE_BUDGET_EXHAUSTED status=429)'
+    );
+  });
+
+  it('a budget-coded error that is not authored keeps its status and code, not its words (#945)', () => {
+    const forged = Object.assign(new Error('Cosmos says: ActivityId 9f, RequestUri /dbs/x'), {
+      code: 'IMAGE_BUDGET_UNKNOWN',
+      status: 503,
+    });
+    const body = JSON.parse(generationFailure({ error: vi.fn() }, 'generateX', forged, 'Failed X').body);
+    expect(body).toMatchObject({
+      code: 'IMAGE_BUDGET_UNKNOWN',
+      message: 'Image generation is paused by the monthly budget.',
+    });
+    expect(JSON.stringify(body)).not.toContain('ActivityId');
   });
 });

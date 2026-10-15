@@ -234,16 +234,18 @@ describe('cancel and reschedule', () => {
     });
   });
 
-  it("cancel passes Resend's refusal through word for word, and writes nothing", async () => {
+  it("cancel names Resend's status and error name, never its sentence, and writes nothing", async () => {
     const { handlers, store } = build({
       resend: makeResend({ refuseDelete: true }),
     });
     const res = await handlers.cancel(request({ body: { etag: 'e1' } }), context());
     expect(res.status).toBe(502);
+    // A provider's own words stay out of the answer (#945).
     expect(bodyOf(res)).toMatchObject({
       code: 'CANCEL_REFUSED',
-      error: expect.stringMatching(/cannot be deleted on this plan/),
+      error: 'Resend did not cancel the broadcast: HTTP 403 restricted_api_key',
     });
+    expect(res.body).not.toMatch(/cannot be deleted on this plan/);
     expect(store.docs.get(`newsletters/${ID}`).status).toBe('scheduled');
   });
 
@@ -313,8 +315,9 @@ describe('cancel and reschedule', () => {
     expect(store.docs.get(`newsletters/${ID}`)).toMatchObject({
       status: 'draft',
       broadcastId: null,
-      lastError: expect.stringMatching(/scheduled_at is in the past/),
+      lastError: expect.stringMatching(/Resend refused the new one: HTTP 422 validation_error\./),
     });
+    expect(store.docs.get(`newsletters/${ID}`).lastError).not.toMatch(/scheduled_at is in the past/);
   });
 });
 

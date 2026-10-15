@@ -5,6 +5,7 @@
  */
 import { ARTICLE_CLOSE, ARTICLE_OPEN, fenceArticleText } from '../../ai/prompt-fence.js';
 import { AFTER_MODEL_MARGIN_MS } from '../../ai/time-budget.js';
+import { failureFields } from '../../http/error-response.js';
 import { text } from './brief.js';
 import { json } from './config.js';
 
@@ -178,11 +179,11 @@ export async function runAssist(ai, { action, draft, body }, context) {
         };
     return { result, served: usageOut.at(-1) || {} };
   } catch (error) {
-    context?.error?.(`[forge/assist] ${action}: ${error?.message || error}`);
+    // The router's own refusals (feature off, not configured) are authored
+    // and shown; a provider's words are not (#945).
     const status = error?.code === 'AI_FEATURE_DISABLED' ? 409 : 502;
     return refuse(status, {
-      ok: false,
-      error: String(error?.message || error),
+      ...failureFields(context, 'The assist did not finish.', error),
       code: error?.code || null,
     });
   }

@@ -8,7 +8,10 @@ import { readFileSync } from 'node:fs';
 
 // The module registers job types on import, and registerJobType throws on a
 // duplicate — so the registry is faked rather than shared across test files.
-vi.mock('../lib/jobs.js', () => ({ registerJobType: vi.fn() }));
+vi.mock('../lib/jobs.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  registerJobType: vi.fn(),
+}));
 vi.mock('../lib/cosmos-client.js', () => ({
   ADMIN_CONFIG_PARTITION: 'admin_config',
   readDoc: vi.fn(),

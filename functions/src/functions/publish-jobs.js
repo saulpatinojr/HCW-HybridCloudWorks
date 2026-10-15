@@ -13,13 +13,13 @@ import { getDefaultGuard } from '../lib/auth/default-guard.js';
 import { createPublishHandlers } from '../lib/cms/publish.js';
 import { createDefaultInlineImageRehoster } from '../lib/cms/inline-images-default.js';
 import { createJobFailureOnComplete } from '../lib/job-failure-notify.js';
-import { registerJobType } from '../lib/jobs.js';
+import { JobFailedError, registerJobType } from '../lib/jobs.js';
 
 /** Split for tests: the worker body with its dependencies injectable. */
 export async function runPublishContent(payload, { job, publish, signal } = {}) {
   if (signal?.aborted) throw signal.reason || new Error('aborted');
   const contentId = String(payload?.contentId || '').trim();
-  if (!contentId) throw new Error('contentId required');
+  if (!contentId) throw new JobFailedError('contentId required');
 
   const result = await publish.processPublishContent(contentId, {
     // The enqueuing surface's identity (the Telegram path stamps
@@ -34,7 +34,7 @@ export async function runPublishContent(payload, { job, publish, signal } = {}) 
   // processPublishContent never throws; a { error } result is this job's
   // failure (visible in /status and the jobs UI), a { skipped } is a benign
   // no-op worth surfacing as the job's result rather than a failure.
-  if (result?.error) throw new Error(result.error);
+  if (result?.error) throw new JobFailedError(result.error);
   return result;
 }
 

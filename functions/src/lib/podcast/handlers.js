@@ -55,6 +55,7 @@
  * per range.
  */
 import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
+import { authoredMessage } from '../http/error-response.js';
 import {
   ARTICLE_CONTAINER,
   TRANSCRIPT_JOB_TYPE,
@@ -212,7 +213,7 @@ export function createPodcastHandlers({
         try {
           id = transcriptId(article);
         } catch (err) {
-          return json(409, { error: err.message });
+          return json(409, { error: authoredMessage(err, 'This article cannot be keyed as a transcript.') });
         }
 
         if (typeof enqueue !== 'function') {

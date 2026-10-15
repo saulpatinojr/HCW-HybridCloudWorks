@@ -21,6 +21,8 @@
  * ranking and quota model are unchanged; the module is ESM and the key arrives
  * as a parameter rather than a Firebase secret binding.
  */
+import { AuthoredError, codeShaped, errorCode, storedFailure } from '../http/error-response.js';
+
 const SEARCH_URL = 'https://www.googleapis.com/youtube/v3/search';
 const VIDEOS_URL = 'https://www.googleapis.com/youtube/v3/videos';
 
@@ -34,10 +36,18 @@ const MAX_DURATION_SECONDS = 3 * 60 * 60;
 /** Below this, a video has had no scrutiny from anyone. */
 export const MIN_VIEWS = 500;
 
-export class VideoSearchError extends Error {
+/**
+ * A video search that failed, in this module's sentence: the HTTP status and
+ * the API's reason code, never the API's own message or a socket's (#945),
+ * so the job result and the episode can store it as written.
+ */
+export class VideoSearchError extends AuthoredError {
+  /**
+   * @param {string} message - the sentence, written here
+   * @param {{ status?: number|null }} [options]
+   */
   constructor(message, { status = null } = {}) {
     super(message);
-    this.name = 'VideoSearchError';
     this.status = status;
   }
 }
@@ -103,12 +113,22 @@ function toCandidate(item) {
   };
 }
 
+/**
+ * One GET against the Data API: the parsed body, or a VideoSearchError whose
+ * sentence names the status and the API's reason code, or the socket's code.
+ * The API's message and the socket's text stay out of it (#945).
+ *
+ * @param {string} url - the endpoint
+ * @param {Record<string, string>} params - the query
+ * @param {{ fetchImpl: Function }} deps
+ * @returns {Promise<object>}
+ */
 async function youtubeGet(url, params, { fetchImpl }) {
   let response;
   try {
     response = await fetchImpl(`${url}?${new URLSearchParams(params)}`);
   } catch (err) {
-    throw new VideoSearchError(`Failed to reach the YouTube Data API: ${err.message}`);
+    throw new VideoSearchError(`Failed to reach the YouTube Data API (${errorCode(err)}).`);
   }
 
   const body = await response.json().catch(() => ({}));
@@ -117,10 +137,11 @@ async function youtubeGet(url, params, { fetchImpl }) {
     // quotaExceeded is the one worth naming explicitly — it is the failure a
     // bulk regeneration will actually hit, and it is not a bug to chase.
     const detail = reason === 'quotaExceeded' ? ' (daily quota exhausted)' : '';
-    throw new VideoSearchError(
-      `YouTube Data API HTTP ${response.status}${detail}: ${body?.error?.message || 'unknown error'}`,
-      { status: response.status }
-    );
+    const reasonCode = codeShaped(reason);
+    const code = reasonCode ? `: ${reasonCode}` : '';
+    throw new VideoSearchError(`YouTube Data API HTTP ${response.status}${detail}${code}`, {
+      status: response.status,
+    });
   }
   return body;
 }
@@ -208,7 +229,7 @@ export async function findVideosForAreas(
   for (const area of areas) {
     const query = `${examCode} ${area.subheadings[0] || area.name}`.trim();
     let videos = [];
-    let error = null;
+    let failure = null;
 
     try {
       const found = await searchVideos(query, { apiKey, keep: perArea + 4, ...options });
@@ -217,10 +238,11 @@ export async function findVideosForAreas(
     } catch (err) {
       // One area failing (or the quota running out mid-run) must not discard
       // the areas that already succeeded; the caller decides what to publish.
-      error = err.message;
+      // The job result stores the search's own sentence (#945).
+      failure = storedFailure(err, 'The video search failed.');
     }
 
-    results.push({ areaSlug: area.slug, query, videos, error });
+    results.push({ areaSlug: area.slug, query, videos, error: failure });
   }
 
   return results;

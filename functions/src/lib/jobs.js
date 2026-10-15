@@ -44,6 +44,7 @@
 import { randomUUID } from 'node:crypto';
 import { ROLE_NAMES, roleLevel } from './auth/roles.js';
 import { runAsJob } from './job-context.js';
+import { AuthoredError, errorResponse, logFailure, storedFailure } from './http/error-response.js';
 
 export const JOBS_CONTAINER = 'jobs';
 export const JOBS_QUEUE = 'platform-jobs';
@@ -61,6 +62,14 @@ export const TERMINAL_JOB_STATUSES = Object.freeze(['succeeded', 'failed', 'time
 const DEFAULT_MAX_PAYLOAD_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_ERROR_CHARS = 2000;
+
+/**
+ * The role a job is read under when its type is no longer registered (a type
+ * renamed or removed since the job was queued): the enqueue floor, editor.
+ * Nobody below it could have queued the job, so nobody below it reads its
+ * payload and result (#945).
+ */
+export const JOB_READ_FLOOR = 'editor';
 
 const json = (status, body) => ({
   status,
@@ -252,6 +261,22 @@ export function jobPayloadBytes(payload) {
 }
 
 /**
+ * A job document over its type's payload bound. The sentence is written in
+ * newJobDoc from the size, the bound and the type, so an admin route may
+ * show it (authored, #945); a route that wants a visitor-safe sentence (the
+ * Listen & Learn queue) keys on the code instead.
+ */
+export class JobPayloadTooLargeError extends AuthoredError {}
+
+/**
+ * A worker's own sentence for why its job failed: a payload it refuses, or
+ * the outcome a pipeline already reported in a storable sentence. runJob
+ * stores it as written; any other throw is stored as the safe sentence with
+ * its code and correlation id (#945).
+ */
+export class JobFailedError extends AuthoredError {}
+
+/**
  * A fresh `queued` job document. One shape, shared by `enqueueJob` and every
  * route, timer and command that enqueues a job of its own (cms/podcast,
  * Listen & Learn, the Forge Studio queue, the Cosmos export scheduler, the
@@ -268,13 +293,13 @@ export function jobPayloadBytes(payload) {
  * the 64 KiB default for a type this process has not registered.
  *
  * @param {{ id: string, type: string, payload: any, requestedBy?: {oid?: string, email?: string}|null, createdAt: string, maxPayloadBytes?: number }} fields
- * @throws {Error} code `JOB_PAYLOAD_TOO_LARGE`, status 413, for a payload over the limit
+ * @throws {JobPayloadTooLargeError} code `JOB_PAYLOAD_TOO_LARGE`, status 413, for a payload over the limit
  */
 export function newJobDoc({ id, type, payload, requestedBy, createdAt, maxPayloadBytes }) {
   const limit = maxPayloadBytes ?? registry.get(type)?.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
   const bytes = jobPayloadBytes(payload);
   if (bytes > limit) {
-    throw Object.assign(new Error(`Payload too large (${bytes} bytes; max ${limit} for ${type})`), {
+    throw new JobPayloadTooLargeError(`Payload too large (${bytes} bytes; max ${limit} for ${type})`, {
       code: 'JOB_PAYLOAD_TOO_LARGE',
       status: 413,
     });
@@ -450,7 +475,20 @@ export function createJobHandlers({
       }
     },
 
-    /** GET|POST /api/getJob — viewer. `jobId` from the query string or the body. */
+    /**
+     * GET|POST /api/getJob — the job type's own role. `jobId` from the query
+     * string or the body.
+     *
+     * A viewer passes the first gate only so a missing id can be answered;
+     * the job itself is read under its type's role, because the payload and
+     * result are the type's (a forge-from-url job carries its source URL and
+     * brief). A job whose type is no longer registered is held at
+     * JOB_READ_FLOOR, so it cannot fall through to the viewer gate (#945).
+     *
+     * @param {object} request - the HTTP request
+     * @param {object} context - the invocation context
+     * @returns {Promise<{ status: number, headers: object, body: string }>}
+     */
     async getJob(request, context) {
       const auth = await guard.requireRole(request, 'viewer');
       if (auth.error) return auth.error;
@@ -472,17 +510,13 @@ export function createJobHandlers({
         const doc = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
         if (!doc) return json(404, { ok: false, error: 'Job not found' });
 
-        const spec = types.get(doc.type);
-        const requiredRole = spec?.role;
-        if (requiredRole) {
-          const stricter = await guard.requireRole(request, requiredRole);
-          if (stricter.error) return stricter.error;
-        }
+        const requiredRole = types.get(doc.type)?.role ?? JOB_READ_FLOOR;
+        const stricter = await guard.requireRole(request, requiredRole);
+        if (stricter.error) return stricter.error;
 
         return json(200, { ok: true, job: publicJob(doc) });
       } catch (error) {
-        context.error?.('getJob failed:', error);
-        return json(500, { ok: false, error: 'Failed to read job' });
+        return errorResponse(context, 'Failed to read job', error, 500, request);
       }
     },
 
@@ -609,16 +643,26 @@ export function createJobHandlers({
         return { jobId, outcome: 'succeeded' };
       } catch (error) {
         const timedOut = error?.code === 'JOB_TIMEOUT';
-        const errorText = truncate(error?.message || String(error));
+        // getJob serves this document to the type's role, so it stores the
+        // worker's authored sentence, or a fixed one with the error's code
+        // and the log line's correlation id: never a provider's, the
+        // store's or a socket's own words (#945). The log line is
+        // content-free and carries the same id.
+        const correlationId = logFailure(
+          context,
+          `runJob: ${doc.type} ${timedOut ? 'timed out' : 'failed'}`,
+          error
+        );
+        const errorText = truncate(
+          storedFailure(error, timedOut ? 'The job ran out of time.' : 'The job failed.', {
+            correlationId,
+          })
+        );
         await store.patchDoc(JOBS_CONTAINER, jobId, {
           status: timedOut ? 'timeout' : 'failed',
           finishedAt: now().toISOString(),
           error: errorText,
         });
-        context.error?.(
-          `runJob: job ${jobId} (${doc.type}) ${timedOut ? 'timed out' : 'failed'}:`,
-          error?.message
-        );
         await invokeOnComplete({
           job: claimed,
           status: timedOut ? 'timeout' : 'failed',

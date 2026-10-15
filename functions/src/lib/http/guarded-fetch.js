@@ -41,6 +41,7 @@
  */
 import { lookup } from 'node:dns/promises';
 import { Agent } from 'undici';
+import { AuthoredError, errorCode } from './error-response.js';
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -85,11 +86,30 @@ export function isPrivateIp(ip) {
   return REFUSED_IPV4_RANGES.some(({ first, last }) => n >= first && n <= last);
 }
 
-/** A guard refusal: `refused: true` so a caller can tell "must not fetch this"
+/**
+ * A guard refusal. Every sentence is written in this module from the URL the
+ * caller gave and what the guard decided, so an admin route may show it
+ * (`authoredMessage`, #945); `refused: true` lets a caller tell "must not
+ * fetch this" from "could not fetch this".
+ */
+export class FetchRefusedError extends AuthoredError {
+  /** @param {string} message - the refusal, naming the URL part refused */
+  constructor(message) {
+    super(message, { code: 'URL_REFUSED' });
+    this.refused = true;
+  }
+}
+
+/**
+ * A guard refusal: `refused: true` so a caller can tell "must not fetch this"
  * from "could not fetch this" and skip any fallback that would send the same
- * URL elsewhere. */
+ * URL elsewhere.
+ *
+ * @param {string} message - the authored sentence
+ * @returns {FetchRefusedError}
+ */
 function refusal(message) {
-  return Object.assign(new Error(message), { code: 'URL_REFUSED', refused: true });
+  return new FetchRefusedError(message);
 }
 
 /**
@@ -115,7 +135,7 @@ export async function validateFetchUrl(
   try {
     ({ address } = await resolve(url.hostname));
   } catch (error) {
-    throw refusal(`Host could not be resolved: ${url.hostname} (${error?.code || error?.message})`);
+    throw refusal(`Host could not be resolved: ${url.hostname} (${errorCode(error)})`);
   }
   if (!address || isPrivateIp(address)) throw refusal(`Private IP access denied: ${address}`);
   return { address };

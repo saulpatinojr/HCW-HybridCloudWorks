@@ -37,6 +37,7 @@ import {
 } from '../cms/content-quality.js';
 import { applyPublishTimeCoverTrigger } from '../cms/publish.js';
 import { buildVoiceAndFormatBlock, pickNextFormat } from './voice.js';
+import { recordedFailure } from '../http/error-response.js';
 import {
   buildForgeModuleInstruction,
   findSimilarTitle,
@@ -569,8 +570,10 @@ export function createForge({
         signal: activeSignal,
       });
     } catch (err) {
-      log.error?.(`forge generation failed: ${err.message}`);
-      return { ok: false, httpStatus: 502, error: `Generation failed: ${err.message}` };
+      // The outcome is stored as the job's result and error and shown on the
+      // Forge pages: the router's sentence, or a fixed one with the code and
+      // the reference of the content-free log line (#945).
+      return { ok: false, httpStatus: 502, error: recordedFailure(log, 'Generation failed.', err) };
     }
     if (draft?.aiError)
       return { ok: false, httpStatus: 502, error: `Generation failed: ${draft.aiError}` };
@@ -603,8 +606,12 @@ export function createForge({
         { usageOut, signal: activeSignal }
       );
     } catch (err) {
-      log.error?.(`forge grading failed: ${err.message}`);
-      grade = { overall: 0, subs: [], skippedLlm: true, note: `Grading failed: ${err.message}` };
+      grade = {
+        overall: 0,
+        subs: [],
+        skippedLlm: true,
+        note: recordedFailure(log, 'Grading failed.', err),
+      };
     }
 
     const clean = forged.bannedHits.length === 0 && forged.moduleReport.valid;

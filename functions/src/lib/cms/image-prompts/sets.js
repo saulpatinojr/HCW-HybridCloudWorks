@@ -3,7 +3,7 @@
  * and history rules, and the template-version stamp a generated image
  * records (PR #841 split of image-prompts.js).
  */
-import { assertStringLength } from '../content-update-validation.js';
+import { ContentValidationError, assertStringLength } from '../content-update-validation.js';
 import { normalizePromptConfigKey } from './shared.js';
 
 /** Aspect ratios Replicate's image models accept; '' means "model default". */
@@ -52,7 +52,9 @@ function aspectRatioField(body) {
   if (!named(body, 'aspectRatio')) return {};
   const ratio = String(body.aspectRatio || '').trim();
   if (!SET_ASPECT_RATIOS.includes(ratio)) {
-    throw new Error(`aspectRatio must be one of ${SET_ASPECT_RATIOS.filter(Boolean).join(', ')}`);
+    throw new ContentValidationError(
+      `aspectRatio must be one of ${SET_ASPECT_RATIOS.filter(Boolean).join(', ')}`
+    );
   }
   return { aspectRatio: ratio };
 }
@@ -98,7 +100,7 @@ function setVersionFields(existing, primaryPrompt, { nowIso, updatedBy }) {
  * only when the body names them, so an older client that sends only
  * `primaryPrompt` cannot blank a set's style rules.
  *
- * @throws {Error} on an over-long field or an unknown aspect ratio
+ * @throws {ContentValidationError} on an over-long field or an unknown aspect ratio
  */
 export function buildSetSaveFields(existing, body, { nowIso, updatedBy }) {
   const primaryPrompt = String(body.primaryPrompt || '').trim();

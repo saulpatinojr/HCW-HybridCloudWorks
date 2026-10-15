@@ -19,6 +19,7 @@
  * runs the whole loop against fakes.
  */
 import { randomUUID } from 'node:crypto';
+import { recordedFailure } from '../http/error-response.js';
 import {
   PROVIDER_FEEDS,
   PROVIDERS,
@@ -71,7 +72,6 @@ export function createRssIngest({
   signal: defaultSignal = null,
 }) {
   const info = (...a) => log.log?.(...a);
-  const warn = (...a) => log.warn?.(...a);
 
   async function cacheFeed(provider, feed, items) {
     const cacheItems = buildCacheItems(items, feed, MAX_CACHE_ITEMS_PER_FEED);
@@ -194,9 +194,12 @@ export function createRssIngest({
             await processSingleFeed(provider, feed, results, signal);
           } catch (err) {
             if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
-            // One feed failing must not abandon the sweep.
-            results.errors.push(`${provider}/${feed.name}: ${err?.message || err}`);
-            warn(`[rssFetcher] Failed ${feed.name} (${provider}): ${err?.message}`);
+            // One feed failing must not abandon the sweep. The job result is
+            // served by getJob, so it names the feed and a sentence with the
+            // code and the log line's reference (#945).
+            results.errors.push(
+              `${provider}/${feed.name}: ${recordedFailure(log, 'The feed could not be read.', err)}`
+            );
           }
         }
       }
@@ -205,8 +208,9 @@ export function createRssIngest({
         results.homepageItems = await rebuildHomepage();
       } catch (err) {
         if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
-        results.errors.push(`homepage_feeds: ${err?.message || err}`);
-        warn(`[rssFetcher] homepage_feeds aggregation failed: ${err?.message}`);
+        results.errors.push(
+          `homepage_feeds: ${recordedFailure(log, 'The homepage feed could not be rebuilt.', err)}`
+        );
       }
       info(
         `[rssFetcher] Complete: ${results.processed} feeds, ${results.cached} cached, ${results.newContent} new, ${results.duplicates} duplicates, ${results.errors.length} errors`

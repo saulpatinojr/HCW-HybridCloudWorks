@@ -1332,18 +1332,23 @@ describe('source grounding — the call (#433)', () => {
         errors: [{ code: 13, message: 'video too long' }],
       })
     );
-    await expect(
-      createAiRouter({
-        env: keys,
-        fetch: failed,
-        sleep: noSleep,
-        log: quiet,
-      }).generateGroundedJsonResponse({
+    const error = await createAiRouter({
+      env: keys,
+      fetch: failed,
+      sleep: noSleep,
+      log: quiet,
+    })
+      .generateGroundedJsonResponse({
         prompt: 'p',
         sources,
         feature: 'sourceGrounding',
       })
-    ).rejects.toThrow(/status 'failed'.*video too long/);
+      .catch((e) => e);
+    // The status and Gemini's error code, never its message: the episode and
+    // the job store this sentence as written (#945).
+    expect(error.name).toBe('GroundingIncompleteError');
+    expect(error.message).toMatch(/status 'failed'.*[(]error code 13[)]/);
+    expect(error.message).not.toContain('video too long');
 
     const incomplete = vi.fn(async () => interactionReply('{"cut":', { status: 'incomplete' }));
     await expect(
@@ -1640,8 +1645,10 @@ describe('a time budget for synchronous callers (router header)', () => {
       feature: 'forgeDrafting',
       budgetMs: 60_000,
     });
+    // Reasons are codes, never a provider's message, so the sentence is the
+    // router's own and an admin route may show it whole (#945).
     const settled = expect(call).rejects.toThrow(
-      "This AI call's 60 s budget ran out after nvidia (timeout after 30000 ms); gemini (timeout after 30000 ms). Not tried: openai, anthropic."
+      "This AI call's 60 s budget ran out after nvidia (timed out); gemini (timed out). Not tried: openai, anthropic."
     );
     await vi.advanceTimersByTimeAsync(60_000);
     await settled;

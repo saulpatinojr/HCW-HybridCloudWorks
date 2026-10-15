@@ -132,13 +132,28 @@ describe("callMcpTool", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("surfaces a tool-level error and an isError result as ok:false with the message", async () => {
+  it("surfaces a JSON-RPC error by its code and an isError result with the tool's output", async () => {
+    // The server's own error sentence stays out of the outcome (#945); the
+    // JSON-RPC code says which error it was.
     const errored = vi.fn(async () =>
       response({ jsonrpc: "2.0", error: { code: -32000, message: "CLIENT_USER_AUTH_REVOKED" } }),
     );
     expect(
       await callMcpTool({ store: store(), serverId: "plaud", tool: "t", fetch: errored, env: {}, log: quiet }),
-    ).toEqual({ ok: false, error: "CLIENT_USER_AUTH_REVOKED", code: -32000, httpStatus: 200 });
+    ).toEqual({
+      ok: false,
+      error: "The MCP server answered the call with an error.",
+      code: -32000,
+      httpStatus: 200,
+    });
+
+    // A code that is not one (a sentence where the number belongs) is not kept.
+    const sentenceCode = vi.fn(async () =>
+      response({ jsonrpc: "2.0", error: { code: "token abc expired for user ana@example.com", message: "x" } }),
+    );
+    expect(
+      await callMcpTool({ store: store(), serverId: "plaud", tool: "t", fetch: sentenceCode, env: {}, log: quiet }),
+    ).toMatchObject({ ok: false, code: null });
 
     const isError = vi.fn(async () =>
       response({ jsonrpc: "2.0", result: { isError: true, content: [{ type: "text", text: "no such file" }] } }),

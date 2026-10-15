@@ -87,11 +87,16 @@ describe('runJob', () => {
     const get = vi.fn(async () => {
       calls += 1;
       if (calls < 3) throw new Error('502');
-      return { ok: true, job: { id: 'j1', status: 'failed', error: 'boom' } };
+      // runJob's stored shape since #945: a sentence, the code and a reference.
+      return {
+        ok: true,
+        job: { id: 'j1', status: 'failed', error: 'The job failed (HTTP_503; reference inv-9).' },
+      };
     });
     const sleep = vi.fn(async () => {});
     const job = await runJob('noop', {}, { fetchers: { enqueue, get }, sleep });
     expect(job.status).toBe('failed');
+    expect(job.error).toBe('The job failed (HTTP_503; reference inv-9).');
     // backoff grew while errors accumulated, then the terminal poll landed
     expect(sleep.mock.calls.length).toBe(3);
     expect(sleep.mock.calls[1][0]).toBeGreaterThan(sleep.mock.calls[0][0]);

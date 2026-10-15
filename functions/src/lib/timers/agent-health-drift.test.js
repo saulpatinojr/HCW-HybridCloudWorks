@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { AGENT_HEALTH_QUERY, createAgentHealthCheck } from './agent-health.js';
 import { DRIFT_READ_INTERVAL_MS, LAB_DRIFT_DOC_ID } from '../labs/drift.js';
+import { RepoSourceError } from '../cms/repo-draft-source.js';
 
 const NOW = new Date('2026-10-10T12:00:00.000Z');
 const now = () => NOW;
@@ -61,7 +62,7 @@ describe('checkAgentHealth reads main once an hour', () => {
     const s = store({ agents: [stale] });
     const driftReader = {
       hostCommits: vi.fn(async () => {
-        throw Object.assign(new Error('GitHub did not answer within 8000 ms.'), { code: 'TIMEOUT' });
+        throw new RepoSourceError('GitHub did not answer within 8000 ms.', { code: 'TIMEOUT' });
       }),
     };
     const log = { warn: vi.fn() };

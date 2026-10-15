@@ -228,9 +228,14 @@ describe('readPlaudRecording', () => {
   });
 
   it('names the tool and the recording on any other failure', async () => {
+    // The tool's text stays out of the stored sentence; its code does not (#945).
     const broken = vi.fn(async () => ({ ok: false, error: 'MCP server returned HTTP 502' }));
     await expect(readPlaudRecording({ callTool: broken, recordingId: 'rec-1' })).rejects.toThrow(
-      /get_file for recording rec-1: MCP server returned HTTP 502/
+      'Plaud could not return get_file for recording rec-1.'
+    );
+    const coded = vi.fn(async () => ({ ok: false, error: 'the tool said so', code: -32603 }));
+    await expect(readPlaudRecording({ callTool: coded, recordingId: 'rec-1' })).rejects.toThrow(
+      'Plaud could not return get_file for recording rec-1 (-32603).'
     );
   });
 });
@@ -445,7 +450,7 @@ describe('script failures', () => {
     ).rejects.toThrow('model refused');
     expect(store.docs[TRANSCRIPT_CONTAINER]['plaud_rec-1']).toMatchObject({
       status: STATUS.failed,
-      error: 'model refused',
+      error: 'The script could not be written (Error).',
       sourceTitle: 'Landing zone review',
     });
   });

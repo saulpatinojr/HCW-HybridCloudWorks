@@ -141,7 +141,8 @@ describe('scrapeArticle', () => {
     });
     const r = await scrapeArticle('https://site.test/post', { fetch, env: {}, now: () => 0, resolve });
     expect(r.success).toBe(false);
-    expect(r.scrapeFailureReason).toMatch(/certificate/);
+    // The code names it; the socket's own sentence stays out (#945).
+    expect(r.scrapeFailureReason).toBe('The page could not be fetched (CERT_HAS_EXPIRED).');
   });
 
   it('referenceScrapedImages keeps ten URL references', () => {

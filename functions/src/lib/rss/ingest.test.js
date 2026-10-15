@@ -150,7 +150,11 @@ describe('processRssFeeds', () => {
     const ingest = createRssIngest({ store, parser, dedup: dedupNone, now: () => NOW, log });
     const r = await ingest.processRssFeeds({ feeds });
     expect(r.processed).toBe(1);
-    expect(r.errors).toEqual(['aws/AWS Blog: Status code 404']);
+    // The feed is named; the failure is a sentence with the code and the log
+    // line's reference (#945).
+    expect(r.errors).toEqual([
+      expect.stringMatching(/^aws\/AWS Blog: The feed could not be read \(Error; reference [\w.:-]+\)\.$/),
+    ]);
     expect(store.docs.homepage_feeds.latest).toBeDefined();
     expect(log.warn).toHaveBeenCalled();
   });
@@ -184,7 +188,11 @@ describe('processRssFeeds', () => {
     const r = await ingest.processRssFeeds({ feeds: { azure: feeds.azure } });
     expect(r.processed).toBe(1);
     expect(r.homepageItems).toBeNull();
-    expect(r.errors).toEqual(['homepage_feeds: 429']);
+    expect(r.errors).toEqual([
+      expect.stringMatching(
+        /^homepage_feeds: The homepage feed could not be rebuilt \(Error; reference [\w.:-]+\)\.$/
+      ),
+    ]);
   });
 
   it('throws immediately when signal is aborted', async () => {

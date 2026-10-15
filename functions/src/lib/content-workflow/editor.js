@@ -10,21 +10,33 @@
  * succeed instead of 409ing.
  */
 import { ensureTldrSectionAtEnd } from '../cms/content-quality.js';
-import { assertStringLength, assertOptionalDateString } from '../cms/content-update-validation.js';
+import {
+  ContentValidationError,
+  assertStringLength,
+  assertOptionalDateString,
+} from '../cms/content-update-validation.js';
+import { authoredMessage } from '../http/error-response.js';
 import { actor, auditRow, json, readBody, workflowFailure } from './shared.js';
 
+/**
+ * The ordered image URLs of an editor save: absolute http(s), bounded.
+ *
+ * @param {unknown} [urls] - the list sent
+ * @returns {string[]}
+ * @throws {ContentValidationError}
+ */
 export function assertImageUrlList(urls = []) {
   if (!Array.isArray(urls)) {
-    throw new Error('orderedImageUrls must be an array');
+    throw new ContentValidationError('orderedImageUrls must be an array');
   }
   return urls.map((value) => {
     const normalized = String(value || '').trim();
     if (!normalized) return normalized;
     if (!/^https?:\/\//i.test(normalized)) {
-      throw new Error('orderedImageUrls must contain absolute http(s) URLs');
+      throw new ContentValidationError('orderedImageUrls must contain absolute http(s) URLs');
     }
     if (normalized.length > 2048) {
-      throw new Error('orderedImageUrls contains an entry that exceeds 2048 characters');
+      throw new ContentValidationError('orderedImageUrls contains an entry that exceeds 2048 characters');
     }
     return normalized;
   });
@@ -96,11 +108,11 @@ function normalizedTagsOf(tags) {
     .map((tag) => tag.trim())
     .filter(Boolean);
   if (normalizedTags.length > 25) {
-    throw new Error('tags exceeds 25 entries');
+    throw new ContentValidationError('tags exceeds 25 entries');
   }
   normalizedTags.forEach((tag) => {
     if (tag.length > 80) {
-      throw new Error('tag exceeds 80 characters');
+      throw new ContentValidationError('tag exceeds 80 characters');
     }
   });
   return normalizedTags;
@@ -135,7 +147,8 @@ export function validateSaveEditorDraftBody(body) {
       nextPublishedDate,
     };
   } catch (error) {
-    return { ok: false, error: String(error.message || error) };
+    // The validators' sentences are authored; anything else is not ours to show (#945).
+    return { ok: false, error: authoredMessage(error, 'The draft could not be validated.') };
   }
 }
 

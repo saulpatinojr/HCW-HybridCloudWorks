@@ -42,6 +42,7 @@
  * (`checkedBy: 'admin'`), because the Health page shows no person's identity.
  */
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
+import { AuthoredError, authoredMessage } from '../http/error-response.js';
 import { actorName } from '../auth/actor-name.js';
 import { satisfiesRole } from '../auth/roles.js';
 import { healthProbe } from './probe-catalogue.js';
@@ -218,8 +219,8 @@ export async function recordProbeResult(
       if (error?.code !== 412 && error?.code !== 409) throw error;
     }
   }
-  throw Object.assign(
-    new Error(`The ${entry.probeId} result kept changing while it was written; nothing was saved.`),
+  throw new AuthoredError(
+    `The ${entry.probeId} result kept changing while it was written; nothing was saved.`,
     { code: 'CONFLICT' }
   );
 }
@@ -297,7 +298,9 @@ export function createProbeResultHandlers({ guard, store, now = () => new Date()
         );
         return json(200, { success: true, written, result: presentResult(doc) });
       } catch (error) {
-        if (error?.code === 'CONFLICT') return json(409, { error: error.message });
+        if (error?.code === 'CONFLICT') {
+          return json(409, { error: authoredMessage(error, 'The result changed while it was written.') });
+        }
         context.error?.(`putProbeResult failed: ${error?.message || error}`);
         return json(500, { error: 'Failed to record the probe result' });
       }

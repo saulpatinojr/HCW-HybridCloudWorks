@@ -184,9 +184,11 @@ describe('the access token', () => {
     expect(error.status).toBe(400);
     expect(error.retryable).toBe(false);
     expect(error.detail).toBe('invalid_grant: The grant type is unauthorized for this client_id');
+    // The sentence names the status and the OAuth code; Podbean's own words
+    // stay on `detail`, which nothing stores (#945).
     expect(error.message).toBe(
       'Podbean refused the client ID and secret while requesting an access token ' +
-        '(400 invalid_grant: The grant type is unauthorized for this client_id).'
+        '(400 invalid_grant).'
     );
   });
 
@@ -406,7 +408,7 @@ describe('the one re-auth', () => {
       .catch((e) => e);
     expect(error.code).toBe('UPSTREAM');
     expect(error.retryable).toBe(true);
-    expect(error.message).toBe('Podbean answered 503 while creating the episode: server_error: busy.');
+    expect(error.message).toBe('Podbean answered 503 while creating the episode (server_error).');
     expect(calls().filter((c) => new URL(c.url).pathname === '/v1/episodes')).toHaveLength(1);
   });
 });
@@ -480,15 +482,19 @@ describe('errors', () => {
   });
 
   it('a network failure has no status and is retryable', async () => {
+    // undici's shape: `fetch failed`, with the socket's code on `cause`.
     const fetchImpl = vi.fn(async () => {
-      throw new Error('getaddrinfo ENOTFOUND api.podbean.com');
+      throw Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.podbean.com'), { code: 'ENOTFOUND' }),
+      });
     });
     const client = createPodbeanClient({ env: ENV, fetch: fetchImpl });
     const error = await client.getPodcast().catch((e) => e);
     expect(error.code).toBe('NETWORK');
     expect(error.status).toBeNull();
     expect(error.retryable).toBe(true);
-    expect(error.message).toContain('ENOTFOUND');
+    expect(error.message).toContain('(ENOTFOUND)');
+    expect(error.message).not.toContain('getaddrinfo');
   });
 
   it('an unconfigured client rejects every call with the plain sentence and sends nothing', async () => {
@@ -580,7 +586,7 @@ describe('the presigned PUT', () => {
       const error = await pending;
       expect(error.code).toBe('UPLOAD_UNREACHABLE');
       expect(error.message).toContain('The upload host uploads.storage.example did not answer the PUT');
-      expect(error.message).toContain(`timeout after ${PODBEAN_UPLOAD_TIMEOUT_MS} ms`);
+      expect(error.message).toContain(`within ${PODBEAN_UPLOAD_TIMEOUT_MS} ms`);
     } finally {
       vi.useRealTimers();
     }
@@ -658,7 +664,9 @@ describe('no credential leaves the client', () => {
     const client = createPodbeanClient({ env: ENV, fetch: fetchImpl });
     const error = await client.getPodcast().catch((e) => e);
     expect(error.code).toBe('NETWORK');
-    expect(error.message).toContain('access_token=***');
+    // The sentence never quotes the socket; its scrubbed text stays on detail.
+    expect(error.message).not.toContain('socket hang up');
+    expect(error.detail).toContain('access_token=***');
     expectNoCredential(error);
   });
 

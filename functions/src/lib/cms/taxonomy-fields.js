@@ -17,6 +17,7 @@
  * (`derivedKindSources`, `derivedOriginSources`) so a record that predates
  * the taxonomy still matches the kind or origin it is shown under.
  */
+import { AuthoredError } from "../http/error-response.js";
 import {
   resolveContentTaxonomy,
   resolveIdeaOrigin,
@@ -45,7 +46,13 @@ const KNOWN_SOURCES = Object.freeze([
   "template-form",
 ]);
 
-export class TaxonomyFieldError extends Error {
+/**
+ * A kind or idea-origin the saved taxonomy refuses. Every message is written
+ * here from the field, the id sent and the allowed ids, so a handler may show
+ * it (#945).
+ */
+export class TaxonomyFieldError extends AuthoredError {
+  /** @param {string} message - the refusal, naming the field and the allowed ids */
   constructor(message) {
     super(message);
     this.status = 400;

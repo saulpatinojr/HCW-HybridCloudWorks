@@ -2,6 +2,8 @@
  * The pages a prompt set may be assigned to, and the pages a content
  * document is assigned through (PR #841 split of image-prompts.js).
  */
+import { ContentValidationError } from '../content-update-validation.js';
+
 /** Verbatim from the source — the pages a prompt set may be assigned to. */
 export const ADMIN_PROMPT_PAGE_ALLOWLIST = new Set([
   '/aws',
@@ -68,13 +70,20 @@ export const ADMIN_PROMPT_PAGE_ALLOWLIST = new Set([
   '/docker/education',
 ]);
 
+/**
+ * The page a prompt set is assigned to, checked against the allowlist.
+ *
+ * @param {unknown} pagePath - the page the body names
+ * @returns {string} the normalised path
+ * @throws {ContentValidationError} when it is missing or not on the list (authored, #945)
+ */
 export function assertAllowedPromptPage(pagePath) {
   const normalized = String(pagePath || '').trim();
   if (!normalized) {
-    throw new Error('pagePath is required');
+    throw new ContentValidationError('pagePath is required');
   }
   if (!ADMIN_PROMPT_PAGE_ALLOWLIST.has(normalized)) {
-    throw new Error(`pagePath is not allowed: ${normalized}`);
+    throw new ContentValidationError(`pagePath is not allowed: ${normalized}`);
   }
   return normalized;
 }

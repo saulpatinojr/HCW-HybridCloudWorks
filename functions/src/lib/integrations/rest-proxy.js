@@ -37,6 +37,7 @@
  * made the call still gets the status and the body it always did.
  */
 import { randomUUID } from 'node:crypto';
+import { AuthoredError, authoredMessage, errorCode, logFailure } from '../http/error-response.js';
 import { createKeyVerdictReporter, isCredentialRejected } from '../key-verdict.js';
 import { readUpstreamError } from './upstream-error.js';
 import { redactSecrets } from './connection-probe.js';
@@ -69,27 +70,34 @@ const json = (status, body) => ({
 
 const ALLOWED_METHODS = Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
+/** A proxied path the guard refuses; every sentence is written below (authored, #945). */
+export class UnsafePathError extends AuthoredError {}
+
 /**
- * @throws {Error} when `path` could redirect the credential off its own API.
+ * The path, checked before the credential travels with it.
+ *
+ * @param {unknown} path - the path the admin page sent
+ * @returns {string}
+ * @throws {UnsafePathError} when `path` could redirect the credential off its own API.
  */
 export function assertSafePath(path) {
   const value = String(path ?? '');
   if (!value.startsWith('/')) {
-    throw new Error('path must start with "/"');
+    throw new UnsafePathError('path must start with "/"');
   }
   // `//host` is protocol-relative and resolves to another origin.
   if (value.startsWith('//')) {
-    throw new Error('path must not be protocol-relative');
+    throw new UnsafePathError('path must not be protocol-relative');
   }
   // Catches `https://`, `http:/x`, and anything else with a scheme.
   if (/^\/[a-z][a-z0-9+.-]*:/i.test(value) || /^[a-z][a-z0-9+.-]*:/i.test(value)) {
-    throw new Error('path must not contain a scheme');
+    throw new UnsafePathError('path must not contain a scheme');
   }
   if (value.includes('..')) {
-    throw new Error('path must not contain ".." segments');
+    throw new UnsafePathError('path must not contain ".." segments');
   }
   if (value.includes('\\')) {
-    throw new Error('path must not contain backslashes');
+    throw new UnsafePathError('path must not contain backslashes');
   }
   // Control characters, including a newline that could inject a second
   // request line or a header into the outbound call. Written as escapes:
@@ -97,7 +105,7 @@ export function assertSafePath(path) {
   // file read as binary to git and grep.
    
   if (/[\u0000-\u001f\u007f]/.test(value)) {
-    throw new Error('path must not contain control characters');
+    throw new UnsafePathError('path must not contain control characters');
   }
   return value;
 }
@@ -369,11 +377,9 @@ export function createRestProxy({
         // Logged at error, not warn: a caller reaching for another origin
         // through a credentialed proxy is worth seeing in telemetry whether it
         // was a bug or an attempt.
-        context.error?.(`${integration.name}Proxy rejected path: ${error.message}`, {
-          path: String(body?.path ?? '').slice(0, 200),
-        });
+        context.error?.(`${integration.name}Proxy rejected path (${errorCode(error)})`);
         await record('refused_path');
-        return json(400, { ok: false, error: error.message });
+        return json(400, { ok: false, error: authoredMessage(error, 'The path was refused.') });
       }
 
       // The allowlist is checked against the path WITHOUT its query string, so a
@@ -441,16 +447,16 @@ export function createRestProxy({
         await record('upstream', { status: response.status });
         return json(200, { ok: response.ok, status: response.status, data });
       } catch (error) {
-        const secretsToRedact = [
-          apiKey,
-          ...integration.extraEnv.map((name) => readKey(env, name)).filter(Boolean),
-        ];
-        const safeError = redactSecrets(error?.message || String(error), secretsToRedact);
-        context.error?.(`${integration.name}Proxy ${method} ${path} failed:`, safeError);
+        // No answer came back, so there is no upstream sentence to relay: the
+        // transport's own text (a socket error quoting its target) stays out
+        // of the body and the log (#945). The code says which failure it was.
+        const correlationId = logFailure(context, `${integration.name}Proxy request failed`, error, request);
         await record('failed');
         return json(200, {
           ok: false,
-          error: `${integration.name} request failed: ${safeError}`,
+          // "could not be reached" is the phrase the page reads as offline (frontend lib/status.js).
+          error: `${integration.name} could not be reached (${errorCode(error?.cause ?? error)}).`,
+          correlationId,
         });
       }
     };

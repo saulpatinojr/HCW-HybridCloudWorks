@@ -9,6 +9,7 @@
  * same floor as `publish-content`; withdrawing to draft stays editor.
  */
 import { isPlainObject } from '../cms/content-update-validation.js';
+import { authoredMessage } from '../http/error-response.js';
 import { SET_CONTAINER, STATUS, setId, setEpisodeStatus } from './publish.js';
 import { LISTEN_AND_LEARN_JOB_TYPE, parseSourceEpisodePayload } from './source-episode.js';
 import { firstError } from './validate.js';
@@ -81,7 +82,14 @@ async function taskModelReport(ai) {
         chosen.provider === 'gemini' ? estimateGeminiCostUsd(chosen.model, MAX_SCRIPT_BYTES) : null,
     };
   } catch (err) {
-    return { task: SPEECH_TASKS.listenAndLearn, provider: null, model: null, error: err?.message || String(err) };
+    // The router's refusal (not configured, switched off) is authored; a
+    // fault is not shown (#945).
+    return {
+      task: SPEECH_TASKS.listenAndLearn,
+      provider: null,
+      model: null,
+      error: authoredMessage(err, 'The speech model could not be chosen.'),
+    };
   }
 }
 

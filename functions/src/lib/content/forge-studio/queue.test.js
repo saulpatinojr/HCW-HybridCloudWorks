@@ -377,11 +377,35 @@ describe('Save: one forge-from-url job per entry, the brief on the payload', () 
     expect(order).toEqual(['forging:1', 'job:1', 'forging:2', 'job:2', 'queued:2']);
     expect(body.started).toEqual([{ id: idOf(1), jobId: 'id-1' }]);
     expect(body.notStarted).toEqual([
-      { id: idOf(2), error: 'jobs container unavailable' },
+      // The store's own words stay out of the answer (#945).
+      { id: idOf(2), error: 'The job could not be written; the entry was put back in the queue.' },
       { id: idOf(3), error: 'not attempted after an earlier job write failed' },
     ]);
     expect((await listed(h)).map((i) => i.status).sort()).toEqual(['forging', 'queued', 'queued']);
     expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the entry is back in the queue only when the revert confirms it (CodeRabbit on #1200)', async () => {
+    const { h, store } = await seeded();
+    store.upsertDoc.mockImplementation(async () => {
+      throw new Error('jobs container unavailable');
+    });
+    const original = store.patchDoc.getMockImplementation();
+    store.patchDoc.mockImplementation(async (...args) => {
+      if (args[2].status === 'queued') throw new Error('admin_config unavailable');
+      return original(...args);
+    });
+    const body = parse(await h.forge(request({ ids: [idOf(1)] }), context, { enqueue: vi.fn() }));
+    expect(body.started).toEqual([]);
+    expect(body.notStarted).toEqual([
+      {
+        id: idOf(1),
+        error:
+          'The job could not be written, and the entry could not be confirmed back in the queue; reload the list.',
+      },
+    ]);
+    // The entry the claim wrote is the one answered, as before.
+    expect(body.changed.find((i) => i.id === idOf(1))).toMatchObject({ status: 'forging' });
   });
 
   it('a job document over its type’s payload bound is not written, and the claim is reverted (#942 follow-up)', async () => {

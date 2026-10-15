@@ -31,6 +31,7 @@
  * it for every other writer. Running it on every save would move the owner's
  * text around under the cursor.
  */
+import { AuthoredError } from "../http/error-response.js";
 import {
   MAX_SUBTITLE_CHARS,
   MAX_TAG_CHARS,
@@ -107,25 +108,29 @@ function readTaxonomyId(value, name) {
   return id;
 }
 
-/** Thrown for input the owner can correct; the handler answers 400 with the message. */
-export class DraftInputError extends Error {}
+/** Thrown for input the owner can correct; the handler answers 400 with the message (authored, #945). */
+export class DraftInputError extends AuthoredError {}
 
 const fail = (message) => {
   throw new DraftInputError(message);
 };
 
+/**
+ * The tags of a save, as a de-duplicated list.
+ *
+ * @param {unknown} value - a list or a comma-separated string
+ * @returns {string[]}
+ * @throws {ContentValidationError}
+ */
 function readTags(value) {
   if (value === undefined || value === null || value === "") return [];
   const list = typeof value === "string" ? value.split(",") : value;
-  let tags;
-  try {
-    tags = assertStringArray(list, "tags", {
-      maxItems: MAX_TAGS,
-      maxItemLength: MAX_TAG_CHARS,
-    });
-  } catch (error) {
-    fail(error.message);
-  }
+  // assertStringArray throws a ContentValidationError: authored, shown as
+  // the 400 the same way a DraftInputError is (drafts-handlers answerFor).
+  const tags = assertStringArray(list, "tags", {
+    maxItems: MAX_TAGS,
+    maxItemLength: MAX_TAG_CHARS,
+  });
   return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
 }
 
@@ -150,21 +155,28 @@ function readDate(value) {
   return date;
 }
 
+/**
+ * One text field of a save, trimmed and within its length.
+ *
+ * @param {unknown} value - the field
+ * @param {string} name - its name, for the refusal
+ * @param {number} max - the ceiling
+ * @param {{ required?: boolean }} [options]
+ * @returns {string}
+ * @throws {DraftInputError|ContentValidationError}
+ */
 function readText(value, name, max, { required = false } = {}) {
   if (value !== undefined && value !== null && typeof value !== "string") {
     fail(`${name} must be a string`);
   }
-  try {
-    return assertStringLength(value, name, max, {
-      allowEmpty: !required,
-    }).trim();
-  } catch (error) {
-    return fail(error.message);
-  }
+  return assertStringLength(value, name, max, {
+    allowEmpty: !required,
+  }).trim();
 }
 
 /**
- * A save's payload → the eight fields, normalised. Throws DraftInputError.
+ * A save's payload → the eight fields, normalised. Throws DraftInputError,
+ * or the ContentValidationError of a length or list rule; both are authored.
  *
  * An allow-list, so `contentStatus`, `Live`, `Status`, `slug` and every other
  * field FORBIDDEN_CONTENT_UPDATE_KEYS protects are refused by not being one

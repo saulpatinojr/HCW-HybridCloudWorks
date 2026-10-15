@@ -19,6 +19,76 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **No raw error text reaches a response body, and a repository-wide guard
+  keeps it that way: follow-up to #1198 for #945** (AP-B10). #1198 converted
+  fifteen modules and checked those fifteen files for one spelling,
+  `(message|error): (error|err)?.message`; `error: error.message`, any other
+  variable name, any other file and text passed through a helper all went
+  unseen: run against c9536e03 (as against b23a7c73), the new guard finds
+  197 sites, 37 of them raw text inside a response body (Cosmos, provider
+  or socket text), where the old one passes.
+  `functions/src/lib/http/error-response.js` is now the one door: an
+  `AuthoredError` (and its subclasses: the CMS, settings,
+  taxonomy, MCP, ElevenLabs, AI-router, GitHub-import, gallery-fetch, job
+  payload-bound and rate-limit refusals) carries a sentence this code wrote,
+  `authoredMessage` and `failureFields` show it and replace anything else
+  with the route's safe sentence, and every failure answer carries a
+  `correlationId` whose log line holds only the sentence, the error's
+  content-free facts (class name, code, HTTP status, Cosmos substatus, the
+  cause's code), up to three places in this repository's code where it was
+  thrown (`at=src/lib/jobs.js:657`) and that id. The helper used to log the
+  whole error; the message is not logged now, and of the stack only those
+  locations. A caller's `x-correlation-id` is used only when it has the id
+  shape, and the v4 worker's `traceParent` is read. The alerting runbook
+  finds a reference's line in Log Analytics. Provider values that used to be
+  relayed are now their status and machine code, each held to the door's
+  code shape (`codeShaped`) before it goes into a sentence: Resend's error
+  name, the OAuth `error` code and `token_type`, ElevenLabs's `detail.code`,
+  the JSON-RPC code, a preview's content type, and the MCP sign-in
+  metadata's addresses (scheme, host and a URL-character path only). A
+  failed connection probe answers `{ ok, status, error }` and no upstream
+  body; the provider's sentence on a rejected key stays on the super_admin
+  API-keys page (#463). `no-raw-error-leaks.test.js` replaces the
+  fifteen-file regex with a parse of every module under `functions/src`:
+  `.message` or `.stack` off anything, a caught error stringified
+  (`String(e)`, a template literal, `+`), a settled promise's `reason`,
+  aliases and destructuring, scope-resolved by catch and `.catch()`
+  parameter; a site is any object field, return, stored field or helper
+  argument it lands in, a site inside a response builder's body (resolved
+  by import, or an injected one called with a literal status) is marked,
+  and an aliased `AuthoredError` subclass built from someone else's text is
+  a site. A helper whose return holds a stored or log-only site carries its
+  text to its callers, and that text is a site where it reaches a response
+  body: the Podbean hub's reads and the Labs snapshot's lab checks were both
+  that, and step 2 fixed them. Stored failures follow the same rule at the
+  moment they are written: `storedFailure` and `recordedFailure` keep an
+  authored sentence, or store the site's own sentence with the error's code
+  and the reference of the content-free log line (`The job failed
+  (ECONNRESET; reference <id>).`), still one string where a string was.
+  That covers `job.error`, the Listen & Learn and podcast failure fields,
+  the Podbean host record and the hub's reads of it, the cover, caption,
+  inspection and Publer sync errors, the health pulse, the lab checks and
+  the drift read, the Plaud token, the pricing and RSS job results, the
+  Telegram activity log and the scheduled-publish records. The job workers'
+  refusals and the study-guide, script, transcript, video, cover, grounding
+  and Podbean failures are now `AuthoredError`s whose sentences name a
+  status and the provider's code, never its words, so those pages still say
+  what went wrong. Documents already stored keep the text they hold: nothing
+  is migrated. The 149 remaining sites (none of them raw text in a response
+  body) are listed in 146 entries, each with a class and a reason (100
+  authored through the door, 42 that never reach a response, three `message`
+  fields that are not an error's, and one stored diagnostic kept by
+  decision: a provider's sentence on a rejected key, which #463 made the
+  diagnosis and only the super_admin API-keys page reads), and the list
+  fails on a new site, a stale entry and a wrong class. `getJob` now holds a
+  job whose type is no longer registered at the enqueue floor (editor)
+  instead of the viewer gate, and answers its 500 with a correlation id; the
+  certification routes are pinned to refuse `_createdAt`, `_updatedAt`,
+  `_etag` and `_ts`; a Forge Studio entry whose job write failed is said to
+  be back in the queue only when the revert confirms it; and the admin
+  client appends the `correlationId` to a failed call's message
+  (`… (reference <id>)`) and keeps it on the thrown error.
+
 - **Public reads return an allowlisted set of fields.** The article detail
   (`GET public/content/{slugOrId}`), the signed preview, the Listen & Learn
   certification read, the podcast list and the news feed each answer with a

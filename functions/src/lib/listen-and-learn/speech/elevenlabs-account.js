@@ -107,7 +107,17 @@
  * keyed it by a SHA-256 of the key, which protected nothing the environment
  * does not already expose, and CodeQL rightly read a fast hash of a
  * credential as a weak password hash (js/insufficient-password-hash).
+ *
+ * ## Whose words an error carries (#945)
+ *
+ * Every ElevenLabsSpeechError sentence is written here: the status, the
+ * ElevenLabs error code, the permission a refusal names and where to set it.
+ * ElevenLabs's own sentence and a raw answer body are not copied into one,
+ * and neither is a socket error's text (its code is), so an admin route may
+ * show the sentence whole (`authoredMessage`).
  */
+
+import { AuthoredError, codeShaped, errorCode as failureCode } from '../../http/error-response.js';
 
 export const SUBSCRIPTION_URL = 'https://api.elevenlabs.io/v1/user/subscription';
 
@@ -175,7 +185,11 @@ const numberFormat = new Intl.NumberFormat('en-US');
  * from here. `name`, `provider`, `status` and `code` are what callers key off,
  * and `name` is 'SpeechError' so they need not know which module threw.
  */
-export class ElevenLabsSpeechError extends Error {
+export class ElevenLabsSpeechError extends AuthoredError {
+  /**
+   * @param {string} message - the authored sentence
+   * @param {{ status?: number|null, code?: string|null, details?: object|null }} [options]
+   */
   constructor(message, { status = null, code = null, details = null } = {}) {
     super(message);
     this.name = 'SpeechError';
@@ -192,12 +206,17 @@ export class ElevenLabsSpeechError extends Error {
  * `detail.code` is the current field; `detail.status` is "a legacy field that
  * is no longer used" but older answers still carry it
  * (https://elevenlabs.io/docs/eleven-api/resources/errors). Read as text
- * first, so a non-JSON error page cannot throw here.
+ * first, so a non-JSON error page cannot throw here. Held to the door's code
+ * shape: the account and voices refusals put it in a sentence, so a value
+ * that is not a code (a sentence, echoed request data) is '' (#945).
+ *
+ * @param {string} bodyText - the refusal's body
+ * @returns {string}
  */
 export function errorCode(bodyText) {
   try {
     const detail = JSON.parse(bodyText)?.detail;
-    return String(detail?.code || detail?.status || '').toLowerCase();
+    return codeShaped(String(detail?.code || detail?.status || '').toLowerCase());
   } catch {
     return '';
   }
@@ -242,12 +261,6 @@ export function isPermissionAnswer(status, bodyText) {
   return (status === 401 || status === 403) && /\bpermission/i.test(errorMessage(bodyText));
 }
 
-/** `; ElevenLabs said: "…"` when the body carries a sentence, else ''. */
-export function saidBy(bodyText) {
-  const message = errorMessage(bodyText);
-  return message ? `; ElevenLabs said: "${message}"` : '';
-}
-
 /**
  * Whether a non-2xx response is the out-of-credit state.
  *
@@ -276,12 +289,11 @@ export function isQuotaExceeded(status, bodyText) {
  * @returns {{ error: ElevenLabsSpeechError, retryable: boolean }}
  */
 export function dialogueRefusal(status, bodyText) {
-  const detail = snippet(bodyText);
   if (isQuotaExceeded(status, bodyText)) {
     return {
       retryable: false,
       error: new ElevenLabsSpeechError(
-        `ElevenLabs is out of credit (HTTP ${status} quota_exceeded): ${detail}`,
+        `ElevenLabs is out of credit (HTTP ${status} quota_exceeded). Add credit or wait for the plan to renew.`,
         { status, code: QUOTA_EXCEEDED }
       ),
     };
@@ -294,14 +306,17 @@ export function dialogueRefusal(status, bodyText) {
       retryable: false,
       error: new ElevenLabsSpeechError(
         `ElevenLabs refused this on the current plan (HTTP 402 ${PAID_PLAN_REQUIRED}): a voice or feature it needs is paid-only. ` +
-          `Choose voices your plan allows under Podcast voices at ${VOICE_PICKER_PAGE}. ElevenLabs said: ${detail}`,
+          `Choose voices your plan allows under Podcast voices at ${VOICE_PICKER_PAGE}.`,
         { status, code: PAID_PLAN_REQUIRED }
       ),
     };
   }
+  const code = errorCode(bodyText);
   return {
     retryable: isRetryableStatus(status),
-    error: new ElevenLabsSpeechError(`ElevenLabs HTTP ${status}: ${detail}`, { status }),
+    error: new ElevenLabsSpeechError(`ElevenLabs answered HTTP ${status}${code ? ` ${code}` : ''}.`, {
+      status,
+    }),
   };
 }
 
@@ -319,22 +334,27 @@ const unavailable = (reason, status = null) =>
     code: SUBSCRIPTION_UNAVAILABLE,
   });
 
-const snippet = (text) => String(text || '').slice(0, 300) || 'no detail';
-
 /** The sentence for a non-2xx subscription answer. */
 function refusalFor(status, text) {
   const code = errorCode(text);
   const label = `HTTP ${status}${code ? ` ${code}` : ''}`;
   if (isPermissionAnswer(status, text)) {
     return unavailable(
-      `${label}: the key needs the User → Read permission (${SUBSCRIPTION_PERMISSION}), set at ${API_KEYS_PAGE}${saidBy(text)}`,
+      `${label}: the key needs the User → Read permission (${SUBSCRIPTION_PERMISSION}), set at ${API_KEYS_PAGE}`,
       status
     );
   }
-  if (status === 401) return unavailable(`${label}: ElevenLabs rejected the key${saidBy(text)}`, status);
-  return unavailable(`${label}: ${snippet(text)}`, status);
+  if (status === 401) return unavailable(`${label}: ElevenLabs rejected the key`, status);
+  return unavailable(label, status);
 }
 
+/**
+ * The subscription answer, retried on 429, 5xx and no answer; throws an
+ * ElevenLabsSpeechError whose sentence carries no ElevenLabs text (#945).
+ *
+ * @param {{ key: string, fetchImpl: Function, sleep: Function }} args
+ * @returns {Promise<object>}
+ */
 async function fetchSubscription({ key, fetchImpl, sleep }) {
   let lastError = null;
 
@@ -346,7 +366,7 @@ async function fetchSubscription({ key, fetchImpl, sleep }) {
         headers: { 'xi-api-key': key, Accept: 'application/json' },
       });
     } catch (err) {
-      lastError = unavailable(`could not reach ElevenLabs: ${err?.message || err}`);
+      lastError = unavailable(`could not reach ElevenLabs (${failureCode(err?.cause ?? err)})`);
       if (attempt === MAX_ATTEMPTS) throw lastError;
       await sleep(attempt * 500);
       continue;

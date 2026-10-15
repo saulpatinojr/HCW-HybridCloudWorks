@@ -28,6 +28,7 @@
  * presence (lib/ai/router.js), and the draft records the one that did.
  */
 import { randomUUID } from 'node:crypto';
+import { AuthoredError, authoredDetails, failureFields } from '../http/error-response.js';
 import { inferProviderFromUrl } from './draft-from-url.js';
 import { AFTER_MODEL_MARGIN_MS, startBudgetClock } from '../ai/time-budget.js';
 
@@ -102,11 +103,23 @@ const STATUS_BY_CODE = Object.freeze({
  * (router.js header, SYNCHRONOUS CALLS HAVE A TIME BUDGET). */
 export const RECORDING_DRAFT_HTTP_BUDGET_MS = 75000;
 
+/**
+ * A refusal of the recording drafter. Every sentence is written in this
+ * module (or is content-create's own answer, for PERSIST_REJECTED), so the
+ * route may show it and its `details` (#945).
+ */
+export class RecordingDraftError extends AuthoredError {}
+
+/**
+ * One coded refusal.
+ *
+ * @param {string} code - machine-readable reason, mapped to a status
+ * @param {string} message - the authored sentence
+ * @param {object} [extra] - `status`, `details`
+ * @returns {RecordingDraftError}
+ */
 function coded(code, message, extra = {}) {
-  const err = new Error(message);
-  err.code = code;
-  Object.assign(err, extra);
-  return err;
+  return Object.assign(new RecordingDraftError(message, { code }), extra);
 }
 
 const json = (status, body) => ({
@@ -377,18 +390,19 @@ export function createContentFromRecordingHandler({
       const code = error?.code;
       const status =
         code === 'PERSIST_REJECTED' ? error.status || 422 : STATUS_BY_CODE[code] || 502;
-      // Code and status only: messages can carry a recording id (404) or a
-      // provider's error text, and the trace stays content-free.
-      if (status >= 500) {
-        context?.error?.(`[createContentFromRecording] ${status} ${code || 'GENERATION_FAILED'}`);
-      } else {
-        context?.warn?.(`[createContentFromRecording] ${status} ${code}`);
-      }
+      // The drafter's and the router's refusals are authored and shown; a
+      // provider's or the store's own words are not (#945). The log line is
+      // content-free: the code and the correlation id.
+      const details = authoredDetails(error);
       return json(status, {
-        ok: false,
-        error: String(error?.message || error),
+        ...failureFields(
+          context,
+          'The draft could not be created from this recording.',
+          error,
+          request
+        ),
         code: code || 'GENERATION_FAILED',
-        ...(error?.details ? { details: error.details } : {}),
+        ...(details ? { details } : {}),
       });
     }
   };

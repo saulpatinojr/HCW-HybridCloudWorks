@@ -117,6 +117,10 @@ describe('critiqueDraft', () => {
       getActiveAiProvider: () => 'anthropic',
     };
     const r = await createCritic({ ai: failing }).critiqueDraft({ title: 'T', postContent: 'x' });
-    expect(r).toMatchObject({ verdict: 'pass', genericityScore: null, error: '429' });
+    expect(r).toMatchObject({
+      verdict: 'pass',
+      genericityScore: null,
+      error: 'The critique could not run (Error).',
+    });
   });
 });

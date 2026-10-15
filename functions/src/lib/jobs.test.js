@@ -13,9 +13,11 @@ import {
   listJobTypes,
   resetJobTypes,
   publicJob,
+  JOB_READ_FLOOR,
   JOBS_CONTAINER,
   TERMINAL_JOB_STATUSES,
 } from './jobs.js';
+import { AuthoredError } from './http/error-response.js';
 
 const context = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
 const USER = { oid: 'u1', email: 'editor@hcw.dev' };
@@ -388,21 +390,44 @@ describe('runJob', () => {
     });
   });
 
-  it('records a worker failure as failed, with the message, and does not throw', async () => {
+  it('records a worker failure as failed, in its own words only when authored, and does not throw (#945)', async () => {
     registerJobType('explode', {
       role: 'editor',
       worker: async () => {
-        throw new Error('boom ' + 'x'.repeat(3000));
+        throw Object.assign(new Error('Request rate is large. ActivityId: 9f ' + 'x'.repeat(3000)), {
+          code: 429,
+        });
       },
     });
-    const store = makeStore({ 'job-1': { ...queued(), type: 'explode' } });
+    registerJobType('refuse', {
+      role: 'editor',
+      worker: async () => {
+        throw new AuthoredError('The source URL answered 404.', { code: 'SOURCE_GONE' });
+      },
+    });
+    const store = makeStore({
+      'job-1': { ...queued(), type: 'explode' },
+      'job-2': { ...queued(), id: 'job-2', type: 'refuse' },
+    });
+    const ctx = { ...context, error: vi.fn(), warn: vi.fn(), invocationId: 'inv-run' };
     const h = createJobHandlers({ guard: guardAs('editor'), store, ...fixed });
-    expect(await h.runJob({ jobId: 'job-1' }, context)).toEqual({
+    expect(await h.runJob({ jobId: 'job-1' }, ctx)).toEqual({
       jobId: 'job-1',
       outcome: 'failed',
     });
     expect(store.docs['job-1'].status).toBe('failed');
-    expect(store.docs['job-1'].error.length).toBeLessThanOrEqual(2001);
+    // getJob serves this field: the store's words never land in it, the
+    // code and the log line's correlation id do.
+    expect(store.docs['job-1'].error).toBe('The job failed (429; reference inv-run).');
+    // The facts, and where in our code it was thrown (the job runner's own
+    // frames; the worker here is a test function, whose frame is skipped).
+    expect(ctx.error).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[inv-run\] runJob: explode failed \(name=Error code=429 at=src\/lib\/[\w./-]+\.js:\d+(,src\/[\w./-]+\.js:\d+)*\)$/)
+    );
+    expect(JSON.stringify(ctx.error.mock.calls)).not.toContain('ActivityId');
+
+    await h.runJob({ jobId: 'job-2' }, ctx);
+    expect(store.docs['job-2'].error).toBe('The source URL answered 404.');
   });
 
   it('records a timeout as timeout', async () => {
@@ -419,7 +444,7 @@ describe('runJob', () => {
     });
     expect(store.docs['job-1']).toMatchObject({
       status: 'timeout',
-      error: 'job timed out',
+      error: expect.stringMatching(/^The job ran out of time \(JOB_TIMEOUT; reference [\w-]+\)\.$/),
     });
   });
 
@@ -458,7 +483,8 @@ describe('runJob', () => {
     await h.runJob({ jobId: 'job-2' }, context);
     expect(seen).toEqual([
       { status: 'succeeded', result: { done: true }, error: null },
-      { status: 'failed', error: 'nope' },
+      // The hook gets what the document stores, never the raw message (#945).
+      { status: 'failed', error: expect.stringMatching(/^The job failed \(Error; reference [\w-]+\)\.$/) },
     ]);
     // The terminal status was already persisted when each hook ran.
     expect(store.docs['job-1'].status).toBe('succeeded');
@@ -606,6 +632,47 @@ describe('getJob role gating and email redaction (AP-B10)', () => {
     expect(res.status).toBe(403);
     expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'viewer');
     expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'editor');
+  });
+
+  it('holds a job whose type is no longer registered at the enqueue floor, so a viewer gets 403 (#945)', async () => {
+    const store = makeStore({
+      'job-gone': { id: 'job-gone', type: 'retired-type', status: 'succeeded', result: { sourceUrl: 'x' } },
+    });
+    // A guard that lets a viewer through the first gate and refuses anything stricter.
+    const viewerOnly = {
+      requireRole: vi.fn(async (_r, role) =>
+        role === 'viewer'
+          ? { user: USER, role: 'viewer', error: null }
+          : { error: { status: 403, body: JSON.stringify({ error: 'Forbidden' }) } }
+      ),
+    };
+    const refused = await createJobHandlers({ guard: viewerOnly, store, ...fixed }).getJob(
+      makeRequest(null, { method: 'GET', query: { jobId: 'job-gone' } }),
+      context
+    );
+    expect(JOB_READ_FLOOR).toBe('editor');
+    expect(refused.status).toBe(403);
+    expect(viewerOnly.requireRole).toHaveBeenCalledWith(expect.anything(), 'editor');
+    expect(refused.body).not.toContain('sourceUrl');
+
+    const editor = await createJobHandlers({ guard: guardAs('editor'), store, ...fixed }).getJob(
+      makeRequest(null, { method: 'GET', query: { jobId: 'job-gone' } }),
+      context
+    );
+    expect(editor.status).toBe(200);
+  });
+
+  it('answers a failed read with the safe sentence and a correlation id, never the store text (#945)', async () => {
+    const store = makeStore({});
+    store.readDoc.mockRejectedValueOnce(new Error('Request rate is large. ActivityId: 9f'));
+    const ctx = { ...context, error: vi.fn(), invocationId: 'inv-job' };
+    const res = await createJobHandlers({ guard: guardAs('viewer'), store, ...fixed }).getJob(
+      makeRequest(null, { method: 'GET', query: { jobId: 'job-1' } }),
+      ctx
+    );
+    expect(res.status).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'Failed to read job', correlationId: 'inv-job' });
+    expect(JSON.stringify(ctx.error.mock.calls)).not.toContain('ActivityId');
   });
 
   it('redacts requestedBy email in publicJob', () => {

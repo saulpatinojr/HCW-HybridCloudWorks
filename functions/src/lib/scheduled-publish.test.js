@@ -123,7 +123,13 @@ describe('runScheduledPublish', () => {
     const store = makeStore([]);
     store.queryDocs.mockRejectedValue(new Error('query refused'));
     await expect(run(store, makePublish())).rejects.toThrow('query refused');
-    expect(recordedRun(store)).toMatchObject({ status: 'failed', error: 'query refused' });
+    // A sentence with the code and the log line's reference; the store's own
+    // words stay out of the digest (#945).
+    expect(recordedRun(store)).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/^The scheduled publish run failed \(Error; reference [\w.:-]+\)\.$/),
+    });
+    expect(JSON.stringify(recordedRun(store))).not.toContain('query refused');
   });
 
   it('does not fail a run whose record could not be written', async () => {

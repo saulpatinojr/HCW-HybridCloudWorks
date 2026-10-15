@@ -78,6 +78,7 @@
  * `createElevenLabsHandlers` only binds them. Small functions, each doing one
  * step, rather than one closure holding both routes.
  */
+import { authoredMessage, errorCode } from '../http/error-response.js';
 import { readSetting, synthesizeDialogue } from '../listen-and-learn/speech/index.js';
 import {
   API_KEYS_PAGE,
@@ -373,7 +374,12 @@ async function readAccountState({ readAccount, fetchImpl }, key) {
   try {
     return { subscription: await readAccount({ key, fetchImpl }), subscriptionError: null };
   } catch (error) {
-    return { subscription: null, subscriptionError: error?.message || String(error) };
+    // ElevenLabsSpeechError sentences are authored; anything else is not
+    // shown (#945).
+    return {
+      subscription: null,
+      subscriptionError: authoredMessage(error, 'The ElevenLabs subscription could not be read.'),
+    };
   }
 }
 
@@ -417,9 +423,10 @@ async function storeSample({ storage }, rendered, at) {
     );
     return { audioUrl: `${SAMPLE_MEDIA_URL}?v=${at.getTime()}`, audioError: null };
   } catch (error) {
+    // The store's own words stay out of the answer (#945); its code says which failure.
     return {
       audioUrl: null,
-      audioError: `The sample was rendered and billed but not stored: ${error?.message || error}`,
+      audioError: `The sample was rendered and billed but not stored (${errorCode(error)}).`,
     };
   }
 }
@@ -574,7 +581,7 @@ async function renderSample(deps, request, context) {
     } catch (error) {
       context.log?.(`elevenLabsSample: refused (${error?.code || error?.name || 'error'})`);
       return json(statusFor(error), {
-        error: error?.message || String(error),
+        error: authoredMessage(error, 'The podcast voice model could not be chosen.'),
         code: error?.code || error?.name || null,
       });
     }
@@ -593,7 +600,7 @@ async function renderSample(deps, request, context) {
   } catch (error) {
     context.log?.(`elevenLabsSample: refused (${error?.code || error?.name || 'error'})`);
     return json(statusFor(error), {
-      error: error?.message || String(error),
+      error: authoredMessage(error, 'The sample could not be rendered.'),
       code: error?.code || error?.name || null,
     });
   }
@@ -634,7 +641,7 @@ async function listVoices(deps, request, context) {
         subscriptionError,
         voices: [],
         truncated: false,
-        voicesError: error.message,
+        voicesError: authoredMessage(error, 'The ElevenLabs voices could not be listed.'),
       });
     }
     return json(200, {
@@ -677,7 +684,10 @@ function previewRefusal(error, context) {
     return json(500, { error: 'Failed to fetch the voice preview' });
   }
   context.log?.(`elevenLabsPreview: refused (${error.code})`);
-  return json(previewStatus(error), { error: error.message, code: error.code });
+  return json(previewStatus(error), {
+    error: authoredMessage(error, 'The voice preview could not be fetched.'),
+    code: error.code,
+  });
 }
 
 /**

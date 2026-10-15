@@ -44,6 +44,7 @@ import {
   validateMcpUrl,
 } from '../ai/mcp.js';
 import { json, LIST_WINDOW, validBody } from '../http/admin-handler.js';
+import { authoredMessage } from '../http/error-response.js';
 import { AUDIT_TTL_SECONDS } from '../audit.js';
 
 /** Route-segment → container allowlist for the client-id config collections. */
@@ -226,7 +227,8 @@ function mcpWriteError(fields, existing = null) {
       });
     }
   } catch (error) {
-    return error.message;
+    // McpPolicyError sentences are authored; anything else is not shown (#945).
+    return authoredMessage(error, 'The MCP server settings were refused.');
   }
   return null;
 }

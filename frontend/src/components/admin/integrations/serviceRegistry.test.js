@@ -350,12 +350,9 @@ describe('the service registry', () => {
     });
 
     it('refuses a Qlty token Qlty rejected, naming Qlty and its status', async () => {
-      postJSON.mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-        data: { message: 'Invalid token' },
-      });
-      await expect(runnerFor('qlty')()).rejects.toThrow('Qlty answered 401 - Invalid token');
+      // The probe's failure shape since #945: its own sentence, no upstream body.
+      postJSON.mockResolvedValueOnce({ ok: false, status: 401, error: 'Qlty answered HTTP 401.' });
+      await expect(runnerFor('qlty')()).rejects.toThrow(/^Qlty answered HTTP 401\.$/);
     });
 
     it('says what a YouTube press costs, because pressing it spends quota', async () => {

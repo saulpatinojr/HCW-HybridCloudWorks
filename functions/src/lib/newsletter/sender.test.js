@@ -105,17 +105,17 @@ describe('checkSendingDomain', () => {
     });
   });
 
-  it("passes Resend's own refusal through", async () => {
+  it("names Resend's status and error name, never its sentence (#945)", async () => {
     const client = {
       listDomains: vi.fn(async () => ({
         ok: false,
         status: 401,
-        data: { message: 'API key is invalid' },
+        data: { name: 'restricted_api_key', message: 'API key is invalid' },
       })),
     };
     expect(await checkSendingDomain('other.example.com', client)).toEqual({
       ok: false,
-      reason: 'Resend could not list sending domains (HTTP 401): API key is invalid',
+      reason: 'Resend could not list sending domains (HTTP 401 restricted_api_key)',
     });
   });
 });

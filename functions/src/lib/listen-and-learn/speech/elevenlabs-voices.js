@@ -52,8 +52,8 @@ import {
   errorCode,
   isPermissionAnswer,
   isRetryableStatus,
-  saidBy,
 } from './elevenlabs-account.js';
+import { errorCode as failureCode } from '../../http/error-response.js';
 import { fetchListedPreview, isAllowedPreviewUrl } from './elevenlabs-preview.js';
 
 // One import surface for the routes and the picker's tests.
@@ -112,20 +112,18 @@ const voicesError = (reason, status = null) =>
     code: VOICES_UNAVAILABLE,
   });
 
-const snippet = (text) => String(text || '').slice(0, 300) || 'no detail';
-
 /** The sentence for a non-2xx listing answer. Names the fix; never the key. */
 function listingRefusal(status, text) {
   const code = errorCode(text);
   const label = `HTTP ${status}${code ? ` ${code}` : ''}`;
   if (isPermissionAnswer(status, text)) {
     return voicesError(
-      `${label}: the key needs the Voices → Read permission (${VOICES_PERMISSION}), set at ${API_KEYS_PAGE}${saidBy(text)}`,
+      `${label}: the key needs the Voices → Read permission (${VOICES_PERMISSION}), set at ${API_KEYS_PAGE}`,
       status
     );
   }
-  if (status === 401) return voicesError(`${label}: ElevenLabs rejected the key${saidBy(text)}`, status);
-  return voicesError(`${label}: ${snippet(text)}`, status);
+  if (status === 401) return voicesError(`${label}: ElevenLabs rejected the key`, status);
+  return voicesError(label, status);
 }
 
 function pageUrl(voiceType, pageToken) {
@@ -160,7 +158,7 @@ async function fetchPage({ key, voiceType, pageToken, fetchImpl, sleep }) {
         headers: { 'xi-api-key': key, Accept: 'application/json' },
       });
     } catch (err) {
-      lastError = voicesError(`could not reach ElevenLabs: ${err?.message || err}`);
+      lastError = voicesError(`could not reach ElevenLabs (${failureCode(err?.cause ?? err)})`);
       if (attempt === MAX_ATTEMPTS) throw lastError;
       await sleep(attempt * 500);
       continue;

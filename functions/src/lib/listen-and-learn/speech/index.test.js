@@ -535,7 +535,7 @@ describe('synthesizeDialogue', () => {
 
       await expect(
         synthesizeDialogue({ ...POD, dialogue: DIALOGUE, env: ALL, fetchImpl, sleep: noSleep })
-      ).rejects.toThrow(/ElevenLabs HTTP 401/);
+      ).rejects.toThrow(/ElevenLabs answered HTTP 401/);
       expect(gemini).not.toHaveBeenCalled();
     });
   });

@@ -22,6 +22,8 @@
  * which is the honest answer to "this is not a badge".
  */
 
+import { errorCode } from './http/error-response.js';
+
 /** Square edge of every stored badge, in pixels. */
 export const BADGE_SIZE = 512;
 
@@ -68,7 +70,8 @@ export async function normalizeBadgeImage(buffer, { contentType, sharp = null } 
       .toBuffer();
     return { buffer: out, contentType: 'image/png', extension: 'png', width: BADGE_SIZE, height: BADGE_SIZE };
   } catch (cause) {
-    return { error: `Not a decodable image: ${String(cause?.message || cause).split('\n')[0].slice(0, 120)}` };
+    // The decoder's own words stay out of the 415 (#945); its code says which failure.
+    return { error: `Not a decodable image (${errorCode(cause)}).` };
   }
 }
 

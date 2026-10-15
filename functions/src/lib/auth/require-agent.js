@@ -47,6 +47,7 @@
 // Static, not `await import()` inside the guard. verify-token.js imports
 // nothing from here, so there was no cycle to break (T-408).
 import { bearerTokenFrom } from './verify-token.js';
+import { errorCode } from '../http/error-response.js';
 
 const deny = (status, error) => ({
   status,
@@ -100,7 +101,8 @@ export function createAgentGuard({ verifier, lookupAgent, auditDenial }) {
     try {
       identity = await verifier.verify(token);
     } catch (err) {
-      audit({ outcome: 'denied', reason: 'invalid-token', detail: err.message });
+      // The verifier's code, not its sentence: the row is stored (#945).
+      audit({ outcome: 'denied', reason: 'invalid-token', detail: errorCode(err) });
       return { agent: null, identity: null, error: deny(401, 'Authentication required') };
     }
 

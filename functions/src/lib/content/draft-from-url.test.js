@@ -16,6 +16,7 @@ import {
   buildUrlSourceDoc,
   DRAFT_HTTP_BUDGET_MS,
   MAX_EXTRA_URL_SCRAPES,
+  UrlDraftError,
 } from './draft-from-url.js';
 import { createDrafter } from './drafting.js';
 import { createAiRouter } from '../ai/router.js';
@@ -293,14 +294,38 @@ describe('createGenerateArticleDraftHandler', () => {
     ['DRAFT_BUDGET_EXCEEDED', 504],
     ['AI_BUDGET_EXHAUSTED', 504],
     [undefined, 502],
-  ])('maps error code %s to HTTP %i', async (code, status) => {
+  ])('maps error code %s to HTTP %i, in its own words for text it did not write', async (code, status) => {
+    // A provider or system message ('boom') never reaches the answer (#945);
+    // the log line carries the code and the correlation id instead.
     const err = new Error('boom');
     if (code) err.code = code;
     const urlDrafter = { draftFromUrl: vi.fn(async () => Promise.reject(err)) };
     const handler = createGenerateArticleDraftHandler({ guard: okGuard, urlDrafter });
-    const res = await handler(makeRequest({ url: 'https://a.example' }), { error: vi.fn() });
+    const context = { error: vi.fn(), invocationId: 'inv-1' };
+    const res = await handler(makeRequest({ url: 'https://a.example' }), context);
     expect(res.status).toBe(status);
-    expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'boom' });
+    expect(JSON.parse(res.body)).toEqual({
+      ok: false,
+      error: 'The draft could not be generated.',
+      correlationId: 'inv-1',
+    });
+    expect(context.error).toHaveBeenCalledWith(
+      `[inv-1] The draft could not be generated. (name=Error${code ? ` code=${code}` : ''})`
+    );
+    expect(JSON.stringify(context.error.mock.calls)).not.toContain('boom');
+  });
+
+  it("shows the drafter's own refusal word for word: it is authored", async () => {
+    const err = new UrlDraftError('A valid http(s) URL is required.', { code: 'BAD_URL' });
+    const urlDrafter = { draftFromUrl: vi.fn(async () => Promise.reject(err)) };
+    const handler = createGenerateArticleDraftHandler({ guard: okGuard, urlDrafter });
+    const res = await handler(makeRequest({ url: 'x' }), { warn: vi.fn(), invocationId: 'inv-2' });
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({
+      ok: false,
+      error: 'A valid http(s) URL is required.',
+      correlationId: 'inv-2',
+    });
   });
 
   it('answers 504 when the draft outlives the budget, without waiting for it', async () => {

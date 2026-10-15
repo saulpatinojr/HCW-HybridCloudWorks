@@ -24,17 +24,24 @@
  *     to the site's pane by origin and Turnstile (lib/labs/public-lock.js).
  */
 import { randomUUID } from 'node:crypto';
+import { logFailure } from './http/error-response.js';
 
+/**
+ * This module's failure answer: the safe sentence and the correlation id,
+ * with the door's content-free log line (logFailure, #945).
+ *
+ * @param {object} context - the invocation context
+ * @param {string} fallbackMessage - the sentence the answer carries
+ * @param {unknown} error - the failure, for the log line
+ * @param {number} [status] - the HTTP status
+ * @param {object} [request] - the request, for a caller's correlation header
+ * @returns {{ status: number, headers: Record<string, string>, body: string }}
+ */
 function errorResponse(context, fallbackMessage, error, status = 500, request = null) {
-  const correlationId =
-    context?.invocationId ||
-    context?.traceContext?.traceparent ||
-    request?.headers?.get?.('x-correlation-id') ||
-    request?.headers?.get?.('x-request-id') ||
-    randomUUID();
-  if (context?.error) {
-    context.error(`[${correlationId}] ${fallbackMessage}:`, error);
-  }
+  // The door's line and id: the v4 traceParent, and a caller's header only in
+  // the id shape (#945). The caught error object is never handed to
+  // context.error, which would log its message (CodeRabbit on #1200).
+  const correlationId = logFailure(context, fallbackMessage, error, request);
   return {
     status,
     headers: {

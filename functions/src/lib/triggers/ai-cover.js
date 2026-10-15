@@ -56,6 +56,7 @@ import { measureImage } from '../gallery-images.js';
 import { claimRisingEdge, releaseRisingEdgeClaim, SKIP_REASONS } from './rising-edge-claim.js';
 import { fetchImage as defaultFetchImage } from './fetch-image.js';
 import { fetchWithTimeout } from '../http/fetch-with-timeout.js';
+import { AuthoredError, errorCode, recordedFailure } from '../http/error-response.js';
 
 // Deadlines for the Replicate calls (T-712). This runs inside a change-feed
 // handler, so a hung socket does not just fail one cover — it holds the lease
@@ -298,7 +299,7 @@ async function createPrediction(fetchImpl, { model, headers, input, sleep }) {
     if (!RETRYABLE_STATUSES.includes(response.status) || attempt === 3) break;
     await sleep(2 ** attempt * 1000);
   }
-  throw new Error(`Replicate HTTP ${lastStatus}`);
+  throw new CoverGenerationError(`Replicate HTTP ${lastStatus}`, { status: lastStatus });
 }
 
 /**
@@ -314,7 +315,7 @@ async function awaitPrediction(fetchImpl, prediction, { authorization, sleep }) 
   let current = prediction;
   for (let poll = 0; poll < 60 && !PREDICTION_SETTLED.includes(current.status); poll += 1) {
     if (Date.now() > pollDeadline) {
-      throw new Error(
+      throw new CoverGenerationError(
         `Replicate prediction still ${current.status} after ${Math.round(REPLICATE_POLL_BUDGET_MS / 1000)}s`
       );
     }
@@ -324,7 +325,11 @@ async function awaitPrediction(fetchImpl, prediction, { authorization, sleep }) 
       current.urls?.get || `https://api.replicate.com/v1/predictions/${current.id}`,
       { headers: { Authorization: authorization }, timeoutMs: REPLICATE_POLL_TIMEOUT_MS }
     );
-    if (!response.ok) throw new Error(`Replicate poll HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new CoverGenerationError(`Replicate poll HTTP ${response.status}`, {
+        status: response.status,
+      });
+    }
     current = await response.json();
   }
   return current;
@@ -333,12 +338,14 @@ async function awaitPrediction(fetchImpl, prediction, { authorization, sleep }) 
 /** The image URL a settled prediction carries, in any of its output shapes. */
 function predictionImageUrl(prediction) {
   if (prediction.status !== 'succeeded') {
-    throw new Error(`Replicate prediction ${prediction.status}: ${prediction.error || 'unknown'}`);
+    // The prediction's own error text is Replicate's (and can quote the
+    // prompt), so the stored sentence names the status only (#945).
+    throw new CoverGenerationError(`Replicate prediction ${prediction.status}`);
   }
   const output = prediction.output;
   const imageUrl =
     typeof output === 'string' ? output : Array.isArray(output) ? output[0] : output?.url;
-  if (!imageUrl) throw new Error('No image URL returned from Replicate API');
+  if (!imageUrl) throw new CoverGenerationError('No image URL returned from Replicate API');
   return imageUrl;
 }
 
@@ -369,22 +376,34 @@ async function assertImageBudget({
   try {
     used = await monthToDateUsage({ store, now }, IMAGE_PROVIDER);
   } catch (cause) {
-    const err = new Error(
-      `Image generation paused: this month's image spend could not be read (${cause?.message || cause}), and with no account-side limit the budget cannot be enforced blind. Try again shortly.`
+    throw new ImageBudgetError(
+      `Image generation paused: this month's image spend could not be read (${errorCode(cause)}), and with no account-side limit the budget cannot be enforced blind. Try again shortly.`,
+      { code: 'IMAGE_BUDGET_UNKNOWN', status: 503, cause }
     );
-    err.code = 'IMAGE_BUDGET_UNKNOWN';
-    err.status = 503;
-    throw err;
   }
   const pending = costPerImageUsd ?? 0;
   if (used.costUsd + pending <= monthlyBudgetUsd && used.count + 1 <= monthlyMaxImages) return;
-  const err = new Error(
-    `Image generation paused: $${used.costUsd.toFixed(2)} of the $${monthlyBudgetUsd} monthly image budget used, ${used.count} images since ${used.since.slice(0, 10)}. Raise CONTENTFORGE_IMAGE_MONTHLY_BUDGET_USD (or CONTENTFORGE_IMAGE_MONTHLY_MAX) or wait for the first of the month.`
+  throw new ImageBudgetError(
+    `Image generation paused: $${used.costUsd.toFixed(2)} of the $${monthlyBudgetUsd} monthly image budget used, ${used.count} images since ${used.since.slice(0, 10)}. Raise CONTENTFORGE_IMAGE_MONTHLY_BUDGET_USD (or CONTENTFORGE_IMAGE_MONTHLY_MAX) or wait for the first of the month.`,
+    { code: 'IMAGE_BUDGET_EXHAUSTED', status: 429 }
   );
-  err.code = 'IMAGE_BUDGET_EXHAUSTED';
-  err.status = 429;
-  throw err;
 }
+
+/**
+ * The monthly image budget refused a generation (429 exhausted, 503
+ * unreadable). Its sentence is written above and names only settings and
+ * totals, so the manual image routes show it (authored, #945).
+ */
+export class ImageBudgetError extends AuthoredError {}
+
+/**
+ * A cover generation this module refuses or gives up on, in its own
+ * sentence: an unset key, a task with no image model, a status from
+ * Replicate, a generation that is not an image. Authored (#945): the
+ * document's altCoverImageError and the manual image routes carry it as
+ * written. Replicate's own error text never goes in one.
+ */
+export class CoverGenerationError extends AuthoredError {}
 
 /**
  * One row per output image, under the task's source with the image slug as
@@ -420,11 +439,13 @@ async function resolveImageModel(modelForTask, source, fallback) {
       ? await modelForTask({ task: 'coverArt' })
       : await modelForTask({ task: 'manualImages' });
   if (chosen.provider !== IMAGE_PROVIDER) {
-    throw new Error(
+    throw new CoverGenerationError(
       `The ${taskForSource(source)} task resolved to ${chosen.provider}, which this image client cannot call; name a ${IMAGE_PROVIDER} model under AI Engine → Tasks.`
     );
   }
-  if (!chosen.model) throw new Error(`The ${taskForSource(source)} task resolved to no model`);
+  if (!chosen.model) {
+    throw new CoverGenerationError(`The ${taskForSource(source)} task resolved to no model`);
+  }
   return chosen.model;
 }
 
@@ -463,8 +484,17 @@ export function createReplicateClient({
 
   const bookkeeping = { store, now, uuid, costPerImageUsd, monthlyBudgetUsd, monthlyMaxImages };
 
+  /**
+   * One image from the task's Replicate model, under the monthly budget.
+   * Refusals and Replicate's statuses are CoverGenerationErrors, written
+   * here (#945).
+   *
+   * @param {string} prompt - what to draw
+   * @param {{ aspectRatio?: string, source?: string }} [options]
+   * @returns {Promise<string>} the image URL
+   */
   async function generate(prompt, { aspectRatio, source } = {}) {
-    if (!apiKey) throw new Error('REPLICATE_API_KEY is not configured');
+    if (!apiKey) throw new CoverGenerationError('REPLICATE_API_KEY is not configured');
     // The task first (header): a task switched off or with nothing eligible
     // refuses before the budget is read or a byte is sent.
     model = await resolveImageModel(modelForTask, source, defaultModel);
@@ -553,7 +583,9 @@ export async function generateCoversForContent(
     // generation, so it fails the slot rather than being skipped (#415): the
     // caller's catch writes `altCoverImageError` and the doc never claims a
     // cover it has no bytes for.
-    if (fetched.refused) throw new Error(`Generated ${target} cover refused: ${fetched.reason}`);
+    if (fetched.refused) {
+      throw new CoverGenerationError(`Generated ${target} cover refused: ${fetched.reason}`);
+    }
     const { buffer, contentType } = fetched;
     const blobPath = aiCoverBlobPath(contentId, target, stamp);
     await storage.uploadBlob('covers', blobPath, buffer, contentType, {
@@ -664,14 +696,15 @@ export function createAiCoverGenerator({
       });
       return { ran: true, reason: 'generated', targets, promptSource: resolved.source };
     } catch (err) {
-      log.error?.(
-        `[generateAiCover:content] Failed for content/${contentId}: ${err?.message || err}`
-      );
+      // The review page shows altCoverImageError: this module's sentence, or
+      // a fixed one with the code and the reference of the content-free log
+      // line, never Replicate's or a socket's own words (#945).
+      const failure = recordedFailure(log, 'The cover could not be generated.', err);
       // Releasing the claim is required: a claim left behind blocks the next request for the whole window.
       const errorUpdate = {
         ...releaseRisingEdgeClaim(AI_COVER_CLAIM_FIELDS),
         altCoverImageTrigger: false,
-        altCoverImageError: String(err?.message || err).slice(0, 500),
+        altCoverImageError: failure,
       };
       // Deterministic fallback (T-606): generation failed or is unconfigured,
       // but a post should still stage with a designed cover. Best effort — a
@@ -693,9 +726,7 @@ export function createAiCoverGenerator({
             // not heroImageUrl (lib/public-reads.js PUBLIC_CONTENT_LIST_FIELDS).
             errorUpdate.altCoverImage = fallback;
             errorUpdate.contentImageUrl = fallback;
-            errorUpdate.altCoverImageError = `fallback: default hero (${String(
-              err?.message || err
-            ).slice(0, 400)})`;
+            errorUpdate.altCoverImageError = `fallback: default hero (${failure})`;
             fallbackApplied = true;
           }
         } catch (fallbackErr) {

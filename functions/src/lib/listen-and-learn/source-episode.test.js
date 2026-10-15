@@ -26,6 +26,7 @@ import { USAGE_SOURCES } from '../ai/usage.js';
 import {
   AiNotConfiguredError,
   GROUNDING_LIMITS,
+  GroundingIncompleteError,
   isYouTubeVideoUrl,
   validateGroundingSources,
 } from '../ai/router.js';
@@ -352,7 +353,10 @@ describe('generateSourceEpisode — the run', () => {
     const store = makeStore();
     const deps = happyDeps({
       writeScript: vi.fn(async () => {
-        throw new Error('Gemini could not read a source — https://example.com/entra (paywall).');
+        // The router's own sentence (authored), as the grounded call throws it.
+        throw new GroundingIncompleteError(
+          'Gemini could not read a source — https://example.com/entra (paywall).'
+        );
       }),
     });
 

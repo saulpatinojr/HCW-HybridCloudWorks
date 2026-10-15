@@ -57,8 +57,10 @@ import { API_ORIGIN, API_PATH_PREFIX, REPO_REF } from '../cms/repo-draft.js';
 import {
   GITHUB_FETCH_TIMEOUT_MS,
   MAX_API_BYTES,
+  RepoSourceError,
   fetchPinned,
 } from '../cms/repo-draft-source.js';
+import { isAuthoredError, storedFailure } from '../http/error-response.js';
 
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -133,6 +135,14 @@ export function createMainHistoryReader({
   fetch: fetchImpl = globalThis.fetch,
   timeoutMs = GITHUB_FETCH_TIMEOUT_MS,
 } = {}) {
+  /**
+   * The commits on main under one path since a date, newest first. A body
+   * that is not a commit list is a coded RepoSourceError (#945).
+   *
+   * @param {string} path - a HOST_PATHS entry
+   * @param {string|null} since - an ISO date, or null for the default window
+   * @returns {Promise<object[]>}
+   */
   async function commitsTouching(path, since) {
     const query = new URLSearchParams({ sha: REPO_REF, path, per_page: String(COMMITS_PER_PATH) });
     if (since) query.set('since', since);
@@ -145,12 +155,12 @@ export function createMainHistoryReader({
     try {
       rows = JSON.parse(bytes.toString('utf8'));
     } catch {
-      throw Object.assign(new Error('GitHub answered with something that is not JSON.'), {
+      throw new RepoSourceError('GitHub answered with something that is not JSON.', {
         code: 'UPSTREAM_SHAPE',
       });
     }
     if (!Array.isArray(rows)) {
-      throw Object.assign(new Error('The commit list is not a list.'), { code: 'UPSTREAM_SHAPE' });
+      throw new RepoSourceError('The commit list is not a list.', { code: 'UPSTREAM_SHAPE' });
     }
     return rows.map(toCommit).filter(Boolean);
   }
@@ -184,10 +194,18 @@ export function readSince(agents) {
   return dates.length ? new Date(Math.min(...dates)).toISOString() : null;
 }
 
-/** What a failed read stores and shows: the coded error's sentence, which carries no secret. */
+/**
+ * What a failed read stores and shows: a RepoSourceError's `CODE: sentence`,
+ * written in this repository and carrying no secret, or a fixed sentence
+ * with the code for anything else, never a socket's or GitHub's own words
+ * (#945).
+ *
+ * @param {unknown} error - what the read threw
+ * @returns {string}
+ */
 function describeReadError(error) {
-  const message = String(error?.message || error || 'unknown error').slice(0, 300);
-  return error?.code ? `${error.code}: ${message}` : message;
+  const sentence = storedFailure(error, "main's lab-host history could not be read.").slice(0, 300);
+  return isAuthoredError(error) && error.code ? `${error.code}: ${sentence}` : sentence;
 }
 
 /** The fields a failed read keeps from the last good one, so the comparison stays usable. */

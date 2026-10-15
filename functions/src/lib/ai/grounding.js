@@ -5,6 +5,7 @@
  * (router.js, which re-exports the public names here so callers and tests
  * are unchanged); the header of router.js carries the Interactions contract.
  */
+import { AuthoredError, codeShaped } from '../http/error-response.js';
 import { fenceArticleText } from './prompt-fence.js';
 
 export const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
@@ -60,11 +61,25 @@ function isYouTubeHost(url) {
   }
 }
 
+/**
+ * A source list the router refuses before spending. The sentences are
+ * written in this module for the person who typed the URLs (#945).
+ */
+export class InvalidSourcesError extends AuthoredError {
+  /** @param {string} message - the refusal, naming the source */
+  constructor(message) {
+    super(message, { code: 'AI_INVALID_SOURCES', status: 400 });
+  }
+}
+
+/**
+ * The refusal for one bad source.
+ *
+ * @param {string} message - the authored sentence
+ * @returns {InvalidSourcesError}
+ */
 function invalidSources(message) {
-  const err = new Error(message);
-  err.status = 400;
-  err.code = 'AI_INVALID_SOURCES';
-  return err;
+  return new InvalidSourcesError(message);
 }
 
 /** The url parses and is http(s); otherwise the sentence that refuses it. */
@@ -219,13 +234,24 @@ export function groundedOutputText(data) {
  * from the pages it did get, which is a run that "succeeds and quietly says
  * less than it claims". Only results the API actually reported are judged; a
  * missing metadata step is not evidence either way and is not treated as one.
+ *
+ * Each is `url (status)`, and goes into a stored sentence (#945), so only an
+ * http(s) URL and a status shaped like a code are named; anything else is
+ * `a source` and `unreadable`.
+ *
+ * @param {object} data - the interaction Gemini answered
+ * @returns {string[]}
  */
 export function failedRetrievals(data) {
   return (Array.isArray(data?.steps) ? data.steps : [])
     .filter((step) => step?.type === 'url_context_result')
     .flatMap((step) => (Array.isArray(step.result) ? step.result : []))
     .filter((r) => r && typeof r === 'object' && r.status && r.status !== 'success')
-    .map((r) => `${r.url || 'a source'} (${r.status})`);
+    .map((r) => {
+      const url = typeof r.url === 'string' && /^https?:\/\/\S+$/.test(r.url) ? r.url.slice(0, 300) : 'a source';
+      const status = codeShaped(r.status) || 'unreadable';
+      return `${url} (${status})`;
+    });
 }
 
 /**

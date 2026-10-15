@@ -574,7 +574,7 @@ describe('out of credit', () => {
       caught = err;
     }
     expect(caught).toMatchObject({ status: 401, code: null });
-    expect(caught.message).toMatch(/ElevenLabs HTTP 401/);
+    expect(caught.message).toBe('ElevenLabs answered HTTP 401 invalid_api_key.');
     expect(posted).toHaveBeenCalledTimes(1);
   });
 
@@ -603,10 +603,12 @@ describe('out of credit', () => {
     }
     expect(caught).toMatchObject({ provider: 'elevenlabs', status: 402, code: PAID_PLAN_REQUIRED });
     expect(caught.message).toMatch(/refused this on the current plan/);
-    // The fix first, pointing at the picker; ElevenLabs's own words after it.
+    // The fix, pointing at the picker. ElevenLabs's own words no longer
+    // follow it (#945): the sentence is this module's, shown whole.
     expect(caught.message).toMatch(
-      /Choose voices your plan allows under Podcast voices at https:\/\/hybridcloudworks\.com\/admin\/platform-settings\?tab=audio\. ElevenLabs said: .*Free users cannot use library voices/
+      /Choose voices your plan allows under Podcast voices at https:\/\/hybridcloudworks\.com\/admin\/platform-settings\?tab=audio\.$/
     );
+    expect(caught.message).not.toMatch(/Free users cannot use library voices/);
     expect(caught.message).not.toMatch(/out of credit/);
     expect(posted).toHaveBeenCalledTimes(1);
   });
@@ -813,7 +815,7 @@ describe('retries', () => {
         fetchImpl: withAccount(posted),
         sleep: noSleep,
       })
-    ).rejects.toThrow(/Failed to reach ElevenLabs: ECONNRESET/);
+    ).rejects.toThrow('Failed to reach ElevenLabs (Error).');
     expect(posted).toHaveBeenCalledTimes(3);
   });
 });

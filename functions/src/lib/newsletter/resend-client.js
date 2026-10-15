@@ -47,6 +47,8 @@
  * trusting any status here.
  */
 
+import { errorCode } from '../http/error-response.js';
+
 export const RESEND_API_BASE = 'https://api.resend.com';
 
 /** Long enough for Resend, short enough that a hung call cannot hold a signup. */
@@ -60,6 +62,15 @@ export const RESEND_TIMEOUT_MS = 10_000;
 export function createResendClient({ apiKey, fetch: fetchImpl = globalThis.fetch }) {
   if (!apiKey) throw new Error('createResendClient needs an API key');
 
+  /**
+   * One Resend request: `{ ok, status, data }`, never a throw. A request
+   * with no answer is status 0 with the failure's code as `data.name`.
+   *
+   * @param {string} method - the HTTP method
+   * @param {string} path - the API path
+   * @param {object} [body] - the JSON body
+   * @returns {Promise<{ ok: boolean, status: number, data: object|null }>}
+   */
   async function call(method, path, body) {
     let response;
     let text = '';
@@ -76,12 +87,13 @@ export function createResendClient({ apiKey, fetch: fetchImpl = globalThis.fetch
       });
       text = await response.text();
     } catch (error) {
-      // The key is in a header, not the URL, so the message cannot carry it;
-      // it is still reduced to its own message rather than passed whole.
+      // No answer: status 0, and the failure's code as its name. The
+      // transport's own sentence is not carried (#945); callers show and
+      // log the name, never a message.
       return {
         ok: false,
         status: 0,
-        data: { message: String(error?.message ?? error) },
+        data: { name: errorCode(error) },
       };
     }
     let data = null;

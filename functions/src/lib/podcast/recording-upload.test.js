@@ -49,11 +49,11 @@ describe('checkAudioUpload', () => {
   it('refuses anything else, and a type whose extension disagrees', () => {
     expect(checkAudioUpload({ contentType: 'text/html', fileName: 'a.html' })).toMatchObject({
       ok: false,
-      message: expect.stringMatching(/Unsupported audio type/),
+      reason: expect.stringMatching(/Unsupported audio type/),
     });
     expect(checkAudioUpload({ contentType: 'audio/mpeg', fileName: 'a.wav' })).toMatchObject({
       ok: false,
-      message: expect.stringMatching(/extension does not match/),
+      reason: expect.stringMatching(/extension does not match/),
     });
     expect(checkAudioUpload({ contentType: 'audio/mpeg', fileName: 'noext' }).ok).toBe(false);
   });

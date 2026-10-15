@@ -64,7 +64,17 @@ const transcripts = [
     audioUrl: null,
     audioError: 'No speech provider is configured',
     generatedAt: '2026-09-08T13:00:00.000Z',
-    host: { podbean: { episodeId: null, error: { status: 502, message: 'host said no' } } },
+    // The shape host-publish.js records since #945: the status and Podbean's
+    // code, never its description.
+    host: {
+      podbean: {
+        episodeId: null,
+        error: {
+          status: 502,
+          message: 'Podbean answered 502 while creating the episode (server_error).',
+        },
+      },
+    },
   },
   {
     id: 'article_publishing',
@@ -427,11 +437,17 @@ describe('Plaud connection check', () => {
   it('surfaces a failed rotation, not just the connected banner', async () => {
     routeGets({
       connected: true,
-      plaudRefresh: { lastTokenRefreshError: 'refresh token revoked' },
+      // The sentence plaud-token.js stores since #945: the status and the
+      // OAuth code, never Plaud's body.
+      plaudRefresh: {
+        lastTokenRefreshError: 'Plaud refused the token refresh (HTTP 400 invalid_grant).',
+      },
     });
     renderPage();
     openSettings();
-    expect(await screen.findByText(/refresh token revoked/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Plaud refused the token refresh \(HTTP 400 invalid_grant\)/)
+    ).toBeInTheDocument();
   });
 });
 
@@ -588,7 +604,11 @@ describe('Podcast tab', () => {
       )
     );
     renderPage();
-    expect(await screen.findByText('Host: host said no')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'Host: Podbean answered 502 while creating the episode (server_error).'
+      )
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     await waitFor(() =>

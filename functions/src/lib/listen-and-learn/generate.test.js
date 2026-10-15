@@ -378,9 +378,10 @@ describe('partial failure', () => {
     });
 
     expect(report).toMatchObject({ generated: 1, failed: 1 });
+    // The episode stores a sentence with the code, not the model's words (#945).
     expect(store.docs[EPISODE_CONTAINER]['area-1']).toMatchObject({
       status: STATUS.failed,
-      error: 'model refused',
+      error: 'The episode could not be generated (Error).',
       areaName: 'Area 1',
     });
     expect(store.docs[EPISODE_CONTAINER]['area-2'].status).toBe(STATUS.draft);
@@ -396,7 +397,7 @@ describe('partial failure', () => {
 
     const report = await generateEpisodes({ ...baseRun(), store, storage: makeStorage(), deps });
 
-    expect(report.videoError).toBe('quota exhausted');
+    expect(report.videoError).toBe('The video search failed (Error).');
     expect(report.generated).toBe(2);
     expect(store.docs[EPISODE_CONTAINER]['area-1'].videos).toEqual([]);
   });

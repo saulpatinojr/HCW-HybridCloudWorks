@@ -114,13 +114,20 @@ export class PlaudEmbeddedError extends Error {
   }
 }
 
+/**
+ * What the upload route and the error below say when the two settings are
+ * missing: a sentence written here for the admin, so a route can answer with
+ * it directly rather than reading an error's message (#945).
+ */
+export const PLAUD_EMBEDDED_NOT_CONFIGURED_MESSAGE =
+  `Plaud Embedded is not configured: seed ${CLIENT_ID_SETTING} and ${API_KEY_SETTING} ` +
+  `(Key Vault PLAUD-EMBEDDED-CLIENT-ID and PLAUD-EMBEDDED-API-KEY) to transcribe uploaded audio.`;
+
+/** Thrown before any call when the Plaud Embedded settings are missing. */
 export class PlaudEmbeddedNotConfiguredError extends PlaudEmbeddedError {
+  /** One fixed sentence: PLAUD_EMBEDDED_NOT_CONFIGURED_MESSAGE. */
   constructor() {
-    super(
-      `Plaud Embedded is not configured: seed ${CLIENT_ID_SETTING} and ${API_KEY_SETTING} ` +
-        `(Key Vault PLAUD-EMBEDDED-CLIENT-ID and PLAUD-EMBEDDED-API-KEY) to transcribe uploaded audio.`,
-      { code: 'PLAUD_EMBEDDED_NOT_CONFIGURED' }
-    );
+    super(PLAUD_EMBEDDED_NOT_CONFIGURED_MESSAGE, { code: 'PLAUD_EMBEDDED_NOT_CONFIGURED' });
     this.name = 'PlaudEmbeddedNotConfiguredError';
   }
 }

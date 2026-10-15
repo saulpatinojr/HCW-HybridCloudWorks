@@ -17,6 +17,7 @@
  * masked email addresses (`s***@example.com`).
  */
 import { ADMIN_CONFIG_PARTITION } from "../cosmos-client.js";
+import { authoredMessage } from "../http/error-response.js";
 import { readKey } from "../ai/router.js";
 import { enforceSubmissionQuota } from "../submissions.js";
 import { createResendClient } from "../newsletter/resend-client.js";
@@ -406,6 +407,14 @@ export function createStreamYardHandlers({
     });
   }
 
+  /**
+   * PUBLIC: a visitor registers for an On Air event. Every answer is a
+   * visitor sentence; the rate-limit refusal is authored (#945).
+   *
+   * @param {object} request - the HTTP request
+   * @param {object} context - the invocation context
+   * @returns {Promise<object>} the HTTP response
+   */
   async function publicRegister(request, context) {
     let clientKey;
     try {
@@ -436,7 +445,10 @@ export function createStreamYardHandlers({
       if (err.code === "SUBMISSION_RATE_LIMIT") {
         return json(
           429,
-          { ok: false, error: err.message },
+          {
+            ok: false,
+            error: authoredMessage(err, "Too many requests — try again later."),
+          },
           { "Retry-After": "3600" },
         );
       }

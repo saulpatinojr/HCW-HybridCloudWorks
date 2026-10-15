@@ -4,6 +4,7 @@
  * (`{ body, action, setName, promptName, newSetName, nowIso, updatedBy }`).
  * Each answers the JSON response to send (PR #841 split of image-prompts.js).
  */
+import { authoredMessage, isAuthoredError } from '../../http/error-response.js';
 import { normalizeSlotTemplates } from '../content-quality.js';
 import { assertStringLength } from '../content-update-validation.js';
 import {
@@ -29,14 +30,23 @@ const SET_AND_PROMPT_REQUIRED = json(400, { error: 'setName and promptName are r
 
 const readSet = (store, name) => store.readDoc('image_prompt_sets', name, name);
 
-/** The save fields, or the 400 for a body that fails validation. */
+/**
+ * The save fields, or the 400 for a body that fails validation. Only a
+ * validator's own sentence is the 400; a failed read is thrown on to the
+ * route's 500 (#945).
+ *
+ * @param {{ readDoc: Function }} store - the document store
+ * @param {{ body: object, setName: string, nowIso: string, updatedBy: string }} req - the request
+ * @returns {Promise<{ fields: object } | { error: object }>}
+ */
 async function saveSetFields(store, { body, setName, nowIso, updatedBy }) {
   try {
     assertStringLength(body.primaryPrompt, 'primaryPrompt', 12000, { allowEmpty: false });
     const existing = await readSet(store, setName);
     return { fields: buildSetSaveFields(existing, body, { nowIso, updatedBy }) };
   } catch (error) {
-    return { error: json(400, { error: String(error.message || error) }) };
+    if (!isAuthoredError(error)) throw error;
+    return { error: json(400, { error: authoredMessage(error, 'The prompt set was refused.') }) };
   }
 }
 
@@ -138,7 +148,12 @@ async function duplicateOrRenameSet({ store }, req) {
   });
 }
 
-/** The prompt's bounded fields, or the 400 for a body that fails validation. */
+/**
+ * The prompt's bounded fields, or the 400 for a body that fails validation.
+ *
+ * @param {object} body - the request body
+ * @returns {{ slotTemplates: object } | { error: object }}
+ */
 function promptFieldsOf(body) {
   try {
     assertStringLength(body.additionalParameters, 'additionalParameters', 12000, {
@@ -150,7 +165,8 @@ function promptFieldsOf(body) {
     });
     return { slotTemplates };
   } catch (error) {
-    return { error: json(400, { error: String(error.message || error) }) };
+    if (!isAuthoredError(error)) throw error;
+    return { error: json(400, { error: authoredMessage(error, 'The prompt was refused.') }) };
   }
 }
 
@@ -198,12 +214,20 @@ async function deletePrompt({ store }, { setName, promptName }) {
   });
 }
 
+/**
+ * Assign a prompt set to one allowlisted page.
+ *
+ * @param {{ store: object }} ctx - the document store
+ * @param {object} req - the normalised request
+ * @returns {Promise<object>} the JSON response
+ */
 async function savePageAssignment({ store }, { body, setName, promptName, nowIso, updatedBy }) {
   let pagePath;
   try {
     pagePath = assertAllowedPromptPage(body.pagePath);
   } catch (error) {
-    return json(400, { error: String(error.message || error) });
+    if (!isAuthoredError(error)) throw error;
+    return json(400, { error: authoredMessage(error, 'That page cannot take a prompt set.') });
   }
   await mergeSet(store, 'image_prompt_pages', pathToPromptPageDocId(pagePath), {
     pagePath,

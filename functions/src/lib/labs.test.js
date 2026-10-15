@@ -217,6 +217,29 @@ describe('getLabsSnapshot', () => {
     expect(jobsQuery).toMatch(/ORDER BY c\.createdAt DESC/);
   });
 
+  // CodeRabbit on #1200: this module's own errorResponse handed the caught
+  // error object to context.error, which logged its message.
+  it('logs a failed snapshot through the door: one content-free line, never the error text', async () => {
+    const store = makeStore({
+      queryDocs: vi.fn(async () => {
+        throw Object.assign(new Error('cosmos said: account hcw-secret-name refused'), { code: 'ServiceUnavailable' });
+      }),
+    });
+    const ctx = { log: vi.fn(), error: vi.fn(), warn: vi.fn(), invocationId: 'inv-labs-1' };
+    const h = createLabHandlers({ guard: guardAs('viewer'), store, ...fixed });
+    const res = await h.getLabsSnapshot(makeRequest({}), ctx);
+    expect(res.status).toBe(500);
+    expect(res.body).not.toContain('hcw-secret-name');
+    const logged = [...ctx.error.mock.calls, ...ctx.warn.mock.calls];
+    expect(logged.length).toBeGreaterThan(0);
+    for (const args of logged) {
+      expect(args).toHaveLength(1);
+      expect(typeof args[0]).toBe('string');
+      expect(args[0]).not.toContain('hcw-secret-name');
+    }
+    expect(logged.some(([line]) => line.includes('code=ServiceUnavailable'))).toBe(true);
+  });
+
   it('knows no running status: the agent writes claimed, then a terminal one', () => {
     expect(JOB_STATUSES).toEqual([
       'queued',
@@ -359,9 +382,13 @@ describe('getLabsSnapshot', () => {
     // health/pulse-checks.js imports this module for the online rule, and the
     // frontend's statusParity.test.js imports pulse-checks.js under jsdom; the
     // checks bring the Cosmos and Key Vault clients, which cannot load there.
+    // The door (http/error-response.js, for the correlation id, #945) imports
+    // node:crypto and nothing else, which the second expectation holds.
     const source = readFileSync(new URL('./labs.js', import.meta.url), 'utf8');
     const staticImports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
-    expect(staticImports).toEqual(['node:crypto']);
+    expect(staticImports).toEqual(['node:crypto', './http/error-response.js']);
+    const door = readFileSync(new URL('./http/error-response.js', import.meta.url), 'utf8');
+    expect([...door.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1])).toEqual(['node:crypto']);
   });
 });
 

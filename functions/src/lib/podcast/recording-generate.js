@@ -38,6 +38,7 @@
  * can see it and the portal toggle gates it.
  */
 import { callMcpTool } from '../ai/mcp.js';
+import { codeShaped } from '../http/error-response.js';
 import {
   generateRecordingScript,
   normalizePlaudTranscript,
@@ -136,11 +137,21 @@ export function parseToolResult(outcome) {
   }
 }
 
+/**
+ * Why a Plaud tool call failed, as the transcript will store it: the connect
+ * sentence for a refused credential, else the tool, the recording and the
+ * answer's code. The tool's own text stays out (#945).
+ *
+ * @param {{ code?: string|number|null }} outcome - callMcpTool's failure
+ * @param {string} tool - the tool called
+ * @param {string} recordingId - the recording asked for
+ * @returns {TranscriptError}
+ */
 function explainToolFailure(outcome, tool, recordingId) {
   if (isPlaudCredentialFailure(outcome)) return new TranscriptError(PLAUD_CONNECT_SENTENCE);
-  return new TranscriptError(
-    `Plaud could not return ${tool} for recording ${recordingId}: ${outcome?.error || 'no result'}`
-  );
+  const code = codeShaped(outcome?.code);
+  const note = code ? ` (${code})` : '';
+  return new TranscriptError(`Plaud could not return ${tool} for recording ${recordingId}${note}.`);
 }
 
 /**
