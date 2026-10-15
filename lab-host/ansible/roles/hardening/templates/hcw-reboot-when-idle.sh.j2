@@ -14,18 +14,18 @@
 # One syslog line per outcome, under the tag {{ hardening_reboot_when_idle_tag }}
 # (journalctl -t {{ hardening_reboot_when_idle_tag }}):
 #
-#   no marker                    notice   nothing pending; stays on the host
-#   a user is logged in          warning  deferred; tomorrow's run asks again
-#   a job container runs         warning  deferred; tomorrow's run asks again
-#   users or docker cannot say   err      the run fails and the notifier (LAB-2) pages
-#   idle                         warning  rebooting, with how long it has waited
+#   no marker                       notice   nothing pending; stays on the host
+#   a user is logged in             warning  deferred; tomorrow's run asks again
+#   a job container runs            warning  deferred; tomorrow's run asks again
+#   loginctl or docker cannot say   err      the run fails and the notifier (LAB-2) pages
+#   idle                            warning  rebooting, with how long it has waited
 #
 # Warning and err ship to Log Analytics through the Arc data collection
 # rule, so every reboot and every deferral leaves a row there, and the daily
 # held report (LAB-3) says at 07:15 for how long a reboot has been waiting.
-# A check that cannot run has not run: a `users` or a `docker` that fails,
-# docker missing included, ends the run non-zero rather than guessing that
-# nobody is there, and the unit's OnFailure= reports that.
+# A check that cannot run has not run: a `loginctl` or a `docker` that
+# fails, docker missing included, ends the run non-zero rather than guessing
+# that nobody is there, and the unit's OnFailure= reports that.
 set -euo pipefail
 
 tag='{{ hardening_reboot_when_idle_tag }}'
@@ -44,14 +44,51 @@ since_epoch="$(stat -c %Y "${reboot_required}")"
 since="$(date -u -d "@${since_epoch}" +%Y-%m-%dT%H:%MZ)"
 days=$(( ($(date -u +%s) - since_epoch) / 86400 ))
 
-# The same source unattended-upgrade's own Automatic-Reboot-WithUsers check
-# read (/usr/bin/users), asked now rather than when the upgrade ran.
-logged_in="$(users)" || {
-  say err "not rebooting: users could not say who is logged in, so the check has not run; its error is in this unit's journal and this run fails"
+# Who is logged in, from logind. `users` and `who` are not asked: on Ubuntu
+# 26.04 they are rust-coreutils, which reads utmp, and systemd no longer
+# writes utmp. Measured on the host on 2026-10-15, both printed nothing with
+# an SSH session open, so unattended-upgrade's own WithUsers check, which
+# read `users`, could never have seen anyone either.
+#
+# A person's login is a session of class `user`, or `user-` and a suffix:
+# user-early is root's interactive login (a console) since systemd 256,
+# user-incomplete a login whose home is not ready yet, and the -light
+# classes the same logins without a user manager. manager, manager-early,
+# background and background-light are not people: the per-user service
+# managers lingering keeps up (hcw-coder-docker's rootless daemon, or a
+# logged-in user's own manager) and cron-like sessions, so they never defer.
+sessions="$(loginctl list-sessions --no-legend)" || {
+  say err "not rebooting: loginctl could not list the sessions, so the check has not run; its error is in this unit's journal and this run fails"
   exit 1
 }
-if [ -n "${logged_in}" ]; then
-  say warning "deferred: a user is logged in (${logged_in}); a reboot has been pending since ${since} (${days} days)"
+people=''
+while read -r id _; do
+  [ -n "${id}" ] || continue
+  # A session that ends between the list and this read fails it too: that
+  # night is a failed run and a page, not a guess.
+  props="$(loginctl show-session "${id}" -p Class -p Name)" || {
+    say err "not rebooting: loginctl could not read session ${id}, so the check has not run; its error is in this unit's journal and this run fails"
+    exit 1
+  }
+  class=''
+  name=''
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      Class) class="${value}" ;;
+      Name) name="${value}" ;;
+    esac
+  done <<< "${props}"
+  case "${class}" in
+    user | user-*)
+      case " ${people} " in
+        *" ${name} "*) ;;
+        *) people="${people:+${people} }${name}" ;;
+      esac
+      ;;
+  esac
+done <<< "${sessions}"
+if [ -n "${people}" ]; then
+  say warning "deferred: a user is logged in (${people}); a reboot has been pending since ${since} (${days} days)"
   exit 0
 fi
 

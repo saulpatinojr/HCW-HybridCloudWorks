@@ -102,9 +102,9 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    | The host at the hour | Line | Level | Exit |
    | --- | --- | --- | --- |
    | `/var/run/reboot-required` absent | `no reboot is pending: ...` | `notice`, stays on the host | 0 |
-   | `users` prints anyone | `deferred: a user is logged in (<names>); a reboot has been pending since <date> (<n> days)` | `warning`, shipped | 0 |
+   | `loginctl list-sessions` has a session of class `user` (or `user-` and a suffix) | `deferred: a user is logged in (<names>); a reboot has been pending since <date> (<n> days)` | `warning`, shipped | 0 |
+   | `loginctl` cannot list the sessions, or read one | `not rebooting: loginctl could not list the sessions, ...` or `... could not read session <id>, ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
    | `docker ps -q --filter label=hcw.lab-job` lists anything | `deferred: <n> job container(s) running; a reboot has been pending since ...` | `warning`, shipped | 0 |
-   | `users` fails | `not rebooting: users could not say who is logged in, ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
    | `docker ps` fails, or there is no `docker` to run | `not rebooting: docker could not list the job containers, ...` | `err`, shipped | 1, so the unit fails and the failure notifier pages |
    | otherwise | `rebooting; pending since <date> (<n> days): nobody is logged in and no job container is running` | `warning`, shipped | 0, then `systemctl reboot` |
 
@@ -120,16 +120,35 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    is the agent's `JOB_LABEL`; `scripts/lab-job-limits.test.mjs` and the
    test below hold the two together.
 
-   `users` reads the host's login records, as unattended-upgrade's own
-   check did, and an empty answer is read as nobody. On Ubuntu 26.04,
-   rust-coreutils' `who` printed nothing for open sessions until a fixed
-   package (Launchpad bug 2152801), so check once that `users` prints your
-   login while you are logged in over SSH; an empty line there means the
-   first question cannot defer anything. On the host, bash: `users` is that
-   check, and `journalctl -t hcw-reboot-when-idle --since -7d` shows the
-   last week's decisions. `sudo systemctl start hcw-reboot-when-idle.service`
-   runs the decision now, and **reboots the host now** when it is idle with
-   a reboot pending, so run `users` first.
+   **Who is logged in comes from logind, not `users` or `who`.** On Ubuntu
+   26.04 those two are rust-coreutils, which reads utmp, and systemd no
+   longer writes it: measured on the host on 2026-10-15 with an SSH session
+   open, both printed nothing. unattended-upgrade's own WithUsers check read
+   `users`, so it never saw anyone either. The script lists the sessions
+   with `loginctl list-sessions --no-legend` and reads each one's class with
+   `loginctl show-session <id> -p Class -p Name`. A person's login is class
+   `user`, or `user-` and a suffix: `user-early` is root's interactive login
+   (the provider's console) since systemd 256, `user-incomplete` a login
+   whose home is not ready yet, and the `-light` classes the same logins
+   without a user service manager. `manager` and `manager-early` (the
+   per-user service managers lingering keeps up, hcw-coder-docker's rootless
+   daemon among them) and `background` (cron and the like) are not people
+   and never defer. As measured with one SSH login open, the host lists:
+
+   ```text
+    22  981 hcw-coder-docker - 331127  manager-early - no -
+   384 1000 hcwadmin         - 3923325 user          - no -
+   385 1000 hcwadmin         - 3923330 manager       - no -
+   ```
+
+   Session 384, class `user`, is the login that defers the reboot; 385 is
+   hcwadmin's service manager and 22 is the lingering daemon's, and neither
+   would. On the host, bash: `loginctl list-sessions` shows the same columns
+   with a header, and `journalctl -t hcw-reboot-when-idle --since -7d`
+   shows the last week's decisions. `sudo systemctl start
+   hcw-reboot-when-idle.service` runs the decision now, and **reboots the
+   host now** when it is idle with a reboot pending. Run it only while a
+   `user` session (yours) is listed, and the result is the deferred line.
 
 ## Handlers
 
@@ -154,16 +173,23 @@ Docker; CI runs it in the `ansible-lint (lab-host)` job, and
 `lab-host/README.md` ("Validating without a host") has the container line.
 
 `tests/hcw-reboot-when-idle.test.sh` renders the idle-reboot script and its
-two units the same way and runs the script against stub `users`, `docker`,
-`systemctl` and `logger`, with the marker at a scratch path: no marker is
-the notice line and no reboot; a user logged in, or a job container
-running, is the deferred line and no reboot (docker is not even asked while
-a user is logged in); a `users` that fails, a docker that cannot answer and
-a docker the shell cannot find are each one `err` line, a non-zero exit and
-no reboot; an idle host is the rebooting line and exactly one `systemctl
-reboot`. It also holds the timer to the role's hour and the job label to the
-agent's `JOB_LABEL` when `vps-agent/` is in the checkout. Same job, same
-requirements.
+two units the same way and runs the script against stub `loginctl`,
+`docker`, `systemctl` and `logger`, with the marker at a scratch path. The
+`loginctl` stub answers from session listings in the host's columns, the
+first of them the one measured on the host above. No marker is the notice
+line and no reboot; that listing (one `user` session for hcwadmin) is the
+deferred line naming hcwadmin once, and so is a second SSH login for the
+same user; root at the console (`user-early`) defers too; only `manager`,
+`manager-early` and `background` sessions do not, so docker is asked
+(docker is not even asked while a user is logged in). A job container
+running is the deferred line; a `loginctl` that cannot list or read a
+session, a docker that cannot answer and a docker the shell cannot find are
+each one `err` line, a non-zero exit and no reboot; an idle host, with the
+lingering managers still listed or with no sessions at all, is the
+rebooting line and exactly one `systemctl reboot`. It also checks that the
+script never calls `users` or `who`, and holds the timer to the role's
+hour and the job label to the agent's `JOB_LABEL` when `vps-agent/` is in
+the checkout. Same job, same requirements.
 
 ## Check mode
 

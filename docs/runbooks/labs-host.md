@@ -2025,26 +2025,32 @@ fix is installed.
 - **Every day at 04:30 host time, on the host,** from the playbook run that
   applies ask 2 of LAB-13 (#959): `hcw-reboot-when-idle.timer` (the
   `hardening` role) reboots the host for a pending upgrade only when
-  `/var/run/reboot-required` exists, `users` prints nobody and `docker ps
-  --filter label=hcw.lab-job` lists no lab job container, both asked at the
-  hour itself. unattended-upgrades no longer reboots on its own: it asked
-  about logged-in users when the upgrade ran, some twenty-two hours before
-  the reboot it then scheduled with no further question, and it never asked
-  about jobs. One line per night under the tag `hcw-reboot-when-idle`:
-  `rebooting; pending since <date> (<n> days)` and the two `deferred:` lines
-  at `warning`, shipped as `Syslog` rows; `no reboot is pending` at
-  `notice`, on the host. A deferred night tries again the next night. A
-  `users` or a docker that cannot answer fails the unit, and
-  `alert-lab-unit-failed` pages (`docs/runbooks/alerting-and-support.md`).
-  Bash, on the host: `journalctl -t hcw-reboot-when-idle --since -7d` is the
-  last week's decisions; `lab-host/ansible/roles/hardening/README.md`, item
-  8, is the whole table. Two checks after the run that applies it, bash, on
-  the host, while logged in over SSH: `users` prints `hcwadmin` (an empty
-  line means the logged-in question cannot defer anything on this release,
-  and the role's README says why), and `shutdown --show` prints `No
-  scheduled shutdown.` (a `shutdown -r` unattended-upgrade scheduled before
-  the run still fires once at 04:30, unasked; `sudo shutdown -c` cancels
-  it).
+  `/var/run/reboot-required` exists, logind lists no login session (class
+  `user`, or `user-` and a suffix) and `docker ps --filter
+  label=hcw.lab-job` lists no lab job container, both asked at the hour
+  itself. unattended-upgrades no longer reboots on its own: it asked `users`
+  when the upgrade ran, some twenty-two hours before the reboot it then
+  scheduled with no further question, and it never asked about jobs. On
+  this host `users` and `who` print nothing even with a session open
+  (rust-coreutils reads utmp, which systemd no longer writes; measured
+  2026-10-15), so that check never deferred anything. One line per night
+  under the tag `hcw-reboot-when-idle`: `rebooting; pending since <date>
+  (<n> days)` and the two `deferred:` lines at `warning`, shipped as
+  `Syslog` rows; `no reboot is pending` at `notice`, on the host. A
+  deferred night tries again the next night. A `loginctl` or a docker that
+  cannot answer fails the unit, and `alert-lab-unit-failed` pages
+  (`docs/runbooks/alerting-and-support.md`). Bash, on the host:
+  `journalctl -t hcw-reboot-when-idle --since -7d` is the last week's
+  decisions; `lab-host/ansible/roles/hardening/README.md`, item 8, is the
+  whole table. Two checks after the run that applies it, bash, on the host,
+  while logged in over SSH. First, `loginctl list-sessions` lists your
+  login with `CLASS` `user` (on 2026-10-15: session 384, `hcwadmin`,
+  `user`); that row is what defers the reboot, and the `manager` and
+  `manager-early` rows beside it (hcwadmin's service manager and
+  hcw-coder-docker's lingering one) do not. Second, `shutdown --show`
+  prints `No scheduled shutdown.` (a `shutdown -r` unattended-upgrade
+  scheduled before the run still fires once at 04:30, unasked; `sudo
+  shutdown -c` cancels it).
 - **Tuesdays 05:20 UTC:** `publish-lab-image.yml` rebuilds the lab images and
   publishes them only when the `full` image's Debian packages moved; each
   publish opens the `chore/lab-pins-image-digests` pull request.

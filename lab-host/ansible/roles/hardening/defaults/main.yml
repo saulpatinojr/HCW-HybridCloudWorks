@@ -64,11 +64,13 @@ hardening_held_report_on_calendar: "*-*-* 07:15:00"
 # then scheduled with no further question, and it never asked whether a
 # visitor's job container was running. hcw-reboot-when-idle.timer runs the
 # script at hardening_unattended_reboot_time instead, and the script reboots
-# only while the marker above exists, nobody is logged in and no container
-# with the job label runs; one syslog line per outcome under this tag, the
-# deferrals and the reboot itself at warning, which the Arc data collection
-# rule ships. A `users` or a docker that does not answer fails the run, so
-# the failure notifier pages rather than the host guessing.
+# only while the marker above exists, logind has no login session (class
+# user, or user- and a suffix) and no container with the job label runs;
+# one syslog line per outcome under this tag, the deferrals and the reboot
+# itself at warning, which the Arc data collection rule ships. A loginctl or
+# a docker that does not answer fails the run, so the failure notifier pages
+# rather than the host guessing. `users` is not asked: on this host it reads
+# utmp, which systemd no longer writes, and prints nobody (2026-10-15).
 hardening_reboot_when_idle_script_path: /usr/local/sbin/hcw-reboot-when-idle
 hardening_reboot_when_idle_tag: hcw-reboot-when-idle
 # The label the labs agent puts on every job container, JOB_LABEL in

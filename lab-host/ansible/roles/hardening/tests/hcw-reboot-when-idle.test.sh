@@ -2,11 +2,13 @@
 # Tests ../templates/hcw-reboot-when-idle.sh.j2, the nightly idle reboot this
 # role renders to /usr/local/sbin/hcw-reboot-when-idle (LAB-13, #959), by
 # rendering it and its service and timer with the role's own defaults and
-# running the script against stub `users`, `docker`, `systemctl` and `logger`
-# on PATH, with the pending-reboot marker at a scratch path. The stubs answer
-# from files in a scratch directory; the logger and systemctl stubs record
-# what they are asked, so each case can say that exactly one reboot was
-# requested, or none.
+# running the script against stub `loginctl`, `docker`, `systemctl` and
+# `logger` on PATH, with the pending-reboot marker at a scratch path. The
+# stubs answer from files in a scratch directory; the loginctl stub answers
+# from a session listing in the host's own format (the listing measured on
+# the lab host on 2026-10-15 is the first fixture), and the logger and
+# systemctl stubs record what they are asked, so each case can say that
+# exactly one reboot was requested, or none.
 #
 # No root and no Docker needed. CI runs it in the `ansible-lint (lab-host)`
 # job with the job's Python, which has Jinja2 and PyYAML from ansible-core;
@@ -74,6 +76,10 @@ check "the rendered script parses as bash and holds no template syntax" \
   "bash -n '${script}' && ! grep -qE '\\{\\{|\\{%|raw %' '${script}'"
 check "the script logs under the role's tag" "grep -qxF \"tag='${tag}'\" '${script}'"
 check "the script filters docker ps on the role's job label" "grep -qxF \"job_label='${label}'\" '${script}'"
+# rust-coreutils' users and who read utmp, which systemd no longer writes;
+# on the lab host both printed nothing with an SSH session open (2026-10-15).
+check "the script asks logind who is logged in, never users or who" \
+  "grep -qF 'loginctl list-sessions --no-legend' '${script}' && ! grep -qE '^[^#]*(\\\$\\(|\\| *|^ *)(users|who)( |\\)|\$)' '${script}'"
 # vps-agent/ is outside lab-host/, so the container line in lab-host/README.md
 # (which mounts lab-host/ alone) cannot see it; CI's checkout can, and
 # scripts/lab-job-limits.test.mjs holds the same pair.
@@ -99,14 +105,57 @@ check "the role installs the script, both units, and enables the timer" \
 check "the role refuses a reboot hour that is not HH:MM" \
   "grep -qF \"hardening_unattended_reboot_time is match('^([01][0-9]|2[0-3]):[0-5][0-9]\$')\" '${tasks}'"
 
+# --- Session listings, in the columns systemd 259 prints for
+# `loginctl list-sessions --no-legend`: SESSION UID USER SEAT LEADER CLASS TTY
+# IDLE SINCE. The first is the lab host's own, measured on 2026-10-15 with an
+# SSH session open: hcwadmin's login (class user), hcwadmin's own service
+# manager (manager) and the lingering manager that keeps hcw-coder-docker's
+# rootless daemon up (manager-early).
+measured="${work}/measured"
+cat > "${measured}" <<'EOF'
+ 22  981 hcw-coder-docker - 331127  manager-early - no -
+384 1000 hcwadmin         - 3923325 user          - no -
+385 1000 hcwadmin         - 3923330 manager       - no -
+EOF
+# The same host with nobody logged in: the two service managers and a
+# cron-like session, none of which is a person.
+nobody="${work}/nobody"
+cat > "${nobody}" <<'EOF'
+ 22  981 hcw-coder-docker - 331127  manager-early - no -
+385 1000 hcwadmin         - 3923330 manager       - no -
+391    0 root             - 3990001 background    - no -
+EOF
+# hcwadmin over SSH twice: named once.
+twice="${work}/twice"
+cat "${measured}" > "${twice}"
+printf '%s\n' '386 1000 hcwadmin         - 3923400 user          - no -' >> "${twice}"
+# Root at the provider's console and nobody else: class user-early, which
+# systemd 256 and later give root's interactive logins.
+console="${work}/console"
+cat "${nobody}" > "${console}"
+printf '%s\n' ' c1    0 root             seat0 4100  user-early    tty1 no -' >> "${console}"
+
 # --- Stubs.
 stubs="${work}/bin"
 mkdir -p "${stubs}"
-cat > "${stubs}/users" <<EOF
+# loginctl answers the two calls the script makes and refuses anything else.
+# show-session prints Name before Class, the order logind's bus gives rather
+# than the order of the -p flags, so the script cannot rely on an order.
+cat > "${stubs}/loginctl" <<EOF
 #!/usr/bin/env bash
-echo users >> '${work}/users.log'
-[ ! -e '${work}/users-fails' ] || { echo 'users: cannot read the login records' >&2; exit 1; }
-cat '${work}/users'
+echo "\$*" >> '${work}/loginctl.log'
+[ ! -e '${work}/loginctl-fails' ] || { echo 'Failed to connect to system scope bus via local transport: No such file or directory' >&2; exit 1; }
+if [ "\$*" = 'list-sessions --no-legend' ]; then
+  cat '${work}/sessions'
+  exit 0
+fi
+if [ "\$#" -eq 6 ] && [ "\$1" = show-session ] && [ "\$3 \$4 \$5 \$6" = '-p Class -p Name' ]; then
+  [ ! -e '${work}/show-fails' ] || { echo "Failed to get session path: No session '\$2' known" >&2; exit 1; }
+  awk -v id="\$2" '\$1 == id { print "Name=" \$3; print "Class=" \$6; found = 1 } END { exit !found }' '${work}/sessions'
+  exit
+fi
+echo "unexpected loginctl argv: \$*" >&2
+exit 64
 EOF
 # docker-missing answers as bash does for a command it cannot find (127):
 # the host's docker gone is the same failed check as a daemon that is down.
@@ -129,41 +178,64 @@ printf '%s|%s|%s\n' "\$2" "\$4" "\$6" >> '${work}/log'
 EOF
 chmod +x "${stubs}"/*
 
-run() { : > "${work}/log"; : > "${work}/users.log"; : > "${work}/docker.log"; : > "${work}/systemctl.log"; PATH="${stubs}:${PATH}" "${script}"; }
+run() { : > "${work}/log"; : > "${work}/loginctl.log"; : > "${work}/docker.log"; : > "${work}/systemctl.log"; PATH="${stubs}:${PATH}" "${script}"; }
 reboots() { grep -c '^reboot' "${work}/systemctl.log" || true; }
 pending='a reboot has been pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \(3 days\)'
 
 # --- No marker: nothing to do, one notice line, nobody asked, no reboot.
-: > "${work}/users"
+cp "${measured}" "${work}/sessions"
 : > "${work}/containers"
 rm -f "${work}/reboot-required"
 check "no marker is a successful run" "run"
-check "no marker is one notice line, and neither users nor docker is asked" \
-  "[ \"\$(wc -l < '${work}/log')\" -eq 1 ] && grep -qxF '${tag}|daemon.notice|no reboot is pending: ${work}/reboot-required does not exist' '${work}/log' && [ ! -s '${work}/users.log' ] && [ ! -s '${work}/docker.log' ]" \
+check "no marker is one notice line, and neither logind nor docker is asked" \
+  "[ \"\$(wc -l < '${work}/log')\" -eq 1 ] && grep -qxF '${tag}|daemon.notice|no reboot is pending: ${work}/reboot-required does not exist' '${work}/log' && [ ! -s '${work}/loginctl.log' ] && [ ! -s '${work}/docker.log' ]" \
   "$(cat "${work}/log")"
 check "no marker requests no reboot" "[ \"\$(reboots)\" -eq 0 ]"
 
-# --- A reboot pending for three days and a user logged in: deferred, docker not even asked.
+# --- A reboot pending for three days and the host as measured, hcwadmin
+# logged in over SSH: deferred, naming hcwadmin once, docker not even asked.
 touch -d '3 days ago' "${work}/reboot-required"
-printf '%s\n' hcwadmin > "${work}/users"
-check "a user logged in is a successful run" "run"
-check "a user logged in is one warning line naming the user and the wait" \
+check "the measured host, hcwadmin logged in, is a successful run" "run"
+check "a session of class user is one warning line naming its user once, and the wait" \
   "[ \"\$(wc -l < '${work}/log')\" -eq 1 ] && grep -qE '^${tag}\\|daemon\\.warning\\|deferred: a user is logged in \\(hcwadmin\\); ${pending}\$' '${work}/log'" \
   "$(cat "${work}/log")"
+check "every listed session's class was read" \
+  "[ \"\$(grep -c '^show-session ' '${work}/loginctl.log')\" -eq 3 ]" \
+  "$(cat "${work}/loginctl.log")"
 check "docker is not asked while a user is logged in" "[ ! -s '${work}/docker.log' ]"
 check "a user logged in requests no reboot" "[ \"\$(reboots)\" -eq 0 ]"
 
-# --- users cannot answer: the run fails rather than taking silence for nobody; docker not asked, no reboot.
-: > "${work}/users"
-touch "${work}/users-fails"
-check "a users that cannot answer fails the run rather than guessing" "! run 2> /dev/null"
-check "a users that cannot answer is one err line, docker not asked, and no reboot" \
-  "[ \"\$(wc -l < '${work}/log')\" -eq 1 ] && grep -q '^${tag}|daemon.err|not rebooting: users could not say who is logged in' '${work}/log' && [ ! -s '${work}/docker.log' ] && [ \"\$(reboots)\" -eq 0 ]" \
+# --- Two SSH logins for the same user: one name in the line.
+cp "${twice}" "${work}/sessions"
+check "two logins for one user name that user once" \
+  "run && grep -qE '^${tag}\\|daemon\\.warning\\|deferred: a user is logged in \\(hcwadmin\\); ${pending}\$' '${work}/log' && [ \"\$(reboots)\" -eq 0 ]" \
   "$(cat "${work}/log")"
-rm -f "${work}/users-fails"
 
-# --- Nobody logged in, two job containers running: deferred, with the count.
-: > "${work}/users"
+# --- Root at the console (class user-early) and nobody else: a person, deferred.
+cp "${console}" "${work}/sessions"
+check "root's console login (class user-early) defers the reboot" \
+  "run && [ \"\$(wc -l < '${work}/log')\" -eq 1 ] && grep -qE '^${tag}\\|daemon\\.warning\\|deferred: a user is logged in \\(root\\); ${pending}\$' '${work}/log' && [ ! -s '${work}/docker.log' ] && [ \"\$(reboots)\" -eq 0 ]" \
+  "$(cat "${work}/log")"
+
+# --- logind cannot answer: the run fails rather than taking silence for nobody.
+cp "${measured}" "${work}/sessions"
+touch "${work}/loginctl-fails"
+check "a loginctl that cannot list the sessions fails the run rather than guessing" "! run 2> /dev/null"
+check "a loginctl that cannot list the sessions is one err line, docker not asked, and no reboot" \
+  "[ \"\$(wc -l < '${work}/log')\" -eq 1 ] && grep -q '^${tag}|daemon.err|not rebooting: loginctl could not list the sessions' '${work}/log' && [ ! -s '${work}/docker.log' ] && [ \"\$(reboots)\" -eq 0 ]" \
+  "$(cat "${work}/log")"
+rm -f "${work}/loginctl-fails"
+touch "${work}/show-fails"
+check "a session loginctl cannot read fails the run rather than guessing" "! run 2> /dev/null"
+check "a session loginctl cannot read is one err line naming it, docker not asked, and no reboot" \
+  "[ \"\$(wc -l < '${work}/log')\" -eq 1 ] && grep -q '^${tag}|daemon.err|not rebooting: loginctl could not read session 22,' '${work}/log' && [ ! -s '${work}/docker.log' ] && [ \"\$(reboots)\" -eq 0 ]" \
+  "$(cat "${work}/log")"
+rm -f "${work}/show-fails"
+
+# --- Nobody logged in (only service managers and a background session),
+# two job containers running: deferred, with the count. Reaching docker at
+# all is what says the managers did not count as people.
+cp "${nobody}" "${work}/sessions"
 printf '%s\n' 3f2a9c1d7e5b 8b1c0d2e4f6a > "${work}/containers"
 check "running job containers are a successful run" "run"
 check "running job containers are one warning line with their count and the wait" \
@@ -191,7 +263,8 @@ check "a docker the shell cannot find is one err line and no reboot" \
   "$(cat "${work}/log")"
 rm -f "${work}/docker-missing"
 
-# --- Idle: one warning line saying so and how long it waited, exactly one reboot.
+# --- Idle, with the lingering managers and a background session still
+# listed: one warning line saying so and how long it waited, exactly one reboot.
 check "an idle host is a successful run" "run"
 check "an idle host is one warning line saying it reboots and how long it waited" \
   "[ \"\$(wc -l < '${work}/log')\" -eq 1 ] && grep -qE '^${tag}\\|daemon\\.warning\\|rebooting; pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(3 days\\): nobody is logged in and no job container is running\$' '${work}/log'" \
@@ -199,6 +272,12 @@ check "an idle host is one warning line saying it reboots and how long it waited
 check "an idle host requests exactly one reboot, through systemctl" \
   "[ \"\$(reboots)\" -eq 1 ] && grep -qxF 'reboot' '${work}/systemctl.log'" \
   "$(cat "${work}/systemctl.log")"
+
+# --- No sessions at all is idle too.
+: > "${work}/sessions"
+check "a host with no sessions at all reboots, once" \
+  "run && [ \"\$(reboots)\" -eq 1 ] && grep -q '|daemon.warning|rebooting; pending since ' '${work}/log'" \
+  "$(cat "${work}/log")"
 
 if [ "${failed}" -ne 0 ]; then
   echo "hcw-reboot-when-idle.test.sh: ${failed} of $((passed + failed)) checks failed" >&2

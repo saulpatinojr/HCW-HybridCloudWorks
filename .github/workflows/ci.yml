@@ -491,9 +491,10 @@ jobs:
         run: bash roles/hardening/tests/unattended-upgrades.test.sh
 
       # The nightly idle reboot (LAB-13, #959), rendered with the role's
-      # defaults and run against stub users, docker, systemctl and logger:
-      # no reboot without the marker, with a user logged in or with a lab
-      # job container running, a failed run when docker cannot answer,
+      # defaults and run against stub loginctl, docker, systemctl and
+      # logger: no reboot without the marker, with a login session (class
+      # user) open or with a lab job container running, none for lingering
+      # service managers, a failed run when loginctl or docker cannot answer,
       # exactly one `systemctl reboot` when idle, the timer at the role's
       # hour and the job label the agent's. Needs neither root nor Docker.
       - name: hcw-reboot-when-idle test

@@ -4,7 +4,7 @@
 # reboots the host for a pending upgrade only when nobody is logged in and no
 # lab job container runs, both asked at the hour itself. unattended-upgrades
 # has Automatic-Reboot off; this unit is what reboots instead. A run that
-# could not ask `users` or docker fails, and the failure notifier (LAB-2)
+# could not ask logind or docker fails, and the failure notifier (LAB-2)
 # reports it, so a reboot that stopped happening is not silence.
 [Unit]
 Description=Reboot for a pending upgrade when nobody is logged in and no lab job runs
@@ -19,8 +19,9 @@ ExecStart={{ hardening_reboot_when_idle_script_path }}
 TimeoutStartSec=2min
 # Root, because `docker ps` needs the host daemon's socket and the reboot
 # needs the manager. Nothing is written, so the file system is read-only to
-# it; a socket on a read-only mount still accepts a connection. Home is
-# hidden, as the backup units hide it, which also keeps a docker context in
+# it; a socket on a read-only mount still accepts a connection, the system
+# bus loginctl reaches logind through among them. Home is hidden, as the
+# backup units hide it, which also keeps a docker context in
 # /root/.docker from pointing the question at another daemon: the CLI asks
 # the default socket, the daemon the job containers run on.
 ProtectSystem=strict

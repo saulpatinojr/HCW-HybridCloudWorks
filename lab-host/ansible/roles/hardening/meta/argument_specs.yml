@@ -126,7 +126,8 @@ argument_specs:
           - The syslog tag (ProcessName in Log Analytics) of the idle reboot's one line per
             outcome. Deferrals and the reboot itself go to daemon.warning, which the Arc data
             collection rule ships; the nothing-pending line goes to daemon.notice and stays on
-            the host; a users or a docker that does not answer is daemon.err and a failed run.
+            the host; a loginctl or a docker that does not answer is daemon.err and a failed
+            run.
       hardening_reboot_job_label:
         type: str
         required: false

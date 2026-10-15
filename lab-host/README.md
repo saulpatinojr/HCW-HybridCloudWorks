@@ -1573,9 +1573,10 @@ which renders the unattended-upgrades override with the role's defaults and
 asserts it names the allowed origins itself and leaves the reboot to
 `hcw-reboot-when-idle.timer`, and
 `roles/hardening/tests/hcw-reboot-when-idle.test.sh`, which renders that
-timer's script and units and runs the script against stub `users`, `docker`,
-`systemctl` and `logger`: no reboot with a user logged in or a lab job
-container running, a failed run when `users` or docker cannot answer,
+timer's script and units and runs the script against stub `loginctl`,
+`docker`, `systemctl` and `logger`: no reboot with a login session (class
+`user`) open or a lab job container running, none held back by lingering
+service managers, a failed run when `loginctl` or docker cannot answer,
 exactly one `systemctl reboot` when idle (LAB-13, #959). The two container
 lines above run either with its path in place of the held-package test's;
 mounted alone, `lab-host/` has no `vps-agent/` beside it, so one line of
