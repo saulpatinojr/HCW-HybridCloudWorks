@@ -847,7 +847,7 @@ Describe 'The tests themselves' {
         }
 
         It 'lab-ssh-burst writes the lines with logger and stops when ssh cannot reach the host' {
-            $command = 'for i in {1..1000}; do logger -p auth.info -t sshd "Invalid user plat4firetest from 192.0.2.10 port 22"; done'
+            $command = 'for i in {1..1000}; do logger -p auth.info -t sshd "Invalid user plat4firetest from 192.0.2.10 port $((20000 + i))"; done'
             $script:sshAnswers[$command] = [pscustomobject]@{ ExitCode = 255; Lines = [string[]]@('ssh: Could not resolve hostname hcw-lab') }
             { Invoke-AlertTestLabSshBurst -Context (New-TestContext -Test 'lab-ssh-burst') } | Should -Throw '*ssh could not reach hcw-lab*'
             (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@($command) -join "`n")
