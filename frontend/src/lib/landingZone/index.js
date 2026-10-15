@@ -91,7 +91,14 @@ export {
   labResolution,
 } from './labImage';
 export { chooseVendored, parseVersion, satisfies, vendoredModules } from './tfConstraints';
-export { emitFiles, emitAwsFiles, emitGcpFiles } from './hcl/index';
+export {
+  emitFiles,
+  emitAwsFiles,
+  emitGcpFiles,
+  SUPPORTED_FORMATS,
+  FORMAT_LABELS,
+  transformBundle,
+} from './hcl/index';
 export { BASELINE_ASSIGNMENTS, POLICY_DEFAULTS, groupsAssigning } from './hcl/policy';
 export { H_GAP, NODE_H, NODE_W, PAD, V_GAP, layoutDiagram } from './diagram';
 export {

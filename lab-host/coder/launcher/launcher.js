@@ -91,6 +91,8 @@ export const LAB_WORKSPACES = Object.freeze({
   'defender-wsl-plugin-walkthrough': 'lab-mde-wsl',
   'aws-transit-gateway-walkthrough': 'lab-aws-tgw',
   'gcp-shared-vpc-walkthrough': 'lab-gcp-vpc',
+  'vmware-hcx-migration-walkthrough': 'lab-vmw-hcx',
+  'docker-sandbox-agent-walkthrough': 'lab-dck-sbx',
 });
 
 /** Every state this page reports, in the order a visit can move through them. */

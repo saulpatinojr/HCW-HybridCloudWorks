@@ -56,14 +56,22 @@
 import { routes, staticRoutes } from '@/lib/routeFactory';
 
 /** Every tool a lab may name; the test refuses anything outside this set. */
-export const LAB_TOOLS = Object.freeze(['az', 'terraform', 'kubectl', 'helm', 'ansible']);
+export const LAB_TOOLS = Object.freeze(['az', 'terraform', 'kubectl', 'helm', 'ansible', 'docker']);
 
 /**
  * The provider hubs a lab may be listed under. A subset of VALID_PROVIDERS
  * (context/ProviderContext.jsx), which the test checks; a lab's first
  * provider is the one its canonical page lives under.
  */
-export const LAB_PROVIDERS = Object.freeze(['azure', 'aws', 'gcp', 'terraform', 'ansible']);
+export const LAB_PROVIDERS = Object.freeze([
+  'azure',
+  'aws',
+  'gcp',
+  'vmware',
+  'terraform',
+  'ansible',
+  'docker',
+]);
 
 /** How much a lab assumes, in the order the pages sort by. */
 export const LAB_DIFFICULTIES = Object.freeze(['intro', 'intermediate', 'advanced']);
@@ -341,6 +349,59 @@ const GCP_SHARED_VPC_SAMPLE = md([
   'resource "google_folder" "platform" {',
   '  display_name = "Platform"',
   '  parent       = "organizations/123456789012"',
+  '}',
+]);
+
+/** A sample root for the VMware HCX / AVS validation runner job. */
+const VMWARE_HCX_SAMPLE = md([
+  'terraform {',
+  '  required_version = ">= 1.9"',
+  '  required_providers {',
+  '    vsphere = {',
+  '      source  = "hashicorp/vsphere"',
+  '      version = "~> 2.11"',
+  '    }',
+  '    azurerm = {',
+  '      source  = "hashicorp/azurerm"',
+  '      version = "~> 4.0"',
+  '    }',
+  '  }',
+  '}',
+  '',
+  'provider "vsphere" {',
+  '  user                 = "administrator@vsphere.local"',
+  '  password             = "stub-password-offline"',
+  '  vsphere_server       = "vcenter.corp.local"',
+  '  allow_unverified_ssl = true',
+  '}',
+  '',
+  'provider "azurerm" {',
+  '  features {}',
+  '}',
+  '',
+  'data "vsphere_datacenter" "dc" {',
+  '  name = "Datacenter-OnPrem"',
+  '}',
+]);
+
+/** A sample root for the Docker agent containment runner job. */
+const DOCKER_SANDBOX_SAMPLE = md([
+  'terraform {',
+  '  required_version = ">= 1.9"',
+  '  required_providers {',
+  '    docker = {',
+  '      source  = "kreuzwerker/docker"',
+  '      version = "~> 3.0"',
+  '    }',
+  '  }',
+  '}',
+  '',
+  'provider "docker" {',
+  '  host = "unix:///var/run/docker.sock"',
+  '}',
+  '',
+  'resource "docker_image" "sandbox_image" {',
+  '  name = "hybridcloudworks/hcw-lab:latest"',
   '}',
 ]);
 
@@ -825,6 +886,83 @@ export const labs = Object.freeze([
     articleSlugs: Object.freeze([]),
   }),
   Object.freeze({
+    id: 'vmware-hcx-migration-walkthrough',
+    workspaceName: 'lab-vmw-hcx',
+    title: 'VMware HCX Hybrid Interconnect & Migration Walkthrough',
+    summary:
+      'Inspect and validate VMware Cloud Foundation (VCF) and Azure VMware Solution (AVS) hybrid interconnect topology, L2 stretched network extensions, and HCX migration policies.',
+    providers: Object.freeze(['vmware']),
+    technology: Object.freeze(['vmware', 'terraform', 'hcx']),
+    tools: Object.freeze(['terraform']),
+    difficulty: 'intermediate',
+    estimatedMinutes: 20,
+    status: 'available',
+    objectives: Object.freeze([
+      'Inspect VMware vSphere datacenter hierarchy and Azure VMware Solution private cloud peering.',
+      'Trace VMware HCX Interconnect (IX) and Network Extension (NE) stretched subnet appliances.',
+      'Execute terraform validate to check hybrid vSphere and AVS infrastructure HCL syntax offline.',
+    ]),
+    prerequisites: Object.freeze([
+      'Familiarity with VMware vSphere, NSX-T, and hybrid-cloud network extension.',
+      'A GitHub account to authenticate with the container workspace, or local Docker.',
+    ]),
+    steps: Object.freeze([
+      step(
+        'Inspect vCenter & AVS Interconnect Topology',
+        md([
+          'Review `vsphere.tf` and `avs-interconnect.tf`. The configuration defines on-premises vSphere datacenter clusters, compute resource pools, and ExpressRoute / private cloud interconnect attachments.',
+          '',
+          '```bash',
+          'cat vsphere.tf',
+          'cat avs-interconnect.tf',
+          '```',
+        ])
+      ),
+      step(
+        'Review HCX L2 Network Extension & Stretched VLANs',
+        md([
+          'Inspect `hcx-service-mesh.tf` and `network-extension.tf` to examine HCX interconnect service mesh appliances, WAN optimization profiles, and stretched L2 broadcast domains.',
+          '',
+          '```bash',
+          'cat hcx-service-mesh.tf',
+          'cat network-extension.tf',
+          '```',
+        ])
+      ),
+      step(
+        'Validate Hybrid VMware Terraform Configuration',
+        md([
+          'Run `terraform init -backend=false` and `terraform validate` to verify the multi-provider vSphere and AzureRM hybrid landing zone HCL declarations offline.',
+          '',
+          '```bash',
+          'terraform init -backend=false',
+          'terraform validate',
+          '```',
+        ]),
+        {
+          jobType: 'terraform-validate',
+          hint: 'The runner checks that all vSphere datacenter, cluster, and Azure VMware Solution peering blocks validate cleanly.',
+        }
+      ),
+    ]),
+    resources: Object.freeze([
+      resource('VMware Architecture Designs', '/vmware/architecture-designs'),
+      resource('VMware Learn Hub', '/vmware/education'),
+      resource(
+        'Azure VMware Solution Documentation',
+        'https://learn.microsoft.com/en-us/azure/azure-vmware/'
+      ),
+    ]),
+    validation: Object.freeze({
+      jobType: 'terraform-validate',
+      payloadEncoding: 'text',
+      samplePayload: VMWARE_HCX_SAMPLE,
+    }),
+    template: LAB_TEMPLATE,
+    params: Object.freeze({ lab: 'vmware-hcx-migration-walkthrough' }),
+    articleSlugs: Object.freeze([]),
+  }),
+  Object.freeze({
     id: 'terraform-validate-walkthrough',
     workspaceName: 'lab-tfv',
     title: 'Terraform validate, step by step',
@@ -1039,6 +1177,80 @@ export const labs = Object.freeze([
     }),
     template: LAB_TEMPLATE,
     params: Object.freeze({ lab: 'ansible-syntax-check-walkthrough' }),
+    articleSlugs: Object.freeze([]),
+  }),
+  Object.freeze({
+    id: 'docker-sandbox-agent-walkthrough',
+    workspaceName: 'lab-dck-sbx',
+    title: 'Docker Sandboxes & Agent Containment Walkthrough',
+    summary:
+      'Explore and validate rootless container execution, unprivileged user namespaces, read-only rootfs mounts, and network-isolated local AI agent sandboxes.',
+    providers: Object.freeze(['docker']),
+    technology: Object.freeze(['docker', 'sandboxes', 'containment']),
+    tools: Object.freeze(['docker']),
+    difficulty: 'intermediate',
+    estimatedMinutes: 15,
+    status: 'available',
+    objectives: Object.freeze([
+      'Inspect rootless daemon configuration, unprivileged subuid mappings, and security profiles.',
+      'Verify network isolation (--network none) and read-only volume boundaries for containment.',
+      'Execute terraform validate to check declarative Docker container sandbox configurations.',
+    ]),
+    prerequisites: Object.freeze([
+      'Basic understanding of Docker containers and Linux security containment.',
+      'A GitHub account to authenticate with the container workspace, or local Docker.',
+    ]),
+    steps: Object.freeze([
+      step(
+        'Inspect Rootless Daemon & User Namespaces',
+        md([
+          'Inspect the rootless Docker daemon socket, subuid/subgid allocations, and unprivileged user mappings in the container sandbox environment.',
+          '',
+          '```bash',
+          'docker info',
+          'id -u',
+          'cat /etc/subuid',
+          '```',
+        ])
+      ),
+      step(
+        'Verify Network Isolation & Read-Only Rootfs',
+        md([
+          'Review the container containment execution profile: verify that the workspace runs with `--network none`, a read-only root filesystem, and strict memory/CPU bounds.',
+          '',
+          '```bash',
+          'docker run --rm --network none alpine ip addr',
+          '```',
+        ])
+      ),
+      step(
+        'Validate Declarative Docker Sandbox Configuration',
+        md([
+          'Run `terraform init -backend=false` and `terraform validate` to verify the declarative Docker sandbox infrastructure and container resource specifications offline.',
+          '',
+          '```bash',
+          'terraform init -backend=false',
+          'terraform validate',
+          '```',
+        ]),
+        {
+          jobType: 'terraform-validate',
+          hint: 'The runner checks that all Docker provider definitions, image tags, and sandbox container resources validate cleanly.',
+        }
+      ),
+    ]),
+    resources: Object.freeze([
+      resource('Docker Sandboxes', '/docker/sandboxes'),
+      resource('Docker Learn Hub', '/docker/education'),
+      resource('Docker Security Best Practices', 'https://docs.docker.com/engine/security/'),
+    ]),
+    validation: Object.freeze({
+      jobType: 'terraform-validate',
+      payloadEncoding: 'text',
+      samplePayload: DOCKER_SANDBOX_SAMPLE,
+    }),
+    template: LAB_TEMPLATE,
+    params: Object.freeze({ lab: 'docker-sandbox-agent-walkthrough' }),
     articleSlugs: Object.freeze([]),
   }),
 ]);

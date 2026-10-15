@@ -67,15 +67,17 @@ function templateLabIds() {
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
 
 describe('lab catalogue', () => {
-  it('has the seven labs', () => {
+  it('has the nine labs', () => {
     expect(labs.map((lab) => lab.id)).toEqual([
       'landing-zone-builder-output',
       'wsl-containers-walkthrough',
       'defender-wsl-plugin-walkthrough',
       'aws-transit-gateway-walkthrough',
       'gcp-shared-vpc-walkthrough',
+      'vmware-hcx-migration-walkthrough',
       'terraform-validate-walkthrough',
       'ansible-syntax-check-walkthrough',
+      'docker-sandbox-agent-walkthrough',
     ]);
   });
 
@@ -247,10 +249,15 @@ describe('the lists the pages derive', () => {
       'aws-transit-gateway-walkthrough',
     ]);
     expect(labsForProvider('gcp').map((lab) => lab.id)).toEqual(['gcp-shared-vpc-walkthrough']);
+    expect(labsForProvider('vmware').map((lab) => lab.id)).toEqual([
+      'vmware-hcx-migration-walkthrough',
+    ]);
     expect(labsForProvider('ansible').map((lab) => lab.id)).toEqual([
       'ansible-syntax-check-walkthrough',
     ]);
-    expect(labsForProvider('docker')).toEqual([]);
+    expect(labsForProvider('docker').map((lab) => lab.id)).toEqual([
+      'docker-sandbox-agent-walkthrough',
+    ]);
     // The index prints each lab once, under its home provider.
     expect(
       labsByProvider().map((group) => [group.provider, group.labs.map((lab) => lab.id)])
@@ -265,10 +272,20 @@ describe('the lists the pages derive', () => {
       ],
       ['aws', ['aws-transit-gateway-walkthrough']],
       ['gcp', ['gcp-shared-vpc-walkthrough']],
+      ['vmware', ['vmware-hcx-migration-walkthrough']],
       ['terraform', ['terraform-validate-walkthrough']],
       ['ansible', ['ansible-syntax-check-walkthrough']],
+      ['docker', ['docker-sandbox-agent-walkthrough']],
     ]);
-    expect(providersWithLabs()).toEqual(['azure', 'aws', 'gcp', 'terraform', 'ansible']);
+    expect(providersWithLabs()).toEqual([
+      'azure',
+      'aws',
+      'gcp',
+      'vmware',
+      'terraform',
+      'ansible',
+      'docker',
+    ]);
   });
 
   it('knows each lab’s home provider', () => {

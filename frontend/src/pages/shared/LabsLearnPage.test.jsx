@@ -133,7 +133,7 @@ describe('LabsLearnPage', () => {
     const cards = [...container.querySelectorAll('li[data-lab]')];
     expect(cards.map((card) => card.dataset.lab)).toEqual(labs.map((lab) => lab.id));
     // Each group is headed by its provider and links to that provider's list.
-    for (const provider of ['azure', 'aws', 'gcp', 'terraform', 'ansible']) {
+    for (const provider of ['azure', 'aws', 'gcp', 'vmware', 'terraform', 'ansible', 'docker']) {
       const group = screen.getByTestId(`labs-group-${provider}`);
       expect(within(group).getByRole('heading', { level: 3 })).toBeInTheDocument();
       expect(within(group).getByRole('link', { name: /^All .* labs$/ })).toHaveAttribute(
@@ -387,11 +387,11 @@ describe('a provider’s labs (/:provider/education/labs, ADR 0033)', () => {
 
   it('says honestly when a provider has no lab yet, and points at the ones that do', async () => {
     unprovisioned();
-    const { container } = renderPage('/docker/education/labs');
+    const { container } = renderPage('/github/education/labs');
 
     expect(container.querySelectorAll('li[data-lab]')).toHaveLength(0);
     const empty = screen.getByTestId('labs-empty');
-    expect(empty).toHaveTextContent('There is no Docker lab yet.');
+    expect(empty).toHaveTextContent('There is no GitHub lab yet.');
     expect(within(empty).getByRole('link', { name: 'Azure' })).toHaveAttribute(
       'href',
       '/azure/education/labs'

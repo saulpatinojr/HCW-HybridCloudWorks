@@ -685,4 +685,30 @@ describe('Multi-Cloud Target Cloud Selector and Architecture Previews (#Phase4)'
     const bom = screen.getByTestId('lz-finops-bom');
     expect(bom).toBeInTheDocument();
   });
+
+  it('switches export format between Terraform, OpenTofu, and Terragrunt', () => {
+    renderPage(PATH);
+    const filesSection = screen.getByTestId('lz-files');
+    expect(filesSection).toBeInTheDocument();
+
+    const formatSwitcher = screen.getByTestId('lz-format-switcher');
+    expect(formatSwitcher).toBeInTheDocument();
+
+    // Default is Terraform HCL
+    expect(screen.getByTestId('lz-format-terraform')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('tab', { name: 'terraform.tf' })).toBeInTheDocument();
+
+    // Switch to OpenTofu
+    const tofuBtn = screen.getByTestId('lz-format-opentofu');
+    fireEvent.click(tofuBtn);
+    expect(tofuBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('tab', { name: 'tofu.tf' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'terraform.tf' })).toBeNull();
+
+    // Switch to Terragrunt
+    const tgBtn = screen.getByTestId('lz-format-terragrunt');
+    fireEvent.click(tgBtn);
+    expect(tgBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('tab', { name: 'terragrunt.hcl' })).toBeInTheDocument();
+  });
 });

@@ -142,6 +142,16 @@ locals {
       source = "lab-image/smoke/providers-only"
       readme = ""
     }
+    "vmware-hcx-migration-walkthrough" = {
+      title  = "VMware HCX migration walkthrough"
+      source = "lab-image/smoke/providers-only"
+      readme = ""
+    }
+    "docker-sandbox-agent-walkthrough" = {
+      title  = "Docker sandbox agent walkthrough"
+      source = "lab-image/smoke/providers-only"
+      readme = ""
+    }
   }
 
   lab        = local.labs[data.coder_parameter.lab.value]
@@ -194,10 +204,18 @@ data "coder_parameter" "lab" {
     name  = "Google Cloud Shared VPC walkthrough"
     value = "gcp-shared-vpc-walkthrough"
   }
+  option {
+    name  = "VMware HCX migration walkthrough"
+    value = "vmware-hcx-migration-walkthrough"
+  }
+  option {
+    name  = "Docker sandbox agent walkthrough"
+    value = "docker-sandbox-agent-walkthrough"
+  }
 
   validation {
-    regex = "^(landing-zone-builder-output|terraform-validate-walkthrough|ansible-syntax-check-walkthrough|wsl-containers-walkthrough|defender-wsl-plugin-walkthrough|aws-transit-gateway-walkthrough|gcp-shared-vpc-walkthrough)$"
-    error = "lab must be one of the catalogue ids: landing-zone-builder-output, terraform-validate-walkthrough, ansible-syntax-check-walkthrough, wsl-containers-walkthrough, defender-wsl-plugin-walkthrough, aws-transit-gateway-walkthrough, gcp-shared-vpc-walkthrough."
+    regex = "^(landing-zone-builder-output|terraform-validate-walkthrough|ansible-syntax-check-walkthrough|wsl-containers-walkthrough|defender-wsl-plugin-walkthrough|aws-transit-gateway-walkthrough|gcp-shared-vpc-walkthrough|vmware-hcx-migration-walkthrough|docker-sandbox-agent-walkthrough)$"
+    error = "lab must be one of the catalogue ids: landing-zone-builder-output, terraform-validate-walkthrough, ansible-syntax-check-walkthrough, wsl-containers-walkthrough, defender-wsl-plugin-walkthrough, aws-transit-gateway-walkthrough, gcp-shared-vpc-walkthrough, vmware-hcx-migration-walkthrough, docker-sandbox-agent-walkthrough."
   }
 }
 
