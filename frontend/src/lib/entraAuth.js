@@ -97,9 +97,10 @@ function clearAuthFragment() {
  * `loginPopup()` opened a TOP-LEVEL WINDOW rather than a child popup. Entra
  * authenticated, the code came back to the redirect URI, and the opener sat
  * waiting on a window handle it no longer had. After #196 taught the root page
- * to consume the fragment, the token was written to localStorage — where the
- * opener could have read it — and the opener still waited, because nothing
- * tells `loginPopup()` that its promise has been settled elsewhere.
+ * to consume the fragment, the token was written to the cache — localStorage
+ * then, a store the opener could have read — and the opener still waited,
+ * because nothing tells `loginPopup()` that its promise has been settled
+ * elsewhere.
  *
  * That is not a bug to work around with cross-window messaging. The popup flow
  * has one failure mode that no amount of care on our side removes: the browser

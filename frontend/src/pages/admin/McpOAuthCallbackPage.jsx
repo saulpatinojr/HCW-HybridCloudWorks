@@ -15,8 +15,11 @@
  * text, clipped, never as markup.
  *
  * Admin-guarded like its siblings: it sits under AdminAuthGuard in App.jsx,
- * and MSAL keeps its session in localStorage, so the trip to the vendor and
- * back does not sign the owner out.
+ * and MSAL keeps its session in sessionStorage (#935), which survives a
+ * same-tab navigation away and back. Connect leaves with `hardAssign`, in
+ * this tab, and the vendor returns the same tab here, so the round trip does
+ * not sign the owner out. A vendor opened in a new tab would land here with
+ * no session; that is why Connect does not open one.
  */
 import React, { useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';

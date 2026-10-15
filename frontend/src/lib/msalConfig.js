@@ -94,10 +94,27 @@ export const msalConfig = {
     },
   },
   cache: {
-    // localStorage so redirect flows survive the round-trip in strict
-    // browsers — the old Firebase guard had a whole error path for state
-    // lost in sessionStorage.
-    cacheLocation: 'localStorage',
+    // sessionStorage, MSAL's own default for a single-page app, since #935
+    // (AP-F11). This was localStorage, chosen so a redirect sign-in would
+    // survive the round trip in strict browsers — the old Firebase guard had a
+    // whole error path for state lost in sessionStorage.
+    //
+    // WHAT CHANGED, AND WHY. In localStorage the token pair outlived the tab:
+    // it sat readable by any script on the origin for as long as the refresh
+    // token lived, so a DOM XSS or a compromised dependency could lift a pair
+    // that then worked from anywhere, for its lifetime, against the API.
+    // sessionStorage is one tab's and is gone when that tab closes. It does
+    // survive a same-tab navigation away and back, which is the redirect flow
+    // this app uses (entraAuth.js, signIn): the browser goes to Entra and
+    // returns to the same tab with the request still cached.
+    //
+    // THE KNOWN RISK. An in-app browser that opens the identity provider in a
+    // separate web view, or one that drops session storage on the way back,
+    // returns to a page with no request in progress and the sign-in starts
+    // over — a loop at worst, never a wrong sign-in. The verification is the
+    // owner signing in on an iPhone after the deploy. The rollback is this
+    // one line back to 'localStorage'.
+    cacheLocation: 'sessionStorage',
     storeAuthStateInCookie: false,
   },
 };
