@@ -141,6 +141,8 @@ sweep_at="$(grep -nF 'dest: /usr/local/libexec/hcw-labjob-sweep' "${role}/tasks/
 unit_at="$(grep -nF 'src: hcw-labs-agent.service.j2' "${role}/tasks/main.yml" | cut -d: -f1)"
 check "the role installs the sweep the unit names, before the unit" \
   "[ -f '${role}/files/hcw-labjob-sweep' ] && [ -n '${sweep_at}' ] && [ -n '${unit_at}' ] && [ '${sweep_at}' -lt '${unit_at}' ]"
+check "the role refuses hold or acknowledgement paths the idle reboot does not share" \
+  "grep -qF -- '- labs_agent_maintenance_hold_path == hardening_reboot_hold_path' '${role}/tasks/main.yml' && grep -qF -- '- labs_agent_maintenance_ack_path == hardening_reboot_ack_path' '${role}/tasks/main.yml'"
 
 echo "# ${passed} passed, ${failed} failed"
 [ "${failed}" -eq 0 ]
