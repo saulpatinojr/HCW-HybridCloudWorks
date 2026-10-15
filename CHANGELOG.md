@@ -19,6 +19,46 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **alert-timer-overdue evaluates again, a KQL test refuses what silenced it,
+  the weekly check reads every log rule's Resource Health, and the fire test
+  matches the timer dimension** (PLAT-4, #964). The rule never evaluated from
+  its create on 2026-10-10: its query took each timer's last due time from
+  `bin_at(Now - Grace, period, anchor)`, Kusto requires `bin_at()`'s bin size
+  and fixed point to be query constants, and `period` and `anchor` are columns
+  of the rule's datatable. Every evaluation failed with `SEM0040 bin_at():
+  failed to cast argument 2 to scalar constant`, the rule's Resource Health
+  read `Unavailable / Semantic error` from 2026-10-10 22:55Z, and a fire test
+  on 2026-10-15 stopped `healthPulse` for 95 minutes with no alert. Azure
+  accepted the rule at create, and nothing in CI ran the KQL. The line is now
+  `anchor + period * tolong((Now - Grace - anchor) / period)`, checked against
+  `appi-site-prod-cus-01` for every timer due in the last day.
+  `scripts/assert-expected-plan.mjs` declares the in-place update of the
+  rule's `criteria[0].query`, its `before` read back from the live rule
+  character for character, and a new test holds `overdueQuery()` to the
+  heredoc in `infra/`. `scripts/kql-alert-columns.test.mjs` fails any rule
+  that passes a per-row value where Kusto needs a constant: `bin_at()`'s bin
+  size and fixed point, measured against the component (a `let`, `now()` or
+  `toscalar()` is accepted; `bin()` and `floor()` take a column and are not
+  checked). It failed on `timer_overdue` before the fix.
+  `scripts/verify-alert-state.mjs` reads each live log search rule's Resource
+  Health and fails `Unavailable` or `Degraded` as `UNHEALTHY`, naming Azure's
+  title, and a read it could not make as `HEALTH UNREADABLE`, never `OK`.
+  `Unknown` passes, as does a reason-less `Unavailable` on a rule evaluated
+  less often than every 15 minutes, for which Microsoft reports no health.
+  The report gains a Health column. *HCW Alert Rule Reader* gains the two
+  `Microsoft.ResourceHealth/availabilityStatuses` reads. The owner writes the
+  role and registers `Microsoft.ResourceHealth` in `sub-plat-mgmt-prod-cus`,
+  unregistered there on 2026-10-15 (`docs/runbooks/alerting-and-support.md`,
+  "Resource Health"); until both are done the run fails, naming each step.
+  `Invoke-AlertFireTest.ps1` searched the whole serialized alert context for
+  `healthPulse`, and every `condition.allOf[]` entry carries `searchQuery`,
+  which names all 26 timers, so any timer's alert would have passed as
+  healthPulse's. It now matches the values of
+  `condition.allOf[].dimensions[]`, read at the live nesting
+  (`context.context`) with a fallback one level up, and the Pester fixture
+  takes the live shape, with a case where `searchQuery` names every timer and
+  the dimension another. The Fire record stays "not yet" until the test is
+  re-run after the apply.
 - **Lab host: ansible-core installed hash-locked from the lab image's own
   pins, and the weekly pin bump moves it** (LAB-13, #959). The
   low-hanging-fruit entry below (#1178) says `lab-host/bootstrap.sh`

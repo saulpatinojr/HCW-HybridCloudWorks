@@ -267,13 +267,74 @@ Describe 'Select-AlertFiredInstance and Get-AlertVerdict, the fired-alert parser
         (Select-AlertFiredInstance -Response (Get-Response @(@{ Start = '2026-10-10T12:03:00Z'; Rule = $named })) -SinceUtc $start -RuleId $rule.Id -RuleName $rule.Name).Fired | Should -BeTrue
     }
 
-    It 'with a context to match, counts only the alert whose context names it' {
-        $other = @{ Start = '2026-10-10T12:30:00Z'; Context = @{ condition = @{ allOf = @(@{ dimensions = @(@{ name = 'timer'; value = 'syncSocialCalendarScheduled' }) }) } } }
-        $mine = @{ Start = '2026-10-10T12:50:00Z'; Context = @{ condition = @{ allOf = @(@{ dimensions = @(@{ name = 'timer'; value = 'healthPulse' }) }) } } }
-        (Select-AlertFiredInstance -Response (Get-Response @($other)) -SinceUtc $start -RuleId $rule.Id -RuleName $rule.Name -ContextMatch 'healthPulse').Fired | Should -BeFalse
-        $state = Select-AlertFiredInstance -Response (Get-Response @($other, $mine)) -SinceUtc $start -RuleId $rule.Id -RuleName $rule.Name -ContextMatch 'healthPulse'
-        $state.Fired | Should -BeTrue
-        $state.FiredAtUtc | Should -Be ([datetime]::new(2026, 10, 10, 12, 50, 0, [System.DateTimeKind]::Utc))
+    Context 'with a context to match (timer-overdue: healthPulse)' {
+        BeforeAll {
+            # Each condition.allOf[] entry carries searchQuery, the rule's
+            # whole query, beside its dimensions; alert-timer-overdue's names
+            # every timer in its datatable. So the fixture's does too, built
+            # from the map in infra/ rather than typed out.
+            $tf = [System.IO.File]::ReadAllText((Join-Path $repositoryRoot 'infra/observability.tf'))
+            $map = [regex]::Match($tf, '(?ms)^\s*timer_schedules\s*=\s*\{\r?\n(.*?)\r?\n\s*\}\r?\n').Groups[1].Value
+            $timers = @([regex]::Matches($map, '(?m)^\s*(\w+)\s*=\s*\{') | ForEach-Object { $_.Groups[1].Value })
+            $rows = @($timers | ForEach-Object { '  "{0}", 5m, datetime(2026-01-01 00:00)' -f $_ }) -join ",`n"
+            $searchQuery = "let Expected = datatable(timer: string, period: timespan, anchor: datetime) [`n$rows`n];`nExpected | project timer"
+
+            function New-TimerContext {
+                <# properties.context of a fired alert-timer-overdue alert with these timer dimensions. #>
+                param([AllowEmptyCollection()] [string[]] $Timer = @(), [switch] $OneLevel)
+                $condition = @{ allOf = @(@{ searchQuery = $searchQuery; dimensions = @($Timer | ForEach-Object { @{ name = 'timer'; value = $_ } }) }) }
+                if ($OneLevel) {
+                    return @{ condition = $condition }
+                }
+                # The live nesting, read from fired log alerts on 2026-10-15:
+                # properties.context.context.condition.allOf[].
+                return @{ context = @{ condition = $condition; conditionType = 'LogQueryCriteria' }; properties = @{}; status = 'Activated'; version = '1.0' }
+            }
+
+            function Test-Fired {
+                param([object[]] $Alerts)
+                return (Select-AlertFiredInstance -Response (Get-Response $Alerts) -SinceUtc $start -RuleId $rule.Id -RuleName $rule.Name -ContextMatch 'healthPulse')
+            }
+        }
+
+        It 'builds its search query from every timer in infra/, healthPulse among them' {
+            $timers.Count | Should -BeGreaterThan 20
+            $timers | Should -Contain 'healthPulse'
+            $searchQuery | Should -Match '"healthPulse"'
+        }
+
+        It 'counts only the alert whose timer dimension is the one named' {
+            $other = @{ Start = '2026-10-10T12:30:00Z'; Context = (New-TimerContext -Timer 'syncSocialCalendarScheduled') }
+            $mine = @{ Start = '2026-10-10T12:50:00Z'; Context = (New-TimerContext -Timer 'healthPulse') }
+            (Test-Fired @($other)).Fired | Should -BeFalse
+            $state = Test-Fired @($other, $mine)
+            $state.Fired | Should -BeTrue
+            $state.Count | Should -Be 1
+            $state.FiredAtUtc | Should -Be ([datetime]::new(2026, 10, 10, 12, 50, 0, [System.DateTimeKind]::Utc))
+        }
+
+        It 'does not read another timer''s alert as healthPulse because its search query names every timer' {
+            # The false pass #964 found: the whole serialized context was
+            # searched for the name, and searchQuery always contains it.
+            $other = @{ Start = '2026-10-10T12:30:00Z'; Context = (New-TimerContext -Timer 'syncSocialCalendarScheduled') }
+            (ConvertTo-Json -InputObject $other.Context -Depth 20 -Compress).Contains('healthPulse') | Should -BeTrue
+            (Test-Fired @($other)).Fired | Should -BeFalse
+        }
+
+        It 'does not read the collapsed alert, or one with no dimension, as healthPulse' {
+            (Test-Fired @(@{ Start = '2026-10-10T12:30:00Z'; Context = (New-TimerContext -Timer 'more than five timers at once') })).Fired | Should -BeFalse
+            (Test-Fired @(@{ Start = '2026-10-10T12:30:00Z'; Context = (New-TimerContext -Timer @()) })).Fired | Should -BeFalse
+            (Test-Fired @(@{ Start = '2026-10-10T12:30:00Z' })).Fired | Should -BeFalse
+        }
+
+        It 'matches the whole value, not a longer name that contains it' {
+            (Test-Fired @(@{ Start = '2026-10-10T12:30:00Z'; Context = (New-TimerContext -Timer 'healthPulseLegacy') })).Fired | Should -BeFalse
+        }
+
+        It 'still reads an older payload with the condition one level up' {
+            (Test-Fired @(@{ Start = '2026-10-10T12:30:00Z'; Context = (New-TimerContext -Timer 'healthPulse' -OneLevel) })).Fired | Should -BeTrue
+            (Test-Fired @(@{ Start = '2026-10-10T12:30:00Z'; Context = (New-TimerContext -Timer 'syncRssFeeds' -OneLevel) })).Fired | Should -BeFalse
+        }
     }
 
     It 'reports a rule the test does not require as ALSO, and it never fails the run' {

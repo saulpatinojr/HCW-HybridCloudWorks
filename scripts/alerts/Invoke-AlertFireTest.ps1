@@ -899,6 +899,43 @@ function Test-AlertRuleMatch {
     return $value.EndsWith('/' + $RuleName, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-AlertDimensionValue {
+    <#
+    .SYNOPSIS
+        The dimension values of a fired log search alert: every value in
+        condition.allOf[].dimensions[] of its context.
+
+    .DESCRIPTION
+        Alerts - Get All with includeContext=true nests the common alert
+        schema's alertContext one level down: properties.context.context
+        .condition.allOf[], read from live alerts on 2026-10-15. An older
+        payload carried condition at properties.context itself, so that level
+        is read when the nested one has no condition.
+
+        Values only, never the rest of the entry. Each allOf[] entry also
+        carries searchQuery, the rule's whole query, and alert-timer-overdue's
+        names all 26 timers in its datatable; a match on the serialized
+        context therefore read any timer's alert as healthPulse's (#964).
+    #>
+    [OutputType([string[]])]
+    param([AllowNull()] $AlertContext)
+
+    $condition = Get-AlertProperty -Object (Get-AlertProperty -Object $AlertContext -Name 'context') -Name 'condition'
+    if ($null -eq $condition) {
+        $condition = Get-AlertProperty -Object $AlertContext -Name 'condition'
+    }
+    $values = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in (Get-AlertList -Object $condition -Name 'allOf')) {
+        foreach ($dimension in (Get-AlertList -Object $entry -Name 'dimensions')) {
+            $value = Get-AlertProperty -Object $dimension -Name 'value'
+            if ($null -ne $value) {
+                $values.Add([string]$value)
+            }
+        }
+    }
+    return , $values.ToArray()
+}
+
 function Select-AlertFiredInstance {
     <#
     .SYNOPSIS
@@ -910,8 +947,9 @@ function Select-AlertFiredInstance {
         start counts. An earlier one is not this test's, however recent; if
         one of those is still Fired, a stateful rule cannot open another until
         it resolves, and StillFiringSinceUtc says so for the FAIL line. With
-        ContextMatch (timer-overdue: healthPulse), the instance's context must
-        also name it, so another timer's alert is not taken for this one.
+        ContextMatch (timer-overdue: healthPulse), one of the instance's
+        dimension values must equal it (Get-AlertDimensionValue), so another
+        timer's alert is not taken for this one.
     #>
     [OutputType([pscustomobject])]
     param(
@@ -943,9 +981,8 @@ function Select-AlertFiredInstance {
             continue
         }
         if ($ContextMatch) {
-            $alertContext = Get-AlertProperty -Object $properties -Name 'context'
-            $text = if ($null -eq $alertContext) { '' } else { [string]($alertContext | ConvertTo-Json -Depth 32 -Compress) }
-            if ($text.IndexOf($ContextMatch, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            $dimensions = Get-AlertDimensionValue -AlertContext (Get-AlertProperty -Object $properties -Name 'context')
+            if (-not ($dimensions -icontains $ContextMatch)) {
                 continue
             }
         }
@@ -2425,7 +2462,7 @@ function Invoke-AlertTestTimerOverdue {
     Write-AlertRecord -Context $Context -Path $hf -Record @{ present = $present; value = $(if ($present) { $priorValue } else { $null }) }
     try {
         $null = Invoke-AlertAzChange -Arguments @('functionapp', 'config', 'appsettings', 'set', '-n', $estate.FunctionApp, '-g', $estate.WebGroup, '--settings', "$setting=true", '-o', 'none') -What 'Disable the healthPulse timer (restarts the app once)'
-        Wait-AlertFired -Context $Context -Required @('alert-timer-overdue') -TimeoutMinutes (Get-AlertTestDefinition -Test 'timer-overdue').TimeoutMinutes -ContextMatch @{ 'alert-timer-overdue' = 'healthPulse' } -Hints @{ 'alert-timer-overdue' = 'only an alert whose context names healthPulse counts' }
+        Wait-AlertFired -Context $Context -Required @('alert-timer-overdue') -TimeoutMinutes (Get-AlertTestDefinition -Test 'timer-overdue').TimeoutMinutes -ContextMatch @{ 'alert-timer-overdue' = 'healthPulse' } -Hints @{ 'alert-timer-overdue' = 'only an alert whose timer dimension is healthPulse counts' }
     }
     finally {
         Restore-AlertTimerSetting -Context $Context -RecordPath $hf -Present $present -Value $(if ($present) { $priorValue } else { $null })

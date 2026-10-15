@@ -237,8 +237,10 @@ derives it from `infra/` at the commit it runs, through
 `scripts/lib/alert-declarations.mjs`: every alert resource in the module, its
 Azure name, resource group, subscription, `count` gate and action group. It then
 reads each resource group's scheduled query, metric and Activity Log alert
-rules through Azure Resource Manager, and the action group, and writes one row
-per declared rule to the job summary (legible from a phone) and to the log:
+rules through Azure Resource Manager, the action group, and each live log
+search rule's Resource Health (*[Resource Health](#resource-health)*), and
+writes one row per declared rule to the job summary (legible from a phone) and
+to the log:
 
 | State | What it means | What to do |
 | --- | --- | --- |
@@ -247,11 +249,18 @@ per declared rule to the job summary (legible from a phone) and to the log:
 | `DISABLED` | Live with `enabled: false`; nothing in `infra/` disables a rule, so this was done by hand | Find out who and why first (the Activity Log has the write), then re-apply |
 | `NOT WIRED` | Live, but its actions do not name the ops action group | Re-apply; the rule pages nobody until then |
 | `DRIFT` | `autoMitigate` differs from the declaration, or a `count`-gated rule is live while `GATES` records its gate as off | Re-apply; for a gate, correct `GATES` if the gate was armed on purpose |
+| `UNHEALTHY` | A log search rule whose Resource Health is `Unavailable` or `Degraded`: Azure reports it cannot evaluate, so it pages nobody however live and wired it is. The detail starts with Azure's title (`Semantic error`, `Syntax error`, `Query is throttled`, ...). Not raised for a rule evaluated less often than every 15 minutes whose title gives no reason, because Microsoft documents no health for those | Run the rule's query under its scope → **Logs** to see the error; for a semantic or syntax error, fix the query in `infra/` and apply. `alert-timer-overdue` read `Semantic error` from its create on 2026-10-10 until #964 replaced its query |
+| `HEALTH UNREADABLE` | The rule was read and its Resource Health was not: the identity may not read it, `Microsoft.ResourceHealth` is not registered in that subscription, or Azure answered with a state the script does not know. Whether the rule can evaluate is **unknown**, never `OK`. Fails the run | The owner steps under *[Resource Health](#resource-health)*; the detail says which |
 | `NOT AUTHORIZED` | The workflow's identity could not read that resource group. The rules' state is **unknown**, which is not the same finding as `MISSING` | See the identity note below |
 | `UNREADABLE` | The same refusal, in a subscription the script's `UNREADABLE` table records as not yet readable. Shown in every run and as a warning annotation; the state is **unknown**. Does not fail the run | The table is empty since #1053, so this appears only if a subscription is recorded again. Grant the alert identity the read there; once it applies, the workflow's next run fails with `STALE RECORD` until the entry is deleted, so the exception cannot outlive the gap |
 | `READ FAILED` | ARM answered with some other error; the detail carries the status and code, with IDs masked | Re-run; if it repeats, the detail says what ARM refused |
 | `ABSENT` | A `count`-gated rule whose gate `GATES` does not record, and absent. Not a failure, and not a pass either | Record the gate in `GATES`; the test suite already refuses a new gate without an entry |
 | `GATED OFF` | A `count`-gated rule whose gate is recorded as off (`GATES` in the script), and absent | Nothing. Arming the gate is an owner decision; record it in `GATES` in the same change |
+
+The **Health** column shows each log search rule's Resource Health:
+`Available`, `Unknown` (not a finding; a rule evaluated less often than every
+15 minutes reads it), `Unavailable`, `Degraded`, or `unread`. Metric and
+Activity Log rules show a dash.
 
 The action group gets its own row: it fails if it is missing, disabled, or has
 no receiver whose status is `Enabled`. Receiver names and statuses are printed;
@@ -262,8 +271,9 @@ no declaration names is listed and does not fail the run.
 (`ALERT_READER_CLIENT_ID`, `infra/oidc.tf`) and makes only GET calls. Since
 #1053 that identity holds one custom role, *HCW Alert Rule Reader*
 (`infra/roles/alert-rule-reader.json`), in `rg-web-site-prod-cus` and
-`rg-mgmt-plat-prod-cus`: the four alert-rule and action-group read actions and
-nothing else, so it cannot query a log or change anything. Both subscriptions
+`rg-mgmt-plat-prod-cus`: the four alert-rule and action-group read actions,
+and since #964 the two Resource Health reads, and nothing else, so it cannot
+query a log or change anything. Both subscriptions
 are therefore read on every run, and the script's `UNREADABLE` table is empty.
 
 **Which subscriptions it reads.** Because that role is held at resource-group
@@ -329,6 +339,85 @@ To print the declared inventory without touching Azure:
 ```powershell
 node scripts/verify-alert-state.mjs --list
 ```
+
+### Resource Health
+
+`alert-timer-overdue` was live, enabled and wired from its create on
+2026-10-10, so this check read it `OK` every week while Kusto refused its query
+at every evaluation (`SEM0040`) and the rule paged nobody. The one place Azure
+said so was the rule's Resource Health: `Unavailable`, `Semantic error`. Since
+#964 the check reads Resource Health for every live log search rule and fails
+one that reads `Unavailable` or `Degraded` as `UNHEALTHY`. Microsoft reports
+health only for a rule evaluated every 15 minutes or more often
+([Monitor the health of log search alert rules](https://learn.microsoft.com/azure/azure-monitor/alerts/log-alert-rule-health)),
+so a less frequent rule reads `Unknown` (both daily Cosmos export rules did on
+2026-10-15), which is not a finding; the same page says such a rule may read
+`Unavailable for unknown reason`, which is not one either.
+
+Two owner steps make the read possible, each once. Until both are done, the
+rules they cover read `HEALTH UNREADABLE` and the run fails, naming the step
+in the detail. The same page says reading a rule's health needs only read on
+the rule, which the role already has, so the role step may prove unneeded;
+the role carries the Resource Health reads anyway, so the check does not
+depend on that sentence.
+
+**Register the provider in the Management subscription.**
+`Microsoft.ResourceHealth` is registered in `sub-app-site-prod-cus` and was
+not in `sub-plat-mgmt-prod-cus` on 2026-10-15: every health read there
+answered `AuthError ... Make sure the resource provider has been registered
+with this subscription`, so the eleven Management log rules read
+`HEALTH UNREADABLE`. Registering needs Owner or Contributor on that
+subscription:
+
+```powershell
+az provider register --namespace Microsoft.ResourceHealth --subscription sub-plat-mgmt-prod-cus
+```
+
+Registration takes a few minutes. Success is this printing `Registered`;
+`Registering` means wait and read again, and `NotRegistered` (what it printed
+on 2026-10-15) means the register did not take:
+
+```powershell
+az provider show --namespace Microsoft.ResourceHealth --subscription sub-plat-mgmt-prod-cus --query registrationState -o tsv
+```
+
+**Give the role its two health reads.** Since #964
+`infra/roles/alert-rule-reader.json` carries
+`Microsoft.ResourceHealth/availabilityStatuses/read` and
+`Microsoft.ResourceHealth/availabilityStatuses/current/read`: the provider's
+scope-wide read and its read of one resource's current status, the GET the
+script makes. Both are reads and nothing else. The role in Azure changes only
+when the owner writes it, from the repository root of a checkout of `main`
+after the #964 fix merged, where this must print two lines:
+
+```powershell
+Select-String -Path infra/roles/alert-rule-reader.json -Pattern 'Microsoft.ResourceHealth' -SimpleMatch
+```
+
+```powershell
+az role definition update --role-definition '@infra/roles/alert-rule-reader.json' --subscription sub-app-site-prod-cus -o none
+```
+
+That needs the same rights as the create above, finds the role by its name at
+its first assignable scope, and fires `alert-rbac-definition-app`, as it
+should. Success is the second line below listing six actions, two of them
+`Microsoft.ResourceHealth` (it listed the first four on 2026-10-15); the
+first line computes the subscription id the scope needs:
+
+```powershell
+$sub = az account show --subscription sub-app-site-prod-cus --query id -o tsv
+```
+
+```powershell
+az role definition list --name 'HCW Alert Rule Reader' --scope "/subscriptions/$sub/resourceGroups/rg-web-site-prod-cus" --subscription sub-app-site-prod-cus -o json | ConvertFrom-Json | Select-Object -ExpandProperty permissions | Select-Object -ExpandProperty actions
+```
+
+Then run
+[Verify Alert Rule State](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/verify-alert-state.yml)
+→ **Run workflow**. Success is no `HEALTH UNREADABLE` row. Until the apply that
+replaces its query, `alert-timer-overdue` reads `UNHEALTHY` with
+`Semantic error`, which is the check working; after it, `Available` once the
+rule has evaluated again, within about 15 minutes.
 
 ### Notes that change what you do
 
@@ -428,7 +517,7 @@ reasoning beside it.
 
 | Rule | Sev | Fires when | What it usually means | Look at first |
 | --- | :---: | --- | --- | --- |
-| `alert-timer-overdue` | 2 | A Function App timer that was due at least 45 minutes ago has no successful run since. One alert per timer, named in the alert; more than five overdue at once collapse into one alert named `more than five timers at once`. Every 15 min, stateful. Quiet while no request telemetry arrives at all, which the capacity and reachability rules own | The host is not running that timer, or every run fails | `AppExceptions` for the named function, then the registration check in *[The failure with no alert](#the-failure-with-no-alert)* |
+| `alert-timer-overdue` | 2 | A Function App timer that was due at least 45 minutes ago has no successful run since. One alert per timer, named in the alert; more than five overdue at once collapse into one alert named `more than five timers at once`. Every 15 min, stateful. Quiet while no request telemetry arrives at all, which the capacity and reachability rules own | The host is not running that timer, or every run fails | `AppExceptions` for the named function, then the registration check in *[The failure with no alert](#the-failure-with-no-alert)*. If it stayed quiet while a timer was known to be down, the rule's Resource Health first (*[Resource Health](#resource-health)*): `Unavailable` there means the rule itself cannot evaluate, as from 2026-10-10 to #964 |
 | `alert-lab-agent-offline` | 2 | `checkAgentHealth` decided to tell the owner a lab agent has been offline five minutes or more (sent, not sent, or failed). Every 15 min, stateful. Needs `CHECK_AGENT_HEALTH` armed | The labs agent stopped or lost its way to the API; public lab jobs wait. The 04:30 reboot does not fire it | `ssh hcw-lab 'systemctl status hcw-labs-agent --no-pager'` |
 | `alert-jobs-poison` | 2 | A message was put into `platform-jobs-poison` on `stsitefuncprodcus01` in the last hour. Management subscription | The host failed to hand a job to `platformJobWorker` five times | `AppExceptions` for `platformJobWorker` around the time of the put |
 | `alert-swa-bandwidth` | 2 | The Static Web App's `BytesSent` over the last 24 hours passes 2,666,666,666 bytes (80% of a thirtieth of the Free plan's 100 GB month). Hourly | Traffic on pace to exhaust the month; on Free, past 100 GB the site stops serving | Static Web App → Metrics → Data Out, summed over the month to date |
@@ -1280,7 +1369,7 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 
 | Rule | Seen to fire | Notes |
 | --- | --- | --- |
-| `alert-timer-overdue` | not yet | |
+| `alert-timer-overdue` | not yet | Tried 2026-10-15: `healthPulse` was off for 95 minutes and no alert opened, because Kusto refused the rule's query at every evaluation from its create on 2026-10-10 (`SEM0040`: `bin_at()` was given per-row columns as its bin size and fixed point; Resource Health `Unavailable`, `Semantic error`). #964 replaces that line; re-run `-Test timer-overdue` after the apply that carries it, once the rule's Resource Health reads `Available` |
 | `alert-lab-agent-offline` | 2026-10-15, 05:51Z | `Invoke-AlertFireTest.ps1 -Test lab-agent-offline`: the agent stopped at 05:40:06Z, the alert opened at 05:51:03Z, the agent started again at 05:55Z (#964) |
 | `alert-jobs-poison` | 2026-10-15, 04:07Z | `Invoke-AlertFireTest.ps1 -Test jobs-poison`: the message was put at 03:52Z after the five-minute propagation wait; the alert opened at 04:07:24Z; the temporary role fired `alert-rbac-assignment-app` beside it, as the test says (#964) |
 | `alert-swa-bandwidth` | 2026-10-15, 03:44Z | `Invoke-AlertFireTest.ps1 -Test swa-bandwidth`: the threshold went to one byte at 03:38Z, the alert opened at 03:44:22Z at the next hourly evaluation, and the threshold read 2666666666 again after (#964) |

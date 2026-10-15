@@ -194,40 +194,97 @@ const baseAddress = (address) => address.replace(/\[[^\]]*\]$/, "");
  * rows, and with them the rule's `criteria[0].query`, which an update can
  * only declare by its exact values. Both strings below were checked against
  * `terraform console` (1.16.5) on 2026-10-10, and assert-expected-plan.test.mjs
- * holds the `after` rows to the map in the tree.
+ * holds the rendering to the heredoc and the map in the tree.
  */
 const OVERDUE_QUERY_HEAD =
   "let Grace = 45m;\nlet Now = now();\nlet Expected = datatable(timer: string, period: timespan, anchor: datetime) [\n";
-const OVERDUE_QUERY_TAIL = [
-  "",
-  "];",
-  "let Ingesting = toscalar(requests | where timestamp > Now - 30m | count) > 0;",
-  "let LastSuccess = requests",
-  '  | where tostring(success) =~ "true"',
-  '  | extend timer = replace_string(name, "Functions.", "")',
-  "  | summarize lastSuccess = max(timestamp) by timer;",
-  "let Overdue = Expected",
-  "  | where Ingesting",
-  "  | extend lastDue = bin_at(Now - Grace, period, anchor)",
-  "  | where lastDue > Now - 1d",
-  "  | join kind=leftouter LastSuccess on timer",
-  "  | where isnull(lastSuccess) or lastSuccess < lastDue - 1m;",
-  "let Many = toscalar(Overdue | count) > 5;",
-  "union",
-  "  (Overdue | where not(Many) | project timer),",
-  '  (Overdue | where Many | take 1 | project timer = "more than five timers at once")',
-  "",
-].join("\n");
 
-/** The query for these `[name, period, anchor]` rows, as Terraform writes it. */
-export function overdueQuery(rows) {
+/** How the tail computes each timer's last due time since #964. */
+export const OVERDUE_LAST_DUE =
+  "  | extend lastDue = anchor + period * tolong((Now - Grace - anchor) / period)";
+
+/**
+ * The line it replaced, which Kusto refused at every evaluation from
+ * 2026-10-10 (SEM0040: bin_at() needs a constant bin size and fixed point).
+ * Kept because the live rule carries it until the owner's apply, so the
+ * declaration below needs it as its `before`; read back from Azure on
+ * 2026-10-15, the deployed query equalled `overdueQuery(rows, { lastDue:
+ * OVERDUE_LAST_DUE_BIN_AT })` over the tree's 26 rows, character for character.
+ */
+export const OVERDUE_LAST_DUE_BIN_AT =
+  "  | extend lastDue = bin_at(Now - Grace, period, anchor)";
+
+const overdueQueryTail = (lastDue) =>
+  [
+    "",
+    "];",
+    "let Ingesting = toscalar(requests | where timestamp > Now - 30m | count) > 0;",
+    "let LastSuccess = requests",
+    '  | where tostring(success) =~ "true"',
+    '  | extend timer = replace_string(name, "Functions.", "")',
+    "  | summarize lastSuccess = max(timestamp) by timer;",
+    "let Overdue = Expected",
+    "  | where Ingesting",
+    lastDue,
+    "  | where lastDue > Now - 1d",
+    "  | join kind=leftouter LastSuccess on timer",
+    "  | where isnull(lastSuccess) or lastSuccess < lastDue - 1m;",
+    "let Many = toscalar(Overdue | count) > 5;",
+    "union",
+    "  (Overdue | where not(Many) | project timer),",
+    '  (Overdue | where Many | take 1 | project timer = "more than five timers at once")',
+    "",
+  ].join("\n");
+
+/**
+ * The query for these `[name, period, anchor]` rows, as Terraform writes it.
+ * `lastDue` is the tail's due-time line, the tree's unless a declaration needs
+ * the deployed one.
+ */
+export function overdueQuery(rows, { lastDue = OVERDUE_LAST_DUE } = {}) {
   const lines = [...rows]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(
       ([name, period, anchor]) => `  "${name}", ${period}, datetime(${anchor})`,
     );
-  return `${OVERDUE_QUERY_HEAD}${lines.join(",\n")}${OVERDUE_QUERY_TAIL}`;
+  return `${OVERDUE_QUERY_HEAD}${lines.join(",\n")}${overdueQueryTail(lastDue)}`;
 }
+
+/**
+ * `local.timer_schedules` as applied since #1009 added labCanary: the rows
+ * the live rule carried when read back on 2026-10-15. Pinned rather than
+ * read from the tree, so a timer added while the declaration below waits
+ * makes assert-expected-plan.test.mjs fail instead of moving `before` to a
+ * query Azure never held.
+ */
+const TIMER_SCHEDULES_APPLIED = [
+  ["buildWeeklyNewsletter", "7d", "2026-01-05 13:00"],
+  ["checkAgentHealth", "5m", "2026-01-01 00:00"],
+  ["checkLiveLinks", "7d", "2026-01-05 06:00"],
+  ["cleanupRejectedContent", "1d", "2026-01-01 04:00"],
+  ["cleanupSoftDeletedContent", "4h", "2026-01-01 00:00"],
+  ["cleanupTempStorage", "1d", "2026-01-01 00:00"],
+  ["cleanupUnusedCertImages", "1d", "2026-01-01 05:00"],
+  ["cosmosExportScheduler", "1d", "2026-01-01 03:00"],
+  ["fetchBlogListings", "6h", "2026-01-01 00:15"],
+  ["fetchPodcastFeeds", "2h", "2026-01-01 00:30"],
+  ["forgeScheduled", "1d", "2026-01-01 03:30"],
+  ["generateReviewerDigest", "1d", "2026-01-01 07:00"],
+  ["healthPulse", "5m", "2026-01-01 00:02"],
+  ["labCanary", "1h", "2026-01-01 00:20"],
+  ["labsWeeklyRollup", "1d", "2026-01-01 23:55"],
+  ["monitorPublishingPipeline", "6h", "2026-01-01 00:00"],
+  ["platformJobSweeper", "15m", "2026-01-01 00:00"],
+  ["probeAiProviders", "7d", "2026-01-05 06:15"],
+  ["publishScheduledContent", "15m", "2026-01-01 00:00"],
+  ["reVerifyCertifications", "7d", "2026-01-04 00:00"],
+  ["refreshPlaudToken", "12h", "2026-01-01 00:00"],
+  ["refreshToolServiceCache", "1d", "2026-01-01 02:00"],
+  ["scrapeSkillsHubRss", "7d", "2026-01-02 09:00"],
+  ["sendReminders", "1d", "2026-01-01 13:00"],
+  ["syncRssFeeds", "2h", "2026-01-01 00:00"],
+  ["syncSocialCalendarScheduled", "5m", "2026-01-01 00:00"],
+];
 
 /**
  * Intended one-off changes, each declared by the pull request that makes it
@@ -238,6 +295,28 @@ export function overdueQuery(rows) {
  * has applied. "Declaring an intended change" in the header has the rest.
  */
 export const DECLARED = [
+  // #964: alert-timer-overdue computes each timer's last due time without
+  // bin_at(), which Kusto refused at every evaluation from the rule's create
+  // on 2026-10-10 (SEM0040), so the rule never fired. An in-place update of
+  // the query alone: same rows, one line different. Delete this entry once
+  // verify-alert-state.yml reads the rule's Resource Health as Available.
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue",
+    path: "criteria[0].query",
+    before: overdueQuery(TIMER_SCHEDULES_APPLIED, {
+      lastDue: OVERDUE_LAST_DUE_BIN_AT,
+    }),
+    after: overdueQuery(TIMER_SCHEDULES_APPLIED),
+    reason:
+      "#964: alert-timer-overdue's due time computed without bin_at(), which Kusto refused at every evaluation since 2026-10-10 (SEM0040)",
+  },
+  // The same change adds Microsoft.ResourceHealth/availabilityStatuses/read
+  // (and its /current/read) to infra/roles/alert-rule-reader.json, and has no
+  // entry here because no plan can show it: Terraform only reads that role
+  // (two `data "azurerm_role_definition"` blocks in infra/oidc.tf), the owner
+  // writes it with `az role definition update`, and a data source read is not
+  // a resource change this script is given. docs/runbooks/alerting-and-support.md
+  // ("Resource Health") carries the owner's command.
   // PLAT-10 (#970): alert-export-window-latency, ADR 0019's revisit trigger
   // measured. Created by the owner's next apply; delete this entry once
   // verify-alert-state.yml reads the rule OK.

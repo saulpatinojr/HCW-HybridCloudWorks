@@ -66,6 +66,19 @@
  *     --analytics-query "print zzz = 1 | project <candidate> = 1"
  *
  * A refusal means reserved. Add it below with the date.
+ *
+ * ## And a binning call must be given the constants Kusto requires (#964)
+ *
+ * The same shape again, one step later: a query Azure accepts at create and
+ * Kusto refuses at every evaluation. `alert-timer-overdue` computed each
+ * timer's last due time with `bin_at(Now - Grace, period, anchor)`, where
+ * `period` and `anchor` are columns of its datatable. Kusto needs both as
+ * query constants, so from its creation on 2026-10-10 every evaluation failed
+ * with `SEM0040 bin_at(): failed to cast argument 2 to scalar constant`, the
+ * rule's Resource Health read `Unavailable / Semantic error`, and a fire test
+ * on 2026-10-15 stopped healthPulse for 95 minutes without an alert.
+ * `MEASURED_CONSTANT_ARGUMENTS` below records which arguments, measured the
+ * same way as the reserved words.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -208,6 +221,121 @@ export function producedColumns(body) {
   );
 }
 
+/**
+ * Arguments Kusto requires to be query constants, by function and 1-based
+ * position. MEASURED on 2026-10-15 against appi-site-prod-cus-01 with
+ * `print` and `datatable` queries, not read off the docs:
+ *
+ *   - a column as `bin_at`'s bin size:    refused, "failed to cast argument 2
+ *                                         to scalar constant" (SEM0040);
+ *   - a column as its fixed point:        refused, the same for "argument 3";
+ *   - a `let` constant, `now()`, `now() - 3h`, `2 * 5m`, a `toscalar(...)`:
+ *                                         accepted in either place.
+ *
+ * So the line is "no per-row value", not "a literal": anything the query can
+ * evaluate once is a constant to Kusto. Microsoft's page documents the fixed
+ * point as "a constant" and says nothing of the bin size
+ * (https://learn.microsoft.com/kusto/query/bin-at-function); the measurement
+ * says both.
+ */
+export const MEASURED_CONSTANT_ARGUMENTS = {
+  bin_at: { 2: 'bin size', 3: 'fixed point' },
+};
+
+/**
+ * Measured on the same run and ACCEPTED with a per-row column: the control
+ * group. `bin()`, and `floor()`, its alias, took a column as the bin size
+ * both in `extend` and in `summarize ... by`, so neither is checked. A guard
+ * against a refusal Kusto does not make would reject correct queries, and a
+ * guard that cries wolf gets deleted (see `producedColumns`).
+ */
+export const MEASURED_COLUMN_ACCEPTED = {
+  bin: [2],
+  floor: [2],
+};
+
+/** Words that are literals, not names, wherever they appear. */
+const LITERAL_WORDS = new Set(['true', 'false', 'null', 'nan', 'inf']);
+
+/**
+ * The query's code alone: string literals emptied, `//` comments and
+ * Terraform interpolations removed, so a name inside any of them is not read
+ * as a column. `\"` is unescaped first, because the one-line quoted form of
+ * `query` escapes the KQL's own string quotes. An interpolation renders to a
+ * value before Kusto sees it, so it stands in as the literal `0`.
+ */
+export function kqlCode(query) {
+  return query
+    .replace(/\\"/g, '"')
+    .replace(/\$\{[^}]*\}/g, '0')
+    .replace(/@?'(?:[^'\\\n]|\\.)*'|@?"(?:[^"\\\n]|\\.)*"/g, "''")
+    .replace(/\/\/[^\n]*/g, '');
+}
+
+/** Each call of `fn(` in the code, as its top-level arguments, trimmed. */
+export function callArguments(code, fn) {
+  const calls = [];
+  for (const match of code.matchAll(new RegExp(`(?<![\\w.])${fn}\\s*\\(`, 'g'))) {
+    const args = [];
+    let depth = 0;
+    let current = '';
+    for (let i = match.index + match[0].length; i < code.length; i += 1) {
+      const ch = code[i];
+      if (depth === 0 && (ch === ',' || ch === ')')) {
+        args.push(current.trim());
+        current = '';
+        if (ch === ')') break;
+        continue;
+      }
+      if ('([{'.includes(ch)) depth += 1;
+      if (')]}'.includes(ch)) depth -= 1;
+      current += ch;
+    }
+    calls.push(args);
+  }
+  return calls;
+}
+
+/**
+ * The names in one argument that can only be per-row values: not a function
+ * being called, not a literal word, not a `let` of the same query. A literal
+ * needs no list of its forms: in `datetime(2026-01-05T13:00Z)`, `45m` or
+ * `1.5h` every letter follows a digit or names the function, so no name is
+ * found. `\b` before the lookahead stops `datetime(` matching as `datetim`.
+ */
+function rowNames(argument, lets) {
+  return [...argument.matchAll(/(?<![\w.])([A-Za-z_]\w*)\b(?!\s*\()/g)]
+    .map((m) => m[1])
+    .filter((name) => !LITERAL_WORDS.has(name) && !lets.has(name));
+}
+
+/**
+ * Every argument a query passes where Kusto needs a constant and gets a
+ * per-row value, one line each, naming the function, the position and the
+ * names it reads. Empty when the query is fine.
+ */
+export function nonConstantArguments(query) {
+  const code = kqlCode(query);
+  const lets = new Set([...code.matchAll(/(?<![\w.])let\s+([A-Za-z_]\w*)\s*=/g)].map((m) => m[1]));
+  const found = [];
+  for (const [fn, positions] of Object.entries(MEASURED_CONSTANT_ARGUMENTS)) {
+    for (const args of callArguments(code, fn)) {
+      for (const [position, role] of Object.entries(positions)) {
+        const argument = args[Number(position) - 1];
+        if (argument === undefined) continue;
+        const names = rowNames(argument, lets);
+        if (names.length > 0) {
+          found.push(
+            `${fn}() argument ${position} (${role}) is \`${argument}\`, which reads ${names.join(', ')}: ` +
+              'not a literal, not a let of this query'
+          );
+        }
+      }
+    }
+  }
+  return found;
+}
+
 describe('scheduled-query alerts in infra/', () => {
   const blocks = moduleBlocks();
 
@@ -283,6 +411,74 @@ describe('the query/Terraform boundary', () => {
     // From lab-hybrid.tf, which this file did not read before PLAT-4.
     expect(byName.lab_hybrid_disk_used).toEqual(['UsedPct']);
     expect(byName.lab_hybrid_ssh_burst).toEqual(['Recent', 'Earlier', 'Burst']);
+  });
+});
+
+describe('binning calls get the constants Kusto requires (#964)', () => {
+  const blocks = moduleBlocks();
+
+  it('passes no per-row value where Kusto needs a constant, in any rule', () => {
+    // Azure validated nothing of this at create on 2026-10-10, and nothing in
+    // CI ran the KQL, so this is the only check before the rule goes silent.
+    for (const block of blocks) {
+      for (const query of queryTexts(block.body)) {
+        expect(
+          nonConstantArguments(query),
+          `${block.name}: Kusto refuses this at every evaluation (SEM0040) although Azure accepts the rule at create`
+        ).toEqual([]);
+      }
+    }
+  });
+
+  it('flags the line that kept alert-timer-overdue from evaluating from 2026-10-10', () => {
+    // Pinned on its own, because once the rule is fixed no query in infra/
+    // calls bin_at() and the assertion above has nothing to find.
+    const query = [
+      'let Grace = 45m;',
+      'let Now = now();',
+      'let Expected = datatable(timer: string, period: timespan, anchor: datetime) [',
+      '  "healthPulse", 5m, datetime(2026-01-01 00:02)',
+      '];',
+      'Expected',
+      '| extend lastDue = bin_at(Now - Grace, period, anchor)',
+    ].join('\n');
+    const found = nonConstantArguments(query);
+    expect(found).toHaveLength(2);
+    expect(found[0]).toMatch(/^bin_at\(\) argument 2 \(bin size\) is `period`, which reads period:/);
+    expect(found[1]).toMatch(/^bin_at\(\) argument 3 \(fixed point\) is `anchor`, which reads anchor:/);
+  });
+
+  it('accepts every form measured to work', () => {
+    for (const query of [
+      'print b = bin_at(now(), 5m, datetime(2026-01-01 00:02))',
+      'print b = bin_at(now(), 7d, datetime(2026-01-05T13:00Z))',
+      'let S = 5m; let F = datetime(2026-01-01 00:02); print b = bin_at(now(), S, F)',
+      'let Now = now(); print b = bin_at(now(), 1d, Now)',
+      'let S = 2 * 5m; print b = bin_at(now(), S, datetime(2026-01-01))',
+      'print b = bin_at(now(), 1d, now() - 3h)',
+      'print b = bin_at(6.5, 2.5, 7)',
+      'datatable(p: timespan, t: datetime) [5m, datetime(2026-01-01 00:07)] | summarize n = count() by b = bin(t, p)',
+      'datatable(p: timespan) [5m] | extend b = floor(now(), p)',
+      'T | extend lastDue = anchor + period * tolong((Now - Grace - anchor) / period)',
+    ]) {
+      expect(nonConstantArguments(query), query).toEqual([]);
+    }
+  });
+
+  it('reads past nested calls, strings, comments and interpolations, and only the function named', () => {
+    expect(nonConstantArguments("print b = bin_at(now(), 1d, todatetime('2026-01-01, period'))")).toEqual([]);
+    expect(nonConstantArguments('// bin_at(t, period, anchor) is refused\nprint 1')).toEqual([]);
+    expect(nonConstantArguments('print b = bin_at(now(), ${var.period}, datetime(2026-01-01))')).toEqual([]);
+    expect(nonConstantArguments('T | extend b = my_bin_at(t, period, anchor)')).toEqual([]);
+    expect(nonConstantArguments('T | extend b = bin_at(t, iff(x > 0, 1h, 2h), datetime(2026-01-01))')).toEqual([
+      'bin_at() argument 2 (bin size) is `iff(x > 0, 1h, 2h)`, which reads x: not a literal, not a let of this query',
+    ]);
+  });
+
+  it('never checks a function measured to accept a column', () => {
+    for (const fn of Object.keys(MEASURED_COLUMN_ACCEPTED)) {
+      expect(Object.hasOwn(MEASURED_CONSTANT_ARGUMENTS, fn), fn).toBe(false);
+    }
   });
 });
 

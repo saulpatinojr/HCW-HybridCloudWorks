@@ -34,6 +34,8 @@ import {
   DECLARED,
   EXPECTED,
   formatPath,
+  OVERDUE_LAST_DUE,
+  OVERDUE_LAST_DUE_BIN_AT,
   overdueQuery,
   redact,
   secretsOf,
@@ -884,23 +886,56 @@ describe('DECLARED', () => {
     }
   });
 
-  it('declares alert-timer-overdue’s query for the timer map in the tree, if it declares it at all (#1009)', () => {
+  /** `local.timer_schedules` in the tree, as `[name, period, anchor]` rows. */
+  const treeTimerRows = () => {
+    const block = /^\s*timer_schedules\s*=\s*\{\n([\s\S]*?)\n\s*\}\n/m.exec(infraSource);
+    expect(block, 'local.timer_schedules not found').not.toBeNull();
+    return [
+      ...block[1].matchAll(/^\s*(\w+)\s*=\s*\{\s*period\s*=\s*"([^"]+)",\s*anchor\s*=\s*"([^"]+)"\s*\}/gm),
+    ].map((m) => [m[1], m[2], m[3]]);
+  };
+
+  it('renders alert-timer-overdue’s query exactly as the heredoc in infra/ does (#964)', () => {
+    // overdueQuery() keeps its own copy of the query around the rows, so a
+    // change to the heredoc that does not move the copy would leave every
+    // declaration of this rule matching a query Terraform never renders.
+    // `<<-` strips the smallest indent and keeps the newline before the
+    // marker; the rows are interpolated after the strip, keeping their own
+    // two spaces, in Terraform's map order, which sorts the names.
+    const heredoc =
+      /resource "azurerm_monitor_scheduled_query_rules_alert_v2" "timer_overdue" \{[\s\S]*?query\s*=\s*<<-KQL\n([\s\S]*?)\n[ \t]*KQL\n/.exec(
+        infraSource
+      );
+    expect(heredoc, 'timer_overdue query heredoc not found').not.toBeNull();
+    const lines = heredoc[1].split('\n');
+    const indent = Math.min(...lines.filter((line) => line.trim()).map((line) => /^ */.exec(line)[0].length));
+    const rows = treeTimerRows()
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([name, period, anchor]) => `  "${name}", ${period}, datetime(${anchor})`)
+      .join(',\n');
+    const rendered = `${lines.map((line) => line.slice(indent)).join('\n')}\n`.replace('${local.timer_schedule_rows}', rows);
+    expect(overdueQuery(treeTimerRows())).toBe(rendered);
+    expect(rendered).toContain(OVERDUE_LAST_DUE);
+    expect(rendered).not.toContain('bin_at(');
+  });
+
+  it('declares alert-timer-overdue’s query for the timer map in the tree, if it declares it at all (#1009, #964)', () => {
     const declaration = DECLARED.find(
       (entry) =>
         entry.address === 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue' &&
         entry.path === 'criteria[0].query'
     );
     if (!declaration) return;
-    const block = /^\s*timer_schedules\s*=\s*\{\n([\s\S]*?)\n\s*\}\n/m.exec(infraSource);
-    expect(block, 'local.timer_schedules not found').not.toBeNull();
-    const rows = [
-      ...block[1].matchAll(/^\s*(\w+)\s*=\s*\{\s*period\s*=\s*"([^"]+)",\s*anchor\s*=\s*"([^"]+)"\s*\}/gm),
-    ].map((m) => [m[1], m[2], m[3]]);
+    const rows = treeTimerRows();
     expect(rows.length).toBeGreaterThan(20);
     expect(declaration.after).toBe(overdueQuery(rows));
-    // One row more than before: the declaration describes one timer added.
-    const count = (query) => query.split('\n').filter((line) => /^ {2}"\w+", /.test(line)).length;
-    expect(count(declaration.after) - count(declaration.before)).toBe(1);
+    // Each declaration of this rule states its own shape; #1009's was one
+    // row more. #964's is the same rows with the due-time line alone
+    // different: the bin_at() line the live rule carries, and nothing else.
+    expect(declaration.before).toBe(overdueQuery(rows, { lastDue: OVERDUE_LAST_DUE_BIN_AT }));
+    const after = declaration.after.split('\n');
+    const changed = declaration.before.split('\n').filter((line, i) => line !== after[i]);
+    expect(changed).toEqual([OVERDUE_LAST_DUE_BIN_AT]);
   });
 
   it('prunes ADDON_NETWORK_ASSESSMENT_URL and ADDON_CLOUD_ASSESSMENT_URL once applied (#1089)', () => {
