@@ -19,6 +19,24 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Alert fire record: twelve of fifteen rules seen to fire, and the SSH
+  burst test writes lines rsyslog cannot fold** (PLAT-4, #964). The fire
+  tests ran on 2026-10-15 from a detached runner (`Invoke-AlertFireTest.ps1`,
+  one test at a time, every change put back and checked), and the Fire
+  record in `docs/runbooks/alerting-and-support.md` carries a dated row for
+  each rule that opened: the two Key Vault rules, both role-assignment and
+  both role-definition rules, the Static Web App bandwidth, the poison
+  queue, the lab vault unwrap, the lab agent offline and the SSH burst, with
+  the 2026-10-11 Key Vault config write. The SSH burst test's first run
+  failed for a reason in the test: it wrote a thousand identical lines with
+  `logger`, and the host's rsyslog (`$RepeatedMsgReduction on`, Ubuntu's
+  default) folded them into two Syslog rows against a rule that needs fifty;
+  each line now carries its own port (`Invoke-AlertFireTest.ps1`, its Pester
+  test and the runbook say why), and the re-run opened the alert in about
+  fourteen minutes. Still open: `alert-timer-overdue`, which has never
+  evaluated (fixed in its own pull request and re-run after the apply), and
+  the two backup-missing rules, whose test stops a backup timer for two
+  nights.
 - **A lab job running when the host stops is interrupted and reported
   within seconds, not left `claimed` (LAB-13, #959)**. This replaces the
   210 s drain #1178 added: that drain then exited with the job's container

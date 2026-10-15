@@ -1281,18 +1281,18 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 | Rule | Seen to fire | Notes |
 | --- | --- | --- |
 | `alert-timer-overdue` | not yet | |
-| `alert-lab-agent-offline` | not yet | |
-| `alert-jobs-poison` | not yet | |
-| `alert-swa-bandwidth` | not yet | |
-| `alert-kv-errors` | not yet | |
-| `alert-kv-data-write` | not yet | |
+| `alert-lab-agent-offline` | 2026-10-15, 05:51Z | `Invoke-AlertFireTest.ps1 -Test lab-agent-offline`: the agent stopped at 05:40:06Z, the alert opened at 05:51:03Z, the agent started again at 05:55Z (#964) |
+| `alert-jobs-poison` | 2026-10-15, 04:07Z | `Invoke-AlertFireTest.ps1 -Test jobs-poison`: the message was put at 03:52Z after the five-minute propagation wait; the alert opened at 04:07:24Z; the temporary role fired `alert-rbac-assignment-app` beside it, as the test says (#964) |
+| `alert-swa-bandwidth` | 2026-10-15, 03:44Z | `Invoke-AlertFireTest.ps1 -Test swa-bandwidth`: the threshold went to one byte at 03:38Z, the alert opened at 03:44:22Z at the next hourly evaluation, and the threshold read 2666666666 again after (#964) |
+| `alert-kv-errors` | 2026-10-15, 03:21Z | `Invoke-AlertFireTest.ps1 -Test kv-errors-and-data-write`: a `secret set-attributes` on a name that does not exist, refused `Forbidden` at 03:05Z; the alert opened at 03:21:21Z (#964) |
+| `alert-kv-data-write` | 2026-10-15, 03:14Z | The same refusal; the alert opened at 03:14:14Z (#964) |
 | `alert-kv-config-write` | 2026-10-11, 04:52Z | `Invoke-AlertFireTest.ps1 -Test kv-config-write`: the test tag went on and came off at 04:46Z; Azure Monitor opened the alert (ActivityLog Administrative) at 04:52:04Z. The first proof that Activity Log alerts reach Alerts Management, where the script reads them |
-| `alert-rbac-assignment-app` | not yet | |
-| `alert-rbac-assignment-mgmt` | not yet | |
-| `alert-rbac-definition-app` | not yet | |
-| `alert-rbac-definition-mgmt` | not yet | |
-| `alert-lab-vault-unwrap` | not yet | |
-| `alert-lab-ssh-burst` | not yet | |
+| `alert-rbac-assignment-app` | 2026-10-15, 03:32Z | `Invoke-AlertFireTest.ps1 -Test rbac-assignment`: a Reader grant to the signed-in account at rg-web-site-prod-cus, created and deleted; the alert opened at 03:32:04Z (#964) |
+| `alert-rbac-assignment-mgmt` | 2026-10-15, 03:31Z | The same at rg-mgmt-plat-prod-cus; the alert opened at 03:31:03Z (#964) |
+| `alert-rbac-definition-app` | 2026-10-15, 03:37Z | `Invoke-AlertFireTest.ps1 -Test rbac-definition`: a throwaway `plat4-fire-test-*` role at rg-web-site-prod-cus, created, listed and deleted; the alert opened at 03:37:04Z (#964) |
+| `alert-rbac-definition-mgmt` | 2026-10-15, 03:36Z | The same at rg-mgmt-plat-prod-cus; the alert opened at 03:36:04Z (#964) |
+| `alert-lab-vault-unwrap` | 2026-10-15, 04:23Z | `Invoke-AlertFireTest.ps1 -Test lab-vault-unwrap`: a wrap request from the workstation, refused 403 at 04:08Z and logged with its address; the alert opened at 04:23:01Z. `alert-kv-errors` did not open beside it because its 03:21Z alert was still open, which the test allows (#964) |
+| `alert-lab-ssh-burst` | 2026-10-15, 07:41Z | `Invoke-AlertFireTest.ps1 -Test lab-ssh-burst`: a thousand `sshd` lines from a documentation address, each with its own port, written by `logger` at 07:27Z; the alert opened at 07:41:48Z. The first run, with one fixed port, failed: rsyslog's `$RepeatedMsgReduction on` folded the burst into two Syslog rows (#964), which is why each line now differs |
 | `alert-lab-backup-missing-coder` | not yet | Host side landed (#955, the `backups` role); fire test: stop `coder-postgres-backup.timer` for two nights |
 | `alert-lab-backup-missing-vault` | not yet | Host side landed (#955, the `backups` role); fire test: stop `hcw-vault-backup.timer` for two nights |
 | `alert-export-window-latency` | not yet | No fire test: a degraded export window cannot be staged without slowing production. Design test: the rule's query with `windowRequests >= 1` and `windowP95 > 0` under Application Insights → **Logs** returns one row on any night with requests in the window |
