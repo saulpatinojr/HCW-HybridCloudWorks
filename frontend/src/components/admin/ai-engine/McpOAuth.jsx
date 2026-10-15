@@ -15,10 +15,12 @@
  * in McpOAuthResultBanner on the MCP Servers tab. Tokens never reach the
  * browser: the card reads `oauth` (status, scope, expiry) and `hasOauthToken`.
  *
- * Disconnect deletes the token here and, where the provider advertises a
- * revocation endpoint, revokes the grant there first (#1116). The toast says
- * which happened: revoked at the provider, or deleted here only — with the
- * grant possibly still live there, for the owner to revoke in that account.
+ * Disconnect asks first — through ConfirmModal, held open and busy while the
+ * request runs (AP-F12, #936) — then deletes the token here and, where the
+ * provider advertises a revocation endpoint, revokes the grant there first
+ * (#1116). The toast says which happened: revoked at the provider, or deleted
+ * here only — with the grant possibly still live there, for the owner to
+ * revoke in that account.
  *
  * Plaud is marked OAuth too but is not Connect's: its token is pasted on the
  * Recording Hub's Connect tab (functions/src/lib/ai/mcp-policy.js
@@ -29,6 +31,7 @@ import { useLocation, useNavigate } from 'react-router';
 import { AlertTriangle, CheckCircle2, Loader2, LogIn, RefreshCw, Unplug, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
+import ConfirmModal from '@/components/admin/ConfirmModal';
 import { aiEngine } from '@/lib/aiEngine';
 import { hardAssign } from '@/lib/hardNavigate';
 
@@ -117,6 +120,10 @@ const smallButton = 'h-7 text-xs px-2';
 export default function McpOAuthPanel({ server }) {
   const state = oauthCardState(server);
   const [busy, setBusy] = useState(null);
+  // Whether Disconnect is waiting on its confirmation (ADR 0033 §2: state,
+  // not a browser dialog). The modal stays open, busy, until the request
+  // settles.
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
   const { toast } = useToast();
   const name = server?.name || server?.id;
 
@@ -138,13 +145,6 @@ export default function McpOAuthPanel({ server }) {
   };
 
   const disconnect = async () => {
-    if (
-      !window.confirm(
-        `Disconnect ${name}? Its token is deleted here and, where the provider allows it, revoked there; nothing can call it until someone presses Connect again.`
-      )
-    ) {
-      return;
-    }
     setBusy('disconnect');
     try {
       const result = await aiEngine.disconnectMcpOAuth(server.id);
@@ -157,6 +157,7 @@ export default function McpOAuthPanel({ server }) {
       });
     } finally {
       setBusy(null);
+      setConfirmingDisconnect(false);
     }
   };
 
@@ -201,7 +202,7 @@ export default function McpOAuthPanel({ server }) {
             size="sm"
             variant="ghost"
             className={`${smallButton} text-slate-500 hover:text-red-600`}
-            onClick={disconnect}
+            onClick={() => setConfirmingDisconnect(true)}
             disabled={Boolean(busy)}
             aria-label={`Disconnect ${name}`}
           >
@@ -213,6 +214,16 @@ export default function McpOAuthPanel({ server }) {
             Disconnect
           </Button>
         </div>
+        <ConfirmModal
+          open={confirmingDisconnect}
+          title={`Disconnect ${name}?`}
+          description="Its token is deleted here and, where the provider allows it, revoked there; nothing can call it until someone presses Connect again."
+          confirmLabel="Disconnect"
+          busy={busy === 'disconnect'}
+          busyLabel="Disconnecting…"
+          onConfirm={disconnect}
+          onCancel={() => setConfirmingDisconnect(false)}
+        />
       </div>
     );
   }

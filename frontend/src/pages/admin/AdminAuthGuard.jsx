@@ -35,6 +35,7 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Spinner } from '@/components/ui/spinner';
 import { ShieldAlert, ShieldQuestion, LogIn, RefreshCw } from 'lucide-react';
 import { useAdminAuth, ACCESS_STATE, UNKNOWN_REASON } from '@/hooks/useAdminAuth';
 import { postJSON } from '@/lib/api';
@@ -108,12 +109,10 @@ export default function AdminAuthGuard({ children }) {
     }
   };
 
+  // A status role and a label (AP-F12, #936): the bare ring this was left a
+  // screen reader on an empty page with nothing to announce.
   if (!authReady || (user && adminStatusLoading)) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-blue" />
-      </div>
-    );
+    return <Spinner size="lg" label="Checking your access" className="min-h-[60vh]" />;
   }
 
   // Not signed in

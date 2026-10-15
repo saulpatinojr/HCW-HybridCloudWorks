@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 
 const startMcpOAuth = vi.fn();
@@ -148,19 +148,35 @@ describe('McpOAuthPanel', () => {
     expect(screen.getByText('The access token renews automatically.')).toBeTruthy();
   });
 
-  it('Disconnect asks first, then disconnects', async () => {
-    const confirm = vi
-      .spyOn(window, 'confirm')
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true);
-    disconnectMcpOAuth.mockResolvedValue(undefined);
+  it('Disconnect asks first, in the modal, then disconnects', async () => {
+    let settle;
+    disconnectMcpOAuth.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        })
+    );
     render(<McpOAuthPanel server={connected()} />);
     const button = screen.getByRole('button', { name: 'Disconnect Hostinger MCP' });
+
+    // Cancelled: nothing is sent and the question goes away.
     fireEvent.click(button);
+    const first = await screen.findByRole('dialog', { name: 'Disconnect Hostinger MCP?' });
+    expect(first).toHaveTextContent(/revoked there/);
+    fireEvent.click(within(first).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(disconnectMcpOAuth).not.toHaveBeenCalled();
+
+    // Confirmed: the request runs with the modal held open and busy, and the
+    // modal closes when it settles.
     fireEvent.click(button);
+    const dialog = await screen.findByRole('dialog', { name: 'Disconnect Hostinger MCP?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
     await waitFor(() => expect(disconnectMcpOAuth).toHaveBeenCalledWith('hostinger-mcp'));
-    expect(confirm).toHaveBeenCalledTimes(2);
+    const busy = within(dialog).getByRole('button', { name: 'Disconnecting…' });
+    expect(busy).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    settle(undefined);
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith({
         title: 'Hostinger MCP disconnected here',
@@ -168,15 +184,17 @@ describe('McpOAuthPanel', () => {
           'Disconnected here. The provider offers no revocation, so remove this site from your account there to end the grant.',
       })
     );
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   describe('what Disconnect says about the grant at the provider (#1116)', () => {
     const podbean = () =>
       connected({ id: 'podbean-mcp', name: 'Podbean MCP', url: 'https://mcp.podbean.com/mcp' });
     const pressDisconnect = async () => {
-      vi.spyOn(window, 'confirm').mockReturnValue(true);
       render(<McpOAuthPanel server={podbean()} />);
       fireEvent.click(screen.getByRole('button', { name: 'Disconnect Podbean MCP' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Disconnect Podbean MCP?' });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
       await waitFor(() => expect(toast).toHaveBeenCalled());
       return toast.mock.calls[0][0];
     };

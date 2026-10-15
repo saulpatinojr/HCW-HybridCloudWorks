@@ -19,6 +19,41 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Polish defects that compound on a phone: no browser confirm dialog,
+  toasts that stack and announce, a toaster that mounts with the admin
+  shell, a loading state with a status role, one status request per user,
+  and a catalogue failure that is shown** (AP-F12, #936). The three
+  `window.confirm` calls that sat beside the shared modal
+  (`frontend/src/components/admin/ai-engine/McpOAuth.jsx`,
+  `components/admin/KeywordMatrixPanel.jsx`, `pages/admin/AIEnginePage.jsx`)
+  and the Drafts page's navigation guard
+  (`pages/admin/drafts/useUnsavedGuard.js`) are state rendered with
+  `ConfirmModal` (ADR 0033 §2); the guard keeps the cancelled click and
+  replays it on confirm, since `useBlocker` needs a data router the app does
+  not mount, and `beforeunload` stays the browser's. `ConfirmModal` gained a
+  `busy` state: the confirm button disabled under a progress label and the
+  dialog not dismissable while the confirmed request runs, used wherever the
+  action awaits one. `src/no-window-confirm.test.js` reads every source file
+  under `src` so the dialog cannot return. `components/ui/use-toast.js`
+  holds three toasts instead of one, each expiring on its own clock, and
+  `toaster.jsx` no longer makes the viewport one atomic live region (every
+  arrival re-announced the list and the toast it replaced was never
+  announced); Radix's per-toast `role="status"` region announces each. The
+  toaster is a static import of `pages/admin/AdminLayout.jsx` rather than a
+  lazy Suspense child of `App.jsx`, so a toast fired before its chunk
+  arrived cannot expire unseen; no public page fires one. A shared
+  `components/ui/spinner.jsx` (`role="status"`, a label) replaces the bare
+  `animate-spin` rings in `AdminAuthGuard.jsx`, `PublishedPage.jsx` and the
+  two newsletter settings cards. `hooks/useAdminAuth.js` keeps one in-flight
+  promise per user in its cache, shared by every mounted instance, dropped
+  by `clearAdminStatusCache`, and never caches a failure; `lib/api.js` no
+  longer forces a token refresh for `getCurrentAdminStatus` on every call —
+  a page load takes MSAL's cached token, renewed when it has actually
+  expired, and only an explicit re-check asks for a fresh one (`freshToken`),
+  the case where a just-granted App Role matters. `AIEnginePage.jsx` shows
+  a dismissible `role="alert"` notice when the model catalogue cannot be
+  read, naming what still works and a Try again, where it used to log and
+  show nothing.
 - **AP-F11: the site's Content-Security-Policy drops `'unsafe-inline'` and
   the scheme-wide image grant and gains `base-uri`, `object-src` and
   `form-action`, the admin token cache moves to `sessionStorage`, and no

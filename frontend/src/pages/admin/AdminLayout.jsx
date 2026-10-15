@@ -11,6 +11,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+// Static, not lazy (AP-F12, #936): a toast fired before a lazy toaster's chunk
+// arrived expired unseen. This shell is the only place toasts are shown.
+import { Toaster } from '@/components/ui/toaster';
 
 // The menu is the navigation registry (config/adminNav.js, ADR 0033 §3):
 // groups, items, routes and the one-line description each item shows on
@@ -390,6 +393,7 @@ export default function AdminLayout() {
           <Outlet />
         </div>
       </div>
+      <Toaster />
     </div>
   );
 }

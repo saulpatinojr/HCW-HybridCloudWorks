@@ -5,6 +5,7 @@ import { useAuthReady } from '@/hooks/useAuthReady';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { getCoverImageUrl, formatPostDate } from '@/lib/blogUtils';
 import { byNewest } from '@/lib/dateUtils';
 import { PenSquare, Loader2, Calendar, Images, Headphones, Rocket } from 'lucide-react';
@@ -633,11 +634,7 @@ export default function PublishedPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[40vh]">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-slate-blue" />
-      </div>
-    );
+    return <Spinner label="Loading published articles" className="min-h-[40vh]" />;
   }
 
   return (

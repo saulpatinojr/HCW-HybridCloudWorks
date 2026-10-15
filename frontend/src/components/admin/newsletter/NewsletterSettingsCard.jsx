@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Spinner } from '@/components/ui/spinner';
 import { Loader2, Save } from 'lucide-react';
 import { getJSON, sendJSON } from '@/lib/api';
 import NewsletterContentFields, { contentProblem } from './NewsletterContentFields';
@@ -137,12 +138,7 @@ export default function NewsletterSettingsCard({ onSaved }) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {loading && (
-          <Loader2
-            className="h-5 w-5 animate-spin text-muted-foreground"
-            aria-label="Loading settings"
-          />
-        )}
+        {loading && <Spinner size="sm" label="Loading settings" className="justify-start" />}
         {!loading && loadError && (
           <div className="space-y-3">
             <p role="alert" className="text-sm text-destructive">
