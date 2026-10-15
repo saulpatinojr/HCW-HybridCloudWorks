@@ -31,7 +31,8 @@ ExecStartPre=/usr/bin/test -S {{ labs_agent_docker_proxy_socket }}
 ExecStart=/usr/bin/node index.js
 # Stopping (LAB-13, #959). SIGTERM goes to the agent alone, not to the docker
 # CLI children it spawns: the agent interrupts each running job itself,
-# removes its container through the proxy and reports it, then exits
+# starts removing its container through the proxy, reports it without
+# waiting for the removal, then exits
 # (vps-agent/lib/shutdown.js). With the default control-group mode the CLI
 # got SIGTERM at the same instant and forwarded it to the job. What is still
 # running when the agent exits, or at TimeoutStopSec, gets SIGKILL. The

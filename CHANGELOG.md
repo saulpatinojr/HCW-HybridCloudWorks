@@ -24,9 +24,10 @@ This project has not cut a tagged release; entries are grouped under
   210 s drain #1178 added: that drain then exited with the job's container
   still running and nothing reported, so the job sat `claimed` until its
   15-minute lease ran out. On SIGTERM the agent now aborts every running
-  job: the runner kills the `docker run` child and removes the container
-  by name through the agent's Docker proxy (`docker rm -f`, the one DELETE
-  the proxy allows). Each job is reported `failed`, exit -1, with
+  job: the runner kills the `docker run` child and starts removing the
+  container by name through the agent's Docker proxy (`docker rm -f`, the
+  one DELETE the proxy allows). Each job is reported at once, without
+  waiting for that removal, which may take 10 s: `failed`, exit -1, with
   *The lab host was restarting and this job was interrupted. Submit it
   again.* The agent then waits up to `LABS_AGENT_SHUTDOWN_TIMEOUT_MS` for
   those reports (default 5000; anything but a positive whole number is

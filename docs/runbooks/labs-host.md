@@ -581,8 +581,8 @@ unattended-upgrades reboot. systemd sends SIGTERM to the agent alone
 (`KillMode=mixed`), never to the `docker` CLI it runs. The agent then
 interrupts every job it holds:
 
-1. It removes the job's container through its Docker proxy.
-2. It reports the job `failed`, exit `-1`, with the sentence the visitor
+1. It starts removing the job's container through its Docker proxy.
+2. Without waiting for that removal, it reports the job `failed`, exit `-1`, with the sentence the visitor
    sees: *The lab host was restarting and this job was interrupted. Submit
    it again.*
 3. It sends `stopping` and waits up to `LABS_AGENT_SHUTDOWN_TIMEOUT_MS` for

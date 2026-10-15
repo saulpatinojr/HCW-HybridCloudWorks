@@ -15,9 +15,9 @@
  *
  *  1. Every running job holds an AbortController. On SIGTERM or SIGINT all
  *     of them are aborted at once, before any network call: the runner
- *     kills its `docker run` child and removes the container by name
+ *     kills its `docker run` child, starts removing the container by name
  *     through the socket proxy (lib/docker-runner.js), and resolves
- *     `aborted`.
+ *     `aborted` without waiting for that removal.
  *  2. `execute` reports an aborted job as `failed`, exit -1, with
  *     INTERRUPTED_OUTPUT. In visitor language: a public lab page may show
  *     a job's result, so the sentence names no vendor, tool or admin-side
@@ -47,7 +47,9 @@
  * crash removes nothing, so the unit sweeps every container carrying the
  * job label as root after this process exits and before the next one
  * starts (roles/labs_agent/files/hcw-labjob-sweep, CodeRabbit on #1188).
- * The removal here is the fast path; the sweep is the guarantee.
+ * The report therefore never waits on the removal: each has its own bound,
+ * the report this budget and the container the sweep. The removal the
+ * runner starts is the fast path; the sweep is the guarantee.
  *
  * Everything the module touches is injected, so lib/shutdown.test.js runs a
  * shutdown against fake jobs, a fake API and a fake exit with no Docker, no

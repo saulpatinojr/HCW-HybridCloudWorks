@@ -98,8 +98,9 @@ that made it the right call before the ADR said so:
    `docs/standards/required-inputs.md` section 4.7.
    The unit also sets `KillMode=mixed` and `TimeoutStopSec=30` (LAB-13,
    #959). On a stop or a reboot, SIGTERM reaches the agent alone, never
-   the `docker` CLI it runs. The agent interrupts each running job, removes
-   its container through the proxy, and reports it `failed` with
+   the `docker` CLI it runs. The agent interrupts each running job, starts
+   removing its container through the proxy, and without waiting for that
+   removal reports it `failed` with
    *The lab host was restarting and this job was interrupted. Submit it
    again.* It then waits up to `LABS_AGENT_SHUTDOWN_TIMEOUT_MS` for those
    reports, says `offline`, and exits. A removal can take longer than that

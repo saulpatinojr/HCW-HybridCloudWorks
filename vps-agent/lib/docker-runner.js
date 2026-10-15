@@ -421,19 +421,28 @@ export async function prepareJobDir(payloadFileName, payload, encoding = 'text')
   return jobDir;
 }
 
-/** How long `docker rm -f` of a job container may take before the agent stops waiting for it. */
+/** How long `docker rm -f` of a job container may take; awaited after a wall-clock timeout, not during a shutdown. */
 export const REMOVE_TIMEOUT_MS = 10000;
 
 /**
  * Execute a job in a sandboxed container.
  *
  * An abort of `signal` is the agent shutting down (lib/shutdown.js): the
- * `docker run` child is killed, the container is removed by name through
- * the proxy (the one DELETE it allows: the job's own `labjob-` name with
- * `force=1`), and the result says `aborted` so the job is reported as
- * interrupted rather than as the learner's failure. Before #959's fix the
- * agent exited with the container running and nothing reported, and the
- * job sat `claimed` until the server's lease lapsed.
+ * `docker run` child is killed, the container's removal by name through
+ * the proxy is started (the one DELETE it allows: the job's own `labjob-`
+ * name with `force=1`), and the result says `aborted` at once so the job is
+ * reported as interrupted rather than as the learner's failure. Before
+ * #959's fix the agent exited with the container running and nothing
+ * reported, and the job sat `claimed` until the server's lease lapsed.
+ *
+ * On that path the removal is not awaited. It may take REMOVE_TIMEOUT_MS,
+ * twice the shutdown's default report window, and a report that waited on
+ * it could miss the window and leave the job to the lease after all
+ * (CodeRabbit on #1188). The report and the cleanup each get their own
+ * bound: the report the shutdown's budget, the container the unit's sweep
+ * (roles/labs_agent/files/hcw-labjob-sweep), which removes whatever this
+ * removal has not finished once the agent has exited. On the wall-clock
+ * path nothing is stopping, so the removal is awaited there.
  *
  * @param {object} capability entry from lib/capabilities.js
  * @param {object} job        { id, payload, payloadEncoding? } as claimed from the API
@@ -468,7 +477,15 @@ export async function runInDocker(capability, job, limits, { signal, spawnImpl =
       // container running (the CLI is only attached to it), so this removal
       // is what actually stops the job, on the wall-clock path and on the
       // shutdown path alike. Not given the signal: it is already aborted.
-      await runProcess('docker', ['rm', '-f', containerName], REMOVE_TIMEOUT_MS, { spawnImpl });
+      // runProcess settles rather than rejects; the catch is for a spawn
+      // that throws, which must not become an unhandled rejection while
+      // the agent is stopping.
+      const removal = runProcess('docker', ['rm', '-f', containerName], REMOVE_TIMEOUT_MS, { spawnImpl }).catch(
+        () => {}
+      );
+      // Stopping: report now, and leave what the removal has not finished
+      // to the unit's sweep (the comment above runInDocker says why).
+      if (!result.aborted) await removal;
     }
     if (result.truncated) {
       result.output += '\n[output truncated at 64KB]';

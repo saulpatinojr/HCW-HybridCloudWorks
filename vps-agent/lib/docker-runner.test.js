@@ -384,9 +384,13 @@ describe('output handling', () => {
  * drives: `exit(code, output)` ends it the way a finished `docker run` does,
  * `kill(signal)` records the signal and closes it with no code, as a
  * SIGKILLed process closes. A `docker rm` child closes 0 by itself, as the
- * daemon answers the proxy's one allowed DELETE. Docker is never involved.
+ * daemon answers the proxy's one allowed DELETE, unless `removalCloses` is
+ * false, which stands for a removal still running when the report is due.
+ * Docker is never involved.
+ *
+ * @param {{ removalCloses?: boolean }} [options]
  */
-function fakeSpawn() {
+function fakeSpawn({ removalCloses = true } = {}) {
   const children = [];
   const impl = (cmd, args) => {
     const child = Object.assign(new EventEmitter(), {
@@ -406,7 +410,7 @@ function fakeSpawn() {
       },
     });
     children.push(child);
-    if (args[0] === 'rm') setImmediate(() => child.emit('close', 0));
+    if (args[0] === 'rm' && removalCloses) setImmediate(() => child.emit('close', 0));
     return child;
   };
   return { impl, children };
@@ -447,6 +451,38 @@ describe('runInDocker when the agent is stopping (LAB-13, #959)', () => {
     assert.match(nameOf(run.args), /^labjob-[0-9a-f]{12}$/);
     assert.deepEqual(result, { exitCode: -1, output: '', truncated: false, timedOut: false, aborted: true });
     assert.ok(REMOVE_TIMEOUT_MS > 0);
+  });
+
+  // CodeRabbit on #1188: a removal may take REMOVE_TIMEOUT_MS, twice the
+  // shutdown's report window, so a report that waited on it could miss the
+  // window. The removal is started, never awaited, on this path; the unit's
+  // sweep finishes it after the agent exits.
+  test('an abort resolves while the removal is still running: the report never waits on the cleanup', async () => {
+    const spawn = fakeSpawn({ removalCloses: false });
+    const controller = new AbortController();
+    const running = runInDocker(capability, job, LIMITS, { signal: controller.signal, spawnImpl: spawn.impl });
+    await until(() => spawn.children.length === 1);
+    const [run] = spawn.children;
+
+    controller.abort();
+    // Bounded well inside REMOVE_TIMEOUT_MS: a runner that awaited the
+    // removal would still be waiting here, and only its own 10 s timeout
+    // would ever end that wait.
+    let timer;
+    const result = await Promise.race([
+      running,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve('still waiting on the removal'), 500);
+      }),
+    ]);
+    clearTimeout(timer);
+    const remove = spawn.children[1];
+    remove?.emit('close', 0);
+    await running;
+
+    assert.deepEqual(result, { exitCode: -1, output: '', truncated: false, timedOut: false, aborted: true });
+    assert.ok(remove, 'the removal was never started');
+    assert.deepEqual(remove.args, ['rm', '-f', nameOf(run.args)]);
   });
 
   test('a signal already aborted spawns nothing: no container to start, none to remove', async () => {
