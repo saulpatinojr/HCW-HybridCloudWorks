@@ -53,4 +53,13 @@ labs_agent_job_memory: 512m
 labs_agent_job_cpus: "0.5"
 labs_agent_job_pids: 128
 labs_agent_job_nofile: 1024
-labs_agent_timeout_stop_sec: 240
+
+# Stopping (LAB-13, #959). On SIGTERM the agent interrupts every running job,
+# removes its container and reports it, and waits at most
+# labs_agent_shutdown_timeout_ms (LABS_AGENT_SHUTDOWN_TIMEOUT_MS, the default
+# in vps-agent/lib/shutdown.js) for those reports; its `stopping` and
+# `offline` heartbeats take at most 5 s each. The unit's TimeoutStopSec must
+# cover all three: 30 s >= 5 s + 2 x 5 s, with margin, and
+# scripts/lab-job-limits.test.mjs fails on a pair that does not.
+labs_agent_shutdown_timeout_ms: 5000
+labs_agent_timeout_stop_sec: 30

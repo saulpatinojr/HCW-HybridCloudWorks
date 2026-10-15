@@ -27,7 +27,16 @@ Environment=TMPDIR={{ labs_agent_tmp_dir }}
 Environment=DOCKER_HOST={{ labs_agent_docker_host }}
 ExecStartPre=/usr/bin/test -S {{ labs_agent_docker_proxy_socket }}
 ExecStart=/usr/bin/node index.js
-# Wait for in-flight jobs to finish before SIGKILL during shutdown (LAB-13, #959).
+# Stopping (LAB-13, #959). SIGTERM goes to the agent alone, not to the docker
+# CLI children it spawns: the agent interrupts each running job itself,
+# removes its container through the proxy and reports it, then exits
+# (vps-agent/lib/shutdown.js). With the default control-group mode the CLI
+# got SIGTERM at the same instant and forwarded it to the job. What is still
+# running when the agent exits, or at TimeoutStopSec, gets SIGKILL. The
+# timeout covers LABS_AGENT_SHUTDOWN_TIMEOUT_MS and the two 5 s shutdown
+# heartbeats with margin; scripts/lab-job-limits.test.mjs holds the sum and
+# tests/hcw-labs-agent.service.test.sh the rendered lines.
+KillMode=mixed
 TimeoutStopSec={{ labs_agent_timeout_stop_sec }}
 # The agent starts its error lines with <3> and its warnings with <4>
 # (vps-agent/lib/log.js), and journald turns that prefix into the line's

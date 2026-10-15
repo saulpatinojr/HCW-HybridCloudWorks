@@ -51,12 +51,28 @@ export const TAR_MAX_BYTES = 8 * 1024 * 1024;
 /** Server-issued job ids are UUIDs; anything else does not reach a docker argv. */
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-function runProcess(cmd, args, timeoutMs) {
+/**
+ * Spawn one process and collect its output, bounded by a wall clock and, when
+ * a `signal` is given, by an abort. Both end the child with SIGKILL: the
+ * `docker run` CLI forwards a SIGTERM to the container's PID 1 and waits,
+ * and the agent's socket proxy refuses that forwarded kill
+ * (docker-proxy.haproxy.cfg.j2), so a polite signal would hang here until
+ * the wall clock. The container itself is removed by the caller afterwards.
+ * `spawnImpl` is for tests, which must never need Docker.
+ */
+function runProcess(cmd, args, timeoutMs, { signal, spawnImpl = spawn } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let truncated = false;
     let timedOut = false;
+    let aborted = false;
+
+    if (signal?.aborted) {
+      resolve({ exitCode: -1, output: out, truncated, timedOut, aborted: true });
+      return;
+    }
+
+    const child = spawnImpl(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     const append = (chunk) => {
       if (out.length >= OUTPUT_CAP_BYTES) {
@@ -72,14 +88,25 @@ function runProcess(cmd, args, timeoutMs) {
       timedOut = true;
       child.kill('SIGKILL');
     }, timeoutMs);
+    const onAbort = () => {
+      aborted = true;
+      child.kill('SIGKILL');
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
 
-    child.on('close', (code) => {
+    // Settled once: 'error' on a spawn failure may be followed by 'close',
+    // and the listener comes off so an abort after the child has gone is a
+    // no-op rather than a kill of a pid the OS may have reused.
+    const settle = (result) => {
       clearTimeout(timer);
-      resolve({ exitCode: code ?? -1, output: out, truncated, timedOut });
+      signal?.removeEventListener('abort', onAbort);
+      resolve(result);
+    };
+    child.on('close', (code) => {
+      settle({ exitCode: aborted ? -1 : (code ?? -1), output: out, truncated, timedOut, aborted });
     });
     child.on('error', (err) => {
-      clearTimeout(timer);
-      resolve({ exitCode: -1, output: `spawn error: ${err.message}`, truncated, timedOut });
+      settle({ exitCode: -1, output: `spawn error: ${err.message}`, truncated, timedOut, aborted });
     });
   });
 }
@@ -394,14 +421,29 @@ export async function prepareJobDir(payloadFileName, payload, encoding = 'text')
   return jobDir;
 }
 
+/** How long `docker rm -f` of a job container may take before the agent stops waiting for it. */
+export const REMOVE_TIMEOUT_MS = 10000;
+
 /**
  * Execute a job in a sandboxed container.
+ *
+ * An abort of `signal` is the agent shutting down (lib/shutdown.js): the
+ * `docker run` child is killed, the container is removed by name through
+ * the proxy (the one DELETE it allows: the job's own `labjob-` name with
+ * `force=1`), and the result says `aborted` so the job is reported as
+ * interrupted rather than as the learner's failure. Before #959's fix the
+ * agent exited with the container running and nothing reported, and the
+ * job sat `claimed` until the server's lease lapsed.
+ *
  * @param {object} capability entry from lib/capabilities.js
  * @param {object} job        { id, payload, payloadEncoding? } as claimed from the API
  * @param {object} limits     { memory, cpus, pidsLimit, nofile } from env config
- * @returns {Promise<{exitCode:number, output:string, timedOut:boolean}>}
+ * @param {object} [options]
+ * @param {AbortSignal} [options.signal]  aborted when the agent is stopping
+ * @param {typeof spawn} [options.spawnImpl] tests only; production always spawns `docker`
+ * @returns {Promise<{exitCode:number, output:string, truncated:boolean, timedOut:boolean, aborted:boolean}>}
  */
-export async function runInDocker(capability, job, limits) {
+export async function runInDocker(capability, job, limits, { signal, spawnImpl = spawn } = {}) {
   const encoding = job.payloadEncoding || 'text';
   const accepted = capability.payloadEncodings || ['text'];
   if (!PAYLOAD_ENCODINGS.includes(encoding) || !accepted.includes(encoding)) {
@@ -412,12 +454,21 @@ export async function runInDocker(capability, job, limits) {
   try {
     const dockerArgs = buildDockerArgs(capability, { jobDir, containerName, jobId: job.id, encoding }, limits);
 
-    const timeoutMs = (capability.timeoutSeconds + 15) * 1000; // grace for image pull/start
-    const result = await runProcess('docker', dockerArgs, timeoutMs);
+    if (signal?.aborted) {
+      // Stopped before `docker run` was spawned: there is no container to
+      // remove, and starting one now would only be killed below.
+      return { exitCode: -1, output: '', truncated: false, timedOut: false, aborted: true };
+    }
 
-    if (result.timedOut) {
-      // Ensure the container is gone (kill -> spawn kill is best-effort).
-      await runProcess('docker', ['rm', '-f', containerName], 10000);
+    const timeoutMs = (capability.timeoutSeconds + 15) * 1000; // grace for image pull/start
+    const result = await runProcess('docker', dockerArgs, timeoutMs, { signal, spawnImpl });
+
+    if (result.timedOut || result.aborted) {
+      // Ensure the container is gone. Killing the CLI child leaves the
+      // container running (the CLI is only attached to it), so this removal
+      // is what actually stops the job, on the wall-clock path and on the
+      // shutdown path alike. Not given the signal: it is already aborted.
+      await runProcess('docker', ['rm', '-f', containerName], REMOVE_TIMEOUT_MS, { spawnImpl });
     }
     if (result.truncated) {
       result.output += '\n[output truncated at 64KB]';

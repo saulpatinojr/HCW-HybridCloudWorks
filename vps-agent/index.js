@@ -34,11 +34,11 @@
 import os from 'node:os';
 import { readFileSync } from 'node:fs';
 import { CAPABILITIES } from './lib/capabilities.js';
-import { runInDocker } from './lib/docker-runner.js';
 import { createApiClient } from './lib/api.js';
 import { readAppliedCommit } from './lib/applied-commit.js';
 import { missingConfig, readApiConfig } from './lib/config.js';
 import { createLogger } from './lib/log.js';
+import { createShutdown } from './lib/shutdown.js';
 
 const AGENT_VERSION = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8')
@@ -95,32 +95,37 @@ const api = createApiClient(config);
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-let activeJobs = 0;
-// Claims in flight: decided on, not yet owned by executeJob. Counted separately
-// from activeJobs so the concurrency guard cannot be raced by a slow claim
-// (T-744).
+// Claims in flight: decided on, not yet owned by the supervisor's execute.
+// Counted separately from its active count so the concurrency guard cannot
+// be raced by a slow claim (T-744).
 let pendingClaims = 0;
-let shuttingDown = false;
+// The interval timers start() arms, cleared at the first signal so no beat
+// of theirs can land after the shutdown's `offline`.
+const timers = [];
 
 // ── Heartbeat ─────────────────────────────────────────────────────────────────
 
-// Once shutdown begins every heartbeat says `stopping`, the interval's and a
-// finishing job's included: an `idle` or `busy` one during the drain would
-// reopen the public door that `stopping` closed (review of #1018).
+// Once shutdown begins the default status is `stopping`: an `idle` or `busy`
+// beat during the drain would reopen the public door that `stopping` closed
+// (review of #1018). The shutdown itself sends its two beats explicitly, with
+// a short timeout (lib/shutdown.js).
 //
 // `applied` is the commit the playbook last converged this host from, read
 // afresh each time (lib/applied-commit.js says why), so the site can raise a
 // host that lags main (#1009). Absent when there is no valid record.
-async function sendHeartbeat(status = shuttingDown ? 'stopping' : 'idle') {
+async function sendHeartbeat(status = supervisor.stopping ? 'stopping' : 'idle', { timeoutMs } = {}) {
   try {
     const applied = await readAppliedCommit();
-    await api.heartbeat({
-      status,
-      activeJobs,
-      hostname: os.hostname(),
-      version: AGENT_VERSION,
-      applied,
-    });
+    await api.heartbeat(
+      {
+        status,
+        activeJobs: supervisor.active(),
+        hostname: os.hostname(),
+        version: AGENT_VERSION,
+        applied,
+      },
+      { timeoutMs }
+    );
   } catch (err) {
     // Never fatal. A heartbeat gap shows as "offline" in the Labs dashboard,
     // which is the correct thing for it to show if the API is unreachable.
@@ -132,95 +137,51 @@ async function sendHeartbeat(status = shuttingDown ? 'stopping' : 'idle') {
 
 // ── Job execution ─────────────────────────────────────────────────────────────
 
-async function executeJob(job) {
-  const capability = CAPABILITIES[job.type];
-
-  // Defence in depth. The server already restricts claims to the agent's
-  // registered capabilities, but this process is the thing that would actually
-  // run the command, so it refuses anything it has no allowlisted recipe for
-  // rather than trusting the response.
-  if (!capability) {
-    log.error(`refusing a job: no local capability for type ${job.type}`);
-    log.info(`refused job ${job.id} (${job.type})`);
-    await api
-      .completeJob({
-        jobId: job.id,
-        claimId: job.claimId,
-        status: 'failed',
-        exitCode: -1,
-        output: `agent has no capability for job type ${job.type}`,
-      })
-      .catch((err) => log.fault('error', 'could not report a refusal', err, `job ${job.id}`));
-    return;
-  }
-
-  activeJobs += 1;
-  log.info(`running job ${job.id} (${job.type})`);
-
-  try {
-    // The whole claimed job goes in: its id becomes the container's
-    // hcw.lab-job label and its payloadEncoding selects how the payload is
-    // staged (lib/docker-runner.js).
-    const result = await runInDocker(capability, job, config.limits);
-    const status = result.timedOut ? 'timeout' : result.exitCode === 0 ? 'succeeded' : 'failed';
-
-    await api.completeJob({
-      jobId: job.id,
-      claimId: job.claimId,
-      status,
-      exitCode: result.exitCode,
-      output: result.output,
-    });
-    // A failed or timed-out job is the learner's result, not the agent's
-    // fault, so it is information.
-    log.info(`job ${job.id} -> ${status} (exit ${result.exitCode})`);
-  } catch (err) {
-    log.fault('error', 'job errored', err, `job ${job.id}`);
-    // Best effort: if this also fails the job's claim lease expires server-side
-    // and another agent picks it up, which is why the lease exists.
-    await api
-      .completeJob({
-        jobId: job.id,
-        claimId: job.claimId,
-        status: 'failed',
-        exitCode: -1,
-        output: `agent error: ${err.message}`,
-      })
-      .catch((reportErr) => log.fault('error', 'could not report a failure', reportErr, `job ${job.id}`));
-  } finally {
-    activeJobs -= 1;
-    sendHeartbeat();
-  }
-}
+// Runs each claimed job in its sandbox (lib/docker-runner.js), reports the
+// result, and at SIGTERM interrupts every job it still holds and reports
+// each one as interrupted within LABS_AGENT_SHUTDOWN_TIMEOUT_MS, so no job
+// is left `claimed` for the lease to recover (LAB-13, #959). Its own file
+// says why it is a module and not this one. It reads pendingClaims so the
+// shutdown also waits, within the same budget, for a claim already sent:
+// the job such a claim brings back is reported interrupted, never started.
+const supervisor = createShutdown({
+  api,
+  log,
+  sendHeartbeat,
+  capabilities: CAPABILITIES,
+  limits: config.limits,
+  claimsInFlight: () => pendingClaims,
+});
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
 async function poll() {
-  // The slot is reserved BEFORE the await, not after (T-744). activeJobs is
-  // only incremented inside executeJob, which runs after claimJob resolves —
-  // and claimJob's timeout (20s) is longer than the poll interval (15s), so a
-  // slow claim let a second poll pass this guard with the counter still at its
-  // old value. With the documented LABS_AGENT_MAX_CONCURRENT=1 and a
-  // 512 MB / 0.5 CPU budget per job, two concurrent Terraform containers is a
-  // real resource-exhaustion path on a small VPS.
+  // The slot is reserved BEFORE the await, not after (T-744). The active
+  // count only moves inside the supervisor's execute, which runs after
+  // claimJob resolves — and claimJob's timeout (20s) is longer than the poll
+  // interval (15s), so a slow claim let a second poll pass this guard with
+  // the counter still at its old value. With the documented
+  // LABS_AGENT_MAX_CONCURRENT=1 and a 512 MB / 0.5 CPU budget per job, two
+  // concurrent Terraform containers is a real resource-exhaustion path on a
+  // small VPS.
   //
   // pendingClaims covers exactly the window between "we decided to claim" and
-  // "executeJob owns the slot", so the guard reflects work already committed
+  // "execute owns the slot", so the guard reflects work already committed
   // to rather than only work already started.
-  if (shuttingDown || activeJobs + pendingClaims >= config.maxConcurrentJobs) return;
+  if (supervisor.stopping || supervisor.active() + pendingClaims >= config.maxConcurrentJobs) return;
 
   pendingClaims += 1;
   try {
     const job = await api.claimJob();
     if (!job) return;
-    executeJob(job); // intentionally not awaited — the poll interval continues
+    supervisor.execute(job); // intentionally not awaited — the poll interval continues
   } catch (err) {
     log.fault('warn', 'claim failed', err);
   } finally {
-    // Released in every path. On the path that takes a slot, executeJob
-    // reaches `activeJobs += 1` with no await in front of it, so the handoff
-    // from pendingClaims to activeJobs has no gap. Its one earlier await is in
-    // the "no capability for this job type" branch, which returns without
+    // Released in every path. On the path that takes a slot, execute tracks
+    // the job with no await in front of it, so the handoff from
+    // pendingClaims to the active count has no gap. Its one earlier await is
+    // in the "no capability for this job type" branch, which returns without
     // taking a slot — nothing to hand over there.
     pendingClaims -= 1;
   }
@@ -233,37 +194,25 @@ async function start() {
   );
 
   await sendHeartbeat('idle');
-  setInterval(() => sendHeartbeat(), config.heartbeatIntervalMs);
-  setInterval(poll, config.pollIntervalMs);
+  timers.push(setInterval(() => sendHeartbeat(), config.heartbeatIntervalMs));
+  timers.push(setInterval(poll, config.pollIntervalMs));
   poll();
 }
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
-async function shutdown(signal) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  log.info(`${signal} received; finishing active jobs (${activeJobs})...`);
-  await sendHeartbeat('stopping');
-
-  // Longest capability takes up to 195s (lib/capabilities.js). With systemd
-  // TimeoutStopSec=240, 210s gives in-flight jobs room to finish cleanly (LAB-13, #959).
-  const timeoutMs = Number(process.env.LABS_AGENT_SHUTDOWN_TIMEOUT_MS || 210_000);
-  const deadline = Date.now() + timeoutMs;
-  while (activeJobs > 0 && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-
-  if (activeJobs > 0) {
-    log.error(`shutdown deadline exceeded with ${activeJobs} active job(s) still running; exiting`);
-  }
-
-  await sendHeartbeat('offline');
-  process.exit(0);
+// systemd delivers SIGTERM to this process alone (KillMode=mixed in
+// hcw-labs-agent.service.j2), never to the docker CLI children; what happens
+// to the jobs is the supervisor's decision, within the budget the unit's
+// TimeoutStopSec covers. The poll timer goes first, so no new claim is sent
+// once stopping has begun.
+function stop(signal) {
+  for (const timer of timers) clearInterval(timer);
+  supervisor.shutdown(signal);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => stop('SIGTERM'));
+process.on('SIGINT', () => stop('SIGINT'));
 
 start().catch((err) => {
   log.fault('error', 'fatal agent error', err);

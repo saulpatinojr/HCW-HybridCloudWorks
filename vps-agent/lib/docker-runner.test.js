@@ -24,6 +24,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,6 +36,7 @@ import {
   decodeTarPayload,
   vetTarPath,
   payloadPathFor,
+  runInDocker,
   SANDBOX_FLAGS,
   OUTPUT_CAP_BYTES,
   JOB_DIR_MODE,
@@ -42,6 +44,7 @@ import {
   JOB_LABEL,
   TAR_MAX_ENTRIES,
   DEFAULT_NOFILE,
+  REMOVE_TIMEOUT_MS,
   memorySwapFor,
 } from './docker-runner.js';
 import { CAPABILITIES } from './capabilities.js';
@@ -373,6 +376,122 @@ describe('tar payloads', () => {
 describe('output handling', () => {
   test('the output cap is a real bound, not a comment', () => {
     assert.equal(OUTPUT_CAP_BYTES, 64 * 1024);
+  });
+});
+
+/**
+ * A stand-in for child_process.spawn. Every child is an emitter the test
+ * drives: `exit(code, output)` ends it the way a finished `docker run` does,
+ * `kill(signal)` records the signal and closes it with no code, as a
+ * SIGKILLed process closes. A `docker rm` child closes 0 by itself, as the
+ * daemon answers the proxy's one allowed DELETE. Docker is never involved.
+ */
+function fakeSpawn() {
+  const children = [];
+  const impl = (cmd, args) => {
+    const child = Object.assign(new EventEmitter(), {
+      cmd,
+      args,
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      killed: [],
+      kill(signal) {
+        child.killed.push(signal);
+        setImmediate(() => child.emit('close', null));
+        return true;
+      },
+      exit(code, output = '') {
+        if (output) child.stdout.emit('data', Buffer.from(output));
+        child.emit('close', code);
+      },
+    });
+    children.push(child);
+    if (args[0] === 'rm') setImmediate(() => child.emit('close', 0));
+    return child;
+  };
+  return { impl, children };
+}
+
+/** Waits until `condition` holds, for at most a second. */
+async function until(condition) {
+  for (let i = 0; i < 1000 && !condition(); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.ok(condition(), 'the condition never held');
+}
+
+describe('runInDocker when the agent is stopping (LAB-13, #959)', () => {
+  // The id is the label's; the payload is the file; neither reaches argv.
+  const job = { id: CTX.jobId, payload: 'hello' };
+  const capability = CAPABILITIES['shell-echo'];
+  const nameOf = (argv) => argv[at(argv, '--name') + 1];
+
+  test('an abort kills the docker run child, removes the container by its own name, and resolves aborted with exit -1', async () => {
+    const spawn = fakeSpawn();
+    const controller = new AbortController();
+    const running = runInDocker(capability, job, LIMITS, { signal: controller.signal, spawnImpl: spawn.impl });
+    await until(() => spawn.children.length === 1);
+    const [run] = spawn.children;
+    assert.equal(run.args[0], 'run');
+
+    controller.abort();
+    const result = await running;
+
+    assert.deepEqual(run.killed, ['SIGKILL'], 'the CLI child was not killed, or not with SIGKILL');
+    assert.equal(spawn.children.length, 2, 'no removal followed the kill');
+    const [, remove] = spawn.children;
+    assert.deepEqual(remove.args, ['rm', '-f', nameOf(run.args)]);
+    // The proxy's `own_job` rule: the job's own labjob- name, twelve hex
+    // characters, and `force=1` is what `rm -f` sends
+    // (docker-proxy.haproxy.cfg.j2; scripts/fixtures/docker-cli-agent-requests.json).
+    assert.match(nameOf(run.args), /^labjob-[0-9a-f]{12}$/);
+    assert.deepEqual(result, { exitCode: -1, output: '', truncated: false, timedOut: false, aborted: true });
+    assert.ok(REMOVE_TIMEOUT_MS > 0);
+  });
+
+  test('a signal already aborted spawns nothing: no container to start, none to remove', async () => {
+    const spawn = fakeSpawn();
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runInDocker(capability, job, LIMITS, { signal: controller.signal, spawnImpl: spawn.impl });
+    assert.equal(spawn.children.length, 0);
+    assert.deepEqual(result, { exitCode: -1, output: '', truncated: false, timedOut: false, aborted: true });
+  });
+
+  test('a job that finished before the abort keeps its own result, is not removed and is not killed', async () => {
+    const spawn = fakeSpawn();
+    const controller = new AbortController();
+    const running = runInDocker(capability, job, LIMITS, { signal: controller.signal, spawnImpl: spawn.impl });
+    await until(() => spawn.children.length === 1);
+    const [run] = spawn.children;
+
+    run.exit(0, 'hello\n');
+    const result = await running;
+    controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(run.killed, [], 'an abort after the child closed still reached kill()');
+    assert.equal(spawn.children.length, 1, 'a finished container was removed');
+    assert.deepEqual(result, { exitCode: 0, output: 'hello\n', truncated: false, timedOut: false, aborted: false });
+  });
+
+  test('the wall-clock timeout takes the same removal path, and the staging directory goes either way', async () => {
+    const spawn = fakeSpawn();
+    // (timeoutSeconds + 15) * 1000 is the runner's clock; this makes it 50 ms.
+    const quick = { ...capability, timeoutSeconds: -14.95 };
+    const running = runInDocker(quick, job, LIMITS, { spawnImpl: spawn.impl });
+    await until(() => spawn.children.length === 1);
+    const [run] = spawn.children;
+    const jobDir = run.args[at(run.args, '-v') + 1].replace(/:\/workspace:ro$/, '');
+    assert.ok((await fs.stat(jobDir)).isDirectory(), 'the staging directory was not there while the job ran');
+
+    const result = await running;
+
+    assert.deepEqual(run.killed, ['SIGKILL']);
+    assert.deepEqual(spawn.children[1].args, ['rm', '-f', nameOf(run.args)]);
+    assert.equal(result.timedOut, true);
+    assert.equal(result.aborted, false);
+    await assert.rejects(fs.stat(jobDir), 'the staging directory outlived the job');
   });
 });
 

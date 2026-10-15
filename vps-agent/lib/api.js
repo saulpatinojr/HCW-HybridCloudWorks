@@ -54,9 +54,11 @@ export function createApiClient({
 
   // The SDK caches and refreshes internally; asking per request is correct and
   // cheap, and avoids the agent holding a token past its expiry across a long
-  // idle period.
-  async function authHeader() {
-    const token = await credential.getToken(scope);
+  // idle period. The request's signal goes with it, so the timeout covers
+  // the token too: a refresh that hangs at Entra would otherwise hold a
+  // shutdown heartbeat past its 5 s (lib/shutdown.js).
+  async function authHeader(abortSignal) {
+    const token = await credential.getToken(scope, { abortSignal });
     if (!token?.token) throw new Error('failed to acquire an API token');
     return `Bearer ${token.token}`;
   }
@@ -69,7 +71,7 @@ export function createApiClient({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: await authHeader(),
+          Authorization: await authHeader(controller.signal),
         },
         // agentId travels in the body on every call; the server binds it to the
         // token's object id and refuses a mismatch, so it is a claim to be
@@ -101,15 +103,22 @@ export function createApiClient({
      * Liveness. The server owns the field names and the busy/idle derivation.
      * `applied` is the commit the host last converged from
      * (lib/applied-commit.js); null or absent leaves it out of the body.
+     * `timeoutMs` is for the two shutdown heartbeats (lib/shutdown.js): at
+     * the 20 s default, the pair alone could outlast the unit's stop budget.
+     * Left undefined, `post` applies that default.
      */
-    heartbeat({ status, activeJobs, hostname, version, applied }) {
-      return post('agent/heartbeat', {
-        status,
-        activeJobs,
-        hostname,
-        version,
-        applied: applied ?? undefined,
-      });
+    heartbeat({ status, activeJobs, hostname, version, applied }, { timeoutMs } = {}) {
+      return post(
+        'agent/heartbeat',
+        {
+          status,
+          activeJobs,
+          hostname,
+          version,
+          applied: applied ?? undefined,
+        },
+        { timeoutMs }
+      );
     },
 
     /** Terminal result. The server refuses jobs this agent does not hold. */

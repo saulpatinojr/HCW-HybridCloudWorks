@@ -6,7 +6,7 @@
  * and above only, and journald gives a line with no `<N>` prefix priority 6,
  * info. So the load-bearing assertions are that an error line starts `<3>`
  * and a warning `<4>` on EVERY physical line, that info carries no prefix,
- * that index.js writes nothing that bypasses the logger, and that no warn or
+ * that index.js and lib/shutdown.js write nothing that bypasses the logger, and that no warn or
  * error line carries an identifier or an error's own text.
  *
  * Node's built-in test runner, like the rest of this package.
@@ -109,14 +109,18 @@ describe('createLogger', () => {
   });
 });
 
-describe('index.js', () => {
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+describe('index.js and lib/shutdown.js', () => {
+  // The job loop and its lines moved to lib/shutdown.js (LAB-13, #959), so
+  // the two files are held to these rules together.
+  const strip = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const index = strip(readFileSync(new URL('../index.js', import.meta.url), 'utf8'));
+  const shutdown = strip(readFileSync(new URL('./shutdown.js', import.meta.url), 'utf8'));
+  const code = `${index}\n${shutdown}`;
 
   it('writes nothing past the logger: no console call, no bare log()', () => {
     assert.doesNotMatch(code, /\bconsole\.\w+\(/);
     assert.doesNotMatch(code, /(?<![.\w])log\(/);
-    assert.match(code, /const log = createLogger\(\)/);
+    assert.match(index, /const log = createLogger\(\)/);
   });
 
   it('writes the failures that need a person at error, and the transient ones at warn', () => {
@@ -132,14 +136,18 @@ describe('index.js', () => {
 
   it('puts no job id, agent id or error text on a warn or error line (content-free telemetry)', () => {
     const collected = [...code.matchAll(/log\.(?:warn|error)\(([^;]*?)\);/g)].map((m) => m[1]);
-    assert.ok(collected.length >= 2, 'expected the direct warn/error calls to be found');
+    // The missing-configuration line, the refusal, and the shutdown budget's
+    // overrun. A semicolon inside a message would hide its line from this
+    // match, which is why the overrun line says ", exiting".
+    assert.ok(collected.length >= 3, 'expected the direct warn/error calls to be found');
+    assert.ok(collected.some((args) => args.includes('shutdown budget of')), 'the overrun line was not inspected');
     for (const args of collected) {
       assert.doesNotMatch(args, /job\.id|agentId|\.message|\berr\b/, `a collected line carries content: ${args}`);
     }
   });
 
   it('heartbeats `stopping`, not `idle`, once shutdown has begun', () => {
-    assert.match(code, /async function sendHeartbeat\(status = shuttingDown \? 'stopping' : 'idle'\)/);
+    assert.match(index, /async function sendHeartbeat\(status = supervisor\.stopping \? 'stopping' : 'idle'/);
   });
 });
 

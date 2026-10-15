@@ -574,6 +574,45 @@ vault nor `bootstrap.sh`, and prints the swap as one PowerShell line. After
 the swap, a plain run finds the agent heartbeating on the new certificate
 and prints the `az ad app credential delete` line for the old one.
 
+**When the agent stops with a job running** (LAB-13, #959). The agent
+stops the same way on `systemctl stop` or `restart`, on a run that restarts
+Docker (the unit `Requires=docker.service`), and on the 04:30
+unattended-upgrades reboot. systemd sends SIGTERM to the agent alone
+(`KillMode=mixed`), never to the `docker` CLI it runs. The agent then
+interrupts every job it holds:
+
+1. It removes the job's container through its Docker proxy.
+2. It reports the job `failed`, exit `-1`, with the sentence the visitor
+   sees: *The lab host was restarting and this job was interrupted. Submit
+   it again.*
+3. It sends `stopping` and waits up to `LABS_AGENT_SHUTDOWN_TIMEOUT_MS` for
+   those reports (5000, the role's `labs_agent_shutdown_timeout_ms`).
+4. It sends `offline` and exits, inside the unit's `TimeoutStopSec=30`.
+
+A claim already sent when the signal lands is waited for in the same
+budget, and its job is reported the same way without being started. This
+replaces #1178's drain of up to 210 s. That drain then exited with the
+container still running, and left the job `claimed` until its 15-minute
+lease ran out. It applies on the host from the first `bootstrap.sh` run
+that includes it ([Labs host, Applied state](../architecture/labs-host.md#applied-state)).
+
+Bash, on the host (PowerShell `ssh hcw-lab` from the workstation gets
+there), after a restart with a job running:
+
+```bash
+sudo journalctl -u hcw-labs-agent -n 20 --no-pager
+```
+
+Good is `SIGTERM received; interrupting 1 active job(s), 5000 ms to report
+them`, then `job <id> -> failed (exit -1); interrupted by shutdown`, then
+systemd's stop, all within a few seconds. On
+<https://hybridcloudworks.com/admin/labs?tab=jobs> the job reads failed with
+the sentence above, and `sudo docker ps --filter label=hcw.lab-job` lists no
+container. If the journal shows `shutdown budget of 5000 ms exceeded`, a
+report did not land in time. That line is an error, so it reaches Log
+Analytics, and its job is recovered by the lease 15 minutes later, as
+before.
+
 ## Opening "Validate on the lab" to the public
 
 The Landing Zone Builder's **Validate on the lab** sends the build's files to
