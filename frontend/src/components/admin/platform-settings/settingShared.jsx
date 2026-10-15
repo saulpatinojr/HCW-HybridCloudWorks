@@ -14,7 +14,12 @@
  *   - a save is guarded by a ref as well as the disabled button, so a double
  *     submit sends one PUT;
  *   - a failed load clears what the card held and hides the form, so a
- *     stale or empty working copy can never be saved over the real document.
+ *     stale or empty working copy can never be saved over the real document;
+ *   - a save names the version it replaces (#946): the read's `etag` goes back
+ *     as If-Match, and a save the server refuses because the setting was
+ *     saved elsewhere since (412, or 428 from a page loaded before saves
+ *     named a version) reloads the setting and says so, rather than
+ *     overwriting what the other save stored.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -84,6 +89,40 @@ export const HISTORY_FILTERABLE = Object.freeze(
 
 export const settingRoute = (name) => `cms/platform-settings/${name}`;
 
+/**
+ * What the admin is told when a save is refused because the setting was saved
+ * somewhere else since this page read it. The setting is reloaded with it.
+ */
+export const CHANGED_ELSEWHERE =
+  'This was saved somewhere else since you opened it. Nothing was overwritten: what is stored now has been loaded, so make your change again.';
+
+/**
+ * Whether a save was refused because what it would replace is not what this
+ * page read (#946): 412 when the version the save named is no longer stored,
+ * 428 when the server will not replace a stored setting without one.
+ *
+ * @param {unknown} err the error sendJSON threw
+ * @returns {boolean}
+ */
+export const isStaleSave = (err) =>
+  err?.status === 412 || err?.status === 428 || err?.code === 'CONFLICT';
+
+/**
+ * PUT a setting, naming the version it replaces when the page has one: the
+ * `etag` its last read or save returned, sent as If-Match. Without one (nothing
+ * stored yet, the reminders sheet, or an API from before #946) the PUT carries
+ * no If-Match, and the server creates the document or merges into it.
+ *
+ * @param {string} route the setting's route
+ * @param {object} body the value to store
+ * @param {string|null} etag the version the page read, or null
+ * @returns {Promise<object>} the server's answer, with the new `etag`
+ */
+export const putSetting = (route, body, etag) =>
+  etag
+    ? sendJSON(route, 'PUT', body, { headers: { 'If-Match': etag } })
+    : sendJSON(route, 'PUT', body);
+
 export const SELECT_CLASS =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
 
@@ -112,7 +151,11 @@ const metaOf = (response) => ({
  * `saved` is the value as last stored (null when nothing is), which edits do
  * not change until they are saved; `meta` is what the server said about the
  * stored document; `options` is what the server offers to choose from, where
- * a setting is a choice.
+ * a setting is a choice. The version the page read is held privately and
+ * named by the next save (#946).
+ *
+ * @param {string} name the setting, as its route names it
+ * @param {boolean} authReady whether a token can be had yet; nothing loads before
  */
 export function useSetting(name, authReady) {
   const [value, setValue] = useState(null);
@@ -125,6 +168,8 @@ export function useSetting(name, authReady) {
   const [attempt, setAttempt] = useState(0);
   const generation = useRef(0);
   const savingRef = useRef(false);
+  // The ETag of the document this page last read or wrote: what a save names.
+  const etagRef = useRef(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -138,6 +183,7 @@ export function useSetting(name, authReady) {
         setSaved(response?.exists ? (response?.value ?? null) : null);
         setMeta(metaOf(response));
         setOptions(Array.isArray(response?.options) ? response.options : []);
+        etagRef.current = response?.etag ?? null;
         setError(null);
       })
       .catch((err) => {
@@ -147,6 +193,7 @@ export function useSetting(name, authReady) {
         setSaved(null);
         setMeta(EMPTY_META);
         setOptions([]);
+        etagRef.current = null;
         setError(err?.message ?? 'Could not load this setting.');
       })
       .finally(() => {
@@ -167,13 +214,18 @@ export function useSetting(name, authReady) {
     setAttempt((n) => n + 1);
   }, []);
 
+  /**
+   * Store `next` under the version this page read; true when it was stored.
+   * A refusal because the setting changed elsewhere reloads it instead.
+   */
   const save = useCallback(
     async (next) => {
       if (savingRef.current) return false;
       savingRef.current = true;
       setSaving(true);
       try {
-        const response = await sendJSON(settingRoute(name), 'PUT', next);
+        const response = await putSetting(settingRoute(name), next, etagRef.current);
+        etagRef.current = response?.etag ?? null;
         setValue(response.value);
         setSaved(response.value ?? null);
         setMeta({ ...metaOf(response), exists: true, stored: 'valid', problem: null });
@@ -181,6 +233,17 @@ export function useSetting(name, authReady) {
         toast({ title: 'Saved', description: `${name} is stored.` });
         return true;
       } catch (err) {
+        if (isStaleSave(err)) {
+          // Saved elsewhere since this page read it: show what is stored now
+          // rather than keep offering a working copy that would replace it.
+          toast({
+            title: 'Changed elsewhere',
+            description: CHANGED_ELSEWHERE,
+            variant: 'destructive',
+          });
+          reload();
+          return false;
+        }
         toast({
           title: 'Not saved',
           description: err?.message ?? 'The write was refused.',
@@ -192,7 +255,7 @@ export function useSetting(name, authReady) {
         setSaving(false);
       }
     },
-    [name, toast]
+    [name, toast, reload]
   );
 
   return { value, setValue, saved, meta, options, loading, saving, error, save, reload };

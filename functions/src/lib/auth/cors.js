@@ -111,6 +111,33 @@ const PREVIEW_ORIGINS = ['https://calm-ground-0d0e6a010.7.azurestaticapps.net'];
  */
 const ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 
+/**
+ * Request headers a cross-origin page may send, and nothing else: each one
+ * names the code that reads it, and a header nobody reads stays off the list.
+ *
+ *   Content-Type   every JSON body
+ *   Authorization  the Entra bearer token, which require-role.js verifies
+ *   If-Match       the version a save replaces (#946): the Platform settings
+ *                  page sends the ETag its read returned, and
+ *                  lib/platform-settings.js refuses a save naming a version
+ *                  no longer stored with a 412 instead of overwriting it
+ *
+ * Without If-Match here a browser's preflight for that save would be refused
+ * wherever this code answers it, and the save would fail before reaching the
+ * guard. (Where App Service's own CORS answers the preflight it allows every
+ * header for an allowed origin, which is why the platform list in
+ * infra/functionapp.tf has no header list to keep in step with this one.)
+ */
+const ALLOW_HEADERS = 'Content-Type, Authorization, If-Match';
+
+/**
+ * Response headers a cross-origin page may read beyond the CORS-safelisted
+ * few. WWW-Authenticate carries why a 401 happened (#517); ETag is the
+ * version a Platform settings read or save returned, beside the `etag` the
+ * body carries (#946).
+ */
+const EXPOSE_HEADERS = 'WWW-Authenticate, ETag';
+
 /** Dev-only origins, any port. Never active when NODE_ENV=production. */
 const LOCALHOST_PATTERN = /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i;
 
@@ -171,7 +198,7 @@ export function createCors({
         // serve one origin's allow header to another.
         Vary: 'Origin',
         'Access-Control-Allow-Methods': ALLOW_METHODS,
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': ALLOW_HEADERS,
         // WITHOUT THIS THE 401 REASON IS INVISIBLE (#517).
         //
         // The admin SPA is served from hybridcloudworks.com and this API from
@@ -183,8 +210,9 @@ export function createCors({
         //
         // It belongs on the ACTUAL response, not just the preflight: the
         // preflight governs what the request may send, this governs what the
-        // response may reveal.
-        'Access-Control-Expose-Headers': 'WWW-Authenticate',
+        // response may reveal. ETag is exposed for the same reason (#946,
+        // EXPOSE_HEADERS above).
+        'Access-Control-Expose-Headers': EXPOSE_HEADERS,
         'Access-Control-Max-Age': '3600',
       };
 

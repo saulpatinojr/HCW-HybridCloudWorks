@@ -19,6 +19,38 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **A Health view inside 30 seconds of the last one is served from the
+  cache instead of running the eleven-query fan-out again, and a Platform
+  settings save made from a page that is out of date is refused and reloaded
+  instead of overwriting the newer save** (#946, the two acceptance items
+  the merge of #1181 left open). The ops-health snapshot cache lived inside
+  `createOpsHealthHandlers`, and `functions/src/functions/ops-health-http.js`
+  builds a handler set per request, so every request found it empty; it is
+  now held by `functions/src/lib/ops-health.js` for the worker's life
+  (`resetOpsHealthCache()` for tests), keyed on the store and environment
+  the snapshot is built from and not on the caller, since every admitted
+  role gets the same snapshot and the guard still runs first. The HTTP file
+  passes one module-level store, views that arrive during a build share it,
+  a failed build is dropped rather than served, and an alert update made
+  through the other route invalidates it. On the settings side, the
+  `If-Match` branch #1181 added could not be reached from a browser:
+  `lib/auth/cors.js` now allows `If-Match` (the allowlist is exactly
+  Content-Type, Authorization, If-Match) and exposes `ETag` beside
+  `WWW-Authenticate`; `GET cms/platform-settings/{setting}` returns the
+  document's `etag` in the body and as an `ETag` header; and the Platform
+  Settings tabs (`settingShared.jsx` `useSetting`) and the Mailing List's
+  `NewsletterSettingsCard.jsx` send it back as `If-Match`, hold the one each
+  save returns, and on a 412 or 428 say the setting was saved elsewhere and
+  reload it. The precondition is now required: a save that names no version
+  may only create the document (`createDoc`), a stored setting is replaced
+  only by `replaceDocIfMatch` under the version named (412 `CONFLICT`
+  otherwise, also when another write lands between the read and the
+  replace), and replacing one without `If-Match` is a 428
+  `PRECONDITION_REQUIRED`. Those two pages were the only callers of the
+  write; no script, Telegram command, MCP tool or timer calls it. The
+  reminders sheet keeps its merge under its own read (review of #910), so
+  its read offers no `etag` and a timer stamp landing mid-edit is still
+  merged rather than refused.
 - **Alert fire record: twelve of fifteen rules seen to fire, and the SSH
   burst test writes lines rsyslog cannot fold** (PLAT-4, #964). The fire
   tests ran on 2026-10-15 from a detached runner (`Invoke-AlertFireTest.ps1`,

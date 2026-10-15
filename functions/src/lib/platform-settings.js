@@ -27,8 +27,14 @@
  * timer's own `isValidFeedEntry`, so a row this module accepts is a row the
  * timer will fetch.
  *
- * The write is a full replace (`upsertDoc`): each document is owned entirely
- * by this page, so replacing it is also how a drifted document gets repaired.
+ * The write is a full replace: each document is owned entirely by this page,
+ * so replacing it is also how a drifted document gets repaired. It is a
+ * conditional replace (#946). The read hands the page the document's ETag,
+ * the save sends it back as If-Match, and a document saved elsewhere in
+ * between is a 412 that the page answers by reloading, never an overwrite. A
+ * save that names no version may only create the document; replacing a stored
+ * one without naming its version is a 428. The reminders sheet is the
+ * exception, guarded by its own read instead (writeMerged).
  * Nothing here logs document contents; the audit row carries counts only.
  *
  * The same module reads those audit rows back for the page's Change history
@@ -83,9 +89,20 @@ import {
   summarizeReminders,
 } from './reminders/settings.js';
 
-const json = (status, body) => ({
+/**
+ * A JSON response, with the stored document's ETag as an `ETag` header when
+ * there is one (#946). The body carries the same value as `etag`, and that is
+ * the copy the page reads: cors.js exposes the header, but App Service's own
+ * CORS takes precedence over code where it handles a request, so what a
+ * browser may read of the headers is not decided here alone.
+ *
+ * @param {number} status
+ * @param {object} body
+ * @param {string|null} [etag] Cosmos's `_etag`, already a quoted entity-tag
+ */
+const json = (status, body, etag = null) => ({
   status,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json', ...(etag ? { ETag: etag } : {}) },
   body: JSON.stringify(body),
 });
 
@@ -985,15 +1002,72 @@ const isWriteConflict = (error) => {
 };
 
 /**
+ * The entity-tags an If-Match header names (#946), or null when there is no
+ * header. `*` comes back as `['*']`. Weak tags are dropped: If-Match uses the
+ * strong comparison (RFC 9110 §13.1.1), so `W/"…"` can never match, and a
+ * header naming nothing else matches nothing.
+ *
+ * @param {string|null|undefined} header the raw If-Match value
+ * @returns {string[]|null}
+ */
+export function parseIfMatch(header) {
+  const raw = String(header ?? '').trim();
+  if (!raw) return null;
+  if (raw === '*') return ['*'];
+  return raw
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter((tag) => tag && !tag.startsWith('W/'));
+}
+
+/**
+ * Whether the stored document is a version the If-Match tags name: any stored
+ * document for `*`, else the one whose `_etag` is listed. When nothing is
+ * stored, no If-Match is satisfied, `*` included.
+ *
+ * @param {string[]} tags from parseIfMatch
+ * @param {object|null} stored the document as read, `_etag` included
+ * @returns {boolean}
+ */
+export function satisfiesIfMatch(tags, stored) {
+  if (!stored) return false;
+  if (tags.includes('*')) return true;
+  return Boolean(stored._etag) && tags.includes(stored._etag);
+}
+
+/** The 412 for a save naming a version that is no longer stored. Nothing was written. */
+const settingChanged = () =>
+  json(412, {
+    code: 'CONFLICT',
+    error:
+      'This setting was saved somewhere else since this page loaded it. Nothing was saved; reload it to see what is stored now.',
+  });
+
+/** The 428 for a save that would replace a stored document without naming its version. */
+const versionRequired = () =>
+  json(428, {
+    code: 'PRECONDITION_REQUIRED',
+    error:
+      'This setting is already stored, and the save did not say which version it replaces. Nothing was saved; reload the page and save again.',
+  });
+
+/**
+ * The Platform settings routes' handlers: read a setting, save it, and read
+ * the change history.
+ *
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
  * @param {{ readDoc: Function, upsertDoc: Function, replaceDocIfMatch: Function, createDoc: Function, queryDocs?: Function }} deps.store
  *        a setting with a merge (the reminders sheet) is written under the
- *        ETag of the read it was merged from (replaceDocIfMatch, or createDoc
- *        when nothing was stored); every other setting is upserted
+ *        ETag of the read it was merged from; every other setting is written
+ *        under the version the save's If-Match names (replaceDocIfMatch), or
+ *        created when it names none (createDoc). No setting is upserted: an
+ *        upsert is the unconditional overwrite #946 removed. upsertDoc writes
+ *        the audit rows only.
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
  * @param {{ select: Function }} [deps.templateCache] the newsletter template cache (template-source.js)
+ * @returns {{ getHistory: Function, getSetting: Function, putSetting: Function }}
  */
 export function createPlatformSettingsHandlers({
   guard,
@@ -1012,10 +1086,27 @@ export function createPlatformSettingsHandlers({
    * never written over: a 412 (replaced since the read) or 409 (created since
    * an absent read) re-reads and re-merges, up to MERGE_WRITE_ATTEMPTS times,
    * then answers 409 (CodeRabbit, review of #1039).
+   *
+   * The page does not send If-Match here, and the read does not offer an ETag
+   * for this setting: the writers expected between the page's load and its
+   * save are the timer and the register sync, whose fields the merge keeps, so
+   * a version check would refuse saves the merge makes safe (review of #910).
+   * A caller that does name a version gets exactly that version or a 412,
+   * with no re-read: a retry would apply the save to a version it did not
+   * name (#946).
+   *
+   * @param {object} spec the setting's registry entry, with `merge`
+   * @param {object} requested the normalized value the caller sent
+   * @param {{ updatedAt: string, updatedBy: string|null }} meta
+   * @param {string[]|null} tags the If-Match tags, or null for none
+   * @returns {Promise<{ value: object } | { error: object }>} the value
+   *   written, or the response refusing the save
    */
-  async function writeMerged(spec, requested, meta) {
-    for (let attempt = 1; attempt <= MERGE_WRITE_ATTEMPTS; attempt += 1) {
+  async function writeMerged(spec, requested, meta, tags) {
+    const attempts = tags ? 1 : MERGE_WRITE_ATTEMPTS;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
       const stored = await store.readDoc('admin_config', spec.docId, ADMIN_CONFIG_PARTITION);
+      if (tags && !satisfiesIfMatch(tags, stored)) return { error: settingChanged() };
       let value;
       // A merge that refuses (the reminders sheet past its limit once the
       // register's rows are counted) is the caller's 400, like a
@@ -1042,6 +1133,7 @@ export function createPlatformSettingsHandlers({
         return { value };
       } catch (error) {
         if (!isWriteConflict(error)) throw error;
+        if (tags) return { error: settingChanged() };
       }
     }
     return {
@@ -1049,6 +1141,48 @@ export function createPlatformSettingsHandlers({
         error: 'This setting changed while it was being saved. Reload the page and save again.',
       }),
     };
+  }
+
+  /**
+   * Save a setting whose value is the caller's alone, conditioned on the
+   * version the caller read (#946).
+   *
+   * With If-Match, the stored document must be a version it names, and the
+   * replace is conditional on that document's ETag, so a save from a page
+   * that loaded an older version is a 412 whether the other write landed
+   * before this read or between this read and the replace.
+   *
+   * Without If-Match, the save may only create: the caller is saying nothing
+   * was stored when it read. If a document exists by the time it writes, the
+   * create's 409 becomes a 428, because the caller has not said which version
+   * it would replace. That is what makes the precondition required: no
+   * request can overwrite a stored setting without naming the version it
+   * read.
+   *
+   * @param {object} spec the setting's registry entry
+   * @param {object} value the normalized value to store
+   * @param {{ updatedAt: string, updatedBy: string|null }} meta
+   * @param {string[]|null} tags the If-Match tags, or null for none
+   * @returns {Promise<{ written: object|null } | { error: object }>} the
+   *   document as written (its `_etag` the next save's If-Match), or the
+   *   response refusing the save
+   */
+  async function writeConditional(spec, value, meta, tags) {
+    const doc = { id: spec.docId, configScope: ADMIN_CONFIG_PARTITION, ...value, ...meta };
+    try {
+      if (!tags) return { written: await store.createDoc('admin_config', doc) };
+      const stored = await store.readDoc('admin_config', spec.docId, ADMIN_CONFIG_PARTITION);
+      if (!satisfiesIfMatch(tags, stored)) return { error: settingChanged() };
+      const written = await store.replaceDocIfMatch(
+        'admin_config',
+        { ...doc, _etag: stored._etag },
+        { partitionKey: ADMIN_CONFIG_PARTITION }
+      );
+      return { written };
+    } catch (error) {
+      if (!isWriteConflict(error)) throw error;
+      return { error: tags ? settingChanged() : versionRequired() };
+    }
   }
 
   async function audit(action, user, details) {
@@ -1084,19 +1218,34 @@ export function createPlatformSettingsHandlers({
       if (!spec) return json(404, { error: 'Unknown platform setting' });
       try {
         const doc = await store.readDoc('admin_config', spec.docId, ADMIN_CONFIG_PARTITION);
-        return json(200, {
-          success: true,
-          setting: name,
-          ...presentSetting(name, doc),
-          ...optionsFor(spec),
-        });
+        // The version the page's save names in If-Match (#946): null when
+        // nothing is stored (the save creates), and null for a merged setting,
+        // whose save is guarded by its own read (writeMerged).
+        const etag = spec.merge ? null : (doc?._etag ?? null);
+        return json(
+          200,
+          {
+            success: true,
+            setting: name,
+            ...presentSetting(name, doc),
+            etag,
+            ...optionsFor(spec),
+          },
+          etag
+        );
       } catch (error) {
         context.error(`getPlatformSetting(${name}) failed:`, error);
         return json(500, { error: 'Failed to read platform setting' });
       }
     },
 
-    /** PUT /api/cms/platform-settings/{setting} — body is the value itself. */
+    /**
+     * PUT /api/cms/platform-settings/{setting} — body is the value itself;
+     * If-Match names the version it replaces (#946). Answers the stored value
+     * and its new ETag, which the next save from the same page names; 412
+     * when the named version is no longer stored, 428 when a stored document
+     * would be replaced without naming one.
+     */
     async putSetting(request, context) {
       const auth = await guard.requireRole(request, 'editor');
       if (auth.error) return auth.error;
@@ -1107,47 +1256,20 @@ export function createPlatformSettingsHandlers({
       const parsed = normalizedSettingValue(spec, await request.json().catch(() => null));
       if (parsed.error) return parsed.error;
       let { value } = parsed;
+      const tags = parseIfMatch(request.headers?.get?.('if-match'));
 
       try {
         const updatedAt = now().toISOString();
         const meta = { updatedAt, updatedBy: auth.user?.oid || auth.user?.sub || null };
+        let etag = null;
         if (spec.merge) {
-          const merged = await writeMerged(spec, value, meta);
+          const merged = await writeMerged(spec, value, meta, tags);
           if (merged.error) return merged.error;
           ({ value } = merged);
         } else {
-          const clientIfMatch = request.headers?.get?.('if-match');
-          if (clientIfMatch && typeof store.replaceDocIfMatch === 'function') {
-            const stored = await store.readDoc('admin_config', spec.docId, ADMIN_CONFIG_PARTITION);
-            if (!stored) {
-              return json(412, { error: 'Precondition failed: setting does not exist' });
-            }
-            if (clientIfMatch !== '*' && stored._etag && clientIfMatch !== stored._etag) {
-              return json(412, { error: 'Precondition failed: ETag mismatch' });
-            }
-            const doc = {
-              id: spec.docId,
-              configScope: ADMIN_CONFIG_PARTITION,
-              ...value,
-              ...meta,
-              _etag: stored._etag,
-            };
-            try {
-              await store.replaceDocIfMatch('admin_config', doc, { partitionKey: ADMIN_CONFIG_PARTITION });
-            } catch (error) {
-              if (isWriteConflict(error)) {
-                return json(412, { error: 'Precondition failed: setting changed concurrently' });
-              }
-              throw error;
-            }
-          } else {
-            await store.upsertDoc('admin_config', {
-              id: spec.docId,
-              configScope: ADMIN_CONFIG_PARTITION,
-              ...value,
-              ...meta,
-            });
-          }
+          const result = await writeConditional(spec, value, meta, tags);
+          if (result.error) return result.error;
+          etag = result.written?._etag ?? null;
         }
         // A different newsletter template takes effect on the next preview,
         // not when the cached copy of the previous one expires.
@@ -1163,15 +1285,20 @@ export function createPlatformSettingsHandlers({
             `putPlatformSetting(${name}) saved but the audit row failed (${JSON.stringify(auditDetailsForLog(details))}): ${auditError?.message || auditError}`
           );
         }
-        return json(200, {
-          success: true,
-          setting: name,
-          value,
-          exists: true,
-          stored: 'valid',
-          updatedAt,
-          ...optionsFor(spec),
-        });
+        return json(
+          200,
+          {
+            success: true,
+            setting: name,
+            value,
+            exists: true,
+            stored: 'valid',
+            updatedAt,
+            etag,
+            ...optionsFor(spec),
+          },
+          etag
+        );
       } catch (error) {
         context.error(`putPlatformSetting(${name}) failed:`, error);
         return json(500, { error: 'Failed to save platform setting' });

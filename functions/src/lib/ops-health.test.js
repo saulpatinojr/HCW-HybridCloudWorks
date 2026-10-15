@@ -5,17 +5,22 @@
  * bug fix), reopen writes explicit nulls (not deletions), and resolve
  * requires a note and auto-acknowledges.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import {
+  OPS_HEALTH_CACHE_TTL_MS,
   WORKFLOW_ALERT_ACTIONS,
   alertUpdateRefusal,
   createOpsHealthHandlers,
   buildWorkflowAlertUpdates,
   getWorkflowAlertStatus,
+  resetOpsHealthCache,
   toHoursSince,
 } from './ops-health.js';
 
 const context = { log: vi.fn(), error: vi.fn() };
+
+// The snapshot cache is the module's (#946); no test inherits another's.
+beforeEach(() => resetOpsHealthCache());
 
 const allowGuard = (role = 'viewer') => ({
   requireRole: vi.fn(async () => ({
@@ -393,32 +398,6 @@ describe('updateWorkflowAlert', () => {
     });
   });
 
-  it('caches the operations health snapshot for 30s and invalidates on alert update (AP-B11)', async () => {
-    let nowMs = NOW.getTime();
-    const store = opsStore();
-    const h = createOpsHealthHandlers({
-      guard: allowGuard('viewer'),
-      store,
-      now: () => new Date(nowMs),
-      ...fixed,
-    });
-
-    const res1 = await h.getOpsHealthSnapshot({ query: { get: () => null } }, context);
-    expect(res1.status).toBe(200);
-    const initialCalls = store.queryDocs.mock.calls.length;
-
-    // Second call within 30s serves from cache, no new store queries
-    nowMs += 10_000;
-    const res2 = await h.getOpsHealthSnapshot({ query: { get: () => null } }, context);
-    expect(res2.status).toBe(200);
-    expect(store.queryDocs.mock.calls.length).toBe(initialCalls);
-
-    // Call with ?refresh=true bypasses cache
-    const res3 = await h.getOpsHealthSnapshot({ query: { get: (k) => (k === 'refresh' ? 'true' : null) } }, context);
-    expect(res3.status).toBe(200);
-    expect(store.queryDocs.mock.calls.length).toBeGreaterThan(initialCalls);
-  });
-
   it('sanitizes 500 error responses and attaches correlation ID (AP-B10)', async () => {
     const explodingStore = {
       ...opsStore(),
@@ -442,6 +421,194 @@ describe('updateWorkflowAlert', () => {
     expect(body.correlationId).toBe('ops-inv-999');
     expect(res.body).not.toContain('192.168.1.1');
     expect(ctx.error).toHaveBeenCalled();
+  });
+});
+
+describe('the snapshot cache outlives the handler set that filled it (#946)', () => {
+  // ops-health-http.js builds a handler set per request. The cache used to
+  // live inside one, so a test that reused a single instance passed while
+  // production ran the fan-out on every Health view. Every test here builds
+  // a new handler set per call, as production does.
+  const plain = () => ({ query: { get: () => null } });
+  const refresh = () => ({ query: { get: (key) => (key === 'refresh' ? 'true' : null) } });
+
+  /** A handler-set factory over one store, read off a clock the test moves. */
+  const perRequest =
+    ({ store, clock, env = ENV, guard = allowGuard('viewer') }) =>
+    () =>
+      createOpsHealthHandlers({
+        guard,
+        store,
+        env,
+        now: () => new Date(clock.ms),
+        uuid: () => 'fixed-uuid',
+      });
+
+  /** How many queries one build runs, measured on a store of its own. */
+  async function queriesPerBuild() {
+    const store = opsStore();
+    await perRequest({ store, clock: { ms: NOW.getTime() } })().getOpsHealthSnapshot(
+      plain(),
+      context
+    );
+    return store.queryDocs.mock.calls.length;
+  }
+
+  it('serves a second, separately built handler set from the cache', async () => {
+    const store = opsStore();
+    const clock = { ms: NOW.getTime() };
+    const handlers = perRequest({ store, clock });
+
+    const first = await handlers().getOpsHealthSnapshot(plain(), context);
+    const fanOut = store.queryDocs.mock.calls.length;
+    expect(fanOut).toBeGreaterThan(0);
+
+    clock.ms += 10_000;
+    const second = await handlers().getOpsHealthSnapshot(plain(), context);
+    expect(second.status).toBe(200);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut);
+    expect(second.body).toBe(first.body);
+  });
+
+  it('expires at 30 s: served at 29.999 s, rebuilt at 30 s', async () => {
+    const store = opsStore();
+    const clock = { ms: NOW.getTime() };
+    const handlers = perRequest({ store, clock });
+
+    await handlers().getOpsHealthSnapshot(plain(), context);
+    const fanOut = store.queryDocs.mock.calls.length;
+
+    clock.ms = NOW.getTime() + OPS_HEALTH_CACHE_TTL_MS - 1;
+    const young = JSON.parse((await handlers().getOpsHealthSnapshot(plain(), context)).body);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut);
+    expect(young.generatedAt).toBe(NOW.toISOString());
+
+    clock.ms = NOW.getTime() + OPS_HEALTH_CACHE_TTL_MS;
+    const expired = JSON.parse((await handlers().getOpsHealthSnapshot(plain(), context)).body);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+    expect(expired.generatedAt).toBe(new Date(clock.ms).toISOString());
+    expect(OPS_HEALTH_CACHE_TTL_MS).toBe(30_000);
+  });
+
+  it('is not shared across stores or environments, which the snapshot is built from', async () => {
+    const clock = { ms: NOW.getTime() };
+    const storeA = opsStore();
+    const storeB = opsStore();
+
+    await perRequest({ store: storeA, clock })().getOpsHealthSnapshot(plain(), context);
+    const fanOut = storeA.queryDocs.mock.calls.length;
+
+    // Another store: its own build, never store A's snapshot.
+    await perRequest({ store: storeB, clock })().getOpsHealthSnapshot(plain(), context);
+    expect(storeB.queryDocs).toHaveBeenCalledTimes(fanOut);
+
+    // Store A under another environment: readiness reads the environment, so
+    // the cached snapshot would report the wrong configuration.
+    const unset = JSON.parse(
+      (await perRequest({ store: storeA, clock, env: {} })().getOpsHealthSnapshot(plain(), context))
+        .body
+    );
+    expect(unset.readiness.configGeneration).toBe('unset');
+    expect(storeA.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+
+    // And store A under the first environment is still cached.
+    const again = JSON.parse(
+      (await perRequest({ store: storeA, clock })().getOpsHealthSnapshot(plain(), context)).body
+    );
+    expect(again.readiness.configGeneration).toBe('run-77-abc1234');
+    expect(storeA.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+  });
+
+  it('is one snapshot for every admitted role, and the guard still runs before it', async () => {
+    const store = opsStore();
+    const clock = { ms: NOW.getTime() };
+
+    const viewer = await perRequest({ store, clock })().getOpsHealthSnapshot(plain(), context);
+    const fanOut = store.queryDocs.mock.calls.length;
+
+    const publisher = await perRequest({ store, clock, guard: allowGuard('publisher') })()
+      .getOpsHealthSnapshot(plain(), context);
+    expect(publisher.body).toBe(viewer.body);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut);
+
+    const refused = await perRequest({ store, clock, guard: denyGuard })().getOpsHealthSnapshot(
+      plain(),
+      context
+    );
+    expect(refused.status).toBe(403);
+    expect(refused.body).toBe('{}');
+  });
+
+  it('shares one build between views that arrive while it is in flight', async () => {
+    const perBuild = await queriesPerBuild();
+    const store = opsStore();
+    const handlers = perRequest({ store, clock: { ms: NOW.getTime() } });
+
+    const [a, b] = await Promise.all([
+      handlers().getOpsHealthSnapshot(plain(), context),
+      handlers().getOpsHealthSnapshot(plain(), context),
+    ]);
+    expect(a.status).toBe(200);
+    expect(b.body).toBe(a.body);
+    expect(store.queryDocs).toHaveBeenCalledTimes(perBuild);
+  });
+
+  it('drops a failed build rather than serving it to the next view', async () => {
+    const store = opsStore();
+    // Only the first query of the first build fails; every later one answers.
+    store.queryDocs.mockImplementationOnce(async () => {
+      throw new Error('transient');
+    });
+    const handlers = perRequest({ store, clock: { ms: NOW.getTime() } });
+
+    const failed = await handlers().getOpsHealthSnapshot(plain(), { error: vi.fn() });
+    expect(failed.status).toBe(500);
+
+    const next = await handlers().getOpsHealthSnapshot(plain(), context);
+    expect(next.status).toBe(200);
+    expect(JSON.parse(next.body).readiness.publishedItems).toBe(12);
+  });
+
+  it('rebuilds on ?refresh=true and serves that build to the next view', async () => {
+    const store = opsStore();
+    const clock = { ms: NOW.getTime() };
+    const handlers = perRequest({ store, clock });
+
+    await handlers().getOpsHealthSnapshot(plain(), context);
+    const fanOut = store.queryDocs.mock.calls.length;
+
+    clock.ms += 5_000;
+    const refreshed = await handlers().getOpsHealthSnapshot(refresh(), context);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+    expect(JSON.parse(refreshed.body).generatedAt).toBe(new Date(clock.ms).toISOString());
+
+    clock.ms += 5_000;
+    const after = await handlers().getOpsHealthSnapshot(plain(), context);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+    expect(after.body).toBe(refreshed.body);
+  });
+
+  it('is invalidated by an alert update made through another handler set', async () => {
+    const base = opsStore();
+    const store = {
+      ...base,
+      readDoc: vi.fn(async (container, id, pk) =>
+        container === 'workflow_alerts'
+          ? { id, alertType: 'link_rot', active: true }
+          : base.readDoc(container, id, pk)
+      ),
+    };
+    const clock = { ms: NOW.getTime() };
+
+    await perRequest({ store, clock })().getOpsHealthSnapshot(plain(), context);
+    const fanOut = store.queryDocs.mock.calls.length;
+
+    const update = await perRequest({ store, clock, guard: allowGuard('publisher') })()
+      .updateWorkflowAlert(makeRequest({ alertId: 'a1', action: 'acknowledge' }), context);
+    expect(update.status).toBe(200);
+
+    await perRequest({ store, clock })().getOpsHealthSnapshot(plain(), context);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
   });
 });
 

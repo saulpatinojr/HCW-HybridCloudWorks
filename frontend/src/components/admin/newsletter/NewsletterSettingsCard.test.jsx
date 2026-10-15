@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 import NewsletterSettingsCard from './NewsletterSettingsCard';
+import { CHANGED_ELSEWHERE } from '@/components/admin/platform-settings/settingShared';
 
 const fetchSpy = vi.fn();
 
@@ -123,6 +124,65 @@ describe('NewsletterSettingsCard', () => {
       })
     );
     expect(onSaved).toHaveBeenCalled();
+  });
+
+  describe('names the version it read (#946)', () => {
+    const OTHER = { ...STORED, replyTo: 'other@example.com' };
+
+    /** The settings route answers each read in turn, the last one from then on; others answer empty. */
+    const readsInTurn = (...reads) =>
+      getJSON.mockImplementation(async (route) => {
+        if (route !== ROUTE) return {};
+        return reads.length > 1 ? reads.shift() : reads[0];
+      });
+
+    it('sends the ETag it read as If-Match, and the one its save returned next time', async () => {
+      readsInTurn({ value: STORED, options: OPTIONS, etag: '"v1"' });
+      sendJSON
+        .mockResolvedValueOnce({ value: STORED, options: OPTIONS, etag: '"v2"' })
+        .mockResolvedValueOnce({ value: STORED, options: OPTIONS, etag: '"v3"' });
+      render(<NewsletterSettingsCard />);
+      await screen.findByLabelText('Postal address');
+
+      save();
+      expect(await screen.findByText('Newsletter settings saved.')).toBeInTheDocument();
+      save();
+      await waitFor(() => expect(sendJSON).toHaveBeenCalledTimes(2));
+      expect(sendJSON.mock.calls[0]).toEqual([
+        ROUTE,
+        'PUT',
+        STORED,
+        { headers: { 'If-Match': '"v1"' } },
+      ]);
+      expect(sendJSON.mock.calls[1][3]).toEqual({ headers: { 'If-Match': '"v2"' } });
+    });
+
+    it.each([
+      [412, 'CONFLICT'],
+      [428, 'PRECONDITION_REQUIRED'],
+    ])(
+      'on a %i says the settings changed elsewhere and shows what is stored now, without saving again',
+      async (status, code) => {
+        readsInTurn(
+          { value: STORED, options: OPTIONS, etag: '"v1"' },
+          { value: OTHER, options: OPTIONS, etag: '"v2"' }
+        );
+        sendJSON.mockRejectedValueOnce(Object.assign(new Error('refused'), { status, code }));
+        render(<NewsletterSettingsCard />);
+        fireEvent.change(await screen.findByLabelText('Postal address'), {
+          target: { value: 'PO Box 9' },
+        });
+        save();
+
+        expect(await screen.findByText(CHANGED_ELSEWHERE)).toBeInTheDocument();
+        await waitFor(() =>
+          expect(screen.getByLabelText('Reply-to address')).toHaveValue('other@example.com')
+        );
+        expect(screen.getByLabelText('Postal address')).toHaveValue('PO Box 1');
+        expect(sendJSON).toHaveBeenCalledTimes(1);
+        expect(getJSON.mock.calls.filter(([route]) => route === ROUTE)).toHaveLength(2);
+      }
+    );
   });
 
   describe('Content', () => {

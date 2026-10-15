@@ -304,11 +304,16 @@ export async function getJSON(fnName, options = {}) {
  * @param {string} fnName - route path after the API base
  * @param {string} method - HTTP method
  * @param {object} [body] - JSON payload
+ * @param {{ headers?: Record<string, string> }} [options] - extra request
+ *   headers, such as the If-Match a Platform settings save sends (#946). A
+ *   cross-origin header must also be in the API's CORS allowlist
+ *   (functions/src/lib/auth/cors.js); Authorization is never taken from here.
  * @returns {Promise<object>} Parsed JSON response
  */
-export async function sendJSON(fnName, method, body) {
+export async function sendJSON(fnName, method, body, { headers } = {}) {
   const res = await authedFetch(fnName, {
     method,
+    ...(headers ? { headers } : {}),
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   return res.json();

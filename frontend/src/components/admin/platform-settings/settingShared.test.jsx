@@ -8,9 +8,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 
 import {
+  CHANGED_ELSEWHERE,
   HISTORY_FILTERABLE,
   SETTING_LABELS,
   SettingSection,
+  isStaleSave,
   settingRoute,
   useSetting,
 } from './settingShared';
@@ -137,6 +139,112 @@ describe('useSetting', () => {
     act(() => result.current.reload());
     await waitFor(() => expect(result.current.value).toEqual({ Maya: '', Elena: '' }));
     expect(result.current.saved).toBeNull();
+  });
+});
+
+describe('useSetting names the version it replaces (#946)', () => {
+  const MINE = { feeds: [{ provider: 'azure', url: 'https://x.example/mine' }] };
+  const THEIRS = { feeds: [{ provider: 'aws', url: 'https://x.example/theirs' }] };
+  const route = settingRoute('podcast-feeds');
+  const ifMatch = (etag) => ({ headers: { 'If-Match': etag } });
+
+  /** A hook over podcast-feeds once its first load has landed. */
+  async function loadedHook() {
+    const hook = renderHook(() => useSetting('podcast-feeds', true));
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    return hook;
+  }
+
+  it('sends the ETag it read as If-Match, then the one each save returns', async () => {
+    getJSON.mockResolvedValueOnce(loaded(THEIRS, { etag: '"v1"' }));
+    sendJSON
+      .mockResolvedValueOnce(loaded(MINE, { etag: '"v2"' }))
+      .mockResolvedValueOnce(loaded(MINE, { etag: '"v3"' }));
+    const { result } = await loadedHook();
+
+    await act(async () => {
+      expect(await result.current.save(MINE)).toBe(true);
+    });
+    await act(async () => {
+      expect(await result.current.save(MINE)).toBe(true);
+    });
+    expect(sendJSON.mock.calls).toEqual([
+      [route, 'PUT', MINE, ifMatch('"v1"')],
+      [route, 'PUT', MINE, ifMatch('"v2"')],
+    ]);
+  });
+
+  it('sends no If-Match when the read offered no version: nothing stored, or the reminders sheet', async () => {
+    getJSON.mockResolvedValueOnce(loaded(MINE, { exists: false, stored: null, etag: null }));
+    sendJSON.mockResolvedValueOnce(loaded(MINE, { etag: '"v1"' }));
+    const { result } = await loadedHook();
+    await act(async () => {
+      await result.current.save(MINE);
+    });
+    expect(sendJSON.mock.calls).toEqual([[route, 'PUT', MINE]]);
+  });
+
+  it.each([
+    [412, 'CONFLICT'],
+    [428, 'PRECONDITION_REQUIRED'],
+  ])(
+    'on a %i says the setting changed elsewhere and reloads what is stored, without saving again',
+    async (status, code) => {
+      getJSON
+        .mockResolvedValueOnce(loaded(THEIRS, { etag: '"v1"' }))
+        .mockResolvedValueOnce(loaded(MINE, { etag: '"v2"' }));
+      sendJSON.mockRejectedValueOnce(
+        Object.assign(new Error('refused'), { status, code, fnName: route })
+      );
+      const { result } = await loadedHook();
+
+      act(() => result.current.setValue({ feeds: [] }));
+      await act(async () => {
+        expect(await result.current.save({ feeds: [] })).toBe(false);
+      });
+      expect(toast).toHaveBeenCalledWith({
+        title: 'Changed elsewhere',
+        description: CHANGED_ELSEWHERE,
+        variant: 'destructive',
+      });
+      await waitFor(() => expect(result.current.value).toEqual(MINE));
+      expect(result.current.saved).toEqual(MINE);
+      expect(getJSON).toHaveBeenCalledTimes(2);
+      expect(sendJSON).toHaveBeenCalledTimes(1);
+
+      // The next save names the version the reload read.
+      sendJSON.mockResolvedValueOnce(loaded(MINE, { etag: '"v3"' }));
+      await act(async () => {
+        await result.current.save(MINE);
+      });
+      expect(sendJSON.mock.calls[1]).toEqual([route, 'PUT', MINE, ifMatch('"v2"')]);
+    }
+  );
+
+  it('any other refusal keeps the working copy and reloads nothing', async () => {
+    getJSON.mockResolvedValueOnce(loaded(THEIRS, { etag: '"v1"' }));
+    sendJSON.mockRejectedValueOnce(
+      Object.assign(new Error('Body must be a JSON object'), { status: 400 })
+    );
+    const { result } = await loadedHook();
+    act(() => result.current.setValue(MINE));
+    await act(async () => {
+      expect(await result.current.save(MINE)).toBe(false);
+    });
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Not saved', description: 'Body must be a JSON object' })
+    );
+    expect(result.current.value).toEqual(MINE);
+    expect(getJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it('isStaleSave is true for 412, 428 and a CONFLICT code, and nothing else', () => {
+    expect(isStaleSave({ status: 412 })).toBe(true);
+    expect(isStaleSave({ status: 428 })).toBe(true);
+    expect(isStaleSave({ code: 'CONFLICT' })).toBe(true);
+    expect(isStaleSave({ status: 409 })).toBe(false);
+    expect(isStaleSave({ status: 400 })).toBe(false);
+    expect(isStaleSave(undefined)).toBe(false);
   });
 });
 

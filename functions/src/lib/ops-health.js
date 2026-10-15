@@ -30,6 +30,45 @@ import { recordMutationAudit } from './audit.js';
 
 export const OPS_HEALTH_CACHE_TTL_MS = 30_000;
 
+/**
+ * The Health page's snapshot cache, held for the life of the worker (#946).
+ *
+ * It used to live inside createOpsHealthHandlers. ops-health-http.js builds a
+ * handler set per request, so each request got a new, empty cache: every
+ * Health view ran the eleven-query fan-out and the 30-second TTL never had a
+ * second request to serve. Here, outside the factory, it outlives the handler
+ * set that filled it.
+ *
+ * Keyed on what the snapshot is built from, so nothing that should differ
+ * shares an entry: the store (the data it reads) and the environment
+ * (readiness reads the configuration stamp and the unresolved Key Vault
+ * references from it). Not on the caller: every role the guard admits gets
+ * the same snapshot, and nothing in a request but `?refresh=true` changes
+ * what is built. The guard runs before the cache on every request, so a
+ * refused caller never reaches it.
+ *
+ * WeakMaps (store, then environment), so a store or an environment nothing
+ * references any more takes its entries with it. An entry holds the build's
+ * promise, not its result: views that arrive while a build is in flight share
+ * that build instead of each starting the fan-out.
+ */
+let snapshotCache = new WeakMap();
+
+/** Test seam: forget every cached snapshot. */
+export function resetOpsHealthCache() {
+  snapshotCache = new WeakMap();
+}
+
+/** One store's cache entries, by environment, created on first use. */
+function cacheEntriesFor(store) {
+  let entries = snapshotCache.get(store);
+  if (!entries) {
+    entries = new WeakMap();
+    snapshotCache.set(store, entries);
+  }
+  return entries;
+}
+
 const json = (status, body) => ({
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -189,14 +228,22 @@ function forgeSummary(forgeStats, lastCheckedAt) {
 }
 
 /**
+ * The ops-health RPCs over one store and environment. Cheap to build: the
+ * snapshot cache is the module's, keyed on `store` and `env`, so a handler set
+ * built per request still serves the snapshot another one cached — provided
+ * the caller passes the same store object each time (ops-health-http.js holds
+ * one for the module's life).
+ *
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
  * @param {{ queryDocs: Function, readDoc: Function, upsertDoc: Function, patchDoc: Function }} deps.store
+ *   also the snapshot cache's first key
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
  * @param {Record<string, unknown>} [deps.env] the worker's environment, read
  *   for the runtime configuration stamp and the unresolved Key Vault
- *   references (ADR 0033 §1 Platform)
+ *   references (ADR 0033 §1 Platform); the snapshot cache's second key
+ * @returns {{ buildSnapshot: Function, getCachedSnapshot: Function, invalidateCache: Function, getOpsHealthSnapshot: Function, updateWorkflowAlert: Function }}
  */
 export function createOpsHealthHandlers({
   guard,
@@ -353,23 +400,38 @@ export function createOpsHealthHandlers({
     };
   }
 
-  let cachedSnapshot = null;
-  let cachedSnapshotAt = 0;
-
+  /**
+   * Drop every snapshot cached for this store, whatever environment built it:
+   * a write through the store makes all of them stale. It reaches the entry
+   * another request's handler set filled, because the cache is the module's,
+   * not this handler set's.
+   */
   function invalidateCache() {
-    cachedSnapshot = null;
-    cachedSnapshotAt = 0;
+    snapshotCache.delete(store);
   }
 
-  async function getCachedSnapshot(forceRefresh = false) {
+  /**
+   * The snapshot from the module's cache while it is younger than
+   * OPS_HEALTH_CACHE_TTL_MS, else a new build, cached for the next caller.
+   * A build that fails is dropped rather than served, unless a newer build
+   * has already taken its place.
+   *
+   * @param {boolean} [forceRefresh] build afresh even if a cached one is young
+   * @returns {Promise<object>} the snapshot
+   */
+  function getCachedSnapshot(forceRefresh = false) {
+    const entries = cacheEntriesFor(store);
     const currentTime = now().getTime();
-    if (!forceRefresh && cachedSnapshot && currentTime - cachedSnapshotAt < OPS_HEALTH_CACHE_TTL_MS) {
-      return cachedSnapshot;
+    const cached = entries.get(env);
+    if (!forceRefresh && cached && currentTime - cached.at < OPS_HEALTH_CACHE_TTL_MS) {
+      return cached.snapshot;
     }
-    const fresh = await buildSnapshot();
-    cachedSnapshot = fresh;
-    cachedSnapshotAt = currentTime;
-    return fresh;
+    const fresh = { at: currentTime, snapshot: buildSnapshot() };
+    entries.set(env, fresh);
+    fresh.snapshot.catch(() => {
+      if (entries.get(env) === fresh) entries.delete(env);
+    });
+    return fresh.snapshot;
   }
 
   return {
@@ -387,7 +449,11 @@ export function createOpsHealthHandlers({
     getCachedSnapshot,
     invalidateCache,
 
-    /** POST /api/getOpsHealthSnapshot */
+    /**
+     * POST /api/getOpsHealthSnapshot — viewer. The role check runs on every
+     * request, before the cache; the snapshot then comes from the module's
+     * cache for up to OPS_HEALTH_CACHE_TTL_MS, or afresh with ?refresh=true.
+     */
     async getOpsHealthSnapshot(request, context) {
       const auth = await guard.requireRole(request, 'viewer');
       if (auth.error) return auth.error;

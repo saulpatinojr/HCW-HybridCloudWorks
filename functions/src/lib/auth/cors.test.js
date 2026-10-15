@@ -91,6 +91,40 @@ describe('CORS evaluation', () => {
     expect(r.response.status).toBe(204);
   });
 
+  /** A comma-separated header value as lower-cased names, in order. */
+  const names = (value) => value.split(',').map((name) => name.trim().toLowerCase());
+
+  // #946: the Platform settings save names the version it replaces in
+  // If-Match. Without it here, the preflight for that save is refused
+  // wherever this code answers it, and the save never reaches the guard.
+  it('lets a request send If-Match, and only the three headers the API reads (#946)', () => {
+    const pre = cors.evaluate(req({ origin: 'https://hybridcloudworks.com' }, 'OPTIONS'));
+    expect(names(pre.response.headers['Access-Control-Allow-Headers'])).toEqual([
+      'content-type',
+      'authorization',
+      'if-match',
+    ]);
+    const actual = cors.evaluate(req({ origin: 'https://hybridcloudworks.com' }, 'PUT'));
+    expect(actual.headers['Access-Control-Allow-Headers']).toBe(
+      pre.response.headers['Access-Control-Allow-Headers']
+    );
+  });
+
+  it('exposes ETag beside WWW-Authenticate on the actual response, and nothing else (#946)', () => {
+    const actual = cors.evaluate(req({ origin: 'https://hybridcloudworks.com' }, 'GET'));
+    expect(names(actual.headers['Access-Control-Expose-Headers'])).toEqual([
+      'www-authenticate',
+      'etag',
+    ]);
+  });
+
+  it('gives a disallowed origin no CORS headers at all, If-Match and ETag included', () => {
+    const r = cors.evaluate(req({ origin: 'https://evil.test' }, 'OPTIONS'));
+    expect(r.response.status).toBe(403);
+    expect(r.response.headers['Access-Control-Allow-Headers']).toBeUndefined();
+    expect(r.response.headers['Access-Control-Expose-Headers']).toBeUndefined();
+  });
+
   it('does not send credentials headers — this is a bearer-token API', () => {
     const r = cors.evaluate(req({ origin: 'https://hybridcloudworks.com' }));
     expect(r.headers['Access-Control-Allow-Credentials']).toBeUndefined();
