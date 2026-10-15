@@ -145,6 +145,11 @@ const LINES = {
  */
 export function createHoldGate({ path, log, now = () => Date.now(), fsImpl = fs }) {
   let last = 'none';
+  /**
+   * True while a hold is in force; reads the file once and says a change of state once.
+   *
+   * @returns {boolean}
+   */
   return function held() {
     const { state } = readHold(path, { now: now(), fsImpl });
     if (state !== last) {

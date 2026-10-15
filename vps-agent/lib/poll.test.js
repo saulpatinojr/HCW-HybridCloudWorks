@@ -19,6 +19,7 @@ import { createPoller } from './poll.js';
 
 const JOB = { id: '0f7c2b1e-9a4d-4c3e-8f21-6b5a7c8d9e01', claimId: 'claim-7d3e', type: 'shell-echo', payload: 'hello' };
 
+/** Resolves after every promise already settled has run its callbacks. */
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 /**
