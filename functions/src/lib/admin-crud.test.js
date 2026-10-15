@@ -247,6 +247,56 @@ describe('certifications', () => {
     expect(validateCertification({ _updatedAt: '1999-01-01' }).error).toMatch(/Unknown field/);
   });
 
+  it.each(['_createdAt', '_updatedAt', '_etag', '_ts', 'id'])(
+    'the routes refuse a write that names the system field %s, and store nothing (#945)',
+    async (field) => {
+      const store = makeStore({
+        readDoc: vi.fn(async () => ({ id: 'c1', name: 'AZ-104', _createdAt: '2026-01-01T00:00:00.000Z' })),
+      });
+      const h = createAdminCrudHandlers({ guard: allowGuard, store, ...fixed });
+      const patched = await h.patchCertification(
+        makeRequest({ params: { id: 'c1' }, body: { [field]: '1999-01-01' } }),
+        context
+      );
+      // `id` is stripped rather than refused (the route's id wins); every
+      // other system field is an unknown field.
+      if (field === 'id') {
+        expect(patched.status).toBe(200);
+        expect(store.patchDoc.mock.calls[0][2]).not.toHaveProperty('id', '1999-01-01');
+      } else {
+        expect(patched.status).toBe(400);
+        expect(JSON.parse(patched.body).error).toMatch(/Unknown field/);
+        expect(store.patchDoc).not.toHaveBeenCalled();
+      }
+      const created = await h.createCertification(
+        makeRequest({ body: { name: 'AZ-104', [field]: '1999-01-01' } }),
+        context
+      );
+      if (field === 'id') {
+        expect(created.status).toBe(200);
+        expect(JSON.parse(created.body).id).not.toBe('1999-01-01');
+      } else {
+        expect(created.status).toBe(400);
+        expect(store.upsertDoc).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('stamps _updatedAt on a patch itself, after the fields the caller sent', async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: 'c1', name: 'AZ-104', _createdAt: '2026-01-01T00:00:00.000Z' })),
+    });
+    const h = createAdminCrudHandlers({ guard: allowGuard, store, ...fixed });
+    const res = await h.patchCertification(
+      makeRequest({ params: { id: 'c1' }, body: { notes: 'renewed' } }),
+      context
+    );
+    expect(res.status).toBe(200);
+    const [, , patch] = store.patchDoc.mock.calls[0];
+    expect(patch).toEqual({ notes: 'renewed', _updatedAt: '2026-08-06T12:00:00.000Z' });
+    expect(patch).not.toHaveProperty('_createdAt');
+  });
+
   it('deletes an abandoned upload only at a cert image path nothing references', async () => {
     const storage = { deleteBlob: vi.fn(async () => {}) };
     const store = makeStore({ queryDocs: vi.fn(async () => []) });

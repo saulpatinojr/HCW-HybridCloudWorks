@@ -13,6 +13,7 @@ import {
   listJobTypes,
   resetJobTypes,
   publicJob,
+  JOB_READ_FLOOR,
   JOBS_CONTAINER,
   TERMINAL_JOB_STATUSES,
 } from './jobs.js';
@@ -606,6 +607,47 @@ describe('getJob role gating and email redaction (AP-B10)', () => {
     expect(res.status).toBe(403);
     expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'viewer');
     expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'editor');
+  });
+
+  it('holds a job whose type is no longer registered at the enqueue floor, so a viewer gets 403 (#945)', async () => {
+    const store = makeStore({
+      'job-gone': { id: 'job-gone', type: 'retired-type', status: 'succeeded', result: { sourceUrl: 'x' } },
+    });
+    // A guard that lets a viewer through the first gate and refuses anything stricter.
+    const viewerOnly = {
+      requireRole: vi.fn(async (_r, role) =>
+        role === 'viewer'
+          ? { user: USER, role: 'viewer', error: null }
+          : { error: { status: 403, body: JSON.stringify({ error: 'Forbidden' }) } }
+      ),
+    };
+    const refused = await createJobHandlers({ guard: viewerOnly, store, ...fixed }).getJob(
+      makeRequest(null, { method: 'GET', query: { jobId: 'job-gone' } }),
+      context
+    );
+    expect(JOB_READ_FLOOR).toBe('editor');
+    expect(refused.status).toBe(403);
+    expect(viewerOnly.requireRole).toHaveBeenCalledWith(expect.anything(), 'editor');
+    expect(refused.body).not.toContain('sourceUrl');
+
+    const editor = await createJobHandlers({ guard: guardAs('editor'), store, ...fixed }).getJob(
+      makeRequest(null, { method: 'GET', query: { jobId: 'job-gone' } }),
+      context
+    );
+    expect(editor.status).toBe(200);
+  });
+
+  it('answers a failed read with the safe sentence and a correlation id, never the store text (#945)', async () => {
+    const store = makeStore({});
+    store.readDoc.mockRejectedValueOnce(new Error('Request rate is large. ActivityId: 9f'));
+    const ctx = { ...context, error: vi.fn(), invocationId: 'inv-job' };
+    const res = await createJobHandlers({ guard: guardAs('viewer'), store, ...fixed }).getJob(
+      makeRequest(null, { method: 'GET', query: { jobId: 'job-1' } }),
+      ctx
+    );
+    expect(res.status).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'Failed to read job', correlationId: 'inv-job' });
+    expect(JSON.stringify(ctx.error.mock.calls)).not.toContain('ActivityId');
   });
 
   it('redacts requestedBy email in publicJob', () => {

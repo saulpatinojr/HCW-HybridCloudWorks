@@ -44,7 +44,7 @@
 import { randomUUID } from 'node:crypto';
 import { ROLE_NAMES, roleLevel } from './auth/roles.js';
 import { runAsJob } from './job-context.js';
-import { AuthoredError } from './http/error-response.js';
+import { AuthoredError, errorResponse } from './http/error-response.js';
 
 export const JOBS_CONTAINER = 'jobs';
 export const JOBS_QUEUE = 'platform-jobs';
@@ -62,6 +62,14 @@ export const TERMINAL_JOB_STATUSES = Object.freeze(['succeeded', 'failed', 'time
 const DEFAULT_MAX_PAYLOAD_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_ERROR_CHARS = 2000;
+
+/**
+ * The role a job is read under when its type is no longer registered (a type
+ * renamed or removed since the job was queued): the enqueue floor, editor.
+ * Nobody below it could have queued the job, so nobody below it reads its
+ * payload and result (#945).
+ */
+export const JOB_READ_FLOOR = 'editor';
 
 const json = (status, body) => ({
   status,
@@ -459,7 +467,20 @@ export function createJobHandlers({
       }
     },
 
-    /** GET|POST /api/getJob — viewer. `jobId` from the query string or the body. */
+    /**
+     * GET|POST /api/getJob — the job type's own role. `jobId` from the query
+     * string or the body.
+     *
+     * A viewer passes the first gate only so a missing id can be answered;
+     * the job itself is read under its type's role, because the payload and
+     * result are the type's (a forge-from-url job carries its source URL and
+     * brief). A job whose type is no longer registered is held at
+     * JOB_READ_FLOOR, so it cannot fall through to the viewer gate (#945).
+     *
+     * @param {object} request - the HTTP request
+     * @param {object} context - the invocation context
+     * @returns {Promise<{ status: number, headers: object, body: string }>}
+     */
     async getJob(request, context) {
       const auth = await guard.requireRole(request, 'viewer');
       if (auth.error) return auth.error;
@@ -481,17 +502,13 @@ export function createJobHandlers({
         const doc = await store.readDoc(JOBS_CONTAINER, jobId, jobId);
         if (!doc) return json(404, { ok: false, error: 'Job not found' });
 
-        const spec = types.get(doc.type);
-        const requiredRole = spec?.role;
-        if (requiredRole) {
-          const stricter = await guard.requireRole(request, requiredRole);
-          if (stricter.error) return stricter.error;
-        }
+        const requiredRole = types.get(doc.type)?.role ?? JOB_READ_FLOOR;
+        const stricter = await guard.requireRole(request, requiredRole);
+        if (stricter.error) return stricter.error;
 
         return json(200, { ok: true, job: publicJob(doc) });
       } catch (error) {
-        context.error?.('getJob failed:', error);
-        return json(500, { ok: false, error: 'Failed to read job' });
+        return errorResponse(context, 'Failed to read job', error, 500, request);
       }
     },
 
