@@ -8,7 +8,7 @@
 # lab-host/README.md ("Validating without a host") has the container line.
 #
 # The helper names its tools by absolute path, where bootstrap.sh puts them:
-# /usr/local/bin/ansible-vault and /opt/uv/tools/ansible-core/bin/python.
+# /usr/local/bin/ansible-vault and /opt/uv/ansible-core/bin/python.
 # Where either is missing (a CI runner, the dev-tools image), this links it to
 # the ansible-vault on PATH and the Python that ansible-vault runs on, and
 # removes exactly those links at the end. It never replaces a file that
@@ -20,7 +20,8 @@ helper="${here}/../files/hcw-vault-set"
 lab_host="$(cd "${here}/../../../.." && pwd)"
 bootstrap="${lab_host}/bootstrap.sh"
 av_path=/usr/local/bin/ansible-vault
-py_path=/opt/uv/tools/ansible-core/bin/python
+venv_path=/opt/uv/ansible-core
+py_path="${venv_path}/bin/python"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "hcw-vault-set.test.sh: run as root (the helper installs the vault root:root)" >&2
@@ -40,8 +41,10 @@ check "the helper runs Python from ${py_path}" \
   "grep -qx 'py=${py_path}' '${helper}'"
 check "bootstrap.sh links the ansible-* commands into /usr/local/bin" \
   "grep -qx 'export UV_TOOL_BIN_DIR=/usr/local/bin' '${bootstrap}'"
-check "bootstrap.sh keeps the ansible-core environment under /opt/uv/tools" \
-  "grep -qx 'export UV_TOOL_DIR=/opt/uv/tools' '${bootstrap}'"
+check "bootstrap.sh keeps the ansible-core environment at ${venv_path}" \
+  "grep -qx 'HCW_ANSIBLE_VENV=${venv_path}' '${bootstrap}'"
+check "bootstrap.sh links ansible-vault from that environment" \
+  "grep -qxE '[[:space:]]*for hcw_ansible_command in ansible ansible-playbook ansible-galaxy ansible-vault; do' '${bootstrap}'"
 check "the helper checks keys against the checkout at /opt/hcw-src unless HCW_SRC_DIR says otherwise" \
   "grep -qxF 'src=\"\${HCW_SRC_DIR:-/opt/hcw-src}\"' '${helper}'"
 check "bootstrap.sh keeps the playbook's checkout at /opt/hcw-src" \

@@ -11,22 +11,27 @@ import {
   DOCKER_GUIDE_PAGE_PATH,
   GROUP_VARS_PATH,
   HOST_BUMPERS,
+  PYPI,
   SANDBOX_DOCKERFILE_PATH,
   VERSIONS_ENV_PATH,
   aptIndex,
   aptPick,
   compareDebian,
   dockerCliDeb,
+  exactPin,
   goSumHash,
   inReleaseSha256,
   makeHttp,
+  normalizePyName,
   parseImageRef,
   planHost,
   planImageBase,
   planImageDigests,
+  readAnsibleCoreDeps,
   readEnv,
   readManifest,
   registryOf,
+  requirementsOf,
   renderEvidence,
   renderNotes,
   renderPlan,
@@ -37,8 +42,12 @@ import {
   setEnvValue,
   setYamlScalar,
   sumsLine,
+  wheelTags,
 } from './lib/lab-pin-bumps.mjs';
 import { LABELS } from './lab-pins-upstream.mjs';
+
+/** A value matched literally inside a RegExp: every metacharacter escaped, not only the dots of a version. */
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const real = (path) => readFileSync(join(REPO, path), 'utf8');
@@ -531,6 +540,307 @@ describe('the image base plan', () => {
     expect(sandbox).toBeTruthy();
     expect(plan.files[SANDBOX_DOCKERFILE_PATH]).not.toContain(env.SANDBOX_BASE_DIGEST);
     expect(readEnv(plan.files[VERSIONS_ENV_PATH]).SANDBOX_BASE_DIGEST).toBe(sha(JSON.stringify({ sandbox: true })));
+  });
+});
+
+describe('the ansible-core plan (image-base, LAB-13)', () => {
+  // The live pins, so these tests survive the bumps they describe.
+  const files = Object.fromEntries(
+    [VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH].map((p) => [p, real(p)])
+  );
+  const envText = files[VERSIONS_ENV_PATH];
+  const env = readEnv(envText);
+  const deps = readAnsibleCoreDeps(envText);
+  const pinned = env.ANSIBLE_CORE_VERSION;
+  const [major, minor] = pinned.split('.');
+  const nextPatch = `${major}.${minor}.99`;
+  const nextLine = `${major}.${Number(minor) + 1}.0`;
+  const nextSha = hex('a');
+  // ansible-core 2.21's Requires-Dist, as PyPI's JSON spells it.
+  const REQUIRES = ['jinja2>=3.1.0', 'PyYAML>=5.1', 'cryptography', 'packaging', 'resolvelib<2.0.0,>=0.8.0'];
+  const LINUX = 'cp314-cp314-manylinux_2_17_x86_64';
+  const coreFile = (version, digest, extra = {}) => ({
+    packagetype: 'bdist_wheel',
+    filename: `ansible_core-${version}-py3-none-any.whl`,
+    digests: { sha256: digest },
+    yanked: false,
+    ...extra,
+  });
+  const sdist = (name, version) => ({ packagetype: 'sdist', filename: `${name}-${version}.tar.gz`, digests: { sha256: hex('e') }, yanked: false });
+  const depWheel = (dep, version, digest, tags = LINUX) => ({
+    packagetype: 'bdist_wheel',
+    filename: `${dep.name.replace(/-/g, '_')}-${version}-${tags}.whl`,
+    digests: { sha256: digest },
+    yanked: false,
+  });
+  const depNamed = (name) => deps.find((d) => normalizePyName(d.name) === name);
+  const ansibleNotes = (plan) => plan.notes.filter((n) => n.label.startsWith('ansible-core'));
+
+  /** PyPI's JSON API for the pinned release, one newer patch in its line, and every pinned dependency. */
+  function pypi({ latest = nextPatch, releases, next = {}, current = {} } = {}) {
+    const routes = {
+      [`${PYPI}/ansible-core/json`]: {
+        info: { version: latest },
+        releases: releases ?? { [pinned]: [coreFile(pinned, env.ANSIBLE_CORE_SHA256)], [nextPatch]: [coreFile(nextPatch, nextSha)] },
+      },
+      [`${PYPI}/ansible-core/${pinned}/json`]: {
+        info: { requires_python: '>=3.12', requires_dist: REQUIRES, ...current.info },
+        urls: current.urls ?? [coreFile(pinned, env.ANSIBLE_CORE_SHA256), sdist('ansible_core', pinned)],
+      },
+      [`${PYPI}/ansible-core/${nextPatch}/json`]: {
+        info: { requires_python: '>=3.12', requires_dist: REQUIRES, ...next.info },
+        urls: next.urls ?? [coreFile(nextPatch, nextSha), sdist('ansible_core', nextPatch)],
+      },
+    };
+    for (const dep of deps) {
+      // The pinned wheel among the others PyPI lists for the release.
+      routes[`${PYPI}/${dep.name}/${dep.version}/json`] = {
+        info: { requires_dist: [] },
+        urls: [depWheel(dep, dep.version, hex('b'), 'cp314-cp314-win_amd64'), depWheel(dep, dep.version, dep.sha256), sdist(dep.name, dep.version)],
+      };
+    }
+    return routes;
+  }
+
+  /** A fake fetch that also records every URL it was asked for. */
+  function counting(routes) {
+    const urls = [];
+    const serve = fakeFetch(routes);
+    return { urls, fetchImpl: async (url, init) => (urls.push(url), serve(url, init)) };
+  }
+
+  it('reads the live ANSIBLE_CORE_DEPS block, and refuses a line in any other shape', () => {
+    expect(deps.length).toBeGreaterThan(0);
+    expect(new Set(deps.map((d) => normalizePyName(d.name))).size).toBe(deps.length);
+    for (const name of ['jinja2', 'pyyaml', 'cryptography', 'packaging', 'resolvelib']) expect(depNamed(name), name).toBeTruthy();
+    const broken = envText.replace(deps[0].line, `${deps[0].name}>=${deps[0].version}`);
+    expect(() => readAnsibleCoreDeps(broken)).toThrow(/not name==version --hash=sha256/);
+    expect(() => readAnsibleCoreDeps('BASE_IMAGE=x\n')).toThrow(/no ANSIBLE_CORE_DEPS block/);
+  });
+
+  it('reads Requires-Dist as PyPI writes it: markers kept, extras dropped, names normalised, only == as an exact pin', () => {
+    const reqs = requirementsOf(['PyYAML>=5.1', 'resolvelib<2.0.0,>=0.8.0', 'cryptography', 'foo (==1.0)', 'bar[x] >= 2 ; python_version < "3.13"', 'pytest; extra == "test"']);
+    expect([...reqs.keys()]).toEqual(['pyyaml', 'resolvelib', 'cryptography', 'foo', 'bar']);
+    expect(reqs.get('pyyaml')).toEqual({ name: 'PyYAML', specifier: '>=5.1', marker: '' });
+    expect(reqs.get('foo').specifier).toBe('==1.0');
+    expect(reqs.get('bar')).toEqual({ name: 'bar', specifier: '>=2', marker: 'python_version < "3.13"' });
+    expect(exactPin('==1.0')).toBe('1.0');
+    expect(exactPin('===1.0')).toBe('1.0');
+    for (const range of ['', '>=1.0', '==1.*', '==1.0,<2', '~=1.0', '!=1.0']) expect(exactPin(range), range).toBeNull();
+    expect(wheelTags('markupsafe-3.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl')).toBe(
+      'cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64'
+    );
+    expect(wheelTags('pkg-1.0-1-py3-none-any.whl')).toBe('py3-none-any');
+    expect(normalizePyName('Ruamel.YAML__clib')).toBe('ruamel-yaml-clib');
+  });
+
+  it('moves ANSIBLE_CORE_VERSION and ANSIBLE_CORE_SHA256 to the newest release in the line, every pinned wheel read back once', async () => {
+    const { urls, fetchImpl } = counting(pypi());
+    const plan = await planImageBase({ files, http: makeHttp(fetchImpl) });
+    const bump = plan.applied.find((b) => b.key === 'ansible-core');
+    expect(bump).toMatchObject({ from: pinned, to: nextPatch });
+    expect(bump.changes.map((c) => c.where)).toEqual(['ANSIBLE_CORE_VERSION', 'ANSIBLE_CORE_SHA256']);
+    // Those two lines move and nothing else in the file (the base reads 404 here, so they are notes).
+    const before = envText.split('\n');
+    expect(plan.files[VERSIONS_ENV_PATH].split('\n').filter((l, i) => l !== before[i])).toEqual([
+      `ANSIBLE_CORE_VERSION=${nextPatch}`,
+      `ANSIBLE_CORE_SHA256=${nextSha}`,
+    ]);
+    expect(readAnsibleCoreDeps(plan.files[VERSIONS_ENV_PATH])).toEqual(deps);
+    expect(bump.evidence[0]).toMatchObject({ item: `ansible_core-${nextPatch}-py3-none-any.whl (SHA256)`, value: nextSha });
+    expect(bump.evidence[0].source).toContain(`${PYPI}/ansible-core/${nextPatch}/json`);
+    // Every pinned dependency's wheel, by the hash versions.env pins, read from its release's own JSON: one request each.
+    for (const dep of deps) {
+      const url = `${PYPI}/${dep.name}/${dep.version}/json`;
+      expect(bump.evidence).toContainEqual(expect.objectContaining({ value: dep.sha256, source: url }));
+      expect(urls.filter((u) => u === url)).toHaveLength(1);
+    }
+    expect(ansibleNotes(plan)).toEqual([]);
+    expect(renderEvidence(plan.applied, { set: 'image-base', date: '2026-10-15' })).toContain(`### ansible-core (lab image and lab host): ${pinned} → ${nextPatch}`);
+  });
+
+  it('reads only the project JSON, and moves and notes nothing, when the pinned release is the newest', async () => {
+    const { urls, fetchImpl } = counting(pypi({ latest: pinned, releases: { [pinned]: [coreFile(pinned, env.ANSIBLE_CORE_SHA256)] } }));
+    const plan = await planImageBase({ files, http: makeHttp(fetchImpl) });
+    expect(plan.applied.filter((b) => b.key === 'ansible-core')).toEqual([]);
+    expect(ansibleNotes(plan)).toEqual([]);
+    expect(urls.filter((u) => u.startsWith(PYPI))).toEqual([`${PYPI}/ansible-core/json`]);
+    expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
+  });
+
+  it('takes the newest stable patch of the pinned line, past pre-releases and yanked files, and notes a new line rather than taking it', async () => {
+    const routes = pypi({
+      latest: nextLine,
+      releases: {
+        [pinned]: [coreFile(pinned, env.ANSIBLE_CORE_SHA256)],
+        [nextPatch]: [coreFile(nextPatch, nextSha)],
+        [`${major}.${minor}.100rc1`]: [coreFile(`${major}.${minor}.100rc1`, hex('c'))],
+        [`${major}.${minor}.101`]: [coreFile(`${major}.${minor}.101`, hex('d'), { yanked: true })],
+        [nextLine]: [coreFile(nextLine, hex('f'))],
+      },
+    });
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)) });
+    expect(plan.applied.find((b) => b.key === 'ansible-core')).toMatchObject({ from: pinned, to: nextPatch });
+    const line = plan.notes.find((n) => n.label === 'ansible-core release line');
+    expect(line).toMatchObject({ from: pinned, to: nextLine });
+    expect(line.reason).toMatch(/moved by hand/);
+    expect(line.reason).toContain('.github/workflows/ci.yml');
+  });
+
+  it('takes nothing when PyPI names a pre-release as the newest', async () => {
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(pypi({ latest: `${nextLine}rc1` }))) });
+    expect(plan.applied.filter((b) => b.key === 'ansible-core')).toEqual([]);
+    expect(ansibleNotes(plan).map((n) => n.reason).join(' ')).toMatch(/not a stable release/);
+    expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
+  });
+
+  it('holds PyPI\'s newest release to the same wheel and yank filter, so an unusable newest patch never hides an older valid one', async () => {
+    const newestPatch = `${major}.${minor}.100`;
+    // Its only wheel yanked, then an sdist and no wheel at all.
+    for (const newestFiles of [[coreFile(newestPatch, hex('d'), { yanked: true })], [sdist('ansible_core', newestPatch)]]) {
+      const { urls, fetchImpl } = counting(
+        pypi({
+          latest: newestPatch,
+          releases: { [pinned]: [coreFile(pinned, env.ANSIBLE_CORE_SHA256)], [nextPatch]: [coreFile(nextPatch, nextSha)], [newestPatch]: newestFiles },
+        })
+      );
+      const plan = await planImageBase({ files, http: makeHttp(fetchImpl) });
+      expect(plan.applied.find((b) => b.key === 'ansible-core')).toMatchObject({ from: pinned, to: nextPatch });
+      expect(ansibleNotes(plan)).toEqual([]);
+      expect(urls).not.toContain(`${PYPI}/ansible-core/${newestPatch}/json`);
+    }
+  });
+
+  it('is a note, and moves nothing, when the project JSON no longer carries the releases map PyPI lists as deprecated', async () => {
+    const routes = pypi();
+    delete routes[`${PYPI}/ansible-core/json`].releases;
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)) });
+    expect(plan.applied.filter((b) => b.key === 'ansible-core')).toEqual([]);
+    expect(ansibleNotes(plan)).toEqual([
+      expect.objectContaining({ from: pinned, reason: `${PYPI}/ansible-core/json carries no releases map to choose a release in the ${major}.${minor} line from` }),
+    ]);
+    expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
+  });
+
+  it('is a note when PyPI cannot be read, and the base plans go on without it', async () => {
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch({})) });
+    expect(ansibleNotes(plan)).toEqual([expect.objectContaining({ from: pinned, reason: `${PYPI}/ansible-core/json: HTTP 404` })]);
+    expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
+  });
+
+  // Each of these is something the plan cannot verify, so the release is a note and versions.env is left as it was.
+  const unverifiable = [
+    [
+      'a pinned dependency\'s hash is not one PyPI serves for that version',
+      (routes) => {
+        const dep = deps[0];
+        routes[`${PYPI}/${dep.name}/${dep.version}/json`] = { info: {}, urls: [depWheel(dep, dep.version, hex('9'))] };
+      },
+      new RegExp(`lists no wheel of ${deps[0].name} ${escapeRegExp(deps[0].version)} with the SHA256 ANSIBLE_CORE_DEPS pins`),
+    ],
+    [
+      'ANSIBLE_CORE_SHA256 is not PyPI\'s digest for the pinned release',
+      (routes) => {
+        routes[`${PYPI}/ansible-core/${pinned}/json`].urls = [coreFile(pinned, hex('7'))];
+      },
+      /ANSIBLE_CORE_SHA256 is not the SHA256 .* so the pin being moved from is itself unverified/,
+    ],
+    [
+      'the new release has more than its one wheel',
+      (routes) => {
+        routes[`${PYPI}/ansible-core/${nextPatch}/json`].urls.push(coreFile(nextPatch, hex('8'), { filename: `ansible_core-${nextPatch}-py2-none-any.whl` }));
+      },
+      /not the one wheel ansible_core-/,
+    ],
+    [
+      'the new release moves Requires-Python',
+      (routes) => {
+        routes[`${PYPI}/ansible-core/${nextPatch}/json`].info.requires_python = '>=3.13';
+      },
+      /declares Requires-Python >=3\.13, where .* declared >=3\.12/,
+    ],
+    [
+      'the new release changes a requirement other than to an exact pin',
+      (routes) => {
+        routes[`${PYPI}/ansible-core/${nextPatch}/json`].info.requires_dist = REQUIRES.map((r) => (r.startsWith('jinja2') ? 'jinja2>=3.2.0' : r));
+      },
+      new RegExp(`requires jinja2>=3\\.2\\.0, where .* required jinja2>=3\\.1\\.0; whether ${depNamed('jinja2').name}==\\S+ still satisfies that is not evaluated here`),
+    ],
+    [
+      'the new release adds a dependency ANSIBLE_CORE_DEPS does not list',
+      (routes) => {
+        routes[`${PYPI}/ansible-core/${nextPatch}/json`].info.requires_dist = [...REQUIRES, 'rich>=13'];
+      },
+      /requires rich>=13, which ANSIBLE_CORE_DEPS does not list/,
+    ],
+    [
+      'the new release drops a dependency ANSIBLE_CORE_DEPS still lists',
+      (routes) => {
+        routes[`${PYPI}/ansible-core/${nextPatch}/json`].info.requires_dist = REQUIRES.filter((r) => r !== 'packaging');
+      },
+      /no longer requires packaging/,
+    ],
+  ];
+  it.each(unverifiable)('is a note that edits nothing when %s', async (_what, change, reason) => {
+    const routes = pypi();
+    change(routes);
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)) });
+    expect(plan.applied.filter((b) => b.key === 'ansible-core')).toEqual([]);
+    const notes = ansibleNotes(plan);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({ label: 'ansible-core (lab image and lab host)', from: pinned, to: nextPatch });
+    expect(notes[0].reason).toMatch(reason);
+    expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
+    expect(renderNotes(plan.notes)).toContain(`**ansible-core (lab image and lab host)** ${pinned} → ${nextPatch}`);
+  });
+
+  describe('a dependency the new release pins exactly', () => {
+    const dep = depNamed('resolvelib');
+    const to = '9.9.9';
+    const pinnedTags = 'py3-none-any';
+    function routesPinning({ movedRequires = [], wheels } = {}) {
+      const routes = pypi();
+      routes[`${PYPI}/ansible-core/${nextPatch}/json`].info.requires_dist = REQUIRES.map((r) => (r.startsWith('resolvelib') ? `resolvelib==${to}` : r));
+      // The pinned resolvelib wheel is pure Python; PyPI lists its other builds beside it.
+      routes[`${PYPI}/${dep.name}/${dep.version}/json`] = {
+        info: { requires_dist: [] },
+        urls: [depWheel(dep, dep.version, hex('3'), 'py2-none-any'), depWheel(dep, dep.version, dep.sha256, pinnedTags)],
+      };
+      routes[`${PYPI}/${dep.name}/${to}/json`] = {
+        info: { requires_dist: movedRequires },
+        urls: wheels ?? [depWheel(dep, to, hex('5'), 'py2-none-any'), depWheel(dep, to, hex('6'), pinnedTags), sdist(dep.name, to)],
+      };
+      return routes;
+    }
+
+    it('moves its line to that version, the wheel built for the same tags, and leaves every other line', async () => {
+      const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routesPinning())) });
+      const bump = plan.applied.find((b) => b.key === 'ansible-core');
+      expect(bump).toMatchObject({ from: pinned, to: nextPatch });
+      const after = readAnsibleCoreDeps(plan.files[VERSIONS_ENV_PATH]);
+      expect(after.find((d) => d.name === dep.name)).toMatchObject({ version: to, sha256: hex('6') });
+      expect(after.filter((d) => d.name !== dep.name)).toEqual(deps.filter((d) => d.name !== dep.name));
+      expect(bump.changes.map((c) => c.where)).toEqual(['ANSIBLE_CORE_VERSION', 'ANSIBLE_CORE_SHA256', `ANSIBLE_CORE_DEPS ${dep.name}`]);
+      expect(bump.changes[2]).toMatchObject({ from: dep.line, to: `${dep.name}==${to} --hash=sha256:${hex('6')}` });
+      expect(bump.evidence).toContainEqual(
+        expect.objectContaining({ value: hex('6'), source: expect.stringContaining(`${PYPI}/${dep.name}/${to}/json`) })
+      );
+    });
+
+    it('is a note when that version has no wheel for the same tags', async () => {
+      const routes = routesPinning({ wheels: [depWheel(dep, to, hex('5'), 'py2-none-any')] });
+      const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)) });
+      expect(plan.applied.filter((b) => b.key === 'ansible-core')).toEqual([]);
+      expect(ansibleNotes(plan)[0].reason).toMatch(new RegExp(`pins resolvelib==${escapeRegExp(to)}, and .* lists 0 wheels with a SHA256 for py3-none-any`));
+      expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
+    });
+
+    it('is a note when that version changes its own requirements', async () => {
+      const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routesPinning({ movedRequires: ['newdep>=1'] }))) });
+      expect(plan.applied.filter((b) => b.key === 'ansible-core')).toEqual([]);
+      expect(ansibleNotes(plan)[0].reason).toMatch(/whose own requirements differ/);
+      expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
+    });
   });
 });
 

@@ -19,6 +19,53 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Lab host: ansible-core installed hash-locked from the lab image's own
+  pins, and the weekly pin bump moves it** (LAB-13, #959). The
+  low-hanging-fruit entry below (#1178) says `lab-host/bootstrap.sh`
+  hash-locked the `ansible-core` wheel. It did not: the script printed an
+  `ANSIBLE_CORE_SHA256` it carried as a copy and installed with
+  `uv tool install "ansible-core==2.21.4"`, which takes no hashes, so
+  neither that wheel nor the eight it depends on was checked. The script
+  now keeps no ansible-core pin. After it checks out the commit it will
+  run, it reads `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and
+  `ANSIBLE_CORE_DEPS` from that commit's `lab-image/versions.env` as data,
+  never sourcing the file, so an edit to it cannot run anything as root, and
+  refuses any requirement line that is not one pinned, hashed wheel, so
+  nothing in it reaches uv as an option. It writes the requirements file with the lab image fetch stage's
+  own two `printf` lines, and installs it with `uv pip install
+  --require-hashes --only-binary :all:`, then `uv pip check` and the fetch
+  stage's count check, into a new venv under
+  `/opt/uv/ansible-core-generations`, a directory of its own for every
+  build, built beside the one in use. Only when that passes, and its
+  `ansible-playbook --version` reports the pinned release on the pinned
+  Python, does the link `/opt/uv/ansible-core` move to it, so a failed
+  download, hash or check leaves the host on the environment it was using,
+  even when that is a build of the same pins that has stopped passing; a
+  generation is removed only after the link has moved off it, and one of
+  other pins is kept until the next move. `ansible`, `ansible-playbook`, `ansible-galaxy`
+  and `ansible-vault` are linked into `/usr/local/bin` through that link,
+  and `hcw-vault-set` runs its Python through it. The old uv tool under
+  `/opt/uv/tools` is removed after the play of the first run that has
+  installed that helper, so a check run, a run narrowed with `--tags` or a
+  failed play never leaves the helper on a removed interpreter; a rollback
+  with `HCW_REPO_REF` to a `bootstrap.sh` from before this change removes
+  the `ansible-playbook` link before handing over, so that script
+  reinstalls its uv tool. The install commands, run in an Ubuntu 26.04
+  container with uv 0.12.19 when first written, installed ansible-core
+  2.21.4 and its eight dependencies on CPython 3.14.7, refused a wrong hash
+  and an unlisted dependency, and installed nothing on a re-run;
+  `hcw-vault-set`'s 81 checks passed with `/opt/uv/ansible-core` a link to
+  a venv. `scripts/lab-host-bootstrap-ansible-core.test.mjs` runs the
+  switch, the retirement and the handover against a stand-in uv, and holds
+  the script to `versions.env` and to the Dockerfile's `printf` lines. The
+  weekly `chore/lab-pins-image-base` pull request now also moves
+  ansible-core to the newest release in its line that has a wheel PyPI has
+  not yanked, with the wheel's SHA256 from PyPI's JSON API and every
+  `ANSIBLE_CORE_DEPS` hash read back from PyPI, and moves a
+  dependency only when the new release pins it exactly; a new line, a
+  changed requirement or Requires-Python, or a hash PyPI does not serve is
+  a note in the weekly issue instead (a dry run on 2026-10-15 proposes
+  2.21.4 to 2.21.5). On the host after the next `bootstrap.sh`.
 - **A Health view inside 30 seconds of the last one is served from the
   cache instead of running the eleven-query fan-out again, and a Platform
   settings save made from a page that is out of date is refused and reloaded

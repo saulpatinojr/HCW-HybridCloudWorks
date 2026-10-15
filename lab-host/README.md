@@ -115,10 +115,12 @@ password login off. The script checks the host is Ubuntu 26.04 LTS (24.04
 LTS is accepted and says it is the fallback; anything else stops), then
 checks the host is empty (below), installs
 `uv` 0.12.19 from its GitHub release after checking the archive's SHA256,
-has uv install CPython 3.14.7 and `ansible-core` 2.21.4 on it, clones
+has uv install CPython 3.14.7, clones
 this repository into `/opt/hcw-src` (or fetches, when the clone exists),
 checks out the current `main` commit detached and prints its full sha
-(`HCW_REPO_REF`, below), installs the collections and runs `site.yml`
+(`HCW_REPO_REF`, below), installs `ansible-core` on that CPython from the
+`ANSIBLE_CORE_*` lines of that commit's `lab-image/versions.env` with every
+wheel hash-checked, installs the collections and runs `site.yml`
 against localhost. Without a
 vault the play stops at the `coder` role, on purpose: Coder is on (since
 2026-09-28) and the role will not start it without its three vault keys.
@@ -181,14 +183,36 @@ so the floor is 3.14.5, and Ubuntu 26.04's own `/usr/bin/python3` is 3.14.4
 
 | Runs | Interpreter | Why |
 | --- | --- | --- |
-| `ansible-playbook`, `ansible-galaxy`, `ansible-vault` (the control side) | CPython 3.14.7 from uv, under `/opt/uv/python`, in the environment `/opt/uv/tools/ansible-core`, linked into `/usr/local/bin` | The rule. `PYTHON_VERSION` at the top of `bootstrap.sh` is the pin; uv checks the download against the SHA256 it carries for that build, and uv itself is checked against `UV_SHA256` |
+| `ansible`, `ansible-playbook`, `ansible-galaxy`, `ansible-vault` (the control side) | CPython 3.14.7 from uv, under `/opt/uv/python`, in the venv the link `/opt/uv/ansible-core` (`HCW_ANSIBLE_VENV`) points to, one generation per build under `/opt/uv/ansible-core-generations`, linked into `/usr/local/bin` through that link | The rule. `PYTHON_VERSION` at the top of `bootstrap.sh` is the pin; uv checks the download against the SHA256 it carries for that build, and uv itself is checked against `UV_SHA256`. ansible-core and every wheel it depends on are the `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and `ANSIBLE_CORE_DEPS` lines of `lab-image/versions.env`, the lines the lab image is built from; `bootstrap.sh` keeps no copy, writes them as one `name==version --hash=sha256:<hex>` line each, and installs them with `uv pip install --require-hashes --only-binary :all:`, which refuses a wheel whose SHA256 differs and any dependency the file does not list |
 | Every module the play runs on the host | `/usr/bin/python3`, the distribution's (3.14.4 on 26.04, 3.12.3 on 24.04) | **The one recorded exception.** `python3-apt`, `python3-debian` and `python3-docker`, which the `apt`, `deb822_repository` and `community.docker` modules import, are Ubuntu packages built for that interpreter and cannot be loaded by another. `ansible_python_interpreter` in `ansible/inventory/localhost.yml` says so |
 
 A successful run prints, before the play starts, `ansible-playbook [core
-2.21.4]` and a `python version = 3.14.7` line. Moving Python is a change to
-`PYTHON_VERSION` (and `UV_VERSION`/`UV_SHA256` when the newer Python needs a
-newer uv); the script rebuilds the environment when either the Python or the
-ansible-core pin no longer matches what is installed.
+<ANSIBLE_CORE_VERSION from versions.env>]` and a `python version = 3.14.7`
+line; a run that installs says `installing ansible-core <version> and the <n>
+wheels it depends on into /opt/uv/ansible-core-generations/<generation>`
+first, and `switched /opt/uv/ansible-core to <that generation>` once it has
+passed. Moving Python is a change to `PYTHON_VERSION` (and
+`UV_VERSION`/`UV_SHA256` when the newer Python needs a newer uv); moving
+ansible-core is a change to `lab-image/versions.env` (its section in
+`lab-image/README.md`, "Updating a version"). Either needs a new generation,
+a directory whose name starts with the ansible-core release, the Python and
+the first twelve hex digits of the requirements file's SHA256, and ends with
+the build's UTC time and a random tag (a copy of the requirements is kept in
+it as `hcw-requirements.txt`). The script builds it beside the one in use,
+checks it with `uv pip check`, the package count and its own `--version`,
+and only then moves the link, so a failed download, hash or check stops the
+run with the host still on the environment it was using. That holds when
+the one in use is itself a build of the same pins that has stopped passing
+those checks: a rebuild gets a directory of its own, and the old build is
+removed only after the link has moved off it. A generation of other pins
+that the link moved from is kept until the next move, so `HCW_REPO_REF` back
+to the commit that pinned it switches back without a download.
+
+The ansible-core uv tool an earlier script installed under `/opt/uv/tools`,
+without hashes, is removed after the play of the first run whose play
+installs an `hcw-vault-set` that no longer runs that tool's Python. Until
+then the helper on the host still needs it, so a `--check` run, a run whose
+`--tags` leave out `vault_tools`, or a play that stops early keeps it.
 
 ## Re-running
 
@@ -301,10 +325,12 @@ request to take effect.
 A run prints the commit before anything changes, as
 `[bootstrap] checking out origin/main at <40-character sha>`, and again as
 `[bootstrap] running site.yml from <sha> against localhost`. When the
-commit carries a different `bootstrap.sh` from the one that started (a
-Python or ansible-core bump), the run says
+commit carries a different `bootstrap.sh` from the one that started (a uv
+or Python bump), the run says
 `carries a different bootstrap.sh; handing over to it` and continues as the
-new script, on the same sha.
+new script, on the same sha. An ansible-core bump needs no handover: it is
+in `lab-image/versions.env`, which the script reads from the commit it has
+just checked out.
 
 `HCW_REPO_REF` also takes any sha or ref the fetch can see, to hold a host
 back or roll it back. Because a plain run also applies whatever has merged
@@ -320,6 +346,20 @@ Roll back to `main` as it was before the most recent merge:
 
 ```bash
 sudo HCW_REPO_REF=origin/main~1 /opt/hcw-src/lab-host/bootstrap.sh
+```
+
+A rollback to a commit whose `bootstrap.sh` predates the generations above
+(it has no `HCW_ANSIBLE_VENV` line) works the same way. That script installs
+ansible-core as a uv tool only when `/usr/local/bin/ansible-playbook` does
+not already report its pins, so before handing over to it the current script
+removes that one link when it points through `/opt/uv/ansible-core`. The
+older script then reinstalls its uv tool, and its play installs the
+`hcw-vault-set` that runs that tool's Python. Running an older checkout's
+script directly, without the handover, skips that step; remove the link
+first:
+
+```bash
+sudo rm -f /usr/local/bin/ansible-playbook
 ```
 
 Move the playbook to current `main` but keep the agent on the commit it
@@ -1588,7 +1628,8 @@ index. It opens or updates one pull request on the branch
 `chore/lab-pins-host` whose body says where each value was read. A pin whose
 checksum it could not verify is not moved; it is listed in the weekly issue,
 and this section is how a person moves it. The same run proposes the lab
-image's newest base digest (`chore/lab-pins-image-base`), and each publish of
+image's newest base digest and ansible-core's newest release in its line,
+which this host installs too (`chore/lab-pins-image-base`), and each publish of
 the lab images proposes their new digests to the two places that pin them
 (`chore/lab-pins-image-digests`). Merging changes nothing on the host until
 `bootstrap.sh` runs. The prose dates beside each pin in `group_vars/all.yml`
@@ -1614,7 +1655,7 @@ advisories".
 | Node.js | `labs_agent_node_version`; the line is `labs_agent_node_apt_repository_url` in `roles/labs_agent/defaults/main.yml` | NodeSource `node_26.x` package index |
 | Repository commit | Not pinned. `HCW_REPO_REF` in `bootstrap.sh` defaults to `origin/main`, and `labs_agent_repo_ref` reads the playbook's own checkout | Nothing to bump: merge, then re-run. The run prints the sha; holding or rolling back a host is under "Re-running" |
 | Collections, including the one transitive dependency | `requirements.yml` | Galaxy |
-| Ansible tooling | `ANSIBLE_CORE_VERSION` in `bootstrap.sh`; the pip pins in `ci.yml`; the image digest above | PyPI; the image's `RepoDigests` |
+| Ansible tooling | `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and `ANSIBLE_CORE_DEPS` in `../lab-image/versions.env`, which `bootstrap.sh` installs from (the weekly `chore/lab-pins-image-base` pull request moves them within their line); the pip pins in `ci.yml`; the image digest above | PyPI's JSON API (`https://pypi.org/pypi/<name>/<version>/json`, the wheel's `digests.sha256`); the image's `RepoDigests` |
 | Python and uv | `PYTHON_VERSION`, `UV_VERSION` and `UV_SHA256` at the top of `bootstrap.sh` | https://www.python.org/downloads/ for the newest release; https://github.com/astral-sh/uv/releases for uv, whose `.sha256` asset beside `uv-x86_64-unknown-linux-gnu.tar.gz` is the value |
 
 All in `ansible/group_vars/all.yml` unless the table says otherwise.

@@ -20,7 +20,10 @@
 #                    how the lab images are rebuilt on a newer base (the
 #                    rebuild itself is the publish that merging it triggers;
 #                    publish-lab-image.yml says what a rebuild can and cannot
-#                    change on its own).
+#                    change on its own), and ansible-core's ANSIBLE_CORE_*
+#                    lines to its newest release in its line, with every
+#                    wheel's hash read from PyPI (lab-host/bootstrap.sh
+#                    installs the host's ansible-core from the same lines).
 #      Each edit carries the checksum or digest read from the publisher
 #      beside the version (scripts/lib/lab-pin-bumps.mjs says which, from
 #      where). A pin whose checksum could not be verified is not edited: it is

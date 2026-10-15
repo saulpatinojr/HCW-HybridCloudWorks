@@ -177,6 +177,11 @@ describe('the pin sets', () => {
     expect(base).not.toContain('## Infrastructure changes only');
     expect(base).toContain('- [ ] Infrastructure or deployment change');
     expect(base).toContain('CHECKED_ON');
+    // An ansible-core move rides this set and reaches the host through bootstrap.sh (LAB-13, #959): the body says so.
+    expect(base).toContain('`ANSIBLE_CORE_VERSION` and `ANSIBLE_CORE_SHA256`');
+    expect(base).toContain('**An ansible-core move reaches the lab host too.**');
+    expect(base).toContain('ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"');
+    expect(base).toContain('this pull request does not move it');
     const digests = prBody({ set: 'image-digests', evidence: 'x', notes: '', runUrl: 'u' });
     // The host publishes the templates itself with its rotation credential
     // (seeded 2026-10-10): the body asks for no token and no manual push.
