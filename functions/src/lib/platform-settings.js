@@ -1003,9 +1003,11 @@ const isWriteConflict = (error) => {
 
 /**
  * The entity-tags an If-Match header names (#946), or null when there is no
- * header. `*` comes back as `['*']`. Weak tags are dropped: If-Match uses the
- * strong comparison (RFC 9110 §13.1.1), so `W/"…"` can never match, and a
- * header naming nothing else matches nothing.
+ * header. `*` alone comes back as `['*']`; inside a list it is not the
+ * grammar (RFC 9110 §13.1.1: `"*" / #entity-tag`) and is dropped, so it can
+ * never widen a list into a wildcard. Weak tags are dropped too: If-Match
+ * uses the strong comparison, so `W/"…"` can never match, and a header naming
+ * nothing else matches nothing.
  *
  * @param {string|null|undefined} header the raw If-Match value
  * @returns {string[]|null}
@@ -1017,8 +1019,17 @@ export function parseIfMatch(header) {
   return raw
     .split(',')
     .map((tag) => tag.trim())
-    .filter((tag) => tag && !tag.startsWith('W/'));
+    .filter((tag) => tag && tag !== '*' && !tag.startsWith('W/'));
 }
+
+/**
+ * Whether the If-Match tags name no particular version: the header was `*`,
+ * which matches whatever is stored.
+ *
+ * @param {string[]} tags from parseIfMatch
+ * @returns {boolean}
+ */
+const namesAnyVersion = (tags) => tags.includes('*');
 
 /**
  * Whether the stored document is a version the If-Match tags name: any stored
@@ -1043,12 +1054,15 @@ const settingChanged = () =>
       'This setting was saved somewhere else since this page loaded it. Nothing was saved; reload it to see what is stored now.',
   });
 
-/** The 428 for a save that would replace a stored document without naming its version. */
+/**
+ * The 428 for a save that did not name the version it replaces: no If-Match
+ * over a stored document, or `If-Match: *`. Nothing was written.
+ */
 const versionRequired = () =>
   json(428, {
     code: 'PRECONDITION_REQUIRED',
     error:
-      'This setting is already stored, and the save did not say which version it replaces. Nothing was saved; reload the page and save again.',
+      'The save did not name the version of this setting it replaces, so nothing was saved. Reload the page and save again.',
   });
 
 /**
@@ -1155,9 +1169,12 @@ export function createPlatformSettingsHandlers({
    * Without If-Match, the save may only create: the caller is saying nothing
    * was stored when it read. If a document exists by the time it writes, the
    * create's 409 becomes a 428, because the caller has not said which version
-   * it would replace. That is what makes the precondition required: no
-   * request can overwrite a stored setting without naming the version it
-   * read.
+   * it would replace. `If-Match: *` is refused with the same 428 before
+   * anything is read: it matches whatever is stored, so it names no version
+   * either, and honouring it would be the unconditional overwrite under
+   * another name (review of #946; the page never sends it). That is what
+   * makes the precondition required: no request can overwrite a stored
+   * setting without naming the version it read.
    *
    * @param {object} spec the setting's registry entry
    * @param {object} value the normalized value to store
@@ -1168,6 +1185,7 @@ export function createPlatformSettingsHandlers({
    *   response refusing the save
    */
   async function writeConditional(spec, value, meta, tags) {
+    if (tags && namesAnyVersion(tags)) return { error: versionRequired() };
     const doc = { id: spec.docId, configScope: ADMIN_CONFIG_PARTITION, ...value, ...meta };
     try {
       if (!tags) return { written: await store.createDoc('admin_config', doc) };
@@ -1244,7 +1262,7 @@ export function createPlatformSettingsHandlers({
      * If-Match names the version it replaces (#946). Answers the stored value
      * and its new ETag, which the next save from the same page names; 412
      * when the named version is no longer stored, 428 when a stored document
-     * would be replaced without naming one.
+     * would be replaced without naming one, `If-Match: *` included.
      */
     async putSetting(request, context) {
       const auth = await guard.requireRole(request, 'editor');

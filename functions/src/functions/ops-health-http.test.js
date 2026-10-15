@@ -100,6 +100,22 @@ describe('getOpsHealthSnapshot, through its registration', () => {
     );
   });
 
+  it('builds again inside the 30 s when the body asks to refresh, as the page does after an action', async () => {
+    await call('getOpsHealthSnapshot', {});
+    const fanOut = queryDocs.mock.calls.length;
+
+    vi.setSystemTime(T0.getTime() + 5_000);
+    const refreshed = await call('getOpsHealthSnapshot', { refresh: true });
+    expect(queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+    expect(JSON.parse(refreshed.body).generatedAt).toBe(
+      new Date(T0.getTime() + 5_000).toISOString()
+    );
+
+    // The mount read's shape, an empty body, is still served from the cache.
+    await call('getOpsHealthSnapshot', {});
+    expect(queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+  });
+
   it('builds again after an alert update made through the other route', async () => {
     await call('getOpsHealthSnapshot');
     const fanOut = queryDocs.mock.calls.length;

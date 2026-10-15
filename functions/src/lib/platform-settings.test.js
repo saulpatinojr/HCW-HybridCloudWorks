@@ -1550,7 +1550,7 @@ describe('a save names the version it replaces (#946)', () => {
     expect(res.status).toBe(428);
     expect(parse(res)).toEqual({
       code: 'PRECONDITION_REQUIRED',
-      error: expect.stringMatching(/already stored.*Nothing was saved/),
+      error: expect.stringMatching(/did not name the version.*nothing was saved/),
     });
     expect(store.current()).toEqual(storedFeeds());
     expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
@@ -1570,21 +1570,33 @@ describe('a save names the version it replaces (#946)', () => {
     expect(store.createDoc).toHaveBeenCalledTimes(1);
   });
 
-  it('If-Match: * replaces whatever is stored, and is a 412 when nothing is', async () => {
-    const stored = versionedStore(storedFeeds());
-    const h = createPlatformSettingsHandlers({ guard: allowGuard, store: stored, ...fixed });
-    expect(
-      (await h.putSetting(request('podcast-feeds', { ifMatch: '*', body: feedsB }), context)).status
-    ).toBe(200);
-    expect(stored.current()).toMatchObject(feedsB);
+  it('If-Match: * names no version, so it is a 428 that reads and writes nothing, stored or not (review of #946)', async () => {
+    for (const store of [versionedStore(storedFeeds()), versionedStore()]) {
+      const before = store.current();
+      const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+      const res = await h.putSetting(
+        request('podcast-feeds', { ifMatch: '*', body: feedsB }),
+        context
+      );
+      expect(res.status).toBe(428);
+      expect(parse(res).code).toBe('PRECONDITION_REQUIRED');
+      expect(store.current()).toEqual(before);
+      expect(store.readDoc).not.toHaveBeenCalled();
+      expect(store.createDoc).not.toHaveBeenCalled();
+      expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+      expect(store.upsertDoc).not.toHaveBeenCalled();
+    }
+  });
 
-    const empty = versionedStore();
-    const h2 = createPlatformSettingsHandlers({ guard: allowGuard, store: empty, ...fixed });
-    expect(
-      (await h2.putSetting(request('podcast-feeds', { ifMatch: '*', body: feedsB }), context))
-        .status
-    ).toBe(412);
-    expect(empty.current()).toBeNull();
+  it('a * inside a list is no wildcard: only the listed versions can match', async () => {
+    const store = versionedStore(storedFeeds());
+    const h = createPlatformSettingsHandlers({ guard: allowGuard, store, ...fixed });
+    const res = await h.putSetting(
+      request('podcast-feeds', { ifMatch: '"v0", *', body: feedsB }),
+      context
+    );
+    expect(res.status).toBe(412);
+    expect(store.current()).toEqual(storedFeeds());
   });
 
   it('matches a listed strong tag, and never a weak one', async () => {
@@ -1607,6 +1619,7 @@ describe('a save names the version it replaces (#946)', () => {
     expect(parseIfMatch('   ')).toBeNull();
     expect(parseIfMatch('*')).toEqual(['*']);
     expect(parseIfMatch(' "a" , W/"b", "c" ')).toEqual(['"a"', '"c"']);
+    expect(parseIfMatch('"a", *')).toEqual(['"a"']);
     expect(parseIfMatch('W/"b"')).toEqual([]);
     expect(satisfiesIfMatch(['*'], null)).toBe(false);
     expect(satisfiesIfMatch(['*'], { _etag: '"a"' })).toBe(true);

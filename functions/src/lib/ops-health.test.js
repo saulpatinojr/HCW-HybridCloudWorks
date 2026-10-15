@@ -10,6 +10,7 @@ import {
   OPS_HEALTH_CACHE_TTL_MS,
   WORKFLOW_ALERT_ACTIONS,
   alertUpdateRefusal,
+  asksToRefresh,
   createOpsHealthHandlers,
   buildWorkflowAlertUpdates,
   getWorkflowAlertStatus,
@@ -607,6 +608,240 @@ describe('the snapshot cache outlives the handler set that filled it (#946)', ()
       .updateWorkflowAlert(makeRequest({ alertId: 'a1', action: 'acknowledge' }), context);
     expect(update.status).toBe(200);
 
+    await perRequest({ store, clock })().getOpsHealthSnapshot(plain(), context);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+  });
+});
+
+describe('a refresh, a slow build and a failed audit, against the shared cache (review of #946)', () => {
+  const plain = () => ({ query: { get: () => null } });
+  /** What the Health page's refresh() sends after an action: the flag in the body. */
+  const bodyRefresh = () => ({ query: { get: () => null }, json: async () => ({ refresh: true }) });
+  /** Let every pending promise callback and timer at 0 ms run. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  const perRequest =
+    ({ store, clock, guard = allowGuard('viewer') }) =>
+    () =>
+      createOpsHealthHandlers({
+        guard,
+        store,
+        env: ENV,
+        now: () => new Date(clock.ms),
+        uuid: () => 'fixed-uuid',
+      });
+
+  /**
+   * opsStore whose queries wait at a gate the test opens, and whose published
+   * count is read when the query is ISSUED: a build that started before an
+   * action reports what was stored before it, however late it answers.
+   */
+  function gatedStore() {
+    const base = opsStore();
+    const state = { published: 12 };
+    let open;
+    let gate = new Promise((resolve) => {
+      open = resolve;
+    });
+    const store = {
+      ...base,
+      queryDocs: vi.fn(async (container, query, params) => {
+        const published = state.published;
+        await gate;
+        if (query.includes('VALUE COUNT') && query.includes("'published'")) return [published];
+        return base.queryDocs(container, query, params);
+      }),
+    };
+    return {
+      store,
+      state,
+      open: () => open(),
+      close: () => {
+        gate = new Promise((resolve) => {
+          open = resolve;
+        });
+      },
+    };
+  }
+
+  /** How many queries one build runs, measured on a store of its own. */
+  async function queriesPerBuild() {
+    const store = opsStore();
+    await perRequest({ store, clock: { ms: NOW.getTime() } })().getOpsHealthSnapshot(
+      plain(),
+      context
+    );
+    return store.queryDocs.mock.calls.length;
+  }
+
+  const body = (response) => JSON.parse(response.body);
+
+  it('asksToRefresh: the body flag or the query, strictly, and never a body it cannot parse', async () => {
+    expect(await asksToRefresh(bodyRefresh())).toBe(true);
+    expect(await asksToRefresh({ query: { get: (k) => (k === 'refresh' ? 'true' : null) } })).toBe(
+      true
+    );
+    expect(await asksToRefresh({ query: { refresh: 'true' } })).toBe(true);
+    expect(await asksToRefresh({ json: async () => ({ refresh: 'true' }) })).toBe(false);
+    expect(await asksToRefresh({ json: async () => ({}) })).toBe(false);
+    expect(
+      await asksToRefresh({
+        json: async () => {
+          throw new SyntaxError('not JSON');
+        },
+      })
+    ).toBe(false);
+    expect(await asksToRefresh(plain())).toBe(false);
+  });
+
+  it('a refresh in the body rebuilds inside the 30 s, and the next plain view gets that build', async () => {
+    const store = opsStore();
+    const clock = { ms: NOW.getTime() };
+    const handlers = perRequest({ store, clock });
+
+    await handlers().getOpsHealthSnapshot(plain(), context);
+    const fanOut = store.queryDocs.mock.calls.length;
+
+    clock.ms += 5_000;
+    const refreshed = await handlers().getOpsHealthSnapshot(bodyRefresh(), context);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+    expect(body(refreshed).generatedAt).toBe(new Date(clock.ms).toISOString());
+
+    const after = await handlers().getOpsHealthSnapshot(plain(), context);
+    expect(after.body).toBe(refreshed.body);
+    expect(store.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+  });
+
+  it('serves a build still running past 30 s instead of starting another fan-out', async () => {
+    const gated = gatedStore();
+    const clock = { ms: NOW.getTime() };
+    const handlers = perRequest({ store: gated.store, clock });
+
+    const first = handlers().getOpsHealthSnapshot(plain(), context);
+    await settle();
+    const issued = gated.store.queryDocs.mock.calls.length;
+    expect(issued).toBeGreaterThan(0);
+
+    // Cosmos is slow (429 retries): a view a minute later joins the build.
+    clock.ms += 60_000;
+    const second = handlers().getOpsHealthSnapshot(plain(), context);
+    await settle();
+    expect(gated.store.queryDocs).toHaveBeenCalledTimes(issued);
+
+    gated.open();
+    const [a, b] = await Promise.all([first, second]);
+    expect(b.body).toBe(a.body);
+  });
+
+  it('counts the 30 s from when the build settled, not from when it started', async () => {
+    const gated = gatedStore();
+    const clock = { ms: NOW.getTime() };
+    const handlers = perRequest({ store: gated.store, clock });
+
+    const first = handlers().getOpsHealthSnapshot(plain(), context);
+    await settle();
+    clock.ms = NOW.getTime() + 20_000;
+    gated.open();
+    await first;
+    const fanOut = gated.store.queryDocs.mock.calls.length;
+
+    // 45 s after it started, 25 s after it settled: still served.
+    clock.ms = NOW.getTime() + 45_000;
+    await handlers().getOpsHealthSnapshot(plain(), context);
+    expect(gated.store.queryDocs).toHaveBeenCalledTimes(fanOut);
+
+    // 30 s after it settled: rebuilt.
+    clock.ms = NOW.getTime() + 50_000;
+    await handlers().getOpsHealthSnapshot(plain(), context);
+    expect(gated.store.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
+  });
+
+  it('never hands a refresh a build that started before it, so the action it follows is in the answer', async () => {
+    const gated = gatedStore();
+    const handlers = perRequest({ store: gated.store, clock: { ms: NOW.getTime() } });
+
+    // The page's mount read starts a build, and it is still reading...
+    const mountRead = handlers().getOpsHealthSnapshot(plain(), context);
+    await settle();
+    const issued = gated.store.queryDocs.mock.calls.length;
+
+    // ...when an action changes what is stored, and the page asks to refresh.
+    gated.state.published = 13;
+    const refresh = handlers().getOpsHealthSnapshot(bodyRefresh(), context);
+    await settle();
+    // The refresh waits; it does not start a second fan-out beside the first.
+    expect(gated.store.queryDocs).toHaveBeenCalledTimes(issued);
+
+    gated.open();
+    const [before, after] = await Promise.all([mountRead, refresh]);
+    expect(body(before).readiness.publishedItems).toBe(12);
+    expect(body(after).readiness.publishedItems).toBe(13);
+  });
+
+  it('refreshes that arrive while a build runs share one queued build between them', async () => {
+    const perBuild = await queriesPerBuild();
+    const gated = gatedStore();
+    const handlers = perRequest({ store: gated.store, clock: { ms: NOW.getTime() } });
+
+    const running = handlers().getOpsHealthSnapshot(plain(), context);
+    await settle();
+    gated.state.published = 13;
+    const refreshes = [
+      handlers().getOpsHealthSnapshot(bodyRefresh(), context),
+      handlers().getOpsHealthSnapshot(bodyRefresh(), context),
+      handlers().getOpsHealthSnapshot(bodyRefresh(), context),
+    ];
+    gated.open();
+    const answers = await Promise.all([running, ...refreshes]);
+
+    // The running build, then one queued build for all three refreshes.
+    expect(gated.store.queryDocs).toHaveBeenCalledTimes(perBuild * 2);
+    for (const answer of answers.slice(2)) expect(answer.body).toBe(answers[1].body);
+    expect(body(answers[1]).readiness.publishedItems).toBe(13);
+  });
+
+  it('a refresh with nothing running starts its build at once', async () => {
+    const gated = gatedStore();
+    gated.open();
+    const handlers = perRequest({ store: gated.store, clock: { ms: NOW.getTime() } });
+    await handlers().getOpsHealthSnapshot(plain(), context);
+    const fanOut = gated.store.queryDocs.mock.calls.length;
+
+    gated.close();
+    const refresh = handlers().getOpsHealthSnapshot(bodyRefresh(), context);
+    await settle();
+    expect(gated.store.queryDocs.mock.calls.length).toBeGreaterThan(fanOut);
+    gated.open();
+    expect((await refresh).status).toBe(200);
+  });
+
+  it('invalidates as soon as the alert is patched, even when the audit write after it fails', async () => {
+    const base = opsStore();
+    const store = {
+      ...base,
+      readDoc: vi.fn(async (container, id, pk) =>
+        container === 'workflow_alerts'
+          ? { id, alertType: 'link_rot', active: true }
+          : base.readDoc(container, id, pk)
+      ),
+      upsertDoc: vi.fn(async (container) => {
+        if (container === 'audits') throw new Error('audits throttled');
+      }),
+    };
+    const clock = { ms: NOW.getTime() };
+
+    await perRequest({ store, clock })().getOpsHealthSnapshot(plain(), context);
+    const fanOut = store.queryDocs.mock.calls.length;
+
+    const update = await perRequest({ store, clock, guard: allowGuard('publisher') })()
+      .updateWorkflowAlert(makeRequest({ alertId: 'a1', action: 'resolve', resolutionNote: 'ok' }), {
+        error: vi.fn(),
+        warn: vi.fn(),
+      });
+    expect(update.status).toBe(500);
+    expect(base.patchDoc).toHaveBeenCalledTimes(1);
+
+    // The alert did change, so the next view must not be the cached snapshot.
     await perRequest({ store, clock })().getOpsHealthSnapshot(plain(), context);
     expect(store.queryDocs).toHaveBeenCalledTimes(fanOut * 2);
   });

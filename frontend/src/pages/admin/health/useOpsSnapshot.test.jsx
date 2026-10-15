@@ -47,6 +47,40 @@ describe('useOpsSnapshot', () => {
     expect(result.current.error).toBe('');
   });
 
+  // #946: the API keeps the snapshot for 30 s. A refresh follows an action
+  // (a digest run, an RSS fetch, a probe, an alert answered), and a cached
+  // answer would show the page as it was before that action for up to 30 s.
+  it('takes the cached snapshot on its first read, and asks for a fresh build on every refresh', async () => {
+    postJSON.mockResolvedValueOnce(FIRST).mockResolvedValue(NEWER);
+    const { result } = renderHook(() => useOpsSnapshot(true));
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(postJSON.mock.calls).toEqual([
+      ['getOpsHealthSnapshot', {}],
+      ['getOpsHealthSnapshot', { refresh: true }],
+      ['getOpsHealthSnapshot', { refresh: true }],
+    ]);
+    expect(result.current.snapshot).toEqual(NEWER);
+  });
+
+  it('a "Try again" click hands refresh its event, and the event never becomes the request', async () => {
+    postJSON.mockRejectedValueOnce(new Error('snapshot refused')).mockResolvedValue(FIRST);
+    const { result } = renderHook(() => useOpsSnapshot(true));
+    await waitFor(() => expect(result.current.error).toBe('snapshot refused'));
+
+    await act(async () => {
+      await result.current.refresh({ type: 'click', target: {} });
+    });
+    expect(postJSON).toHaveBeenLastCalledWith('getOpsHealthSnapshot', { refresh: true });
+    expect(result.current.snapshot).toEqual(FIRST);
+  });
+
   it('does not let a slow first load overwrite a refresh that resolved before it', async () => {
     const slow = deferred();
     postJSON.mockReturnValueOnce(slow.promise).mockResolvedValueOnce(NEWER);

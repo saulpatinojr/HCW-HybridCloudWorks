@@ -20,6 +20,14 @@
  * failed or was superseded, and the failure itself is in `error`. The action
  * that asked for the refresh did happen either way, so its caller reports the
  * action and leaves the snapshot's failure to the tabs that show the snapshot.
+ *
+ * The API keeps the snapshot for 30 s (#946). The page's first read takes the
+ * cached one; `refresh`, which runs after an action (a digest, an RSS fetch,
+ * a probe, an alert answered) or a "Try again", sends `{ refresh: true }` and
+ * gets a build that started after it, so the action's effect is on screen at
+ * once rather than up to 30 s later. The flag rides in the body: a query
+ * string in the route name would miss the client's per-route timeout and
+ * retry tables (lib/api.js).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -27,6 +35,17 @@ import { postJSON } from '@/lib/api';
 
 export const EMPTY_SNAPSHOT = Object.freeze({ readiness: null, digest: null, alerts: [] });
 
+/** The body of a read that may be served from the API's cache. */
+const CACHED_READ = Object.freeze({});
+/** The body of a read that must reflect what has just been done. */
+const FRESH_READ = Object.freeze({ refresh: true });
+
+/**
+ * The Health Hub's ops snapshot, its loading and error state, and `refresh`.
+ *
+ * @param {boolean} authReady whether a token can be had yet; nothing is read before
+ * @returns {{ snapshot: object, loaded: boolean, loading: boolean, error: string, refresh: () => Promise<boolean> }}
+ */
 export default function useOpsSnapshot(authReady) {
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
   const [loaded, setLoaded] = useState(false);
@@ -39,11 +58,11 @@ export default function useOpsSnapshot(authReady) {
   // State is only ever set after the await, and only by the newest read. The
   // first read's "pending, no error" is the initial state, so the effect below
   // starts it without a synchronous setState (react-hooks/set-state-in-effect).
-  const read = useCallback(async (mine) => {
+  const read = useCallback(async (mine, body) => {
     const current = () => mine === generation.current;
     let landed = false;
     try {
-      const result = await postJSON('getOpsHealthSnapshot', {});
+      const result = await postJSON('getOpsHealthSnapshot', body);
       if (current()) {
         setSnapshot(result || EMPTY_SNAPSHOT);
         setLoaded(true);
@@ -61,16 +80,18 @@ export default function useOpsSnapshot(authReady) {
     return landed;
   }, []);
 
+  // Takes no arguments on purpose: "Try again" passes it straight to onClick,
+  // and the click event must not become the request.
   const refresh = useCallback(() => {
     const mine = ++generation.current;
     setPending(true);
     setError('');
-    return read(mine);
+    return read(mine, FRESH_READ);
   }, [read]);
 
   useEffect(() => {
     if (!authReady) return undefined;
-    read(++generation.current);
+    read(++generation.current, CACHED_READ);
     return () => {
       // Supersede the read in flight: its result, success or failure, is dropped.
       generation.current += 1;
