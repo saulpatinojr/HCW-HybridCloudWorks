@@ -16,7 +16,7 @@
  */
 import { httpRoute, httpRouteByMethod } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
-import { readDoc, upsertDoc } from '../lib/cosmos-client.js';
+import { readDoc, upsertDoc, replaceDocIfMatch } from '../lib/cosmos-client.js';
 import { readKey } from '../lib/ai/router.js';
 import { createConnectionProbe } from '../lib/integrations/connection-probe.js';
 import { createIntegrationStatusHandlers } from '../lib/integrations/integration-status.js';
@@ -37,7 +37,7 @@ const probe = () =>
 const status = () =>
   createIntegrationStatusHandlers({
     guard: getDefaultGuard(),
-    store: { readDoc, upsertDoc },
+    store: { readDoc, upsertDoc, replaceDocIfMatch },
   });
 
 httpRoute('connectionProbe', {

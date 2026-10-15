@@ -564,6 +564,37 @@ export async function queryDocs(containerName, query, parameters = [], options =
 }
 
 /**
+ * Query documents with SQL and return a single page with its continuation token (AP-B11).
+ *
+ * @param {string} containerName
+ * @param {string} query - Cosmos DB SQL query
+ * @param {Array<{name: string, value: any}>} [parameters]
+ * @param {object} [options]
+ * @param {number} [options.maxItemCount] - maximum items per page
+ * @param {string} [options.continuationToken] - continuation token from previous page
+ * @param {string} [options.partitionKey] - scope to one logical partition
+ * @returns {Promise<{ resources: object[], continuationToken: string|null, hasMoreResults: boolean }>}
+ */
+export async function queryDocsPage(containerName, query, parameters = [], options = {}) {
+  const container = getContainer(containerName);
+  const feedOptions = {
+    maxItemCount: options.maxItemCount || options.limit || 50,
+  };
+  if (options.continuationToken) {
+    feedOptions.continuationToken = options.continuationToken;
+  }
+  if (options.partitionKey !== undefined && options.partitionKey !== null) {
+    feedOptions.partitionKey = options.partitionKey;
+  }
+  const response = await container.items.query({ query, parameters }, feedOptions).fetchNext();
+  return {
+    resources: response.resources || [],
+    continuationToken: response.continuationToken || null,
+    hasMoreResults: response.hasMoreResults ?? false,
+  };
+}
+
+/**
  * Count documents matching a query.
  * Equivalent to: admin.firestore().collection(name).count().get()
  *
@@ -580,4 +611,5 @@ export async function countDocs(containerName, whereClause, parameters = []) {
   const { resources } = await container.items.query({ query, parameters }).fetchAll();
   return resources[0] || 0;
 }
+
 

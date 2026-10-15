@@ -115,13 +115,10 @@ export function createIntegrationStatusHandlers({ guard, store, now = () => new 
       if (parsed.problem) return json(400, { error: parsed.problem });
       try {
         const nowIso = now().toISOString();
-        const services = await readServices();
-        const previous = services[parsed.service] ?? {};
         const actor = auth.user?.oid ?? auth.user?.sub ?? auth.user?.preferred_username ?? null;
-        services[parsed.service] = parsed.ok
-          ? { ...previous, lastOkAt: nowIso, lastTestedBy: actor }
+        const newOutcome = parsed.ok
+          ? { lastOkAt: nowIso, lastTestedBy: actor }
           : {
-              ...previous,
               lastFailAt: nowIso,
               // Overwritten on every failure, including with null when the
               // test gave no sentence: a stale reason beside a fresh time is
@@ -129,16 +126,58 @@ export function createIntegrationStatusHandlers({ guard, store, now = () => new 
               lastError: parsed.error,
               lastTestedBy: actor,
             };
-        await store.upsertDoc(INTEGRATION_STATUS_CONTAINER, {
-          id: INTEGRATION_STATUS_DOC_ID,
-          services,
-          updatedAt: nowIso,
-        });
-        return json(200, {
-          success: true,
-          service: parsed.service,
-          status: presentServiceStatus(services[parsed.service]),
-        });
+
+        const MAX_RETRIES = 5;
+        let lastError = null;
+
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
+          const doc = await store.readDoc(
+            INTEGRATION_STATUS_CONTAINER,
+            INTEGRATION_STATUS_DOC_ID,
+            INTEGRATION_STATUS_DOC_ID
+          );
+          const services =
+            doc?.services && typeof doc.services === 'object' && !Array.isArray(doc.services)
+              ? { ...doc.services }
+              : {};
+          const previous = services[parsed.service] ?? {};
+          services[parsed.service] = { ...previous, ...newOutcome };
+
+          const nextDoc = {
+            id: INTEGRATION_STATUS_DOC_ID,
+            services,
+            updatedAt: nowIso,
+          };
+
+          if (typeof store.replaceDocIfMatch === 'function' && doc?._etag) {
+            try {
+              await store.replaceDocIfMatch(
+                INTEGRATION_STATUS_CONTAINER,
+                { ...nextDoc, _etag: doc._etag },
+                { partitionKey: INTEGRATION_STATUS_DOC_ID }
+              );
+              return json(200, {
+                success: true,
+                service: parsed.service,
+                status: presentServiceStatus(services[parsed.service]),
+              });
+            } catch (err) {
+              if (err?.code === 412 || /412|precondition/i.test(err?.message)) {
+                lastError = err;
+                continue;
+              }
+              throw err;
+            }
+          } else {
+            await store.upsertDoc(INTEGRATION_STATUS_CONTAINER, nextDoc);
+            return json(200, {
+              success: true,
+              service: parsed.service,
+              status: presentServiceStatus(services[parsed.service]),
+            });
+          }
+        }
+        throw lastError || new Error('Concurrency conflict: maximum retries exceeded');
       } catch (error) {
         context.error?.(`putIntegrationStatus failed: ${error?.message || error}`);
         return json(500, { error: 'Failed to record integration status' });

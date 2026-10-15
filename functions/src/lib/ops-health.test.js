@@ -48,6 +48,85 @@ const ENV = {
 };
 const fixed = { now: () => NOW, uuid: () => 'fixed-uuid', env: ENV };
 
+function opsStore() {
+  return {
+    queryDocs: vi.fn(async (container, query, params) => {
+      if (query.includes('VALUE COUNT')) {
+        if (query.includes("'published'")) return [12];
+        if (query.includes("'rss'")) return [3];
+        return [2]; // queue breach
+      }
+      if (container === 'content' && query.includes('c["slug"]')) {
+        return [{ id: 'p1', slug: 'has-slug' }, { id: 'p2' }]; // one missing slug
+      }
+      if (container === 'content' && query.includes('ARRAY_CONTAINS(@ids, c.id)')) {
+        const ids = params?.[0]?.value || [];
+        return ids.filter((id) => id === 'c-exists').map((id) => ({ id }));
+      }
+      if (container === 'content') {
+        return [
+          {
+            id: 's1',
+            contentStatus: 'approved',
+            updatedAt: '2026-08-06T04:00:00Z',
+          },
+          {
+            id: 's-live',
+            contentStatus: 'published',
+            Live: true,
+            updatedAt: '2026-08-07T03:00:00Z',
+          },
+        ];
+      }
+      if (container === 'workflow_digests') {
+        expect(query).toContain('ORDER BY c.id DESC');
+        return [
+          {
+            id: '2026-08-06',
+            publishingOps: { status: 'success', lastRunAt: 'run-ts' },
+          },
+        ];
+      }
+      if (container === 'workflow_alerts') {
+        return [
+          {
+            id: 'a-open',
+            alertType: 'scheduled_publish_failures',
+            updatedAt: '2026-08-07T02:00:00Z',
+          },
+          {
+            id: 'a-resolved',
+            status: 'resolved',
+            updatedAt: '2026-08-07T03:00:00Z',
+          },
+        ];
+      }
+      if (container === 'generated_content_images') {
+        return [
+          { id: 'img-ok', contentId: 'c-exists' },
+          { id: 'img-orphan', contentId: 'c-gone' },
+          { id: 'img-noid', contentId: '' },
+        ];
+      }
+      return [];
+    }),
+    readDoc: vi.fn(async (container, id) => {
+      if (container === 'workflow_digests') return null;
+      if (container === 'system') return { telegram: 'state' };
+      if (container === 'content') return id === 'c-exists' ? { id } : null;
+      if (container === 'admin_config' && id === 'forge_stats') {
+        return {
+          updatedAt: '2026-08-07T01:00:00.000Z',
+          today: { date: '2026-08-07', forged: 3 },
+        };
+      }
+      return null;
+    }),
+    upsertDoc: vi.fn(),
+    patchDoc: vi.fn(),
+  };
+}
+
 describe('helpers', () => {
   it('alertUpdateRefusal refuses the body before any read, in the handler order', () => {
     const body = (status, error) => ({ status, error });
@@ -147,88 +226,6 @@ describe('helpers', () => {
 });
 
 describe('getOpsHealthSnapshot', () => {
-  function opsStore() {
-    return {
-      queryDocs: vi.fn(async (container, query, params) => {
-        if (query.includes('VALUE COUNT')) {
-          if (query.includes("'published'")) return [12];
-          if (query.includes("'rss'")) return [3];
-          return [2]; // queue breach
-        }
-        if (container === 'content' && query.includes('c["slug"]')) {
-          return [{ id: 'p1', slug: 'has-slug' }, { id: 'p2' }]; // one missing slug
-        }
-        // Orphan probe (T-711): one batched existence check in place of a
-        // point read per generated image. Only 'c-exists' exists, matching the
-        // readDoc branch below that this replaced.
-        if (container === 'content' && query.includes('ARRAY_CONTAINS(@ids, c.id)')) {
-          const ids = params?.[0]?.value || [];
-          return ids.filter((id) => id === 'c-exists').map((id) => ({ id }));
-        }
-        if (container === 'content') {
-          // staged rows
-          return [
-            {
-              id: 's1',
-              contentStatus: 'approved',
-              updatedAt: '2026-08-06T04:00:00Z',
-            },
-            {
-              id: 's-live',
-              contentStatus: 'published',
-              Live: true,
-              updatedAt: '2026-08-07T03:00:00Z',
-            },
-          ];
-        }
-        if (container === 'workflow_digests') {
-          expect(query).toContain('ORDER BY c.id DESC'); // the source's bug fix
-          return [
-            {
-              id: '2026-08-06',
-              publishingOps: { status: 'success', lastRunAt: 'run-ts' },
-            },
-          ];
-        }
-        if (container === 'workflow_alerts') {
-          return [
-            {
-              id: 'a-open',
-              alertType: 'scheduled_publish_failures',
-              updatedAt: '2026-08-07T02:00:00Z',
-            },
-            {
-              id: 'a-resolved',
-              status: 'resolved',
-              updatedAt: '2026-08-07T03:00:00Z',
-            },
-          ];
-        }
-        if (container === 'generated_content_images') {
-          return [
-            { id: 'img-ok', contentId: 'c-exists' },
-            { id: 'img-orphan', contentId: 'c-gone' },
-            { id: 'img-noid', contentId: '' },
-          ];
-        }
-        return [];
-      }),
-      readDoc: vi.fn(async (container, id) => {
-        if (container === 'workflow_digests') return null; // today's digest absent
-        if (container === 'system') return { telegram: 'state' };
-        if (container === 'content') return id === 'c-exists' ? { id } : null;
-        if (container === 'admin_config' && id === 'forge_stats') {
-          return {
-            updatedAt: '2026-08-07T01:00:00.000Z',
-            today: { date: '2026-08-07', forged: 3 },
-          };
-        }
-        return null;
-      }),
-      upsertDoc: vi.fn(),
-      patchDoc: vi.fn(),
-    };
-  }
 
   it('assembles the full source response shape', async () => {
     const store = opsStore();
@@ -395,4 +392,56 @@ describe('updateWorkflowAlert', () => {
       metadata: { alertType: 'link_rot' },
     });
   });
+
+  it('caches the operations health snapshot for 30s and invalidates on alert update (AP-B11)', async () => {
+    let nowMs = NOW.getTime();
+    const store = opsStore();
+    const h = createOpsHealthHandlers({
+      guard: allowGuard('viewer'),
+      store,
+      now: () => new Date(nowMs),
+      ...fixed,
+    });
+
+    const res1 = await h.getOpsHealthSnapshot({ query: { get: () => null } }, context);
+    expect(res1.status).toBe(200);
+    const initialCalls = store.queryDocs.mock.calls.length;
+
+    // Second call within 30s serves from cache, no new store queries
+    nowMs += 10_000;
+    const res2 = await h.getOpsHealthSnapshot({ query: { get: () => null } }, context);
+    expect(res2.status).toBe(200);
+    expect(store.queryDocs.mock.calls.length).toBe(initialCalls);
+
+    // Call with ?refresh=true bypasses cache
+    const res3 = await h.getOpsHealthSnapshot({ query: { get: (k) => (k === 'refresh' ? 'true' : null) } }, context);
+    expect(res3.status).toBe(200);
+    expect(store.queryDocs.mock.calls.length).toBeGreaterThan(initialCalls);
+  });
+
+  it('sanitizes 500 error responses and attaches correlation ID (AP-B10)', async () => {
+    const explodingStore = {
+      ...opsStore(),
+      queryDocs: vi.fn(async () => {
+        throw new Error('Cosmos connection refused: 192.168.1.1');
+      }),
+    };
+    const ctx = {
+      invocationId: 'ops-inv-999',
+      error: vi.fn(),
+    };
+    const h = createOpsHealthHandlers({
+      guard: allowGuard('viewer'),
+      store: explodingStore,
+      ...fixed,
+    });
+    const res = await h.getOpsHealthSnapshot({ query: { get: () => null } }, ctx);
+    expect(res.status).toBe(500);
+    const body = JSON.parse(res.body);
+    expect(body.error).toBe('Failed to generate operations health snapshot');
+    expect(body.correlationId).toBe('ops-inv-999');
+    expect(res.body).not.toContain('192.168.1.1');
+    expect(ctx.error).toHaveBeenCalled();
+  });
 });
+

@@ -35,8 +35,44 @@ export function listAllHandler({ guard, store }, { container, name, failure }) {
     const auth = await guard.requireRole(request, 'editor');
     if (auth.error) return auth.error;
     try {
-      const items = await store.queryDocs(container, `SELECT TOP ${LIST_WINDOW} * FROM c`, []);
-      return json(200, { success: true, items, total: items.length });
+      const continuationToken =
+        request?.query?.get?.('continuationToken') ||
+        request?.query?.continuationToken ||
+        null;
+      const limitRaw =
+        request?.query?.get?.('limit') ||
+        request?.query?.limit;
+      const limit = Number(limitRaw) > 0 ? Math.min(Number(limitRaw), LIST_WINDOW) : LIST_WINDOW;
+
+      if (typeof store.queryDocsPage === 'function') {
+        const page = await store.queryDocsPage(
+          container,
+          'SELECT * FROM c ORDER BY c._ts DESC',
+          [],
+          {
+            maxItemCount: limit,
+            continuationToken: continuationToken || undefined,
+          }
+        );
+        return json(200, {
+          success: true,
+          items: page.resources || [],
+          total: (page.resources || []).length,
+          continuationToken: page.continuationToken || null,
+        });
+      }
+
+      const items = await store.queryDocs(
+        container,
+        `SELECT TOP ${limit} * FROM c ORDER BY c._ts DESC`,
+        []
+      );
+      return json(200, {
+        success: true,
+        items,
+        total: items.length,
+        continuationToken: null,
+      });
     } catch (error) {
       context.error(`${name} failed:`, error);
       return json(500, { error: failure });

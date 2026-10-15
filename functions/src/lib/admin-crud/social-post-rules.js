@@ -7,6 +7,18 @@
 export const SOCIAL_DEFAULT_STATUSES = ['scheduled', 'published'];
 /** What PATCH may change on a social post; everything else is Publer's or the timer's. */
 export const SOCIAL_EDITABLE = ['caption', 'url', 'scheduledAt'];
+/** What POST may carry on social post creation (AP-B6). */
+export const SOCIAL_CREATE_FIELDS = [
+  'caption',
+  'text',
+  'url',
+  'scheduledAt',
+  'status',
+  'accountIds',
+  'platforms',
+  'mediaUrls',
+  'contentId',
+];
 const MAX_CAPTION = 5000;
 
 /** One editable field each: the cleaned value, or the sentence refusing it. */
@@ -56,3 +68,88 @@ export function socialPostEditRefusal(existing, updates) {
   }
   return null;
 }
+
+/** Validate fields for social post creation (AP-B6). Returns `{ doc }` or `{ error }`. */
+export function validateSocialPostCreate(body, nowMs) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Body must be a JSON object' };
+  }
+  const unknown = Object.keys(body).filter((key) => !SOCIAL_CREATE_FIELDS.includes(key));
+  if (unknown.length > 0) {
+    return { error: `Unknown field(s): ${unknown.join(', ')}` };
+  }
+
+  const doc = {};
+
+  // caption or text
+  const captionRaw = body.caption ?? body.text;
+  if (captionRaw !== undefined) {
+    const cleanedCaption = SOCIAL_FIELD_CLEANERS.caption(captionRaw);
+    if (cleanedCaption.error) return cleanedCaption;
+    doc.caption = cleanedCaption.value;
+    if (body.text !== undefined) doc.text = cleanedCaption.value;
+  }
+
+  // url
+  if (body.url !== undefined) {
+    const cleanedUrl = SOCIAL_FIELD_CLEANERS.url(body.url);
+    if (cleanedUrl.error) return cleanedUrl;
+    doc.url = cleanedUrl.value;
+  }
+
+  // scheduledAt
+  if (body.scheduledAt !== undefined) {
+    const cleanedWhen = SOCIAL_FIELD_CLEANERS.scheduledAt(body.scheduledAt, nowMs);
+    if (cleanedWhen.error) return cleanedWhen;
+    doc.scheduledAt = cleanedWhen.value;
+  }
+
+  // status
+  if (body.status !== undefined) {
+    const validStatuses = ['draft', 'scheduled', 'published', 'failed'];
+    if (!validStatuses.includes(body.status)) {
+      return { error: `status must be one of: ${validStatuses.join(', ')}` };
+    }
+    doc.status = body.status;
+  } else {
+    doc.status = doc.scheduledAt ? 'scheduled' : 'draft';
+  }
+
+  // accountIds
+  if (body.accountIds !== undefined) {
+    if (!Array.isArray(body.accountIds) || body.accountIds.some((id) => typeof id !== 'string')) {
+      return { error: 'accountIds must be an array of strings' };
+    }
+    doc.accountIds = body.accountIds;
+  }
+
+  // platforms
+  if (body.platforms !== undefined) {
+    if (!Array.isArray(body.platforms) || body.platforms.some((p) => typeof p !== 'string')) {
+      return { error: 'platforms must be an array of strings' };
+    }
+    doc.platforms = body.platforms;
+  }
+
+  // mediaUrls
+  if (body.mediaUrls !== undefined) {
+    if (
+      !Array.isArray(body.mediaUrls) ||
+      body.mediaUrls.some((u) => typeof u !== 'string' || !/^https?:\/\//i.test(u))
+    ) {
+      return { error: 'mediaUrls must be an array of http(s) URLs' };
+    }
+    doc.mediaUrls = body.mediaUrls;
+  }
+
+  // contentId
+  if (body.contentId !== undefined) {
+    if (typeof body.contentId !== 'string') {
+      return { error: 'contentId must be a string' };
+    }
+    doc.contentId = body.contentId;
+  }
+
+  return { doc };
+}
+

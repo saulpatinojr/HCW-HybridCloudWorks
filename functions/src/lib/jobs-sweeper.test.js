@@ -126,4 +126,93 @@ describe('abandoned running jobs (T-710)', () => {
     expect(reaped).toEqual([{ jobId: 'r5', type: 'hooked' }]);
     expect(warn.mock.calls.some((c) => /onComplete/.test(String(c[0])))).toBe(true);
   });
+
+  it('passes _etag condition on reap and skips when 412 conflict occurs', async () => {
+    resetJobTypes();
+    const onComplete = vi.fn();
+    registerJobType('etag-job', {
+      role: 'editor',
+      worker: async () => {},
+      timeoutMs: 60_000,
+      onComplete,
+    });
+    const startedAt = new Date(NOW.getTime() - 60_000 - RUNNING_GRACE_MS - 1000).toISOString();
+    const warn = vi.fn();
+    const store = {
+      queryDocs: runningRows([{ id: 'r6', type: 'etag-job', startedAt, _etag: '"etag-123"' }]),
+      patchDoc: vi.fn(async () => {
+        const err = new Error('Precondition failed');
+        err.code = 412;
+        throw err;
+      }),
+    };
+    const { reaped } = await createJobSweeper({ store, now: () => NOW, log: { warn } }).sweep();
+    expect(reaped).toEqual([]);
+    expect(store.patchDoc).toHaveBeenCalledWith(
+      JOBS_CONTAINER,
+      'r6',
+      expect.objectContaining({ status: 'timeout' }),
+      { ifMatch: '"etag-123"' }
+    );
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+  });
 });
+
+describe('poison message requeue ceiling (AP-B7)', () => {
+  it('marks a job failed as poison message when requeueCount reaches MAX_REQUEUE_COUNT and fires onComplete', async () => {
+    resetJobTypes();
+    const onComplete = vi.fn(async () => {});
+    registerJobType('poison-type', {
+      role: 'editor',
+      worker: async () => {},
+      onComplete,
+    });
+    const store = {
+      queryDocs: vi.fn(async (_c, sql) =>
+        sql.includes("'running'")
+          ? []
+          : [
+              { id: 'p1', type: 'poison-type', requeueCount: 3, _etag: '"p1-etag"' },
+              { id: 'ok1', type: 'poison-type', requeueCount: 2, _etag: '"ok1-etag"' },
+            ]
+      ),
+      patchDoc: vi.fn(async () => ({})),
+    };
+    const { requeued, reaped } = await createJobSweeper({ store, now: () => NOW }).sweep();
+    expect(reaped).toEqual([]);
+    // p1 is poison, not requeued; ok1 is below ceiling, requeued
+    expect(requeued).toEqual([{ jobId: 'ok1', type: 'poison-type' }]);
+
+    // p1 patched as failed with poison error and ETag
+    expect(store.patchDoc).toHaveBeenCalledWith(
+      JOBS_CONTAINER,
+      'p1',
+      {
+        status: 'failed',
+        finishedAt: NOW.toISOString(),
+        error: 'exceeded maximum requeue attempts (3); marked as poison message',
+      },
+      { ifMatch: '"p1-etag"' }
+    );
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete.mock.calls[0][0]).toMatchObject({
+      job: expect.objectContaining({ id: 'p1' }),
+      status: 'failed',
+      result: null,
+      error: expect.stringMatching(/poison message/),
+    });
+
+    // ok1 patched as requeued with incremented count
+    expect(store.patchDoc).toHaveBeenCalledWith(
+      JOBS_CONTAINER,
+      'ok1',
+      {
+        requeuedAt: NOW.toISOString(),
+        requeueCount: 3,
+      },
+      { ifMatch: '"ok1-etag"' }
+    );
+  });
+});
+

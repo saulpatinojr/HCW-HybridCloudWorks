@@ -160,4 +160,34 @@ describe('the handlers', () => {
     expect(res.status).toBe(400);
     expect(s.upsertDoc).not.toHaveBeenCalled();
   });
+
+  it('uses replaceDocIfMatch with _etag and retries on 412 conflict (AP-B11)', async () => {
+    let callCount = 0;
+    const s = {
+      readDoc: vi.fn(async () => {
+        callCount += 1;
+        return {
+          id: 'integration-status',
+          services: { other: { lastOkAt: 'prev' } },
+          _etag: `"etag-${callCount}"`,
+        };
+      }),
+      replaceDocIfMatch: vi.fn(async (_c, doc) => {
+        if (callCount === 1) {
+          const err = new Error('Precondition failed');
+          err.code = 412;
+          throw err;
+        }
+        return doc;
+      }),
+    };
+    const h = createIntegrationStatusHandlers({ guard: allow, store: s, now: () => NOW });
+    const res = await h.putIntegrationStatus(req({ service: 'publer', ok: true }), context);
+    expect(res.status).toBe(200);
+    expect(s.replaceDocIfMatch).toHaveBeenCalledTimes(2);
+    expect(s.replaceDocIfMatch.mock.calls[0][1]._etag).toBe('"etag-1"');
+    expect(s.replaceDocIfMatch.mock.calls[1][1]._etag).toBe('"etag-2"');
+    expect(s.replaceDocIfMatch.mock.calls[1][1].services.publer.lastOkAt).toBe(NOW.toISOString());
+    expect(s.replaceDocIfMatch.mock.calls[1][1].services.other.lastOkAt).toBe('prev');
+  });
 });

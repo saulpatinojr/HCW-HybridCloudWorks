@@ -32,6 +32,32 @@ describe('createJobFailureOnComplete', () => {
     await hook({ job, status: 'timeout', result: null, error: 'job timed out' });
     expect(notifier.notifyTelegram.mock.calls[0][0].message).toContain('timed out');
   });
+
+  it('redacts sensitive credentials and email addresses in payload and error', async () => {
+    const { hook, notifier } = makeHook();
+    await hook({
+      job: {
+        id: 'job-sec',
+        type: 'publish-content',
+        payload: {
+          token: 'secret-token-123',
+          email: 'admin@example.com',
+          apiKey: 're_1234567890abcdef',
+        },
+      },
+      status: 'failed',
+      result: null,
+      error: 'Bearer def-123 failed for user@hcw.test',
+    });
+    const msg = notifier.notifyTelegram.mock.calls[0][0].message;
+    expect(msg).not.toContain('secret-token-123');
+    expect(msg).not.toContain('admin@example.com');
+    expect(msg).not.toContain('re_1234567890abcdef');
+    expect(msg).not.toContain('user@hcw.test');
+    expect(msg).not.toContain('def-123');
+    expect(msg).toContain('[redacted]');
+    expect(msg).toContain('[redacted email]');
+  });
 });
 
 describe('prefixed source display names', () => {

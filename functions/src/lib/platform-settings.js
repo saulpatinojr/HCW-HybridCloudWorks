@@ -1116,12 +1116,38 @@ export function createPlatformSettingsHandlers({
           if (merged.error) return merged.error;
           ({ value } = merged);
         } else {
-          await store.upsertDoc('admin_config', {
-            id: spec.docId,
-            configScope: ADMIN_CONFIG_PARTITION,
-            ...value,
-            ...meta,
-          });
+          const clientIfMatch = request.headers?.get?.('if-match');
+          if (clientIfMatch && typeof store.replaceDocIfMatch === 'function') {
+            const stored = await store.readDoc('admin_config', spec.docId, ADMIN_CONFIG_PARTITION);
+            if (!stored) {
+              return json(412, { error: 'Precondition failed: setting does not exist' });
+            }
+            if (clientIfMatch !== '*' && stored._etag && clientIfMatch !== stored._etag) {
+              return json(412, { error: 'Precondition failed: ETag mismatch' });
+            }
+            const doc = {
+              id: spec.docId,
+              configScope: ADMIN_CONFIG_PARTITION,
+              ...value,
+              ...meta,
+              _etag: stored._etag,
+            };
+            try {
+              await store.replaceDocIfMatch('admin_config', doc, { partitionKey: ADMIN_CONFIG_PARTITION });
+            } catch (error) {
+              if (isWriteConflict(error)) {
+                return json(412, { error: 'Precondition failed: setting changed concurrently' });
+              }
+              throw error;
+            }
+          } else {
+            await store.upsertDoc('admin_config', {
+              id: spec.docId,
+              configScope: ADMIN_CONFIG_PARTITION,
+              ...value,
+              ...meta,
+            });
+          }
         }
         // A different newsletter template takes effect on the next preview,
         // not when the cached copy of the previous one expires.

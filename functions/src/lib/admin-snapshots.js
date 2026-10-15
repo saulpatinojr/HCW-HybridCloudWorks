@@ -25,6 +25,7 @@
 import { ADMIN_CONTENT_SNAPSHOT_FIELDS } from "./cms-content.js";
 import { REVIEW_DECISION_STATUSES } from "./cms/content-status.js";
 import { resolveIdeaOrigin, resolveKind } from "./cms/taxonomy.js";
+import { errorResponse } from "./http/error-response.js";
 
 const json = (status, body) => ({
   status,
@@ -591,11 +592,7 @@ export function createAdminSnapshotHandlers({
         const body = (await request.json().catch(() => null)) || {};
         return json(200, await buildQueueSnapshot(ctx, body));
       } catch (error) {
-        context.error("getQueueSnapshot failed:", error);
-        return json(500, {
-          error: "Failed to generate queue snapshot",
-          message: error?.message || "Unknown error",
-        });
+        return errorResponse(context, "Failed to generate queue snapshot", error, 500, request);
       }
     },
 
@@ -636,11 +633,7 @@ export function createAdminSnapshotHandlers({
           publishedItems,
         });
       } catch (error) {
-        context.error("getPublishSnapshot failed:", error);
-        return json(500, {
-          error: "Failed to generate publish snapshot",
-          message: error?.message || "Unknown error",
-        });
+        return errorResponse(context, "Failed to generate publish snapshot", error, 500, request);
       }
     },
 
@@ -676,11 +669,7 @@ export function createAdminSnapshotHandlers({
           recentNeedsReview,
         });
       } catch (error) {
-        context.error("getAdminDashboardSnapshot failed:", error);
-        return json(500, {
-          error: "Failed to generate dashboard snapshot",
-          message: error?.message || "Unknown error",
-        });
+        return errorResponse(context, "Failed to generate dashboard snapshot", error, 500, request);
       }
     },
 
@@ -729,11 +718,7 @@ export function createAdminSnapshotHandlers({
           message: `Content changed during each of ${RECOUNT_ATTEMPTS} recounts, so the counters were left as they were. Press Recount again in a minute.`,
         });
       } catch (error) {
-        context.error("recalculateDashboardStats failed:", error);
-        return json(500, {
-          error: "Failed to recalculate dashboard stats",
-          message: error?.message || "Unknown error",
-        });
+        return errorResponse(context, "Failed to recalculate dashboard stats", error, 500, request);
       }
     },
   };

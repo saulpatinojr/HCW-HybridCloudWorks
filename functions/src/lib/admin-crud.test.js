@@ -453,3 +453,41 @@ describe('social posts: the patch validator and the edit refusal (ADR 0033 Ampli
     expect(socialPostEditRefusal({ status: 'scheduled' }, { scheduledAt: 'x' })).toBeNull();
   });
 });
+
+describe('AP-B6: mass assignment allowlists on admin CRUD writes', () => {
+  it('social post creation rejects unknown fields with 400 and does not persist them', async () => {
+    const store = makeStore();
+    const h = createAdminCrudHandlers({ guard: allowGuard, store, ...fixed });
+    const res = await h.createSocialPost(
+      makeRequest({ body: { caption: 'Safe post', maliciousField: true, adminBypass: 'yes' } }),
+      context
+    );
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/Unknown field\(s\): maliciousField, adminBypass/);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  it('certification create and patch reject unknown fields with 400', async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: 'c1', name: 'Existing Cert' })),
+    });
+    const h = createAdminCrudHandlers({ guard: allowGuard, store, ...fixed });
+
+    const createRes = await h.createCertification(
+      makeRequest({ body: { name: 'Valid Cert', injection: 'drop database' } }),
+      context
+    );
+    expect(createRes.status).toBe(400);
+    expect(JSON.parse(createRes.body).error).toMatch(/Unknown field\(s\) for certification: injection/);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+
+    const patchRes = await h.patchCertification(
+      makeRequest({ params: { id: 'c1' }, body: { evilProp: 123 } }),
+      context
+    );
+    expect(patchRes.status).toBe(400);
+    expect(JSON.parse(patchRes.body).error).toMatch(/Unknown field\(s\) for certification: evilProp/);
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+});
+

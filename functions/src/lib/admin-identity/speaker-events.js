@@ -5,6 +5,7 @@
  * store, now, actor); the factory at the bottom only wires them.
  */
 import { json } from '../http/admin-handler.js';
+import { errorResponse } from '../http/error-response.js';
 import { checkSpeakerEventUpsert } from './speaker-event-rules.js';
 
 /**
@@ -42,11 +43,7 @@ async function upsertSpeakerEvent(ctx, request, context) {
 
     return json(200, { success: true, docId: checked.docId });
   } catch (error) {
-    context.error('upsertSpeakerEvent failed:', error);
-    return json(500, {
-      error: 'Failed to save speaker event',
-      message: error?.message || 'Unknown error',
-    });
+    return errorResponse(context, 'Failed to save speaker event', error, 500, request);
   }
 }
 
@@ -70,11 +67,7 @@ async function deleteSpeakerEvent(ctx, request, context) {
     await ctx.store.deleteDoc('speakerevents', docId);
     return json(200, { success: true, docId, deletedBy: ctx.actor(auth.user) });
   } catch (error) {
-    context.error('deleteSpeakerEvent failed:', error);
-    return json(500, {
-      error: 'Failed to delete speaker event',
-      message: error?.message || 'Unknown error',
-    });
+    return errorResponse(context, 'Failed to delete speaker event', error, 500, request);
   }
 }
 

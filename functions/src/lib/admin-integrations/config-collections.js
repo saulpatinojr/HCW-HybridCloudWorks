@@ -51,6 +51,53 @@ const CONFIG_COLLECTIONS = {
   'mcp-servers': 'mcp_servers',
 };
 
+/** Allowlists for config collections (AP-B6). */
+export const AI_PROVIDER_FIELDS = Object.freeze([
+  'id',
+  'name',
+  'enabled',
+  'order',
+  'apiKeyEnvVar',
+  'model',
+  'defaultModel',
+  'baseUrl',
+  'apiVersion',
+  'temperature',
+  'maxTokens',
+  'timeoutMs',
+  'models',
+  'description',
+  'notes',
+  'status',
+  'lastError',
+  'lastTestedAt',
+  'createdAt',
+  'updatedAt',
+]);
+
+export const MCP_SERVER_FIELDS = Object.freeze([
+  'id',
+  'name',
+  'url',
+  'transport',
+  'apiKeyEnvVar',
+  'enabled',
+  'order',
+  'authType',
+  'allowedTools',
+  'oauthToken',
+  'oauthRefreshToken',
+  'description',
+  'notes',
+  'headers',
+  'status',
+  'lastError',
+  'lastTestedAt',
+  'tools',
+  'createdAt',
+  'updatedAt',
+]);
+
 // The token values are write-only, but consumers need to know whether one is
 // stored (RecordingsPage renders 'connected' from status + token presence,
 // and since 2026-09-05 shows whether the 12-hour refresh timer has a refresh
@@ -349,11 +396,62 @@ function carryForwardTokens(doc, incoming, existing) {
  * the boolean into the stored document, where it would then shadow the real
  * value on the next read.
  */
+function validateConfigFieldTypes(container, fields) {
+  if (fields.enabled !== undefined && typeof fields.enabled !== 'boolean') {
+    return 'enabled must be a boolean';
+  }
+  if (fields.order !== undefined && fields.order !== null) {
+    const o = Number(fields.order);
+    if (!Number.isInteger(o) || o < 0) return 'order must be a non-negative integer';
+  }
+  if (fields.name !== undefined && fields.name !== null && typeof fields.name !== 'string') {
+    return 'name must be a string';
+  }
+  if (fields.apiKeyEnvVar !== undefined && fields.apiKeyEnvVar !== null && typeof fields.apiKeyEnvVar !== 'string') {
+    return 'apiKeyEnvVar must be a string or null';
+  }
+  if (container === 'mcp_servers') {
+    if (fields.allowedTools !== undefined && fields.allowedTools !== null) {
+      if (!Array.isArray(fields.allowedTools) || fields.allowedTools.some((t) => typeof t !== 'string')) {
+        return 'allowedTools must be an array of strings';
+      }
+    }
+    if (fields.transport !== undefined && fields.transport !== null && typeof fields.transport !== 'string') {
+      return 'transport must be a string';
+    }
+  }
+  if (container === 'ai_providers') {
+    if (fields.temperature !== undefined && fields.temperature !== null) {
+      const t = Number(fields.temperature);
+      if (!Number.isFinite(t) || t < 0 || t > 2) return 'temperature must be a number between 0 and 2';
+    }
+    if (fields.maxTokens !== undefined && fields.maxTokens !== null) {
+      const m = Number(fields.maxTokens);
+      if (!Number.isInteger(m) || m < 1) return 'maxTokens must be a positive integer';
+    }
+    if (fields.models !== undefined && fields.models !== null) {
+      if (!Array.isArray(fields.models) || fields.models.some((m) => typeof m !== 'string')) {
+        return 'models must be an array of strings';
+      }
+    }
+  }
+  return null;
+}
+
 function putDocumentOf(container, body, existing = null) {
   const { hasOauthToken: _ignored, hasOauthRefreshToken: _ignored2, ...fields } = body;
   const nested = nestedFieldError(fields);
   if (nested) return { error: nested };
   const incoming = withoutServerManagedFields(container, fields);
+
+  const allowlist = container === 'ai_providers' ? AI_PROVIDER_FIELDS : MCP_SERVER_FIELDS;
+  const unknown = Object.keys(incoming).filter((key) => !allowlist.includes(key));
+  if (unknown.length > 0) {
+    return { error: `Unknown field(s) for ${container}: ${unknown.join(', ')}` };
+  }
+  const typeErr = validateConfigFieldTypes(container, incoming);
+  if (typeErr) return { error: typeErr };
+
   const problem = writeError(container, incoming, existing);
   return problem ? { error: problem } : { incoming };
 }
@@ -395,6 +493,15 @@ function patchUpdatesOf(container, body, existing = null) {
   if (Object.keys(updates).length === 0) {
     return { error: 'Body must contain at least one updatable field' };
   }
+
+  const allowlist = container === 'ai_providers' ? AI_PROVIDER_FIELDS : MCP_SERVER_FIELDS;
+  const unknown = Object.keys(updates).filter((key) => !allowlist.includes(key));
+  if (unknown.length > 0) {
+    return { error: `Unknown field(s) for ${container}: ${unknown.join(', ')}` };
+  }
+  const typeErr = validateConfigFieldTypes(container, updates);
+  if (typeErr) return { error: typeErr };
+
   const problem = writeError(container, updates, existing);
   return problem ? { error: problem } : { updates };
 }

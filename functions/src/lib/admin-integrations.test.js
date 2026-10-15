@@ -1922,3 +1922,120 @@ describe('config writes after the OAuth Connect security review (2026-10-08)', (
     expect(broken.deleteDoc).not.toHaveBeenCalled();
   });
 });
+
+describe('AP-B6: mass assignment allowlists on admin integration writes', () => {
+  it('recordings create and patch reject unknown fields with 400', async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: 'r1', status: 'new' })),
+    });
+    const h = createAdminIntegrationHandlers({ guard: allowGuard, store, ...fixed });
+
+    const createRes = await h.createRecording(
+      makeRequest({
+        body: { title: 'R', transcript: 'T', evilExtra: 'payload' },
+      }),
+      context
+    );
+    expect(createRes.status).toBe(400);
+    expect(JSON.parse(createRes.body).error).toMatch(/Unknown field\(s\): evilExtra/);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+
+    const patchRes = await h.patchRecording(
+      makeRequest({
+        params: { id: 'r1' },
+        body: { unauthorizedProp: 1 },
+      }),
+      context
+    );
+    expect(patchRes.status).toBe(400);
+    expect(JSON.parse(patchRes.body).error).toMatch(/Unknown field\(s\): unauthorizedProp/);
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('recordings create cannot override status from the body', async () => {
+    const store = makeStore();
+    const h = createAdminIntegrationHandlers({ guard: allowGuard, store, ...fixed });
+
+    // If an unknown field is sent (like status in create), it's rejected:
+    const res = await h.createRecording(
+      makeRequest({
+        body: { title: 'R', transcript: 'T', status: 'published' },
+      }),
+      context
+    );
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/Unknown field\(s\): status/);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+  });
+
+  it('putSettings rejects unknown fields with 400', async () => {
+    const store = makeStore();
+    const h = createAdminIntegrationHandlers({ guard: allowGuard, store, ...fixed });
+
+    const res = await h.putSettings(
+      makeRequest({
+        body: { sessionizeSpeakerId: 'valid-id', maliciousConfig: 'danger' },
+      }),
+      context
+    );
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/Unknown field\(s\): maliciousConfig/);
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('ai-providers put and patch reject unknown fields with 400', async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: 'vertex', enabled: true })),
+    });
+    const h = createAdminIntegrationHandlers({ guard: allowGuard, store, ...fixed });
+
+    const putRes = await h.putConfig(
+      makeRequest({
+        params: { collection: 'ai-providers', id: 'vertex' },
+        body: { enabled: true, secretBackdoor: true },
+      }),
+      context
+    );
+    expect(putRes.status).toBe(400);
+    expect(JSON.parse(putRes.body).error).toMatch(/Unknown field\(s\) for ai_providers: secretBackdoor/);
+
+    const patchRes = await h.patchConfig(
+      makeRequest({
+        params: { collection: 'ai-providers', id: 'vertex' },
+        body: { injection: 42 },
+      }),
+      context
+    );
+    expect(patchRes.status).toBe(400);
+    expect(JSON.parse(patchRes.body).error).toMatch(/Unknown field\(s\) for ai_providers: injection/);
+  });
+
+  it('mcp-servers put and patch reject unknown fields with 400', async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: 'srv', url: 'https://mcp.example.com' })),
+    });
+    const h = createAdminIntegrationHandlers({ guard: allowGuard, store, ...fixed });
+
+    const putRes = await h.putConfig(
+      makeRequest({
+        params: { collection: 'mcp-servers', id: 'srv' },
+        body: { url: 'https://mcp.example.com', unapprovedFlag: true },
+      }),
+      context
+    );
+    expect(putRes.status).toBe(400);
+    expect(JSON.parse(putRes.body).error).toMatch(/Unknown field\(s\) for mcp_servers: unapprovedFlag/);
+
+    const patchRes = await h.patchConfig(
+      makeRequest({
+        params: { collection: 'mcp-servers', id: 'srv' },
+        body: { exploitKey: 'val' },
+      }),
+      context
+    );
+    expect(patchRes.status).toBe(400);
+    expect(JSON.parse(patchRes.body).error).toMatch(/Unknown field\(s\) for mcp_servers: exploitKey/);
+  });
+});
+
