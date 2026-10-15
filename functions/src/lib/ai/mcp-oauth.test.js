@@ -37,6 +37,7 @@ import {
   tokenExpiresWithin,
   tokenRequest,
 } from './mcp-oauth.js';
+import { currentJobSignal, refuseWriteAfterJobAbort, runAsJob } from '../job-context.js';
 
 const PUBLIC = '93.184.216.34';
 const resolve = async () => ({ address: PUBLIC });
@@ -1047,5 +1048,42 @@ describe('refresh', () => {
     const [ra, rb] = await Promise.all([a, b]);
     expect(ra.ok && rb.ok).toBe(true);
     expect(net.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs a refresh a job started outside that job, so a route that joins it is not refused (#942)', async () => {
+    // The store refuses its write the way the shared Cosmos client refuses
+    // any write it does not keep, and records whose context the write ran in.
+    let release;
+    const gate = new Promise((r) => (release = r));
+    const net = network({
+      [`POST ${HOSTINGER_OAUTH}/token`]: async () => {
+        await gate;
+        return reply(200, { access_token: 'at-new', refresh_token: 'rt-new' });
+      },
+    });
+    const doc = connected();
+    const store = storeFor(doc);
+    const write = store.patchDoc.getMockImplementation();
+    const signalsAtWrite = [];
+    store.patchDoc.mockImplementation(async (...args) => {
+      signalsAtWrite.push(currentJobSignal());
+      refuseWriteAfterJobAbort();
+      return write(...args);
+    });
+
+    const job = new AbortController();
+    const fromJob = runAsJob(job.signal, () =>
+      refreshOAuthToken({ store, serverId: 'h6', server: doc, http: net.http, now })
+    );
+    const fromRoute = refreshOAuthToken({ store, serverId: 'h6', server: doc, http: net.http, now });
+    job.abort(Object.assign(new Error('job timed out'), { code: 'JOB_TIMEOUT' }));
+    release();
+
+    const [rj, rr] = await Promise.all([fromJob, fromRoute]);
+    expect(rr.ok).toBe(true);
+    expect(rj.ok).toBe(true);
+    expect(net.fetch).toHaveBeenCalledTimes(1);
+    expect(signalsAtWrite).toEqual([undefined]);
+    expect(store.current.oauthToken).toBe('at-new');
   });
 });

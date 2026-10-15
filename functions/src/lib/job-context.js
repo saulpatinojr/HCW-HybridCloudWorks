@@ -12,10 +12,18 @@
  * runJob runs the worker inside the job's context (`runAsJob`), and the
  * shared clients call `refuseWriteAfterJobAbort` before every write: once the
  * signal has fired, a write that starts inside that context throws the
- * job's reason instead of reaching the service. The context follows the
- * worker's own async work and nothing else, so routes, timers and the
- * onComplete hooks — which runJob calls outside it, after the terminal
- * write — are not affected. Nothing is threaded through the workers.
+ * job's reason instead of reaching the service. Routes, timers and the
+ * onComplete hooks, which runJob calls after the terminal write, run outside
+ * the context and are not affected. Nothing is threaded through the workers.
+ *
+ * The context follows every async operation the worker STARTS, which is
+ * more than the worker's own work. A process-wide single-flight, a
+ * module-level map of in-flight promises that later callers join, is the
+ * case that matters: started by a job, it would run in that job's context,
+ * and a route that joined it would meet that job's abort. Shared work of
+ * that kind is started with `outsideJob` (the MCP OAuth token refresh in
+ * ai/mcp-oauth.js is the one today; the AI config cache's single-flight in
+ * ai/ai-config.js only reads, which the context never touches).
  *
  * A write already in flight when the signal fires is handed the signal as
  * well: the shared clients pass `writeAbortSignal(container)` as the SDK's
@@ -71,6 +79,19 @@ export const WRITES_KEPT_AFTER_ABORT = Object.freeze([
  */
 export function runAsJob(signal, fn) {
   return jobContext.run({ signal }, fn);
+}
+
+/**
+ * Run `fn` outside any job's context, for work that other callers may join:
+ * nothing it starts is refused or handed a signal because of the job that
+ * happened to start it.
+ *
+ * @template T
+ * @param {() => T} fn
+ * @returns {T}
+ */
+export function outsideJob(fn) {
+  return jobContext.exit(fn);
 }
 
 /**

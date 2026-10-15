@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   WRITES_KEPT_AFTER_ABORT,
   currentJobSignal,
+  outsideJob,
   refuseWriteAfterJobAbort,
   runAsJob,
   writeAbortSignal,
@@ -77,6 +78,23 @@ describe('currentJobSignal and writeAbortSignal', () => {
       for (const container of WRITES_KEPT_AFTER_ABORT) {
         expect(writeAbortSignal(container)).toBeUndefined();
       }
+    });
+  });
+});
+
+describe('outsideJob', () => {
+  it('runs shared work, and everything it starts, outside the job that started it', async () => {
+    const job = new AbortController();
+    job.abort(timeoutReason());
+    await runAsJob(job.signal, async () => {
+      const shared = outsideJob(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        refuseWriteAfterJobAbort('content');
+        return currentJobSignal();
+      });
+      await expect(shared).resolves.toBeUndefined();
+      // The job's own code, after the shared work, is still inside it.
+      expect(() => refuseWriteAfterJobAbort('content')).toThrow('job timed out');
     });
   });
 });
