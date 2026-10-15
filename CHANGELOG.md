@@ -36,25 +36,44 @@ This project has not cut a tagged release; entries are grouped under
   scheduler and the Telegram /approve command, which wrote object literals,
   now build their documents with it, a Forge Studio entry whose document
   cannot be built is put back to queued, and `jobs.payload-bound.test.js`
-  fails any new job write under `src/` that does not go through it. New
+  reads every `upsertDoc`/`createDoc` to the jobs container (by
+  `JOBS_CONTAINER`, a `'jobs'` literal or a local name for it) and fails one
+  whose document `newJobDoc` did not build. A payload over the bound is the
+  caller's 413, not a 500: Listen & Learn's routes answer
+  `JOB_PAYLOAD_TOO_LARGE` with a fixed sentence, and the recording upload
+  measures its job payload before it stores the audio, since a title within
+  200 characters can JSON-escape past the 1024-byte bound. New
   `jobs.signal.test.js` keeps #1198's threading in place: it reads every
   module under `src/` that registers a job type (aliased and namespace
   imports included), pins the eight modules and the sixteen types, and fails
-  a worker that never passes `signal` on to a call — one that destructures
-  it unused, only checks it first, or names it in a string does not count.
-  `noop` was the one worker that ignored it; its delay now ends with the job.
-  And #942's own acceptance, that a timed-out job's side effects stop, now
-  holds for writes: under #1198 a worker checks its signal at points it
-  chooses, but its Cosmos and Blob writes went through shared clients that
-  never saw it, so one that started after the deadline still landed (a
-  timed-out Podbean publish rewrote the transcript's `host.podbean` after the
-  job was recorded `timeout`). New `lib/job-context.js` runs the worker in
-  the job's context, and `cosmos-client.js` and `blob-storage.js` refuse a
-  write that starts there once the signal has fired; routes, timers and the
-  hooks run outside it and are unchanged. A request already sent is not
-  recalled. Usage rows (`ai_usage`) and MCP tokens (`mcp_servers`) are still
-  written after the deadline, because refusing them would lose spend
-  already billed or a token a provider already rotated.
+  a worker that never hands its signal to a call. Only an argument that
+  carries the signal counts (the signal under any name, `ctx.signal`, or the
+  whole context, so a thin wrapper passes); one that destructures it unused,
+  only checks it first, names it in a string, or passes `Boolean(signal)` or
+  `signal.aborted` does not. `noop` was the one worker that ignored it; its
+  delay now ends with the job. And #942's own acceptance, that a timed-out
+  job's side effects stop, now holds for writes: under #1198 a worker checks
+  its signal at points it chooses, but its Cosmos and Blob writes went
+  through shared clients that never saw it, so one that started after the
+  deadline still landed (a timed-out Podbean publish rewrote the
+  transcript's `host.podbean` after the job was recorded `timeout`). New
+  `lib/job-context.js` runs the worker in the job's context, and
+  `cosmos-client.js` and `blob-storage.js` refuse a write that starts there
+  once the signal has fired, check again before a read-modify-write's
+  replace, and hand a write in flight the signal as the SDK's `abortSignal`,
+  so the client stops waiting for it (the service may still apply it). Each
+  refusal is a fresh error with the job's reason as its `cause`. Routes,
+  timers and the hooks run outside the context, and so does work that other
+  callers join: the MCP OAuth token refresh, a process-wide single-flight,
+  is started with `outsideJob`. A write that records something already done
+  is kept past the deadline: usage rows (`ai_usage`), rotated MCP tokens
+  (`mcp_servers`), and the version snapshot and audit row that follow a
+  content write that has landed (`content_versions`, `admin_audit_logs`,
+  `audits`), so a forge save cut off by the deadline still leaves its
+  version and its audit row. `runJob` disarms the deadline as soon as the
+  worker settles, so a worker that finished just inside it does not see its
+  signal fire during the terminal write, and the publish hook now warns,
+  without ids, when every attempt met a 412 and `pending` was left set.
 - **Admin routes are the menu labels' slugs and page titles are the
   registry's labels, the single-draft RPC file says what it registers,
   deleting a live page archives it with ten seconds of Undo and the Archive
