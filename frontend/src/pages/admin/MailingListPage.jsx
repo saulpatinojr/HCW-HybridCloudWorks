@@ -84,10 +84,14 @@ const GLOSSARY = [
 // ── Resend connection ─────────────────────────────────────────────────────────
 
 /**
- * A human sentence for a working key, or a thrown Error with Resend's own.
+ * A human sentence for a working key, or a thrown Error with the probe's
+ * sentence: the status Resend answered (#945; Resend's own words about a
+ * refused key go to the API-keys page, not here).
  *
  * GET /domains on the server. A key minted with sending access only is refused
  * there, which is the failure worth catching before anything is built on it.
+ *
+ * @returns {Promise<string>}
  */
 export async function checkResend() {
   const body = unwrapProxy(await postJSON('connectionProbe', { probe: 'resend' }), 'Resend');

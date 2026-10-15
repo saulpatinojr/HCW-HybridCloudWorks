@@ -77,20 +77,15 @@ describe('Test Connection', () => {
     expect(postJSON.mock.calls.flat().some((arg) => arg === 'klaviyoProxy')).toBe(false);
   });
 
-  it('reports a sending-only key as a failure, in Resend’s words, never as connected', async () => {
-    const sentence = 'This API key is restricted to only send emails';
-    postJSON.mockResolvedValue(
-      envelope(false, 401, { name: 'restricted_api_key', message: sentence }, sentence)
-    );
+  it('reports a sending-only key as a failure, by its status, never as connected', async () => {
+    // The probe's failure shape since #945: its own sentence and no upstream
+    // body. Resend's words about the key reach the API-keys page only.
+    postJSON.mockResolvedValue({ ok: false, status: 401, error: 'Resend answered HTTP 401.' });
     render(<MailingListPage />);
 
     fireEvent.click(screen.getByRole('button', { name: /test connection/i }));
 
-    await waitFor(() =>
-      expect(
-        screen.getByText(/Resend answered 401 - This API key is restricted/)
-      ).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText('Resend answered HTTP 401.')).toBeInTheDocument());
     expect(screen.queryByText(/Connected to Resend/i)).not.toBeInTheDocument();
   });
 
