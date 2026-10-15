@@ -19,12 +19,15 @@ import {
   resolveBlobEndpoint,
   resolveAccountName,
   getBlobUrl,
+  deleteBlob,
   headBlobForDelivery,
   parseContentRangeTotal,
   readBlobRangeForDelivery,
   resetBlobServiceForTests,
   uploadBlob,
+  uploadBlobFromStream,
 } from './blob-storage.js';
+import { runAsJob } from './job-context.js';
 
 const uploadSpy = vi.hoisted(() => vi.fn());
 const downloadSpy = vi.hoisted(() => vi.fn());
@@ -182,6 +185,43 @@ describe('uploadBlob overwrite conditions', () => {
     expect(content.toString()).toBe('hello');
     expect(length).toBe(5);
     expect(options.blobHTTPHeaders).toEqual({ blobContentType: 'image/png' });
+  });
+});
+
+describe('a write a timed-out job starts is refused (#942 follow-up)', () => {
+  const original = { ...process.env };
+
+  beforeEach(() => {
+    uploadSpy.mockClear();
+    resetBlobServiceForTests();
+    process.env.STORAGE_BLOB_ENDPOINT = 'https://hcwmedia.blob.core.windows.net';
+  });
+
+  afterEach(() => {
+    process.env = { ...original };
+    resetBlobServiceForTests();
+  });
+
+  it('refuses an upload or a delete that starts after the job’s signal fired, before Storage is reached', async () => {
+    const job = new AbortController();
+    job.abort(Object.assign(new Error('job timed out'), { code: 'JOB_TIMEOUT' }));
+    await runAsJob(job.signal, async () => {
+      await expect(uploadBlob('podcast', 'a.mp3', Buffer.from('x'), 'audio/mpeg')).rejects.toMatchObject({
+        code: 'JOB_TIMEOUT',
+      });
+      await expect(
+        uploadBlobFromStream('cosmos-export', 'a.gz', null, 4, 'application/gzip')
+      ).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
+      await expect(deleteBlob('podcast', 'a.mp3')).rejects.toMatchObject({ code: 'JOB_TIMEOUT' });
+    });
+    expect(uploadSpy).not.toHaveBeenCalled();
+  });
+
+  it('lets a job upload while its signal has not fired, and anything outside a job as before', async () => {
+    const job = new AbortController();
+    await runAsJob(job.signal, () => uploadBlob('podcast', 'a.mp3', Buffer.from('x'), 'audio/mpeg'));
+    await uploadBlob('podcast', 'b.mp3', Buffer.from('y'), 'audio/mpeg');
+    expect(uploadSpy).toHaveBeenCalledTimes(2);
   });
 });
 

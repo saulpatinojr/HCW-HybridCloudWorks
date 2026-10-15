@@ -43,6 +43,18 @@ This project has not cut a tagged release; entries are grouped under
   a worker that never passes `signal` on to a call — one that destructures
   it unused, only checks it first, or names it in a string does not count.
   `noop` was the one worker that ignored it; its delay now ends with the job.
+  And #942's own acceptance, that a timed-out job's side effects stop, now
+  holds for writes: under #1198 a worker checks its signal at points it
+  chooses, but its Cosmos and Blob writes went through shared clients that
+  never saw it, so one that started after the deadline still landed (a
+  timed-out Podbean publish rewrote the transcript's `host.podbean` after the
+  job was recorded `timeout`). New `lib/job-context.js` runs the worker in
+  the job's context, and `cosmos-client.js` and `blob-storage.js` refuse a
+  write that starts there once the signal has fired; routes, timers and the
+  hooks run outside it and are unchanged. A request already sent is not
+  recalled. Usage rows (`ai_usage`) and MCP tokens (`mcp_servers`) are still
+  written after the deadline, because refusing them would lose spend
+  already billed or a token a provider already rotated.
 - **Admin routes are the menu labels' slugs and page titles are the
   registry's labels, the single-draft RPC file says what it registers,
   deleting a live page archives it with ten seconds of Undo and the Archive

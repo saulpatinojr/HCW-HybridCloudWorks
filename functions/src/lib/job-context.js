@@ -1,0 +1,62 @@
+/**
+ * job-context.js — no Cosmos or Blob write starts after a platform job is
+ * recorded `timeout` (#942 follow-up to #1198).
+ *
+ * #1198 hands each worker's AbortSignal to the libraries it calls, and those
+ * check it at points they choose. The writes themselves go through the
+ * shared clients (cosmos-client.js, blob-storage.js), which never saw the
+ * signal, so a write that starts after the deadline — a step that was
+ * already past its last check when the budget ran out — still landed. That
+ * was #942's own acceptance item: a timed-out job's side effects stop.
+ *
+ * runJob runs the worker inside the job's context (`runAsJob`), and the
+ * shared clients call `refuseWriteAfterJobAbort` before every write: once the
+ * signal has fired, a write that starts inside that context throws the
+ * job's reason instead of reaching the service. The context follows the
+ * worker's own async work and nothing else, so routes, timers and the
+ * onComplete hooks — which runJob calls outside it, after the terminal
+ * write — are not affected. Nothing is threaded through the workers.
+ *
+ * This refuses what STARTS after the abort. A request already sent is not
+ * recalled, and the service may still complete it.
+ *
+ * Two containers are written whatever the job's clock says, because
+ * refusing them would lose something already spent rather than prevent a
+ * side effect: `ai_usage` (a usage row for a model or speech call already
+ * billed; recordAiUsage swallows a failed write, so a refused row would
+ * vanish), and `mcp_servers` (an OAuth token a provider has already rotated,
+ * which is only usable once stored).
+ */
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+const jobContext = new AsyncLocalStorage();
+
+/** Containers whose writes go through after a job's abort; the header says why. */
+export const WRITES_KEPT_AFTER_ABORT = Object.freeze(['ai_usage', 'mcp_servers']);
+
+/**
+ * Run `fn` as a platform job's work: inside it, and in everything it starts,
+ * the shared clients refuse a write once `signal` has fired.
+ *
+ * @template T
+ * @param {AbortSignal} signal the job's signal
+ * @param {() => T} fn
+ * @returns {T}
+ */
+export function runAsJob(signal, fn) {
+  return jobContext.run({ signal }, fn);
+}
+
+/**
+ * Throw the running job's abort reason when its signal has fired and the
+ * write is to a container that is not kept; do nothing outside a job.
+ * Called by the shared clients before every write.
+ *
+ * @param {string} [containerName] the Cosmos container, when there is one
+ */
+export function refuseWriteAfterJobAbort(containerName) {
+  const signal = jobContext.getStore()?.signal;
+  if (!signal?.aborted) return;
+  if (containerName && WRITES_KEPT_AFTER_ABORT.includes(containerName)) return;
+  throw signal.reason || new Error('aborted');
+}

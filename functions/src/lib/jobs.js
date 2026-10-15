@@ -43,6 +43,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { ROLE_NAMES, roleLevel } from './auth/roles.js';
+import { runAsJob } from './job-context.js';
 
 export const JOBS_CONTAINER = 'jobs';
 export const JOBS_QUEUE = 'platform-jobs';
@@ -572,13 +573,18 @@ export function createJobHandlers({
 
       try {
         const result = await Promise.race([
-          spec.worker(doc.payload, {
-            context,
-            job: claimed,
-            now,
-            signal: controller.signal,
-            abortSignal: controller.signal,
-          }),
+          // Inside the job's context, the shared Cosmos and Blob clients
+          // refuse a write that starts after the timeout (job-context.js).
+          // This code, and the hooks below, run outside it.
+          runAsJob(controller.signal, () =>
+            spec.worker(doc.payload, {
+              context,
+              job: claimed,
+              now,
+              signal: controller.signal,
+              abortSignal: controller.signal,
+            })
+          ),
           timeout,
         ]);
         await store.patchDoc(JOBS_CONTAINER, jobId, {

@@ -6,10 +6,16 @@
  *
  * Required app settings: COSMOS_ENDPOINT, COSMOS_DATABASE
  * Required RBAC role on the Function App MI: Cosmos DB Built-in Data Contributor
+ *
+ * Every write first calls `refuseWriteAfterJobAbort` (job-context.js): inside
+ * a platform job whose budget has run out, a write that starts now throws
+ * the job's reason instead of reaching Cosmos (#942). Outside a job it does
+ * nothing.
  */
 
 import { CosmosClient } from '@azure/cosmos';
 import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
+import { refuseWriteAfterJobAbort } from './job-context.js';
 
 let client = null;
 let database = null;
@@ -151,6 +157,7 @@ export async function readDoc(containerName, id, partitionKey) {
  * @returns {Promise<object>}
  */
 export async function upsertDoc(containerName, document) {
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   const { resource } = await container.items.upsert(document);
   return resource;
@@ -179,6 +186,7 @@ export async function upsertDoc(containerName, document) {
  * @throws {{code: 412}} when the document changed since it was read
  */
 export async function replaceDocIfMatch(containerName, document, options = {}) {
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   const pk = resolvePartitionKey(containerName, options.partitionKey, document.id);
   const { resource } = await container
@@ -247,6 +255,7 @@ export async function incrementIf(containerName, id, options) {
   if (!path?.startsWith('/')) {
     throw new Error(`incrementIf: path must be a JSON Pointer, got ${JSON.stringify(path)}`);
   }
+  refuseWriteAfterJobAbort(containerName);
 
   const container = getContainer(containerName);
   const pk = resolvePartitionKey(containerName, partitionKey, id);
@@ -303,6 +312,7 @@ export function bindConditionValues(condition, values = {}) {
  * @throws {{code: 409}} when a document with that id already exists
  */
 export async function createDoc(containerName, document) {
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   const { resource } = await container.items.create(document);
   return resource;
@@ -379,6 +389,7 @@ export async function patchDoc(containerName, id, updates, options = {}) {
   if (plan.strategy === 'noop') {
     return readDoc(containerName, id, options.partitionKey);
   }
+  refuseWriteAfterJobAbort(containerName);
 
   const container = getContainer(containerName);
   const pk = resolvePartitionKey(containerName, options.partitionKey, id);
@@ -509,6 +520,7 @@ export function applyFieldPath(target, segments, value) {
  * @param {string} [partitionKey]
  */
 export async function deleteDoc(containerName, id, partitionKey) {
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   await container.item(id, resolvePartitionKey(containerName, partitionKey, id)).delete();
 }
@@ -528,6 +540,7 @@ export async function deleteDoc(containerName, id, partitionKey) {
  */
 export async function deleteDocIfMatch(containerName, id, etag, partitionKey) {
   if (!etag) throw new Error('deleteDocIfMatch: an etag is required');
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   await container
     .item(id, resolvePartitionKey(containerName, partitionKey, id))
