@@ -851,10 +851,11 @@ describe('recordScheduleFailure', () => {
 });
 
 describe('recordHostJobFailure', () => {
-  const failure = (store, status = 'timeout') =>
+  const failure = (store, status = 'timeout', jobId = 'j') =>
     recordHostJobFailure({
       store,
       id: 'article_x',
+      jobId,
       status,
       error: status === 'timeout' ? 'job timed out' : 'cosmos down',
       now,
@@ -866,6 +867,7 @@ describe('recordHostJobFailure', () => {
         id: 'article_x',
         status: 'published',
         host: { podbean: { episodeId: 'IWPNG2FB3F', pending: true, jobId: 'j' } },
+        _etag: '"etag-1"',
       })),
     });
     expect(await failure(store)).toBe(true);
@@ -878,11 +880,14 @@ describe('recordHostJobFailure', () => {
         },
       },
     });
+    // Under the version it was decided from (#942 review).
+    expect(transcriptWrites(store)[0][1]).toEqual({ partitionKey: 'article_x', ifMatch: '"etag-1"' });
     const failed = makeStore({
       readDoc: vi.fn(async () => ({
         id: 'article_x',
         status: 'published',
-        host: { podbean: { pending: true } },
+        host: { podbean: { pending: true, jobId: 'j' } },
+        _etag: '"etag-1"',
       })),
     });
     await failure(failed, 'failed');
@@ -898,6 +903,7 @@ describe('recordHostJobFailure', () => {
           id: 'article_x',
           status,
           host: { podbean: { episodeId: 'IWPNG2FB3F', pending: true, jobId: 'j' } },
+          _etag: '"etag-1"',
         })),
       });
       expect(await failure(store)).toBe(true);
@@ -925,5 +931,77 @@ describe('recordHostJobFailure', () => {
     const missing = makeStore();
     expect(await failure(missing)).toBe(false);
     expect(missing.patchDoc).not.toHaveBeenCalled();
+  });
+
+  // The hook runs late — after a timeout, or from the sweeper — and a newer
+  // Publish may hold the marker by then (#942 review). Clearing it would let
+  // a third job run beside the second: a double publish.
+  it('leaves a newer job’s reservation alone, and does nothing for a hook that names no job', async () => {
+    const { store, state } = versionedStore({
+      id: 'article_x',
+      status: 'published',
+      host: { podbean: { pending: true, jobId: 'j-newer', queuedAt: AT } },
+      _etag: '"etag-1"',
+    });
+    expect(await failure(store, 'timeout', 'j-older')).toBe(false);
+    expect(await failure(store, 'timeout', undefined)).toBe(false);
+    expect(transcriptWrites(store)).toEqual([]);
+    expect(state.transcript.host.podbean).toEqual({ pending: true, jobId: 'j-newer', queuedAt: AT });
+  });
+
+  it('loses to an outcome that lands between its read and its write: the episode stands', async () => {
+    const { store, state } = versionedStore({
+      id: 'article_x',
+      status: 'published',
+      host: { podbean: { pending: true, jobId: 'j' } },
+      _etag: '"etag-1"',
+    });
+    // The racing worker stores its episode right after the hook's read.
+    const read = store.readDoc.getMockImplementation();
+    store.readDoc.mockImplementationOnce(async (...args) => {
+      const seen = await read(...args);
+      state.transcript.host = { podbean: { episodeId: 'IWPNG2FB3F', error: null } };
+      state.transcript._etag = '"etag-2"';
+      return seen;
+    });
+
+    expect(await failure(store)).toBe(false);
+    // One conditional write, refused; the re-read found no marker to clear.
+    expect(transcriptWrites(store)).toHaveLength(1);
+    expect(transcriptWrites(store)[0][1]).toEqual({ partitionKey: 'article_x', ifMatch: '"etag-1"' });
+    expect(state.transcript.host.podbean).toEqual({ episodeId: 'IWPNG2FB3F', error: null });
+  });
+
+  it('tries again on a 412 while the marker is still its own, and writes nothing unconditionally', async () => {
+    const { store, state } = versionedStore({
+      id: 'article_x',
+      status: 'published',
+      title: 'Before',
+      host: { podbean: { pending: true, jobId: 'j' } },
+      _etag: '"etag-1"',
+    });
+    // An unrelated edit (a title) lands after the first read.
+    const read = store.readDoc.getMockImplementation();
+    store.readDoc.mockImplementationOnce(async (...args) => {
+      const seen = await read(...args);
+      state.transcript.title = 'After';
+      state.transcript._etag = '"etag-2"';
+      return seen;
+    });
+
+    expect(await failure(store)).toBe(true);
+    expect(transcriptWrites(store).map(([, options]) => options.ifMatch)).toEqual(['"etag-1"', '"etag-2"']);
+    expect(state.transcript.host.podbean.pending).toBeUndefined();
+    expect(state.transcript.host.podbean.error.code).toBe('JOB_TIMEOUT');
+
+    const unversioned = makeStore({
+      readDoc: vi.fn(async () => ({
+        id: 'article_x',
+        status: 'published',
+        host: { podbean: { pending: true, jobId: 'j' } },
+      })),
+    });
+    expect(await failure(unversioned)).toBe(false);
+    expect(unversioned.patchDoc).not.toHaveBeenCalled();
   });
 });

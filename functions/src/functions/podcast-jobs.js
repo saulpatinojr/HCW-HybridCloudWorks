@@ -178,8 +178,12 @@ registerJobType(PUBLISH_JOB_TYPE, {
   // specific error rather than as a job timeout.
   timeoutMs: 10 * 60 * 1000,
   worker: runTranscriptPublish,
-  // A job that died around the step (a thrown store error, the timeout) would
-  // leave host.podbean.pending true forever; clear it and say why.
+  /**
+   * A job that died around the step (a thrown store error, the timeout, a
+   * poisoned or reaped job) would leave host.podbean.pending true forever;
+   * clear it and say why — but only this job's own reservation, under the
+   * version read, so a newer Publish's marker or a stored episode stands.
+   */
   onComplete: async ({ job, status, error }, { now }) => {
     if (status === 'succeeded') return;
     const parsed = parsePublishPayload(job?.payload);
@@ -187,6 +191,7 @@ registerJobType(PUBLISH_JOB_TYPE, {
     await recordHostJobFailure({
       store: { readDoc, patchDoc },
       id: parsed.value.transcriptId,
+      jobId: job?.id,
       status,
       error,
       now,

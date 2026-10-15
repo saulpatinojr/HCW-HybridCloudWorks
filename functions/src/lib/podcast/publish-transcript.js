@@ -572,6 +572,9 @@ export async function runHostPublish({
   return patch.host.podbean;
 }
 
+/** How many versions of the transcript a job-failure record is tried against: the read, and one re-read after a 412. */
+const FAILURE_RECORD_ATTEMPTS = 2;
+
 /**
  * The job died around the step rather than in it — a thrown store error, or
  * the platform timeout — so `pending` would otherwise stay true forever and
@@ -586,36 +589,73 @@ export async function runHostPublish({
  * that far — not a publish error, which would leave a draft showing a
  * failure and offering a retry the retry route refuses.
  *
+ * Only this job's own reservation is cleared, and only the version that was
+ * read (#942 follow-up). The hook runs late — after runJob's timeout, or
+ * when the sweeper poisons or reaps the job, which now hands it the whole
+ * document (#1198) — and by then a newer Publish may hold the marker, or a
+ * racing worker may have stored an episode. Clearing either would let a
+ * second job put the same episode on the feed. So the marker must name
+ * `jobId`, and the write is conditional on the `_etag` read: a 412 is read
+ * again (FAILURE_RECORD_ATTEMPTS bounds it), and a marker that moved on is
+ * the answer, as recordScheduleFailure treats a newer reservation.
+ *
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function }} deps.store
  * @param {string} deps.id
+ * @param {string} deps.jobId the id of the job whose hook this is
  * @param {'failed' | 'timeout' | string} deps.status the job's terminal status
  * @param {string|null} deps.error the job's recorded error text
  * @param {() => Date} [deps.now]
  * @returns {Promise<boolean>} whether a record was written
  */
-export async function recordHostJobFailure({ store, id, status, error, now = () => new Date() }) {
-  const doc = await store.readDoc(TRANSCRIPT_CONTAINER, id, id);
-  if (!doc || doc.host?.podbean?.pending !== true) return false;
-  const at = now().toISOString();
+export async function recordHostJobFailure({
+  store,
+  id,
+  jobId,
+  status,
+  error,
+  now = () => new Date(),
+}) {
+  if (!jobId) return false;
+  for (let attempt = 1; attempt <= FAILURE_RECORD_ATTEMPTS; attempt += 1) {
+    const doc = await store.readDoc(TRANSCRIPT_CONTAINER, id, id);
+    const marker = doc?.host?.podbean;
+    if (!doc || marker?.pending !== true || marker.jobId !== jobId) return false;
+    // Read without its `_etag`: nothing to condition on, so nothing written.
+    if (!doc._etag) return false;
+    try {
+      await store.patchDoc(TRANSCRIPT_CONTAINER, id, jobFailurePatch(doc, { status, error, now }), {
+        partitionKey: id,
+        ifMatch: doc._etag,
+      });
+      return true;
+    } catch (err) {
+      if (!isPreconditionFailure(err)) throw err;
+    }
+  }
+  return false;
+}
 
-  const patch =
-    doc.status !== STATUS.published
-      ? skippedPatch(doc, notPublishedSkip(doc), at)
-      : {
-          host: {
-            podbean: {
-              ...stableHostRecord(doc.host),
-              lastAttemptAt: at,
-              error: {
-                status: null,
-                code: status === 'timeout' ? 'JOB_TIMEOUT' : 'JOB_FAILED',
-                message: error || `The publish job ended as ${status}.`,
-                retryable: true,
-              },
-            },
-          },
-        };
-  await patchTranscript(store, id, patch);
-  return true;
+/**
+ * What a job that died around the step records on the transcript: the
+ * not-published skip for a draft, otherwise a retryable JOB_TIMEOUT or
+ * JOB_FAILED error. `pending` is not carried (stableHostRecord drops it).
+ */
+function jobFailurePatch(doc, { status, error, now }) {
+  const at = now().toISOString();
+  if (doc.status !== STATUS.published) return skippedPatch(doc, notPublishedSkip(doc), at);
+  return {
+    host: {
+      podbean: {
+        ...stableHostRecord(doc.host),
+        lastAttemptAt: at,
+        error: {
+          status: null,
+          code: status === 'timeout' ? 'JOB_TIMEOUT' : 'JOB_FAILED',
+          message: error || `The publish job ended as ${status}.`,
+          retryable: true,
+        },
+      },
+    },
+  };
 }

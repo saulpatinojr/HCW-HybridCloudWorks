@@ -19,6 +19,17 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **A late podcast publish hook clears only its own job's reservation, under
+  the version it read** (#942, follow-up to #1198). #1198 made the sweeper
+  hand a poisoned or reaped job's `onComplete` the whole document, which made
+  the podcast publish hook live on those paths; it already ran on `runJob`'s
+  timeout. Running late, it read the transcript and wrote unconditionally,
+  so it could clear a newer Publish's `host.podbean.pending` marker or erase
+  an episode a racing worker had just stored, and a second job could then
+  put the same episode on the feed. `recordHostJobFailure` now takes the
+  job's id, writes only while the marker is pending and names that job, and
+  writes with `ifMatch` on the `_etag` it read; a 412 is read again at most
+  once, and a marker that has moved on is the answer.
 - **Admin routes are the menu labels' slugs and page titles are the
   registry's labels, the single-draft RPC file says what it registers,
   deleting a live page archives it with ten seconds of Undo and the Archive

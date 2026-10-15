@@ -175,22 +175,27 @@ describe('registration', () => {
       id: 'article_x',
       status: 'published',
       host: { podbean: { pending: true, jobId: 'job-1' } },
+      _etag: '"etag-1"',
     });
     patchDoc.mockResolvedValue({});
+    const job = { id: 'job-1', payload: { transcriptId: 'article_x' } };
 
-    await spec.onComplete(
-      { job: { payload: { transcriptId: 'article_x' } }, status: 'timeout', error: 'job timed out' },
-      { context: {}, now }
-    );
+    await spec.onComplete({ job, status: 'timeout', error: 'job timed out' }, { context: {}, now });
     expect(patchDoc).toHaveBeenCalledTimes(1);
     expect(patchDoc.mock.calls[0][2].host.podbean).toEqual({
       lastAttemptAt: '2026-09-09T10:00:00.000Z',
       error: { status: null, code: 'JOB_TIMEOUT', message: 'job timed out', retryable: true },
     });
+    // Conditional on the version read (#942 follow-up).
+    expect(patchDoc.mock.calls[0][3]).toEqual({ partitionKey: 'article_x', ifMatch: '"etag-1"' });
 
     patchDoc.mockClear();
+    await spec.onComplete({ job, status: 'succeeded', error: null }, { context: {}, now });
+    expect(patchDoc).not.toHaveBeenCalled();
+
+    // A hook for an older job leaves the newer job's reservation alone.
     await spec.onComplete(
-      { job: { payload: { transcriptId: 'article_x' } }, status: 'succeeded', error: null },
+      { job: { ...job, id: 'job-0' }, status: 'timeout', error: 'job timed out' },
       { context: {}, now }
     );
     expect(patchDoc).not.toHaveBeenCalled();
