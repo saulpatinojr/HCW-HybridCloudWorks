@@ -282,3 +282,13 @@ describe('staging into dist', () => {
     expect(policy).not.toContain(digest('\r\nbody { margin: 0; }\r\n'));
   });
 });
+
+describe('decodeAttribute, invalid numeric references (CodeRabbit on #1185)', () => {
+  it('maps a numeric reference the HTML spec calls invalid to U+FFFD instead of throwing', () => {
+    expect(decodeAttribute('a&#x110000;b')).toBe('a\uFFFDb');
+    expect(decodeAttribute('a&#0;b')).toBe('a\uFFFDb');
+    expect(decodeAttribute('a&#xD800;b')).toBe('a\uFFFDb');
+    expect(decodeAttribute('a&#99999999999;b')).toBe('a\uFFFDb');
+    expect(decodeAttribute('a&#x41;b&#66;c')).toBe('aAbBc');
+  });
+});

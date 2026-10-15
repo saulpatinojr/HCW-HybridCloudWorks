@@ -82,14 +82,25 @@ const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp:
  * The CSP hash is of the parsed value, and React escapes `"` as `&quot;` and
  * `'` as `&#x27;` on the way out, so a font-family with quotes in it hashes
  * wrongly unless the escapes are undone first. Unknown entities are left as
- * written, which is also what the parser does.
+ * written, which is also what the parser does. A numeric reference the HTML
+ * spec calls invalid (zero, a surrogate, or past U+10FFFF) becomes U+FFFD, as
+ * the parser makes it; `String.fromCodePoint` would throw on two of those and
+ * fail the build on one stray `&#x110000;` (CodeRabbit on #1185).
  */
 export function decodeAttribute(value) {
   return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body) => {
     if (body[0] === '#') {
       const hex = body[1] === 'x' || body[1] === 'X';
       const code = parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+      if (
+        !Number.isFinite(code) ||
+        code === 0 ||
+        code > 0x10ffff ||
+        (code >= 0xd800 && code <= 0xdfff)
+      ) {
+        return '\uFFFD';
+      }
+      return String.fromCodePoint(code);
     }
     return NAMED_ENTITIES[body.toLowerCase()] ?? whole;
   });
