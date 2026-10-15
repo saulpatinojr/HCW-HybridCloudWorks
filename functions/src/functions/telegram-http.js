@@ -24,7 +24,7 @@
 import { output } from '@azure/functions';
 import { httpRoute } from '../lib/auth/http-route.js';
 import { readDoc, upsertDoc, patchDoc, queryDocs } from '../lib/cosmos-client.js';
-import { JOBS_CONTAINER, JOBS_QUEUE } from '../lib/jobs.js';
+import { JOBS_CONTAINER, JOBS_QUEUE, newJobDoc } from '../lib/jobs.js';
 import { createTelegramBot, createSender, secretMatches } from '../lib/telegram/bot.js';
 
 const queueOutput = output.storageQueue({
@@ -44,23 +44,22 @@ async function snapshot() {
  * Write the job document and put its id on the queue, the same two steps
  * `enqueueJob` performs — without the HTTP shape or the role guard, neither of
  * which applies to a chat message that has already been authorized twice.
+ * The document is built by newJobDoc, so the type's payload bound holds
+ * here as at every other door (#942 follow-up).
  */
 function makeEnqueue(context) {
   return async function enqueueJob({ type, payload }) {
     const jobId = crypto.randomUUID();
-    await store.upsertDoc(JOBS_CONTAINER, {
-      id: jobId,
-      type,
-      status: 'queued',
-      payload: payload ?? null,
-      createdAt: new Date().toISOString(),
-      startedAt: null,
-      finishedAt: null,
-      attempts: 0,
-      requestedBy: { oid: null, email: 'telegram-bot@system' },
-      result: null,
-      error: null,
-    });
+    await store.upsertDoc(
+      JOBS_CONTAINER,
+      newJobDoc({
+        id: jobId,
+        type,
+        payload: payload ?? null,
+        requestedBy: { oid: null, email: 'telegram-bot@system' },
+        createdAt: new Date().toISOString(),
+      })
+    );
     context.extraOutputs.set(queueOutput, { jobId, type });
     return jobId;
   };

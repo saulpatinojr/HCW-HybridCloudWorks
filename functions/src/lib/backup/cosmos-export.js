@@ -48,7 +48,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 
-import { JOBS_CONTAINER } from '../jobs.js';
+import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
 import { EXPORT_MODES, exportPlanFor } from './export-classification.js';
 
 /** The private blob container on `stsiteprodcus01` (Terraform: infra/storage.tf). */
@@ -163,19 +163,18 @@ export function createExportScheduler({
     let enqueued = 0;
     for (const container of containers) {
       const jobId = uuid();
-      await store.upsertDoc(JOBS_CONTAINER, {
-        id: jobId,
-        type: EXPORT_JOB_TYPE,
-        payload: { runId, mode, container },
-        status: 'queued',
-        createdAt: now().toISOString(),
-        startedAt: null,
-        finishedAt: null,
-        attempts: 0,
-        requestedBy: { ...EXPORT_ACTOR },
-        result: null,
-        error: null,
-      });
+      // newJobDoc, as every writer of a job document: the same shape, and the
+      // type's payload bound held here too (#942 follow-up).
+      await store.upsertDoc(
+        JOBS_CONTAINER,
+        newJobDoc({
+          id: jobId,
+          type: EXPORT_JOB_TYPE,
+          payload: { runId, mode, container },
+          requestedBy: EXPORT_ACTOR,
+          createdAt: now().toISOString(),
+        })
+      );
       enqueue({ jobId, type: EXPORT_JOB_TYPE });
       enqueued += 1;
     }

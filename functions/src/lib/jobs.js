@@ -210,14 +210,44 @@ registerBuiltins();
 const SYSTEM_FIELDS = new Set(['_rid', '_self', '_etag', '_attachments', '_ts']);
 
 /**
- * A fresh `queued` job document. One shape, shared by `enqueueJob` and every
- * route that enqueues a job of its own (cms/podcast/transcripts/generate), so
- * the worker's claim, the sweeper and `getJob` read the same fields wherever
- * the job came from.
+ * A payload's size as a job document stores it: its JSON, in UTF-8 bytes.
+ * An absent payload is stored as `null`.
  *
- * @param {{ id: string, type: string, payload: any, requestedBy?: {oid?: string, email?: string}|null, createdAt: string }} fields
+ * @param {any} payload
+ * @returns {number}
  */
-export function newJobDoc({ id, type, payload, requestedBy, createdAt }) {
+export function jobPayloadBytes(payload) {
+  return Buffer.byteLength(JSON.stringify(payload ?? null), 'utf8');
+}
+
+/**
+ * A fresh `queued` job document. One shape, shared by `enqueueJob` and every
+ * route, timer and command that enqueues a job of its own (cms/podcast,
+ * Listen & Learn, the Forge Studio queue, the Cosmos export scheduler, the
+ * Telegram /approve command), so the worker's claim, the sweeper and
+ * `getJob` read the same fields wherever the job came from.
+ *
+ * It is also where every job document's payload bound is enforced (#942
+ * follow-up). enqueueJob answers an oversized payload with a 413 before it
+ * gets here, but the other writers did not check at all, and the sweeper
+ * reads whole job documents (#1198) on the strength of that bound. Every
+ * writer builds its document here, and jobs.payload-bound.test.js fails a
+ * write to the jobs container that does not. The limit is `maxPayloadBytes`
+ * when given (enqueueJob passes its type's), else the registered type's, else
+ * the 64 KiB default for a type this process has not registered.
+ *
+ * @param {{ id: string, type: string, payload: any, requestedBy?: {oid?: string, email?: string}|null, createdAt: string, maxPayloadBytes?: number }} fields
+ * @throws {Error} code `JOB_PAYLOAD_TOO_LARGE`, status 413, for a payload over the limit
+ */
+export function newJobDoc({ id, type, payload, requestedBy, createdAt, maxPayloadBytes }) {
+  const limit = maxPayloadBytes ?? registry.get(type)?.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
+  const bytes = jobPayloadBytes(payload);
+  if (bytes > limit) {
+    throw Object.assign(new Error(`Payload too large (${bytes} bytes; max ${limit} for ${type})`), {
+      code: 'JOB_PAYLOAD_TOO_LARGE',
+      status: 413,
+    });
+  }
   return {
     id,
     type,
@@ -345,11 +375,14 @@ export function createJobHandlers({
       }
 
       const jobId = uuid();
+      // The size was checked above against this type's limit, and answered
+      // with a 413; newJobDoc holds the same limit for every other writer.
       const doc = newJobDoc({
         id: jobId,
         type,
         payload,
         requestedBy: auth.user,
+        maxPayloadBytes: spec.maxPayloadBytes,
         createdAt: now().toISOString(),
       });
       // Computed before the write so a hook that throws is logged against a
@@ -605,6 +638,10 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
    * minutes, and a single conservative cutoff would leave short jobs hanging
    * for half an hour. A job is reaped only once its OWN budget plus a grace
    * margin has elapsed, so a slow-but-live worker is never stolen from.
+   *
+   * This query and the queued one read whole documents (#1198), so the hooks
+   * get `job.payload`. That stays cheap because newJobDoc bounds every job
+   * document's payload by its type's `maxPayloadBytes`.
    */
   async function reapAbandoned(types = typesToUse) {
     const cutoff = new Date(now().getTime() - RUNNING_GRACE_MS).toISOString();

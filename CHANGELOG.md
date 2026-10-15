@@ -29,7 +29,14 @@ This project has not cut a tagged release; entries are grouped under
   put the same episode on the feed. `recordHostJobFailure` now takes the
   job's id, writes only while the marker is pending and names that job, and
   writes with `ifMatch` on the `_etag` it read; a 412 is read again at most
-  once, and a marker that has moved on is the answer.
+  once, and a marker that has moved on is the answer. Reading whole job
+  documents is cheap only while their payloads are bounded, and that bound
+  now holds at every door: `newJobDoc` refuses a payload over its type's
+  `maxPayloadBytes` (`JOB_PAYLOAD_TOO_LARGE`, 413), the Cosmos export
+  scheduler and the Telegram /approve command, which wrote object literals,
+  now build their documents with it, a Forge Studio entry whose document
+  cannot be built is put back to queued, and `jobs.payload-bound.test.js`
+  fails any new job write under `src/` that does not go through it.
 - **Admin routes are the menu labels' slugs and page titles are the
   registry's labels, the single-draft RPC file says what it registers,
   deleting a live page archives it with ten seconds of Undo and the Archive
