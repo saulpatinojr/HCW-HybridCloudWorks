@@ -260,7 +260,7 @@ describe('createPricingRefresh', () => {
         { region: 'us-west-2', error: historyFailed },
       ]);
       expect(log.error).toHaveBeenCalledWith(
-        expect.stringMatching(/The region's price history could not be written \(name=Error\)$/)
+        expect.stringMatching(/The region's price history could not be written \(name=Error( at=[^)]+)?\)$/)
       );
       expect(JSON.stringify([summary.failed, log.error.mock.calls])).not.toContain(
         'history container missing'
@@ -359,7 +359,7 @@ describe('createPricingRefresh', () => {
     ]);
     expect(store.docs.has(`${CACHE_CONTAINER}/pricing:westeurope`)).toBe(true);
     expect(log.error).toHaveBeenCalledWith(
-      expect.stringMatching(/The region could not be refreshed \(name=Error\)$/)
+      expect.stringMatching(/The region could not be refreshed \(name=Error( at=[^)]+)?\)$/)
     );
     expect(JSON.stringify(summary.failed)).not.toContain('cosmos 503');
   });

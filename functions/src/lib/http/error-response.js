@@ -151,16 +151,56 @@ export function getCorrelationId(context, request) {
   return candidates.find((id) => typeof id === 'string' && CORRELATION_SHAPE.test(id)) ?? randomUUID();
 }
 
+/** A stack frame in this repository's code: `src/...js:<line>`, relative to functions/. */
+const FRAME_SHAPE = /^src\/[A-Za-z0-9_.\/-]{1,200}\.[cm]?js:\d{1,6}$/;
+/** How many of our own frames a log line names. */
+const MAX_FRAMES = 3;
+
+/**
+ * Where an error was thrown, in this repository's code only: the first few
+ * stack frames under `src/`, each as `src/lib/jobs.js:657`, relative to
+ * functions/ and held to FRAME_SHAPE. A frame in node_modules, in a test
+ * file, or outside src/ is skipped, so neither the host's absolute path nor
+ * a dependency's is logged; the message lines of the stack are never kept.
+ * What it gives back is a place to look when a TypeError behind the door
+ * has nothing else to say (#1200 review L3).
+ *
+ * @param {unknown} error - anything thrown
+ * @returns {string[]}
+ */
+export function ownFrames(error) {
+  const stack = typeof error?.stack === 'string' ? error.stack : '';
+  const out = [];
+  for (const raw of stack.split('\n')) {
+    const line = raw.trim();
+    if (!line.startsWith('at ')) continue;
+    const open = line.lastIndexOf('(');
+    let location = line.endsWith(')') && open >= 0 ? line.slice(open + 1, -1) : line.slice(3);
+    location = location.replace(/^file:\/\/\/?/, '').split('\\').join('/');
+    const position = /^(.+?):(\d+)(?::\d+)?$/.exec(location);
+    if (!position || position[1].includes('/node_modules/')) continue;
+    const at = position[1].lastIndexOf('/src/');
+    if (at < 0) continue;
+    const frame = `${position[1].slice(at + 1)}:${position[2]}`;
+    if (!FRAME_SHAPE.test(frame) || /\.test\.[cm]?js:/.test(frame) || out.includes(frame)) continue;
+    out.push(frame);
+    if (out.length === MAX_FRAMES) break;
+  }
+  return out;
+}
+
 /**
  * Everything content-free an operator diagnoses an error by, as `key=value`
  * pairs for a log line: its class name, its code (a provider's or Node's,
  * `ECONNRESET`, `invalid_grant`, `429`), its HTTP status, a Cosmos substatus,
- * and the code of its cause (undici's `fetch failed` keeps the socket code
- * there). Each value must fit CODE_SHAPE, so none can carry a sentence; the
- * message and the stack are never read.
+ * the code of its cause (undici's `fetch failed` keeps the socket code
+ * there), and where in this repository's code it was thrown (`at=`, from
+ * ownFrames). Each value must fit CODE_SHAPE or FRAME_SHAPE, so none can
+ * carry a sentence; the message is never read, and of the stack only our
+ * own frames' file and line.
  *
  * @param {unknown} error - anything thrown
- * @returns {string} e.g. `name=Error code=429 status=429 substatus=3200`
+ * @returns {string} e.g. `name=Error code=429 status=429 substatus=3200 at=src/lib/jobs.js:657`
  */
 export function errorFacts(error) {
   if (!error || typeof error !== 'object') return `type=${error === null ? 'null' : typeof error}`;
@@ -175,6 +215,8 @@ export function errorFacts(error) {
   add('status', error.status ?? error.statusCode);
   add('substatus', error.substatus);
   add('cause', error.cause?.code ?? error.cause?.name);
+  const frames = ownFrames(error);
+  if (frames.length) facts.push(`at=${frames.join(',')}`);
   return facts.join(' ') || 'type=object';
 }
 

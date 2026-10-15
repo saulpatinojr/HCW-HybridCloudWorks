@@ -11,6 +11,7 @@ import {
   getCorrelationId,
   isAuthoredError,
   logFailure,
+  ownFrames,
   recordedFailure,
   storedFailure,
 } from './error-response.js';
@@ -156,6 +157,51 @@ describe('errorCode: a content-free name for a log line', () => {
     [null, 'UNKNOWN'],
   ])('%j → %s', (error, code) => {
     expect(errorCode(error)).toBe(code);
+  });
+});
+
+describe('ownFrames: where in our own code, and nothing else (#1200 review L3)', () => {
+  /** An error whose stack is exactly these lines. */
+  const thrown = (...lines) => Object.assign(new Error('secret text'), { stack: lines.join('\n') });
+
+  it('names our own frames as repo-relative path:line, from any host layout', () => {
+    const error = thrown(
+      'TypeError: Cannot read properties of undefined (reading "id") for ana@example.com',
+      '    at runJob (C:\\Users\\someone\\HCW\\functions\\src\\lib\\jobs.js:657:12)',
+      '    at async Promise.all (index 0)',
+      '    at handler (/home/site/wwwroot/src/functions/jobs-http.js:41:9)',
+      '    at file:///home/site/wwwroot/src/lib/job-context.js:90:21',
+      '    at Object.other (/home/site/wwwroot/src/lib/fourth.js:1:1)'
+    );
+    expect(ownFrames(error)).toEqual([
+      'src/lib/jobs.js:657',
+      'src/functions/jobs-http.js:41',
+      'src/lib/job-context.js:90',
+    ]);
+    expect(errorFacts(Object.assign(error, { name: 'TypeError' }))).toBe(
+      'name=TypeError at=src/lib/jobs.js:657,src/functions/jobs-http.js:41,src/lib/job-context.js:90'
+    );
+  });
+
+  it('skips dependencies, tests, Node internals, paths outside src/ and anything not frame-shaped', () => {
+    const error = thrown(
+      'Error: at fake (src/lib/injected.js:1:1) sent by the caller',
+      '    at x (/home/site/wwwroot/node_modules/@azure/cosmos/dist/index.js:10:5)',
+      '    at y (/repo/functions/src/lib/jobs.test.js:12:3)',
+      '    at z (node:internal/process/task_queues:95:5)',
+      '    at w (/repo/functions/scripts/run.js:3:1)',
+      '    at v (/repo/functions/src/lib/has space/x.js:3:1)',
+      '    at u (/repo/functions/src/lib/real.js:7:2)',
+      '    at u (/repo/functions/src/lib/real.js:7:9)'
+    );
+    expect(ownFrames(error)).toEqual(['src/lib/real.js:7']);
+    expect(errorFacts(error)).not.toMatch(/secret|injected|node_modules|internal|scripts|repo/);
+  });
+
+  it('gives nothing for an error with no stack, or for a non-error', () => {
+    expect(ownFrames(Object.assign(new Error('x'), { stack: undefined }))).toEqual([]);
+    expect(ownFrames('a string')).toEqual([]);
+    expect(ownFrames(null)).toEqual([]);
   });
 });
 

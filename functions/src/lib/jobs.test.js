@@ -419,7 +419,11 @@ describe('runJob', () => {
     // getJob serves this field: the store's words never land in it, the
     // code and the log line's correlation id do.
     expect(store.docs['job-1'].error).toBe('The job failed (429; reference inv-run).');
-    expect(ctx.error).toHaveBeenCalledWith('[inv-run] runJob: explode failed (name=Error code=429)');
+    // The facts, and where in our code it was thrown (the job runner's own
+    // frames; the worker here is a test function, whose frame is skipped).
+    expect(ctx.error).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[inv-run\] runJob: explode failed \(name=Error code=429 at=src\/lib\/[\w./-]+\.js:\d+(,src\/[\w./-]+\.js:\d+)*\)$/)
+    );
     expect(JSON.stringify(ctx.error.mock.calls)).not.toContain('ActivityId');
 
     await h.runJob({ jobId: 'job-2' }, ctx);
