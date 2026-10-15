@@ -497,8 +497,14 @@ async function forgeOne(ctx, id, { user, stamp, context, io }) {
     const reverted = await updateEntry(ctx.store, id, (current) =>
       current.jobId === jobId ? { status: 'queued', jobId: null, updatedAt: stamp } : null
     ).catch(() => null);
+    // "Put back in the queue" only when the revert says so: a revert that
+    // failed, or found the entry changed under it, confirms nothing, and the
+    // list's reconcile settles the entry on its next read.
+    const fallback = reverted
+      ? 'The job could not be written; the entry was put back in the queue.'
+      : 'The job could not be written, and the entry could not be confirmed back in the queue; reload the list.';
     return {
-      failed: authoredMessage(error, 'The job could not be written; the entry was put back in the queue.'),
+      failed: authoredMessage(error, fallback),
       entry: reverted || entry,
     };
   }

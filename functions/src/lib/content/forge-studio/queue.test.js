@@ -385,6 +385,29 @@ describe('Save: one forge-from-url job per entry, the brief on the payload', () 
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
+  it('says the entry is back in the queue only when the revert confirms it (CodeRabbit on #1200)', async () => {
+    const { h, store } = await seeded();
+    store.upsertDoc.mockImplementation(async () => {
+      throw new Error('jobs container unavailable');
+    });
+    const original = store.patchDoc.getMockImplementation();
+    store.patchDoc.mockImplementation(async (...args) => {
+      if (args[2].status === 'queued') throw new Error('admin_config unavailable');
+      return original(...args);
+    });
+    const body = parse(await h.forge(request({ ids: [idOf(1)] }), context, { enqueue: vi.fn() }));
+    expect(body.started).toEqual([]);
+    expect(body.notStarted).toEqual([
+      {
+        id: idOf(1),
+        error:
+          'The job could not be written, and the entry could not be confirmed back in the queue; reload the list.',
+      },
+    ]);
+    // The entry the claim wrote is the one answered, as before.
+    expect(body.changed.find((i) => i.id === idOf(1))).toMatchObject({ status: 'forging' });
+  });
+
   it('a job document over its type’s payload bound is not written, and the claim is reverted (#942 follow-up)', async () => {
     // A limit far below a real brief, so newJobDoc refuses the document.
     registerJobType('forge-from-url', { role: 'editor', worker: async () => {}, maxPayloadBytes: 64 });
