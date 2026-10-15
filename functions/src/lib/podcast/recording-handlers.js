@@ -11,7 +11,7 @@
  * and the jobs they enqueue: each produces a draft, and approval stays a
  * separate publisher-gated act.
  */
-import { JOBS_CONTAINER, newJobDoc } from '../jobs.js';
+import { JOBS_CONTAINER, jobPayloadBytes, newJobDoc } from '../jobs.js';
 import { PODCAST_AUDIO_CONTAINER } from './store.js';
 import {
   PLAUD_MCP_SERVER_ID,
@@ -25,6 +25,7 @@ import {
   MAX_AUDIO_UPLOAD_BYTES,
   MAX_TITLE_CHARS,
   MAX_UPLOAD_REQUEST_BYTES,
+  UPLOAD_JOB_MAX_PAYLOAD_BYTES,
   UPLOAD_JOB_TYPE,
   checkAudioUpload,
   uploadPathFor,
@@ -41,6 +42,8 @@ const json = (status, body) => ({
 });
 
 const TOO_LARGE = `File exceeds the ${Math.round(MAX_AUDIO_UPLOAD_BYTES / 1024 / 1024)}MB upload limit`;
+/** A title within MAX_TITLE_CHARS can still escape past the job's payload bound. */
+const TITLE_TOO_LARGE = 'The title is too long to queue with the upload; use a shorter title.';
 
 function readContentLength(request) {
   const raw = request?.headers?.get?.('content-length');
@@ -67,7 +70,22 @@ export function createPodcastRecordingHandlers({
   now = () => new Date(),
   uuid = () => crypto.randomUUID(),
 }) {
-  async function enqueueJob({ type, payload, auth, enqueue, context, label }) {
+  /**
+   * Write a job document built by newJobDoc and queue it.
+   *
+   * @param {object} job
+   * @param {string} job.type
+   * @param {object} job.payload
+   * @param {{ user?: object }} job.auth
+   * @param {Function} [job.enqueue] the queue output; absent answers a 500
+   * @param {object} job.context
+   * @param {string} job.label the route, for the log
+   * @param {number} [job.maxPayloadBytes] the bound, when the caller holds it;
+   *   else the registered type's
+   * @returns {Promise<{jobId: string} | {error: object}>}
+   * @throws {Error} code JOB_PAYLOAD_TOO_LARGE from newJobDoc
+   */
+  async function enqueueJob({ type, payload, auth, enqueue, context, label, maxPayloadBytes }) {
     if (typeof enqueue !== 'function') {
       context.error?.(`${label}: no queue output wired`);
       return { error: json(500, { error: 'Job queue is not configured' }) };
@@ -79,6 +97,7 @@ export function createPodcastRecordingHandlers({
       payload,
       requestedBy: auth.user,
       createdAt: now().toISOString(),
+      maxPayloadBytes,
     });
     await store.upsertDoc(JOBS_CONTAINER, doc);
     enqueue({ jobId, type });
@@ -211,6 +230,15 @@ export function createPodcastRecordingHandlers({
         if (buffer.length > MAX_AUDIO_UPLOAD_BYTES) return json(413, { error: TOO_LARGE });
 
         const uploadPath = uploadPathFor(uuid(), media.extension);
+        // The job's payload is bounded (#942), and a title within
+        // MAX_TITLE_CHARS can still exceed it once JSON-escaped (control
+        // characters and lone surrogates escape to six bytes each). Checked
+        // here, before the audio is stored, so an oversized title is the
+        // caller's 413 rather than an upload deleted again behind a 500.
+        const payload = { uploadPath, title };
+        if (jobPayloadBytes(payload) > UPLOAD_JOB_MAX_PAYLOAD_BYTES) {
+          return json(413, { error: TITLE_TOO_LARGE });
+        }
         await storage.uploadBlob(
           PODCAST_AUDIO_CONTAINER,
           uploadPath,
@@ -231,11 +259,12 @@ export function createPodcastRecordingHandlers({
         try {
           queued = await enqueueJob({
             type: UPLOAD_JOB_TYPE,
-            payload: { uploadPath, title },
+            payload,
             auth,
             enqueue,
             context,
             label: 'uploadPodcastRecording',
+            maxPayloadBytes: UPLOAD_JOB_MAX_PAYLOAD_BYTES,
           });
         } catch (err) {
           await discardUpload(uploadPath, context);

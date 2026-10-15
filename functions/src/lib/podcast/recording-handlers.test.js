@@ -10,9 +10,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createPodcastRecordingHandlers } from './recording-handlers.js';
 import { PLAUD_CONNECT_SENTENCE, RECORDING_JOB_TYPE } from './recording-generate.js';
-import { UPLOAD_JOB_TYPE } from './recording-upload.js';
+import { MAX_TITLE_CHARS, UPLOAD_JOB_MAX_PAYLOAD_BYTES, UPLOAD_JOB_TYPE } from './recording-upload.js';
 import { API_KEY_SETTING, CLIENT_ID_SETTING } from './plaud-embedded.js';
-import { JOBS_CONTAINER } from '../jobs.js';
+import { JOBS_CONTAINER, jobPayloadBytes } from '../jobs.js';
 
 const NOW = new Date('2026-09-08T12:00:00.000Z');
 const context = { log: vi.fn(), error: vi.fn() };
@@ -244,6 +244,31 @@ describe('uploadRecording', () => {
     );
     expect(res.status).toBe(413);
     expect(storage.uploadBlob).not.toHaveBeenCalled();
+  });
+
+  it('413s a title that fits MAX_TITLE_CHARS but not the job’s payload bound, before storing anything (#942)', async () => {
+    // 200 characters, each JSON-escaped to six bytes (\u0001): over the
+    // upload job's 1024-byte bound once the blob path is added.
+    const title = '\u0001'.repeat(MAX_TITLE_CHARS);
+    expect(jobPayloadBytes({ uploadPath: 'uploads/x.mp3', title })).toBeGreaterThan(UPLOAD_JOB_MAX_PAYLOAD_BYTES);
+    const store = makeStore();
+    const storage = makeStorage();
+    const enqueue = vi.fn();
+
+    const res = await handlers({ store, storage }).uploadRecording(
+      makeRequest({ body: audioBody({ title }) }),
+      context,
+      { enqueue }
+    );
+
+    expect(res.status).toBe(413);
+    expect(JSON.parse(res.body).error).toBe(
+      'The title is too long to queue with the upload; use a shorter title.'
+    );
+    expect(storage.uploadBlob).not.toHaveBeenCalled();
+    expect(storage.deleteBlob).not.toHaveBeenCalled();
+    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it('415s a non-audio type or a mismatched extension, 400s a missing title or body', async () => {

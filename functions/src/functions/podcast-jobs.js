@@ -42,6 +42,7 @@ import {
   parseRecordingPayload,
 } from '../lib/podcast/recording-generate.js';
 import {
+  UPLOAD_JOB_MAX_PAYLOAD_BYTES,
   UPLOAD_JOB_TYPE,
   parseUploadPayload,
   transcribeUpload,
@@ -275,8 +276,9 @@ registerJobType(UPLOAD_JOB_TYPE, {
   role: 'editor',
   description:
     'Hand one uploaded audio file to the Plaud Embedded Transcription API, poll until it is transcribed and store the transcript in recordings for the Recording Hub.',
-  // A blob path and a title.
-  maxPayloadBytes: 1024,
+  // A blob path and a title; the route checks the same bound before it
+  // stores the audio.
+  maxPayloadBytes: UPLOAD_JOB_MAX_PAYLOAD_BYTES,
   // Plaud transcribes at roughly real time or faster; a two-hour recording
   // fits, and the poll loop stops with a named error a minute before this.
   timeoutMs: UPLOAD_JOB_TIMEOUT_MS,
