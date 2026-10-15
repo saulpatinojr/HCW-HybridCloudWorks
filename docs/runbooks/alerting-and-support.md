@@ -945,10 +945,15 @@ A 403 error is the expected result. Success is
 **`alert-lab-ssh-burst`**: write a thousand failed-login lines to the lab
 host's auth log under sshd's name, from a documentation address. They are
 written by `logger`, not by sshd, so fail2ban (which reads the sshd unit's
-journal) bans nothing, and no login is attempted.
+journal) bans nothing, and no login is attempted. Each line carries its own
+port number on purpose: the host's rsyslog has `$RepeatedMsgReduction on`
+(`/etc/rsyslog.conf`, Ubuntu's default), which folds identical consecutive
+lines into one `message repeated N times` line, and the 2026-10-15 run with
+one fixed port reached the workspace as two `Syslog` rows and fired nothing
+(#964). A thousand distinct lines arrive as a thousand.
 
 ```powershell
-ssh hcw-lab 'for i in {1..1000}; do logger -p auth.info -t sshd "Invalid user plat4firetest from 192.0.2.10 port 22"; done'
+ssh hcw-lab 'for i in {1..1000}; do logger -p auth.info -t sshd "Invalid user plat4firetest from 192.0.2.10 port $((20000 + i))"; done'
 ```
 
 Success is `alert-lab-ssh-burst-prod-cus` within about 30 minutes. It

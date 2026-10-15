@@ -1863,11 +1863,16 @@ function Invoke-AlertTestLabSshBurst {
     .SYNOPSIS
         alert-lab-ssh-burst: a thousand failed-login lines under sshd's name,
         written by logger, so fail2ban bans nothing and no login is tried.
+        Each line carries its own port number: the host's rsyslog runs with
+        $RepeatedMsgReduction on, which folds identical consecutive lines into
+        one "message repeated N times" line, and the 2026-10-15 run of this
+        test with one fixed port reached the workspace as two Syslog rows
+        (#964). A thousand distinct lines reach it as a thousand.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(Mandatory)] [pscustomobject] $Context)
 
-    $command = 'for i in {1..1000}; do logger -p auth.info -t sshd "Invalid user plat4firetest from 192.0.2.10 port 22"; done'
+    $command = 'for i in {1..1000}; do logger -p auth.info -t sshd "Invalid user plat4firetest from 192.0.2.10 port $((20000 + i))"; done'
     $Context.StartUtc = Get-AlertUtcNow
     $run = Invoke-AlertSshChange -HostAlias $Context.HostAlias -Command $command -What 'Write a thousand failed-login lines to the lab host''s auth log'
     if ($run.Ran) {
