@@ -183,7 +183,7 @@ test.describe('pre-render hydration', () => {
     // main.jsx hydrated on "the mount point has children" this would mismatch
     // on every admin route; the route stamp is what makes it a clean client
     // render instead.
-    await page.goto('/admin/queue');
+    await page.goto('/admin/review-queue');
     await page.waitForLoadState('networkidle');
 
     const stamped = await page.getAttribute('#root', 'data-prerendered-route');

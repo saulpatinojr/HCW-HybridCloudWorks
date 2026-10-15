@@ -15,8 +15,10 @@ import { ThemeProvider } from '@/context/ThemeContext';
 // A bare string module, deliberately: importing this from msalConfig.js would
 // drag MSAL onto every public route (#520).
 import { AUTH_REDIRECT_PATH } from '@/lib/authRoutes';
-// Plain data, so the Integrations Hub page itself stays lazily loaded (#570).
-import { LEGACY_ROUTES as INTEGRATIONS_LEGACY_ROUTES } from '@/components/admin/integrations/tabs';
+// Plain data and one Navigate, so no admin page is pulled onto the public
+// bundle: every retired admin path and where it goes now (#442, #569, #570,
+// and the slugs renamed to their menu labels for AP-F13, #937).
+import { adminLegacyRoutes } from '@/config/adminRedirects';
 
 const lazyPage = (loader) => lazy(loader);
 
@@ -489,43 +491,42 @@ function App() {
                   </AdminAuthGuard>
                 }
               >
+                {/* Each page's segment is the slug of its menu label
+                    (config/adminNav.js, AP-F13 #937); adminNav.test.js holds
+                    the registry to that, adminRedirects.test.jsx holds this
+                    table to the registry. */}
                 <Route index element={<AdminDashboardPage />} />
                 <Route path="drafts" element={<AdminDraftsPage />} />
-                <Route path="queue" element={<AdminQueuePage />} />
-                <Route path="queue/:blogId" element={<AdminReviewPage />} />
+                <Route path="review-queue" element={<AdminQueuePage />} />
+                <Route path="review-queue/:blogId" element={<AdminReviewPage />} />
                 <Route path="editor" element={<AdminEditorListPage />} />
                 <Route path="editor/:blogId" element={<AdminEditorPage />} />
-                <Route path="submit" element={<AdminSubmitUrlsPage />} />
-                <Route path="published" element={<AdminPublishedPage />} />
+                <Route path="new-content" element={<AdminSubmitUrlsPage />} />
+                <Route path="publish" element={<AdminPublishedPage />} />
                 <Route path="live-pages" element={<AdminLivePagesPage />} />
                 <Route path="calendar" element={<AdminCalendarPage />} />
                 <Route path="frameworks" element={<AdminFrameworksPage />} />
                 <Route path="coder-corner" element={<AdminCoderCornerPage />} />
-                <Route path="speaking-events" element={<AdminSpeakingEventsPage />} />
+                <Route path="speaking" element={<AdminSpeakingEventsPage />} />
                 <Route path="certifications" element={<AdminCertificationsPage />} />
                 <Route path="ambassador" element={<AdminAmbassadorPage />} />
                 <Route path="image-prompts" element={<AdminImagePromptsPage />} />
                 <Route path="image-gallery" element={<AdminImageGalleryPage />} />
-                <Route path="platform" element={<AdminPlatformSettingsPage />} />
+                <Route path="platform-settings" element={<AdminPlatformSettingsPage />} />
                 <Route path="health" element={<AdminHealthPage />} />
                 <Route path="integrations" element={<AdminIntegrationsPage />} />
-                <Route path="social" element={<AdminSocialHubPage />} />
+                <Route path="social-hub" element={<AdminSocialHubPage />} />
                 <Route path="recording-hub" element={<AdminRecordingHubPage />} />
-                {/* #442: /admin/recordings became the Plaud tab of the Recording Hub. */}
-                <Route path="recordings" element={<Navigate to="/admin/recording-hub" replace />} />
                 <Route path="forge-studio" element={<AdminForgeStudioPage />} />
                 <Route path="ai-engine" element={<AdminAIEnginePage />} />
                 <Route path="ai-engine/docs/:serviceId" element={<AdminServiceDocsPage />} />
                 {/* An MCP vendor's sign-in returns here (OAuth Connect, 2026-10-08). */}
                 <Route path="ai-engine/oauth/callback" element={<AdminMcpOAuthCallbackPage />} />
-                <Route path="linkie" element={<AdminLinkiePage />} />
-                <Route path="mailing-list" element={<AdminMailingListPage />} />
-                <Route path="ops-health" element={<Navigate to="/admin/health" replace />} />
-                <Route path="diagnostics" element={<Navigate to="/admin/health" replace />} />
-                {/* #570: the two pages the Integrations Hub replaced land on their tab. */}
-                {INTEGRATIONS_LEGACY_ROUTES.map(({ path, to }) => (
-                  <Route key={path} path={path} element={<Navigate to={to} replace />} />
-                ))}
+                <Route path="linkie-hub" element={<AdminLinkiePage />} />
+                <Route path="newsletter-hub" element={<AdminMailingListPage />} />
+                {/* Every retired admin path, redirected with its query and
+                    nested segment (config/adminRedirects.jsx). */}
+                {adminLegacyRoutes()}
                 <Route path="labs" element={<AdminLabsPage />} />
                 <Route path="listen-and-learn" element={<AdminListenAndLearnPage />} />
                 <Route path="*" element={<NotFoundPage />} />

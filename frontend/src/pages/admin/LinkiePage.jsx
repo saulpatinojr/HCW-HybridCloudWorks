@@ -1,5 +1,5 @@
 /**
- * Linkie Hub (route `/admin/linkie`) — the link-in-bio profile: its posts, the
+ * Linkie Hub (route `/admin/linkie-hub`) — the link-in-bio profile: its posts, the
  * published pages pushed onto it, and what the traffic looks like.
  *
  * Three tabs by duty (#577, components/admin/linkie):
@@ -113,7 +113,6 @@ export default function LinkiePage() {
     <div className="space-y-6">
       <PageHeader
         icon={Link2}
-        title="Linkie Hub"
         help={HELP}
         status={
           <>

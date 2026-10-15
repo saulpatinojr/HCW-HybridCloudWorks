@@ -299,6 +299,25 @@ export async function getJSON(fnName, options = {}) {
 }
 
 /**
+ * GET /api/cms/content with its filters as the list route reads them
+ * (functions/src/lib/cms-content.js buildListQuery): `search` matches titles
+ * and summaries (#1178), and `status`, `live`, `type`, `kind`, `ideaOrigin`,
+ * `sort` and `limit` as there. Empty values are left off the query. Resolves
+ * to the items, in the admin snapshot projection.
+ * @param {Record<string, string|number|boolean|undefined>} [params]
+ * @returns {Promise<object[]>}
+ */
+export async function listContentItems(params = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
+  }
+  const qs = query.toString();
+  const res = await getJSON(qs ? `cms/content?${qs}` : 'cms/content');
+  return res.items || [];
+}
+
+/**
  * Send JSON to an authenticated REST route with an explicit method
  * (PATCH/PUT/DELETE). Omit body for body-less requests.
  * @param {string} fnName - route path after the API base

@@ -482,7 +482,7 @@ describe("Send to In Review", () => {
       ),
     );
     expect(res.status).toBe(200);
-    expect(res.body.reviewPath).toBe(`/admin/queue/${draft.id}`);
+    expect(res.body.reviewPath).toBe(`/admin/review-queue/${draft.id}`);
     expect(res.body.draft.stage).toBe("in_review");
     const stored = store.docs.get(draft.id);
     expect(stored).toMatchObject({

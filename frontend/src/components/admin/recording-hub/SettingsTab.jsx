@@ -367,7 +367,10 @@ export default function SettingsTab({ hub }) {
         </p>
         <p className="text-sm text-slate-600 dark:text-slate-300">
           <strong className="text-slate-900 dark:text-slate-100">Podcast feeds and voice</strong> —{' '}
-          <RouterLink to="/admin/platform?tab=audio" className="text-violet-600 hover:underline">
+          <RouterLink
+            to="/admin/platform-settings?tab=audio"
+            className="text-violet-600 hover:underline"
+          >
             Platform settings
           </RouterLink>
           . The Podbean credentials are on{' '}

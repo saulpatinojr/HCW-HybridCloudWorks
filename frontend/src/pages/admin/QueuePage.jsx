@@ -407,7 +407,6 @@ export default function QueuePage() {
     <div className="space-y-6 max-w-5xl">
       <PageHeader
         icon={ListChecks}
-        title="Content Queue"
         help={QUEUE_HELP}
         status={
           <>

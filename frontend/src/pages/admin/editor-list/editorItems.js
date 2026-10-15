@@ -7,6 +7,13 @@ import { byNewest } from '@/lib/dateUtils';
 import { getLiveUrl } from '@/lib/livePages';
 import { getCanonicalContentType } from '@/lib/contentModel';
 
+/**
+ * The status the Archive board lists, and the one Live Pages' Archive moves
+ * a page into (AP-F13, #937): one name, so "deleting a live page moves it to
+ * the Archive board" is the same word on both sides.
+ */
+export const ARCHIVED_STATUS = 'archived';
+
 export function getContentType(item) {
   return getCanonicalContentType(item);
 }

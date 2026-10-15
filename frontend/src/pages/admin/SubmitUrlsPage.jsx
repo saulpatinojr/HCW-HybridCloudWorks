@@ -588,7 +588,7 @@ export default function SubmitUrlsPage() {
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <PageHeader icon={FilePlus2} title="New Content" help={SUBMIT_HELP}>
+      <PageHeader icon={FilePlus2} help={SUBMIT_HELP}>
         <WorkflowHeader
           currentStep={currentStep}
           readinessComplete={readinessComplete}

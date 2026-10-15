@@ -310,6 +310,12 @@ export function createContentStatusTransitioner({
     // Enforce additional invariants tied to the state machine.
     if (normalizedStatus === "archived") {
       updateData.archivedAt = nowDate.toISOString();
+    } else if (normalizedCurrentStatus === "archived") {
+      // Leaving the archive (Undo or Restore to live, AP-F13 #937) clears
+      // the stamp the Archive board sorts on, as leaving rejected clears
+      // rejectedAt below. Null, not undefined: a page that was archived
+      // once and is live again should read as never archived.
+      updateData.archivedAt = null;
     }
     if (
       normalizedCurrentStatus === "rejected" &&

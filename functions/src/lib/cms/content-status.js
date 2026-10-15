@@ -69,7 +69,12 @@ export const VALID_TRANSITIONS = {
   forge_ready: ['published', 'editing', 'rejected'],
   published: ['archived', 'editing', 'inspected', 'rejected'],
   rejected: ['inspected', 'in_review', 'archived'],
-  archived: ['in_review', 'rejected'],
+  // published: the way back from the Archive board, and the Undo on Live
+  // Pages' ten-second toast (AP-F13, #937). The port kept the source graph's
+  // "no resurrect-to-live" until 2026-10-15; an archive that cannot be undone
+  // is a delete with a kinder name. Publisher-only, like every edge into
+  // `published` (transitionRequestRefusal), and audited like every edge.
+  archived: ['in_review', 'rejected', 'published'],
 };
 
 export const VALID_STATUSES = Object.keys(VALID_TRANSITIONS);
@@ -135,15 +140,29 @@ function applyStatusPublished(updateData, data, ctx) {
   updateData.publishTarget = ctx.resolvedPublishTarget;
   updateData.Live = ctx.markLive === null ? true : Boolean(ctx.markLive);
   updateData.approvedForNews = false;
+  // A page coming back from the archive (Undo, AP-F13 #937) carries the
+  // `Status: 'Archived'` the archive wrote; a live page does not say that.
+  if (updateData.Live) updateData.Status = undefined;
 }
 
+/**
+ * OFF THE SITE MEANS EVERY GATE. The public reads admit a document on any of
+ * three words — `Live`, the legacy `Status: 'Live'`, or a published
+ * contentStatus (public-reads.js isPublicDocument and SQL_PUBLIC_CLAUSE) — so
+ * taking a page down has to turn all three, not just the flag. Rejected and
+ * archived write the legacy word too, the way softDeleteLivePage always did;
+ * public-reads.test.js applies these patches to a legacy document and checks
+ * nothing serves it (AP-F13, #937).
+ */
 function applyStatusRejected(updateData, data, ctx) {
   updateData.Live = false;
+  updateData.Status = 'Rejected';
   updateData.rejectedAt = ctx.nowIso;
 }
 
 function applyStatusArchived(updateData) {
   updateData.Live = false;
+  updateData.Status = 'Archived';
 }
 
 function applyStatusForgeReady(updateData) {
@@ -192,6 +211,10 @@ export function buildStatusUpdateData(data, newStatus, reviewedBy, reviewNotes, 
 
   if (newStatus !== 'rejected') {
     updateData.softDeletedAt = undefined;
+    // Both halves of isSoftDeleted (public-reads.js): a page the old Delete
+    // Live Page had soft-deleted can be restored through Undo (AP-F13, #937)
+    // only if the expiry goes with the stamp.
+    updateData.softDeleteExpiresAt = undefined;
     updateData.softDeletedReason = undefined;
     updateData.rejectedAt = undefined;
   }

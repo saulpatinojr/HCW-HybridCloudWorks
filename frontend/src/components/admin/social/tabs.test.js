@@ -58,10 +58,10 @@ describe('resolveTab', () => {
 
 describe('tabHref', () => {
   it('builds a deep link on the hub route', () => {
-    expect(tabHref('queue')).toBe('/admin/social?tab=queue');
+    expect(tabHref('queue')).toBe('/admin/social-hub?tab=queue');
   });
 
   it('encodes a value rather than pasting it into the query string', () => {
-    expect(tabHref('a b&c')).toBe('/admin/social?tab=a%20b%26c');
+    expect(tabHref('a b&c')).toBe('/admin/social-hub?tab=a%20b%26c');
   });
 });

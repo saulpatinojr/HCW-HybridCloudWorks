@@ -180,7 +180,7 @@ function SocialResult({ result, contentId }) {
         Paste one into the Social Hub composer:{' '}
         <Link
           className="text-primary underline"
-          to={`/admin/social?tab=compose&contentId=${encodeURIComponent(contentId)}`}
+          to={`/admin/social-hub?tab=compose&contentId=${encodeURIComponent(contentId)}`}
         >
           open the Social Hub with this piece selected
         </Link>

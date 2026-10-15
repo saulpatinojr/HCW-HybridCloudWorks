@@ -350,14 +350,20 @@ describe("transitionContentStatus", () => {
       store,
       ...fixed,
     });
+    // archived → editing: the archive opens back onto review or the site
+    // (AP-F13, #937), never straight into the editor.
     const res = await h(
-      makeRequest({ contentId: "c1", newStatus: "published" }),
+      makeRequest({ contentId: "c1", newStatus: "editing" }),
       context,
     );
     expect(res.status).toBe(400);
     const body = JSON.parse(res.body);
-    expect(body.error).toMatch(/Invalid transition: archived → published/);
-    expect(body.allowedTransitions).toEqual(["in_review", "rejected"]);
+    expect(body.error).toMatch(/Invalid transition: archived → editing/);
+    expect(body.allowedTransitions).toEqual([
+      "in_review",
+      "rejected",
+      "published",
+    ]);
     expect(store.patchDoc).not.toHaveBeenCalled();
   });
 
@@ -438,6 +444,69 @@ describe("transitionContentStatus", () => {
         )
       ).status,
     ).toBe(404);
+  });
+
+  /**
+   * Undo on Live Pages and Restore on the Archive board (AP-F13, #937): the
+   * edge back from archived to published, for a publisher, with the stamp
+   * cleared and the audit row written like every other edge.
+   */
+  it("lets a publisher bring an archived page back live, clearing archivedAt, and audits it", async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({
+        id: "c1",
+        Title: "Was live",
+        contentStatus: "archived",
+        Live: false,
+        Status: "Archived",
+        archivedAt: "2026-10-15T11:59:00.000Z",
+        publishedAt: "2026-10-01T00:00:00.000Z",
+      })),
+    });
+    const h = createContentTransitionHandler({
+      guard: guardAs("publisher"),
+      store,
+      ...fixed,
+    });
+    const res = await h(
+      makeRequest({ contentId: "c1", newStatus: "published", reviewNotes: "Undo" }),
+      context,
+    );
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ from: "archived", to: "published" });
+    const patch = store.patchDoc.mock.calls[0][2];
+    expect(patch.contentStatus).toBe("published");
+    expect(patch.Live).toBe(true);
+    expect(patch.archivedAt).toBeNull();
+    expect("Status" in patch && patch.Status === undefined).toBe(true);
+    expect(patch.publishedAt).toBe("2026-10-01T00:00:00.000Z");
+    const auditCall = store.upsertDoc.mock.calls.find(([c]) => c === "audits");
+    expect(auditCall[1]).toMatchObject({
+      action: "status_transition",
+      resourceId: "c1",
+      changes: {
+        before: { contentStatus: "archived" },
+        after: { contentStatus: "published" },
+        notes: "Undo",
+      },
+    });
+  });
+
+  it("keeps the way back from the archive to publishers, like every edge into published", async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: "c1", contentStatus: "archived" })),
+    });
+    const h = createContentTransitionHandler({
+      guard: guardAs("editor"),
+      store,
+      ...fixed,
+    });
+    const res = await h(
+      makeRequest({ contentId: "c1", newStatus: "published" }),
+      context,
+    );
+    expect(res.status).toBe(403);
+    expect(store.patchDoc).not.toHaveBeenCalled();
   });
 
   it("restore from rejected clears the rejection marker with an explicit null", async () => {

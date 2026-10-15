@@ -111,9 +111,9 @@ beforeEach(() => {
 });
 
 describe('the header and tabs', () => {
-  it('names the page Integrations Hub and offers its tabs, in order, the Directory last', () => {
+  it('names the page Integrations, as the menu does, and offers its tabs, in order, the Directory last', () => {
     render(<IntegrationsPage />);
-    expect(screen.getByRole('heading', { name: /Integrations Hub/ })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Integrations' })).toBeTruthy();
     expect(
       hubTabs()
         .getAllByRole('tab')
@@ -224,7 +224,7 @@ describe('each tab loads its own data', () => {
     const { rerender } = render(<IntegrationsPage />);
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/HTTP 403/));
     // The page around the tab is still there.
-    expect(screen.getByRole('heading', { name: /Integrations Hub/ })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Integrations' })).toBeTruthy();
     expect(hubTabs().getAllByRole('tab')).toHaveLength(6);
 
     searchParams = 'tab=identity';

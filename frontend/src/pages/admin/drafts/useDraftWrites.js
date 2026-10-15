@@ -73,7 +73,7 @@ export function useDraftWrites({ editor, list, toast }) {
       () => postJSON(`${draftRoute(current.id)}/send-to-review`, { etag: current.etag }),
       showAnswer({
         title: 'Sent to In Review',
-        description: 'It is on the Content Queue under In Review. Nothing was published.',
+        description: 'It is on the Review Queue under In Review. Nothing was published.',
       })
     );
 

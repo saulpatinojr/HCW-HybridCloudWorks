@@ -215,7 +215,7 @@ export default function ForgeStudioPage() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <PageHeader icon={Flame} title="Forge Studio" status={headerStatus} help={HELP} />
+      <PageHeader icon={Flame} status={headerStatus} help={HELP} />
 
       {session.error && (
         <div

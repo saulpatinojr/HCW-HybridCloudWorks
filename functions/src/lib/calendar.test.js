@@ -106,7 +106,7 @@ describe('collectors', () => {
       ['content:b', 'failed'],
       ['content:d:published', 'published'],
     ]);
-    expect(items[0].href).toBe('/admin/queue/a?source=content');
+    expect(items[0].href).toBe('/admin/review-queue/a?source=content');
     expect(items[1].meta.error).toMatch(/not live/);
   });
 

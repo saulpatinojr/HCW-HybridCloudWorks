@@ -52,7 +52,7 @@ export function contentStage(item = {}) {
 }
 
 /** The review board, the page every stage but Drafts and the Editor is decided on. */
-const reviewPath = (id) => `/admin/queue/${enc(id)}?source=content`;
+const reviewPath = (id) => `/admin/review-queue/${enc(id)}?source=content`;
 
 const STAGE_PATHS = Object.freeze({
   drafts: () => '/admin/drafts',
@@ -70,14 +70,14 @@ export const transcriptHref = (id) => `/admin/recording-hub?tab=transcripts&tran
 
 /** `tab` is the Newsletter Hub tab the issue is listed on: `newsletter` or `drafts`. */
 export const newsletterIssueHref = (id, tab = 'newsletter') =>
-  `/admin/mailing-list?tab=${enc(tab)}&issue=${enc(id)}`;
+  `/admin/newsletter-hub?tab=${enc(tab)}&issue=${enc(id)}`;
 
 export const alertHref = (id) => `/admin/health?tab=alerts&alert=${enc(id)}`;
 
 /** Where the Health Hub lists the Key Vault references that did not resolve. */
 export const UNRESOLVED_SECRETS_HREF = '/admin/health?tab=overview';
 
-export const reminderHref = (id) => `/admin/platform?tab=reminders&reminder=${enc(id)}`;
+export const reminderHref = (id) => `/admin/platform-settings?tab=reminders&reminder=${enc(id)}`;
 
 /** One chapter on the Review tab, its book opened by provider and exam code. */
 export function chapterHref({ provider, examCode, id }) {
@@ -90,8 +90,8 @@ export const ambassadorHref = (id) => `/admin/ambassador?tab=applications&applic
 
 /** Compose, with the article the post was for already chosen when it is known. */
 export const socialComposeHref = (contentId) =>
-  contentId ? `/admin/social?tab=compose&contentId=${enc(contentId)}` : '/admin/social?tab=compose';
+  contentId ? `/admin/social-hub?tab=compose&contentId=${enc(contentId)}` : '/admin/social-hub?tab=compose';
 
-export const SOCIAL_QUEUE_HREF = '/admin/social?tab=queue';
+export const SOCIAL_QUEUE_HREF = '/admin/social-hub?tab=queue';
 
 export const FORGE_QUEUE_HREF = '/admin/forge-studio?tab=queue';

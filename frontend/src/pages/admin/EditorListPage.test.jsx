@@ -25,7 +25,12 @@ vi.mock('@/hooks/useAuthReady', () => ({
 }));
 
 vi.mock('./queue/useContentTransitions', () => ({
-  useContentTransitions: () => ({ errors: {}, recall: vi.fn(), transition: vi.fn() }),
+  useContentTransitions: () => ({
+    loading: {},
+    errors: {},
+    recall: vi.fn(),
+    transition: vi.fn(),
+  }),
 }));
 
 /** One live content record, in the shape the list route returns. */

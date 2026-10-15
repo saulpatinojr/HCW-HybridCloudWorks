@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ExternalLink, Globe, Search, Trash2 } from 'lucide-react';
+import { Archive, ExternalLink, Globe, Search } from 'lucide-react';
 import { useAuthReady } from '@/hooks/useAuthReady';
 import { usePublicData } from '@/hooks/usePublicData';
 import { fetchPublicContentList } from '@/lib/publicApi';
@@ -8,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import ConfirmModal from '@/components/admin/ConfirmModal';
 import RoleGate from '@/components/admin/RoleGate';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import PageHeader from '@/components/admin/shared/PageHeader';
@@ -24,12 +23,12 @@ import {
   getTypeLabel,
   selectLiveItems,
 } from './livePages/liveItems';
-import { useLivePageDeletion } from './livePages/useLivePageDeletion';
+import { useLivePageArchive } from './livePages/useLivePageArchive';
 
 const LIVE_PAGES_HELP = [
   'What is here: every page visitors can open right now — the records whose Live flag is set, with the URL the site serves them at.',
   'Nothing is drafted or approved here; this is the end of the pipeline. Open Editor to change a page, Open Live Page to see it as a visitor does.',
-  'Delete Live Page takes the page off the site immediately (the URL returns 404) and soft-deletes the record for 24 hours before cleanup.',
+  'Archive takes the page off the site at once and lists it on the Editor page’s Archive board; the toast offers Undo for ten seconds. After that, Restore to live and Delete permanently are on the Archive board.',
   'Legacy pages from the retired blogs collection can be included with the checkbox; they are read-only here.',
 ];
 
@@ -42,8 +41,8 @@ const LIVE_PAGES_HELP = [
  */
 export const LIVE_PAGES_QUERY = 'cms/content?live=true&limit=500&sort=publishedAt';
 
-/** One live page: its title, badges and URL, with Open Editor, Delete and Open Live Page. */
-function LivePageRow({ item, deleting, onDelete }) {
+/** One live page: its title, badges and URL, with Open Editor, Archive and Open Live Page. */
+function LivePageRow({ item, archiving, canArchive, onArchive }) {
   const liveUrl = getLiveUrl(item);
   return (
     <div className="flex flex-col gap-3 rounded-lg border p-4 lg:flex-row lg:items-center">
@@ -69,16 +68,23 @@ function LivePageRow({ item, deleting, onDelete }) {
         <Button size="sm" variant="outline" asChild>
           <Link to={`/admin/editor/${editorTargetId(item)}`}>Open Editor</Link>
         </Button>
-        {/* softDeleteLivePage is publisher (lib/content-workflow.js). */}
+        {/* No confirm step: Archive is reversible from the toast it raises
+            (AP-F13, #937). A legacy blog with no content record behind it
+            cannot be archived here, and the button says so. Taking a page
+            off the site is a publisher's edge (lib/cms/content-status.js),
+            so below that role the gate says why first (AP-F4). */}
         <RoleGate minRole="publisher" reason="Taking a page off the site needs the publisher role.">
           <Button
             size="sm"
-            variant="destructive"
-            onClick={() => onDelete(item)}
-            disabled={deleting}
+            variant="outline"
+            onClick={() => onArchive(item)}
+            disabled={archiving || !canArchive}
+            title={
+              canArchive ? undefined : 'A legacy page with no content record cannot be archived here'
+            }
           >
-            <Trash2 className="mr-2 h-4 w-4" />
-            {deleting ? 'Deleting...' : 'Delete Live Page'}
+            <Archive className="mr-2 h-4 w-4" />
+            {archiving ? 'Archiving…' : 'Archive'}
           </Button>
         </RoleGate>
         {liveUrl && (
@@ -113,27 +119,26 @@ export default function LivePagesPage() {
     authReady && includeLegacyPages ? 'live-pages:legacy' : ''
   );
   const [query, setQuery] = useState('');
-  const {
-    deleteTarget,
-    setDeleteTarget,
-    deletingId,
-    deleteError,
-    locallyDeletedKeys,
-    handleDeleteLivePage,
-  } = useLivePageDeletion();
+  const { archivingId, archiveError, locallyArchivedKeys, archiveLivePage, canArchive } =
+    useLivePageArchive();
   const loading = contentLoading || (includeLegacyPages && blogsLoading);
 
   const liveItems = useMemo(
     () =>
-      selectLiveItems({ contentItems, blogItems, includeLegacyPages, locallyDeletedKeys, query }),
-    [blogItems, contentItems, includeLegacyPages, locallyDeletedKeys, query]
+      selectLiveItems({
+        contentItems,
+        blogItems,
+        includeLegacyPages,
+        locallyDeletedKeys: locallyArchivedKeys,
+        query,
+      }),
+    [blogItems, contentItems, includeLegacyPages, locallyArchivedKeys, query]
   );
 
   return (
     <div className="space-y-6">
       <PageHeader
         icon={Globe}
-        title="Live Pages"
         help={LIVE_PAGES_HELP}
         status={
           <span className="text-muted-foreground">
@@ -175,7 +180,11 @@ export default function LivePagesPage() {
               records.
             </p>
           )}
-          {deleteError && <p className="mt-2 text-xs text-red-500">{deleteError}</p>}
+          {archiveError && (
+            <p role="alert" className="mt-2 text-xs text-red-500">
+              {archiveError}
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -219,22 +228,14 @@ export default function LivePagesPage() {
               <LivePageRow
                 key={item.id}
                 item={item}
-                deleting={deletingId === item.id}
-                onDelete={setDeleteTarget}
+                archiving={archivingId === item.id}
+                canArchive={canArchive(item)}
+                onArchive={archiveLivePage}
               />
             ))}
           </CardContent>
         </Card>
       )}
-
-      <ConfirmModal
-        open={Boolean(deleteTarget)}
-        title="Delete live page?"
-        description="This removes the page from the public site immediately so the URL returns 404. The underlying records are soft-deleted for 24 hours before permanent cleanup."
-        confirmLabel="Delete Live Page"
-        onCancel={() => setDeleteTarget(null)}
-        onConfirm={handleDeleteLivePage}
-      />
     </div>
   );
 }

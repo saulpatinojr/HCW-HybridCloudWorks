@@ -34,7 +34,7 @@ function StageNote({ draft }) {
   if (draft.stage === 'in_review') {
     return (
       <p className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
-        In Review on the Content Queue, where the provider is set and it goes on to the Publish
+        In Review on the Review Queue, where the provider is set and it goes on to the Publish
         Queue. It is read-only here; use <strong>Back to Drafts</strong> to edit it again.{' '}
         <Link to={reviewPath(draft.id)} className="underline">
           Open it in review

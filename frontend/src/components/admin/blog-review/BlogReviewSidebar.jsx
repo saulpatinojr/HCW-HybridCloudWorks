@@ -228,7 +228,7 @@ function WorkflowActionsCard({ blogId, view, actions, navigate }) {
         )}
 
         {flags.showPublishPane && (
-          <Button onClick={() => navigate('/admin/published')} className="w-full gap-2">
+          <Button onClick={() => navigate('/admin/publish')} className="w-full gap-2">
             Go to Publish Pane
           </Button>
         )}
@@ -240,7 +240,7 @@ function WorkflowActionsCard({ blogId, view, actions, navigate }) {
 
         {flags.showPublishedNavigation && (
           <>
-            <Button onClick={() => navigate('/admin/published')} className="w-full gap-2">
+            <Button onClick={() => navigate('/admin/publish')} className="w-full gap-2">
               Go to Publish Pane
             </Button>
             <Button

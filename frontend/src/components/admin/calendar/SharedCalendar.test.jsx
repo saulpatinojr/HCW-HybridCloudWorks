@@ -39,7 +39,7 @@ const ITEMS = [
     start: at(10, 9),
     allDay: false,
     status: 'scheduled',
-    href: '/admin/queue/c1?source=content',
+    href: '/admin/review-queue/c1?source=content',
     sourceId: 'c1',
     sourceCollection: 'content',
     meta: { provider: 'Azure', publishTarget: 'blog' },
@@ -51,7 +51,7 @@ const ITEMS = [
     start: at(1, 9),
     allDay: false,
     status: 'failed',
-    href: '/admin/queue/c2?source=content',
+    href: '/admin/review-queue/c2?source=content',
     sourceId: 'c2',
     sourceCollection: 'content',
     meta: { error: 'The scheduled time passed and the content is not live.' },
@@ -63,7 +63,7 @@ const ITEMS = [
     start: at(6, 14),
     allDay: false,
     status: 'scheduled',
-    href: '/admin/mailing-list?tab=published&issue=issue-2026-10-06',
+    href: '/admin/newsletter-hub?tab=published&issue=issue-2026-10-06',
     sourceId: 'issue-2026-10-06',
     sourceCollection: 'newsletters',
     meta: {},
@@ -75,7 +75,7 @@ const ITEMS = [
     start: at(10, 9),
     allDay: false,
     status: 'scheduled',
-    href: '/admin/social?tab=queue',
+    href: '/admin/social-hub?tab=queue',
     sourceId: 's1',
     sourceCollection: 'social_posts',
     meta: { platforms: ['linkedin'], caption: 'Hello LinkedIn', contentId: 'c1' },
@@ -87,7 +87,7 @@ const ITEMS = [
     start: '2026-10-20T00:00:00.000Z',
     allDay: true,
     status: 'accepted',
-    href: '/admin/speaking-events',
+    href: '/admin/speaking',
     sourceId: 'e1',
     sourceCollection: 'speakerevents',
     meta: {},
@@ -181,7 +181,7 @@ describe('acting', () => {
     expect(within(dialog).getByText(/scheduled time passed/)).toBeInTheDocument();
     expect(within(dialog).getByRole('link', { name: /Retry on Publish/ })).toHaveAttribute(
       'href',
-      '/admin/published'
+      '/admin/publish'
     );
     expect(within(dialog).getByRole('link', { name: /Edit/ })).toHaveAttribute(
       'href',
@@ -189,7 +189,7 @@ describe('acting', () => {
     );
     expect(within(dialog).getByRole('link', { name: /Schedule social/ })).toHaveAttribute(
       'href',
-      '/admin/social?tab=compose&contentId=c2'
+      '/admin/social-hub?tab=compose&contentId=c2'
     );
   });
 

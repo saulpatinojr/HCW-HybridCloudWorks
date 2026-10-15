@@ -586,7 +586,6 @@ export default function HealthPage() {
     <div className="space-y-6">
       <PageHeader
         icon={Activity}
-        title="Health Hub"
         description="What the platform reports about itself, and the checks you can run against it from this session. The token behind those checks is decoded here and reduced to claim names; it is never displayed, and only the summary on the Report tab is copied."
         help={HELP}
       />

@@ -90,8 +90,8 @@ describe('tabs', () => {
   });
 
   it('opens the All settings index with no ?tab=, reading nothing (ADR 0033)', async () => {
-    renderAt('/admin/platform');
-    expect(screen.getByRole('heading', { name: /Platform Settings Hub/ })).toBeTruthy();
+    renderAt('/admin/platform-settings');
+    expect(screen.getByRole('heading', { level: 1, name: 'Platform Settings' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'All settings' }).getAttribute('aria-selected')).toBe(
       'true'
     );
@@ -113,7 +113,7 @@ describe('tabs', () => {
     ).toBe('/admin/integrations?tab=services&group=content');
     expect(
       within(table).getByRole('link', { name: 'Open Newsletter settings' }).getAttribute('href')
-    ).toBe('/admin/mailing-list?tab=settings');
+    ).toBe('/admin/newsletter-hub?tab=settings');
     expect(routesAsked()).toEqual([]);
     expect(postJSON).not.toHaveBeenCalled();
   });
@@ -127,7 +127,7 @@ describe('tabs', () => {
   });
 
   it('opens Content defaults from ?tab=content, loading only the covers', async () => {
-    renderAt('/admin/platform?tab=content');
+    renderAt('/admin/platform-settings?tab=content');
     await screen.findByText('Default covers');
     expect(
       screen.getByRole('tab', { name: 'Content defaults' }).getAttribute('aria-selected')
@@ -137,7 +137,7 @@ describe('tabs', () => {
   });
 
   it('deep-links each tab, and each loads only its own data', async () => {
-    renderAt('/admin/platform?tab=audio');
+    renderAt('/admin/platform-settings?tab=audio');
     await screen.findByText('Podcast feeds');
     await screen.findByText('Listen & Learn voice');
     await screen.findByText('Not configured');
@@ -158,27 +158,27 @@ describe('tabs', () => {
   });
 
   it('deep-links Social automation, which alone asks Publer', async () => {
-    renderAt('/admin/platform?tab=social');
+    renderAt('/admin/platform-settings?tab=social');
     await screen.findByText('Social autoposting');
     expect(routesAsked()).toEqual([settingRoute('social-autopost')]);
     expect(postJSON).toHaveBeenCalledWith('publerProxy', { path: '/accounts', method: 'GET' });
   });
 
   it('deep-links Reminders, which reads the reminders document only', async () => {
-    renderAt('/admin/platform?tab=reminders');
+    renderAt('/admin/platform-settings?tab=reminders');
     await screen.findByText(/Nothing here yet/);
     expect(routesAsked()).toEqual([settingRoute('reminders')]);
     expect(postJSON).not.toHaveBeenCalled();
   });
 
   it('deep-links Change history, which reads the history route only', async () => {
-    renderAt('/admin/platform?tab=history');
+    renderAt('/admin/platform-settings?tab=history');
     expect(await screen.findByText(/No settings changes recorded yet/)).toBeTruthy();
     expect(routesAsked()).toEqual([HISTORY_ROUTE]);
   });
 
   it('lands an unknown ?tab= on the index rather than a blank page', async () => {
-    renderAt('/admin/platform?tab=covers');
+    renderAt('/admin/platform-settings?tab=covers');
     expect(screen.getByRole('tab', { name: 'All settings' }).getAttribute('aria-selected')).toBe(
       'true'
     );
@@ -186,11 +186,13 @@ describe('tabs', () => {
   });
 
   it('switching tabs writes ?tab= and mounts the new tab fresh', async () => {
-    renderAt('/admin/platform?tab=content');
+    renderAt('/admin/platform-settings?tab=content');
     await screen.findByText('Default covers');
     fireEvent.click(screen.getByRole('tab', { name: 'Change history' }));
     await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe('/admin/platform?tab=history')
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/admin/platform-settings?tab=history'
+      )
     );
     expect(await screen.findByText(/No settings changes recorded yet/)).toBeTruthy();
     expect(screen.queryByLabelText('Azure')).toBeNull();
@@ -203,7 +205,7 @@ describe('tabs', () => {
   });
 
   it('follows the ARIA tabs keyboard pattern: roving tabindex, arrows wrap, Home and End', async () => {
-    renderAt('/admin/platform?tab=content');
+    renderAt('/admin/platform-settings?tab=content');
     await screen.findByText('Default covers');
     const tab = (name) => screen.getByRole('tab', { name });
     expect(tab('Content defaults').getAttribute('tabindex')).toBe('0');
@@ -211,27 +213,33 @@ describe('tabs', () => {
 
     fireEvent.keyDown(tab('Content defaults'), { key: 'ArrowRight' });
     await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe('/admin/platform?tab=taxonomy')
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/admin/platform-settings?tab=taxonomy'
+      )
     );
     expect(document.activeElement).toBe(tab('Content types & origins'));
     expect(tab('Content types & origins').getAttribute('tabindex')).toBe('0');
 
     fireEvent.keyDown(tab('Content types & origins'), { key: 'End' });
     await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe('/admin/platform?tab=history')
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/admin/platform-settings?tab=history'
+      )
     );
     // Wraps to the index, which is first now.
     fireEvent.keyDown(tab('Change history'), { key: 'ArrowRight' });
     await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe('/admin/platform?tab=index')
+      expect(screen.getByTestId('location').textContent).toBe('/admin/platform-settings?tab=index')
     );
     fireEvent.keyDown(tab('All settings'), { key: 'ArrowLeft' });
     await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe('/admin/platform?tab=history')
+      expect(screen.getByTestId('location').textContent).toBe(
+        '/admin/platform-settings?tab=history'
+      )
     );
     fireEvent.keyDown(tab('Change history'), { key: 'Home' });
     await waitFor(() =>
-      expect(screen.getByTestId('location').textContent).toBe('/admin/platform?tab=index')
+      expect(screen.getByTestId('location').textContent).toBe('/admin/platform-settings?tab=index')
     );
   });
 
@@ -241,7 +249,7 @@ describe('tabs', () => {
       const setting = route.replace('cms/platform-settings/', '');
       return { success: true, value: empty[setting], exists: false };
     });
-    renderAt('/admin/platform?tab=content');
+    renderAt('/admin/platform-settings?tab=content');
     expect((await screen.findByRole('alert')).textContent).toContain('HTTP 500');
     fireEvent.click(screen.getByRole('tab', { name: 'Audio' }));
     await screen.findByText('Podcast feeds');

@@ -1,5 +1,5 @@
 /**
- * Newsletter Hub (route `/admin/mailing-list`) — the weekly newsletter and its provider, Resend (ADR 0030, ADR 0033).
+ * Newsletter Hub (route `/admin/newsletter-hub`) — the weekly newsletter and its provider, Resend (ADR 0030, ADR 0033).
  *
  * Resend replaced Klaviyo, which this page used to read through `klaviyoProxy`:
  * lists, profiles and campaigns, and nothing was ever written. The tabs follow
@@ -239,7 +239,6 @@ export default function MailingListPage() {
     <div className="space-y-6">
       <PageHeader
         icon={Mail}
-        title="Newsletter Hub"
         help={GLOSSARY}
         helpTitle="What the words mean"
         status={

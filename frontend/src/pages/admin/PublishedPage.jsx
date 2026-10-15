@@ -258,7 +258,7 @@ function usePublishWorkflow({ navigate, withImageOverride, setLocalLiveOverrides
       setLocalLiveOverrides((prev) => ({ ...prev, [item.id]: true }));
       if (autoPostSocial) {
         // Deep-link to Social Hub compose with this content preselected.
-        navigate(`/admin/social?tab=compose&contentId=${encodeURIComponent(item.id)}`);
+        navigate(`/admin/social-hub?tab=compose&contentId=${encodeURIComponent(item.id)}`);
       }
     } catch (err) {
       setPublishError(`Publish failed: ${err.message}`);
@@ -643,7 +643,6 @@ export default function PublishedPage() {
     <div className="space-y-4">
       <PageHeader
         icon={Rocket}
-        title="Publish"
         help={PUBLISH_HELP}
         status={
           <span className="text-muted-foreground">

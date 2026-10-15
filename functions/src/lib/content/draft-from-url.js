@@ -7,7 +7,7 @@
  *   - The HTTP RPC scrapes and hands the result to `createDrafter` — whose
  *     output shape the Publish-Ready Builder and the editor already expect —
  *     under the caller's 90 s client timeout (the handler enforces its own
- *     budget below that; see draft-http.js).
+ *     budget below that; see generate-article-draft-http.js).
  *   - The job scrapes into a `content` document shaped like the RSS ingest
  *     writes (lib/rss/feeds.js is the field-convention source), lands it
  *     `inspected` with `inspectTrigger: false` — the forge does its own

@@ -82,7 +82,7 @@ export default function FeedbackCard({ variant, message, contentId }) {
           <p className={isSuccess ? '' : 'text-muted-foreground'}>{message}</p>
           {isSuccess && contentId && (
             <a href={getQueueReviewPath(contentId)} className="text-blue-600 hover:underline">
-              Open in Content Queue
+              Open in Review Queue
             </a>
           )}
         </div>

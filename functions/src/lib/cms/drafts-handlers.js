@@ -459,7 +459,7 @@ async function sendToReview(deps, { request, user, id, etag, current }) {
   return json(200, {
     ok: true,
     draft: toDraftView(written),
-    reviewPath: `/admin/queue/${encodeURIComponent(id)}`,
+    reviewPath: `/admin/review-queue/${encodeURIComponent(id)}`,
   });
 }
 

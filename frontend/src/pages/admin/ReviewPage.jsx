@@ -1,5 +1,5 @@
 /**
- * /admin/queue/:id — one item, on the board its type calls for (ADR 0033).
+ * /admin/review-queue/:id — one item, on the board its type calls for (ADR 0033).
  *
  *   architecture  → ArchitectureReviewBoard
  *   framework     → FrameworkReviewBoard
@@ -237,7 +237,7 @@ function ReviewUnavailable({ error, refresh, navigate }) {
       description={error?.message || 'It may have been deleted, or the request failed.'}
       onRetry={refresh}
       action={
-        <Button variant="outline" size="sm" onClick={() => navigate('/admin/queue')}>
+        <Button variant="outline" size="sm" onClick={() => navigate('/admin/review-queue')}>
           Back to Queue
         </Button>
       }
@@ -264,7 +264,7 @@ function ReviewContent({ blog, blogId, refresh, navigate, transitions, actions }
           </>
         }
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate('/admin/queue')}>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/admin/review-queue')}>
             <ArrowLeft className="h-4 w-4 mr-1" /> Back to Queue
           </Button>
         }

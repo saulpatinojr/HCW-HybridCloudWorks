@@ -156,7 +156,7 @@ describe('dialogueRefusal', () => {
     expect(message).toContain(
       `Choose voices your plan allows under Podcast voices at ${VOICE_PICKER_PAGE}. ElevenLabs said: `
     );
-    expect(VOICE_PICKER_PAGE).toBe('https://hybridcloudworks.com/admin/platform?tab=audio');
+    expect(VOICE_PICKER_PAGE).toBe('https://hybridcloudworks.com/admin/platform-settings?tab=audio');
   });
 
   it('reads a permission refusal from the body when the code alone says unauthorized (live, 2026-09-26)', () => {

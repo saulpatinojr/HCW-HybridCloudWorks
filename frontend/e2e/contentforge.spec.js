@@ -20,12 +20,14 @@ import { test, expect } from '@playwright/test';
  * route that was asked for, the denial and configuration cards, the one
  * automatic re-authentication on an expired token, and the Pixel 5 drawer.
  *
- * `/admin/platform`, not `/admin/platform-settings`: the second is not a route
- * (the router answers it with its not-found page), and a signed-out check on it
- * proved only that the guard wraps unknown admin paths too.
+ * The routes are the menu labels' slugs (AP-F13, #937): `/admin/platform-settings`
+ * was once a not-found path beside the real `/admin/platform`, and a signed-out
+ * check on it proved only that the guard wraps unknown admin paths too. Now it
+ * is the page and `/admin/platform` is its redirect, so the list below names
+ * routes the registry declares.
  */
 
-const ADMIN_ROUTES = ['/admin', '/admin/queue', '/admin/platform', '/admin/health'];
+const ADMIN_ROUTES = ['/admin', '/admin/review-queue', '/admin/platform-settings', '/admin/health'];
 
 for (const route of ADMIN_ROUTES) {
   test(`${route}: signed out, the guard shows the sign-in card and none of the admin`, async ({
@@ -55,7 +57,7 @@ test('the sign-in card is keyboard reachable and the route has a title', async (
 
 test('at a phone width the admin route never scrolls sideways', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 });
-  await page.goto('/admin/queue');
+  await page.goto('/admin/review-queue');
   await expect(page.getByRole('button', { name: /sign in with microsoft/i })).toBeVisible();
   const overflow = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,

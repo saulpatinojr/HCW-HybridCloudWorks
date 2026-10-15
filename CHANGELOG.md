@@ -19,6 +19,66 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Admin routes are the menu labels' slugs and page titles are the
+  registry's labels, the single-draft RPC file says what it registers,
+  deleting a live page archives it with ten seconds of Undo and the Archive
+  board carries Restore and Delete permanently, and Ctrl-K opens a command
+  palette over every admin page and the content search** (AP-F13, #937).
+  `frontend/src/config/adminNav.js` is the one place a page's label, route
+  and title come from: eight items routed to a slug that was not their
+  label ("Publish" at `/admin/published`, "Review Queue" at `/admin/queue`,
+  "Newsletter Hub" at `/admin/mailing-list`, "New Content" at
+  `/admin/submit`, "Social Hub" at `/admin/social`, "Linkie Hub" at
+  `/admin/linkie`, "Speaking" at `/admin/speaking-events`, "Platform
+  Settings" at `/admin/platform`), and `adminNav.test.js` now holds every
+  row to `/admin/<slug of its label>`. The old paths live on in
+  `frontend/src/config/adminRedirects.jsx`, which also took over the five
+  redirects `App.jsx` carried inline (#442, #569, #570) and, unlike them,
+  carries the query, the hash and a nested segment through
+  (`/admin/queue/<id>?source=content` still opens the review board);
+  `adminRedirects.test.jsx` walks every entry and reads `App.jsx` for the
+  route each lands on. Every link in `frontend/src`, the two e2e specs and
+  the API's own admin links (`functions/src/lib/decision-center/links.js`,
+  `calendar/collectors.js`, `cms/drafts-handlers.js`,
+  `timers/newsletter-autobuild.js`, the ElevenLabs voice-picker URL) moved
+  with them, since `itemLinks.test.js` holds the two sides equal.
+  `components/admin/shared/PageHeader.jsx` (and `ServicePageHeader.jsx`,
+  the Certifications page's) now render the registry label as the h1 and
+  the document title; seven pages had written their own ("Content Queue",
+  "Health Hub", "Integrations Hub", "Platform Settings Hub", "Speaking
+  Events Hub", "Certifications Hub", "Ambassador Hub"), and
+  `PageHeader.test.jsx` renders the header at every registry route and
+  reads every admin page's source for a literal `title=`.
+  `functions/src/functions/draft-http.js`, one letter from
+  `drafts-http.js` and nothing to do with the Drafts stage, is
+  `generate-article-draft-http.js`; the function name and route are
+  unchanged. On Live Pages, Delete Live Page — one confirm, then
+  `softDeleteLivePage`, which stamped a 24-hour soft delete nothing in the
+  API ever swept — is Archive: `published → archived` through
+  `transitionContentStatus`, which writes the audit row, and a toast with
+  Undo for ten seconds (`pages/admin/livePages/useLivePageArchive.jsx`)
+  that runs the new `archived → published` edge back.
+  `lib/cms/content-status.js` gained that edge (publisher-only, like every
+  edge into `published`; the port's "no resurrect-to-live" pin is reversed
+  with the reason), and its archived and rejected appliers now also write
+  the legacy `Status` word, because `public-reads.js` admits a document on
+  `Status: 'Live'` as well as the flag — `public-reads.test.js` applies the
+  archive patch to a document that says live every way it can and checks
+  nothing serves it. Leaving the archive clears `archivedAt`; every
+  non-rejected transition clears `softDeleteExpiresAt` beside
+  `softDeletedAt`. The Editor's Archive board
+  (`pages/admin/editor-list/ArchiveBoard.jsx`) carries Restore to live and
+  Delete permanently (confirm, then `deleteContentItem`, the publisher RPC
+  the Review Queue's delete uses; `cmsDeleteContent` is an editor-level
+  hard delete and was left alone). MCP server removal keeps its confirm:
+  the OAuth token lives only on the deleted document and is write-only, so
+  nothing could restore it. `components/admin/CommandPalette.jsx`, mounted
+  once in `AdminLayout.jsx`, opens on Ctrl-K, Cmd-K or its button as a
+  Radix dialog — labelled, focus-trapped, Escape closes — listing the
+  registry's pages filtered by what is typed and, from two characters, the
+  content the list route's `search` matches (#1178; `lib/api.js`
+  `listContentItems`), asked once per pause in typing and answered in
+  order; Enter opens a page at its route or a content item in its editor.
 - **alert-timer-overdue evaluates again, a KQL test refuses what silenced it,
   the weekly check reads every log rule's Resource Health, and the fire test
   matches the timer dimension** (PLAT-4, #964). The rule never evaluated from

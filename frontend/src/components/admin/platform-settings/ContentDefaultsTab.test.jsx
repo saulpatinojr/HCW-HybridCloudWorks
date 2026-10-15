@@ -235,7 +235,7 @@ describe('the Content defaults tab', () => {
     expect(screen.getByText(/Newsletter settings live in Newsletter Hub → Settings/)).toBeTruthy();
     const link = screen.getByRole('link', { name: /Open Newsletter Hub settings/ });
     expect(link.getAttribute('href')).toBe(NEWSLETTER_SETTINGS_PATH);
-    expect(NEWSLETTER_SETTINGS_PATH).toBe('/admin/mailing-list?tab=settings');
+    expect(NEWSLETTER_SETTINGS_PATH).toBe('/admin/newsletter-hub?tab=settings');
     expect(getJSON).not.toHaveBeenCalledWith(settingRoute('newsletter-settings'));
   });
 

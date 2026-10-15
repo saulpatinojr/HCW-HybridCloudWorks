@@ -20,7 +20,6 @@ export default function CoderCornerPage() {
   return (
     <TypedReviewList
       type="coder_corner"
-      title="Coder Corner"
       icon={Code2}
       help={CODER_CORNER_HELP}
       nouns={{ singular: 'coder corner item', plural: 'coder corner items' }}

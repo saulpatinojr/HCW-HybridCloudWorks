@@ -49,7 +49,7 @@ export default function UnscheduledPanel({ items, loading, error, onRetry, onSch
             description="Approve content on the Review Queue and it appears here, ready for a date."
             action={
               <Button asChild variant="outline" size="sm">
-                <Link to="/admin/queue?status=needs_review">Open the Review Queue</Link>
+                <Link to="/admin/review-queue?status=needs_review">Open the Review Queue</Link>
               </Button>
             }
           />
@@ -93,7 +93,7 @@ export default function UnscheduledPanel({ items, loading, error, onRetry, onSch
         {items.length > MAX_SHOWN && (
           <p className="text-xs text-muted-foreground">
             +{items.length - MAX_SHOWN} more —{' '}
-            <Link className="underline" to="/admin/queue?status=approved">
+            <Link className="underline" to="/admin/review-queue?status=approved">
               see them on the Review Queue
             </Link>
           </p>

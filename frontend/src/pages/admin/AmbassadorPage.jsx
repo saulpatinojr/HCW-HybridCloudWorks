@@ -88,7 +88,7 @@ export default function AmbassadorPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={BadgeCheck} title="Ambassador Hub" help={HELP} />
+      <PageHeader icon={BadgeCheck} help={HELP} />
       <HubTabs
         tabs={TABS}
         active={activeTab}

@@ -23,7 +23,7 @@ vi.mock('react-router', async () => {
   const React_ = await vi.importActual('react');
   return {
     // PageHeader reads the route to find its purpose sentence.
-    useLocation: () => ({ pathname: '/admin/social', search: '' }),
+    useLocation: () => ({ pathname: '/admin/social-hub', search: '' }),
     useSearchParams: () => [new URLSearchParams(searchParams), setSearchParams],
     Link: ({ to, children }) => React_.createElement('a', { href: to }, children),
   };

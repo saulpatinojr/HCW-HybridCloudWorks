@@ -292,4 +292,4 @@ export const DRAG_TYPE = 'application/x-contentforge-calendar';
 
 /** The query string Share and Schedule Social carry so the composer preselects the content. */
 export const socialComposeHref = (contentId) =>
-  `/admin/social?tab=compose${contentId ? `&contentId=${encodeURIComponent(contentId)}` : ''}`;
+  `/admin/social-hub?tab=compose${contentId ? `&contentId=${encodeURIComponent(contentId)}` : ''}`;

@@ -126,7 +126,6 @@ export default function ListenAndLearnPage() {
     <div className="space-y-6">
       <PageHeader
         icon={Headphones}
-        title="Listen & Learn"
         status={speechStatus(hub.catalog)}
         help={HELP}
         helpTitle="How the Audio Library works"

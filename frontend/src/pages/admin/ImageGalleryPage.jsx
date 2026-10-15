@@ -91,7 +91,6 @@ export default function ImageGalleryPage() {
     <div className="space-y-5">
       <PageHeader
         icon={Images}
-        title="Image Gallery"
         help={HELP}
         status={facets?.counts && <GalleryCounts counts={facets.counts} />}
         actions={
@@ -175,7 +174,7 @@ export default function ImageGalleryPage() {
           onReuse={reuse}
           onCopy={copyText}
           onOpenSet={(name) => navigate(`/admin/image-prompts?set=${encodeURIComponent(name)}`)}
-          onOpenContent={(use) => navigate(`/admin/queue/${encodeURIComponent(use.id)}`)}
+          onOpenContent={(use) => navigate(`/admin/review-queue/${encodeURIComponent(use.id)}`)}
           onOpenVariant={actions.openVariant}
         />
       )}

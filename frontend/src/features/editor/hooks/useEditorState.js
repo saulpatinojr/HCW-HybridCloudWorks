@@ -510,12 +510,12 @@ export function useEditorState(blogId, navigate) {
           from: result?.from || null,
           to: result?.to || targetStatus,
           contentId: result?.contentId || blogId,
-          note: 'Status transitioned from editor. Final live publishing still occurs from /admin/published.',
+          note: 'Status transitioned from editor. Final live publishing still occurs from /admin/publish.',
         });
 
         // transitionContentStatus writes the `audits` row itself; the client
         // copy that doubled it is gone (ADR 0033 §1).
-        navigate('/admin/published');
+        navigate('/admin/publish');
       }
 
       setPublishing(true);

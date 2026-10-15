@@ -44,7 +44,7 @@ vi.mock('@/hooks/useAuthReady', () => ({ useAuthReady: () => ({ authReady: true 
 vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock('react-router', () => ({
   useSearchParams: () => [new URLSearchParams(searchParams), setSearchParams],
-  useLocation: () => ({ pathname: '/admin/speaking-events' }),
+  useLocation: () => ({ pathname: '/admin/speaking' }),
   Link: ({ to, children, ...rest }) => (
     <a href={to} {...rest}>
       {children}
@@ -110,7 +110,7 @@ const panel = () => within(screen.getByRole('tabpanel'));
 describe('the header and tabs', () => {
   it('names the hub and Sessionize in the header, and offers five tabs with Settings last', () => {
     render(<SpeakingEventsPage />);
-    expect(screen.getByRole('heading', { name: /Speaking Events Hub/ })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Speaking' })).toBeTruthy();
     expect(screen.getByText('Sessionize', { selector: 'strong' })).toBeTruthy();
     expect(
       hubTabs()

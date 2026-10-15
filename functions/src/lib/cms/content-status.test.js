@@ -15,7 +15,9 @@ describe('transition table', () => {
   it('keeps the source graph — spot-check the edges bugs have hidden in', () => {
     expect(VALID_TRANSITIONS.forge_ready).toEqual(['published', 'editing', 'rejected']);
     expect(VALID_TRANSITIONS.rejected).toContain('inspected'); // the restore path
-    expect(VALID_TRANSITIONS.archived).not.toContain('published'); // no resurrect-to-live
+    // Undo on Live Pages and Restore on the Archive board (AP-F13, #937).
+    // Until 2026-10-15 this line said the opposite ("no resurrect-to-live").
+    expect(VALID_TRANSITIONS.archived).toContain('published');
     expect(VALID_STATUSES).toContain('needs_rework');
   });
 
@@ -63,6 +65,8 @@ describe('buildStatusUpdateData', () => {
     const out = buildStatusUpdateData({}, 'approved', 'r', '', { now: NOW });
     // undefined = patchDoc deletion
     expect('softDeletedAt' in out && out.softDeletedAt === undefined).toBe(true);
+    // Both halves of the soft-delete marker, or Undo leaves the page hidden.
+    expect('softDeleteExpiresAt' in out && out.softDeleteExpiresAt === undefined).toBe(true);
     expect('rejectedAt' in out && out.rejectedAt === undefined).toBe(true);
 
     const rejected = buildStatusUpdateData({}, 'rejected', 'r', '', { now: NOW });
@@ -105,6 +109,18 @@ describe('buildStatusUpdateData', () => {
   it('forge_ready and archived stage with Live=false', () => {
     expect(buildStatusUpdateData({}, 'forge_ready', 'r', '', { now: NOW }).Live).toBe(false);
     expect(buildStatusUpdateData({}, 'archived', 'r', '', { now: NOW }).Live).toBe(false);
+  });
+
+  it('archived and rejected retire the legacy Status word, and going live drops it (AP-F13, #937)', () => {
+    // The public gate also admits `Status: 'Live'`; a page taken down has to
+    // stop saying it, or a legacy document stays on the site with Live false.
+    expect(buildStatusUpdateData({}, 'archived', 'r', '', { now: NOW }).Status).toBe('Archived');
+    expect(buildStatusUpdateData({}, 'rejected', 'r', '', { now: NOW }).Status).toBe('Rejected');
+    const live = buildStatusUpdateData({}, 'published', 'r', '', { now: NOW });
+    expect('Status' in live && live.Status === undefined).toBe(true);
+    // Staged, not live: the legacy word is left alone.
+    const staged = buildStatusUpdateData({}, 'published', 'r', '', { now: NOW, markLive: false });
+    expect('Status' in staged).toBe(false);
   });
 });
 

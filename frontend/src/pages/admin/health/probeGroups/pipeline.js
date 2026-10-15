@@ -63,7 +63,7 @@ export const PIPELINE_PROBES = [
     covers: 'The 15-minute scheduler that publishes due items, and its 6-hour watchdog.',
     impact: 'Scheduled items stay unpublished and overdue.',
     action: 'Open Alerts for the failure; the Publish page lists what is due.',
-    href: { to: '/admin/published', label: 'Publish' },
+    href: { to: '/admin/publish', label: 'Publish' },
     evaluate: evaluateScheduledPublishing,
   }),
   snapshotProbe({

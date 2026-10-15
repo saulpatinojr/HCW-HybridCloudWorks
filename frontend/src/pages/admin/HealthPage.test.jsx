@@ -261,7 +261,7 @@ const verdictBadge = (pattern) => {
 describe('the hub', () => {
   it('always renders the header and the five tabs, Overview first', async () => {
     renderAt();
-    expect(screen.getByRole('heading', { name: 'Health Hub' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Health' })).toBeTruthy();
     expect(
       hubTabs()
         .getAllByRole('tab')
@@ -354,7 +354,7 @@ describe('the hub', () => {
   it('renders readiness and publishing metrics from the backend snapshot', async () => {
     renderAt();
 
-    expect(await screen.findByText('Health Hub')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Health' })).toBeInTheDocument();
     await waitFor(() => expect(postJSON).toHaveBeenCalledWith('getOpsHealthSnapshot', {}));
 
     expect(await screen.findByText('14')).toBeInTheDocument();
@@ -396,7 +396,7 @@ describe('a snapshot that fails to load', () => {
 
   it('is an error on Overview and on Alerts, beside a strip that says UNKNOWN', async () => {
     renderAt();
-    expect(screen.getByRole('heading', { name: 'Health Hub' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Health' })).toBeTruthy();
     expect((await screen.findByRole('alert')).textContent).toContain('Snapshot refused: HTTP 503');
     expect(screen.queryByText('Queue SLA Breaches')).toBeNull();
     // No default zeros standing in for counts nobody read.

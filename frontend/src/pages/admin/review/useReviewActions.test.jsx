@@ -82,7 +82,7 @@ describe('useReviewActions', () => {
       'c-1',
       expect.objectContaining({ publishTarget: 'blog' })
     );
-    expect(navigate).toHaveBeenCalledWith('/admin/queue?contentType=architecture');
+    expect(navigate).toHaveBeenCalledWith('/admin/review-queue?contentType=architecture');
   });
 
   it('publishFields puts the approve failure on the board and stays put', async () => {
@@ -106,7 +106,7 @@ describe('useReviewActions', () => {
     expect(postJSON).toHaveBeenCalledWith('deleteContentItem', { contentId: 'c-1' });
     expect(logAdminAction).toHaveBeenCalledWith('framework_deleted', { contentId: 'c-1' });
     expect(toast).toHaveBeenCalledWith({ title: 'Framework deleted' });
-    expect(navigate).toHaveBeenCalledWith('/admin/queue?contentType=framework');
+    expect(navigate).toHaveBeenCalledWith('/admin/review-queue?contentType=framework');
     expect(hook.result.current.frameworkDeleteOpen).toBe(false);
   });
 });

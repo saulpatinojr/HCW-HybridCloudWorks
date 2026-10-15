@@ -1,4 +1,6 @@
 import React from 'react';
+import { useLocation } from 'react-router';
+import { navItemFor } from '@/config/adminNav';
 
 /**
  * ServicePageHeader — standardized header for service-integrated admin pages.
@@ -12,7 +14,9 @@ import React from 'react';
  *
  * Props:
  *   icon         — Lucide icon component (required)
- *   title        — Page title (required)
+ *   title        — Page title; defaults to the navigation registry's label for the
+ *                  route, as PageHeader's does (AP-F13, #937), so the menu and the
+ *                  heading cannot drift. Pass one only off a registry route.
  *   service      — Service name shown in status line, e.g. "Publer" or "Plaud"
  *   connected    — boolean | 'checking' | 'unknown'  (controls dot color + text)
  *                  'unknown' is for a status check that could not run — not
@@ -26,7 +30,7 @@ import React from 'react';
  */
 export default function ServicePageHeader({
   icon: Icon,
-  title,
+  title: ownTitle,
   service,
   connected,
   description,
@@ -34,6 +38,8 @@ export default function ServicePageHeader({
   accent = 'slate',
   actions = null,
 }) {
+  const { pathname } = useLocation();
+  const title = ownTitle ?? navItemFor(pathname)?.label ?? '';
   let dotClass = 'bg-rose-400';
   let statusText = `${service} disconnected`;
   if (connected === 'checking') {

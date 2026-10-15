@@ -58,7 +58,7 @@ export default function FinishTab({ session, onDraft, onStart }) {
   const id = encodeURIComponent(contentId);
   const status = String(doc.contentStatus || '');
   const inDrafts = status === 'drafting';
-  const queueHref = `/admin/queue/${id}`;
+  const queueHref = `/admin/review-queue/${id}`;
 
   return (
     <div className="space-y-4">
@@ -103,8 +103,8 @@ export default function FinishTab({ session, onDraft, onStart }) {
           title="Send to review"
           description={
             inDrafts
-              ? 'Moves it from Drafting to In Review on the Content Queue. Nothing is published.'
-              : `It is already in the pipeline as “${status.replace(/_/g, ' ')}”: the forge staged it, so review happens on the Content Queue.`
+              ? 'Moves it from Drafting to In Review on the Review Queue. Nothing is published.'
+              : `It is already in the pipeline as “${status.replace(/_/g, ' ')}”: the forge staged it, so review happens on the Review Queue.`
           }
         >
           {inDrafts ? (
@@ -123,7 +123,7 @@ export default function FinishTab({ session, onDraft, onStart }) {
             </Button>
           ) : (
             <Button size="sm" asChild>
-              <Link to={queueHref}>Open on the Content Queue</Link>
+              <Link to={queueHref}>Open on the Review Queue</Link>
             </Button>
           )}
           {inDrafts && dirty && (
@@ -147,7 +147,7 @@ export default function FinishTab({ session, onDraft, onStart }) {
           description="Publishing and scheduling happen on the Publish page once the piece is approved or forge-ready."
         >
           <Button size="sm" variant="outline" asChild>
-            <Link to="/admin/published">Open Publish</Link>
+            <Link to="/admin/publish">Open Publish</Link>
           </Button>
         </Action>
 
@@ -157,7 +157,7 @@ export default function FinishTab({ session, onDraft, onStart }) {
           description="Social posts for this piece. Extract them with the AI action on the Draft tab, then compose in the Social Hub."
         >
           <Button size="sm" variant="outline" asChild>
-            <Link to={`/admin/social?tab=compose&contentId=${id}`}>Open the Social Hub</Link>
+            <Link to={`/admin/social-hub?tab=compose&contentId=${id}`}>Open the Social Hub</Link>
           </Button>
         </Action>
 

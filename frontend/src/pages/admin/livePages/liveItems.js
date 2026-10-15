@@ -51,18 +51,6 @@ export function liveUrlKey(item) {
     .toLowerCase();
 }
 
-/** What softDeleteLivePage needs: the content and blog ids a live record points at. */
-export function deletePayload(target) {
-  return {
-    contentId:
-      target.sourceContentId ||
-      target.publishedContentId ||
-      (target.__source === 'content' ? target.id : ''),
-    blogId:
-      target.publishedBlogId || target.blogId || (target.__source === 'blogs' ? target.id : ''),
-  };
-}
-
 /** Whether a record belongs on the page at all: live, with a URL, and not deleted here since load. */
 function isShowable(item, locallyDeletedKeys) {
   return isLiveRecord(item) && Boolean(getLiveUrl(item)) && !locallyDeletedKeys[liveUrlKey(item)];

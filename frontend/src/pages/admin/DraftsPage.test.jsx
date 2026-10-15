@@ -92,12 +92,12 @@ function renderPage() {
           path="/admin/drafts"
           element={
             <>
-              <Link to="/admin/queue">Review Queue</Link>
+              <Link to="/admin/review-queue">Review Queue</Link>
               <DraftsPage />
             </>
           }
         />
-        <Route path="/admin/queue" element={<h1>Queue page</h1>} />
+        <Route path="/admin/review-queue" element={<h1>Queue page</h1>} />
       </Routes>
     </MemoryRouter>
   );
@@ -280,7 +280,7 @@ describe('DraftsPage', () => {
     postJSON.mockResolvedValue({
       ok: true,
       draft: view({ stage: 'in_review', etag: '"e2"' }),
-      reviewPath: '/admin/queue/d1',
+      reviewPath: '/admin/review-queue/d1',
     });
     await openFirstDraft();
     fireEvent.click(screen.getByRole('button', { name: /Send to In Review/ }));
@@ -288,7 +288,7 @@ describe('DraftsPage', () => {
     await waitFor(() =>
       expect(postJSON).toHaveBeenCalledWith('cms/drafts/d1/send-to-review', { etag: '"e1"' })
     );
-    expect(await screen.findByText(/In Review on the Content Queue/)).toBeInTheDocument();
+    expect(await screen.findByText(/In Review on the Review Queue/)).toBeInTheDocument();
     expect(screen.getByLabelText('Title')).toBeDisabled();
     expect(screen.queryByRole('button', { name: /^Save$/ })).not.toBeInTheDocument();
     expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Sent to In Review' }));

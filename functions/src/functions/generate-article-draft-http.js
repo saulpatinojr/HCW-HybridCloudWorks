@@ -1,7 +1,13 @@
 /**
- * draft-http.js — registration for `generateArticleDraft` (Blog Machine
- * T-602, closing one of #180's fifteen). Semantics in
+ * generate-article-draft-http.js — registration for `generateArticleDraft`
+ * (Blog Machine T-602, closing one of #180's fifteen). Semantics in
  * lib/content/draft-from-url.js.
+ *
+ * Named for the one RPC it registers (AP-F13, #937): until 2026-10-15 this
+ * was `draft-http.js`, one letter from `drafts-http.js`, which is the Drafts
+ * stage of the pipeline and nothing to do with drafting from a URL. The
+ * function name is unchanged, so the route inventory and the deployed
+ * function are untouched.
  *
  * RPC-style route, not REST: the Publish-Ready Builder and the editor both
  * post to the function NAME (`postJSON('generateArticleDraft', ...)`), the

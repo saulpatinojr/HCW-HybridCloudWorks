@@ -3,13 +3,7 @@
  * URL, minus the ones deleted since load, matching the search, newest first.
  */
 import { describe, it, expect } from 'vitest';
-import {
-  deletePayload,
-  editorTargetId,
-  getTypeLabel,
-  liveUrlKey,
-  selectLiveItems,
-} from './liveItems';
+import { editorTargetId, getTypeLabel, liveUrlKey, selectLiveItems } from './liveItems';
 
 const live = (id, url, extra = {}) => ({ id, Live: true, publishedUrl: url, ...extra });
 
@@ -93,16 +87,5 @@ describe('record helpers', () => {
     expect(editorTargetId({ id: 'live', sourceContentId: 'src' })).toBe('src');
     expect(editorTargetId({ id: 'live', publishedContentId: 'pub' })).toBe('pub');
     expect(editorTargetId({ id: 'live' })).toBe('live');
-  });
-
-  it('builds the soft-delete payload from the record and where it came from', () => {
-    expect(deletePayload({ id: 'c1', __source: 'content' })).toEqual({
-      contentId: 'c1',
-      blogId: '',
-    });
-    expect(deletePayload({ id: 'b1', __source: 'blogs' })).toEqual({ contentId: '', blogId: 'b1' });
-    expect(
-      deletePayload({ id: 'x', sourceContentId: 's', publishedBlogId: 'pb', __source: 'content' })
-    ).toEqual({ contentId: 's', blogId: 'pb' });
   });
 });

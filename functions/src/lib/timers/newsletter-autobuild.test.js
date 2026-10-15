@@ -8,7 +8,7 @@ import {
 import { createIssueBuilder } from '../newsletter/issue.js';
 import { SOURCE_DISPLAY_NAMES } from '../notify.js';
 
-const DRAFTS = 'https://hybridcloudworks.com/admin/mailing-list?tab=drafts';
+const DRAFTS = 'https://hybridcloudworks.com/admin/newsletter-hub?tab=drafts';
 const NOW = new Date('2026-09-14T13:00:00Z');
 
 const notifier = (sent = true) => ({ notifyTelegram: vi.fn(async () => (sent ? { sent: true } : { sent: false, reason: 'cooldown' })) });
@@ -80,8 +80,8 @@ describe('createNewsletterAutoBuild', () => {
   });
 
   it('builds the link on the configured origin', () => {
-    const { message } = buildAutoBuildMessage({ success: true, issueId: 'i', subject: 's', itemCount: 1 }, 'https://example.test/admin/mailing-list?tab=drafts');
-    expect(message).toContain('https://example.test/admin/mailing-list?tab=drafts');
+    const { message } = buildAutoBuildMessage({ success: true, issueId: 'i', subject: 's', itemCount: 1 }, 'https://example.test/admin/newsletter-hub?tab=drafts');
+    expect(message).toContain('https://example.test/admin/newsletter-hub?tab=drafts');
   });
 
   it('with the real builder, writes a kept draft and never an approved status', async () => {

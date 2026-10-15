@@ -1,7 +1,15 @@
 /**
- * The Archive board under the Editor list: pages taken down for good, behind
+ * The Archive board under the Editor list: pages taken off the site, behind
  * a disclosure, with their own search, provider filter and sort. The state
  * is the board's alone, so it lives here rather than on the page (PR #841).
+ *
+ * TWO WAYS OUT OF THE ARCHIVE, BOTH EXPLICIT (AP-F13, #937). Archiving is the
+ * first, reversible step of a delete — Live Pages' Archive lands here, with
+ * Undo on its toast for ten seconds — so this board is where the second step
+ * is taken: Restore to live (`archived → published`, the publisher's edge,
+ * audited by the server) or Delete permanently, the one action with no way
+ * back, behind the confirm dialog and the `deleteContentItem` RPC the Review
+ * Queue's own delete uses.
  */
 import React, { useMemo, useState } from 'react';
 import {
@@ -10,15 +18,21 @@ import {
   ChevronUp,
   ExternalLink as LinkIcon,
   Loader2,
+  RotateCcw,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import ConfirmModal from '@/components/admin/ConfirmModal';
 import EmptyState from '@/components/admin/shared/EmptyState';
+import { postJSON } from '@/lib/api';
 import { toDate } from '@/lib/dateUtils';
 import { safeUrl } from '@/lib/safeUrl';
 import { PROVIDER_OPTIONS as ADMIN_PROVIDER_OPTIONS } from '@/config/admin';
+import { useContentTransitions } from '@/pages/admin/queue/useContentTransitions';
 import {
   TYPE_BADGE,
   filterAndSortArchivedItems,
@@ -40,7 +54,7 @@ const SORT_OPTIONS = [
 
 // ── Archive board row ─────────────────────────────────────────────────────────
 
-function ArchiveRow({ item }) {
+function ArchiveRow({ item, busy, onRestore, onDelete }) {
   const publicUrl = getPublicUrl(item);
   const provider = getProviderDisplay(item);
   const type = getContentType(item);
@@ -98,6 +112,30 @@ function ArchiveRow({ item }) {
       <Badge variant="secondary" className="text-[10px] shrink-0">
         archived
       </Badge>
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-1 text-xs shrink-0"
+        disabled={busy}
+        onClick={() => onRestore(item)}
+      >
+        {busy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <RotateCcw className="h-3.5 w-3.5" />
+        )}
+        Restore to live
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="gap-1 text-xs shrink-0 text-destructive hover:text-destructive"
+        disabled={busy}
+        onClick={() => onDelete(item)}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        Delete permanently
+      </Button>
     </div>
   );
 }
@@ -165,7 +203,7 @@ function ArchiveControls({
 }
 
 /** The rows, the spinner while they load, or the empty state. */
-function ArchiveContent({ loading, items, filtered }) {
+function ArchiveContent({ loading, items, filtered, busyId, onRestore, onDelete }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-6">
@@ -179,14 +217,20 @@ function ArchiveContent({ loading, items, filtered }) {
         compact
         variant={filtered ? 'filtered' : 'empty'}
         title={filtered ? 'No archived items match your filters.' : 'No archived content yet.'}
-        description="Archive a live item from its row above and it is listed here."
+        description="Archive a live item from its row above, or from Live Pages, and it is listed here."
       />
     );
   }
   return (
     <div className="space-y-1.5">
       {items.map((item) => (
-        <ArchiveRow key={item.id} item={item} />
+        <ArchiveRow
+          key={item.id}
+          item={item}
+          busy={busyId === item.id}
+          onRestore={onRestore}
+          onDelete={onDelete}
+        />
       ))}
     </div>
   );
@@ -199,16 +243,56 @@ export default function ArchiveBoard({ archivedList, loading }) {
   const [archiveSortDir, setArchiveSortDir] = useState('desc');
   const [showArchive, setShowArchive] = useState(false);
 
+  // Rows restored or deleted since the list was read leave without a refetch.
+  const [goneIds, setGoneIds] = useState({});
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deletingId, setDeletingId] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const transitions = useContentTransitions();
+  const busyId =
+    deletingId || Object.keys(transitions.loading).find((id) => transitions.loading[id]) || '';
+  const actionError = deleteError || Object.values(transitions.errors).find(Boolean) || '';
+
+  const restore = async (item) => {
+    const result = await transitions.transition(item, 'published', {
+      markLive: true,
+      reviewNotes: 'Restored to live from the Archive board',
+      label: 'Restore',
+    });
+    if (result) setGoneIds((prev) => ({ ...prev, [item.id]: true }));
+  };
+
+  const deletePermanently = async () => {
+    const item = deleteTarget;
+    setDeleteTarget(null);
+    if (!item) return;
+    setDeleteError('');
+    setDeletingId(item.id);
+    try {
+      await postJSON('deleteContentItem', { contentId: item.id });
+      setGoneIds((prev) => ({ ...prev, [item.id]: true }));
+    } catch (err) {
+      setDeleteError(`Delete failed: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setDeletingId('');
+    }
+  };
+
+  const listed = useMemo(
+    () => archivedList.filter((item) => !goneIds[item.id]),
+    [archivedList, goneIds]
+  );
+
   // Filtered + sorted archive items
   const filteredArchive = useMemo(() => {
     return filterAndSortArchivedItems(
-      archivedList,
+      listed,
       archiveProviderFilter,
       archiveSearch,
       archiveSortField,
       archiveSortDir
     );
-  }, [archivedList, archiveSearch, archiveProviderFilter, archiveSortField, archiveSortDir]);
+  }, [listed, archiveSearch, archiveProviderFilter, archiveSortField, archiveSortDir]);
 
   function toggleSort(field) {
     if (archiveSortField === field) {
@@ -229,7 +313,7 @@ export default function ArchiveBoard({ archivedList, loading }) {
         onClick={() => setShowArchive((v) => !v)}
       >
         <Archive className="h-5 w-5 text-muted-foreground" />
-        <h2 className="text-lg font-semibold tracking-tight">Archive ({archivedList.length})</h2>
+        <h2 className="text-lg font-semibold tracking-tight">Archive ({listed.length})</h2>
         {showArchive ? (
           <ChevronUp className="h-4 w-4 text-muted-foreground ml-auto" />
         ) : (
@@ -241,7 +325,8 @@ export default function ArchiveBoard({ archivedList, loading }) {
         <Card className="mt-3">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">
-              Archived articles — removed from live site. Sorted by{' '}
+              Archived articles — off the site, kept. Restore to live puts one back as it was;
+              Delete permanently removes it for good. Sorted by{' '}
               {SORT_OPTIONS.find((o) => o.value === archiveSortField)?.label}.
             </CardTitle>
           </CardHeader>
@@ -256,10 +341,32 @@ export default function ArchiveBoard({ archivedList, loading }) {
               onToggleSort={toggleSort}
             />
 
-            <ArchiveContent loading={loading} items={filteredArchive} filtered={filtered} />
+            {actionError && (
+              <p role="alert" className="text-sm text-destructive">
+                {actionError}
+              </p>
+            )}
+
+            <ArchiveContent
+              loading={loading}
+              items={filteredArchive}
+              filtered={filtered}
+              busyId={busyId}
+              onRestore={restore}
+              onDelete={setDeleteTarget}
+            />
           </CardContent>
         </Card>
       )}
+
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title="Delete this page permanently?"
+        description="This removes the record and its live URL for good, and nothing brings it back. To put it back on the site instead, choose Restore to live."
+        confirmLabel="Delete permanently"
+        onConfirm={deletePermanently}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </section>
   );
 }

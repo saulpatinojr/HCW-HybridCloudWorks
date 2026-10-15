@@ -18,6 +18,7 @@ import { safeUrl } from '@/lib/safeUrl';
 import { useContentTransitions } from './queue/useContentTransitions';
 import ArchiveBoard from './editor-list/ArchiveBoard';
 import {
+  ARCHIVED_STATUS,
   TYPE_BADGE,
   filterAndSortDraftItems,
   filterAndSortLiveItems,
@@ -219,7 +220,7 @@ export default function EditorListPage() {
     loading: archiveLoading,
     error: archiveError,
   } = usePublicData(
-    () => listContent(`status=archived&limit=${LIST_PAGE}`),
+    () => listContent(`status=${ARCHIVED_STATUS}&limit=${LIST_PAGE}`),
     authReady ? `editor:archived:${attempt}` : ''
   );
   const {
@@ -293,13 +294,13 @@ export default function EditorListPage() {
       reviewNotes: `Unpublished from Editor board (was ${currentStatus || 'unknown'}) - returned to review queue`,
     });
     setActionId('');
-    if (result) navigate('/admin/queue');
+    if (result) navigate('/admin/review-queue');
   };
 
   const doArchive = async (item) => {
     setActionError('');
     setActionId(item.id);
-    await transitions.transition(item, 'archived', {
+    await transitions.transition(item, ARCHIVED_STATUS, {
       markLive: false,
       reviewNotes: 'Archived from Editor board',
       label: 'Archive',
@@ -412,7 +413,6 @@ export default function EditorListPage() {
     <div className="space-y-6">
       <PageHeader
         icon={PenTool}
-        title="Editor"
         help={EDITOR_HELP}
         status={
           <span className="text-muted-foreground">

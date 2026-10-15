@@ -317,7 +317,7 @@ export default function NewsletterPublished({ initialIssueId = null, today }) {
         setNotice({
           ok: true,
           message: 'The send is canceled. The issue is back in Drafts.',
-          link: { to: '/admin/mailing-list?tab=drafts', label: 'Open Drafts' },
+          link: { to: '/admin/newsletter-hub?tab=drafts', label: 'Open Drafts' },
         });
       }
     );
@@ -342,7 +342,7 @@ export default function NewsletterPublished({ initialIssueId = null, today }) {
         setNotice({
           ok: true,
           message: 'Back in Drafts as a draft. Approve it again to send.',
-          link: { to: '/admin/mailing-list?tab=drafts', label: 'Open Drafts' },
+          link: { to: '/admin/newsletter-hub?tab=drafts', label: 'Open Drafts' },
         });
       }
     );
@@ -354,7 +354,7 @@ export default function NewsletterPublished({ initialIssueId = null, today }) {
         setNotice({
           ok: true,
           message: `Duplicated as ${res.issue.id}, saved in Drafts.`,
-          link: { to: '/admin/mailing-list?tab=drafts', label: 'Open Drafts' },
+          link: { to: '/admin/newsletter-hub?tab=drafts', label: 'Open Drafts' },
         });
       }
     );

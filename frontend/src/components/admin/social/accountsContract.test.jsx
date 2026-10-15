@@ -203,7 +203,7 @@ describe('the Settings tab', () => {
     // rather than listing them a second time.
     expect(screen.queryByText('HCW on LinkedIn')).toBeNull();
     expect(screen.getByRole('link', { name: /Accounts tab/ }).getAttribute('href')).toBe(
-      '/admin/social?tab=accounts'
+      '/admin/social-hub?tab=accounts'
     );
   });
 
