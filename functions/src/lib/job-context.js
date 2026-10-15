@@ -11,8 +11,9 @@
  *
  * runJob runs the worker inside the job's context (`runAsJob`), and the
  * shared clients call `refuseWriteAfterJobAbort` before every write: once the
- * signal has fired, a write that starts inside that context throws the
- * job's reason instead of reaching the service. Routes, timers and the
+ * signal has fired, a write that starts inside that context throws a
+ * refusal carrying the job's reason (as `cause`, with its `code`) instead of
+ * reaching the service. Routes, timers and the
  * onComplete hooks, which runJob calls after the terminal write, run outside
  * the context and are not affected. Nothing is threaded through the workers.
  *

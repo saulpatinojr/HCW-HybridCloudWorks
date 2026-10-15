@@ -24,10 +24,10 @@
  *
  * An upload or a delete first calls `refuseWriteAfterJobAbort`
  * (job-context.js): inside a platform job whose budget has run out, one
- * that starts now throws the job's reason instead of reaching Storage
- * (#942). Inside a job, an upload or a delete also carries the job's signal
- * as the SDK's `abortSignal`, so one still in flight at the deadline is
- * abandoned by the client. Outside a job neither does anything.
+ * that starts now throws a refusal carrying the job's reason instead of
+ * reaching Storage (#942). Inside a job, an upload or a delete also carries
+ * the job's signal as the SDK's `abortSignal`, so one still in flight at the
+ * deadline is abandoned by the client. Outside a job neither does anything.
  *
  * One property of the SDK that the signal meets, recorded here because it
  * is not visible from this file: the Blob pipeline hands a request's

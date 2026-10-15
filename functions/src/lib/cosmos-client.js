@@ -8,11 +8,12 @@
  * Required RBAC role on the Function App MI: Cosmos DB Built-in Data Contributor
  *
  * Every write first calls `refuseWriteAfterJobAbort` (job-context.js): inside
- * a platform job whose budget has run out, a write that starts now throws
- * the job's reason instead of reaching Cosmos (#942). Inside a job, a write
- * also carries the job's signal as the SDK's `abortSignal`, so one still in
- * flight at the deadline is abandoned by the client. Outside a job neither
- * does anything, and every call passes exactly the options it always did.
+ * a platform job whose budget has run out, a write that starts now throws a
+ * refusal carrying the job's reason instead of reaching Cosmos (#942). Inside
+ * a job, a write also carries the job's signal as the SDK's `abortSignal`,
+ * so one still in flight at the deadline is abandoned by the client. Outside
+ * a job neither does anything, and every call passes exactly the options it
+ * always did.
  */
 
 import { CosmosClient } from '@azure/cosmos';
