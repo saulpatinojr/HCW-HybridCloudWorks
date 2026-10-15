@@ -1,6 +1,7 @@
 /**
- * The build as Terraform (#668): one tab per file `emitFiles` returns,
- * rendered with the site's CodeBlock, and a button that downloads them all
+ * The build as Infrastructure as Code (#668): one tab per file `emitFiles` returns,
+ * supporting Native Terraform, OpenTofu 1.8+, and Terragrunt formats.
+ * Rendered with the site's CodeBlock, and a button that downloads them all
  * as a zip. The tab strip carries every file name, so the pre-rendered page
  * already says what the build produces; only the selected file's content is
  * in the DOM at a time.
@@ -21,7 +22,7 @@ import { Download, Loader2 } from 'lucide-react';
 import CodeBlock from '@/components/shared/CodeBlock';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { emitFiles } from '@/lib/landingZone';
+import { emitFiles, FORMAT_LABELS, SUPPORTED_FORMATS } from '@/lib/landingZone';
 import { LzLabValidate } from './LzLabValidate';
 import { HINT_CLASS } from './styles';
 
@@ -71,12 +72,28 @@ const TAB_ACTIVE =
 const TAB_IDLE =
   'border-transparent text-slate-600 hover:text-slate-950 dark:text-slate-400 dark:hover:text-white';
 
+const FORMAT_DESCRIPTIONS = {
+  opentofu:
+    'The files this build becomes for OpenTofu 1.8+, configured with client-side state encryption and pinned provider registries.',
+  terragrunt:
+    'The files this build becomes for Terragrunt, orchestrated with root terragrunt.hcl and DRY module configurations.',
+  terraform:
+    'The files this build becomes, in the shape of the examples the Azure Verified Modules ship. Every module is pinned; the README says what to fill in before a plan.',
+};
+
+const FORMAT_BADGES = {
+  opentofu: 'OpenTofu 1.8+ · State Encryption',
+  terragrunt: 'Terragrunt · DRY Remote State',
+  terraform: 'HashiCorp Terraform · Native HCL',
+};
+
 /**
  * @param {object} props
  * @param {object} props.state  the normalised build
  */
 export function LzFiles({ state }) {
-  const files = useMemo(() => emitFiles(state), [state]);
+  const [exportFormat, setExportFormat] = useState('terraform');
+  const files = useMemo(() => emitFiles(state, exportFormat), [state, exportFormat]);
   const [activePath, setActivePath] = useState(null);
   const active = files.find((f) => f.path === activePath) ?? files[0];
   const [download, setDownload] = useState('idle');
@@ -84,7 +101,9 @@ export function LzFiles({ state }) {
   const onDownload = async () => {
     setDownload('busy');
     try {
-      saveBlob(await buildZip(files), ZIP_NAME);
+      const zipFileName =
+        exportFormat === 'terraform' ? ZIP_NAME : `landing-zone-${exportFormat}.zip`;
+      saveBlob(await buildZip(files), zipFileName);
       setDownload('idle');
     } catch {
       setDownload('failed');
@@ -101,15 +120,16 @@ export function LzFiles({ state }) {
     document.getElementById(`lz-tab-${slug(next.path)}`)?.focus();
   };
 
+  const description = FORMAT_DESCRIPTIONS[exportFormat] || FORMAT_DESCRIPTIONS.terraform;
+
   return (
     <Card data-testid="lz-files">
       <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex flex-col gap-1.5">
-          <CardTitle className="text-xl">Generated Terraform</CardTitle>
-          <CardDescription>
-            The files this build becomes, in the shape of the examples the Azure Verified Modules
-            ship. Every module is pinned; the README says what to fill in before a plan.
-          </CardDescription>
+          <CardTitle className="text-xl">
+            Generated {FORMAT_LABELS[exportFormat] || 'Terraform'}
+          </CardTitle>
+          <CardDescription>{description}</CardDescription>
         </div>
         <Button
           type="button"
@@ -134,6 +154,38 @@ export function LzFiles({ state }) {
             The zip could not be built in this browser. Copy each file from its tab instead.
           </p>
         ) : null}
+
+        {/* Format Selector Pill Group */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+          <div className="flex items-center gap-1.5" data-testid="lz-format-switcher">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 mr-1">
+              Format:
+            </span>
+            {SUPPORTED_FORMATS.map((fmt) => (
+              <button
+                key={fmt}
+                type="button"
+                data-testid={`lz-format-${fmt}`}
+                onClick={() => {
+                  setExportFormat(fmt);
+                  setActivePath(null);
+                }}
+                aria-pressed={exportFormat === fmt}
+                className={`rounded px-2.5 py-1 text-xs font-medium transition-all ${
+                  exportFormat === fmt
+                    ? 'bg-sky-600 text-white font-semibold shadow-sm'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                {FORMAT_LABELS[fmt]}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+            {FORMAT_BADGES[exportFormat] || FORMAT_BADGES.terraform}
+          </span>
+        </div>
+
         <div
           role="tablist"
           aria-label="Generated files"

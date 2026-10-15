@@ -325,6 +325,10 @@ if [ "$target" = full ]; then
     ansible-syntax-check-walkthrough \
     wsl-containers-walkthrough \
     defender-wsl-plugin-walkthrough \
+    aws-transit-gateway-walkthrough \
+    gcp-shared-vpc-walkthrough \
+    vmware-hcx-migration-walkthrough \
+    docker-sandbox-agent-walkthrough \
     migration-assessment \
     network-assessment \
     cloud-assessment; do

@@ -5,7 +5,14 @@
  * which is worse than no smoke test.
  */
 import { describe, it, expect } from 'vitest';
-import { parseArgs, looksPublic, projectionLeaks, LIST_MUST_NOT_CARRY } from './smoke-deployed.mjs';
+import {
+  parseArgs,
+  looksPublic,
+  projectionLeaks,
+  LIST_MUST_NOT_CARRY,
+  looksValidEstate,
+  looksValidCoderStatus,
+} from './smoke-deployed.mjs';
 
 describe('parseArgs', () => {
   it('reads --base and strips trailing slashes', () => {
@@ -46,5 +53,44 @@ describe('projectionLeaks — mirrors the T-206 exclusion list', () => {
     // `explanation` is deliberately IN the projection (Coder Corner excerpt
     // fallback); the smoke test must not report it as a leak.
     expect(projectionLeaks({ explanation: 'x', Title: 't' })).toEqual([]);
+  });
+});
+
+describe('looksValidEstate — validates public/labs/estate contract', () => {
+  it('validates unconfigured response', () => {
+    expect(looksValidEstate({ configured: false })).toBe(true);
+    expect(looksValidEstate(null)).toBe(false);
+    expect(looksValidEstate({})).toBe(false);
+  });
+
+  it('validates configured response with required blocks', () => {
+    expect(
+      looksValidEstate({
+        configured: true,
+        arc: { status: 'Connected' },
+        agent: { online: true },
+        coder: { reachable: true },
+      })
+    ).toBe(true);
+
+    expect(
+      looksValidEstate({
+        configured: true,
+        arc: { status: 'Connected' },
+      })
+    ).toBe(false);
+  });
+});
+
+describe('looksValidCoderStatus — validates public/labs/coder-status contract', () => {
+  it('validates unconfigured response', () => {
+    expect(looksValidCoderStatus({ configured: false })).toBe(true);
+    expect(looksValidCoderStatus(null)).toBe(false);
+  });
+
+  it('validates configured response with reachable flag', () => {
+    expect(looksValidCoderStatus({ configured: true, reachable: true })).toBe(true);
+    expect(looksValidCoderStatus({ configured: true, reachable: false })).toBe(true);
+    expect(looksValidCoderStatus({ configured: true })).toBe(false);
   });
 });

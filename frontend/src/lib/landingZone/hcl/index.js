@@ -29,6 +29,7 @@ import { tfvarsExample, variablesTf } from './variables';
 
 import { emitAwsFiles } from './aws/index';
 import { emitGcpFiles } from './gcp/index';
+import { FORMAT_LABELS, SUPPORTED_FORMATS, transformBundle } from './formats';
 
 /** Component → the file it adds, in emission order. */
 const COMPONENT_FILES = [
@@ -62,20 +63,24 @@ export function emitAzureFiles(normalized) {
 }
 
 /**
- * The Terraform files for a build across Azure, AWS, and Google Cloud.
+ * The Infrastructure as Code files for a build across Azure, AWS, and Google Cloud,
+ * formatted for Native Terraform, OpenTofu 1.8+, or Terragrunt.
  *
  * @param {{ selected?: string[], options?: object, cloud?: string }} state
+ * @param {'terraform'|'opentofu'|'terragrunt'} [format='terraform']
  * @returns {Array<{ path: string, content: string }>}
  */
-export function emitFiles(state) {
+export function emitFiles(state, format = 'terraform') {
   const normalized = normalizeState(state);
   const cloud = state?.cloud || normalized.cloud || normalized.options?.cloud || 'azure';
+  let baseFiles;
   if (cloud === 'aws') {
-    return emitAwsFiles(normalized);
+    baseFiles = emitAwsFiles(normalized);
+  } else if (cloud === 'gcp') {
+    baseFiles = emitGcpFiles(normalized);
+  } else {
+    baseFiles = emitAzureFiles(normalized);
   }
-  if (cloud === 'gcp') {
-    return emitGcpFiles(normalized);
-  }
-  return emitAzureFiles(normalized);
+  return transformBundle(baseFiles, format, state);
 }
-export { emitAwsFiles, emitGcpFiles };
+export { emitAwsFiles, emitGcpFiles, SUPPORTED_FORMATS, FORMAT_LABELS, transformBundle };

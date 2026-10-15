@@ -97,6 +97,18 @@ export const LIST_MUST_NOT_CARRY = [
   'sidebarContent',
 ];
 
+export function looksValidEstate(body) {
+  if (!body || typeof body.configured !== 'boolean') return false;
+  if (!body.configured) return true;
+  return Boolean(body.arc && body.agent && body.coder);
+}
+
+export function looksValidCoderStatus(body) {
+  if (!body || typeof body.configured !== 'boolean') return false;
+  if (!body.configured) return true;
+  return typeof body.reachable === 'boolean';
+}
+
 export function projectionLeaks(item = {}) {
   return LIST_MUST_NOT_CARRY.filter((f) => f in item);
 }
@@ -201,6 +213,30 @@ async function tierAnonymous(base) {
     // implemented — this failing is the deployed twin of api-contract.test.js.
     const res = await fetch(`${base}/aiProxy`, { method: 'POST' });
     expectStatus(res, 404);
+  });
+
+  await check(1, 'labs-estate: answers configured contract with Arc, agent, Coder', async () => {
+    const res = await get('public/labs/estate');
+    expectStatus(res, 200);
+    const body = await res.json();
+    if (!looksValidEstate(body)) {
+      throw new Error(`invalid estate payload: configured=${body?.configured}`);
+    }
+    return body.configured
+      ? `configured: arc=${body.arc.status}, agent=${body.agent.online ? 'online' : 'offline'}`
+      : 'unconfigured estate (offline host)';
+  });
+
+  await check(1, 'coder-status: answers configured contract with capacity', async () => {
+    const res = await get('public/labs/coder-status');
+    expectStatus(res, 200);
+    const body = await res.json();
+    if (!looksValidCoderStatus(body)) {
+      throw new Error(`invalid coder status payload: configured=${body?.configured}`);
+    }
+    return body.configured
+      ? `configured: reachable=${body.reachable}, running=${body.capacity?.running || 0}`
+      : 'unconfigured coder (no CODER_URL)';
   });
 }
 
