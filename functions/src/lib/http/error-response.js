@@ -134,6 +134,7 @@ export function getCorrelationId(context, request) {
 export function errorFacts(error) {
   if (!error || typeof error !== 'object') return `type=${error === null ? 'null' : typeof error}`;
   const facts = [];
+  /** Keep one fact when its value has the code shape. */
   const add = (key, value) => {
     const text = Number.isInteger(value) ? String(value) : value;
     if (typeof text === 'string' && CODE_SHAPE.test(text)) facts.push(`${key}=${text}`);

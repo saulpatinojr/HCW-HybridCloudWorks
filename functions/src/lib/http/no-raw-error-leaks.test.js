@@ -152,8 +152,10 @@ const ERROR_NAME = /^(e|err|error|ex|exc|exception|cause|rejection)$|(Error|Err)
 const ERROR_CLASS = /(Error|Exception|Refusal)$/;
 
 const RANK = { text: 4, error: 3, authored: 2, named: 1 };
+/** The strongest of several taint kinds, by RANK. */
 const strongest = (...kinds) =>
   kinds.reduce((a, b) => ((RANK[b] ?? 0) > (RANK[a] ?? 0) ? b : a), null);
+/** A whole error made into text counts as text. */
 const asText = (kind) => (kind === 'error' || kind === 'named' ? 'text' : kind);
 
 /**
@@ -300,6 +302,7 @@ function parse(file, source) {
 function returnsOf(fn) {
   if (fn.body.type !== 'BlockStatement') return [fn.body];
   const out = [];
+  /** Collect the function's return expressions, not a nested function's. */
   const walk = (node) => {
     if (isFunction(node)) return;
     if (node.type === 'ReturnStatement' && node.argument) out.push(node.argument);
@@ -335,6 +338,7 @@ function moduleTable(file, program) {
   const imports = new Map();
   const exports = new Map();
   const stars = [];
+  /** Record the module's top-level functions, exports and star re-exports. */
   const collect = (node) => {
     if (node.type === 'FunctionDeclaration' && node.id) {
       locals.set(node.id.name, node);
@@ -409,6 +413,7 @@ function moduleTable(file, program) {
  */
 function parameterSlots(fn) {
   const out = new Map();
+  /** Map every name a parameter pattern binds to its argument slot. */
   const bindAll = (pattern, slot) => {
     if (!pattern) return;
     if (pattern.type === 'Identifier') out.set(pattern.name, slot);
@@ -440,6 +445,7 @@ function parameterSlots(fn) {
  */
 function mentionedParameters(expression, params) {
   const out = new Set();
+  /** Find the parameters an expression puts into the value it builds. */
   const walk = (node, parent, key) => {
     if (!node || typeof node.type !== 'string') return;
     if (node.type === 'Identifier') {
@@ -499,6 +505,7 @@ function slotsThrough(call, slots, params) {
  */
 function responseBuilders(parsed) {
   const tables = new Map(parsed.map(({ file, program }) => [file, moduleTable(file, program)]));
+  /** The function a module exports under a name, through re-exports. */
   const resolveExport = (file, name, seen = new Set()) => {
     const table = tables.get(file);
     if (!table || seen.has(`${file}::${name}`)) return null;
@@ -512,6 +519,7 @@ function responseBuilders(parsed) {
     }
     return null;
   };
+  /** The function a local or imported name refers to. */
   const resolveLocal = (file, name, seen = new Set()) => {
     const table = tables.get(file);
     if (!table) return null;
@@ -520,6 +528,7 @@ function responseBuilders(parsed) {
     if (imported && !imported.namespace) return resolveExport(imported.from, imported.imported, seen);
     return null;
   };
+  /** The function a call's callee resolves to, or null. */
   const resolveCall = (file, call) => {
     const callee = unwrap(call.callee);
     if (!callee) return null;
@@ -589,6 +598,7 @@ function responseBuilders(parsed) {
  */
 function loggerAliases(program) {
   const out = new Set();
+  /** Record a variable that aliases a logger method. */
   const collect = (node) => {
     if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) {
       const init = unwrap(node.init);
@@ -616,6 +626,7 @@ function loggerAliases(program) {
 function authoredClasses(parsed) {
   const parents = new Map();
   for (const { program } of parsed) {
+    /** Record each class and the class it extends. */
     const collect = (node) => {
       if ((node.type === 'ClassDeclaration' || node.type === 'ClassExpression') && node.id) {
         const parent = lastName(node.superClass);
@@ -652,7 +663,9 @@ function bindingsOf(program) {
   const declared = new WeakSet();
   const refs = new Map();
   const rejection = new WeakSet();
+  /** A scope under its parent, owned by a function. */
   const newScope = (parent, fn) => ({ parent, fn, names: new Map() });
+  /** The nearest scope that belongs to a function. */
   const functionScope = (scope) => {
     let s = scope;
     while (s && !s.fn) s = s.parent;
@@ -895,6 +908,7 @@ function sitesOf(file, program, source, { builderOf, authored }) {
 
   // Aliases, to a fixpoint: `const why = e?.message ?? 'x'` makes `why` text.
   const definitions = [];
+  /** Record every variable declaration with an initialiser. */
   const collect = (node) => {
     if (node.type === 'VariableDeclarator' && node.init) definitions.push([node.id, node.init]);
     if (
@@ -907,6 +921,7 @@ function sitesOf(file, program, source, { builderOf, authored }) {
     eachChild(node, collect);
   };
   collect(program);
+  /** Raise a binding's taint to a stronger kind; whether it changed. */
   const raise = (binding, kind) => {
     if (!binding || !kind || (RANK[kind] ?? 0) <= (RANK[binding.kind] ?? 0)) return false;
     binding.kind = kind;
@@ -938,8 +953,11 @@ function sitesOf(file, program, source, { builderOf, authored }) {
   /** Object arguments of which only some properties land in a builder's body. */
   const partialBodies = new WeakMap();
   let responseDepth = 0;
+  /** The 1-based line of a source offset. */
   const lineOf = (offset) => source.slice(0, offset).split('\n').length;
+  /** A node's source on one line, cut for a key. */
   const snippet = (node) => source.slice(node.start, node.end).replace(/\s+/g, ' ').trim().slice(0, 120);
+  /** Record a site, keyed by file, function and expression. */
   const report = (node, what, kind) => {
     const fn = names.at(-1) ?? '<module>';
     found.push({
@@ -950,6 +968,7 @@ function sitesOf(file, program, source, { builderOf, authored }) {
       inResponse: responseDepth > 0,
     });
   };
+  /** Run a visit with every site marked as inside a response body. */
   const inResponse = (fn) => {
     responseDepth += 1;
     try {
@@ -958,6 +977,7 @@ function sitesOf(file, program, source, { builderOf, authored }) {
       responseDepth -= 1;
     }
   };
+  /** Whether a taint kind makes a site here. */
   const flagged = (kind, wholeErrorCounts) =>
     kind === 'text' || kind === 'authored' || (wholeErrorCounts && kind === 'error');
 
@@ -968,6 +988,7 @@ function sitesOf(file, program, source, { builderOf, authored }) {
     else walk(node);
   };
 
+  /** The name a function is known by for a key. */
   const functionName = (node, parent) => {
     if (node.id?.name) return node.id.name;
     if (parent?.type === 'VariableDeclarator') return parent.id?.name ?? null;
@@ -1006,6 +1027,7 @@ function sitesOf(file, program, source, { builderOf, authored }) {
             continue;
           }
           const key = keyName(p) ?? '[computed]';
+          /** Visit the property's value as a site of its own. */
           const visitValue = () => value(p.value, (t) => `${key}: ${t}`, true);
           const body = (response && (key === 'body' || key === 'jsonBody')) || Boolean(partial?.has(key));
           if (body) inResponse(visitValue);
@@ -1078,6 +1100,7 @@ function sitesOf(file, program, source, { builderOf, authored }) {
             Boolean(slots?.has(String(index))) ||
             (keys.length > 0 && !partial) ||
             (name === 'errorResponse' && index === 1);
+          /** Visit the argument as a site of its own. */
           const visitArg = () => value(arg, (t) => `${name}(${t})`, inBody);
           if (inBody) inResponse(visitArg);
           else visitArg();
@@ -1357,6 +1380,7 @@ describe('no raw error text in HTTP response bodies (AP-B10, #945)', () => {
 describe('the scan itself', () => {
   /** The site keys a one-module tree yields. */
   const sitesIn = (source, file = 'lib/x.js') => scanSources({ [file]: source }).map((s) => s.key);
+  /** A one-route module whose handler body is the given source. */
   const handler = (body) => `
     const json = (status, body) => ({ status, body: JSON.stringify(body) });
     export async function handle(request, context) {
