@@ -117,6 +117,41 @@ export const RECORDING_CREATE_SOURCES = ['plaud_mcp', 'manual_upload'];
 /** A Plaud file id is an opaque short string; anything longer is not one. */
 export const RECORDING_PLAUD_ID_MAX = 200;
 
+const RECORDED_AT_SHAPE =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?)?(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/**
+ * `recordedAt` as an ISO string, or null when it is not a real moment.
+ *
+ * `new Date()` alone is not a validator: it rolls `2026-02-30` over to
+ * 2 March, and it reads a time with no zone in the host's own zone, so the
+ * same Plaud timestamp would be stored differently on a workstation and on
+ * the Function App. So a string must be an ISO date, optionally with a time
+ * and a zone, whose day exists in its month (checked before parsing) and
+ * whose clock fields are in range; a time with no zone is read as UTC, the
+ * zone every other stamp in this container uses. Epoch milliseconds are
+ * accepted as a finite number.
+ */
+export function normaliseRecordedAt(raw) {
+  if (typeof raw === 'number') {
+    const when = new Date(raw);
+    return Number.isFinite(raw) && !Number.isNaN(when.getTime()) ? when.toISOString() : null;
+  }
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  const match = RECORDED_AT_SHAPE.exec(value);
+  if (!match) return null;
+  const [, y, mo, d, h = '00', mi = '00', s = '00', zone] = match;
+  const year = Number(y);
+  const month = Number(mo);
+  const day = Number(d);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth) return null;
+  if (Number(h) > 23 || Number(mi) > 59 || Number(s) > 59) return null;
+  const when = new Date(zone ? value.replace(' ', 'T') : `${value.replace(' ', 'T')}${match[4] ? '' : 'T00:00'}Z`);
+  return Number.isNaN(when.getTime()) ? null : when.toISOString();
+}
+
 export const RECORDING_PATCH_FIELDS = [
   'title',
   'transcript',
@@ -201,14 +236,12 @@ function validateRecordingCreate(body) {
     doc.plaudId = plaudId;
   }
   if (body.recordedAt !== undefined && body.recordedAt !== null) {
-    // Plaud reports start_at / created_at; an ISO string or epoch
-    // milliseconds both mean a time. Stored as ISO, like createdAt.
-    const raw = body.recordedAt;
-    const when = typeof raw === 'string' || typeof raw === 'number' ? new Date(raw) : null;
-    if (!when || Number.isNaN(when.getTime())) {
+    // Plaud reports start_at / created_at; stored as ISO, like createdAt.
+    const recordedAt = normaliseRecordedAt(body.recordedAt);
+    if (!recordedAt) {
       return { error: 'recordedAt must be an ISO date string or epoch milliseconds' };
     }
-    doc.recordedAt = when.toISOString();
+    doc.recordedAt = recordedAt;
   }
   return { doc };
 }

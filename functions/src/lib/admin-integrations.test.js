@@ -6,7 +6,7 @@
  * rather than replace, and the config collection segment is allowlisted.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createAdminIntegrationHandlers } from './admin-integrations.js';
+import { createAdminIntegrationHandlers, normaliseRecordedAt } from './admin-integrations.js';
 
 const context = { log: vi.fn(), error: vi.fn() };
 
@@ -2035,6 +2035,26 @@ describe('AP-B6: mass assignment allowlists on admin integration writes', () => 
     const res = await post({ recordedAt: Date.UTC(2026, 9, 14, 15, 30) });
     expect(res.status).toBe(200);
     expect(store.upsertDoc.mock.calls[0][1].recordedAt).toBe('2026-10-14T15:30:00.000Z');
+  });
+
+  // CodeRabbit on #1187: `new Date()` rolls 2026-02-30 over to 2 March and
+  // reads a zoneless time in the host's zone.
+  it('normaliseRecordedAt refuses calendar overflow and reads a zoneless time as UTC', () => {
+    expect(normaliseRecordedAt('2026-02-30')).toBeNull();
+    expect(normaliseRecordedAt('2026-02-30T10:00:00')).toBeNull();
+    expect(normaliseRecordedAt('2025-02-29')).toBeNull();
+    expect(normaliseRecordedAt('2026-13-01')).toBeNull();
+    expect(normaliseRecordedAt('2026-10-14T24:00:00')).toBeNull();
+    expect(normaliseRecordedAt('14/10/2026')).toBeNull();
+    expect(normaliseRecordedAt(Number.NaN)).toBeNull();
+    expect(normaliseRecordedAt(Number.POSITIVE_INFINITY)).toBeNull();
+
+    expect(normaliseRecordedAt('2024-02-29')).toBe('2024-02-29T00:00:00.000Z');
+    expect(normaliseRecordedAt('2026-10-14T15:30:00')).toBe('2026-10-14T15:30:00.000Z');
+    expect(normaliseRecordedAt('2026-10-14 15:30')).toBe('2026-10-14T15:30:00.000Z');
+    expect(normaliseRecordedAt('2026-10-14T15:30:00.123Z')).toBe('2026-10-14T15:30:00.123Z');
+    expect(normaliseRecordedAt('2026-10-14T10:30:00-05:00')).toBe('2026-10-14T15:30:00.000Z');
+    expect(normaliseRecordedAt(' 2026-10-14T15:30:00Z ')).toBe('2026-10-14T15:30:00.000Z');
   });
 
   it('putSettings rejects unknown fields with 400', async () => {
