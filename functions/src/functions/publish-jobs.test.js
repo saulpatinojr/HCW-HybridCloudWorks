@@ -42,4 +42,13 @@ describe('runPublishContent', () => {
     await expect(runPublishContent({}, { job, publish })).rejects.toThrow('contentId required');
     expect(publish.processPublishContent).not.toHaveBeenCalled();
   });
+
+  it('throws immediately when signal is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const publish = makePublish({});
+    await expect(
+      runPublishContent({ contentId: 'doc-1' }, { job, publish, signal: controller.signal })
+    ).rejects.toThrow();
+  });
 });

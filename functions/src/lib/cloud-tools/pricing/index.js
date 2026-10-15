@@ -74,7 +74,10 @@ export async function fetchLivePricing(serviceId, requestedRegion, baseline, opt
       let triple = null;
 
       try {
-        triple = await loaders[provider](serviceId, requestedRegion, options.deps ?? {});
+        triple = await loaders[provider](serviceId, requestedRegion, {
+          ...(options.deps ?? {}),
+          signal: options.signal,
+        });
       } catch (error) {
         log.warn('[cloud-tools-pricing] live price fetch FAILED', {
           provider,

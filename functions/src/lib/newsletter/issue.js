@@ -133,7 +133,7 @@ export const describeAiError = (error) => String(error?.message ?? error).slice(
  *   Monday build passes none (router.js, SYNCHRONOUS CALLS HAVE A TIME BUDGET)
  * @returns {Promise<{ subject: string, intro: string }>}
  */
-export async function draftIntro({ drafter, sections, subject, tone, budgetMs = null }) {
+export async function draftIntro({ drafter, sections, subject, tone, budgetMs = null, signal = null }) {
   const draft = await drafter.generateDraft({
     url: 'weekly-newsletter',
     cloudProvider: 'Auto',
@@ -142,6 +142,7 @@ export async function draftIntro({ drafter, sections, subject, tone, budgetMs = 
     markdown: buildIntroContext(sections),
     customInstructionPrompt: introInstruction(tone),
     budgetMs,
+    signal,
   });
   const drafted = plainText(stripMarkdown(draft?.title), 120);
   return {
@@ -302,12 +303,13 @@ function rebuildRefusal(existing, id) {
  * off or down costs the intro, not the issue: the items are the newsletter,
  * and the owner can write the note by hand.
  */
-async function draftIntroIfEnabled({ drafter, settings, sections, subject, log }) {
+async function draftIntroIfEnabled({ drafter, settings, sections, subject, log, signal }) {
   if (!drafter || settings.introEnabled === false) return { subject, intro: '', introError: null };
   try {
-    const drafted = await draftIntro({ drafter, sections, subject, tone: settings.introTone });
+    const drafted = await draftIntro({ drafter, sections, subject, tone: settings.introTone, signal });
     return { subject: drafted.subject, intro: drafted.intro, introError: null };
   } catch (error) {
+    if (signal?.aborted) throw signal.reason || error;
     const introError = describeAiError(error);
     log?.warn?.(`[newsletter] intro not drafted: ${introError}`);
     return { subject, intro: '', introError };
@@ -368,6 +370,7 @@ function issueDocument({
  * @param {() => Date} [deps.now]
  * @param {object[]} [deps.sections]
  * @param {object} [deps.log]
+ * @param {AbortSignal} [deps.signal]
  */
 export function createIssueBuilder({
   store,
@@ -375,13 +378,16 @@ export function createIssueBuilder({
   now = () => new Date(),
   sections = SECTIONS,
   log,
+  signal: defaultSignal,
 }) {
   /**
-   * @param {{ days?: number, keep?: boolean, keptBy?: string }} [payload]
+   * @param {{ days?: number, keep?: boolean, keptBy?: string, signal?: AbortSignal }} [payload]
    *   `days` overrides the saved window (clamped); `keep` lands the built issue
    *   in Drafts; `keptBy` is recorded as `savedBy`.
    */
-  async function build({ days, keep = false, keptBy = null } = {}) {
+  async function build({ days, keep = false, keptBy = null, signal: callSignal } = {}) {
+    const activeSignal = callSignal || defaultSignal;
+    if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
     const until = now();
     const { settings, problem: settingsProblem } = await readBuildSettings(store, log);
     const windowDays = clampWindowDays(days ?? settings.windowDays);
@@ -422,6 +428,7 @@ export function createIssueBuilder({
       sections: collected.sections,
       subject: defaultSubject(since, until),
       log,
+      signal: activeSignal,
     });
     const doc = issueDocument({
       id,

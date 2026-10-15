@@ -31,9 +31,11 @@ export function normalizeScore(value, fallback) {
  * @param {object} deps
  * @param {{ generateJsonResponse: Function, defaultModelFor: Function, getActiveAiProvider: Function }} deps.ai
  */
-export function createCritic({ ai }) {
+export function createCritic({ ai, signal: defaultSignal }) {
   return {
-    async critiqueDraft({ title, postContent }) {
+    async critiqueDraft({ title, postContent, signal: callSignal }) {
+      const activeSignal = callSignal || defaultSignal;
+      if (activeSignal?.aborted) throw activeSignal.reason || new Error('aborted');
       const bannedPhraseHits = scanBannedPhrases(`${title || ''}\n${postContent || ''}`);
       try {
         const judged = await ai.generateJsonResponse({
@@ -46,6 +48,7 @@ export function createCritic({ ai }) {
           // provider it actually selects.
           purpose: 'draft',
           feature: 'critique',
+          signal: activeSignal,
         });
         const genericityScore = normalizeScore(judged?.genericityScore, 0);
         const specificityScore = normalizeScore(judged?.specificityScore, 10);

@@ -130,7 +130,7 @@ describe('POST cms/ai-routing/test/{task}', () => {
       {
         provider: 'gemini',
         model: null,
-        why: 'gemini refused',
+        why: 'The provider call failed',
         code: 'AI_PROVIDER_ERROR',
         latencyMs: 250,
       },

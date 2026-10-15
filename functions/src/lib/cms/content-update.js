@@ -28,6 +28,7 @@
  *     carried.
  */
 import { randomUUID } from "node:crypto";
+import { errorResponse } from "../http/error-response.js";
 import { actorName } from "../auth/actor-name.js";
 import { isPublicDocument } from "../public-reads.js";
 import { normalizeContentBodyFields } from "./content-quality.js";
@@ -215,11 +216,7 @@ export function createContentUpdateHandler({
 
       return json(200, { success: true, contentId });
     } catch (error) {
-      context.error("updateContentItem failed:", error);
-      return json(500, {
-        error: "Failed to update content item",
-        message: error?.message || "Unknown error",
-      });
+      return errorResponse(context, "Failed to update content item", error, 500, request);
     }
   };
 }
@@ -861,11 +858,7 @@ export function createContentTransitionHandler({
         reviewedBy,
       });
     } catch (error) {
-      context.error("transitionContentStatus failed:", error);
-      return json(500, {
-        error: "Failed to transition content status",
-        message: error?.message || "Unknown error",
-      });
+      return errorResponse(context, "Failed to transition content status", error, 500, request);
     }
   };
 }

@@ -27,6 +27,7 @@
  *     from its `type` and `source`, so nothing here invents a value.
  */
 import { randomUUID } from "node:crypto";
+import { errorResponse } from "../http/error-response.js";
 import { actorName } from "../auth/actor-name.js";
 import {
   normalizeContentBodyFields,
@@ -246,11 +247,7 @@ export function createContentCreateHandler({
       });
       return json(result.status, result.body);
     } catch (error) {
-      context.error("createContentItem failed:", error);
-      return json(500, {
-        error: "Failed to create content item",
-        message: error?.message || "Unknown error",
-      });
+      return errorResponse(context, "Failed to create content item", error, 500, request);
     }
   };
 }

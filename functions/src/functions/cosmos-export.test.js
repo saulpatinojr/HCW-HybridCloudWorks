@@ -69,4 +69,17 @@ describe('cosmos-export-container job type', () => {
       )
     ).rejects.toThrow(/not exported on a delta run/);
   });
+
+  it('throws when the signal is pre-aborted', async () => {
+    const spec = getJobType(EXPORT_JOB_TYPE);
+    const controller = new AbortController();
+    controller.abort(new Error('timeout'));
+    await expect(
+      spec.worker(
+        { runId: '2026-09-14', mode: 'full', container: 'content' },
+        { context: { log: vi.fn() }, signal: controller.signal }
+      )
+    ).rejects.toThrow('timeout');
+  });
 });
+

@@ -536,7 +536,9 @@ export async function runHostPublish({
   readAudio,
   resolvePublicUrl,
   now = () => new Date(),
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const doc = await store.readDoc(TRANSCRIPT_CONTAINER, id, id);
   if (!doc) {
     // runJob logs and stores `error.message`, so the message names the

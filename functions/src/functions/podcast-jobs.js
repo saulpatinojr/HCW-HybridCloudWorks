@@ -60,7 +60,8 @@ export function parseTranscriptPayload(payload) {
 }
 
 /** One generation run against production dependencies. */
-export async function runTranscriptGeneration(payload, { context } = {}) {
+export async function runTranscriptGeneration(payload, { context, signal } = {}) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseTranscriptPayload(payload);
   if (parsed.error) throw new Error(parsed.error);
 
@@ -70,6 +71,7 @@ export async function runTranscriptGeneration(payload, { context } = {}) {
     storage: { uploadBlob },
     // modelForTask: the podcastVoice task's model (ADR 0034 slice 5).
     ai: { generateJsonResponse, getCostEstimate, modelForTask },
+    signal,
   });
 
   context?.log?.(
@@ -125,7 +127,8 @@ async function resolveArticleUrl(doc, { context, jobId }) {
 }
 
 /** One publish run against production dependencies. */
-export async function runTranscriptPublish(payload, { context, job } = {}) {
+export async function runTranscriptPublish(payload, { context, job, signal } = {}) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parsePublishPayload(payload);
   if (parsed.error) throw new Error(parsed.error);
   const id = parsed.value.transcriptId;
@@ -134,9 +137,10 @@ export async function runTranscriptPublish(payload, { context, job } = {}) {
   const record = await runHostPublish({
     store: { readDoc, patchDoc },
     id,
-    client: createPodbeanClient(),
+    client: createPodbeanClient({ signal }),
     readAudio: audioReaderFor(readBlobForDelivery),
     resolvePublicUrl: (doc) => resolveArticleUrl(doc, { context, jobId }),
+    signal,
   });
 
   // Content-free: the outcome and the error code, keyed by the job id. The
@@ -195,7 +199,8 @@ registerJobType(PUBLISH_JOB_TYPE, {
 // ---------------------------------------------------------------------------
 
 /** One recording → transcript run against production dependencies. */
-export async function runRecordingGeneration(payload, { context } = {}) {
+export async function runRecordingGeneration(payload, { context, signal } = {}) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseRecordingPayload(payload);
   if (parsed.error) throw new Error(parsed.error);
 
@@ -205,6 +210,7 @@ export async function runRecordingGeneration(payload, { context } = {}) {
     storage: { uploadBlob },
     // modelForTask: the podcastVoice task's model (ADR 0034 slice 5).
     ai: { generateJsonResponse, getCostEstimate, modelForTask },
+    signal,
   });
 
   context?.log?.(
@@ -235,7 +241,8 @@ const UPLOAD_JOB_TIMEOUT_MS = 25 * 60 * 1000;
 const UPLOAD_POLL_BUDGET_MS = UPLOAD_JOB_TIMEOUT_MS - 60 * 1000;
 
 /** One upload → Plaud Embedded → stored transcript, against production dependencies. */
-export async function runUploadTranscription(payload, { context } = {}) {
+export async function runUploadTranscription(payload, { context, signal } = {}) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const parsed = parseUploadPayload(payload);
   if (parsed.error) throw new Error(parsed.error);
 
@@ -245,6 +252,7 @@ export async function runUploadTranscription(payload, { context } = {}) {
     storage: { deleteBlob },
     timeoutMs: UPLOAD_POLL_BUDGET_MS,
     log: context,
+    signal,
   });
 
   context?.log?.(

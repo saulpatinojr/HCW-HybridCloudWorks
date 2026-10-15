@@ -410,7 +410,9 @@ export async function synthesizeDialogue({
   env = process.env,
   fetchImpl = fetch,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  signal = null,
 } = {}) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const name = resolveProduct(product);
   const turns = speakableTurns(dialogue);
   if (turns.length === 0) throw new SpeechError('No dialogue turns to synthesise');
@@ -426,6 +428,7 @@ export async function synthesizeDialogue({
     env: providerEnv(provider, env, model),
     fetchImpl,
     sleep,
+    signal,
   });
   return { ...result, provider: provider.name, contentType: CONTENT_TYPE };
 }

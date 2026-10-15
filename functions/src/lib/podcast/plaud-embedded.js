@@ -200,7 +200,9 @@ export async function createTranscription({
   env = process.env,
   fetch: fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const credentials = readEmbeddedCredentials(env);
   if (!credentials) throw new PlaudEmbeddedNotConfiguredError();
 
@@ -227,6 +229,7 @@ export async function createTranscription({
     headers: headersFor(credentials),
     body: JSON.stringify(body),
     timeoutMs,
+    signal,
   });
   const json = await readJson(response);
   if (!response.ok) throw explainHttp(response, json, 'submit the audio');
@@ -248,7 +251,9 @@ export async function getTranscription({
   env = process.env,
   fetch: fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   const credentials = readEmbeddedCredentials(env);
   if (!credentials) throw new PlaudEmbeddedNotConfiguredError();
   const id = String(transcriptionId || '').trim();
@@ -257,7 +262,7 @@ export async function getTranscription({
   const response = await fetchWithTimeout(
     fetchImpl,
     `${baseUrl(env)}${TRANSCRIPTIONS_PATH}${encodeURIComponent(id)}`,
-    { method: 'GET', headers: headersFor(credentials), timeoutMs }
+    { method: 'GET', headers: headersFor(credentials), timeoutMs, signal }
   );
   const json = await readJson(response);
   if (!response.ok) throw explainHttp(response, json, 'read the transcription');
@@ -286,7 +291,9 @@ export async function waitForTranscription({
   intervalMs = DEFAULT_POLL_INTERVAL_MS,
   timeoutMs = DEFAULT_WAIT_TIMEOUT_MS,
   now = () => Date.now(),
+  signal = null,
 }) {
+  if (signal?.aborted) throw signal.reason || new Error('aborted');
   // A NaN or non-positive budget would make `deadline` NaN and the loop
   // below endless; refuse it by name instead.
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -301,7 +308,8 @@ export async function waitForTranscription({
   }
   const deadline = now() + timeoutMs;
   for (;;) {
-    const task = await getTranscription({ transcriptionId, env, fetch: fetchImpl });
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
+    const task = await getTranscription({ transcriptionId, env, fetch: fetchImpl, signal });
     if (task.status === STATUS.success) {
       if (!task.data) {
         throw new PlaudEmbeddedError(

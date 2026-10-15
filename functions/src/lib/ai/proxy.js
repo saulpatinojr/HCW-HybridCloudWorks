@@ -109,7 +109,7 @@ async function runTestCall(
       ok: false,
       status: 'error',
       latencyMs: clock() - startedAt,
-      error: error?.message || 'The provider call failed',
+      error: 'The provider call failed',
       code: error?.code || null,
     };
   }
@@ -264,7 +264,7 @@ export function createAiProxyHandlers({
         context.error?.('aiProxy failed:', error);
         return json(200, {
           ok: false,
-          error: error?.message || 'The provider call failed',
+          error: 'The provider call failed',
           code: error?.code || null,
           latencyMs: clock() - startedAt,
         });

@@ -222,11 +222,18 @@ export async function guardedFetch(
     method = 'GET',
     body,
     httpsOnly = false,
+    signal: parentSignal,
   } = {}
 ) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const { signal } = controller;
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
+  const signal = parentSignal
+    ? AbortSignal.any([parentSignal, timeoutController.signal])
+    : timeoutController.signal;
+  if (signal.aborted) {
+    clearTimeout(timer);
+    throw signal.reason || Object.assign(new Error('aborted'), { name: 'AbortError' });
+  }
   let current = String(url);
   try {
     for (let hop = 0; hop <= maxRedirects; hop += 1) {
@@ -263,7 +270,7 @@ export async function guardedFetch(
     /* istanbul ignore next -- the loop returns or throws on its last hop */
     throw new Error(`Too many redirects fetching ${url}`);
   } catch (error) {
-    if (error?.name === 'AbortError') {
+    if (error?.name === 'AbortError' && !parentSignal?.aborted) {
       throw Object.assign(new Error(`timeout after ${timeoutMs} ms`), { code: 'FETCH_TIMEOUT' });
     }
     throw error;

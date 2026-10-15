@@ -151,4 +151,20 @@ describe('scrapeArticle', () => {
     expect(refs).toHaveLength(10);
     expect(refs[0]).toEqual({ original: 'https://s/0', alt: 'a0', index: 0 });
   });
+
+  it('forwards signal to fetch call (AP-B7)', async () => {
+    const parent = new AbortController();
+    const fetch = vi.fn(async () => ok(page));
+    await scrapeArticle('https://site.test/post', {
+      fetch,
+      env: {},
+      now: () => 0,
+      resolve,
+      signal: parent.signal,
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [, init] = fetch.mock.calls[0];
+    expect(init.signal).toBeDefined();
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
 });

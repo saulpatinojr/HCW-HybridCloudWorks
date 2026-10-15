@@ -58,6 +58,7 @@
  *     resolveSlug.
  */
 import { randomUUID } from 'node:crypto';
+import { errorResponse } from '../http/error-response.js';
 import { ADMIN_CONFIG_PARTITION } from '../cosmos-client.js';
 import { buildContentQualityReport, buildImageReadinessReport } from './content-quality.js';
 import { normalizePublishTarget, SUPPORTED_PUBLISH_TARGETS } from './publish-targets.js';
@@ -1099,11 +1100,7 @@ export function createPublishHandlers({
 
         return json(200, { success: true, ...results });
       } catch (error) {
-        context.error('publishContent failed:', error);
-        return json(500, {
-          error: 'Failed to publish content',
-          message: error?.message || 'Unknown error',
-        });
+        return errorResponse(context, 'Failed to publish content', error, 500, request);
       }
     },
 

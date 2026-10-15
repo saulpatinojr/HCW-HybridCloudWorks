@@ -4,6 +4,7 @@
  * named-set read (PR #841 split of manual-images.js).
  */
 import { normalizePromptConfigKey } from '../cms/image-prompts.js';
+import { errorResponse } from '../http/error-response.js';
 
 export const PREVIEW_SLOTS = ['hero', 'secondary1', 'secondary2', 'secondary3'];
 
@@ -50,7 +51,7 @@ export async function readNamedSet(store, setName, promptName) {
  * exhausted, 503 unreadable) and code, kept so the page can say "paused"
  * rather than "server error" (#854).
  */
-export function generationFailure(context, label, error, message) {
+export function generationFailure(context, label, error, message, request = null) {
   context.error(`${label} failed:`, error);
   const budget = typeof error?.code === 'string' && error.code.startsWith('IMAGE_BUDGET_');
   if (budget) {
@@ -60,5 +61,5 @@ export function generationFailure(context, label, error, message) {
       message: error.message,
     });
   }
-  return json(500, { error: message, message: error?.message || 'Unknown error' });
+  return errorResponse(context, message, error, 500, request);
 }

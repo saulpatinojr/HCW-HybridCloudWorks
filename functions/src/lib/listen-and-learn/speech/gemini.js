@@ -223,16 +223,18 @@ function assertTwoSpeakers(speakers, voices) {
   }
 }
 
-async function requestAudio(body, { key, fetchImpl, sleep }) {
+async function requestAudio(body, { key, fetchImpl, sleep, signal }) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     let response;
     try {
       response = await fetchImpl(INTERACTIONS_URL, {
         method: 'POST',
         headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal,
       });
     } catch (err) {
       lastError = new GeminiSpeechError(`Failed to reach the Gemini API: ${err.message}`);
@@ -552,6 +554,7 @@ export async function synthesizeWithGemini({
   env = process.env,
   fetchImpl = fetch,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  signal,
 }) {
   const key = readSetting(env, 'GEMINI_API_KEY');
   if (!key) throw new GeminiSpeechError('GEMINI_API_KEY is not configured');
@@ -576,6 +579,7 @@ export async function synthesizeWithGemini({
   const parts = [];
   const usages = [];
   for (const [index, chunk] of chunks.entries()) {
+    if (signal?.aborted) throw signal.reason || new Error('aborted');
     const payload = await requestAudio(
       {
         model,
@@ -583,7 +587,7 @@ export async function synthesizeWithGemini({
         response_format: { type: 'audio' },
         generation_config: { speech_config: speechConfig },
       },
-      { key, fetchImpl, sleep }
+      { key, fetchImpl, sleep, signal }
     );
     parts.push(audioFromReply(payload, { part: index + 1, of: chunks.length }));
     usages.push(payload?.usage);
