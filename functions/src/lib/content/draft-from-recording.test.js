@@ -400,7 +400,9 @@ describe('createContentFromRecording', () => {
     await handler(request({ recordingId: 'missing-id-xyz', contentType: 'blog_post' }), c);
     // Content-free: the sentence, the code and the correlation id (#945).
     expect(c.warn).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[[^\]]+\] The draft could not be created from this recording\. \(RECORDING_NOT_FOUND\)$/)
+      expect.stringMatching(
+        /^\[[^\]]+\] The draft could not be created from this recording\. \(name=RecordingDraftError code=RECORDING_NOT_FOUND\)$/
+      )
     );
     expect(JSON.stringify(c.warn.mock.calls)).not.toContain('missing-id-xyz');
     const boom = build({
@@ -412,7 +414,7 @@ describe('createContentFromRecording', () => {
     });
     await boom.handler(request({ recordingId: 'rec-1', contentType: 'blog_post' }), c);
     expect(c.error).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[[^\]]+\] The draft could not be created from this recording\. \(Error\)$/)
+      expect.stringMatching(/^\[[^\]]+\] The draft could not be created from this recording\. \(name=Error\)$/)
     );
     expect(JSON.stringify(c.error.mock.calls)).not.toContain('secret text');
   });

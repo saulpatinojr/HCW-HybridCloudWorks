@@ -24,16 +24,19 @@ This project has not cut a tagged release; entries are grouped under
   fifteen modules and checked those fifteen files for one spelling,
   `(message|error): (error|err)?.message`; `error: error.message`, any other
   variable name, any other file and text passed through a helper all went
-  unseen: run against b23a7c73, the new guard finds 197 sites, 37 of them
-  raw text inside a response body (Cosmos, provider or socket text), where
-  the old one passes. `functions/src/lib/http/error-response.js` is now the
-  one door: an `AuthoredError` (and its subclasses: the CMS, settings,
+  unseen: run against c9536e03 (as against b23a7c73), the new guard finds
+  197 sites, 37 of them raw text inside a response body (Cosmos, provider
+  or socket text), where the old one passes.
+  `functions/src/lib/http/error-response.js` is now the one door: an
+  `AuthoredError` (and its subclasses: the CMS, settings,
   taxonomy, MCP, ElevenLabs, AI-router, GitHub-import, gallery-fetch, job
   payload-bound and rate-limit refusals) carries a sentence this code wrote,
   `authoredMessage` and `failureFields` show it and replace anything else
   with the route's safe sentence, and every failure answer carries a
-  `correlationId` whose log line holds only the sentence, the error's code
-  and that id (the helper used to log the whole error). Provider sentences
+  `correlationId` whose log line holds only the sentence, the error's
+  content-free facts (class name, code, HTTP status, Cosmos substatus, the
+  cause's code) and that id; the helper used to log the whole error, message
+  and stack included, and neither is logged now. Provider sentences
   that used to be relayed are now their status and machine code: Resend's
   error name, the OAuth `error` code, ElevenLabs's `detail.code`, the
   JSON-RPC code, the integration probes' HTTP status (the redacted upstream

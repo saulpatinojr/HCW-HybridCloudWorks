@@ -121,19 +121,46 @@ export function getCorrelationId(context, request) {
 }
 
 /**
+ * Everything content-free an operator diagnoses an error by, as `key=value`
+ * pairs for a log line: its class name, its code (a provider's or Node's,
+ * `ECONNRESET`, `invalid_grant`, `429`), its HTTP status, a Cosmos substatus,
+ * and the code of its cause (undici's `fetch failed` keeps the socket code
+ * there). Each value must fit CODE_SHAPE, so none can carry a sentence; the
+ * message and the stack are never read.
+ *
+ * @param {unknown} error - anything thrown
+ * @returns {string} e.g. `name=Error code=429 status=429 substatus=3200`
+ */
+export function errorFacts(error) {
+  if (!error || typeof error !== 'object') return `type=${error === null ? 'null' : typeof error}`;
+  const facts = [];
+  const add = (key, value) => {
+    const text = Number.isInteger(value) ? String(value) : value;
+    if (typeof text === 'string' && CODE_SHAPE.test(text)) facts.push(`${key}=${text}`);
+  };
+  add('name', error.name);
+  add('code', error.code);
+  add('status', error.status ?? error.statusCode);
+  add('substatus', error.substatus);
+  add('cause', error.cause?.code ?? error.cause?.name);
+  return facts.join(' ') || 'type=object';
+}
+
+/**
  * Log a failure content-free and return the correlation id that ties the
- * answer to the line. The line is the caller's sentence, the error's code and
- * the id; an authored refusal is a warning, anything else an error.
+ * answer to the line. The line is the caller's sentence, the error's
+ * content-free facts (errorFacts: name, code, status, substatus, cause code)
+ * and the id; an authored refusal is a warning, anything else an error.
  *
  * @param {object} context - invocation context, or any `{ error, warn }` logger
  * @param {string} sentence - what failed, written by the caller
- * @param {unknown} error - the error behind it (only its code is logged)
+ * @param {unknown} error - the error behind it (never its message or stack)
  * @param {object} [request] - the HTTP request, for a caller-supplied id
  * @returns {string} the correlation id
  */
 export function logFailure(context, sentence, error, request = null) {
   const correlationId = getCorrelationId(context, request);
-  const line = `[${correlationId}] ${sentence} (${errorCode(error)})`;
+  const line = `[${correlationId}] ${sentence} (${errorFacts(error)})`;
   const write = isAuthoredError(error)
     ? (context?.warn ?? context?.error)
     : (context?.error ?? context?.warn);

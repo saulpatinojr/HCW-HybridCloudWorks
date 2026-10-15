@@ -60,7 +60,7 @@ describe('generationFailure', () => {
   it('answers the 500 with the message, logging only the code and the correlation id', () => {
     const context = { error: vi.fn(), invocationId: 'inv-1' };
     const response = generationFailure(context, 'generateX', new Error('boom'), 'Failed X');
-    expect(context.error).toHaveBeenCalledWith('[inv-1] Failed X (Error)');
+    expect(context.error).toHaveBeenCalledWith('[inv-1] Failed X (name=Error)');
     expect(JSON.stringify(context.error.mock.calls)).not.toContain('boom');
     expect(response.status).toBe(500);
     expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'Failed X', correlationId: 'inv-1' });
@@ -80,7 +80,9 @@ describe('generationFailure', () => {
       message: 'Image generation paused: $10.00 of the $10 budget used',
       correlationId: 'inv-2',
     });
-    expect(context.warn).toHaveBeenCalledWith('[inv-2] generateX paused (IMAGE_BUDGET_EXHAUSTED)');
+    expect(context.warn).toHaveBeenCalledWith(
+      '[inv-2] generateX paused (name=ImageBudgetError code=IMAGE_BUDGET_EXHAUSTED status=429)'
+    );
   });
 
   it('a budget-coded error that is not authored keeps its status and code, not its words (#945)', () => {

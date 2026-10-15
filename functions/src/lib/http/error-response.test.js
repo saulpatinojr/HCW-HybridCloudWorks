@@ -4,6 +4,7 @@ import {
   authoredDetails,
   authoredMessage,
   errorCode,
+  errorFacts,
   errorResponse,
   failureFields,
   getCorrelationId,
@@ -38,7 +39,7 @@ describe('errorResponse (AP-B10)', () => {
 
     // The log keeps the correlation id and the error's code, never its
     // message or stack: telemetry is content-free (#945).
-    expect(context.error).toHaveBeenCalledWith('[inv-12345] Internal Server Error (Error)');
+    expect(context.error).toHaveBeenCalledWith('[inv-12345] Internal Server Error (name=Error)');
     expect(JSON.stringify(context.error.mock.calls)).not.toContain('localhost');
   });
 
@@ -134,13 +135,40 @@ describe('errorCode: a content-free name for a log line', () => {
   });
 });
 
+describe('errorFacts: what an operator diagnoses by, and nothing else', () => {
+  it.each([
+    ['a plain error', new Error('Entity rid=9f not found'), 'name=Error'],
+    [
+      'a Cosmos throttle',
+      Object.assign(new Error('Request rate is large. ActivityId: 9f'), { code: 429, substatus: 3200 }),
+      'name=Error code=429 substatus=3200',
+    ],
+    [
+      "a provider's HTTP refusal",
+      Object.assign(new Error('429 quota for org-abc'), { status: 429, code: 'rate_limit_exceeded' }),
+      'name=Error code=rate_limit_exceeded status=429',
+    ],
+    [
+      "undici's fetch failed, with the socket code on its cause",
+      Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED', message: 'connect 10.0.0.5:443' } }),
+      'name=TypeError cause=ECONNREFUSED',
+    ],
+    ['an authored refusal', new AuthoredError('title is required', { code: 'BAD_INPUT', status: 400 }), 'name=AuthoredError code=BAD_INPUT status=400'],
+    ['a code that is a sentence', { name: 'Error', code: 'a sentence with spaces' }, 'name=Error'],
+    ['a string', 'boom', 'type=string'],
+    ['nothing', null, 'type=null'],
+  ])('%s', (_, error, facts) => {
+    expect(errorFacts(error)).toBe(facts);
+  });
+});
+
 describe('logFailure and failureFields', () => {
-  it('logs the sentence, the code and the id; an authored refusal as a warning', () => {
+  it('logs the sentence, the content-free facts and the id; an authored refusal as a warning', () => {
     const context = { invocationId: 'inv-9', error: vi.fn(), warn: vi.fn() };
     expect(logFailure(context, 'Save failed', new Error('secret text'))).toBe('inv-9');
-    expect(context.error).toHaveBeenCalledWith('[inv-9] Save failed (Error)');
+    expect(context.error).toHaveBeenCalledWith('[inv-9] Save failed (name=Error)');
     logFailure(context, 'Save refused', new AuthoredError('title is required', { code: 'BAD_INPUT' }));
-    expect(context.warn).toHaveBeenCalledWith('[inv-9] Save refused (BAD_INPUT)');
+    expect(context.warn).toHaveBeenCalledWith('[inv-9] Save refused (name=AuthoredError code=BAD_INPUT)');
     expect(JSON.stringify([context.error.mock.calls, context.warn.mock.calls])).not.toMatch(
       /secret text|title is required/
     );

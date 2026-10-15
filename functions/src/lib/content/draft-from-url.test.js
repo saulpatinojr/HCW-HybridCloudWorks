@@ -310,7 +310,7 @@ describe('createGenerateArticleDraftHandler', () => {
       correlationId: 'inv-1',
     });
     expect(context.error).toHaveBeenCalledWith(
-      `[inv-1] The draft could not be generated. (${code ?? 'Error'})`
+      `[inv-1] The draft could not be generated. (name=Error${code ? ` code=${code}` : ''})`
     );
     expect(JSON.stringify(context.error.mock.calls)).not.toContain('boom');
   });
