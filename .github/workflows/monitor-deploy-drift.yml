@@ -39,10 +39,20 @@
 # drops near the delivery gap, that reasoning stops holding and this comment is
 # the thing that should stop it.
 #
-# NO AZURE, NO OIDC, NO `environment:`. Everything here is answerable from the
-# GitHub API: the last successful run of each deploy workflow, and the commits on
-# main touching that service's paths since. Nothing to authenticate to, nothing
-# to leak, and no self-arming gate needed.
+# NO AZURE, NO OIDC. The two deploy rows are answerable from the GitHub API
+# alone: the last successful run of each deploy workflow, and the commits on
+# main touching that service's paths since. The Terraform row is not (PLAT-3,
+# #963, reopened 2026-10-15): "what is applied" lives in HCP Terraform, so the
+# `check` job carries `TFC_TOKEN` and sits in the `automation` environment for
+# the same reason tfc-plan-check.yml does — a secret is reachable only from a
+# job GitHub has admitted into an environment (zizmor secrets-outside-env,
+# #567), and `automation` rather than `production` because a scheduled run
+# cannot wait on an approval gate. The token is read-only here: one workspace
+# lookup and one one-run listing. Without it the row reads ⚠️ and the job goes
+# red, never ✅ — the first version keyed that row on the last green
+# tfc-plan-check.yml run, which succeeds with the token unset, on an
+# unconfirmed plan, and on a plan nobody applied, so the row read green on
+# evidence that was not an apply.
 #
 # ===========================================================================
 # A SECOND JOB, ADDED 2026-09-08: CAN EVERY WORKFLOW STILL SUCCEED?
@@ -99,6 +109,9 @@ jobs:
   check:
     name: Is production behind main?
     runs-on: ubuntu-26.04
+    # For TFC_TOKEN, and nothing else — see the header. The `workflows` job
+    # below reads only this repository's run history and stays outside it.
+    environment: automation
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -112,11 +125,20 @@ jobs:
 
       # No `npm ci`. The script imports node:url and uses global fetch, and a
       # monitor that installs third-party packages to check a commit log has
-      # more supply chain than subject matter.
+      # more supply chain than subject matter. The Terraform row's reader comes
+      # through tfc-workspace-busy.mjs and check-tfc-plan.mjs, which reach only
+      # node:fs, node:url and node:util (tfc-plan-check.yml says the same of
+      # that chain).
+      #
+      # TFC_TOKEN is not tested in a step of its own, as tfc-plan-check.yml
+      # does: the script reads it and renders the Terraform row ⚠️ with the
+      # reason when it is absent, so the summary says which row could not be
+      # read rather than the whole job skipping.
       - name: Measure the drift
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          TFC_TOKEN: ${{ secrets.TFC_TOKEN }}
           DRIFT_THRESHOLD_HOURS: ${{ inputs.threshold_hours || '24' }}
         run: |
           set -uo pipefail

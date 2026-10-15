@@ -139,6 +139,79 @@ export function normaliseRunId(raw) {
 }
 
 /**
+ * The `included` section of a JSON:API document, keyed `type:id`.
+ *
+ * Shared with `ingressCommitFor` below and with `check-deploy-drift.mjs`,
+ * which resolves the same two hops for a different question (which commit did
+ * the last APPLY come from?) and should not carry a second copy of the walk.
+ */
+export function indexIncluded(included) {
+  const byId = new Map();
+  for (const resource of included || []) {
+    if (resource?.id) byId.set(`${resource.type}:${resource.id}`, resource);
+  }
+  return byId;
+}
+
+/**
+ * The VCS commit one run was planned from, resolved through `included`.
+ *
+ * Returns the `commit-sha` string, or null when the run carries no
+ * configuration version or its configuration version carries no ingress
+ * attributes — both facts about the run, see ABSENT versus DANGLING below.
+ * Throws when a relationship is present but its target is missing from
+ * `included`, or when the ingress attributes carry no string sha: those are
+ * shapes this could not read, and reporting them as "no commit" is how a
+ * check vouches for health it never saw.
+ *
+ * The attribute path is HashiCorp's: `/workspaces/:id/runs` with
+ * `include=configuration_version.ingress_attributes` puts the configuration
+ * version and its ingress attributes in `included`, and the commit sits at
+ * `ingress-attributes.attributes.commit-sha`
+ * (developer.hashicorp.com/terraform/cloud-docs/api-docs/run, "Available
+ * Related Resources", and /api-docs/configuration-versions, "Show a
+ * Configuration Version's Commit Information").
+ */
+export function ingressCommitFor(run, byId) {
+  // ABSENT versus DANGLING, which is the whole distinction this function is
+  // built around and the first draft got wrong. A relationship that is not
+  // there is a fact about the run — CLI-driven runs have no configuration
+  // version, and an API-uploaded configuration version has no ingress
+  // attributes — so those are skipped. A relationship that IS there but whose
+  // target is missing from `included` means the payload did not carry what was
+  // asked for, and skipping it would report "no run for this commit" for a
+  // commit that has one. That is the failure this function exists to prevent,
+  // so it throws.
+  const dangling = (ref, kind) =>
+    new Error(
+      `HCP Terraform referenced ${kind} ${ref} but did not include it. The runs request must ` +
+        'carry include=configuration_version.ingress_attributes, and this tool cannot tell ' +
+        'whether a run exists for the commit without it.'
+    );
+
+  const cvRef = run?.relationships?.['configuration-version']?.data;
+  if (!cvRef?.id) return null;
+
+  const cv = byId.get(`${cvRef.type ?? 'configuration-versions'}:${cvRef.id}`);
+  if (!cv) throw dangling(cvRef.id, 'configuration version');
+
+  const iaRef = cv.relationships?.['ingress-attributes']?.data;
+  if (!iaRef?.id) return null;
+
+  const ia = byId.get(`${iaRef.type ?? 'ingress-attributes'}:${iaRef.id}`);
+  if (!ia) throw dangling(iaRef.id, 'ingress attributes');
+
+  const commit = ia.attributes?.['commit-sha'];
+  if (typeof commit !== 'string') {
+    throw new Error(
+      `Ingress attributes ${iaRef.id} carry no string commit-sha, so the run it belongs to ` +
+        'cannot be matched against a commit.'
+    );
+  }
+  return commit;
+}
+
+/**
  * Find the run HCP Terraform planned for one commit.
  *
  * WHY THIS EXISTS. Without it this tool resolves the workspace's LATEST run,
@@ -198,50 +271,12 @@ export function selectRunForCommit(payload, sha) {
     );
   }
 
-  const byId = new Map();
-  for (const resource of payload.included) {
-    if (resource?.id) byId.set(`${resource.type}:${resource.id}`, resource);
-  }
-
-  // ABSENT versus DANGLING, which is the whole distinction this function is
-  // built around and the first draft got wrong. A relationship that is not
-  // there is a fact about the run — CLI-driven runs have no configuration
-  // version, and an API-uploaded configuration version has no ingress
-  // attributes — so those are skipped. A relationship that IS there but whose
-  // target is missing from `included` means the payload did not carry what was
-  // asked for, and skipping it would report "no run for this commit" for a
-  // commit that has one. That is the failure this function exists to prevent,
-  // so it throws.
-  const dangling = (ref, kind) =>
-    new Error(
-      `HCP Terraform referenced ${kind} ${ref} but did not include it. The runs request must ` +
-        'carry include=configuration_version.ingress_attributes, and this tool cannot tell ' +
-        'whether a run exists for the commit without it.'
-    );
+  const byId = indexIncluded(payload.included);
 
   const matches = [];
   for (const run of payload.data) {
-    const cvRef = run?.relationships?.['configuration-version']?.data;
-    if (!cvRef?.id) continue;
-
-    const cv = byId.get(`${cvRef.type ?? 'configuration-versions'}:${cvRef.id}`);
-    if (!cv) throw dangling(cvRef.id, 'configuration version');
-
-    const iaRef = cv.relationships?.['ingress-attributes']?.data;
-    if (!iaRef?.id) continue;
-
-    const ia = byId.get(`${iaRef.type ?? 'ingress-attributes'}:${iaRef.id}`);
-    if (!ia) throw dangling(iaRef.id, 'ingress attributes');
-
-    const commit = ia.attributes?.['commit-sha'];
-    if (typeof commit !== 'string') {
-      throw new Error(
-        `Ingress attributes ${iaRef.id} carry no string commit-sha, so the run it belongs to ` +
-          'cannot be matched against a commit.'
-      );
-    }
-
-    if (commit.toLowerCase() === wanted) matches.push(run);
+    const commit = ingressCommitFor(run, byId);
+    if (commit !== null && commit.toLowerCase() === wanted) matches.push(run);
   }
 
   if (matches.length === 0) return null;

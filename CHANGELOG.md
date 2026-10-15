@@ -19,6 +19,35 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **The drift monitor's Terraform row reads the last apply from HCP
+  Terraform, and reads ⚠️ rather than ✅ when it cannot** (PLAT-3, #963).
+  The row #1178 added to `scripts/check-deploy-drift.mjs` took the last
+  successful `tfc-plan-check.yml` run's head as the deployed baseline. That
+  workflow is a dispatch-only read of a plan and is green with `TFC_TOKEN`
+  unset, on a plan nobody confirms and on a plan the owner never applies, so
+  `infra/` could keep merging while the row printed ✅, and an apply from the
+  HCP Terraform UI with no dispatch in a day read ❌ (found by a read-only
+  review, 2026-10-15). The row now resolves the `hcw/hcw-azure` workspace
+  and reads its newest run in state `applied`
+  (`filter[status]=applied`, `page[size]=1`,
+  `include=configuration_version.ingress_attributes`), takes the
+  `commit-sha` of that run's ingress attributes as the deployed baseline
+  and its `status-timestamps.applied-at` as the date, and counts the
+  `infra/` commits on `main` after it as the other rows do; the walk through
+  `included` is `check-tfc-plan.mjs`'s, and the API call is
+  `tfc-workspace-busy.mjs`'s, both imported rather than copied. A baseline
+  commit `main` does not contain is reported as such and fails the report
+  instead of counting as zero drift; no token, or a read that fails, renders
+  ⚠️ with the reason and fails the job, never ✅. `monitor-deploy-drift.yml`'s
+  `check` job sits in the `automation` environment and passes `TFC_TOKEN`
+  to the step, the way `tfc-plan-check.yml` receives it; its permissions
+  are unchanged. The entry's `cosmos-containers.json` path, which named a
+  file that does not exist at the root (`infra/cosmos-containers.json` sits
+  under `infra`), is gone, and the report's footer describes three rows
+  rather than "both deploys". Tests cover the token-unset row, an applied
+  baseline with later `infra/` commits, a refused read, a baseline off
+  `main`, a workspace that never applied, a listing whose newest run is not
+  applied, every declared path existing on disk, and the workflow wiring.
 - **Recording Hub saves again: the recordings create allowlist accepts the
   four fields both forms send, typed** (AP-B6, #941). #1181 put an allowlist
   on `POST cms/recordings` (`RECORDING_CREATE_FIELDS` in
