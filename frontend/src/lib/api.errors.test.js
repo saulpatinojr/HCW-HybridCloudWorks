@@ -69,6 +69,38 @@ describe('a failed call surfaces the cause, not only the label', () => {
   });
 });
 
+describe('a failure names its reference, not the cause, since #945', () => {
+  it('appends the correlation id the API sent beside its safe sentence, and attaches it', async () => {
+    fetch.mockResolvedValue(
+      failing({ ok: false, error: 'Failed to publish content', correlationId: 'inv-1234-abcd' })
+    );
+    const error = await postJSON('publishContent', {}).catch((err) => err);
+    expect(error.message).toBe('Failed to publish content (reference inv-1234-abcd)');
+    expect(error.correlationId).toBe('inv-1234-abcd');
+    expect(error.status).toBe(500);
+  });
+
+  it('keeps an authored cause before the reference', async () => {
+    fetch.mockResolvedValue(
+      failing({
+        error: 'Failed X',
+        message: 'Image generation paused: $10.00 of the $10 budget used',
+        correlationId: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      })
+    );
+    await expect(postJSON('x', {})).rejects.toThrow(
+      'Failed X — Image generation paused: $10.00 of the $10 budget used (reference 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01)'
+    );
+  });
+
+  it('ignores a correlation id that is not shaped like one', async () => {
+    fetch.mockResolvedValue(failing({ error: 'E', correlationId: 'not an id <script>' }));
+    const error = await postJSON('x', {}).catch((err) => err);
+    expect(error.message).toBe('E');
+    expect(error).not.toHaveProperty('correlationId');
+  });
+});
+
 describe('parseWwwAuthenticate (#517)', () => {
   it('reads the parameters the API sends', () => {
     expect(

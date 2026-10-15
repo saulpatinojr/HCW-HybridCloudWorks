@@ -19,6 +19,43 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **No raw error text reaches a response body, and a repository-wide guard
+  keeps it that way: follow-up to #1198 for #945** (AP-B10). #1198 converted
+  fifteen modules and checked those fifteen files for one spelling,
+  `(message|error): (error|err)?.message`; `error: error.message`, any other
+  variable name, any other file and text passed through a helper all went
+  unseen: run against b23a7c73, the new guard finds 197 sites, 37 of them
+  raw text inside a response body (Cosmos, provider or socket text), where
+  the old one passes. `functions/src/lib/http/error-response.js` is now the
+  one door: an `AuthoredError` (and its subclasses: the CMS, settings,
+  taxonomy, MCP, ElevenLabs, AI-router, GitHub-import, gallery-fetch, job
+  payload-bound and rate-limit refusals) carries a sentence this code wrote,
+  `authoredMessage` and `failureFields` show it and replace anything else
+  with the route's safe sentence, and every failure answer carries a
+  `correlationId` whose log line holds only the sentence, the error's code
+  and that id (the helper used to log the whole error). Provider sentences
+  that used to be relayed are now their status and machine code: Resend's
+  error name, the OAuth `error` code, ElevenLabs's `detail.code`, the
+  JSON-RPC code, the integration probes' HTTP status (the redacted upstream
+  body is still relayed under `data`). `no-raw-error-leaks.test.js`
+  replaces the fifteen-file regex with a parse of every module under
+  `functions/src`: `.message` or `.stack` off anything, a caught error
+  stringified (`String(e)`, a template literal, `+`), aliases and
+  destructuring, scope-resolved by catch and `.catch()` parameter; a site is
+  any object field, return, stored field or helper argument it lands in,
+  and a site inside a response builder's body is marked. The 154 remaining
+  sites (none of them raw text in a response body) are listed in 150
+  entries, each with a class and a reason (66 authored through the door, 43
+  that never reach a response, 40 stored diagnostics read back by admin
+  pages, left for an owner decision, and one git commit title), and the
+  list fails on a new site, a stale entry and a wrong class. `getJob` now
+  holds a job whose type is no longer registered at the enqueue floor
+  (editor) instead of the viewer gate, and answers its 500 with a
+  correlation id; the certification routes are pinned to refuse
+  `_createdAt`, `_updatedAt`, `_etag` and `_ts`; and the admin client
+  appends the `correlationId` to a failed call's message
+  (`… (reference <id>)`) and keeps it on the thrown error.
+
 - **Public reads return an allowlisted set of fields.** The article detail
   (`GET public/content/{slugOrId}`), the signed preview, the Listen & Learn
   certification read, the podcast list and the news feed each answer with a

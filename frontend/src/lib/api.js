@@ -163,6 +163,24 @@ function attachRefusalHints(error, errData) {
   if (typeof errData?.code === 'string') error.code = errData.code;
 }
 
+/** A correlation id in a shape that cannot carry a sentence: an invocation id, a UUID, a traceparent. */
+const CORRELATION_SHAPE = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/**
+ * The reference a failure answer carries (#945). Since the API stopped
+ * returning a provider's or the store's own words, a failed call names
+ * itself with a safe sentence and `correlationId`, the id of the server's
+ * content-free log line. Shown beside the sentence, it is what the owner
+ * looks up; anything not shaped like an id is ignored.
+ *
+ * @param {unknown} errData - the parsed error body
+ * @returns {string | null}
+ */
+function correlationOf(errData) {
+  const id = errData?.correlationId;
+  return typeof id === 'string' && CORRELATION_SHAPE.test(id) ? id : null;
+}
+
 /**
  * Authenticated fetch wrapper.
  * Automatically injects an Entra Bearer token from MSAL's cache, which MSAL
@@ -231,45 +249,64 @@ export async function authedFetch(
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
-    const detailText = errData?.details ? ` Details: ${JSON.stringify(errData.details)}` : '';
-    // `message` is where the API puts the actual cause. Several handlers
-    // answer `{ error: 'Failed to generate caption', message: <why> }`, and
-    // this used to throw only `error` — so the Social Hub toast read "Failed
-    // to generate caption" and nothing else while the sentence that named the
-    // real problem was discarded one line away. The same shape that cost
-    // #358 two days on Publer, reproduced inside this client (#498).
-    const cause =
-      typeof errData?.message === 'string' &&
-      errData.message.trim() &&
-      errData.message !== errData.error
-        ? ` — ${errData.message.trim()}`
-        : '';
-    const error = new Error(
-      (errData.error || `${fnName} failed with HTTP ${res.status}. Try again or check the logs.`) +
-        cause +
-        detailText
-    );
-    // The status code, kept on the error rather than flattened into prose.
-    // Without it every failure looks the same to a caller, and useAdminAuth
-    // could not tell "the server says you are not an admin" from "the server
-    // rejected the token" — which is how an expired session rendered as
-    // Access Denied with an offer to re-provision the owner (#503). Callers
-    // that only show `err.message` are unaffected; a thrown Error with extra
-    // own-properties behaves exactly as before.
-    error.status = res.status;
-    error.fnName = fnName;
-    attachRefusalHints(error, errData);
-    // The reason, when the API gave one (#517). `error.status` told a caller
-    // that the request failed; this tells them what would fix it — and the
-    // distinction matters most on a 401, where `invalid_token` means sign in
-    // again and `insufficient_scope` means signing in again changes nothing.
-    // Readable cross-origin only because cors.js names it in
-    // Access-Control-Expose-Headers.
-    error.wwwAuthenticate = parseWwwAuthenticate(res.headers?.get?.('www-authenticate'));
-    throw error;
+    throw callError(fnName, res, errData);
   }
 
   return res;
+}
+
+/**
+ * The Error a failed call throws: the API's sentence, the cause it put
+ * beside it, any details and the correlation reference, with the status, the
+ * function name, the refusal hints and the parsed challenge as properties.
+ *
+ * @param {string} fnName - the route that was called
+ * @param {Response} res - the failed response
+ * @param {object} errData - the parsed body, `{}` when it was not JSON
+ * @returns {Error}
+ */
+function callError(fnName, res, errData) {
+  const detailText = errData?.details ? ` Details: ${JSON.stringify(errData.details)}` : '';
+  // `message` is where the API puts the actual cause. Several handlers
+  // answer `{ error: 'Failed to generate caption', message: <why> }`, and
+  // this used to throw only `error` — so the Social Hub toast read "Failed
+  // to generate caption" and nothing else while the sentence that named the
+  // real problem was discarded one line away. The same shape that cost
+  // #358 two days on Publer, reproduced inside this client (#498).
+  const cause =
+    typeof errData?.message === 'string' &&
+    errData.message.trim() &&
+    errData.message !== errData.error
+      ? ` — ${errData.message.trim()}`
+      : '';
+  // The reference last, so a toast that shows `err.message` gives the owner
+  // the id that finds the server's log line (#945).
+  const reference = correlationOf(errData);
+  const error = new Error(
+    (errData.error || `${fnName} failed with HTTP ${res.status}. Try again or check the logs.`) +
+      cause +
+      detailText +
+      (reference ? ` (reference ${reference})` : '')
+  );
+  if (reference) error.correlationId = reference;
+  // The status code, kept on the error rather than flattened into prose.
+  // Without it every failure looks the same to a caller, and useAdminAuth
+  // could not tell "the server says you are not an admin" from "the server
+  // rejected the token" — which is how an expired session rendered as
+  // Access Denied with an offer to re-provision the owner (#503). Callers
+  // that only show `err.message` are unaffected; a thrown Error with extra
+  // own-properties behaves exactly as before.
+  error.status = res.status;
+  error.fnName = fnName;
+  attachRefusalHints(error, errData);
+  // The reason, when the API gave one (#517). `error.status` told a caller
+  // that the request failed; this tells them what would fix it — and the
+  // distinction matters most on a 401, where `invalid_token` means sign in
+  // again and `insufficient_scope` means signing in again changes nothing.
+  // Readable cross-origin only because cors.js names it in
+  // Access-Control-Expose-Headers.
+  error.wwwAuthenticate = parseWwwAuthenticate(res.headers?.get?.('www-authenticate'));
+  return error;
 }
 
 /**
