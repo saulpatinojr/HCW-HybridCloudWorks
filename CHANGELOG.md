@@ -19,6 +19,27 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **PLAT-9 remainder: the Well-Architected assessment's thirty-seven
+  `Planned` controls read against the repository and the live estate, and
+  the lab host page's Provisioning and Configuration rows read live**
+  (PLAT-9, #969). `docs/architecture/well-architected-assessment.md` carried
+  `Planned` on thirty-seven of its forty controls since the baseline;
+  each now carries what exists and the date it was read: six are
+  `Verified` with their signal captured (service and API authentication,
+  secret protection with three rules seen to fire, the budget's test
+  notifications, observability's cap and billed ingestion, the migration
+  log), fourteen `Implemented` with the missing measurement named (cold
+  starts, cache-hit ratio, Core Web Vitals, RU by partition, a live
+  anonymous fetch), seventeen `Partial` with the gap named (no rollback
+  drill or retained Functions package, one HCP Terraform identity for plan
+  and apply, no correlation ids on audit rows, no queue age or depth
+  signal, no dashboards or SLOs), two of them `by decision` (Private Link,
+  required approvals). The header says what each status means. On the lab
+  host page the Provisioning row says what a session can and cannot read
+  about the `hcw/hcw-lab` workspace and carries the VPS's Arc state, and
+  the Configuration row's last converge reads from the host's
+  `applied-commit.json` (2026-10-14 05:08 UTC, `de0be17a`) instead of a
+  week-old date.
 - **PLAT-10 remainder: the Static Web App bandwidth comment reads the live
   DNS, the runner address is checked before it reaches a firewall argument
   and the storage window's flip can be measured, Cloudflare's ranges are
