@@ -469,8 +469,14 @@ fi
 
 # ansible-core, every wheel checked against its SHA256 (LAB-13, #959). The
 # pins are the ANSIBLE_CORE_VERSION, ANSIBLE_CORE_SHA256 and ANSIBLE_CORE_DEPS
-# lines of lab-image/versions.env in the commit just checked out, read in a
-# subshell so nothing else from that file reaches this script. The
+# lines of lab-image/versions.env in the commit just checked out, read as
+# data and never sourced, so an edit to that file can change these pins but
+# cannot run anything here as root (CodeRabbit, #1189). Each value must be
+# written as the file and the weekly bumper write it today: the version and
+# hash unquoted, the DEPS block between an `ANSIBLE_CORE_DEPS='` line and a
+# lone `'`; any other spelling yields no pins and the run refuses. Every line
+# of the result must then be one pinned, hashed wheel, so nothing in the file
+# can reach uv as an option (`--index-url` is a valid requirements line). The
 # requirements file is written exactly as lab-image/Dockerfile's fetch stage
 # writes it: one `name==version --hash=sha256:<hex>` line for ansible-core and
 # one for every wheel it depends on. `uv pip install --require-hashes`
@@ -502,9 +508,39 @@ fi
 # already fails those checks, so there is nothing working to lose.
 hcw_ansible_requirements="$(mktemp)"
 trap 'rm -f "${hcw_ansible_requirements}"' EXIT
+# hcw_read_ansible_pins FILE: set the three ANSIBLE_CORE_* variables from
+# FILE's lines as text, never evaluating it; fails when no complete DEPS
+# block is there.
+hcw_read_ansible_pins() {
+  local line in_deps=0 saw_deps=0
+  ANSIBLE_CORE_VERSION='' ANSIBLE_CORE_SHA256='' ANSIBLE_CORE_DEPS=''
+  while IFS= read -r line || [ -n "${line}" ]; do
+    if [ "${in_deps}" = 1 ]; then
+      # A requirement starts lower-case; an assignment here means the block
+      # was never closed and the next variable's lines would be read as pins.
+      case "${line}" in [A-Z]*=*) return 1 ;; esac
+      if [ "${line}" = "'" ]; then
+        in_deps=0
+        saw_deps=1
+      else
+        ANSIBLE_CORE_DEPS="${ANSIBLE_CORE_DEPS}${line}
+"
+      fi
+      continue
+    fi
+    case "${line}" in
+      ANSIBLE_CORE_VERSION=*) ANSIBLE_CORE_VERSION="${line#ANSIBLE_CORE_VERSION=}" ;;
+      ANSIBLE_CORE_SHA256=*) ANSIBLE_CORE_SHA256="${line#ANSIBLE_CORE_SHA256=}" ;;
+      "ANSIBLE_CORE_DEPS='") in_deps=1 ;;
+    esac
+  done <"$1"
+  [ "${saw_deps}" = 1 ] && [ "${in_deps}" = 0 ]
+}
 (
-  # shellcheck source=/dev/null
-  . "${HCW_SRC_DIR}/lab-image/versions.env"
+  if ! hcw_read_ansible_pins "${HCW_SRC_DIR}/lab-image/versions.env"; then
+    echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} has no complete ANSIBLE_CORE_DEPS block" >&2
+    exit 1
+  fi
   printf 'ansible-core==%s --hash=sha256:%s\n' "${ANSIBLE_CORE_VERSION}" "${ANSIBLE_CORE_SHA256}"
   printf '%s\n' "${ANSIBLE_CORE_DEPS}" | sed '/^[[:space:]]*$/d'
 ) >"${hcw_ansible_requirements}"
@@ -513,6 +549,9 @@ trap 'rm -f "${hcw_ansible_requirements}"' EXIT
 hcw_ansible_core_version="$(sed -n 's/^ansible-core==\([0-9][0-9A-Za-z.+!]*\) --hash=sha256:[0-9a-f]\{64\}$/\1/p' "${hcw_ansible_requirements}")"
 if [ -z "${hcw_ansible_core_version}" ]; then
   echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} names no ansible-core version with a SHA256" >&2
+  exit 1
+elif grep -qvE '^[a-z0-9][a-z0-9._-]*==[0-9][0-9A-Za-z.+!]* --hash=sha256:[0-9a-f]{64}$' "${hcw_ansible_requirements}"; then
+  echo "refusing to run: lab-image/versions.env at ${hcw_repo_sha} has an ansible-core requirement that is not one pinned, hashed wheel (name==version --hash=sha256:<64 hex>)" >&2
   exit 1
 fi
 hcw_ansible_lines="$(wc -l <"${hcw_ansible_requirements}")"

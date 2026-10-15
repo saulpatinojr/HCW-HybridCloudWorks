@@ -23,7 +23,7 @@
  * and root, so it is not repeated here.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,17 +66,23 @@ const WRITE_BLOCK = cut(SCRIPT, 'hcw_ansible_requirements="$(mktemp)"', 'fi');
 
 describe('bootstrap.sh and lab-image/versions.env', () => {
   it('carries no ansible-core pin of its own', () => {
-    for (const key of ['ANSIBLE_CORE_VERSION', 'ANSIBLE_CORE_SHA256', 'ANSIBLE_CORE_DEPS']) {
-      expect(SCRIPT, key).not.toMatch(new RegExp(`^\\s*${key}=`, 'm'));
-    }
+    // The reader names the three keys and resets them to '', so the check is
+    // on values: no release, no digest and no pinned wheel line anywhere.
+    expect(SCRIPT).not.toMatch(/^\s*ANSIBLE_CORE_VERSION=['"]?\d/m);
+    expect(SCRIPT).not.toMatch(/^\s*ANSIBLE_CORE_SHA256=['"]?[0-9a-f]{64}/m);
+    expect(SCRIPT).not.toMatch(/^\s*ANSIBLE_CORE_DEPS='[^'\n]/m);
+    expect(SCRIPT).not.toMatch(/==\S+ --hash=sha256:[0-9a-f]{64}/);
     // Where the pins live, said where the old ones were.
     expect(SCRIPT).toMatch(/^# ansible-core is not pinned here\./m);
   });
 
-  it('reads the three lines from versions.env in the checkout it is about to run, in a subshell', () => {
-    expect(WRITE_BLOCK).toContain('. "${HCW_SRC_DIR}/lab-image/versions.env"');
+  it('reads the three lines from versions.env in the checkout it is about to run as data, in a subshell, and never sources it', () => {
+    expect(WRITE_BLOCK).toContain('if ! hcw_read_ansible_pins "${HCW_SRC_DIR}/lab-image/versions.env"; then');
     expect(WRITE_BLOCK).toMatch(/^\($/m);
     expect(WRITE_BLOCK).toMatch(/^\) >"\$\{hcw_ansible_requirements\}"$/m);
+    // CodeRabbit on #1189: sourcing it ran the whole file as root.
+    expect(SCRIPT).not.toMatch(/^\s*(\.|source)\s+\S*versions\.env/m);
+    expect(SCRIPT).not.toMatch(/\beval\b/);
   });
 
   it('writes the requirements with the same two printf lines as the Dockerfile\'s fetch stage', () => {
@@ -240,8 +246,42 @@ describe.skipIf(!shellReady)('the block that writes the requirements file, run',
   it('stops when versions.env has no ANSIBLE_CORE_DEPS, rather than installing without them', () => {
     const dir = checkoutWith('no-deps', VERSIONS_ENV.replace(/^ANSIBLE_CORE_DEPS='[^']*'$/m, ''));
     const result = runBlock(dir);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/ANSIBLE_CORE_DEPS: unbound variable/);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('has no complete ANSIBLE_CORE_DEPS block');
+  });
+
+  it('stops when the ANSIBLE_CORE_DEPS block is never closed', () => {
+    const dir = checkoutWith('open-deps', VERSIONS_ENV.replace(/^ANSIBLE_CORE_DEPS='([^']*)'$/m, "ANSIBLE_CORE_DEPS='$1"));
+    const result = runBlock(dir);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('has no complete ANSIBLE_CORE_DEPS block');
+  });
+
+  // CodeRabbit on #1189: versions.env is read as data, so nothing in it runs.
+  it('runs nothing written in versions.env, and still reads its pins', () => {
+    const marker = join(root, 'ran');
+    const command = `touch '${slash(marker)}'`;
+    const dir = checkoutWith('command', `${command}\nRAN_AT=$(${command})\n${VERSIONS_ENV}`);
+    const result = runBlock(dir);
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    expect(result.stdout.trimEnd().split('\n').slice(1)).toEqual(expectedRequirements(VERSIONS_ENV));
+  });
+
+  it('refuses a value that would need the shell to read it, rather than guessing', () => {
+    const dir = checkoutWith('quoted', VERSIONS_ENV.replace(/^ANSIBLE_CORE_VERSION=(.*)$/m, 'ANSIBLE_CORE_VERSION="$1"'));
+    const result = runBlock(dir);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('names no ansible-core version with a SHA256');
+  });
+
+  it('refuses a requirement line that is not one pinned, hashed wheel, so nothing reaches uv as an option', () => {
+    for (const line of ['--index-url https://example.invalid/simple', '-e git+https://example.invalid/x', 'jinja2>=3 --hash=sha256:' + '0'.repeat(64)]) {
+      const dir = checkoutWith(`line-${line.length}`, VERSIONS_ENV.replace(/^ANSIBLE_CORE_DEPS='\n/m, `ANSIBLE_CORE_DEPS='\n${line}\n`));
+      const result = runBlock(dir);
+      expect(result.status, line).toBe(1);
+      expect(result.stderr, line).toContain('has an ansible-core requirement that is not one pinned, hashed wheel');
+    }
   });
 
   it('refuses an ANSIBLE_CORE_VERSION that is not a version, because it names a directory', () => {

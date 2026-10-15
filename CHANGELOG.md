@@ -28,8 +28,10 @@ This project has not cut a tagged release; entries are grouped under
   neither that wheel nor the eight it depends on was checked. The script
   now keeps no ansible-core pin. After it checks out the commit it will
   run, it reads `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and
-  `ANSIBLE_CORE_DEPS` from that commit's `lab-image/versions.env` in a
-  subshell, writes the requirements file with the lab image fetch stage's
+  `ANSIBLE_CORE_DEPS` from that commit's `lab-image/versions.env` as data,
+  never sourcing the file, so an edit to it cannot run anything as root, and
+  refuses any requirement line that is not one pinned, hashed wheel, so
+  nothing in it reaches uv as an option. It writes the requirements file with the lab image fetch stage's
   own two `printf` lines, and installs it with `uv pip install
   --require-hashes --only-binary :all:`, then `uv pip check` and the fetch
   stage's count check, into a new venv under
