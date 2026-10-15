@@ -796,5 +796,31 @@ describe('the audit row every non-GET proxy call leaves (AP-B3, #938)', () => {
       expect(parsed.error).not.toContain('publer-key-secret-12345');
       expect(parsed.error).toContain('***');
     });
+
+    it('redacts secrets containing characters that are JSON-escaped in raw upstream text', async () => {
+      const complexSecret = 'key"with\\quotes';
+      const complexHandler = (fetchImpl) =>
+        createRestProxy({
+          guard: allowGuard,
+          env: { TEST_API_KEY: complexSecret },
+          fetch: fetchImpl,
+          readKey,
+        })(publer);
+
+      const fetchImpl = vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ message: `Rejected: ${complexSecret}` }),
+      }));
+
+      const res = await complexHandler(fetchImpl)(
+        makeRequest({ path: '/accounts', method: 'GET' }),
+        context
+      );
+      expect(res.status).toBe(200);
+      const parsed = JSON.parse(res.body);
+      expect(parsed.data.message).not.toContain(complexSecret);
+      expect(parsed.data.message).toContain('***');
+    });
   });
 });

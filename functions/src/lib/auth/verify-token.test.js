@@ -12,6 +12,7 @@ const KID = 'test-prewarm-key-1';
 let server;
 let jwksUri;
 let privateKey;
+let requestCount = 0;
 
 beforeAll(async () => {
   const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -21,6 +22,7 @@ beforeAll(async () => {
   const document = JSON.stringify({ keys: [{ ...jwk, kid: KID, use: 'sig', alg: 'RS256' }] });
 
   server = createServer((_req, res) => {
+    requestCount += 1;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(document);
   });
@@ -63,13 +65,18 @@ describe('verify-token', () => {
     expect(keys[0].kid).toBe(KID);
   });
 
-  it('verifies a valid token after prewarming', async () => {
+  it('verifies a valid token after prewarming without additional JWKS requests', async () => {
+    const initialRequests = requestCount;
     const verifier = createTokenVerifier({ tenantId: TENANT, audience: AUDIENCE, jwksUri });
     await verifier.prewarm();
+    const afterPrewarmRequests = requestCount;
+    expect(afterPrewarmRequests).toBeGreaterThan(initialRequests);
+
     const token = mintToken();
     const decoded = await verifier.verify(token);
     expect(decoded.tid).toBe(TENANT);
     expect(decoded.aud).toBe(AUDIENCE);
+    expect(requestCount).toBe(afterPrewarmRequests);
   });
 
   it('bearerTokenFrom parses header accurately', () => {

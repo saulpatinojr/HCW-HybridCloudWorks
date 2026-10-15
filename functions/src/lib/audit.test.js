@@ -79,6 +79,13 @@ describe('audit.js (AP-B4, #939)', () => {
       const res = sanitizeAuditDetails(big);
       expect(res.error).toContain('exceeds maximum allowed size');
     });
+
+    it('measures UTF-8 bytes for multi-byte characters', () => {
+      // 1500 copies of '🚀' is 6000 UTF-8 bytes, despite being fewer than 4096 string characters
+      const multiByteBig = { emoji: '🚀'.repeat(1500) };
+      const res = sanitizeAuditDetails(multiByteBig);
+      expect(res.error).toContain('exceeds maximum allowed size');
+    });
   });
 
   describe('recordMutationAudit', () => {
@@ -111,7 +118,7 @@ describe('audit.js (AP-B4, #939)', () => {
         details: { vendor: 'Microsoft' },
         timestamp: '2026-10-15T12:00:00.000Z',
         ttl: AUDIT_TTL_SECONDS,
-        compliance: { schemaVersion: 2, appendOnly: true },
+        compliance: { schemaVersion: 2, appendOnly: true, clientOriginated: false },
       });
       expect(doc.id).toBe('audit-uuid-1');
     });

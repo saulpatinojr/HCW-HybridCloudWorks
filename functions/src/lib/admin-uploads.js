@@ -41,6 +41,7 @@ import {
   UPLOAD_CONTAINERS,
 } from './blob-paths.js';
 import { normalizeBadgeImage, withExtension } from './badge-image.js';
+import { randomUUID } from 'node:crypto';
 import { recordMutationAudit } from './audit.js';
 
 /**
@@ -212,7 +213,7 @@ export function createAdminUploadHandlers({
   storage,
   store = null,
   now = () => new Date(),
-  uuid,
+  uuid = randomUUID,
   normalizeImage = normalizeBadgeImage,
 }) {
   return {

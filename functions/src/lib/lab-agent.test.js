@@ -112,7 +112,7 @@ describe('claimLabJob', () => {
 
     const body = parse(res);
     expect(body.job.id).toBe('older');
-    expect(body.job.claimId).toBeDefined();
+    expect(body.job.claimId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     // Not the whole document: no _etag, no internal status, no agentId.
     expect(Object.keys(body.job).sort()).toEqual(['claimId', 'id', 'payload', 'payloadEncoding', 'type']);
     // A document from before #675 carries no encoding and is text.
@@ -608,7 +608,7 @@ describe('completeLabJob', () => {
       expect(res.status).toBe(409);
       expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'Job was claimed under a different claimId' });
       expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('tried to complete job j1 with stale claimId claim-old'));
+      expect(warn).toHaveBeenCalledWith('lab-agent: claimId mismatch on completion');
     });
 
     it('accepts completion without claimId for backward compatibility with older agents', async () => {

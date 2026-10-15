@@ -187,7 +187,16 @@ async function deleteSocialPost(ctx, request, context) {
     // feed never delivers a delete, so the Publer un-publish happens here
     // (T-324). Best-effort, before the document goes.
     let publer = { attempted: 0, removed: 0 };
-    const existing = await ctx.store.readDoc('social_posts', id, id).catch(() => null);
+    let existing = null;
+    try {
+      existing = await ctx.store.readDoc('social_posts', id, id);
+    } catch (err) {
+      if (err?.statusCode === 404 || err?.code === 404 || err?.code === 'NotFound') {
+        existing = null;
+      } else {
+        throw err;
+      }
+    }
     if (ctx.unpublishSocialPost && existing) {
       publer = await ctx.unpublishSocialPost(existing);
     }

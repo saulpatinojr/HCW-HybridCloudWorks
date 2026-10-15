@@ -108,6 +108,7 @@ describe('AP-B4: Unified audit record format and TTL', () => {
       compliance: {
         schemaVersion: 2,
         appendOnly: true,
+        clientOriginated: false,
       },
     });
     expect(AUDIT_TTL_SECONDS).toBe(90 * 86400);

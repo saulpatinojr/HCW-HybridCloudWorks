@@ -71,7 +71,8 @@ export function sanitizeAuditDetails(details) {
   } catch {
     return { error: 'details must be serializable JSON' };
   }
-  if (str.length > MAX_DETAILS_LENGTH) {
+  const byteLength = Buffer.byteLength(str, 'utf8');
+  if (byteLength > MAX_DETAILS_LENGTH) {
     return { error: `details exceeds maximum allowed size of ${MAX_DETAILS_LENGTH} bytes` };
   }
   return { details };
@@ -118,7 +119,7 @@ export async function recordMutationAudit(store, {
     details: details ?? {},
     timestamp: now().toISOString(),
     ttl: AUDIT_TTL_SECONDS,
-    compliance: { schemaVersion: 2, appendOnly: true },
+    compliance: { schemaVersion: 2, appendOnly: true, clientOriginated: false },
   };
 
   try {

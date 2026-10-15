@@ -198,7 +198,17 @@ export function createTokenVerifier({ tenantId, audience, jwksUri } = {}) {
      */
     async prewarm() {
       if (typeof client.getSigningKeys === 'function') {
-        return await client.getSigningKeys();
+        const keys = await client.getSigningKeys();
+        if (Array.isArray(keys)) {
+          for (const key of keys) {
+            if (key?.kid) {
+              await new Promise((resolve) => {
+                client.getSigningKey(key.kid, () => resolve());
+              });
+            }
+          }
+        }
+        return keys;
       }
       return null;
     },

@@ -41,6 +41,26 @@ import { createKeyVerdictReporter, isCredentialRejected } from '../key-verdict.j
 import { readUpstreamError } from './upstream-error.js';
 import { redactSecrets } from './connection-probe.js';
 
+/**
+ * Recursively redacts secrets from any strings within an object tree.
+ */
+export function redactDeep(value, secrets) {
+  if (typeof value === 'string') {
+    return redactSecrets(value, secrets);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactDeep(item, secrets));
+  }
+  if (value && typeof value === 'object') {
+    const copy = {};
+    for (const [k, v] of Object.entries(value)) {
+      copy[k] = redactDeep(v, secrets);
+    }
+    return copy;
+  }
+  return value;
+}
+
 const json = (status, body) => ({
   status,
   headers: { 'Content-Type': 'application/json' },
@@ -388,11 +408,12 @@ export function createRestProxy({
         const text = redactSecrets(rawText, secretsToRedact);
         let data = null;
         try {
-          data = text ? JSON.parse(text) : null;
+          const parsed = text ? JSON.parse(text) : null;
+          data = redactDeep(parsed, secretsToRedact);
         } catch {
           // Not every upstream error is JSON. Returning the raw text is more
           // use to an operator than discarding it.
-          data = { raw: text.slice(0, 2000) };
+          data = { raw: redactSecrets(text.slice(0, 2000), secretsToRedact) };
         }
         // The body is read BEFORE the verdict, which is the only reason the
         // verdict can carry a reason. It used to be judged on the status

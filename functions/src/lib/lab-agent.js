@@ -416,9 +416,7 @@ function heldJobRefusal(job, jobId, agent, context, claimId = undefined) {
   // Fences against the same agent reclaiming a job after lease expiry and a late
   // result from the first claim landing against the second (#1094).
   if (claimId && job.claimId && claimId !== job.claimId) {
-    context.warn?.(
-      `agent ${agent.agentId} tried to complete job ${jobId} with stale claimId ${claimId} (current is ${job.claimId})`
-    );
+    context.warn?.('lab-agent: claimId mismatch on completion');
     return json(409, { ok: false, error: 'Job was claimed under a different claimId' });
   }
 
