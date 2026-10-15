@@ -8,6 +8,7 @@ import RoleGate from '@/components/admin/RoleGate';
 import { Loader2, Send } from 'lucide-react';
 import { describePlan } from './issueFormat';
 
+/** The approval, or the reason there is none yet, since an approval the server would refuse is a button that cannot work. */
 export default function ApprovalBox({ detail, dirty, busy, onApprove }) {
   const [confirming, setConfirming] = useState(false);
   const planText = describePlan(detail.sendPlan);

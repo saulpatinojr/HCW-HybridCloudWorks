@@ -52,6 +52,7 @@ export default function RoleGate({ minRole, reason, className, children }) {
   if (current === null || satisfiesRole(current, minRole)) return <>{children}</>;
 
   const text = reason || roleGateReason(minRole, current);
+  /** The click below the role: nothing happens, so the request and its 403 never start. */
   const blocked = (event) => event.preventDefault();
   const gated = React.Children.map(children, (child) =>
     React.isValidElement(child)

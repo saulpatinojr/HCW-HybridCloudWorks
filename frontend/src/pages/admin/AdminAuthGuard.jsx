@@ -42,7 +42,7 @@ import { AdminRoleProvider } from '@/hooks/useAdminRole';
 import { postJSON } from '@/lib/api';
 import { signIn, signOutUser, reauthenticateForApi } from '@/lib/entraAuth';
 
-/** Render the admin pages only for an authorized admin, and show each other outcome as its own. */
+/** The gate in front of every /admin page: the portal renders only for an admin the registry verified, that admin's role goes down with it, and each other outcome shows as its own. */
 export default function AdminAuthGuard({ children }) {
   const {
     authReady,

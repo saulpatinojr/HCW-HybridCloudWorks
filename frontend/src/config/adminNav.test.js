@@ -74,6 +74,7 @@ describe('minRole on every item', () => {
   });
 
   it('reads the server: the Dashboard and Health are viewer reads, Publish is the publisher write, the rest is editor', () => {
+    /** An item's role by its label, so the assertions read as the table above ITEMS does. */
     const roleOf = (label) => NAV_ITEMS.find((item) => item.label === label).minRole;
     expect(roleOf('Dashboard')).toBe('viewer');
     expect(roleOf('Health')).toBe('viewer');
@@ -89,7 +90,9 @@ describe('minRole on every item', () => {
 });
 
 describe('visibleNavFor', () => {
+  /** The labels `role` is shown, flat, so a case compares the whole menu in one line. */
   const labels = (role) => visibleNavFor(role).flatMap((group) => group.items.map((i) => i.label));
+  /** The groups `role` is shown, so an empty group that was dropped shows up as a missing id. */
   const groupIds = (role) => visibleNavFor(role).map((group) => group.id);
 
   it('shows a viewer the Dashboard and Health only, with the empty groups dropped', () => {

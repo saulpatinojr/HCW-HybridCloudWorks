@@ -359,6 +359,7 @@ export function OperationalSignalsCard({ signals }) {
   );
 }
 
+/** One workflow alert with its state changes, gated together because the hub is a viewer read and updateWorkflowAlert is publisher. */
 function AlertRow({
   alert,
   alertActionId,

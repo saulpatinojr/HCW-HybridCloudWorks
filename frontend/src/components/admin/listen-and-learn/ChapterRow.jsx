@@ -164,6 +164,7 @@ function ChapterAudio({ chapter, name }) {
   return null;
 }
 
+/** A chapter's actions in the Library, the review gated at the role its route asks for: publisher to publish, editor to withdraw. */
 function ChapterActions({ chapter, noun, busy, progress, renaming, onRenameStart, actions }) {
   const published = chapter.status === 'published';
   const archived = chapter.status === 'archived';

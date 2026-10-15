@@ -101,6 +101,7 @@ export function shortDate(iso) {
   return Number.isNaN(parsed.getTime()) ? '—' : parsed.toISOString().slice(0, 10);
 }
 
+/** The backfill's panel: listing the candidates is an editor read, and the run republishes, so only the run is gated at publisher. */
 export default function RehostImagesPanel() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);

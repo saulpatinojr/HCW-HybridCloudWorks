@@ -130,8 +130,10 @@ describe('the admin sidebar', () => {
     vi.unstubAllGlobals();
   });
 
-  // The role is what AdminAuthGuard provides in the app (AP-F4); the whole
-  // menu is the owner's view, so these tests see it as a super_admin.
+  /**
+   * The role is what AdminAuthGuard provides in the app (AP-F4); the whole
+   * menu is the owner's view, so these tests see it as a super_admin.
+   */
   function renderAdmin(path = '/admin/labs', role = 'super_admin') {
     return render(
       <AdminRoleProvider value={role}>
@@ -289,6 +291,7 @@ describe('the admin sidebar', () => {
    * refuses on its own; this is the viewer not learning that from a 403.
    */
   describe('cut to the signed-in role (AP-F4)', () => {
+    /** Queries scoped to the menu itself, so a match elsewhere in the shell cannot pass a case. */
     const rail = () => within(screen.getByRole('navigation', { name: 'ContentForge' }));
 
     it('shows a viewer the Dashboard and Health, and none of Publish, Integrations or Platform Settings', () => {
@@ -367,6 +370,7 @@ describe('the phone drawer', () => {
     vi.unstubAllGlobals();
   });
 
+  /** The shell at /admin/labs with a second route, so a drawer link has a page to land on and close over. */
   function renderShell(role = 'super_admin') {
     return render(
       <AdminRoleProvider value={role}>

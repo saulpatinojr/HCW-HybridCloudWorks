@@ -213,6 +213,7 @@ describe('an answer from the registry', () => {
 
   it('hands the verified role down to the portal, so the menu and the gates read it (AP-F4)', async () => {
     answers({ isAdmin: true, role: 'editor', permissions: [] });
+    /** Prints the context's role, so the case reads what the guard handed down rather than what it fetched. */
     const RoleReader = () => <div>Role: {useAdminRole() ?? 'none'}</div>;
     render(
       <AdminAuthGuard>

@@ -162,6 +162,7 @@ function LinkAction({ to, icon: Icon, children, primary = false }) {
   );
 }
 
+/** A content item's actions, the two schedule writes gated so an editor on the calendar learns their role before the round trip. */
 function ContentActions({ item, busy, onReschedule, onUnschedule }) {
   const pending = item.status !== 'published';
   return (

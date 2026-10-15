@@ -241,7 +241,7 @@ function ShellFooter({ collapsed, onSignOut, onNavigate }) {
 
 // ── Main Layout ───────────────────────────────────────────────────────────────
 
-/** The shell every admin route renders inside: the menu, the page, and the toasts it fires. */
+/** The shell every admin route renders inside: the menu, cut to the signed-in role so a page the server would refuse is never offered, the page, and the toasts it fires. */
 export default function AdminLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();

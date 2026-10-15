@@ -12,6 +12,7 @@ import RoleGate, { roleGateReason } from './RoleGate';
 
 const REASON = 'Publishing needs the publisher role.';
 
+/** One gated Publish button under `role` (no provider when undefined), so each case names only the role it is about. */
 function renderGate(role, props = {}) {
   const onClick = vi.fn();
   const gate = (

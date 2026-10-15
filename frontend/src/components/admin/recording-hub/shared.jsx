@@ -104,6 +104,7 @@ function HostPublished({ host }) {
   );
 }
 
+/** The host's refusal with Retry beside it, so a failed Podbean publish is retried from the row rather than from the logs. */
 function HostError({ host, item, onRetry, retrying }) {
   return (
     <p className="text-xs text-red-700 dark:text-red-300 flex items-center gap-2 flex-wrap">

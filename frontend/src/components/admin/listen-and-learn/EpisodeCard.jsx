@@ -73,6 +73,7 @@ function EpisodeBadges({ episode }) {
   );
 }
 
+/** The reviewer's card for one chapter, its approval gated at publisher only when it publishes, since withdrawing is an editor write. */
 export default function EpisodeCard({ episode, busy, onReview, onRetry, onKeepCurrent }) {
   const published = episode.status === 'published';
   const failedOnly = episode.status === 'failed' && episode.error && !episode.lastError;

@@ -30,6 +30,7 @@ import {
   AlertCircle,
   Layers,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import useDashboardCounts from '@/hooks/useDashboardCounts';
 import { useAdminRole } from '@/hooks/useAdminRole';
 import { visibleNavFor } from '@/config/adminNav';
@@ -156,6 +157,7 @@ function PipelineStage({ step, stage, count, isLast }) {
           columns the step numbers carry the order instead. */}
       {!isLast && (
         <ChevronRight
+          data-testid="pipeline-connector"
           className="pointer-events-none absolute top-6.75 -right-3.5 hidden h-3 w-3 -translate-y-1/2 text-muted-foreground/50 @4xl:block"
           aria-hidden="true"
         />
@@ -171,8 +173,20 @@ function PipelineStage({ step, stage, count, isLast }) {
  * card at xl clears), three from 28rem, two below. `auto-rows-fr` makes every
  * box the height of the tallest, so all six are the same size whichever row
  * they land on.
+ *
+ * Cut to the signed-in role as the Explore strip is (AP-F4): a stage whose
+ * page the menu does not offer is not drawn, and the numbering and the last
+ * connector follow the stages that are. A viewer can open none of them, so a
+ * viewer sees no pipeline rather than six links to pages that refuse them.
  */
-function DashboardPipeline({ counts }) {
+function DashboardPipeline({ counts, role }) {
+  const stages = React.useMemo(() => {
+    const offered = new Set(
+      visibleNavFor(role).flatMap((group) => group.items.map((item) => item.to))
+    );
+    return PIPELINE_STAGES.filter((stage) => offered.has(stage.to));
+  }, [role]);
+  if (stages.length === 0) return null;
   return (
     <Section
       testId="pipeline-card"
@@ -186,13 +200,13 @@ function DashboardPipeline({ counts }) {
           data-testid="pipeline"
           className="m-0 grid list-none auto-rows-fr grid-cols-2 gap-4 p-0 @md:grid-cols-3 @4xl:grid-cols-6"
         >
-          {PIPELINE_STAGES.map((stage, index) => (
+          {stages.map((stage, index) => (
             <PipelineStage
               key={stage.id}
               step={index + 1}
               stage={stage}
               count={stage.countKey ? counts[stage.countKey] : 0}
-              isLast={index === PIPELINE_STAGES.length - 1}
+              isLast={index === stages.length - 1}
             />
           ))}
         </ol>
@@ -228,12 +242,30 @@ function Section({ title, icon: Icon, iconColor, to, children, hint, testId }) {
   );
 }
 
-/** A count in running text that opens the page listing what it counts. */
-function CountLink({ to, children }) {
+/**
+ * A count in running text that opens the page listing what it counts. It
+ * passes on what a RoleGate injects (the no-op click, `aria-disabled`, the
+ * reason's id and the dimmed class): dropped here, a gate around it could not
+ * stop the click, and a viewer would still land on an editor page.
+ */
+function CountLink({
+  to,
+  children,
+  className,
+  onClick,
+  'aria-disabled': ariaDisabled,
+  'aria-describedby': ariaDescribedBy,
+}) {
   return (
     <Link
       to={to}
-      className="underline-offset-2 hover:text-primary hover:underline focus-visible:underline"
+      onClick={onClick}
+      aria-disabled={ariaDisabled}
+      aria-describedby={ariaDescribedBy}
+      className={cn(
+        'underline-offset-2 hover:text-primary hover:underline focus-visible:underline',
+        className
+      )}
     >
       {children}
     </Link>
@@ -263,25 +295,34 @@ function DashboardHeader({
         <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
           {today}
         </p>
+        {/* The queue, the editor and live pages are editor pages (adminNav.js),
+            so below that role each count stays a number on screen and says
+            why it does not open, rather than landing a viewer on a page whose
+            every call is refused (AP-F4). */}
         <h1 className="text-2xl font-bold tracking-tight">
           {counts.queue > 0 ? (
-            <CountLink to="/admin/queue?status=needs_review">
-              {`${pluralize(counts.queue, 'item')} waiting for you`}
-            </CountLink>
+            <RoleGate minRole="editor" reason="Opening the review queue needs the editor role.">
+              <CountLink to="/admin/queue?status=needs_review">
+                {`${pluralize(counts.queue, 'item')} waiting for you`}
+              </CountLink>
+            </RoleGate>
           ) : (
             "You're all caught up 🎉"
           )}
         </h1>
         <p className="mt-1 mb-0 text-sm text-muted-foreground">
-          <CountLink to="/admin/live-pages">{counts.live} pieces live</CountLink>
-          {' · '}
-          <CountLink to="/admin/editor">{counts.editor} in editor</CountLink>
-          {counts.rejected > 0 && (
-            <>
-              {' · '}
+          {/* One gate for the line, so a viewer reads the reason once, not
+              three times. The separators are its text children, which the
+              gate leaves alone; a fragment would be cloned as a control. */}
+          <RoleGate minRole="editor" reason="Opening these lists needs the editor role.">
+            <CountLink to="/admin/live-pages">{counts.live} pieces live</CountLink>
+            {' · '}
+            <CountLink to="/admin/editor">{counts.editor} in editor</CountLink>
+            {counts.rejected > 0 && ' · '}
+            {counts.rejected > 0 && (
               <CountLink to="/admin/queue?status=rejected">{counts.rejected} rejected</CountLink>
-            </>
-          )}
+            )}
+          </RoleGate>
         </p>
         {loadError && (
           // A failed re-read keeps the last numbers on screen and says they
@@ -326,10 +367,15 @@ function DashboardHeader({
             {recalculating ? 'Recounting…' : 'Recount'}
           </Button>
         </RoleGate>
-        <Button size="sm" onClick={onNewContent}>
-          <Zap className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
-          New Content
-        </Button>
+        {/* New Content opens /admin/submit, whose calls are editor writes
+            (generateArticleDraft, createContentItem; adminNav.js), so a
+            viewer is told here rather than by the page's first refusal. */}
+        <RoleGate minRole="editor" reason="Creating content needs the editor role.">
+          <Button size="sm" onClick={onNewContent}>
+            <Zap className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
+            New Content
+          </Button>
+        </RoleGate>
       </div>
     </div>
   );
@@ -577,7 +623,7 @@ export default function DashboardPage() {
         onRecalculate={handleRecalculate}
         onNewContent={() => navigate('/admin/submit')}
       />
-      <DashboardPipeline counts={counts} />
+      <DashboardPipeline counts={counts} role={role} />
       <DashboardStats counts={counts} />
       <DecisionCenter enabled={authReady} />
       <DashboardExplore role={role} />

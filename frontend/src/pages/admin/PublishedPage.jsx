@@ -424,7 +424,7 @@ function PrePublishModal({
   );
 }
 
-/** The Publish stage: what is ready to go live and what already is, read as one snapshot. */
+/** The Publish stage, where content goes live, read as one snapshot; its publish and unpublish buttons are gated because the routes behind them are publisher. */
 export default function PublishedPage() {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();

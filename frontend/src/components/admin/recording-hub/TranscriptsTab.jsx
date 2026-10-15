@@ -33,6 +33,7 @@ import RoleGate from '@/components/admin/RoleGate';
 import { fmtDate } from './recordingView';
 import { HostLine, ReadState, SourceChip, StatusBadge } from './shared';
 
+/** One transcript as its own row, so the Decision Center's link can ring it and its review action can follow its status. */
 function TranscriptRow({ item, onOpen, onReview, onRetry, busy }) {
   const audio = safeUrl(item.audioUrl);
   // `?transcript=<id>` (the dashboard's Decision Center) scrolls to this row and rings it.
@@ -87,23 +88,29 @@ function TranscriptRow({ item, onOpen, onReview, onRetry, busy }) {
             </Button>
             {/* The review route is publisher either way (lib/podcast/handlers.js
                 reviewTranscript): approving queues the host publish and
-                returning to draft withdraws it. */}
-            <RoleGate
-              minRole="publisher"
-              reason="Approving a transcript for the host needs the publisher role."
-            >
-              {item.status === 'published' ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs px-2"
-                  onClick={() => onReview(item, 'draft')}
-                  disabled={busy === `review:${item.id}`}
-                >
-                  <Undo2 className="h-3 w-3 mr-1" /> Return to draft
-                </Button>
-              ) : (
-                item.status !== 'failed' && (
+                returning to draft withdraws it. A failed transcript has no
+                review button, so it gets no gate and no sentence beside
+                nothing; the sentence names the button that is there. */}
+            {item.status !== 'failed' && (
+              <RoleGate
+                minRole="publisher"
+                reason={
+                  item.status === 'published'
+                    ? 'Returning a transcript to draft needs the publisher role.'
+                    : 'Approving a transcript for the host needs the publisher role.'
+                }
+              >
+                {item.status === 'published' ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs px-2"
+                    onClick={() => onReview(item, 'draft')}
+                    disabled={busy === `review:${item.id}`}
+                  >
+                    <Undo2 className="h-3 w-3 mr-1" /> Return to draft
+                  </Button>
+                ) : (
                   <Button
                     size="sm"
                     className="h-7 text-xs px-2"
@@ -112,9 +119,9 @@ function TranscriptRow({ item, onOpen, onReview, onRetry, busy }) {
                   >
                     <CheckCircle className="h-3 w-3 mr-1" /> Approve
                   </Button>
-                )
-              )}
-            </RoleGate>
+                )}
+              </RoleGate>
+            )}
           </div>
         </div>
         {audio && (

@@ -121,6 +121,7 @@ function describeWhen(issue) {
   return '';
 }
 
+/** One sent, scheduled or failed issue, the actions that touch its Resend broadcast gated at publisher and Duplicate left at the page's role. */
 function IssuePanel({ detail, busy, notice, onCancel, onReschedule, onRetry, onDuplicate }) {
   const { issue } = detail;
   const [confirmCancel, setConfirmCancel] = useState(false);

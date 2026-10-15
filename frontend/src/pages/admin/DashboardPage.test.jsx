@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, useLocation } from 'react-router';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AdminRoleProvider } from '@/hooks/useAdminRole';
 import DashboardPage, { PIPELINE_STAGES } from './DashboardPage';
@@ -52,20 +52,36 @@ const DECISIONS = {
 
 const answer = (route) => Promise.resolve(route === 'getDecisionCenter' ? DECISIONS : SNAPSHOT);
 
+/** Where the router is, printed, so a test can tell a click that navigated from one that did not. */
+function LocationProbe() {
+  const { pathname, search } = useLocation();
+  return <p data-testid="location">{`${pathname}${search}`}</p>;
+}
+
 /**
- * Render the dashboard inside a router, as the admin shell does, with the
- * role AdminAuthGuard provides there (AP-F4) — the owner's, unless a test
- * asks for a lower one.
+ * Render the dashboard inside a router at /admin, as the admin shell does,
+ * with the role AdminAuthGuard provides there (AP-F4) — the owner's, unless a
+ * test asks for a lower one — and the router's location beside it.
  */
 function renderDashboard(role = 'super_admin') {
   return render(
     <AdminRoleProvider value={role}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/admin']}>
         <DashboardPage />
+        <LocationProbe />
       </MemoryRouter>
     </AdminRoleProvider>
   );
 }
+
+/** The router's location as the probe prints it. */
+const currentLocation = () => screen.getByTestId('location').textContent;
+
+/** Each drawn stage's label, read from its accessible name, in the order drawn. */
+const drawnStages = () =>
+  within(screen.getByTestId('pipeline'))
+    .getAllByTestId('pipeline-stage')
+    .map((stage) => stage.getAttribute('aria-label').split(':')[0]);
 
 describe('DashboardPage', () => {
   beforeEach(() => {
@@ -245,6 +261,86 @@ describe('DashboardPage', () => {
     postJSON.mockClear();
     fireEvent.click(recount);
     expect(postJSON).not.toHaveBeenCalledWith('recalculateDashboardStats', {});
+  });
+
+  it('gates New Content for a viewer, whose click stays on the dashboard (AP-F4)', async () => {
+    renderDashboard('viewer');
+    await screen.findByText('6 items waiting for you');
+    const newContent = screen.getByRole('button', { name: /New Content/ });
+    expect(newContent).toHaveAttribute('aria-disabled', 'true');
+    expect(newContent).toHaveAccessibleDescription('Creating content needs the editor role.');
+    fireEvent.click(newContent);
+    expect(currentLocation()).toBe('/admin');
+  });
+
+  it('opens the submit page from New Content for an editor', async () => {
+    renderDashboard('editor');
+    await screen.findByText('6 items waiting for you');
+    const newContent = screen.getByRole('button', { name: /New Content/ });
+    expect(newContent).not.toHaveAttribute('aria-disabled');
+    fireEvent.click(newContent);
+    expect(currentLocation()).toBe('/admin/submit');
+  });
+
+  it('draws no pipeline for a viewer, who can open none of its stages (AP-F4)', async () => {
+    renderDashboard('viewer');
+    await screen.findByText('6 items waiting for you');
+    expect(screen.queryByTestId('pipeline-card')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'The pipeline' })).not.toBeInTheDocument();
+    expect(screen.queryAllByTestId('pipeline-stage')).toHaveLength(0);
+  });
+
+  it('draws every stage for a publisher, with a connector between each pair', async () => {
+    renderDashboard('publisher');
+    await screen.findByText('6 items waiting for you');
+    expect(drawnStages()).toEqual(PIPELINE_STAGES.map((s) => s.label));
+    expect(screen.getAllByTestId('pipeline-connector')).toHaveLength(PIPELINE_STAGES.length - 1);
+  });
+
+  it('numbers an editor’s stages from the ones drawn, with no connector after the last', async () => {
+    renderDashboard('editor');
+    await screen.findByText('6 items waiting for you');
+    // Publish is the publisher's page, so it is the one stage an editor loses.
+    expect(drawnStages()).toEqual([
+      'New Content',
+      'Drafts',
+      'Review Queue',
+      'Editor',
+      'Live Pages',
+    ]);
+    expect(screen.getAllByTestId('pipeline-connector')).toHaveLength(4);
+    const live = screen.getByRole('link', { name: /^Live Pages: / });
+    expect(within(live).getByText('5')).toBeInTheDocument();
+    expect(live.closest('li').querySelector('[data-testid="pipeline-connector"]')).toBeNull();
+  });
+
+  it('keeps a viewer on the dashboard when a header count is clicked, and says why (AP-F4)', async () => {
+    renderDashboard('viewer');
+    await screen.findByText('6 items waiting for you');
+    const queue = screen.getByRole('link', { name: '6 items waiting for you' });
+    expect(queue).toHaveAttribute('aria-disabled', 'true');
+    expect(queue).toHaveAccessibleDescription('Opening the review queue needs the editor role.');
+    fireEvent.click(queue);
+    expect(currentLocation()).toBe('/admin');
+    for (const name of ['14 pieces live', '8 in editor', '9 rejected']) {
+      const link = screen.getByRole('link', { name });
+      expect(link, name).toHaveAttribute('aria-disabled', 'true');
+      expect(link, name).toHaveAccessibleDescription('Opening these lists needs the editor role.');
+      fireEvent.click(link);
+      expect(currentLocation(), name).toBe('/admin');
+    }
+    // The line carries the reason once, not once per link.
+    expect(screen.getAllByText('Opening these lists needs the editor role.')).toHaveLength(1);
+  });
+
+  it('opens the list a header count names for an editor', async () => {
+    renderDashboard('editor');
+    await screen.findByText('6 items waiting for you');
+    expect(screen.queryByText(/needs the editor role/)).not.toBeInTheDocument();
+    const live = screen.getByRole('link', { name: '14 pieces live' });
+    expect(live).not.toHaveAttribute('aria-disabled');
+    fireEvent.click(live);
+    expect(currentLocation()).toBe('/admin/live-pages');
   });
 
   it('recounts through the backend and re-reads the snapshot', async () => {

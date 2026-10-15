@@ -250,6 +250,7 @@ function SubjectField({ value, onChange, busy, onSuggestSubjects }) {
   );
 }
 
+/** The draft's actions in one bar, all locked while one runs, and the test send gated because it goes out through Resend. */
 function ActionBar({
   view,
   edits,

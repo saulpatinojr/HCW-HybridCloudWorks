@@ -142,6 +142,7 @@ export function describeSetSlugResult(result = {}) {
   };
 }
 
+/** The slug control for one live article; the write republishes it, so the button is gated at the publisher role the route asks for. */
 export default function SetSlugPanel({ item, onApplied }) {
   const suggested = suggestedSlugFor(item);
   const current = currentSlugOf(item);
