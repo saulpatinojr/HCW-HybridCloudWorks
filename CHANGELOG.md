@@ -74,9 +74,9 @@ This project has not cut a tagged release; entries are grouped under
   and Podbean failures are now `AuthoredError`s whose sentences name a
   status and the provider's code, never its words, so those pages still say
   what went wrong. Documents already stored keep the text they hold: nothing
-  is migrated. The 148 remaining sites (none of them raw text in a response
-  body) are listed in 145 entries, each with a class and a reason (100
-  authored through the door, 42 that never reach a response, two `message`
+  is migrated. The 149 remaining sites (none of them raw text in a response
+  body) are listed in 146 entries, each with a class and a reason (100
+  authored through the door, 42 that never reach a response, three `message`
   fields that are not an error's, and one stored diagnostic kept by
   decision: a provider's sentence on a rejected key, which #463 made the
   diagnosis and only the super_admin API-keys page reads), and the list
