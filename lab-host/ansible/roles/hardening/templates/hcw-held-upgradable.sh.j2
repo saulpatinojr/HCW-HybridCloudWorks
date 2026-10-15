@@ -21,14 +21,16 @@
 # and the unit's OnFailure= reports that.
 #
 # It also says, at warning, while a reboot is pending and for how long
-# (LAB-13, #959): unattended-upgrades reboots at 04:30 only when nobody is
-# logged in, so a fix that needs the reboot is applied only once a window
-# comes. The owner's window is to log out before 04:30, or to reboot at a
-# time of their choosing (docs/runbooks/labs-host.md, Runtime advisories).
+# (LAB-13, #959): hcw-reboot-when-idle reboots at {{ hardening_unattended_reboot_time }}
+# only on a night with nobody logged in and no lab job container running, so
+# a fix that needs the reboot is applied only once such a night comes. The
+# owner's window is to log out before then, or to reboot at a time of their
+# choosing (docs/runbooks/labs-host.md, Runtime advisories).
 set -euo pipefail
 
 tag='{{ hardening_held_report_tag }}'
 reboot_required='{{ hardening_reboot_required_path }}'
+reboot_hour='{{ hardening_unattended_reboot_time }}'
 {% raw %}
 say() { logger -t "${tag}" -p "daemon.$1" -- "$2"; }
 
@@ -61,6 +63,6 @@ if [ -e "${reboot_required}" ]; then
   since_epoch="$(stat -c %Y "${reboot_required}")"
   since="$(date -u -d "@${since_epoch}" +%Y-%m-%dT%H:%MZ)"
   days=$(( ($(date -u +%s) - since_epoch) / 86400 ))
-  say warning "a reboot is pending since ${since} (${days} days): unattended-upgrades reboots at 04:30 only with nobody logged in. Log out before then, or reboot at a time of your choosing (docs/runbooks/labs-host.md, Runtime advisories)."
+  say warning "a reboot is pending since ${since} (${days} days): hcw-reboot-when-idle reboots at ${reboot_hour} only with nobody logged in and no lab job running. Log out before then, or reboot at a time of your choosing (docs/runbooks/labs-host.md, Runtime advisories)."
 fi
 {% endraw %}

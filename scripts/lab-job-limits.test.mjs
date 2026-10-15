@@ -27,6 +27,10 @@
  * heartbeats' 20 s each made the worst case 250 s, which nothing here
  * checked. vps-agent/lib/shutdown.js starts nothing on import, so its
  * constants are imported rather than read from text.
+ *
+ * The same reading holds the hardening role's job label to the agent's
+ * JOB_LABEL (the last block): the host's nightly reboot gate filters
+ * `docker ps` on it (LAB-13, #959).
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -66,17 +70,17 @@ function envExample(source, name) {
   return unquote(found[1]);
 }
 
-/** `variable: value` at the top level of defaults/main.yml. */
-function roleDefault(source, variable) {
+/** `variable: value` at the top level of a role's defaults/main.yml. */
+function roleDefault(source, variable, role = 'labs_agent') {
   const found = source.match(new RegExp(`^${variable}:\\s*(.+)$`, 'm'));
-  expect(found, `labs_agent defaults/main.yml has no ${variable}`).not.toBeNull();
+  expect(found, `${role} defaults/main.yml has no ${variable}`).not.toBeNull();
   return unquote(found[1]);
 }
 
-/** The `default:` inside `variable:`'s block in meta/argument_specs.yml. */
-function specDefault(source, variable) {
+/** The `default:` inside `variable:`'s block in a role's meta/argument_specs.yml. */
+function specDefault(source, variable, role = 'labs_agent') {
   const start = source.search(new RegExp(`^\\s+${variable}:\\s*$`, 'm'));
-  expect(start, `labs_agent argument_specs.yml has no ${variable}`).toBeGreaterThan(-1);
+  expect(start, `${role} argument_specs.yml has no ${variable}`).toBeGreaterThan(-1);
   const found = source.slice(start).match(/^\s+default:\s*(.+)$/m);
   expect(found, `${variable} in argument_specs.yml has no default`).not.toBeNull();
   return unquote(found[1]);
@@ -159,4 +163,33 @@ describe('the stop budget fits inside the unit (LAB-13, #959)', () => {
       expect(stopSec * 1000).toBeGreaterThanOrEqual(shutdownMs + 2 * SHUTDOWN_HEARTBEAT_TIMEOUT_MS);
     });
   }
+});
+
+/**
+ * hcw-reboot-when-idle, in the hardening role, defers the 04:30 reboot while
+ * `docker ps --filter label=<hardening_reboot_job_label>` lists anything
+ * (LAB-13, #959). A label that drifted from the one docker-runner.js writes
+ * on every job container would see no job, ever, and reboot through a
+ * running one, which is the failure the gate exists to stop, and nothing on
+ * the host would say so. The role's test reads the same constant when
+ * vps-agent/ is in its checkout; this holds it in the suite that runs when
+ * either file changes.
+ */
+describe('the reboot gate filters on the label the agent writes', () => {
+  const runner = read('vps-agent', 'lib', 'docker-runner.js');
+  const defaults = read('lab-host', 'ansible', 'roles', 'hardening', 'defaults', 'main.yml');
+  const specs = read('lab-host', 'ansible', 'roles', 'hardening', 'meta', 'argument_specs.yml');
+
+  it('hardening_reboot_job_label / JOB_LABEL', () => {
+    const found = runner.match(/^export const JOB_LABEL = '([^']+)';$/m);
+    expect(found, 'vps-agent/lib/docker-runner.js has no export const JOB_LABEL').not.toBeNull();
+    const label = found[1];
+    expect({
+      'defaults/main.yml': roleDefault(defaults, 'hardening_reboot_job_label', 'hardening'),
+      'argument_specs.yml': specDefault(specs, 'hardening_reboot_job_label', 'hardening'),
+    }).toEqual({
+      'defaults/main.yml': label,
+      'argument_specs.yml': label,
+    });
+  });
 });

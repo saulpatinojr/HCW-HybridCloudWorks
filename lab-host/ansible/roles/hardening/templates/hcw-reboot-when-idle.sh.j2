@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Reboot for a pending upgrade, but only while the host is idle (LAB-13,
+# #959). unattended-upgrades used to reboot: it asked `users` when the
+# upgrade ran, in the morning's apt-daily-upgrade run, then scheduled
+# `shutdown -r` for the reboot hour, some twenty-two hours later, with no
+# further question, and it never asked whether a visitor's job container was
+# running. A lab job killed at 04:30 is the evidence paragraph of #959. So
+# the override turns Automatic-Reboot off and hcw-reboot-when-idle.timer
+# runs this at the role's reboot hour instead; both questions are asked at
+# the hour itself.
+#
+# One syslog line per outcome, under the tag {{ hardening_reboot_when_idle_tag }}
+# (journalctl -t {{ hardening_reboot_when_idle_tag }}):
+#
+#   no marker                    notice   nothing pending; stays on the host
+#   a user is logged in          warning  deferred; tomorrow's run asks again
+#   a job container runs         warning  deferred; tomorrow's run asks again
+#   users or docker cannot say   err      the run fails and the notifier (LAB-2) pages
+#   idle                         warning  rebooting, with how long it has waited
+#
+# Warning and err ship to Log Analytics through the Arc data collection
+# rule, so every reboot and every deferral leaves a row there, and the daily
+# held report (LAB-3) says at 07:15 for how long a reboot has been waiting.
+# A check that cannot run has not run: a `users` or a `docker` that fails,
+# docker missing included, ends the run non-zero rather than guessing that
+# nobody is there, and the unit's OnFailure= reports that.
+set -euo pipefail
+
+tag='{{ hardening_reboot_when_idle_tag }}'
+reboot_required='{{ hardening_reboot_required_path }}'
+job_label='{{ hardening_reboot_job_label }}'
+systemctl='/usr/bin/systemctl'
+{% raw %}
+say() { logger -t "${tag}" -p "daemon.$1" -- "$2"; }
+
+if [ ! -e "${reboot_required}" ]; then
+  say notice "no reboot is pending: ${reboot_required} does not exist"
+  exit 0
+fi
+
+since_epoch="$(stat -c %Y "${reboot_required}")"
+since="$(date -u -d "@${since_epoch}" +%Y-%m-%dT%H:%MZ)"
+days=$(( ($(date -u +%s) - since_epoch) / 86400 ))
+
+# The same source unattended-upgrade's own Automatic-Reboot-WithUsers check
+# read (/usr/bin/users), asked now rather than when the upgrade ran.
+logged_in="$(users)" || {
+  say err "not rebooting: users could not say who is logged in, so the check has not run; its error is in this unit's journal and this run fails"
+  exit 1
+}
+if [ -n "${logged_in}" ]; then
+  say warning "deferred: a user is logged in (${logged_in}); a reboot has been pending since ${since} (${days} days)"
+  exit 0
+fi
+
+# Every job container carries the agent's label (vps-agent/lib/docker-runner.js,
+# JOB_LABEL), keyed by job id; nothing else on the host does.
+running="$(docker ps -q --filter "label=${job_label}")" || {
+  say err "not rebooting: docker could not list the job containers, so the check has not run; its error is in this unit's journal and this run fails"
+  exit 1
+}
+if [ -n "${running}" ]; then
+  count="$(wc -l <<< "${running}" | tr -d ' ')"
+  say warning "deferred: ${count} job container(s) running; a reboot has been pending since ${since} (${days} days)"
+  exit 0
+fi
+
+say warning "rebooting; pending since ${since} (${days} days): nobody is logged in and no job container is running"
+# `systemctl reboot` enqueues the job and returns (it is `start reboot.target
+# --job-mode=replace-irreversibly --no-block` with a wall message), so this
+# run ends successfully before the shutdown reaches its unit. A reboot the
+# manager refuses is a non-zero exit here, and so a line from the notifier
+# rather than a night silently skipped.
+"${systemctl}" reboot
+{% endraw %}

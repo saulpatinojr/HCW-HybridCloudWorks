@@ -109,7 +109,9 @@
     group: root
     mode: "0644"
 
-- name: Reboot automatically at a fixed hour when an upgrade needs it
+# The override names the origins and turns unattended-upgrades' own reboot
+# off (LAB-13, #959); hcw-reboot-when-idle.timer, below, reboots instead.
+- name: Let unattended-upgrades upgrade from the allowed origins and never reboot on its own
   ansible.builtin.template:
     src: 52hcw-unattended-upgrades.j2
     dest: /etc/apt/apt.conf.d/52hcw-unattended-upgrades
@@ -182,6 +184,49 @@
 - name: Enable the daily held-package report
   ansible.builtin.systemd_service:
     name: hcw-held-upgradable.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# The nightly idle reboot (LAB-13, #959). unattended-upgrades asked `users`
+# when the upgrade ran, some twenty-two hours before the reboot it then
+# scheduled with no further question, and never asked whether a visitor's
+# job container was running; a lab job killed at 04:30 is the evidence
+# paragraph of #959. This timer asks both at the hour itself and reboots
+# only while the marker exists. The service runs as root (docker's socket,
+# the reboot) with the file system read-only to it, and names the failure
+# notifier above in OnFailure=, so a docker that does not answer is a page.
+- name: Refuse a reboot hour the timer could not render
+  ansible.builtin.assert:
+    that:
+      - hardening_unattended_reboot_time is match('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+    fail_msg: >-
+      hardening_unattended_reboot_time must be HH:MM, host local time; it is rendered into
+      hcw-reboot-when-idle.timer's OnCalendar as *-*-* HH:MM:00.
+
+- name: Install the idle-reboot script
+  ansible.builtin.template:
+    src: hcw-reboot-when-idle.sh.j2
+    dest: "{{ hardening_reboot_when_idle_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the idle reboot's service and timer
+  ansible.builtin.template:
+    src: "hcw-reboot-when-idle.{{ item }}.j2"
+    dest: "/etc/systemd/system/hcw-reboot-when-idle.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - service
+    - timer
+  notify: Reload systemd for the idle reboot
+
+- name: Enable the nightly idle reboot
+  ansible.builtin.systemd_service:
+    name: hcw-reboot-when-idle.timer
     enabled: true
     state: started
     daemon_reload: true

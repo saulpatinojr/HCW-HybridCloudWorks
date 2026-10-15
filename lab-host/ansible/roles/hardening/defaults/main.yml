@@ -20,6 +20,10 @@ hardening_ufw_allowed_tcp_ports:
   - 443
 hardening_ufw_logging: "low"
 
+# The hour, host local time (HH:MM), at which hcw-reboot-when-idle.timer asks
+# whether the host may reboot for a pending upgrade (LAB-13, #959). The other
+# nightly timers are placed around it: the Coder dump at 03:30 and the Vault
+# snapshot at 03:45 end before it, the held report at 07:15 starts after it.
 hardening_unattended_reboot_time: "04:30"
 # The origins unattended-upgrades may move packages from, rendered into
 # 52hcw-unattended-upgrades rather than inherited from 50unattended-upgrades'
@@ -44,11 +48,32 @@ hardening_fail2ban_bantime: 1h
 # tag is what a Log Analytics query or alert matches on (ProcessName).
 hardening_held_report_tag: hcw-held-upgradable
 # The same daily run says, at warning, while this file exists, that a reboot
-# is pending and for how long (LAB-13, #959): with Automatic-Reboot-WithUsers
-# off, the 04:30 reboot waits for a window with nobody logged in, and this
-# line is what says it has waited. The path is a variable for the role's test.
+# is pending and for how long (LAB-13, #959): hcw-reboot-when-idle reboots
+# only with nobody logged in and no job container running, and this line is
+# what says it has waited. The path is a variable for the roles' tests; both
+# scripts read it.
 hardening_reboot_required_path: /var/run/reboot-required
 hardening_held_report_script_path: /usr/local/sbin/hcw-held-upgradable
-# Daily, after the 04:30 unattended-upgrades reboot window and early in the
-# working day, with up to 15 minutes of jitter from the timer.
+# Daily, after the 04:30 idle-reboot window and early in the working day,
+# with up to 15 minutes of jitter from the timer.
 hardening_held_report_on_calendar: "*-*-* 07:15:00"
+
+# The nightly idle reboot (LAB-13, #959). unattended-upgrades no longer
+# reboots (Automatic-Reboot is off in 52hcw-unattended-upgrades): it asked
+# `users` when the upgrade ran, about twenty-two hours before the reboot it
+# then scheduled with no further question, and it never asked whether a
+# visitor's job container was running. hcw-reboot-when-idle.timer runs the
+# script at hardening_unattended_reboot_time instead, and the script reboots
+# only while the marker above exists, nobody is logged in and no container
+# with the job label runs; one syslog line per outcome under this tag, the
+# deferrals and the reboot itself at warning, which the Arc data collection
+# rule ships. A `users` or a docker that does not answer fails the run, so
+# the failure notifier pages rather than the host guessing.
+hardening_reboot_when_idle_script_path: /usr/local/sbin/hcw-reboot-when-idle
+hardening_reboot_when_idle_tag: hcw-reboot-when-idle
+# The label the labs agent puts on every job container, JOB_LABEL in
+# vps-agent/lib/docker-runner.js. scripts/lab-job-limits.test.mjs holds the
+# two together and tests/hcw-reboot-when-idle.test.sh reads the agent's, so
+# a label that drifted would fail a test rather than see no job and reboot
+# through one.
+hardening_reboot_job_label: hcw.lab-job

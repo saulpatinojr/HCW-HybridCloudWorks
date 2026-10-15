@@ -147,8 +147,9 @@ printf '%s\n' docker-ce > "${work}/held"
 : > "${work}/upgradable"
 touch -d '3 days ago' "${work}/reboot-required"
 run
-check "a pending reboot adds one warning line with its age in days" \
-  "[ \"\$(wc -l < '${work}/log')\" -eq 2 ] && grep -qE '^${tag}\\|daemon\\.warning\\|a reboot is pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(3 days\\): unattended-upgrades reboots at 04:30 only with nobody logged in\\. Log out before then, or reboot at a time of your choosing \\(docs/runbooks/labs-host\\.md, Runtime advisories\\)\\.\$' '${work}/log'" \
+reboot_time="$(sed -n 's/^hardening_unattended_reboot_time: "\(.*\)"$/\1/p' "${defaults}")"
+check "a pending reboot adds one warning line with its age in days, naming the idle reboot and its hour" \
+  "[ \"\$(wc -l < '${work}/log')\" -eq 2 ] && grep -qE '^${tag}\\|daemon\\.warning\\|a reboot is pending since [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z \\(3 days\\): hcw-reboot-when-idle reboots at ${reboot_time} only with nobody logged in and no lab job running\\. Log out before then, or reboot at a time of your choosing \\(docs/runbooks/labs-host\\.md, Runtime advisories\\)\\.\$' '${work}/log'" \
   "$(cat "${work}/log")"
 rm -f "${work}/reboot-required"
 run

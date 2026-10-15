@@ -68,7 +68,8 @@ Vault", and the keys go to the owner's password manager and nowhere else.
 
 **A restart seals Vault**, unless the auto-unseal seal is on. A changed
 binary, configuration, certificate or unit restarts it, and so does every
-reboot, including the unattended-upgrades reboot at 04:30. Under Shamir keys
+reboot, including the nightly idle reboot at 04:30
+(`hcw-reboot-when-idle.timer`). Under Shamir keys
 it then answers `Sealed true` and serves nothing until the owner unseals it.
 With the seal on it unseals itself ("Auto-unseal", below; ADR 0032,
 amendment of 2026-09-29).

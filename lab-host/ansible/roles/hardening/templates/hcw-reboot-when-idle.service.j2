@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+#
+# The nightly idle reboot (LAB-13, #959): {{ hardening_reboot_when_idle_script_path }}
+# reboots the host for a pending upgrade only when nobody is logged in and no
+# lab job container runs, both asked at the hour itself. unattended-upgrades
+# has Automatic-Reboot off; this unit is what reboots instead. A run that
+# could not ask `users` or docker fails, and the failure notifier (LAB-2)
+# reports it, so a reboot that stopped happening is not silence.
+[Unit]
+Description=Reboot for a pending upgrade when nobody is logged in and no lab job runs
+Documentation=https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/lab-host/ansible/roles/hardening
+OnFailure=hcw-unit-failed@%n.service
+
+[Service]
+Type=oneshot
+ExecStart={{ hardening_reboot_when_idle_script_path }}
+# A docker that does not answer is a failed run and a page, not a hang
+# through the night.
+TimeoutStartSec=2min
+# Root, because `docker ps` needs the host daemon's socket and the reboot
+# needs the manager. Nothing is written, so the file system is read-only to
+# it; a socket on a read-only mount still accepts a connection. Home is
+# hidden, as the backup units hide it, which also keeps a docker context in
+# /root/.docker from pointing the question at another daemon: the CLI asks
+# the default socket, the daemon the job containers run on.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

@@ -5,7 +5,8 @@ Description=Run {{ coder_backup_unit_name }}.service nightly
 [Timer]
 OnCalendar={{ coder_backup_on_calendar }}
 # A missed run (host was off at 03:30) runs at the next boot instead of being
-# skipped; the jitter keeps it off the unattended-upgrades reboot at 04:30.
+# skipped; the jitter keeps it off the idle reboot at 04:30
+# (hcw-reboot-when-idle).
 Persistent=true
 RandomizedDelaySec=10m
 Unit={{ coder_backup_unit_name }}.service

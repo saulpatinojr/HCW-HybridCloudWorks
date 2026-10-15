@@ -78,8 +78,8 @@ coder_automation_state_dir: /var/lib/hcw-coder-automation
 # token: Template Admin, never Owner (lab-host/README.md, "The status token
 # for the site", step 2, creates it).
 coder_automation_status_user: hcw-status
-# Daily, after the 03:30 backup and the 04:30 unattended-upgrades reboot,
-# with up to 30 minutes of jitter.
+# Daily, after the 03:30 backup and the 04:30 idle reboot, with up to 30
+# minutes of jitter.
 coder_automation_on_calendar: "*-*-* 05:45:00"
 # The checkout hcw-coder-template-push publishes from: bootstrap.sh's
 # HCW_SRC_DIR default, which the helper names too.

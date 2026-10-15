@@ -1593,8 +1593,9 @@ clear && printf '\033[3J'
 ```
 
 **Unseal, after initialising and after every restart or reboot.** A restart
-seals Vault, and so does every reboot, including the unattended-upgrades
-reboot at 04:30; until three keys are entered it serves nothing. Bash, on the
+seals Vault, and so does every reboot, including the nightly idle reboot at
+04:30 (`hcw-reboot-when-idle.timer`); until three keys are entered it serves
+nothing. Bash, on the
 host, three times, pasting a different key at each `Unseal Key (will be
 hidden):` prompt:
 
@@ -2015,11 +2016,35 @@ fix is installed.
   upgrade waiting; the all-clear line stays on the host at `notice`. Since
   #1172 (LAB-13, #959) the same run also logs `a reboot is pending since
   <date> (<n> days)` at warning while `/var/run/reboot-required` exists:
-  the 04:30 reboot waits for a window with nobody logged in, so the owner's
-  window is to log out before 04:30, or to run `sudo reboot` at a time of
-  their choosing; a pending line a week old is the sign that neither has
-  happened and a fix that needs the reboot is still waiting. An alert
-  on those rows is not built yet: that is PLAT-4's work, not this page's.
+  the 04:30 reboot (next bullet) waits for a night with nobody logged in
+  and no lab job running, so the owner's window is to log out before 04:30,
+  or to run `sudo reboot` at a time of their choosing; a pending line a week
+  old is the sign that neither has happened and a fix that needs the reboot
+  is still waiting. An alert on those rows is not built yet: that is
+  PLAT-4's work, not this page's.
+- **Every day at 04:30 host time, on the host,** from the playbook run that
+  applies ask 2 of LAB-13 (#959): `hcw-reboot-when-idle.timer` (the
+  `hardening` role) reboots the host for a pending upgrade only when
+  `/var/run/reboot-required` exists, `users` prints nobody and `docker ps
+  --filter label=hcw.lab-job` lists no lab job container, both asked at the
+  hour itself. unattended-upgrades no longer reboots on its own: it asked
+  about logged-in users when the upgrade ran, some twenty-two hours before
+  the reboot it then scheduled with no further question, and it never asked
+  about jobs. One line per night under the tag `hcw-reboot-when-idle`:
+  `rebooting; pending since <date> (<n> days)` and the two `deferred:` lines
+  at `warning`, shipped as `Syslog` rows; `no reboot is pending` at
+  `notice`, on the host. A deferred night tries again the next night. A
+  `users` or a docker that cannot answer fails the unit, and
+  `alert-lab-unit-failed` pages (`docs/runbooks/alerting-and-support.md`).
+  Bash, on the host: `journalctl -t hcw-reboot-when-idle --since -7d` is the
+  last week's decisions; `lab-host/ansible/roles/hardening/README.md`, item
+  8, is the whole table. Two checks after the run that applies it, bash, on
+  the host, while logged in over SSH: `users` prints `hcwadmin` (an empty
+  line means the logged-in question cannot defer anything on this release,
+  and the role's README says why), and `shutdown --show` prints `No
+  scheduled shutdown.` (a `shutdown -r` unattended-upgrade scheduled before
+  the run still fires once at 04:30, unasked; `sudo shutdown -c` cancels
+  it).
 - **Tuesdays 05:20 UTC:** `publish-lab-image.yml` rebuilds the lab images and
   publishes them only when the `full` image's Debian packages moved; each
   publish opens the `chore/lab-pins-image-digests` pull request.
