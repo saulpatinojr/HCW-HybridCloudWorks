@@ -599,6 +599,11 @@ const FAILURE_RECORD_ATTEMPTS = 2;
  * again (FAILURE_RECORD_ATTEMPTS bounds it), and a marker that moved on is
  * the answer, as recordScheduleFailure treats a newer reservation.
  *
+ * Every attempt meeting a 412 while the marker still names this job is the
+ * one way this gives up with `pending` left set, so it says so: a warning
+ * with a fixed sentence and the attempt count, and no transcript or job id,
+ * which the hub's "publishing…" then explains to whoever reads the log.
+ *
  * @param {object} deps
  * @param {{ readDoc: Function, patchDoc: Function }} deps.store
  * @param {string} deps.id
@@ -606,6 +611,7 @@ const FAILURE_RECORD_ATTEMPTS = 2;
  * @param {'failed' | 'timeout' | string} deps.status the job's terminal status
  * @param {string|null} deps.error the job's recorded error text
  * @param {() => Date} [deps.now]
+ * @param {{ warn?: Function }} [deps.log] the hook's context
  * @returns {Promise<boolean>} whether a record was written
  */
 export async function recordHostJobFailure({
@@ -615,6 +621,7 @@ export async function recordHostJobFailure({
   status,
   error,
   now = () => new Date(),
+  log = null,
 }) {
   if (!jobId) return false;
   for (let attempt = 1; attempt <= FAILURE_RECORD_ATTEMPTS; attempt += 1) {
@@ -633,6 +640,10 @@ export async function recordHostJobFailure({
       if (!isPreconditionFailure(err)) throw err;
     }
   }
+  log?.warn?.(
+    `recordHostJobFailure: the publish marker changed on each of ${FAILURE_RECORD_ATTEMPTS} attempts; ` +
+      'pending was left set'
+  );
   return false;
 }
 

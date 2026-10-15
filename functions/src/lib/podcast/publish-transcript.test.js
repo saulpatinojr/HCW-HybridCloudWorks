@@ -1004,4 +1004,67 @@ describe('recordHostJobFailure', () => {
     expect(await failure(unversioned)).toBe(false);
     expect(unversioned.patchDoc).not.toHaveBeenCalled();
   });
+
+  it('warns, content-free, when every attempt meets a 412 and the marker still names its job', async () => {
+    const { store, state } = versionedStore({
+      id: 'article_x',
+      status: 'published',
+      title: 'Before',
+      host: { podbean: { pending: true, jobId: 'j-own' } },
+      _etag: '"etag-1"',
+    });
+    // An unrelated edit lands after each of the two reads.
+    const read = store.readDoc.getMockImplementation();
+    store.readDoc.mockImplementation(async (...args) => {
+      const seen = await read(...args);
+      state.version += 1;
+      state.transcript._etag = `"etag-${state.version}"`;
+      return seen;
+    });
+    const log = { warn: vi.fn() };
+
+    const stored = await recordHostJobFailure({
+      store,
+      id: 'article_x',
+      jobId: 'j-own',
+      status: 'timeout',
+      error: 'job timed out',
+      now,
+      log,
+    });
+
+    expect(stored).toBe(false);
+    expect(transcriptWrites(store)).toHaveLength(2);
+    expect(state.transcript.host.podbean.pending).toBe(true);
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    const [message] = log.warn.mock.calls[0];
+    expect(message).toBe(
+      'recordHostJobFailure: the publish marker changed on each of 2 attempts; pending was left set'
+    );
+    expect(message).not.toMatch(/article_x|j-own|Before/);
+  });
+
+  it('does not warn when it stops because the marker moved on, or after it wrote', async () => {
+    const log = { warn: vi.fn() };
+    const withMarker = (jobId) =>
+      versionedStore({
+        id: 'article_x',
+        status: 'published',
+        host: { podbean: { pending: true, jobId } },
+        _etag: '"etag-1"',
+      }).store;
+    const record = (store) =>
+      recordHostJobFailure({
+        store,
+        id: 'article_x',
+        jobId: 'j-own',
+        status: 'timeout',
+        error: null,
+        now,
+        log,
+      });
+    expect(await record(withMarker('j-newer'))).toBe(false);
+    expect(await record(withMarker('j-own'))).toBe(true);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
 });

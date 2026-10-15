@@ -184,7 +184,7 @@ registerJobType(PUBLISH_JOB_TYPE, {
    * clear it and say why — but only this job's own reservation, under the
    * version read, so a newer Publish's marker or a stored episode stands.
    */
-  onComplete: async ({ job, status, error }, { now }) => {
+  onComplete: async ({ job, status, error }, { context, now }) => {
     if (status === 'succeeded') return;
     const parsed = parsePublishPayload(job?.payload);
     if (parsed.error) return;
@@ -195,6 +195,7 @@ registerJobType(PUBLISH_JOB_TYPE, {
       status,
       error,
       now,
+      log: context,
     });
   },
 });

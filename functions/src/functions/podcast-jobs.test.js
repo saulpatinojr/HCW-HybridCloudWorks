@@ -200,6 +200,30 @@ describe('registration', () => {
     );
     expect(patchDoc).not.toHaveBeenCalled();
   });
+
+  it('warns on the hook’s own context when two 412s in a row leave the marker set (#942)', async () => {
+    const [, spec] = registrations.find(([name]) => name === 'publish-podcast-transcript');
+    readDoc.mockReset();
+    patchDoc.mockReset();
+    readDoc.mockResolvedValue({
+      id: 'article_x',
+      status: 'published',
+      host: { podbean: { pending: true, jobId: 'job-1' } },
+      _etag: '"etag-1"',
+    });
+    patchDoc.mockRejectedValue(Object.assign(new Error('precondition failed'), { code: 412 }));
+    const context = { warn: vi.fn() };
+
+    await spec.onComplete(
+      { job: { id: 'job-1', payload: { transcriptId: 'article_x' } }, status: 'timeout', error: 'job timed out' },
+      { context, now: () => new Date('2026-09-09T10:00:00.000Z') }
+    );
+
+    expect(patchDoc).toHaveBeenCalledTimes(2);
+    expect(context.warn).toHaveBeenCalledTimes(1);
+    expect(context.warn.mock.calls[0][0]).not.toMatch(/article_x|job-1/);
+    patchDoc.mockReset();
+  });
   it('registers the two recording-side jobs (#442) at editor, like the routes that enqueue them', () => {
     for (const name of ['generate-podcast-transcript-from-recording', 'transcribe-recording-upload']) {
       const [, spec] = registrations.find(([type]) => type === name);
