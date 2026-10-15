@@ -20,11 +20,17 @@
  *     held to the rule the day it is added.
  *  2. The types: the registry holds exactly the types pinned below; a new
  *     one fails here until it is added, and so is read by the check in 3.
- *  3. The worker passes `signal` onward — as an argument of a call, into the
- *     library or the next function — in its own code once its comments,
- *     strings and parameter list are removed. Naming it in a destructuring
- *     and never using it, only testing it in an `if`, or naming it in a
- *     string, does not count.
+ *  3. The worker passes its signal onward, into the library or the next
+ *     function, in its own code once its comments and strings are removed.
+ *     What counts is an argument that carries the signal itself: the signal
+ *     (destructured, under any name), `ctx.signal`, or the whole context
+ *     object `ctx`, alone or as a property or spread of an object argument,
+ *     so a thin wrapper `(p, ctx) => run(p, ctx)` passes. What does not:
+ *     naming it in a destructuring and never using it, testing it in an
+ *     `if`, naming it in a string, passing something computed from it
+ *     (`signal.aborted`, `!signal`), or handing it to a call that only
+ *     converts or logs it (`Boolean(signal)`, `String(signal)`,
+ *     `context.log(signal)`).
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -89,20 +95,6 @@ function codeOf(fn) {
     .replace(/"(?:\\.|[^"\\\n])*"/g, '""');
 }
 
-/** The code after the function's own parameter list, so a destructured `signal` does not count. */
-function bodyOf(code) {
-  const open = code.indexOf('(');
-  if (open === -1 || !/^\s*(async\s*)?(function\s*\*?\s*)?[\w$]*\s*$/.test(code.slice(0, open))) {
-    return code;
-  }
-  let depth = 0;
-  for (let i = open; i < code.length; i += 1) {
-    if (code[i] === '(') depth += 1;
-    else if (code[i] === ')' && (depth -= 1) === 0) return code.slice(i + 1);
-  }
-  return code;
-}
-
 /** The index of the parenthesis closing the one at `open`, or -1. */
 function closingParen(code, open) {
   let depth = 0;
@@ -113,21 +105,136 @@ function closingParen(code, open) {
   return -1;
 }
 
+/** The index of the parenthesis opening the one closing at `close`, or -1. */
+function openingParen(code, close) {
+  let depth = 0;
+  for (let i = close; i >= 0; i -= 1) {
+    if (code[i] === ')') depth += 1;
+    else if (code[i] === '(' && (depth -= 1) === 0) return i;
+  }
+  return -1;
+}
+
+/** `text` split at its top-level commas, each part trimmed, empty parts dropped. */
+function topLevel(text) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if ('([{'.includes(text[i])) depth += 1;
+    else if (')]}'.includes(text[i])) depth -= 1;
+    else if (text[i] === ',' && depth === 0) {
+      parts.push(text.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start).trim());
+  return parts.filter(Boolean);
+}
+
+/** A binding or property with its default (`= {}`) removed; `=>` and comparisons are not defaults. */
+function withoutDefault(binding) {
+  let depth = 0;
+  for (let i = 0; i < binding.length; i += 1) {
+    if ('([{'.includes(binding[i])) depth += 1;
+    else if (')]}'.includes(binding[i])) depth -= 1;
+    else if (depth === 0 && binding[i] === '=' && !/[=>]/.test(binding[i + 1] || '') && !/[=!<>]/.test(binding[i - 1] || '')) {
+      return binding.slice(0, i).trim();
+    }
+  }
+  return binding.trim();
+}
+
 /**
- * Does the worker hand `signal` (or `ctx.signal`) to a call in its own code?
- * A call's parenthesis follows a name, a `]` or a `)` — Vitest's transform
- * writes a call to an imported function as `(0, __vite_ssr_import_0__.fn)(…)`
- * — and not a keyword such as `if`. Its arguments are read whole, nested
- * calls included.
+ * The function's own parameter list and the code after it. Code that is not
+ * a parenthesised function (a single bare parameter) has no context to pass.
+ */
+function splitFunction(code) {
+  const open = code.indexOf('(');
+  if (open === -1 || !/^\s*(async\s*)?(function\s*\*?\s*)?[\w$]*\s*$/.test(code.slice(0, open))) {
+    return { params: '', body: code };
+  }
+  const close = closingParen(code, open);
+  return close === -1 ? { params: '', body: code } : { params: code.slice(open + 1, close), body: code.slice(close + 1) };
+}
+
+/**
+ * What carries the worker's signal, read from its second parameter: for a
+ * destructured context, the local name of `signal` (or `abortSignal`) and
+ * any rest element; for a context taken whole, the context itself and its
+ * `.signal`.
+ */
+function signalCarriers(params) {
+  const ctx = withoutDefault(topLevel(params)[1] || '');
+  if (/^[\w$]+$/.test(ctx)) {
+    return { names: new Set([ctx]), members: new Set([`${ctx}.signal`, `${ctx}?.signal`]) };
+  }
+  const names = new Set();
+  if (ctx.startsWith('{') && ctx.endsWith('}')) {
+    for (const entry of topLevel(ctx.slice(1, -1)).map(withoutDefault)) {
+      if (entry.startsWith('...')) names.add(entry.slice(3).trim());
+      else if (entry === 'signal' || entry === 'abortSignal') names.add(entry);
+      else {
+        const renamed = /^(?:signal|abortSignal)\s*:\s*([\w$]+)$/.exec(entry);
+        if (renamed) names.add(renamed[1]);
+      }
+    }
+  }
+  return { names, members: new Set() };
+}
+
+/**
+ * Does this argument carry the signal itself: a carrier, spread or whole, or
+ * an object literal with one as a property value, a shorthand or a spread?
+ * Anything computed from it (`signal.aborted`, `!signal`, a call) does not.
+ */
+function carries(argument, carriers) {
+  const expression = argument.replace(/^\.\.\./, '').trim();
+  if (carriers.names.has(expression) || carriers.members.has(expression)) return true;
+  if (!expression.startsWith('{') || !expression.endsWith('}')) return false;
+  return topLevel(expression.slice(1, -1)).some((entry) => {
+    if (entry.startsWith('...')) return carries(entry, carriers);
+    const property = /^([^:]+?)\s*:\s*([\s\S]+)$/.exec(entry);
+    return property ? carries(property[2], carriers) : carriers.names.has(entry);
+  });
+}
+
+/** Calls that only convert or log what they are given; the signal handed to one goes nowhere. */
+const NO_OP_CALLEE = /(?:^|\.)(?:Boolean|String|Number|BigInt|isArray|stringify|keys|values|entries|log|info|debug|warn|error|trace)$/;
+
+/**
+ * The name called at `open`: the member chain before it, or — for Vitest's
+ * `(0, __vite_ssr_import_0__.fn)(…)` — the last part of the parenthesised list.
+ */
+function calleeAt(body, open) {
+  const before = body.slice(0, open).trimEnd();
+  if (before.endsWith(')')) {
+    const start = openingParen(before, before.length - 1);
+    return start === -1 ? '' : topLevel(before.slice(start + 1, -1)).at(-1) || '';
+  }
+  const chain = /([\w$.?]+)$/.exec(before);
+  return chain ? chain[1].replace(/\?\./g, '.') : '';
+}
+
+/**
+ * Does the worker hand its signal to a call in its own code? A call's
+ * parenthesis follows a name, a `]` or a `)`, and not a keyword such as
+ * `if`; a parenthesis followed by `{` or `=>` opens a definition, not a call.
+ * Each argument is read whole, nested calls included, and counts only when
+ * it carries the signal itself to a call that is not a conversion or a log.
  */
 function passesSignalOn(worker) {
-  const body = bodyOf(codeOf(worker));
+  const { params, body } = splitFunction(codeOf(worker));
+  const carriers = signalCarriers(params);
+  if (carriers.names.size === 0 && carriers.members.size === 0) return false;
   for (let open = body.indexOf('('); open !== -1; open = body.indexOf('(', open + 1)) {
     const before = body.slice(0, open);
     if (!/[\w$)\]]\s*$/.test(before)) continue;
-    if (/\b(?:if|while|for|switch|catch|return|typeof|await)\s*$/.test(before)) continue;
+    if (/\b(?:if|while|for|switch|catch|return|typeof|await|async|function\s*\*?\s*[\w$]*)\s*$/.test(before)) continue;
     const close = closingParen(body, open);
-    if (close !== -1 && /\bsignal\b/.test(body.slice(open + 1, close))) return true;
+    if (close === -1 || /^\s*(?:\{|=>)/.test(body.slice(close + 1))) continue;
+    if (NO_OP_CALLEE.test(calleeAt(body, open))) continue;
+    if (topLevel(body.slice(open + 1, close)).some((argument) => carries(argument, carriers))) return true;
   }
   return false;
 }
@@ -222,6 +329,37 @@ describe('every registered worker passes its AbortSignal on (#942)', () => {
     }
   });
 
+  it('and fails one that hands a call only something made from the signal, or a conversion or log of it', () => {
+    const converted = async (payload, { signal }) => run(payload, { live: Boolean(signal) });
+    const asText = async (payload, { signal }) => run(payload, String(signal));
+    const logged = async (payload, { context, signal }) => {
+      context.log(signal);
+      return run(payload);
+    };
+    const itsFlag = async (payload, { signal }) => run(payload, signal.aborted);
+    const itsFlagInAnObject = async (payload, { signal }) => run(payload, { aborted: signal?.aborted });
+    const negated = async (payload, { signal }) => run(payload, !signal);
+    const anotherField = async (payload, ctx) => run(payload, ctx.context);
+    const aDefinitionNotACall = async (payload, { signal }) => {
+      function inner(signal) {
+        return signal;
+      }
+      return run(payload, inner);
+    };
+    for (const worker of [
+      converted,
+      asText,
+      logged,
+      itsFlag,
+      itsFlagInAnObject,
+      negated,
+      anotherField,
+      aDefinitionNotACall,
+    ]) {
+      expect(passesSignalOn(worker), worker.toString()).toBe(false);
+    }
+  });
+
   it('and passes one that hands it to a call', () => {
     const destructured = async (payload, { context, signal }) => run(payload, { context, signal });
     const fromContext = async (payload, ctx) => run(payload, ctx.signal);
@@ -229,6 +367,17 @@ describe('every registered worker passes its AbortSignal on (#942)', () => {
       return createForge({ store: sample, signal }).run(payload);
     };
     for (const worker of [destructured, fromContext, intoALibrary]) {
+      expect(passesSignalOn(worker), worker.toString()).toBe(true);
+    }
+  });
+
+  it('and passes a thin wrapper that hands on the whole context, or the signal under another name', () => {
+    const thinWrapper = (p, ctx) => run(p, ctx);
+    const spread = (p, ctx) => run(p, { ...ctx, extra: 1 });
+    const renamed = (p, { signal: stop }) => run(p, { abortSignal: stop });
+    const rest = (p, { context, ...rest }) => run(p, { context, options: rest });
+    const withDefault = async (payload, { signal } = {}) => run(payload, signal);
+    for (const worker of [thinWrapper, spread, renamed, rest, withDefault]) {
       expect(passesSignalOn(worker), worker.toString()).toBe(true);
     }
   });
