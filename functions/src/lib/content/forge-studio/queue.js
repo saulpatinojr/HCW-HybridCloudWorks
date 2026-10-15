@@ -469,7 +469,9 @@ const canForge = (item) => item.status !== 'forging' && item.status !== 'forged'
  * Saves racing on one entry start one job: the loser reads it forging and
  * skips. Then the job document is written and its message emitted. A job
  * write that fails reverts the claim to queued (best effort; should that
- * fail too, the list's reconcile reads "no job document" as failed).
+ * fail too, the list's reconcile reads "no job document" as failed), and so
+ * does a job document that cannot be built — newJobDoc refuses a brief over
+ * the type's payload bound (#942 follow-up).
  * Resolves to `{ started, entry }`, `{ failed, entry }` or `{ skipped }`.
  */
 async function forgeOne(ctx, id, { user, stamp, context, io }) {
@@ -482,8 +484,9 @@ async function forgeOne(ctx, id, { user, stamp, context, io }) {
     return { status: 'forging', jobId, error: null, updatedAt: stamp };
   });
   if (!entry || !jobId) return { skipped: true };
-  const jobDoc = jobFor(entry, { jobId, user, stamp });
+  let jobDoc;
   try {
+    jobDoc = jobFor(entry, { jobId, user, stamp });
     await ctx.store.upsertDoc(JOBS_CONTAINER, jobDoc);
   } catch (error) {
     context?.error?.(`[forge/queue] job write failed: ${error?.message || error}`);

@@ -175,25 +175,54 @@ describe('registration', () => {
       id: 'article_x',
       status: 'published',
       host: { podbean: { pending: true, jobId: 'job-1' } },
+      _etag: '"etag-1"',
     });
     patchDoc.mockResolvedValue({});
+    const job = { id: 'job-1', payload: { transcriptId: 'article_x' } };
 
-    await spec.onComplete(
-      { job: { payload: { transcriptId: 'article_x' } }, status: 'timeout', error: 'job timed out' },
-      { context: {}, now }
-    );
+    await spec.onComplete({ job, status: 'timeout', error: 'job timed out' }, { context: {}, now });
     expect(patchDoc).toHaveBeenCalledTimes(1);
     expect(patchDoc.mock.calls[0][2].host.podbean).toEqual({
       lastAttemptAt: '2026-09-09T10:00:00.000Z',
       error: { status: null, code: 'JOB_TIMEOUT', message: 'job timed out', retryable: true },
     });
+    // Conditional on the version read (#942 follow-up).
+    expect(patchDoc.mock.calls[0][3]).toEqual({ partitionKey: 'article_x', ifMatch: '"etag-1"' });
 
     patchDoc.mockClear();
+    await spec.onComplete({ job, status: 'succeeded', error: null }, { context: {}, now });
+    expect(patchDoc).not.toHaveBeenCalled();
+
+    // A hook for an older job leaves the newer job's reservation alone.
     await spec.onComplete(
-      { job: { payload: { transcriptId: 'article_x' } }, status: 'succeeded', error: null },
+      { job: { ...job, id: 'job-0' }, status: 'timeout', error: 'job timed out' },
       { context: {}, now }
     );
     expect(patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('warns on the hook’s own context when two 412s in a row leave the marker set (#942)', async () => {
+    const [, spec] = registrations.find(([name]) => name === 'publish-podcast-transcript');
+    readDoc.mockReset();
+    patchDoc.mockReset();
+    readDoc.mockResolvedValue({
+      id: 'article_x',
+      status: 'published',
+      host: { podbean: { pending: true, jobId: 'job-1' } },
+      _etag: '"etag-1"',
+    });
+    patchDoc.mockRejectedValue(Object.assign(new Error('precondition failed'), { code: 412 }));
+    const context = { warn: vi.fn() };
+
+    await spec.onComplete(
+      { job: { id: 'job-1', payload: { transcriptId: 'article_x' } }, status: 'timeout', error: 'job timed out' },
+      { context, now: () => new Date('2026-09-09T10:00:00.000Z') }
+    );
+
+    expect(patchDoc).toHaveBeenCalledTimes(2);
+    expect(context.warn).toHaveBeenCalledTimes(1);
+    expect(context.warn.mock.calls[0][0]).not.toMatch(/article_x|job-1/);
+    patchDoc.mockReset();
   });
   it('registers the two recording-side jobs (#442) at editor, like the routes that enqueue them', () => {
     for (const name of ['generate-podcast-transcript-from-recording', 'transcribe-recording-upload']) {

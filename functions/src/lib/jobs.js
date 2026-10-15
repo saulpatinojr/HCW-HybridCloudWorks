@@ -43,6 +43,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { ROLE_NAMES, roleLevel } from './auth/roles.js';
+import { runAsJob } from './job-context.js';
 
 export const JOBS_CONTAINER = 'jobs';
 export const JOBS_QUEUE = 'platform-jobs';
@@ -193,11 +194,38 @@ function registerBuiltins() {
     description: 'Smoke test — echoes the payload after an optional delayMs (max 20000).',
     maxPayloadBytes: 1024,
     timeoutMs: 30_000,
-    worker: async (payload) => {
+    /** Echo the payload; the delay ends with the job's signal, like every worker's wait. */
+    worker: async (payload, { signal } = {}) => {
       const delay = Math.min(Math.max(Number(payload?.delayMs) || 0, 0), 20_000);
-      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      if (delay) await waitUnlessAborted(delay, signal);
       return { echoed: payload ?? null, delayedMs: delay };
     },
+  });
+}
+
+/**
+ * Resolve after `ms`, or reject with the signal's reason as soon as it fires,
+ * so a wait does not hold a job that is already over (#942 follow-up).
+ *
+ * @param {number} ms
+ * @param {AbortSignal|null|undefined} signal
+ * @returns {Promise<void>}
+ */
+function waitUnlessAborted(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason || new Error('aborted'));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason || new Error('aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -210,14 +238,47 @@ registerBuiltins();
 const SYSTEM_FIELDS = new Set(['_rid', '_self', '_etag', '_attachments', '_ts']);
 
 /**
- * A fresh `queued` job document. One shape, shared by `enqueueJob` and every
- * route that enqueues a job of its own (cms/podcast/transcripts/generate), so
- * the worker's claim, the sweeper and `getJob` read the same fields wherever
- * the job came from.
+ * A payload's size as a job document stores it: its JSON, in UTF-8 bytes.
+ * An absent payload is MEASURED as `null` (4 bytes), because
+ * `JSON.stringify(undefined)` is not JSON. It is not stored as `null`:
+ * newJobDoc keeps the payload as given, so an undefined payload leaves the
+ * field out of the stored document and the worker receives undefined.
  *
- * @param {{ id: string, type: string, payload: any, requestedBy?: {oid?: string, email?: string}|null, createdAt: string }} fields
+ * @param {any} payload
+ * @returns {number}
  */
-export function newJobDoc({ id, type, payload, requestedBy, createdAt }) {
+export function jobPayloadBytes(payload) {
+  return Buffer.byteLength(JSON.stringify(payload ?? null), 'utf8');
+}
+
+/**
+ * A fresh `queued` job document. One shape, shared by `enqueueJob` and every
+ * route, timer and command that enqueues a job of its own (cms/podcast,
+ * Listen & Learn, the Forge Studio queue, the Cosmos export scheduler, the
+ * Telegram /approve command), so the worker's claim, the sweeper and
+ * `getJob` read the same fields wherever the job came from.
+ *
+ * It is also where every job document's payload bound is enforced (#942
+ * follow-up). enqueueJob answers an oversized payload with a 413 before it
+ * gets here, but the other writers did not check at all, and the sweeper
+ * reads whole job documents (#1198) on the strength of that bound. Every
+ * writer builds its document here, and jobs.payload-bound.test.js fails a
+ * write to the jobs container that does not. The limit is `maxPayloadBytes`
+ * when given (enqueueJob passes its type's), else the registered type's, else
+ * the 64 KiB default for a type this process has not registered.
+ *
+ * @param {{ id: string, type: string, payload: any, requestedBy?: {oid?: string, email?: string}|null, createdAt: string, maxPayloadBytes?: number }} fields
+ * @throws {Error} code `JOB_PAYLOAD_TOO_LARGE`, status 413, for a payload over the limit
+ */
+export function newJobDoc({ id, type, payload, requestedBy, createdAt, maxPayloadBytes }) {
+  const limit = maxPayloadBytes ?? registry.get(type)?.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
+  const bytes = jobPayloadBytes(payload);
+  if (bytes > limit) {
+    throw Object.assign(new Error(`Payload too large (${bytes} bytes; max ${limit} for ${type})`), {
+      code: 'JOB_PAYLOAD_TOO_LARGE',
+      status: 413,
+    });
+  }
   return {
     id,
     type,
@@ -345,11 +406,14 @@ export function createJobHandlers({
       }
 
       const jobId = uuid();
+      // The size was checked above against this type's limit, and answered
+      // with a 413; newJobDoc holds the same limit for every other writer.
       const doc = newJobDoc({
         id: jobId,
         type,
         payload,
         requestedBy: auth.user,
+        maxPayloadBytes: spec.maxPayloadBytes,
         createdAt: now().toISOString(),
       });
       // Computed before the write so a hook that throws is logged against a
@@ -512,15 +576,23 @@ export function createJobHandlers({
 
       try {
         const result = await Promise.race([
-          spec.worker(doc.payload, {
-            context,
-            job: claimed,
-            now,
-            signal: controller.signal,
-            abortSignal: controller.signal,
-          }),
+          // Inside the job's context, the shared Cosmos and Blob clients
+          // refuse a write that starts after the timeout (job-context.js).
+          // This code, and the hooks below, run outside it.
+          runAsJob(controller.signal, () =>
+            spec.worker(doc.payload, {
+              context,
+              job: claimed,
+              now,
+              signal: controller.signal,
+              abortSignal: controller.signal,
+            })
+          ),
           timeout,
-        ]);
+          // The deadline is the worker's, so it is disarmed the moment the
+          // race settles: a worker that finished just inside it must not have
+          // its signal fire during the terminal write or the hook below.
+        ]).finally(() => clearTimeout(timer));
         await store.patchDoc(JOBS_CONTAINER, jobId, {
           status: 'succeeded',
           finishedAt: now().toISOString(),
@@ -555,6 +627,8 @@ export function createJobHandlers({
         });
         return { jobId, outcome: timedOut ? 'timeout' : 'failed' };
       } finally {
+        // Already cleared when the race settled; this covers a worker that
+        // threw before the race was entered.
         clearTimeout(timer);
       }
     },
@@ -605,6 +679,10 @@ export function createJobSweeper({ store, now = () => new Date(), log = {}, regi
    * minutes, and a single conservative cutoff would leave short jobs hanging
    * for half an hour. A job is reaped only once its OWN budget plus a grace
    * margin has elapsed, so a slow-but-live worker is never stolen from.
+   *
+   * This query and the queued one read whole documents (#1198), so the hooks
+   * get `job.payload`. That stays cheap because newJobDoc bounds every job
+   * document's payload by its type's `maxPayloadBytes`.
    */
   async function reapAbandoned(types = typesToUse) {
     const cutoff = new Date(now().getTime() - RUNNING_GRACE_MS).toISOString();

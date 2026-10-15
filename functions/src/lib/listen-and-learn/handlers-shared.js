@@ -113,10 +113,20 @@ export async function readRequest(
 export const noSetMessage = (ref) => `No Listen & Learn set for ${ref.platform}/${ref.examCode}`;
 export const noChapterMessage = (ref, chapterId) => `No chapter ${chapterId} in ${ref.id}`;
 
+/** What a route answers when the job it would queue is over its type's payload bound. */
+export const TOO_LARGE_TO_QUEUE =
+  'That request is too large to queue as one job. Shorten it, or split it into smaller parts, and try again.';
+
 /**
  * The scaffold every route shares: the role guard, then the route body,
  * with any throw logged under `label` and answered as a 500 carrying
  * `message`. The body answers everything else.
+ *
+ * The one throw that is the caller's to fix is newJobDoc's
+ * JOB_PAYLOAD_TOO_LARGE (#942): a job document over its type's payload
+ * bound. That is answered 413 with a fixed sentence, keyed on the code
+ * newJobDoc sets rather than on any `status` an error happens to carry, so
+ * a 413 from somewhere else is not passed off as the caller's.
  */
 export const guardedWith =
   (guard) =>
@@ -127,6 +137,10 @@ export const guardedWith =
     try {
       return await run({ request, context, auth, io });
     } catch (error) {
+      if (error?.code === 'JOB_PAYLOAD_TOO_LARGE') {
+        context.warn?.(`${label} refused: JOB_PAYLOAD_TOO_LARGE`);
+        return json(413, { error: TOO_LARGE_TO_QUEUE });
+      }
       context.error(`${label} failed:`, error);
       return json(500, { error: message });
     }

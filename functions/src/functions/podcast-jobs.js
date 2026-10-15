@@ -42,6 +42,7 @@ import {
   parseRecordingPayload,
 } from '../lib/podcast/recording-generate.js';
 import {
+  UPLOAD_JOB_MAX_PAYLOAD_BYTES,
   UPLOAD_JOB_TYPE,
   parseUploadPayload,
   transcribeUpload,
@@ -178,18 +179,24 @@ registerJobType(PUBLISH_JOB_TYPE, {
   // specific error rather than as a job timeout.
   timeoutMs: 10 * 60 * 1000,
   worker: runTranscriptPublish,
-  // A job that died around the step (a thrown store error, the timeout) would
-  // leave host.podbean.pending true forever; clear it and say why.
-  onComplete: async ({ job, status, error }, { now }) => {
+  /**
+   * A job that died around the step (a thrown store error, the timeout, a
+   * poisoned or reaped job) would leave host.podbean.pending true forever;
+   * clear it and say why — but only this job's own reservation, under the
+   * version read, so a newer Publish's marker or a stored episode stands.
+   */
+  onComplete: async ({ job, status, error }, { context, now }) => {
     if (status === 'succeeded') return;
     const parsed = parsePublishPayload(job?.payload);
     if (parsed.error) return;
     await recordHostJobFailure({
       store: { readDoc, patchDoc },
       id: parsed.value.transcriptId,
+      jobId: job?.id,
       status,
       error,
       now,
+      log: context,
     });
   },
 });
@@ -269,8 +276,9 @@ registerJobType(UPLOAD_JOB_TYPE, {
   role: 'editor',
   description:
     'Hand one uploaded audio file to the Plaud Embedded Transcription API, poll until it is transcribed and store the transcript in recordings for the Recording Hub.',
-  // A blob path and a title.
-  maxPayloadBytes: 1024,
+  // A blob path and a title; the route checks the same bound before it
+  // stores the audio.
+  maxPayloadBytes: UPLOAD_JOB_MAX_PAYLOAD_BYTES,
   // Plaud transcribes at roughly real time or faster; a two-hour recording
   // fits, and the poll loop stops with a named error a minute before this.
   timeoutMs: UPLOAD_JOB_TIMEOUT_MS,

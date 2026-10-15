@@ -22,6 +22,7 @@ import {
   recordQueueOutcome,
   updateEntry,
 } from './queue.js';
+import { registerJobType, resetJobTypes } from '../../jobs.js';
 
 const NOW = new Date('2026-10-06T12:00:00.000Z');
 const user = { oid: 'u1', email: 'owner@hcw.test' };
@@ -381,6 +382,23 @@ describe('Save: one forge-from-url job per entry, the brief on the payload', () 
     ]);
     expect((await listed(h)).map((i) => i.status).sort()).toEqual(['forging', 'queued', 'queued']);
     expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('a job document over its type’s payload bound is not written, and the claim is reverted (#942 follow-up)', async () => {
+    // A limit far below a real brief, so newJobDoc refuses the document.
+    registerJobType('forge-from-url', { role: 'editor', worker: async () => {}, maxPayloadBytes: 64 });
+    try {
+      const { h, store } = await seeded();
+      const enqueue = vi.fn();
+      const body = parse(await h.forge(request({ ids: [idOf(1)] }), context, { enqueue }));
+      expect(body.started).toEqual([]);
+      expect(body.notStarted[0]).toMatchObject({ id: idOf(1), error: expect.stringMatching(/Payload too large/) });
+      expect(store.upsertDoc.mock.calls.filter(([c]) => c === 'jobs')).toEqual([]);
+      expect(enqueue).not.toHaveBeenCalled();
+      expect((await listed(h)).find((i) => i.id === idOf(1))).toMatchObject({ status: 'queued', jobId: null });
+    } finally {
+      resetJobTypes();
+    }
   });
 });
 

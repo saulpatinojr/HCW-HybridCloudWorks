@@ -21,6 +21,14 @@
  * Required app settings: STORAGE_BLOB_ENDPOINT (or STORAGE_ACCOUNT_NAME)
  * Required RBAC on the Function App MI: Storage Blob Data Contributor, plus
  * Storage Blob Delegator for `generateSasUrl`.
+ *
+ * An upload or a delete first calls `refuseWriteAfterJobAbort`
+ * (job-context.js): inside a platform job whose budget has run out, one
+ * that starts now throws a refusal carrying the job's reason instead of
+ * reaching Storage (#942). One already dispatched is left to finish, and is
+ * never handed the job's signal: cancelling it on the client would not
+ * recall it from the service, and would leave the job unable to tell a
+ * stored blob from a failed upload. Outside a job none of this does anything.
  */
 
 import {
@@ -30,6 +38,7 @@ import {
   SASProtocol,
 } from '@azure/storage-blob';
 import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
+import { refuseWriteAfterJobAbort } from './job-context.js';
 
 let blobServiceClient = null;
 
@@ -137,6 +146,7 @@ export async function uploadBlob(
   metadata = {},
   options = {}
 ) {
+  refuseWriteAfterJobAbort();
   const containerClient = getContainerClient(containerName);
   const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
@@ -176,6 +186,7 @@ export async function uploadBlobFromStream(
   contentType,
   options = {}
 ) {
+  refuseWriteAfterJobAbort();
   const containerClient = getContainerClient(containerName);
   const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
@@ -366,6 +377,7 @@ export async function readBlobRangeForDelivery(containerName, blobName, { start,
  * @param {string} blobName
  */
 export async function deleteBlob(containerName, blobName) {
+  refuseWriteAfterJobAbort();
   const containerClient = getContainerClient(containerName);
   const blobClient = containerClient.getBlobClient(blobName);
   await blobClient.deleteIfExists();

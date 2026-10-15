@@ -6,10 +6,19 @@
  *
  * Required app settings: COSMOS_ENDPOINT, COSMOS_DATABASE
  * Required RBAC role on the Function App MI: Cosmos DB Built-in Data Contributor
+ *
+ * Every write first calls `refuseWriteAfterJobAbort` (job-context.js): inside
+ * a platform job whose budget has run out, a write that starts now throws a
+ * refusal carrying the job's reason instead of reaching Cosmos (#942). A
+ * write already dispatched is left to finish, and is never handed the job's
+ * signal: cancelling it on the client would not recall it from the service,
+ * and would leave the job unable to tell a landed write from a failed one.
+ * Outside a job none of this does anything.
  */
 
 import { CosmosClient } from '@azure/cosmos';
 import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
+import { refuseWriteAfterJobAbort } from './job-context.js';
 
 let client = null;
 let database = null;
@@ -151,6 +160,7 @@ export async function readDoc(containerName, id, partitionKey) {
  * @returns {Promise<object>}
  */
 export async function upsertDoc(containerName, document) {
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   const { resource } = await container.items.upsert(document);
   return resource;
@@ -179,6 +189,7 @@ export async function upsertDoc(containerName, document) {
  * @throws {{code: 412}} when the document changed since it was read
  */
 export async function replaceDocIfMatch(containerName, document, options = {}) {
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   const pk = resolvePartitionKey(containerName, options.partitionKey, document.id);
   const { resource } = await container
@@ -247,6 +258,7 @@ export async function incrementIf(containerName, id, options) {
   if (!path?.startsWith('/')) {
     throw new Error(`incrementIf: path must be a JSON Pointer, got ${JSON.stringify(path)}`);
   }
+  refuseWriteAfterJobAbort(containerName);
 
   const container = getContainer(containerName);
   const pk = resolvePartitionKey(containerName, partitionKey, id);
@@ -303,6 +315,7 @@ export function bindConditionValues(condition, values = {}) {
  * @throws {{code: 409}} when a document with that id already exists
  */
 export async function createDoc(containerName, document) {
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   const { resource } = await container.items.create(document);
   return resource;
@@ -379,6 +392,7 @@ export async function patchDoc(containerName, id, updates, options = {}) {
   if (plan.strategy === 'noop') {
     return readDoc(containerName, id, options.partitionKey);
   }
+  refuseWriteAfterJobAbort(containerName);
 
   const container = getContainer(containerName);
   const pk = resolvePartitionKey(containerName, options.partitionKey, id);
@@ -393,7 +407,15 @@ export async function patchDoc(containerName, id, updates, options = {}) {
 
   // A caller-supplied ETag makes the retry wrong: retrying re-reads, which is
   // exactly the "decide from a stale document" the caller asked to prevent.
-  return readModifyWrite(container, id, pk, plan.entries, options.ifMatch ? 1 : 0, options.ifMatch);
+  return readModifyWrite(
+    containerName,
+    container,
+    id,
+    pk,
+    plan.entries,
+    options.ifMatch ? 1 : 0,
+    options.ifMatch
+  );
 }
 
 /**
@@ -442,8 +464,30 @@ export function planPatch(updates) {
  * ETag-guarded read-modify-write, applying dotted field paths onto a copy.
  * One retry: a 412 means someone else wrote between our read and our replace,
  * and re-reading resolves it unless the document is genuinely hot.
+ *
+ * The replace is a write of its own, started after a read that can take any
+ * time, so the job-abort guard is applied again immediately before each one
+ * (#942): patchDoc's guard ran before the read, and a job whose deadline
+ * passed during the read, or during the 412 re-read, must not then write.
+ *
+ * @param {string} containerName - for the guard; `container` is its client
+ * @param {object} container
+ * @param {string} id
+ * @param {string} pk
+ * @param {[string, any][]} entries
+ * @param {number} [attempt]
+ * @param {string|null} [ifMatch]
+ * @returns {Promise<object>}
  */
-async function readModifyWrite(container, id, pk, entries, attempt = 0, ifMatch = null) {
+async function readModifyWrite(
+  containerName,
+  container,
+  id,
+  pk,
+  entries,
+  attempt = 0,
+  ifMatch = null
+) {
   const { resource: current } = await container.item(id, pk).read();
   if (!current) {
     // The SDK's read answers a missing item with no resource rather than
@@ -464,6 +508,7 @@ async function readModifyWrite(container, id, pk, entries, attempt = 0, ifMatch 
     applyFieldPath(next, String(field).split('.'), value);
   }
 
+  refuseWriteAfterJobAbort(containerName);
   try {
     const { resource } = await container
       .item(id, pk)
@@ -471,7 +516,7 @@ async function readModifyWrite(container, id, pk, entries, attempt = 0, ifMatch 
     return resource;
   } catch (err) {
     if (err.code === 412 && attempt === 0) {
-      return readModifyWrite(container, id, pk, entries, attempt + 1, ifMatch);
+      return readModifyWrite(containerName, container, id, pk, entries, attempt + 1, ifMatch);
     }
     throw err;
   }
@@ -509,6 +554,7 @@ export function applyFieldPath(target, segments, value) {
  * @param {string} [partitionKey]
  */
 export async function deleteDoc(containerName, id, partitionKey) {
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   await container.item(id, resolvePartitionKey(containerName, partitionKey, id)).delete();
 }
@@ -528,6 +574,7 @@ export async function deleteDoc(containerName, id, partitionKey) {
  */
 export async function deleteDocIfMatch(containerName, id, etag, partitionKey) {
   if (!etag) throw new Error('deleteDocIfMatch: an etag is required');
+  refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   await container
     .item(id, resolvePartitionKey(containerName, partitionKey, id))

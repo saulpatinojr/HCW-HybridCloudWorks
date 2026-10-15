@@ -50,6 +50,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { PRODUCTION_ORIGINS } from '../auth/cors.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
+import { outsideJob } from '../job-context.js';
 import { MCP_OAUTH_CALLBACK_PATH, validateMcpUrl } from './mcp-policy.js';
 
 const MCP_CONTAINER = 'mcp_servers';
@@ -1066,11 +1067,25 @@ const inflight = new Map();
  * document is then marked as needing a connection, tokens cleared); or
  * `{ ok: false, transient: true, message }` when the server could not be
  * reached, which leaves everything as it was.
+ *
+ * The refresh is shared by every caller in the process, so it runs outside
+ * any platform job's context (job-context.js `outsideJob`, #942): a refresh
+ * a job happened to start must not carry that job's abort to a route that
+ * joins it.
+ *
+ * @param {object} deps
+ * @param {{ readDoc: Function, patchDoc: Function }} deps.store
+ * @param {string} deps.serverId
+ * @param {object} deps.server the server document as the caller read it
+ * @param {Function} deps.http
+ * @param {() => Date} [deps.now]
+ * @param {{ warn?: Function }} [deps.log]
+ * @returns {Promise<object>}
  */
 export function refreshOAuthToken({ store, serverId, server, http, now = () => new Date(), log }) {
   if (inflight.has(serverId)) return inflight.get(serverId);
-  const pending = performRefresh({ store, serverId, server, http, now, log }).finally(() =>
-    inflight.delete(serverId)
+  const pending = outsideJob(() => performRefresh({ store, serverId, server, http, now, log })).finally(
+    () => inflight.delete(serverId)
   );
   inflight.set(serverId, pending);
   return pending;

@@ -68,6 +68,13 @@ import { RECORDINGS_CONTAINER } from './recording-generate.js';
 /** The platform job that polls Plaud. Shared with the route that enqueues it. */
 export const UPLOAD_JOB_TYPE = 'transcribe-recording-upload';
 
+/**
+ * The upload job's payload bound: a blob path and a title. Shared by the
+ * registration (functions/podcast-jobs.js) and the route, which checks it
+ * before the audio is stored (#942).
+ */
+export const UPLOAD_JOB_MAX_PAYLOAD_BYTES = 1024;
+
 /** Prefix under the `podcast` container. Validated by blob-paths `isValidBlobPath`. */
 export const UPLOAD_PREFIX = 'uploads';
 
