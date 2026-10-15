@@ -143,11 +143,23 @@ describe('bootstrap.sh and lab-image/versions.env', () => {
 
   it('builds a new generation on a changed requirements file, a changed release or a changed Python, and keeps the --version guard', () => {
     expect(SCRIPT).toContain(
-      'hcw_ansible_generation="${HCW_ANSIBLE_GENERATIONS}/${hcw_ansible_core_version}-py${PYTHON_VERSION}-$(sha256sum "${hcw_ansible_requirements}" | cut -c 1-12)"'
+      'hcw_ansible_prefix="${HCW_ANSIBLE_GENERATIONS}/${hcw_ansible_core_version}-py${PYTHON_VERSION}-$(sha256sum "${hcw_ansible_requirements}" | cut -c 1-12)"'
     );
-    expect(SCRIPT).toContain('if ! cmp -s "${hcw_ansible_requirements}" "${hcw_ansible_record}" || ! hcw_ansible_answers "${hcw_ansible_generation}"; then');
+    expect(SCRIPT).toContain('cmp -s "${hcw_ansible_requirements}" "$1/hcw-requirements.txt" && hcw_ansible_answers "$1"');
     expect(SCRIPT).toContain('grep -qF "[core ${hcw_ansible_core_version}]"');
     expect(SCRIPT).toContain('grep -qF "python version = ${PYTHON_VERSION} ("');
+  });
+
+  it('gives every build a directory of its own, and removes what the link points to only after the link has moved off it', () => {
+    expect(SCRIPT).toContain('hcw_ansible_generation="$(mktemp -d "${hcw_ansible_prefix}-$(date -u +%Y%m%dT%H%M%SZ)-XXXX")"');
+    // No path the lookup may have chosen, or the link may point to, is removed by name before the switch.
+    expect(SCRIPT).not.toContain('rm -rf -- "${hcw_ansible_generation}"');
+    const swap = at('mv -T "${HCW_ANSIBLE_VENV}.next" "${HCW_ANSIBLE_VENV}"');
+    const removeInUse = at('rm -rf -- "${hcw_ansible_in_use}"');
+    expect(removeInUse).toBeGreaterThan(swap);
+    // The clean-up before a build spares the generation in use.
+    expect(SCRIPT).toContain('[ "${hcw_ansible_candidate}" = "${hcw_ansible_in_use}" ] || rm -rf -- "${hcw_ansible_candidate}"');
+    expect(at('[ "${hcw_ansible_candidate}" = "${hcw_ansible_in_use}" ] || rm -rf')).toBeLessThan(at('"${UV_BIN}" venv --managed-python'));
   });
 
   it('links the four commands through HCW_ANSIBLE_VENV before the play, and retires the old uv tool only after it, once the installed helper no longer runs its Python', () => {
@@ -404,7 +416,9 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     const first = step(VERSIONS_ENV);
     expect(first.status, first.stderr).toBe(0);
     const generation = inUse();
-    expect(generation).toMatch(new RegExp(`^${esc(root)}/opt/uv/ansible-core-generations/${esc(pinned)}-py${esc(PINNED_PYTHON)}-[0-9a-f]{12}$`));
+    expect(generation).toMatch(
+      new RegExp(`^${esc(root)}/opt/uv/ansible-core-generations/${esc(pinned)}-py${esc(PINNED_PYTHON)}-[0-9a-f]{12}-\\d{8}T\\d{6}Z-[A-Za-z0-9]{4}$`)
+    );
     expect(first.stdout).toContain(`switched ${root}/opt/uv/ansible-core to ${generation}\n`);
     for (const command of COMMANDS) expect(sh(`readlink "$ROOT/bin/${command}"`)).toBe(`${root}/opt/uv/ansible-core/bin/${command}`);
     expect(first.stdout).toContain(`ansible-playbook [core ${pinned}]`);
@@ -465,6 +479,66 @@ describe.skipIf(!linksReady)('the generation switch and the uv tool\'s retiremen
     expect(result.status, result.stderr).toBe(0);
     expect(inUse()).toContain('/opt/uv/ansible-core-generations/');
     expect(answer()).toContain(`[core ${pinned}]`);
+  });
+
+  // The generation in use for these very pins, spoiled in one of the two ways
+  // the lookup refuses it. Either way it may still serve what does not need the
+  // spoiled part (hcw-vault-set's ansible-vault and Python), so a rebuild must
+  // not take it away before its replacement is in place.
+  const pinsOf = (path) => name(path).match(new RegExp(`^${esc(pinned)}-py${esc(PINNED_PYTHON)}-[0-9a-f]{12}`))?.[0];
+  for (const [spoiled, spoil] of [
+    ['fails its version check', 'printf "#!/usr/bin/env bash\\nexit 1\\n" >"$GEN/bin/ansible-playbook"'],
+    ['carries a stale record', 'echo "stale==0 --hash=sha256:0" >>"$GEN/hcw-requirements.txt"'],
+  ]) {
+    it(`keeps the generation in use, which ${spoiled}, in use and on disk when the rebuild of the same pins fails`, () => {
+      expect(step(VERSIONS_ENV).status).toBe(0);
+      const active = inUse();
+      sh(spoil, { GEN: active });
+      const failed = step(VERSIONS_ENV, { UV_STUB_FAIL: 'install' });
+      expect(failed.status).not.toBe(0);
+      expect(inUse()).toBe(active);
+      expect(sh('[ -d "$GEN" ] && echo there', { GEN: active })).toBe('there');
+      expect(sh('"$ROOT/bin/ansible-vault" --version')).toContain(`[core ${pinned}]`);
+
+      // The next good run replaces it, and the failed build's directory goes too.
+      const rebuilt = step(VERSIONS_ENV);
+      expect(rebuilt.status, rebuilt.stderr).toBe(0);
+      expect(generations()).toEqual([name(inUse())]);
+    });
+
+    it(`replaces the generation in use, which ${spoiled}, with a build in a directory of its own, and removes it only after the switch`, () => {
+      expect(step(VERSIONS_ENV).status).toBe(0);
+      const active = inUse();
+      sh(spoil, { GEN: active });
+      const rebuilt = step(VERSIONS_ENV);
+      expect(rebuilt.status, rebuilt.stderr).toBe(0);
+      const now = inUse();
+      expect(now).not.toBe(active);
+      expect(pinsOf(now)).toBeTruthy();
+      expect(pinsOf(now)).toBe(pinsOf(active));
+      expect(answer()).toContain(`[core ${pinned}]`);
+      expect(sh('[ -e "$GEN" ] || echo gone', { GEN: active })).toBe('gone');
+      expect(generations()).toEqual([name(now)]);
+      const switched = rebuilt.stdout.indexOf(`switched ${root}/opt/uv/ansible-core to ${now}`);
+      expect(switched).toBeGreaterThan(-1);
+      expect(rebuilt.stdout.indexOf(`removing ${active}`)).toBeGreaterThan(switched);
+    });
+  }
+
+  it('keeps the previous pins\' generation through a rebuild of the current pins, so the switch back still needs no download', () => {
+    expect(step(withVersion(pinned)).status).toBe(0);
+    const previous = inUse();
+    expect(step(withVersion(later(97))).status).toBe(0);
+    const spoiled = inUse();
+    sh('printf "#!/usr/bin/env bash\\nexit 1\\n" >"$GEN/bin/ansible-playbook"', { GEN: spoiled });
+    const rebuilt = step(withVersion(later(97)));
+    expect(rebuilt.status, rebuilt.stderr).toBe(0);
+    expect(generations()).toEqual([previous, inUse()].map(name).sort());
+
+    const back = step(withVersion(pinned));
+    expect(back.status, back.stderr).toBe(0);
+    expect(inUse()).toBe(previous);
+    expect(calls('^venv ')).toBe(3);
   });
 
   /** A host an earlier bootstrap.sh set up, after this one has linked the four commands through HCW_ANSIBLE_VENV. */

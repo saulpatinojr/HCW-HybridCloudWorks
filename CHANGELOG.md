@@ -35,12 +35,14 @@ This project has not cut a tagged release; entries are grouped under
   own two `printf` lines, and installs it with `uv pip install
   --require-hashes --only-binary :all:`, then `uv pip check` and the fetch
   stage's count check, into a new venv under
-  `/opt/uv/ansible-core-generations`, one per set of pins, built beside the
-  one in use. Only when that passes, and its `ansible-playbook --version`
-  reports the pinned release on the pinned Python, does the link
-  `/opt/uv/ansible-core` move to it, so a failed download, hash or check
-  leaves the host on the environment that worked; the one moved from is
-  kept until the next move. `ansible`, `ansible-playbook`, `ansible-galaxy`
+  `/opt/uv/ansible-core-generations`, a directory of its own for every
+  build, built beside the one in use. Only when that passes, and its
+  `ansible-playbook --version` reports the pinned release on the pinned
+  Python, does the link `/opt/uv/ansible-core` move to it, so a failed
+  download, hash or check leaves the host on the environment it was using,
+  even when that is a build of the same pins that has stopped passing; a
+  generation is removed only after the link has moved off it, and one of
+  other pins is kept until the next move. `ansible`, `ansible-playbook`, `ansible-galaxy`
   and `ansible-vault` are linked into `/usr/local/bin` through that link,
   and `hcw-vault-set` runs its Python through it. The old uv tool under
   `/opt/uv/tools` is removed after the play of the first run that has

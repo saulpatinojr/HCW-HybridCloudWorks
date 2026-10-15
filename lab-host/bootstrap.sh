@@ -488,24 +488,36 @@ fi
 # bootstrap.sh printed beside it verified nothing.
 #
 # The environment is a venv on the uv interpreter above, one generation per
-# set of pins: a directory under HCW_ANSIBLE_GENERATIONS named for its
+# build: a directory under HCW_ANSIBLE_GENERATIONS whose name starts with its
 # ansible-core release, its Python and the first twelve hex digits of its
-# requirements file's SHA256, so a dependency bump and a Python bump each name
-# a new one. HCW_ANSIBLE_VENV is a symlink to the generation in use, and the
-# four commands and hcw-vault-set reach ansible-core only through it.
+# requirements file's SHA256 (the pins prefix), so a dependency bump and a
+# Python bump each start a new prefix, and ends with the build's UTC time and
+# a random tag, so no build ever reuses a directory. HCW_ANSIBLE_VENV is a
+# symlink to the generation in use, and the four commands and hcw-vault-set
+# reach ansible-core only through it.
 #
-# A generation that is not complete is built beside the one in use, never in
-# its place: installed, checked with `uv pip check`, counted (it holds exactly
-# as many packages as the file has lines, the fetch stage's check), and asked
-# for its ansible-core release and Python. Its copy of the requirements file,
-# written last, marks it complete. Only then is the link switched, by renaming
-# a new link over it, which is atomic, so a download, hash or check failure
-# stops the run with every command and the helper still on the generation
-# that worked (CodeRabbit, #1189). The generation switched away from is kept
+# A generation is complete when its copy of the requirements file, written
+# last, matches and its ansible-playbook reports the pinned release and
+# Python. The run uses the generation in use when it is a complete build of
+# these pins, or else any other complete build of them (a switch back after a
+# rollback), and only when there is none builds a new one beside it: installed,
+# checked with `uv pip check`, counted (it holds exactly as many packages as
+# the file has lines, the fetch stage's check), and asked for its release and
+# Python. Only then is the link switched, by renaming a new link over it, which
+# is atomic, so a download, hash or check failure stops the run with every
+# command and the helper still on the generation they were using, even when
+# that one is a build of these pins that has stopped passing (CodeRabbit,
+# #1189): it may still serve the helper, and the failure may be passing. A
+# venv's commands name its directory in their first line, so a build cannot be
+# made elsewhere and moved into place; it gets a directory of its own instead.
+#
+# Nothing the link points to is removed before the link has moved off it.
+# After the switch, the generation switched away from is removed when it was a
+# build of the same pins, which the new build replaces, and otherwise kept
 # until the next switch, so holding a host back with HCW_REPO_REF to the
 # commit that pinned it switches back without a download; any older one is
-# removed. The one generation ever rebuilt in place is the one in use when it
-# already fails those checks, so there is nothing working to lose.
+# removed then. Before a build, the other builds of these pins, none of which
+# is complete, are removed, except the one in use.
 hcw_ansible_requirements="$(mktemp)"
 trap 'rm -f "${hcw_ansible_requirements}"' EXIT
 # hcw_read_ansible_pins FILE: set the three ANSIBLE_CORE_* variables from
@@ -555,9 +567,7 @@ elif grep -qvE '^[a-z0-9][a-z0-9._-]*==[0-9][0-9A-Za-z.+!]* --hash=sha256:[0-9a-
   exit 1
 fi
 hcw_ansible_lines="$(wc -l <"${hcw_ansible_requirements}")"
-hcw_ansible_generation="${HCW_ANSIBLE_GENERATIONS}/${hcw_ansible_core_version}-py${PYTHON_VERSION}-$(sha256sum "${hcw_ansible_requirements}" | cut -c 1-12)"
-hcw_ansible_python="${hcw_ansible_generation}/bin/python"
-hcw_ansible_record="${hcw_ansible_generation}/hcw-requirements.txt"
+hcw_ansible_prefix="${HCW_ANSIBLE_GENERATIONS}/${hcw_ansible_core_version}-py${PYTHON_VERSION}-$(sha256sum "${hcw_ansible_requirements}" | cut -c 1-12)"
 hcw_ansible_in_use="$(readlink "${HCW_ANSIBLE_VENV}" || true)"
 
 # True when a generation's ansible-playbook runs and reports this ansible-core
@@ -570,6 +580,12 @@ hcw_ansible_answers() {
     && grep -qF "python version = ${PYTHON_VERSION} (" <<<"${hcw_version_output}"
 }
 
+# True when a generation is a complete build of these pins: its copy of the
+# requirements file matches, and it answers.
+hcw_ansible_complete() {
+  cmp -s "${hcw_ansible_requirements}" "$1/hcw-requirements.txt" && hcw_ansible_answers "$1"
+}
+
 # The four commands are linked through HCW_ANSIBLE_VENV, not to a generation,
 # so switching that one link moves all of them at once.
 hcw_link_ansible_commands() {
@@ -579,10 +595,32 @@ hcw_link_ansible_commands() {
   done
 }
 
-if ! cmp -s "${hcw_ansible_requirements}" "${hcw_ansible_record}" || ! hcw_ansible_answers "${hcw_ansible_generation}"; then
-  log "installing ansible-core ${hcw_ansible_core_version} and the $((hcw_ansible_lines - 1)) wheels it depends on into ${hcw_ansible_generation} on CPython ${PYTHON_VERSION}, each checked against its SHA256 in lab-image/versions.env; ${HCW_ANSIBLE_VENV} moves to it only once it passes"
-  rm -rf -- "${hcw_ansible_generation}"
+hcw_ansible_generation=
+if [[ "${hcw_ansible_in_use}" == "${hcw_ansible_prefix}"* ]] && hcw_ansible_complete "${hcw_ansible_in_use}"; then
+  hcw_ansible_generation="${hcw_ansible_in_use}"
+else
+  for hcw_ansible_candidate in "${hcw_ansible_prefix}"*; do
+    if [ "${hcw_ansible_candidate}" != "${hcw_ansible_in_use}" ] && hcw_ansible_complete "${hcw_ansible_candidate}"; then
+      hcw_ansible_generation="${hcw_ansible_candidate}"
+      break
+    fi
+  done
+fi
+
+if [ -z "${hcw_ansible_generation}" ]; then
+  if [[ "${hcw_ansible_in_use}" == "${hcw_ansible_prefix}"* ]]; then
+    log "${hcw_ansible_in_use} is a build of these pins that no longer passes its checks; it stays in use until a new build passes"
+  fi
+  for hcw_ansible_candidate in "${hcw_ansible_prefix}"*; do
+    [ "${hcw_ansible_candidate}" = "${hcw_ansible_in_use}" ] || rm -rf -- "${hcw_ansible_candidate}"
+  done
   install -d -m 0755 -o root -g root "${HCW_ANSIBLE_GENERATIONS}"
+  # mktemp picks a name nothing has, and uv makes the venv there itself.
+  hcw_ansible_generation="$(mktemp -d "${hcw_ansible_prefix}-$(date -u +%Y%m%dT%H%M%SZ)-XXXX")"
+  rmdir -- "${hcw_ansible_generation}"
+  hcw_ansible_python="${hcw_ansible_generation}/bin/python"
+  hcw_ansible_record="${hcw_ansible_generation}/hcw-requirements.txt"
+  log "installing ansible-core ${hcw_ansible_core_version} and the $((hcw_ansible_lines - 1)) wheels it depends on into ${hcw_ansible_generation} on CPython ${PYTHON_VERSION}, each checked against its SHA256 in lab-image/versions.env; ${HCW_ANSIBLE_VENV} moves to it only once it passes"
   "${UV_BIN}" venv --managed-python --python "${PYTHON_VERSION}" "${hcw_ansible_generation}"
   "${UV_BIN}" pip install --python "${hcw_ansible_python}" --require-hashes --only-binary :all: -r "${hcw_ansible_requirements}"
   "${UV_BIN}" pip check --python "${hcw_ansible_python}"
@@ -608,13 +646,20 @@ if [ "${hcw_ansible_in_use}" != "${hcw_ansible_generation}" ]; then
   fi
   ln -sfn "${hcw_ansible_generation}" "${HCW_ANSIBLE_VENV}.next"
   mv -T "${HCW_ANSIBLE_VENV}.next" "${HCW_ANSIBLE_VENV}"
-  log "switched ${HCW_ANSIBLE_VENV} to ${hcw_ansible_generation}${hcw_ansible_in_use:+, keeping ${hcw_ansible_in_use} until the next switch}"
-  for hcw_ansible_old in "${HCW_ANSIBLE_GENERATIONS}"/*; do
-    case "${hcw_ansible_old}" in
-      "${hcw_ansible_generation}" | "${hcw_ansible_in_use}") ;;
-      *) rm -rf -- "${hcw_ansible_old}" ;;
-    esac
-  done
+  # Only now, with the link off it, may the generation it pointed to go.
+  if [[ "${hcw_ansible_in_use}" == "${hcw_ansible_prefix}"* ]]; then
+    log "switched ${HCW_ANSIBLE_VENV} to ${hcw_ansible_generation}"
+    log "removing ${hcw_ansible_in_use}, the build of these pins it replaces"
+    rm -rf -- "${hcw_ansible_in_use}"
+  else
+    log "switched ${HCW_ANSIBLE_VENV} to ${hcw_ansible_generation}${hcw_ansible_in_use:+, keeping ${hcw_ansible_in_use} until the next switch}"
+    for hcw_ansible_old in "${HCW_ANSIBLE_GENERATIONS}"/*; do
+      case "${hcw_ansible_old}" in
+        "${hcw_ansible_generation}" | "${hcw_ansible_in_use}") ;;
+        *) rm -rf -- "${hcw_ansible_old}" ;;
+      esac
+    done
+  fi
 fi
 hcw_link_ansible_commands
 "${UV_TOOL_BIN_DIR}/ansible-playbook" --version | sed -n '1p;/python version/p'
