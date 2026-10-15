@@ -404,7 +404,15 @@ export async function patchDoc(containerName, id, updates, options = {}) {
 
   // A caller-supplied ETag makes the retry wrong: retrying re-reads, which is
   // exactly the "decide from a stale document" the caller asked to prevent.
-  return readModifyWrite(container, id, pk, plan.entries, options.ifMatch ? 1 : 0, options.ifMatch);
+  return readModifyWrite(
+    containerName,
+    container,
+    id,
+    pk,
+    plan.entries,
+    options.ifMatch ? 1 : 0,
+    options.ifMatch
+  );
 }
 
 /**
@@ -453,8 +461,30 @@ export function planPatch(updates) {
  * ETag-guarded read-modify-write, applying dotted field paths onto a copy.
  * One retry: a 412 means someone else wrote between our read and our replace,
  * and re-reading resolves it unless the document is genuinely hot.
+ *
+ * The replace is a write of its own, started after a read that can take any
+ * time, so the job-abort guard is applied again immediately before each one
+ * (#942): patchDoc's guard ran before the read, and a job whose deadline
+ * passed during the read, or during the 412 re-read, must not then write.
+ *
+ * @param {string} containerName - for the guard; `container` is its client
+ * @param {object} container
+ * @param {string} id
+ * @param {string} pk
+ * @param {[string, any][]} entries
+ * @param {number} [attempt]
+ * @param {string|null} [ifMatch]
+ * @returns {Promise<object>}
  */
-async function readModifyWrite(container, id, pk, entries, attempt = 0, ifMatch = null) {
+async function readModifyWrite(
+  containerName,
+  container,
+  id,
+  pk,
+  entries,
+  attempt = 0,
+  ifMatch = null
+) {
   const { resource: current } = await container.item(id, pk).read();
   if (!current) {
     // The SDK's read answers a missing item with no resource rather than
@@ -475,6 +505,7 @@ async function readModifyWrite(container, id, pk, entries, attempt = 0, ifMatch 
     applyFieldPath(next, String(field).split('.'), value);
   }
 
+  refuseWriteAfterJobAbort(containerName);
   try {
     const { resource } = await container
       .item(id, pk)
@@ -482,7 +513,7 @@ async function readModifyWrite(container, id, pk, entries, attempt = 0, ifMatch 
     return resource;
   } catch (err) {
     if (err.code === 412 && attempt === 0) {
-      return readModifyWrite(container, id, pk, entries, attempt + 1, ifMatch);
+      return readModifyWrite(containerName, container, id, pk, entries, attempt + 1, ifMatch);
     }
     throw err;
   }
