@@ -55,7 +55,7 @@ describe('newJobDoc holds the payload bound', () => {
     );
   });
 
-  it('counts an absent payload as null', () => {
+  it('measures an absent payload as null, and stores it as given (jobPayloadBytes JSDoc)', () => {
     expect(jobPayloadBytes(undefined)).toBe(4);
     expect(newJobDoc(fields(undefined)).payload).toBeUndefined();
   });

@@ -448,9 +448,12 @@ export async function scheduleHostPublish({
  * because the approval has already happened and must be reported as such
  * whatever the second write does. Returns whether the record was stored.
  *
- * Unconditional on purpose: `doc` is the pre-approval read, whose etag the
- * status write has already moved past, and a record that exists to say
- * "nothing was queued" has no version to be conditional on.
+ * Conditional on the version it is handed, and nothing is written without
+ * one. `doc` is the newest document the caller saw: the scheduler's `latest`
+ * when the reservation was contended, otherwise the transcript as the status
+ * write left it, `_etag` included (podcast/handlers.js). A 412 means a newer
+ * reservation or outcome landed since, which stands; the record is then not
+ * written and this returns false.
  *
  * @param {object} deps
  * @param {{ patchDoc: Function }} deps.store

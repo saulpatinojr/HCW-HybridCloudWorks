@@ -239,7 +239,10 @@ const SYSTEM_FIELDS = new Set(['_rid', '_self', '_etag', '_attachments', '_ts'])
 
 /**
  * A payload's size as a job document stores it: its JSON, in UTF-8 bytes.
- * An absent payload is stored as `null`.
+ * An absent payload is MEASURED as `null` (4 bytes), because
+ * `JSON.stringify(undefined)` is not JSON. It is not stored as `null`:
+ * newJobDoc keeps the payload as given, so an undefined payload leaves the
+ * field out of the stored document and the worker receives undefined.
  *
  * @param {any} payload
  * @returns {number}
