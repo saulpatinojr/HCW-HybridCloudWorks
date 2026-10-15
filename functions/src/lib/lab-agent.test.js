@@ -112,8 +112,9 @@ describe('claimLabJob', () => {
 
     const body = parse(res);
     expect(body.job.id).toBe('older');
+    expect(body.job.claimId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     // Not the whole document: no _etag, no internal status, no agentId.
-    expect(Object.keys(body.job).sort()).toEqual(['id', 'payload', 'payloadEncoding', 'type']);
+    expect(Object.keys(body.job).sort()).toEqual(['claimId', 'id', 'payload', 'payloadEncoding', 'type']);
     // A document from before #675 carries no encoding and is text.
     expect(body.job.payloadEncoding).toBe('text');
     // FIFO in the query too, so TOP 20 is the twenty oldest candidates and
@@ -581,6 +582,47 @@ describe('completeLabJob', () => {
       expect(store.readDoc).not.toHaveBeenCalled();
     }
   );
+
+  describe('claimId protocol handshake (#1094)', () => {
+    it('accepts completion when claimId matches job.claimId', async () => {
+      const store = emptyStore();
+      store.readDoc = vi.fn(async () => held({ claimId: 'claim-abc' }));
+      const h = make(allowGuard(), store);
+      const res = await h.completeLabJob(
+        req({ agentId: 'vps-1', jobId: 'j1', claimId: 'claim-abc', status: 'succeeded', exitCode: 0 }),
+        context
+      );
+      expect(res.status).toBe(200);
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses completion with 409 when claimId does not match (stale claim after re-claim)', async () => {
+      const store = emptyStore();
+      store.readDoc = vi.fn(async () => held({ claimId: 'claim-new' }));
+      const warn = vi.fn();
+      const h = make(allowGuard(), store);
+      const res = await h.completeLabJob(
+        req({ agentId: 'vps-1', jobId: 'j1', claimId: 'claim-old', status: 'succeeded', exitCode: 0 }),
+        { ...context, warn }
+      );
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'Job was claimed under a different claimId' });
+      expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith('lab-agent: claimId mismatch on completion');
+    });
+
+    it('accepts completion without claimId for backward compatibility with older agents', async () => {
+      const store = emptyStore();
+      store.readDoc = vi.fn(async () => held({ claimId: 'claim-xyz' }));
+      const h = make(allowGuard(), store);
+      const res = await h.completeLabJob(
+        req({ agentId: 'vps-1', jobId: 'j1', status: 'succeeded', exitCode: 0 }),
+        context
+      );
+      expect(res.status).toBe(200);
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
+    });
+  });
 
   it('accepts exactly the three terminal statuses', () => {
     expect(AGENT_TERMINAL_STATUSES).toEqual(['succeeded', 'failed', 'timeout']);

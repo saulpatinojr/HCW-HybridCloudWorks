@@ -8,6 +8,7 @@ import {
   bindConditionValues,
   planPatch,
   toJsonPointer,
+  validateWhereClause,
 } from './cosmos-client.js';
 
 /**
@@ -267,5 +268,33 @@ describe('bindConditionValues', () => {
     expect(() => bindConditionValues('', { a: 1 })).toThrow(/required/);
     expect(() => bindConditionValues('   ', { a: 1 })).toThrow(/required/);
     expect(() => bindConditionValues(undefined, { a: 1 })).toThrow(/required/);
+  });
+});
+
+describe('validateWhereClause (countDocs SQL injection defense)', () => {
+  it('returns empty string for null, undefined, or empty string', () => {
+    expect(validateWhereClause(null)).toBe('');
+    expect(validateWhereClause(undefined)).toBe('');
+    expect(validateWhereClause('')).toBe('');
+    expect(validateWhereClause('   ')).toBe('');
+  });
+
+  it('allows safe where expressions', () => {
+    expect(validateWhereClause('c.status = @status')).toBe('c.status = @status');
+    expect(validateWhereClause('c.count > 0 AND c.type = @type')).toBe('c.count > 0 AND c.type = @type');
+  });
+
+  it('refuses statements containing semicolons', () => {
+    expect(() => validateWhereClause('c.id = 1; DROP TABLE c')).toThrow(/illegal or unsafe/);
+  });
+
+  it('refuses SQL comment indicators', () => {
+    expect(() => validateWhereClause('c.id = 1 -- comment')).toThrow(/illegal or unsafe/);
+    expect(() => validateWhereClause('c.id = 1 /* comment */')).toThrow(/illegal or unsafe/);
+  });
+
+  it('refuses UNION attempts', () => {
+    expect(() => validateWhereClause('1=1 UNION SELECT * FROM secret')).toThrow(/illegal or unsafe/);
+    expect(() => validateWhereClause('1=1 UNION ALL SELECT * FROM secret')).toThrow(/illegal or unsafe/);
   });
 });

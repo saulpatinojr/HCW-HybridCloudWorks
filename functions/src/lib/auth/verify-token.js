@@ -179,7 +179,7 @@ export function createTokenVerifier({ tenantId, audience, jwksUri } = {}) {
     // pre-auth outbound amplification path that also injects latency into every
     // admin request.
     rateLimit: true,
-    jwksRequestsPerMinute: 10,
+    jwksRequestsPerMinute: 30,
   });
 
   const getKey = (header, callback) => {
@@ -190,6 +190,29 @@ export function createTokenVerifier({ tenantId, audience, jwksUri } = {}) {
   };
 
   return {
+    /**
+     * Prewarm the JWKS cache by eagerly fetching signing keys.
+     * Reduces latency on the first token verification call.
+     *
+     * @returns {Promise<Array<object>|null>}
+     */
+    async prewarm() {
+      if (typeof client.getSigningKeys === 'function') {
+        const keys = await client.getSigningKeys();
+        if (Array.isArray(keys)) {
+          for (const key of keys) {
+            if (key?.kid) {
+              await new Promise((resolve) => {
+                client.getSigningKey(key.kid, () => resolve());
+              });
+            }
+          }
+        }
+        return keys;
+      }
+      return null;
+    },
+
     /**
      * Verify a raw bearer token.
      * Resolves the decoded payload, or rejects with an Error.

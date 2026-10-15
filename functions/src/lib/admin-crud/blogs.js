@@ -7,6 +7,7 @@
  * deletes the change feed cannot see). Audited.
  */
 import { json } from '../http/admin-handler.js';
+import { AUDIT_TTL_SECONDS } from '../audit.js';
 
 /** The Change history row a blog delete writes. */
 function blogDeletedAudit({ now, uuid }, { user, request, id, existing }) {
@@ -16,6 +17,7 @@ function blogDeletedAudit({ now, uuid }, { user, request, id, existing }) {
     userId: user?.oid || user?.sub || null,
     userEmail: user?.email || null,
     timestamp: now().toISOString(),
+    ttl: AUDIT_TTL_SECONDS,
     details: {
       blogId: id,
       slug: existing.slug || existing.Slug || null,
@@ -28,6 +30,7 @@ function blogDeletedAudit({ now, uuid }, { user, request, id, existing }) {
       schemaVersion: 1,
       detailsSanitized: true,
       identityVerified: true,
+      appendOnly: true,
     },
   };
 }

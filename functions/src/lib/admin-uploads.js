@@ -41,6 +41,8 @@ import {
   UPLOAD_CONTAINERS,
 } from './blob-paths.js';
 import { normalizeBadgeImage, withExtension } from './badge-image.js';
+import { randomUUID } from 'node:crypto';
+import { recordMutationAudit } from './audit.js';
 
 /**
  * Containers whose uploads are decoded and re-encoded before they are stored
@@ -201,9 +203,19 @@ function readContentLength(request) {
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
  * @param {{ uploadBlob: Function }} deps.storage - uploadBlob(container, blobName, content, contentType, metadata, options) → public URL
+ * @param {object} [deps.store] - Cosmos store for audit recording (optional)
+ * @param {Function} [deps.now]
+ * @param {Function} [deps.uuid]
  * @param {Function} [deps.normalizeImage] - badge-image.js normalizeBadgeImage, injectable for tests
  */
-export function createAdminUploadHandlers({ guard, storage, normalizeImage = normalizeBadgeImage }) {
+export function createAdminUploadHandlers({
+  guard,
+  storage,
+  store = null,
+  now = () => new Date(),
+  uuid = randomUUID,
+  normalizeImage = normalizeBadgeImage,
+}) {
   return {
     /** POST /api/cms/uploads/{container} — {path, contentType, dataBase64} → {url} */
     async uploadFile(request, context) {
@@ -291,6 +303,18 @@ export function createAdminUploadHandlers({ guard, storage, normalizeImage = nor
         // the delivery route; private ones get no URL at all rather than a
         // plausible-looking dead one.
         const url = PUBLIC_MEDIA_CONTAINERS.has(container) ? mediaUrlFor(container, storedPath) : '';
+
+        if (store) {
+          await recordMutationAudit(store, {
+            action: 'admin_upload_completed',
+            actor: auth.user,
+            resource: `${container}:${storedPath}`,
+            details: { container, path: storedPath, size: buffer.length, contentType: storedType },
+            now,
+            uuid,
+            context,
+          });
+        }
 
         return json(200, { success: true, url, blobUrl, container, path: storedPath });
       } catch (error) {

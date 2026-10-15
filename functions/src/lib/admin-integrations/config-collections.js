@@ -44,6 +44,7 @@ import {
   validateMcpUrl,
 } from '../ai/mcp.js';
 import { json, LIST_WINDOW, validBody } from '../http/admin-handler.js';
+import { AUDIT_TTL_SECONDS } from '../audit.js';
 
 /** Route-segment → container allowlist for the client-id config collections. */
 const CONFIG_COLLECTIONS = {
@@ -342,6 +343,7 @@ async function auditConfigWrite(ctx, context, { container, id, user, existing, f
       userName: user?.name || null,
       userEmail: user?.email || user?.preferred_username || null,
       timestamp: ctx.now().toISOString(),
+      ttl: AUDIT_TTL_SECONDS,
       details: {
         collection: container,
         documentId: id,
@@ -352,6 +354,7 @@ async function auditConfigWrite(ctx, context, { container, id, user, existing, f
         before: existing ? routing(existing) : null,
         after: action === 'delete' ? null : routing({ ...existing, ...fields }),
       },
+      compliance: { schemaVersion: 2, appendOnly: true },
     });
   } catch (auditError) {
     context.warn?.(

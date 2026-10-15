@@ -156,6 +156,9 @@ describe('MCP secret and URL helpers', () => {
     for (const url of ['http://localhost:8100', 'http://127.0.0.1:8100/mcp', 'http://[::1]:8100/']) {
       expect(() => validateMcpUrl(url)).toThrow(/must use https/);
     }
+    for (const url of ['https://localhost:8100', 'https://127.0.0.1:8100/mcp', 'https://[::1]:8100/']) {
+      expect(() => validateMcpUrl(url)).toThrow(/loopback/);
+    }
     expect(validateMcpUrl('https://mcp.hostinger.com')).toBe('https://mcp.hostinger.com/');
     expect(() => validateMcpUrl('https://user:pass@example.test/mcp')).toThrow(/credentials/);
   });

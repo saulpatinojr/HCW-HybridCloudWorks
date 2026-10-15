@@ -360,7 +360,8 @@ describe('speaker events', () => {
       makeRequest({ docId: 'ev1', data: { name: 'Talk', date: { seconds: 1767225600 } } }),
       context
     );
-    expect(store.upsertDoc).not.toHaveBeenCalled();
+    expect(store.upsertDoc.mock.calls.some(([c]) => c === 'speakerevents')).toBe(false);
+    expect(store.upsertDoc.mock.calls.some(([c, d]) => c === 'admin_audit_logs' && d.action === 'speaker_event_upserted')).toBe(true);
     const patch = store.patchDoc.mock.calls[0][2];
     // A calendar day, not UTC midnight: the admin and the widget read it as the
     // day it names in every zone (ADR 0033 §4).
@@ -383,7 +384,8 @@ describe('speaker events', () => {
       context
     );
     expect(store.patchDoc).not.toHaveBeenCalled();
-    expect(store.upsertDoc.mock.calls[0][1]).toMatchObject({
+    const eventDoc = store.upsertDoc.mock.calls.find(([c]) => c === 'speakerevents')?.[1];
+    expect(eventDoc).toMatchObject({
       id: 'ev3',
       date: '2026-03-14',
       cfpDeadline: '2026-01-31',

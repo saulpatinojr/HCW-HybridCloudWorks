@@ -10,6 +10,7 @@
  * now, uuid, unpublishSocialPost); the factory at the bottom only wires them.
  */
 import { json, LIST_WINDOW, validBody } from '../http/admin-handler.js';
+import { recordMutationAudit } from '../audit.js';
 import {
   SOCIAL_DEFAULT_STATUSES,
   socialPostEditRefusal,
@@ -83,6 +84,16 @@ async function createSocialPost(ctx, request, context) {
       createdAt: ctx.now().toISOString(),
     };
     await ctx.store.upsertDoc('social_posts', doc);
+    await recordMutationAudit(ctx.store, {
+      action: 'social_post_created',
+      actor: auth.user,
+      resource: `social_posts:${doc.id}`,
+      before: null,
+      after: doc,
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
     return json(200, { success: true, id: doc.id, item: doc });
   } catch (error) {
     context.error('createSocialPost failed:', error);
@@ -139,6 +150,16 @@ async function patchSocialPost(ctx, request, context) {
       syncOrigin: 'calendar',
       syncStatus: publerPostIds.length ? 'pending' : existing.syncStatus || 'pending',
     });
+    await recordMutationAudit(ctx.store, {
+      action: 'social_post_updated',
+      actor: auth.user,
+      resource: `social_posts:${id}`,
+      before: existing,
+      after: updated,
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
     return json(200, {
       success: true,
       item: updated,
@@ -166,11 +187,31 @@ async function deleteSocialPost(ctx, request, context) {
     // feed never delivers a delete, so the Publer un-publish happens here
     // (T-324). Best-effort, before the document goes.
     let publer = { attempted: 0, removed: 0 };
-    if (ctx.unpublishSocialPost) {
-      const existing = await ctx.store.readDoc('social_posts', id, id);
-      if (existing) publer = await ctx.unpublishSocialPost(existing);
+    let existing = null;
+    try {
+      existing = await ctx.store.readDoc('social_posts', id, id);
+    } catch (err) {
+      if (err?.statusCode === 404 || err?.code === 404 || err?.code === 'NotFound') {
+        existing = null;
+      } else {
+        throw err;
+      }
+    }
+    if (ctx.unpublishSocialPost && existing) {
+      publer = await ctx.unpublishSocialPost(existing);
     }
     await ctx.store.deleteDoc('social_posts', id);
+    await recordMutationAudit(ctx.store, {
+      action: 'social_post_deleted',
+      actor: auth.user,
+      resource: `social_posts:${id}`,
+      before: existing,
+      after: null,
+      details: { publer },
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
     return json(200, { success: true, publer });
   } catch (error) {
     context.error('deleteSocialPost failed:', error);
