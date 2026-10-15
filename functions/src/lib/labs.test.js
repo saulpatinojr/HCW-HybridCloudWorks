@@ -217,6 +217,29 @@ describe('getLabsSnapshot', () => {
     expect(jobsQuery).toMatch(/ORDER BY c\.createdAt DESC/);
   });
 
+  // CodeRabbit on #1200: this module's own errorResponse handed the caught
+  // error object to context.error, which logged its message.
+  it('logs a failed snapshot through the door: one content-free line, never the error text', async () => {
+    const store = makeStore({
+      queryDocs: vi.fn(async () => {
+        throw Object.assign(new Error('cosmos said: account hcw-secret-name refused'), { code: 'ServiceUnavailable' });
+      }),
+    });
+    const ctx = { log: vi.fn(), error: vi.fn(), warn: vi.fn(), invocationId: 'inv-labs-1' };
+    const h = createLabHandlers({ guard: guardAs('viewer'), store, ...fixed });
+    const res = await h.getLabsSnapshot(makeRequest({}), ctx);
+    expect(res.status).toBe(500);
+    expect(res.body).not.toContain('hcw-secret-name');
+    const logged = [...ctx.error.mock.calls, ...ctx.warn.mock.calls];
+    expect(logged.length).toBeGreaterThan(0);
+    for (const args of logged) {
+      expect(args).toHaveLength(1);
+      expect(typeof args[0]).toBe('string');
+      expect(args[0]).not.toContain('hcw-secret-name');
+    }
+    expect(logged.some(([line]) => line.includes('code=ServiceUnavailable'))).toBe(true);
+  });
+
   it('knows no running status: the agent writes claimed, then a terminal one', () => {
     expect(JOB_STATUSES).toEqual([
       'queued',

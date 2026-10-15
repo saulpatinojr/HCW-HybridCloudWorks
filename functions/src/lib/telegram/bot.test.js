@@ -383,7 +383,8 @@ describe('command toggles', () => {
 });
 
 describe('failure handling', () => {
-  it('reports a thrown command into the chat and logs activity, rather than throwing', async () => {
+  // CodeRabbit on #1200: the chat reply used to quote the error's own words.
+  it('reports a thrown command into the chat as the stored sentence, never the error text, and logs activity', async () => {
     const { bot, send, store } = makeBot({
       snapshot: vi.fn(async () => {
         throw new Error('cosmos exploded');
@@ -391,7 +392,8 @@ describe('failure handling', () => {
     });
     const result = await bot.handleUpdate(message('/status'));
     expect(result.handled).toBe(true);
-    expect(send).toHaveBeenCalledWith(expect.stringContaining('cosmos exploded'));
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('Something went wrong: The command failed'));
+    expect(send).not.toHaveBeenCalledWith(expect.stringContaining('cosmos exploded'));
     expect(store.upsertDoc).toHaveBeenCalledWith(ACTIVITY_CONTAINER, expect.objectContaining({ ok: false }));
   });
 

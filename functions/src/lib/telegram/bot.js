@@ -455,7 +455,10 @@ export function createTelegramBot({
         // log line's reference, and the line itself is content-free (#945).
         const detail = recordedFailure(log, 'The command failed.', error);
         await logActivity({ command: text.split(/\s+/)[0], ok: false, detail });
-        reply = `Something went wrong: ${error?.message || error}`;
+        // The chat reply says the same: an authored refusal as written,
+        // otherwise the stored sentence with its code and reference, never
+        // the error's own words (CodeRabbit on #1200).
+        reply = `Something went wrong: ${detail}`;
       }
 
       // The send is INSIDE the guard, not after it (T-730). It used to sit

@@ -101,6 +101,13 @@ export function authoredDetails(error) {
 export function errorCode(error) {
   const code = error?.code;
   if (typeof code === 'string' && CODE_SHAPE.test(code)) return code;
+  // A DOMException's integer `code` is a legacy constant (TimeoutError 23,
+  // AbortError 20), not a provider's code: an `AbortSignal.timeout` fetch
+  // would otherwise read "could not be reached (23)". Its name says what
+  // happened (CodeRabbit on #1200).
+  if (typeof DOMException === 'function' && error instanceof DOMException && CODE_SHAPE.test(error.name)) {
+    return error.name;
+  }
   if (Number.isInteger(code)) return String(code);
   const status = error?.status ?? error?.statusCode;
   if (Number.isInteger(status)) return `HTTP_${status}`;

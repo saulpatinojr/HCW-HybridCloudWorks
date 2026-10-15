@@ -159,6 +159,18 @@ describe('errorCode: a content-free name for a log line', () => {
   ])('%j → %s', (error, code) => {
     expect(errorCode(error)).toBe(code);
   });
+
+  // CodeRabbit on #1200: a DOMException's legacy integer code (TimeoutError
+  // 23, AbortError 20) read as a provider code, "could not be reached (23)".
+  it('names a DOMException by its name, not its legacy integer code', () => {
+    const timeout = new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    const abort = new DOMException('This operation was aborted', 'AbortError');
+    expect(timeout.code).toBe(23);
+    expect(errorCode(timeout)).toBe('TimeoutError');
+    expect(errorCode(abort)).toBe('AbortError');
+    // An ordinary object with an integer code keeps it.
+    expect(errorCode({ code: 23, name: 'TimeoutError' })).toBe('23');
+  });
 });
 
 describe('ownFrames: where in our own code, and nothing else (#1200 review L3)', () => {
