@@ -23,6 +23,11 @@ addons_wait_delay: 2
 # The json-file log cap per container, so an add-on that logs every request
 # cannot fill the disk.
 addons_log_max_size: 10m
+# Sigstore cosign for SLSA build provenance attestation verification (#1069).
+# Verified before pulling any deployed add-on image.
+addons_cosign_bin: /usr/local/bin/cosign
+addons_attestation_type: slsaprovenance1
+addons_attestation_oidc_issuer: https://token.actions.githubusercontent.com
 # The add-ons' own bridge network (ADR 0035, review 2026-10-10). Not the
 # default bridge: inter-container communication is off on it, so an add-on
 # cannot reach another add-on or any other container, and its subnet is the

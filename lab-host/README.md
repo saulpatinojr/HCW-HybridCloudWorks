@@ -1688,6 +1688,7 @@ advisories".
 | Collections, including the one transitive dependency | `requirements.yml` | Galaxy |
 | Ansible tooling | `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and `ANSIBLE_CORE_DEPS` in `../lab-image/versions.env`, which `bootstrap.sh` installs from (the weekly `chore/lab-pins-image-base` pull request moves them within their line); the pip pins in `ci.yml`; the image digest above | PyPI's JSON API (`https://pypi.org/pypi/<name>/<version>/json`, the wheel's `digests.sha256`); the image's `RepoDigests` |
 | Python and uv | `PYTHON_VERSION`, `UV_VERSION` and `UV_SHA256` at the top of `bootstrap.sh` | https://www.python.org/downloads/ for the newest release; https://github.com/astral-sh/uv/releases for uv, whose `.sha256` asset beside `uv-x86_64-unknown-linux-gnu.tar.gz` is the value |
+| Sigstore cosign | `cosign_version`, `cosign_checksum` in `ansible/group_vars/all.yml`; `COSIGN_VERSION`, `COSIGN_SHA256` at the top of `bootstrap.sh` | https://github.com/sigstore/cosign/releases, whose `cosign_checksums.txt` asset beside `cosign-linux-amd64` is the value (`roles/addons/README.md`) |
 
 All in `ansible/group_vars/all.yml` unless the table says otherwise.
 

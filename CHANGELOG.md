@@ -17,6 +17,19 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Security
+
+- **Add-on images: SLSA build provenance attestation verification before pull (#1069, part 1)**.
+  The `addons` Ansible role (`lab-host/ansible/roles/addons`) now verifies the
+  SLSA build provenance attestation of each deployed add-on image against Sigstore's
+  public transparency log and the expected GitHub Actions workflow identity
+  (`attestation_identity_regexp`) using `cosign verify-attestation` before calling
+  `docker_image_pull`. A missing attestation pattern, mismatched identity, or
+  unreachable transparency log fails the run closed, preventing untrusted or
+  unauthenticated images from being deployed. Sigstore `cosign` (v3.1.3) is pinned
+  and SHA-256 verified in `bootstrap.sh` and `group_vars/all.yml` and tracked upstream
+  via `scripts/lab-pins-upstream.mjs`.
+
 ### Changed
 
 - **Credential register reads live dates the estate already knows (#1066)**.
