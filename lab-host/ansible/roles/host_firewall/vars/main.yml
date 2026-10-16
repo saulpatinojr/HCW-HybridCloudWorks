@@ -28,6 +28,10 @@ host_firewall_control_network: coder-control
 host_firewall_control_compose_file: "{{ role_path }}/../../../coder/docker-compose.yml"
 
 host_firewall_config_dir: /etc/hcw/firewall
+# A copy of the three files, made only once the live tables have been read
+# back equal to them: the policy the rescue in tasks/present.yml measures the
+# live tables against. Inside the config directory, so absent removes it too.
+host_firewall_verified_dir: /etc/hcw/firewall/verified
 host_firewall_script: /usr/local/libexec/hcw-host-firewall
 host_firewall_unit: hcw-host-firewall
 

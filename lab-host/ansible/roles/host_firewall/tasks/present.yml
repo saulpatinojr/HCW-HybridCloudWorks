@@ -244,6 +244,30 @@
         quiet: true
       when: not ansible_check_mode
 
+    # The policy the rescue below measures the live tables against: these
+    # files, recorded only now that the live tables have been read back equal
+    # to them. A later run that fails keeps the sandbox running only while the
+    # live tables still equal this record, rule for rule.
+    - name: Create the directory of the last policy verified live
+      ansible.builtin.file:
+        path: "{{ host_firewall_verified_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: not ansible_check_mode
+
+    - name: Record the files as the last policy verified live
+      ansible.builtin.copy:
+        src: "{{ host_firewall_config_dir }}/{{ item }}"
+        dest: "{{ host_firewall_verified_dir }}/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [hcw.v4.rules, hcw.v6.rules, hcw.jumps]
+      when: not ansible_check_mode
+
     # Started, never restarted: the rules are already loaded above, and a
     # restart would stop the sandbox user's manager with it (the drop-in's
     # Requires=). In check mode on a host that has no unit yet there is
@@ -256,36 +280,29 @@
       when: not (ansible_check_mode and host_firewall_unit_file is changed)
 
   rescue:
-    # Whether a firewall loaded earlier still governs the sandbox, in both
-    # families: the sandbox jump first in OUTPUT, and the sandbox chain ending
-    # in its refusal. A load iptables refuses changes nothing, so a run that
-    # fails after a good one leaves the good rules in force.
-    - name: Read the top of OUTPUT in both families
+    # Whether a firewall still governs the sandbox: every HCW-* chain and
+    # jump, in both families, exactly equal to the last policy this role
+    # verified live (recorded above), as the helper's own verify reads it.
+    # Not the shape alone: a chain weakened since (an early RETURN, a refusal
+    # chain that no longer refuses) differs from that record, and so does a
+    # host where no policy was ever verified or the helper was never
+    # installed. Any of those stops the sandbox. A load iptables refuses
+    # changes nothing, so a run that fails after a good one, on a host nobody
+    # has touched, leaves the record and the tables equal.
+    - name: Read the live chains and jumps against the last policy verified live
       ansible.builtin.command:
-        argv: ["{{ item }}", -w, -S, OUTPUT]
-      loop: [iptables, ip6tables]
-      register: host_firewall_rescue_output
-      changed_when: false
-      failed_when: false
-      check_mode: false
-
-    - name: Read the sandbox chain in both families
-      ansible.builtin.command:
-        argv: ["{{ item }}", -w, -S, "{{ host_firewall_sandbox_chain }}"]
-      loop: [iptables, ip6tables]
-      register: host_firewall_rescue_chain
+        argv:
+          - "{{ host_firewall_script }}"
+          - verify
+          - "{{ host_firewall_verified_dir }}"
+      register: host_firewall_rescue_verify
       changed_when: false
       failed_when: false
       check_mode: false
 
     - name: Decide whether a loaded firewall still governs the sandbox
       ansible.builtin.set_fact:
-        host_firewall_rescue_governed: >-
-          {{ host_firewall_rescue_output.results | map(attribute='stdout_lines.1', default='')
-             | select('equalto', '-A OUTPUT -m owner --uid-owner ' ~ host_firewall_sandbox_uid ~ ' -j ' ~ host_firewall_sandbox_chain)
-             | list | length == 2
-             and host_firewall_rescue_chain.results | selectattr('rc', 'equalto', 0) | map(attribute='stdout_lines') | map('last')
-             | select('search', ' -j ' ~ host_firewall_refuse_chain ~ '$') | list | length == 2 }}
+        host_firewall_rescue_governed: "{{ (host_firewall_rescue_verify.rc | default(1)) == 0 }}"
 
     - name: Stop the sandbox user's manager, which no loaded firewall governs
       ansible.builtin.systemd_service:
@@ -301,9 +318,12 @@
           The host firewall did not load: {{ ansible_failed_task.name }} failed
           ({{ ansible_failed_result.msg | default('') }}{{ ' ' ~ (ansible_failed_result.stderr_lines | default([]) | join(' | ')) }}).
           {% if ansible_check_mode %}Check mode: nothing was stopped.
-          {% elif host_firewall_rescue_governed | bool %}The rules loaded before are still in force, so the
-          sandbox keeps running under them. Put right what failed and re-run bootstrap.sh.
-          {% else %}No loaded firewall governs the sandbox, so its user manager
+          {% elif host_firewall_rescue_governed | bool %}The live rules still equal the last policy verified
+          live ({{ host_firewall_verified_dir }}), so the sandbox keeps running under them. Put right what
+          failed and re-run bootstrap.sh.
+          {% else %}The live rules do not equal a policy this role verified
+          ({{ (host_firewall_rescue_verify.stdout_lines | default([]) + host_firewall_rescue_verify.stderr_lines | default([])) | join(' | ') }}),
+          so no firewall can be shown to govern the sandbox. Its user manager
           (user@{{ host_firewall_sandbox_uid }}.service) is stopped, and workspaces do not run until the
           firewall loads. Put right what failed, run
           sudo /opt/hcw-src/lab-host/bootstrap.sh --tags host_firewall, then start the manager

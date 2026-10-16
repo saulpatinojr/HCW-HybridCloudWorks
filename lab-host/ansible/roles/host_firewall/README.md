@@ -133,12 +133,17 @@ The play fails closed too. `coder_sandbox` runs first and has already
 started the sandbox user's manager, so the role installs the unit and the
 drop-in before anything that can fail to load (adding `Requires=` to a
 running manager changes nothing until its next start). The rest runs in one
-block: if any of it fails while no loaded firewall governs the sandbox (its
-jump first in `OUTPUT` and its chain ending in the refusal, in both
-families), the rescue stops `user@<uid>.service`, which stops the
-workspaces, and fails the play with what to do. If rules loaded by an
-earlier run are still in force (a load iptables refuses changes nothing), it
-stops nothing and says so. In check mode it never stops anything.
+block. Each successful run, once the read-back passes, records the three
+files in `/etc/hcw/firewall/verified` as the last policy verified live. If
+anything in the block fails, the rescue runs the helper's `verify` against
+that record. Only an exact match, every `HCW-*` chain and jump in both
+families, counts as governed; the shape alone does not, since a chain
+weakened since (an early `RETURN`, a refusal chain that no longer refuses)
+keeps its shape. Otherwise, or with no record at all, it stops
+`user@<uid>.service`, which stops the workspaces, and fails the play with
+what to do. When the live rules still equal the record (a load iptables
+refuses changes nothing), it stops nothing and says so. In check mode it
+never stops anything.
 Recovering after a stop means running the role on its own
 (`--tags host_firewall`) before a plain run, since a plain run starts the
 manager in `coder_sandbox` and the manager waits for the firewall; the

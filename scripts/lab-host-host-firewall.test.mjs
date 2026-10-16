@@ -318,6 +318,7 @@ describe('host_firewall: failing closed', () => {
       '- name: Read Coder\'s internal network as Docker has it',
       '- name: Load the chains and put the jumps first',
       '- name: Refuse a host whose live firewall differs from what this run loaded',
+      '- name: Record the files as the last policy verified live',
       '- name: Enable the boot unit',
       '  rescue:',
       '- name: Say what the firewall allows',
@@ -327,10 +328,23 @@ describe('host_firewall: failing closed', () => {
     expect(lines[order[0] + 1]).toBe('  block:');
   });
 
+  it('records the files as the verified policy only after the read-back passed, all three, in their own directory', () => {
+    const record = present.slice(present.indexOf('- name: Record the files as the last policy verified live'), present.indexOf('- name: Enable the boot unit'));
+    expect(record).toContain('src: "{{ host_firewall_config_dir }}/{{ item }}"');
+    expect(record).toContain('dest: "{{ host_firewall_verified_dir }}/{{ item }}"');
+    expect(record).toContain('remote_src: true');
+    expect(record).toContain('loop: [hcw.v4.rules, hcw.v6.rules, hcw.jumps]');
+    expect(vars).toMatch(/^host_firewall_verified_dir: \/etc\/hcw\/firewall\/verified$/m);
+  });
+
   it('stops the sandbox user\'s manager only when no loaded firewall governs it, never in check mode, then fails', () => {
     const rescue = present.slice(present.indexOf('  rescue:\n'), present.indexOf('- name: Say what the firewall allows'));
-    expect(rescue).toContain("'-A OUTPUT -m owner --uid-owner ' ~ host_firewall_sandbox_uid ~ ' -j ' ~ host_firewall_sandbox_chain");
-    expect(rescue).toContain("select('search', ' -j ' ~ host_firewall_refuse_chain ~ '$') | list | length == 2");
+    // Governed means the live tables equal the last verified policy exactly,
+    // as the helper's verify reads them, not that the jump and the last rule
+    // have the right shape: a weakened chain keeps its shape.
+    expect(rescue).toMatch(/- "\{\{ host_firewall_script \}\}"\n\s+- verify\n\s+- "\{\{ host_firewall_verified_dir \}\}"/);
+    expect(rescue).toContain('host_firewall_rescue_governed: "{{ (host_firewall_rescue_verify.rc | default(1)) == 0 }}"');
+    expect(rescue).not.toMatch(/stdout_lines\.1|select\('search'/);
     expect(rescue).toMatch(/name: "user@\{\{ host_firewall_sandbox_uid \}\}\.service"\n\s+state: stopped\n\s+when:\n\s+- not ansible_check_mode\n\s+- not host_firewall_rescue_governed \| bool\n/);
     expect(rescue).toMatch(/- name: Fail the play[^\n]*\n\s+ansible\.builtin\.fail:/);
     expect(rescue.indexOf('ansible.builtin.fail:')).toBeGreaterThan(rescue.indexOf('state: stopped'));

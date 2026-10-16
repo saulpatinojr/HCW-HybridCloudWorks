@@ -408,6 +408,20 @@ run apply "${conf}"
 check "and once the lock is free, apply puts IPv4 right" \
   '[ "${rc}" -eq 0 ] && [ "${out}" = "v4: loaded HCW-BRIDGE-IN HCW-CONTROL-OUT HCW-REFUSE HCW-SANDBOX-OUT from ${rules4}" ]' "rc=${rc} output: ${out}"
 
+# 6d. What the role's rescue relies on: it keeps the sandbox running only
+#     when verify, against the last verified files, exits 0. A refusal chain
+#     weakened to accept, with every jump first and the sandbox chain still
+#     ending in HCW-REFUSE, makes it exit 1; a directory never written, 2.
+iptables -w -R HCW-REFUSE 1 -p tcp -m comment --comment "hcw: refused with a reset" -j ACCEPT
+run verify "${conf}"
+check "verify fails on a refusal chain that no longer refuses, though the jumps and the chain's shape are intact" \
+  '[ "${rc}" -eq 1 ] && grep -q "^v4: HCW-REFUSE differs from" <<<"${out}" && [ "$(iptables -w -S HCW-SANDBOX-OUT | tail -n 1)" = "-A HCW-SANDBOX-OUT -m comment --comment \"hcw: refused\" -j HCW-REFUSE" ]' \
+  "rc=${rc} output: ${out}"
+run verify "${work}/never-written"
+check "and on a policy directory that was never written" '[ "${rc}" -eq 2 ]' "rc=${rc} output: ${out}"
+run apply "${conf}"
+check "and apply puts the refusal back" '[ "${rc}" -eq 0 ] && grep -q "^v4: loaded" <<<"${out}"' "rc=${rc} output: ${out}"
+
 # 7. Jumps: duplicated, moved below another rule, or missing, put right.
 iptables -w -A OUTPUT -m owner --uid-owner 0 -j HCW-SANDBOX-OUT
 iptables -w -I INPUT 1 -p tcp --dport 9 -j DROP

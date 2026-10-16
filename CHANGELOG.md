@@ -987,10 +987,14 @@ This project has not cut a tagged release; entries are grouped under
   - **Boot:** `hcw-host-firewall.service` re-applies the rules at boot, after
     ufw and before Docker, and reports a failure to `hcw-unit-failed@`. The
     sandbox user's manager requires it.
+  - **Failing closed:** if a run cannot load the firewall, the sandbox
+    keeps running only while the live rules exactly equal the last policy
+    the role verified live (`/etc/hcw/firewall/verified`); otherwise its
+    manager is stopped and the play fails.
   - **Removal:** `host_firewall_state: absent` removes it all in a safe order.
   - **Untouched:** ufw's rules and the add-ons' `DOCKER-USER` rules.
   - **Tests:** `roles/host_firewall/tests/hcw-host-firewall.test.sh` (real
-    iptables in a scratch network namespace, 103 checks, in CI with ufw
+    iptables in a scratch network namespace, 106 checks, in CI with ufw
     required) and `scripts/lab-host-host-firewall.test.mjs`.
 - **No auto-delete on the owner's Ambassador hub (follow-up to #1234, SEC-4
   #973)**. #1234 set a 90-day container TTL on the `ambassador` Cosmos

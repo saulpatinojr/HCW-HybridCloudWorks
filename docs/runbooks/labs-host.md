@@ -1614,9 +1614,9 @@ systemctl is-active hcw-host-firewall "user@$(id -u hcw-coder-docker).service"
 Good is two lines, `active` and `active`.
 
 The same two commands recover a `bootstrap.sh` run that stopped the
-sandbox: when the role cannot load the firewall and no firewall loaded
-earlier governs the sandbox, it stops the sandbox user's manager and fails
-the run, and its message says so. Put right what the message names, then
+sandbox: when the role cannot load the firewall and the live rules do not
+exactly equal the last policy it verified (`/etc/hcw/firewall/verified`), it
+stops the sandbox user's manager and fails the run, and its message says so. Put right what the message names, then
 run the role on its own first, because a plain run starts that manager in
 `coder_sandbox`, before this role, and the manager waits for the firewall:
 
@@ -1625,8 +1625,8 @@ sudo /opt/hcw-src/lab-host/bootstrap.sh --tags host_firewall
 ```
 
 Good is `failed=0`. Then the two commands above, with the same good result.
-A run that fails while rules loaded earlier are still in force stops
-nothing: its message says the earlier rules still govern the sandbox.
+A run that fails while the live rules still equal that verified policy
+stops nothing: its message says so.
 
 **Taking it out.** The role removes everything it put on the host when run
 with `host_firewall_state=absent`: the drop-in first, so the sandbox user's
