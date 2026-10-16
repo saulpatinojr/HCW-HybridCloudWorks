@@ -32,10 +32,36 @@ const denyGuard = {
 const makeRequest = (body) => ({ json: async () => body });
 
 function makeStore(over = {}) {
+  const docs = new Map();
   return {
+    docs,
     readDoc: vi.fn(async () => null),
     upsertDoc: vi.fn(async (_c, d) => d),
     patchDoc: vi.fn(async (_c, id, u) => ({ id, ...u })),
+    incrementIf: vi.fn(async (_container, id, { value, conditionValues }) => {
+      const doc = docs.get(id);
+      if (!doc) {
+        const err = new Error('cosmos 404');
+        err.code = 404;
+        throw err;
+      }
+      if (conditionValues && typeof conditionValues.limit === 'number' && !(doc.count < conditionValues.limit)) {
+        const err = new Error('cosmos 412');
+        err.code = 412;
+        throw err;
+      }
+      doc.count += value;
+      return doc;
+    }),
+    createDoc: vi.fn(async (_container, doc) => {
+      if (docs.has(doc.id)) {
+        const err = new Error('cosmos 409');
+        err.code = 409;
+        throw err;
+      }
+      docs.set(doc.id, { ...doc });
+      return doc;
+    }),
     ...over,
   };
 }
@@ -165,6 +191,104 @@ describe('aiProxy', () => {
     }
   });
 
+  it('rejects an unknown provider with 400', async () => {
+    const response = await build().aiProxy(
+      makeRequest({ provider: 'unsupported-llm', prompt: 'hi' }),
+      context
+    );
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toMatchObject({
+      ok: false,
+      code: 'INVALID_PROVIDER',
+    });
+  });
+
+  it('rejects an unknown model with 400', async () => {
+    const response = await build().aiProxy(
+      makeRequest({ provider: 'gemini', model: 'nonexistent-model-v99', prompt: 'hi' }),
+      context
+    );
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toMatchObject({
+      ok: false,
+      code: 'INVALID_MODEL',
+    });
+  });
+
+  it('rejects a retired model in the catalogue with 400', async () => {
+    const readCatalog = async () => ({
+      providers: {
+        gemini: {
+          models: {
+            'gemini-retired-model': { status: 'retired' },
+          },
+        },
+      },
+    });
+    const response = await build({ readCatalog }).aiProxy(
+      makeRequest({ provider: 'gemini', model: 'gemini-retired-model', prompt: 'hi' }),
+      context
+    );
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toMatchObject({
+      ok: false,
+      code: 'RETIRED_MODEL',
+    });
+  });
+
+  it('rejects an overly long prompt or system prompt with 400', async () => {
+    const longText = 'x'.repeat(40_000);
+    const res1 = await build().aiProxy(
+      makeRequest({ provider: 'gemini', prompt: longText }),
+      context
+    );
+    expect(res1.status).toBe(400);
+    expect(JSON.parse(res1.body).code).toBe('PROMPT_TOO_LONG');
+
+    const res2 = await build().aiProxy(
+      makeRequest({ provider: 'gemini', prompt: 'hi', systemPrompt: longText }),
+      context
+    );
+    expect(res2.status).toBe(400);
+    expect(JSON.parse(res2.body).code).toBe('PROMPT_TOO_LONG');
+  });
+
+  it('enforces per-actor daily spend ceiling with 429', async () => {
+    const guard = {
+      requireRole: vi.fn(async () => ({ user: { oid: 'actor-123' }, role: 'editor', error: null })),
+    };
+    const store = makeStore();
+    const handler = build({ guard, store, actorDailyLimit: 2 });
+
+    const r1 = await handler.aiProxy(makeRequest({ provider: 'gemini', prompt: 'hi' }), context);
+    expect(r1.status).toBe(200);
+
+    const r2 = await handler.aiProxy(makeRequest({ provider: 'gemini', prompt: 'hi again' }), context);
+    expect(r2.status).toBe(200);
+
+    const r3 = await handler.aiProxy(makeRequest({ provider: 'gemini', prompt: 'exceed limit' }), context);
+    expect(r3.status).toBe(429);
+    expect(JSON.parse(r3.body)).toMatchObject({
+      ok: false,
+      code: 'AI_SPEND_LIMIT_EXCEEDED',
+    });
+  });
+
+  it('enforces global daily spend ceiling with 429', async () => {
+    const store = makeStore();
+    const handler = build({ store, actorDailyLimit: 10, globalDailyLimit: 1 });
+
+    const r1 = await handler.aiProxy(makeRequest({ provider: 'gemini', prompt: 'hi' }), context);
+    expect(r1.status).toBe(200);
+
+    const r2 = await handler.aiProxy(makeRequest({ provider: 'gemini', prompt: 'global exceed' }), context);
+    expect(r2.status).toBe(429);
+    expect(JSON.parse(r2.body)).toMatchObject({
+      ok: false,
+      code: 'AI_SPEND_LIMIT_EXCEEDED',
+    });
+  });
+
   it('requires a role', async () => {
     const response = await build({ guard: denyGuard }).aiProxy(
       makeRequest({ provider: 'gemini', prompt: 'hi' }),
@@ -253,6 +377,18 @@ describe('testAiProvider', () => {
   it('400s a missing providerId', async () => {
     const response = await build().testAiProvider(makeRequest({}), context);
     expect(response.status).toBe(400);
+  });
+
+  it('rejects an unknown provider with 400', async () => {
+    const response = await build().testAiProvider(
+      makeRequest({ providerId: 'unsupported-provider' }),
+      context
+    );
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toMatchObject({
+      ok: false,
+      code: 'INVALID_PROVIDER',
+    });
   });
 
   it('requires a role', async () => {

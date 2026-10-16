@@ -34,6 +34,9 @@
  */
 
 import { recordAiUsage, USAGE_SOURCES } from './usage.js';
+import { takeDailyCap } from '../daily-cap.js';
+import { readModelCatalog } from './model-catalog-doc.js';
+import { CACHE_CONTAINER, utcDay } from '../cloud-tools/history.js';
 
 const json = (status, body) => ({
   status,
@@ -42,6 +45,10 @@ const json = (status, body) => ({
 });
 
 const PROVIDERS_CONTAINER = 'ai_providers';
+
+export const AI_PROXY_ACTOR_DAILY_LIMIT = 50;
+export const AI_PROXY_GLOBAL_DAILY_LIMIT = 500;
+export const AI_PROXY_MAX_PROMPT_CHARS = 32_768;
 
 /** A short, cheap prompt. The answer does not matter; reaching the model does. */
 const TEST_PROMPT = 'Reply with the single word: ok';
@@ -184,8 +191,13 @@ export async function testProviderConnection(deps, { providerId, model = null, t
 /**
  * @param {object} deps
  * @param {{ requireRole: Function }} deps.guard
- * @param {{ readDoc: Function, upsertDoc: Function, patchDoc: Function }} deps.store
+ * @param {{ readDoc: Function, upsertDoc: Function, patchDoc: Function, incrementIf?: Function, createDoc?: Function }} deps.store
  * @param {{ callProvider: Function, getCostEstimate: Function }} deps.ai
+ * @param {Function} [deps.readCatalog]
+ * @param {Function} [deps.takeDailyCap]
+ * @param {number} [deps.actorDailyLimit]
+ * @param {number} [deps.globalDailyLimit]
+ * @param {number} [deps.maxPromptChars]
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
  * @param {() => number} [deps.clock] monotonic-ish source for latency
@@ -194,6 +206,11 @@ export function createAiProxyHandlers({
   guard,
   store,
   ai,
+  readCatalog = ({ store, now }) => readModelCatalog({ store, now }),
+  takeDailyCap: capChecker = takeDailyCap,
+  actorDailyLimit = AI_PROXY_ACTOR_DAILY_LIMIT,
+  globalDailyLimit = AI_PROXY_GLOBAL_DAILY_LIMIT,
+  maxPromptChars = AI_PROXY_MAX_PROMPT_CHARS,
   now = () => new Date(),
   uuid = () => crypto.randomUUID(),
   clock = () => Date.now(),
@@ -214,7 +231,7 @@ export function createAiProxyHandlers({
   const recordUsage = (record) => recordAiUsage({ store, ai, uuid, now }, record);
 
   return {
-    /** POST /api/aiProxy — one call to one named provider. */
+    /** POST /api/aiProxy — one call to one named provider (#944, AP-B9). */
     async aiProxy(request, context) {
       const auth = await guard.requireRole(request, 'editor');
       if (auth.error) return auth.error;
@@ -222,8 +239,93 @@ export function createAiProxyHandlers({
       const body = await request.json().catch(() => null);
       const provider = String(body?.provider || '').trim();
       const prompt = String(body?.prompt || '');
+      const systemPrompt = String(body?.systemPrompt || '');
       if (!provider) return json(400, { ok: false, error: 'provider is required' });
       if (!prompt.trim()) return json(400, { ok: false, error: 'prompt is required' });
+
+      if (prompt.length > maxPromptChars) {
+        return json(400, {
+          ok: false,
+          error: `Prompt exceeds maximum allowed length of ${maxPromptChars} characters`,
+          code: 'PROMPT_TOO_LONG',
+        });
+      }
+      if (systemPrompt.length > maxPromptChars) {
+        return json(400, {
+          ok: false,
+          error: `System prompt exceeds maximum allowed length of ${maxPromptChars} characters`,
+          code: 'PROMPT_TOO_LONG',
+        });
+      }
+
+      // Catalog validation: validate provider and model against the catalogue (#944, AP-B9)
+      const catalog = await readCatalog({ store, now });
+      const providerEntry = catalog?.providers?.[provider];
+      if (!providerEntry) {
+        return json(400, {
+          ok: false,
+          error: `Unknown or unsupported provider: ${provider}`,
+          code: 'INVALID_PROVIDER',
+        });
+      }
+
+      if (body?.model) {
+        const modelStr = String(body.model).trim();
+        const modelEntry = providerEntry.models?.[modelStr];
+        if (!modelEntry) {
+          return json(400, {
+            ok: false,
+            error: `Unknown model "${modelStr}" for provider "${provider}"`,
+            code: 'INVALID_MODEL',
+          });
+        }
+        if (modelEntry.status === 'retired') {
+          return json(400, {
+            ok: false,
+            error: `Model "${modelStr}" on ${provider} is retired in the catalogue`,
+            code: 'RETIRED_MODEL',
+          });
+        }
+      }
+
+      // Spend ceiling: per-actor and global daily caps enforced BEFORE calling provider (#944, AP-B9)
+      const actorId = auth.user?.oid || auth.user?.sub || auth.user?.email || 'editor';
+      const nowIso = new Date(now()).toISOString();
+      const day = utcDay(nowIso);
+
+      const actorAllowed = await capChecker(store, {
+        container: CACHE_CONTAINER,
+        id: `ai-proxy-actor:${actorId}:${day}`,
+        kind: 'ai-proxy-actor-cap',
+        day,
+        nowIso,
+        limit: actorDailyLimit,
+        ttlSeconds: 2 * 24 * 60 * 60,
+      });
+      if (!actorAllowed) {
+        return json(429, {
+          ok: false,
+          error: `Daily AI spend ceiling reached for actor ${actorId}. Try again tomorrow UTC.`,
+          code: 'AI_SPEND_LIMIT_EXCEEDED',
+        });
+      }
+
+      const globalAllowed = await capChecker(store, {
+        container: CACHE_CONTAINER,
+        id: `ai-proxy-global:${day}`,
+        kind: 'ai-proxy-global-cap',
+        day,
+        nowIso,
+        limit: globalDailyLimit,
+        ttlSeconds: 2 * 24 * 60 * 60,
+      });
+      if (!globalAllowed) {
+        return json(429, {
+          ok: false,
+          error: 'Global daily AI spend ceiling reached. Try again tomorrow UTC.',
+          code: 'AI_SPEND_LIMIT_EXCEEDED',
+        });
+      }
 
       const startedAt = clock();
       try {
@@ -231,7 +333,7 @@ export function createAiProxyHandlers({
           provider,
           model: body?.model || null,
           prompt,
-          systemPrompt: String(body?.systemPrompt || ''),
+          systemPrompt,
         });
         const latencyMs = clock() - startedAt;
 
@@ -286,6 +388,15 @@ export function createAiProxyHandlers({
       const body = await request.json().catch(() => null);
       const providerId = String(body?.providerId || '').trim();
       if (!providerId) return json(400, { ok: false, error: 'providerId is required' });
+
+      const catalog = await readCatalog({ store, now });
+      if (!catalog?.providers?.[providerId]) {
+        return json(400, {
+          ok: false,
+          error: `Unknown or unsupported provider: ${providerId}`,
+          code: 'INVALID_PROVIDER',
+        });
+      }
 
       const outcome = await testProviderConnection(
         { store, ai, now, uuid, clock, log: context },
