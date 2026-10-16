@@ -190,10 +190,11 @@ export const CONTAINER_TTL_SECONDS = Object.freeze({
   audits: 7776000, // 90 days
   // NOT `ambassador`. That container is the owner's Ambassador hub: the
   // programs, the owner's own applications to them and their evidence
-  // (lib/ambassador), kept until the owner deletes them. It holds no
-  // visitor's or third party's personal data. A container TTL expires every
-  // document not written within the window, so one here would delete the
-  // owner's records. #1234 set 90 days in the belief it held applicants'
+  // (lib/ambassador), kept until the owner deletes them. No field is meant
+  // for anyone else's personal data; what an editor types into its free-text
+  // fields is found and redacted by docs/runbooks/data-subject-requests.md,
+  // never expired. A container TTL expires every document not written within
+  // the window, so one here would delete the owner's records. #1234 set 90 days in the belief it held applicants'
   // data; it was taken off before any apply (2026-10-16), and
   // generate-cosmos-container-spec.test.mjs refuses it.
 });

@@ -947,13 +947,14 @@ This project has not cut a tagged release; entries are grouped under
   owner's own programs, applications and evidence, kept until deleted. A
   container TTL expires every document not written within the window, so it
   would have deleted the owner's records. The tfc-plan-check flagged it as
-  undeclared; the HCP Terraform runs carrying it were discarded and it is
-  taken off before any apply. `generate-cosmos-container-spec.test.mjs` now
-  refuses a container TTL on the containers whose records are kept until
-  deleted (`ambassador`, `content`, `content_versions`, `blogs`). The
-  data-subject runbook no longer lists the hub as a personal-data store. Its
-  commands and exercise record, which do not match the estate, are marked
-  under review in #1237.
+  undeclared before any run carrying it was confirmed, and it is taken off
+  before any apply. `generate-cosmos-container-spec.test.mjs` now refuses a
+  container TTL on the containers whose records are kept until deleted
+  (`ambassador`, `content`, `content_versions`, `blogs`). The data-subject
+  runbook keeps the hub in scope as a search of its free-text fields and
+  files, redacting matches and keeping the records. Its `content` queries
+  and its exercise record, which do not match the estate, are marked under
+  review and unverified until #1237.
 - **Lab host: Caddy's admin API moves to a Unix socket, and HTTP/3 is off
   (#958)**. The Caddyfile always renders a global block with
   `admin unix//run/caddy/admin.sock` instead of TCP `127.0.0.1:2019`, and
