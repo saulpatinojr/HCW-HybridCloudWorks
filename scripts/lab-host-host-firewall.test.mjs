@@ -185,11 +185,11 @@ describe('host_firewall: the jumps', () => {
     expect(sandboxUser).toBe('hcw-coder-docker');
   });
 
-  // The sandbox chain matches the sandbox user's own packets. That holds while
-  // rootlesskit's network driver is a user-mode one (slirp4netns or pasta); a
-  // routed driver would forward workspace packets instead, which an OUTPUT
-  // owner match does not see.
-  it("keeps the sandbox daemon on a user-mode network driver, which the OUTPUT owner match relies on", () => {
+  // The sandbox chain is written for rootlesskit's user-mode network drivers
+  // (slirp4netns or pasta). A change of driver changes how the sandbox's
+  // traffic leaves the host, so it has to revisit this role, and this test
+  // makes that change fail until it does.
+  it('keeps the sandbox daemon on the user-mode network driver this role is written for', () => {
     const sandboxUnit = read('lab-host/ansible/roles/coder_sandbox/templates/hcw-coder-docker.service.j2');
     expect(sandboxUnit).toMatch(/^Environment=DOCKERD_ROOTLESS_ROOTLESSKIT_NET=(slirp4netns|pasta)$/m);
   });
