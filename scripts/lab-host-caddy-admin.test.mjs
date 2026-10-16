@@ -157,4 +157,55 @@ describe('the restart runs before any reload of Caddy', () => {
       names.indexOf('Enable and start Caddy')
     );
   });
+
+  it('the socket check runs on every tag-scoped run, since coder and addons reload Caddy too', () => {
+    const check = items(read('roles/caddy/tasks/main.yml')).find(
+      (t) => t.name === 'Check that the running Caddy answers on the admin socket'
+    );
+    expect(check.body).toMatch(/^\s+tags: \[always\]\s*$/m);
+  });
+});
+
+describe('the run proves the move took, after the handlers', () => {
+  const tasks = items(read('roles/caddy/tasks/main.yml'));
+  const names = tasks.map((t) => t.name);
+  const at = (name) => {
+    const index = names.indexOf(name);
+    expect(index, `missing task: ${name}`).toBeGreaterThan(-1);
+    return index;
+  };
+  const body = (name) => tasks[at(name)].body;
+  const flush = 'Run any pending Caddy restart or reload before checking the result';
+  const readSocket = 'Read the admin socket Caddy is running with';
+  const refuse = "Refuse an admin socket that is missing, not Caddy's or not write-only";
+  const answers = 'Check that Caddy answers on the admin socket';
+  const no2019 = 'Refuse a Caddy still listening on TCP 2019';
+
+  it('flushes the handlers, then reads the socket, asserts it, asks Caddy, and checks 2019 is closed', () => {
+    expect(body(flush)).toContain('ansible.builtin.meta: flush_handlers');
+    const order = [flush, readSocket, refuse, answers, no2019].map(at);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(at(flush)).toBeGreaterThan(at('Check that the running Caddy answers on the admin socket'));
+  });
+
+  it('asserts a socket owned by the Caddy user, mode 0200', () => {
+    expect(body(readSocket)).toContain('path: "{{ caddy_admin_socket }}"');
+    expect(body(readSocket)).toContain('check_mode: false');
+    expect(body(refuse)).toContain('caddy_admin_socket_live.stat.issock');
+    expect(body(refuse)).toContain('caddy_admin_socket_live.stat.pw_name == caddy_user');
+    expect(body(refuse)).toContain("caddy_admin_socket_live.stat.mode == '0200'");
+  });
+
+  it('asks Caddy for its config over the socket, and waits for nothing on 127.0.0.1:2019', () => {
+    expect(body(answers)).toContain('ansible.builtin.uri:');
+    expect(body(answers)).toContain('unix_socket: "{{ caddy_admin_socket }}"');
+    expect(body(answers)).toMatch(/status_code: 200/);
+    expect(body(no2019)).toContain('ansible.builtin.wait_for:');
+    expect(body(no2019)).toMatch(/port: 2019[\s\S]*state: stopped/);
+  });
+
+  it('skips the reads in check mode only while the socket is missing, so the drift run does not fail on them', () => {
+    const guard = 'not ansible_check_mode or (caddy_admin_socket_live.stat.issock | default(false))';
+    for (const name of [refuse, answers, no2019]) expect(body(name), name).toContain(guard);
+  });
 });
