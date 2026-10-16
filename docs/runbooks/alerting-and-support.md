@@ -1147,6 +1147,21 @@ is stateless, so no Resolved mail follows, and now and then a second alert for
 the same line arrives a quarter of an hour after the first: the duplicate the
 rule accepts rather than miss a login.
 
+**Adding, rotating or removing an admin SSH key.** The rule's approved keys
+are a reviewed list in `infra/` (`lab_ssh_admin_key_fingerprints`), never
+read from the host, so a key the host merely has is not trusted by the alert.
+A change to the keys the host accepts is therefore two edits in one pull
+request: the public key in `lab-host/ansible/group_vars/all.yml`
+(`hardening_admin_authorized_keys`) and its fingerprint (`ssh-keygen -lf
+<file>.pub`) in `infra/variables.tf`. `scripts/lab-host-ssh-login-alert.test.mjs`
+fails when the two lists differ. Apply in this order:
+1. Confirm the `hcw-azure` run first, so the alert knows the new key.
+2. Then run `bootstrap.sh`, which installs the key on the host.
+
+The other order makes the first login with the new key page. Removing a
+key is the same two edits in the reverse order: bootstrap first, then the
+apply.
+
 **`alert-kv-config-write`**: add a tag to the site vault and take it off.
 A tag write is a Resource Manager write on the vault and touches nothing else.
 The key carries this moment's time, so it cannot be a tag the vault already
