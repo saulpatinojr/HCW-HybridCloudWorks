@@ -921,6 +921,18 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The lab backup account's blob diagnostic setting no longer plans a
+  change on every run (#1209)**. It set
+  `log_analytics_destination_type = "Dedicated"`, which Azure keeps no
+  value for on a storage target. Storage writes only to its own
+  resource-specific tables, so the setting read back empty after its create
+  on 2026-10-14, and every plan since proposed `"" -> "Dedicated"` again.
+  The plan check named it as undeclared on #1207's merge run
+  (`run-qrsPoBGgTrAZyqwa`). The attribute is gone. The rows land in
+  `StorageBlobLogs` as before, as they always did for the site's four other
+  storage settings, which never set it.
+  `scripts/storage-diagnostic-settings.test.mjs` refuses the attribute on
+  any diagnostic setting whose target is a storage account.
 - **The `/education` page test computes its expectations on the day the page
   renders, not on the runner's real date** (#495, #1092). Since #495,
   `EducationIndexPage.test.jsx` has pinned the clock to 2026-09-10 in

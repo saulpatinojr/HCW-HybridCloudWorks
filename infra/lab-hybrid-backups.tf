@@ -152,10 +152,14 @@ resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_backups_blob" {
   name                       = "diag-blob-to-logs"
   target_resource_id         = "${azurerm_storage_account.lab_hybrid_backups.id}/blobServices/default"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.hcw.id
-  # Resource-specific tables, so the rows land in StorageBlobLogs — the table
-  # the two alerts below query — and not in AzureDiagnostics (the site's
-  # content_blob setting in observability.tf makes the same choice).
-  log_analytics_destination_type = "Dedicated"
+  # No log_analytics_destination_type. Storage writes only to its own
+  # resource-specific tables, so the rows land in StorageBlobLogs, the table
+  # the two alerts below query, whatever this says. Azure keeps no value for
+  # it: the setting was created with "Dedicated" on 2026-10-14, read back
+  # empty, and every plan since proposed "" -> "Dedicated" again (#1209). The
+  # site's content_blob setting in observability.tf leaves it unset the same
+  # way and has never drifted. scripts/storage-diagnostic-settings.test.mjs
+  # holds every storage diagnostic setting to that.
 
   enabled_log {
     category = "StorageWrite"
