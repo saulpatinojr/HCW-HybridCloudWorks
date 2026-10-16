@@ -32,6 +32,7 @@
           "checkedOn": "2026-09-25",
           "source": "https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#supported-language-stack-versions",
           "appliesTo": [
+            "functions/.nvmrc",
             "functions/package.json",
             "infra/functionapp.tf",
             ".github/workflows/ci.yml > verify > functions (azure)",

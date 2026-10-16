@@ -323,6 +323,7 @@ function QueueItemCover({ item, coverUrl, canGenerateHero, isGeneratingHero, han
         />
       ) : (
         <div
+          role="img"
           className="w-full h-full rounded-md bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-600"
           aria-label="No hero image yet"
         >

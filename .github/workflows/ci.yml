@@ -75,7 +75,7 @@ jobs:
           # decisionCenterModel.test.js holds the tabs to the API's categories.
           - name: frontend
             dir: frontend
-            filter: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile)$|vps-agent/lib/docker-runner\.js$|functions/src/lib/(labs/(visitor-report\.js|fixtures/[^/]+\.log)|rss/feeds\.js|decision-center/(links|items)\.js|cms/content-status\.js)$|lab-host/(coder/launcher/launcher\.js|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
+            filter: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile)$|vps-agent/lib/docker-runner\.js$|functions/src/lib/(labs/(visitor-report\.js|fixtures/[^/]+\.log)|rss/feeds\.js|decision-center/(links|items)\.js|cms/(content-status|content-update-validation)\.js|addons/registry\.js|ai/(router|model-catalog|usage|mcp-policy)\.js|health/(status-model|probe-catalogue|pulse-checks)\.js)$|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
             lint: npm run lint
             format: npm run format:check
             build: npm run build
@@ -101,10 +101,12 @@ jobs:
           # lists submissions.test.js holds the API's contract to. The
           # dashboard's decisionCenterModel.js is where each Decision Center
           # source's list lives: decision-center.test.js holds every source to it.
+          # sourceUrl.js is what source-episode.test.js imports, and onboard.yml
+          # is what estate.test.js reads for the guest configuration toggle.
           - name: functions (azure)
             dir: functions
             node-version: '24'
-            filter: '^(functions/|\.azure/api-surface\.json|infra/|docs/content/blog-[a-z0-9-]+\.md$|frontend/src/pages/tools/landingZone/labValidateRules\.js$|frontend/src/pages/tools/explain/ExplainControl\.jsx$|frontend/src/lib/turnstile\.js$|frontend/src/components/admin/platform-settings/settingShared\.jsx$|frontend/src/pages/admin/ImagePromptsPage\.jsx$|frontend/src/lib/api\.js$|frontend/src/config/admin\.js$|frontend/src/lib/providers\.js$|frontend/src/pages/submissions/[A-Za-z]+SubmissionPage\.jsx$|frontend/src/components/admin/dashboard/decisionCenterModel\.js$)'
+            filter: '^(functions/|\.azure/api-surface\.json|infra/|docs/content/blog-[a-z0-9-]+\.md$|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
             lint: npm run lint
             test: npm test
           # The out-of-tree entries after infra/ are what
@@ -127,9 +129,11 @@ jobs:
           # are the catalogue's. function-inventory.json is what
           # check-registered-functions.test.mjs parses with the script the
           # deploy and the registration monitor run (PLAT-2).
+          # BuildingImagesPage.jsx and AddOnPanePage.jsx are read by supply-chain
+          # and visitor-copy tests.
           - name: scripts (operations)
             dir: scripts
-            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/function-inventory\.json$)'
+            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/(lib/(labs|rss/feeds)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
             lint: npm run lint
             test: npm test
           # vps-agent shells out to `docker run` with a payload that reached
@@ -138,9 +142,11 @@ jobs:
           # nothing else, so an edit dropping `--network none` shipped green.
           # The suite uses node:test — no dependency, which keeps this
           # package's single-dependency lockfile intact.
+          # group_vars/all.yml and hcw-labs-agent.service.j2 are read by
+          # applied-commit.test.js and log.test.js.
           - name: vps-agent
             dir: vps-agent
-            filter: '^vps-agent/'
+            filter: '^(vps-agent/|lab-host/ansible/(group_vars/all\.yml|roles/labs_agent/templates/hcw-labs-agent\.service\.j2)$)'
             test: npm test
           - name: edge (availability probe)
             dir: edge/availability-probe
