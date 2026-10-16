@@ -2007,11 +2007,24 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "key_vault_data_writes
 # custom role's actions widens every assignment of it without one assignment
 # being written.
 
-# Vault configuration: anything Resource Manager writes on either vault or
-# beneath it. That covers the network ACL and every other vault property, a
-# delete, keys and secrets written through Resource Manager, and role
-# assignments scoped to a vault. Scopes are resource ids used as prefixes, so
-# naming the two vaults is the whole filter.
+# Vault configuration: what Resource Manager writes on either vault or beneath
+# it. That covers the network ACL and every other vault property, a delete,
+# keys and secrets written through Resource Manager, role assignments and locks
+# scoped to a vault, its tags, and its diagnostic settings. Scopes are resource
+# ids used as prefixes.
+#
+# THE PROVIDER LIST IS WHAT STOPS THIS RULE FIRING ON ITSELF (#1216). An
+# alert's state change is logged against its target, as
+# `<vault id>/providers/Microsoft.AlertsManagement/alerts/<id>`, which is
+# beneath the vault and matched the bare prefix. So closing one of this rule's
+# alerts, in the portal or through the API, opened another and paged again:
+# the 2026-10-16 cleanup closed three and three new ones fired at 01:37Z.
+# Activity Log conditions have no "not equals", so the providers that make
+# real vault changes are listed and Microsoft.AlertsManagement is not:
+# KeyVault (the vault, its keys, secrets and private endpoints),
+# Authorization (role assignments and locks), Resources (tags, which
+# Invoke-AlertFireTest.ps1 -Test kv-config-write writes) and Insights
+# (diagnostic settings, so turning off the vault's audit log still pages).
 resource "azurerm_monitor_activity_log_alert" "key_vault_config_writes" {
   name                = "alert-kv-config-write-${var.environment}-${var.region_abbreviation}"
   resource_group_name = azurerm_resource_group.app["web"].name
@@ -2022,6 +2035,12 @@ resource "azurerm_monitor_activity_log_alert" "key_vault_config_writes" {
   criteria {
     category = "Administrative"
     statuses = ["Succeeded", "Failed"]
+    resource_providers = [
+      "Microsoft.KeyVault",
+      "Microsoft.Authorization",
+      "Microsoft.Resources",
+      "Microsoft.Insights",
+    ]
   }
 
   action {

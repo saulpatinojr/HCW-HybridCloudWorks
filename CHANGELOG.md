@@ -934,6 +934,20 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **`alert-kv-config-write` no longer fires when one of its own alerts is
+  closed (#1216)**. An alert's state change is logged against its target, as
+  `<vault id>/providers/Microsoft.AlertsManagement/alerts/<id>`. That sits
+  beneath the vault, and the rule's only filters were category and status.
+  So closing one of its alerts opened another and paged again: on
+  2026-10-16 the alert cleanup closed three, and three new ones fired at
+  01:37Z. Activity Log conditions have no "not equals", so the rule now
+  names the providers that make real vault changes: KeyVault,
+  Authorization, Resources (tags, which the fire test writes) and Insights
+  (diagnostic settings). `Microsoft.AlertsManagement` is not among them.
+  `scripts/activity-log-alert-filters.test.mjs` refuses any Administrative
+  Activity Log alert without a provider or type filter, or one that lets
+  `Microsoft.AlertsManagement` through. Live after the owner's `hcw-azure`
+  apply.
 - **The lab backup account's blob diagnostic setting no longer plans a
   change on every run (#1209)**. It set
   `log_analytics_destination_type = "Dedicated"`, which Azure keeps no
