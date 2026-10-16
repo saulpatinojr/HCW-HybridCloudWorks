@@ -9,7 +9,6 @@ import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 
 import { createLabAgentHandlers } from './lab-agent.js';
-import { ADMIN_CONFIG_PARTITION } from './cosmos-client.js';
 
 const CONTRACT_PATH = new URL('../../../.azure/agent-protocol.json', import.meta.url);
 const contract = JSON.parse(fs.readFileSync(CONTRACT_PATH, 'utf8'));
