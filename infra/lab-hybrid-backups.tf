@@ -197,7 +197,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_backup_mis
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   location            = azurerm_resource_group.platform_mgmt.location
   scopes              = [azurerm_log_analytics_workspace.hcw.id]
-  description         = "The lab host wrote no Coder PostgreSQL dump to ${azurerm_storage_account.lab_hybrid_backups.name}/host-backups/coder/ in two days. The nightly unit is failing or the host is not uploading; `sudo systemctl status coder-postgres-backup` and `sudo journalctl -t hcw-backup-upload` on the host say which. Stateful: resolves once a dump lands. LAB-9."
+  description         = "The lab host wrote no Coder PostgreSQL dump to ${azurerm_storage_account.lab_hybrid_backups.name}/host-backups/coder/ in two days. The nightly unit is failing or the host is not uploading; `sudo systemctl status coder-postgres-backup` and `sudo journalctl -t hcw-backup-upload` on the host say which. LAB-9."
   severity            = 2
 
   evaluation_frequency = "PT1H"
@@ -238,7 +238,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_backup_mis
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   location            = azurerm_resource_group.platform_mgmt.location
   scopes              = [azurerm_log_analytics_workspace.hcw.id]
-  description         = "The lab host wrote no Vault raft snapshot to ${azurerm_storage_account.lab_hybrid_backups.name}/host-backups/vault/ in two days. The nightly unit is failing or the host is not uploading; `sudo systemctl status hcw-vault-backup` and `sudo journalctl -t hcw-backup-upload` on the host say which. Stateful: resolves once a snapshot lands. LAB-9."
+  description         = "The lab host wrote no Vault raft snapshot to ${azurerm_storage_account.lab_hybrid_backups.name}/host-backups/vault/ in two days. The nightly unit is failing or the host is not uploading; `sudo systemctl status hcw-vault-backup` and `sudo journalctl -t hcw-backup-upload` on the host say which. LAB-9."
   severity            = 2
 
   evaluation_frequency = "PT1H"

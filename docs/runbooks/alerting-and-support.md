@@ -499,8 +499,10 @@ answered from metrics, not from logs.
 **One mail per incident, not one every five minutes.** The workload rules are
 *stateful* (`auto_mitigation_enabled = true`, or a metric rule's own default):
 each fires once, stays fired while the condition holds, and sends a single
-Resolved mail once the condition has been clear for three evaluation periods —
-fifteen minutes on the PT5M rules, two on the hourly ones. Since 2026-10-16 that
+Resolved mail once the condition has been clear: for three evaluation periods
+on a rule evaluated every 5 to 15 minutes (fifteen minutes on the PT5M rules),
+and for two on a rule evaluated less often, up to every 11 hours (two hours on
+the hourly rules). Since 2026-10-16 that
 includes `alert-logs-capacity`, `alert-lab-disk` and both
 `alert-lab-backup-missing` rules, which used to mute instead and left an alert
 open for every evaluation over their threshold ([ADR 0022](../decisions/0022-alerting-fabric.md)

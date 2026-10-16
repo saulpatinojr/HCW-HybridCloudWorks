@@ -491,7 +491,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_disk_used"
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   location            = azurerm_resource_group.platform_mgmt.location
   scopes              = [azurerm_log_analytics_workspace.hcw.id]
-  description         = "The lab host's root filesystem is past 85% used. Docker images, Coder workspaces, Vault's raft store and the pg_dumps share it; a full disk breaks them without a crash. Prune images or old dumps. Stateful: resolves once the disk is back under 85%. LAB-2."
+  description         = "The lab host's root filesystem is past 85% used. Docker images, Coder workspaces, Vault's raft store and the pg_dumps share it; a full disk breaks them without a crash. Prune images or old dumps. LAB-2."
   severity            = 2
 
   evaluation_frequency = "PT1H"

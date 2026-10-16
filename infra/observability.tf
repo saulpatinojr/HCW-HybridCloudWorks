@@ -948,7 +948,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "logs_daily_cap" {
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   location            = azurerm_resource_group.platform_mgmt.location
   scopes              = [azurerm_log_analytics_workspace.hcw.id]
-  description         = "Log Analytics billable ingestion has passed 80% of the daily cap since the last reset. Stateful: resolves after the 08:00 UTC reset."
+  description         = "Log Analytics billable ingestion has passed 80% of the daily cap since the last reset."
   severity            = 2
 
   evaluation_frequency = "PT1H"

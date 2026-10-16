@@ -295,6 +295,33 @@ const TIMER_SCHEDULES_APPLIED = [
  * has applied. "Declaring an intended change" in the header has the rest.
  */
 export const DECLARED = [
+  // ADR 0022 decision 6, amended 2026-10-16: four hourly rules go from a mute
+  // to stateful. Each is an in-place update of two attributes, the mute
+  // removed (Terraform plans an unset optional string as null) and
+  // auto-mitigation on; query, threshold, frequency and window are unchanged.
+  // Delete these once verify-alert-state.yml reads all four OK with
+  // autoMitigate true.
+  ...[
+    ["lab_hybrid_backup_missing_coder", "P1D"],
+    ["lab_hybrid_backup_missing_vault", "P1D"],
+    ["lab_hybrid_disk_used", "PT6H"],
+    ["logs_daily_cap", "PT6H"],
+  ].flatMap(([name, mute]) => [
+    {
+      address: `azurerm_monitor_scheduled_query_rules_alert_v2.${name}`,
+      path: "auto_mitigation_enabled",
+      before: false,
+      after: true,
+      reason: "ADR 0022 decision 6: stateful wherever the condition can clear",
+    },
+    {
+      address: `azurerm_monitor_scheduled_query_rules_alert_v2.${name}`,
+      path: "mute_actions_after_alert_duration",
+      before: mute,
+      after: null,
+      reason: "ADR 0022 decision 6: the mute it replaces",
+    },
+  ]),
   // #964: alert-timer-overdue computes each timer's last due time without
   // bin_at(), which Kusto refused at every evaluation from the rule's create
   // on 2026-10-10 (SEM0040), so the rule never fired. An in-place update of
