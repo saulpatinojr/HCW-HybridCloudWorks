@@ -191,10 +191,16 @@
 # Arc machine accepts any extension and Run Command from any identity with
 # Contributor on its resource group, which is root on the host over the
 # control plane, bypassing sshd. The allowlist admits the one extension this
-# estate installs (the Azure Monitor Agent, docs/runbooks/labs-host.md), and
-# incoming connections (SSH over Arc, Windows Admin Center) are off: the
-# owner reaches the host over sshd with a key. Guest configuration is off
-# too (owner decision 2026-10-07, ADR 0032 amendment of that date):
+# estate installs (the Azure Monitor Agent, docs/runbooks/labs-host.md).
+# Incoming connections (SSH over Arc, Windows Admin Center) were off until
+# 2026-10-16; since #953 (LAB-7; ADR 0032, amendment of that date) they are
+# on for port 22 alone, sshd's, so the owner can reach sshd through Arc SSH
+# once port 22 is closed to the internet. The relay delivers a stream to
+# sshd, which still asks for the pinned key, and nothing else listens for it:
+# Windows Admin Center and every other port stay refused, and no extension is
+# added. arc_incoming_ssh_enabled false puts LAB-6's state back. Guest
+# configuration is off too (owner decision 2026-10-07, ADR 0032 amendment of
+# that date):
 # Microsoft's locked-down-machine guidance disables it so a custom machine
 # configuration policy cannot rewrite the agent settings above, and it
 # avoids the per-server machine-configuration charge on an Arc server. Each
@@ -222,6 +228,17 @@
   changed_when: false
   when: not ansible_check_mode
 
+- name: Read the ports incoming connections through Arc may reach
+  ansible.builtin.command:
+    argv:
+      - "{{ arc_azcmagent_path }}"
+      - config
+      - get
+      - incomingconnections.ports
+  register: arc_ports_get
+  changed_when: false
+  when: not ansible_check_mode
+
 - name: Read whether guest configuration is enabled on the Arc agent
   ansible.builtin.command:
     argv:
@@ -242,7 +259,11 @@
 # test here would have accepted it; review of #909.) The first version read
 # `config list --json` and assumed a list of name/value objects, which it is
 # not, and the play stopped here on the owner's first re-run (2026-10-06).
-- name: Reduce the three readings to comparable values
+# Agent 1.68 prints the bare value: `false`, `[]`, and
+# `[Microsoft.Azure.Monitor/AzureMonitorLinuxAgent]` (read on the host
+# 2026-10-16); the ports list reads the same way, so `[22]` and `[]` reduce
+# to ['22'] and [].
+- name: Reduce the four readings to comparable values
   ansible.builtin.set_fact:
     arc_allowlist_current: >-
       {{ ((arc_allowlist_get.stdout_lines | first | default('')) | regex_replace('^[^:]*:', '')
@@ -253,6 +274,10 @@
          | reject('eq', '') | sort }}
     arc_incoming_current: >-
       {{ (arc_incoming_get.stdout_lines | first | default('')) | regex_replace('^[^:]*:', '') | trim | lower }}
+    arc_ports_current: >-
+      {{ ((arc_ports_get.stdout_lines | first | default('')) | regex_replace('^[^:]*:', '')
+          | regex_replace('[\[\]"\s]', '')).split(',')
+         | reject('eq', '') | sort }}
     arc_guestconfig_current: >-
       {{ (arc_guestconfig_get.stdout_lines | first | default('')) | regex_replace('^[^:]*:', '') | trim | lower }}
   when: not ansible_check_mode
@@ -271,18 +296,102 @@
     - not ansible_check_mode
     - arc_allowlist_current != arc_allowlist_wanted
 
-- name: Turn off incoming connections through Arc
+# Ports before the switch, so that the moment incoming connections turn on
+# the agent admits 22 alone; and, turning Arc SSH off, the switch before the
+# ports are cleared.
+- name: Admit port 22 alone for incoming connections through Arc
+  ansible.builtin.command:
+    argv:
+      - "{{ arc_azcmagent_path }}"
+      - config
+      - set
+      - incomingconnections.ports
+      - "22"
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - arc_incoming_ssh_enabled | bool
+    - arc_ports_current != arc_incoming_ports_wanted
+
+- name: Turn incoming connections through Arc on for Arc SSH, or off without it
   ansible.builtin.command:
     argv:
       - "{{ arc_azcmagent_path }}"
       - config
       - set
       - incomingconnections.enabled
-      - "false"
+      - "{{ arc_incoming_enabled_wanted }}"
   changed_when: true
   when:
     - not ansible_check_mode
-    - arc_incoming_current != 'false'
+    - arc_incoming_current != arc_incoming_enabled_wanted
+
+- name: Clear the incoming ports when Arc SSH is off
+  ansible.builtin.command:
+    argv:
+      - "{{ arc_azcmagent_path }}"
+      - config
+      - clear
+      - incomingconnections.ports
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - not (arc_incoming_ssh_enabled | bool)
+    - arc_ports_current | length > 0
+
+# Read back after the writes above, and fail closed if they did anything but
+# what they say: Arc SSH opens port 22 and nothing else, and adding it must
+# not widen what the agent may install. A run that leaves the allowlist
+# admitting a second extension, or the agent open on another port, stops
+# here naming what it found.
+- name: Read the extension allowlist and the incoming-connection settings back
+  ansible.builtin.command:
+    argv:
+      - "{{ arc_azcmagent_path }}"
+      - config
+      - get
+      - "{{ item }}"
+  loop:
+    - extensions.allowlist
+    - incomingconnections.enabled
+    - incomingconnections.ports
+  register: arc_lockdown_after
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Reduce the read-back to comparable values
+  ansible.builtin.set_fact:
+    arc_allowlist_after: >-
+      {{ ((arc_lockdown_after.results[0].stdout_lines | first | default('')) | regex_replace('^[^:]*:', '')
+          | regex_replace('[\[\]"\s]', '')).split(',')
+         | reject('eq', '') | sort }}
+    arc_incoming_after: >-
+      {{ (arc_lockdown_after.results[1].stdout_lines | first | default('')) | regex_replace('^[^:]*:', '') | trim | lower }}
+    arc_ports_after: >-
+      {{ ((arc_lockdown_after.results[2].stdout_lines | first | default('')) | regex_replace('^[^:]*:', '')
+          | regex_replace('[\[\]"\s]', '')).split(',')
+         | reject('eq', '') | sort }}
+  when: not ansible_check_mode
+
+- name: Assert the extension allowlist is unchanged and incoming connections reach port 22 alone
+  ansible.builtin.assert:
+    that:
+      - arc_allowlist_after == arc_allowlist_wanted
+      - arc_incoming_after == arc_incoming_enabled_wanted
+      - arc_ports_after == arc_incoming_ports_wanted
+    fail_msg: >-
+      The Arc agent reads extensions.allowlist {{ arc_allowlist_after }},
+      incomingconnections.enabled {{ arc_incoming_after }} and
+      incomingconnections.ports {{ arc_ports_after }}; this role sets
+      {{ arc_allowlist_wanted }}, {{ arc_incoming_enabled_wanted }} and
+      {{ arc_incoming_ports_wanted }} (arc_incoming_ssh_enabled is
+      {{ arc_incoming_ssh_enabled | bool }}). Read them with
+      `sudo /opt/azcmagent/bin/azcmagent config list` on the host. Nothing
+      after this task has run.
+    success_msg: >-
+      Arc agent: extension allowlist {{ arc_allowlist_wanted | join(',') }};
+      incoming connections {{ 'on, port 22 only (Arc SSH)' if arc_incoming_ssh_enabled | bool else 'off' }}.
+  when: not ansible_check_mode
 
 - name: Turn off guest configuration on the Arc agent
   ansible.builtin.command:

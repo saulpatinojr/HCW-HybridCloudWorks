@@ -10,6 +10,13 @@ arc_identity_present: >-
 # one is a vault key pasted into the wrong slot, and azcmagent would report it
 # as an authentication failure that does not say which of the three it was.
 arc_guid_pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+# The ports incoming connections through Arc may reach, as azcmagent's
+# incomingconnections.ports list: sshd's port with Arc SSH on, none with it
+# off. 22 is fixed, not a setting: it is sshd's port, and the connectivity
+# endpoint's SSH service configuration in infra/lab-hybrid.tf names the same
+# port (scripts/lab-host-arc-ssh.test.mjs holds the two together).
+arc_incoming_ports_wanted: "{{ ['22'] if arc_incoming_ssh_enabled | bool else [] }}"
+arc_incoming_enabled_wanted: "{{ 'true' if arc_incoming_ssh_enabled | bool else 'false' }}"
 # azcmagent --tags takes Name=Value pairs separated by commas.
 arc_tags_argument: "{{ arc_tags.items() | map('join', '=') | join(',') }}"
 # The --config file. Keys are azcmagent connect's long option names; Microsoft

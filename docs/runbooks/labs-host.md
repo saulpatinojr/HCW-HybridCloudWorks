@@ -276,6 +276,110 @@ allowusers hcwadmin
 authenticationmethods publickey
 ```
 
+### Connect through Azure Arc
+
+Owner decision 2026-10-16 (#953; [ADR 0032](../decisions/0032-learner-labs-platform.md),
+amendment of that date): the owner reaches the host through **Azure Arc
+SSH**, and port 22 then closes to the internet, in a later change. Arc SSH
+carries the session through a relay the host's Arc agent dials out to, so
+sshd needs no open port; sshd still asks for the same pinned key. Until
+port 22 closes, the direct block above keeps working, and running the script
+without `-Arc` puts it back.
+
+`Connect-Lab.ps1 -Arc` writes the same `Host hcw-lab` block with a
+`ProxyCommand`. That runs `$HOME\.ssh\hcw-lab-arc-proxy.ps1` (written by the
+script, run by Windows PowerShell 5.1), which asks `az ssh config` for fresh
+relay credentials on **every** connection, since they last an hour at most,
+in a private folder under your temporary folder that it deletes when the
+connection ends, and then hands the connection to the az ssh extension's
+proxy. So `ssh hcw-lab`, piped commands, `ssh -t`, `ssh -L` and VS Code
+Remote-SSH work as they do directly, from PowerShell and Git Bash alike, and
+nothing expires an hour after setup. Each connection takes a few seconds
+longer while az fetches the credentials. The host key is checked under the
+name a direct connection used (`HostKeyAlias`), so the key already accepted
+is the one Arc must present. After an OS reinstall, the old key is removed
+under that name, PowerShell:
+
+```powershell
+ssh-keygen -R (ssh -G hcw-lab | Select-String -Pattern '^hostkeyalias (.+)$').Matches[0].Groups[1].Value
+```
+
+Once, in this order:
+
+1. **The `hcw-azure` run** that creates the Arc machine's connectivity
+   endpoint and its SSH service configuration on port 22
+   (`infra/lab-hybrid.tf`): two creates,
+   `azapi_resource.lab_hybrid_arc_connectivity_endpoint[0]` and
+   `azapi_resource.lab_hybrid_arc_ssh_service_configuration[0]`, beside the
+   permanent diff, confirmed in the HCP Terraform UI. Run it before anything
+   below: the az ssh extension creates a missing endpoint itself, and this
+   run would then fail on one that already exists. The script refuses to
+   continue until it has run.
+2. **The playbook run** that turns on the agent's incoming connections for
+   port 22 alone (the `arc` role, `arc_incoming_ssh_enabled`), PowerShell:
+
+   ```powershell
+   ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+   ```
+
+   Success is a recap with `failed=0`, after the line `Arc agent: extension
+   allowlist Microsoft.Azure.Monitor/AzureMonitorLinuxAgent; incoming
+   connections on, port 22 only (Arc SSH).` The run stops instead if the
+   allowlist reads anything else.
+3. **The az ssh extension** on this desktop, PowerShell:
+
+   ```powershell
+   az extension add --name ssh
+   ```
+
+   Success is this printing a version, 2.0.4 or later:
+
+   ```powershell
+   az extension show --name ssh --query version -o tsv
+   ```
+
+4. **The script**, from the repository root on `main` once this change has
+   merged (`Test-Path scripts/lab/Connect-Lab.ps1` prints `True`), signed in
+   with `az login`, PowerShell:
+
+   ```powershell
+   pwsh -NoProfile -File scripts/lab/Connect-Lab.ps1 -Arc
+   ```
+
+   It reads first and changes nothing until each check passes: az, the
+   extension, the sign-in, and the service configuration from step 1. Then
+   it writes the helper, asks Azure once for relay credentials through it
+   (which also downloads the extension's proxy), and only then replaces the
+   block. Success ends with `Changed:` naming the helper and the block, after
+   the line `hcw-lab (Arc): relay credentials issued for
+   arcs-lab-hybrid-prod-cus-01; proxy …`. A refusal names the step to run
+   and leaves the direct block in place.
+5. **The test**, PowerShell:
+
+   ```powershell
+   ssh hcw-lab hostname
+   ```
+
+   Success prints the host's name, after a few seconds. That it came
+   through Arc is this, whose first field is `127.0.0.1` or `::1`, the
+   host's own loopback, where the relay hands connections to sshd:
+
+   ```powershell
+   ssh hcw-lab 'echo $SSH_CONNECTION'
+   ```
+
+   A failure prints lines starting `hcw-lab (Arc):` that say why. VS Code
+   opens the repository the same way as before; if Remote-SSH gives up
+   connecting, raise its **Remote.SSH: Connect Timeout** setting to 60.
+6. **The break-glass path**: the Web Console checks of "The first
+   `bootstrap.sh` run with #953" above (its steps 1 and 5). It needs
+   neither Arc, the relay nor port 22, so it is the way in when nothing
+   else works.
+
+Port 22 closes only after step 5 here and those console checks have both
+succeeded, in a later change, which also makes the SSH login alert (#953)
+page on any accepted login that did not come through Arc.
+
 ## The first-run host check
 
 `lab-host/bootstrap.sh` configures only a host that was prepared for it. On

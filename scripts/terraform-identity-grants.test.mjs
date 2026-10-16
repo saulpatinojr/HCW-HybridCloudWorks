@@ -383,11 +383,16 @@ const SCOPE_ATTRIBUTES = [
 ];
 
 /**
- * Locals and variables a scope-bearing attribute may name, each with the
- * reason it resolves below a declared group. Empty on purpose: none is used
- * on 2026-10-07, and an entry here is a reviewed decision, not a default.
+ * Locals, variables and data sources a scope-bearing attribute may name, each
+ * with the reason it resolves below a declared group. Empty until 2026-10-16:
+ * an entry here is a reviewed decision, not a default.
  */
-const SCOPE_EXPRESSION_ALLOWLIST = {};
+const SCOPE_EXPRESSION_ALLOWLIST = {
+  'data.azapi_resource.lab_hybrid_arc_machine.id':
+    "the Arc machine, read by the id in its own resource_id, a literal under rg-lab-hybrid-<env>-<region> " +
+    'that the scope check below holds to a declared group like any other; the parent of the Arc SSH ' +
+    'connectivity endpoint (#953)',
+};
 
 /**
  * Scope attributes that name what a block WATCHES, not where it writes, and
