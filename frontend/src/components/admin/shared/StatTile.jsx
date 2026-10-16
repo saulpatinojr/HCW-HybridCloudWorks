@@ -54,7 +54,7 @@ export default function StatTile({
       aria-label={ariaLabel}
       data-testid="stat-tile"
       className={cn(
-        'group flex h-full min-w-0 flex-col rounded-xl border p-4 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'group flex h-full min-w-0 flex-col rounded-xl border p-3.5 sm:p-4 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className
       )}
     >
@@ -63,13 +63,13 @@ export default function StatTile({
         <ChevronRight className="h-3 w-3 text-muted-foreground/30 transition-colors group-hover:text-muted-foreground" />
       </span>
       <span className="mt-2 text-2xl font-bold leading-8 tabular-nums">{value}</span>
-      <span className="truncate text-xs font-medium leading-4 text-muted-foreground" title={label}>
+      <span className="truncate text-xs font-medium leading-4 tracking-tight text-muted-foreground" title={label}>
         {label}
       </span>
       {note ? (
         <span
           className={cn(
-            'mt-0.5 truncate text-xs leading-4',
+            'mt-0.5 truncate text-xs leading-4 tracking-tight',
             noteClassName ?? 'text-muted-foreground'
           )}
           title={note}
@@ -78,7 +78,7 @@ export default function StatTile({
           {note}
         </span>
       ) : (
-        <span className="mt-0.5 text-xs leading-4" aria-hidden="true" data-testid="stat-tile-note">
+        <span className="mt-0.5 text-xs leading-4 tracking-tight" aria-hidden="true" data-testid="stat-tile-note">
           &nbsp;
         </span>
       )}

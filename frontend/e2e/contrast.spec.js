@@ -82,16 +82,14 @@ for (const theme of THEMES) {
         }, theme);
 
         await page.goto(route, { waitUntil: 'networkidle' });
-        await page
-          .waitForFunction(
-            (t) =>
-              t === 'dark'
-                ? document.documentElement.classList.contains('dark')
-                : !document.documentElement.classList.contains('dark'),
-            theme,
-            { timeout: 5000 }
-          )
-          .catch(() => {});
+        await page.waitForFunction(
+          (t) =>
+            t === 'dark'
+              ? document.documentElement.classList.contains('dark')
+              : !document.documentElement.classList.contains('dark'),
+          theme,
+          { timeout: 5000 }
+        );
 
         await page.addScriptTag({ path: AXE_PATH });
 
@@ -134,16 +132,14 @@ for (const theme of THEMES) {
         }, theme);
 
         await identity.signIn(route);
-        await page
-          .waitForFunction(
-            (t) =>
-              t === 'dark'
-                ? document.documentElement.classList.contains('dark')
-                : !document.documentElement.classList.contains('dark'),
-            theme,
-            { timeout: 5000 }
-          )
-          .catch(() => {});
+        await page.waitForFunction(
+          (t) =>
+            t === 'dark'
+              ? document.documentElement.classList.contains('dark')
+              : !document.documentElement.classList.contains('dark'),
+          theme,
+          { timeout: 5000 }
+        );
 
         await page.addScriptTag({ path: AXE_PATH });
 

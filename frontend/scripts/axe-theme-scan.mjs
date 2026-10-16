@@ -136,16 +136,14 @@ async function main() {
         try {
           await page.goto(url, { waitUntil: 'networkidle' });
           // Wait for hydration; theme class must be present on <html>.
-          await page
-            .waitForFunction(
-              (t) =>
-                t === 'dark'
-                  ? document.documentElement.classList.contains('dark')
-                  : !document.documentElement.classList.contains('dark'),
-              theme,
-              { timeout: 5000 }
-            )
-            .catch(() => {});
+          await page.waitForFunction(
+            (t) =>
+              t === 'dark'
+                ? document.documentElement.classList.contains('dark')
+                : !document.documentElement.classList.contains('dark'),
+            theme,
+            { timeout: 5000 }
+          );
 
           const axeResult = await runAxeOnPage(page);
           const contrastNodes = (
@@ -193,16 +191,14 @@ async function main() {
           const stub = new IdentityStub(adminPage, BASE_URL);
           await stub.install();
           await stub.signIn(route);
-          await adminPage
-            .waitForFunction(
-              (t) =>
-                t === 'dark'
-                  ? document.documentElement.classList.contains('dark')
-                  : !document.documentElement.classList.contains('dark'),
-              theme,
-              { timeout: 5000 }
-            )
-            .catch(() => {});
+          await adminPage.waitForFunction(
+            (t) =>
+              t === 'dark'
+                ? document.documentElement.classList.contains('dark')
+                : !document.documentElement.classList.contains('dark'),
+            theme,
+            { timeout: 5000 }
+          );
 
           const axeResult = await runAxeOnPage(adminPage);
           const contrastNodes = (
@@ -321,6 +317,7 @@ async function main() {
       .filter((v) => FAIL_ON.includes(v.id))
       .map((v) => ({ theme: r.theme, route: r.route, id: v.id, nodes: v.nodeCount }))
   );
+  const errors = results.filter((r) => r.error);
   const incompleteCount = INCLUDE_INCOMPLETE
     ? results.reduce((n, r) => n + r.incomplete.reduce((m, v) => m + v.nodeCount, 0), 0)
     : 0;
@@ -328,11 +325,17 @@ async function main() {
   console.log(`Routes scanned: ${allRoutesCount} × ${THEMES.length}`);
   console.log(`Contrast violation nodes: ${totalContrast}`);
   console.log(`Other violation nodes: ${totalAll - totalContrast}`);
+  if (errors.length > 0) {
+    console.error(`Route errors: ${errors.length}`);
+    for (const e of errors) {
+      console.error(`  - [${e.theme}] ${e.route}: ${e.error}`);
+    }
+  }
   console.log(`Reports written to: ${reportDir}/axe-theme-scan.{json,md}`);
 
-  if (failures.length > 0 || incompleteCount > 0) {
+  if (failures.length > 0 || incompleteCount > 0 || errors.length > 0) {
     console.error(
-      `\nFAIL: ${failures.length} route/rule combinations triggered configured fail-on rules (${FAIL_ON.join(', ')}).`
+      `\nFAIL: Scan encountered failures (failures: ${failures.length}, incomplete: ${incompleteCount}, errors: ${errors.length}).`
     );
     process.exit(1);
   }
