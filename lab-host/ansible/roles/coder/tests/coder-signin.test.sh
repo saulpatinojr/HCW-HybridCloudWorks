@@ -14,6 +14,10 @@
 #    (including one that differs only in case, because Coder compares the
 #    names exactly), a team with no organisation or a second slash, and an
 #    empty organisation list. With Coder disabled it checks nothing.
+# 3. Every owner line in docs/runbooks/labs-host.md and lab-host/README.md
+#    that pipes a token into Coder's CLI strips the carriage return with a
+#    doubled backslash, and the runbook's lines that add and suspend a
+#    learner are there.
 #
 # No root and no Docker; ansible-core on PATH. CI runs it in the
 # `ansible-lint (lab-host)` job; lab-host/README.md ("Validating without a
@@ -127,6 +131,37 @@ refused no_orgs 'an empty organisation list' \
 
 policy two_orgs '{"coder_oauth2_github_allowed_orgs": ["HybridCloudWorks", "OtherOrg"], "coder_oauth2_github_allowed_teams": ["HybridCloudWorks/lab-learners", "OtherOrg/lab-learners"]}'
 check "a team in a second allowed organisation passes" "[ \"\$(rc_of two_orgs)\" = 0 ]" "$(tail -n 30 "${work}/two_orgs.out")"
+
+# 3. The owner's lines that hand a token to Coder's CLI. Each pipes it into
+#    `coder sh -c '... tr -d \\r | { read -r CODER_SESSION_TOKEN; ...'`:
+#    PowerShell passes the line as written, the host's shell keeps the single
+#    quotes' contents, and the container's sh turns the unquoted \\r into \r,
+#    which tr reads as a carriage return. With one backslash sh leaves a bare
+#    r, so tr deletes every lowercase r from the token and keeps the carriage
+#    return (the 2026-10-16 review of #954). Read from the repository's
+#    checkout; a copy of lab-host/ alone has no docs/ and skips.
+repo="$(cd "${ansible}/../.." && pwd)"
+runbook="${repo}/docs/runbooks/labs-host.md"
+any_tr="sh -c 'tr -d "
+good_tr='tr -d \\r | { read -r CODER_SESSION_TOKEN;'
+for name in docs/runbooks/labs-host.md lab-host/README.md; do
+  doc="${repo}/${name}"
+  if [ ! -f "${doc}" ]; then
+    echo "skip - ${name} is not beside lab-host/ansible in this copy"
+    continue
+  fi
+  all="$(grep -cF -- "${any_tr}" "${doc}" || true)"
+  doubled="$(grep -F -- "${any_tr}" "${doc}" | grep -cF -- "${good_tr}" || true)"
+  check "every token line in ${name} strips \\r with a doubled backslash (${doubled} of ${all})" \
+    "[ \"${all}\" -gt 0 ] && [ \"${all}\" = \"${doubled}\" ]" \
+    "$(grep -nF -- "${any_tr}" "${doc}" | grep -vF -- "${good_tr}" | cut -c1-160)"
+done
+if [ -f "${runbook}" ]; then
+  check "the runbook creates a learner's account with the GitHub login type" \
+    "grep -F -- \"\${good_tr}\" \"${runbook}\" | grep -qF -- 'coder users create --username \$login --email \$email --login-type github'"
+  check "and suspends one, answering the CLI's confirmation" \
+    "grep -F -- \"\${good_tr}\" \"${runbook}\" | grep -qF -- 'echo yes | coder users suspend \$login'"
+fi
 
 if [ "${failed}" -gt 0 ]; then
   echo "coder-signin.test.sh: ${failed} of $((passed + failed)) checks failed" >&2

@@ -664,7 +664,12 @@ Docker; ansible-core on `PATH`. It checks:
   organisation that is not allowed (one that differs only in case too,
   because Coder compares the names exactly), a bad team beside a good one, a
   team with no organisation or a second slash, and an empty organisation
-  list; a team in a second allowed organisation passes.
+  list; a team in a second allowed organisation passes;
+- every owner line in `docs/runbooks/labs-host.md` and `lab-host/README.md`
+  that pipes a token into Coder's CLI strips the carriage return with
+  `tr -d \\r` (one backslash reaches `tr` as a bare `r`), and the runbook's
+  lines that create and suspend a learner's account are there. A copy of
+  `lab-host/` without `docs/` beside it skips these.
 
 The `ansible-lint (lab-host)` job runs it with the job's ansible-core.
 

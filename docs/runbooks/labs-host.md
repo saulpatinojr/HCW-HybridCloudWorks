@@ -1127,7 +1127,7 @@ the site", step 1, makes one (`hcw-setup`, shortest expiry) and holds it.
 3. **The account.**
 
    ```powershell
-   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder users create --username $login --email $email --login-type github && coder users show $login; }'"
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder users create --username $login --email $email --login-type github && coder users show $login; }'"
    ```
 
    Success is `A new user has been created!` with `Login is authenticated
@@ -1164,7 +1164,7 @@ suspension is what ends it now.
    (step 1 above):
 
    ```powershell
-   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; echo yes | coder users suspend $login; coder users show $login; }'"
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; echo yes | coder users suspend $login; coder users show $login; }'"
    ```
 
    Success is `User <login> has been suspended!` and `Status`
