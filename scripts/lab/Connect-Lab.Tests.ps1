@@ -256,6 +256,6 @@ Describe 'Get-LabGroupVarsKeyLine' {
         $groupVars = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..' '..' 'lab-host' 'ansible' 'group_vars' 'all.yml')
         $pinned = [regex]::Match($groupVars, '(?m)^hardening_admin_authorized_keys:\r?\n(?:  #[^\r\n]*\r?\n)*(  - [^\r\n]+)').Groups[1].Value
         $pinned | Should -Not -BeNullOrEmpty
-        Get-LabGroupVarsKeyLine -PublicKey ($pinned.Substring(4) + ' WSZ690E hcw-lab') | Should -BeExactly $pinned
+        Get-LabGroupVarsKeyLine -PublicKey ($pinned.Substring(4) + ' DESKTOP-1 hcw-lab') | Should -BeExactly $pinned
     }
 }
