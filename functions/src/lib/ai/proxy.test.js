@@ -289,6 +289,57 @@ describe('aiProxy', () => {
     });
   });
 
+  it('rejects inherited properties like constructor or toString as provider or model', async () => {
+    const res1 = await build().aiProxy(makeRequest({ provider: 'constructor', prompt: 'hi' }), context);
+    expect(res1.status).toBe(400);
+    expect(JSON.parse(res1.body).code).toBe('INVALID_PROVIDER');
+
+    const res2 = await build().aiProxy(
+      makeRequest({ provider: 'gemini', model: 'constructor', prompt: 'hi' }),
+      context
+    );
+    expect(res2.status).toBe(400);
+    expect(JSON.parse(res2.body).code).toBe('INVALID_MODEL');
+  });
+
+  it('rejects empty or whitespace-only model with 400', async () => {
+    const res = await build().aiProxy(
+      makeRequest({ provider: 'gemini', model: '   ', prompt: 'hi' }),
+      context
+    );
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).code).toBe('INVALID_MODEL');
+  });
+
+  it('rolls back the actor slot reservation when global cap denies the request', async () => {
+    const store = makeStore();
+    const handler = build({ store, actorDailyLimit: 10, globalDailyLimit: 1 });
+
+    const r1 = await handler.aiProxy(makeRequest({ provider: 'gemini', prompt: 'hi' }), context);
+    expect(r1.status).toBe(200);
+
+    const r2 = await handler.aiProxy(makeRequest({ provider: 'gemini', prompt: 'global exceed' }), context);
+    expect(r2.status).toBe(429);
+
+    // After global cap refusal rolled back the actor slot, incrementIf was called with value: -1
+    expect(store.incrementIf).toHaveBeenCalledWith(
+      'tool_service_cache',
+      expect.stringContaining('ai-proxy-actor:'),
+      expect.objectContaining({ value: -1 })
+    );
+  });
+
+  it('bounds maxTokens to the default ceiling when calling ai.callProvider', async () => {
+    const ai = okAi();
+    await build({ ai }).aiProxy(
+      makeRequest({ provider: 'gemini', prompt: 'hi', maxTokens: 999_999 }),
+      context
+    );
+    expect(ai.callProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ maxTokens: 4096 })
+    );
+  });
+
   it('requires a role', async () => {
     const response = await build({ guard: denyGuard }).aiProxy(
       makeRequest({ provider: 'gemini', prompt: 'hi' }),
