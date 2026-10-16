@@ -102,6 +102,7 @@ describe('the day this file renders on', () => {
     // render reads, this would fail on every day the two differ, rather than
     // waiting for the day a catalogue row happens to change status between
     // them, which is how the module-load read went unnoticed for five weeks.
+    /** Prints the day `useToday` gives the page, so the test can read it. */
     function RenderDay() {
       return <output data-testid="render-day">{useToday(earliestDataAsOf())}</output>;
     }
