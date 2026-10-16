@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+#
+# The nightly playbook drift detection (LAB-4, #950): {{ hardening_drift_script_path }}
+# runs ansible-playbook in check and diff mode from the applied checkout.
+# A drift or failure logs to syslog at daemon.warning and exits non-zero,
+# which triggers the failure notifier (LAB-2). A clean run logs at daemon.notice.
+[Unit]
+Description=Check lab host playbook drift against applied checkout
+Documentation=https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/lab-host/ansible/roles/hardening
+After=network.target
+OnFailure=hcw-unit-failed@%n.service
+
+[Service]
+Type=oneshot
+ExecStart={{ hardening_drift_script_path }}
+TimeoutStartSec=900
+Nice=10

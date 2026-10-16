@@ -213,3 +213,46 @@ argument_specs:
           - A reboot pending this many days or more is logged at daemon.err rather than
             daemon.warning when a night defers it. Logging only; the script never reboots over a
             logged-in user or a running job.
+      hardening_drift_tag:
+        type: str
+        required: false
+        default: hcw-playbook-drift
+        description:
+          - Syslog tag of the nightly playbook drift detection timer (LAB-4, issue 950).
+      hardening_drift_script_path:
+        type: str
+        required: false
+        default: /usr/local/sbin/hcw-playbook-drift
+        description:
+          - Where the playbook drift detection script is installed.
+      hardening_drift_src_dir:
+        type: str
+        required: false
+        default: /opt/hcw-src
+        description:
+          - Root of the HCW checkout on the host from which the playbook is checked in check mode.
+      hardening_drift_on_calendar:
+        type: str
+        required: false
+        default: "*-*-* 03:00:00"
+        description:
+          - Calendar specification for hcw-playbook-drift.timer.
+      hardening_drift_ansible_playbook:
+        type: str
+        required: false
+        default: /usr/local/bin/ansible-playbook
+        description:
+          - Path to ansible-playbook executable to use for the check run.
+      hardening_drift_vault_file:
+        type: str
+        required: false
+        default: /etc/hcw/vault.yml
+        description:
+          - Path to Ansible vault file passed to check run when present.
+      hardening_drift_vault_password_file:
+        type: str
+        required: false
+        default: /etc/hcw/vault.pass
+        description:
+          - Path to Ansible vault password file passed to check run when present.
+

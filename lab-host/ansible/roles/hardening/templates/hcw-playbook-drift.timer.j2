@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run hcw-playbook-drift.service nightly
+
+[Timer]
+OnCalendar={{ hardening_drift_on_calendar }}
+Persistent=true
+RandomizedDelaySec=15m
+Unit=hcw-playbook-drift.service
+
+[Install]
+WantedBy=timers.target

@@ -409,6 +409,31 @@ fi
 log "installing CPython ${PYTHON_VERSION} with uv"
 "${UV_BIN}" python install --no-bin "${PYTHON_VERSION}"
 
+# Check mode and narrowed runs are parsed early so a check run can execute
+# from a temporary worktree without moving the host's applied checkout (#950).
+hcw_check_mode=
+hcw_partial=
+for arg in "$@"; do
+  case "${arg}" in
+    --check | -C) hcw_check_mode=1 ;;
+    # -t* covers both `-t addons` and the attached form `-taddons`.
+    --tags | --tags=* | -t* | --skip-tags | --skip-tags=*) hcw_partial=1 ;;
+  esac
+done
+
+hcw_worktree_dir=
+hcw_effective_src="${HCW_SRC_DIR}"
+hcw_cleanup() {
+  if [ -n "${hcw_ansible_requirements:-}" ] && [ -f "${hcw_ansible_requirements}" ]; then
+    rm -f "${hcw_ansible_requirements}"
+  fi
+  if [ -n "${hcw_worktree_dir:-}" ] && [ -d "${hcw_worktree_dir}" ]; then
+    log "removing temporary worktree ${hcw_worktree_dir}"
+    git -C "${HCW_SRC_DIR}" worktree remove --force "${hcw_worktree_dir}" 2>/dev/null || rm -rf -- "${hcw_worktree_dir}"
+  fi
+}
+trap hcw_cleanup EXIT
+
 if [ -d "${HCW_SRC_DIR}/.git" ]; then
   # A checkout keeps the origin it was cloned from. One made before the
   # repository moved to saulpatinojr (2026-10-07) still names the old
@@ -435,8 +460,15 @@ if ! hcw_repo_sha="$(git -C "${HCW_SRC_DIR}" rev-parse --verify --quiet "${HCW_R
   echo "refusing to run: HCW_REPO_REF=${HCW_REPO_REF} does not name a commit in ${HCW_SRC_DIR} after the fetch" >&2
   exit 1
 fi
-log "checking out ${HCW_REPO_REF} at ${hcw_repo_sha}"
-git -C "${HCW_SRC_DIR}" checkout --quiet --detach "${hcw_repo_sha}"
+if [ -n "${hcw_check_mode}" ]; then
+  hcw_worktree_dir="$(mktemp -d /run/hcw-bootstrap-worktree.XXXXXX 2>/dev/null || mktemp -d /tmp/hcw-bootstrap-worktree.XXXXXX)"
+  log "running check mode in temporary worktree ${hcw_worktree_dir} at ${hcw_repo_sha} (leaving ${HCW_SRC_DIR} alone)"
+  git -C "${HCW_SRC_DIR}" worktree add --quiet --detach "${hcw_worktree_dir}" "${hcw_repo_sha}"
+  hcw_effective_src="${hcw_worktree_dir}"
+else
+  log "checking out ${HCW_REPO_REF} at ${hcw_repo_sha}"
+  git -C "${HCW_SRC_DIR}" checkout --quiet --detach "${hcw_repo_sha}"
+fi
 
 # The pins at the top of this file are part of the commit too. When the commit
 # just checked out carries a different bootstrap.sh (a uv or Python bump, say),
@@ -445,19 +477,13 @@ git -C "${HCW_SRC_DIR}" checkout --quiet --detach "${hcw_repo_sha}"
 # ansible-core's pins need no handover: they are in lab-image/versions.env,
 # which the block below reads from this checkout. HCW_REPO_REF is passed on as
 # the resolved sha, so the second pass checks out the same commit, and
-# HCW_BOOTSTRAP_HANDED_OVER stops it handing over again.
-hcw_checked_out_script="${HCW_SRC_DIR}/lab-host/bootstrap.sh"
+# HCW_BOOTSTRAP_HANDED_OVER stops it handing over again. Check runs skip handover
+# because they inspect the host from a temporary worktree and do not upgrade
+# the host runtime (#950).
+hcw_checked_out_script="${hcw_effective_src}/lab-host/bootstrap.sh"
 if [ -z "${HCW_BOOTSTRAP_HANDED_OVER:-}" ] && [ -f "${hcw_checked_out_script}" ] \
   && [ "$(sha256sum "${hcw_checked_out_script}" | cut -d ' ' -f 1)" != "${self_digest}" ]; then
-  # A bootstrap.sh from before HCW_ANSIBLE_VENV (a host rolled back with
-  # HCW_REPO_REF) installs ansible-core as a uv tool, and skips that install
-  # whenever ${UV_TOOL_BIN_DIR}/ansible-playbook already reports its release
-  # and Python, which the link to HCW_ANSIBLE_VENV does. Its play then
-  # installs the hcw-vault-set that runs the uv tool's Python, which this
-  # script retires, and the helper would stop working. Removing that one link
-  # makes the older script reinstall its uv tool and relink every command, so
-  # the helper it installs has its interpreter. The environment under
-  # HCW_ANSIBLE_GENERATIONS is left as it is, for the next run of this script.
+  if [ -z "${hcw_check_mode}" ]; then
   if ! grep -q '^HCW_ANSIBLE_VENV=' "${hcw_checked_out_script}" \
     && [ "$(readlink "${UV_TOOL_BIN_DIR}/ansible-playbook" || true)" = "${HCW_ANSIBLE_VENV}/bin/ansible-playbook" ]; then
     log "${hcw_repo_sha}'s bootstrap.sh installs ansible-core as a uv tool; removing ${UV_TOOL_BIN_DIR}/ansible-playbook so that it does"
@@ -465,6 +491,9 @@ if [ -z "${HCW_BOOTSTRAP_HANDED_OVER:-}" ] && [ -f "${hcw_checked_out_script}" ]
   fi
   log "${hcw_repo_sha} carries a different bootstrap.sh; handing over to it"
   HCW_BOOTSTRAP_HANDED_OVER=1 HCW_REPO_REF="${hcw_repo_sha}" exec bash "${hcw_checked_out_script}" "$@"
+  else
+    log "check mode: skipping handover to checked-out bootstrap.sh"
+  fi
 fi
 
 # ansible-core, every wheel checked against its SHA256 (LAB-13, #959). The
@@ -519,7 +548,7 @@ fi
 # removed then. Before a build, the other builds of these pins, none of which
 # is complete, are removed, except the one in use.
 hcw_ansible_requirements="$(mktemp)"
-trap 'rm -f "${hcw_ansible_requirements}"' EXIT
+trap hcw_cleanup EXIT
 # hcw_read_ansible_pins FILE: set the three ANSIBLE_CORE_* variables from
 # FILE's lines as text, never evaluating it; fails when no complete DEPS
 # block is there.
@@ -636,7 +665,10 @@ if [ -z "${hcw_ansible_generation}" ]; then
   install -m 0644 -o root -g root "${hcw_ansible_requirements}" "${hcw_ansible_record}"
 fi
 rm -f "${hcw_ansible_requirements}"
-trap - EXIT
+hcw_ansible_requirements=
+if [ -z "${hcw_worktree_dir}" ]; then
+  trap - EXIT
+fi
 
 if [ "${hcw_ansible_in_use}" != "${hcw_ansible_generation}" ]; then
   # A venv built in place at HCW_ANSIBLE_VENV, as this change's first
@@ -664,7 +696,7 @@ fi
 hcw_link_ansible_commands
 "${UV_TOOL_BIN_DIR}/ansible-playbook" --version | sed -n '1p;/python version/p'
 
-cd "${HCW_SRC_DIR}/lab-host/ansible"
+cd "${hcw_effective_src}/lab-host/ansible"
 
 log "installing collections from requirements.yml"
 "${UV_TOOL_BIN_DIR}/ansible-galaxy" collection install -r requirements.yml
@@ -709,15 +741,6 @@ fi
 # run, which changed nothing the marker should claim, or a run narrowed with
 # --tags / --skip-tags, which converged one area and not the host (the play's
 # own commit record skips those the same way).
-hcw_check_mode=
-hcw_partial=
-for arg in "$@"; do
-  case "${arg}" in
-    --check | -C) hcw_check_mode=1 ;;
-    # -t* covers both `-t addons` and the attached form `-taddons`.
-    --tags | --tags=* | -t* | --skip-tags | --skip-tags=*) hcw_partial=1 ;;
-  esac
-done
 if [ -n "${hcw_partial}" ] && [ -z "${hcw_check_mode}" ]; then
   log "a run narrowed with --tags or --skip-tags is not recorded as a completed run; the next full run is"
 fi
@@ -730,4 +753,9 @@ if [ -z "${hcw_check_mode}" ] && [ -z "${hcw_partial}" ]; then
   chmod 0644 "${HCW_HOST_MARKER}.tmp"
   mv "${HCW_HOST_MARKER}.tmp" "${HCW_HOST_MARKER}"
   log "recorded ${hcw_repo_sha} as the last completed run in ${HCW_HOST_MARKER}"
+fi
+
+if [ -n "${hcw_worktree_dir}" ]; then
+  hcw_cleanup
+  trap - EXIT
 fi

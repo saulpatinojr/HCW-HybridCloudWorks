@@ -69,6 +69,13 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_reboot_agent_service` | `hcw-labs-agent` | The agent's unit (`labs_agent_service_name`); inactive or failed, no acknowledgement is waited for |
 | `hardening_reboot_hold_seconds` | `300` | How long a hold lasts if nothing removes it: over 120 (the run's timeout), at most 600 (the agent's cap) |
 | `hardening_reboot_overdue_days` | `7` | From this many days pending, a deferral is logged at `err` instead of `warning` |
+| `hardening_drift_tag` | `hcw-playbook-drift` | Syslog tag of the playbook drift detection |
+| `hardening_drift_script_path` | `/usr/local/sbin/hcw-playbook-drift` | Where the drift detection script is installed |
+| `hardening_drift_src_dir` | `/opt/hcw-src` | Where the HCW source checkout lives |
+| `hardening_drift_on_calendar` | `*-*-* 03:00:00` | When drift detection runs (systemd `OnCalendar`) |
+| `hardening_drift_ansible_playbook` | `/usr/local/bin/ansible-playbook` | The ansible-playbook executable to run |
+| `hardening_drift_vault_file` | `/etc/hcw/vault.yml` | Vault file to include if present |
+| `hardening_drift_vault_password_file` | `/etc/hcw/vault.pass` | Vault password file if present |
 
 `meta/argument_specs.yml` is the contract; the table is a summary of it.
 
@@ -298,14 +305,35 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    hcw-reboot-when-idle.service` runs the decision now, and **reboots the
    host now** when it is idle with a reboot pending. Run it only while a
    `user` session (yours) is listed, and the result is the deferred line.
+9. `hcw-playbook-drift`, a nightly timer at 03:00 (LAB-4, #950). Runs
+   `ansible-playbook -i inventory/localhost.yml site.yml --check --diff` from
+   the applied checkout (`/opt/hcw-src/lab-host/ansible`), before the Coder
+   dump (03:30) and the idle reboot (04:30).
+   - If changes would be applied, logs `playbook drift detected ...: <n> change(s) would be applied`
+     at `daemon.warning` under the tag `hcw-playbook-drift`, exiting 2.
+   - If the playbook execution fails, logs `playbook check failed (rc=..., failed=...)`
+     at `daemon.warning`, exiting 1.
+   - Non-zero exits mark the unit as failed, triggering `OnFailure=hcw-unit-failed@%n.service`
+     which pages `alert-lab-unit-failed`.
+   - On a clean run with no drift, logs `playbook check: no drift detected ...`
+     at `daemon.notice` and exits 0.
 
 ## Handlers
 
 `Restart ssh`, `Restart unattended-upgrades`, `Restart fail2ban`, `Reload
 systemd for the failure notifier`, `Reload systemd for the held-package
-report`, `Reload systemd for the idle reboot`.
+report`, `Reload systemd for the idle reboot`, `Reload systemd for playbook
+drift detection`.
 
 ## Tests
+
+`tests/hcw-playbook-drift.test.sh` renders the drift detection script and its
+two units with the role's defaults and runs the script against stub
+`ansible-playbook` and `logger`: a notice line on a clean check run (ok,
+changed=0), a warning line and exit 2 on detected drift (changed>0), a warning
+line and exit 1 on playbook execution failure, and `--vault-password-file` and
+`-e` passed when vault files exist. Needs neither root nor Docker; CI runs it in
+the `ansible-lint (lab-host)` job.
 
 `tests/unattended-upgrades.test.sh` renders `52hcw-unattended-upgrades.j2`
 with the role's defaults and asserts the override clears and names the

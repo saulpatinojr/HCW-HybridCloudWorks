@@ -136,3 +136,18 @@ hardening_reboot_hold_seconds: 300
 # is the week the runbook already calls the sign that neither the owner's
 # logout nor a reboot by hand has happened (Runtime advisories).
 hardening_reboot_overdue_days: 7
+
+# The nightly playbook drift detection timer (LAB-4, #950): hcw-playbook-drift
+# runs the playbook in check and diff mode from the applied checkout, logging
+# to syslog at daemon.warning and exiting non-zero on any change or failure.
+# A clean run logs to syslog at daemon.notice and exits 0.
+hardening_drift_tag: hcw-playbook-drift
+hardening_drift_script_path: /usr/local/sbin/hcw-playbook-drift
+hardening_drift_src_dir: /opt/hcw-src
+# Nightly at 03:00 host local time, before the Coder dump (03:30) and the
+# idle reboot (04:30), with up to 15 minutes of jitter from the timer.
+hardening_drift_on_calendar: "*-*-* 03:00:00"
+hardening_drift_ansible_playbook: /usr/local/bin/ansible-playbook
+hardening_drift_vault_file: /etc/hcw/vault.yml
+hardening_drift_vault_password_file: /etc/hcw/vault.pass
+

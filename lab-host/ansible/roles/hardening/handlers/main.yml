@@ -25,3 +25,8 @@
 - name: Reload systemd for the idle reboot
   ansible.builtin.systemd_service:
     daemon_reload: true
+
+- name: Reload systemd for playbook drift detection
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+

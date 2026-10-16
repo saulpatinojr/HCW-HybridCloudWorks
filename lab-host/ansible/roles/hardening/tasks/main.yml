@@ -180,6 +180,37 @@
     state: started
     daemon_reload: true
 
+# The nightly playbook drift detection (LAB-4, #950). Runs the playbook in check
+# and diff mode from the applied checkout, logging to syslog at daemon.warning
+# and exiting non-zero on any detected drift or playbook failure.
+- name: Install the playbook drift detection script
+  ansible.builtin.template:
+    src: hcw-playbook-drift.sh.j2
+    dest: "{{ hardening_drift_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the playbook drift detection service and timer
+  ansible.builtin.template:
+    src: "hcw-playbook-drift.{{ item }}.j2"
+    dest: "/etc/systemd/system/hcw-playbook-drift.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - service
+    - timer
+  notify: Reload systemd for playbook drift detection
+
+- name: Enable the nightly playbook drift detection timer
+  ansible.builtin.systemd_service:
+    name: hcw-playbook-drift.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+
 # The nightly idle reboot (LAB-13, #959). unattended-upgrades asked `users`
 # when the upgrade ran, some twenty-two hours before the reboot it then
 # scheduled with no further question, and never asked whether a visitor's
