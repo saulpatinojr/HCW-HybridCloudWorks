@@ -39,7 +39,10 @@ export type PageType =
   | 'sandboxes'
   | 'buildingImages'
   | 'desktop'
-  | 'rss';
+  | 'rss'
+  | 'news'
+  | 'architectures'
+  | 'labs';
 
 /**
  * Centralized route definitions
@@ -73,6 +76,9 @@ const ROUTE_MAP: Record<PageType, string> = {
   buildingImages: 'building-images',
   desktop: 'desktop',
   rss: 'rss',
+  news: 'news',
+  architectures: 'architectures',
+  labs: 'labs',
 };
 
 const ROUTE_REVERSE_MAP = Object.entries(ROUTE_MAP).reduce(

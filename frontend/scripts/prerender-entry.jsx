@@ -92,6 +92,7 @@ const STANDALONE_ROUTES = [
   '/docker/tools',
   '/github/workflows',
   '/github/tools',
+  '/ansible/tools',
   '/tools/comparison',
   '/tools/resources',
   '/tools/decisions',

@@ -1,22 +1,167 @@
 /**
  * Global Search Index for Cmd+K / Ctrl+K Command Palette (Stage 2 / Audit P1-1)
  *
- * Indexed items across Providers (Cloud, Platform, Service), Reference Architectures
- * (including FOCUS 1.4 FinOps), Interactive Tools, Browser Labs, and Certifications.
+ * Indexed items across Providers (Cloud, Platform, Service), Provider Hubs & Sections,
+ * Reference Architectures (including FOCUS 1.4 FinOps), Interactive Tools & AddOns,
+ * Browser Labs (from data/labs/catalogue.js), and Certifications (including the
+ * Azure certification catalogue).
  */
 
 import { ALL_TIER_PROVIDERS } from './providerTiers';
+import { availableLabs, labPanePath, labsPath } from './labs/catalogue';
+import { addonPanePath, availableAddons } from './addons/catalogue';
+import { certifications as azureCertifications } from './azure/certifications';
 
 export const SEARCH_CATEGORIES = Object.freeze({
   PROVIDERS: 'Providers',
+  SECTIONS: 'Hubs & Sections',
   BLUEPRINTS: 'Blueprints',
   TOOLS: 'Interactive Tools',
   LABS: 'Browser Labs',
   CERTS: 'Certifications',
 });
 
+const CURATED_AZURE_CERT_SLUGS = new Set(['az-104', 'az-305']);
+
+const PROVIDER_SECTION_ITEMS = ALL_TIER_PROVIDERS.flatMap((provider) => {
+  const { id, name, fullName } = provider;
+  const baseKeywords = [name, fullName, id];
+
+  const items = [
+    {
+      id: `section-${id}-news`,
+      title: `${name} News & RSS`,
+      subtitle: `Curated platform updates, release notes, and RSS feeds for ${name}`,
+      category: SEARCH_CATEGORIES.SECTIONS,
+      path: `/${id}/rss`,
+      icon: 'newspaper',
+      badge: name,
+      keywords: [...baseKeywords, 'news', 'rss', 'updates', 'releases', 'announcements'],
+    },
+    {
+      id: `section-${id}-blog`,
+      title: `${name} Blogs & Articles`,
+      subtitle: `Deep-dive engineering articles, guides, and field notes for ${name}`,
+      category: SEARCH_CATEGORIES.SECTIONS,
+      path: `/${id}/blog`,
+      icon: 'article',
+      badge: name,
+      keywords: [...baseKeywords, 'blog', 'blogs', 'articles', 'posts', 'guides'],
+    },
+    {
+      id: `section-${id}-coder-corner`,
+      title: `${name} Coder Corner`,
+      subtitle: `Hands-on code patterns, automation snippets, and engineering recipes for ${name}`,
+      category: SEARCH_CATEGORIES.SECTIONS,
+      path: `/${id}/coder-corner`,
+      icon: 'code_blocks',
+      badge: name,
+      keywords: [...baseKeywords, 'coder corner', 'snippets', 'recipes', 'patterns'],
+    },
+    {
+      id: `section-${id}-learn`,
+      title: `${name} Learn & Certifications`,
+      subtitle: `Learning paths, exam study guides, and training resources for ${name}`,
+      category: SEARCH_CATEGORIES.SECTIONS,
+      path: `/${id}/education`,
+      icon: 'school',
+      badge: name,
+      keywords: [...baseKeywords, 'learn', 'education', 'training', 'certifications', 'courses'],
+    },
+    {
+      id: `section-${id}-labs`,
+      title: `${name} Browser Labs`,
+      subtitle: `Interactive browser container labs and hands-on exercises for ${name}`,
+      category: SEARCH_CATEGORIES.LABS,
+      path: labsPath(id),
+      icon: 'terminal',
+      badge: `${name} Labs`,
+      keywords: [...baseKeywords, 'labs', 'browser labs', 'hands-on', 'workspace', 'sandbox'],
+    },
+  ];
+
+  if (['azure', 'aws', 'gcp', 'vmware', 'finops'].includes(id)) {
+    items.push(
+      {
+        id: `section-${id}-architecture`,
+        title: `${name} Architecture Designs`,
+        subtitle: `Reference architectures, topology diagrams, and design patterns for ${name}`,
+        category: SEARCH_CATEGORIES.SECTIONS,
+        path: `/${id}/architecture-designs`,
+        icon: 'account_tree',
+        badge: name,
+        keywords: [
+          ...baseKeywords,
+          'architecture',
+          'designs',
+          'diagrams',
+          'blueprints',
+          'topology',
+        ],
+      },
+      {
+        id: `section-${id}-frameworks`,
+        title: `${name} Frameworks`,
+        subtitle: `Well-Architected and Cloud Adoption frameworks, pillars, and governance for ${name}`,
+        category: SEARCH_CATEGORIES.SECTIONS,
+        path: `/${id}/frameworks`,
+        icon: 'Rule',
+        badge: name,
+        keywords: [
+          ...baseKeywords,
+          'frameworks',
+          'well-architected',
+          'caf',
+          'governance',
+          'pillars',
+        ],
+      }
+    );
+  }
+
+  if (['azure', 'aws', 'gcp', 'vmware', 'ansible', 'docker'].includes(id)) {
+    items.push({
+      id: `section-${id}-podcast`,
+      title: `${name} Architecture Podcast`,
+      subtitle: `Audio architecture episodes and Listen & Learn briefings for ${name}`,
+      category: SEARCH_CATEGORIES.SECTIONS,
+      path: `/${id}/audio-architecture`,
+      icon: 'podcasts',
+      badge: name,
+      keywords: [...baseKeywords, 'podcast', 'audio', 'episodes', 'listen'],
+    });
+  }
+
+  if (['github', 'terraform', 'docker', 'ansible'].includes(id)) {
+    items.push(
+      {
+        id: `section-${id}-code`,
+        title: `${name} Code & Templates`,
+        subtitle: `Production-ready code repositories, configurations, and patterns for ${name}`,
+        category: SEARCH_CATEGORIES.SECTIONS,
+        path: `/${id}/code`,
+        icon: 'code',
+        badge: name,
+        keywords: [...baseKeywords, 'code', 'templates', 'repositories', 'examples'],
+      },
+      {
+        id: `section-${id}-tools`,
+        title: `${name} Tools & Utilities`,
+        subtitle: `CLI utilities, linters, scanners, and developer tooling for ${name}`,
+        category: SEARCH_CATEGORIES.TOOLS,
+        path: `/${id}/tools`,
+        icon: 'build',
+        badge: `${name} Tools`,
+        keywords: [...baseKeywords, 'tools', 'utilities', 'cli', 'linter'],
+      }
+    );
+  }
+
+  return items;
+});
+
 export const STATIC_SEARCH_ITEMS = Object.freeze([
-  // Providers (Mapped from ALL_TIER_PROVIDERS)
+  // Providers (Mapped from ALL_TIER_PROVIDERS — exact 9 providers)
   ...ALL_TIER_PROVIDERS.map((provider) => ({
     id: `provider-${provider.id}`,
     title: provider.name,
@@ -109,7 +254,7 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     keywords: ['vmware', 'vcf', 'sddc', 'vsphere', 'nsx', 'hybrid cloud', 'private cloud'],
   },
 
-  // Interactive Tools
+  // Interactive Tools & AddOns
   {
     id: 'tool-landing-zone-builder',
     title: 'Landing Zone Builder',
@@ -178,8 +323,36 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
       'open cost',
     ],
   },
+  {
+    id: 'tool-finops-tools',
+    title: 'FinOps Tools & Calculators',
+    subtitle: 'Cost allocation, anomaly detection, and cloud financial management tools',
+    category: SEARCH_CATEGORIES.TOOLS,
+    path: '/finops/tools',
+    icon: 'calculate',
+    badge: 'FinOps Tools',
+    keywords: ['finops', 'tools', 'cost', 'budget', 'allocation'],
+  },
+  ...availableAddons.map((addon) => ({
+    id: `addon-${addon.id}`,
+    title: addon.menuLabel ? `${addon.menuLabel} (${addon.title})` : addon.title,
+    subtitle: addon.summary,
+    category: SEARCH_CATEGORIES.TOOLS,
+    path: addonPanePath(addon),
+    icon: 'handyman',
+    badge: 'Interactive Tool',
+    keywords: [
+      addon.id,
+      addon.title,
+      ...(addon.menuLabel ? [addon.menuLabel] : []),
+      ...addon.providers,
+      ...addon.technology,
+      'assessment',
+      'tool',
+    ],
+  })),
 
-  // Browser Labs
+  // Browser Labs (Curated + Full Lab Catalogue)
   {
     id: 'lab-browser-labs-hub',
     title: 'Browser Labs Hub',
@@ -195,7 +368,7 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     title: 'Terraform Lab: Validate & Plan',
     subtitle: 'In-browser Terraform syntax checking, linting, and declarative plan generation',
     category: SEARCH_CATEGORIES.LABS,
-    path: '/education/labs',
+    path: '/terraform/education/labs/terraform-validate-walkthrough',
     icon: 'deployed_code',
     badge: 'IaC Lab',
     keywords: ['terraform lab', 'validate', 'terraform plan', 'hcl', 'syntax', 'iac'],
@@ -205,7 +378,7 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     title: 'Ansible Lab: Playbook Linting',
     subtitle: 'Interactive YAML playbook syntax validation and Ansible lint execution harness',
     category: SEARCH_CATEGORIES.LABS,
-    path: '/education/labs',
+    path: '/ansible/education/labs/ansible-syntax-check-walkthrough',
     icon: 'terminal',
     badge: 'Automation Lab',
     keywords: ['ansible lab', 'playbook', 'lint', 'yaml', 'syntax check', 'automation'],
@@ -220,8 +393,26 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     badge: 'Container Lab',
     keywords: ['docker', 'sandboxes', 'containers', 'dockerfile', 'isolation', 'runtime'],
   },
+  ...availableLabs.map((lab) => ({
+    id: `lab-catalogue-${lab.id}`,
+    title: lab.title,
+    subtitle: lab.summary,
+    category: SEARCH_CATEGORIES.LABS,
+    path: labPanePath(lab.providers[0] ?? null, lab.id),
+    icon: 'terminal',
+    badge: `${(lab.providers[0] || 'Cloud').toUpperCase()} Lab`,
+    keywords: [
+      lab.id,
+      ...lab.providers,
+      ...lab.technology,
+      ...lab.tools,
+      'lab',
+      'hands-on',
+      'workspace',
+    ],
+  })),
 
-  // Certifications
+  // Certifications (Curated + Full Active Azure Catalogue)
   {
     id: 'cert-learn-all-clouds',
     title: 'Learn Any Cloud',
@@ -302,6 +493,90 @@ export const STATIC_SEARCH_ITEMS = Object.freeze([
     icon: 'verified',
     badge: 'FOCUS 1.4',
     keywords: ['fofa', 'focus analyst', 'focus 1.4', 'billing data', 'usage datasets', 'exam'],
+  },
+  ...azureCertifications
+    .filter((cert) => cert.status !== 'retired' && !CURATED_AZURE_CERT_SLUGS.has(cert.slug))
+    .map((cert) => ({
+      id: `cert-azure-${cert.slug}`,
+      title: `${cert.title} (${cert.code})`,
+      subtitle: cert.description,
+      category: SEARCH_CATEGORIES.CERTS,
+      path: `/azure/education/${cert.slug}`,
+      icon: 'verified',
+      badge: `Azure ${cert.level}`,
+      keywords: [
+        cert.code,
+        cert.slug,
+        cert.title,
+        cert.level,
+        'azure',
+        'certification',
+        'exam',
+        ...(cert.topics || []),
+      ],
+    })),
+
+  // Provider Hubs, Dedicated Sections & Site Pages
+  ...PROVIDER_SECTION_ITEMS,
+  {
+    id: 'section-terraform-modules',
+    title: 'Terraform Verified Modules',
+    subtitle: 'Reusable, validated Terraform modules for Azure, AWS, and Google Cloud',
+    category: SEARCH_CATEGORIES.SECTIONS,
+    path: '/terraform/modules',
+    icon: 'view_module',
+    badge: 'Terraform',
+    keywords: ['terraform', 'modules', 'avm', 'registry', 'iac', 'reusable'],
+  },
+  {
+    id: 'section-github-workflows',
+    title: 'GitHub Actions & Workflows',
+    subtitle: 'CI/CD pipelines, reusable GitHub Actions workflows, and OIDC deployment patterns',
+    category: SEARCH_CATEGORIES.SECTIONS,
+    path: '/github/workflows',
+    icon: 'account_tree',
+    badge: 'GitHub',
+    keywords: ['github', 'workflows', 'actions', 'ci/cd', 'pipelines', 'oidc'],
+  },
+  {
+    id: 'section-docker-building-images',
+    title: 'Docker Building Images Guide',
+    subtitle: 'Multi-stage builds, layer caching, BuildKit, and minimal container base images',
+    category: SEARCH_CATEGORIES.SECTIONS,
+    path: '/docker/building-images',
+    icon: 'layers',
+    badge: 'Docker',
+    keywords: ['docker', 'building images', 'dockerfile', 'multi-stage', 'buildkit'],
+  },
+  {
+    id: 'section-docker-desktop',
+    title: 'Docker Desktop Guide',
+    subtitle: 'Local container development, Compose watch, and resource configuration',
+    category: SEARCH_CATEGORIES.SECTIONS,
+    path: '/docker/desktop',
+    icon: 'desktop_windows',
+    badge: 'Docker',
+    keywords: ['docker', 'docker desktop', 'compose', 'containers', 'local dev'],
+  },
+  {
+    id: 'section-site-about',
+    title: 'About HybridCloudWorks',
+    subtitle: 'Platform mission, multi-cloud architecture coverage, and engineering principles',
+    category: SEARCH_CATEGORIES.SECTIONS,
+    path: '/about',
+    icon: 'info',
+    badge: 'Site',
+    keywords: ['about', 'hybridcloudworks', 'mission', 'platform'],
+  },
+  {
+    id: 'section-site-contact',
+    title: 'Contact HybridCloudWorks',
+    subtitle: 'Get in touch with the HybridCloudWorks team for questions or feedback',
+    category: SEARCH_CATEGORIES.SECTIONS,
+    path: '/contact',
+    icon: 'mail',
+    badge: 'Site',
+    keywords: ['contact', 'support', 'feedback', 'reach out'],
   },
 ]);
 

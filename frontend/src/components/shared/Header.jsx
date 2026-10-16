@@ -1,111 +1,179 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router';
 import { cn } from '@/lib/utils';
 import { useProvider } from '@/context/ProviderContext';
 import { routes, staticRoutes, parseRoute } from '@/lib/routeFactory';
-import { addonPanePath, availableAddons } from '@/data/addons/catalogue';
 import { SkipToMainContent } from '@/components/accessibility/SkipToMainContent';
-import ProvidersMegaMenu from '@/components/shared/ProvidersMegaMenu';
 import CommandPalette from '@/components/shared/CommandPalette';
 
 /**
- * The two Learn entries: the cross-provider index and the browser labs (#681).
- * Neither is a `/:provider/...` route, so neither could live in a provider's
- * hub links — and until this menu existed the header had no way to reach
- * `/education` at all.
+ * Cross-provider Learn links retained as a named export for compatibility and
+ * mobile fallback on non-provider pages.
  */
 export const LEARN_MENU_ITEMS = Object.freeze([
   { label: 'Learn any cloud', path: staticRoutes.education },
   { label: 'Browser labs', path: staticRoutes.labs },
 ]);
 
+export const PROVIDER_DISPLAY_NAMES = Object.freeze({
+  azure: 'Azure',
+  aws: 'AWS',
+  gcp: 'Google Cloud',
+  vmware: 'VMware',
+  github: 'GitHub',
+  finops: 'FinOps',
+  terraform: 'Terraform',
+  docker: 'Docker',
+  ansible: 'Ansible',
+});
+
 /**
- * One click-to-toggle menu in the primary nav: a button and, while open, a
- * list of links. Closes on a click outside, on Escape (returning focus to
- * the button), and when an item is chosen. Was the Tools dropdown inline in
- * Header until the Learn menu needed the same behaviour (#681).
+ * Symmetrical 9-slot primary navigation builder.
+ *
+ * Both the main landing page and every provider hub render exactly 9 columns
+ * (`repeat(9, 100px)`) inside `<nav aria-label="Primary">`, followed by the
+ * divider, `About` / `Contact`, and `Search... ⌘K`. Switching between the main
+ * landing page and any provider—or from one provider to another—keeps every
+ * pill in the exact same pixel position; only the theme color and labels change.
  */
-function NavDropdown({ id, label, items, active, gridColumn }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef(null);
-  const buttonRef = useRef(null);
+export function getPrimaryNavItems(currentProvider) {
+  if (!currentProvider) {
+    return [
+      { label: 'Azure', path: routes.landing('azure') },
+      { label: 'AWS', path: routes.landing('aws') },
+      { label: 'Google Cloud', path: routes.landing('gcp') },
+      { label: 'VMware', path: routes.landing('vmware') },
+      { label: 'GitHub', path: routes.landing('github') },
+      { label: 'FinOps', path: routes.landing('finops') },
+      { label: 'Terraform', path: routes.landing('terraform') },
+      { label: 'Docker', path: routes.landing('docker') },
+      { label: 'Ansible', path: routes.landing('ansible') },
+    ];
+  }
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const handleClickOutside = (event) => {
-      if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false);
-    };
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        buttonRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [open]);
+  const baseLinks = [
+    { label: 'Home', path: staticRoutes.home, exact: true },
+    {
+      label: PROVIDER_DISPLAY_NAMES[currentProvider] || currentProvider.toUpperCase(),
+      path: routes.landing(currentProvider),
+      exact: true,
+    },
+    { label: 'News', path: routes.rss(currentProvider), section: 'news' },
+    { label: 'Blogs', path: routes.blog(currentProvider), section: 'blog' },
+  ];
 
-  const menuId = `${id}-dropdown-menu`;
+  const tailLinks = [
+    { label: 'Learn', path: routes.education(currentProvider), section: 'learn' },
+    { label: 'Labs', path: routes.labs(currentProvider), section: 'labs' },
+  ];
+
+  if (['aws', 'azure', 'gcp', 'vmware'].includes(currentProvider)) {
+    return [
+      ...baseLinks,
+      {
+        label: 'Architecture',
+        path: routes.architectureDesigns(currentProvider),
+        section: 'architecture',
+      },
+      { label: 'Podcast', path: routes.audioArchitecture(currentProvider), section: 'podcast' },
+      { label: 'Frameworks', path: routes.frameworks(currentProvider), section: 'frameworks' },
+      ...tailLinks,
+    ];
+  }
+
+  if (currentProvider === 'finops') {
+    return [
+      ...baseLinks,
+      {
+        label: 'Architecture',
+        path: routes.architectureDesigns('finops'),
+        section: 'architecture',
+      },
+      { label: 'FOCUS', path: routes.focus('finops'), section: 'focus' },
+      { label: 'Frameworks', path: routes.frameworks('finops'), section: 'frameworks' },
+      ...tailLinks,
+    ];
+  }
+
+  if (currentProvider === 'github') {
+    return [
+      ...baseLinks,
+      { label: 'Code', path: routes.code('github'), section: 'code' },
+      { label: 'Workflows', path: routes.workflows('github'), section: 'workflows' },
+      { label: 'Tools', path: routes.tools('github'), section: 'tools' },
+      ...tailLinks,
+    ];
+  }
+
+  if (currentProvider === 'terraform') {
+    return [
+      ...baseLinks,
+      { label: 'Code', path: routes.code('terraform'), section: 'code' },
+      { label: 'Modules', path: routes.modules('terraform'), section: 'modules' },
+      { label: 'Tools', path: routes.tools('terraform'), section: 'tools' },
+      ...tailLinks,
+    ];
+  }
+
+  if (currentProvider === 'docker') {
+    return [
+      ...baseLinks,
+      { label: 'Code', path: routes.code('docker'), section: 'code' },
+      { label: 'Sandboxes', path: routes.sandboxes('docker'), section: 'sandboxes' },
+      { label: 'Tools', path: routes.tools('docker'), section: 'tools' },
+      ...tailLinks,
+    ];
+  }
+
+  if (currentProvider === 'ansible') {
+    return [
+      ...baseLinks,
+      { label: 'Code', path: routes.code('ansible'), section: 'code' },
+      { label: 'Podcast', path: routes.audioArchitecture('ansible'), section: 'podcast' },
+      { label: 'Tools', path: routes.tools('ansible'), section: 'tools' },
+      ...tailLinks,
+    ];
+  }
+
+  return baseLinks;
+}
+
+function matchesPrefix(pathname, prefix) {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
+function isProviderLabsRoute(pathname, provider) {
   return (
-    <div className="relative" style={{ gridColumn }} ref={rootRef}>
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        aria-controls={menuId}
-        aria-label={`Toggle ${label.toLowerCase()} menu`}
-        className={cn(
-          'text-[11px] font-semibold uppercase tracking-wide transition-all px-2.5 py-2 rounded-full border whitespace-nowrap inline-flex items-center justify-center w-full gap-1',
-          active || open
-            ? 'text-(--dark-gray) dark:text-(--light-gray) bg-secondary/15 border-secondary/40 shadow-sm'
-            : 'text-slate-600 dark:text-slate-400 border-transparent hover:text-(--dark-gray) dark:hover:text-(--light-gray) hover:bg-secondary/15 hover:border-secondary/40'
-        )}
-      >
-        {label}
-        <span
-          className={cn(
-            'material-symbols-outlined text-[13px] transition-transform duration-200',
-            open && 'rotate-180'
-          )}
-          aria-hidden="true"
-        >
-          expand_more
-        </span>
-      </button>
-
-      {open && (
-        <div
-          id={menuId}
-          role="menu"
-          aria-label={label}
-          className="absolute top-[calc(100%+8px)] left-0 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl py-2 min-w-50 z-100 animate-in fade-in slide-in-from-top-2 duration-200"
-        >
-          {items.map((item) => (
-            <Link
-              key={item.path}
-              to={item.path}
-              role="menuitem"
-              onClick={() => setOpen(false)}
-              className="block px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400 hover:bg-secondary/10 hover:text-(--dark-gray) dark:hover:text-(--light-gray) transition-colors"
-            >
-              {item.label}
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
+    matchesPrefix(pathname, routes.labs(provider)) || matchesPrefix(pathname, `/${provider}/labs`)
   );
+}
+
+function isNavItemActive(item, pathname, currentProvider) {
+  if (item.exact) return pathname === item.path;
+  if (!currentProvider) return matchesPrefix(pathname, item.path);
+
+  const onLabsRoute = isProviderLabsRoute(pathname, currentProvider);
+  const sectionMatchers = {
+    labs: () => onLabsRoute,
+    learn: () => !onLabsRoute && matchesPrefix(pathname, routes.education(currentProvider)),
+    news: () =>
+      matchesPrefix(pathname, routes.rss(currentProvider)) ||
+      matchesPrefix(pathname, `/${currentProvider}/news`),
+    architecture: () =>
+      matchesPrefix(pathname, routes.architectureDesigns(currentProvider)) ||
+      pathname === `/${currentProvider}/architectures`,
+    podcast: () =>
+      pathname === routes.audioArchitecture(currentProvider) ||
+      pathname === routes.audio(currentProvider),
+  };
+
+  const matcher = sectionMatchers[item.section];
+  return matcher ? matcher() : matchesPrefix(pathname, item.path);
 }
 
 export default function Header() {
   const location = useLocation();
-  const _currentProvider = useProvider();
+  const contextProvider = useProvider();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -125,250 +193,78 @@ export default function Header() {
     };
   }, [mobileMenuOpen]);
 
-  const onLearnPage =
-    location.pathname === staticRoutes.education ||
-    location.pathname.startsWith(`${staticRoutes.education}/`);
+  // Parse route info for provider context (handles both ProviderLayout routes
+  // and static provider routes like /docker/sandboxes or /terraform/tools).
+  const routeInfo = parseRoute(location.pathname);
+  const currentProvider = routeInfo?.provider || contextProvider || null;
 
-  // Parse route info for provider context
-  const _routeInfo = parseRoute(location.pathname);
-  const currentProvider = _routeInfo?.provider || null;
-
-  // Shared nav links (consistent across all headers)
-  // The admin portal is now linked from the global Footer, keeping the top header
-  // clean for visitors while remaining discoverable and testable.
   const sharedLinks = [
     { label: 'About', path: staticRoutes.about },
     { label: 'Contact', path: staticRoutes.contact },
   ];
 
-  // Define navigation groups
-  const allProviders = [
-    { label: 'Azure', path: routes.landing('azure') },
-    { label: 'AWS', path: routes.landing('aws') },
-    { label: 'Google Cloud', path: routes.landing('gcp') },
-    { label: 'VMware', path: routes.landing('vmware') },
-    { label: 'GitHub', path: routes.landing('github') },
-    { label: 'FinOps', path: routes.landing('finops') },
-    { label: 'Terraform', path: routes.landing('terraform') },
-    { label: 'Docker', path: routes.landing('docker') },
-    { label: 'Ansible', path: routes.landing('ansible') },
-  ];
-
-  // Cloud provider page navigation (absolute paths will be set dynamically)
-  const getCloudPageLinks = (provider) => [
-    { label: 'News', path: routes.rss(provider) },
-    { label: 'Blogs', path: routes.blog(provider) },
-    { label: 'Architecture', path: routes.architectureDesigns(provider) },
-    { label: 'Podcast', path: routes.audioArchitecture(provider) },
-    { label: 'Frameworks', path: routes.frameworks(provider) },
-    { label: 'Learning', path: routes.education(provider) },
-  ];
-
-  // FinOps page navigation
-  const getFinOpsPageLinks = () => [
-    { label: 'News', path: routes.rss('finops') },
-    { label: 'Blogs', path: routes.blog('finops') },
-    { label: 'Architecture', path: routes.architectureDesigns('finops') },
-    { label: 'FOCUS', path: routes.focus('finops') },
-    { label: 'Frameworks', path: routes.frameworks('finops') },
-    { label: 'Learning', path: routes.education('finops') },
-  ];
-
-  // GitHub page navigation
-  const getGitHubPageLinks = () => [
-    { label: 'News', path: routes.rss('github') },
-    { label: 'Blogs', path: routes.blog('github') },
-    { label: 'Code', path: routes.code('github') },
-    { label: 'Workflows', path: routes.workflows('github') },
-    { label: 'Tools', path: routes.tools('github') },
-    { label: 'Learning', path: routes.education('github') },
-  ];
-
-  // Terraform page navigation
-  const getTerraformPageLinks = () => [
-    { label: 'News', path: routes.rss('terraform') },
-    { label: 'Blogs', path: routes.blog('terraform') },
-    { label: 'Code', path: routes.code('terraform') },
-    { label: 'Modules', path: routes.modules('terraform') },
-    { label: 'Tools', path: routes.tools('terraform') },
-    { label: 'Learning', path: routes.education('terraform') },
-  ];
-
-  // Ansible page navigation (service-provider pattern, mirrors Terraform)
-  const getAnsiblePageLinks = () => [
-    { label: 'News', path: routes.rss('ansible') },
-    { label: 'Blogs', path: routes.blog('ansible') },
-    { label: 'Code', path: routes.code('ansible') },
-    { label: 'Learning', path: routes.education('ansible') },
-  ];
-
-  // Docker page navigation (service-provider pattern, mirrors Terraform, with
-  // Sandboxes where Terraform has Modules: #774)
-  const getDockerPageLinks = () => [
-    { label: 'News', path: routes.rss('docker') },
-    { label: 'Blogs', path: routes.blog('docker') },
-    { label: 'Code', path: routes.code('docker') },
-    { label: 'Sandboxes', path: routes.sandboxes('docker') },
-    { label: 'Tools', path: routes.tools('docker') },
-    { label: 'Learning', path: routes.education('docker') },
-  ];
-
-  // Tools dropdown menu items (global standalone tools + provider-specific tools)
-  const getToolsDropdownItems = () => [
-    { label: 'Resource Comparison', path: staticRoutes.resources },
-    { label: 'Decision Matrix', path: staticRoutes.decisions },
-    { label: 'Pricing Comparison', path: staticRoutes.comparison },
-    // The AddOn panes (ADR 0035): one item per available catalogue row, in
-    // the position the Migration Hub has always held.
-    ...availableAddons.map((addon) => ({
-      label: addon.menuLabel ?? addon.title,
-      path: addonPanePath(addon),
-    })),
-    { label: 'Landing Zone Builder', path: staticRoutes.landingZone },
-    ...(currentProvider === 'finops'
-      ? [{ label: 'FinOps Tools', path: routes.tools('finops') }]
-      : []),
-    ...(currentProvider === 'github'
-      ? [{ label: 'GitHub Tools', path: routes.tools('github') }]
-      : []),
-    ...(currentProvider === 'terraform'
-      ? [{ label: 'Terraform Tools', path: routes.tools('terraform') }]
-      : []),
-    ...(currentProvider === 'docker'
-      ? [{ label: 'Docker Tools', path: routes.tools('docker') }]
-      : []),
-  ];
-
-  const _serviceProviders = [
-    { label: 'FinOps', path: routes.landing('finops') },
-    { label: 'GitHub', path: routes.landing('github') },
-    { label: 'Terraform', path: routes.landing('terraform') },
-  ];
-
-  // Determine which navigation to show based on current provider
-  let hubLinks;
-  if (!currentProvider) {
-    // Root page - show all providers
-    hubLinks = allProviders;
-  } else if (['aws', 'azure', 'gcp', 'vmware'].includes(currentProvider)) {
-    // Cloud provider pages - show page navigation
-    hubLinks = getCloudPageLinks(currentProvider);
-  } else if (currentProvider === 'finops') {
-    // FinOps pages - show FinOps-specific navigation
-    hubLinks = getFinOpsPageLinks();
-  } else if (currentProvider === 'github') {
-    // GitHub pages - show GitHub-specific navigation
-    hubLinks = getGitHubPageLinks();
-  } else if (currentProvider === 'terraform') {
-    // Terraform pages - show Terraform-specific navigation
-    hubLinks = getTerraformPageLinks();
-  } else if (currentProvider === 'ansible') {
-    // Ansible pages - service-provider navigation like Terraform
-    hubLinks = getAnsiblePageLinks();
-  } else if (currentProvider === 'docker') {
-    // Docker pages - service-provider navigation like Terraform
-    hubLinks = getDockerPageLinks();
-  } else {
-    // Fallback to all providers
-    hubLinks = allProviders;
-  }
-
-  // The all-providers list (nine of them, plus Learn and Tools) does not fit
-  // the fixed 90px grid. Even with eight providers that nav was 936px, which
-  // squeezed the logo to zero width at every desktop width and pushed the row
-  // past its container; nine would make it 1030px. So the longest list sizes
-  // its columns to their labels (838px measured). Every hub list is six links
-  // or fewer and keeps the fixed columns that line its links up from one hub
-  // to the next.
-  const compactNav = hubLinks.length > 8;
+  const hubLinks = getPrimaryNavItems(currentProvider);
 
   return (
     <header
       className={cn(
-        // Background/blur come from the tokenized header chrome in index.css
-        // (--header-bg / --header-blur, overridden per provider theme).
         'sticky top-0 z-50 border-b border-glass-border h-16 transition-all duration-300',
         scrolled && 'shadow-(--shadow-sm)'
       )}
     >
       <SkipToMainContent href="#main-content" />
-      <div className="max-w-[1400px] mx-auto h-full px-4 md:px-8 flex items-center">
-        {/* Logo - use brand logo image in top-left */}
-        <div className="flex items-center w-60">
-          {/* shrink-0: the logo is never the thing that gives way when the
-              nav is long. Without it the image, being max-width: 100%, was
-              compressed to zero width on the home page. */}
-          <Link to="/" className="flex items-center group h-full py-0 shrink-0">
-            <img
-              src="/icons/hcw-logo.png"
-              alt="HybridCloudWorks logo"
-              width="160"
-              height="32"
-              fetchPriority="high"
-              decoding="async"
-              className="h-8 w-auto object-contain"
-            />
-            <span className="sr-only">HybridCloudWorks</span>
-          </Link>
-        </div>
-
-        {/* Centered Nav */}
-        <div className="flex-1 hidden lg:flex items-center justify-center gap-5">
-          {/* Provider links with GRID layout for perfect alignment across all providers */}
+      <div className="max-w-[1400px] mx-auto h-full px-4 md:px-8 flex items-center justify-between lg:justify-center">
+        {/* Symmetrical Centered Desktop Toolbar */}
+        <div className="hidden lg:flex items-center justify-center gap-4">
           <nav
             aria-label="Primary"
-            className="grid gap-1 items-center"
+            className="grid gap-1.5 items-center"
             style={{
-              gridTemplateColumns: `repeat(${hubLinks.length + 2}, ${compactNav ? 'max-content' : '90px'})`,
+              gridTemplateColumns: 'repeat(9, 100px)',
             }}
           >
-            {hubLinks.map((item, index) => (
+            {hubLinks.map((item, index) => {
+              const active = isNavItemActive(item, location.pathname, currentProvider);
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  style={{ gridColumn: index + 1 }}
+                  aria-current={active ? 'page' : undefined}
+                  className={cn(
+                    'text-[11px] font-semibold uppercase tracking-wide transition-colors px-2.5 py-2 rounded-full border whitespace-nowrap inline-flex items-center justify-center w-full text-center',
+                    active
+                      ? 'text-(--dark-gray) dark:text-(--light-gray) bg-secondary/15 border-secondary/40 shadow-2xs'
+                      : 'text-slate-600 dark:text-slate-400 border-transparent hover:text-(--dark-gray) dark:hover:text-(--light-gray) hover:bg-secondary/15 hover:border-secondary/40'
+                  )}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          {/* Divider - identical position on landing and every provider hub */}
+          <div className="h-6 w-px bg-slate-300 dark:bg-slate-800 shrink-0" />
+
+          {/* Secondary Nav (About / Contact) - fixed 2-column grid */}
+          <nav
+            aria-label="Secondary"
+            className="grid gap-1.5 items-center"
+            style={{
+              gridTemplateColumns: 'repeat(2, 84px)',
+            }}
+          >
+            {sharedLinks.map((item, index) => (
               <Link
                 key={item.path}
                 to={item.path}
                 style={{ gridColumn: index + 1 }}
+                aria-current={location.pathname === item.path ? 'page' : undefined}
                 className={cn(
-                  'text-[11px] font-semibold uppercase tracking-wide transition-colors px-2.5 py-2 rounded-full border whitespace-nowrap inline-flex items-center justify-center',
-                  location.pathname.startsWith(item.path)
-                    ? 'text-(--dark-gray) dark:text-(--light-gray) bg-secondary/15 border-secondary/40'
-                    : 'text-slate-600 dark:text-slate-400 border-transparent hover:text-(--dark-gray) dark:hover:text-(--light-gray) hover:bg-secondary/15 hover:border-secondary/40'
-                )}
-              >
-                {item.label}
-              </Link>
-            ))}
-
-            {/* Learn and Tools menus, in the last two grid columns so the
-                provider links keep their positions across every hub. */}
-            <NavDropdown
-              id="learn"
-              label="Learn"
-              items={LEARN_MENU_ITEMS}
-              active={onLearnPage}
-              gridColumn={hubLinks.length + 1}
-            />
-            <NavDropdown
-              id="tools"
-              label="Tools"
-              items={getToolsDropdownItems()}
-              active={location.pathname.startsWith('/tools/')}
-              gridColumn={hubLinks.length + 2}
-            />
-          </nav>
-          {/* Divider - always in same position */}
-          <div className="h-6 w-px bg-slate-300 dark:bg-slate-800 shrink-0"></div>
-          {/* About/Contact - always in same position */}
-          {/* Fixed width so the primary nav does not shift when this renders.
-              Widened from w-42.5 when Admin became a third link. */}
-          <nav aria-label="Secondary" className="hidden xl:flex items-center gap-1 w-64">
-            {sharedLinks.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={cn(
-                  'text-[11px] font-semibold uppercase tracking-wide transition-colors px-2.5 py-2 rounded-full border whitespace-nowrap inline-flex items-center justify-center min-w-20',
+                  'text-[11px] font-semibold uppercase tracking-wide transition-colors px-2.5 py-2 rounded-full border whitespace-nowrap inline-flex items-center justify-center w-full text-center',
                   location.pathname === item.path
-                    ? 'text-(--dark-gray) dark:text-(--light-gray) bg-secondary/15 border-secondary/40'
+                    ? 'text-(--dark-gray) dark:text-(--light-gray) bg-secondary/15 border-secondary/40 shadow-2xs'
                     : 'text-slate-600 dark:text-slate-400 border-transparent hover:text-(--dark-gray) dark:hover:text-(--light-gray) hover:bg-secondary/15 hover:border-secondary/40'
                 )}
               >
@@ -376,67 +272,58 @@ export default function Header() {
               </Link>
             ))}
           </nav>
-        </div>
 
-        {/* Right Controls. The box only ever holds the menu button, which is
-            hidden from lg up, so from lg it keeps its width while there is
-            room and gives it back when the nav needs it. Held at a fixed
-            minimum instead, it forced the logo to give way: on the hubs at
-            1024-1280px the logo was squeezed to a few pixels. */}
-        <div className="flex items-center gap-2 ml-auto justify-end">
-          {/* Cloud Status Pill */}
-          <Link
-            to="/#platform-health"
-            className="hidden 2xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors shrink-0"
-            aria-label="Platform Health: 9/9 Systems Live"
-          >
-            <span
-              className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"
-              aria-hidden="true"
-            />
-            <span>9/9 Live</span>
-          </Link>
+          {/* Divider - identical position before Search */}
+          <div className="h-6 w-px bg-slate-300 dark:bg-slate-800 shrink-0" />
 
-          {/* Grouped Providers Mega-Menu (accessible across all pages) */}
-          <div className="hidden lg:block">
-            <ProvidersMegaMenu />
-          </div>
-
-          {/* Search Trigger Button (Desktop & Tablet) */}
+          {/* Search Trigger Button (Desktop) */}
           <button
             type="button"
             onClick={() => setCommandPaletteOpen(true)}
             aria-label="Search site (Cmd+K)"
-            className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-800/60 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-all text-xs cursor-pointer hover:border-slate-300 dark:hover:border-slate-700"
+            className="inline-flex items-center justify-between gap-2 w-36 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-800/60 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-all text-xs cursor-pointer hover:border-slate-300 dark:hover:border-slate-700 shrink-0"
           >
-            <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
-              search
+            <span className="inline-flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
+                search
+              </span>
+              <span className="font-medium">Search...</span>
             </span>
-            <span className="hidden md:inline font-medium">Search...</span>
-            <kbd className="hidden md:inline-flex items-center px-1.5 py-0.5 text-[9px] font-mono rounded bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-400">
+            <kbd className="inline-flex items-center px-1.5 py-0.5 text-[9px] font-mono rounded bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-400">
               ⌘K
             </kbd>
           </button>
+        </div>
 
-          {/* Search Icon Trigger (Mobile only) */}
-          <button
-            type="button"
-            onClick={() => setCommandPaletteOpen(true)}
-            aria-label="Search"
-            className="sm:hidden text-slate-700 dark:text-slate-300 h-10 w-10 inline-flex items-center justify-center rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-colors"
+        {/* Tablet & Mobile Controls (< lg) */}
+        <div className="flex lg:hidden items-center justify-between w-full gap-2">
+          <Link
+            to={staticRoutes.home}
+            className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-800"
           >
-            <span className="material-symbols-outlined text-lg">search</span>
-          </button>
+            HybridCloudWorks
+          </Link>
 
-          <button
-            className="lg:hidden text-slate-900 dark:text-white h-11 w-11 inline-flex items-center justify-center rounded-md hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-colors"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            aria-expanded={mobileMenuOpen}
-            aria-controls="mobile-nav"
-            aria-label="Toggle menu"
-          >
-            <span className="material-symbols-outlined">{mobileMenuOpen ? 'close' : 'menu'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCommandPaletteOpen(true)}
+              aria-label="Search"
+              className="text-slate-700 dark:text-slate-300 h-10 w-10 inline-flex items-center justify-center rounded-lg hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-colors"
+            >
+              <span className="material-symbols-outlined text-lg">search</span>
+            </button>
+
+            <button
+              className="text-slate-900 dark:text-white h-11 w-11 inline-flex items-center justify-center rounded-md hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-colors"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-nav"
+              aria-label="Toggle menu"
+            >
+              <span className="material-symbols-outlined">{mobileMenuOpen ? 'close' : 'menu'}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -463,33 +350,40 @@ export default function Header() {
             </kbd>
           </button>
 
-          {hubLinks.map((item) => (
-            <Link
-              key={item.path}
-              to={item.path}
-              className={cn(
-                'flex items-center h-11 px-4 rounded-lg text-sm font-bold uppercase tracking-wide',
-                location.pathname.startsWith(item.path)
-                  ? 'bg-slate-200/70 dark:bg-slate-700/60 text-slate-900 dark:text-white'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
-              )}
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              {item.label}
-            </Link>
-          ))}
-          <div className="border-t border-slate-300 dark:border-slate-800 mt-2 pt-2">
-            {LEARN_MENU_ITEMS.map((item) => (
+          {hubLinks.map((item) => {
+            const active = isNavItemActive(item, location.pathname, currentProvider);
+            return (
               <Link
                 key={item.path}
                 to={item.path}
-                className="flex items-center h-11 px-4 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm transition-colors"
+                className={cn(
+                  'flex items-center h-11 px-4 rounded-lg text-sm font-bold uppercase tracking-wide',
+                  active
+                    ? 'bg-slate-200/70 dark:bg-slate-700/60 text-slate-900 dark:text-white'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-white'
+                )}
                 onClick={() => setMobileMenuOpen(false)}
               >
                 {item.label}
               </Link>
-            ))}
-          </div>
+            );
+          })}
+
+          {!currentProvider && (
+            <div className="border-t border-slate-300 dark:border-slate-800 mt-2 pt-2">
+              {LEARN_MENU_ITEMS.map((item) => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className="flex items-center h-11 px-4 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-sm transition-colors"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+          )}
+
           <div className="border-t border-slate-300 dark:border-slate-800 mt-2 pt-2">
             {sharedLinks.map((item) => (
               <Link

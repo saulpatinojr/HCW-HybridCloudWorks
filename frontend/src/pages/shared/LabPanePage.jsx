@@ -115,7 +115,6 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Helmet } from 'react-helmet-async';
 import { Link, Navigate, useParams } from 'react-router';
 import {
-  CODER_APPS_ORIGIN,
   CODER_ORIGIN,
   LAB_LANDING_FRAMES,
   coderSignInUrl,
@@ -228,24 +227,26 @@ export const PANE_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-p
 /**
  * The pane's `allow` list: clipboard read and write, which code-server's
  * copy and paste use, and fullscreen, which its own full-screen view uses.
- * Each is granted to Coder's name and to the workspace apps' names by
- * origin, not with the default `'src'`, because `'src'` is the origin of the
- * frame's first URL (the launcher, on Coder's name) and would not follow the
- * frame to code-server's own name, where the launcher sends it. A Permissions Policy origin can only wildcard a
- * whole label, so the grant also covers any other app or forwarded port the
- * learner opens under their workspace's names. Those run the learner's own
- * code, and the pane reaches them only by navigating within Coder's names
- * (`frame-src`); a page from anywhere else never gets the clipboard. Accepted
- * for code-server's paste (security review of #751). Dropping
- * clipboard-read would leave Ctrl+V working, which needs no permission, and
- * lose the context menu's Paste.
+ *
+ * WHY `*` IN THE ATTRIBUTE AND THE EXACT ALLOWLIST IN `Permissions-Policy`.
+ * The frame starts at the launcher on `coder.lab.hybridcloudworks.com` and
+ * navigates itself to `code-server--<workspace>--<owner>.coder.lab.hybridcloudworks.com`.
+ * Chromium's HTML `<iframe allow="…">` parser (`SerializedPermissionsPolicy`)
+ * does NOT accept a wildcard subdomain token (`https://*.coder.lab…`): it
+ * silently drops the token, leaving `allowsFeature('clipboard-read')` false
+ * as soon as the frame moves to code-server's subdomain — which makes
+ * `navigator.clipboard.readText()` fail with `NotAllowedError` ("Unable to
+ * read from the browser's clipboard").
+ *
+ * The HTTP `Permissions-Policy` response header on the site's document
+ * (`staticwebapp.config.json`) DOES support RFC 8941 wildcard subdomains and
+ * bounds `clipboard-read`, `clipboard-write` and `fullscreen` to `self`,
+ * `CODER_ORIGIN`, `CODER_APPS_ORIGIN` and the AddOn origins, while `frame-src`
+ * prevents the frame from loading any other origin. Pairing that document
+ * header with `*` on the container attribute is how Chromium delegates the
+ * clipboard to every workspace subdomain and nowhere else.
  */
-const PANE_ORIGINS = `${CODER_ORIGIN} ${CODER_APPS_ORIGIN}`;
-export const PANE_ALLOW = [
-  `clipboard-read ${PANE_ORIGINS}`,
-  `clipboard-write ${PANE_ORIGINS}`,
-  `fullscreen ${PANE_ORIGINS}`,
-].join('; ');
+export const PANE_ALLOW = ['clipboard-read *', 'clipboard-write *', 'fullscreen *'].join('; ');
 
 const MUTED = 'text-slate-600 dark:text-slate-400';
 const BUTTON =

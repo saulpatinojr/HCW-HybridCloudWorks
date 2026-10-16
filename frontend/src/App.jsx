@@ -107,6 +107,7 @@ const AnsibleCodePage = lazyPage(() => import('@/pages/ansible/CodePage'));
 const AnsibleBlogPage = lazyPage(() => import('@/pages/ansible/BlogPage'));
 const AnsibleEducationPage = lazyPage(() => import('@/pages/ansible/EducationPage'));
 const AnsibleRssPage = lazyPage(() => import('@/pages/ansible/RssPage'));
+const AnsibleToolsPage = lazyPage(() => import('@/pages/ansible/ToolsPage'));
 
 // Docker (service-provider pattern, like Terraform). The blog and code pages
 // list published Docker content, with detail pages, as every provider's do
@@ -412,6 +413,8 @@ function App() {
                     scripts/prerender-entry.jsx. */}
                 <Route path="education/labs" element={<LabsLearnPage />} />
                 <Route path="education/labs/:labId" element={<LabPanePage />} />
+                <Route path="labs" element={<LabsLearnPage />} />
+                <Route path="labs/:labId" element={<LabPanePage />} />
                 <Route path="education/:certSlug" element={<ProviderEducationDetailDispatcher />} />
                 <Route
                   path="education/microcredentials/:mcSlug"
@@ -425,7 +428,7 @@ function App() {
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
               {/*
-                --- Dedicated Section Routes (FinOps, Terraform, Docker, GitHub) ---
+                --- Dedicated Section Routes (FinOps, Terraform, Docker, GitHub, Ansible) ---
 
                 These are provider paths that have no cross-provider dispatcher,
                 so they are declared statically.
@@ -463,6 +466,8 @@ function App() {
               {/* GitHub Specifics */}
               <Route path="/github/workflows" element={<GitHubWorkflowsPage />} />
               <Route path="/github/tools" element={<GitHubToolsPage />} />
+              {/* Ansible Specifics */}
+              <Route path="/ansible/tools" element={<AnsibleToolsPage />} />
               {/* --- Cloud Tools --- */}
               <Route path="/tools/migration" element={<ToolsMigrationPage />} />
               <Route path="/tools/comparison" element={<ToolsComparisonPage />} />

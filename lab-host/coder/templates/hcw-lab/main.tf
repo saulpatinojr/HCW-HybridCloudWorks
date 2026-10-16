@@ -333,6 +333,9 @@ module "code-server" {
     "workbench.startupEditor" = "readme"
     # No usage data leaves a learner's editor.
     "telemetry.telemetryLevel" = "off"
+    # Right-clicking in the integrated terminal copies when text is selected
+    # and pastes when nothing is selected, matching standard terminal workflow.
+    "terminal.integrated.rightClickBehavior" = "copyPaste"
   }
 }
 
