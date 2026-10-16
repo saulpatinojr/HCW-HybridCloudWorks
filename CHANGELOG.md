@@ -19,6 +19,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **`alert-kv-config-write`'s plan declarations are pruned, and the loop is
+  proven gone (#1216)**. The owner applied #1217 in
+  `run-KZEnEksD78i8wtKr`, whose plan the check read as the four declared
+  provider additions, so the state had held `[]`. `verify-alert-state.yml`
+  then read the rule OK. The three alerts the cleanup itself had caused were
+  closed at 15:10Z, and no new one opened in the ten minutes after. Five
+  entries are deleted, and a test keeps them from coming back.
 - **The plan check's applied declarations are pruned (#1207, #964,
   #970)**. Ten `DECLARED` entries in `scripts/assert-expected-plan.mjs` had
   met their own removal condition:

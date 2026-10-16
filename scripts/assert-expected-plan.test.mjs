@@ -952,6 +952,11 @@ describe('DECLARED', () => {
     }
   });
 
+  it('prunes alert-kv-config-write’s provider entries once applied (#1216)', () => {
+    const addresses = DECLARED.map((entry) => entry.address);
+    expect(addresses).not.toContain('azurerm_monitor_activity_log_alert.key_vault_config_writes');
+  });
+
   it('prunes ADDON_NETWORK_ASSESSMENT_URL and ADDON_CLOUD_ASSESSMENT_URL once applied (#1089)', () => {
     const paths = DECLARED.map((entry) => entry.path);
     expect(paths).not.toContain('app_settings.ADDON_NETWORK_ASSESSMENT_URL');
