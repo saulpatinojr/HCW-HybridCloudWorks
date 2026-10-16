@@ -71,8 +71,8 @@ reviewed pull request, never per run.
   daemon's own image pulls and DNS included. The jump names the user, and
   the helper looks the uid up when it loads it, so nothing holds a uid that
   could go stale. `scripts/lab-host-host-firewall.test.mjs` holds the
-  sandbox daemon to a user-mode network driver, which the owner match
-  relies on.
+  sandbox daemon to the user-mode network driver this role is written for,
+  so a change of driver has to revisit the role.
 - **DNS through the stub.** The daemon and the embedded resolver of every
   workspace network forward to the nameservers in the host's
   `/etc/resolv.conf`, so all of it reaches `127.0.0.53` (Docker 29.9's
@@ -121,6 +121,21 @@ rules are loaded and not at all if loading failed. A drop-in left on
 another uid's manager is removed. A failure is reported by
 `OnFailure=hcw-unit-failed@%n.service`, the notifier `alert-lab-unit-failed`
 reads (roles/hardening).
+
+The play fails closed too. `coder_sandbox` runs first and has already
+started the sandbox user's manager, so the role installs the unit and the
+drop-in before anything that can fail to load (adding `Requires=` to a
+running manager changes nothing until its next start). The rest runs in one
+block: if any of it fails while no loaded firewall governs the sandbox (its
+jump first in `OUTPUT` and its chain ending in the refusal, in both
+families), the rescue stops `user@<uid>.service`, which stops the
+workspaces, and fails the play with what to do. If rules loaded by an
+earlier run are still in force (a load iptables refuses changes nothing), it
+stops nothing and says so. In check mode it never stops anything.
+Recovering after a stop means running the role on its own
+(`--tags host_firewall`) before a plain run, since a plain run starts the
+manager in `coder_sandbox` and the manager waits for the firewall; the
+runbook's "Putting it back" has the commands.
 
 The unit has `RefuseManualStop=yes`: stopping or restarting it would stop
 the sandbox user's manager with it (and every workspace) without removing a

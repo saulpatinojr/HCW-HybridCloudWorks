@@ -268,9 +268,49 @@ describe('host_firewall: at boot', () => {
     expect(code(present)).not.toMatch(/user@\d+|user@\.service\.d/);
   });
 
-  it('is started, never restarted, by the role', () => {
-    expect(code(present)).not.toMatch(/state: (restarted|reloaded|stopped)/);
+  it('is started, never restarted or stopped, by the role', () => {
+    expect(code(present)).not.toMatch(/state: (restarted|reloaded)/);
+    // The one stop in present.yml is the rescue's, of the sandbox user's manager, never of the unit.
+    expect(code(present).match(/state: stopped/g)).toHaveLength(1);
+    expect(present).toMatch(/name: "user@\{\{ host_firewall_sandbox_uid \}\}\.service"\n\s+state: stopped/);
     expect(present).toMatch(/name: "\{\{ host_firewall_unit \}\}\.service"\n\s+enabled: true\n\s+state: started/);
+  });
+});
+
+describe('host_firewall: failing closed', () => {
+  const lines = present.split('\n');
+  const at = (needle) => lines.findIndex((line) => line.includes(needle));
+
+  it('installs the boot unit and the drop-in before anything that can fail to load, inside the block', () => {
+    const order = [
+      '- name: Load the host firewall, and stop the sandbox if it cannot be loaded',
+      '- name: Install the boot unit that loads the firewall',
+      '- name: Make the sandbox user\'s manager require the firewall',
+      '- name: Reload systemd, so the requirement holds from the manager\'s next start',
+      '- name: Read the host\'s resolver configuration',
+      '- name: Read Coder\'s internal network as Docker has it',
+      '- name: Load the chains and put the jumps first',
+      '- name: Refuse a host whose live firewall differs from what this run loaded',
+      '- name: Enable the boot unit',
+      '  rescue:',
+      '- name: Say what the firewall allows',
+    ].map(at);
+    expect(order.every((index) => index >= 0), String(order)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(lines[order[0] + 1]).toBe('  block:');
+  });
+
+  it('stops the sandbox user\'s manager only when no loaded firewall governs it, never in check mode, then fails', () => {
+    const rescue = present.slice(present.indexOf('  rescue:\n'), present.indexOf('- name: Say what the firewall allows'));
+    expect(rescue).toContain("'-A OUTPUT -m owner --uid-owner ' ~ host_firewall_sandbox_uid ~ ' -j ' ~ host_firewall_sandbox_chain");
+    expect(rescue).toContain("select('search', ' -j ' ~ host_firewall_refuse_chain ~ '$') | list | length == 2");
+    expect(rescue).toMatch(/name: "user@\{\{ host_firewall_sandbox_uid \}\}\.service"\n\s+state: stopped\n\s+when:\n\s+- not ansible_check_mode\n\s+- not host_firewall_rescue_governed \| bool\n/);
+    expect(rescue).toMatch(/- name: Fail the play[^\n]*\n\s+ansible\.builtin\.fail:/);
+    expect(rescue.indexOf('ansible.builtin.fail:')).toBeGreaterThan(rescue.indexOf('state: stopped'));
+    for (const read of rescue.match(/ansible\.builtin\.command:[\s\S]*?check_mode: false/g)) {
+      expect(read).toContain('changed_when: false');
+      expect(read).toContain('failed_when: false');
+    }
   });
 });
 
