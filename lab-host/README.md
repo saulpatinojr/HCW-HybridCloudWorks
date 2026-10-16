@@ -564,8 +564,10 @@ and the hardening test are described in
 [`../coder/README.md`](../coder/README.md); this section is the operating
 procedure. `ansible/group_vars/all.yml` holds the switches: `coder_enabled`
 (`true` since 2026-09-28), `coder_oauth2_github_allowed_orgs`
-(`[HybridCloudWorks]` since the same day), `coder_oauth2_github_allow_signups`
-(`true`) and `coder_max_workspaces` (`5`).
+(`[HybridCloudWorks]` since the same day), `coder_oauth2_github_allowed_teams`
+(`[HybridCloudWorks/lab-learners]` since 2026-10-16),
+`coder_oauth2_github_allow_signups` (`false` since 2026-10-16) and
+`coder_max_workspaces` (`5`).
 
 **Coder is reached through panes on the site, never directly** (owner
 decision 2026-09-28). Opened in a browser tab, any Coder page, dashboard or
@@ -606,7 +608,10 @@ it is redirected like any other Coder page.
 any GitHub account sign in, so `site.yml` asserts in `pre_tasks`, and the
 role asserts again, that the list is non-empty whenever `coder_enabled` is
 true and fails the play otherwise; with `coder_enabled: false` the asserts
-are skipped.
+are skipped. The team list is the same: an empty
+`CODER_OAUTH2_GITHUB_ALLOWED_TEAMS` lets every member of the organisation in,
+so the role refuses it too, and refuses a team whose organisation is not in
+the organisation list ("Who signs in", below).
 
 ### Turning it on
 
@@ -697,7 +702,10 @@ what they then use. The **Sign in with GitHub** button on any lab's page on
 the site starts the same sign-in in a tab of its own, and brings that tab
 back to the lab.
 
-If the tab shows `You aren't a member of the authorized Github
+If the tab shows `You aren't a member of an authorized team in the
+[HybridCloudWorks] Github organization(s)!`, the account is in the
+organisation but not in the `lab-learners` team ("Who signs in", below).
+If it shows `You aren't a member of the authorized Github
 organizations!` instead of the labs page, GitHub did not report the account
 as a member of `HybridCloudWorks` to the app. Either the account is not a
 member, or the organisation restricts OAuth app access and has not approved
@@ -705,6 +713,50 @@ this app; that policy is at
 https://github.com/organizations/HybridCloudWorks/settings/oauth_application_policy.
 No Coder account was created, so the next successful sign-in is still the
 first.
+
+### Who signs in
+
+Owner decision 2026-10-16 (#954): only members of the GitHub team
+`HybridCloudWorks/lab-learners` sign in, and sign-ups are off. Read in
+Coder v2.38.0's source (`coderd/userauth.go`, `userOAuth2Github` and
+`oauthLogin`), a GitHub sign-in passes three gates in order:
+
+1. **The organisation.** The account must be an active member of
+   `HybridCloudWorks` (`CODER_OAUTH2_GITHUB_ALLOWED_ORGS`).
+2. **The team.** It must then be a member of `lab-learners` in that
+   organisation (`CODER_OAUTH2_GITHUB_ALLOWED_TEAMS`, written
+   `<organisation>/<team-slug>`). Coder looks for a team only inside an
+   organisation that passed the first gate, which is why the role refuses a
+   team in any other organisation: it would let nobody in.
+3. **The account.** With `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false`, a
+   sign-in that matches no Coder account is refused with `Signups are
+   disabled` and `Please contact your Coder administrator to request
+   access.`, and nothing is created. Coder matches an account first by the
+   GitHub account it was linked to at an earlier sign-in, then by the
+   GitHub account's **primary, verified** email address. So a learner's
+   first sign-in works only once the owner has created their account with
+   that address and the GitHub login type; it then links to the GitHub
+   account and is matched that way from then on. The one exception is the
+   very first account on an empty deployment, which Coder always admits
+   and makes the owner ("First admin sign-in", above).
+
+**Existing accounts keep working.** Nothing deletes or suspends an
+account, and a session already open is not checked again: Coder checks the
+organisation and the team only when someone signs in with GitHub, and an
+open browser session is extended while it is used (24 hours of idleness
+ends it, Coder's default). Every later GitHub sign-in passes all three
+gates again, so an account outside the team is refused at its next sign-in.
+On 2026-10-16 the deployment had one account that signs in with GitHub,
+the owner's, who is in the team. `hcw-status` ("The status token for the
+site", below) is not affected at all: it never signs in, Coder cannot even
+match a GitHub sign-in to its `.invalid` address, and the tokens it acts
+with (`coder tokens create`, login type `token`) are not checked against
+GitHub by any gate.
+
+Adding a learner is therefore two steps, the team and then the account,
+and removing one is the team and then a suspension; both, with the lines
+to paste, are in `docs/runbooks/labs-host.md`, "Coder sign-in: adding and
+removing a learner".
 
 ### Publishing the template
 
@@ -1027,15 +1079,14 @@ stay the way to renew by hand either way. Setting the host up is
 
 Two, in ADR 0032's words, and emptying the allowlist is neither.
 
-**No new learners; existing ones keep working.** Durable: a pull request
-setting `coder_oauth2_github_allow_signups: false` in
-`ansible/group_vars/all.yml`, merged and applied with `bootstrap.sh`.
-Immediate, bash, on the host (the next `bootstrap.sh` run re-renders the
-file from `group_vars`, so land the pull request too):
-
-```bash
-sudo sed -i 's/^CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=.*/CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false/' /etc/hcw/coder/coder.env && sudo docker compose --project-directory /etc/hcw/coder up -d
-```
+**No new learners; existing ones keep working.** This is how the lab runs
+since 2026-10-16: `coder_oauth2_github_allow_signups: false` in
+`ansible/group_vars/all.yml`, so no sign-in creates an account, and a new
+learner exists only once the owner creates their account ("Who signs in",
+above). Not creating accounts is the switch. To refuse even someone whose
+account was made but who has not signed in yet, suspend that account, the
+same line as removing a learner in `docs/runbooks/labs-host.md`, "Coder
+sign-in: adding and removing a learner".
 
 **Everyone, at once.** Immediate, bash, on the host:
 

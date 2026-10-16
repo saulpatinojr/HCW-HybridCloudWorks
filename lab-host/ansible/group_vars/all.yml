@@ -190,10 +190,22 @@ caddy_direct_visit_redirect: https://hybridcloudworks.com/education/labs
 # which makes that account Coder's owner; nothing in this repository creates
 # a Coder user. The three vault_coder_* keys were in the host's vault that
 # day (checked by key name).
+# Narrowed 2026-10-16 (owner decision, #954): only members of the
+# lab-learners team sign in, and sign-ups are off, so a learner's account is
+# created by the owner before their first sign-in (docs/runbooks/labs-host.md,
+# "Coder sign-in: adding and removing a learner"; why in lab-host/README.md,
+# "Who signs in"). coder_oauth2_github_allowed_teams renders
+# CODER_OAUTH2_GITHUB_ALLOWED_TEAMS as <organisation>/<team-slug>. Like the
+# organisation list, an EMPTY team list is not a lock: Coder then lets every
+# member of the allowed organisations in. Coder checks a team only inside an
+# organisation the learner already passed, so the role also refuses a team
+# whose organisation is not in coder_oauth2_github_allowed_orgs.
 coder_enabled: true
 coder_oauth2_github_allowed_orgs:
   - HybridCloudWorks
-coder_oauth2_github_allow_signups: true
+coder_oauth2_github_allowed_teams:
+  - HybridCloudWorks/lab-learners
+coder_oauth2_github_allow_signups: false
 coder_domain: "coder.{{ lab_host_domain }}"
 # Concurrent workspaces the host is sized for. Coder Community enforces no
 # count; the role asserts 5 x 2 GiB (the template's limit) + 2.5 GiB for

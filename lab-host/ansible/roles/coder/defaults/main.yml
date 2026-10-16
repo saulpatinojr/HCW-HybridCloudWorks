@@ -1,9 +1,9 @@
 ---
-# coder_enabled, coder_oauth2_github_allowed_orgs, coder_oauth2_github_allow_signups,
-# coder_domain, coder_max_workspaces and the image pins (coder_image,
-# coder_image_tag, coder_image_digest, coder_postgres_image,
-# coder_postgres_image_tag, coder_postgres_image_digest) live in
-# group_vars/all.yml; meta/argument_specs.yml marks them required.
+# coder_enabled, coder_oauth2_github_allowed_orgs, coder_oauth2_github_allowed_teams,
+# coder_oauth2_github_allow_signups, coder_domain, coder_max_workspaces and the
+# image pins (coder_image, coder_image_tag, coder_image_digest,
+# coder_postgres_image, coder_postgres_image_tag, coder_postgres_image_digest)
+# live in group_vars/all.yml; meta/argument_specs.yml marks them required.
 
 # Where the Compose project lives on the host. docker compose reads
 # docker-compose.yml, .env (interpolation), coder.env and coder-postgres.env

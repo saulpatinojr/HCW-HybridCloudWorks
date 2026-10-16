@@ -1,15 +1,8 @@
 ---
-# Fail closed before touching the host. site.yml asserts the allowlist too;
-# repeated here so the role's contract does not depend on the play.
-- name: Refuse to enable Coder with an empty GitHub organisation allowlist
-  ansible.builtin.assert:
-    that:
-      - coder_oauth2_github_allowed_orgs | length > 0
-    fail_msg: >-
-      coder_enabled is true but coder_oauth2_github_allowed_orgs is empty. An empty
-      CODER_OAUTH2_GITHUB_ALLOWED_ORGS lets any GitHub account sign in (ADR 0032).
-    quiet: true
-  when: coder_enabled | bool
+# Fail closed before touching the host: first who may sign in (the
+# organisation and team allowlists), then the rest.
+- name: Check the GitHub sign-in allowlists
+  ansible.builtin.import_tasks: signin_policy.yml
 
 - name: Refuse to enable Coder without its three vault secrets
   ansible.builtin.assert:

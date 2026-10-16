@@ -209,7 +209,9 @@ What keeps working, and why:
   level, and a stopped container answers 503 with the site's own sentence,
   `This tool isn't available right now.`
 - **Coder** (on since 2026-09-28, for members of the `HybridCloudWorks`
-  GitHub organisation only). Its route removes Coder's
+  GitHub organisation only; since 2026-10-16 for members of its
+  `lab-learners` team only, with sign-ups off, so the owner creates each
+  learner's account: #954, `lab-host/README.md`, "Who signs in"). Its route removes Coder's
   default `frame-ancestors 'self'`, because the browser enforces every
   policy it receives and that one would keep Coder out of the panes. It
   lets Coder's GitHub sign-in callback through at the top level, because

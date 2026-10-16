@@ -10,7 +10,13 @@ starts or stops it, adds the Caddy route and keeps a week of nightly dumps.
 
 1. **Fails closed** when `coder_enabled` is true and any of these holds: the
    GitHub organisation allowlist is empty (an empty
-   `CODER_OAUTH2_GITHUB_ALLOWED_ORGS` lets any GitHub account in); one of
+   `CODER_OAUTH2_GITHUB_ALLOWED_ORGS` lets any GitHub account in); the GitHub
+   team allowlist is empty (an empty `CODER_OAUTH2_GITHUB_ALLOWED_TEAMS` lets
+   every member of those organisations in), or names a team that is not
+   `<organisation>/<team-slug>` with its organisation in the organisation
+   allowlist, spelled the same way (Coder checks a team only inside an
+   organisation the learner already passed, so any other team would let
+   nobody in; `tasks/signin_policy.yml`); one of
    `vault_coder_oauth2_github_client_id`,
    `vault_coder_oauth2_github_client_secret` and
    `vault_coder_postgres_password` is unset; the password holds a character
@@ -28,8 +34,8 @@ starts or stops it, adds the Caddy route and keeps a week of nightly dumps.
    to `/etc/hcw/coder/docker-compose.yml`. One source, no copy under
    `files/`.
 4. Writes `/etc/hcw/coder/coder.env` (GitHub OAuth client id and secret, the
-   allowlist, `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS`, the PostgreSQL connection
-   URL) and `/etc/hcw/coder/coder-postgres.env` (`POSTGRES_PASSWORD`), both
+   organisation and team allowlists, `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS`, the
+   PostgreSQL connection URL) and `/etc/hcw/coder/coder-postgres.env` (`POSTGRES_PASSWORD`), both
    `root:root` `0600`, with `no_log`. Two files so the database container
    never receives the OAuth secret. While disabled both are written empty:
    the Compose file marks them `required`, so `docker compose down` could
@@ -473,7 +479,8 @@ token in `Coder-Session-Token`, through no proxy and following no redirect.
 | --- | --- | --- |
 | `coder_enabled` | required (`true` in `group_vars` since 2026-09-28) | Run or stop Coder |
 | `coder_oauth2_github_allowed_orgs` | required (`[HybridCloudWorks]` in `group_vars` since 2026-09-28) | `CODER_OAUTH2_GITHUB_ALLOWED_ORGS`; non-empty while enabled |
-| `coder_oauth2_github_allow_signups` | required (`true` in `group_vars`) | `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS`; `false` is the no-new-learners switch |
+| `coder_oauth2_github_allowed_teams` | required (`[HybridCloudWorks/lab-learners]` in `group_vars` since 2026-10-16) | `CODER_OAUTH2_GITHUB_ALLOWED_TEAMS`; non-empty while enabled, each `<organisation>/<team-slug>` in an allowed organisation |
+| `coder_oauth2_github_allow_signups` | required (`false` in `group_vars` since 2026-10-16) | `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS`; with `false` a learner's account is created by the owner before their first sign-in (`docs/runbooks/labs-host.md`, "Coder sign-in: adding and removing a learner") |
 | `coder_domain` | required | `coder.lab.hybridcloudworks.com` |
 | `coder_max_workspaces` | required | Capacity the host is sized for; asserted against memory |
 | `coder_image`, `coder_image_tag`, `coder_image_digest` | required | Coder pin; run as `image@digest` |
@@ -640,6 +647,26 @@ systemd for the coder backup units` and `Reload systemd for the coder
 automation units` (unit files).
 
 ## Tests
+
+`tests/coder-signin.test.sh` renders `templates/coder.env.j2` with
+ansible-core's own template module, from `group_vars/all.yml` and this
+role's defaults and vars with placeholder secrets, and runs
+`tasks/signin_policy.yml` on its own in a scratch playbook. No root, no
+Docker; ansible-core on `PATH`. It checks:
+
+- `coder.env` sets `CODER_OAUTH2_GITHUB_ALLOWED_ORGS=HybridCloudWorks`,
+  `CODER_OAUTH2_GITHUB_ALLOWED_TEAMS=HybridCloudWorks/lab-learners` and
+  `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false`, each once, and no
+  `CODER_OAUTH2_GITHUB_ALLOW_EVERYONE`;
+- the checks pass `group_vars`' allowlists, all three running, and check
+  nothing while Coder is disabled;
+- they refuse, naming the value, an empty team list, a team in an
+  organisation that is not allowed (one that differs only in case too,
+  because Coder compares the names exactly), a bad team beside a good one, a
+  team with no organisation or a second slash, and an empty organisation
+  list; a team in a second allowed organisation passes.
+
+The `ansible-lint (lab-host)` job runs it with the job's ansible-core.
 
 `tests/hcw-coder-template-push.test.sh` renders
 `templates/hcw-coder-template-push.j2` with this role's `defaults/main.yml`

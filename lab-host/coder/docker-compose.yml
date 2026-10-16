@@ -11,6 +11,8 @@
 #                        group_vars: CODER_OAUTH2_GITHUB_CLIENT_ID,
 #                        CODER_OAUTH2_GITHUB_CLIENT_SECRET,
 #                        CODER_OAUTH2_GITHUB_ALLOWED_ORGS,
+#                        CODER_OAUTH2_GITHUB_ALLOWED_TEAMS (v2.38.0's
+#                        --oauth2-github-allowed-teams, checked 2026-10-16),
 #                        CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS and
 #                        CODER_PG_CONNECTION_URL. root:root 0600.
 #   coder-postgres.env   POSTGRES_PASSWORD. root:root 0600, separate from
