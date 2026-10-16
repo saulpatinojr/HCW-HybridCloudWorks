@@ -38,19 +38,43 @@ describe('Header symmetrical layout & decluttered chrome', () => {
     expect(LEARN_MENU_ITEMS.map((item) => item.path)).toEqual(['/education', '/education/labs']);
   });
 
-  it.each(['/', '/azure', '/aws', '/gcp', '/vmware', '/github', '/finops', '/terraform', '/docker', '/ansible'])(
+  it.each([
+    '/',
+    '/azure',
+    '/aws',
+    '/gcp',
+    '/vmware',
+    '/github',
+    '/finops',
+    '/terraform',
+    '/docker',
+    '/ansible',
+  ])(
     'removes the top-left logo image, caret dropdowns, 9/9 Live pill, and Providers pulldown on %s',
     (pathname) => {
       renderAt(pathname);
       expect(screen.queryByAltText(/HybridCloudWorks logo/i)).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /toggle learn menu/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /toggle tools menu/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /toggle providers menu/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /toggle providers menu/i })
+      ).not.toBeInTheDocument();
       expect(screen.queryByRole('link', { name: /platform health/i })).not.toBeInTheDocument();
     }
   );
 
-  it.each(['/', '/azure', '/aws', '/gcp', '/vmware', '/github', '/finops', '/terraform', '/docker', '/ansible'])(
+  it.each([
+    '/',
+    '/azure',
+    '/aws',
+    '/gcp',
+    '/vmware',
+    '/github',
+    '/finops',
+    '/terraform',
+    '/docker',
+    '/ansible',
+  ])(
     'uses an identical repeat(9, 100px) primary grid on %s so every navbar lines up pixel-for-pixel',
     (pathname) => {
       renderAt(pathname);
@@ -233,11 +257,14 @@ describe('Header provider-specific direct Learn and Labs links', () => {
         '/ansible/education/labs',
       ],
     ],
-  ])('renders symmetrical 9-item provider navigation on %s', (pathname, expectedLabels, expectedHrefs) => {
-    renderAt(pathname);
-    expect(primaryLabels()).toEqual(expectedLabels);
-    expect(primaryHrefs()).toEqual(expectedHrefs);
-  });
+  ])(
+    'renders symmetrical 9-item provider navigation on %s',
+    (pathname, expectedLabels, expectedHrefs) => {
+      renderAt(pathname);
+      expect(primaryLabels()).toEqual(expectedLabels);
+      expect(primaryHrefs()).toEqual(expectedHrefs);
+    }
+  );
 
   it.each(['/docker/sandboxes', '/docker/building-images', '/docker/desktop'])(
     'keeps the Docker hub nav on %s, a static route outside the provider layout',

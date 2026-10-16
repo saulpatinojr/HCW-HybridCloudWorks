@@ -321,9 +321,7 @@ export default function Header() {
               aria-controls="mobile-nav"
               aria-label="Toggle menu"
             >
-              <span className="material-symbols-outlined">
-                {mobileMenuOpen ? 'close' : 'menu'}
-              </span>
+              <span className="material-symbols-outlined">{mobileMenuOpen ? 'close' : 'menu'}</span>
             </button>
           </div>
         </div>

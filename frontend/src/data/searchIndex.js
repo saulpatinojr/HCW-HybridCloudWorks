@@ -90,7 +90,14 @@ const PROVIDER_SECTION_ITEMS = ALL_TIER_PROVIDERS.flatMap((provider) => {
         path: `/${id}/architecture-designs`,
         icon: 'account_tree',
         badge: name,
-        keywords: [...baseKeywords, 'architecture', 'designs', 'diagrams', 'blueprints', 'topology'],
+        keywords: [
+          ...baseKeywords,
+          'architecture',
+          'designs',
+          'diagrams',
+          'blueprints',
+          'topology',
+        ],
       },
       {
         id: `section-${id}-frameworks`,
@@ -100,7 +107,14 @@ const PROVIDER_SECTION_ITEMS = ALL_TIER_PROVIDERS.flatMap((provider) => {
         path: `/${id}/frameworks`,
         icon: 'Rule',
         badge: name,
-        keywords: [...baseKeywords, 'frameworks', 'well-architected', 'caf', 'governance', 'pillars'],
+        keywords: [
+          ...baseKeywords,
+          'frameworks',
+          'well-architected',
+          'caf',
+          'governance',
+          'pillars',
+        ],
       }
     );
   }

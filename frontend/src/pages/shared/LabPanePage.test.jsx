@@ -14,12 +14,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { HelmetProvider } from 'react-helmet-async';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  CODER_ORIGIN,
-  coderSignInUrl,
-  labById,
-  labs,
-} from '@/data/labs/catalogue';
+import { CODER_ORIGIN, coderSignInUrl, labById, labs } from '@/data/labs/catalogue';
 import { SIGNED_IN_KEY, SIGN_IN_PENDING_KEY, markSignedIn } from '@/components/labs/labSignIn';
 
 const fetchCoderStatus = vi.fn();
