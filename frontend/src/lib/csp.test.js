@@ -294,6 +294,22 @@ describe('Content-Security-Policy', () => {
       expect(directive('img-src')).not.toContain(broad);
     }
   });
+
+  it('delegates clipboard-read, clipboard-write and fullscreen in Permissions-Policy to Coder, its workspace apps wildcard, and AddOns', () => {
+    const permissionsPolicy = config.globalHeaders['Permissions-Policy'];
+    expect(permissionsPolicy).toContain('camera=()');
+    expect(permissionsPolicy).toContain('microphone=()');
+    expect(permissionsPolicy).toContain('geolocation=()');
+    const expectedList = [
+      'self',
+      `"${CODER_ORIGIN}"`,
+      `"${CODER_APPS_ORIGIN}"`,
+      ...addonOrigins().map((origin) => `"${origin}"`),
+    ].join(' ');
+    expect(permissionsPolicy).toContain(`clipboard-read=(${expectedList})`);
+    expect(permissionsPolicy).toContain(`clipboard-write=(${expectedList})`);
+    expect(permissionsPolicy).toContain(`fullscreen=(${expectedList})`);
+  });
 });
 
 describe('indexing headers', () => {

@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { STATIC_SEARCH_ITEMS, SEARCH_CATEGORIES, filterSearchItems } from './searchIndex';
+import { availableLabs } from './labs/catalogue';
+import { availableAddons } from './addons/catalogue';
 
 describe('searchIndex', () => {
-  it('contains entries across all 5 major categories', () => {
+  it('contains entries across all major categories including Hubs & Sections', () => {
     const categories = new Set(STATIC_SEARCH_ITEMS.map((item) => item.category));
     expect(categories).toContain(SEARCH_CATEGORIES.PROVIDERS);
+    expect(categories).toContain(SEARCH_CATEGORIES.SECTIONS);
     expect(categories).toContain(SEARCH_CATEGORIES.BLUEPRINTS);
     expect(categories).toContain(SEARCH_CATEGORIES.TOOLS);
     expect(categories).toContain(SEARCH_CATEGORIES.LABS);
@@ -26,6 +29,35 @@ describe('searchIndex', () => {
       'GitHub',
       'FinOps',
     ]);
+  });
+
+  it('indexes every available browser lab and AddOn tool from the catalogues', () => {
+    for (const lab of availableLabs) {
+      expect(
+        STATIC_SEARCH_ITEMS.some((item) => item.id === `lab-catalogue-${lab.id}`),
+        `missing search index entry for lab ${lab.id}`
+      ).toBe(true);
+    }
+
+    for (const addon of availableAddons) {
+      expect(
+        STATIC_SEARCH_ITEMS.some((item) => item.id === `addon-${addon.id}`),
+        `missing search index entry for addon ${addon.id}`
+      ).toBe(true);
+    }
+  });
+
+  it('indexes provider sections, tools, and Azure certifications', () => {
+    expect(filterSearchItems('ansible tools').some((r) => r.path === '/ansible/tools')).toBe(true);
+    expect(filterSearchItems('migration hub').some((r) => r.path === '/tools/migration')).toBe(
+      true
+    );
+    expect(
+      filterSearchItems('network assessment').some((r) => r.path === '/tools/network-assessment')
+    ).toBe(true);
+    expect(filterSearchItems('az-900').some((r) => r.path === '/azure/education/az-900')).toBe(
+      true
+    );
   });
 
   it('indexes FinOps with FOCUS 1.4 specification', () => {

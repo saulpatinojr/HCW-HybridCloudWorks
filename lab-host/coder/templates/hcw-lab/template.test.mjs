@@ -315,5 +315,6 @@ test('code-server opens trusted, without the AI chat, on the README, with teleme
     'chat.disableAIFeatures': 'true',
     'workbench.startupEditor': '"readme"',
     'telemetry.telemetryLevel': '"off"',
+    'terminal.integrated.rightClickBehavior': '"copyPaste"',
   });
 });

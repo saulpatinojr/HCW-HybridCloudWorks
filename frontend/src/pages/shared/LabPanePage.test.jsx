@@ -15,7 +15,6 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { HelmetProvider } from 'react-helmet-async';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  CODER_APPS_ORIGIN,
   CODER_ORIGIN,
   coderSignInUrl,
   labById,
@@ -307,7 +306,7 @@ describe('LabPanePage, the pane', () => {
     ]);
   });
 
-  it('allows clipboard read and write and fullscreen, to Coder and its apps only', async () => {
+  it('delegates clipboard read, clipboard write and fullscreen on the frame so workspace subdomains receive the document Permissions-Policy grant', async () => {
     renderPane();
     await screen.findByTestId('lab-pane');
     const allow = document.querySelector('iframe').getAttribute('allow');
@@ -323,7 +322,7 @@ describe('LabPanePage, the pane', () => {
       'fullscreen',
     ]);
     for (const origins of Object.values(features)) {
-      expect(origins).toEqual([CODER_ORIGIN, CODER_APPS_ORIGIN]);
+      expect(origins).toEqual(['*']);
     }
     expect(document.querySelector('iframe').hasAttribute('allowfullscreen')).toBe(false);
   });
