@@ -289,7 +289,10 @@ async function bumpMain(argv) {
   let plan;
   if (set === 'host') {
     const text = read(bump.GROUP_VARS_PATH);
-    const files = { [bump.CADDY_TEST_PATH]: read(bump.CADDY_TEST_PATH) };
+    const files = {
+      [bump.CADDY_TEST_PATH]: read(bump.CADDY_TEST_PATH),
+      [bump.BOOTSTRAP_PATH]: read(bump.BOOTSTRAP_PATH),
+    };
     const { rows } = await check({ pins: readPins(text), readers: sources() });
     plan = await bump.planHost({ text, files, rows, http });
   } else if (set === 'image-base') {
