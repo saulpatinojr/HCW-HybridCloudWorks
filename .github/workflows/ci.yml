@@ -106,7 +106,7 @@ jobs:
           - name: functions (azure)
             dir: functions
             node-version: '24'
-            filter: '^(functions/|\.azure/api-surface\.json|infra/|docs/content/blog-[a-z0-9-]+\.md$|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
+            filter: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/blog-[a-z0-9-]+\.md$|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
             lint: npm run lint
             test: npm test
           # The out-of-tree entries after infra/ are what
@@ -143,10 +143,11 @@ jobs:
           # The suite uses node:test — no dependency, which keeps this
           # package's single-dependency lockfile intact.
           # group_vars/all.yml and hcw-labs-agent.service.j2 are read by
-          # applied-commit.test.js and log.test.js.
+          # applied-commit.test.js and log.test.js; .azure/agent-protocol.json
+          # is the shared agent protocol contract fixture (QA-3 #978).
           - name: vps-agent
             dir: vps-agent
-            filter: '^(vps-agent/|lab-host/ansible/(group_vars/all\.yml|roles/labs_agent/templates/hcw-labs-agent\.service\.j2)$)'
+            filter: '^(vps-agent/|\.azure/agent-protocol\.json$|lab-host/ansible/(group_vars/all\.yml|roles/labs_agent/templates/hcw-labs-agent\.service\.j2)$)'
             test: npm test
           - name: edge (availability probe)
             dir: edge/availability-probe
