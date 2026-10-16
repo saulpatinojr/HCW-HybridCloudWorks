@@ -469,6 +469,7 @@ const OTHER_ENTRIES = [
     // TODO.md, accepted risk for #834: nothing stores it, so a reset breaks
     // nothing, and the compensating control is a reset every 90 days.
     lifetimeDays: SWA_TOKEN_RESET_DAYS,
+    source: { swaReset: true },
     rotate:
       "Reset it on the Static Web App (Manage deployment token, then Reset). Nothing stores it, so the next deploy reads the new one.",
   },
@@ -582,6 +583,7 @@ const OTHER_ENTRIES = [
     issuer: "Self-signed on the lab host, registered in Entra",
     renewal: "hand",
     lifetimeDays: LAB_CERTIFICATE_DAYS,
+    source: { labCertificate: "labAgent" },
     rotate:
       'Generate the next pair on the host and register it with Register-LabAgent.ps1 -NextCertificate before the swap: lab-host/README.md, "Rotating the agent certificate".',
   },
@@ -593,6 +595,7 @@ const OTHER_ENTRIES = [
     issuer: "Self-signed on the lab host",
     renewal: "hand",
     lifetimeDays: LAB_CERTIFICATE_DAYS,
+    source: { labCertificate: "vaultTls" },
     rotate:
       'Remove the pair and re-run bootstrap.sh, then unseal: lab-host/ansible/roles/vault/README.md, "Rotating the certificate".',
   },

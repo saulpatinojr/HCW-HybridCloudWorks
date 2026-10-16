@@ -54,6 +54,7 @@ export const ROTATED_FROM = Object.freeze({
   'lab-host': 'lab host',
   oauth: 'sign-in',
   owner: 'recorded',
+  azure: 'Activity Log',
 });
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;

@@ -17,8 +17,30 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Security
+
+- **Add-on images: SLSA build provenance attestation verification before pull (#1069, part 1)**.
+  The `addons` Ansible role (`lab-host/ansible/roles/addons`) now verifies the
+  SLSA build provenance attestation of each deployed add-on image against Sigstore's
+  public transparency log and the expected GitHub Actions workflow identity
+  (`attestation_identity_regexp`) using `cosign verify-attestation` before calling
+  `docker_image_pull`. A missing attestation pattern, mismatched identity, or
+  unreachable transparency log fails the run closed, preventing untrusted or
+  unauthenticated images from being deployed. Sigstore `cosign` (v3.1.3) is pinned
+  and SHA-256 verified in `bootstrap.sh` and `group_vars/all.yml` and tracked upstream
+  via `scripts/lab-pins-upstream.mjs`.
+
 ### Changed
 
+- **Credential register reads live dates the estate already knows (#1066)**.
+  The credential register (`functions/src/lib/credentials/`) and Credentials tab
+  view (`frontend/src/components/admin/integrations/`) now automatically resolve live
+  dates from estate sources: Key Vault secrets resolve `createdAt` from metadata
+  when `lastWriteAt` has not yet been set; lab host certificates (`/etc/hcw/labs-agent.pem`
+  and `/etc/vault.d/tls/vault.crt`) resolve `notBefore` and `notAfter` from
+  `admin_config/lab_certificates` (reported via `vps-agent`); and the Static Web App
+  deployment token resolves its reset date from `admin_config/swa_reset`. Manual recording
+  remains supported for owner overrides.
 - **`alert-kv-config-write`'s plan declarations are pruned, and the loop is
   proven gone (#1216)**. The owner applied #1217 in
   `run-KZEnEksD78i8wtKr`, whose plan the check read as the four declared
@@ -970,6 +992,20 @@ This project has not cut a tagged release; entries are grouped under
   - **Tests:** `roles/host_firewall/tests/hcw-host-firewall.test.sh` (real
     iptables in a scratch network namespace, 103 checks, in CI with ufw
     required) and `scripts/lab-host-host-firewall.test.mjs`.
+- **No auto-delete on the owner's Ambassador hub (follow-up to #1234, SEC-4
+  #973)**. #1234 set a 90-day container TTL on the `ambassador` Cosmos
+  container, believing it held applicants' personal data. It holds the
+  owner's own programs, applications and evidence, kept until deleted. A
+  container TTL expires every document not written within the window, so it
+  would have deleted the owner's records. The tfc-plan-check flagged it as
+  undeclared before any run carrying it was confirmed, and it is taken off
+  before any apply. `generate-cosmos-container-spec.test.mjs` now refuses a
+  container TTL on the containers whose records are kept until deleted
+  (`ambassador`, `content`, `content_versions`, `blogs`). The data-subject
+  runbook keeps the hub in scope as a search of its free-text fields and
+  files, redacting matches and keeping the records. Its `content` queries
+  and its exercise record, which do not match the estate, are marked under
+  review and unverified until #1237.
 - **Lab host: Caddy's admin API moves to a Unix socket, and HTTP/3 is off
   (#958)**. The Caddyfile always renders a global block with
   `admin unix//run/caddy/admin.sock` instead of TCP `127.0.0.1:2019`, and

@@ -91,7 +91,7 @@
       ],
       "excluded_paths": [],
       "composite_indexes": [],
-      "default_ttl": 7776000,
+      "default_ttl": null,
       "note": "created on Azure after cutover — no Firestore source, nothing to migrate"
     },
     {

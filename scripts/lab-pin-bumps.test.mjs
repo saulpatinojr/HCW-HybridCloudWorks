@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
+  BOOTSTRAP_PATH,
   CADDY_TEST_PATH,
   CAPABILITIES_PATH,
   CODER_TEMPLATE_PATH,
@@ -299,6 +300,31 @@ describe('the host plan', () => {
 
   it('has a bump procedure for every pin the check watches', () => {
     expect(Object.keys(HOST_BUMPERS).sort()).toEqual(Object.keys(LABELS).sort());
+  });
+
+  it('cosign bumper reads cosign_checksums.txt and edits cosign_version, cosign_checksum, and bootstrap.sh', async () => {
+    const checksums = `${hex('c')}  cosign-linux-amd64\n${hex('d')}  cosign-darwin-amd64\n`;
+    const http = makeHttp(
+      fakeFetch({
+        'https://github.com/sigstore/cosign/releases/download/v3.2.0/cosign_checksums.txt': checksums,
+      })
+    );
+    const result = await HOST_BUMPERS.cosign({ http, latest: '3.2.0' });
+    expect(result.edits).toHaveLength(4);
+    expect(result.edits[0].to).toBe('3.2.0');
+    expect(result.edits[1].to).toBe(`sha256:${hex('c')}`);
+    expect(result.edits[2].file).toBe(BOOTSTRAP_PATH);
+    expect(result.edits[2].where).toBe('COSIGN_VERSION');
+    expect(result.edits[2].to).toBe('3.2.0');
+    expect(result.edits[3].file).toBe(BOOTSTRAP_PATH);
+    expect(result.edits[3].where).toBe('COSIGN_SHA256');
+    expect(result.edits[3].to).toBe(hex('c'));
+    expect(result.evidence[0].value).toBe(hex('c'));
+
+    const bootstrapSample = `COSIGN_VERSION=3.1.3\nCOSIGN_SHA256=${hex('a')}\n`;
+    const step1 = result.edits[2].apply(bootstrapSample);
+    const step2 = result.edits[3].apply(step1.text);
+    expect(step2.text).toBe(`COSIGN_VERSION=3.2.0\nCOSIGN_SHA256=${hex('c')}\n`);
   });
 
   it('edits only BEHIND rows, and turns a bump without evidence into a note that edits nothing', async () => {
