@@ -424,8 +424,8 @@ resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_key_vault" {
 #     (the Coder backup, the labs agent, Caddy, Vault). The notifier writes one
 #     line at daemon.err; the DCR ships daemon at Warning and above. Stateless
 #     and muted for six hours, deliberately: the line is an event, not a state.
-#     A stateful form would report Resolved once the line left the hour's
-#     window, whether or not the unit came back.
+#     A stateful form would report Resolved two clear 15-minute evaluations
+#     after the line left the hour's window, whether or not the unit came back.
 #
 # verify-alert-state.yml derives its list from these declarations since PLAT-4
 # (#964), so these three are in it. Its identity since #1053,

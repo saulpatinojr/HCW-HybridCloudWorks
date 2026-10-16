@@ -510,8 +510,10 @@ decision 6). The exceptions are deliberate. The three daily rules
 (`alert-export-window-latency` and the two Cosmos export rules) are stateless
 because Azure refuses auto-resolution on a rule evaluated less often than every
 twelve hours. `alert-lab-unit-failed` mutes for six hours because its condition
-is a log line, an event, which a stateful rule would call resolved an hour later
-whether or not the unit came back. Activity Log alerts are stateless by
+is a log line, an event. A stateful rule would call it resolved once the line
+left the query's one-hour window and two 15-minute evaluations then came back
+clear, about an hour and a half after the failure, whether or not the unit came
+back. Activity Log alerts are stateless by
 platform; each one is an event a person reads and closes.
 They were not stateful when they first went live, and `alert-app-exceptions`
 demonstrated the difference on the night of 2026-08-25: a stateless log rule

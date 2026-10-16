@@ -109,7 +109,8 @@ clears. Three exceptions remain, and each is held by a reason, not by habit:
   auto-resolution on a rule evaluated less often than every 12 hours.
 - **`alert-lab-unit-failed`:** stateless, and muted for six hours, because its
   condition is an event, a `hcw-unit-failed` line, not a state. A stateful
-  form would report Resolved once the line left the hour's window, whether or
+  form would report Resolved about 30 minutes after the line left the hour's
+  window (two clear 15-minute evaluations), whether or
   not the unit came back.
 - **Activity Log alerts:** stateless by platform. Each alert is one event, read
   and closed by a person.
