@@ -2011,6 +2011,16 @@ fix is installed.
 
 ### What runs on its own
 
+- **Every day at 03:00 host time, on the host,** from the playbook run that
+  applies LAB-4 (#950): `hcw-playbook-drift.timer` (the `hardening` role) runs
+  `ansible-playbook -i inventory/localhost.yml site.yml --check --diff` from
+  the applied checkout (`/opt/hcw-src/lab-host/ansible`), before the Coder dump
+  (03:30) and the idle reboot (04:30). If any task reports changed or the playbook
+  fails, it logs at `daemon.warning` under the tag `hcw-playbook-drift` and exits
+  non-zero, triggering `OnFailure=hcw-unit-failed@%n.service` which pages
+  `alert-lab-unit-failed`. On a clean run with no drift, it logs at `daemon.notice`
+  and exits 0. To run it by hand (bash, on the host):
+  `sudo systemctl start hcw-playbook-drift.service; sudo journalctl -t hcw-playbook-drift --since -5min --no-pager`.
 - **Every day, on the host,** from the playbook run that applies #986
   (merged 2026-10-07, not yet on the host at the 2026-10-08 review:
   [Labs host, Applied state](../architecture/labs-host.md#applied-state)):

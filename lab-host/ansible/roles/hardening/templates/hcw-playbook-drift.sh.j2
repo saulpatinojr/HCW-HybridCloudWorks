@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Nightly playbook drift detection (estate review 2026-10-06, LAB-4; #950).
+#
+# Runs ansible-playbook in check and diff mode from the applied checkout
+# against localhost. If any task reports changed or the playbook fails, logs
+# to syslog at daemon.warning (which the Arc data collection rule ships to Log
+# Analytics and triggers alert-lab-unit-failed via OnFailure=), and exits
+# non-zero. If no change is needed, logs to syslog at daemon.notice and exits 0.
+set -euo pipefail
+
+tag='{{ hardening_drift_tag }}'
+src_dir='{{ hardening_drift_src_dir }}'
+ansible_bin='{{ hardening_drift_ansible_playbook }}'
+vault_file='{{ hardening_drift_vault_file }}'
+vault_pass_file='{{ hardening_drift_vault_password_file }}'
+applied_file='/etc/hcw/applied-commit.json'
+
+{% raw %}
+# say PRIORITY MESSAGE: log under the tag, to daemon.PRIORITY.
+say() { logger -t "${tag}" -p "daemon.$1" -- "$2"; }
+
+if [ ! -d "${src_dir}/lab-host/ansible" ]; then
+  say warning "playbook drift check failed: ${src_dir}/lab-host/ansible does not exist"
+  exit 1
+fi
+
+if [ ! -x "${ansible_bin}" ]; then
+  # Fallback to PATH lookup if ansible_bin is not executable at configured path
+  if command -v ansible-playbook >/dev/null 2>&1; then
+    ansible_bin="$(command -v ansible-playbook)"
+  else
+    say warning "playbook drift check failed: ansible-playbook not found at ${ansible_bin} or on PATH"
+    exit 1
+  fi
+fi
+
+# Determine applied commit for diagnostic message
+applied_commit='unknown'
+if [ -f "${applied_file}" ]; then
+  applied_commit="$(sed -n 's/.*"commit"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F]\{7,40\}\)".*/\1/p' "${applied_file}" 2>/dev/null | head -n 1 || true)"
+fi
+if [ -z "${applied_commit}" ] || [ "${applied_commit}" = 'unknown' ]; then
+  if command -v git >/dev/null 2>&1 && [ -d "${src_dir}/.git" ]; then
+    applied_commit="$(git -C "${src_dir}" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+  fi
+fi
+
+extra_args=()
+if [ -f "${vault_file}" ] && [ -f "${vault_pass_file}" ]; then
+  extra_args+=(--vault-password-file "${vault_pass_file}" -e "@${vault_file}")
+fi
+
+cd "${src_dir}/lab-host/ansible"
+
+# Run ansible-playbook with --check and --diff, capturing output to check PLAY RECAP.
+# In Ansible, --check exits 0 even when tasks report changed. Drift is detected
+# by parsing the recap line for changed>0.
+output_file="$(mktemp)"
+trap 'rm -f "${output_file}"' EXIT
+
+set +e
+"${ansible_bin}" -i inventory/localhost.yml site.yml --check --diff "${extra_args[@]}" >"${output_file}" 2>&1
+play_rc=$?
+set -e
+
+# Extract recap: localhost : ok=45 changed=0 unreachable=0 failed=0 ...
+recap="$(grep -E '^[[:space:]]*localhost[[:space:]]*:' "${output_file}" | tail -n 1 || true)"
+changed_count=""
+failed_count=""
+unreachable_count=""
+
+if [ -n "${recap}" ]; then
+  changed_count="$(sed -n 's/.*changed=\([0-9]\+\).*/\1/p' <<< "${recap}" || true)"
+  failed_count="$(sed -n 's/.*failed=\([0-9]\+\).*/\1/p' <<< "${recap}" || true)"
+  unreachable_count="$(sed -n 's/.*unreachable=\([0-9]\+\).*/\1/p' <<< "${recap}" || true)"
+fi
+
+if [ "${play_rc}" -ne 0 ] || [ -z "${changed_count}" ] || [ -z "${failed_count}" ] || [ -z "${unreachable_count}" ] || [ "${failed_count}" -gt 0 ] || [ "${unreachable_count}" -gt 0 ]; then
+  say warning "playbook check failed (rc=${play_rc}, failed=${failed_count:-unknown}, unreachable=${unreachable_count:-unknown}) on commit ${applied_commit}"
+  tail -n 25 "${output_file}" >&2 || true
+  exit 1
+fi
+
+if [ "${changed_count:-0}" -gt 0 ]; then
+  say warning "playbook drift detected on commit ${applied_commit}: ${changed_count} change(s) would be applied"
+  grep -E '^changed:[[:space:]]*\[' "${output_file}" >&2 || true
+  exit 2
+fi
+
+say notice "playbook check: no drift detected on commit ${applied_commit}"
+exit 0
+{% endraw %}
