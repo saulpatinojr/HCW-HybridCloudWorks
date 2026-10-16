@@ -98,6 +98,7 @@ echo '{"commit":"feedbeef1234567890abcdef1234567890abcdef"}' > "${fake_applied}"
 # Point the rendered script to our test directories
 sed -i "s#^src_dir=.*#src_dir='${fake_src}'#" "${script}"
 sed -i "s#^applied_file=.*#applied_file='${fake_applied}'#" "${script}"
+sed -i "s#^ansible_bin=.*#ansible_bin='${stubs}/ansible-playbook'#" "${script}"
 
 cat > "${stubs}/logger" <<EOF
 #!/usr/bin/env bash
@@ -189,7 +190,22 @@ run >/dev/null 2>&1
 check "vault arguments are passed to ansible-playbook when vault files exist" \
   "grep -qxF -- '--vault-password-file' '${work}/ansible-args' && grep -qxF -- '${fake_pass}' '${work}/ansible-args' && grep -qxF -- '-e' '${work}/ansible-args' && grep -qxF -- \"@${fake_vault}\" '${work}/ansible-args'"
 
-# --- Case 5: Missing ansible directory exits 1 with warning.
+# --- Case 5: Missing or unparseable recap line exits 1 with warning.
+cat > "${work}/ansible-output" <<EOF
+PLAY [localhost] ***************************************************************
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+EOF
+echo 0 > "${work}/ansible-rc"
+
+norecap_status=0
+run >/dev/null 2>&1 || norecap_status=$?
+check "playbook run without recap line exits non-zero (rc=1)" "[ '${norecap_status}' -eq 1 ]"
+check "playbook run without recap logs check failed warning" \
+  "grep -qxF '${tag}|daemon.warning|playbook check failed (rc=0, failed=unknown, unreachable=unknown) on commit feedbeef1234567890abcdef1234567890abcdef' '${work}/log'" \
+  "$(cat "${work}/log" 2>/dev/null || true)"
+
+# --- Case 6: Missing ansible directory exits 1 with warning.
 sed -i "s#^src_dir=.*#src_dir='${work}/nonexistent'#" "${script}"
 missing_status=0
 run >/dev/null 2>&1 || missing_status=$?

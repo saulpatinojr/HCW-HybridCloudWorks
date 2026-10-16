@@ -67,18 +67,18 @@ set -e
 
 # Extract recap: localhost : ok=45 changed=0 unreachable=0 failed=0 ...
 recap="$(grep -E '^[[:space:]]*localhost[[:space:]]*:' "${output_file}" | tail -n 1 || true)"
-changed_count=0
-failed_count=0
-unreachable_count=0
+changed_count=""
+failed_count=""
+unreachable_count=""
 
 if [ -n "${recap}" ]; then
-  changed_count="$(sed -n 's/.*changed=\([0-9]\+\).*/\1/p' <<< "${recap}" || echo 0)"
-  failed_count="$(sed -n 's/.*failed=\([0-9]\+\).*/\1/p' <<< "${recap}" || echo 0)"
-  unreachable_count="$(sed -n 's/.*unreachable=\([0-9]\+\).*/\1/p' <<< "${recap}" || echo 0)"
+  changed_count="$(sed -n 's/.*changed=\([0-9]\+\).*/\1/p' <<< "${recap}" || true)"
+  failed_count="$(sed -n 's/.*failed=\([0-9]\+\).*/\1/p' <<< "${recap}" || true)"
+  unreachable_count="$(sed -n 's/.*unreachable=\([0-9]\+\).*/\1/p' <<< "${recap}" || true)"
 fi
 
-if [ "${play_rc}" -ne 0 ] || [ "${failed_count:-0}" -gt 0 ] || [ "${unreachable_count:-0}" -gt 0 ]; then
-  say warning "playbook check failed (rc=${play_rc}, failed=${failed_count:-0}, unreachable=${unreachable_count:-0}) on commit ${applied_commit}"
+if [ "${play_rc}" -ne 0 ] || [ -z "${changed_count}" ] || [ -z "${failed_count}" ] || [ -z "${unreachable_count}" ] || [ "${failed_count}" -gt 0 ] || [ "${unreachable_count}" -gt 0 ]; then
+  say warning "playbook check failed (rc=${play_rc}, failed=${failed_count:-unknown}, unreachable=${unreachable_count:-unknown}) on commit ${applied_commit}"
   tail -n 25 "${output_file}" >&2 || true
   exit 1
 fi

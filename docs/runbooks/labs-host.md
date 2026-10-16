@@ -2019,8 +2019,8 @@ fix is installed.
   fails, it logs at `daemon.warning` under the tag `hcw-playbook-drift` and exits
   non-zero, triggering `OnFailure=hcw-unit-failed@%n.service` which pages
   `alert-lab-unit-failed`. On a clean run with no drift, it logs at `daemon.notice`
-  and exits 0. To run it by hand on the host:
-  `sudo systemctl start hcw-playbook-drift.service && sudo journalctl -t hcw-playbook-drift --since -5min --no-pager`.
+  and exits 0. To run it by hand (bash, on the host):
+  `sudo systemctl start hcw-playbook-drift.service; sudo journalctl -t hcw-playbook-drift --since -5min --no-pager`.
 - **Every day, on the host,** from the playbook run that applies #986
   (merged 2026-10-07, not yet on the host at the 2026-10-08 review:
   [Labs host, Applied state](../architecture/labs-host.md#applied-state)):
