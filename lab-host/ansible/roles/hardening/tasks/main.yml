@@ -210,7 +210,6 @@
     state: started
     daemon_reload: true
 
-
 # The nightly idle reboot (LAB-13, #959). unattended-upgrades asked `users`
 # when the upgrade ran, some twenty-two hours before the reboot it then
 # scheduled with no further question, and never asked whether a visitor's

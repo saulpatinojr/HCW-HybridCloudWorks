@@ -548,7 +548,7 @@ fi
 # removed then. Before a build, the other builds of these pins, none of which
 # is complete, are removed, except the one in use.
 hcw_ansible_requirements="$(mktemp)"
-trap hcw_cleanup EXIT
+trap 'rm -f "${hcw_ansible_requirements}"' EXIT
 # hcw_read_ansible_pins FILE: set the three ANSIBLE_CORE_* variables from
 # FILE's lines as text, never evaluating it; fails when no complete DEPS
 # block is there.
@@ -665,9 +665,9 @@ if [ -z "${hcw_ansible_generation}" ]; then
   install -m 0644 -o root -g root "${hcw_ansible_requirements}" "${hcw_ansible_record}"
 fi
 rm -f "${hcw_ansible_requirements}"
-hcw_ansible_requirements=
-if [ -z "${hcw_worktree_dir}" ]; then
-  trap - EXIT
+trap - EXIT
+if [ -n "${hcw_worktree_dir:-}" ]; then
+  trap hcw_cleanup EXIT
 fi
 
 if [ "${hcw_ansible_in_use}" != "${hcw_ansible_generation}" ]; then
@@ -755,7 +755,7 @@ if [ -z "${hcw_check_mode}" ] && [ -z "${hcw_partial}" ]; then
   log "recorded ${hcw_repo_sha} as the last completed run in ${HCW_HOST_MARKER}"
 fi
 
-if [ -n "${hcw_worktree_dir}" ]; then
+if [ -n "${hcw_worktree_dir:-}" ]; then
   hcw_cleanup
   trap - EXIT
 fi

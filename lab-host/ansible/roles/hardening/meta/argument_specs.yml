@@ -255,4 +255,3 @@ argument_specs:
         default: /etc/hcw/vault.pass
         description:
           - Path to Ansible vault password file passed to check run when present.
-

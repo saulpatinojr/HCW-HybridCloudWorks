@@ -150,4 +150,3 @@ hardening_drift_on_calendar: "*-*-* 03:00:00"
 hardening_drift_ansible_playbook: /usr/local/bin/ansible-playbook
 hardening_drift_vault_file: /etc/hcw/vault.yml
 hardening_drift_vault_password_file: /etc/hcw/vault.pass
-
