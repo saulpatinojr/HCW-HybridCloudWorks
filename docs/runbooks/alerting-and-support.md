@@ -1152,9 +1152,18 @@ are a reviewed list in `infra/` (`lab_ssh_admin_key_fingerprints`), never
 read from the host, so a key the host merely has is not trusted by the alert.
 A change to the keys the host accepts is therefore two edits in one pull
 request: the public key in `lab-host/ansible/group_vars/all.yml`
-(`hardening_admin_authorized_keys`) and its fingerprint (`ssh-keygen -lf
-<file>.pub`) in `infra/variables.tf`. `scripts/lab-host-ssh-login-alert.test.mjs`
-fails when the two lists differ. Apply in this order:
+(`hardening_admin_authorized_keys`) and its fingerprint in
+`infra/variables.tf`. `scripts/lab-host-ssh-login-alert.test.mjs` fails when
+the two lists differ. The fingerprint of the workstation key pinned today
+prints with this PowerShell line; for another key, run it on that key's own
+`.pub` file. The second field of the output, starting `SHA256:`, is the value
+to list:
+
+```powershell
+ssh-keygen -lf $HOME\.ssh\hcw-lab_ed25519.pub
+```
+
+Apply in this order:
 1. Confirm the `hcw-azure` run first, so the alert knows the new key.
 2. Then run `bootstrap.sh`, which installs the key on the host.
 
