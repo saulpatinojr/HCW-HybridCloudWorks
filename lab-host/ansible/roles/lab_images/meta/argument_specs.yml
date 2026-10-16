@@ -42,3 +42,11 @@ argument_specs:
         required: false
         default: /usr/bin/node
         description: The node binary that runs the plan; the labs_agent role installs it.
+      lab_images_defer_workspace_cleanup:
+        type: bool
+        required: false
+        default: false
+        description:
+          - Defer removing superseded workspace images from the sandbox daemon. When true (or
+            when Coder template publication was skipped), existing workspace images are
+            retained so active Coder template versions continue running without interruption.

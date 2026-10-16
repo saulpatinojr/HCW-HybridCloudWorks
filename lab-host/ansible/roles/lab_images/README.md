@@ -62,6 +62,14 @@ the host can hold them before any job asks.
 5. **Keeps an image a container still uses**, running or stopped (a job in
    flight on the old digest, a Coder workspace on an older template
    version), and prints which container holds it. The next run removes it.
+6. **Defers workspace image cleanup when template publication is skipped.**
+   When Coder template publication is skipped (e.g. the rotation credential is
+   missing or refused, exit 3), the active template version in Coder still
+   names the previous image digest. In this state, the role pulls the newly
+   pinned workspace image but defers removal of superseded workspace images on
+   the sandbox daemon (`lab_images_defer_workspace_cleanup` /
+   `coder_template_publication_skipped`), degrading cleanly to "old image
+   still runs" rather than breaking workspace starts (Issue #1134).
 
 The removal is the Docker CLI rather than a module because community.docker
 5.3.0's `docker_image_remove` and `docker_image` rebuild a digest reference
@@ -105,6 +113,7 @@ run moves the checkout first and then removes it.
 ## Variables
 
 `lab_images_checkouts`, `lab_images_pull_workspace`,
+`lab_images_defer_workspace_cleanup`,
 `lab_images_sandbox_docker_host` and `lab_images_node`, in
 `defaults/main.yml`; `meta/argument_specs.yml` is the contract. Nothing
 here is a pin: the pins are the two files above.

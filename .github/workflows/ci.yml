@@ -499,6 +499,11 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/hcw-playbook-drift.test.sh
 
+      # The lab_images role and workspace image retention on skipped Coder template publication (#1134).
+      - name: lab-images-role test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/lab_images/tests/lab-images-role.test.sh
+
 
       # The unattended-upgrades override (LAB-13, #959), rendered with the
       # role's defaults: the allowed origins are cleared and named by the

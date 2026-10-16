@@ -385,6 +385,30 @@
     - not ansible_check_mode
     - coder_automation_push.rc | default(0) == 3
 
+- name: Record whether Coder template publication was skipped for downstream roles
+  ansible.builtin.set_fact:
+    coder_template_publication_skipped: >-
+      {{ (coder_automation_push.rc | default(0) == 3)
+         or (coder_automation_push.skipped | default(false) and coder_enabled | bool and not ansible_check_mode) }}
+
+- name: Record runtime marker when Coder template publication was skipped
+  ansible.builtin.copy:
+    content: "skipped\n"
+    dest: /run/hcw-coder-template-publication-skipped
+    mode: "0644"
+  when:
+    - coder_enabled | bool
+    - not ansible_check_mode
+    - coder_template_publication_skipped | bool
+
+- name: Clear runtime marker when Coder template publication was not skipped
+  ansible.builtin.file:
+    path: /run/hcw-coder-template-publication-skipped
+    state: absent
+  when:
+    - not ansible_check_mode
+    - (not coder_enabled | bool) or not (coder_template_publication_skipped | bool)
+
 - name: Say why Coder is not running
   ansible.builtin.debug:
     msg: >-
