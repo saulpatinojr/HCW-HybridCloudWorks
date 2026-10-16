@@ -206,6 +206,14 @@
 # avoids the per-server machine-configuration charge on an Arc server. Each
 # setting is read first and written only when it differs, so the play
 # reports changed truthfully.
+#
+# The reads run in check mode too (check_mode: false; `config get` changes
+# nothing), and so do the reductions below them, so that the nightly
+# `--check --diff` run (hcw-playbook-drift, LAB-4) sees these settings. The
+# writes cannot run there; the check-mode report after the reductions turns
+# a difference into a changed task instead, which is how that run counts
+# drift. Until 2026-10-16 the reads were skipped in check mode, and drift in
+# the agent's lockdown was invisible to it.
 - name: Read the Arc agent's extension allowlist
   ansible.builtin.command:
     argv:
@@ -215,7 +223,7 @@
       - extensions.allowlist
   register: arc_allowlist_get
   changed_when: false
-  when: not ansible_check_mode
+  check_mode: false
 
 - name: Read whether incoming connections through Arc are enabled
   ansible.builtin.command:
@@ -226,7 +234,7 @@
       - incomingconnections.enabled
   register: arc_incoming_get
   changed_when: false
-  when: not ansible_check_mode
+  check_mode: false
 
 - name: Read the ports incoming connections through Arc may reach
   ansible.builtin.command:
@@ -237,7 +245,7 @@
       - incomingconnections.ports
   register: arc_ports_get
   changed_when: false
-  when: not ansible_check_mode
+  check_mode: false
 
 - name: Read whether guest configuration is enabled on the Arc agent
   ansible.builtin.command:
@@ -248,7 +256,7 @@
       - guestconfiguration.enabled
   register: arc_guestconfig_get
   changed_when: false
-  when: not ansible_check_mode
+  check_mode: false
 
 # `config get` prints `<key> : <value>` (the same layout as `config list`)
 # or the bare value, depending on the agent version. The first output line
@@ -280,7 +288,29 @@
          | reject('eq', '') | sort }}
     arc_guestconfig_current: >-
       {{ (arc_guestconfig_get.stdout_lines | first | default('')) | regex_replace('^[^:]*:', '') | trim | lower }}
-  when: not ansible_check_mode
+
+# Check mode only: the writes below are skipped there, so a setting that
+# differs would otherwise pass unseen. This reports it as one changed task,
+# which hcw-playbook-drift counts as drift and names, and the check carries on
+# through the roles after this one. A failed task here would stop the whole
+# check at the third role and hide drift in every role after it.
+- name: Report Arc agent settings that differ from this role's (check mode)
+  ansible.builtin.debug:
+    msg: >-
+      The Arc agent would be changed: extensions.allowlist {{ arc_allowlist_current }}
+      (wanted {{ arc_allowlist_wanted }}), incomingconnections.enabled
+      {{ arc_incoming_current }} (wanted {{ arc_incoming_enabled_wanted }}),
+      incomingconnections.ports {{ arc_ports_current }} (wanted
+      {{ arc_incoming_ports_wanted }}), guestconfiguration.enabled
+      {{ arc_guestconfig_current }} (wanted false).
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - >-
+      arc_allowlist_current != arc_allowlist_wanted
+      or arc_incoming_current != arc_incoming_enabled_wanted
+      or arc_ports_current != arc_incoming_ports_wanted
+      or arc_guestconfig_current != 'false'
 
 - name: Allow only the Azure Monitor Agent extension
   ansible.builtin.command:
@@ -343,7 +373,10 @@
 # what they say: Arc SSH opens port 22 and nothing else, and adding it must
 # not widen what the agent may install. A run that leaves the allowlist
 # admitting a second extension, or the agent open on another port, stops
-# here naming what it found.
+# here naming what it found. Real runs only: in check mode nothing was
+# written, so the read-back would repeat the reads above, whose differences
+# the check-mode report has already counted as drift without stopping the
+# check.
 - name: Read the extension allowlist and the incoming-connection settings back
   ansible.builtin.command:
     argv:

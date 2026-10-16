@@ -80,7 +80,11 @@ With `arc_enabled: true`:
    read with `azcmagent config get` and written with `config set` only when
    it differs, so a second run reports nothing changed; then all three are
    read back, and the run fails closed unless the allowlist is still the
-   Azure Monitor Agent alone and port 22 is the only port admitted.
+   Azure Monitor Agent alone and port 22 is the only port admitted. In
+   check mode, which the nightly drift check (`hcw-playbook-drift`) runs,
+   the settings are read all the same and any difference is reported as one
+   changed task, which that check counts as drift, without stopping the
+   check of the roles after this one.
    These settings live on the host and cannot be changed from Azure, which
    is the point: a Contributor on the resource group can no longer push an
    extension or a Run Command, and a custom machine configuration policy

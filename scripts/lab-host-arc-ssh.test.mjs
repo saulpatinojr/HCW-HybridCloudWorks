@@ -129,6 +129,47 @@ describe('the arc role opens the same port, and nothing else', () => {
     );
   });
 
+  it('reads the settings in check mode too, and reports a difference there as a changed task the nightly drift check counts', () => {
+    // hcw-playbook-drift (LAB-4) runs the play with --check --diff and counts
+    // changed tasks as drift. Skipped reads made the agent's lockdown
+    // invisible to it; a failed task would stop the check at this role and
+    // hide drift in every role after it.
+    for (const name of [
+      "Read the Arc agent's extension allowlist",
+      'Read whether incoming connections through Arc are enabled',
+      'Read the ports incoming connections through Arc may reach',
+      'Read whether guest configuration is enabled on the Arc agent',
+    ]) {
+      const read = task(name);
+      expect(read, name).toMatch(/^ {2}check_mode: false$/m);
+      expect(read, name).toMatch(/^ {2}changed_when: false$/m);
+      expect(read, name).not.toContain('ansible_check_mode');
+    }
+    expect(task('Reduce the four readings to comparable values')).not.toContain('ansible_check_mode');
+    const report = task("Report Arc agent settings that differ from this role's (check mode)");
+    expect(report).toContain('ansible.builtin.debug:');
+    expect(report).toMatch(/^ {2}changed_when: true$/m);
+    expect(report).toContain('    - ansible_check_mode\n');
+    for (const difference of [
+      'arc_allowlist_current != arc_allowlist_wanted',
+      'arc_incoming_current != arc_incoming_enabled_wanted',
+      'arc_ports_current != arc_incoming_ports_wanted',
+      "arc_guestconfig_current != 'false'",
+    ]) {
+      expect(report).toContain(difference);
+    }
+    // The writes stay out of check mode, where they could not run anyway.
+    for (const name of [
+      'Allow only the Azure Monitor Agent extension',
+      'Admit port 22 alone for incoming connections through Arc',
+      'Turn incoming connections through Arc on for Arc SSH, or off without it',
+      'Clear the incoming ports when Arc SSH is off',
+      'Turn off guest configuration on the Arc agent',
+    ]) {
+      expect(task(name), name).toContain('- not ansible_check_mode');
+    }
+  });
+
   it('leaves the extension allowlist as LAB-6 set it, and fails closed if it reads back anything else', () => {
     expect(yamlScalar(arcDefaults, 'arc_extensions_allowlist')).toBe('Microsoft.Azure.Monitor/AzureMonitorLinuxAgent');
     const assertion = task('Assert the extension allowlist is unchanged and incoming connections reach port 22 alone');
