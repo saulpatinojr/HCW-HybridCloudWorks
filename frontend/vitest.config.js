@@ -102,6 +102,13 @@ export default defineConfig({
         'text-summary',
         ['lcovonly', { file: 'lcov.info', projectRoot: path.resolve(import.meta.dirname, '..') }],
       ],
+      thresholds: {
+        lines: 75.5,
+        statements: 74.0,
+        functions: 69.0,
+        branches: 65.0,
+        autoUpdate: true,
+      },
       reportsDirectory: 'coverage',
       include: ['src/**/*.{js,jsx,ts,tsx}'],
       exclude: [
