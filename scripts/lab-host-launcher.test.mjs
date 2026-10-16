@@ -754,10 +754,16 @@ describe('the running-workspace limit (#954)', () => {
     expect(buildLogsPath(REFUSED_BUILD)).toBe(`/api/v2/workspacebuilds/${REFUSED_BUILD}/logs`);
   });
 
-  it('counts a workspace as the templates do: a start that is queued, under way or done', () => {
-    for (const status of ['pending', 'starting', 'running']) expect(isBlocking(lzb(status)), status).toBe(true);
+  it('counts a workspace as the templates do: a start queued, under way, done or being cancelled, or a failed stop', () => {
+    for (const status of ['pending', 'starting', 'running', 'canceling']) expect(isBlocking(lzb(status)), status).toBe(true);
     for (const status of ['stopped', 'failed', 'canceled', 'deleted']) expect(isBlocking(lzb(status)), status).toBe(false);
-    for (const status of ['pending', 'stopping', 'stopped']) expect(isBlocking(lzb(status, 'stop')), status).toBe(false);
+    // A stop that failed may have left the container up.
+    expect(isBlocking(lzb('failed', 'stop'))).toBe(true);
+    for (const status of ['pending', 'stopping', 'stopped', 'canceled']) expect(isBlocking(lzb(status, 'stop')), status).toBe(false);
+    for (const status of ['failed', 'deleting', 'deleted']) expect(isBlocking(lzb(status, 'delete')), status).toBe(false);
+    for (const transition of ['constructor', '__proto__', 'hasOwnProperty', '']) {
+      expect(isBlocking(lzb('running', transition)), transition).toBe(false);
+    }
     expect(isBlocking(null)).toBe(false);
     expect(isBlocking({})).toBe(false);
   });
@@ -778,28 +784,61 @@ describe('the running-workspace limit (#954)', () => {
     expect(assess(refused(), 'lab-tfv', OWNER)).toEqual({ state: 'stopped', refused: refusedStart(refused()) });
   });
 
-  it('says which lab to stop, and frames Coder’s page for it, where Stop is, while it runs', async () => {
+  it('says which lab to stop, frames Coder’s page for it, where Stop is, and waits past the cap for the learner', async () => {
+    const LIMITED_STEPS = 12;
     const run = await launch({
-      reads: [refused()],
+      reads: [...Array(LIMITED_STEPS + 1).fill(refused()), workspace({ status: 'starting' }), workspace()],
       logs: [REFUSAL_LOG],
-      others: [lzb('running')],
+      others: [...Array(LIMITED_STEPS).fill(lzb('running')), lzb('stopped', 'stop')],
       poll: { ...POLL, capMs: 20_000 },
     });
-    // The learner never stopped it, so the wait ends at the cap.
-    expect(run.end).toBe('unavailable');
+    // Longer than the cap went by while the other lab ran, and the wait did
+    // not end: the cap is for Coder, not for the learner.
+    expect(run.clock).toBeGreaterThan(20_000);
+    expect(run.end).toBe('ready');
     expect(run.frames).toEqual(['/@me/lab-lzb', null]);
     expect(limitMessage('lab-lzb')).toBe(
       'Only one of your lab workspaces runs at a time, and lab-lzb is running. Stop it on the page below, and this lab starts.'
     );
     expect(run.says).toContain(limitMessage('lab-lzb'));
-    // The site hears a state it knows: this lab is not running.
-    expect(run.posts).toEqual(['checking', 'stopped', 'unavailable']);
+    // The site hears a state of its own for it, once.
+    expect(run.posts).toEqual(['checking', 'limited', 'starting', 'ready']);
+    expect(STATES).toContain('limited');
     // The log is read once for the build, however long the wait.
     expect(run.calls.filter((c) => c.url === buildLogsPath(REFUSED_BUILD))).toHaveLength(1);
-    expect(run.calls.filter((c) => c.url === workspaceApiPath('lab-lzb')).length).toBeGreaterThan(1);
-    expect(posted(run)).toHaveLength(0);
-    for (const { init } of run.calls) {
+    expect(run.calls.filter((c) => c.url === workspaceApiPath('lab-lzb'))).toHaveLength(LIMITED_STEPS + 1);
+    expect(posted(run)).toHaveLength(1);
+    for (const { init } of run.calls.filter((c) => c.init?.method !== 'POST')) {
       expect(init).toMatchObject({ method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
+    }
+  });
+
+  it('counts the cap again once the limit clears', async () => {
+    const run = await launch({
+      reads: [...Array(7).fill(refused()), workspace({ status: 'starting' })],
+      logs: [REFUSAL_LOG],
+      others: [...Array(6).fill(lzb('running')), lzb('stopped', 'stop')],
+      poll: { ...POLL, capMs: 20_000 },
+    });
+    // The start it made never finishes, so the wait ends at the cap, counted
+    // from the last limited step (after 1 + 1.5 + 2.25 + 3.375 + 5 s of
+    // backoff), not from the first.
+    expect(run.end).toBe('unavailable');
+    expect(run.posts).toEqual(['checking', 'limited', 'starting', 'unavailable']);
+    expect(run.clock).toBeGreaterThanOrEqual(20_000 + 13_125);
+  });
+
+  it('waits on a failed stop or a cancelling start of the other lab as on a running one', async () => {
+    for (const other of [lzb('failed', 'stop'), lzb('canceling')]) {
+      const run = await launch({
+        reads: [refused(), refused(), workspace({ status: 'starting' }), workspace()],
+        logs: [REFUSAL_LOG],
+        others: [other, lzb('stopped', 'stop')],
+      });
+      expect(run.end).toBe('ready');
+      expect(run.posts).toEqual(['checking', 'limited', 'starting', 'ready']);
+      expect(run.frames).toEqual(['/@me/lab-lzb', null]);
+      expect(posted(run)).toHaveLength(1);
     }
   });
 
@@ -811,7 +850,7 @@ describe('the running-workspace limit (#954)', () => {
     });
     expect(run.end).toBe('ready');
     expect(run.frames).toEqual(['/@me/lab-lzb', null]);
-    expect(run.posts).toEqual(['checking', 'stopped', 'starting', 'ready']);
+    expect(run.posts).toEqual(['checking', 'limited', 'starting', 'ready']);
     const starts = posted(run);
     expect(starts).toHaveLength(1);
     expect(starts[0].url).toBe(buildsApiPath(WORKSPACE_ID));

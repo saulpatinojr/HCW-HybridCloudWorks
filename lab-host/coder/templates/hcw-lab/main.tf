@@ -197,12 +197,20 @@ locals {
   # Coder listens on 7080 (CODER_HTTP_ADDRESS), so the call never leaves the
   # container and the owner's token never crosses a network.
   coder_api_url = "http://127.0.0.1:7080"
-  # The owner's other workspaces whose latest build is a start that is
-  # queued, running or done. This workspace's own build is left out by id.
+  # The latest builds that leave a workspace's container running, or may: a
+  # start that is queued, under way, done or being cancelled, and a stop
+  # that failed. A failed start does not count, so a start this check
+  # refused never holds the limit itself.
+  blocking_builds = {
+    start = ["pending", "starting", "running", "canceling"]
+    stop  = ["failed"]
+  }
+  # The owner's other workspaces with such a latest build. This workspace's
+  # own build is left out by id.
   other_running_workspaces = flatten([
     for listing in data.http.owner_workspaces : [
       for w in jsondecode(listing.response_body).workspaces : w.name
-      if w.id != data.coder_workspace.me.id && w.latest_build.transition == "start" && contains(["pending", "starting", "running"], w.latest_build.status)
+      if w.id != data.coder_workspace.me.id && contains(lookup(local.blocking_builds, w.latest_build.transition, []), w.latest_build.status)
     ]
   ])
 }

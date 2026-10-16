@@ -32,7 +32,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { LIMIT_REFUSAL, limitBlocker } from '../../launcher/launcher.js';
+import { LIMIT_REFUSAL, isBlocking, limitBlocker } from '../../launcher/launcher.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mainTf = readFileSync(join(here, 'main.tf'), 'utf8');
@@ -331,6 +331,19 @@ test('code-server opens trusted, without the AI chat, on the README, with teleme
 
 const templatesDir = join(here, '..');
 const TEMPLATES = ['amo-guided-lab', 'hcw-lab', 'na-guided-lab'];
+/** Every status a workspace build can have (codersdk.WorkspaceStatus, Coder v2.38.0). */
+const BUILD_STATUSES = [
+  'pending',
+  'starting',
+  'running',
+  'stopping',
+  'stopped',
+  'failed',
+  'canceling',
+  'canceled',
+  'deleting',
+  'deleted',
+];
 const templateTf = (name) => readFileSync(join(templatesDir, name, 'main.tf'), 'utf8');
 
 /** The value of `name = <value>` on one line of a body, comment stripped and trimmed, or null. */
@@ -430,13 +443,37 @@ for (const name of TEMPLATES) {
       ]),
       'lab-lzb'
     );
-    // Counted as the launcher counts them: the owner's other workspaces whose
-    // latest build is a start that is queued, under way or done.
+    // Counted by the latest builds that leave a container running, or may.
     const counted = locals.slice(locals.indexOf('other_running_workspaces'));
     assert.match(counted, /for listing in data\.http\.owner_workspaces/);
     assert.match(counted, /w\.id != data\.coder_workspace\.me\.id/, 'this workspace is left out');
-    assert.match(counted, /w\.latest_build\.transition == "start"/);
-    assert.match(counted, /contains\(\["pending", "starting", "running"\], w\.latest_build\.status\)/);
+    assert.match(
+      counted,
+      /contains\(lookup\(local\.blocking_builds, w\.latest_build\.transition, \[\]\), w\.latest_build\.status\)/
+    );
+    const blocking = assignedObject(locals, 'blocking_builds');
+    assert.ok(blocking !== null, 'local.blocking_builds');
+    const builds = Object.fromEntries(
+      blocking
+        .split('\n')
+        .filter((line) => line.trim() !== '')
+        .map((line) => {
+          const [, transition, list] = line.match(/^\s*([a-z]+)\s*=\s*\[([^\]]*)\]\s*$/);
+          return [transition, [...list.matchAll(/"([a-z]+)"/g)].map(([, status]) => status)];
+        })
+    );
+    assert.deepEqual(builds, { start: ['pending', 'starting', 'running', 'canceling'], stop: ['failed'] });
+    // And counted exactly as the lab launcher counts them, so the launcher
+    // starts this lab again only once the template would let it.
+    for (const transition of ['start', 'stop', 'delete']) {
+      for (const status of BUILD_STATUSES) {
+        assert.equal(
+          isBlocking({ latest_build: { transition, status } }),
+          (builds[transition] ?? []).includes(status),
+          `${transition} ${status}`
+        );
+      }
+    }
   });
 
   test(`${name}: the owner's workspaces are read on a start only, inside Coder's container, failing closed`, () => {

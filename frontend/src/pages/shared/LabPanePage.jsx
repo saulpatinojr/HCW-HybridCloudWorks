@@ -174,6 +174,8 @@ export const PANE_STATE_WORDS = Object.freeze({
   'signed-out': 'Sign in to open your workspace',
   create: 'Confirm to create your workspace',
   stopped: 'Start your workspace to continue',
+  // Another of the learner's workspaces is running; one runs at a time.
+  limited: 'Stop your other lab to continue',
   starting: 'Starting your workspace…',
   ready: 'Workspace ready',
 });

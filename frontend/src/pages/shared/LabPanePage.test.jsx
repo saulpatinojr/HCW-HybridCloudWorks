@@ -508,6 +508,19 @@ describe('LabPanePage, what the launcher says', () => {
     expect(screen.getByTestId('lab-pane-state')).toHaveTextContent(PANE_STATE_WORDS['signed-out']);
   });
 
+  it('asks to stop the other lab, and keeps the pane, while another workspace runs (#954)', async () => {
+    const { container } = renderPane();
+    await screen.findByTestId('lab-pane');
+    await launcherSays('limited');
+    expect(screen.getByTestId('lab-pane-state')).toHaveTextContent(
+      'Stop your other lab to continue'
+    );
+    expect(PANE_STATE_WORDS.limited).toBe('Stop your other lab to continue');
+    // The frame stays: it holds Coder's page for the other lab, where Stop is.
+    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(screen.queryByTestId('lab-unavailable')).toBeNull();
+  });
+
   it('shows the unavailable section when the launcher gives up', async () => {
     const { container } = renderPane();
     await screen.findByTestId('lab-pane');

@@ -111,6 +111,7 @@ export const STATES = Object.freeze([
   'signed-out',
   'create',
   'stopped',
+  'limited',
   'starting',
   'ready',
   'unavailable',
@@ -266,17 +267,28 @@ function anyStartPlan(workspace) {
  * lines of its own, and the job's own error only says that `terraform plan`
  * failed). The launcher reads that log for a failed start of this lab's
  * workspace, once per build, and when it finds the line it shows the
- * learner the limit, with Coder's page for the other workspace, where Stop
- * is, in the frame. When the other workspace is no longer starting or
- * running, the refusal no longer holds, and the launcher starts this one,
- * once per visit: the one case a failed build is started without a click,
- * because its log says why it failed and that reason is gone.
+ * learner the limit, as the state `limited`, with Coder's page for the other
+ * workspace, where Stop is, in the frame. When the other workspace no
+ * longer counts against the limit (isBlocking, below), the refusal no
+ * longer holds, and the launcher starts this one, once per visit: the one
+ * case a failed build is started without a click, because its log says why
+ * it failed and that reason is gone.
  */
 export const LIMIT_REFUSAL = /Stop your other lab first: ([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)/;
 /** Coder's limit on a workspace name (codersdk/name.go). */
 const WORKSPACE_NAME_MAX = 32;
 /** A start that is queued, under way or done: what the templates count against the limit. */
-const BLOCKING = new Set(['pending', 'starting', 'running']);
+/**
+ * The latest builds the templates count against the limit (`blocking_builds`
+ * in each main.tf), by transition: the ones that leave a container running,
+ * or may. A start that is queued, under way, done or being cancelled, and a
+ * stop that failed. A failed start is not one, so a refused start never
+ * holds the limit itself. template.test.mjs holds the two lists equal.
+ */
+const BLOCKING = new Map([
+  ['start', new Set(['pending', 'starting', 'running', 'canceling'])],
+  ['stop', new Set(['failed'])],
+]);
 
 /** Coder's log of one build, by id. */
 export function buildLogsPath(buildId) {
@@ -297,7 +309,7 @@ export function limitBlocker(logs) {
 /** Whether a workspace counts against the limit, as the templates count it. */
 export function isBlocking(workspace) {
   const build = workspace?.latest_build;
-  return build?.transition === 'start' && BLOCKING.has(build.status);
+  return BLOCKING.get(build?.transition)?.has(build.status) === true;
 }
 
 /** What the learner reads while another of their workspaces holds the limit. */
@@ -568,10 +580,10 @@ async function readBlocker(buildId, session, fetchImpl) {
 /**
  * The running-workspace limit, for a failed start of this lab's workspace.
  * Null to go on as for any failed build (Coder's page with Retry);
- * otherwise how the step goes on. While the other workspace is starting or
- * running, the learner reads the limit and Coder's page for that workspace,
- * where Stop is, is framed. Once it is not, this one is started, once per
- * visit.
+ * otherwise how the step goes on. While the other workspace counts against
+ * the limit, the state is `limited`: the learner reads the limit and Coder's
+ * page for that workspace, where Stop is, is framed. Once it does not, this
+ * one is started, once per visit.
  */
 async function limitGate(verdict, session, { fetchImpl, view }) {
   if (!verdict.refused) return null;
@@ -582,8 +594,8 @@ async function limitGate(verdict, session, { fetchImpl, view }) {
   if (other.kind === 'signed-out' || other.kind === 'error') return other.kind;
   if (other.kind === 'ok' && isBlocking(other.body)) {
     view.frame(workspacePagePath(blocker));
-    view.report('stopped', limitMessage(blocker));
-    return 'wait';
+    view.report('limited', limitMessage(blocker));
+    return 'limited';
   }
   if (session.retryTried) return null;
   session.retryTried = true;
@@ -618,21 +630,29 @@ async function launcherStep(session, { fetchImpl, target, view, navigate }) {
   return show(verdict, { target, view, navigate });
 }
 
-/** What goes on after a step: `'wait'` sleeps and backs off, `'again'` goes straight on, `'error'` counts toward giving up. */
-const CONTINUES = new Set(['wait', 'again', 'error']);
+/**
+ * What goes on after a step: `'wait'` sleeps and backs off, `'again'` goes
+ * straight on, `'error'` counts toward giving up, and `'limited'` waits like
+ * `'wait'` on the learner rather than on Coder.
+ */
+const CONTINUES = new Set(['wait', 'again', 'error', 'limited']);
 
 /**
  * Run `step` until it ends, with the backoff and both caps in POLL. A step
  * that gives anything outside CONTINUES ends the run with that; running out
- * of time or of retries ends it with `'unavailable'`.
+ * of time or of retries ends it with `'unavailable'`. The time cap is for
+ * Coder, so it does not run while the learner is asked to stop another lab
+ * (`'limited'`): that wait lasts until they do, or until that lab stops
+ * itself at its autostop, and the cap counts again from then.
  */
 async function pollUntilDone(step, { sleep, now, poll }) {
-  const started = now();
+  let started = now();
   let delay = poll.firstDelayMs;
   let errors = 0;
   for (;;) {
     const outcome = await step();
     if (!CONTINUES.has(outcome)) return outcome;
+    if (outcome === 'limited') started = now();
     errors = outcome === 'error' ? errors + 1 : 0;
     if (errors >= poll.maxErrors || now() - started >= poll.capMs) return 'unavailable';
     if (outcome !== 'again') {
