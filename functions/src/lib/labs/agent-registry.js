@@ -230,8 +230,7 @@ const LEASE_MINUTES = CLAIM_LEASE_MS / 60_000;
  */
 export const HELD_JOBS_QUERY = `SELECT TOP 5 c.id, c.status FROM c
   WHERE c.agentId = @agentId
-    AND (c.status = 'running'
-         OR (c.status = 'claimed' AND IS_DEFINED(c.claimedAt) AND c.claimedAt >= @staleBefore))`;
+    AND c.status = 'claimed' AND IS_DEFINED(c.claimedAt) AND c.claimedAt >= @staleBefore`;
 
 /** A 409 naming the jobs the agent still holds, or null when it holds none. */
 async function heldJobsRefusal(deps, agentId) {

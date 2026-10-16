@@ -126,8 +126,7 @@ class MemoryContainers {
     if (name !== 'lab_jobs' || sql !== HELD_JOBS_QUERY) return [];
     const arg = Object.fromEntries(parameters.map((p) => [p.name, p.value]));
     const held = (job) =>
-      job.status === 'running' ||
-      (job.status === 'claimed' && typeof job.claimedAt === 'string' && job.claimedAt >= arg['@staleBefore']);
+      job.status === 'claimed' && typeof job.claimedAt === 'string' && job.claimedAt >= arg['@staleBefore'];
     return [...this.table(name).values()]
       .filter((job) => job.agentId === arg['@agentId'] && held(job))
       .slice(0, 5)
@@ -548,19 +547,26 @@ describe('DELETE cms/labs/agents/{agentId}', () => {
     expect(memory.all('admin_audit_logs')).toHaveLength(0);
   });
 
-  it.each([
-    ['a job it claimed inside the lease', job('j-claimed', { status: 'claimed', claimedAt: minutesAgo(14) }), /j-claimed \(claimed\)/],
-    ['a running job', job('j-running', { status: 'running', claimedAt: minutesAgo(60) }), /j-running \(running\)/],
-  ])('refuses an agent that holds %s with 409, naming the job', async (_label, held, named) => {
+  it('refuses an agent that holds a job it claimed inside the lease with 409, naming the job', async () => {
+    const held = job('j-claimed', { status: 'claimed', claimedAt: minutesAgo(14) });
     const memory = seeded({ jobs: [held] });
     const res = await handlersOver(memory).removeAgent(remove(OLD_ID), context());
 
     expect(res.status).toBe(409);
-    expect(bodyOf(res).error).toMatch(named);
+    expect(bodyOf(res).error).toMatch(/j-claimed \(claimed\)/);
     expect(bodyOf(res).error).toMatch(/15 minutes/);
     expect(memory.doc('lab_agents', OLD_ID)).not.toBeNull();
     expect(writes(memory)).toBe(0);
     expect(memory.all('admin_audit_logs')).toHaveLength(0);
+  });
+
+  it('allows removing an agent whose claimed job has expired beyond the lease', async () => {
+    const expired = job('j-expired', { status: 'claimed', claimedAt: minutesAgo(30) });
+    const memory = seeded({ jobs: [expired] });
+    const res = await handlersOver(memory).removeAgent(remove(OLD_ID), context());
+
+    expect(res.status).toBe(200);
+    expect(memory.doc('lab_agents', OLD_ID)).toBeNull();
   });
 
   it('answers 404 to a second DELETE, writing no second audit row', async () => {

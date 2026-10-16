@@ -9,10 +9,19 @@ reading: 13
 ---
 
 Every lab on <https://hybridcloudworks.com/education/labs> has a "Run it
-locally" line. In PowerShell it is this:
+locally" line. Inspecting the latest manifest digest and pinning it runs the
+reproducible image:
+
+PowerShell:
 
 ```powershell
-docker run --rm -it -v ${PWD}:/workspace hybridcloudworks/hcw-lab:latest
+$d = docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'; docker run --rm -it -v ${PWD}:/workspace "hybridcloudworks/hcw-lab@$d"
+```
+
+bash:
+
+```bash
+d=$(docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'); docker run --rm -it -v "$PWD":/workspace "hybridcloudworks/hcw-lab@$d"
 ```
 
 It needs Docker and nothing else: no Terraform, no Azure CLI, no Python on
@@ -35,7 +44,7 @@ expect a newer number by the time you read this.
 | --- | --- |
 | Docker Desktop | 4.93.0 or later, using the WSL 2 backend on Windows |
 | Resources | Memory, disk and file sharing checked against what the lab image needs |
-| The lab image | `hybridcloudworks/hcw-lab:latest`: 497 MB to pull, 2.73 GB on disk |
+| The lab image | Pinned by digest from `docker.io/hybridcloudworks/hcw-lab:latest`: 497 MB to pull, 2.73 GB on disk |
 | A lab shell | `nobody@<container id>:/workspace$`, in your own folder, with terraform 1.16.4, the Azure CLI, kubectl, helm and Ansible |
 
 ## What it costs
@@ -323,10 +332,16 @@ emulation; turn it on if it is off. Not measured on a Mac for this article.
 
 ### 5. Pull the lab image
 
-PowerShell or bash:
+PowerShell:
+
+```powershell
+$d = docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'; $d; docker pull "hybridcloudworks/hcw-lab@$d"
+```
+
+bash:
 
 ```bash
-docker pull hybridcloudworks/hcw-lab:latest
+d=$(docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'); echo "$d"; docker pull "hybridcloudworks/hcw-lab@$d"
 ```
 
 **Verify:**
@@ -337,7 +352,7 @@ docker image ls hybridcloudworks/hcw-lab
 
 ```text
 IMAGE                             ID             DISK USAGE   CONTENT SIZE   EXTRA
-hybridcloudworks/hcw-lab:latest   ce7cc655da13       2.73GB          497MB
+hybridcloudworks/hcw-lab          ce7cc655da13       2.73GB          497MB
 ```
 
 The ID changes whenever a new image is published. The two sizes are the ones
@@ -352,13 +367,13 @@ at `/workspace`. Then pick the line for the shell you are in.
 PowerShell:
 
 ```powershell
-docker run --rm -it -v ${PWD}:/workspace hybridcloudworks/hcw-lab:latest
+docker run --rm -it -v ${PWD}:/workspace "hybridcloudworks/hcw-lab@$d"
 ```
 
 bash:
 
 ```bash
-docker run --rm -it -v "$PWD":/workspace hybridcloudworks/hcw-lab:latest
+docker run --rm -it -v "$PWD":/workspace "hybridcloudworks/hcw-lab@$d"
 ```
 
 On Windows, use the PowerShell line. The bash line is for macOS, Linux and the
@@ -408,7 +423,7 @@ bundles.
 | | Docker Desktop on your machine | Docker Engine on the Hybrid Lab host |
 | --- | --- | --- |
 | Engine | 29.8.1, inside a Linux VM Desktop manages (the WSL 2 utility VM on Windows) | 29.8.1, directly on Ubuntu 26.04 LTS |
-| The image | `hybridcloudworks/hcw-lab:latest` | Browser workspaces built on the same image |
+| The image | Pinned by digest from `docker.io/hybridcloudworks/hcw-lab:latest` | Browser workspaces built on the same image |
 | Your folder | Shared into the VM by Desktop's file sharing | A directory on the same Linux machine |
 | Resources | What you give the VM (step 4) | One CPU and two gigabytes per browser workspace |
 | Licence | Docker Subscription Service Agreement | Docker Engine's open-source licence |

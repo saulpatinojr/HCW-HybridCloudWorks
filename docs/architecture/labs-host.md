@@ -305,21 +305,21 @@ repository is public, so the pull needs no sign-in.
 PowerShell:
 
 ```powershell
-docker pull hybridcloudworks/hcw-lab:latest
+$d = docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'; $d; docker pull "hybridcloudworks/hcw-lab@$d"
 ```
 
 ```powershell
-docker run --rm -it -v "${PWD}:/workspace" hybridcloudworks/hcw-lab:latest
+docker run --rm -it -v "${PWD}:/workspace" "hybridcloudworks/hcw-lab@$d"
 ```
 
 bash:
 
 ```bash
-docker pull hybridcloudworks/hcw-lab:latest
+d=$(docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'); echo "$d"; docker pull "hybridcloudworks/hcw-lab@$d"
 ```
 
 ```bash
-docker run --rm -it -v "$PWD:/workspace" hybridcloudworks/hcw-lab:latest
+docker run --rm -it -v "$PWD:/workspace" "hybridcloudworks/hcw-lab@$d"
 ```
 
 A successful run prints a `nobody@<container id>:/workspace$` prompt, and

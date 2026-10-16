@@ -77,37 +77,32 @@ with the current directory mounted at `/workspace`; both commands drop into
 PowerShell:
 
 ```powershell
-docker pull hybridcloudworks/hcw-lab:latest
+$d = docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'; $d; docker pull "hybridcloudworks/hcw-lab@$d"
 ```
 
 ```powershell
-docker run --rm -it -v "${PWD}:/workspace" hybridcloudworks/hcw-lab:latest
+docker run --rm -it -v "${PWD}:/workspace" "hybridcloudworks/hcw-lab@$d"
 ```
 
 bash:
 
 ```bash
-docker pull hybridcloudworks/hcw-lab:latest
+d=$(docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'); echo "$d"; docker pull "hybridcloudworks/hcw-lab@$d"
 ```
 
 ```bash
-docker run --rm -it -v "$PWD:/workspace" hybridcloudworks/hcw-lab:latest
+docker run --rm -it -v "$PWD:/workspace" "hybridcloudworks/hcw-lab@$d"
 ```
 
 A successful run prints a `nobody@<container id>:/workspace$` prompt, and
 `terraform version` there reports the version in `versions.env`. Add `:ro`
-to the mount to run the way the job sandbox does. For anything automated,
-pin the digest rather than the tag, exactly as
-[`vps-agent/lib/capabilities.js`](../vps-agent/lib/capabilities.js) does:
-the publish workflow writes each pushed image's digest to its job summary,
-and that is the first-party place to copy it from. This prints the digest
-Docker Hub serves for `latest` and pulls exactly it:
-
-```powershell
-$d = docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'; $d; docker pull "hybridcloudworks/hcw-lab@$d"
-```
-
-Success ends with `Status: Downloaded newer image for hybridcloudworks/hcw-lab@sha256:…`
+to the mount to run the way the job sandbox does. Pinning the digest rather than
+the mutable tag matches how [`vps-agent/lib/capabilities.js`](../vps-agent/lib/capabilities.js)
+runs jobs and ensures immutable provenance: the publish workflow writes each pushed
+image's digest to its job summary, and that is the first-party place to copy it from.
+The `docker buildx imagetools inspect` commands above read the current digest
+Docker Hub serves for `latest` and pull exactly it. Success ends with
+`Status: Downloaded newer image for hybridcloudworks/hcw-lab@sha256:…`
 (or `Image is up to date`) and the same `sha256:` value on the `Digest:` line.
 
 The provenance attestation verifies against this repository. The first line
