@@ -259,10 +259,15 @@ describe('the drop-in reaches sshd only after it is proven', () => {
     expect(block).toContain("'allowusers root' not in hardening_sshd_effective.results[1].stdout_lines");
   });
 
-  it('puts the previous drop-in back when a check fails, before the run stops', () => {
+  it('puts the previous drop-in back when a check fails, removes the backup, and only then stops', () => {
     const rescue = block.slice(block.indexOf('  rescue:'));
-    expect(rescue).toContain('src: "{{ hardening_sshd_dropin.backup_file }}"');
-    expect(rescue).toContain('ansible.builtin.fail:');
+    const back = rescue.indexOf('src: "{{ hardening_sshd_dropin.backup_file }}"');
+    const removed = rescue.indexOf('- name: Remove the backup, now that it is back in place');
+    const stop = rescue.indexOf('ansible.builtin.fail:');
+    expect(back).toBeGreaterThan(0);
+    expect(removed).toBeGreaterThan(back);
+    expect(stop).toBeGreaterThan(removed);
+    expect(rescue.slice(removed, stop)).toContain('path: "{{ hardening_sshd_dropin.backup_file }}"\n        state: absent');
   });
 
   it('reloads sshd, never restarts it, so open sessions stay up', () => {

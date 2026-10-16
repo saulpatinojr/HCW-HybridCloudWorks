@@ -124,9 +124,11 @@
         quiet: true
       when: not (ansible_check_mode and hardening_sshd_dropin is changed)
 
-    # The backup is only for the rescue below. Its name does not end in
-    # .conf, so sshd never read it, but nothing should leave copies of sshd
-    # settings lying in sshd_config.d.
+    # The template's backup exists only for the rescue below, which copies it
+    # back and then removes it; when the checks pass it is removed here.
+    # Either way no copy of sshd settings is left in sshd_config.d (sshd
+    # would not read it, its name not ending in .conf, but the next person
+    # to look in the directory would).
     - name: Remove the previous drop-in's backup once the new one has passed
       ansible.builtin.file:
         path: "{{ hardening_sshd_dropin.backup_file }}"
@@ -151,6 +153,12 @@
       when:
         - hardening_sshd_dropin is changed
         - hardening_sshd_dropin.backup_file is not defined
+
+    - name: Remove the backup, now that it is back in place
+      ansible.builtin.file:
+        path: "{{ hardening_sshd_dropin.backup_file }}"
+        state: absent
+      when: hardening_sshd_dropin.backup_file is defined
 
     - name: Stop, with sshd still on the settings it had
       ansible.builtin.fail:
