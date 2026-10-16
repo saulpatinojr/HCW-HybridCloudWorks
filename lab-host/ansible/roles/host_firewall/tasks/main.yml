@@ -1,0 +1,13 @@
+---
+# The host's own iptables chains (#954, #958; owner decision 2026-10-16),
+# each jumped to first, above ufw's, so they decide before any of ufw's
+# rules. README.md beside this file says what each allows, and why.
+# Imported, not included, so `bootstrap.sh --tags host_firewall` reaches
+# every task.
+- name: Load the host firewall and wire it into boot
+  ansible.builtin.import_tasks: present.yml
+  when: host_firewall_state == 'present'
+
+- name: Take the host firewall out
+  ansible.builtin.import_tasks: absent.yml
+  when: host_firewall_state == 'absent'

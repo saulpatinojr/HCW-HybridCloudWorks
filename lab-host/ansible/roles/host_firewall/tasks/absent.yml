@@ -1,0 +1,120 @@
+---
+# Takes the host firewall out (host_firewall_state: absent; the runbook's
+# "Taking it out"). The order matters: the sandbox user's manager stops
+# requiring the boot unit before the unit goes, so it is never left
+# requiring a unit that is missing, and the unit is gone before the chains,
+# so nothing re-applies them. Nothing restarts the user's manager or Docker.
+
+# 1. The drop-in on the sandbox user's manager, on whatever uid it was put.
+- name: Find the drop-ins that make a user manager require the firewall
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    recurse: true
+    depth: 2
+    patterns: "{{ host_firewall_unit }}.conf"
+  register: host_firewall_absent_dropins
+
+- name: Remove the drop-ins, so no user manager requires the firewall
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ host_firewall_absent_dropins.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+# 2. Before the unit is touched, systemd forgets the requirement. Here, in
+#    order, not in a handler (which would run after the unit is gone); a
+#    reload alone reports no change, so a second run stays unchanged.
+- name: Reload systemd so the user managers no longer require the firewall
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# 3. The boot unit. It refuses a manual stop while its file says so; once the
+#    file is gone and systemd reloaded, it is a stopped-able leftover, and
+#    stopping it removes no rule (it has no ExecStop).
+- name: Look for the boot unit
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ host_firewall_unit }}.service"
+  register: host_firewall_absent_unit
+
+- name: Disable the boot unit
+  ansible.builtin.systemd_service:
+    name: "{{ host_firewall_unit }}.service"
+    enabled: false
+  when: host_firewall_absent_unit.stat.exists
+
+- name: Remove the boot unit
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ host_firewall_unit }}.service"
+    state: absent
+
+- name: Reload systemd so the boot unit is gone
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Ask whether the boot unit is still active from before
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ host_firewall_unit }}.service"]
+  register: host_firewall_absent_active
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Stop the boot unit left from before
+  ansible.builtin.command:
+    argv: [systemctl, stop, "{{ host_firewall_unit }}.service"]
+  changed_when: true
+  when:
+    - host_firewall_absent_active.stdout == 'active'
+    - not ansible_check_mode
+
+# 4 and 5. The jumps, then the chains, in one transaction per family, by the
+#    helper's remove (files/hcw-host-firewall), which touches HCW-* only.
+- name: Look for the helper
+  ansible.builtin.stat:
+    path: "{{ host_firewall_script }}"
+  register: host_firewall_absent_helper
+
+- name: Delete the jumps, then flush and delete the chains
+  ansible.builtin.command:
+    argv: ["{{ host_firewall_script }}", remove]
+  register: host_firewall_absent_remove
+  changed_when: host_firewall_absent_remove.stdout_lines | length > 0
+  when:
+    - host_firewall_absent_helper.stat.exists
+    - not ansible_check_mode
+
+# 6. The helper and the files, last, because the helper did the removing.
+- name: Remove the helper and the rules files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ host_firewall_script }}"
+    - "{{ host_firewall_config_dir }}"
+
+# The read-back: no HCW-* chain or jump is left in either family. In check
+# mode one left is what this run would remove.
+- name: Read both filter tables for anything of the host firewall's
+  ansible.builtin.command:
+    argv: ["{{ item }}", -w, -S]
+  loop: [iptables, ip6tables]
+  register: host_firewall_absent_tables
+  changed_when: >-
+    ansible_check_mode and host_firewall_absent_tables.stdout_lines | select('search', ' HCW-') | list | length > 0
+  check_mode: false
+
+- name: Refuse to call the firewall removed while any of it is left
+  ansible.builtin.assert:
+    that:
+      - host_firewall_absent_left | length == 0
+    fail_msg: >-
+      Still loaded after the removal: {{ host_firewall_absent_left | join(' | ') }}. Read
+      sudo iptables -S and sudo ip6tables -S on the host (docs/runbooks/labs-host.md, "Taking it
+      out").
+    quiet: true
+  vars:
+    host_firewall_absent_left: >-
+      {{ host_firewall_absent_tables.results | map(attribute='stdout_lines') | flatten
+         | select('search', ' HCW-') | list }}
+  when: not ansible_check_mode

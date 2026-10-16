@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# The jumps into the host firewall's chains (roles/host_firewall), for IPv4 and IPv6 alike, as
+# `iptables -S` prints them. hcw-host-firewall keeps the jumps a built-in chain names here at the
+# top of that chain, in this order, once each: above ufw's, so the host firewall's chains decide
+# first. A user name is looked up when the jump is loaded.
+-A OUTPUT -m owner --uid-owner {{ host_firewall_sandbox_user }} -j {{ host_firewall_sandbox_chain }}
+-A OUTPUT -j {{ host_firewall_control_chain }}
+{% for interface in host_firewall_bridge_interfaces %}
+-A INPUT -i {{ interface }} -j {{ host_firewall_bridge_chain }}
+{% endfor %}
