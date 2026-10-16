@@ -261,6 +261,39 @@ export function overdueQuery(rows, { lastDue = OVERDUE_LAST_DUE } = {}) {
  * has applied. "Declaring an intended change" in the header has the rest.
  */
 export const DECLARED = [
+  // #1216: alert-kv-config-write lists the resource providers it watches, so
+  // a state change on one of its own alerts (Microsoft.AlertsManagement,
+  // logged beneath the vault) no longer fires it. An in-place update adding
+  // `resource_providers` to the rule's one criteria block. The provider
+  // flattens an absent list by omitting it, so the state most likely holds
+  // [] and the plan shows four index additions; if it holds null, the plan
+  // shows the whole list. Both shapes are declared, so whichever the plan
+  // carries matches, and the other prints as a NOTE. Delete all five once
+  // verify-alert-state.yml reads the rule OK after the apply.
+  ...[
+    "Microsoft.KeyVault",
+    "Microsoft.Authorization",
+    "Microsoft.Resources",
+    "Microsoft.Insights",
+  ].map((provider, i) => ({
+    address: "azurerm_monitor_activity_log_alert.key_vault_config_writes",
+    path: `criteria[0].resource_providers[${i}]`,
+    before: undefined,
+    after: provider,
+    reason: "#1216: alert-kv-config-write watches named providers, not Microsoft.AlertsManagement",
+  })),
+  {
+    address: "azurerm_monitor_activity_log_alert.key_vault_config_writes",
+    path: "criteria[0].resource_providers",
+    before: null,
+    after: [
+      "Microsoft.KeyVault",
+      "Microsoft.Authorization",
+      "Microsoft.Resources",
+      "Microsoft.Insights",
+    ],
+    reason: "#1216: alert-kv-config-write watches named providers, not Microsoft.AlertsManagement",
+  },
   // Applied and deleted here on 2026-10-16, as the header asks. Each change,
   // with the reading that showed it live:
   // - ADR 0022 decision 6's four stateful rules (#1207): auto_mitigation_enabled
