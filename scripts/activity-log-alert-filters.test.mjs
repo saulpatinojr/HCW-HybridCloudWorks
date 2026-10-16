@@ -41,12 +41,20 @@ function activityLogAlerts(source) {
     });
 }
 
+/**
+ * Whether a filter's source text names at least one provider or type. `[]`,
+ * `null` and `""` send no condition to Azure, so they filter nothing, and a
+ * value read from a `var.` or `local.` cannot be checked here; only a written
+ * name counts.
+ */
+const namesSomething = (text) => /"[^"\s]+"/.test(text ?? '');
+
 /** The addresses of Administrative rules that can match a change to an alert's state. */
 function selfTriggering(source) {
   return activityLogAlerts(source)
     .filter(({ criteria }) => /"Administrative"/.test(criteria.get('category') ?? ''))
     .filter(({ criteria }) => {
-      const filters = FILTERS.filter((name) => criteria.has(name)).map((name) => criteria.get(name));
+      const filters = FILTERS.filter((name) => namesSomething(criteria.get(name))).map((name) => criteria.get(name));
       return filters.length === 0 || filters.some((text) => /Microsoft\.AlertsManagement/i.test(text));
     })
     .map(({ address }) => address);
@@ -100,6 +108,32 @@ resource "azurerm_monitor_activity_log_alert" "filtered" {
     expect(selfTriggering(source)).toEqual([
       'azurerm_monitor_activity_log_alert.bare',
       'azurerm_monitor_activity_log_alert.leaky',
+    ]);
+  });
+
+  it('does not count an empty, null or blank filter as a filter, since none sends a condition', () => {
+    const rule = (name, filter) => `
+resource "azurerm_monitor_activity_log_alert" "${name}" {
+  name   = "${name}"
+  scopes = [azurerm_key_vault.hcw.id]
+  criteria {
+    category = "Administrative"
+    ${filter}
+  }
+}
+`;
+    const source = [
+      rule('empty_list', 'resource_providers = []'),
+      rule('null_list', 'resource_providers = null'),
+      rule('blank_type', 'resource_type = ""'),
+      rule('from_a_local', 'resource_providers = local.vault_providers'),
+      rule('named', 'resource_type = "Microsoft.KeyVault/vaults"'),
+    ].join('\n');
+    expect(selfTriggering(source)).toEqual([
+      'azurerm_monitor_activity_log_alert.empty_list',
+      'azurerm_monitor_activity_log_alert.null_list',
+      'azurerm_monitor_activity_log_alert.blank_type',
+      'azurerm_monitor_activity_log_alert.from_a_local',
     ]);
   });
 });
