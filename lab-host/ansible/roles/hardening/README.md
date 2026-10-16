@@ -35,11 +35,17 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    `AuthenticationMethods publickey`, `PubkeyAuthentication yes`,
    `AuthorizedKeysFile .ssh/authorized_keys` (no `authorized_keys2`),
    `PasswordAuthentication no`, `KbdInteractiveAuthentication no`,
-   `PermitRootLogin no`, `MaxAuthTries 4`, `AllowAgentForwarding no`,
-   `AllowTcpForwarding local` (VS Code Remote-SSH and the Portainer `-L`
-   tunnel need local forwards), `PermitTunnel no`, `X11Forwarding no` and
-   `LogLevel VERBOSE`, which logs the fingerprint of the key each login
-   used. The `00-` prefix matters: sshd keeps the first value it reads and
+   `PermitRootLogin no`, `MaxAuthTries 4`, `LoginGraceTime 30`,
+   `AllowAgentForwarding no`, `AllowTcpForwarding local` (VS Code
+   Remote-SSH and the Portainer `-L` tunnel need local forwards),
+   `AllowStreamLocalForwarding no` (nothing forwards Unix sockets),
+   `PermitTunnel no`, `X11Forwarding no`,
+   `PerSourcePenaltyExemptList 127.0.0.1,::1` (every Arc SSH session will
+   arrive from the loopback, and OpenSSH's per-source penalties would
+   otherwise hold a few failures there against all of them) and
+   `LogLevel VERBOSE`. INFO already logs the fingerprint of the key each
+   accepted login used (`Accepted publickey for …`); VERBOSE adds the
+   fingerprints of keys offered and refused. The `00-` prefix matters: sshd keeps the first value it reads and
    Ubuntu's cloud image ships `50-cloud-init.conf` with
    `PasswordAuthentication yes`. Before sshd reads it the role proves it:
    `sshd -t -f` on the drop-in alone (the template's `validate`), `sshd -t`
@@ -387,7 +393,9 @@ carry it:
 - **Azure Arc SSH** (coming, #953): SSH through the Arc agent, after which
   port 22 closes to the internet.
 - **The login alert** (coming, #953): an alert on every accepted SSH login,
-  which `LogLevel VERBOSE` logs with the fingerprint of the key it used.
+  keyed on the INFO line `Accepted publickey for …`, which names the key's
+  fingerprint at any log level. It ignores VERBOSE's `Accepted key` and
+  `Accepted certificate` lines, so each login counts once.
 
 Revisit if a second person gets a key, or if either of the coming controls
 is dropped.

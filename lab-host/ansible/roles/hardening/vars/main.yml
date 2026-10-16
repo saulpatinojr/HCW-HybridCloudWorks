@@ -63,6 +63,9 @@ hardening_sshd_checked_keywords:
   - permitrootlogin
   - allowagentforwarding
   - allowtcpforwarding
+  - allowstreamlocalforwarding
+  - logingracetime
+  - persourcepenaltyexemptlist
   - permittunnel
   - x11forwarding
   - authorizedkeysfile

@@ -89,17 +89,27 @@ describe('the sshd drop-in', () => {
     expect(dropIn).not.toMatch(/authorized_keys2/);
   });
 
-  it('allows local forwards only, and no agent, tunnel or X11 forwarding', () => {
+  it('allows local TCP forwards only, and no agent, Unix-socket, tunnel or X11 forwarding', () => {
     expect(directives).toMatchObject({
       AllowAgentForwarding: 'no',
       AllowTcpForwarding: 'local',
+      AllowStreamLocalForwarding: 'no',
       PermitTunnel: 'no',
       X11Forwarding: 'no',
     });
   });
 
-  it('logs at VERBOSE, which names the key each login used', () => {
+  it('gives a login 30 seconds, and exempts the loopback Arc SSH arrives from from per-source penalties', () => {
+    expect(directives).toMatchObject({
+      LoginGraceTime: '30',
+      PerSourcePenaltyExemptList: '127.0.0.1,::1',
+    });
+  });
+
+  it('logs at VERBOSE, for the refused keys INFO does not name', () => {
     expect(directives.LogLevel).toBe('VERBOSE');
+    // INFO already names the accepted key; the reason given must not say otherwise.
+    expect(dropIn).toContain('INFO already logs the fingerprint of the key each accepted login used');
   });
 
   it('sets each keyword once, since sshd keeps the first value it reads', () => {
@@ -280,6 +290,9 @@ describe('the drop-in reaches sshd only after it is proven', () => {
       'permitrootlogin no',
       'allowagentforwarding no',
       'allowtcpforwarding local',
+      'allowstreamlocalforwarding no',
+      'logingracetime 30',
+      'persourcepenaltyexemptlist 127.0.0.1,::1',
       'passwordauthentication no',
     ]) {
       expect(block).toContain(`'${line}' in hardening_sshd_effective.results[0].stdout_lines`);
