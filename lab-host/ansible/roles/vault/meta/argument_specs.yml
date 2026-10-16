@@ -113,7 +113,7 @@ argument_specs:
       vault_certificate_days:
         type: int
         required: false
-        default: 730
+        default: 180
         description: Validity of a generated certificate.
       vault_certificate_warn_days:
         type: int

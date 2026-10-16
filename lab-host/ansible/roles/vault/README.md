@@ -214,7 +214,7 @@ still exist for all of this: the migration unwraps with it. Rehearsed on
 | `vault_ui` | `false` | The web UI, on the same loopback listener |
 | `vault_raft_node_id` | `lab-host-01` | Fixed at first start |
 | `vault_data_dir` | `/var/lib/vault` | Raft storage, `vault:vault 0700` |
-| `vault_certificate_days`, `vault_certificate_warn_days` | `730`, `60` | The generated certificate |
+| `vault_certificate_days`, `vault_certificate_warn_days` | `180`, `60` | The generated certificate |
 | `vault_seal_azurekeyvault_enabled` | `false` (`group_vars` reads the host's fact) | Auto-unseal through Azure Key Vault |
 | `vault_seal_azurekeyvault_vault_name`, `vault_seal_azurekeyvault_key_name` | `kv-labhybrid-prod-cus-01`, `vault-seal` | What `infra/lab-hybrid.tf` creates; `scripts/lab-host-vault-seal.test.mjs` holds them equal |
 | `vault_seal_azurekeyvault_tenant_id` | `""` | Written as `tenant_id` when set; unused without a client secret |

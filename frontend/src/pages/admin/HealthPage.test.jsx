@@ -397,9 +397,7 @@ describe('the hub', () => {
     renderAt();
     expect(await screen.findByText('Failed Platform Jobs')).toBeInTheDocument();
     expect(screen.getByText(/forgeArticle \(job-forge-99\)/)).toBeInTheDocument();
-    expect(
-      screen.getByText('AI proxy returned HTTP 429: rate limit exceeded')
-    ).toBeInTheDocument();
+    expect(screen.getByText('AI proxy returned HTTP 429: rate limit exceeded')).toBeInTheDocument();
   });
 
   it('does not refetch the snapshot or rerun identity when switching tabs', async () => {

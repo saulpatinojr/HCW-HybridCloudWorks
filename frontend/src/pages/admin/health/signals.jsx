@@ -368,8 +368,12 @@ export function OperationalSignalsCard({ signals }) {
                   data-testid={`failed-job-${job.id}`}
                 >
                   <div className="flex items-center justify-between font-mono font-medium">
-                    <span>{job.type} ({job.id})</span>
-                    <span className="text-muted-foreground">{formatTimestamp(job.finishedAt || job.createdAt)}</span>
+                    <span>
+                      {job.type} ({job.id})
+                    </span>
+                    <span className="text-muted-foreground">
+                      {formatTimestamp(job.finishedAt || job.createdAt)}
+                    </span>
                   </div>
                   {job.error && (
                     <p className="mt-1 font-mono text-xs text-destructive break-all">{job.error}</p>
