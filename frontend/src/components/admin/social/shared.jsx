@@ -15,7 +15,7 @@ export function PlatformBadge({ provider }) {
   const meta = PLATFORM_META[typeof provider === 'string' ? provider.toLowerCase() : ''] || {};
   const { Icon, color, label } = meta;
   return (
-    <Badge variant="outline" className={`text-[10px] capitalize gap-1 ${color || ''}`}>
+    <Badge variant="outline" className={`text-xs capitalize gap-1 ${color || ''}`}>
       {Icon && <Icon className="h-2.5 w-2.5" />}
       {label || provider}
     </Badge>

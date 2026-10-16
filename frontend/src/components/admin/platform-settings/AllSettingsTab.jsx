@@ -245,7 +245,7 @@ export default function AllSettingsTab() {
                   <td className="py-2 pr-4">
                     <span className="font-medium">{row.label}</span>
                     {row.history ? (
-                      <span className="ml-2 rounded-full border border-border px-1.5 text-[10px] uppercase text-muted-foreground">
+                      <span className="ml-2 rounded-full border border-border px-1.5 text-xs uppercase text-muted-foreground">
                         History
                       </span>
                     ) : null}

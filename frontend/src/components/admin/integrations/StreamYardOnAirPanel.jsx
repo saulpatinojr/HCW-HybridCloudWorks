@@ -41,7 +41,7 @@ function EndpointRow({ label, value }) {
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5 text-xs">
       <div className="min-w-0">
         <span className="font-medium text-foreground">{label}: </span>
-        <code className="break-all font-mono text-[11px] text-muted-foreground">{value}</code>
+        <code className="break-all font-mono text-xs text-muted-foreground">{value}</code>
       </div>
       <Button
         type="button"
@@ -79,7 +79,7 @@ function RecentRegistrantsList({ items }) {
               <span className="mx-1.5 text-muted-foreground">·</span>
               <span className="text-muted-foreground">{item.webinarTitle}</span>
             </div>
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="rounded bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
                 {formatStatusLabel(item.status)}
               </span>

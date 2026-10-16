@@ -277,7 +277,7 @@ export default function ServiceCard({
             {status ? <StatusBadge status={status} size="xs" /> : null}
             <IntegrationBadge id={service.id} size="xs" />
             {result?.at && (
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-xs text-muted-foreground">
                 tested {relativeTime(result.at)}
               </span>
             )}

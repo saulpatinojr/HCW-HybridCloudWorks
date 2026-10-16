@@ -80,7 +80,7 @@ function ServiceTile({ service, result, testing, onOpen }) {
             <p className="wrap-break-word text-xs text-destructive">{result.message}</p>
           ) : null}
           {service.skipInTestAll ? (
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Not in Test all. {service.skipInTestAll}
             </p>
           ) : null}

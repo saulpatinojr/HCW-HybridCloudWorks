@@ -127,7 +127,7 @@ export default function DiagramSourcePanel({
 
         {parsed && (
           <>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {parsed.page.name || 'Page 1'}
               {parsed.pageCount > 1 ? ` (1 of ${parsed.pageCount})` : ''} · {shapes.length} labelled
               shapes

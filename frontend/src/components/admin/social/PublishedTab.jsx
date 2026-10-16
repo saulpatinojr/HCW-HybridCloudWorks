@@ -31,7 +31,7 @@ function AccountResult({ result }) {
   return (
     <Badge
       variant="outline"
-      className={`text-[10px] ${failed ? 'border-destructive/40 text-destructive' : ''}`}
+      className={`text-xs ${failed ? 'border-destructive/40 text-destructive' : ''}`}
       title={result.error || undefined}
     >
       {result.name}
@@ -61,7 +61,7 @@ function PublishedPost({ post, fromHub, index }) {
               {fmtDate(postWhen(post))}
             </span>
             {fromHub && (
-              <Badge variant="outline" className="text-[10px] border-pink-300 text-pink-600">
+              <Badge variant="outline" className="text-xs border-pink-300 text-pink-600">
                 via Social Hub
               </Badge>
             )}
@@ -100,14 +100,14 @@ function LivePageCard({ item }) {
           <p className="text-sm font-medium truncate">{getLiveTitle(item)}</p>
           <div className="flex flex-wrap items-center gap-2 mt-1">
             {provider && (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-xs">
                 {provider}
               </Badge>
             )}
-            <Badge variant="outline" className="text-[10px] capitalize">
+            <Badge variant="outline" className="text-xs capitalize">
               {item.__source}
             </Badge>
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {fmtDate(item.publishedAt || item.updatedAt || item.createdAt)}
             </span>
           </div>
@@ -180,7 +180,7 @@ export default function PublishedTab({ ready = true }) {
           <h3 className="text-sm font-semibold flex items-center gap-2">
             Live Pages on hybridcloudworks.com
             {recentContent.length > 0 && (
-              <Badge variant="secondary" className="text-[10px]">
+              <Badge variant="secondary" className="text-xs">
                 {recentContent.length}
               </Badge>
             )}
@@ -219,7 +219,7 @@ export default function PublishedTab({ ready = true }) {
             <h3 className="text-sm font-semibold flex items-center gap-2">
               Published in Publer
               {publerPosts.length > 0 && (
-                <Badge variant="secondary" className="text-[10px]">
+                <Badge variant="secondary" className="text-xs">
                   {publerPosts.length}
                 </Badge>
               )}
@@ -257,7 +257,7 @@ export default function PublishedTab({ ready = true }) {
           <section key={day.key || 'undated'} className="space-y-2" aria-label={day.label}>
             <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {day.label}
-              <Badge variant="secondary" className="ml-2 text-[10px]">
+              <Badge variant="secondary" className="ml-2 text-xs">
                 {day.posts.length}
               </Badge>
             </h4>

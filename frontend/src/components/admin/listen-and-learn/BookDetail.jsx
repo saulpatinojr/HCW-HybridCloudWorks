@@ -69,24 +69,24 @@ function BookHeader({ book, onAdd, onEdit, onArchive, onDelete }) {
       )}
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="outline" className="text-[10px]">
+          <Badge variant="outline" className="text-xs">
             {BOOK_KIND_LABEL[book.kind] || book.kind}
           </Badge>
-          <Badge variant="secondary" className="text-[10px]">
+          <Badge variant="secondary" className="text-xs">
             {book.provider}
           </Badge>
           {book.kind === 'course' && (
-            <Badge variant="secondary" className="text-[10px] uppercase">
+            <Badge variant="secondary" className="text-xs uppercase">
               {book.examCode}
             </Badge>
           )}
           {book.archivedAt && (
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-xs">
               Archived
             </Badge>
           )}
           {(book.tags || []).map((tag) => (
-            <Badge key={tag} variant="outline" className="text-[10px]">
+            <Badge key={tag} variant="outline" className="text-xs">
               #{tag}
             </Badge>
           ))}

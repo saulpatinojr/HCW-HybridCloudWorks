@@ -33,7 +33,7 @@ function PromptList({ prompts, promptName, onChoose, onNew }) {
             >
               {prompt.name}
               {hasSlotTemplates(prompt) && (
-                <span className="ml-1 text-[10px] text-muted-foreground">· slot templates</span>
+                <span className="ml-1 text-xs text-muted-foreground">· slot templates</span>
               )}
             </button>
           </li>
@@ -80,7 +80,7 @@ function PromptForm({ promptFields, selectedPrompt, busy, actions }) {
           disabled={Boolean(selectedPrompt)}
         />
         {selectedPrompt && (
-          <p className="mt-1 text-[11px] text-muted-foreground">
+          <p className="mt-1 text-xs text-muted-foreground">
             Names are the prompt&apos;s id; to rename, create a new prompt and delete this one.
           </p>
         )}
@@ -101,7 +101,7 @@ function PromptForm({ promptFields, selectedPrompt, busy, actions }) {
         slotTemplates={promptFields.slotTemplates}
         onChange={actions.setSlotTemplate}
       />
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         The hero template is used by the AI cover (review queue and change feed) and by set samples;
         the secondary templates by the Submit URLs preview slots.
       </p>

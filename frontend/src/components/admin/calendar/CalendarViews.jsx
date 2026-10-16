@@ -82,7 +82,7 @@ export function MonthGrid({ cursor, days, conflicts, today, onSelect, onAdd, onD
         <div
           key={name}
           role="columnheader"
-          className="py-1 text-center text-[11px] font-semibold text-muted-foreground"
+          className="py-1 text-center text-xs font-semibold text-muted-foreground"
         >
           {name}
         </div>
@@ -117,7 +117,7 @@ export function MonthGrid({ cursor, days, conflicts, today, onSelect, onAdd, onD
                 <button
                   type="button"
                   onClick={() => onMore?.(day)}
-                  className="text-[10px] text-muted-foreground underline"
+                  className="text-xs text-muted-foreground underline"
                 >
                   +{items.length - MONTH_MAX_CHIPS} more
                 </button>
@@ -143,13 +143,11 @@ export function WeekView({ cursor, days, conflicts, today, onSelect, onAdd, onDr
             {...dropProps(day, onDrop)}
             className="group min-h-[28rem] rounded-md border border-border p-1.5"
           >
-            <p className="text-[11px] font-semibold text-muted-foreground">
-              {WEEKDAYS[day.getDay()]}
-            </p>
+            <p className="text-xs font-semibold text-muted-foreground">{WEEKDAYS[day.getDay()]}</p>
             <DayHeading day={day} today={today} onAdd={onAdd} />
             <div className="mt-2 space-y-1">
               {items.length === 0 && (
-                <p className="text-[11px] text-muted-foreground">Nothing scheduled</p>
+                <p className="text-xs text-muted-foreground">Nothing scheduled</p>
               )}
               {items.map((item) => (
                 <CalendarItemChip

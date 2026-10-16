@@ -38,7 +38,7 @@ const SAMPLE_INPUTS = [
 function SampleSelect({ field, value, options, onChange }) {
   return (
     <div>
-      <label htmlFor={field.id} className="text-[11px] font-medium">
+      <label htmlFor={field.id} className="text-xs font-medium">
         {field.label}
       </label>
       <select
@@ -60,7 +60,7 @@ function SampleSelect({ field, value, options, onChange }) {
 function SampleInput({ field, value, onChange }) {
   return (
     <div className={field.className}>
-      <label htmlFor={field.id} className="text-[11px] font-medium">
+      <label htmlFor={field.id} className="text-xs font-medium">
         {field.label}
       </label>
       <Input
@@ -103,7 +103,7 @@ function SampleResult({ result, setName }) {
         </p>
         <details>
           <summary className="cursor-pointer font-medium">Prompt sent</summary>
-          <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[11px]">
+          <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-xs">
             {result.prompt}
           </pre>
         </details>
@@ -171,7 +171,7 @@ function ImageTile({ image, onOpen }) {
           className="aspect-video w-full object-cover"
         />
       </button>
-      <div className="space-y-1 p-2 text-[10px]">
+      <div className="space-y-1 p-2 text-xs">
         <div className="flex flex-wrap gap-1">
           <StatusBadge status={imageState(image)} size="xs" />
           {image.usageCount > 0 && <Badge variant="secondary">In use ({image.usageCount})</Badge>}

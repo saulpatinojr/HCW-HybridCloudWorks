@@ -281,7 +281,7 @@ export default function Header() {
             type="button"
             onClick={() => setCommandPaletteOpen(true)}
             aria-label="Search site (Cmd+K)"
-            className="inline-flex items-center justify-between gap-2 w-36 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-800/60 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-all text-xs cursor-pointer hover:border-slate-300 dark:hover:border-slate-700 shrink-0"
+            className="inline-flex items-center justify-between gap-2 w-36 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-800/60 text-muted-foreground hover:text-foreground transition-all text-xs cursor-pointer hover:border-slate-300 dark:hover:border-slate-700 shrink-0"
           >
             <span className="inline-flex items-center gap-1.5">
               <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
@@ -289,7 +289,7 @@ export default function Header() {
               </span>
               <span className="font-medium">Search...</span>
             </span>
-            <kbd className="inline-flex items-center px-1.5 py-0.5 text-[9px] font-mono rounded bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-400">
+            <kbd className="inline-flex items-center px-1.5 py-0.5 text-xs font-mono rounded bg-muted border border-border text-muted-foreground">
               ⌘K
             </kbd>
           </button>
@@ -345,7 +345,7 @@ export default function Header() {
           >
             <span className="material-symbols-outlined text-base">search</span>
             <span>Search blueprints, labs, certs...</span>
-            <kbd className="ml-auto px-1.5 py-0.5 text-[10px] font-mono rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-400">
+            <kbd className="ml-auto px-1.5 py-0.5 text-xs font-mono rounded bg-muted border border-border text-muted-foreground">
               ⌘K
             </kbd>
           </button>

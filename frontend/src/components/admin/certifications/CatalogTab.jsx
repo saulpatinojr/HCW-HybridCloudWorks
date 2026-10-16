@@ -17,7 +17,7 @@ function Stat({ label, className = 'text-2xl font-bold', children }) {
   return (
     <Card>
       <CardContent className="p-3">
-        <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
+        <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
         <p className={className}>{children}</p>
       </CardContent>
     </Card>

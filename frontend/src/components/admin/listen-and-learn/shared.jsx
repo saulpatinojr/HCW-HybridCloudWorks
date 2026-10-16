@@ -27,7 +27,7 @@ export function SetPicker({ sets, selected, onOpen }) {
           onClick={() => onOpen(set.provider, set.examCode)}
         >
           {set.kind === 'course' ? set.examCode : set.title}
-          <span className="ml-1.5 text-[10px] opacity-70">{set.provider}</span>
+          <span className="ml-1.5 text-xs opacity-70">{set.provider}</span>
         </Button>
       ))}
     </div>

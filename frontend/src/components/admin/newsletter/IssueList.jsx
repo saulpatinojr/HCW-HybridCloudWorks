@@ -95,7 +95,7 @@ function IssueCard({ row, selected, busy, onSelect, onDelete }) {
         className={`rounded-lg border px-3 py-2 text-left text-sm ${selected ? 'border-primary' : 'border-border'}`}
       >
         <span className="block font-medium">{label}</span>
-        <Badge variant="secondary" className="mt-1 text-[10px]">
+        <Badge variant="secondary" className="mt-1 text-xs">
           {STATUS_LABELS[row.status] || row.status}
         </Badge>
       </button>

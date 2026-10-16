@@ -55,7 +55,7 @@ function SetField({ field, value, onChange }) {
         )}
       </label>
       <Control field={field} value={value} onChange={(e) => onChange(field.key, e.target.value)} />
-      {field.help && <p className="mt-1 text-[11px] text-muted-foreground">{field.help}</p>}
+      {field.help && <p className="mt-1 text-xs text-muted-foreground">{field.help}</p>}
     </div>
   );
 }
@@ -112,14 +112,14 @@ function HistoryList({ history, onRestore }) {
             {entry.savedAt ? ` · ${new Date(entry.savedAt).toLocaleString()}` : ''}
             {entry.savedBy ? ` · ${entry.savedBy}` : ''}
           </p>
-          <pre className="whitespace-pre-wrap rounded bg-muted/40 p-2 text-[11px]">
+          <pre className="whitespace-pre-wrap rounded bg-muted/40 p-2 text-xs">
             {entry.primaryPrompt}
           </pre>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-6 text-[11px]"
+            className="h-6 text-xs"
             onClick={() => onRestore(entry.primaryPrompt)}
           >
             Restore this text into the editor

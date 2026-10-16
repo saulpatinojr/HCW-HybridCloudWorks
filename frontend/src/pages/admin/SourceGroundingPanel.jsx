@@ -48,7 +48,7 @@ function SourceLine({ line }) {
   return (
     <li className="flex items-start gap-1.5 text-xs text-muted-foreground">
       <Icon className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-      <Badge variant="outline" className="text-[10px] px-1 py-0">
+      <Badge variant="outline" className="text-xs px-1 py-0">
         {KIND_LABEL[line.kind]}
       </Badge>
       <span className="break-all">{line.url}</span>
@@ -181,7 +181,7 @@ export function SourceGroundingPanel({ platform, examCode, certTitle, onDone }) 
                   : null)}
             </span>
           </div>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Gemini reads the pages and watches the videos itself, so this needs Gemini enabled on
             the AI Engine page; no other provider can, and the run refuses rather than falling back
             to one. At most 20 pages and 10 videos. Re-running the same title adds a new take to the
@@ -205,7 +205,7 @@ export function EpisodeSources({ episode }) {
   return (
     <div className="space-y-1">
       <p className="text-xs font-medium flex items-center gap-1.5">
-        <Badge variant="secondary" className="text-[10px] px-1 py-0">
+        <Badge variant="secondary" className="text-xs px-1 py-0">
           Source-grounded
         </Badge>
         Built from {sources.length} {sources.length === 1 ? 'source' : 'sources'}

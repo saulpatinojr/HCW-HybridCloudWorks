@@ -143,7 +143,7 @@ export default function BulkActionsBar({
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         <div className="space-y-1.5">
-          <p className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
             <Tag className="h-3 w-3" aria-hidden="true" /> Tags — click to add to every selected
             image; click again when all have it to remove
           </p>
@@ -164,7 +164,7 @@ export default function BulkActionsBar({
                   onClick={() => toggleTag(tag)}
                   disabled={busy}
                   aria-pressed={onAll}
-                  className={`rounded-full border px-2 py-0.5 text-[11px] ${tagChipClass(onAll, onSome)}`}
+                  className={`rounded-full border px-2 py-0.5 text-xs ${tagChipClass(onAll, onSome)}`}
                   title={onAll ? 'Remove from all selected' : 'Add to all selected'}
                 >
                   {tag}
@@ -172,7 +172,7 @@ export default function BulkActionsBar({
               );
             })}
             {tags.length === 0 && (
-              <span className="text-[11px] text-muted-foreground">No tags yet.</span>
+              <span className="text-xs text-muted-foreground">No tags yet.</span>
             )}
           </div>
           <div className="flex gap-1">
@@ -199,7 +199,7 @@ export default function BulkActionsBar({
         <div className="space-y-1.5">
           <label
             htmlFor="bulk-folder"
-            className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground"
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground"
           >
             <FolderInput className="h-3 w-3" aria-hidden="true" /> Move to folder
           </label>
@@ -230,7 +230,7 @@ export default function BulkActionsBar({
         </div>
 
         <div className="space-y-1.5">
-          <p className="text-[11px] font-medium text-muted-foreground">Set provider / slot</p>
+          <p className="text-xs font-medium text-muted-foreground">Set provider / slot</p>
           <div className="flex flex-wrap gap-1">
             <select
               value={provider}

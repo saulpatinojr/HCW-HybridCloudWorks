@@ -149,7 +149,7 @@ function ChapterForm({ book, onCreate, onClose }) {
             onChange={(e) => setText(e.target.value)}
             maxLength={60000}
           />
-          <span className="block text-[11px] font-normal text-muted-foreground" aria-live="polite">
+          <span className="block text-xs font-normal text-muted-foreground" aria-live="polite">
             {estimateLine(text, estimate)}
           </span>
         </label>

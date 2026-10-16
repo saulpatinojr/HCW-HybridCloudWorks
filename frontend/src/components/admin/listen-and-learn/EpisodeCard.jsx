@@ -48,7 +48,7 @@ function EpisodeAudio({ episode }) {
       {/* Which voice read it. Provenance for AI-generated study content, and
           the only thing that answers "why does this one sound different"
           after a provider or model change. */}
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         {versionSummary(episode) || episode.speechModel || episode.speechProvider}
       </p>
     </>
@@ -60,12 +60,12 @@ function EpisodeBadges({ episode }) {
     <div className="flex flex-wrap items-center justify-end gap-1.5">
       <StatusBadge status={chapterStatus(episode.status)} />
       {episode.kind && (
-        <Badge variant="outline" className="text-[10px]">
+        <Badge variant="outline" className="text-xs">
           {KIND_LABEL[episode.kind] || episode.kind}
         </Badge>
       )}
       {episode.droppedFromGuide && (
-        <Badge variant="secondary" className="text-[10px]">
+        <Badge variant="secondary" className="text-xs">
           Not in current guide
         </Badge>
       )}
@@ -128,7 +128,7 @@ export default function EpisodeCard({ episode, busy, onReview, onRetry, onKeepCu
             </Button>
           </RoleGate>
           {published && episode.approvedAt && (
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               Approved {new Date(episode.approvedAt).toLocaleDateString()}
             </span>
           )}

@@ -30,7 +30,7 @@ function Field({ id, label, hint, className = 'space-y-1', children }) {
         {label}
       </label>
       {children}
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -241,7 +241,7 @@ function ListEditor({ idPrefix, title, hint, rows, empty, fields, onChange }) {
   return (
     <fieldset className="md:col-span-2 space-y-2 rounded-md border border-border p-3">
       <legend className="px-1 text-xs font-medium text-muted-foreground">{title}</legend>
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {rows.length === 0 && <p className="text-xs text-muted-foreground">None yet.</p>}
       {rows.map((row, index) => (
         <div key={index} className="grid gap-2 md:grid-cols-[1fr_1fr_auto] items-end">

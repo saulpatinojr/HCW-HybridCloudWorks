@@ -167,7 +167,7 @@ export default function CommandPalette({ isOpen: propIsOpen, onClose: propOnClos
               <span className="material-symbols-outlined text-base">close</span>
             </button>
           ) : (
-            <kbd className="hidden sm:inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] font-mono font-semibold text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md">
+            <kbd className="hidden sm:inline-flex items-center gap-0.5 px-2 py-0.5 text-xs font-mono font-semibold text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md">
               ESC
             </kbd>
           )}
@@ -240,7 +240,7 @@ export default function CommandPalette({ isOpen: propIsOpen, onClose: propOnClos
                       <div className="min-w-0 flex flex-col">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-bold truncate">{item.title}</span>
-                          <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-200/60 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300/40 dark:border-slate-700/60 shrink-0">
+                          <span className="text-xs font-mono uppercase px-1.5 py-0.5 rounded bg-slate-200/60 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300/40 dark:border-slate-700/60 shrink-0">
                             {item.category}
                           </span>
                         </div>
@@ -252,7 +252,7 @@ export default function CommandPalette({ isOpen: propIsOpen, onClose: propOnClos
 
                     <div className="flex items-center gap-2 shrink-0">
                       {item.badge && (
-                        <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                        <span className="text-xs font-mono font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                           {item.badge}
                         </span>
                       )}
@@ -271,7 +271,7 @@ export default function CommandPalette({ isOpen: propIsOpen, onClose: propOnClos
         </div>
 
         {/* Footer Navigation Hints */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 font-mono">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
               <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
@@ -295,7 +295,7 @@ export default function CommandPalette({ isOpen: propIsOpen, onClose: propOnClos
               Close
             </span>
           </div>
-          <span className="text-[10px]">
+          <span className="text-xs">
             {filteredItems.length} {filteredItems.length === 1 ? 'item' : 'items'}
           </span>
         </div>

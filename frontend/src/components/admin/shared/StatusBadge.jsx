@@ -68,7 +68,7 @@ export default function StatusBadge({
   const info = statusFromProps({ system, content, status });
   const tone = TONES[info.tone] || TONES.muted;
   const { Icon } = tone;
-  const sizing = size === 'xs' ? 'px-1.5 py-0 text-[10px] gap-1' : 'px-2 py-0.5 text-xs gap-1.5';
+  const sizing = size === 'xs' ? 'px-1.5 py-0 text-xs gap-1' : 'px-2 py-0.5 text-xs gap-1.5';
   return (
     <span
       className={`inline-flex items-center rounded-full border font-medium whitespace-nowrap transition-colors duration-300 motion-reduce:transition-none ${sizing} ${tone.className} ${className}`}

@@ -114,7 +114,7 @@ export const STATUS_ANSWERS = Object.freeze({
     ),
 });
 
-class IdentityStub {
+export class IdentityStub {
   constructor(page, baseURL) {
     this.page = page;
     this.origin = new URL(baseURL).origin;

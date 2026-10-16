@@ -141,7 +141,7 @@ export default function GenerateTab({ hub }) {
                     : null)}
               </span>
             </div>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               A run takes several minutes and saves each lesson as it completes, so a timeout still
               leaves finished lessons behind. Re-running an exam code adds a new take to each lesson
               and keeps its approval and your renames; a lesson the new guide no longer lists is
@@ -150,7 +150,7 @@ export default function GenerateTab({ hub }) {
               ElevenLabs, which is the podcast voice) and the expected spend is shown here as soon
               as the run is accepted; the actual spend is logged to the AI Engine usage tab.
             </p>
-            <p className="text-[11px] text-muted-foreground">{GITHUB_GENERATE_NOTE}</p>
+            <p className="text-xs text-muted-foreground">{GITHUB_GENERATE_NOTE}</p>
           </form>
         </CardContent>
       </Card>

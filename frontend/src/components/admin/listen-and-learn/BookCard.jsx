@@ -34,19 +34,19 @@ export default function BookCard({ book, onOpen }) {
         )}
         <div className="flex flex-1 flex-col gap-1.5 p-3">
           <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-xs">
               {BOOK_KIND_LABEL[book.kind] || book.kind}
             </Badge>
-            <Badge variant="secondary" className="text-[10px]">
+            <Badge variant="secondary" className="text-xs">
               {book.provider}
             </Badge>
             {book.examCode && book.kind === 'course' && (
-              <Badge variant="secondary" className="text-[10px] uppercase">
+              <Badge variant="secondary" className="text-xs uppercase">
                 {book.examCode}
               </Badge>
             )}
             {book.archivedAt && (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-xs">
                 Archived
               </Badge>
             )}
@@ -54,9 +54,7 @@ export default function BookCard({ book, onOpen }) {
           <p className="line-clamp-2 text-sm font-semibold">{book.title}</p>
           {book.author && <p className="text-xs text-muted-foreground">{book.author}</p>}
           <p className="mt-auto text-xs text-muted-foreground">{bookSummary(book)}</p>
-          {counts.failed > 0 && (
-            <p className="text-[11px] text-destructive">{counts.failed} failed</p>
-          )}
+          {counts.failed > 0 && <p className="text-xs text-destructive">{counts.failed} failed</p>}
         </div>
       </button>
     </li>

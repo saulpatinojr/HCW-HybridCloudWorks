@@ -66,7 +66,7 @@ function TextAnswer({ id, question, text, onChange, error }) {
         aria-describedby={describedBy(id, question, error)}
       />
       {max && (
-        <p className="text-[11px] text-muted-foreground tabular-nums" aria-live="polite">
+        <p className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
           {text.length.toLocaleString()} / {max.toLocaleString()} characters
         </p>
       )}
@@ -251,7 +251,7 @@ function ActivitiesAnswer({ id, question, text, onChange, evidence }) {
     );
   return (
     <div className="space-y-1.5">
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         Tag {max ? `up to ${max} ` : ''}activities from the past 12 months, from the evidence
         attached to this application
         {max ? ` · ${chosen.length} / ${max}` : ` · ${chosen.length}`}.
@@ -338,7 +338,7 @@ function QuestionField({ question, text, onChange, error, evidence, evidenceById
         />
       </div>
       {question.hint && (
-        <p id={describeId(id)} className="text-[11px] text-muted-foreground">
+        <p id={describeId(id)} className="text-xs text-muted-foreground">
           {question.hint}
         </p>
       )}
@@ -419,7 +419,7 @@ export default function GuidedResponses({ questions, responses, onChange, eviden
       {leftovers.length > 0 && (
         <fieldset className="space-y-2 rounded-md border border-dashed border-border p-3">
           <legend className="px-1 text-xs font-medium">Other responses</legend>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Written before this program had its question list; kept as they are.
           </p>
           {leftovers.map((r) => (

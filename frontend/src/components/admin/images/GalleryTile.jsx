@@ -122,7 +122,7 @@ function TileFooter({ item, url, resolved }) {
       <p className="truncate text-sm font-medium" title={item.title}>
         {item.title}
       </p>
-      <div className="flex flex-wrap items-center gap-1 text-[10px]">
+      <div className="flex flex-wrap items-center gap-1 text-xs">
         <Badge variant="outline">{getSourceLabel(item.source)}</Badge>
         {item.provider && <Badge variant="outline">{String(item.provider).toUpperCase()}</Badge>}
         {item.slot && <Badge variant="secondary">{item.slot}</Badge>}
@@ -140,7 +140,7 @@ function TileFooter({ item, url, resolved }) {
           <span className="text-muted-foreground">+{item.customTags.length - 3}</span>
         )}
       </div>
-      <div className="mt-auto flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+      <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>
           {item.folder}
           {dims ? ` · ${dims}` : ''}
@@ -154,7 +154,7 @@ function TileFooter({ item, url, resolved }) {
           href={safeUrl(resolved)}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
+          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
         >
           Open file <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </a>
@@ -220,7 +220,7 @@ export default function GalleryTile({
             {item.duplicateOf && (
               <Badge
                 variant="secondary"
-                className="text-[10px]"
+                className="text-xs"
                 title="Same bytes or URL as an earlier image in the gallery"
               >
                 Duplicate

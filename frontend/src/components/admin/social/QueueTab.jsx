@@ -84,7 +84,7 @@ function PublerQueueCard({ post, deleting, onDelete }) {
           <div className="flex flex-wrap items-center gap-2 mt-2">
             {provider && <PlatformBadge provider={provider} />}
             {accts.map((a, i) => (
-              <Badge key={i} variant="outline" className="text-[10px]">
+              <Badge key={i} variant="outline" className="text-xs">
                 {firstText([a?.name, a?.id], 'account')}
               </Badge>
             ))}
@@ -95,7 +95,7 @@ function PublerQueueCard({ post, deleting, onDelete }) {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <Badge variant="secondary" className="capitalize text-[10px]">
+          <Badge variant="secondary" className="capitalize text-xs">
             {firstText([post.status, post.state], 'scheduled')}
           </Badge>
           <DeleteButton
@@ -129,7 +129,7 @@ function LocalRecordCard({ post, deleting, onDelete, onEdit }) {
               </span>
             )}
             {post.syncStatus === 'pending' && (
-              <span className="text-[10px] text-muted-foreground">Publer update pending</span>
+              <span className="text-xs text-muted-foreground">Publer update pending</span>
             )}
           </div>
         </div>
@@ -318,7 +318,7 @@ function QueueLists({
           <h3 className="text-sm font-semibold">
             Publer Queue
             {totalPubler > 0 && (
-              <Badge variant="secondary" className="ml-2 text-[10px]">
+              <Badge variant="secondary" className="ml-2 text-xs">
                 {totalPubler}
               </Badge>
             )}
@@ -358,7 +358,7 @@ function QueueLists({
         <div className="space-y-3">
           <h3 className="text-sm font-semibold">
             Local Records
-            <Badge variant="secondary" className="ml-2 text-[10px]">
+            <Badge variant="secondary" className="ml-2 text-xs">
               {totalLocal}
             </Badge>
           </h3>

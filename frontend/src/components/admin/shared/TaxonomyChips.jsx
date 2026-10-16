@@ -11,7 +11,7 @@ import { labelFor, resolveIdeaOrigin, resolveKind } from '@/lib/taxonomy';
 import { useTaxonomy } from './useTaxonomy';
 
 const CHIP =
-  'inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground whitespace-nowrap';
+  'inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs font-medium text-muted-foreground whitespace-nowrap';
 
 export default function TaxonomyChips({
   item,

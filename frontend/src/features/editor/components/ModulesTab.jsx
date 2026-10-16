@@ -46,7 +46,7 @@ export function ModulesTab() {
       {/* Header with section filter toggle */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">
             {showAll
               ? `All modules — ${moduleItems.length}/10`
               : `Modules in ${sectionLabel} — ${sectionModuleCount}`}
@@ -57,7 +57,7 @@ export function ModulesTab() {
         </div>
         <button
           type="button"
-          className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors shrink-0"
+          className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors shrink-0"
           onClick={() => setShowAll((v) => !v)}
         >
           {showAll ? 'Filter to section' : 'Show all'}

@@ -81,7 +81,7 @@ export default function UnscheduledPanel({ items, loading, error, onRetry, onSch
             </p>
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
               <StatusBadge content={item} size="xs" />
-              <span className="text-[10px] text-muted-foreground">
+              <span className="text-xs text-muted-foreground">
                 {item['Cloud Provider'] || item.cloudProvider || ''}
               </span>
               <Button

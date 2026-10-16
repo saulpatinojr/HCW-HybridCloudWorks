@@ -71,7 +71,7 @@ export default function PipelineStepper({ item, status, className = '' }) {
               role="listitem"
               aria-current={isCurrent ? 'step' : undefined}
               data-stage={stage.id}
-              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition-colors ${chipClass}`}
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-wide transition-colors ${chipClass}`}
             >
               {isDone && <Check className="h-2.5 w-2.5" aria-hidden="true" />}
               {stage.label}
@@ -83,7 +83,7 @@ export default function PipelineStepper({ item, status, className = '' }) {
         <span
           role="listitem"
           aria-current="step"
-          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
             rejected
               ? 'border-destructive/40 bg-destructive/10 text-destructive'
               : 'border-border bg-muted text-muted-foreground'

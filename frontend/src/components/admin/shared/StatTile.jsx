@@ -69,7 +69,7 @@ export default function StatTile({
       {note ? (
         <span
           className={cn(
-            'mt-0.5 truncate text-[11px] leading-4',
+            'mt-0.5 truncate text-xs leading-4',
             noteClassName ?? 'text-muted-foreground'
           )}
           title={note}
@@ -78,11 +78,7 @@ export default function StatTile({
           {note}
         </span>
       ) : (
-        <span
-          className="mt-0.5 text-[11px] leading-4"
-          aria-hidden="true"
-          data-testid="stat-tile-note"
-        >
+        <span className="mt-0.5 text-xs leading-4" aria-hidden="true" data-testid="stat-tile-note">
           &nbsp;
         </span>
       )}

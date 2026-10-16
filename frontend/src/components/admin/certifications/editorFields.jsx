@@ -91,7 +91,7 @@ export function IssuerField({ form, set, allCerts }) {
         Issuer
         {issuerMatch && (
           <span
-            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${getIssuerColor(form.issuer)}`}
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold ${getIssuerColor(form.issuer)}`}
           >
             {issuerMatch.name}
           </span>
@@ -127,7 +127,7 @@ export function IssuerField({ form, set, allCerts }) {
         )}
       </div>
       {vendorMeta.path && (
-        <p className="text-[10px] text-slate-500 mt-1">
+        <p className="text-xs text-slate-500 mt-1">
           Will appear on <span className="font-mono">{vendorMeta.path}</span>
         </p>
       )}
@@ -177,7 +177,7 @@ function UploadStatus({ uploading }) {
           </>
         )}
       </p>
-      <p className="text-[11px] text-slate-500 mt-0.5">
+      <p className="text-xs text-slate-500 mt-0.5">
         {IMAGE_RULES.formats} · max {IMAGE_RULES.maxLabel}. Uploaded through the Azure API to Blob
         Storage and saved as the Image URL on save.
       </p>
@@ -296,10 +296,10 @@ function SiblingLadder({ siblings, order }) {
   const rows = ladderWindow(siblings, order);
   return (
     <div className="mt-2 p-2 rounded-md bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50">
-      <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
+      <p className="text-xs uppercase tracking-wide text-slate-500 mb-1">
         Nearby on the About page ladder
       </p>
-      <ul className="space-y-0.5 text-[11px]">
+      <ul className="space-y-0.5 text-xs">
         {rows.map((s) => {
           const conflict = s.order === Number(order);
           return (
@@ -310,12 +310,12 @@ function SiblingLadder({ siblings, order }) {
               }`}
             >
               <span className="truncate">
-                <span className="font-mono text-[10px] mr-1">#{s.order}</span>
+                <span className="font-mono text-xs mr-1">#{s.order}</span>
                 {s.name}
                 {s.code ? ` (${s.code})` : ''}
                 <span className="text-slate-400"> · {s.issuer}</span>
               </span>
-              {conflict && <span className="text-[9px]">same number</span>}
+              {conflict && <span className="text-xs">same number</span>}
             </li>
           );
         })}
@@ -335,7 +335,7 @@ export function DisplayOrderField({ form, set, allCerts, docId, error }) {
         <button
           type="button"
           onClick={() => set('display_order', nextFreeOrder(siblings))}
-          className="text-[10px] font-semibold text-indigo-600 hover:text-indigo-700"
+          className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
         >
           Suggest next
         </button>
@@ -351,7 +351,7 @@ export function DisplayOrderField({ form, set, allCerts, docId, error }) {
         aria-describedby={error ? 'cert-display-order-error' : undefined}
       />
       {error && (
-        <p id="cert-display-order-error" className="mt-1 text-[11px] text-rose-600" role="alert">
+        <p id="cert-display-order-error" className="mt-1 text-xs text-rose-600" role="alert">
           {error}
         </p>
       )}
@@ -375,7 +375,7 @@ export function VisibilityFlags({ form, set }) {
       <Flag checked={form.display} onChange={(v) => set('display', v)}>
         Show on About page
       </Flag>
-      <p className="text-[10px] text-slate-500 -mt-1">
+      <p className="text-xs text-slate-500 -mt-1">
         New certifications default to visible; hide only when you want them excluded from About.
       </p>
       <Flag checked={form.featured} onChange={(v) => set('featured', v)}>

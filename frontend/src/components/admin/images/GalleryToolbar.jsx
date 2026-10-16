@@ -15,7 +15,7 @@ const selectClass =
 function FilterSelect({ id, label, value, onChange, options, allLabel }) {
   return (
     <div className="space-y-1">
-      <label htmlFor={id} className="text-[11px] font-medium text-muted-foreground">
+      <label htmlFor={id} className="text-xs font-medium text-muted-foreground">
         {label}
       </label>
       <select
@@ -96,7 +96,7 @@ export default function GalleryToolbar({
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <div className="space-y-1 md:col-span-3 xl:col-span-2">
-          <label htmlFor="gallery-search" className="text-[11px] font-medium text-muted-foreground">
+          <label htmlFor="gallery-search" className="text-xs font-medium text-muted-foreground">
             Search
           </label>
           <div className="relative">
@@ -164,7 +164,7 @@ export default function GalleryToolbar({
           />
         )}
         <div className="space-y-1">
-          <label htmlFor="gallery-sort" className="text-[11px] font-medium text-muted-foreground">
+          <label htmlFor="gallery-sort" className="text-xs font-medium text-muted-foreground">
             Sort
           </label>
           <select

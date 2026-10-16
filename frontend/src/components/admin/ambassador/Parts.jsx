@@ -18,7 +18,7 @@ export const INPUT = 'w-full text-sm border border-border rounded-md px-3 py-1.5
 export function FieldError({ id, message }) {
   if (!message) return null;
   return (
-    <p id={id} role="alert" className="mt-1 text-[11px] text-rose-600">
+    <p id={id} role="alert" className="mt-1 text-xs text-rose-600">
       {message}
     </p>
   );
@@ -31,7 +31,7 @@ export function Field({ id, label, hint, error, className = '', children }) {
         {label}
       </Label>
       {children}
-      {hint && !error && <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p>}
+      {hint && !error && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
       <FieldError id={`${id}-error`} message={error} />
     </div>
   );
@@ -132,7 +132,7 @@ export function LinkList({ idPrefix, title, hint, rows, onChange, errors = {} })
   return (
     <fieldset className="space-y-2 rounded-md border border-border p-3">
       <legend className="px-1 text-xs font-medium">{title}</legend>
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {rows.length === 0 && <p className="text-xs text-muted-foreground">None yet.</p>}
       {rows.map((row, index) => (
         <div key={index} className="grid grid-cols-[1fr_2fr_auto] items-start gap-2">
@@ -225,7 +225,7 @@ export function ProgramsFieldset({ programs, value, onChange }) {
   return (
     <fieldset className="space-y-1">
       <legend className="text-xs font-medium">Counts for</legend>
-      <p className="text-[11px] text-muted-foreground">Leave clear to count for every program.</p>
+      <p className="text-xs text-muted-foreground">Leave clear to count for every program.</p>
       <div className="flex flex-wrap gap-2">
         {programs.map((p) => (
           <label key={p.id} className="flex items-center gap-1.5 text-xs">

@@ -25,7 +25,7 @@ function renderGalleryContent({ galleryLoading, galleryItems, deleteGalleryItem 
         {galleryItems.map((item) => (
           <div key={item.id} className="rounded-md border border-border p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <Badge variant="secondary" className="text-[10px]">
+              <Badge variant="secondary" className="text-xs">
                 {item.slot || 'preview'}
               </Badge>
               <Button
@@ -45,7 +45,7 @@ function renderGalleryContent({ galleryLoading, galleryItems, deleteGalleryItem 
                 className="h-32 w-full rounded object-cover"
               />
             </a>
-            <p className="text-[11px] text-muted-foreground truncate">{item.imageUrl}</p>
+            <p className="text-xs text-muted-foreground truncate">{item.imageUrl}</p>
           </div>
         ))}
       </div>
@@ -160,7 +160,7 @@ function GeneratedSlots({
             </a>
           </label>
           {generationPromptLogs[key]?.slotLabel && (
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-xs">
               {generationPromptLogs[key].slotLabel}
             </Badge>
           )}
@@ -274,14 +274,12 @@ function PromptLibraryPicker({
           ))}
         </select>
       </div>
-      <p className="mt-1 text-[11px] text-muted-foreground">
+      <p className="mt-1 text-xs text-muted-foreground">
         {promptLibraryLoading
           ? 'Loading prompt library...'
           : promptLibraryStatus || 'Select a saved Prompt Set and Prompt Name for this page.'}
       </p>
-      {promptLibraryError && (
-        <p className="mt-1 text-[11px] text-destructive">{promptLibraryError}</p>
-      )}
+      {promptLibraryError && <p className="mt-1 text-xs text-destructive">{promptLibraryError}</p>}
     </div>
   );
 }

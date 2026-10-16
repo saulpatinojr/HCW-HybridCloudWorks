@@ -73,7 +73,7 @@ export function ModuleCard({
                 type="button"
                 variant={module.align === align ? 'default' : 'outline'}
                 size="sm"
-                className="h-6 px-2 text-[10px]"
+                className="h-6 px-2 text-xs"
                 onClick={(e) => {
                   e.stopPropagation();
                   onAlignChange(index, align);

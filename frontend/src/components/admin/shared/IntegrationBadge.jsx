@@ -129,8 +129,8 @@ export function brandFor(id) {
 }
 
 const SIZES = {
-  xs: { pill: 'gap-1 px-1.5 py-0 text-[10px]', medallion: 'h-3 w-3 text-[7px]' },
-  sm: { pill: 'gap-1.5 px-2 py-0.5 text-xs', medallion: 'h-4 w-4 text-[9px]' },
+  xs: { pill: 'gap-1 px-1.5 py-0 text-xs', medallion: 'h-3 w-3 text-xs' },
+  sm: { pill: 'gap-1.5 px-2 py-0.5 text-xs', medallion: 'h-4 w-4 text-xs' },
 };
 
 /**

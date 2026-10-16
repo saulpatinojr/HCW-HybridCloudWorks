@@ -174,7 +174,7 @@ export default function AIEngineUsageTab() {
               <div>
                 <p className="text-xs text-slate-500">{label}</p>
                 <p className="text-lg font-bold">{value}</p>
-                {note && <p className="text-[11px] text-amber-700 dark:text-amber-400">{note}</p>}
+                {note && <p className="text-xs text-amber-700 dark:text-amber-400">{note}</p>}
               </div>
             </CardContent>
           </Card>

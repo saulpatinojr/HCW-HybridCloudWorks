@@ -53,7 +53,7 @@ export function SectionCard({
       </span>
 
       {isTextFrame && (
-        <Badge variant="outline" className="text-[10px] h-4 px-1 ml-0.5">
+        <Badge variant="outline" className="text-xs h-4 px-1 ml-0.5">
           Frame
         </Badge>
       )}

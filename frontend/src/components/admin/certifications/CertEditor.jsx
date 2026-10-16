@@ -232,7 +232,7 @@ function useSave({ cert, form, setErrors, onSaved, onClose, toast, uploaded }) {
 function FieldError({ id, message }) {
   if (!message) return null;
   return (
-    <p id={id} className="mt-1 text-[11px] text-rose-600" role="alert">
+    <p id={id} className="mt-1 text-xs text-rose-600" role="alert">
       {message}
     </p>
   );
@@ -293,7 +293,7 @@ function LearnUrlField({ form, set, toast, error }) {
         <button
           type="button"
           onClick={autoSuggest}
-          className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:text-indigo-700"
+          className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
         >
           <Wand2 className="h-3 w-3" /> Auto-suggest
         </button>
@@ -307,7 +307,7 @@ function LearnUrlField({ form, set, toast, error }) {
         aria-describedby={error ? 'cert-learn-url-error' : undefined}
       />
       <FieldError id="cert-learn-url-error" message={error} />
-      <p className="text-[10px] text-slate-500 mt-1">
+      <p className="text-xs text-slate-500 mt-1">
         Used to link this cert to the official learning path on the provider site.
       </p>
     </div>
@@ -321,14 +321,14 @@ function LinkListField({ idPrefix, title, hint, rows, onChange, errors }) {
   return (
     <fieldset className="col-span-2 space-y-2 rounded-md border border-border p-3">
       <legend className="px-1 text-xs font-medium">{title}</legend>
-      <p className="text-[10px] text-slate-500">{hint}</p>
+      <p className="text-xs text-slate-500">{hint}</p>
       {rows.length === 0 && <p className="text-xs text-slate-500">None yet.</p>}
       {rows.map((row, index) => {
         const error = errors[`${idPrefix}.${index}`];
         return (
           <div key={index} className="grid grid-cols-[1fr_2fr_auto] gap-2 items-start">
             <div>
-              <Label className="text-[10px]" htmlFor={`cert-${idPrefix}-${index}-label`}>
+              <Label className="text-xs" htmlFor={`cert-${idPrefix}-${index}-label`}>
                 Label
               </Label>
               <Input
@@ -338,7 +338,7 @@ function LinkListField({ idPrefix, title, hint, rows, onChange, errors }) {
               />
             </div>
             <div>
-              <Label className="text-[10px]" htmlFor={`cert-${idPrefix}-${index}-url`}>
+              <Label className="text-xs" htmlFor={`cert-${idPrefix}-${index}-url`}>
                 URL
               </Label>
               <Input

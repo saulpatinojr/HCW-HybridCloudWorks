@@ -208,7 +208,7 @@ function getModulePreview(module) {
           </span>
         ))}
         {links.length > 3 && (
-          <span className="text-[10px] text-muted-foreground">+{links.length - 3} more</span>
+          <span className="text-xs text-muted-foreground">+{links.length - 3} more</span>
         )}
       </div>
     );
@@ -260,7 +260,7 @@ function SectionBoardCard({
         <Hash className="h-4 w-4 text-muted-foreground shrink-0" />
         <span className="font-medium text-sm flex-1 truncate">{heading || item.section.title}</span>
         {level > 0 && (
-          <Badge variant="outline" className="text-[10px] shrink-0">
+          <Badge variant="outline" className="text-xs shrink-0">
             H{level}
           </Badge>
         )}
@@ -268,7 +268,7 @@ function SectionBoardCard({
           type="button"
           variant="ghost"
           size="sm"
-          className="h-6 px-2 text-[10px] shrink-0"
+          className="h-6 px-2 text-xs shrink-0"
           onClick={(e) => {
             e.stopPropagation();
             onSelectSection(item.sectionIndex);
@@ -313,7 +313,7 @@ function ModuleBoardCard({
         <div className="flex-1 min-w-0 space-y-1">
           {/* Header row */}
           <div className="flex items-center gap-1.5">
-            <Badge variant="outline" className="capitalize text-[10px] shrink-0">
+            <Badge variant="outline" className="capitalize text-xs shrink-0">
               {item.module.type}
             </Badge>
             {item.module.type !== 'spacer' && (
@@ -326,7 +326,7 @@ function ModuleBoardCard({
                       e.stopPropagation();
                       onAlignChange(item.globalModuleIndex, a);
                     }}
-                    className={`rounded px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
+                    className={`rounded px-1.5 py-0.5 text-xs font-medium transition-colors ${
                       item.module.align === a
                         ? 'bg-primary text-primary-foreground'
                         : 'text-muted-foreground hover:text-foreground'
@@ -422,11 +422,11 @@ export function BoardTab() {
   return (
     <div className="space-y-1.5 max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-3">
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">
           Board — {sections.length} section{sections.length !== 1 ? 's' : ''}, {moduleItems.length}{' '}
           module{moduleItems.length !== 1 ? 's' : ''}
         </p>
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Drag to reorder. Modules can move between sections.
         </p>
       </div>

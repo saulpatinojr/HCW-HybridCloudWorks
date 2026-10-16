@@ -101,7 +101,7 @@ function PostSummary({ post }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{post.text || post.provider}</p>
         <p className="text-xs text-muted-foreground truncate">{post.url}</p>
-        <Badge variant="outline" className="text-[10px] mt-1">
+        <Badge variant="outline" className="text-xs mt-1">
           {post.provider} · {post.post_type}
         </Badge>
       </div>
@@ -167,7 +167,7 @@ export default function PostList({
         <h3 className="text-sm font-semibold">
           Current Posts
           {posts.length > 0 && (
-            <Badge variant="secondary" className="ml-2 text-[10px]">
+            <Badge variant="secondary" className="ml-2 text-xs">
               {posts.length}
             </Badge>
           )}

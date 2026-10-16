@@ -12,7 +12,7 @@ export function StatusBadge({ status }) {
   return (
     <Badge
       variant="outline"
-      className={`text-[10px] capitalize ${STATUS_STYLES[status] || STATUS_STYLES.cancelled}`}
+      className={`text-xs capitalize ${STATUS_STYLES[status] || STATUS_STYLES.cancelled}`}
     >
       {status}
     </Badge>
@@ -28,7 +28,7 @@ function DeactivatedBadge({ active }) {
   return (
     <Badge
       variant="outline"
-      className="text-[10px] border-slate-300 text-slate-500 dark:border-slate-700 dark:text-slate-400"
+      className="text-xs border-slate-300 text-slate-500 dark:border-slate-700 dark:text-slate-400"
     >
       Deactivated
     </Badge>
@@ -42,9 +42,7 @@ function DeactivatedBadge({ active }) {
  */
 function ObjectIdLine({ oid }) {
   if (!oid) return null;
-  return (
-    <p className="text-[10px] text-muted-foreground mt-1 font-mono break-all">object id {oid}</p>
-  );
+  return <p className="text-xs text-muted-foreground mt-1 font-mono break-all">object id {oid}</p>;
 }
 
 /** The drift verdict's colour, by its Health Hub status. */
@@ -67,7 +65,7 @@ function DriftLine({ applied, drift }) {
   return (
     <div className="mt-1 space-y-0.5">
       {applied?.commit && (
-        <p className="text-[10px] text-muted-foreground font-mono break-all">
+        <p className="text-xs text-muted-foreground font-mono break-all">
           commit {applied.commit.slice(0, 8)} · converged {formatTime(applied.appliedAt)}
         </p>
       )}
@@ -109,7 +107,7 @@ function CertificateLine({ certificateExpiresAt, now }) {
   }
 
   return (
-    <p className={`text-[11px] ${tone} mt-0.5`} data-testid="agent-cert-expiry">
+    <p className={`text-xs ${tone} mt-0.5`} data-testid="agent-cert-expiry">
       {label}
     </p>
   );
@@ -126,7 +124,7 @@ function CertWarningBadge({ certDaysLeft }) {
   return (
     <Badge
       variant="outline"
-      className={`text-[10px] ${toneClass}`}
+      className={`text-xs ${toneClass}`}
       data-testid="agent-cert-warning-badge"
     >
       {label}
@@ -162,7 +160,7 @@ export function AgentCard({ agent, now, actions = null, registry = false }) {
             <p className="text-sm font-semibold truncate">{agent.agentId || agent.id}</p>
             <Badge
               variant="outline"
-              className={`text-[10px] ${
+              className={`text-xs ${
                 online
                   ? 'border-emerald-300 text-emerald-600 dark:border-emerald-700 dark:text-emerald-400'
                   : 'border-rose-300 text-rose-600 dark:border-rose-700 dark:text-rose-400'
@@ -172,7 +170,7 @@ export function AgentCard({ agent, now, actions = null, registry = false }) {
             </Badge>
             <DeactivatedBadge active={agent.active} />
             {agent.version && (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-xs">
                 v{agent.version}
               </Badge>
             )}
@@ -188,7 +186,7 @@ export function AgentCard({ agent, now, actions = null, registry = false }) {
           {(agent.capabilities || []).length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
               {agent.capabilities.map((cap) => (
-                <Badge key={cap} variant="outline" className="text-[10px] font-mono">
+                <Badge key={cap} variant="outline" className="text-xs font-mono">
                   {cap}
                 </Badge>
               ))}

@@ -34,7 +34,7 @@ function PriorityRow({ step, index, count, row, name, models, busy, onMove, onMo
       data-provider={step.provider}
     >
       <span
-        className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] tabular-nums ${
+        className={`shrink-0 rounded-full border px-2 py-0.5 text-xs tabular-nums ${
           index === 0
             ? 'border-primary/40 bg-primary/5 font-medium text-primary'
             : 'border-border text-muted-foreground'

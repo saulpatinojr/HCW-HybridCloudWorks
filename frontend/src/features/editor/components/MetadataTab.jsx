@@ -80,7 +80,7 @@ export function MetadataTab() {
       <div className="rounded-md border border-border px-3 py-2 text-xs space-y-1 text-muted-foreground">
         <div className="flex items-center gap-2">
           {currentTarget && (
-            <Badge variant="secondary" className="capitalize text-[10px]">
+            <Badge variant="secondary" className="capitalize text-xs">
               {currentTarget}
             </Badge>
           )}
@@ -193,15 +193,13 @@ export function MetadataTab() {
           placeholder="aws, kubernetes, terraform"
           className="text-sm"
         />
-        <p className="text-[11px] text-muted-foreground">Comma-separated</p>
+        <p className="text-xs text-muted-foreground">Comma-separated</p>
       </div>
 
       {/* Summary — collapsible with AI button */}
       <CollapsibleSection title="Summary" defaultOpen>
         <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[11px] text-muted-foreground">
-            Used in article previews and cards
-          </span>
+          <span className="text-xs text-muted-foreground">Used in article previews and cards</span>
           <Button
             variant="ghost"
             size="sm"
@@ -227,7 +225,7 @@ export function MetadataTab() {
 
       {/* Sidebar content — collapsible */}
       <CollapsibleSection title="Sidebar Content">
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Optional markdown displayed in the article sidebar.
         </p>
         <Textarea
@@ -241,7 +239,7 @@ export function MetadataTab() {
       {/* Scraped images — collapsible */}
       <CollapsibleSection title={`Publish image order (${orderedImages.length})`} defaultOpen>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Drag to reorder. The first image becomes the hero image when you save.
           </p>
           <Button asChild variant="outline" size="sm" className="h-7 text-xs">
@@ -261,7 +259,7 @@ export function MetadataTab() {
           provider={blog?.['Cloud Provider'] || blog?.cloudProvider || ''}
           onSelect={(item) => attachOrderedImage(item.imageUrl)}
         />
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Reordering and removals are stored with the next draft save or publish action.
         </p>
       </CollapsibleSection>
@@ -270,7 +268,7 @@ export function MetadataTab() {
 
       {scrapedImages.length > 0 && (
         <CollapsibleSection title={`Scraped images (${scrapedImages.length})`}>
-          <p className="text-[11px] text-muted-foreground mb-1.5">
+          <p className="text-xs text-muted-foreground mb-1.5">
             Click an image to copy its URL for use in a picture module.
           </p>
           <div className="grid grid-cols-4 gap-1.5">

@@ -66,7 +66,7 @@ function ActivityRow({ row }) {
       </span>
       <span className="text-muted-foreground">{row.actor}</span>
       {route && (
-        <Badge variant="outline" className="font-mono text-[10px]">
+        <Badge variant="outline" className="font-mono text-xs">
           {route}
         </Badge>
       )}

@@ -50,7 +50,7 @@ function RequirementsEditor({ rows, onChange }) {
   return (
     <fieldset className="space-y-3 rounded-md border border-border p-3">
       <legend className="px-1 text-xs font-medium">Requirements</legend>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         Each is met when the count of relevant evidence of its types reaches the minimum; weight is
         its share of the readiness score.
       </p>
@@ -125,7 +125,7 @@ function CustomFieldsEditor({ rows, onChange }) {
   return (
     <fieldset className="space-y-2 rounded-md border border-border p-3">
       <legend className="px-1 text-xs font-medium">Custom fields</legend>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         Extra values an application for this program records (an id, a label and a type).
       </p>
       {rows.map((f, index) => (

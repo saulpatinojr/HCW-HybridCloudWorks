@@ -114,7 +114,7 @@ function PipelineTriggersCard({
             placeholder="Leave empty to use the assigned image set; type a prompt to use it verbatim."
             className="text-xs min-h-20"
           />
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             <CoverPlanNote
               imagePrompt={state.imagePrompt}
               plan={state.coverPromptPlan}
@@ -132,7 +132,7 @@ function PipelineTriggersCard({
             {isCoverGenerating ? 'Generating...' : 'Generate AI Cover'}
           </Button>
           {state.coverTriggerMessage && (
-            <p className="text-[11px] text-muted-foreground">{state.coverTriggerMessage}</p>
+            <p className="text-xs text-muted-foreground">{state.coverTriggerMessage}</p>
           )}
         </div>
       </CardContent>

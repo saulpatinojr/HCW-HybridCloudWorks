@@ -20,7 +20,7 @@ import { aiEngine } from '@/lib/aiEngine';
 import { catalogEntries, describeRefresh } from '@/lib/aiEngine/catalog';
 import { providerLabel, retiredInUse } from './selectionModel';
 
-const BADGE = 'rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide';
+const BADGE = 'rounded border px-1.5 py-0.5 text-xs uppercase tracking-wide';
 const STATUS_TONE = {
   live: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   retired: 'border-slate-200 bg-slate-100 text-slate-500',
@@ -197,7 +197,7 @@ export default function CatalogDrawer({
               ) : (
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    <tr className="text-xs uppercase tracking-wide text-muted-foreground">
                       <th className="py-1 pr-2 font-medium">Model</th>
                       <th className="py-1 pr-2 font-medium">Capabilities</th>
                       <th className="py-1 pr-2 font-medium">Price</th>

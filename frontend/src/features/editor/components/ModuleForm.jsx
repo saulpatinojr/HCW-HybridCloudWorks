@@ -75,8 +75,8 @@ function RichTypeInputs({ type, content, attribution, title, eyebrow, setModuleF
   if (type === 'stat_board') {
     return (
       <div className="space-y-1.5">
-        <p className="text-[11px] text-muted-foreground">
-          One stat per line (2-4): <code className="text-[10px]">value | label | sublabel</code>{' '}
+        <p className="text-xs text-muted-foreground">
+          One stat per line (2-4): <code className="text-xs">value | label | sublabel</code>{' '}
           (sublabel optional)
         </p>
         <Textarea
@@ -91,9 +91,9 @@ function RichTypeInputs({ type, content, attribution, title, eyebrow, setModuleF
   if (type === 'comparison') {
     return (
       <div className="space-y-1.5">
-        <p className="text-[11px] text-muted-foreground">
-          First line: column headers separated by <code className="text-[10px]">|</code>. Each
-          following line: one row.
+        <p className="text-xs text-muted-foreground">
+          First line: column headers separated by <code className="text-xs">|</code>. Each following
+          line: one row.
         </p>
         <Textarea
           value={content}
@@ -107,9 +107,9 @@ function RichTypeInputs({ type, content, attribution, title, eyebrow, setModuleF
   if (type === 'timeline') {
     return (
       <div className="space-y-1.5">
-        <p className="text-[11px] text-muted-foreground">
-          One step per line (at least 2): <code className="text-[10px]">Title :: detail</code>{' '}
-          (detail optional)
+        <p className="text-xs text-muted-foreground">
+          One step per line (at least 2): <code className="text-xs">Title :: detail</code> (detail
+          optional)
         </p>
         <Textarea
           value={content}
@@ -147,7 +147,7 @@ function RichTypeInputs({ type, content, attribution, title, eyebrow, setModuleF
   if (type === 'design') {
     return (
       <div className="space-y-1.5">
-        <p className="text-[11px] text-muted-foreground">Mermaid diagram source.</p>
+        <p className="text-xs text-muted-foreground">Mermaid diagram source.</p>
         <Textarea
           value={content}
           onChange={(e) => setModuleFormField('content', e.target.value)}
@@ -232,10 +232,10 @@ export function ModuleForm() {
     <div className="rounded-md border border-border p-3 space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">
           {isEditing ? `Editing module ${editingModuleIndex + 1}` : 'New module'}
         </p>
-        <Badge variant="outline" className="text-[10px]">
+        <Badge variant="outline" className="text-xs">
           {moduleItems.length}/{MAX_MODULES}
         </Badge>
       </div>
@@ -248,7 +248,7 @@ export function ModuleForm() {
             type="button"
             variant={type === key ? 'default' : 'outline'}
             size="sm"
-            className="h-8 flex-col gap-0.5 text-[10px] px-1"
+            className="h-8 flex-col gap-0.5 text-xs px-1"
             onClick={() => handleTypeSelect(key)}
           >
             <Icon className="h-3.5 w-3.5" />
@@ -260,7 +260,7 @@ export function ModuleForm() {
       {/* Align row (full-width types pin their own align) */}
       {!FULL_WIDTH_MODULE_TYPES.includes(type) && (
         <div className="flex items-center gap-1">
-          <span className="text-[11px] text-muted-foreground w-10 shrink-0">Align</span>
+          <span className="text-xs text-muted-foreground w-10 shrink-0">Align</span>
           {ALIGN_OPTIONS.map((a) => (
             <Button
               key={a}
@@ -297,8 +297,8 @@ export function ModuleForm() {
 
       {type === 'links' && (
         <div className="space-y-1.5">
-          <p className="text-[11px] text-muted-foreground">
-            One link per line. Markdown format: <code className="text-[10px]">- [Title](url)</code>
+          <p className="text-xs text-muted-foreground">
+            One link per line. Markdown format: <code className="text-xs">- [Title](url)</code>
           </p>
           <Textarea
             value={content}
@@ -336,7 +336,7 @@ export function ModuleForm() {
                 Paste URL
               </Button>
             </div>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               External image URLs stay external. They are not copied into the Image Gallery unless
               you manually upload them there.
             </p>
@@ -384,7 +384,7 @@ export function ModuleForm() {
             autoComplete="off"
             spellCheck={false}
           />
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             YouTube only. Click plays; double-click toggles 50% screen size in the published
             article.
           </p>

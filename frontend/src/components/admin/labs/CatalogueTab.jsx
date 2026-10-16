@@ -91,7 +91,7 @@ function LabRow({ lab, jobTypes, onWatchJob }) {
     <tr className="border-b border-border/50 last:border-0 align-top" data-lab={lab.id}>
       <td className="px-3 py-2">
         <p className="font-semibold">{lab.title}</p>
-        <p className="font-mono text-[11px] text-muted-foreground">{lab.id}</p>
+        <p className="font-mono text-xs text-muted-foreground">{lab.id}</p>
       </td>
       <td className="px-3 py-2">{lab.providers.map(providerName).join(', ')}</td>
       <td className="px-3 py-2">{DIFFICULTY_LABELS[lab.difficulty]}</td>

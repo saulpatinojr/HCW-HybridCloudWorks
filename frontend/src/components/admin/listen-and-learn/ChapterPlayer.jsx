@@ -72,7 +72,7 @@ export default function ChapterPlayer({
           onEnded?.();
         }}
       />
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {meta.length > 0 && <span>{meta.join(' · ')}</span>}
         {download && src && (
           <a

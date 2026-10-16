@@ -156,7 +156,7 @@ function NavItem({
       )}
       {collapsed && count > 0 && (
         <span
-          className="absolute -top-1 -right-1 min-w-4 h-4 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center px-0.5"
+          className="absolute -top-1 -right-1 min-w-4 h-4 rounded-full bg-amber-500 text-white text-xs font-bold flex items-center justify-center px-0.5"
           aria-hidden="true"
         >
           {shown}
