@@ -346,8 +346,15 @@ Once, in this order:
    ```
 
 4. **The script**, from the repository root on `main` once this change has
-   merged (`Test-Path scripts/lab/Connect-Lab.ps1` prints `True`), signed in
-   with `az login`, PowerShell:
+   merged, signed in with `az login`. The script exists on `main` already,
+   so check for its `-Arc` switch instead; this prints `True` once the
+   working tree has it, PowerShell:
+
+   ```powershell
+   Select-String -Path scripts/lab/Connect-Lab.ps1 -Pattern '\[switch\] \$Arc' -Quiet
+   ```
+
+   Then, PowerShell:
 
    ```powershell
    pwsh -NoProfile -File scripts/lab/Connect-Lab.ps1 -Arc
