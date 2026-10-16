@@ -490,6 +490,16 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/hcw-held-upgradable.test.sh
 
+      # The nightly playbook drift detection timer (LAB-4, #950), rendered with
+      # the role's defaults and run against stub ansible-playbook and logger:
+      # runs the playbook in check and diff mode from the applied checkout,
+      # detects task changes or errors, logs to syslog (warning on drift or error,
+      # notice on clean), and exits non-zero on drift or failure.
+      - name: hcw-playbook-drift test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/hardening/tests/hcw-playbook-drift.test.sh
+
+
       # The unattended-upgrades override (LAB-13, #959), rendered with the
       # role's defaults: the allowed origins are cleared and named by the
       # role, and the reboot is left to hcw-reboot-when-idle.timer.
