@@ -60,10 +60,16 @@ async function check(tier, name, fn) {
 // ── argument handling ────────────────────────────────────────────────────────
 
 export function parseArgs(argv) {
-  const args = { base: process.env.SMOKE_BASE_URL || '', cosmos: false, help: false };
+  const args = {
+    base: process.env.SMOKE_BASE_URL || '',
+    cosmos: false,
+    help: false,
+    tier: process.env.SMOKE_TIER ? Number(process.env.SMOKE_TIER) : null,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--base') args.base = argv[++i] || '';
     else if (argv[i] === '--cosmos') args.cosmos = true;
+    else if (argv[i] === '--tier') args.tier = Number(argv[++i]);
     else if (argv[i] === '--help' || argv[i] === '-h') args.help = true;
   }
   // The base must include the /api route prefix — every route registers
@@ -328,11 +334,12 @@ async function tierAuthed(base) {
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
-const HELP = `Usage: node smoke-deployed.mjs --base <url> [--cosmos]
+const HELP = `Usage: node smoke-deployed.mjs --base <url> [--tier <1|2|3>] [--cosmos]
 
   --base <url>   API base including the /api prefix (or SMOKE_BASE_URL), e.g.
                  https://api-azure.hybridcloudworks.com/api  (the Cloudflare host —
                  the azurewebsites.net origin is IP-locked and answers 403)
+  --tier <n>     run only tier <n> (e.g. 1 for anonymous surface inside deploy window)
   --cosmos       also run the Cosmos conditional-patch tier
                  (needs COSMOS_ENDPOINT + az login with data-plane RBAC)
 
@@ -346,11 +353,13 @@ async function main() {
     process.exit(args.help ? 0 : 2);
   }
 
+  const shouldRunTier = (tier) => args.tier === null || args.tier === tier;
+
   if (args.base) {
-    await tierAnonymous(args.base);
-    await tierAuthed(args.base);
+    if (shouldRunTier(1)) await tierAnonymous(args.base);
+    if (shouldRunTier(3)) await tierAuthed(args.base);
   }
-  if (args.cosmos) await tierCosmos();
+  if (args.cosmos && shouldRunTier(2)) await tierCosmos();
 
   const failed = results.filter((r) => r.ok === false);
   const skipped = results.filter((r) => r.ok === 'skip');

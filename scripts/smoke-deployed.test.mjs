@@ -25,6 +25,12 @@ describe('parseArgs', () => {
     expect(parseArgs([]).cosmos).toBe(false);
     expect(parseArgs(['--cosmos']).cosmos).toBe(true);
   });
+
+  it('reads --tier and defaults to null', () => {
+    expect(parseArgs([]).tier).toBe(null);
+    expect(parseArgs(['--tier', '1']).tier).toBe(1);
+    expect(parseArgs(['--tier', '2']).tier).toBe(2);
+  });
 });
 
 describe('looksPublic — mirrors the server filter', () => {

@@ -526,3 +526,77 @@ jobs:
           skip_app_build: true
           # No skip_api_build here: it is not an input at the pinned action SHA,
           # and with no api_location set there is no API build to skip anyway.
+
+      # Post-deploy probe: fetch the root and one prerendered route (PLAT-5, #965).
+      #
+      # Probes the Static Web App default hostname directly (bypassing Cloudflare
+      # Bot Fight Mode, which rejects datacenter runner IPs on the custom domain).
+      # Verifies that both the root document shell (/) and a prerendered route (/news)
+      # return HTTP 200 with valid HTML markup.
+      - name: Post-deploy frontend probe
+        env:
+          APP: ${{ vars.STATIC_WEB_APP_NAME || 'stapp-site-prod-cus-01' }}
+          RG: ${{ vars.STATIC_WEB_APP_RESOURCE_GROUP || 'rg-web-site-prod-cus' }}
+          POLL_INTERVAL_S: '5'
+          POLL_BUDGET_S: '90'
+        run: |
+          set -euo pipefail
+
+          DEFAULT_HOSTNAME=$(az staticwebapp show --name "${APP}" --resource-group "${RG}" --query "defaultHostname" -o tsv)
+          if [ -z "${DEFAULT_HOSTNAME}" ]; then
+            echo "::error::Could not read defaultHostname for ${APP} from ARM"
+            exit 1
+          fi
+
+          echo "Probing deployed Static Web App at https://${DEFAULT_HOSTNAME} (PLAT-5)..."
+          ROOT_URL="https://${DEFAULT_HOSTNAME}/"
+          PRERENDER_URL="https://${DEFAULT_HOSTNAME}/news"
+
+          probe_url() {
+            local target_url="$1"
+            local label="$2"
+            local started=$SECONDS
+            local attempt=0
+            local status=""
+            local body=""
+
+            echo "Probing ${label} at ${target_url}..."
+            while :; do
+              attempt=$((attempt + 1))
+              local resp
+              resp=$(curl -sS -m 20 -w $'\n%{http_code}' "${target_url}" 2>&1 || true)
+              status=$(printf '%s' "${resp}" | tail -n1)
+              body=$(printf '%s' "${resp}" | sed '$d')
+              local elapsed=$((SECONDS - started))
+              echo "  attempt ${attempt} at +${elapsed} s: HTTP ${status}"
+              [ "${status}" = "200" ] && break
+              if [ $((elapsed + POLL_INTERVAL_S)) -gt "${POLL_BUDGET_S}" ]; then
+                echo "  no 200 within ${POLL_BUDGET_S} s"
+                break
+              fi
+              sleep "${POLL_INTERVAL_S}"
+            done
+
+            if [ "${status}" != "200" ]; then
+              echo "::error::Probe failed for ${label}: HTTP ${status}"
+              echo "Response excerpt: ${body:0:300}"
+              return 1
+            fi
+
+            if ! printf '%s' "${body}" | grep -qiE "<(!DOCTYPE html|html|div id=\"root\")"; then
+              echo "::error::Probe response for ${label} did not contain expected HTML markup"
+              return 1
+            fi
+            echo "  ${label} verified: HTTP 200 with valid HTML"
+          }
+
+          probe_url "${ROOT_URL}" "root document (/)"
+          probe_url "${PRERENDER_URL}" "prerendered route (/news)"
+
+          {
+            echo "## 🌐 Frontend Post-Deploy Verification"
+            echo ""
+            echo "Direct Azure Static Web Apps probe on \`${DEFAULT_HOSTNAME}\` (PLAT-5):"
+            echo "- \`GET /\` → **HTTP 200 OK** (HTML root shell)"
+            echo "- \`GET /news\` → **HTTP 200 OK** (Prerendered page markup)"
+          } >> "$GITHUB_STEP_SUMMARY"

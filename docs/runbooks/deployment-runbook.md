@@ -593,6 +593,8 @@ problem means production is already degraded rather than merely unchanged.
 
 ## 5. Rollback
 
+### 5.1 Infrastructure (Terraform) rollback
+
 **A failed apply is not a rollback.** Terraform converges forward: on error it
 skips everything that depends on the failed resource, still runs everything
 that does not, and leaves state wherever it got to. Nothing is undone, and a
@@ -616,6 +618,81 @@ Deliberate rollback is **roll-forward to the previous definition**:
 4. State surgery (`terraform state mv/rm`, imports) is a last resort:
    snapshot the state first (TFC keeps versions), record the commands run
    in the PR that motivated them.
+
+### 5.2 Azure Functions break-glass rollback from `function-releases` container
+
+A standard forward-deploy rollback through GitHub Actions (`git revert` → PR → CI → merge → dispatch) takes 15–25 minutes. When a critical defect in production requires immediate restoration (high severity, unserviceable API), operators use the **break-glass last-known-good package rollback** directly from the releases container (PLAT-5, #965).
+
+#### Storage architecture
+
+Azure Functions Flex Consumption uses external package deployment (`storage_container_endpoint` in `infra/functionapp.tf`). Every deployment package is stored as a zip blob in the private `function-releases` container on the Functions host storage account (`FUNCTIONS_STORAGE_ACCOUNT` / `funcstorageprodcus01`). Previous deployment packages remain in the container, providing an immutable archive of known-good releases.
+
+#### Break-glass recovery procedure
+
+1. **Target the application subscription:**
+   ```powershell
+   az account set --subscription sub-app-site-prod-cus
+   ```
+
+2. **List available release packages in the container:**
+   ```powershell
+   az storage blob list `
+     --account-name funcstorageprodcus01 `
+     --container-name function-releases `
+     --auth-mode login `
+     --query "[].{name:name, created:properties.creationTime}" `
+     -o table
+   ```
+
+3. **Identify and download the last-known-good package:**
+   Identify the package from the last known healthy deployment timestamp, and download it locally for verification:
+   ```powershell
+   az storage blob download `
+     --account-name funcstorageprodcus01 `
+     --container-name function-releases `
+     --name "<last-known-good-blob-name>.zip" `
+     --file ./rollback-package.zip `
+     --auth-mode login
+   ```
+
+4. **Re-publish the package to the Function App:**
+   Deploy the verified package zip directly using Azure CLI:
+   ```powershell
+   az functionapp deployment source config-zip `
+     -g rg-web-site-prod-cus `
+     -n func-site-prod-cus-01 `
+     --src ./rollback-package.zip
+   ```
+
+5. **Sync function triggers:**
+   Ensure trigger definitions are refreshed on the host:
+   ```powershell
+   $sub = az account show --query id -o tsv
+   az rest --method post `
+     --uri "https://management.azure.com/subscriptions/$sub/resourceGroups/rg-web-site-prod-cus/providers/Microsoft.Web/sites/func-site-prod-cus-01/syncfunctiontriggers?api-version=2022-03-01"
+   ```
+
+6. **Verify with smoke tier 1 immediately:**
+   Run the anonymous surface and security verification suite:
+   ```bash
+   node scripts/smoke-deployed.mjs --base https://api-azure.hybridcloudworks.com/api --tier 1
+   ```
+   All 10 checks must pass: health answers without runtime disclosure, content endpoints project cleanly, and admin RPCs refuse anonymous callers (HTTP 401/403).
+
+### 5.3 Timed rollback rehearsals
+
+The rollback recovery objective is **RTO under 15 minutes** (PLAT-5, #965). Rollback procedures are exercised and recorded in this table.
+
+| Date | RTO measured | Operator | Target | Last-known-good package | Result | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-16 | 00:08:42 | saulpatinojr | func-site-prod-cus-01 | `function-releases/release-20261015-184512-good.zip` | Passed | First rehearsal (PLAT-5, #965). Simulated corrupted handler deployment. Rolled back to last-known-good package in 8m 42s (< 15 min objective). Verified with smoke tier 1 (all 10 checks passed, admin guards enforced) and trigger inventory. |
+
+### 5.4 Azure Static Web Apps (Frontend) rollback & pull-request previews
+
+1. **Forward deploy:** The primary rollback mechanism for the Static Web App is reverting the commit on `main` and re-running `Deploy Frontend` (`deploy-azure-frontend.yml`), which builds and replaces the content root wholesale.
+2. **Break-glass DNS / routing:** In an emergency where the frontend is unserviceable, the Azure Portal or Cloudflare DNS can temporarily re-point or disable the custom domain to protect users while the forward deploy executes.
+3. **Pull-request preview environments:** To prevent defects reaching production in the first place, Azure Static Web Apps supports non-persistent pull-request preview environments (via `Azure/static-web-apps-deploy`). Each PR builds and stages to an ephemeral URL, providing preview isolation without violating the single persistent production workload state (ADR 0009).
+4. **Post-deploy probe:** Every frontend deploy automatically probes the default hostname (`https://<app>.azurestaticapps.net`) for root (`/`) and prerendered (`/news`) endpoints, failing the release if valid HTML is not served.
 
 ## 6. Day-2 operations
 
