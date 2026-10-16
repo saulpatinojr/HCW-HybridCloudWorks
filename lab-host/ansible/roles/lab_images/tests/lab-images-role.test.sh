@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# {{ ansible_managed }}
-#
 # Tests the lab_images role configuration and lifecycle hardening (Issue #1134).
 #
 # Asserts that:
@@ -84,7 +82,7 @@ EOF
 if command -v node >/dev/null 2>&1; then
   plan="$(node "${helper}" --scope workspaces --defer-workspace-cleanup "${repo}" < "${work}/docker.json")"
   check "lab-images.mjs with --defer-workspace-cleanup defers workspace removal" \
-    "echo '${plan}' | grep -qF '\"remove\":[]' && echo '${plan}' | grep -qF 'hybridcloudworks/hcw-lab@sha256:8888888888888888888888888888888888888888888888888888888888888888'"
+    "node -e 'const p = JSON.parse(process.argv[1]); if (p.remove.length !== 0 || !p.deferred.some(d => d.includes(\"hybridcloudworks/hcw-lab@sha256:8888\"))) process.exit(1);' \"\${plan}\""
 else
   echo "skip - node not on PATH; skipping CLI execution test"
 fi

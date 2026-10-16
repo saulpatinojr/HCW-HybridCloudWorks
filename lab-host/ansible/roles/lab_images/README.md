@@ -58,7 +58,7 @@ the host can hold them before any job asks.
    data, and no image outside those repositories is touched. A workspace
    image left on the host daemon is removed there (it is not that daemon's
    pin), and a capability image would be removed from the sandbox daemon
-   the same way.
+   the same way (unless workspace cleanup is deferred; see item 6 below).
 5. **Keeps an image a container still uses**, running or stopped (a job in
    flight on the old digest, a Coder workspace on an older template
    version), and prints which container holds it. The next run removes it.
