@@ -169,8 +169,10 @@ What keeps working, and why:
 - **Certificates.** Caddy obtains them by DNS-01, so no challenge request
   arrives over HTTP, and Caddy would answer one before any route in any
   case.
-- **Caddy's admin API and metrics** listen on `127.0.0.1:2019`, not on the
-  lab names.
+- **Caddy's admin API and metrics** listen on a Unix socket,
+  `/run/caddy/admin.sock`, that only the `caddy` user and root can open, not
+  on TCP and not on the lab names (#958). Caddy serves HTTP/1.1 and HTTP/2
+  only; HTTP/3 is off, so nothing listens on UDP 443.
 - **The lab agent** dials out to the Functions API and receives nothing
   inbound. Nothing else on the host takes a connection through Caddy apart
   from Coder and the tool add-ons, and Coder's own clients send no fetch

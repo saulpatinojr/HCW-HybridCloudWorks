@@ -12,8 +12,14 @@ Type=notify
 User={{ caddy_user }}
 Group={{ caddy_group }}
 EnvironmentFile={{ caddy_env_file }}
+# The admin API's socket lives here (#958): systemd creates the directory
+# for the caddy user at start and removes it at stop, so a socket in it was
+# made by the Caddy running now. 0700 because only the caddy user and root
+# have any business in it.
+RuntimeDirectory=caddy
+RuntimeDirectoryMode=0700
 ExecStart={{ caddy_binary_path }} run --config {{ caddy_config_dir }}/Caddyfile --adapter caddyfile
-ExecReload={{ caddy_binary_path }} reload --config {{ caddy_config_dir }}/Caddyfile --adapter caddyfile --force
+ExecReload={{ caddy_binary_path }} reload --config {{ caddy_config_dir }}/Caddyfile --adapter caddyfile --address {{ caddy_admin_address }} --force
 TimeoutStopSec=5s
 LimitNOFILE=1048576
 PrivateTmp=true

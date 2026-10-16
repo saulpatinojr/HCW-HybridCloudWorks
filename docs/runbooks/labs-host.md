@@ -11,6 +11,7 @@ container runtime is privilege-separated and how to take that back (LAB-5);
 how the owner reaches Portainer and
 initialises and unseals HashiCorp Vault on it (owner decision 2026-09-26),
 and moves that Vault to auto-unseal through the Arc identity (#726);
+how to reload Caddy by hand now that its admin API is a Unix socket (#958);
 how the owner turns on a tool add-on, the first being the migration
 assessment the site frames at `/tools/migration` ("Tool add-ons", ADR 0035);
 how fast a runc, containerd or Docker Engine advisory is fixed on the host,
@@ -1874,6 +1875,48 @@ Management workspace as an `AzureDiagnostics` row with the caller's IP
 address, from the vault's AuditEvent diagnostic setting. When the owner has
 seen the host come back unsealed from a reboot, the cold copy can go:
 `sudo rm /root/vault-before-726.tgz`.
+
+## Caddy: reloading by hand
+
+Since #958 Caddy's admin API, which every reload goes through, listens on
+the Unix socket `/run/caddy/admin.sock` instead of TCP `127.0.0.1:2019`, and
+HTTP/3 is off. Only the `caddy` user and root can open the socket. The
+playbook reloads Caddy itself whenever the Caddyfile or a route changes, so
+a reload by hand is only for a file edited on the host, which the next
+`bootstrap.sh` run puts back. Bash, on the host:
+
+```bash
+sudo systemctl reload caddy
+```
+
+Success prints nothing and exits 0, and the journal
+(`sudo journalctl -u caddy -n 5`) ends with `Reloaded caddy.service - Caddy.`
+The unit's reload is this line, run as the `caddy` user, which is the same
+thing by hand. Bash, on the host:
+
+```bash
+sudo -u caddy /usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --address unix//run/caddy/admin.sock
+```
+
+A reload that fails with `connect: no such file or directory` on
+`/run/caddy/admin.sock` means the Caddy running now was started before the
+unit gained its runtime directory, so it is still on TCP 2019. The playbook
+restarts it in that case; by hand, bash, on the host (a restart closes open
+connections for a few seconds, and panes reconnect):
+
+```bash
+sudo systemctl restart caddy
+```
+
+After the first `bootstrap.sh` run with #958, these show the move took.
+Bash, on the host; the first two print `0` (nothing on TCP 2019, nothing on
+UDP 443) and the third a line beginning `s-w-------` owned by `caddy caddy`:
+
+```bash
+sudo ss -Hltn 'sport = :2019' | wc -l
+sudo ss -Hlun 'sport = :443' | wc -l
+sudo ls -l /run/caddy/admin.sock
+```
 
 ## Tool add-ons
 

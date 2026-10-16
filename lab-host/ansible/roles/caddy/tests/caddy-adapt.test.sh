@@ -5,7 +5,9 @@
 # Caddy orders every `vars` directive ahead of `redir`, with the snippet's
 # `vars lab_direct_visit_redirect` first and a route's `vars @addon_<id>
 # lab_direct_visit_redirect` after it, so the later one wins for that name,
-# and that the redir reads the variable as a placeholder.
+# and that the redir reads the variable as a placeholder. It also reads the
+# global options back as Caddy adapted them (#958): the admin API on the
+# unit's Unix socket and every server on h1 and h2 only.
 #
 # The configuration is rendered by ansible-core's own template module, from
 # this directory's inventory (so group_vars/all.yml applies) with the three
@@ -130,6 +132,25 @@ check "the redir reads the variable as a placeholder" "[ -n \"${redir_line}\" ]"
 check "Caddy orders the snippet's vars, then the route's, then the redir" \
   "[ -n \"${global_line}\" ] && [ -n \"${addon_line}\" ] && [ -n \"${redir_line}\" ] && [ \"${global_line}\" -lt \"${addon_line}\" ] && [ \"${addon_line}\" -lt \"${redir_line}\" ]" "${order}"
 check "no handler runs before the vars" "! sed -n \"1,\${global_line}p\" \"${work}/order.txt\" | grep -qvE '^vars '" "${order}"
+
+# The global options (#958): the admin API on the unit's Unix socket, not on
+# TCP, and every server on HTTP/1.1 and HTTP/2 only. One line each, printed
+# from the adapted JSON, so a failure shows what Caddy settled on.
+"${python}" - "${work}/adapted.json" > "${work}/globals.txt" <<'PY'
+import json, sys
+adapted = json.load(open(sys.argv[1]))
+print("admin " + json.dumps(adapted.get("admin", {}).get("listen")))
+servers = adapted["apps"]["http"]["servers"]
+print("servers " + str(len(servers)))
+for name, server in sorted(servers.items()):
+    print(f"protocols {name} " + json.dumps(server.get("protocols")))
+PY
+globals_out="$(cat "${work}/globals.txt")"
+servers_total="$(grep -c '^protocols ' "${work}/globals.txt" || true)"
+servers_h1_h2="$(grep -cE '^protocols [^ ]+ \["h1", "h2"\]$' "${work}/globals.txt" || true)"
+check "the admin API listens on the unit's Unix socket" "grep -qxF 'admin \"unix//run/caddy/admin.sock\"' \"${work}/globals.txt\"" "${globals_out}"
+check "every server speaks h1 and h2 only, so no HTTP/3" "[ \"${servers_total}\" -gt 0 ] && [ \"${servers_total}\" -eq \"${servers_h1_h2}\" ]" "${globals_out}"
+check "nothing in the rendered configuration names TCP 2019" "! grep -rqE '(^|[^0-9])2019([^0-9-]|$)' \"${work}/config\"" "$(grep -rnE '(^|[^0-9])2019([^0-9-]|$)' "${work}/config" || true)"
 
 if [ "${failed}" -gt 0 ]; then
   echo "caddy-adapt.test.sh: ${failed} of $((passed + failed)) checks failed" >&2

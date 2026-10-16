@@ -1,10 +1,21 @@
 # {{ ansible_managed }}
-{% if caddy_acme_email | length > 0 %}
+# Global options, always rendered (#958).
+# - admin: the admin API (and the metrics it serves) on a Unix socket in the
+#   unit's RuntimeDirectory, not on TCP. Only the caddy user and root can
+#   connect to it, by file permission; the unit's ExecReload names the same
+#   socket with --address.
+# - protocols h1 h2: no HTTP/3, so Caddy neither listens on UDP 443 nor
+#   advertises h3 in Alt-Svc. ufw admits TCP 80 and 443 only.
 {
+  admin {{ caddy_admin_address }}
+  servers {
+    protocols h1 h2
+  }
+{% if caddy_acme_email | length > 0 %}
   email {{ caddy_acme_email }}
+{% endif %}
 }
 
-{% endif %}
 # Panes only. Owner decision 2026-09-28: "The lab should only be accessible
 # through 'panes' from my site, lock to that", and a direct visit goes to the
 # site's labs page. Imported first into the site block below, and Caddy runs
@@ -52,7 +63,7 @@
   #    access control; Coder's GitHub sign-in is the access control. ACME
   #    never reaches this rule: certificates come by DNS-01, and Caddy
   #    answers an HTTP challenge on port 80 before any route. Caddy's admin
-  #    API and metrics listen on 127.0.0.1:2019, not here.
+  #    API and metrics listen on a Unix socket (global options), not here.
   #    A route opts a request out by setting the variable
   #    lab_top_level_allowed, and only for a request that must work at the
   #    top level and shows no page there. 10-coder.caddy does this for

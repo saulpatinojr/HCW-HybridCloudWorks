@@ -155,3 +155,20 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# Every reload goes through the admin socket (#958), and the socket exists
+# only while a Caddy started from this unit and this Caddyfile runs: systemd
+# creates its directory at start and removes it at stop. A Caddy that is
+# running without it is still on an older configuration (the first run after
+# the move from TCP 2019, or a run interrupted between the unit change and
+# its handlers), and a reload, this role's or the coder and addons roles',
+# would find nothing listening. So that case notifies the restart, which
+# handlers/main.yml defines ahead of every reload of Caddy and therefore runs
+# first. Read-only, so check mode reports the same drift.
+- name: Check that the running Caddy answers on the admin socket
+  ansible.builtin.stat:
+    path: "{{ caddy_admin_socket }}"
+    get_checksum: false
+  register: caddy_admin_socket_stat
+  changed_when: not (caddy_admin_socket_stat.stat.issock | default(false))
+  notify: Restart caddy

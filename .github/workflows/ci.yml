@@ -573,8 +573,9 @@ jobs:
       # route's later `vars` win for its name. Nothing but Caddy can say so:
       # this renders the Caddyfile and every conf.d route with this job's
       # ansible-core, has the pinned Caddy release (version from group_vars,
-      # SHA-512 in the script) adapt it, and checks the order it settled on.
-      # Needs neither root nor Docker.
+      # SHA-512 in the script) adapt it, and checks the order it settled on,
+      # and the global options: the admin API on its Unix socket and h1/h2
+      # only (#958). Needs neither root nor Docker.
       - name: Rendered Caddy configuration adapts, with the vars before the redir
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/caddy/tests/caddy-adapt.test.sh
