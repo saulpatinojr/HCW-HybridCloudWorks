@@ -9,6 +9,16 @@
     name: ssh
     state: reloaded
 
+# Notified with Reload ssh and defined after it, so it runs after the reload
+# and only once the reload has succeeded (a failed handler stops the host's
+# handlers). The marker says sshd has not loaded the drop-in yet
+# (tasks/sshd.yml); once it has, the marker goes.
+- name: Forget the pending reload of sshd
+  ansible.builtin.file:
+    path: "{{ hardening_sshd_reload_marker }}"
+    state: absent
+  listen: Reload ssh
+
 - name: Restart unattended-upgrades
   ansible.builtin.systemd_service:
     name: unattended-upgrades

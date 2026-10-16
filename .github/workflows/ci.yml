@@ -525,6 +525,18 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/admin-keys.test.sh
 
+      # sshd's settings and root's keys (#953): the hardening role's sshd
+      # tasks run against a stub sshd and scratch paths, with the reload of
+      # ssh.service logged instead of done. The pending-reload marker is
+      # written before the drop-in, a marker an interrupted run left makes
+      # the next run reload before root's keys are emptied, and a drop-in
+      # sshd -T does not confirm is put back with its backup removed. As
+      # root, because the tasks make root the owner of what they write; env
+      # keeps this job's Python on PATH past sudo's secure_path.
+      - name: sshd-apply test
+        if: steps.changes.outputs.relevant == 'true'
+        run: sudo env "PATH=$PATH" bash roles/hardening/tests/sshd-apply.test.sh
+
       # The nightly idle reboot (LAB-13, #959), rendered with the role's
       # defaults and run against stub apt-config, loginctl, docker, sleep,
       # systemctl and logger: a stand-down while unattended-upgrades' own

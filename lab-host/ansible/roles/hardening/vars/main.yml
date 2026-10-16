@@ -1,7 +1,8 @@
 ---
 # Fixed names and patterns. Not meant to be overridden, which is why they are
-# vars and not defaults; tests/admin-keys.test.sh points the two paths at
-# scratch files with -e, which is the one override they get.
+# vars and not defaults; tests/admin-keys.test.sh and tests/sshd-apply.test.sh
+# point the paths, the journal command and the sshd binary at scratch files
+# and stubs with -e, which is the one override they get.
 
 # Root's authorized_keys. Root login is off, so the role keeps this file
 # empty (#953); break-glass is hPanel's Web Console with root's password,
@@ -20,6 +21,13 @@ hardening_public_key_pattern: '^{{ hardening_public_key_types }} AAAA[A-Za-z0-9+
 # carries that type name, so two lines name the same key exactly when their
 # blobs are equal.
 hardening_public_key_blob_pattern: '(?:^|\s)(AAAA[A-Za-z0-9+/]+={0,3})(?=\s|$)'
+
+# sshd, its drop-in, and the marker that says a written drop-in has not been
+# loaded yet (tasks/sshd.yml; only the Reload ssh handler removes it).
+# tests/sshd-apply.test.sh points all three at a stub and scratch paths.
+hardening_sshd_binary: /usr/sbin/sshd
+hardening_sshd_dropin_path: /etc/ssh/sshd_config.d/00-hcw-hardening.conf
+hardening_sshd_reload_marker: /var/lib/hcw-hardening/sshd-reload-pending
 
 # Where the lockout guard reads the SSH logins of the last 14 days
 # (tasks/admin_keys.yml). sshd logs each accepted login at INFO as

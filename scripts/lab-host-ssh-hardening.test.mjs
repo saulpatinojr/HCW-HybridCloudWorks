@@ -17,7 +17,8 @@
  * - Connect-Lab.ps1, which no longer writes root's keys.
  *
  * roles/hardening/tests/admin-keys.test.sh runs the key tasks themselves
- * against scratch files. In the CI matrix this runs in the
+ * against a journal fixture and scratch files, and sshd-apply.test.sh runs
+ * the sshd tasks against a stub sshd. In the CI matrix this runs in the
  * `scripts (operations)` row, whose filter covers lab-host/ and scripts/.
  */
 import { describe, expect, it } from 'vitest';
@@ -31,7 +32,8 @@ const read = (relative) => readFileSync(path.join(repoRoot, relative), 'utf8');
 const role = 'lab-host/ansible/roles/hardening';
 
 const dropIn = read(`${role}/templates/sshd_hardening.conf.j2`);
-const tasks = read(`${role}/tasks/main.yml`);
+const mainTasks = read(`${role}/tasks/main.yml`);
+const tasks = read(`${role}/tasks/sshd.yml`);
 const keyTasks = read(`${role}/tasks/admin_keys.yml`);
 const handlers = read(`${role}/handlers/main.yml`);
 const defaults = read(`${role}/defaults/main.yml`);
@@ -157,8 +159,13 @@ describe('the keys the role writes', () => {
     expect(first.body).toContain('- hardening_admin_authorized_keys | length > 0');
     expect(first.body).toContain('lab-host/ansible/group_vars/all.yml');
     // The copy-from-root fallback is gone from both task files.
-    expect(tasks + keyTasks).not.toMatch(/hardening_effective_authorized_keys/);
-    expect(tasks).not.toMatch(/slurp:/);
+    expect(mainTasks + tasks + keyTasks).not.toMatch(/hardening_effective_authorized_keys/);
+    expect(mainTasks + tasks).not.toMatch(/slurp:/);
+    // hcwadmin's keys are written before sshd's settings change.
+    expect(mainTasks.indexOf('ansible.builtin.import_tasks: admin_keys.yml')).toBeGreaterThan(0);
+    expect(mainTasks.indexOf('ansible.builtin.import_tasks: sshd.yml')).toBeGreaterThan(
+      mainTasks.indexOf('ansible.builtin.import_tasks: admin_keys.yml')
+    );
   });
 
   it('refuses a list without the key of the most recent login in the journal, unless told to replace it', () => {
@@ -213,6 +220,26 @@ describe('the keys the role writes', () => {
     }
   });
 
+  it('marks the reload pending before the drop-in changes, and reloads before root\'s keys when a marker is left', () => {
+    const at = (name) => task(tasks, name).at;
+    const mark = task(tasks, "Mark sshd's reload pending before the drop-in changes");
+    expect(mark.body).toContain('dest: "{{ hardening_sshd_reload_marker }}"');
+    expect(mark.body).toContain('when: hardening_sshd_dropin_preview is changed');
+    expect(task(tasks, 'See whether the sshd drop-in is about to change').body).toContain('check_mode: true');
+    expect(at('See whether the sshd drop-in is about to change')).toBeLessThan(mark.at);
+    expect(mark.at).toBeLessThan(at("Harden sshd through a drop-in that sorts before cloud-init's"));
+    const pending = task(tasks, 'Look for a reload of sshd an earlier run left pending');
+    expect(pending.body).toContain('path: "{{ hardening_sshd_reload_marker }}"');
+    expect(pending.body).toContain('notify: Reload ssh');
+    expect(pending.at).toBeLessThan(at('Apply the sshd drop-in before any later role can fail'));
+    expect(vars).toMatch(/^hardening_sshd_reload_marker: \/var\/lib\/hcw-hardening\/sshd-reload-pending$/m);
+    // Only the reload handler removes the marker, after the reload itself.
+    expect(handlers).toMatch(
+      /- name: Forget the pending reload of sshd\n {2}ansible\.builtin\.file:\n {4}path: "\{\{ hardening_sshd_reload_marker \}\}"\n {4}state: absent\n {2}listen: Reload ssh\n/
+    );
+    expect(handlers.indexOf('- name: Forget the pending reload of sshd')).toBeGreaterThan(handlers.indexOf('- name: Reload ssh'));
+  });
+
   it("keeps root's authorized_keys empty, once sshd has reloaded", () => {
     expect(vars).toMatch(/^hardening_root_authorized_keys_path: \/root\/\.ssh\/authorized_keys$/m);
     const empty = task(tasks, "Keep root's authorized_keys empty");
@@ -239,7 +266,9 @@ describe('the drop-in reaches sshd only after it is proven', () => {
     const at = order.map((name) => block.indexOf(`- name: ${name}`));
     for (const [i, name] of order.entries()) expect(at[i], name).toBeGreaterThan(0);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
-    expect(block).toContain('validate: /usr/sbin/sshd -t -f %s');
+    expect(block).toContain('validate: "{{ hardening_sshd_binary }} -t -f %s"');
+    expect(vars).toMatch(/^hardening_sshd_binary: \/usr\/sbin\/sshd$/m);
+    expect(vars).toMatch(/^hardening_sshd_dropin_path: \/etc\/ssh\/sshd_config\.d\/00-hcw-hardening\.conf$/m);
     expect(block).toContain('notify: Reload ssh');
   });
 

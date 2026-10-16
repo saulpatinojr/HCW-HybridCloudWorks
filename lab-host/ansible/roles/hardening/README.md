@@ -47,15 +47,22 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    for `hcwadmin` and for root, held to `allowusers hcwadmin`,
    `authenticationmethods publickey`, `permitrootlogin no`,
    `allowagentforwarding no` and the rest of the file, and to root not
-   being allowed. A failure puts the previous drop-in back before the run
-   stops, so the reload `force_handlers` still runs keeps today's settings.
+   being allowed. A failure puts the previous drop-in back and removes its
+   backup before the run stops, so the reload `force_handlers` still runs
+   keeps today's settings.
    Then sshd is **reloaded, never restarted**: `ssh.socket` hands each
    connection to `ssh.service`'s listening `sshd`, which hands it to an
    `sshd-session` process of its own, so only the listener has to re-read
    its settings. The unit's `ExecReload` runs `sshd -t` and sends it `HUP`;
-   open sessions, the operator's included, stay up. Last, once sshd has
-   reloaded, root's `authorized_keys` is written empty and both users'
-   `authorized_keys2` are removed.
+   open sessions, the operator's included, stay up. Before a drop-in that
+   is about to change is written, the role writes a marker,
+   `/var/lib/hcw-hardening/sshd-reload-pending`, and only the reload
+   handler removes it. A run interrupted between the write and the reload
+   leaves the marker, and the next run, finding it, reloads sshd although
+   the drop-in is unchanged. Last, once sshd has reloaded, root's
+   `authorized_keys` is written empty and both users' `authorized_keys2`
+   are removed, so root's keys are never taken while the running sshd may
+   still let root in. These tasks are `tasks/sshd.yml`.
 3. ufw: default deny inbound, allow outbound, allow TCP 22, 80, 443.
    Docker's iptables rules for a published port come before ufw's, so ufw
    cannot close a port Docker publishes. That is why every publish on this
@@ -408,9 +415,21 @@ read stops it too. The override lets a refused list through, a list that
 passes writes `hcwadmin`'s file to exactly the list, and a second run
 changes nothing. As root, because the module sets the file's owner; CI
 runs it in the `ansible-lint (lab-host)` job.
+`tests/sshd-apply.test.sh` runs `tasks/sshd.yml` against a stub `sshd`
+and scratch paths, with the role's handlers as written except that the
+reload of `ssh.service` becomes a log line recording the size of root's
+`authorized_keys` at that moment. A fresh write marks the reload pending
+before the drop-in is written, reloads, clears the marker and only then
+empties root's keys, and a second run changes nothing; a marker an
+interrupted run left makes the next run reload before root's keys are
+emptied; a drop-in that `sshd -T` does not confirm is put back with its
+backup removed, root's keys untouched, and the forced reload clears the
+marker; check mode with a marker left reports it and changes nothing. As
+root, because the tasks make root the owner of what they write; CI runs it
+with `sudo` in the `ansible-lint (lab-host)` job.
 `scripts/lab-host-ssh-hardening.test.mjs` (vitest) holds the drop-in's
 directives, the pinned key and its fingerprint, the order of the checks
-before the reload, and root's empty file.
+before the reload, the pending-reload marker, and root's empty file.
 
 `tests/hcw-playbook-drift.test.sh` renders the drift detection script and its
 two units with the role's defaults and runs the script against stub
