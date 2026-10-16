@@ -19,6 +19,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Credential register reads live dates the estate already knows (#1066)**.
+  The credential register (`functions/src/lib/credentials/`) and Credentials tab
+  view (`frontend/src/components/admin/integrations/`) now automatically resolve live
+  dates from estate sources: Key Vault secrets resolve `createdAt` from metadata
+  when `lastWriteAt` has not yet been set; lab host certificates (`/etc/hcw/labs-agent.pem`
+  and `/etc/vault.d/tls/vault.crt`) resolve `notBefore` and `notAfter` from
+  `admin_config/lab_certificates` (reported via `vps-agent`); and the Static Web App
+  deployment token resolves its reset date from `admin_config/swa_reset`. Manual recording
+  remains supported for owner overrides.
 - **`alert-kv-config-write`'s plan declarations are pruned, and the loop is
   proven gone (#1216)**. The owner applied #1217 in
   `run-KZEnEksD78i8wtKr`, whose plan the check read as the four declared
