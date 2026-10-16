@@ -19,6 +19,19 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **The plan check's applied declarations are pruned (#1207, #964,
+  #970)**. Ten `DECLARED` entries in `scripts/assert-expected-plan.mjs` had
+  met their own removal condition:
+  - The eight for #1207's four stateful rules. The owner applied them in
+    `run-qrsPoBGgTrAZyqwa` on 2026-10-16, and `verify-alert-state.yml` then
+    read all four OK with `autoMitigate` true.
+  - `alert-timer-overdue`'s query, whose Resource Health now reads
+    Available.
+  - `alert-export-window-latency`'s create, which the verifier reads OK.
+
+  They are deleted, along with the pinned timer rows only the
+  `timer_overdue` entry used. The history comment records each one, and a
+  test keeps them from coming back.
 - **Both backup-missing rules are on the Fire record: fifteen of fifteen
   (PLAT-4, #964)**. Neither needed a staged test, because each fired on
   the real condition when it was created on 2026-10-14. That was before

@@ -206,10 +206,12 @@ export const OVERDUE_LAST_DUE =
 /**
  * The line it replaced, which Kusto refused at every evaluation from
  * 2026-10-10 (SEM0040: bin_at() needs a constant bin size and fixed point).
- * Kept because the live rule carries it until the owner's apply, so the
- * declaration below needs it as its `before`; read back from Azure on
- * 2026-10-15, the deployed query equalled `overdueQuery(rows, { lastDue:
- * OVERDUE_LAST_DUE_BIN_AT })` over the tree's 26 rows, character for character.
+ * The live rule carried it until the owner's apply at 20:42Z on 2026-10-15.
+ * Read back from Azure that day, the deployed query equalled
+ * `overdueQuery(rows, { lastDue: OVERDUE_LAST_DUE_BIN_AT })` over the tree's
+ * 26 rows, character for character. The declaration that used it as its
+ * `before` applied and was deleted on 2026-10-16. The constant stays so
+ * assert-expected-plan.test.mjs can still hold a redeclaration to it.
  */
 export const OVERDUE_LAST_DUE_BIN_AT =
   "  | extend lastDue = bin_at(Now - Grace, period, anchor)";
@@ -251,42 +253,6 @@ export function overdueQuery(rows, { lastDue = OVERDUE_LAST_DUE } = {}) {
 }
 
 /**
- * `local.timer_schedules` as applied since #1009 added labCanary: the rows
- * the live rule carried when read back on 2026-10-15. Pinned rather than
- * read from the tree, so a timer added while the declaration below waits
- * makes assert-expected-plan.test.mjs fail instead of moving `before` to a
- * query Azure never held.
- */
-const TIMER_SCHEDULES_APPLIED = [
-  ["buildWeeklyNewsletter", "7d", "2026-01-05 13:00"],
-  ["checkAgentHealth", "5m", "2026-01-01 00:00"],
-  ["checkLiveLinks", "7d", "2026-01-05 06:00"],
-  ["cleanupRejectedContent", "1d", "2026-01-01 04:00"],
-  ["cleanupSoftDeletedContent", "4h", "2026-01-01 00:00"],
-  ["cleanupTempStorage", "1d", "2026-01-01 00:00"],
-  ["cleanupUnusedCertImages", "1d", "2026-01-01 05:00"],
-  ["cosmosExportScheduler", "1d", "2026-01-01 03:00"],
-  ["fetchBlogListings", "6h", "2026-01-01 00:15"],
-  ["fetchPodcastFeeds", "2h", "2026-01-01 00:30"],
-  ["forgeScheduled", "1d", "2026-01-01 03:30"],
-  ["generateReviewerDigest", "1d", "2026-01-01 07:00"],
-  ["healthPulse", "5m", "2026-01-01 00:02"],
-  ["labCanary", "1h", "2026-01-01 00:20"],
-  ["labsWeeklyRollup", "1d", "2026-01-01 23:55"],
-  ["monitorPublishingPipeline", "6h", "2026-01-01 00:00"],
-  ["platformJobSweeper", "15m", "2026-01-01 00:00"],
-  ["probeAiProviders", "7d", "2026-01-05 06:15"],
-  ["publishScheduledContent", "15m", "2026-01-01 00:00"],
-  ["reVerifyCertifications", "7d", "2026-01-04 00:00"],
-  ["refreshPlaudToken", "12h", "2026-01-01 00:00"],
-  ["refreshToolServiceCache", "1d", "2026-01-01 02:00"],
-  ["scrapeSkillsHubRss", "7d", "2026-01-02 09:00"],
-  ["sendReminders", "1d", "2026-01-01 13:00"],
-  ["syncRssFeeds", "2h", "2026-01-01 00:00"],
-  ["syncSocialCalendarScheduled", "5m", "2026-01-01 00:00"],
-];
-
-/**
  * Intended one-off changes, each declared by the pull request that makes it
  * (#719).
  *
@@ -295,63 +261,22 @@ const TIMER_SCHEDULES_APPLIED = [
  * has applied. "Declaring an intended change" in the header has the rest.
  */
 export const DECLARED = [
-  // ADR 0022 decision 6, amended 2026-10-16: four hourly rules go from a mute
-  // to stateful. Each is an in-place update of two attributes, the mute
-  // removed (Terraform plans an unset optional string as null) and
-  // auto-mitigation on; query, threshold, frequency and window are unchanged.
-  // Delete these once verify-alert-state.yml reads all four OK with
-  // autoMitigate true.
-  ...[
-    ["lab_hybrid_backup_missing_coder", "P1D"],
-    ["lab_hybrid_backup_missing_vault", "P1D"],
-    ["lab_hybrid_disk_used", "PT6H"],
-    ["logs_daily_cap", "PT6H"],
-  ].flatMap(([name, mute]) => [
-    {
-      address: `azurerm_monitor_scheduled_query_rules_alert_v2.${name}`,
-      path: "auto_mitigation_enabled",
-      before: false,
-      after: true,
-      reason: "ADR 0022 decision 6: stateful wherever the condition can clear",
-    },
-    {
-      address: `azurerm_monitor_scheduled_query_rules_alert_v2.${name}`,
-      path: "mute_actions_after_alert_duration",
-      before: mute,
-      after: null,
-      reason: "ADR 0022 decision 6: the mute it replaces",
-    },
-  ]),
-  // #964: alert-timer-overdue computes each timer's last due time without
-  // bin_at(), which Kusto refused at every evaluation from the rule's create
-  // on 2026-10-10 (SEM0040), so the rule never fired. An in-place update of
-  // the query alone: same rows, one line different. Delete this entry once
-  // verify-alert-state.yml reads the rule's Resource Health as Available.
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue",
-    path: "criteria[0].query",
-    before: overdueQuery(TIMER_SCHEDULES_APPLIED, {
-      lastDue: OVERDUE_LAST_DUE_BIN_AT,
-    }),
-    after: overdueQuery(TIMER_SCHEDULES_APPLIED),
-    reason:
-      "#964: alert-timer-overdue's due time computed without bin_at(), which Kusto refused at every evaluation since 2026-10-10 (SEM0040)",
-  },
-  // The same change adds Microsoft.ResourceHealth/availabilityStatuses/read
-  // (and its /current/read) to infra/roles/alert-rule-reader.json, and has no
-  // entry here because no plan can show it: Terraform only reads that role
-  // (two `data "azurerm_role_definition"` blocks in infra/oidc.tf), the owner
-  // writes it with `az role definition update`, and a data source read is not
-  // a resource change this script is given. docs/runbooks/alerting-and-support.md
-  // ("Resource Health") carries the owner's command.
-  // PLAT-10 (#970): alert-export-window-latency, ADR 0019's revisit trigger
-  // measured. Created by the owner's next apply; delete this entry once
-  // verify-alert-state.yml reads the rule OK.
-  {
-    address: "azurerm_monitor_scheduled_query_rules_alert_v2.export_window_latency",
-    action: "create",
-    reason: "#970: alert-export-window-latency, the nightly export window measured against the day (ADR 0019's revisit trigger)",
-  },
+  // Applied and deleted here on 2026-10-16, as the header asks. Each change,
+  // with the reading that showed it live:
+  // - ADR 0022 decision 6's four stateful rules (#1207): auto_mitigation_enabled
+  //   false -> true and the mute to null, on both alert-lab-backup-missing
+  //   rules, alert-lab-disk and alert-logs-capacity. Applied in
+  //   run-qrsPoBGgTrAZyqwa, whose plan tfc-plan-check.yml read as all eight
+  //   declared. verify-alert-state.yml then read the four OK with
+  //   autoMitigate true.
+  // - #964's alert-timer-overdue query, its due time computed without
+  //   bin_at(). Applied 2026-10-15 at 20:42Z, and read since with Resource
+  //   Health Available. Its role change, the Microsoft.ResourceHealth reads in
+  //   infra/roles/alert-rule-reader.json, was never an entry here, because
+  //   Terraform only reads that role.
+  // - #970's alert-export-window-latency create, read OK by
+  //   verify-alert-state.yml.
+  //
   // The weekly AI provider probe's timer flag (#701): the key applied disarmed
   // ('false', present in state since the 2026-10-06 runs); adding
   // PROBE_AI_PROVIDERS to enabled_timers arms it. Everything else declared
