@@ -193,14 +193,26 @@ describe('the rule reads those variables, and is the event-shaped rule ADR 0022 
     expect(rule).not.toMatch(/auto_mitigation_enabled\s*=\s*true/);
     expect(rule).not.toContain('mute_actions_after_alert_duration');
     expect(rule).toMatch(/evaluation_frequency\s*=\s*"PT15M"/);
-    expect(rule).toMatch(/window_duration\s*=\s*"PT1H"/);
     expect(rule).toContain('| where ingestion_time() > ago(20m)');
   });
 
-  it('drops the VERBOSE "Accepted key" and "Accepted certificate" lines, which are not logins, before the parse', () => {
+  it('keeps a day of TimeGenerated in the window, so a login the agent sends late is still evaluated', () => {
+    // The window bounds TimeGenerated; the ingestion-time filter picks the
+    // rows. With PT1H a line written 45 minutes or more before the agent sent
+    // it (a backlog after an outage or a restart) fell outside every
+    // evaluation that could see it ingested. P1D, as alert-lab-ssh-burst.
+    expect(rule).toMatch(/^\s*window_duration\s*=\s*"P1D"$/m);
+  });
+
+  it('drops only the two VERBOSE lines that follow a public-key login, before the parse', () => {
     const drop = rule.indexOf('Accepted key ');
     expect(drop).toBeGreaterThan(0);
     expect(rule.indexOf('Accepted certificate ')).toBeGreaterThan(0);
     expect(drop).toBeLessThan(rule.indexOf('| parse SyslogMessage'));
+    // The host-based VERBOSE line ("Accepted <type> public key … from
+    // user@host") is NOT dropped: it fails the parse and pages, which is the
+    // right answer to a host-based login. Only these two prefixes are named.
+    const prefixes = [...rule.matchAll(/startswith "(Accepted [^"]*)"/g)].map((m) => m[1]);
+    expect(prefixes).toEqual(['Accepted ', 'Accepted key ', 'Accepted certificate ']);
   });
 });

@@ -744,11 +744,15 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_ssh_burst"
 # days before: all 201 parsed, and this query, run over them, returned none
 # (and all 201 with lab_ssh_loopback_only set, as none came through Arc). A
 # line that does not parse leaves Method empty, and an empty Method pages, so
-# a format change after an upgrade is a page rather than silence. Two lines
-# that start "Accepted " and are not logins are dropped before the parse:
-# "Accepted key … found at …" and "Accepted certificate ID …", which sshd
-# writes at LogLevel VERBOSE beside the login line. Without that, every
-# expected login would page once VERBOSE is on.
+# a format change after an upgrade is a page rather than silence. sshd writes
+# three more lines that start "Accepted " at LogLevel VERBOSE, beside the
+# login line, and none of them is a login. Two follow every public-key login,
+# "Accepted key … found at …" and "Accepted certificate ID …", and are dropped
+# before the parse; without that, every expected login would page once
+# VERBOSE is on. The third, "Accepted <type> public key <fp> from
+# <user>@<host>" (auth2-hostbased.c), is written only for host-based
+# authentication, which sshd here does not offer. It is left in: it fails the
+# parse and pages, which is the right answer to a host-based login.
 #
 # STATELESS AND UNMUTED, by ADR 0022 decision 6 as amended 2026-10-16: a login
 # is an event, not a state, so there is nothing to resolve, and a mute would
@@ -760,9 +764,14 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_ssh_burst"
 # it was ingested relative to TimeGenerated. The cost is the overlap: a line
 # ingested in the five minutes two evaluations share is seen by both, so one
 # login can, now and then, mail twice. That duplicate is accepted; a missed
-# login is not. The one-hour window still bounds TimeGenerated, so a line
-# ingested more than an hour after sshd wrote it would be missed; the measured
-# p95 ingestion delay for these rows is 79 seconds.
+# login is not. The window still bounds TimeGenerated, which is why it is a
+# day and not an hour: the measured p95 ingestion delay for these rows is 79
+# seconds, but after an outage or an agent restart the Azure Monitor Agent
+# sends its backlog late, and with a one-hour window a login written 45
+# minutes or more before it was ingested would never be evaluated. A day, as
+# on alert-lab-ssh-burst above, covers any backlog short of one that loses
+# rows anyway. Only Syslog rows from the host, in auth and authpriv, are read,
+# so the longer window costs nothing worth counting.
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_ssh_login_unexpected" {
   provider = azurerm.mgmt
 
@@ -774,7 +783,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_ssh_login_
   severity            = 1
 
   evaluation_frequency = "PT15M"
-  window_duration      = "PT1H"
+  window_duration      = "P1D"
 
   criteria {
     query                   = <<-KQL
