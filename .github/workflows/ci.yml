@@ -513,12 +513,14 @@ jobs:
         run: bash roles/hardening/tests/unattended-upgrades.test.sh
 
       # The administrative user's keys (#953): the hardening role's key
-      # tasks run with this job's ansible-core against scratch copies of the
-      # two authorized_keys files, with throwaway keys. An empty list and a
-      # malformed entry stop the run; a list sharing no key with the keys
-      # that log in today stops it (the lockout guard) unless overridden; a
-      # list that keeps one writes the file to the list exactly, and a
-      # second run changes nothing. Needs neither root nor Docker.
+      # tasks run with this job's ansible-core against a journal fixture and
+      # scratch copies of the two authorized_keys files, with throwaway
+      # keys. An empty list and a malformed entry stop the run; a list
+      # without the key of the most recent login in the journal stops it
+      # (the lockout guard), falling back to the keys on file only for an
+      # empty journal, unless overridden; a list that passes is written
+      # exactly, and a second run changes nothing. Needs neither root nor
+      # Docker.
       - name: admin-keys test
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/admin-keys.test.sh

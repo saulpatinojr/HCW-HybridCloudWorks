@@ -33,8 +33,8 @@ hardening_ufw_allowed_tcp_ports:
 hardening_admin_user: hcwadmin
 # The only keys that may log in as hcwadmin (#953, owner decision 2026-10-16).
 # The hardening role writes hcwadmin's authorized_keys from this list and
-# nothing else, keeps root's empty, and stops on an empty list or one that
-# shares no key with the keys that log in today. A public key, comment
+# nothing else, keeps root's empty, and stops on an empty list or one
+# without the key of the most recent SSH login. A public key, comment
 # stripped. To add one: its line here, merge, run bootstrap.sh
 # (docs/runbooks/labs-host.md, "Connect from a desktop").
 hardening_admin_authorized_keys:

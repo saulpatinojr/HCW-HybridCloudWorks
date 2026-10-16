@@ -8,9 +8,10 @@
  * - the pinned key in group_vars, checked against its fingerprint, which is
  *   computed here from the key itself;
  * - the hardening role's refusals before it writes anything (an empty list,
- *   and the lockout guard against a list that shares no key with the keys
- *   that log in today), and its writes: hcwadmin's file from the list
- *   alone, root's empty;
+ *   and the lockout guard against a list without the key of the most recent
+ *   login in the journal, or, with no login there, sharing no key with the
+ *   keys on file), and its writes: hcwadmin's file from the list alone,
+ *   root's empty;
  * - the order that keeps a bad drop-in from reaching sshd: written, tested
  *   whole, read back with sshd -T, then reloaded (never restarted);
  * - Connect-Lab.ps1, which no longer writes root's keys.
@@ -160,19 +161,36 @@ describe('the keys the role writes', () => {
     expect(tasks).not.toMatch(/slurp:/);
   });
 
-  it('refuses a list that shares no key with the keys that log in today, unless told to replace them all', () => {
-    const decide = task(keyTasks, 'Decide whether the key list would replace every key that logs in today').body;
-    expect(decide).toContain('hardening_keys_now | length > 0');
-    expect(decide).toContain('hardening_keys_now | intersect(hardening_keys_wanted) | length == 0');
-    const guard = task(keyTasks, 'Refuse a key list that would replace every key that logs in today').body;
+  it('refuses a list without the key of the most recent login in the journal, unless told to replace it', () => {
+    // The journal sshd's INFO lines are read from, and the login that counts.
+    expect(vars).toMatch(
+      /^hardening_ssh_login_journal_argv:\n {2}- journalctl\n {2}- --quiet\n {2}- --no-pager\n {2}- --unit\n {2}- ssh\.service\n {2}- --since\n {2}- 14 days ago\n {2}- --output\n {2}- cat\n/m
+    );
+    const read = task(keyTasks, 'Read the SSH logins of the last 14 days from the journal').body;
+    expect(read).toContain('argv: "{{ hardening_ssh_login_journal_argv }}"');
+    expect(read).toContain('check_mode: false');
+    expect(task(keyTasks, 'Refuse to guess which key logs in when the journal cannot be read').body).toContain(
+      '- hardening_ssh_journal.rc == 0'
+    );
+    const last = task(keyTasks, 'Find the most recent SSH login as the administrative user or root').body;
+    expect(last).toContain("select('match', '^Accepted publickey for (' ~ (hardening_admin_user | regex_escape) ~ '|root) ')");
+    expect(last).toContain('| list | last');
+    // The journal decides when it has a login; the files only when it has none.
+    const basis = task(keyTasks, 'Decide what the key list is compared with').body;
+    expect(basis).toContain("hardening_keys_lockout_basis: \"{{ 'journal' if hardening_ssh_last_login | length > 0 else 'file' }}\"");
+    const decide = task(keyTasks, 'Decide whether the key list would lock out the key that logs in today').body;
+    expect(decide).toContain('hardening_ssh_last_login_fp not in hardening_keys_wanted_fps');
+    expect(decide).toContain("if hardening_keys_lockout_basis == 'journal'");
+    expect(decide).toContain('else (hardening_keys_now | length > 0 and hardening_keys_now | intersect(hardening_keys_wanted) | length == 0)');
+    const guard = task(keyTasks, 'Refuse a key list that would lock out the key that logs in today').body;
     expect(guard).toContain('- not (hardening_keys_lockout | bool) or (hardening_admin_keys_replace_all | bool)');
     expect(guard).toContain('-e hardening_admin_keys_replace_all=true');
     expect(defaults).toMatch(/^hardening_admin_keys_replace_all: false$/m);
     expect(specs).toMatch(/hardening_admin_keys_replace_all:\n {8}type: bool\n {8}required: false\n {8}default: false\n/);
   });
 
-  it("compares with hcwadmin's keys, or root's while hcwadmin has none", () => {
-    const which = task(keyTasks, 'Decide which keys log in today').body;
+  it("falls back to hcwadmin's keys on file, or root's while hcwadmin has none", () => {
+    const which = task(keyTasks, 'Decide which keys on file the list falls back to').body;
     expect(which).toMatch(/hardening_admin_authorized_keys_path\s+if hardening_keys_admin_text is search/);
     expect(which).toContain('else hardening_root_authorized_keys_path');
   });
@@ -186,7 +204,9 @@ describe('the keys the role writes', () => {
     for (const refusal of [
       'Refuse to run without a public key for the administrative user',
       'Refuse an entry in the key list that is not one public key',
-      'Refuse a key list that would replace every key that logs in today',
+      'Refuse to guess which key logs in when the journal cannot be read',
+      'Refuse a key list ssh-keygen cannot read',
+      'Refuse a key list that would lock out the key that logs in today',
     ]) {
       expect(index(refusal), refusal).toBeGreaterThanOrEqual(0);
       expect(index(refusal), refusal).toBeLessThan(writeAt);

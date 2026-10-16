@@ -45,17 +45,20 @@ argument_specs:
             empty (issue 953).
           - The role stops before changing anything when the list is empty or an entry is not one
             public key. There is no fallback to root's keys.
-          - The lockout guard. The role also stops when the list shares no key with the keys that
-            log in today, the administrative user's authorized_keys or, while that has none (the
-            first run after a reinstall), root's; see hardening_admin_keys_replace_all.
+          - The lockout guard. The role also stops when the list does not hold the key of the most
+            recent SSH login as the administrative user or root in the journal of the last 14 days.
+            With no login in the journal (a fresh host) it falls back to the files, and stops when
+            the list shares no key with the administrative user's authorized_keys or, while that
+            has none (the first run after a reinstall), root's. See
+            hardening_admin_keys_replace_all.
       hardening_admin_keys_replace_all:
         type: bool
         required: false
         default: false
         description:
-          - Lets one run through the lockout guard, writing a key list that shares no key with the
-            keys that log in today. Pass it with -e for that run only, once you hold one of the new
-            keys or can reach hPanel's Web Console.
+          - Lets one run through the lockout guard, writing a key list without the key in use.
+            Pass it with -e for that run only, once you hold one of the new keys or can reach
+            hPanel's Web Console.
       hardening_sshd_allow_users:
         type: list
         elements: str

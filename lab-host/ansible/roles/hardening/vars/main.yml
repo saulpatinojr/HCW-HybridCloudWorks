@@ -21,6 +21,23 @@ hardening_public_key_pattern: '^{{ hardening_public_key_types }} AAAA[A-Za-z0-9+
 # blobs are equal.
 hardening_public_key_blob_pattern: '(?:^|\s)(AAAA[A-Za-z0-9+/]+={0,3})(?=\s|$)'
 
+# Where the lockout guard reads the SSH logins of the last 14 days
+# (tasks/admin_keys.yml). sshd logs each accepted login at INFO as
+# `Accepted publickey for <user> from <address> port <n> ssh2: <type>
+# SHA256:<fingerprint>`, under ssh.service, which runs both the listener and
+# each connection's sshd-session. --quiet prints nothing for no entries.
+# tests/admin-keys.test.sh points it at fixtures with -e.
+hardening_ssh_login_journal_argv:
+  - journalctl
+  - --quiet
+  - --no-pager
+  - --unit
+  - ssh.service
+  - --since
+  - 14 days ago
+  - --output
+  - cat
+
 # The connection sshd -T -C is asked about after the drop-in is written: a
 # label for the host and a TEST-NET-1 address (RFC 5737), which names no
 # real client. sshd's configuration on this host has no Match block, so the

@@ -117,7 +117,8 @@ in `/root/.ssh/authorized_keys` first (step 6 there), and that key must be
 one `hardening_admin_authorized_keys` in `ansible/group_vars/all.yml` pins:
 the `hardening` role writes `hcwadmin`'s keys from that list alone, empties
 root's and turns root and password login off, and it refuses to run when
-the list shares no key with the keys that log in today (#953). The script checks the host is Ubuntu 26.04 LTS (24.04
+the list does not hold the key of the most recent SSH login, which on that
+run is root's with this key (#953). The script checks the host is Ubuntu 26.04 LTS (24.04
 LTS is accepted and says it is the fallback; anything else stops), then
 checks the host is empty (below), installs
 `uv` 0.12.19 from its GitHub release after checking the archive's SHA256,

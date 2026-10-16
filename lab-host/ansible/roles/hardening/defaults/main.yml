@@ -14,9 +14,10 @@ hardening_admin_user: hcwadmin
 # keeps root's empty. Empty here on purpose, so the host's list lives in
 # group_vars/all.yml; the role stops on an empty list rather than guess.
 hardening_admin_authorized_keys: []
-# The lockout guard. A run whose key list shares no key with the keys that
-# log in today stops before it writes anything, unless this is true. Meant
-# for one run, passed with -e, never set in a file.
+# The lockout guard. A run whose key list does not hold the key of the most
+# recent SSH login in the journal (or, on a host with none there, shares no
+# key with the keys on file) stops before it writes anything, unless this
+# is true. Meant for one run, passed with -e, never set in a file.
 hardening_admin_keys_replace_all: false
 # sshd's AllowUsers: the only accounts that may log in over SSH. The role
 # refuses a list without the administrative user or with root.

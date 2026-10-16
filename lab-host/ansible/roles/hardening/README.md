@@ -15,14 +15,21 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    That list is in `group_vars/all.yml`: the owner's workstation key,
    pinned. There is no fallback to root's keys any more. Before it writes
    anything, the role **stops** (`tasks/admin_keys.yml`):
-   - when the list is empty, or an entry is not one public key line;
-   - when the list shares no key with the keys that log in today (the
-     **lockout guard**): `hcwadmin`'s `authorized_keys`, or root's while
-     `hcwadmin` has none, which is the first run after a reinstall, when the
-     operator is in as root with the key hPanel installed. Keys are compared
-     by their key blob, so comments and options do not matter. The refusal
-     prints the SHA256 fingerprints of both sides. A run that means to
-     replace every key passes `-e hardening_admin_keys_replace_all=true`.
+   - when the list is empty, or an entry is not one public key line, or
+     `ssh-keygen` cannot read one;
+   - when the list does not hold the key the operator logs in with (the
+     **lockout guard**). That is the key of the most recent SSH login as
+     `hcwadmin` or root in the journal of the last 14 days: sshd logs every
+     accepted login at INFO as `Accepted publickey for <user> from <address>
+     port <n> ssh2: <type> SHA256:<fingerprint>`, and the guard reads it
+     with `journalctl -u ssh.service -o cat`. A list that keeps some other
+     key on file but drops the one in use is refused. Only when the journal
+     has no login at all, a fresh host, does the guard fall back to the
+     files: the list must then share a key, compared by key blob, with
+     `hcwadmin`'s `authorized_keys`, or with root's while `hcwadmin` has
+     none. A journal that cannot be read stops the run rather than fall
+     back. The refusal prints SHA256 fingerprints, and a run that means to
+     replace the key in use passes `-e hardening_admin_keys_replace_all=true`.
 2. Writes `/etc/ssh/sshd_config.d/00-hcw-hardening.conf`: `AllowUsers`
    from `hardening_sshd_allow_users` (`hcwadmin` alone),
    `AuthenticationMethods publickey`, `PubkeyAuthentication yes`,
@@ -388,12 +395,18 @@ drift detection`.
 ## Tests
 
 `tests/admin-keys.test.sh` runs `tasks/admin_keys.yml` with ansible-core
-against scratch copies of the two `authorized_keys` files: an empty list
-and a malformed entry stop the run with nothing written; a list that
+against a journal fixture and scratch copies of the two `authorized_keys`
+files: an empty list, a malformed entry and one `ssh-keygen` cannot read
+stop the run with nothing written. With logins in the journal, a list
+without the key of the most recent login as the user or root stops it,
+though it keeps another key on file, and a list with that key passes;
+another user's login, a refused key and VERBOSE's `Accepted key` line do
+not count. With an empty journal it falls back to the files: a list that
 shares no key with `hcwadmin`'s file, or with root's while `hcwadmin`'s has
-none, stops it with both sides' fingerprints; the override lets it through;
-a list that keeps a key that logs in today writes `hcwadmin`'s file to
-exactly the list. As root, because the module sets the file's owner; CI
+none, stops it with both sides' fingerprints. A journal that cannot be
+read stops it too. The override lets a refused list through, a list that
+passes writes `hcwadmin`'s file to exactly the list, and a second run
+changes nothing. As root, because the module sets the file's owner; CI
 runs it in the `ansible-lint (lab-host)` job.
 `scripts/lab-host-ssh-hardening.test.mjs` (vitest) holds the drop-in's
 directives, the pinned key and its fingerprint, the order of the checks

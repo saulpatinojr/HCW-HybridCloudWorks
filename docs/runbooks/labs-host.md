@@ -128,8 +128,10 @@ root's empty, and lets `hcwadmin` alone in over SSH, by key only
 (`AllowUsers hcwadmin`, `AuthenticationMethods publickey`). The list holds
 one key, the owner's workstation key `hcw-lab_ed25519.pub`,
 `SHA256:VTyaLLQLfYwi38RP1mHDD6Vtu0eSQsa4EPsNJTrdgG8`. Before it writes, the
-run stops if the list is empty, or if it shares no key with the keys that
-log in today (the lockout guard), and says which keys it compared.
+run stops if the list is empty, or if it does not hold the key of the most
+recent SSH login in the journal (the lockout guard; on a host with no login
+in the journal, if it shares no key with the keys on file), and says which
+keys it compared.
 
 - **A second key (another desktop):** the script prints the line to add,
   `  - ssh-ed25519 AAAA…`, which is the key's type and key with the comment
@@ -151,14 +153,15 @@ log in today (the lockout guard), and says which keys it compared.
   at https://hpanel.hostinger.com/vps, **Manage** on the server,
   **Settings**, **SSH keys**, **Add SSH key**. hPanel installs it for root,
   and the first `bootstrap.sh` run, made as root, writes `hcwadmin`'s file
-  from the list and empties root's. While `hcwadmin` has no key the guard
-  compares the list with root's keys, so the run goes ahead only if the key
+  from the list and empties root's. The most recent login the guard finds
+  in the journal is that root login, so the run goes ahead only if the key
   hPanel installed is in the list; the pinned workstation key is
   (`infra-lab/README.md`, steps 6 and 7).
 - **Replacing every key** (a lost or rebuilt workstation): put the new key
   in the list instead of the old one and merge. The guard then stops the
-  run, because no key in the list logs in today. Run it once with the
-  override from hPanel's Web Console (below), bash, on the host:
+  run, because the key of the most recent login is no longer in the list.
+  Run it once with the override from hPanel's Web Console (below), bash, on
+  the host:
 
   ```bash
   sudo /opt/hcw-src/lab-host/bootstrap.sh -e hardening_admin_keys_replace_all=true
