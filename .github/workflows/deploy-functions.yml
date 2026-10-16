@@ -560,6 +560,21 @@ jobs:
 
           echo "✅ Health check: **PASSED**" >> "$GITHUB_STEP_SUMMARY"
 
+      # Smoke tier 1 inside the origin-firewall window (PLAT-5, #965).
+      #
+      # Proves the deployed application wires its security guards, CORS,
+      # content endpoints, and health contracts before the firewall window
+      # closes. The deploy fails if an admin route answers 200 anonymously
+      # or if the API contract is broken.
+      - name: Smoke tier 1 anonymous surface verification
+        env:
+          APP_HOSTNAME: ${{ vars.APP_HOSTNAME }}
+        run: |
+          set -euo pipefail
+          echo "Running smoke tier 1 inside the origin firewall window..."
+          node scripts/smoke-deployed.mjs --base "https://${APP_HOSTNAME}/api" --tier 1
+          echo "✅ Smoke tier 1 (anonymous surface & security guards): **PASSED**" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Close origin firewall window
         if: ${{ always() && steps.appfw.outputs.runner_ip != '' }}
         env:
