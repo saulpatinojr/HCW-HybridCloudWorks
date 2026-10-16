@@ -44,6 +44,19 @@ describe('what a regeneration must keep', () => {
     expect(byName.get('content_versions')?.partition_key_path).toBe('/contentId');
   });
 
+  // A container TTL expires every document not written within the window,
+  // whatever it is. These containers hold records kept until someone deletes
+  // them: the owner's Ambassador hub and the site's content. A TTL on either
+  // is data loss, not retention (#1234 set one on `ambassador`; it was taken
+  // off before any apply). Expiry for a short-lived kind of record inside
+  // them belongs on that document's own `ttl`, never on the container.
+  it('puts no container TTL on the containers whose records are kept until deleted', () => {
+    for (const name of ['ambassador', 'content', 'content_versions', 'blogs']) {
+      expect(byName.get(name), `${name} missing from the spec`).toBeDefined();
+      expect(byName.get(name).default_ttl ?? null, name).toBeNull();
+    }
+  });
+
   it('indexes and declares cp_sortDate on the two containers the public list orders', () => {
     for (const name of ['content', 'blogs']) {
       const container = byName.get(name);
