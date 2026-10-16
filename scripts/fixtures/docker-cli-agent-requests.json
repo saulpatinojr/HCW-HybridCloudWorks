@@ -1,6 +1,6 @@
 {
   "$comment": "Written by scripts/lab/capture-docker-cli-requests.mjs; read by scripts/lab-host-docker-proxy.test.mjs. Container ids are <id>.",
-  "dockerCli": "29.9.0",
+  "dockerCli": "29.9.1",
   "apiVersion": "1.56",
   "job": {
     "jobDir": "/var/lib/hcw-labs-agent/tmp/labjob-Ab3xZ9",

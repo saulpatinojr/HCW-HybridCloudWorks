@@ -96,13 +96,13 @@ arc_tags:
 # get_url refuses a key that does not match.
 docker_release_pins:
   resolute:
-    engine: "5:29.9.0-1~ubuntu.26.04~resolute"
-    containerd: "2.4.1-2~ubuntu.26.04~resolute"
+    engine: "5:29.9.1-1~ubuntu.26.04~resolute"
+    containerd: "2.4.2-2~ubuntu.26.04~resolute"
     buildx: "0.38.0-1~ubuntu.26.04~resolute"
     compose: "5.6.0-1~ubuntu.26.04~resolute"
   noble:
-    engine: "5:29.9.0-1~ubuntu.24.04~noble"
-    containerd: "2.4.1-2~ubuntu.24.04~noble"
+    engine: "5:29.9.1-1~ubuntu.24.04~noble"
+    containerd: "2.4.2-2~ubuntu.24.04~noble"
     buildx: "0.38.0-1~ubuntu.24.04~noble"
     compose: "5.6.0-1~ubuntu.24.04~noble"
 docker_version: "{{ docker_release_pins[ansible_facts['distribution_release']].engine }}"
@@ -247,7 +247,7 @@ labs_agent_repo_ref: "{{ lookup('ansible.builtin.pipe', 'git -C ' ~ (playbook_di
 # is the newest nodejs in node_26.x/dists/nodistro/main/binary-amd64/Packages,
 # read 2026-09-26. The line itself is labs_agent_node_apt_repository_url in
 # the role defaults, so a major bump moves both.
-labs_agent_node_version: "26.11.1-1nodesource1"
+labs_agent_node_version: "26.12.0-1nodesource1"
 # sha256sum of https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key, read
 # 2026-09-26 and checked with gpgv against node_26.x/dists/nodistro/InRelease;
 # the key that apt trusts for the pinned nodejs package.
@@ -411,8 +411,8 @@ addons:
 # checks all three links on the host. The vault_ prefix is the role's name:
 # none of these is an Ansible Vault key.
 vault_enabled: true
-vault_version: "2.1.2"
-vault_checksum: sha256:873bbdac35ca4b0c3e2886c41991ca1272fc452826208d5499f32d12cd2e76e1
+vault_version: "2.2.0"
+vault_checksum: sha256:05d78b0ac842ca7c522fc297df91527cd43c15420c4c5c0a969d48a7b0ff7b6d
 vault_pgp_key_checksum: sha256:c2f5bc1163bd8d15a711616b587bcede212d045a5b8b52df01c74095897cd065
 
 # Auto-unseal through Azure Key Vault and the Arc machine's identity (#726;
