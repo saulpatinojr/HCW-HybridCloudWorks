@@ -160,11 +160,11 @@ Describe 'The rule table agrees with the Terraform and the runbook' {
         $fireRecord | Should -Match ('(?m)^\| `' + [regex]::Escape($Short) + '` \| ')
     }
 
-    It 'offers the ten tests, in the order the caller asked for, each with a definition whose rules are in the table' {
+    It 'offers the eleven tests, in the order the caller asked for, each with a definition whose rules are in the table' {
         $parameter = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Test' }
         $set = $parameter.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' }
         $values = @($set.PositionalArguments | ForEach-Object { $_.Value })
-        ($values -join ',') | Should -BeExactly 'kv-config-write,rbac-assignment,rbac-definition,kv-errors-and-data-write,lab-vault-unwrap,lab-ssh-burst,jobs-poison,lab-agent-offline,swa-bandwidth,timer-overdue'
+        ($values -join ',') | Should -BeExactly 'kv-config-write,rbac-assignment,rbac-definition,kv-errors-and-data-write,lab-vault-unwrap,lab-ssh-burst,lab-ssh-login,jobs-poison,lab-agent-offline,swa-bandwidth,timer-overdue'
         $catalog = Get-AlertRuleCatalog
         $covered = [System.Collections.Generic.HashSet[string]]::new()
         foreach ($value in $values) {
@@ -548,6 +548,7 @@ Describe 'The tests themselves' {
             @{ Test = 'kv-errors-and-data-write' },
             @{ Test = 'lab-vault-unwrap' },
             @{ Test = 'lab-ssh-burst' },
+            @{ Test = 'lab-ssh-login' },
             @{ Test = 'jobs-poison' },
             @{ Test = 'lab-agent-offline' },
             @{ Test = 'swa-bandwidth' },
@@ -914,6 +915,24 @@ Describe 'The tests themselves' {
             (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@($command) -join "`n")
         }
 
+        It 'lab-ssh-login writes the one line with logger and waits for its rule alone' {
+            Mock Wait-AlertFired { }
+            Invoke-AlertTestLabSshLogin -Context (New-TestContext -Test 'lab-ssh-login')
+            $command = 'logger -p auth.info -t sshd "Accepted publickey for firetest from 192.0.2.10 port 1 ssh2: ED25519 SHA256:firetest"'
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@($command) -join "`n")
+            Get-AzWrites | Should -BeNullOrEmpty
+            Get-HostText | Should -Match 'Written: one line\.'
+            Should -Invoke Wait-AlertFired -Times 1 -Exactly -ParameterFilter { ($Required -join ',') -eq 'alert-lab-ssh-login' -and -not $Optional }
+        }
+
+        It 'lab-ssh-login stops when ssh cannot reach the host, and when logger fails' {
+            $command = 'logger -p auth.info -t sshd "Accepted publickey for firetest from 192.0.2.10 port 1 ssh2: ED25519 SHA256:firetest"'
+            $script:sshAnswers[$command] = [pscustomobject]@{ ExitCode = 255; Lines = [string[]]@('ssh: Could not resolve hostname hcw-lab') }
+            { Invoke-AlertTestLabSshLogin -Context (New-TestContext -Test 'lab-ssh-login') } | Should -Throw '*ssh could not reach hcw-lab*'
+            $script:sshAnswers[$command] = [pscustomobject]@{ ExitCode = 1; Lines = [string[]]@('logger: socket /dev/log: No such file or directory') }
+            { Invoke-AlertTestLabSshLogin -Context (New-TestContext -Test 'lab-ssh-login') } | Should -Throw '*Writing the line on hcw-lab failed (exit 1)*'
+        }
+
         It 'rbac-assignment, end to end: both halves, each recorded, granted, deleted and confirmed' {
             Mock Wait-AlertFired { }
             $context = New-TestContext -Test 'rbac-assignment'
@@ -1005,6 +1024,7 @@ Describe 'The tests themselves' {
             @{ Test = 'kv-errors-and-data-write' },
             @{ Test = 'lab-vault-unwrap' },
             @{ Test = 'lab-ssh-burst' },
+            @{ Test = 'lab-ssh-login' },
             @{ Test = 'rbac-definition' },
             @{ Test = 'swa-bandwidth' }
         ) {

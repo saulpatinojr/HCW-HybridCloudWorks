@@ -102,7 +102,7 @@ signal that survives the application being completely down.
 2026-10-16. The rule this decision first wrote, for four workload rules, now
 covers every log rule that evaluates every 12 hours or more often and watches
 a state. That is a count, a level, or an absence, which the next good reading
-clears. Three exceptions remain, and each is held by a reason, not by habit:
+clears. Four exceptions remain, and each is held by a reason, not by habit:
 
 - **The daily rules:** `alert-export-window-latency`, `alert-cosmos-export-daily`
   and `alert-cosmos-export-full` are stateless because Azure refuses
@@ -112,6 +112,13 @@ clears. Three exceptions remain, and each is held by a reason, not by habit:
   form would report Resolved about 30 minutes after the line left the hour's
   window (two clear 15-minute evaluations), whether or
   not the unit came back.
+- **`alert-lab-ssh-login`** (added 2026-10-16, #953): stateless because a
+  login is an event, an `Accepted` line from sshd, with nothing to resolve.
+  Unlike `alert-lab-unit-failed` it is not muted, because a mute would hide a
+  second unexpected login inside the muted hours. It selects rows by
+  ingestion time over a lookback a little longer than its 15-minute
+  evaluation, so no login falls between two evaluations; the price, accepted,
+  is that a line ingested in the overlap mails twice.
 - **Activity Log alerts:** stateless by platform. Each alert is one event, read
   and closed by a person.
 
