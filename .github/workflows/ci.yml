@@ -266,11 +266,10 @@ jobs:
   # The browser suites (frontend/e2e). Until 2026-10-06 nothing ran them: the
   # hydration, console-error and smoke specs had real assertions and executed
   # only when someone remembered, and the admin spec could not fail (estate
-  # review, finding QA-1). This job is NOT a required check: it is a signal
-  # for two weeks first, then the hydration spec becomes required in the
-  # ruleset. The build is the same `npm run build` the frontend row runs;
-  # `vite preview` serves it and the suites run against it on desktop Chrome
-  # and a Pixel 5.
+  # review, finding QA-1). Promoted to a required check in the ruleset: runs
+  # desktop Chrome and Pixel 5 mobile profiles across hydration.spec.js,
+  # contentforge.spec.js, and admin-authenticated.spec.js against the preview
+  # server. The build is the same `npm run build` the frontend row runs.
   #
   # Only the hydration and admin specs run here. The first run (PR #899)
   # showed why: the console-error and smoke specs assert a clean console on
@@ -289,7 +288,7 @@ jobs:
   # Pixel 5 drawer on four admin routes. All three specs together took 100 s
   # on one worker locally; the acceptance is a job under eight minutes.
   e2e:
-    name: e2e (playwright, not required)
+    name: e2e (playwright)
     runs-on: ubuntu-26.04
     timeout-minutes: 25
     permissions:
