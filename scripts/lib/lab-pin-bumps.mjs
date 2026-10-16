@@ -615,6 +615,16 @@ export const HOST_BUMPERS = {
       ],
     };
   }),
+  cosign: async ({ http, latest }) => {
+    const url = `https://github.com/sigstore/cosign/releases/download/v${latest}/cosign_checksums.txt`;
+    const file = 'cosign-linux-amd64';
+    const hex = sumsLine(await http.text(url), file);
+    if (!hex) throw new Error(`${url} has no line for ${file}`);
+    return {
+      edits: [yamlEdit(['cosign_version'], latest), yamlEdit(['cosign_checksum'], `sha256:${hex}`)],
+      evidence: [{ item: `${file} (SHA256)`, value: hex, source: url }],
+    };
+  },
 };
 
 /** What a check row asks of its bumper: a new release, the same release rebuilt, or nothing. */

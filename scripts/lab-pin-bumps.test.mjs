@@ -301,6 +301,20 @@ describe('the host plan', () => {
     expect(Object.keys(HOST_BUMPERS).sort()).toEqual(Object.keys(LABELS).sort());
   });
 
+  it('cosign bumper reads cosign_checksums.txt and edits cosign_version and cosign_checksum', async () => {
+    const checksums = `${hex('c')}  cosign-linux-amd64\n${hex('d')}  cosign-darwin-amd64\n`;
+    const http = makeHttp(
+      fakeFetch({
+        'https://github.com/sigstore/cosign/releases/download/v3.2.0/cosign_checksums.txt': checksums,
+      })
+    );
+    const result = await HOST_BUMPERS.cosign({ http, latest: '3.2.0' });
+    expect(result.edits).toHaveLength(2);
+    expect(result.edits[0].to).toBe('3.2.0');
+    expect(result.edits[1].to).toBe(`sha256:${hex('c')}`);
+    expect(result.evidence[0].value).toBe(hex('c'));
+  });
+
   it('edits only BEHIND rows, and turns a bump without evidence into a note that edits nothing', async () => {
     const bumpers = {
       vault: async () => ({
