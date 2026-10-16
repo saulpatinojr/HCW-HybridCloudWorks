@@ -179,6 +179,13 @@ resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_backups_blob" {
 # derives its list from these declarations, which is why the two kinds are
 # two resources rather than a for_each: scripts/lib/alert-declarations.mjs
 # resolves a rule's name from var.* references only.
+#
+# Stateful since 2026-10-16 (ADR 0022 decision 6). They muted for a day
+# instead, which is what the rows of the stateless form looked like: from
+# their create on 2026-10-14 the Coder rule opened 22 alerts, one an hour,
+# before the first dump landed, and none of them closed when it did. Stateful,
+# a missed night is one alert, and it resolves two clear evaluations after the
+# next backup lands.
 locals {
   lab_hybrid_backup_blob_logs = "StorageBlobLogs | where AccountName == \"${azurerm_storage_account.lab_hybrid_backups.name}\" | where OperationName in (\"PutBlob\", \"PutBlockList\") | where StatusText == \"Success\""
 }
@@ -196,7 +203,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_backup_mis
   evaluation_frequency = "PT1H"
   window_duration      = "P2D"
 
-  mute_actions_after_alert_duration = "P1D"
+  auto_mitigation_enabled = true
 
   criteria {
     query                   = "${local.lab_hybrid_backup_blob_logs} | where ObjectKey startswith \"/${azurerm_storage_account.lab_hybrid_backups.name}/host-backups/coder/\""
@@ -237,7 +244,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_backup_mis
   evaluation_frequency = "PT1H"
   window_duration      = "P2D"
 
-  mute_actions_after_alert_duration = "P1D"
+  auto_mitigation_enabled = true
 
   criteria {
     query                   = "${local.lab_hybrid_backup_blob_logs} | where ObjectKey startswith \"/${azurerm_storage_account.lab_hybrid_backups.name}/host-backups/vault/\""

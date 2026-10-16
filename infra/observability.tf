@@ -777,10 +777,9 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "app_exceptions" {
   # coverage — a filter on the query below, a higher threshold, a severity that
   # is not 1 — need a week of real firing to set, not a guess.
   #
-  # Mutually exclusive with mute_actions_after_alert_duration, which is why
-  # alert-logs-capacity uses that one instead: its condition cannot clear
-  # before the 08:00 UTC reset, so there is nothing for auto-resolution to
-  # resolve.
+  # Mutually exclusive with mute_actions_after_alert_duration. Since
+  # 2026-10-16 that is left only to alert-lab-unit-failed, whose condition is
+  # an event and not a state (ADR 0022 decision 6).
   auto_mitigation_enabled = true
 
   criteria {
@@ -933,11 +932,15 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "telegram_delivery" {
 # rather than a code change. It is also why that variable refuses -1: an
 # unlimited workspace would put a negative number on the line below.
 #
-# mute_actions_after_alert_duration rather than auto-mitigation, and the two
-# are mutually exclusive on this resource. Ingestion only goes up between
-# resets, so once it is past 80% it stays past — an hourly evaluation would
-# otherwise send the same mail every hour until the reset, which is how a
-# useful alert becomes a mail rule.
+# Stateful since 2026-10-16 (ADR 0022 decision 6). Ingestion only goes up
+# between resets, so once it is past 80% it stays past until the 08:00 UTC
+# reset. Stateless, an hourly evaluation would mail every hour until then, so
+# this muted for six hours. That still mailed up to four times a day, and it
+# left an alert open for every hour over: twelve were open on 2026-10-16. The
+# reasoning behind the mute was that there is nothing for auto-resolution to
+# resolve, and that was wrong. The reset clears the condition, because
+# WindowStart moves and the sum starts again. Stateful, a day over 80% is one
+# alert, and it resolves two clear evaluations after the reset.
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "logs_daily_cap" {
   provider = azurerm.mgmt
 
@@ -951,7 +954,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "logs_daily_cap" {
   evaluation_frequency = "PT1H"
   window_duration      = "P1D"
 
-  mute_actions_after_alert_duration = "PT6H"
+  auto_mitigation_enabled = true
 
   criteria {
     query                   = <<-KQL
