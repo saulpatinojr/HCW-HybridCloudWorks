@@ -27,7 +27,10 @@ describe('Admin pages budget and test coverage (AP-F10)', () => {
       it(`does not exceed ${MAX_PAGE_LINES} lines`, () => {
         const fullPath = path.join(adminDir, file);
         const content = fs.readFileSync(fullPath, 'utf8');
-        const lineCount = content.split('\n').length;
+        const lines = content.endsWith('\n')
+          ? content.slice(0, -1).split('\n')
+          : content.split('\n');
+        const lineCount = lines.length;
         expect(
           lineCount,
           `${file} has ${lineCount} lines, which exceeds the ${MAX_PAGE_LINES} line budget`

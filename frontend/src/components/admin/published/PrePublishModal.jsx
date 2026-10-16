@@ -1,6 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { ADMIN_ROUTES } from '@/config/admin';
 
 export default function PrePublishModal({
@@ -14,20 +21,21 @@ export default function PrePublishModal({
   if (!candidate) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="absolute inset-0" onClick={() => onClose()} aria-hidden="true" />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="prepublish-modal-title"
-        className="relative w-full max-w-md rounded-2xl border bg-background shadow-2xl p-6 space-y-4"
-      >
-        <h2 id="prepublish-modal-title" className="text-lg font-semibold">
-          {failures.length === 0 ? 'Ready to publish' : 'Publish blocked'}
-        </h2>
-        <p className="text-sm text-muted-foreground truncate">
-          {candidate.Title || candidate.title || 'Untitled'}
-        </p>
+    <Dialog
+      open={Boolean(candidate)}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="w-full max-w-md rounded-2xl border bg-background shadow-2xl p-6 space-y-4">
+        <DialogHeader>
+          <DialogTitle id="prepublish-modal-title" className="text-lg font-semibold text-left">
+            {failures.length === 0 ? 'Ready to publish' : 'Publish blocked'}
+          </DialogTitle>
+          <DialogDescription className="text-sm text-muted-foreground truncate text-left">
+            {candidate.Title || candidate.title || 'Untitled'}
+          </DialogDescription>
+        </DialogHeader>
 
         {failures.length === 0 ? (
           <p className="text-sm text-emerald-600 dark:text-emerald-400">
@@ -80,7 +88,7 @@ export default function PrePublishModal({
             </Button>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

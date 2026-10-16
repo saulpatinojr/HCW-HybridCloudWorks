@@ -64,13 +64,17 @@ export function usePublishWorkflow({ navigate, withImageOverride, setLocalLiveOv
         setPublishError(nextError);
       }
 
-      await logAdminAction('content_published_live', {
-        contentId: item.id,
-        title: item.Title || item.title,
-        publishTarget,
-        publishMapping: mapping || null,
-      });
       setLocalLiveOverrides((prev) => ({ ...prev, [item.id]: true }));
+      try {
+        await logAdminAction('content_published_live', {
+          contentId: item.id,
+          title: item.Title || item.title,
+          publishTarget,
+          publishMapping: mapping || null,
+        });
+      } catch (auditErr) {
+        console.warn('Failed to log admin action for content_published_live:', auditErr);
+      }
       if (autoPostSocial) {
         navigate(`/admin/social-hub?tab=compose&contentId=${encodeURIComponent(item.id)}`);
       }
