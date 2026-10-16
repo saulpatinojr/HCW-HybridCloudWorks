@@ -19,6 +19,17 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Both backup-missing rules are on the Fire record: fifteen of fifteen
+  (PLAT-4, #964)**. Neither needed a staged test, because each fired on
+  the real condition when it was created on 2026-10-14. That was before
+  the host had uploaded anything. `alert-lab-backup-missing-coder` first
+  opened at 06:23:14Z, with its actions run, and stopped after the first
+  Coder dump landed at 03:37:18Z on 2026-10-15.
+  `alert-lab-backup-missing-vault` first opened at 06:30:23Z and stopped
+  after the first Vault snapshot at 14:35:10Z. Read from Alerts Management
+  on 2026-10-16, so the two-night backup stop the rows used to call for
+  was not made. `alert-export-window-latency` keeps its design test, since
+  a degraded export window cannot be staged.
 - **`alert-timer-overdue` is seen to fire: thirteen of fifteen alert rules
   are now on the Fire record (PLAT-4, #964)**. After the owner's apply put
   #1195's corrected query live (20:42Z on 2026-10-15),
