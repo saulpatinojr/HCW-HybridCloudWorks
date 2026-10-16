@@ -941,6 +941,19 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **No auto-delete on the owner's Ambassador hub (follow-up to #1234, SEC-4
+  #973)**. #1234 set a 90-day container TTL on the `ambassador` Cosmos
+  container, believing it held applicants' personal data. It holds the
+  owner's own programs, applications and evidence, kept until deleted. A
+  container TTL expires every document not written within the window, so it
+  would have deleted the owner's records. The tfc-plan-check flagged it as
+  undeclared; the HCP Terraform runs carrying it were discarded and it is
+  taken off before any apply. `generate-cosmos-container-spec.test.mjs` now
+  refuses a container TTL on the containers whose records are kept until
+  deleted (`ambassador`, `content`, `content_versions`, `blogs`). The
+  data-subject runbook no longer lists the hub as a personal-data store. Its
+  commands and exercise record, which do not match the estate, are marked
+  under review in #1237.
 - **Lab host: Caddy's admin API moves to a Unix socket, and HTTP/3 is off
   (#958)**. The Caddyfile always renders a global block with
   `admin unix//run/caddy/admin.sock` instead of TCP `127.0.0.1:2019`, and
