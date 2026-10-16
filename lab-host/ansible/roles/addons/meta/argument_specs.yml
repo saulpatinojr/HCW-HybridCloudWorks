@@ -74,6 +74,12 @@ argument_specs:
             description:
               - Environment keys whose values are read from the vault variable each names, for example
                 TURNSTILE_SECRET from vault_addon_migration_turnstile_secret.
+          attestation_identity_regexp:
+            type: str
+            required: false
+            description:
+              - Regular expression matching the workflow identity in Sigstore's code-signing
+                certificate, verified with cosign before the image is pulled (#1069).
       addons_unavailable_response:
         type: str
         required: false
@@ -92,6 +98,7 @@ argument_specs:
       addons_caddy_route_file:
         type: path
         required: false
+        default: /etc/caddy/conf.d/20-addons.caddy
         description: Where the route is rendered; defaults to addons_caddy_sites_dir/20-addons.caddy.
       addons_wait_retries:
         type: int
@@ -108,6 +115,21 @@ argument_specs:
         required: false
         default: 10m
         description: The json-file log cap per container.
+      addons_cosign_bin:
+        type: path
+        required: false
+        default: /usr/local/bin/cosign
+        description: Path to the cosign binary used to verify add-on image attestations (#1069).
+      addons_attestation_type:
+        type: str
+        required: false
+        default: slsaprovenance1
+        description: The predicate type cosign verify-attestation checks (SLSA provenance v1).
+      addons_attestation_oidc_issuer:
+        type: str
+        required: false
+        default: https://token.actions.githubusercontent.com
+        description: The OIDC issuer expected in the code-signing certificate (GitHub Actions).
       addons_network_name:
         type: str
         required: false

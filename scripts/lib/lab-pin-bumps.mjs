@@ -65,6 +65,7 @@ export const CODER_TEMPLATE_PATH = 'lab-host/coder/templates/hcw-lab/main.tf';
  * the lab image's base tag and CPython release in its prose and commands.
  */
 export const CADDY_TEST_PATH = 'lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh';
+export const BOOTSTRAP_PATH = 'lab-host/bootstrap.sh';
 export const DOCKER_CLI_FIXTURE_PATH = 'scripts/fixtures/docker-cli-agent-requests.json';
 export const DOCKER_GUIDE_PAGE_PATH = 'frontend/src/pages/docker/BuildingImagesPage.jsx';
 export const README_PATH = 'lab-image/README.md';
@@ -615,6 +616,31 @@ export const HOST_BUMPERS = {
       ],
     };
   }),
+  cosign: async ({ http, latest }) => {
+    const url = `https://github.com/sigstore/cosign/releases/download/v${latest}/cosign_checksums.txt`;
+    const file = 'cosign-linux-amd64';
+    const hex = sumsLine(await http.text(url), file);
+    if (!hex) throw new Error(`${url} has no line for ${file}`);
+    return {
+      edits: [
+        yamlEdit(['cosign_version'], latest),
+        yamlEdit(['cosign_checksum'], `sha256:${hex}`),
+        {
+          file: BOOTSTRAP_PATH,
+          where: 'COSIGN_VERSION',
+          to: latest,
+          apply: (text) => replaceOne(text, /^COSIGN_VERSION=([0-9.]+)$/m, latest, 'COSIGN_VERSION'),
+        },
+        {
+          file: BOOTSTRAP_PATH,
+          where: 'COSIGN_SHA256',
+          to: hex,
+          apply: (text) => replaceOne(text, /^COSIGN_SHA256=([0-9a-f]{64})$/m, hex, 'COSIGN_SHA256'),
+        },
+      ],
+      evidence: [{ item: `${file} (SHA256)`, value: hex, source: url }],
+    };
+  },
 };
 
 /** What a check row asks of its bumper: a new release, the same release rebuilt, or nothing. */

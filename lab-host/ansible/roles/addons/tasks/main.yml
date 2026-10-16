@@ -57,6 +57,19 @@
   loop_control:
     label: "{{ item.id }}"
 
+- name: Refuse to deploy an add-on without an attestation identity pattern
+  ansible.builtin.assert:
+    that:
+      - item.attestation_identity_regexp | default('') | length > 0
+    fail_msg: >-
+      hcw-addon-{{ item.id }} has a digest, so it would be deployed, but its attestation_identity_regexp
+      is not set. Every deployed add-on image must have a publisher workflow identity pattern to verify
+      against before pull (#1069; roles/addons/README.md).
+    quiet: true
+  loop: "{{ addons_deployed }}"
+  loop_control:
+    label: "{{ item.id }}"
+
 # Every secret_env value names a vault key; the container is not started
 # while any of them is unset, because the add-on would then start without
 # human verification or refuse to start, and either is better said here.
@@ -230,6 +243,39 @@
     create: false
     mode: "0640"
   when: addons_active | length > 0
+
+# Attestation verification before pull (#1069). Verifies the image's SLSA
+# build provenance bundle against Sigstore's public transparency log and the
+# expected GitHub Actions workflow identity. Fails closed if the identity
+# does not match or Sigstore cannot be reached.
+- name: Download the pinned cosign binary and verify its checksum
+  ansible.builtin.get_url:
+    url: "https://github.com/sigstore/cosign/releases/download/v{{ cosign_version }}/cosign-linux-amd64"
+    dest: "{{ addons_cosign_bin }}"
+    checksum: "{{ cosign_checksum }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: addons_deployed | length > 0
+
+- name: Verify build provenance attestation before pull for each deployed add-on image
+  ansible.builtin.command:
+    argv:
+      - "{{ addons_cosign_bin }}"
+      - verify-attestation
+      - --type
+      - "{{ addons_attestation_type }}"
+      - --certificate-oidc-issuer
+      - "{{ addons_attestation_oidc_issuer }}"
+      - --certificate-identity-regexp
+      - "{{ item.attestation_identity_regexp }}"
+      - "{{ item.image }}@{{ item.image_digest }}"
+  register: addons_attestation_verify
+  changed_when: false
+  loop: "{{ addons_deployed }}"
+  loop_control:
+    label: "{{ item.id }}: {{ item.image }}@{{ item.image_digest }}"
+  when: not ansible_check_mode
 
 - name: Pull each deployed add-on image by digest
   community.docker.docker_image_pull:

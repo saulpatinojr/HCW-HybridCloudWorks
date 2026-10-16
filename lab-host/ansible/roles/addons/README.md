@@ -19,11 +19,19 @@ one; ADR 0035 decision 8 records them as the second permitted workload kind.
    `vars/main.yml`; Docker's iptables rules for a published port come before
    ufw's), every row has an integer port of its own between 1024 and 65535
    and an id of lowercase letters, digits and hyphens, every digest is
-   empty or `sha256:` plus 64 hex characters, and every `secret_env` value
-   of an enabled row names a vault key that is set. A missing key fails the
-   run with the one `hcw-vault-set` line that sets it, by name.
+   empty or `sha256:` plus 64 hex characters, every deployed row carries
+   `attestation_identity_regexp` to authenticate its image before pull (#1069),
+   and every `secret_env` value of an enabled row names a vault key that is
+   set. A missing key fails the run with the one `hcw-vault-set` line that
+   sets it, by name.
 2. For every enabled row with a digest, while `addons_enabled` is true:
-   pulls `image@image_digest` and runs `hcw-addon-<id>` with
+   verifies the image's SLSA build provenance attestation against Sigstore's
+   public trust root with `cosign verify-attestation` using
+   `addons_attestation_type` (`slsaprovenance1`),
+   `addons_attestation_oidc_issuer` (`https://token.actions.githubusercontent.com`)
+   and the row's `attestation_identity_regexp` (failing closed on mismatch or
+   unreachable transparency log; #1069), pulls `image@image_digest` and runs
+   `hcw-addon-<id>` with
    `127.0.0.1:<port>:8080`, `read_only`, `/tmp` on tmpfs, `cap_drop ALL`,
    `no-new-privileges`, the row's `memory` and `pids_limit`, one CPU,
    `restart unless-stopped`, json-file logs capped at `addons_log_max_size`,
@@ -112,12 +120,15 @@ human-verification site key is public (the add-on publishes it in
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `addons_enabled` | required (`true` in `group_vars`) | Run or remove every add-on |
-| `addons` | required | One row per add-on: `id`, `enabled`, `image`, `image_tag`, `image_digest`, `port`, `memory`, `pids_limit`, `env`, `secret_env` |
+| `addons` | required | One row per add-on: `id`, `enabled`, `image`, `image_tag`, `image_digest`, `attestation_identity_regexp`, `port`, `memory`, `pids_limit`, `env`, `secret_env` |
 | `addons_unavailable_response` | `This tool isn't available right now.` | The 503 body; the site's sentence ("What a pane shows") |
 | `addons_caddy_sites_dir`, `addons_caddy_group` | `/etc/caddy/conf.d`, `caddy` | The caddy role's paths |
 | `addons_caddy_route_file` | `<sites dir>/20-addons.caddy` | Where the route is rendered |
 | `addons_wait_retries`, `addons_wait_delay` | `30`, `2` | The health wait after a start |
 | `addons_log_max_size` | `10m` | json-file log cap per container |
+| `addons_cosign_bin` | `/usr/local/bin/cosign` | Cosign binary path for attestation verification |
+| `addons_attestation_type` | `slsaprovenance1` | Predicate type for SLSA provenance verification |
+| `addons_attestation_oidc_issuer` | `https://token.actions.githubusercontent.com` | Expected OIDC issuer in code-signing cert |
 
 `addons_publish_address` (`127.0.0.1`) and `addons_container_port` (`8080`)
 are in `vars/main.yml` and are not knobs. `meta/argument_specs.yml` is the
