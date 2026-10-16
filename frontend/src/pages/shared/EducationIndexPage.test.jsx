@@ -17,7 +17,7 @@ import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { HelmetProvider } from 'react-helmet-async';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { deriveStatus, isIsoDate, todayIso } from '@/lib/certStatus';
+import { deriveStatus, isIsoDate, todayIso, useToday } from '@/lib/certStatus';
 import { VALID_PROVIDERS } from '@/context/ProviderContext';
 import EducationIndexPage, {
   AVAILABLE_STATUS_WORD,
@@ -33,24 +33,23 @@ import EducationIndexPage, {
 } from './EducationIndexPage';
 
 /**
- * The day the page renders as. `useToday` uses the earliest `DATA_AS_OF` for
- * the server snapshot and the viewer's date after hydration; jsdom's
- * `useSyncExternalStore` takes the client snapshot, so the rendered page is on
- * the real clock and every expectation here must be computed on it too.
+ * The instant the page renders at. `useToday` uses the earliest `DATA_AS_OF`
+ * for the server snapshot and the viewer's date after hydration; jsdom's
+ * `useSyncExternalStore` takes the client snapshot, so the rendered page reads
+ * the clock (`todayIso()`) at render time, and every expectation here must be
+ * computed on the day that read returns.
  *
- * WHICH IS WHY THE CLOCK IS FROZEN. Reading `new Date()` here at module load
- * while the component reads it again at render time is two reads of a moving
- * value, and a suite that crosses midnight between them computes its
- * expectations for one day and renders another. Rare, real, and exactly the
- * kind of failure nobody can reproduce the next morning — this repository
- * spent an evening on the same midnight boundary when `DATA_AS_OF` was
- * written from the UTC date while `todayIso()` reads the local one.
+ * WHICH IS WHY THE CLOCK IS FROZEN. Reading the real clock for the
+ * expectations while the component reads it again at render time is two
+ * reads of a moving value, and a suite that crosses midnight between them
+ * computes its expectations for one day and renders another. Rare, real, and
+ * exactly the kind of failure nobody can reproduce the next morning — this
+ * repository spent an evening on the same midnight boundary when `DATA_AS_OF`
+ * was written from the UTC date while `todayIso()` reads the local one.
  *
  * `vi.useFakeTimers` with `shouldAdvanceTime` keeps timers working for
- * Testing Library while pinning the wall clock, so both reads land on the
- * same day whatever the hour. The frozen instant is deliberately mid-morning
- * rather than midnight, so a timezone offset cannot push it onto a
- * neighbouring date either. (Copilot review of 033aaa85.)
+ * Testing Library while pinning the wall clock the render reads. (Copilot
+ * review of 033aaa85.)
  */
 const FROZEN_NOW = new Date('2026-09-10T12:00:00Z');
 
@@ -63,9 +62,28 @@ afterAll(() => {
   vi.useRealTimers();
 });
 
-// Computed AFTER the clock is pinned, from the same helper the component uses,
-// so the test cannot drift from the page by construction.
-const today = todayIso();
+/**
+ * The day every expectation is computed on: the frozen instant on the
+ * runner's own calendar, worked out from the constant, never read from the
+ * clock.
+ *
+ * It used to be `todayIso()`, under a comment saying it ran after the clock
+ * was pinned. It ran before. A test file's body runs while Vitest collects
+ * it and `beforeAll` runs later, when the suite starts, so `today` was the
+ * runner's real date while the page rendered on 2026-09-10. The two agreed
+ * only while no row's status differed between those days. AB-400 was the
+ * first that did: `availableDate` 2026-10-16 and `statusReadDate` 2026-10-12
+ * make it `upcoming` on 2026-09-10 and `active` from 2026-10-16. From
+ * midnight UTC that day the Linux runners expected 49 bookable Azure exams
+ * and rendered 48, while a machine on Central time still read 2026-10-15 and
+ * passed.
+ *
+ * `todayIso` reads the local calendar here and in the page, so the day itself
+ * moves with the zone (noon UTC is already 2026-09-11 from UTC+12 eastward).
+ * The expectations and the render move together, so the suite passes in
+ * every zone. `the day this file renders on`, below, holds them to one day.
+ */
+const today = todayIso(FROZEN_NOW);
 
 function renderPage() {
   return render(
@@ -76,6 +94,21 @@ function renderPage() {
     </HelmetProvider>
   );
 }
+
+describe('the day this file renders on', () => {
+  it('is the day its expectations are computed on', () => {
+    // The hook the page calls, with the argument the page passes, under this
+    // file's clock. Were `today` taken from any other clock than the one the
+    // render reads, this would fail on every day the two differ, rather than
+    // waiting for the day a catalogue row happens to change status between
+    // them, which is how the module-load read went unnoticed for five weeks.
+    function RenderDay() {
+      return <output data-testid="render-day">{useToday(earliestDataAsOf())}</output>;
+    }
+    render(<RenderDay />);
+    expect(screen.getByTestId('render-day').textContent).toBe(today);
+  });
+});
 
 describe('the level table can describe every catalogue', () => {
   it('maps every level word the nine catalogues use onto a tier', () => {
