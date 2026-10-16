@@ -91,13 +91,33 @@ describe('host_firewall: the chains', () => {
   });
 
   it('loads them with --noflush, one transaction per family, and flushes or deletes chains only in remove', () => {
-    expect(helper).toMatch(/"\$\{ipt\}-restore" -w --noflush <<<"\$\{transaction\}"/);
-    const removeFamily = helper.slice(helper.indexOf('remove_family() {'), helper.indexOf('\n}\n', helper.indexOf('remove_family() {')));
-    const outside = helper.replace(removeFamily, '');
-    expect(removeFamily).toContain('transaction+=$\'\\n\'"-F ${name}"');
-    expect(removeFamily).toContain('transaction+=$\'\\n\'"-X ${name}"');
+    expect(helper).toMatch(/"\$\{ipt\}-restore" -w --noflush <<<"\$\{transactions\[\$1\]\}"/);
+    const removal = helper.slice(helper.indexOf('removal() {'), helper.indexOf('\n}\n', helper.indexOf('removal() {')));
+    const outside = helper.replace(removal, '');
+    expect(removal).toContain('transaction+=$\'\\n\'"-F ${name}"');
+    expect(removal).toContain('transaction+=$\'\\n\'"-X ${name}"');
     expect(code(outside)).not.toMatch(/"-[FXZ] |--flush|--delete-chain/);
-    expect(removeFamily).toContain('awk \'$1 == "-N" && $2 ~ /^HCW-/ { print $2 }\'');
+    expect(removal).toContain('awk \'$1 == "-N" && $2 ~ /^HCW-/ { print $2 }\'');
+  });
+
+  it('dry-runs both families before committing either, for apply and for remove', () => {
+    expect(helper).toMatch(/"\$\{ipt\}-restore" -w --noflush --test <<<"\$\{transaction\}"/);
+    for (const what of ['transaction', 'removal']) {
+      const dry = helper.indexOf(`dry_run "\${version}" ${what}`);
+      const commit = helper.indexOf(`commit "\${version}" ${what}`);
+      expect(dry, what).toBeGreaterThan(0);
+      expect(commit, what).toBeGreaterThan(dry);
+      // The dry run's loop closes before the commit's begins.
+      expect(helper.slice(dry, commit), what).toMatch(/\n\s*done\n(?:[\s\S]*\n)?\s*for version in 4 6; do\n/);
+    }
+    expect(helper).toContain('a rule jumps to ${BASH_REMATCH[1]}, which the file does not declare');
+  });
+
+  it('runs one at a time, under a lock in /run that exists before any unit starts', () => {
+    expect(helper).toContain('lock="${HCW_FIREWALL_LOCK:-/run/hcw-host-firewall.lock}"');
+    expect(helper).toContain('flock -w "${lock_wait}" 9 ||');
+    expect(helper.indexOf('flock -w')).toBeLessThan(helper.indexOf('if [ "${mode}" = remove ]; then'));
+    expect(helper).not.toContain('/run/lock/');
   });
 
   it('refuses every range the owner named, IPv4 and IPv6', () => {
@@ -183,6 +203,13 @@ describe('host_firewall: the jumps', () => {
     const sandboxUser = /^coder_sandbox_user: (.+)$/m.exec(read('lab-host/ansible/roles/coder_sandbox/defaults/main.yml'))[1];
     expect(defaults).toMatch(new RegExp(`^host_firewall_sandbox_user: ${sandboxUser}$`, 'm'));
     expect(sandboxUser).toBe('hcw-coder-docker');
+  });
+
+  it('takes that user from coder_sandbox_user in group_vars, so the two cannot be set apart', () => {
+    const groupVars = read('lab-host/ansible/group_vars/all.yml');
+    expect(groupVars).toMatch(/^coder_sandbox_user: hcw-coder-docker$/m);
+    expect(groupVars).toMatch(/^host_firewall_sandbox_user: "\{\{ coder_sandbox_user \}\}"$/m);
+    expect(code(site)).not.toMatch(/host_firewall_sandbox_user/);
   });
 
   // The sandbox chain is written for rootlesskit's user-mode network drivers

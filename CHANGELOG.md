@@ -958,15 +958,17 @@ This project has not cut a tagged release; entries are grouped under
     refused; Coder reaches it across its own bridge.
   - **Loading:** `hcw-host-firewall` loads each family in one
     `iptables-restore --noflush` transaction and keeps each jump first and
-    single. The play fails on any read-back difference, and check mode
-    reports drift.
+    single. Both families are dry-run before either commits, a jump to an
+    undeclared `HCW-*` chain is refused first, and a lock in `/run` keeps
+    one run at a time. The play fails on any read-back difference, and check
+    mode reports drift.
   - **Boot:** `hcw-host-firewall.service` re-applies the rules at boot, after
     ufw and before Docker, and reports a failure to `hcw-unit-failed@`. The
     sandbox user's manager requires it.
   - **Removal:** `host_firewall_state: absent` removes it all in a safe order.
   - **Untouched:** ufw's rules and the add-ons' `DOCKER-USER` rules.
   - **Tests:** `roles/host_firewall/tests/hcw-host-firewall.test.sh` (real
-    iptables in a scratch network namespace, 95 checks, in CI with ufw
+    iptables in a scratch network namespace, 103 checks, in CI with ufw
     required) and `scripts/lab-host-host-firewall.test.mjs`.
 - **Lab host: Caddy's admin API moves to a Unix socket, and HTTP/3 is off
   (#958)**. The Caddyfile always renders a global block with

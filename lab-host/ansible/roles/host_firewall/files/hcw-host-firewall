@@ -24,25 +24,39 @@
 # chain line flushes an existing chain), and every jump to an HCW-* chain in
 # INPUT, FORWARD and OUTPUT deleted by its full specification and the wanted
 # ones inserted again at the top. Nothing else is touched: ufw's chains and
-# jumps, Docker's chains and DOCKER-USER stay as they are. A transaction
-# iptables rejects changes nothing. It prints one line per change, nothing
-# when the table already matches, and then reads the table back and fails
-# if it still differs (a rule not written in `iptables -S` form would).
+# jumps, Docker's chains and DOCKER-USER stay as they are. Both families'
+# transactions are built and dry-run (`iptables-restore --test`) before
+# either is committed, so a rule iptables cannot parse (an unknown match or
+# target, a bad option) stops the run with neither family changed, rather
+# than with IPv4 new and IPv6 old. The dry run is userspace only: on
+# nf_tables it does not see what the kernel refuses at commit, such as a jump
+# to a chain that does not exist, so the files are checked for that here
+# first. Anything else the kernel refuses is reported for its family, after
+# IPv4 may have been committed, and the role's rescue stops the sandbox. A
+# transaction iptables rejects changes nothing. It prints one line per
+# change, nothing when the table already matches, and then reads the table
+# back and fails if it still differs (a rule not written in `iptables -S`
+# form would).
 #
 # verify prints every difference and exits 1 when there is one.
 #
-# remove reads no file: in one transaction per family it deletes every jump
-# to an HCW-* chain from INPUT, FORWARD and OUTPUT, then flushes and deletes
-# every HCW-* chain, and touches nothing else. It prints a line per family it
-# changed and nothing when there was nothing to take out. The role runs it
-# when host_firewall_state is absent, after the sandbox user's manager no
-# longer requires the boot unit (tasks/absent.yml).
+# remove reads no file: in one transaction per family, both dry-run first as
+# apply's are, it deletes every jump to an HCW-* chain from INPUT, FORWARD
+# and OUTPUT, then flushes and deletes every HCW-* chain, and touches nothing
+# else. It prints a line per family it changed and nothing when there was
+# nothing to take out. The role runs it when host_firewall_state is absent,
+# after the sandbox user's manager no longer requires the boot unit
+# (tasks/absent.yml).
+#
+# One run at a time: every mode holds a lock (below) for the whole run.
 #
 # Exit status: 0 matches (or now matches, or is now removed), 1 differs, 2 a
-# usage or file error, 3 iptables-restore refused the transaction.
+# usage or file error, or the lock held too long by another run, 3
+# iptables-restore refused a transaction.
 set -euo pipefail
 export LC_ALL=C
 
+# usage: the command line, said on stderr, and exit 2.
 usage() {
   echo "usage: $0 apply|verify [dir] | remove" >&2
   exit 2
@@ -57,6 +71,16 @@ fail() {
 mode="${1:-}"
 dir="${2:-/etc/hcw/firewall}"
 case "${mode}" in apply | verify | remove) ;; *) usage ;; esac
+
+# One run at a time. apply and remove read the live tables and then change
+# them, so two at once (a play's apply beside a reload, or beside a remove)
+# could each act on what the other is replacing. The lock is directly in
+# /run, which systemd mounts before any unit starts: the boot unit runs
+# before /run/lock is certain to exist. The two variables are for the tests.
+lock="${HCW_FIREWALL_LOCK:-/run/hcw-host-firewall.lock}"
+lock_wait="${HCW_FIREWALL_LOCK_WAIT:-60}"
+exec 9>>"${lock}" || fail "cannot open the lock file ${lock}"
+flock -w "${lock_wait}" 9 || fail "another hcw-host-firewall run held ${lock} for ${lock_wait}s; nothing was changed"
 
 chain_shape='^HCW-[A-Z0-9-]+$'
 jumps_file="${dir}/hcw.jumps"
@@ -100,6 +124,15 @@ parse_rules() {
   done <"${file}"
   [ "${committed}" -eq 1 ] && [ "${table}" -eq 0 ] || fail "${file}: no COMMIT after the *filter table"
   [ "${#declared[@]}" -gt 0 ] || fail "${file} declares no chain"
+  # A jump or goto to an HCW-* chain the file does not declare. iptables
+  # refuses one only when the transaction is committed (on nf_tables its
+  # --test dry run does not look), by which time the other family may have
+  # been, so it is refused here, before either is touched.
+  for line in "${wanted[@]}"; do
+    if [[ " ${line} " =~ \ -[jg]\ (HCW-[A-Z0-9-]+)\  ]] && ! is_declared "${BASH_REMATCH[1]}"; then
+      fail "${file}: a rule jumps to ${BASH_REMATCH[1]}, which the file does not declare"
+    fi
+  done
 }
 
 # is_declared CHAIN: true when the rules file just read declares CHAIN.
@@ -219,11 +252,15 @@ check_family() {
   done
 }
 
-# remove_family VERSION: takes every HCW-* jump and chain out of one family's
-# filter table in one transaction, the jumps first, then the chains flushed
-# (they jump to one another), then deleted.
-remove_family() {
-  local version="$1" listing transaction="*filter" changed=0 line name
+# removal VERSION: sets `transaction` to the one that takes every HCW-* jump
+# and chain out of one family's filter table, the jumps first, then the
+# chains flushed (they jump to one another), then deleted, and `report` to
+# the line that says so; both empty when there is nothing to take out.
+removal() {
+  local version="$1" listing changed=0 line name
+  local -a chains=()
+  transaction="*filter"
+  report=""
   listing="$("${ipt}" -w -S)"
   for builtin in INPUT FORWARD OUTPUT; do
     while IFS= read -r line; do
@@ -232,7 +269,6 @@ remove_family() {
       changed=1
     done < <(hcw_jumps "${listing}" "${builtin}")
   done
-  local -a chains=()
   while IFS= read -r name; do
     [ -n "${name}" ] || continue
     chains+=("${name}")
@@ -240,27 +276,64 @@ remove_family() {
   for name in "${chains[@]}"; do transaction+=$'\n'"-F ${name}"; done
   for name in "${chains[@]}"; do transaction+=$'\n'"-X ${name}"; done
   [ "${#chains[@]}" -eq 0 ] || changed=1
-  [ "${changed}" -eq 1 ] || return 0
+  if [ "${changed}" -eq 0 ]; then
+    transaction=""
+    return 0
+  fi
   transaction+=$'\n'"COMMIT"
-  if ! "${ipt}-restore" -w --noflush <<<"${transaction}"; then
-    echo "hcw-host-firewall: ${ipt}-restore refused the IPv${version} removal; nothing in it was applied" >&2
+  report="v${version}: removed the HCW-* jumps and the chains ${chains[*]:-(none)}"$'\n'
+}
+
+# set_family VERSION: points `ipt` at that family's iptables.
+set_family() {
+  if [ "$1" = 4 ]; then ipt=iptables; else ipt=ip6tables; fi
+}
+
+# dry_run VERSION WHAT: iptables-restore --test on `transaction`; when it
+# is refused, says so and exits 3 before either family has been changed.
+dry_run() {
+  if ! "${ipt}-restore" -w --noflush --test <<<"${transaction}"; then
+    echo "hcw-host-firewall: ${ipt}-restore refused the IPv$1 $2 in its dry run; nothing in either family was changed" >&2
     exit 3
   fi
-  echo "v${version}: removed the HCW-* jumps and the chains ${chains[*]:-(none)}"
 }
+
+# commit VERSION WHAT: iptables-restore on the family's stored transaction,
+# then its report. A refusal here, after both dry runs passed, is one the
+# kernel made: it says which family, since IPv4 may already be committed.
+commit() {
+  if ! "${ipt}-restore" -w --noflush <<<"${transactions[$1]}"; then
+    echo "hcw-host-firewall: ${ipt}-restore refused the IPv$1 $2; nothing in it was applied" >&2
+    exit 3
+  fi
+  printf '%s' "${reports[$1]}"
+}
+
+declare -A transactions=() reports=()
 
 if [ "${mode}" = remove ]; then
   for version in 4 6; do
-    if [ "${version}" = 4 ]; then ipt=iptables; else ipt=ip6tables; fi
-    remove_family "${version}"
+    set_family "${version}"
+    removal "${version}"
+    [ -n "${transaction}" ] || continue
+    dry_run "${version}" removal
+    transactions[${version}]="${transaction}"
+    reports[${version}]="${report}"
+  done
+  for version in 4 6; do
+    [ -n "${transactions[${version}]:-}" ] || continue
+    set_family "${version}"
+    commit "${version}" removal
   done
   exit 0
 fi
 
 parse_jumps
 status=0
+# First pass: both families checked, and for apply their transactions built
+# and dry-run, before anything is committed.
 for version in 4 6; do
-  if [ "${version}" = 4 ]; then ipt=iptables; else ipt=ip6tables; fi
+  set_family "${version}"
   rules_file="${dir}/hcw.v${version}.rules"
   parse_rules "${rules_file}"
   for line in "${jumps[@]}"; do
@@ -279,28 +352,36 @@ for version in 4 6; do
 
   [ "${chains_differ}" -eq 1 ] || [ "${#fixes[@]}" -gt 0 ] || continue
   transaction="*filter"
+  report=""
   if [ "${chains_differ}" -eq 1 ]; then
     for name in "${declared[@]}"; do transaction+=$'\n'":${name} - [0:0]"; done
     for line in "${wanted[@]}"; do transaction+=$'\n'"${line}"; done
-  fi
-  for line in "${fixes[@]}"; do transaction+=$'\n'"${line}"; done
-  transaction+=$'\n'"COMMIT"
-  if ! "${ipt}-restore" -w --noflush <<<"${transaction}"; then
-    echo "hcw-host-firewall: ${ipt}-restore refused the IPv${version} transaction; nothing in it was applied" >&2
-    exit 3
-  fi
-  if [ "${chains_differ}" -eq 1 ]; then
-    echo "v${version}: loaded ${declared[*]} from ${rules_file}"
+    report+="v${version}: loaded ${declared[*]} from ${rules_file}"$'\n'
   fi
   for line in "${fixes[@]}"; do
+    transaction+=$'\n'"${line}"
     case "${line}" in
-      -D*) echo "v${version}: removed -A ${line#-D }" ;;
-      -I*) read -r _ name _ rest <<<"${line}" && echo "v${version}: put -A ${name} ${rest} first" ;;
+      -D*) report+="v${version}: removed -A ${line#-D }"$'\n' ;;
+      -I*) read -r _ name _ rest <<<"${line}" && report+="v${version}: put -A ${name} ${rest} first"$'\n' ;;
     esac
   done
+  transaction+=$'\n'"COMMIT"
+  dry_run "${version}" transaction
+  transactions[${version}]="${transaction}"
+  reports[${version}]="${report}"
+done
+[ "${mode}" = apply ] || exit "${status}"
+
+# Second pass: commit each family that differs, then read it back.
+for version in 4 6; do
+  [ -n "${transactions[${version}]:-}" ] || continue
+  set_family "${version}"
+  commit "${version}" transaction
 
   # Read back: a rule iptables prints differently from the file would make
   # every later run reload, so it fails here instead, saying which.
+  rules_file="${dir}/hcw.v${version}.rules"
+  parse_rules "${rules_file}"
   check_family "${version}"
   if [ "${#problems[@]}" -gt 0 ]; then
     echo "hcw-host-firewall: after loading, the live IPv${version} table still differs; write the files the way iptables -S prints them:" >&2

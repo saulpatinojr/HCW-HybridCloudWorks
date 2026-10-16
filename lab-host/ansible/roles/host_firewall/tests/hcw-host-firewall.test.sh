@@ -81,11 +81,13 @@ work="$(mktemp -d)"
 chmod 0755 "${work}"
 child=''
 echo_server=''
-# finish: stop the child namespace's holder and its echo server, and remove
-# the scratch directory.
+lock_holder=''
+# finish: stop the child namespace's holder, its echo server and any lock
+# holder, and remove the scratch directory.
 finish() {
   [ -z "${echo_server}" ] || kill "${echo_server}" 2>/dev/null || true
   [ -z "${child}" ] || kill "${child}" 2>/dev/null || true
+  [ -z "${lock_holder}" ] || kill "${lock_holder}" 2>/dev/null || true
   rm -rf "${work}"
 }
 trap finish EXIT
@@ -93,6 +95,8 @@ trap finish EXIT
 helper="${work}/hcw-host-firewall"
 cp "${role}/files/hcw-host-firewall" "${helper}"
 chmod 0755 "${helper}"
+# The helper's lock, in the scratch directory rather than the machine's /run.
+export HCW_FIREWALL_LOCK="${work}/lock"
 conf="${work}/etc"
 mkdir -p "${conf}"
 
@@ -186,6 +190,7 @@ ip -6 addr add fd00:28::1/64 dev br-hcwtest nodad
 ip addr add 172.17.0.1/16 dev docker0
 ip link set br-hcwtest up
 ip link set docker0 up
+# inside CMD...: runs CMD in the child namespace, the containers' side of the bridges.
 inside() { nsenter -t "${child}" -n "$@"; }
 inside ip link set lo up
 inside ip addr add 172.28.240.3/24 dev ctr0
@@ -205,6 +210,7 @@ iptables -w -A OUTPUT -o lo -j ACCEPT
 iptables -w -N DOCKER-USER
 iptables -w -A DOCKER-USER -s 172.29.0.0/24 -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "hcw-addons egress (roles/addons)" -j RETURN
 iptables -w -A FORWARD -j DOCKER-USER
+# others_v4: the IPv4 rules that are not the helper's, which it must never change.
 others_v4() { iptables -w -S | grep -v -e 'HCW-' || true; }
 before_others="$(others_v4)"
 
@@ -218,7 +224,10 @@ run() { out="$("${helper}" "$@" 2>&1)" && rc=0 || rc=$?; }
 #     (section 3). One flow as uid 0 (the sandbox user here) to a private
 #     address; and, where another user exists (the test runs as real root),
 #     one as that user to the internal network.
-inside "${python}" -c '
+# nsenter itself, not `inside`: a function run with & is a subshell, whose
+# pid finish() would kill while the server it started lived on. nsenter -n
+# execs, so $! is the server.
+nsenter -t "${child}" -n "${python}" -c '
 import socketserver
 class Echo(socketserver.BaseRequestHandler):
     def handle(self):
@@ -333,16 +342,71 @@ check "apply refills the drifted chain, and only that family" \
   '[ "${rc}" -eq 0 ] && [ "${out}" = "v4: loaded HCW-BRIDGE-IN HCW-CONTROL-OUT HCW-REFUSE HCW-SANDBOX-OUT from ${rules4}" ] && [ "$(iptables -w -S HCW-SANDBOX-OUT | grep -v "^-N")" = "$(grep "^-A HCW-SANDBOX-OUT" "${rules4}")" ]' \
   "rc=${rc} output: ${out}"
 
-# 6. A transaction iptables rejects changes nothing: the chain keeps its
-#    rules and the jumps their places.
+# 6. A transaction the kernel rejects at commit changes nothing: the chain
+#    keeps its rules and the jumps their places. A jump to a chain that does
+#    not exist is refused only at commit (the dry run does not see it).
 bad="${work}/bad"
 cp -r "${conf}" "${bad}"
-sed -i 's/^COMMIT$/-A HCW-SANDBOX-OUT -j HCW-NO-SUCH-CHAIN\nCOMMIT/' "${bad}/hcw.v4.rules"
+sed -i 's/^COMMIT$/-A HCW-SANDBOX-OUT -j NO-SUCH-CHAIN\nCOMMIT/' "${bad}/hcw.v4.rules"
 before="$(iptables -w -S)"
 run apply "${bad}"
-check "a load iptables refuses exits 3 and says nothing was applied" \
+check "a load iptables refuses at commit exits 3 and says nothing in it was applied" \
   '[ "${rc}" -eq 3 ] && grep -q "refused the IPv4 transaction; nothing in it was applied" <<<"${out}"' "rc=${rc} output: ${out}"
 check "and the IPv4 table is exactly as it was" '[ "$(iptables -w -S)" = "${before}" ]' "now: $(iptables -w -S HCW-SANDBOX-OUT)"
+
+# 6a. The commit-time refusal these files could carry, a jump to an HCW-*
+#     chain they do not declare, is refused by the helper's own parse,
+#     before either family is touched: IPv4 differs and comes first, and is
+#     still not committed.
+iptables -w -D HCW-SANDBOX-OUT -d 10.0.0.0/8 -m comment --comment "hcw: private or reserved, refused" -j HCW-REFUSE
+undeclared="${work}/undeclared"
+cp -r "${conf}" "${undeclared}"
+sed -i 's/^COMMIT$/-A HCW-SANDBOX-OUT -j HCW-NO-SUCH-CHAIN\nCOMMIT/' "${undeclared}/hcw.v6.rules"
+before="$(iptables -w -S; ip6tables -w -S)"
+run apply "${undeclared}"
+check "a jump to an undeclared HCW-* chain is refused before anything, with exit 2" \
+  '[ "${rc}" -eq 2 ] && grep -qF "hcw.v6.rules: a rule jumps to HCW-NO-SUCH-CHAIN, which the file does not declare" <<<"${out}"' "rc=${rc} output: ${out}"
+check "and neither family changed" '[ "$(iptables -w -S; ip6tables -w -S)" = "${before}" ]' "now: $(iptables -w -S HCW-SANDBOX-OUT)"
+
+# 6b. Both families are dry-run before either is committed: an IPv6 rule
+#     iptables cannot parse stops the run with IPv4 as it was, although
+#     IPv4 differs and comes first.
+bad6="${work}/bad6"
+cp -r "${conf}" "${bad6}"
+sed -i 's/^COMMIT$/-A HCW-SANDBOX-OUT -m no-such-match -j RETURN\nCOMMIT/' "${bad6}/hcw.v6.rules"
+run apply "${bad6}"
+check "an IPv6 rule iptables refuses in its dry run exits 3 before either family changes" \
+  '[ "${rc}" -eq 3 ] && grep -q "refused the IPv6 transaction in its dry run; nothing in either family was changed" <<<"${out}" && ! grep -q "^v4: loaded" <<<"${out}"' "rc=${rc} output: ${out}"
+check "and IPv4 keeps its drift: it was not committed ahead of IPv6" '[ "$(iptables -w -S; ip6tables -w -S)" = "${before}" ]' "now: $(iptables -w -S HCW-SANDBOX-OUT)"
+run apply "${conf}"
+check "and the good files then load IPv4 alone" \
+  '[ "${rc}" -eq 0 ] && [ "${out}" = "v4: loaded HCW-BRIDGE-IN HCW-CONTROL-OUT HCW-REFUSE HCW-SANDBOX-OUT from ${rules4}" ]' "rc=${rc} output: ${out}"
+
+# 6c. One run at a time: while another run holds the lock, apply waits, and
+#     gives up after the wait without changing anything.
+# The holder takes the lock on its own descriptor and then becomes the sleep,
+# so killing that one process lets the lock go.
+(
+  exec 8>>"${HCW_FIREWALL_LOCK}"
+  flock 8
+  exec sleep 30
+) &
+lock_holder=$!
+for _ in $(seq 50); do flock -n "${HCW_FIREWALL_LOCK}" true || break; sleep 0.1; done
+iptables -w -D HCW-SANDBOX-OUT -d 10.0.0.0/8 -m comment --comment "hcw: private or reserved, refused" -j HCW-REFUSE
+before="$(iptables -w -S; ip6tables -w -S)"
+export HCW_FIREWALL_LOCK_WAIT=1
+run apply "${conf}"
+unset HCW_FIREWALL_LOCK_WAIT
+check "apply waits for another run's lock, and gives up after the wait with exit 2" \
+  '[ "${rc}" -eq 2 ] && grep -q "another hcw-host-firewall run held .* for 1s; nothing was changed" <<<"${out}"' "rc=${rc} output: ${out}"
+check "and changed nothing while it waited" '[ "$(iptables -w -S; ip6tables -w -S)" = "${before}" ]' "now: $(iptables -w -S HCW-SANDBOX-OUT)"
+kill "${lock_holder}" 2>/dev/null || true
+wait "${lock_holder}" 2>/dev/null || true
+lock_holder=''
+run apply "${conf}"
+check "and once the lock is free, apply puts IPv4 right" \
+  '[ "${rc}" -eq 0 ] && [ "${out}" = "v4: loaded HCW-BRIDGE-IN HCW-CONTROL-OUT HCW-REFUSE HCW-SANDBOX-OUT from ${rules4}" ]' "rc=${rc} output: ${out}"
 
 # 7. Jumps: duplicated, moved below another rule, or missing, put right.
 iptables -w -A OUTPUT -m owner --uid-owner 0 -j HCW-SANDBOX-OUT
@@ -397,9 +461,14 @@ except OSError as error:
     outcome = "error-%d" % error.errno
 print("%s %.2f" % (outcome, time.monotonic() - start))
 PY
+# probe PROTO ADDRESS PORT [DEVICE]: one connection or datagram from this
+# namespace, printing how it ended and how long that took.
 probe() { "${python}" "${work}/probe.py" "$@"; }
 # counts CMD CHAIN: the packet count of each rule of CHAIN, one per line.
 counts() { "$1" -w -L "$2" -n -v -x | awk 'NR > 2 { print $1 }'; }
+# verdict CMD CHAIN PROBE...: runs PROBE and prints each rule of CHAIN whose
+# packet count grew, as TARGET=COMMENT joined by ";", then "#" and the
+# probe's own outcome.
 verdict() {
   local cmd="$1" chain="$2" result before
   shift 2
@@ -440,6 +509,8 @@ expect() {
     not_ok "${name}" "want ${target}=${comment}, got ${got}"
   fi
 }
+# sandbox4 and sandbox6 NAME TARGET COMMENT PROBE-ARGS...: expect for a probe
+# the sandbox user sends, read from HCW-SANDBOX-OUT of that family.
 sandbox4() { expect "$1" "$2" "$3" iptables HCW-SANDBOX-OUT probe "${@:4}"; }
 sandbox6() { expect "$1" "$2" "$3" ip6tables HCW-SANDBOX-OUT probe "${@:4}"; }
 
@@ -478,6 +549,8 @@ sandbox6 "sandbox v6: HTTPS to a public address is allowed" RETURN "hcw: web egr
 sandbox6 "sandbox v6: SMTP to a public address is refused" HCW-REFUSE "hcw: refused" tcp 2001:db8:1::5 25
 sandbox6 "sandbox v6: DNS to a public resolver is refused" HCW-REFUSE "hcw: refused" udp 2001:db8:1::5 53
 
+# bridge4 and bridge6 NAME TARGET COMMENT PROBE-ARGS...: expect for a probe a
+# container sends to the host, read from HCW-BRIDGE-IN of that family.
 bridge4() { expect "$1" "$2" "$3" iptables HCW-BRIDGE-IN inside "${python}" "${work}/probe.py" "${@:4}"; }
 bridge6() { expect "$1" "$2" "$3" ip6tables HCW-BRIDGE-IN inside "${python}" "${work}/probe.py" "${@:4}"; }
 bridge4 "bridge: HTTPS from a container to the host is allowed" RETURN "hcw: http and https to this host" tcp 172.28.240.1 443
@@ -619,7 +692,9 @@ check "and none of them changed either table" '[ "$(iptables -w -S; ip6tables -w
 
 # 12. remove, the role's absent path: every HCW-* jump and chain out of both
 #     families, in one transaction each, and nothing else touched.
+# hcw_lines: how many rules of both families name an HCW-* chain.
 hcw_lines() { { iptables -w -S; ip6tables -w -S; } | grep -c -e ' HCW-' || true; }
+# others_both: the rules of both families that are not the helper's.
 others_both() { { iptables -w -S; ip6tables -w -S; } | grep -v -e 'HCW-' || true; }
 before_remove="$(others_both)"
 check "before remove, the chains and jumps are loaded" '[ "$(hcw_lines)" -gt 0 ]'

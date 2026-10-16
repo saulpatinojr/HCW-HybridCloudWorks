@@ -90,7 +90,14 @@ reviewed pull request, never per run.
 - **One transaction per family, compared first.** `apply` reads the live
   table, changes only what differs, and does it in one `iptables-restore
   --noflush` transaction, where a chain line flushes and refills that chain;
-  a transaction iptables rejects changes nothing. It prints a line per
+  a transaction iptables rejects changes nothing. Both families are built
+  and dry-run (`--test`) before either is committed, and a jump to an
+  `HCW-*` chain the file does not declare is refused before both, so a bad
+  file leaves neither family half-loaded. The dry run is userspace only: on
+  nf_tables it does not see what the kernel refuses at commit, which is
+  reported for its family, and the fail-closed rescue then stops the
+  sandbox. Every mode holds a lock in `/run` for the whole run, so a play's
+  `apply` and a boot or reload cannot interleave. It prints a line per
   change and nothing otherwise, which is the role's `changed`. The files are
   written in the form `iptables -S` prints, and `apply` reads the table back
   and fails if it still differs, so a rule iptables normalises differently
@@ -175,9 +182,10 @@ from a failed boot load, and how to take it out.
 ## Variables
 
 `host_firewall_state` (default `present`) and `host_firewall_sandbox_user`
-(default `hcw-coder-docker`, the `coder_sandbox` role's
-`coder_sandbox_user`), in `defaults/main.yml`; `meta/argument_specs.yml` is
-the contract. Everything else is the policy in `vars/main.yml`, including
+(default `hcw-coder-docker`), in `defaults/main.yml`; `meta/argument_specs.yml`
+is the contract. In this playbook `group_vars/all.yml` sets
+`host_firewall_sandbox_user` to `{{ coder_sandbox_user }}`, so the jump always
+matches the user the sandbox daemon runs as. Everything else is the policy in `vars/main.yml`, including
 the internal network's name (`host_firewall_control_network`) and the
 Compose file its subnet is also read from.
 
@@ -192,7 +200,8 @@ is what the nightly drift check reads.
 `tests/hcw-host-firewall.test.sh` renders the templates with the role's
 values and loads them into real iptables in a scratch network namespace
 (`unshare -n` as root, `unshare -rn` otherwise): idempotent loads,
-`--noflush` replacing a chain, a refused transaction changing nothing, the
+`--noflush` replacing a chain, a refused transaction changing nothing, a bad
+IPv6 file leaving IPv4 uncommitted, the lock held against a second run, the
 jumps put back first and single, flows open before the first load cut, the
 verdict for each destination class read from the counters with real
 packets, the internal network refused to the host's own connections while
