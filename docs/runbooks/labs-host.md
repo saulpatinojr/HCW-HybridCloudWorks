@@ -290,11 +290,18 @@ without `-Arc` puts it back.
 `ProxyCommand`. That runs `$HOME\.ssh\hcw-lab-arc-proxy.ps1` (written by the
 script, run by Windows PowerShell 5.1), which asks `az ssh config` for fresh
 relay credentials on **every** connection, since they last an hour at most,
-in a private folder under your temporary folder that it deletes when the
-connection ends, and then hands the connection to the az ssh extension's
-proxy. So `ssh hcw-lab`, piped commands, `ssh -t`, `ssh -L` and VS Code
-Remote-SSH work as they do directly, from PowerShell and Git Bash alike, and
-nothing expires an hour after setup. Each connection takes a few seconds
+and hands the connection to the az ssh extension's proxy. So `ssh hcw-lab`,
+piped commands, `ssh -t`, `ssh -L` and VS Code Remote-SSH work as they do
+directly, from PowerShell and Git Bash alike, and nothing expires an hour
+after setup. The credentials are written by az into a folder only you can
+read, under `$env:LOCALAPPDATA\hcw-lab-arc`; the helper reads them and
+deletes the folder **before** the connection starts, and the proxy gets
+them in its environment, so they are not on disk while you are connected,
+nor after: Windows OpenSSH ends a connection by killing the helper, so no
+cleanup at the end could be relied on. A folder is left only if the helper
+is killed in the few seconds az is writing it, and the next connection, or
+any run of `Connect-Lab.ps1`, deletes it once it is an hour old and the
+credentials in it have expired. Each connection takes a few seconds
 longer while az fetches the credentials. The host key is checked under the
 name a direct connection used (`HostKeyAlias`), so the key already accepted
 is the one Arc must present. After an OS reinstall, the old key is removed

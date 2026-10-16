@@ -52,11 +52,15 @@
     it, which also downloads the az ssh extension's proxy. Only when that
     works does it replace the Host block, with a ProxyCommand that runs the
     helper. The helper asks `az ssh config` for FRESH relay credentials on
-    every connection (they last an hour at most), in a private temporary
-    folder it deletes, and hands ssh's own standard input and output to the
-    extension's proxy, so `ssh hcw-lab`, piped commands, `ssh -t`, `ssh -L`
-    and VS Code Remote-SSH work as they do directly, from PowerShell and Git
-    Bash alike. Run without -Arc to put the direct block back.
+    every connection (they last an hour at most), in a folder private to
+    you (%LOCALAPPDATA%\hcw-lab-arc), reads them and deletes the folder
+    before the connection starts, then hands ssh's own standard input and
+    output to the extension's proxy, with the credentials in the proxy's
+    environment, so `ssh hcw-lab`, piped commands, `ssh -t`, `ssh -L` and VS
+    Code Remote-SSH work as they do directly, from PowerShell and Git Bash
+    alike. Every run of this script, with or without -Arc, deletes a folder
+    a killed connection left there once it is an hour old. Run without -Arc
+    to put the direct block back.
 
 .PARAMETER KeyPath
     The private key. Defaults to ~/.ssh/hcw-lab_ed25519; the public key is the
@@ -570,29 +574,113 @@ function Get-LabArcProxyLine {
     return $null
 }
 
+function Split-LabArcRelayArgument {
+    <#
+    .SYNOPSIS
+        Splits `-r <relay info file>` out of the proxy's arguments: the file
+        az wrote the relay credentials to, and the arguments without it.
+        RelayPath is $null when there is no -r.
+    #>
+    [OutputType([pscustomobject])]
+    param([AllowEmptyString()] [string] $Arguments)
+
+    $match = [regex]::Match($Arguments, '(?:^|\s)-r\s+(?:"([^"]*)"|(\S+))')
+    if (-not $match.Success) {
+        return [pscustomobject]@{ RelayPath = $null; Arguments = $Arguments }
+    }
+    $path = $match.Groups[2].Value
+    if ($match.Groups[1].Success) {
+        $path = $match.Groups[1].Value
+    }
+    $before = $Arguments.Substring(0, $match.Index).TrimEnd()
+    $after = $Arguments.Substring($match.Index + $match.Length).TrimStart()
+    return [pscustomobject]@{ RelayPath = $path; Arguments = ($before + ' ' + $after).Trim() }
+}
+
+function Get-LabArcStateRoot {
+    <#
+    .SYNOPSIS
+        Where the run folders go: %LOCALAPPDATA%\hcw-lab-arc on Windows,
+        ~/.ssh/hcw-lab-arc elsewhere. Never the shared temporary folder.
+    #>
+    [OutputType([string])]
+    param()
+
+    if ($env:LOCALAPPDATA) {
+        return (Join-Path $env:LOCALAPPDATA 'hcw-lab-arc')
+    }
+    return (Join-Path (Join-Path $HOME '.ssh') 'hcw-lab-arc')
+}
+
+function Initialize-LabArcStateRoot {
+    <#
+    .SYNOPSIS
+        Creates the state folder when it is missing, readable by this user
+        alone: on Windows an access list that inherits nothing and grants
+        only the current user, which the run folders and files below it
+        inherit; elsewhere mode 0700.
+    #>
+    param([Parameter(Mandatory)] [string] $Path)
+
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+        return
+    }
+    $null = New-Item -ItemType Directory -Path $Path -Force
+    try {
+        if ($env:OS -eq 'Windows_NT') {
+            $security = New-Object System.Security.AccessControl.DirectorySecurity
+            $security.SetAccessRuleProtection($true, $false)
+            $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($user, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
+            $security.AddAccessRule($rule)
+            Set-Acl -LiteralPath $Path -AclObject $security
+        }
+        else {
+            $mode = 'System.IO.UnixFileMode' -as [type]
+            if ($null -ne $mode) {
+                [System.IO.File]::SetUnixFileMode($Path, [System.Enum]::Parse($mode, 'UserRead, UserWrite, UserExecute'))
+            }
+            else {
+                $null = & chmod 700 $Path 2>&1
+            }
+        }
+    }
+    catch {
+        Write-LabArcMessage -Message ('could not make ' + $Path + ' private to this user: ' + $_.Exception.Message)
+    }
+}
+
 function Remove-LabArcStaleState {
     <#
     .SYNOPSIS
         Deletes this helper's run folders under Root last written more than
-        MaxAgeMinutes ago. A folder holds relay credentials, which last an
-        hour at most, and is deleted when its connection ends; this catches
-        the folders of connections ssh ended by killing the helper.
+        MaxAgeMinutes ago, an hour by default, which is as long as relay
+        credentials last, and returns how many it deleted. A run folder is
+        normally gone before the connection starts; this catches one left by
+        a helper killed while az was still writing it, at the next
+        connection and at every Connect-Lab.ps1 run.
     #>
+    [OutputType([int])]
     param(
         [Parameter(Mandatory)] [string] $Root,
         [Parameter(Mandatory)] [datetime] $Now,
-        [int] $MaxAgeMinutes = 90
+        [int] $MaxAgeMinutes = 60
     )
 
+    $removed = 0
     if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
-        return
+        return $removed
     }
     $cutoff = $Now.ToUniversalTime().AddMinutes(-$MaxAgeMinutes)
     foreach ($folder in @(Get-ChildItem -LiteralPath $Root -Directory -Filter 'run-*' -ErrorAction SilentlyContinue)) {
         if ($folder.LastWriteTimeUtc -lt $cutoff) {
             Remove-Item -LiteralPath $folder.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            if (-not (Test-Path -LiteralPath $folder.FullName)) {
+                $removed++
+            }
         }
     }
+    return $removed
 }
 
 function Write-LabArcMessage {
@@ -663,18 +751,24 @@ function Start-LabArcProxyProcess {
         it and returns its exit code. Nothing is redirected, and the proxy is
         not started through PowerShell's own native-command handling, so the
         connection's bytes pass between ssh and the proxy without this
-        process reading or re-encoding them. The seam the tests mock.
+        process reading or re-encoding them. RelayInfo, when given, goes to
+        the proxy in SSHPROXY_RELAY_INFO, its environment alone, which is how
+        `az ssh arc` hands it the same credentials. The seam the tests mock.
     #>
     [OutputType([int])]
     param(
         [Parameter(Mandatory)] [string] $Path,
-        [AllowEmptyString()] [string] $Arguments = ''
+        [AllowEmptyString()] [string] $Arguments = '',
+        [AllowEmptyString()] [string] $RelayInfo = ''
     )
 
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $Path
     $start.Arguments = $Arguments
     $start.UseShellExecute = $false
+    if ($RelayInfo) {
+        $start.EnvironmentVariables['SSHPROXY_RELAY_INFO'] = $RelayInfo
+    }
     $process = [System.Diagnostics.Process]::Start($start)
     $process.WaitForExit()
     return $process.ExitCode
@@ -688,12 +782,20 @@ function Invoke-LabArcProxy {
         the proxy ended cleanly; every message goes to standard error.
 
     .DESCRIPTION
-        Each connection gets its own run folder under StateRoot, in the
-        user's temporary folder, and az writes the config and the relay
+        Each connection gets its own run folder under StateRoot
+        (Get-LabArcStateRoot: %LOCALAPPDATA%\hcw-lab-arc, or ~/.ssh/hcw-lab-arc,
+        private to this user), and az writes the config and the relay
         credentials (an access key for this machine's endpoint, an hour at
-        most) into it. The folder is deleted when the proxy exits, and
-        folders older than 90 minutes are deleted at every start, for
-        connections ssh ended by killing this process.
+        most) into it. The helper reads the credentials, DELETES the folder,
+        and only then starts the proxy, handing it the credentials in its
+        environment. So nothing is left on disk while the connection runs,
+        and nothing when ssh ends it: Windows OpenSSH ends a ProxyCommand
+        with TerminateProcess, and no cleanup in this process would run. A
+        folder survives only if this process is killed while az is writing
+        it; folders older than an hour are deleted at every start and at
+        every Connect-Lab.ps1 run. If az ever names no relay file, the
+        proxy gets its arguments as written and the folder stays until the
+        proxy exits or the sweep.
 
         With -Check it stops once the credentials are issued and the proxy is
         on disk, and says so: Connect-Lab.ps1 -Arc runs that once before it
@@ -711,9 +813,10 @@ function Invoke-LabArcProxy {
     )
 
     if (-not $StateRoot) {
-        $StateRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'hcw-lab-arc'
+        $StateRoot = Get-LabArcStateRoot
     }
-    Remove-LabArcStaleState -Root $StateRoot -Now (Get-Date)
+    Initialize-LabArcStateRoot -Path $StateRoot
+    $null = Remove-LabArcStaleState -Root $StateRoot -Now (Get-Date)
     $az = Resolve-LabArcAz
     if (-not $az) {
         Write-LabArcMessage -Message 'az is not on PATH, and Arc SSH needs it. Install the Azure CLI (winget install --exact --id Microsoft.AzureCLI), or reach the host directly: run scripts/lab/Connect-Lab.ps1 without -Arc.'
@@ -742,9 +845,28 @@ function Invoke-LabArcProxy {
             Write-LabArcMessage -Message ("The relay proxy az named is not on disk: " + $proxy.Path)
             return 1
         }
+        $relay = Split-LabArcRelayArgument -Arguments $proxy.Arguments
+        $relayInfo = ''
+        if ($null -ne $relay.RelayPath) {
+            if (-not (Test-Path -LiteralPath $relay.RelayPath -PathType Leaf)) {
+                Write-LabArcMessage -Message ("az ssh config named relay information it did not write: " + $relay.RelayPath)
+                return 1
+            }
+            $relayInfo = ([System.IO.File]::ReadAllText($relay.RelayPath)).Trim()
+            if (-not $relayInfo) {
+                Write-LabArcMessage -Message ("The relay information az wrote is empty: " + $relay.RelayPath)
+                return 1
+            }
+        }
         if ($Check) {
             Write-LabArcMessage -Message ("relay credentials issued for " + $MachineName + "; proxy " + $proxy.Path + ".")
             return 0
+        }
+        if ($relayInfo) {
+            # Off the disk before the connection starts; the proxy reads them
+            # from its environment.
+            Remove-Item -LiteralPath $run -Recurse -Force -ErrorAction SilentlyContinue
+            return (Start-LabArcProxyProcess -Path $proxy.Path -Arguments $relay.Arguments -RelayInfo $relayInfo)
         }
         return (Start-LabArcProxyProcess -Path $proxy.Path -Arguments $proxy.Arguments)
     }
@@ -768,6 +890,9 @@ function Get-LabArcProxyScript {
         'Get-LabArcAzArguments',
         'Get-LabArcAzHint',
         'Get-LabArcProxyLine',
+        'Split-LabArcRelayArgument',
+        'Get-LabArcStateRoot',
+        'Initialize-LabArcStateRoot',
         'Remove-LabArcStaleState',
         'Write-LabArcMessage',
         'Resolve-LabArcAz',
@@ -969,6 +1094,17 @@ else {
 }
 if (-not (Test-LabHostName -Name $HostName)) {
     throw "'$HostName' is not a host name or IPv4 address. Letters, digits, dots and hyphens only."
+}
+
+# Relay-credential folders a killed Arc connection left behind (#953), once
+# they are an hour old and so expired, in either mode. Nothing else is there.
+if (-not $WhatIfPreference) {
+    $arcStateRoot = Get-LabArcStateRoot
+    $swept = Remove-LabArcStaleState -Root $arcStateRoot -Now (Get-Date)
+    if ($swept -gt 0) {
+        Write-Host "Arc: deleted $swept relay-credential folder(s) older than an hour under $arcStateRoot."
+        $changes.Add("deleted $swept expired Arc relay-credential folder(s)")
+    }
 }
 
 # Arc mode's reads, before anything changes: a desktop or an estate that is
