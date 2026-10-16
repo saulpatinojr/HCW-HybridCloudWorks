@@ -1,5 +1,5 @@
-import path from 'node:path';
-import { defineConfig } from 'vitest/config';
+import path from "node:path";
+import { defineConfig } from "vitest/config";
 
 // Test discovery is Vitest's default, exactly as it was before this file
 // existed. The only setting here is coverage, which is collected only when
@@ -21,10 +21,16 @@ export default defineConfig({
   test: {
     hookTimeout: 30000,
     coverage: {
-      provider: 'v8',
+      provider: "v8",
       reporter: [
-        'text-summary',
-        ['lcovonly', { file: 'lcov.info', projectRoot: path.resolve(import.meta.dirname, '..') }],
+        "text-summary",
+        [
+          "lcovonly",
+          {
+            file: "lcov.info",
+            projectRoot: path.resolve(import.meta.dirname, ".."),
+          },
+        ],
       ],
       thresholds: {
         lines: 94.52,
@@ -33,9 +39,9 @@ export default defineConfig({
         branches: 83.66,
         autoUpdate: true,
       },
-      reportsDirectory: 'coverage',
-      include: ['src/**/*.js'],
-      exclude: ['src/**/*.test.js', 'src/**/*.spec.js'],
+      reportsDirectory: "coverage",
+      include: ["src/**/*.js"],
+      exclude: ["src/**/*.test.js", "src/**/*.spec.js"],
     },
   },
 });
