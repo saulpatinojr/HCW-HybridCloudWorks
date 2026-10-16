@@ -95,9 +95,24 @@
   when: lab_images_pull_workspace | bool
   check_mode: false
 
+- name: Check whether Coder template publication was skipped on this host
+  ansible.builtin.stat:
+    path: /run/hcw-coder-template-publication-skipped
+  register: lab_images_publication_skipped_stat
+  when: lab_images_pull_workspace | bool
+
+- name: Determine if workspace image cleanup should be deferred
+  ansible.builtin.set_fact:
+    lab_images_effective_defer_cleanup: >-
+      {{ (lab_images_defer_workspace_cleanup | bool)
+         or (coder_template_publication_skipped | default(false))
+         or (lab_images_publication_skipped_stat.stat.exists | default(false)) }}
+  when: lab_images_pull_workspace | bool
+
 - name: Plan the workspace image on the sandbox daemon
   ansible.builtin.command:
-    argv: "{{ lab_images_sandbox_plan_argv }}"
+    argv: >-
+      {{ lab_images_sandbox_plan_argv + (['--defer-workspace-cleanup'] if (lab_images_effective_defer_cleanup | bool) else []) }}
     stdin: "{{ {'images': lab_images_sandbox_docker.images, 'containers': lab_images_sandbox_docker.containers} | to_json }}"
   register: lab_images_sandbox_plan_run
   changed_when: false
@@ -133,7 +148,9 @@
     - lab_images_sandbox_removed.rc != 0
     - "'No such image' not in lab_images_sandbox_removed.stderr"
     - "'is using its referenced image' not in lab_images_sandbox_removed.stderr"
-  when: lab_images_pull_workspace | bool
+  when:
+    - lab_images_pull_workspace | bool
+    - not (lab_images_effective_defer_cleanup | bool)
 
 - name: Say which superseded workspace images are kept because a workspace still uses them
   ansible.builtin.debug:
@@ -144,3 +161,13 @@
   loop_control:
     label: "{{ item.image }}"
   when: lab_images_pull_workspace | bool
+
+- name: Say which superseded workspace images are kept because Coder template publication was skipped
+  ansible.builtin.debug:
+    msg: >-
+      {{ item }} is no longer pinned but is kept on the sandbox daemon because Coder template
+      publication was skipped; it remains available for active template versions.
+  loop: "{{ lab_images_sandbox_plan.deferred | default([]) }}"
+  when:
+    - lab_images_pull_workspace | bool
+    - lab_images_effective_defer_cleanup | bool

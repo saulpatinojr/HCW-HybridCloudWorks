@@ -227,11 +227,23 @@ function pinsInScope(checkout, scope) {
  *   pinned: string[],        every pin, as repository@digest
  *   pull: string[],          what to pull (docker_image_pull, pull: not_present)
  *   remove: string[],        references to remove (docker image rm), tags before digests
+ * @returns {{
+ *   pinned: string[],        every pin, as repository@digest
+ *   pull: string[],          what to pull (docker_image_pull, pull: not_present)
+ *   remove: string[],        references to remove (docker image rm), tags before digests
+ *   deferred: string[],      stale workspace references retained because cleanup was deferred
  *   in_use: {image: string, references: string[], containers: string[]}[],
  *   checkouts: string[],
  * }}
  */
-export function planImages({ checkouts, pullWorkspace = false, scope = 'all', images = [], containers = [] }) {
+export function planImages({
+  checkouts,
+  pullWorkspace = false,
+  scope = 'all',
+  deferWorkspaceCleanup = false,
+  images = [],
+  containers = [],
+}) {
   if (!SCOPES.includes(scope)) {
     throw new Error(`scope is ${JSON.stringify(scope)}; expected one of ${SCOPES.join(', ')}`);
   }
@@ -240,6 +252,10 @@ export function planImages({ checkouts, pullWorkspace = false, scope = 'all', im
   const pinnedRepositories = new Set(pins.map((p) => p.repository));
   const isLabRepository = (repository) =>
     pinnedRepositories.has(repository) || LAB_REPOSITORY_PATTERN.test(repository);
+  const isWorkspaceRepository = (repository) =>
+    checkouts.some((c) => c.workspace && c.workspace.repository === repository) ||
+    repository.endsWith('/hcw-lab') ||
+    repository === 'hybridcloudworks/hcw-lab';
 
   const pull = unique(
     checkouts
@@ -250,6 +266,7 @@ export function planImages({ checkouts, pullWorkspace = false, scope = 'all', im
   );
 
   const remove = [];
+  const deferred = [];
   const inUse = [];
   for (const image of images) {
     const references = unique([...(image.RepoTags || []), ...(image.RepoDigests || [])])
@@ -268,6 +285,8 @@ export function planImages({ checkouts, pullWorkspace = false, scope = 'all', im
     const users = containers.filter((c) => c.ImageID && c.ImageID === image.Id).map(containerName);
     if (users.length > 0) {
       inUse.push({ image: image.Id, references: stale, containers: users });
+    } else if (deferWorkspaceCleanup && ours.some((r) => isWorkspaceRepository(r.repository))) {
+      deferred.push(...stale);
     } else {
       remove.push(...stale);
     }
@@ -277,6 +296,7 @@ export function planImages({ checkouts, pullWorkspace = false, scope = 'all', im
     pinned: [...pinned],
     pull,
     remove: unique(remove),
+    deferred: unique(deferred),
     in_use: inUse,
     checkouts: checkouts.map((c) => c.checkout),
   };
@@ -290,10 +310,11 @@ async function readStdin() {
 
 export async function main(args) {
   const pullWorkspace = args.includes('--pull-workspace');
+  const deferWorkspaceCleanup = args.includes('--defer-workspace-cleanup');
   let scope = 'all';
   const rest = [];
   for (let i = 0; i < args.length; i += 1) {
-    if (args[i] === '--pull-workspace') continue;
+    if (args[i] === '--pull-workspace' || args[i] === '--defer-workspace-cleanup') continue;
     if (args[i] === '--scope') {
       scope = args[i + 1];
       i += 1;
@@ -304,7 +325,7 @@ export async function main(args) {
   const checkoutArgs = unique(rest);
   if (checkoutArgs.length === 0 || !SCOPES.includes(scope)) {
     throw new Error(
-      'usage: node lab-images.mjs [--pull-workspace] [--scope all|jobs|workspaces] <checkout> [<checkout> ...] < docker-host.json'
+      'usage: node lab-images.mjs [--pull-workspace] [--defer-workspace-cleanup] [--scope all|jobs|workspaces] <checkout> [<checkout> ...] < docker-host.json'
     );
   }
   const input = (await readStdin()).trim();
@@ -315,6 +336,7 @@ export async function main(args) {
     checkouts,
     pullWorkspace,
     scope,
+    deferWorkspaceCleanup,
     images: host.images || [],
     containers: host.containers || [],
   });

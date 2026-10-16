@@ -370,6 +370,40 @@ describe('a plan scoped to one daemon (LAB-5)', () => {
     expect(plan.in_use.map((u) => u.containers)).toEqual([['coder-owner-lab']]);
   });
 
+  it('defers workspace image removal on the sandbox daemon when deferWorkspaceCleanup is true', async () => {
+    const pins = await readPins(checkout());
+    const plan = planImages({
+      checkouts: [pins],
+      scope: 'workspaces',
+      deferWorkspaceCleanup: true,
+      images: [
+        image(hex('8'), [`${WORKSPACE}@sha256:${hex('8')}`]),
+        image(hex('9'), [`${RUNNER}@sha256:${hex('9')}`]),
+      ],
+    });
+    expect(plan.pull).toEqual([`${WORKSPACE}@${workspaceDigest}`]);
+    expect(plan.remove).toEqual([`${RUNNER}@sha256:${hex('9')}`]);
+    expect(plan.deferred).toEqual([`${WORKSPACE}@sha256:${hex('8')}`]);
+  });
+
+  it('defers workspace image removal via CLI when --defer-workspace-cleanup is passed', () => {
+    const run = (args, stdin) =>
+      JSON.parse(execFileSync(process.execPath, [helper, ...args], { input: stdin, encoding: 'utf8' }));
+    const dockerState = JSON.stringify({
+      images: [
+        image(hex('8'), [`${WORKSPACE}@sha256:${hex('8')}`]),
+      ],
+      containers: [],
+    });
+    const deferredPlan = run(['--scope', 'workspaces', '--defer-workspace-cleanup', repoRoot], dockerState);
+    expect(deferredPlan.remove).toEqual([]);
+    expect(deferredPlan.deferred).toEqual([`${WORKSPACE}@sha256:${hex('8')}`]);
+
+    const normalPlan = run(['--scope', 'workspaces', repoRoot], dockerState);
+    expect(normalPlan.remove).toEqual([`${WORKSPACE}@sha256:${hex('8')}`]);
+    expect(normalPlan.deferred).toEqual([]);
+  });
+
   it('is what the CLI prints with --scope, the two commands the role runs', () => {
     const run = (args) =>
       JSON.parse(execFileSync(process.execPath, [helper, ...args], { input: '', encoding: 'utf8' }));

@@ -22,3 +22,8 @@ lab_images_sandbox_docker_host: unix:///run/hcw-coder-docker/docker.sock
 
 # NodeSource's node, which the labs_agent role installs, runs the plan.
 lab_images_node: /usr/bin/node
+
+# Defer workspace image removal when Coder template publication was skipped or failed.
+# When true, newly pinned workspace images are still pulled, but existing workspace images
+# on the sandbox daemon are kept so active Coder template versions continue running.
+lab_images_defer_workspace_cleanup: false
