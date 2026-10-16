@@ -14,7 +14,7 @@
  */
 import { httpRoute, httpRouteByMethod } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
-import { readDoc, upsertDoc, patchDoc, queryDocs, deleteDoc } from '../lib/cosmos-client.js';
+import { readDoc, upsertDoc, patchDoc, queryDocs, deleteDoc, incrementIf, createDoc } from '../lib/cosmos-client.js';
 import { createAiProxyHandlers } from '../lib/ai/proxy.js';
 import { createAdminIntegrationHandlers } from '../lib/admin-integrations.js';
 import * as ai from '../lib/ai/router.js';
@@ -23,7 +23,7 @@ import { getCostEstimate } from '../lib/ai/router.js';
 const handlers = () =>
   createAiProxyHandlers({
     guard: getDefaultGuard(),
-    store: { readDoc, upsertDoc, patchDoc },
+    store: { readDoc, upsertDoc, patchDoc, incrementIf, createDoc },
     ai: { callProvider: ai.callProvider, getCostEstimate },
   });
 
