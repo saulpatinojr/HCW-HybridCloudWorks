@@ -166,16 +166,16 @@ describe('alert-lab-ssh-login expects what the hardening role installs', () => {
     expect(adminUsers).toContain(yamlScalar(groupVars, 'hardening_admin_user'));
   });
 
-  it.skipIf(pinnedKeys.length === 0)(
-    'pins exactly the fingerprints of hardening_admin_authorized_keys (skipped only while that list is empty, as on main before #953’s key pin; then the role copies root’s keys and there is nothing to compare)',
-    () => {
-      const ansible = [...new Set(pinnedKeys.map(sshFingerprint))].sort();
-      expect(
-        [...new Set(fingerprints)].sort(),
-        'infra/variables.tf lab_ssh_admin_key_fingerprints must be the fingerprints of lab-host/ansible/group_vars/all.yml hardening_admin_authorized_keys: run ssh-keygen -lf on each key'
-      ).toEqual(ansible);
-    }
-  );
+  it('pins exactly the fingerprints of hardening_admin_authorized_keys, and that list is not empty', () => {
+    // The hardening role refuses an empty list (tasks/admin_keys.yml), so an
+    // empty one here is a bootstrap that would stop, not a parity to skip.
+    expect(pinnedKeys.length, 'lab-host/ansible/group_vars/all.yml hardening_admin_authorized_keys is empty').toBeGreaterThan(0);
+    const ansible = [...new Set(pinnedKeys.map(sshFingerprint))].sort();
+    expect(
+      [...new Set(fingerprints)].sort(),
+      'infra/variables.tf lab_ssh_admin_key_fingerprints must be the fingerprints of lab-host/ansible/group_vars/all.yml hardening_admin_authorized_keys: run ssh-keygen -lf on each key'
+    ).toEqual(ansible);
+  });
 });
 
 describe('the rule reads those variables, and is the event-shaped rule ADR 0022 decision 6 describes', () => {
