@@ -938,6 +938,20 @@ describe('DECLARED', () => {
     expect(changed).toEqual([OVERDUE_LAST_DUE_BIN_AT]);
   });
 
+  it('prunes the stateful-rule, timer-overdue and export-latency entries once applied (#1207, #964, #970)', () => {
+    const addresses = DECLARED.map((entry) => entry.address);
+    for (const name of [
+      'lab_hybrid_backup_missing_coder',
+      'lab_hybrid_backup_missing_vault',
+      'lab_hybrid_disk_used',
+      'logs_daily_cap',
+      'timer_overdue',
+      'export_window_latency',
+    ]) {
+      expect(addresses, name).not.toContain(`azurerm_monitor_scheduled_query_rules_alert_v2.${name}`);
+    }
+  });
+
   it('prunes ADDON_NETWORK_ASSESSMENT_URL and ADDON_CLOUD_ASSESSMENT_URL once applied (#1089)', () => {
     const paths = DECLARED.map((entry) => entry.path);
     expect(paths).not.toContain('app_settings.ADDON_NETWORK_ASSESSMENT_URL');
