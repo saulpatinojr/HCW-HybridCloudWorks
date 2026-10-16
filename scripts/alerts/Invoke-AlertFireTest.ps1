@@ -51,16 +51,16 @@
 
 .PARAMETER Test
     The runbook block to run. kv-config-write, rbac-assignment,
-    rbac-definition, kv-errors-and-data-write, lab-vault-unwrap and
-    lab-ssh-burst finish in under an hour; jobs-poison and lab-agent-offline
-    in about an hour; swa-bandwidth and timer-overdue in up to an hour and a
-    half.
+    rbac-definition, kv-errors-and-data-write, lab-vault-unwrap,
+    lab-ssh-burst and lab-ssh-login finish in under an hour; jobs-poison and
+    lab-agent-offline in about an hour; swa-bandwidth and timer-overdue in up
+    to an hour and a half.
 
 .PARAMETER Recover
     Do the runbook's recovery for -Test from its record file, then confirm it
     with the runbook's stop-condition read. For a test that changes nothing
-    (kv-errors-and-data-write, lab-vault-unwrap, lab-ssh-burst) there is
-    nothing to recover, and it says so.
+    (kv-errors-and-data-write, lab-vault-unwrap, lab-ssh-burst,
+    lab-ssh-login) there is nothing to recover, and it says so.
 
 .PARAMETER TimeoutMinutes
     How long to wait for the alerts once the test's change is made, instead
@@ -86,7 +86,7 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('kv-config-write', 'rbac-assignment', 'rbac-definition', 'kv-errors-and-data-write', 'lab-vault-unwrap', 'lab-ssh-burst', 'jobs-poison', 'lab-agent-offline', 'swa-bandwidth', 'timer-overdue')]
+    [ValidateSet('kv-config-write', 'rbac-assignment', 'rbac-definition', 'kv-errors-and-data-write', 'lab-vault-unwrap', 'lab-ssh-burst', 'lab-ssh-login', 'jobs-poison', 'lab-agent-offline', 'swa-bandwidth', 'timer-overdue')]
     [string] $Test,
 
     [switch] $Recover,
@@ -144,9 +144,10 @@ function Get-AlertEstate {
 function Get-AlertRuleCatalog {
     <#
     .SYNOPSIS
-        The thirteen PLAT-4 rules: where each lives and what kind it is.
-        Declared in infra/observability.tf and infra/lab-hybrid.tf; the tests
-        hold this table to those files.
+        The rules these tests prove, PLAT-4's thirteen and #953's login rule:
+        where each lives and what kind it is. Declared in
+        infra/observability.tf and infra/lab-hybrid.tf; the tests hold this
+        table to those files.
     #>
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
     param()
@@ -171,7 +172,8 @@ function Get-AlertRuleCatalog {
         @('alert-rbac-definition-app', $app, $web, $activity),
         @('alert-rbac-definition-mgmt', $mgmt, $plat, $activity),
         @('alert-lab-vault-unwrap', $mgmt, $plat, $log),
-        @('alert-lab-ssh-burst', $mgmt, $plat, $log)
+        @('alert-lab-ssh-burst', $mgmt, $plat, $log),
+        @('alert-lab-ssh-login', $mgmt, $plat, $log)
     )
     $catalog = [ordered]@{}
     foreach ($row in $rows) {
@@ -229,6 +231,11 @@ function Get-AlertTestDefinition {
             return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-lab-ssh-burst'); Optional = $none; TimeoutMinutes = 45; Tools = [string[]]@('az', 'ssh'); RecoverTools = [string[]]@('az')
                 Summary = 'Writes a thousand failed-login lines to the lab host''s auth log under sshd''s name with logger, from a documentation address. fail2ban bans nothing and no login is attempted.'
                 Success = 'alert-lab-ssh-burst-prod-cus within about 30 minutes. It resolves on its own once the burst leaves the 15-minute window.' }
+        }
+        'lab-ssh-login' {
+            return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-lab-ssh-login'); Optional = $none; TimeoutMinutes = 45; Tools = [string[]]@('az', 'ssh'); RecoverTools = [string[]]@('az')
+                Summary = 'Writes one accepted-login line to the lab host''s auth log under sshd''s name with logger, for a user that does not exist, from a documentation address, with a fingerprint no key has. No login happens and nothing on the host changes.'
+                Success = 'alert-lab-ssh-login-prod-cus within about 30 minutes. It is stateless, so no Resolved mail follows, and now and then a second alert for the same line follows a quarter of an hour later.' }
         }
         'jobs-poison' {
             return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-jobs-poison'); Optional = [string[]]@('alert-rbac-assignment-app'); TimeoutMinutes = 45; Tools = [string[]]@('az', 'gh'); RecoverTools = [string[]]@('az')
@@ -1922,6 +1929,33 @@ function Invoke-AlertTestLabSshBurst {
     Wait-AlertFired -Context $Context -Required @('alert-lab-ssh-burst') -TimeoutMinutes (Get-AlertTestDefinition -Test 'lab-ssh-burst').TimeoutMinutes
 }
 
+# --- lab-ssh-login ------------------------------------------------------------
+
+function Invoke-AlertTestLabSshLogin {
+    <#
+    .SYNOPSIS
+        alert-lab-ssh-login (#953): one accepted-login line under sshd's
+        name, written by logger, so no login happens. It has the shape of
+        OpenSSH's own line, which the rule parses, and both its user and its
+        key are outside the expected pair, so the rule pages on it whatever
+        lab_ssh_loopback_only says. The address is a documentation one.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)] [pscustomobject] $Context)
+
+    $command = 'logger -p auth.info -t sshd "Accepted publickey for firetest from 192.0.2.10 port 1 ssh2: ED25519 SHA256:firetest"'
+    $Context.StartUtc = Get-AlertUtcNow
+    $run = Invoke-AlertSshChange -HostAlias $Context.HostAlias -Command $command -What 'Write one accepted-login line to the lab host''s auth log'
+    if ($run.Ran) {
+        Assert-AlertSshReached -ExitCode $run.ExitCode -HostAlias $Context.HostAlias
+        if ($run.ExitCode -ne 0) {
+            throw "Writing the line on $($Context.HostAlias) failed (exit $($run.ExitCode)): $((@($run.Lines) | Select-Object -Last 3) -join ' ')"
+        }
+        Write-Host 'Written: one line.'
+    }
+    Wait-AlertFired -Context $Context -Required @('alert-lab-ssh-login') -TimeoutMinutes (Get-AlertTestDefinition -Test 'lab-ssh-login').TimeoutMinutes
+}
+
 # --- jobs-poison --------------------------------------------------------------
 
 function Get-AlertDeployRuns {
@@ -2525,6 +2559,7 @@ function Invoke-AlertTestRun {
         'kv-errors-and-data-write' { Invoke-AlertTestKvErrorsAndDataWrite -Context $Context }
         'lab-vault-unwrap' { Invoke-AlertTestLabVaultUnwrap -Context $Context }
         'lab-ssh-burst' { Invoke-AlertTestLabSshBurst -Context $Context }
+        'lab-ssh-login' { Invoke-AlertTestLabSshLogin -Context $Context }
         'jobs-poison' { Invoke-AlertTestJobsPoison -Context $Context }
         'lab-agent-offline' { Invoke-AlertTestLabAgentOffline -Context $Context }
         'swa-bandwidth' { Invoke-AlertTestSwaBandwidth -Context $Context }

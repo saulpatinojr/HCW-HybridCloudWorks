@@ -1381,3 +1381,61 @@ variable "lab_hybrid_policy_enabled" {
   type        = bool
   default     = false
 }
+
+# -----------------------------------------------------------------------------
+# Hybrid Lab: the expected SSH login (#953, LAB-7, lab-hybrid.tf)
+# -----------------------------------------------------------------------------
+# What alert-lab-ssh-login treats as an expected login: one of these users, by
+# public key, with one of these keys. Anything else that sshd accepts pages.
+#
+# The users are the hardening role's administrative login,
+# hardening_admin_user in lab-host/ansible/group_vars/all.yml. The
+# fingerprints are those of the keys that role pins in
+# hardening_admin_authorized_keys, in OpenSSH's `SHA256:` form (what
+# `ssh-keygen -lf <key>.pub` prints and what sshd logs on an accepted login).
+# scripts/lab-host-ssh-login-alert.test.mjs holds both lists to the Ansible
+# ones, so a key rotated in one place and not the other fails CI rather than
+# paging on every login. Public values: a fingerprint identifies a key and
+# grants nothing.
+variable "lab_ssh_admin_users" {
+  description = "Users whose public-key SSH login to the lab host with a pinned key is expected (alert-lab-ssh-login, #953)"
+  type        = list(string)
+  default     = ["hcwadmin"]
+
+  validation {
+    condition     = length(var.lab_ssh_admin_users) > 0
+    error_message = "lab_ssh_admin_users must name at least one user: empty, every login to the lab host would page."
+  }
+
+  validation {
+    condition     = alltrue([for user in var.lab_ssh_admin_users : can(regex("^[a-z_][a-z0-9_-]{0,31}$", user))])
+    error_message = "Each lab_ssh_admin_users entry must be a Linux user name: lower case, starting with a letter or underscore, at most 32 characters."
+  }
+}
+
+variable "lab_ssh_admin_key_fingerprints" {
+  description = "SHA256 fingerprints of the public keys pinned for the lab host's administrative login (alert-lab-ssh-login, #953)"
+  type        = list(string)
+  default     = ["SHA256:VTyaLLQLfYwi38RP1mHDD6Vtu0eSQsa4EPsNJTrdgG8"]
+
+  validation {
+    condition     = length(var.lab_ssh_admin_key_fingerprints) > 0
+    error_message = "lab_ssh_admin_key_fingerprints must hold at least one fingerprint: empty, every login to the lab host would page."
+  }
+
+  validation {
+    condition     = alltrue([for fingerprint in var.lab_ssh_admin_key_fingerprints : can(regex("^SHA256:[A-Za-z0-9+/]{43}$", fingerprint))])
+    error_message = "Each lab_ssh_admin_key_fingerprints entry must be an OpenSSH SHA256 fingerprint, SHA256: and 43 base64 characters without padding, as `ssh-keygen -lf <key>.pub` prints it."
+  }
+}
+
+# Whether an expected login must also arrive through Azure Arc SSH, which
+# reaches sshd from the host's own loopback address. False while port 22 is
+# still open to the internet (ADR 0032, the 2026-10-16 staging of #953); the
+# change that closes port 22 sets it true, and from then a login from any
+# other address pages even with the pinned key.
+variable "lab_ssh_loopback_only" {
+  description = "Page on any SSH login to the lab host that does not arrive from loopback, as Arc SSH does; set once port 22 is closed (alert-lab-ssh-login, #953)"
+  type        = bool
+  default     = false
+}

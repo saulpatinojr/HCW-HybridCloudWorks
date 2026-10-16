@@ -344,6 +344,18 @@ export const DECLARED = [
   // PODBEAN references in) in run-zKhjw537s5ZF2FYU, both on 2026-10-13, and
   // were deleted here. tfc-plan-check.yml read each run as its declared
   // changes beside the permanent diff and nothing else.
+  //
+  // #953 (LAB-7): alert-lab-ssh-login, a successful SSH login on the lab host
+  // that is not the admin user with the pinned key. Created by the owner's
+  // next apply; delete this entry once verify-alert-state.yml reads the rule
+  // OK.
+  {
+    address:
+      "azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected",
+    action: "create",
+    reason:
+      "#953 LAB-7: alert-lab-ssh-login, an accepted SSH login that is not the admin user with the pinned key",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
