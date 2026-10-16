@@ -214,13 +214,13 @@ workspace makes them page, not sleep.
 | `alert-api-reachability` | 1 | Fewer than 3 `edge-api-health` successes in `availabilityResults` in 30 min, of the 6 expected, evaluated every 5 min (stateful). Gated on `availability_probe_alert_enabled`, armed 2026-09-01 (T-519) | The API is unreachable over the Cloudflare path, or the edge probe itself has stopped; from a visitor's seat they are the same incident | `AppAvailabilityResults` for `edge-api-health` over the last hour, then [Availability probe](availability-probe.md) |
 | `alert-cosmos-export-daily` | 2 | No `cosmosExportCompleted` event, full or delta, in the last 2 days, evaluated daily. **Stateless**: mails once a day until a run completes. Gated on `cosmos_export_enabled` | The 03:00 UTC exporter is not finishing, and the out-of-account copy is going stale | `AppEvents` for `cosmosExportCompleted`, and `AppExceptions` for the export timer and job; then [Cosmos restore](cosmos-restore.md) |
 | `alert-cosmos-export-full` | 2 | On a Monday, no full export completed in the trailing 2 days, evaluated daily. **Stateless**: one mail per missed Sunday. Gated on `cosmos_export_enabled` | Sunday's full did not land: deltas keep accumulating and deletes stay unreconciled until the next full | The same `AppEvents` rows, filtered to `mode` `full` |
-| `alert-logs-capacity` | 2 | Billable ingestion passes 80% of the daily cap since the 08:00 UTC reset. In `rg-mgmt-plat-prod-cus`, Management subscription | Telemetry is about to stop for the day, taking the log-based signals with it | The `Usage` table, grouped by `DataType`, over the same window |
+| `alert-logs-capacity` | 2 | Billable ingestion passes 80% of the daily cap since the 08:00 UTC reset, hourly (stateful: resolves after the reset). In `rg-mgmt-plat-prod-cus`, Management subscription | Telemetry is about to stop for the day, taking the log-based signals with it | The `Usage` table, grouped by `DataType`, over the same window |
 | ~~`alert-api-availability`~~ | 1 | **Not created** (`count = 0`, gated on `availability_test_enabled`) | — | See *[Reachability is covered, but not by the Azure test](#reachability-is-covered-but-not-by-the-azure-test)* |
 | `alert-lab-heartbeat` | 1 | No `Heartbeat` row from `arcs-lab-hybrid-prod-cus-01` in 30 min, evaluated every 15 min (stateful). In `rg-mgmt-plat-prod-cus`, Management subscription | The lab host is down, the Azure Monitor Agent is stopped, or the host cannot reach Azure; public lab submission fails closed meanwhile | `ssh hcw-lab 'systemctl status azuremonitoragent himdsd hcw-labs-agent --no-pager'`; the Hostinger panel if ssh fails |
-| `alert-lab-disk` | 2 | Root filesystem past 85% used, hourly. Management subscription | Docker images, Coder workspaces or pg_dumps filling the disk | `ssh hcw-lab 'df -h /; sudo docker system df; sudo ls -l /var/backups/coder'` |
-| `alert-lab-unit-failed` | 2 | A `hcw-unit-failed` line in `Syslog` from the lab host in the last hour, evaluated every 15 min. Management subscription | A unit that names the notifier in `OnFailure=` entered the failed state; the line names the unit. They are the Coder backup and Coder automation, the Vault backup, the labs agent, Caddy, Vault, the daily held-package report (`hcw-held-upgradable`, when apt fails) and the nightly idle reboot (`hcw-reboot-when-idle`, when `apt-config`, logind or a docker daemon cannot answer, or the run times out; `sudo journalctl -t hcw-reboot-when-idle` says which). Stopping the idle reboot is not a failure | `ssh hcw-lab 'systemctl --failed --no-pager; sudo journalctl -t hcw-unit-failed --since -2h --no-pager'`, which lists the failed units and the notifier's own lines naming them |
-| `alert-lab-backup-missing-coder` | 2 | No successful blob write under `host-backups/coder/` in `stlabhybridprodcus01` (`StorageBlobLogs`, `PutBlob`/`PutBlockList`) in two days, hourly. Management subscription | The nightly Coder dump or its upload is failing, or the host is down; the 35-day immutable copies stop growing | `ssh hcw-lab 'systemctl status coder-postgres-backup.timer coder-postgres-backup --no-pager; sudo journalctl -t hcw-backup-upload --since -2d --no-pager; sudo ls -l /var/backups/coder'` |
-| `alert-lab-backup-missing-vault` | 2 | No successful blob write under `host-backups/vault/` in `stlabhybridprodcus01` in two days, hourly. Management subscription | The nightly Vault raft snapshot or its upload is failing (its token expired or was revoked), or the host is down | `ssh hcw-lab 'systemctl status hcw-vault-backup.timer hcw-vault-backup --no-pager; sudo journalctl -t hcw-backup-upload --since -2d --no-pager'` |
+| `alert-lab-disk` | 2 | Root filesystem past 85% used, hourly (stateful). Management subscription | Docker images, Coder workspaces or pg_dumps filling the disk | `ssh hcw-lab 'df -h /; sudo docker system df; sudo ls -l /var/backups/coder'` |
+| `alert-lab-unit-failed` | 2 | A `hcw-unit-failed` line in `Syslog` from the lab host in the last hour, evaluated every 15 min (stateless, muted 6 h: the line is an event). Management subscription | A unit that names the notifier in `OnFailure=` entered the failed state; the line names the unit. They are the Coder backup and Coder automation, the Vault backup, the labs agent, Caddy, Vault, the daily held-package report (`hcw-held-upgradable`, when apt fails) and the nightly idle reboot (`hcw-reboot-when-idle`, when `apt-config`, logind or a docker daemon cannot answer, or the run times out; `sudo journalctl -t hcw-reboot-when-idle` says which). Stopping the idle reboot is not a failure | `ssh hcw-lab 'systemctl --failed --no-pager; sudo journalctl -t hcw-unit-failed --since -2h --no-pager'`, which lists the failed units and the notifier's own lines naming them |
+| `alert-lab-backup-missing-coder` | 2 | No successful blob write under `host-backups/coder/` in `stlabhybridprodcus01` (`StorageBlobLogs`, `PutBlob`/`PutBlockList`) in two days, hourly (stateful: resolves once a backup lands). Management subscription | The nightly Coder dump or its upload is failing, or the host is down; the 35-day immutable copies stop growing | `ssh hcw-lab 'systemctl status coder-postgres-backup.timer coder-postgres-backup --no-pager; sudo journalctl -t hcw-backup-upload --since -2d --no-pager; sudo ls -l /var/backups/coder'` |
+| `alert-lab-backup-missing-vault` | 2 | No successful blob write under `host-backups/vault/` in `stlabhybridprodcus01` in two days, hourly (stateful: resolves once a backup lands). Management subscription | The nightly Vault raft snapshot or its upload is failing (its token expired or was revoked), or the host is down | `ssh hcw-lab 'systemctl status hcw-vault-backup.timer hcw-vault-backup --no-pager; sudo journalctl -t hcw-backup-upload --since -2d --no-pager'` |
 
 ### To check what is actually deployed
 
@@ -500,10 +500,17 @@ answered from metrics, not from logs.
 *stateful* (`auto_mitigation_enabled = true`, or a metric rule's own default):
 each fires once, stays fired while the condition holds, and sends a single
 Resolved mail once the condition has been clear for three evaluation periods —
-fifteen minutes on the PT5M rules. The exceptions are deliberate:
-`alert-logs-capacity`, `alert-lab-disk` and `alert-lab-unit-failed` mute for
-six hours instead, and the two export rules are stateless because Azure refuses
-auto-resolution on a rule evaluated less often than every twelve hours.
+fifteen minutes on the PT5M rules, two on the hourly ones. Since 2026-10-16 that
+includes `alert-logs-capacity`, `alert-lab-disk` and both
+`alert-lab-backup-missing` rules, which used to mute instead and left an alert
+open for every evaluation over their threshold ([ADR 0022](../decisions/0022-alerting-fabric.md)
+decision 6). The exceptions are deliberate. The three daily rules
+(`alert-export-window-latency` and the two Cosmos export rules) are stateless
+because Azure refuses auto-resolution on a rule evaluated less often than every
+twelve hours. `alert-lab-unit-failed` mutes for six hours because its condition
+is a log line, an event, which a stateful rule would call resolved an hour later
+whether or not the unit came back. Activity Log alerts are stateless by
+platform; each one is an event a person reads and closes.
 They were not stateful when they first went live, and `alert-app-exceptions`
 demonstrated the difference on the night of 2026-08-25: a stateless log rule
 re-notifies on *every* evaluation whose condition is met, and because each
@@ -513,9 +520,11 @@ have stopped. Nothing about detection changed — same frequency, same query, sa
 threshold. **If a rule is still noisy after this, it is firing too often, not
 notifying too often**, and the fix is the query or the threshold, below.
 
-**The capacity alert is muted for 6 hours after it fires**, deliberately.
-Ingestion only goes up between resets, so once it is past 80% it stays past, and
-an hourly rule would send the same mail until 08:00 UTC. When it fires, prune a
+**The capacity alert fires once a day at most, and resolves after the reset.**
+Ingestion only goes up between resets, so once it is past 80% it stays past
+until 08:00 UTC, when the sum starts again and the alert resolves two
+evaluations later. Until 2026-10-16 it muted for six hours instead, which still
+mailed up to four times a day. When it fires, prune a
 diagnostic category before raising the cap; raising the cap moves spend into the
 Platform Management budget ([Cost analysis](../architecture/cost-analysis.md)).
 
@@ -1445,7 +1454,7 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 | `alert-rbac-definition-mgmt` | 2026-10-15, 03:36Z | The same at rg-mgmt-plat-prod-cus; the alert opened at 03:36:04Z (#964) |
 | `alert-lab-vault-unwrap` | 2026-10-15, 04:23Z | `Invoke-AlertFireTest.ps1 -Test lab-vault-unwrap`: a wrap request from the workstation, refused 403 at 04:08Z and logged with its address; the alert opened at 04:23:01Z. `alert-kv-errors` did not open beside it because its 03:21Z alert was still open, which the test allows (#964) |
 | `alert-lab-ssh-burst` | 2026-10-15, 07:41Z | `Invoke-AlertFireTest.ps1 -Test lab-ssh-burst`: a thousand `sshd` lines from a documentation address, each with its own port, written by `logger` at 07:27Z; the alert opened at 07:41:48Z. The first run, with one fixed port, failed: rsyslog's `$RepeatedMsgReduction on` folded the burst into two Syslog rows (#964), which is why each line now differs |
-| `alert-lab-backup-missing-coder` | 2026-10-14, 06:23Z | On the real condition, not a staged one. The rule was created at 06:16:56Z, before the host had uploaded any Coder dump, and its first evaluation opened an alert at 06:23:14Z with its actions run. It opened again every hour, its actions muted for a day as `mute_actions_after_alert_duration` sets, until 03:23Z on 2026-10-15. The first dump, `coder/coder-20261015T033716Z.sql.gz`, landed at 03:37:18Z, and no evaluation has opened one since. Read from Alerts Management on 2026-10-16. So the two-night timer stop this row used to call for is not needed (#964, #955) |
+| `alert-lab-backup-missing-coder` | 2026-10-14, 06:23Z | On the real condition, not a staged one. The rule was created at 06:16:56Z, before the host had uploaded any Coder dump, and its first evaluation opened an alert at 06:23:14Z with its actions run. It opened again every hour, its actions muted for a day by the `mute_actions_after_alert_duration` it had then, until 03:23Z on 2026-10-15. The first dump, `coder/coder-20261015T033716Z.sql.gz`, landed at 03:37:18Z, and no evaluation has opened one since. Read from Alerts Management on 2026-10-16. So the two-night timer stop this row used to call for is not needed (#964, #955) |
 | `alert-lab-backup-missing-vault` | 2026-10-14, 06:30Z | The same way. Created at 06:16:56Z with no Vault snapshot uploaded yet, it opened an alert at 06:30:23Z with its actions run, and again hourly until 14:30Z. The first snapshot, `vault/vault-20261014T143509Z.snap`, landed at 14:35:10Z, and none has opened since (#964, #955) |
 | `alert-export-window-latency` | not yet | No fire test: a degraded export window cannot be staged without slowing production. Design test: the rule's query with `windowRequests >= 1` and `windowP95 > 0` under Application Insights → **Logs** returns one row on any night with requests in the window |
 

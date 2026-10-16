@@ -416,9 +416,16 @@ resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_key_vault" {
 #   - disk_used: the root filesystem is past 85%. Docker images, Coder
 #     workspaces and seven days of pg_dumps all live there, and a full disk
 #     breaks Coder, Vault's raft store and job staging without a crash.
+#     Stateful since 2026-10-16: one alert, resolved once the disk is back
+#     under 85%. It muted for six hours instead, which mailed four times a day
+#     while the disk stayed full and left every alert open after it was
+#     pruned (ADR 0022 decision 6).
 #   - unit_failed: `hcw-unit-failed@` logged a failure for a unit it watches
 #     (the Coder backup, the labs agent, Caddy, Vault). The notifier writes one
-#     line at daemon.err; the DCR ships daemon at Warning and above.
+#     line at daemon.err; the DCR ships daemon at Warning and above. Stateless
+#     and muted for six hours, deliberately: the line is an event, not a state.
+#     A stateful form would report Resolved once the line left the hour's
+#     window, whether or not the unit came back.
 #
 # verify-alert-state.yml derives its list from these declarations since PLAT-4
 # (#964), so these three are in it. Its identity since #1053,
@@ -484,13 +491,14 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_disk_used"
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   location            = azurerm_resource_group.platform_mgmt.location
   scopes              = [azurerm_log_analytics_workspace.hcw.id]
-  description         = "The lab host's root filesystem is past 85% used. Docker images, Coder workspaces, Vault's raft store and the pg_dumps share it; a full disk breaks them without a crash. Prune images or old dumps. LAB-2."
+  description         = "The lab host's root filesystem is past 85% used. Docker images, Coder workspaces, Vault's raft store and the pg_dumps share it; a full disk breaks them without a crash. Prune images or old dumps. Stateful: resolves once the disk is back under 85%. LAB-2."
   severity            = 2
 
   evaluation_frequency = "PT1H"
   window_duration      = "PT1H"
 
-  mute_actions_after_alert_duration = "PT6H"
+  # One alert per episode, resolved two clear evaluations after the prune.
+  auto_mitigation_enabled = true
 
   criteria {
     query                   = <<-KQL

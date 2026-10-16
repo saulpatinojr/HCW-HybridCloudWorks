@@ -30,6 +30,24 @@ This project has not cut a tagged release; entries are grouped under
   on 2026-10-16, so the two-night backup stop the rows used to call for
   was not made. `alert-export-window-latency` keeps its design test, since
   a degraded export window cannot be staged.
+- **Every log rule whose condition can clear now resolves itself (ADR 0022
+  decision 6, amended)**. Four rules muted their repeats rather than
+  resolving: `alert-logs-capacity`, `alert-lab-disk` and both
+  `alert-lab-backup-missing` rules. A mute still opens an alert at every
+  evaluation over the threshold and closes none, and on 2026-10-16 there
+  were 43 such alerts open for conditions long gone. All four are now
+  stateful: one alert per episode, resolved two clear evaluations later.
+  The capacity rule's comment said its condition could not clear before the
+  08:00 UTC reset, and that the reset left nothing to auto-resolve. That
+  was wrong: the reset clears it. Stateless by reason, and so recorded:
+  - the three daily rules, which Azure will not make stateful;
+  - `alert-lab-unit-failed`, whose condition is a log line, not a state;
+  - the Activity Log alerts, stateless by platform.
+  The 205 alert instances open in both subscriptions were closed the same
+  day, each with its reason. 137 had already resolved and 43 were stateless
+  repeats of cleared conditions. The other 25 were security events, each
+  traced to a fire test, a Terraform apply or the owner's own role change.
+  Live after the owner's `hcw-azure` apply.
 - **`alert-timer-overdue` is seen to fire: thirteen of fifteen alert rules
   are now on the Fire record (PLAT-4, #964)**. After the owner's apply put
   #1195's corrected query live (20:42Z on 2026-10-15),

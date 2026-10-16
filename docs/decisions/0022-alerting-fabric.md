@@ -98,8 +98,32 @@ would sit enabled and inert, and `az monitor metrics alert list` would report
 six rules when five can fire — with the inert one being reachability, the only
 signal that survives the application being completely down.
 
-**6. The four workload rules are stateful; only the capacity rule is muted.**
-Added 2026-08-25 after the first firing. `autoMitigate` defaults to false on a
+**6. A log rule is stateful wherever its condition can clear.** Amended
+2026-10-16. The rule this decision first wrote, for four workload rules, now
+covers every log rule that evaluates every 12 hours or more often and watches
+a state. That is a count, a level, or an absence, which the next good reading
+clears. Three exceptions remain, and each is held by a reason, not by habit:
+
+- **The daily rules:** `alert-export-window-latency`, `alert-cosmos-export-daily`
+  and `alert-cosmos-export-full` are stateless because Azure refuses
+  auto-resolution on a rule evaluated less often than every 12 hours.
+- **`alert-lab-unit-failed`:** stateless, and muted for six hours, because its
+  condition is an event, a `hcw-unit-failed` line, not a state. A stateful
+  form would report Resolved once the line left the hour's window, whether or
+  not the unit came back.
+- **Activity Log alerts:** stateless by platform. Each alert is one event, read
+  and closed by a person.
+
+The amendment moved `alert-logs-capacity`, `alert-lab-disk` and both
+`alert-lab-backup-missing` rules from mutes to stateful. They had muted
+because their conditions hold for hours. That was the reason to make them
+stateful, not to mute them. A mute still opened an alert at every evaluation
+and closed none, and 43 of them were open on 2026-10-16 for conditions long
+gone. The capacity rule's own reason, that its condition "cannot clear before
+the 08:00 UTC reset and there is nothing to auto-resolve", had it backwards:
+the reset is what clears it.
+
+The decision as first written, 2026-08-25, after the first firing, follows. `autoMitigate` defaults to false on a
 scheduled query rule, and a stateless log rule notifies on *every* evaluation
 whose condition is met — at PT5M that is a fresh Sev1 mail every five to ten
 minutes, continuing for a further window-length after the condition clears,
@@ -110,8 +134,9 @@ against the same threshold and detects exactly what it detected before, and adds
 a Resolved notification the stateless form cannot send. It is deliberately the
 *only* change made without firing data, because it is the only one that does not
 trade coverage for quiet. `mute_actions_after_alert_duration` is mutually
-exclusive with it and stays on `alert-logs-capacity` alone, where the condition
-cannot clear before the 08:00 UTC reset and there is nothing to auto-resolve.
+exclusive with it. It stayed on `alert-logs-capacity` alone, on the reasoning
+that the condition cannot clear before the 08:00 UTC reset. The 2026-10-16
+amendment above corrects that.
 
 The corollary is recorded so it is not lost: **after this, a noisy rule is one
 that fires too often, and the remedies all cost coverage.** They are ordered in
