@@ -15,6 +15,16 @@ import {
   JOB_STATUSES,
 } from './labs.js';
 
+// getLabsSnapshot lazily imports ./labs/lab-checks.js, which transitively
+// imports ./cosmos-client.js and ./secret-vault.js. Every test here supplies
+// its own store double, so stubbing the two Azure SDKs keeps that lazy import
+// from loading @azure/cosmos and @azure/identity mid-test (#1203).
+vi.mock('@azure/cosmos', () => ({ CosmosClient: class {} }));
+vi.mock('@azure/identity', () => ({
+  DefaultAzureCredential: class {},
+  ManagedIdentityCredential: class {},
+}));
+
 const context = { log: vi.fn(), error: vi.fn() };
 
 const USER = { oid: 'u1', email: 'editor@hcw.dev' };
@@ -295,6 +305,29 @@ describe('getLabsSnapshot', () => {
         registeredAt: null,
       },
       { agentId: 'legacy', active: false, oid: null, registeredAt: null },
+    ]);
+  });
+
+  it('projects certificateExpiresAt for each agent as an ISO string or null (#957)', async () => {
+    const store = makeStore({
+      queryDocs: vi.fn(async (container) => {
+        if (container === 'lab_agents') {
+          return [
+            { id: 'vps-1', certificateExpiresAt: '2027-04-14T00:00:00.000Z' },
+            { id: 'vps-2', certificateExpiresAt: 'invalid-date' },
+            { id: 'vps-3' },
+          ];
+        }
+        return [0];
+      }),
+    });
+    const h = createLabHandlers({ guard: guardAs('viewer'), store, ...fixed });
+    const { agents } = JSON.parse((await h.getLabsSnapshot(makeRequest({}), context)).body);
+
+    expect(agents.map((a) => ({ agentId: a.agentId, certificateExpiresAt: a.certificateExpiresAt }))).toEqual([
+      { agentId: 'vps-1', certificateExpiresAt: '2027-04-14T00:00:00.000Z' },
+      { agentId: 'vps-2', certificateExpiresAt: null },
+      { agentId: 'vps-3', certificateExpiresAt: null },
     ]);
   });
 

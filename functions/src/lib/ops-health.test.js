@@ -114,6 +114,18 @@ function opsStore() {
           { id: 'img-noid', contentId: '' },
         ];
       }
+      if (container === 'jobs') {
+        return [
+          {
+            id: 'job-f1',
+            type: 'forgeArticle',
+            status: 'failed',
+            error: 'OpenAI 429 rate limit exceeded',
+            createdAt: '2026-08-07T03:30:00Z',
+            finishedAt: '2026-08-07T03:31:00Z',
+          },
+        ];
+      }
       return [];
     }),
     readDoc: vi.fn(async (container, id) => {
@@ -270,6 +282,16 @@ describe('getOpsHealthSnapshot', () => {
       queueBreachCount: 2,
       publishFailureCount: 1, // the open scheduled_publish_failures alert
       orphanedGeneratedImages: 2, // c-gone + missing contentId
+      failedJobs: [
+        {
+          id: 'job-f1',
+          type: 'forgeArticle',
+          status: 'failed',
+          error: 'OpenAI 429 rate limit exceeded',
+          createdAt: '2026-08-07T03:30:00Z',
+          finishedAt: '2026-08-07T03:31:00Z',
+        },
+      ],
       lastSchedulerSuccessAt: 'run-ts',
     });
     expect(body.operationalSignals.oldestStagedHours).toBe(24); // staged Live item excluded

@@ -88,6 +88,23 @@ export const SETS = {
     ],
     infrastructure: false,
   },
+  'image-tools': {
+    branch: 'chore/lab-pins-image-tools',
+    workflow: '.github/workflows/lab-supply-chain.yml',
+    paths: ['lab-image/versions.env', 'lab-image/README.md'],
+    title: 'Lab image: move tools, providers and Azure CLI pins, each with its publisher checksum',
+    intro:
+      "The weekly lab supply-chain run found newer upstream versions for the lab image's tools, Terraform providers, or the Azure CLI. It edits `lab-image/versions.env` and `lab-image/README.md` (which documents the provider mirror and tools), each with its publisher checksum or apt index hash. Nothing else.",
+    after: [
+      "**This pull request's `Build and smoke` check tests the new tools and providers:** the image builds with them, validates the provider mirror, and runs the smoke tests. Merge only on green.",
+      "**Merging publishes, it does not deploy.** The push to `main` runs publish-lab-image.yml, which builds, smoke-tests, attests and pushes both images, then opens the `chore/lab-pins-image-digests` pull request that pins the new digests where they are consumed.",
+    ],
+    scope: [
+      "**Components:** `lab-image/versions.env` (tools: Terraform, kubeconform, Helm, kubectl, Azure CLI; providers: azurerm, azapi, alz, random, modtm, time) and `lab-image/README.md`.",
+      "**Rollback:** revert this pull request; the consumers keep the digests they pin until a later `chore/lab-pins-image-digests` pull request moves them.",
+    ],
+    infrastructure: false,
+  },
   'image-digests': {
     branch: 'chore/lab-pins-image-digests',
     workflow: '.github/workflows/publish-lab-image.yml',

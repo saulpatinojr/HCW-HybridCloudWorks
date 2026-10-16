@@ -115,7 +115,7 @@ export function createApiClient({
      * the 20 s default, the pair alone could outlast the unit's stop budget.
      * Left undefined, `post` applies that default.
      */
-    heartbeat({ status, activeJobs, hostname, version, applied }, { timeoutMs } = {}) {
+    heartbeat({ status, activeJobs, hostname, version, applied, certificateExpiresAt }, { timeoutMs } = {}) {
       return post(
         'agent/heartbeat',
         {
@@ -124,6 +124,7 @@ export function createApiClient({
           hostname,
           version,
           applied: applied ?? undefined,
+          certificateExpiresAt: certificateExpiresAt ?? undefined,
         },
         { timeoutMs }
       );

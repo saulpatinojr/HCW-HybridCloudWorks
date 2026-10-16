@@ -264,7 +264,7 @@ export function flag(argv, name) {
   return at >= 0 && at + 1 < argv.length ? argv[at + 1] : null;
 }
 
-export const BUMP_SETS = ['host', 'image-base', 'image-digests'];
+export const BUMP_SETS = ['host', 'image-base', 'image-tools', 'image-digests'];
 
 /**
  * --bump <set>: plan the set's edits from publisher reads, print them, and
@@ -297,6 +297,9 @@ async function bumpMain(argv) {
       ])
     );
     plan = await bump.planImageBase({ files, http });
+  } else if (set === 'image-tools') {
+    const files = Object.fromEntries([bump.VERSIONS_ENV_PATH, bump.README_PATH].map((p) => [p, read(p)]));
+    plan = await bump.planImageTools({ files, http });
   } else {
     const files = Object.fromEntries([bump.CAPABILITIES_PATH, bump.CODER_TEMPLATE_PATH].map((p) => [p, read(p)]));
     plan = await bump.planImageDigests({ files, http, runner: flag(argv, '--runner'), full: flag(argv, '--full') });

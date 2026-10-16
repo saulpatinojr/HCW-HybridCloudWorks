@@ -467,6 +467,40 @@ describe('heartbeatAgent: the applied commit (#1009)', () => {
   });
 });
 
+describe('heartbeatAgent: certificateExpiresAt', () => {
+  const CERT_EXP = '2027-04-14T00:00:00.000Z';
+
+  it('stores certificateExpiresAt on the agent record when provided and valid', async () => {
+    const store = emptyStore();
+    await make(allowGuard(), store).heartbeatAgent(
+      req({ agentId: 'vps-1', certificateExpiresAt: CERT_EXP }),
+      context
+    );
+    const updates = store.patchDoc.mock.calls[0][2];
+    expect(updates.certificateExpiresAt).toBe(CERT_EXP);
+  });
+
+  it('does not patch certificateExpiresAt when identical to stored record', async () => {
+    const store = emptyStore();
+    await make(allowGuard({ certificateExpiresAt: CERT_EXP }), store).heartbeatAgent(
+      req({ agentId: 'vps-1', certificateExpiresAt: CERT_EXP }),
+      context
+    );
+    expect(store.patchDoc.mock.calls[0][2]).not.toHaveProperty('certificateExpiresAt');
+  });
+
+  it('ignores malformed or absent certificateExpiresAt', async () => {
+    for (const bad of [undefined, null, 'not-a-date', '2027-99-99']) {
+      const store = emptyStore();
+      await make(allowGuard({ certificateExpiresAt: CERT_EXP }), store).heartbeatAgent(
+        req({ agentId: 'vps-1', certificateExpiresAt: bad }),
+        context
+      );
+      expect(store.patchDoc.mock.calls[0][2]).not.toHaveProperty('certificateExpiresAt');
+    }
+  });
+});
+
 describe('completeLabJob', () => {
   const held = (over = {}) => ({ id: 'j1', status: 'claimed', agentId: 'vps-1', _etag: '"e1"', ...over });
   const written = (store, call = 0) => store.replaceDocIfMatch.mock.calls[call][1];

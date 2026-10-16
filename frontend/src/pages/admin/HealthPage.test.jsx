@@ -372,6 +372,36 @@ describe('the hub', () => {
     expect(screen.getByText('No alerts in this filter.')).toBeInTheDocument();
   });
 
+  it('renders a failed forge job with its error text on Health Overview within one refresh', async () => {
+    postJSON.mockImplementation(async (name) => {
+      if (name === 'getOpsHealthSnapshot') {
+        return {
+          ...SNAPSHOT,
+          operationalSignals: {
+            ...SNAPSHOT.operationalSignals,
+            failedJobs: [
+              {
+                id: 'job-forge-99',
+                type: 'forgeArticle',
+                status: 'failed',
+                error: 'AI proxy returned HTTP 429: rate limit exceeded',
+                finishedAt: '2026-04-12T10:00:00Z',
+              },
+            ],
+          },
+        };
+      }
+      return {};
+    });
+
+    renderAt();
+    expect(await screen.findByText('Failed Platform Jobs')).toBeInTheDocument();
+    expect(screen.getByText(/forgeArticle \(job-forge-99\)/)).toBeInTheDocument();
+    expect(
+      screen.getByText('AI proxy returned HTTP 429: rate limit exceeded')
+    ).toBeInTheDocument();
+  });
+
   it('does not refetch the snapshot or rerun identity when switching tabs', async () => {
     renderAt('checks');
     await identityLoaded();

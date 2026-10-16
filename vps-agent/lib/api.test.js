@@ -88,6 +88,16 @@ describe('every call', () => {
     assert.equal(Object.hasOwn(calls[1].body, 'applied'), false);
   });
 
+  it('carries the certificateExpiresAt on a heartbeat when provided, and leaves it out when not', async () => {
+    const certExp = '2027-04-14T00:00:00.000Z';
+    const { api, calls } = client();
+    await api.heartbeat({ status: 'idle', activeJobs: 0, hostname: 'h', version: '2.0.0', certificateExpiresAt: certExp });
+    await api.heartbeat({ status: 'idle', activeJobs: 0, hostname: 'h', version: '2.0.0', certificateExpiresAt: null });
+
+    assert.equal(calls[0].body.certificateExpiresAt, certExp);
+    assert.equal(Object.hasOwn(calls[1].body, 'certificateExpiresAt'), false);
+  });
+
   it('a heartbeat sent with its own timeout gives up at that timeout, not at the 20 s default', async () => {
     // The two shutdown heartbeats carry one (lib/shutdown.js): a fetch that
     // never answers is abandoned when the signal fires, and the agent moves

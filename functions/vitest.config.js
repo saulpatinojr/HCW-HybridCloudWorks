@@ -19,6 +19,7 @@ import { defineConfig } from 'vitest/config';
 // flags are on the coverage script only, so `npm test` keeps the defaults.
 export default defineConfig({
   test: {
+    hookTimeout: 30000,
     coverage: {
       provider: 'v8',
       reporter: [

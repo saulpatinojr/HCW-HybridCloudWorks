@@ -401,3 +401,44 @@ describe('The applied commit and the drift verdict (#1009)', () => {
     expect(screen.queryByText(/^commit /)).not.toBeInTheDocument();
   });
 });
+
+describe('AgentCard: certificate expiry (#957)', () => {
+  it('shows certificate valid line when expiry is well in the future', () => {
+    const certExp = new Date(NOW + 120 * 86_400_000).toISOString();
+    render(<AgentsTab hub={hub({ agents: [agent({ certificateExpiresAt: certExp })] })} />);
+
+    const line = screen.getByTestId('agent-cert-expiry');
+    expect(line).toHaveTextContent(/Certificate valid for 120d/);
+    expect(screen.queryByTestId('agent-cert-warning-badge')).not.toBeInTheDocument();
+  });
+
+  it('shows amber warning badge and text when expiry is within 60 days', () => {
+    const certExp = new Date(NOW + 30 * 86_400_000).toISOString();
+    render(<AgentsTab hub={hub({ agents: [agent({ certificateExpiresAt: certExp })] })} />);
+
+    const line = screen.getByTestId('agent-cert-expiry');
+    expect(line).toHaveTextContent(/Certificate expires in 30d/);
+    expect(line.className).toMatch(/text-amber-600/);
+
+    const badge = screen.getByTestId('agent-cert-warning-badge');
+    expect(badge).toHaveTextContent('Cert expires in 30d');
+  });
+
+  it('shows red warning badge and text when certificate is expired', () => {
+    const certExp = new Date(NOW - 5 * 86_400_000).toISOString();
+    render(<AgentsTab hub={hub({ agents: [agent({ certificateExpiresAt: certExp })] })} />);
+
+    const line = screen.getByTestId('agent-cert-expiry');
+    expect(line).toHaveTextContent(/Certificate expired 5d ago/);
+    expect(line.className).toMatch(/text-rose-600/);
+
+    const badge = screen.getByTestId('agent-cert-warning-badge');
+    expect(badge).toHaveTextContent('Cert expired');
+  });
+
+  it('renders nothing when certificateExpiresAt is absent or malformed', () => {
+    render(<AgentsTab hub={hub({ agents: [agent({ certificateExpiresAt: null })] })} />);
+    expect(screen.queryByTestId('agent-cert-expiry')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('agent-cert-warning-badge')).not.toBeInTheDocument();
+  });
+});

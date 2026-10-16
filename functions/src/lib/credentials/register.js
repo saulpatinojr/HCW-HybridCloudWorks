@@ -117,7 +117,7 @@ export const HAND_ROTATION_DAYS = 180;
 export const SWA_TOKEN_RESET_DAYS = 90;
 
 /** The lab host's generated certificates: `labs_agent_certificate_days`, `vault_certificate_days`. */
-export const LAB_CERTIFICATE_DAYS = 730;
+export const LAB_CERTIFICATE_DAYS = 180;
 
 /** What the lab host mints: a 90-day status token, a year-long rotation credential (lab-host/README.md). */
 export const CODER_STATUS_TOKEN_DAYS = 90;
