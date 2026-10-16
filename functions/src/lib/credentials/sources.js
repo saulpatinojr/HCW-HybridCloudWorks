@@ -54,6 +54,8 @@ import { CREDENTIAL_REGISTER } from './register.js';
 
 export const CREDENTIAL_REGISTER_DOC_ID = 'credential_register';
 export const CREDENTIAL_REGISTER_DOC_TYPE = 'credential_register';
+export const LAB_CERTIFICATES_DOC_ID = 'lab_certificates';
+export const SWA_RESET_DOC_ID = 'swa_reset';
 const SECRET_STATE_DOC_ID = 'secret_state';
 const CODER_AUTOMATION_DOC_ID = 'coder_automation';
 const CONTAINER = 'admin_config';
@@ -67,6 +69,8 @@ export const SOURCE_LABELS = Object.freeze({
   'secret-state': 'Key Vault write dates (admin_config/secret_state)',
   'coder-automation': 'the lab host’s Coder report (admin_config/coder_automation)',
   'credential-register': 'the recorded rotations (admin_config/credential_register)',
+  'lab-certificates': 'the lab host’s certificate report (admin_config/lab_certificates)',
+  'swa-reset': 'Static Web App reset log (admin_config/swa_reset)',
   reminders: 'the reminders sheet (admin_config/reminders)',
 });
 
@@ -122,7 +126,6 @@ async function settle(read) {
  * recorded rotation `rotatedOn` as a real `YYYY-MM-DD` (review of #1039).
  */
 const isInstant = (value) => typeof value === 'string' && value !== '' && Number.isFinite(Date.parse(value));
-const SECRET_DATE = Object.freeze({ field: 'lastWriteAt', valid: isInstant });
 const ROTATION_DATE = Object.freeze({ field: 'rotatedOn', valid: (value) => parseDateOnly(value) !== null });
 
 /**
@@ -142,6 +145,74 @@ function recordMap(doc, field, date) {
   if (!records.every(isPlainObject)) return null;
   const wellFormed = records.every((record) => record[date.field] == null || date.valid(record[date.field]));
   return wellFormed ? map : null;
+}
+
+/**
+ * Secret state record map: checks both lastWriteAt and createdAt timestamps.
+ */
+function secretRecordMap(doc) {
+  if (!doc) return {};
+  const map = doc.secrets;
+  if (!isPlainObject(map)) return null;
+  const records = Object.values(map);
+  if (!records.every(isPlainObject)) return null;
+  const wellFormed = records.every(
+    (record) =>
+      (record.lastWriteAt == null || isInstant(record.lastWriteAt)) &&
+      (record.createdAt == null || isInstant(record.createdAt))
+  );
+  return wellFormed ? map : null;
+}
+
+const projectSecretRecords = (map) =>
+  map === null
+    ? null
+    : Object.fromEntries(
+        Object.entries(map).map(([key, record]) => {
+          const out = { lastWriteAt: stringOrNull(record.lastWriteAt) };
+          if (record.createdAt) out.createdAt = stringOrNull(record.createdAt);
+          return [key, out];
+        })
+      );
+
+/**
+ * Lab certificates record map: validates notBefore and notAfter.
+ */
+function labCertificatesMap(doc) {
+  if (!doc) return {};
+  const map = doc.certificates;
+  if (!isPlainObject(map)) return null;
+  const records = Object.values(map);
+  if (!records.every(isPlainObject)) return null;
+  const wellFormed = records.every(
+    (record) =>
+      (record.notBefore == null || isInstant(record.notBefore)) &&
+      (record.notAfter == null || isInstant(record.notAfter))
+  );
+  return wellFormed ? map : null;
+}
+
+const projectLabCertificates = (map) =>
+  map === null
+    ? null
+    : Object.fromEntries(
+        Object.entries(map).map(([key, record]) => [
+          key,
+          {
+            notBefore: stringOrNull(record.notBefore),
+            notAfter: stringOrNull(record.notAfter),
+          },
+        ])
+      );
+
+/**
+ * SWA reset document: validates lastResetAt instant.
+ */
+function swaResetRecord(doc) {
+  if (!doc) return {};
+  if (!isPlainObject(doc)) return null;
+  if (doc.lastResetAt != null && !isInstant(doc.lastResetAt)) return null;
+  return { lastResetAt: stringOrNull(doc.lastResetAt) };
 }
 
 /**
@@ -198,25 +269,33 @@ async function readMcpServers(store) {
  */
 export async function readCredentialSources(store) {
   const sheet = await settle(() => store.readDoc(CONTAINER, REMINDERS_CONFIG_ID, ADMIN_CONFIG_PARTITION));
-  const [secretState, coder, register, servers] = await Promise.all([
+  const [secretState, coder, register, servers, labCerts, swa] = await Promise.all([
     settle(() => store.readDoc(CONTAINER, SECRET_STATE_DOC_ID, ADMIN_CONFIG_PARTITION)),
     settle(() => store.readDoc(CONTAINER, CODER_AUTOMATION_DOC_ID, ADMIN_CONFIG_PARTITION)),
     settle(() => store.readDoc(CONTAINER, CREDENTIAL_REGISTER_DOC_ID, ADMIN_CONFIG_PARTITION)),
     settle(() => readMcpServers(store)),
+    settle(() => store.readDoc(CONTAINER, LAB_CERTIFICATES_DOC_ID, ADMIN_CONFIG_PARTITION)),
+    settle(() => store.readDoc(CONTAINER, SWA_RESET_DOC_ID, ADMIN_CONFIG_PARTITION)),
   ]);
 
   const secrets = secretState.ok
-    ? projectRecords(recordMap(secretState.value, 'secrets', SECRET_DATE), SECRET_DATE.field)
+    ? projectSecretRecords(secretRecordMap(secretState.value))
     : null;
   const records = register.ok
     ? projectRecords(recordMap(register.value, 'credentials', ROTATION_DATE), ROTATION_DATE.field)
     : null;
+  const certificates = labCerts.ok
+    ? projectLabCertificates(labCertificatesMap(labCerts.value))
+    : null;
+  const swaReset = swa.ok ? swaResetRecord(swa.value) : null;
   const rows = sheet.ok ? sheetRows(sheet.value) : null;
   const unavailable = [
     ...(rows === null ? ['reminders'] : []),
     ...(secrets === null ? ['secret-state'] : []),
     ...(coder.ok ? [] : ['coder-automation']),
     ...(records === null ? ['credential-register'] : []),
+    ...(certificates === null ? ['lab-certificates'] : []),
+    ...(swaReset === null ? ['swa-reset'] : []),
     // A failed query leaves every server absent, which status.js tells
     // apart from a server with no document (null): unknown, not unconnected.
     ...(servers.ok ? [] : MCP_SERVER_IDS.map((id) => `mcp:${id}`)),
@@ -227,6 +306,8 @@ export async function readCredentialSources(store) {
       coder: coder.value,
       records: records ?? {},
       mcp: servers.ok ? servers.value : {},
+      labCertificates: certificates ?? {},
+      swaReset: swaReset ?? {},
       reminders: rows,
     },
     unavailable,
