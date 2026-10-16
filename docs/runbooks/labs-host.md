@@ -2023,6 +2023,87 @@ sudo iptables -S | grep -c HCW-; sudo ip6tables -S | grep -c HCW-; systemctl is-
 
 Good is `0`, `0`, then `inactive`.
 
+## Coder workspaces: one running per learner, sign-ins in memory (#954)
+
+Owner decision 2026-10-16. Every template under `lab-host/coder/templates`
+carries both, and they reach Coder when the run after the merge publishes
+the templates ("After a merge", above). The launcher's half reaches the
+host in the same run.
+
+- **One running workspace per learner.** A start is refused while another
+  workspace of the same learner is starting or running (its latest build is
+  a start that is queued, under way or done). Stopped workspaces do not
+  count, so a learner keeps one per lab. The refusal is a precondition on
+  the workspace container, checked at plan, so a refused start creates
+  nothing. Coder's build log carries `Stop your other lab first: <name>.`
+  In a pane on the site, the lab launcher reads that line, says `Only one of
+  your lab workspaces runs at a time, and <name> is running. Stop it on the
+  page below, and this lab starts.`, and frames Coder's page for that
+  workspace, where Stop is; once it has stopped, the launcher starts the
+  refused one by itself. The check reads
+  `http://127.0.0.1:7080/api/v2/workspaces?q=owner:me` from inside the
+  `coder` container, where the provisioner runs Terraform, with the
+  learner's own session token, which Coder makes for each start build. It
+  runs on a start only, never on a stop, a delete or a template import, and
+  it fails closed: when Coder does not answer 200, the start fails with
+  `Your lab workspace could not check your other lab workspaces (answer
+  <code>). Try again in a minute.`
+- **Sign-ins in memory.** The Azure, AWS and Google Cloud CLIs keep their
+  sign-ins on a 64 MiB tmpfs at `/tmp/cloud-creds` (uid and gid 65534, mode
+  0700, `noexec`, `nosuid`, `nodev`): `AZURE_CONFIG_DIR`, `AWS_CONFIG_FILE`,
+  `AWS_SHARED_CREDENTIALS_FILE` and `CLOUDSDK_CONFIG` point there, never at
+  the workspace's home volume, so a sign-in ends when the workspace stops
+  and nothing of it is left on disk. On 2026-10-16 neither workspace volume
+  on the sandbox daemon held a `.azure`, `.aws` or `.config/gcloud`
+  directory, so there is nothing older to clear. Two things still land on
+  the volume, by design: the AWS CLI's single sign-on and role caches,
+  which it keeps under `~/.aws` whatever the variables say (the image ships
+  no AWS CLI), and anything a learner writes there by hand.
+
+### Checking them
+
+After the run that publishes the templates. Each check is in a browser
+signed in to the site; the commands are bash, in the workspace's own
+terminal (**Terminal** > **New Terminal** in the editor).
+
+1. **Sign-ins in memory.** Open
+   https://hybridcloudworks.com/education/labs/terraform-validate-walkthrough
+   and wait for the editor. In its terminal:
+
+   ```bash
+   az login --use-device-code
+   ```
+
+   Finish the sign-in at the address, and with the code, that it prints.
+   Then:
+
+   ```bash
+   ls -la /tmp/home/.azure; ls -la /tmp/cloud-creds/azure; grep ' /tmp/cloud-creds ' /proc/mounts
+   ```
+
+   Good is `ls: cannot access '/tmp/home/.azure': No such file or
+   directory`, then a listing of `/tmp/cloud-creds/azure` that includes
+   `azureProfile.json`, then one `tmpfs /tmp/cloud-creds tmpfs
+   rw,nosuid,nodev,noexec,relatime,size=65536k,mode=700,uid=65534,gid=65534`
+   line. After the workspace stops and starts again, `az account show`
+   says to run `az login`.
+
+2. **One running workspace.** With that lab still open and running, open
+   https://hybridcloudworks.com/education/labs/ansible-syntax-check-walkthrough
+   in another tab, and confirm Coder's dialog if its workspace is new. Good
+   is the pane saying `Only one of your lab workspaces runs at a time, and
+   lab-tfv is running. Stop it on the page below, and this lab starts.`
+   above Coder's page for `lab-tfv`. Press **Stop** there: within a minute
+   the pane says `Getting your lab workspace ready.` and then opens the
+   editor for the second lab, with no click.
+
+A start that fails with `Your lab workspace could not check your other lab
+workspaces (answer <code>)` means the provisioner could not read Coder's
+API: `401` is a session token Coder refused, and a `5xx` is Coder failing,
+tried twice more first. A connection nothing answered fails the start with
+the provider's own `Error making request` instead. Either way, Coder's page
+for the workspace shows the failed build's log with the whole error.
+
 ## Portainer through an SSH tunnel
 
 Portainer Business Edition runs for the owner only (owner decision

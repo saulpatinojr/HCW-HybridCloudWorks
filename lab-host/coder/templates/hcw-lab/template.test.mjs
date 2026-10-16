@@ -17,15 +17,22 @@
 // README first, telemetry off), with the two versions they were checked
 // against.
 //
+// Then, in every template under lab-host/coder/templates (#954, owner
+// decision 2026-10-16): the cloud CLIs' sign-ins on a tmpfs owned by the
+// learner, never on the home volume, and a start refused while another of
+// the learner's workspaces is starting or running, read from Coder's API with
+// the owner's token on a start only, in the words the lab launcher looks for.
+//
 // Text-level on purpose: no YAML or HCL parser is a dependency of this
 // directory, and the assertions are about what a reviewer would grep for.
 // Run with `node --test` from lab-host/coder (npm test does the same).
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { LIMIT_REFUSAL, limitBlocker } from '../../launcher/launcher.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mainTf = readFileSync(join(here, 'main.tf'), 'utf8');
@@ -318,3 +325,141 @@ test('code-server opens trusted, without the AI chat, on the README, with teleme
     'terminal.integrated.rightClickBehavior': '"copyPaste"',
   });
 });
+
+// ---------------------------------------------------------------------------
+// #954, in every template.
+
+const templatesDir = join(here, '..');
+const TEMPLATES = ['amo-guided-lab', 'hcw-lab', 'na-guided-lab'];
+const templateTf = (name) => readFileSync(join(templatesDir, name, 'main.tf'), 'utf8');
+
+/** The value of `name = <value>` on one line of a body, comment stripped and trimmed, or null. */
+function attribute(body, name) {
+  const line = codeLines(body).find((candidate) => new RegExp(`^\\s*${name}\\s*=`).test(candidate));
+  return line ? line.replace(new RegExp(`^\\s*${name}\\s*=\\s*`), '').trim() : null;
+}
+
+/** Every top-level `locals { }` body of a template, joined. */
+const localsOf = (text) =>
+  hclBlocks(text, 'locals {')
+    .map((block) => block.body)
+    .join('\n');
+
+test('the #954 checks cover every template there is', () => {
+  const found = readdirSync(templatesDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(templatesDir, entry.name, 'main.tf')))
+    .map((entry) => entry.name)
+    .sort();
+  assert.deepEqual(found, TEMPLATES);
+});
+
+for (const name of TEMPLATES) {
+  const text = templateTf(name);
+  const locals = localsOf(text);
+  const [container] = hclBlocks(text, 'resource "docker_container"');
+  const [agent] = hclBlocks(text, 'resource "coder_agent"');
+  const [listing] = hclBlocks(text, 'data "http" "owner_workspaces"');
+
+  test(`${name}: cloud sign-ins live on a tmpfs the learner owns, never on the home volume`, () => {
+    assert.equal(attribute(locals, 'cloud_creds_dir'), '"/tmp/cloud-creds"');
+    const home = JSON.parse(attribute(locals, 'home'));
+    assert.ok(!`/tmp/cloud-creds/`.startsWith(`${home}/`), 'the tmpfs is not under the home volume');
+    const tmpfs = assignedObject(container.body, 'tmpfs');
+    assert.ok(tmpfs !== null, 'the container has a tmpfs map');
+    const entries = tmpfs.split('\n').filter((line) => line.trim() !== '');
+    assert.equal(entries.length, 1, 'one tmpfs');
+    const [, key, options] = entries[0].match(/^\s*(\S+)\s*=\s*"([^"]+)"\s*$/) ?? [];
+    assert.equal(key, '(local.cloud_creds_dir)');
+    const opts = new Set(options.split(','));
+    for (const flag of ['nosuid', 'nodev', 'noexec', 'mode=0700']) assert.ok(opts.has(flag), `${flag} in ${options}`);
+    assert.ok([...opts].some((opt) => /^size=\d+[km]$/.test(opt)), `a size in ${options}`);
+    // Owned by the uid and gid the workspace runs as, so the learner can write there.
+    const user = attribute(container.body, 'user');
+    const runAs = user === 'local.uid' ? JSON.parse(attribute(locals, 'uid')) : JSON.parse(user);
+    const [uid, gid] = runAs.split(':');
+    assert.equal(uid, '65534');
+    assert.ok(opts.has(`uid=${uid}`) && opts.has(`gid=${gid}`), `uid ${uid} and gid ${gid} in ${options}`);
+    // Still no mounts block: the only mount is the named volume.
+    assert.equal(nestedBlocks(container.body, 'mounts').length, 0);
+  });
+
+  test(`${name}: the agent points the Azure, AWS and Google Cloud CLIs into the tmpfs`, () => {
+    const env = assignedObject(locals, 'cloud_creds_env');
+    assert.ok(env !== null, 'local.cloud_creds_env');
+    const vars = Object.fromEntries(
+      env
+        .split('\n')
+        .filter((line) => line.trim() !== '')
+        .map((line) => line.match(/^\s*([A-Z_]+)\s*=\s*"([^"]+)"\s*$/).slice(1))
+    );
+    assert.deepEqual(Object.keys(vars).sort(), [
+      'AWS_CONFIG_FILE',
+      'AWS_SHARED_CREDENTIALS_FILE',
+      'AZURE_CONFIG_DIR',
+      'CLOUDSDK_CONFIG',
+    ]);
+    for (const [variable, value] of Object.entries(vars)) {
+      assert.match(value, /^\$\{local\.cloud_creds_dir\}\/[a-z]+(\/[a-z]+)?$/, `${variable} is under the tmpfs`);
+    }
+    assert.match(agent.body, /^\s*env\s*=\s*merge\(local\.cloud_creds_env,\s*\{\s*$/m, 'the agent env merges them');
+    assert.doesNotMatch(
+      agent.body,
+      /^\s*(AZURE_CONFIG_DIR|AWS_CONFIG_FILE|AWS_SHARED_CREDENTIALS_FILE|CLOUDSDK_CONFIG)\s*=/m,
+      'and nothing in the agent overrides them'
+    );
+  });
+
+  test(`${name}: a start is refused while another of the learner's workspaces runs`, () => {
+    assert.equal(attribute(locals, 'max_running_workspaces'), '1');
+    const lifecycle = nestedBlocks(container.body, 'lifecycle');
+    assert.equal(lifecycle.length, 1);
+    const [precondition] = nestedBlocks(lifecycle[0], 'precondition');
+    assert.ok(precondition, 'a precondition on the container');
+    assert.equal(
+      attribute(precondition, 'condition'),
+      'length(local.other_running_workspaces) < local.max_running_workspaces'
+    );
+    const message = attribute(precondition, 'error_message');
+    assert.ok(message.endsWith('Stop your other lab first: ${join(", ", local.other_running_workspaces)}."'), message);
+    // The words the lab launcher reads out of the failed build's log, as
+    // `terraform plan -json` gave the detail on 2026-10-16.
+    assert.ok(LIMIT_REFUSAL.test('Stop your other lab first: lab-lzb.'));
+    assert.equal(
+      limitBlocker([
+        { log_level: 'error', output: 'Only one lab workspace can run at a time. Stop your other lab first: lab-lzb.' },
+      ]),
+      'lab-lzb'
+    );
+    // Counted as the launcher counts them: the owner's other workspaces whose
+    // latest build is a start that is queued, under way or done.
+    const counted = locals.slice(locals.indexOf('other_running_workspaces'));
+    assert.match(counted, /for listing in data\.http\.owner_workspaces/);
+    assert.match(counted, /w\.id != data\.coder_workspace\.me\.id/, 'this workspace is left out');
+    assert.match(counted, /w\.latest_build\.transition == "start"/);
+    assert.match(counted, /contains\(\["pending", "starting", "running"\], w\.latest_build\.status\)/);
+  });
+
+  test(`${name}: the owner's workspaces are read on a start only, inside Coder's container, failing closed`, () => {
+    assert.ok(listing, 'data "http" "owner_workspaces"');
+    assert.equal(
+      attribute(listing.body, 'count'),
+      'data.coder_workspace.me.start_count > 0 && nonsensitive(data.coder_workspace_owner.me.session_token != "") ? 1 : 0'
+    );
+    assert.equal(attribute(locals, 'coder_api_url'), '"http://127.0.0.1:7080"');
+    assert.equal(attribute(listing.body, 'url'), '"${local.coder_api_url}/api/v2/workspaces?q=owner:me"');
+    const headers = assignedObject(listing.body, 'request_headers');
+    assert.match(headers, /^\s*Coder-Session-Token\s*=\s*data\.coder_workspace_owner\.me\.session_token\s*$/m);
+    const [postcondition] = nestedBlocks(listing.body, 'postcondition');
+    assert.equal(attribute(postcondition, 'condition'), 'self.status_code == 200');
+    // The provider, pinned exactly, and in the lock file at that version for both platforms.
+    const pinned = text.match(/http = \{\s*source\s*=\s*"hashicorp\/http"\s*version\s*=\s*"(\d+\.\d+\.\d+)"\s*\}/);
+    assert.ok(pinned, 'hashicorp/http pinned to an exact version');
+    const lock = readFileSync(join(templatesDir, name, '.terraform.lock.hcl'), 'utf8');
+    const locked = lock.match(
+      /provider "registry\.terraform\.io\/hashicorp\/http" \{\n\s*version\s*=\s*"([^"]+)"[\s\S]*?hashes = \[([\s\S]*?)\]/
+    );
+    assert.ok(locked, 'the lock file carries hashicorp/http');
+    assert.equal(locked[1], pinned[1]);
+    assert.equal((locked[2].match(/"h1:/g) ?? []).length, 2, 'linux_amd64 and windows_amd64, as for the other providers');
+  });
+}

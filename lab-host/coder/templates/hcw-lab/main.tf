@@ -13,7 +13,11 @@
 #   - it joins its own bridge network, created and destroyed with the
 #     container, with no route to the Compose network Coder and PostgreSQL
 #     share;
-#   - 2 GiB of memory and one CPU, hard limits.
+#   - 2 GiB of memory and one CPU, hard limits;
+#   - the cloud CLIs keep their sign-ins on a tmpfs, never on the volume, so
+#     a sign-in lasts until the workspace stops (#954);
+#   - a learner runs one workspace at a time: a start is refused while
+#     another of theirs is starting or running (#954).
 #
 # template.test.mjs beside this file reads it as text and fails when any of
 # those stops being true. The Coder server that runs this template holds no
@@ -40,6 +44,10 @@ terraform {
     docker = {
       source  = "kreuzwerker/docker"
       version = "4.6.0"
+    }
+    http = {
+      source  = "hashicorp/http"
+      version = "3.6.2"
     }
   }
 }
@@ -162,6 +170,75 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+# Sign-ins in memory, and one running workspace per learner (owner decision
+# 2026-10-16, #954). The same block, the agent's env and the container's
+# tmpfs and precondition are in every template under lab-host/coder/templates;
+# hcw-lab/template.test.mjs holds each of them to it.
+locals {
+  # The Azure, AWS and Google Cloud CLIs keep their sign-ins and settings
+  # here, a tmpfs the container gets (docker_container.workspace, tmpfs), not
+  # the home volume: memory only, gone when the workspace stops. Owned by the
+  # learner's uid with mode 0700; noexec, nosuid and nodev, because nothing
+  # in it is meant to run. az and gcloud create their directories and the
+  # AWS CLI the files' parent, so the tmpfs starts empty.
+  cloud_creds_dir = "/tmp/cloud-creds"
+  cloud_creds_env = {
+    AZURE_CONFIG_DIR            = "${local.cloud_creds_dir}/azure"
+    AWS_CONFIG_FILE             = "${local.cloud_creds_dir}/aws/config"
+    AWS_SHARED_CREDENTIALS_FILE = "${local.cloud_creds_dir}/aws/credentials"
+    CLOUDSDK_CONFIG             = "${local.cloud_creds_dir}/gcloud"
+  }
+
+  # How many of a learner's workspaces may be starting or running at once.
+  # Stopped ones do not count: the launcher makes one workspace per lab.
+  max_running_workspaces = 1
+  # Coder's API as this template reaches it. The provisioner runs Terraform
+  # inside the coder container (lab-host/coder/docker-compose.yml), where
+  # Coder listens on 7080 (CODER_HTTP_ADDRESS), so the call never leaves the
+  # container and the owner's token never crosses a network.
+  coder_api_url = "http://127.0.0.1:7080"
+  # The owner's other workspaces whose latest build is a start that is
+  # queued, running or done. This workspace's own build is left out by id.
+  other_running_workspaces = flatten([
+    for listing in data.http.owner_workspaces : [
+      for w in jsondecode(listing.response_body).workspaces : w.name
+      if w.id != data.coder_workspace.me.id && w.latest_build.transition == "start" && contains(["pending", "starting", "running"], w.latest_build.status)
+    ]
+  ])
+}
+
+# The owner's workspaces, read with the owner's own session token, which
+# Coder mints for a start build and revokes on stop (provisionerdserver,
+# regenerateSessionToken). Only on a start: a stop or delete build never
+# calls it, and neither does a template import or dry run, which has no
+# owner and no token (coder provider 2.18.0 reads an unset
+# CODER_WORKSPACE_OWNER_SESSION_TOKEN as ""). The token is sensitive, so
+# only whether it is set reaches count.
+data "http" "owner_workspaces" {
+  count = data.coder_workspace.me.start_count > 0 && nonsensitive(data.coder_workspace_owner.me.session_token != "") ? 1 : 0
+
+  url = "${local.coder_api_url}/api/v2/workspaces?q=owner:me"
+  request_headers = {
+    Accept              = "application/json"
+    Coder-Session-Token = data.coder_workspace_owner.me.session_token
+  }
+  request_timeout_ms = 10000
+
+  retry {
+    attempts     = 2
+    min_delay_ms = 1000
+  }
+
+  # Fail closed: a start that cannot count the owner's workspaces does not
+  # go ahead.
+  lifecycle {
+    postcondition {
+      condition     = self.status_code == 200
+      error_message = "Your lab workspace could not check your other lab workspaces (answer ${self.status_code}). Try again in a minute."
+    }
+  }
+}
+
 # One parameter: which lab folder to open. A dropdown of the catalogue ids;
 # Coder rejects any value that is not one of the options, and the regex says
 # the same thing a second way so a value that bypasses the form (the deep
@@ -238,13 +315,15 @@ resource "coder_agent" "main" {
     /usr/local/libexec/hcw-boot/hcw-boot "$LAB_ID" "$LAB_ROOT"
   EOT
 
-  env = {
+  # The agent hands these to every terminal, script and app it starts, so
+  # the cloud CLIs find their configuration on the tmpfs (local.cloud_creds_env).
+  env = merge(local.cloud_creds_env, {
     HOME                = local.home
     GIT_AUTHOR_NAME     = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
     GIT_AUTHOR_EMAIL    = data.coder_workspace_owner.me.email
     GIT_COMMITTER_NAME  = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
     GIT_COMMITTER_EMAIL = data.coder_workspace_owner.me.email
-  }
+  })
 
   # Browser only: the site links learners to code-server, and the desktop
   # VS Code, SSH and port-forward helpers would advertise paths this lab does
@@ -444,6 +523,26 @@ resource "docker_container" "workspace" {
     container_path = local.home
     volume_name    = docker_volume.home.name
     read_only      = false
+  }
+
+  # The cloud CLIs' sign-ins, in memory (local.cloud_creds_dir). The tmpfs
+  # map rather than a `mounts` block: a mount's tmpfs_options take only mode
+  # and size (docker provider 4.6.0), and the learner's uid and gid are what
+  # let them write there. What is written there counts against the 2 GiB
+  # memory limit, up to its 64 MiB.
+  tmpfs = {
+    (local.cloud_creds_dir) = "rw,nosuid,nodev,noexec,size=64m,uid=65534,gid=65534,mode=0700"
+  }
+
+  # One workspace at a time per learner (local.max_running_workspaces).
+  # Checked at plan, so a refused start creates nothing; Coder shows the
+  # message in the build log, and the lab launcher shows it in hcw-lab's
+  # panes (lab-host/coder/launcher/launcher.js, LIMIT_REFUSAL).
+  lifecycle {
+    precondition {
+      condition     = length(local.other_running_workspaces) < local.max_running_workspaces
+      error_message = "Only ${local.max_running_workspaces == 1 ? "one lab workspace" : "${local.max_running_workspaces} lab workspaces"} can run at a time. Stop your other lab first: ${join(", ", local.other_running_workspaces)}."
+    }
   }
 
   labels {

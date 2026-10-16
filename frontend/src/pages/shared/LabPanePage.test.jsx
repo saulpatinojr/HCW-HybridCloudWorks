@@ -601,6 +601,11 @@ describe('LabPanePage, the lab itself (ADR 0033 §4)', () => {
     // Stop and reset are the workspace's own; the page says where.
     expect(screen.getByRole('heading', { name: 'Your workspace' })).toBeInTheDocument();
     expect(container.textContent).toMatch(/Stop keeps your files/);
+    // One running workspace per learner, and sign-ins kept in memory (#954).
+    expect(container.textContent).toMatch(/Only one of your workspaces runs at a time/);
+    expect(container.textContent).toMatch(
+      /A cloud sign-in made in a workspace lasts until the\s+workspace stops/
+    );
     expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
   });
 

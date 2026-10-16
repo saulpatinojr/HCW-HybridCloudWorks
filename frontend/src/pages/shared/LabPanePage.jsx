@@ -412,6 +412,11 @@ function LabDetails({ lab }) {
             name: Stop keeps your files for next time, and deleting the workspace resets the lab to
             its starting folder. Workspaces also stop by themselves after an hour of inactivity.
           </p>
+          <p className={`text-sm ${MUTED}`}>
+            Only one of your workspaces runs at a time: opening a lab while another is running asks
+            you to stop that one first. A cloud sign-in made in a workspace lasts until the
+            workspace stops, so sign in again after it starts.
+          </p>
           <p className={`text-xs ${MUTED}`}>
             Prefer your own machine? The{' '}
             <Link to={labsPath(primaryProvider(lab))} className={LINK}>

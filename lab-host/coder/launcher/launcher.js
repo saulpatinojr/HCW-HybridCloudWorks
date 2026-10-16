@@ -18,24 +18,34 @@
  *   - GET, same origin, with the learner's session cookie, to four paths:
  *     who is signed in, their workspace for this lab, before Coder's create
  *     page is ever framed the template, and Coder's own index page for the
- *     CSRF token. None of these changes anything in Coder.
+ *     CSRF token. Two more only when a start of this lab's workspace failed
+ *     (#954): that build's log, once per build, and the one other workspace
+ *     of the learner's that the log names. None of these changes anything
+ *     in Coder.
  *   - ONE write, and only this one: `POST /api/v2/workspaces/{id}/builds`
  *     with `{ transition: "start" }` (and the template's active version id
  *     when the workspace is outdated), for the learner's own workspace for
- *     this lab, only when its last build stopped or was cancelled, once per
- *     visit, carrying the CSRF token Coder embeds in its own page as
+ *     this lab, only when its last build stopped or was cancelled, or when
+ *     it failed because another lab was running and that lab no longer is
+ *     (the running-workspace limit, below), each at most once per visit,
+ *     carrying the CSRF token Coder embeds in its own page as
  *     `X-CSRF-TOKEN` — the same call, and the same token, Coder's Start
  *     button sends (#911, owner 2026-10-07). Never a create, never a delete,
- *     never another learner's workspace: the id comes from the workspace
- *     read above, which Coder scopes to the signed-in learner. When Coder
- *     refuses, or its page carries no token, the launcher frames Coder's
- *     workspace page with Start, as it always did. Creating a workspace is
- *     still Coder's own UI in a frame of the same origin, with Coder's own
- *     consent dialog.
+ *     never another learner's workspace, and never a stop: the id comes from
+ *     the workspace read above, which Coder scopes to the signed-in learner.
+ *     When Coder refuses, or its page carries no token, the launcher frames
+ *     Coder's workspace page with Start, as it always did. Creating a
+ *     workspace is still Coder's own UI in a frame of the same origin, with
+ *     Coder's own consent dialog.
  *   - Everything it builds comes from constants below: the lab id and the
  *     workspace name from LAB_WORKSPACES, the template name, and the host
  *     suffix it navigates to. The query string only selects a key of
- *     LAB_WORKSPACES, and no text from it reaches the page.
+ *     LAB_WORKSPACES, and no text from it reaches the page. The one other
+ *     name it uses is the workspace a refused start's log says to stop
+ *     first, only when it is a Coder workspace name (letters, digits and
+ *     single hyphens, at most 32), and only in two same-origin paths
+ *     under `me` (that workspace's read and Coder's page for it) and in
+ *     the text the page shows, which is set as text.
  *   - The one address it takes from Coder is code-server's
  *     `subdomain_name`, and only when it is exactly the name Coder v2.37.3
  *     builds (`code-server--<workspace>--<owner>`, coderd/database/db2sdk
@@ -125,6 +135,9 @@ export const MESSAGES = Object.freeze({
   unavailable: "Lab workspaces aren't available right now.",
   'unknown-lab': "There's no lab at this address.",
   'frame-title': 'Your lab workspace',
+  // `{name}` is the other workspace's name, checked by limitBlocker.
+  limited:
+    'Only one of your lab workspaces runs at a time, and {name} is running. Stop it on the page below, and this lab starts.',
 });
 
 /**
@@ -229,12 +242,80 @@ export function csrfTokenFrom(html) {
  */
 export function startPlan(workspace) {
   const status = workspace?.latest_build?.status;
-  if (!STARTABLE.has(status) || typeof workspace?.id !== 'string' || workspace.id === '') return null;
+  return STARTABLE.has(status) ? anyStartPlan(workspace) : null;
+}
+
+/** The start call for this workspace whatever its last build did, or null without an id. */
+function anyStartPlan(workspace) {
+  if (typeof workspace?.id !== 'string' || workspace.id === '') return null;
   const body = { transition: 'start' };
   if (workspace.outdated === true && typeof workspace.template_active_version_id === 'string') {
     body.template_version_id = workspace.template_active_version_id;
   }
   return { path: buildsApiPath(workspace.id), body };
+}
+
+/**
+ * The running-workspace limit (owner decision 2026-10-16, #954). Every
+ * template refuses a start while another of the learner's workspaces is
+ * starting or running: a Terraform precondition fails the build at plan,
+ * and Coder logs its message, `Only one lab workspace can run at a time.
+ * Stop your other lab first: <name>.`, as an error line of that build's
+ * log (docker_container.workspace in each template under
+ * lab-host/coder/templates; Coder v2.38.0 logs a diagnostic's detail as
+ * lines of its own, and the job's own error only says that `terraform plan`
+ * failed). The launcher reads that log for a failed start of this lab's
+ * workspace, once per build, and when it finds the line it shows the
+ * learner the limit, with Coder's page for the other workspace, where Stop
+ * is, in the frame. When the other workspace is no longer starting or
+ * running, the refusal no longer holds, and the launcher starts this one,
+ * once per visit: the one case a failed build is started without a click,
+ * because its log says why it failed and that reason is gone.
+ */
+export const LIMIT_REFUSAL = /Stop your other lab first: ([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)/;
+/** Coder's limit on a workspace name (codersdk/name.go). */
+const WORKSPACE_NAME_MAX = 32;
+/** A start that is queued, under way or done: what the templates count against the limit. */
+const BLOCKING = new Set(['pending', 'starting', 'running']);
+
+/** Coder's log of one build, by id. */
+export function buildLogsPath(buildId) {
+  return `/api/v2/workspacebuilds/${encodeURIComponent(buildId)}/logs`;
+}
+
+/** The other workspace a build's log says to stop first, or null when the log carries no such refusal. */
+export function limitBlocker(logs) {
+  if (!Array.isArray(logs)) return null;
+  for (const entry of logs) {
+    if (entry?.log_level !== 'error' || typeof entry.output !== 'string') continue;
+    const name = entry.output.match(LIMIT_REFUSAL)?.[1];
+    if (name && name.length <= WORKSPACE_NAME_MAX) return name;
+  }
+  return null;
+}
+
+/** Whether a workspace counts against the limit, as the templates count it. */
+export function isBlocking(workspace) {
+  const build = workspace?.latest_build;
+  return build?.transition === 'start' && BLOCKING.has(build.status);
+}
+
+/** What the learner reads while another of their workspaces holds the limit. */
+export function limitMessage(name) {
+  return MESSAGES.limited.replace('{name}', name);
+}
+
+/**
+ * A start of this workspace that failed, which may be the limit's refusal:
+ * `{ buildId, retry }`, retry being the start call to make once the other
+ * workspace has stopped. Null for anything else.
+ */
+export function refusedStart(workspace) {
+  const build = workspace?.latest_build;
+  if (build?.status !== 'failed' || build.transition !== 'start') return null;
+  if (typeof build.id !== 'string' || build.id === '') return null;
+  const retry = anyStartPlan(workspace);
+  return retry ? { buildId: build.id, retry } : null;
 }
 
 /** One attempt to start: true when Coder accepted the build, false for anything else. */
@@ -343,7 +424,10 @@ export function assess(workspace, workspaceName, owner) {
   if (status !== 'running') {
     const state = NOT_RUNNING.get(status) ?? 'starting';
     const start = state === 'stopped' ? startPlan(workspace) : null;
-    return start ? { state, start } : { state };
+    if (start) return { state, start };
+    // A failed start may be the running-workspace limit's refusal.
+    const refused = refusedStart(workspace);
+    return refused ? { state, refused } : { state };
   }
   const found = findCodeServer(workspace);
   // A startup script that failed never becomes ready; the workspace page
@@ -467,9 +551,52 @@ async function templateGate(verdict, session, fetchImpl) {
 }
 
 /**
+ * The workspace a failed start's log says to stop first, read once per
+ * build: the name, `null` when the log names none, or how the step ends
+ * (`'signed-out'`). A log Coder will not give leaves the answer unknown for
+ * this step only, so the next one asks again.
+ */
+async function readBlocker(buildId, session, fetchImpl) {
+  if (session.limitLog?.buildId === buildId) return { blocker: session.limitLog.blocker };
+  const log = await read(fetchImpl, buildLogsPath(buildId));
+  if (log.kind === 'signed-out') return { end: 'signed-out' };
+  if (log.kind !== 'ok') return { blocker: null };
+  session.limitLog = { buildId, blocker: limitBlocker(log.body) };
+  return { blocker: session.limitLog.blocker };
+}
+
+/**
+ * The running-workspace limit, for a failed start of this lab's workspace.
+ * Null to go on as for any failed build (Coder's page with Retry);
+ * otherwise how the step goes on. While the other workspace is starting or
+ * running, the learner reads the limit and Coder's page for that workspace,
+ * where Stop is, is framed. Once it is not, this one is started, once per
+ * visit.
+ */
+async function limitGate(verdict, session, { fetchImpl, view }) {
+  if (!verdict.refused) return null;
+  const { blocker, end } = await readBlocker(verdict.refused.buildId, session, fetchImpl);
+  if (end) return end;
+  if (!blocker) return null;
+  const other = await read(fetchImpl, workspaceApiPath(blocker));
+  if (other.kind === 'signed-out' || other.kind === 'error') return other.kind;
+  if (other.kind === 'ok' && isBlocking(other.body)) {
+    view.frame(workspacePagePath(blocker));
+    view.report('stopped', limitMessage(blocker));
+    return 'wait';
+  }
+  if (session.retryTried) return null;
+  session.retryTried = true;
+  if (!(await startWorkspace(fetchImpl, verdict.refused.retry))) return null;
+  view.frame(null);
+  view.report('starting');
+  return 'wait';
+}
+
+/**
  * One step of the wait: who is signed in, then their workspace for this lab,
  * with the template read before a create. `session` carries what the steps
- * learn: `{ owner, templateFound, startTried }`.
+ * learn: `{ owner, templateFound, startTried, retryTried, limitLog }`.
  */
 async function launcherStep(session, { fetchImpl, target, view, navigate }) {
   if (!session.owner) return readOwner(session, fetchImpl);
@@ -477,6 +604,8 @@ async function launcherStep(session, { fetchImpl, target, view, navigate }) {
   if (verdict.end) return verdict.end;
   const gate = await templateGate(verdict, session, fetchImpl);
   if (gate) return gate;
+  const limit = await limitGate(verdict, session, { fetchImpl, view });
+  if (limit) return limit;
   // A stopped workspace is started once, without a click; if Coder takes
   // the build the visit waits for it, otherwise Coder's page with Start.
   if (verdict.start && !session.startTried) {
@@ -533,7 +662,7 @@ export async function runLauncher({ search, fetch: fetchImpl, ui, post, navigate
   if (!target) return view.end('unavailable', MESSAGES['unknown-lab']);
   view.report('checking');
 
-  const session = { owner: null, templateFound: false, startTried: false };
+  const session = { owner: null, templateFound: false, startTried: false, retryTried: false, limitLog: null };
   const step = () => launcherStep(session, { fetchImpl, target, view, navigate });
   const ending = await pollUntilDone(step, { sleep, now, poll });
   return ending === 'ready' ? ending : view.end(ending);

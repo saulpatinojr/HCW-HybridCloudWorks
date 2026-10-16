@@ -795,20 +795,22 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
 
+      # Every template, not hcw-lab alone: the guided labs carry the same
+      # sign-in tmpfs and running-workspace check (#954).
       - name: Terraform fmt
         if: steps.changes.outputs.relevant == 'true'
-        working-directory: lab-host/coder/templates/hcw-lab
+        working-directory: lab-host/coder/templates
         run: terraform fmt -recursive -check -diff
 
       - name: Terraform init (no backend)
         if: steps.changes.outputs.relevant == 'true'
-        working-directory: lab-host/coder/templates/hcw-lab
-        run: terraform init -backend=false -input=false
+        working-directory: lab-host/coder/templates
+        run: for t in */; do terraform -chdir="$t" init -backend=false -input=false || exit 1; done
 
       - name: Terraform validate
         if: steps.changes.outputs.relevant == 'true'
-        working-directory: lab-host/coder/templates/hcw-lab
-        run: terraform validate -no-color
+        working-directory: lab-host/coder/templates
+        run: for t in */; do terraform -chdir="$t" validate -no-color || exit 1; done
 
   # hooks/claude_event.py runs on every Claude Code session start and stop, and
   # tooling/workflow.py owns the state the Stop guard reads. Both were shipped

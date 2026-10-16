@@ -600,8 +600,12 @@ code-server is healthy the launcher replaces itself with code-server's own
 name, `code-server--<workspace>--<owner>.coder.lab.hybridcloudworks.com`.
 Each learner has one workspace per lab, named in the launcher's
 `LAB_WORKSPACES` (`lab-lzb`, `lab-tfv` and `lab-asc`, the same names as the
-site's catalogue). The launcher has no top-level exemption: opened in a tab,
-it is redirected like any other Coder page.
+site's catalogue), and one of them runs at a time: every template refuses a
+second start until the first stops, and the launcher says which lab to stop,
+then starts this one when it has (#954; [`../coder/README.md`](../coder/README.md),
+"Running workspaces and sign-ins", which also has the workspaces' cloud
+sign-ins, kept in memory). The launcher has no top-level exemption: opened
+in a tab, it is redirected like any other Coder page.
 
 **An empty allowlist is not a lock.** Coder treats an empty
 `CODER_OAUTH2_GITHUB_ALLOWED_ORGS` as "no organisation restriction" and lets
