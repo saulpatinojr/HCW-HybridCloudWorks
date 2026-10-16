@@ -63,6 +63,7 @@ const routesAsked = () => getJSON.mock.calls.map(([route]) => route.split('?')[0
 
 beforeEach(() => {
   getJSON.mockReset().mockImplementation(async (route) => {
+    if (route === 'cms/admins') return { admins: [] };
     if (route.startsWith(HISTORY_ROUTE)) return { success: true, entries: [], nextAfter: null };
     if (route === ELEVENLABS_STATUS_ROUTE) {
       return { success: true, configured: false, reason: 'ELEVENLABS_API_KEY is not configured.' };
@@ -77,6 +78,7 @@ describe('tabs', () => {
   it('are one per concern, the index first and Change history last', () => {
     expect(TABS.map((tab) => [tab.id, tab.label])).toEqual([
       ['index', 'All settings'],
+      ['platform', 'Platform'],
       ['content', 'Content defaults'],
       ['taxonomy', 'Content types & origins'],
       ['social', 'Social automation'],
@@ -133,6 +135,16 @@ describe('tabs', () => {
       screen.getByRole('tab', { name: 'Content defaults' }).getAttribute('aria-selected')
     ).toBe('true');
     expect(routesAsked()).toEqual([settingRoute('default-heroes')]);
+    expect(postJSON).not.toHaveBeenCalled();
+  });
+
+  it('opens Platform from ?tab=platform, loading only administrators', async () => {
+    renderAt('/admin/platform-settings?tab=platform');
+    await screen.findByText('Administrators & Platform Access');
+    expect(screen.getByRole('tab', { name: 'Platform' }).getAttribute('aria-selected')).toBe(
+      'true'
+    );
+    expect(routesAsked()).toEqual(['cms/admins']);
     expect(postJSON).not.toHaveBeenCalled();
   });
 

@@ -37,7 +37,12 @@ import { actorName } from './auth/actor-name.js';
 import { json } from './http/admin-handler.js';
 import { errorResponse } from './http/error-response.js';
 import { createSpeakerEventHandlers } from './admin-identity/speaker-events.js';
-import { validateClientAuditAction, sanitizeAuditDetails, AUDIT_TTL_SECONDS } from './audit.js';
+import {
+  validateClientAuditAction,
+  sanitizeAuditDetails,
+  AUDIT_TTL_SECONDS,
+  recordMutationAudit,
+} from './audit.js';
 
 export {
   SPEAKER_EVENT_FIELDS,
@@ -71,40 +76,51 @@ export function getPermissionsForRole(role) {
   return permissionMap[String(role || '').toLowerCase()] || [];
 }
 
-/** Source checkBootstrapAllowlist (:6186), uid = Entra oid. */
+export const BOOTSTRAP_STATE_DOC_ID = 'bootstrap-state';
+export const BOOTSTRAP_STATE_CONTAINER = 'admin_settings';
+
+/** Detect whether a user is an external/guest account. */
+export function isGuestUser(user) {
+  if (!user) return false;
+  if (String(user.userType || user.user_type || '').toLowerCase() === 'guest') return true;
+  if (user.acct === 1) return true;
+  if (typeof user.idp === 'string' && user.idp.length > 0) return true;
+  const upn = String(user.preferred_username || user.upn || user.email || '');
+  if (/#EXT#/i.test(upn)) return true;
+  return false;
+}
+
+/**
+ * Source checkBootstrapAllowlist (:6186), uid = Entra oid.
+ * AP-B5: Object IDs only, email-only matching is refused, and guest accounts are rejected.
+ */
 export function checkBootstrapAllowlist(user, env = process.env) {
-  const expandList = (envValues, lowercase) =>
+  if (isGuestUser(user)) {
+    return { ok: false, status: 403, error: 'Guest accounts are not permitted to perform bootstrap' };
+  }
+
+  const expandList = (envValues) =>
     envValues.filter(Boolean).flatMap((value) =>
       String(value)
         .split(',')
-        .map((entry) => (lowercase ? entry.trim().toLowerCase() : entry.trim()))
+        .map((entry) => entry.trim())
         .filter(Boolean)
     );
   const bootstrapAllowedUids = expandList(
-    [env.CMS_BOOTSTRAP_ALLOWED_UIDS, env.OWNER_ADMIN_UID],
-    false
-  );
-  const bootstrapAllowedEmails = expandList(
-    [env.CMS_BOOTSTRAP_ALLOWED_EMAILS, env.OWNER_ADMIN_EMAIL],
-    true
+    [env.CMS_BOOTSTRAP_ALLOWED_UIDS, env.OWNER_ADMIN_UID]
   );
 
-  if (bootstrapAllowedUids.length === 0 && bootstrapAllowedEmails.length === 0) {
+  if (bootstrapAllowedUids.length === 0) {
     return {
       ok: false,
       status: 503,
       error:
-        'Initial bootstrap is locked. Configure bootstrap allowlist env vars for the first admin.',
+        'Initial bootstrap is locked. Configure bootstrap allowlist env vars with object IDs for the first admin.',
     };
   }
 
-  const oid = user.oid ?? user.sub;
-  const email = String(user.email || user.preferred_username || '')
-    .trim()
-    .toLowerCase();
-  const uidAllowed = bootstrapAllowedUids.includes(oid);
-  const emailAllowed = email ? bootstrapAllowedEmails.includes(email) : false;
-  if (!uidAllowed && !emailAllowed) {
+  const oid = user?.oid ?? user?.sub;
+  if (!oid || !bootstrapAllowedUids.includes(oid)) {
     return { ok: false, status: 403, error: 'User is not allowed to perform initial bootstrap' };
   }
   return { ok: true };
@@ -139,6 +155,8 @@ async function hasActiveAdmin(store) {
 async function canBootstrapSelf({ store, env }, user, record) {
   if (record) return false;
   if (!checkBootstrapAllowlist(user, env).ok) return false;
+  const bootstrapDoc = await store.readDoc(BOOTSTRAP_STATE_CONTAINER, BOOTSTRAP_STATE_DOC_ID, BOOTSTRAP_STATE_DOC_ID).catch(() => null);
+  if (bootstrapDoc?.completed === true) return false;
   return !(await hasActiveAdmin(store));
 }
 
@@ -289,10 +307,26 @@ async function bootstrapCurrentUserAdmin(ctx, request, context) {
         .toLowerCase() || null;
 
     const initialBootstrap = !(await hasActiveAdmin(ctx.store));
+    if (initialBootstrap) {
+      const bootstrapDoc = await ctx.store
+        .readDoc(BOOTSTRAP_STATE_CONTAINER, BOOTSTRAP_STATE_DOC_ID, BOOTSTRAP_STATE_DOC_ID)
+        .catch(() => null);
+      if (bootstrapDoc?.completed === true) {
+        return json(409, { error: 'Initial bootstrap has already been completed' });
+      }
+    }
     const refusal = await bootstrapRefusal(ctx, request, user, initialBootstrap, context);
     if (refusal) return refusal;
 
     await writeAdminRecord(ctx, { oid, email, role: requestedRole, initialBootstrap });
+    if (initialBootstrap) {
+      await ctx.store.upsertDoc(BOOTSTRAP_STATE_CONTAINER, {
+        id: BOOTSTRAP_STATE_DOC_ID,
+        completed: true,
+        completedAt: ctx.now().toISOString(),
+        completedBy: oid,
+      });
+    }
     // The 60s role cache must not serve the pre-bootstrap answer.
     ctx.guard.clearCache();
 
@@ -308,6 +342,154 @@ async function bootstrapCurrentUserAdmin(ctx, request, context) {
   } catch (error) {
     return errorResponse(context, 'Failed to bootstrap admin', error, 500, request);
   }
+}
+
+/**
+ * POST /api/cms/bootstrap/reset — reset one-shot bootstrap flag (super_admin only).
+ */
+async function resetBootstrapState(ctx, request, context) {
+  const auth = await ctx.guard.requireRole(request, 'super_admin');
+  if (auth.error) return auth.error;
+
+  try {
+    const { user } = auth;
+    const actorOid = user.oid ?? user.sub;
+    const previous = await ctx.store
+      .readDoc(BOOTSTRAP_STATE_CONTAINER, BOOTSTRAP_STATE_DOC_ID, BOOTSTRAP_STATE_DOC_ID)
+      .catch(() => null);
+
+    const newState = {
+      id: BOOTSTRAP_STATE_DOC_ID,
+      completed: false,
+      resetAt: ctx.now().toISOString(),
+      resetBy: actorOid,
+    };
+    await ctx.store.upsertDoc(BOOTSTRAP_STATE_CONTAINER, newState);
+
+    await recordMutationAudit(ctx.store, {
+      actor: user,
+      action: 'bootstrap_reset',
+      resource: `${BOOTSTRAP_STATE_CONTAINER}/${BOOTSTRAP_STATE_DOC_ID}`,
+      before: previous,
+      after: newState,
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
+
+    return json(200, { success: true, message: 'Bootstrap state has been reset' });
+  } catch (error) {
+    return errorResponse(context, 'Failed to reset bootstrap state', error, 500, request);
+  }
+}
+
+/**
+ * GET /api/cms/admins — list all admin records (super_admin only).
+ */
+async function listAdmins(ctx, request, context) {
+  const auth = await ctx.guard.requireRole(request, 'super_admin');
+  if (auth.error) return auth.error;
+
+  try {
+    const docs = await ctx.store.queryDocs(
+      'admins',
+      'SELECT c.id, c.uid, c.email, c.role, c.permissions, c.active, c.createdAt, c.createdBy, c.updatedAt, c.updatedBy, c.updateReason FROM c'
+    );
+    const admins = (docs || []).sort((a, b) =>
+      String(a.email || a.id).localeCompare(String(b.email || b.id))
+    );
+    return json(200, { admins });
+  } catch (error) {
+    return errorResponse(context, 'Failed to list admins', error, 500, request);
+  }
+}
+
+/**
+ * PATCH /api/cms/admins/{id} — change role or active status (super_admin only).
+ * Prevents demoting or deactivating the last active super admin.
+ * Writes before-and-after audit and clears guard role cache.
+ */
+async function updateAdmin(ctx, request, context) {
+  const auth = await ctx.guard.requireRole(request, 'super_admin');
+  if (auth.error) return auth.error;
+
+  try {
+    const { user } = auth;
+    const actorOid = user.oid ?? user.sub;
+    const targetId = request.params?.id || request.params?.adminId;
+    if (!targetId) return json(400, { error: 'Admin ID is required' });
+
+    const existing = await ctx.store.readDoc('admins', targetId, targetId);
+    if (!existing) return json(404, { error: 'Admin record not found' });
+
+    const body = (await request.json().catch(() => null)) || {};
+    const requestedRole = body.role ? String(body.role).toLowerCase() : undefined;
+    if (requestedRole && !ADMIN_ROLES[requestedRole.toUpperCase()]) {
+      return json(400, { error: 'Invalid role' });
+    }
+
+    const requestedActive = typeof body.active === 'boolean' ? body.active : undefined;
+    const updateReason = String(body.reason || body.updateReason || 'Admin updated via lifecycle API');
+
+    const isCurrentlyActiveSuperAdmin = existing.role === 'super_admin' && existing.active === true;
+    const willBeActiveSuperAdmin =
+      (requestedRole ? requestedRole === 'super_admin' : existing.role === 'super_admin') &&
+      (requestedActive !== undefined ? requestedActive : existing.active);
+
+    if (isCurrentlyActiveSuperAdmin && !willBeActiveSuperAdmin) {
+      const activeSuperAdmins = await ctx.store.queryDocs(
+        'admins',
+        "SELECT c.id FROM c WHERE c.active = true AND c.role = 'super_admin'"
+      );
+      if (activeSuperAdmins.length <= 1) {
+        return json(400, { error: 'Cannot demote or deactivate the last active super admin' });
+      }
+    }
+
+    const newRole = requestedRole ?? existing.role;
+    const newActive = requestedActive !== undefined ? requestedActive : existing.active;
+    const nowIso = ctx.now().toISOString();
+
+    const patchedFields = {
+      role: newRole,
+      permissions: getPermissionsForRole(newRole),
+      active: newActive,
+      updatedAt: nowIso,
+      updatedBy: actorOid,
+      updateReason,
+    };
+
+    await ctx.store.patchDoc('admins', targetId, patchedFields);
+
+    // Evict cached role entries immediately so changes take effect without waiting 60s
+    ctx.guard.clearCache();
+
+    const updatedDoc = { ...existing, ...patchedFields };
+
+    await recordMutationAudit(ctx.store, {
+      actor: user,
+      action: isCurrentlyActiveSuperAdmin && !willBeActiveSuperAdmin ? 'admin_demoted' : 'admin_role_changed',
+      resource: `admins/${targetId}`,
+      before: { id: existing.id, role: existing.role, active: existing.active },
+      after: { id: updatedDoc.id, role: updatedDoc.role, active: updatedDoc.active },
+      details: { reason: updateReason, targetOid: targetId },
+      now: ctx.now,
+      uuid: ctx.uuid,
+      context,
+    });
+
+    return json(200, { success: true, admin: updatedDoc });
+  } catch (error) {
+    return errorResponse(context, 'Failed to update admin', error, 500, request);
+  }
+}
+
+async function deactivateAdmin(ctx, request, context) {
+  const reqWithDeactivate = {
+    ...request,
+    json: async () => ({ active: false, reason: 'Deactivated via admin lifecycle API' }),
+  };
+  return updateAdmin(ctx, reqWithDeactivate, context);
 }
 
 /** POST /api/recordAdminAudit — client-originated audit rows. */
@@ -370,6 +552,10 @@ export function createAdminIdentityHandlers({
     bootstrapCurrentUserAdmin: (request, context) =>
       bootstrapCurrentUserAdmin(ctx, request, context),
     recordAdminAudit: (request, context) => recordAdminAudit(ctx, request, context),
+    listAdmins: (request, context) => listAdmins(ctx, request, context),
+    updateAdmin: (request, context) => updateAdmin(ctx, request, context),
+    deactivateAdmin: (request, context) => deactivateAdmin(ctx, request, context),
+    resetBootstrapState: (request, context) => resetBootstrapState(ctx, request, context),
     ...createSpeakerEventHandlers(ctx),
   };
 }

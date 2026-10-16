@@ -526,6 +526,51 @@ describe("the Drafts stage routes", () => {
   });
 });
 
+/**
+ * The admin lifecycle routes (AP-B5, #940).
+ * Property 1 proves these reach a guard; this pins them to super_admin.
+ * They list admins, change roles, deactivate accounts and reset bootstrap,
+ * which is the root of administrative authority across the estate.
+ */
+describe("the admin lifecycle routes (#940)", () => {
+  const VERBS = {
+    "cms/admins": ["GET"],
+    "cms/admins/{id}": ["PATCH", "DELETE"],
+    "cms/bootstrap/reset": ["POST"],
+  };
+
+  it.each(Object.entries(VERBS))(
+    "%s is one registration answering exactly %j",
+    (route, verbs) => {
+      const registrations = [...httpRegistrations.values()].filter(
+        (o) => o.route === route,
+      );
+      expect(registrations).toHaveLength(1);
+      expect(PUBLIC_ROUTES.has(route)).toBe(false);
+      expect(registrations[0].methods).toEqual([...verbs, "OPTIONS"]);
+    },
+  );
+
+  it.each(
+    Object.entries(VERBS).flatMap(([route, verbs]) =>
+      verbs.map((verb) => [route, verb]),
+    ),
+  )(
+    "%s answers %s through requireRole at super_admin",
+    async (route, method) => {
+      const options = [...httpRegistrations.values()].find(
+        (o) => o.route === route,
+      );
+
+      clearGuards();
+      const res = await invoke(options, makeRequest({ method }));
+      expect(requireRole).toHaveBeenCalledTimes(1);
+      expect(requireRole.mock.calls[0][1]).toBe("super_admin");
+      expect(res?.status).toBe(403);
+    },
+  );
+});
+
 describe("property 2 — every route accepts OPTIONS", () => {
   it("so a preflight is not 404ed before any handler runs", () => {
     const missing = [...httpRegistrations.entries()]

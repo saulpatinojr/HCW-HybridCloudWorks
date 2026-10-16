@@ -199,6 +199,15 @@ export const SETTINGS_INDEX = Object.freeze([
     href: '/admin/labs?tab=agents',
     history: false,
   },
+  {
+    id: 'admins',
+    label: 'Administrators & platform access',
+    storedAt: 'admins (one document per administrator)',
+    editedIn: 'Platform Settings → Platform',
+    readBy: 'The role guard and admin lifecycle API.',
+    href: '/admin/platform-settings?tab=platform',
+    history: true,
+  },
 ]);
 
 export default function AllSettingsTab() {
