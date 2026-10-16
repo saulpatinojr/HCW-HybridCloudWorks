@@ -181,10 +181,12 @@ caddy_direct_visit_redirect: https://hybridcloudworks.com/education/labs
 # as "no organisation restriction" and lets ANY GitHub account sign in, so
 # site.yml and the role both refuse to run with coder_enabled true and this
 # list empty. Set the organisation(s) whose members are allowed before
-# flipping coder_enabled. The kill switches are
-# coder_oauth2_github_allow_signups: false (no new learners; existing ones keep
-# working) or stopping the coder compose service (everyone), never an emptied
-# allowlist. Enabling also needs three vault keys (lab-host/README.md, "Coder").
+# flipping coder_enabled. Shutting learners out is never an emptied
+# allowlist: one learner leaves the lab-learners team and has their Coder
+# account suspended, and everyone is shut out by stopping the coder compose
+# service. Sign-ups are off as the normal setting since 2026-10-16 (below), so
+# no sign-in creates an account and there is no sign-up switch to throw.
+# Enabling also needs three vault keys (lab-host/README.md, "Coder").
 # On since 2026-09-28 (owner decision): Coder runs, and only members of the
 # HybridCloudWorks GitHub organisation may sign in. The owner signs in first,
 # which makes that account Coder's owner; nothing in this repository creates
