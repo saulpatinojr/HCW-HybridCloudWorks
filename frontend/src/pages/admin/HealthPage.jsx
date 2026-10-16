@@ -142,6 +142,7 @@ const EMPTY_SIGNALS = {
   openAlertAgeHours: 0,
   publishFailureCount: 0,
   orphanedGeneratedImages: 0,
+  failedJobs: [],
   lastSchedulerSuccessAt: null,
 };
 

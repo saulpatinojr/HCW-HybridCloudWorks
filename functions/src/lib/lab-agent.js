@@ -343,6 +343,10 @@ async function heartbeatAgent({ guard, store, now, notifier }, request, context)
   };
   if (typeof body.hostname === 'string') updates.hostname = body.hostname.slice(0, 255);
   if (typeof body.version === 'string') updates.version = body.version.slice(0, 64);
+  if (typeof body.certificateExpiresAt === 'string') {
+    const certExp = parseIsoDateTime(body.certificateExpiresAt);
+    if (certExp && agent.certificateExpiresAt !== certExp) updates.certificateExpiresAt = certExp;
+  }
 
   // The host's applied commit (#1009), one patch operation as one object, and
   // only when it changed: it moves once per bootstrap.sh run, not per beat.

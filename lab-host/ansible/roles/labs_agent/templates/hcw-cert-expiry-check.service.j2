@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Check lab certificates expiry and log warnings to syslog
+Documentation=https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/lab-host/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hcw-cert-expiry-check.sh
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

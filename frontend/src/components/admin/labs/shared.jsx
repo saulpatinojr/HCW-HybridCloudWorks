@@ -5,7 +5,7 @@ import React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Server } from 'lucide-react';
-import { isAgentOnline } from '@/lib/labsPolling';
+import { isAgentOnline, toMillis } from '@/lib/labsPolling';
 import { STATUS_STYLES, formatTime } from './labsView';
 
 export function StatusBadge({ status }) {
@@ -84,6 +84,63 @@ function DriftLine({ applied, drift }) {
   );
 }
 
+function CertificateLine({ certificateExpiresAt, now }) {
+  if (!certificateExpiresAt) return null;
+  const expiresMs = new Date(certificateExpiresAt).getTime();
+  if (!Number.isFinite(expiresMs)) return null;
+  const nowMs = toMillis(now);
+  if (!nowMs) return null;
+  const daysLeft = Math.round((expiresMs - nowMs) / (24 * 60 * 60 * 1000));
+  const isExpiringSoon = daysLeft <= 60;
+  const isExpired = daysLeft <= 0;
+
+  let tone = 'text-muted-foreground';
+  if (isExpired) {
+    tone = 'text-rose-600 dark:text-rose-400 font-semibold';
+  } else if (isExpiringSoon) {
+    tone = 'text-amber-600 dark:text-amber-400 font-semibold';
+  }
+
+  let label = `Certificate valid for ${daysLeft}d`;
+  if (isExpired) {
+    label = `Certificate expired ${Math.abs(daysLeft)}d ago`;
+  } else if (isExpiringSoon) {
+    label = `Certificate expires in ${daysLeft}d`;
+  }
+
+  return (
+    <p className={`text-[11px] ${tone} mt-0.5`} data-testid="agent-cert-expiry">
+      {label}
+    </p>
+  );
+}
+
+function CertWarningBadge({ certDaysLeft }) {
+  if (certDaysLeft === null || certDaysLeft > 60) return null;
+  const isExpired = certDaysLeft <= 0;
+  const toneClass = isExpired
+    ? 'border-rose-300 text-rose-600 dark:border-rose-700 dark:text-rose-400'
+    : 'border-amber-300 text-amber-600 dark:border-amber-700 dark:text-amber-400';
+  const label = isExpired ? 'Cert expired' : `Cert expires in ${certDaysLeft}d`;
+
+  return (
+    <Badge
+      variant="outline"
+      className={`text-[10px] ${toneClass}`}
+      data-testid="agent-cert-warning-badge"
+    >
+      {label}
+    </Badge>
+  );
+}
+
+function computeCertDaysLeft(expiresAt, nowMs) {
+  if (!expiresAt || !nowMs) return null;
+  const exp = new Date(expiresAt).getTime();
+  if (!Number.isFinite(exp)) return null;
+  return Math.round((exp - nowMs) / (24 * 60 * 60 * 1000));
+}
+
 /**
  * One agent. The Agents tab passes `actions` (Activate or Deactivate, #740)
  * and `registry`, which adds the bound object id; the Dashboard passes
@@ -91,6 +148,9 @@ function DriftLine({ applied, drift }) {
  */
 export function AgentCard({ agent, now, actions = null, registry = false }) {
   const online = isAgentOnline(agent, now);
+  const nowMs = toMillis(now);
+  const certDaysLeft = computeCertDaysLeft(agent.certificateExpiresAt, nowMs);
+
   return (
     <Card className="p-4">
       <div className="flex items-start gap-3">
@@ -116,12 +176,14 @@ export function AgentCard({ agent, now, actions = null, registry = false }) {
                 v{agent.version}
               </Badge>
             )}
+            <CertWarningBadge certDaysLeft={certDaysLeft} />
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {agent.hostname || 'unknown host'} · last seen {formatTime(agent.lastSeenAt)}
             {online && agent.status ? ` · ${agent.status}` : ''}
           </p>
           {registry && <ObjectIdLine oid={agent.oid} />}
+          <CertificateLine certificateExpiresAt={agent.certificateExpiresAt} now={now} />
           <DriftLine applied={agent.applied} drift={agent.drift} />
           {(agent.capabilities || []).length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">

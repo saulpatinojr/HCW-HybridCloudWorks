@@ -140,7 +140,7 @@ describe('the issue’s list', () => {
     expect(SWA_TOKEN_RESET_DAYS).toBe(90);
     expect(findCredential('lab-agent-certificate').lifetimeDays).toBe(LAB_CERTIFICATE_DAYS);
     expect(findCredential('lab-vault-tls-certificate').lifetimeDays).toBe(LAB_CERTIFICATE_DAYS);
-    expect(LAB_CERTIFICATE_DAYS).toBe(730);
+    expect(LAB_CERTIFICATE_DAYS).toBe(180);
     // The owner's rule for the hand-only ones that never expire (2026-10-09).
     expect(HAND_ROTATION_DAYS).toBe(180);
     for (const id of [

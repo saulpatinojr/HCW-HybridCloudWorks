@@ -354,6 +354,7 @@ export function createLabHandlers({
             agentId: data.id,
             hostname: data.hostname || null,
             version: data.version || null,
+            certificateExpiresAt: toIsoOrNull(data.certificateExpiresAt),
             capabilities: data.capabilities || [],
             status: data.status || 'unknown',
             lastSeenAt: lastSeenMs ? new Date(lastSeenMs).toISOString() : null,

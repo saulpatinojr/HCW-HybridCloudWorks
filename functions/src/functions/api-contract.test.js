@@ -48,6 +48,26 @@ vi.mock('../lib/auth/default-agent-guard.js', () => ({
   resetDefaultAgentGuard: () => {},
 }));
 
+// Importing index.js loads every function module; none of the heavy cloud,
+// media or parser SDKs are called while enumerating registrations, and
+// parsing them in parallel across the inventory suites pushed beforeAll past
+// the 10 s hook ceiling under full-suite load (#1203).
+vi.mock('@azure/cosmos', () => ({ CosmosClient: class {} }));
+vi.mock('@azure/identity', () => ({
+  DefaultAzureCredential: class {},
+  ManagedIdentityCredential: class {},
+}));
+vi.mock('@azure/storage-blob', () => ({ BlobServiceClient: class {} }));
+vi.mock('@aws-sdk/client-pricing', () => ({
+  PricingClient: class {},
+  GetProductsCommand: class {},
+}));
+vi.mock('sharp', () => ({ default: vi.fn() }));
+vi.mock('@breezystack/lamejs', () => ({ default: {}, Mp3Encoder: class {} }));
+vi.mock('cheerio', () => ({ load: vi.fn() }));
+vi.mock('turndown', () => ({ default: class { addRule() {} turndown() { return ''; } } }));
+vi.mock('rss-parser', () => ({ default: class {} }));
+
 const contract = JSON.parse(
   readFileSync(join(process.cwd(), '..', '.azure', 'api-surface.json'), 'utf8')
 );
@@ -62,7 +82,7 @@ beforeAll(async () => {
     })
   );
   await import('./index.js');
-});
+}, 30_000);
 
 afterAll(() => {
   vi.unstubAllGlobals();

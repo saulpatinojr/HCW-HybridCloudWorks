@@ -200,6 +200,32 @@
       the PEM — the steps are in lab-host/README.md under "Rotating the agent certificate".
   when: labs_agent_certificate_check.rc | default(0) == 1
 
+- name: Install the daily certificate expiry check script
+  ansible.builtin.template:
+    src: hcw-cert-expiry-check.sh.j2
+    dest: /usr/local/sbin/hcw-cert-expiry-check.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the certificate expiry check service and timer
+  ansible.builtin.template:
+    src: "hcw-cert-expiry-check.{{ item }}.j2"
+    dest: "/etc/systemd/system/hcw-cert-expiry-check.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - service
+    - timer
+
+- name: Enable the daily certificate expiry check timer
+  ansible.builtin.systemd_service:
+    name: hcw-cert-expiry-check.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
 # scripts/lab-job-limits.test.mjs holds the DEFAULTS to this budget; a host
 # override set in the inventory never reaches that test, so the role refuses it
 # here, before the env file and the unit are written (CodeRabbit on #1188).

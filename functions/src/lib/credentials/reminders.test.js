@@ -118,7 +118,7 @@ describe('wantedReminders', () => {
     const cert = byId(wantedReminders(view({ 'lab-agent-certificate': { rotatedOn: '2026-09-29' } }), { today: TODAY }))[
       'credential-lab-agent-certificate'
     ];
-    expect(cert).toMatchObject({ dueDate: '2028-09-28', leadDays: 30 });
+    expect(cert).toMatchObject({ dueDate: '2027-03-28', leadDays: 30 });
   });
 
   it('follows a Keys-tab write: the later of it and the record, 180 days on', () => {
@@ -248,7 +248,7 @@ describe('syncCredentialReminders', () => {
     await syncCredentialReminders({ store, now });
     expect(rowsOf(store)[first.id]).toMatchObject({
       title: rotateTitle({ name: '/etc/hcw/labs-agent.pem (sp-labs-agent-lab-hybrid-prod-cus-01)' }),
-      dueDate: '2028-09-28',
+      dueDate: '2027-03-28',
       leadDays: 30,
       done: false,
       notified: {},
@@ -328,7 +328,7 @@ describe('syncCredentialReminders', () => {
     });
     const result = await syncCredentialReminders({ store, now, sleep: noSleep });
     expect(result).toMatchObject({ synced: true });
-    expect(rowsOf(store)['credential-lab-agent-certificate'].dueDate).toBe('2028-09-28');
+    expect(rowsOf(store)['credential-lab-agent-certificate'].dueDate).toBe('2027-03-28');
     // It went round: the register was read again after the interleaved record.
     expect(store.readDoc.mock.calls.filter((call) => call[1] === 'credential_register').length).toBeGreaterThanOrEqual(3);
   });

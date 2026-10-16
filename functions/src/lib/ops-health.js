@@ -323,6 +323,7 @@ export function createOpsHealthHandlers({
       generatedImages,
       notifyState,
       forgeStats,
+      failedJobRows,
     ] = await Promise.all([
       count("c.contentStatus = 'published'"),
       store.queryDocs(
@@ -353,12 +354,23 @@ export function createOpsHealthHandlers({
       // The autonomous forge's rolling day bucket (content/forge.js), so the
       // Health page can say when the forge last did anything (ADR 0033).
       store.readDoc('admin_config', 'forge_stats', ADMIN_CONFIG_PARTITION),
+      store
+        .queryDocs(
+          'jobs',
+          'SELECT TOP 50 c.id, c["type"], c["status"], c["error"], c["createdAt"], c["finishedAt"] FROM c WHERE c.status = \'failed\'',
+          []
+        )
+        .catch(() => []),
     ]);
     const lastCheckedAt = nowDate.toISOString();
 
     const alerts = [...alertRows]
       .sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt))
       .slice(0, 20);
+
+    const failedJobs = [...(failedJobRows || [])]
+      .sort((a, b) => toMillis(b.finishedAt || b.createdAt) - toMillis(a.finishedAt || a.createdAt))
+      .slice(0, 10);
 
     const missingSlugCount = publishedSlim.filter((d) => !d.slug && !d.Slug).length;
     // `functionsConfigured` used to be the literal `true` — a placeholder the
@@ -404,6 +416,7 @@ export function createOpsHealthHandlers({
       openAlertAgeHours: openAlertHours.length > 0 ? Math.max(...openAlertHours) : 0,
       publishFailureCount,
       orphanedGeneratedImages,
+      failedJobs,
       lastSchedulerSuccessAt:
         digestData?.publishingOps?.status === 'success'
           ? (digestData?.publishingOps?.lastRunAt ?? null)

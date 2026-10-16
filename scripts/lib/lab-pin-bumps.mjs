@@ -45,7 +45,7 @@
  * squash commit keeps it.
  */
 import { createHash } from 'node:crypto';
-import { coreVersion, compareVersions, newest } from '../lab-pins-upstream.mjs';
+import { coreVersion, compareVersions, newest, newestHashicorp, newestGitHubRelease, newestAptVersion } from '../lab-pins-upstream.mjs';
 
 export const USER_AGENT =
   'HCW-HybridCloudWorks lab-pins-upstream (+https://github.com/saulpatinojr/HCW-HybridCloudWorks)';
@@ -67,6 +67,7 @@ export const CODER_TEMPLATE_PATH = 'lab-host/coder/templates/hcw-lab/main.tf';
 export const CADDY_TEST_PATH = 'lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh';
 export const DOCKER_CLI_FIXTURE_PATH = 'scripts/fixtures/docker-cli-agent-requests.json';
 export const DOCKER_GUIDE_PAGE_PATH = 'frontend/src/pages/docker/BuildingImagesPage.jsx';
+export const README_PATH = 'lab-image/README.md';
 
 // Docker Hub only since 2026-10-08. GHCR was the first stop until the
 // repository left the HybridCloudWorks organisation, whose package namespace
@@ -1022,6 +1023,244 @@ export async function planImageBase({ files, http, today = new Date() }) {
   } catch (error) {
     notes.push({ label: 'ansible-core (lab image and lab host)', from: env.ANSIBLE_CORE_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
   }
+  const result = applyBumps(files, bumps);
+  return { files: result.files, applied: result.applied, notes: [...notes, ...result.notes] };
+}
+
+// ── Lab image tools, providers and Azure CLI (image-tools) ────────────────
+
+export const PROVIDER_SPECS = Object.freeze({
+  azurerm: {
+    namespace: 'hashicorp',
+    name: 'azurerm',
+    line: '5',
+    versionKey: 'PROVIDER_AZURERM_VERSION',
+    shaKey: 'PROVIDER_AZURERM_SHA256',
+    label: 'azurerm provider (5.x line)',
+  },
+  azurermV4: {
+    namespace: 'hashicorp',
+    name: 'azurerm',
+    line: '4',
+    versionKey: 'PROVIDER_AZURERM_V4_VERSION',
+    shaKey: 'PROVIDER_AZURERM_V4_SHA256',
+    label: 'azurerm provider (4.x line)',
+  },
+  azapi: {
+    namespace: 'azure',
+    name: 'azapi',
+    versionKey: 'PROVIDER_AZAPI_VERSION',
+    shaKey: 'PROVIDER_AZAPI_SHA256',
+    label: 'azapi provider',
+  },
+  alz: {
+    namespace: 'azure',
+    name: 'alz',
+    versionKey: 'PROVIDER_ALZ_VERSION',
+    shaKey: 'PROVIDER_ALZ_SHA256',
+    label: 'alz provider',
+  },
+  random: {
+    namespace: 'hashicorp',
+    name: 'random',
+    versionKey: 'PROVIDER_RANDOM_VERSION',
+    shaKey: 'PROVIDER_RANDOM_SHA256',
+    label: 'random provider',
+  },
+  modtm: {
+    namespace: 'azure',
+    name: 'modtm',
+    versionKey: 'PROVIDER_MODTM_VERSION',
+    shaKey: 'PROVIDER_MODTM_SHA256',
+    label: 'modtm provider',
+  },
+  time: {
+    namespace: 'hashicorp',
+    name: 'time',
+    versionKey: 'PROVIDER_TIME_VERSION',
+    shaKey: 'PROVIDER_TIME_SHA256',
+    label: 'time provider',
+  },
+});
+
+export const README_MIRROR_RE =
+  /(The mirror holds azurerm [^\s]+ and [^\s]+, azapi [^\s]+, alz\s+[^\s]+, random [^\s]+, modtm [^\s]+ and time [^\s]+, each zip verified after)/m;
+
+export function renderReadmeMirrorProse(versions) {
+  return `The mirror holds azurerm ${versions.PROVIDER_AZURERM_VERSION} and ${versions.PROVIDER_AZURERM_V4_VERSION}, azapi ${versions.PROVIDER_AZAPI_VERSION}, alz\n  ${versions.PROVIDER_ALZ_VERSION}, random ${versions.PROVIDER_RANDOM_VERSION}, modtm ${versions.PROVIDER_MODTM_VERSION} and time ${versions.PROVIDER_TIME_VERSION}, each zip verified after`;
+}
+
+export async function planImageTools({ files, http }) {
+  const env = readEnv(files[VERSIONS_ENV_PATH]);
+  const bumps = [];
+  const notes = [];
+  const envEdit = (key, to) => ({ file: VERSIONS_ENV_PATH, where: key, to, apply: (t) => setEnvValue(t, key, to) });
+
+  // 1. Terraform
+  try {
+    const indexUrl = 'https://releases.hashicorp.com/terraform/index.json';
+    const target = newestHashicorp(await http.json(indexUrl));
+    const pinned = env.TERRAFORM_VERSION;
+    if (target && compareVersions(target, pinned) > 0) {
+      const sumsUrl = `https://releases.hashicorp.com/terraform/${target}/terraform_${target}_SHA256SUMS`;
+      const file = `terraform_${target}_linux_amd64.zip`;
+      const hex = sumsLine(await http.text(sumsUrl), file);
+      if (!hex) throw new Error(`${sumsUrl} has no line for ${file}`);
+      bumps.push({
+        key: 'terraform',
+        label: 'Terraform (runner target)',
+        from: pinned,
+        to: target,
+        edits: [envEdit('TERRAFORM_VERSION', target), envEdit('TERRAFORM_SHA256', hex)],
+        evidence: [{ item: `${file} (SHA256)`, value: hex, source: sumsUrl }],
+      });
+    }
+  } catch (error) {
+    notes.push({ label: 'Terraform', from: env.TERRAFORM_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
+  }
+
+  // 2. kubeconform
+  try {
+    const relsUrl = 'https://api.github.com/repos/yannh/kubeconform/releases?per_page=30';
+    const target = newestGitHubRelease(await http.json(relsUrl));
+    const pinned = env.KUBECONFORM_VERSION;
+    if (target && compareVersions(target, pinned) > 0) {
+      const sumsUrl = `https://github.com/yannh/kubeconform/releases/download/v${target}/CHECKSUMS`;
+      const file = 'kubeconform-linux-amd64.tar.gz';
+      const hex = sumsLine(await http.text(sumsUrl), file);
+      if (!hex) throw new Error(`${sumsUrl} has no line for ${file}`);
+      bumps.push({
+        key: 'kubeconform',
+        label: 'kubeconform (runner target)',
+        from: pinned,
+        to: target,
+        edits: [envEdit('KUBECONFORM_VERSION', target), envEdit('KUBECONFORM_SHA256', hex)],
+        evidence: [{ item: `${file} (SHA256)`, value: hex, source: sumsUrl }],
+      });
+    }
+  } catch (error) {
+    notes.push({ label: 'kubeconform', from: env.KUBECONFORM_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
+  }
+
+  // 3. Helm
+  try {
+    const relsUrl = 'https://api.github.com/repos/helm/helm/releases?per_page=30';
+    const target = newestGitHubRelease(await http.json(relsUrl));
+    const pinned = env.HELM_VERSION;
+    if (target && compareVersions(target, pinned) > 0) {
+      const sumsUrl = `https://get.helm.sh/helm-v${target}-linux-amd64.tar.gz.sha256sum`;
+      const file = `helm-v${target}-linux-amd64.tar.gz`;
+      const hex = sumsLine(await http.text(sumsUrl), file);
+      if (!hex) throw new Error(`${sumsUrl} has no line for ${file}`);
+      bumps.push({
+        key: 'helm',
+        label: 'Helm (runner target)',
+        from: pinned,
+        to: target,
+        edits: [envEdit('HELM_VERSION', target), envEdit('HELM_SHA256', hex)],
+        evidence: [{ item: `${file} (SHA256)`, value: hex, source: sumsUrl }],
+      });
+    }
+  } catch (error) {
+    notes.push({ label: 'Helm', from: env.HELM_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
+  }
+
+  // 4. kubectl
+  try {
+    const stableUrl = 'https://dl.k8s.io/release/stable.txt';
+    const target = coreVersion((await http.text(stableUrl)).trim());
+    const pinned = env.KUBECTL_VERSION;
+    if (target && compareVersions(target, pinned) > 0) {
+      const sumsUrl = `https://dl.k8s.io/release/v${target}/bin/linux/amd64/kubectl.sha256`;
+      const hex = (await http.text(sumsUrl)).trim();
+      if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error(`${sumsUrl} served invalid SHA256: ${hex}`);
+      bumps.push({
+        key: 'kubectl',
+        label: 'kubectl (full target)',
+        from: pinned,
+        to: target,
+        edits: [envEdit('KUBECTL_VERSION', target), envEdit('KUBECTL_SHA256', hex)],
+        evidence: [{ item: `kubectl v${target} (SHA256)`, value: hex, source: sumsUrl }],
+      });
+    }
+  } catch (error) {
+    notes.push({ label: 'kubectl', from: env.KUBECTL_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
+  }
+
+  // 5. Azure CLI
+  try {
+    const bookwormUrl = 'https://packages.microsoft.com/repos/azure-cli/dists/bookworm/main/binary-amd64/Packages';
+    const resoluteUrl = 'https://packages.microsoft.com/repos/azure-cli/dists/resolute/main/binary-amd64/Packages';
+    const [bookworm, resolute] = await Promise.all([http.text(bookwormUrl), http.text(resoluteUrl)]);
+    const vBookworm = newestAptVersion(bookworm, 'azure-cli');
+    const vResolute = newestAptVersion(resolute, 'azure-cli');
+    const target = vBookworm && vResolute && compareVersions(vBookworm, vResolute) <= 0 ? vBookworm : vResolute;
+    const pinned = env.AZURE_CLI_VERSION;
+    if (target && compareVersions(target, pinned) > 0) {
+      bumps.push({
+        key: 'azure-cli',
+        label: 'Azure CLI (full target & sandbox)',
+        from: pinned,
+        to: target,
+        edits: [envEdit('AZURE_CLI_VERSION', target)],
+        evidence: [
+          {
+            item: `azure-cli ${target} (Debian bookworm & Ubuntu resolute)`,
+            value: target,
+            source: `${bookwormUrl} and ${resoluteUrl}; verified published in both suites`,
+          },
+        ],
+      });
+    }
+  } catch (error) {
+    notes.push({ label: 'Azure CLI', from: env.AZURE_CLI_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
+  }
+
+  // 6. Terraform Providers
+  const nextVersions = { ...env };
+  const providerBumps = [];
+  for (const [key, spec] of Object.entries(PROVIDER_SPECS)) {
+    const pinned = env[spec.versionKey];
+    try {
+      const versionsUrl = `https://registry.terraform.io/v1/providers/${spec.namespace}/${spec.name}/versions`;
+      const index = await http.json(versionsUrl);
+      const candidates = (index.versions ?? [])
+        .map((v) => coreVersion(v.version))
+        .filter((v) => v && (!spec.line || v.startsWith(`${spec.line}.`)));
+      const target = newest(candidates);
+      if (target && compareVersions(target, pinned) > 0) {
+        const dlUrl = `https://registry.terraform.io/v1/providers/${spec.namespace}/${spec.name}/${target}/download/linux/amd64`;
+        const dl = await http.json(dlUrl);
+        const hex = dl.shasum;
+        if (!/^[0-9a-f]{64}$/.test(hex ?? '')) throw new Error(`${dlUrl} gave invalid shasum: ${hex}`);
+        nextVersions[spec.versionKey] = target;
+        nextVersions[spec.shaKey] = hex;
+        providerBumps.push({
+          key,
+          label: spec.label,
+          from: pinned,
+          to: target,
+          edits: [envEdit(spec.versionKey, target), envEdit(spec.shaKey, hex)],
+          evidence: [{ item: `${spec.name} v${target} (linux_amd64 SHA256)`, value: hex, source: dlUrl }],
+        });
+      }
+    } catch (error) {
+      notes.push({ label: spec.label, from: pinned ?? '—', to: '—', reason: error?.message || String(error) });
+    }
+  }
+
+  // If any provider moved and README_PATH was read, update the prose in README_PATH
+  if (providerBumps.length > 0 && files[README_PATH]) {
+    const prose = renderReadmeMirrorProse(nextVersions);
+    providerBumps[0].edits.push({
+      file: README_PATH,
+      where: 'provider filesystem mirror prose',
+      to: prose,
+      apply: (t) => replaceOne(t, README_MIRROR_RE, prose, 'provider mirror prose'),
+    });
+  }
+
+  bumps.push(...providerBumps);
   const result = applyBumps(files, bumps);
   return { files: result.files, applied: result.applied, notes: [...notes, ...result.notes] };
 }

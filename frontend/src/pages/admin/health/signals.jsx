@@ -114,11 +114,12 @@ const countStatus = (count, above = 'degraded') => ((Number(count) || 0) > 0 ? a
 /** The four tiles' words and the publish-failure count, worst first: the card's status. */
 export function signalsStatus(signals) {
   return worstStatus([
-    countStatus(signals.queueBreachCount),
-    (signals.oldestStagedHours || 0) > 72 ? 'degraded' : 'healthy',
-    (signals.openAlertAgeHours || 0) > 24 ? 'degraded' : 'healthy',
-    countStatus(signals.orphanedGeneratedImages),
-    countStatus(signals.publishFailureCount),
+    countStatus(signals?.queueBreachCount),
+    (signals?.oldestStagedHours || 0) > 72 ? 'degraded' : 'healthy',
+    (signals?.openAlertAgeHours || 0) > 24 ? 'degraded' : 'healthy',
+    countStatus(signals?.orphanedGeneratedImages),
+    countStatus(signals?.publishFailureCount),
+    countStatus((signals?.failedJobs || []).length),
   ]);
 }
 
@@ -353,6 +354,35 @@ export function OperationalSignalsCard({ signals }) {
           <span>Last Scheduler Success</span>
           <Badge variant="outline">{formatTimestamp(signals.lastSchedulerSuccessAt)}</Badge>
         </div>
+        {(signals?.failedJobs || []).length > 0 && (
+          <div className="space-y-2 pt-2 border-t" data-testid="failed-jobs-section">
+            <div className="flex items-center justify-between">
+              <span className="font-medium text-destructive">Failed Platform Jobs</span>
+              <Badge variant="destructive">{signals.failedJobs.length}</Badge>
+            </div>
+            <div className="space-y-1.5">
+              {signals.failedJobs.map((job) => (
+                <div
+                  key={job.id}
+                  className="rounded border border-destructive/40 bg-destructive/5 p-2 text-xs"
+                  data-testid={`failed-job-${job.id}`}
+                >
+                  <div className="flex items-center justify-between font-mono font-medium">
+                    <span>
+                      {job.type} ({job.id})
+                    </span>
+                    <span className="text-muted-foreground">
+                      {formatTimestamp(job.finishedAt || job.createdAt)}
+                    </span>
+                  </div>
+                  {job.error && (
+                    <p className="mt-1 font-mono text-xs text-destructive break-all">{job.error}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <CheckedFooter at={signals.lastCheckedAt} />
       </CardContent>
     </Card>

@@ -54,6 +54,24 @@ vi.mock('../lib/auth/default-agent-guard.js', () => ({
   resetDefaultAgentGuard: () => {},
 }));
 
+// Same as api-contract and route-inventory: enumerating registrations never
+// touches the cloud, media or parser SDKs (#1203).
+vi.mock('@azure/cosmos', () => ({ CosmosClient: class {} }));
+vi.mock('@azure/identity', () => ({
+  DefaultAzureCredential: class {},
+  ManagedIdentityCredential: class {},
+}));
+vi.mock('@azure/storage-blob', () => ({ BlobServiceClient: class {} }));
+vi.mock('@aws-sdk/client-pricing', () => ({
+  PricingClient: class {},
+  GetProductsCommand: class {},
+}));
+vi.mock('sharp', () => ({ default: vi.fn() }));
+vi.mock('@breezystack/lamejs', () => ({ default: {}, Mp3Encoder: class {} }));
+vi.mock('cheerio', () => ({ load: vi.fn() }));
+vi.mock('turndown', () => ({ default: class { addRule() {} turndown() { return ''; } } }));
+vi.mock('rss-parser', () => ({ default: class {} }));
+
 const INVENTORY_PATH = fileURLToPath(new URL('../../function-inventory.json', import.meta.url));
 const inventory = JSON.parse(readFileSync(INVENTORY_PATH, 'utf8'));
 const TRIGGERS = Object.keys(registered);
@@ -71,7 +89,7 @@ beforeAll(async () => {
     })
   );
   await import('./index.js');
-});
+}, 30_000);
 
 afterAll(() => {
   vi.unstubAllGlobals();

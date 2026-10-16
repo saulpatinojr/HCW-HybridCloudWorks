@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# Daily certificate expiry check (LAB-11, #957).
+# Checks the agent certificate and Vault listener certificate for remaining validity.
+# Logs a warning to syslog if either certificate expires within {{ labs_agent_certificate_warn_days }} days.
+set -euo pipefail
+
+tag="hcw-cert-expiry"
+warn_seconds="{{ labs_agent_certificate_warn_seconds }}"
+
+check_cert() {
+    local label="$1"
+    local cert="$2"
+
+    if [ ! -f "$cert" ]; then
+        return 0
+    fi
+
+    if openssl x509 -checkend "$warn_seconds" -noout -in "$cert" >/dev/null 2>&1; then
+        logger -t "$tag" -p "daemon.notice" "$label ($cert) is valid for more than {{ labs_agent_certificate_warn_days }} days"
+    else
+        logger -t "$tag" -p "daemon.warning" "$label ($cert) expires within {{ labs_agent_certificate_warn_days }} days: rotate it now"
+    fi
+}
+
+check_cert "Agent certificate" "{{ labs_agent_public_certificate_path }}"
+check_cert "Vault certificate" "{{ vault_tls_cert_file | default('/etc/vault.d/tls/vault.crt') }}"

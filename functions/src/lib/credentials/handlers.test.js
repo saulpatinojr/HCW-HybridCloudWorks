@@ -91,7 +91,7 @@ describe('GET cms/credentials', () => {
           {
             id: 'credential-lab-agent-certificate',
             title: 'Rotate /etc/hcw/labs-agent.pem (sp-labs-agent-lab-hybrid-prod-cus-01)',
-            dueDate: '2028-09-28',
+            dueDate: '2027-03-28',
           },
           { id: 'credential-lab-vault-tls-certificate', title: 'Rotate /etc/vault.d/tls/vault.crt', dueDate: '2027-01-01' },
         ],
@@ -102,7 +102,7 @@ describe('GET cms/credentials', () => {
     expect(byId['lab-agent-certificate'].reminder).toEqual({
       id: 'credential-lab-agent-certificate',
       kind: 'rotate',
-      dueDate: '2028-09-28',
+      dueDate: '2027-03-28',
       leadDays: 30,
       inSheet: true,
     });
@@ -274,7 +274,7 @@ describe('PUT cms/credentials', () => {
     const rows = store.get('admin_config', 'reminders').reminders;
     expect(rows).toHaveLength(8);
     expect(rows.find((r) => r.id === 'credential-lab-agent-certificate')).toMatchObject({
-      dueDate: '2028-09-28',
+      dueDate: '2027-03-28',
       title: expect.stringMatching(/^Rotate /),
     });
     expect(body.credentials.find((c) => c.id === 'lab-agent-certificate').reminder).toMatchObject({

@@ -33,7 +33,7 @@ vault_ui: false
 vault_tls_dir: /etc/vault.d/tls
 vault_tls_cert_file: /etc/vault.d/tls/vault.crt
 vault_tls_key_file: /etc/vault.d/tls/vault.key
-vault_certificate_days: 730
+vault_certificate_days: 180
 vault_certificate_warn_days: 60
 
 # HashiCorp's release signing key. The bytes are pinned by

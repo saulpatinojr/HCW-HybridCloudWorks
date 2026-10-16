@@ -41,6 +41,7 @@ import { createLogger } from './lib/log.js';
 import { ackPath, createAcknowledger, createHoldGate, holdPath } from './lib/maintenance-hold.js';
 import { createPoller } from './lib/poll.js';
 import { createShutdown } from './lib/shutdown.js';
+import { readCertificateExpiry } from './lib/certificate-expiry.js';
 
 const AGENT_VERSION = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8')
@@ -122,6 +123,7 @@ const timers = [];
 async function sendHeartbeat(status = supervisor.stopping ? 'stopping' : 'idle', { timeoutMs } = {}) {
   try {
     const applied = await readAppliedCommit();
+    const certificateExpiresAt = readCertificateExpiry(config.certificatePath);
     await api.heartbeat(
       {
         status,
@@ -129,6 +131,7 @@ async function sendHeartbeat(status = supervisor.stopping ? 'stopping' : 'idle',
         hostname: os.hostname(),
         version: AGENT_VERSION,
         applied,
+        certificateExpiresAt,
       },
       { timeoutMs }
     );

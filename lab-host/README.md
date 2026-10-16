@@ -1388,23 +1388,35 @@ pwsh -NoProfile -File scripts/lab/Register-LabAgent.ps1
 Success is the line `Agent: hcw-labs-agent is active and has logged no
 failure since it started: it is heartbeating.` near the end of the run,
 which then exits 0, and `vps-hostinger-01` Online at
-https://hybridcloudworks.com/admin/labs?tab=agents. The same tab is where the
-agent is revoked: **Deactivate** on its card makes the API refuse it from its
-next call, and **Activate** undoes that; registering it again never does.
+https://hybridcloudworks.com/admin/labs?tab=agents.
+
+### Revoking an agent
+
+Revocation has two layers:
+1. **Immediate site deactivation**: **Deactivate** on the agent's card in
+   https://hybridcloudworks.com/admin/labs?tab=agents makes the Functions API
+   immediately refuse any call from the agent with HTTP 403, and **Activate** undoes
+   that.
+2. **Entra credential deletion**: To permanently revoke the certificate on the app
+   registration itself, list the credentials with
+   `az ad app credential list --id $LABS_AGENT_CLIENT_ID` and remove the key with
+   `az ad app credential delete --id $LABS_AGENT_CLIENT_ID --key-id <KEY_ID>`.
+
 Every result the script can end with, and what each means, is
 [docs/runbooks/labs-host.md](../docs/runbooks/labs-host.md), "The lab
 agent's go-live".
 
 ## Rotating the agent certificate
 
-The generated certificate is valid for 730 days and nothing renews it by
-itself; every run of the play prints a warning once it is within 60 days of
-expiry (`labs_agent_certificate_warn_days`). Rotation is a two-step swap so
-the agent never holds a key whose certificate the app registration has not
-seen. Bash, on the host:
+The generated certificate is valid for 180 days and nothing renews it by
+itself; the daily host timer (`hcw-cert-expiry-check.timer`) logs an expiry warning
+to syslog once it is within 60 days of expiry (`labs_agent_certificate_warn_days`),
+and the agent's card in Admin → Labs reflects the certificate's expiry date.
+Rotation is a two-step swap so the agent never holds a key whose certificate
+the app registration has not seen. Bash, on the host:
 
 ```bash
-sudo sh -c 'umask 077 && openssl req -x509 -newkey rsa:4096 -sha256 -nodes -days 730 -subj "/CN=vps-hostinger-01" -keyout /etc/hcw/labs-agent.next.pem -out /etc/hcw/labs-agent.next.crt && cat /etc/hcw/labs-agent.next.crt >> /etc/hcw/labs-agent.next.pem'
+sudo sh -c 'umask 077 && openssl req -x509 -newkey rsa:4096 -sha256 -nodes -days 180 -subj "/CN=vps-hostinger-01" -keyout /etc/hcw/labs-agent.next.pem -out /etc/hcw/labs-agent.next.crt && cat /etc/hcw/labs-agent.next.crt >> /etc/hcw/labs-agent.next.pem'
 ```
 
 Register the new certificate before the agent uses it, with the same script

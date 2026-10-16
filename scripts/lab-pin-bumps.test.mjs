@@ -12,6 +12,7 @@ import {
   GROUP_VARS_PATH,
   HOST_BUMPERS,
   PYPI,
+  README_PATH,
   SANDBOX_DOCKERFILE_PATH,
   VERSIONS_ENV_PATH,
   aptIndex,
@@ -27,6 +28,7 @@ import {
   planHost,
   planImageBase,
   planImageDigests,
+  planImageTools,
   readAnsibleCoreDeps,
   readEnv,
   readManifest,
@@ -841,6 +843,64 @@ describe('the ansible-core plan (image-base, LAB-13)', () => {
       expect(ansibleNotes(plan)[0].reason).toMatch(/whose own requirements differ/);
       expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
     });
+  });
+});
+
+describe('the lab image tools and providers plan (image-tools)', () => {
+  const envText = real(VERSIONS_ENV_PATH);
+  const readmeText = real(README_PATH);
+  const files = { [VERSIONS_ENV_PATH]: envText, [README_PATH]: readmeText };
+  const env = readEnv(envText);
+
+  it('moves terraform when a newer release exists and its sha256sums matches', async () => {
+    const nextTf = '1.17.0';
+    const tfSha = hex('a');
+    const routes = {
+      'https://releases.hashicorp.com/terraform/index.json': { versions: { [nextTf]: {} } },
+      [`https://releases.hashicorp.com/terraform/${nextTf}/terraform_${nextTf}_SHA256SUMS`]: `${tfSha}  terraform_${nextTf}_linux_amd64.zip\n`,
+    };
+    const plan = await planImageTools({ files, http: makeHttp(fakeFetch(routes)) });
+    const bump = plan.applied.find((b) => b.key === 'terraform');
+    expect(bump).toBeDefined();
+    expect(bump.from).toBe(env.TERRAFORM_VERSION);
+    expect(bump.to).toBe(nextTf);
+    expect(plan.files[VERSIONS_ENV_PATH]).toContain(`TERRAFORM_VERSION=${nextTf}`);
+    expect(plan.files[VERSIONS_ENV_PATH]).toContain(`TERRAFORM_SHA256=${tfSha}`);
+  });
+
+  it('moves a provider in the mirror and updates lab-image/README.md mirror prose', async () => {
+    const nextAzurerm = '5.10.0';
+    const providerSha = hex('b');
+    const routes = {
+      'https://registry.terraform.io/v1/providers/hashicorp/azurerm/versions': {
+        versions: [{ version: env.PROVIDER_AZURERM_VERSION }, { version: nextAzurerm }],
+      },
+      [`https://registry.terraform.io/v1/providers/hashicorp/azurerm/${nextAzurerm}/download/linux/amd64`]: {
+        shasum: providerSha,
+      },
+    };
+    const plan = await planImageTools({ files, http: makeHttp(fakeFetch(routes)) });
+    const bump = plan.applied.find((b) => b.key === 'azurerm');
+    expect(bump).toBeDefined();
+    expect(bump.to).toBe(nextAzurerm);
+    expect(plan.files[VERSIONS_ENV_PATH]).toContain(`PROVIDER_AZURERM_VERSION=${nextAzurerm}`);
+    expect(plan.files[VERSIONS_ENV_PATH]).toContain(`PROVIDER_AZURERM_SHA256=${providerSha}`);
+    expect(plan.files[README_PATH]).toContain(`The mirror holds azurerm ${nextAzurerm} and`);
+  });
+
+  it('records an unreadable provider or checksum as a note without editing the file', async () => {
+    const nextAzurerm = '5.10.0';
+    const routes = {
+      'https://registry.terraform.io/v1/providers/hashicorp/azurerm/versions': {
+        versions: [{ version: nextAzurerm }],
+      },
+      // download endpoint returns 404
+    };
+    const plan = await planImageTools({ files, http: makeHttp(fakeFetch(routes)) });
+    expect(plan.applied.filter((b) => b.key === 'azurerm')).toEqual([]);
+    expect(plan.notes.some((n) => n.label.includes('azurerm') && n.reason.includes('404'))).toBe(true);
+    expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
+    expect(plan.files[README_PATH]).toBe(readmeText);
   });
 });
 

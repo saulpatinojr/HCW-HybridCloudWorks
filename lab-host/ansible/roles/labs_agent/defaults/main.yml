@@ -14,7 +14,7 @@ labs_agent_config_dir: /etc/hcw
 labs_agent_env_file: /etc/hcw/labs-agent.env
 labs_agent_certificate_path: /etc/hcw/labs-agent.pem
 labs_agent_public_certificate_path: /etc/hcw/labs-agent.crt
-labs_agent_certificate_days: 730
+labs_agent_certificate_days: 180
 # Every run checks the certificate's remaining validity and prints a warning
 # inside this window, pointing at the rotation procedure in lab-host/README.md.
 labs_agent_certificate_warn_days: 60

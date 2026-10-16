@@ -36,9 +36,13 @@ app.timer('platformJobSweeper', {
       log: context,
     }).sweep();
     if (requeued.length) context.extraOutputs.set(queueOutput, requeued);
-    context.log(
+    const msg =
       `platformJobSweeper: re-enqueued ${requeued.length} stale job(s), ` +
-        `reaped ${reaped.length} abandoned running job(s)`
-    );
+      `reaped ${reaped.length} abandoned running job(s)`;
+    if (requeued.length > 0 || reaped.length > 0) {
+      context.warn(msg);
+    } else {
+      context.log(msg);
+    }
   },
 });
