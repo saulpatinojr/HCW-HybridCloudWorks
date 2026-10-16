@@ -188,6 +188,9 @@ export const CONTAINER_TTL_SECONDS = Object.freeze({
   // Hardened audit logs: 90 days retention floor
   admin_audit_logs: 7776000, // 90 days
   audits: 7776000, // 90 days
+  // PII retention and data minimization (SEC-4, #973):
+  // 90-day retention floor on ambassador applications and rejected candidate records.
+  ambassador: 7776000, // 90 days
 });
 
 /**
