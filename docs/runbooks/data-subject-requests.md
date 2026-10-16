@@ -40,11 +40,14 @@ curl -sSf "https://api.resend.com/audiences/<AUDIENCE_ID>/contacts/<USER_EMAIL>"
 ```
 
 ### Step 2: Search the `ambassador` container and the files it references
-The hub's records are the owner's, but an editor can type or attach someone else's details (section 1). In Cosmos account `cosmos-site-prod-cus`, database `hcw`, container `ambassador`:
-1. Search every text field of every record (programs, applications and evidence alike, not only the fields section 1 names) for the requester's email address and name.
+The hub's records are the owner's, but an editor can type or attach someone else's details (section 1). The records live in Cosmos account `cosmos-site-prod-cus`, database `hcw`, container `ambassador`.
+
+**Access path.** Local authentication is off on that account, and the only Cosmos data-plane role is the Function App's (`infra/cosmos.tf`, `func_cosmos`). So Cosmos Data Explorer is not a path for a person today. Use the admin Ambassador hub, signed in with the editor role: <https://hybridcloudworks.com/admin/ambassador>. It reads the records through the Function App, and opens attached files from storage account `stsiteprodcus01` (container `speakerevents` unless the entry names another).
+
+1. Open every program, application and evidence record, and read every text field (not only the fields section 1 names) for the requester's email address and name.
 2. Open every file and image the records reference (`files` and `images`, each a URL or a blob path), and check the content itself for the requester. A reference's name says nothing about what the file shows.
 
-Add any match to the export. #1237 replaces this description with a tested query.
+Add any match to the export. #1237 replaces this walk with a tested query an operator can run.
 
 ### Step 3: Query Cosmos DB `content` container (Submissions)
 ```sql
@@ -71,7 +74,12 @@ curl -X DELETE "https://api.resend.com/audiences/<AUDIENCE_ID>/contacts/<CONTACT
 ```
 
 ### Step 2: Redact matches in the `ambassador` container
-For each match Step 2 of section 3 found, remove the requester's details. In a text field, delete the requester's text. For a file or image that shows the requester, delete its stored blob and its entry in `files` or `images`. The record itself is the owner's and stays: never delete the document.
+For each match Step 2 of section 3 found, remove the requester's details, in the same admin hub. The record itself is the owner's and stays: never delete the document.
+- **In a text field:** delete the requester's text.
+- **A file or image stored in the estate** (a blob path): remove its entry in `files` or `images` in the hub, then delete the blob itself. The hub's routes only read blobs, so removing the entry leaves the blob in place. Delete it in the Azure portal's Storage browser for `stsiteprodcus01` (resource group `rg-stor-site-prod-cus`), in the entry's container (`speakerevents` by default) at the entry's `path`. That takes a Storage Blob Data Contributor role on the account.
+- **A file or image that is only a URL elsewhere:** remove the entry. That does not erase the target, which the estate does not host. Tell the requester where it is hosted, so they can ask that host.
+
+Hub edits go through the Function App, which sends the record's ETag (`functions/src/lib/ambassador/applications.js`, `steps.js`), so an edit racing another change is refused rather than lost. #1237 adds the tested, resumable procedure and its final verification.
 
 > **Under review (#1237):** the `content` queries (Step 3 of section 3, and Step 3 below) filter on `submitterEmail` and `authorEmail`, which appear nowhere in `functions/src` or `frontend/src`, and neither step says where to run them. Do not rely on them until #1237 confirms the fields and replaces them with tested queries.
 
