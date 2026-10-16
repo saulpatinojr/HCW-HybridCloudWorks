@@ -371,12 +371,19 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 ## Break-glass
 
 Root has no key (its `authorized_keys` is kept empty) and sshd lets in
-`hcwadmin` alone, by key. When SSH is not working, the way in is hPanel's
-**Web Console** (https://hpanel.hostinger.com/vps, **Manage** on the server,
-then **Web Console**), signed in as root with root's password. It is the
-VPS's console, so it does not go through sshd, `AllowUsers` or the keys
-above, and nothing here changes it. `docs/runbooks/labs-host.md`, "Connect
-from a desktop", has the steps.
+`hcwadmin` alone, by key. When SSH is not working, the intended way in is
+hPanel's **Web Console** (https://hpanel.hostinger.com/vps, **Manage** on
+the server, then **Web Console**), signed in as root with root's password.
+
+**Unverified:** whether that console goes through sshd. Hostinger's page
+says it "functions exactly like a standard SSH connection"; if it is an SSH
+login as root, this role's settings refuse it and the break-glass is gone.
+Root login over SSH has been off since 2026-09-26, the journal shows no SSH
+login as root and no console login since, and a getty runs on `tty1` and
+`ttyS0`, which a VNC or serial console would use, but none of that settles
+it. So the owner signs in to the Web Console before and after the first run
+with #953, keeping an SSH session open through the run
+(`docs/runbooks/labs-host.md`, "The first `bootstrap.sh` run with #953").
 
 ## Accepted risk: passwordless sudo
 

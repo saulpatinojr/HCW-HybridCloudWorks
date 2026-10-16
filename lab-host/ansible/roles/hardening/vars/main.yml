@@ -5,8 +5,9 @@
 # and stubs with -e, which is the one override they get.
 
 # Root's authorized_keys. Root login is off, so the role keeps this file
-# empty (#953); break-glass is hPanel's Web Console with root's password,
-# which does not go through sshd.
+# empty (#953); break-glass is meant to be hPanel's Web Console with root's
+# password, and whether that goes through sshd is unverified (README,
+# "Break-glass").
 hardening_root_authorized_keys_path: /root/.ssh/authorized_keys
 
 # One public key line as hardening_admin_authorized_keys must hold it: a key

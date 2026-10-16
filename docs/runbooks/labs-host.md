@@ -213,12 +213,57 @@ SSH from a desktop is the only shell. When SSH is not working, hPanel's
 **Web Console** is the break-glass: https://hpanel.hostinger.com/vps,
 **Manage** on the server, then **Web Console** on its overview. It usually
 signs in by itself; when it asks, Hostinger's instructions are `root` and
-the root password. It is the server's console, not an SSH login, so
-`AllowUsers`, the pinned key and root's empty `authorized_keys` do not
-apply to it (#953).
+the root password.
 
-After the first `bootstrap.sh` run with #953, this shows what sshd now
-applies. PowerShell:
+**Whether the Web Console goes through sshd is unverified (#953).**
+Hostinger's own page says the session "functions exactly like a standard
+SSH connection"
+([How to use the Hostinger VPS Web Console](https://www.hostinger.com/support/how-to-use-the-web-console-in-hostinger/)).
+If it is an SSH login as root, `PermitRootLogin no`, `AllowUsers hcwadmin`,
+publickey only and root's empty `authorized_keys` would all refuse it, and
+the break-glass would be gone. What is known (read on the host
+2026-10-16): root login over SSH has been off since 2026-09-26, the journal
+shows no SSH login as root and no console login since then, and a getty
+runs on `tty1` and on the serial port `ttyS0`, which a VNC or serial
+console would use. None of that proves which one hPanel uses, so the owner
+checks it before and after the first run below.
+
+### The first `bootstrap.sh` run with #953
+
+1. **Before the run**, sign in to the Web Console:
+   https://hpanel.hostinger.com/vps, **Manage** on the server, then
+   **Web Console**. Success is a `root@` prompt. If it does not get there,
+   stop and say so on #953 before running anything: SSH would then be the
+   only way in, and this change should not be applied until the
+   break-glass is settled.
+2. Open an SSH session and keep it open until step 4, PowerShell:
+
+   ```powershell
+   ssh hcw-lab
+   ```
+
+3. In that session, run the playbook, bash, on the host. Success is a play
+   recap with `failed=0`; leave the session open afterwards:
+
+   ```bash
+   sudo /opt/hcw-src/lab-host/bootstrap.sh
+   ```
+
+4. From a second PowerShell window, check that a new SSH login still works.
+   Success prints the server's host name:
+
+   ```powershell
+   ssh hcw-lab hostname
+   ```
+
+   If it fails, the open session from step 2 is still root through `sudo`,
+   and `sudo journalctl -u ssh.service -n 20` there says why.
+5. Sign in to the Web Console again. Success is the same `root@` prompt. If
+   it stopped working after the run, it was going through sshd: SSH still
+   works (step 4), so nothing is locked out, but say so on #953, because
+   the break-glass has to be settled before port 22 closes.
+
+Then this shows what sshd now applies. PowerShell:
 
 ```powershell
 ssh hcw-lab 'sudo -n sshd -T | grep -e ^allowusers -e ^authenticationmethods'

@@ -1,8 +1,9 @@
 /**
  * SSH on the lab host (#953, owner decisions 2026-10-16): one account,
  * hcwadmin, by key only, and only the keys group_vars pins, which is the
- * owner's workstation key. Root keeps no key at all; break-glass is hPanel's
- * Web Console. This holds the files that make that true to each other:
+ * owner's workstation key. Root keeps no key at all; break-glass is meant
+ * to be hPanel's Web Console, which the owner verifies by hand (runbook).
+ * This holds the files that make that true to each other:
  *
  * - the sshd drop-in's directives;
  * - the pinned key in group_vars, checked against its fingerprint, which is
