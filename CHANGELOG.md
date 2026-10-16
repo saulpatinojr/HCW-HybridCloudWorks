@@ -1120,6 +1120,19 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Lab host: an alert on an unexpected SSH login (#953, LAB-7)**.
+  `alert-lab-ssh-login` (severity 1) pages when sshd accepts a login that is
+  not `hcwadmin` by public key with the pinned key
+  (`lab_ssh_admin_key_fingerprints`). Once the change that closes port 22
+  sets `lab_ssh_loopback_only`, it also pages on any login that did not
+  arrive through Arc SSH. It parses OpenSSH 10.2's `Accepted` line, drops
+  VERBOSE's `Accepted key`/`Accepted certificate` follow-ups, and pages on a
+  line it cannot parse. The rule is stateless and unmuted (ADR 0022 decision
+  6): rows are chosen by ingestion time over 20 minutes and evaluated every
+  15, inside a one-day window, so no login is missed (even one ingested late
+  after an agent backlog) and one may mail twice. A test keeps the
+  fingerprint variable equal to the key pinned in `group_vars`, and
+  `Invoke-AlertFireTest.ps1 -Test lab-ssh-login` fires it.
 - **Scanner triage: a CodeQL section** (SEC-5, #974). The triage standard
   covered Qlty, zizmor, checkov and Trivy but not CodeQL dismissals, of
   which 151 exist: 112 under the vendored harness, dismissed on 2026-08-21
