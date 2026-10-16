@@ -1,0 +1,90 @@
+---
+# The policy itself. Not meant to be overridden, which is why it is vars and
+# not defaults: what workspaces and the host's containers may reach is an
+# owner decision (2026-10-16; #954, #958), changed in a reviewed pull
+# request, never per run. scripts/lab-host-host-firewall.test.mjs holds the
+# chain names, the ports and every range below to that decision.
+
+# The chains. The script refuses to declare any chain whose name does not
+# start with HCW-, so the files can never flush ufw's, Docker's or a built-in.
+# HCW-REFUSE is where the others send what they refuse: a TCP reset for TCP
+# and port-unreachable for the rest, so a refused connection fails at once. A
+# reset is needed for IPv6 in particular: an ICMPv6 port-unreachable that
+# OUTPUT sends back never reaches the local TCP socket, which then waits out
+# its whole connect timeout (measured in tests/hcw-host-firewall.test.sh).
+host_firewall_sandbox_chain: HCW-SANDBOX-OUT
+host_firewall_bridge_chain: HCW-BRIDGE-IN
+host_firewall_refuse_chain: HCW-REFUSE
+host_firewall_control_chain: HCW-CONTROL-OUT
+
+# Coder's internal network (lab-host/coder/docker-compose.yml), which Coder
+# reaches across its own bridge. The host's own new connections to it are
+# refused; nothing on the host opens one (read on the host 2026-10-16). The
+# network is named here; its subnet is read at play time, from the network as
+# Docker has it and from the Compose file the coder role deploys (for a host
+# where coder, which runs later, has not created it yet), and is never
+# written down.
+host_firewall_control_network: coder-control
+host_firewall_control_compose_file: "{{ role_path }}/../../../coder/docker-compose.yml"
+
+host_firewall_config_dir: /etc/hcw/firewall
+# A copy of the three files, made only once the live tables have been read
+# back equal to them: the policy the rescue in tasks/present.yml measures the
+# live tables against. Inside the config directory, so absent removes it too.
+host_firewall_verified_dir: /etc/hcw/firewall/verified
+host_firewall_script: /usr/local/libexec/hcw-host-firewall
+host_firewall_unit: hcw-host-firewall
+
+# The sandbox may open TCP to these ports on any public address.
+host_firewall_sandbox_tcp_ports: [80, 443]
+# And to these on any address of the host itself but its loopback: Caddy,
+# which serves Coder's access URL (the workspace agent's way home) and the
+# guided labs' names, and is the host's only listener on *:443. Matched by
+# address type, not by address, so a change of the host's IP needs no run.
+host_firewall_own_tcp_ports: [443]
+
+# The host daemon's bridges: docker0 and every bridge Docker names br-<id>,
+# which takes in the add-ons' br-hcw-addons and any network created later.
+host_firewall_bridge_interfaces: [docker0, br-+]
+# What a container on those bridges may open to the host itself. Caddy, for a
+# container that reaches a lab name (Coder reaches its own access URL).
+host_firewall_bridge_tcp_ports: [80, 443]
+
+# Per address family. `resolvers` is where the sandbox's DNS goes: the
+# daemon and the embedded resolver of every workspace network forward to the
+# nameservers in the host's /etc/resolv.conf, which is systemd-resolved's
+# stub (the role checks the file names exactly these). `loopback` is left out
+# of the host's own HTTPS. `reserved` is refused to the sandbox after the
+# resolver and the host's own HTTPS are allowed, together with every other
+# address of the host itself (addrtype LOCAL). `neighbour_discovery` is the
+# ICMPv6 types a container on a bridge needs to find the host on the link.
+host_firewall_families:
+  ipv4:
+    version: 4
+    host_prefix: 32
+    loopback: 127.0.0.0/8
+    reject_with: icmp-port-unreachable
+    resolvers: [127.0.0.53]
+    reserved:
+      - 127.0.0.0/8
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 100.64.0.0/10
+      - 169.254.0.0/16
+      - 0.0.0.0/8
+      - 224.0.0.0/4
+      - 240.0.0.0/4
+    neighbour_discovery: []
+  ipv6:
+    version: 6
+    host_prefix: 128
+    loopback: ::1/128
+    reject_with: icmp6-port-unreachable
+    resolvers: []
+    reserved:
+      - ::1/128
+      - fc00::/7
+      - fe80::/10
+      - ff00::/8
+    neighbour_discovery: [135, 136]

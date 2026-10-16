@@ -1,0 +1,345 @@
+---
+# HCW-SANDBOX-OUT for what the sandbox daemon's user sends, HCW-BRIDGE-IN for
+# what containers on the host daemon's bridges send to the host, and
+# HCW-CONTROL-OUT for what the host sends to Coder's internal network.
+#
+# Fail closed. coder_sandbox, earlier in the play, has already started the
+# sandbox user's manager, so the boot unit and the drop-in that makes that
+# manager require it go in first: from then on the manager cannot start
+# again (at boot, or when a later run starts it) unless the firewall loads.
+# Everything after that runs in one block, and if any of it fails while no
+# loaded firewall governs the sandbox, the rescue stops the manager, which
+# stops the workspaces, and fails the play. In check mode nothing is stopped.
+
+- name: Read the sandbox daemon's user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ host_firewall_sandbox_user }}"
+    fail_key: false
+
+- name: Refuse to write the firewall before the sandbox daemon's user exists
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['getent_passwd'][host_firewall_sandbox_user] is not none
+    fail_msg: >-
+      The user {{ host_firewall_sandbox_user }} does not exist, so the jump that governs what the
+      sandbox daemon sends has nothing to match. The coder_sandbox role creates it: run the whole
+      play (sudo /opt/hcw-src/lab-host/bootstrap.sh), or add coder_sandbox to the tags.
+    quiet: true
+
+- name: Record the sandbox user's uid, for the user manager's drop-in
+  ansible.builtin.set_fact:
+    host_firewall_sandbox_uid: "{{ ansible_facts['getent_passwd'][host_firewall_sandbox_user][1] }}"
+
+- name: Load the host firewall, and stop the sandbox if it cannot be loaded
+  block:
+    # The unit and the drop-in first. Adding Requires= to a manager that is
+    # already running changes nothing about it now (systemd only reads it at
+    # the next start), so this is safe on a host whose sandbox is up.
+    - name: Install the boot unit that loads the firewall
+      ansible.builtin.template:
+        src: hcw-host-firewall.service.j2
+        dest: "/etc/systemd/system/{{ host_firewall_unit }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      register: host_firewall_unit_file
+
+    # On the sandbox user's own manager, by the uid read above: a drop-in on
+    # user@.service would make every login's manager wait on the firewall.
+    - name: Create the drop-in directory of the sandbox user's manager
+      ansible.builtin.file:
+        path: "/etc/systemd/system/user@{{ host_firewall_sandbox_uid }}.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Make the sandbox user's manager require the firewall
+      ansible.builtin.template:
+        src: user-manager-requires-firewall.conf.j2
+        dest: "/etc/systemd/system/user@{{ host_firewall_sandbox_uid }}.service.d/{{ host_firewall_unit }}.conf"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # A drop-in left on another uid's manager (the user recreated with a new
+    # uid) would hold that manager to the firewall for nothing.
+    - name: Find drop-ins of this role on other user managers
+      ansible.builtin.find:
+        paths: /etc/systemd/system
+        recurse: true
+        depth: 2
+        patterns: "{{ host_firewall_unit }}.conf"
+      register: host_firewall_dropins_found
+
+    - name: Remove drop-ins of this role from other user managers
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ host_firewall_dropins_found.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: item.path != '/etc/systemd/system/user@' ~ host_firewall_sandbox_uid ~ '.service.d/' ~ host_firewall_unit ~ '.conf'
+
+    # Here, in order, not in a handler: the requirement must hold before the
+    # load below can fail. A reload alone reports no change.
+    - name: Reload systemd, so the requirement holds from the manager's next start
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    # The sandbox daemon and the embedded resolver of every workspace network
+    # forward to the nameservers in this file (README.md, "DNS through the
+    # stub"). The chain allows DNS to those named in vars/main.yml
+    # only, so a host whose file names another would leave every workspace
+    # unable to resolve a name; that is said here rather than found by a
+    # learner.
+    - name: Read the host's resolver configuration
+      ansible.builtin.slurp:
+        src: /etc/resolv.conf
+      register: host_firewall_resolv_conf
+
+    - name: Refuse a host whose resolver is not the one the sandbox may reach
+      ansible.builtin.assert:
+        that:
+          - host_firewall_nameservers | length > 0
+          - host_firewall_nameservers | difference(host_firewall_allowed_resolvers) | length == 0
+        fail_msg: >-
+          /etc/resolv.conf names {{ host_firewall_nameservers | join(', ') or 'no nameserver' }}, and the
+          sandbox may send DNS to {{ host_firewall_allowed_resolvers | join(', ') }} only (systemd-resolved's
+          stub). Workspaces would not resolve any name. Point /etc/resolv.conf back at the stub
+          (sudo ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf) and re-run
+          bootstrap.sh, or change the resolvers in roles/host_firewall/vars/main.yml in a reviewed change.
+        quiet: true
+      vars:
+        host_firewall_nameservers: >-
+          {{ host_firewall_resolv_conf.content | b64decode
+             | regex_findall('(?m)^\s*nameserver\s+(\S+)') | unique }}
+        host_firewall_allowed_resolvers: >-
+          {{ host_firewall_families.values() | map(attribute='resolvers') | flatten }}
+
+    # Coder's internal network (vars/main.yml): read, never written down. As
+    # Docker has it now, and as the Compose file the coder role deploys
+    # declares it, because coder runs after this role and a new host has no
+    # network yet. Both, so a subnet that moves is covered on the run that
+    # moves it.
+    - name: Read Coder's internal network as Docker has it
+      community.docker.docker_network_info:
+        name: "{{ host_firewall_control_network }}"
+      register: host_firewall_control_network_info
+
+    - name: Collect the internal network's subnets, from Docker and from the Compose file
+      ansible.builtin.set_fact:
+        host_firewall_control_subnets:
+          ipv4: "{{ host_firewall_control_all | reject('search', ':') | list }}"
+          ipv6: "{{ host_firewall_control_all | select('search', ':') | list }}"
+      vars:
+        host_firewall_control_live: >-
+          {{ (((host_firewall_control_network_info.network or {}).get('IPAM') or {}).get('Config') or [])
+             | selectattr('Subnet', 'defined') | map(attribute='Subnet') | list }}
+        host_firewall_control_compose_networks: >-
+          {{ (lookup('ansible.builtin.file', host_firewall_control_compose_file) | from_yaml).get('networks') or {} }}
+        host_firewall_control_declared: >-
+          {{ (((host_firewall_control_compose_networks.get(host_firewall_control_network) or {}).get('ipam') or {}).get('config') or [])
+             | selectattr('subnet', 'defined') | map(attribute='subnet') | list }}
+        host_firewall_control_all: "{{ (host_firewall_control_live + host_firewall_control_declared) | unique }}"
+
+    - name: Refuse to write the firewall without the internal network's subnet
+      ansible.builtin.assert:
+        that:
+          - host_firewall_control_subnets['ipv4'] | length > 0
+          - host_firewall_control_subnets['ipv4'] | reject('match', '^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$') | list | length == 0
+          - host_firewall_control_subnets['ipv6'] | reject('match', '^[0-9a-f:]+/[0-9]{1,3}$') | list | length == 0
+        fail_msg: >-
+          Found no usable subnet for the Docker network {{ host_firewall_control_network }} (found
+          {{ host_firewall_control_subnets }}), neither on the host nor in
+          {{ host_firewall_control_compose_file }}. Check that the Compose file still names that network
+          with an ipam subnet, and roles/host_firewall/vars/main.yml, host_firewall_control_network.
+        quiet: true
+
+    - name: Create the firewall's directory
+      ansible.builtin.file:
+        path: "{{ host_firewall_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Render each address family's chains
+      ansible.builtin.template:
+        src: hcw.rules.j2
+        dest: "{{ host_firewall_config_dir }}/hcw.v{{ host_firewall_families[host_firewall_family_name]['version'] }}.rules"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ host_firewall_families.keys() | sort }}"
+      loop_control:
+        loop_var: host_firewall_family_name
+
+    - name: Render the jumps into the chains
+      ansible.builtin.template:
+        src: hcw.jumps.j2
+        dest: "{{ host_firewall_config_dir }}/hcw.jumps"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # Other roles install their helpers here too; this one may be the first
+    # to run on a host (bootstrap.sh --tags host_firewall), so it makes sure.
+    - name: Create the directory the helper goes in
+      ansible.builtin.file:
+        path: "{{ host_firewall_script | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install hcw-host-firewall, which loads the chains and keeps each jump first, once
+      ansible.builtin.copy:
+        src: hcw-host-firewall
+        dest: "{{ host_firewall_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    # One iptables-restore transaction per family, changing only what differs
+    # from the files (files/hcw-host-firewall, tested against real iptables
+    # in tests/hcw-host-firewall.test.sh). It prints a line per change and
+    # nothing when the live table already matches.
+    - name: Load the chains and put the jumps first
+      ansible.builtin.command:
+        argv:
+          - "{{ host_firewall_script }}"
+          - apply
+          - "{{ host_firewall_config_dir }}"
+      register: host_firewall_apply
+      changed_when: host_firewall_apply.stdout_lines | length > 0
+      when: not ansible_check_mode
+
+    # The read-back. In check mode nothing was loaded, so a difference is
+    # what this run would change (the nightly drift check reads it that way);
+    # in a real run the apply above has just converged, and a difference now
+    # fails the play.
+    - name: Read the live chains and jumps back against the files
+      ansible.builtin.command:
+        argv:
+          - "{{ host_firewall_script }}"
+          - verify
+          - "{{ host_firewall_config_dir }}"
+      register: host_firewall_verify
+      changed_when: ansible_check_mode and host_firewall_verify.rc != 0
+      failed_when: false
+      check_mode: false
+
+    - name: Refuse a host whose live firewall differs from what this run loaded
+      ansible.builtin.assert:
+        that:
+          - host_firewall_verify.rc == 0
+        fail_msg: >-
+          The live chains or jumps differ from {{ host_firewall_config_dir }} right after loading them:
+          {{ (host_firewall_verify.stdout_lines + host_firewall_verify.stderr_lines) | join(' | ') }}.
+          Something else rewrote the filter table during the run, or a rule is not in the form
+          iptables -S prints. Read sudo {{ host_firewall_script }} verify on the host
+          (docs/runbooks/labs-host.md, "Host firewall for the sandbox and bridges").
+        quiet: true
+      when: not ansible_check_mode
+
+    # The policy the rescue below measures the live tables against: these
+    # files, recorded only now that the live tables have been read back equal
+    # to them. A later run that fails keeps the sandbox running only while the
+    # live tables still equal this record, rule for rule.
+    - name: Create the directory of the last policy verified live
+      ansible.builtin.file:
+        path: "{{ host_firewall_verified_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: not ansible_check_mode
+
+    - name: Record the files as the last policy verified live
+      ansible.builtin.copy:
+        src: "{{ host_firewall_config_dir }}/{{ item }}"
+        dest: "{{ host_firewall_verified_dir }}/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [hcw.v4.rules, hcw.v6.rules, hcw.jumps]
+      when: not ansible_check_mode
+
+    # Started, never restarted: the rules are already loaded above, and a
+    # restart would stop the sandbox user's manager with it (the drop-in's
+    # Requires=). In check mode on a host that has no unit yet there is
+    # nothing to enable; the unit task above already reports the change.
+    - name: Enable the boot unit
+      ansible.builtin.systemd_service:
+        name: "{{ host_firewall_unit }}.service"
+        enabled: true
+        state: started
+      when: not (ansible_check_mode and host_firewall_unit_file is changed)
+
+  rescue:
+    # Whether a firewall still governs the sandbox: every HCW-* chain and
+    # jump, in both families, exactly equal to the last policy this role
+    # verified live (recorded above), as the helper's own verify reads it.
+    # Not the shape alone: a chain weakened since (an early RETURN, a refusal
+    # chain that no longer refuses) differs from that record, and so does a
+    # host where no policy was ever verified or the helper was never
+    # installed. Any of those stops the sandbox. A load iptables refuses
+    # changes nothing, so a run that fails after a good one, on a host nobody
+    # has touched, leaves the record and the tables equal.
+    - name: Read the live chains and jumps against the last policy verified live
+      ansible.builtin.command:
+        argv:
+          - "{{ host_firewall_script }}"
+          - verify
+          - "{{ host_firewall_verified_dir }}"
+      register: host_firewall_rescue_verify
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Decide whether a loaded firewall still governs the sandbox
+      ansible.builtin.set_fact:
+        host_firewall_rescue_governed: "{{ (host_firewall_rescue_verify.rc | default(1)) == 0 }}"
+
+    - name: Stop the sandbox user's manager, which no loaded firewall governs
+      ansible.builtin.systemd_service:
+        name: "user@{{ host_firewall_sandbox_uid }}.service"
+        state: stopped
+      when:
+        - not ansible_check_mode
+        - not host_firewall_rescue_governed | bool
+
+    - name: Fail the play, saying what the firewall's failure left behind
+      ansible.builtin.fail:
+        msg: >-
+          The host firewall did not load: {{ ansible_failed_task.name }} failed
+          ({{ ansible_failed_result.msg | default('') }}{{ ' ' ~ (ansible_failed_result.stderr_lines | default([]) | join(' | ')) }}).
+          {% if ansible_check_mode %}Check mode: nothing was stopped.
+          {% elif host_firewall_rescue_governed | bool %}The live rules still equal the last policy verified
+          live ({{ host_firewall_verified_dir }}), so the sandbox keeps running under them. Put right what
+          failed and re-run bootstrap.sh.
+          {% else %}The live rules do not equal a policy this role verified
+          ({{ (host_firewall_rescue_verify.stdout_lines | default([]) + host_firewall_rescue_verify.stderr_lines | default([])) | join(' | ') }}),
+          so no firewall can be shown to govern the sandbox. Its user manager
+          (user@{{ host_firewall_sandbox_uid }}.service) is stopped, and workspaces do not run until the
+          firewall loads. Put right what failed, run
+          sudo /opt/hcw-src/lab-host/bootstrap.sh --tags host_firewall, then start the manager
+          (docs/runbooks/labs-host.md, "Putting it back").{% endif %}
+
+- name: Say what the firewall allows
+  ansible.builtin.debug:
+    msg: >-
+      {{ host_firewall_sandbox_chain }} governs {{ host_firewall_sandbox_user }} (the sandbox daemon and
+      its workspaces): DNS to {{ host_firewall_families['ipv4']['resolvers'] | join(', ') }}, TCP
+      {{ host_firewall_own_tcp_ports | join(', ') }} to this host's own non-loopback addresses, TCP
+      {{ host_firewall_sandbox_tcp_ports | join(', ') }} to public addresses; the rest of the host and
+      every private and reserved range refused. {{ host_firewall_bridge_chain }} lets containers on
+      {{ host_firewall_bridge_interfaces | join(', ') }} open TCP {{ host_firewall_bridge_tcp_ports | join(', ') }}
+      to the host and refuses the rest. {{ host_firewall_control_chain }} refuses the host's own new
+      connections to {{ host_firewall_control_network }}
+      ({{ (host_firewall_control_subnets['ipv4'] + host_firewall_control_subnets['ipv6']) | join(', ') }}).
+      Read it with sudo {{ host_firewall_script }} verify and
+      sudo iptables -L {{ host_firewall_sandbox_chain }} -v -n (docs/runbooks/labs-host.md).

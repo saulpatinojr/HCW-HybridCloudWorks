@@ -1,0 +1,63 @@
+{% set family = host_firewall_families[host_firewall_family_name] %}
+{% set sandbox = host_firewall_sandbox_chain %}
+{% set bridge = host_firewall_bridge_chain %}
+{% set refuse = host_firewall_refuse_chain %}
+{% set control = host_firewall_control_chain %}
+{% set control_subnets = host_firewall_control_subnets[host_firewall_family_name] %}
+# {{ ansible_managed }}
+# The host firewall's own chains, IPv{{ family.version }} (roles/host_firewall; #954, #958).
+# iptables-restore --noflush input: each chain line flushes that chain, so loading this file
+# replaces the chains' contents in one transaction and touches nothing else. The rules are
+# written as `iptables -S` prints them, because hcw-host-firewall compares the two line by line.
+# The jumps into the chains are in hcw.jumps beside this file. Load and check with
+#   sudo {{ host_firewall_script }} apply
+#   sudo {{ host_firewall_script }} verify
+*filter
+:{{ bridge }} - [0:0]
+:{{ control }} - [0:0]
+:{{ refuse }} - [0:0]
+:{{ sandbox }} - [0:0]
+#
+# {{ refuse }}: every refusal of the chains below ends here, so it fails at once.
+-A {{ refuse }} -p tcp -m comment --comment "hcw: refused with a reset" -j REJECT --reject-with tcp-reset
+-A {{ refuse }} -m comment --comment "hcw: refused as unreachable" -j REJECT --reject-with {{ family.reject_with }}
+#
+# {{ sandbox }}: every packet a socket of {{ host_firewall_sandbox_user }} sends (the sandbox
+# Docker daemon and its workspaces). The destinations the sandbox may not reach are refused
+# before replies are let through, so a flow to one of them that was open when this file loaded
+# is cut too. Allowed traffic returns to OUTPUT, where ufw still decides.
+{% for resolver in family.resolvers %}
+{% for proto in ['udp', 'tcp'] %}
+-A {{ sandbox }} -d {{ resolver }}/{{ family.host_prefix }} -p {{ proto }} -m {{ proto }} --dport 53 -m comment --comment "hcw: the host resolver" -j RETURN
+{% endfor %}
+{% endfor %}
+{% for port in host_firewall_own_tcp_ports %}
+-A {{ sandbox }} ! -d {{ family.loopback }} -p tcp -m tcp --dport {{ port }} -m addrtype --dst-type LOCAL -m comment --comment "hcw: https to this host" -j RETURN
+{% endfor %}
+-A {{ sandbox }} -m addrtype --dst-type LOCAL -m comment --comment "hcw: host-local, refused" -j {{ refuse }}
+{% for range in family.reserved %}
+-A {{ sandbox }} -d {{ range }} -m comment --comment "hcw: private or reserved, refused" -j {{ refuse }}
+{% endfor %}
+-A {{ sandbox }} -m conntrack --ctstate RELATED,ESTABLISHED --ctdir REPLY -m comment --comment "hcw: replies" -j RETURN
+-A {{ sandbox }} -p tcp -m multiport --dports {{ host_firewall_sandbox_tcp_ports | join(',') }} -m comment --comment "hcw: web egress" -j RETURN
+-A {{ sandbox }} -m comment --comment "hcw: refused" -j {{ refuse }}
+#
+# {{ bridge }}: every packet that reaches the host itself from a container on the host
+# daemon's bridges ({{ host_firewall_bridge_interfaces | join(', ') }}). Allowed traffic returns to INPUT,
+# where ufw still decides.
+-A {{ bridge }} -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "hcw: replies to host flows" -j RETURN
+{% for type in family.neighbour_discovery %}
+-A {{ bridge }} -p ipv6-icmp -m icmp6 --icmpv6-type {{ type }} -m hl --hl-eq 255 -m comment --comment "hcw: neighbour discovery" -j RETURN
+{% endfor %}
+-A {{ bridge }} -p tcp -m multiport --dports {{ host_firewall_bridge_tcp_ports | join(',') }} -m comment --comment "hcw: http and https to this host" -j RETURN
+-A {{ bridge }} -m comment --comment "hcw: refused" -j {{ refuse }}
+#
+# {{ control }}: every packet the host itself sends to Coder's internal network
+# ({{ host_firewall_control_network }}), which Coder reaches across its own bridge. The host's
+# answers to connections opened from that network go (the reply direction only); a connection
+# the host opens to it is refused, one already open included.
+{% for subnet in control_subnets %}
+-A {{ control }} -d {{ subnet }} -m conntrack --ctstate RELATED,ESTABLISHED --ctdir REPLY -m comment --comment "hcw: replies on the internal network" -j RETURN
+-A {{ control }} -d {{ subnet }} -m comment --comment "hcw: internal network, refused" -j {{ refuse }}
+{% endfor %}
+COMMIT

@@ -1,0 +1,48 @@
+---
+argument_specs:
+  main:
+    short_description: Limit what the sandbox daemon's user and the host daemon's containers may reach on and from the host
+    description:
+      - Renders /etc/hcw/firewall/hcw.v4.rules and hcw.v6.rules, iptables-restore --noflush
+        input that declares and fills the chains, and hcw.jumps, the jumps into them.
+        HCW-SANDBOX-OUT, jumped to first in OUTPUT for every packet the sandbox user's sockets
+        send, lets that user reach DNS on systemd-resolved's stub, TCP 443 on the host's own
+        non-loopback addresses, and TCP 80 and 443 anywhere public; the rest of the host and every
+        private, link-local, multicast and reserved range are refused before replies are let
+        through, so a flow open when the rules load is cut too. HCW-BRIDGE-IN, jumped to first in
+        INPUT for docker0 and every br-* bridge, lets containers on the host daemon open TCP 80 and
+        443 to the host and answer the host's own connections, and refuses the rest.
+        HCW-CONTROL-OUT, jumped to from OUTPUT, refuses the host's own new connections to Coder's
+        internal network (coder-control) and lets the host answer connections opened from it; its
+        subnet is read from Docker and from the Compose file the coder role deploys at play time.
+      - Installs /usr/local/libexec/hcw-host-firewall, runs its apply (one transaction per address
+        family, changing only what differs, and keeping each jump first and single), then its verify,
+        and fails the play when the live chains or jumps differ from the files.
+      - Installs hcw-host-firewall.service, which applies the files at boot after ufw and before
+        Docker and reports a failure to hcw-unit-failed@, and a drop-in that makes the sandbox user's
+        manager require it, so the sandbox daemon never starts without the rules.
+      - Refuses to run when the sandbox user does not exist, when /etc/resolv.conf names a
+        nameserver other than the ones the rules allow, or when no subnet is found for Coder's
+        internal network.
+      - With host_firewall_state absent, removes the drop-in, the unit, the jumps, the chains, the
+        helper and the files, in that order.
+      - Never touches ufw's rules files, Docker's chains or DOCKER-USER.
+    author: HybridCloudWorks
+    options:
+      host_firewall_state:
+        type: str
+        required: false
+        default: present
+        choices:
+          - present
+          - absent
+        description: >-
+          present loads the chains and wires them into boot; absent removes all of it, the drop-in on
+          the sandbox user's manager first.
+      host_firewall_sandbox_user:
+        type: str
+        required: false
+        default: hcw-coder-docker
+        description: >-
+          The user the sandbox Docker daemon runs as; the coder_sandbox role's coder_sandbox_user.
+          The OUTPUT jump matches that user's sockets by name.

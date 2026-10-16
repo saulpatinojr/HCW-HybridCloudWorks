@@ -225,6 +225,12 @@ coder_docker_proxy_image_digest: sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b33
 # server asks for is privileged inside that user's namespace only. Tied to
 # coder_enabled, so turning Coder off stops that daemon too.
 coder_sandbox_enabled: "{{ coder_enabled }}"
+# The user that daemon runs as, set once here. host_firewall's OUTPUT jump
+# matches that user's sockets, so it takes the same name by construction:
+# set apart, the jump would govern a user the daemon does not run as, and
+# the account check in host_firewall would still pass (#954 review).
+coder_sandbox_user: hcw-coder-docker
+host_firewall_sandbox_user: "{{ coder_sandbox_user }}"
 
 # vps-agent runs host-native as a systemd service (ADR 0032) from a checkout of
 # this repository. Its commit is the one this playbook runs from: the lookup

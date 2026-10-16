@@ -567,6 +567,26 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: sudo bash roles/addons/tests/hcw-addons-egress-clear.test.sh
 
+      # /usr/local/libexec/hcw-host-firewall loads the host_firewall role's
+      # chains (what the sandbox daemon's user may reach, what containers on
+      # the host's bridges may open to the host, what the host may open to
+      # Coder's internal network) and keeps each jump first.
+      # The role's templates are rendered with this job's Jinja2 and loaded
+      # into real iptables in a scratch network namespace: idempotent loads,
+      # --noflush replacing a chain, a refused transaction changing nothing,
+      # jumps put back first and single, the verdict for each destination
+      # class read from the counters with real packets, and ufw's own start,
+      # reload and restart leaving the chains in place. ufw is installed (not
+      # enabled: the package leaves it off) and HCW_REQUIRE_UFW=1 makes its
+      # proof fail rather than skip. As root, for the namespace; env keeps
+      # this job's Python (Jinja2) on PATH past sudo.
+      - name: hcw-host-firewall test
+        if: steps.changes.outputs.relevant == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq ufw >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ufw >/dev/null; }
+          sudo env "PATH=$PATH" HCW_REQUIRE_UFW=1 bash roles/host_firewall/tests/hcw-host-firewall.test.sh
+
       # The Caddyfile's per-name direct-visit redirect (ADR 0035) relies on
       # Caddy ordering every `vars` directive ahead of `redir` and letting a
       # route's later `vars` win for its name. Nothing but Caddy can say so:

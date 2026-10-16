@@ -963,6 +963,39 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab host: a host firewall for the lab sandbox, the container bridges and
+  Coder's internal network (#954, #958)**. A new `host_firewall` role, run
+  after `coder_sandbox`, adds the host's own `HCW-SANDBOX-OUT`,
+  `HCW-BRIDGE-IN`, `HCW-CONTROL-OUT` and `HCW-REFUSE` chains, jumped to first
+  above ufw's.
+  - **The sandbox:** the sandbox daemon's user (the daemon and every
+    workspace) may reach DNS on systemd-resolved's stub, TCP 443 on the
+    host's own non-loopback addresses, and TCP 80/443 on public addresses.
+    Host-local, private, link-local, multicast and reserved destinations,
+    and all other traffic, are refused at once, and flows already open to
+    them are cut when the rules first load.
+  - **The bridges:** containers on `docker0` and `br-*` may open only TCP
+    80/443 to the host.
+  - **Coder's internal network:** the host's own new connections to it are
+    refused; Coder reaches it across its own bridge.
+  - **Loading:** `hcw-host-firewall` loads each family in one
+    `iptables-restore --noflush` transaction and keeps each jump first and
+    single. Both families are dry-run before either commits, a jump to an
+    undeclared `HCW-*` chain is refused first, and a lock in `/run` keeps
+    one run at a time. The play fails on any read-back difference, and check
+    mode reports drift.
+  - **Boot:** `hcw-host-firewall.service` re-applies the rules at boot, after
+    ufw and before Docker, and reports a failure to `hcw-unit-failed@`. The
+    sandbox user's manager requires it.
+  - **Failing closed:** if a run cannot load the firewall, the sandbox
+    keeps running only while the live rules exactly equal the last policy
+    the role verified live (`/etc/hcw/firewall/verified`); otherwise its
+    manager is stopped and the play fails.
+  - **Removal:** `host_firewall_state: absent` removes it all in a safe order.
+  - **Untouched:** ufw's rules and the add-ons' `DOCKER-USER` rules.
+  - **Tests:** `roles/host_firewall/tests/hcw-host-firewall.test.sh` (real
+    iptables in a scratch network namespace, 106 checks, in CI with ufw
+    required) and `scripts/lab-host-host-firewall.test.mjs`.
 - **No auto-delete on the owner's Ambassador hub (follow-up to #1234, SEC-4
   #973)**. #1234 set a 90-day container TTL on the `ambassador` Cosmos
   container, believing it held applicants' personal data. It holds the

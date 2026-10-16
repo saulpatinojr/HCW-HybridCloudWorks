@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+# The sandbox Docker daemon (roles/coder_sandbox) runs in this user manager,
+# {{ host_firewall_sandbox_user }}'s. It starts only once the host firewall has loaded the
+# rules that limit what that user may reach, and not at all if loading them
+# failed (roles/host_firewall).
+[Unit]
+Requires={{ host_firewall_unit }}.service
+After={{ host_firewall_unit }}.service
