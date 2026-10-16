@@ -148,6 +148,22 @@ roles refuse any other address. The owner reaches Portainer
 through an SSH tunnel and Vault through the CLI over SSH; neither has a Caddy
 route or a public name.
 
+Workspace egress is limited to what the labs need, and host-local and
+private destinations are refused (`host_firewall` role, #954 and #958; owner
+decision 2026-10-16; merged in its pull request, on the host from the next
+`bootstrap.sh` run: [Applied state](#applied-state)). Everything the sandbox
+daemon's user sends, the workspaces included, may reach DNS on
+systemd-resolved's stub, TCP 443 on the host's own addresses (Coder and the
+guided labs, through Caddy) and TCP 80 and 443 on public addresses, and
+nothing else; containers on the host daemon's bridges may open only TCP 80
+and 443 to the host; and the host's own new connections to Coder's internal
+network are refused (Coder reaches it across its own bridge). The rules are
+the host's own chains, jumped to ahead of ufw's and loaded at boot before
+Docker and the sandbox daemon, which does not start without them; a failed
+load is reported like any watched unit's. ufw's reload and Docker's restart
+leave them in place, and the add-ons' `DOCKER-USER` rules are separate
+([runbook](../runbooks/labs-host.md#host-firewall-for-the-sandbox-and-bridges)).
+
 ### Panes only
 
 **Owner decision 2026-09-28:** "The lab should only be accessible through

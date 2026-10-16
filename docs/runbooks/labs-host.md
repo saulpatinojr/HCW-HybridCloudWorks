@@ -1479,6 +1479,160 @@ plain run turns the remap on again and stops at the carry: it finds the
 pre-remap data newer than the copy it made the first time, refuses to use
 that older copy, and prints the three steps that carry the data again.
 
+### Host firewall for the sandbox and bridges
+
+The `host_firewall` role (#954, #958; owner decision 2026-10-16) limits
+workspace egress to what the labs need, refuses host-local and private
+destinations, lets containers on the host daemon's bridges open only HTTP
+and HTTPS to the host, and refuses the host's own new connections to Coder's
+internal network. It is on the host from the first `bootstrap.sh` run after
+its pull request merges. Four chains of the host's own, each jumped to first,
+above ufw's:
+
+- **`HCW-SANDBOX-OUT`**, for everything the sandbox user `hcw-coder-docker`
+  sends (the sandbox daemon and its workspaces): DNS to systemd-resolved's
+  stub `127.0.0.53`, TCP 443 to the host's own non-loopback addresses
+  (Caddy: Coder and the guided labs), then the rest of the host and every
+  private, link-local, multicast and reserved range refused, then replies,
+  TCP 80 and 443 to public addresses, and everything else (mail, SSH, other
+  UDP) refused. The refusals come before replies, so a flow to a refused
+  destination that was open when the rules first loaded is cut.
+- **`HCW-BRIDGE-IN`**, for what containers on `docker0` and `br-*` send to
+  the host: replies to the host's own connections and TCP 80 and 443;
+  everything else refused.
+- **`HCW-CONTROL-OUT`**, for what the host itself sends to Coder's internal
+  network (`coder-control`): the host's own new connections there are
+  refused, and its answers to connections opened from there go. Coder
+  reaches that network across its own bridge. The subnet is read from
+  Docker and from the Compose file at every run.
+- **`HCW-REFUSE`**, which the others use to refuse: a TCP reset or an ICMP
+  port-unreachable, so a refused TCP connection fails at once rather than
+  timing out.
+
+`hcw-host-firewall.service` loads them at every boot, after ufw and before
+Docker, and the sandbox user's manager requires it, so the sandbox daemon
+does not start without them; a failed load is reported through
+`hcw-unit-failed@` (`alert-lab-unit-failed`). ufw's reload and Docker's
+restart leave them in place; the add-ons' `DOCKER-USER` rules are separate
+and untouched.
+
+**Reading it.** Each command is bash, on the host, one line. Whether the
+live chains and jumps match the files the role rendered:
+
+```bash
+sudo /usr/local/libexec/hcw-host-firewall verify; echo "exit=$?"
+```
+
+Good is `exit=0` and nothing before it. A difference prints one line per
+chain or jump that differs, under `v4:` or `v6:`. The rules as loaded:
+
+```bash
+sudo iptables -S HCW-SANDBOX-OUT
+```
+
+Good is the rules in the order above, each with an `hcw:` comment, the
+`https to this host` line reading `! -d 127.0.0.0/8 -p tcp -m tcp --dport 443
+-m addrtype --dst-type LOCAL`, and the last line
+`-A HCW-SANDBOX-OUT -m comment --comment "hcw: refused" -j HCW-REFUSE`. The
+jumps:
+
+```bash
+sudo iptables -S OUTPUT | sed -n 2,3p; sudo iptables -S INPUT | sed -n 2,3p
+```
+
+Good is four lines: `-A OUTPUT -m owner --uid-owner` followed by the
+number `id -u hcw-coder-docker` prints and `-j HCW-SANDBOX-OUT`, then
+`-A OUTPUT -j HCW-CONTROL-OUT`, `-A INPUT -i docker0 -j HCW-BRIDGE-IN` and
+`-A INPUT -i br-+ -j HCW-BRIDGE-IN`. `ip6tables` in place of `iptables`
+gives the IPv6 side, which reads the same with IPv6 ranges. The internal
+network's rules:
+
+```bash
+sudo iptables -S HCW-CONTROL-OUT
+```
+
+Good is two lines per subnet of `coder-control` (the subnet
+`sudo docker network inspect coder-control --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'`
+prints): one ending `"hcw: replies on the internal network" -j RETURN`, one
+ending `"hcw: internal network, refused" -j HCW-REFUSE`. The boot unit:
+
+```bash
+systemctl is-active hcw-host-firewall; systemctl show "user@$(id -u hcw-coder-docker).service" -p Requires
+```
+
+Good is `active`, then a `Requires=` line that names
+`hcw-host-firewall.service`.
+
+**When a lab cannot reach something.** From the workspace's terminal, a
+refused TCP destination fails at once with `Connection refused`. UDP (DNS to
+a public resolver, QUIC) may instead simply time out, and so does a
+destination that is down, so a timeout alone says nothing either way: read
+the counters. Read them, make the lab try again, and read them again; the
+line whose packet count grew is the verdict:
+
+```bash
+sudo iptables -L HCW-SANDBOX-OUT -v -n --line-numbers
+```
+
+`hcw: private or reserved, refused` and `hcw: host-local, refused` mean the
+lab tried a private or host address; `hcw: refused` means a port or protocol
+other than TCP 80 and 443 (`git` over SSH, a mail port, DNS to a public
+resolver, QUIC). Labs use HTTPS for all of these. A lab that genuinely needs
+more is a change to `lab-host/ansible/roles/host_firewall/vars/main.yml` in
+a reviewed pull request (owner decision), not an edit on the host. The same
+command with `HCW-BRIDGE-IN` reads what the host's own containers were
+refused.
+
+**Putting it back.** If `verify` reports a difference (something rewrote
+the filter table), re-apply from the files:
+
+```bash
+sudo systemctl reload hcw-host-firewall; sudo /usr/local/libexec/hcw-host-firewall verify; echo "exit=$?"
+```
+
+Good is `exit=0`. Do not `restart` or `stop` the unit: it refuses, because
+stopping it would stop the sandbox user's manager and every workspace with
+it, and would not remove a rule. Re-running the role alone also works:
+`sudo /opt/hcw-src/lab-host/bootstrap.sh --tags host_firewall`.
+
+If the unit failed at boot (the `alert-lab-unit-failed` mail names
+`hcw-host-firewall.service`, and workspaces do not start, because the
+sandbox user's manager requires it), read why with
+`sudo journalctl -u hcw-host-firewall -b --no-pager`, put right what it
+names, then start the unit and the manager that waited for it:
+
+```bash
+sudo systemctl start hcw-host-firewall && sudo systemctl start "user@$(id -u hcw-coder-docker).service"
+```
+
+Then:
+
+```bash
+systemctl is-active hcw-host-firewall "user@$(id -u hcw-coder-docker).service"
+```
+
+Good is two lines, `active` and `active`.
+
+**Taking it out.** The role removes everything it put on the host when run
+with `host_firewall_state=absent`: the drop-in first, so the sandbox user's
+manager stops requiring the unit, then the unit, then the jumps and the
+chains, then the helper and its files. Nothing restarts the user's manager or
+Docker. The sandbox and the bridges are then as unrestricted as before the
+role existed, until the next plain run, which puts it all back. Bash, on the
+host:
+
+```bash
+sudo /opt/hcw-src/lab-host/bootstrap.sh --tags host_firewall -e host_firewall_state=absent
+```
+
+Good is `failed=0` in the `PLAY RECAP`, and then:
+
+```bash
+sudo iptables -S | grep -c HCW-; sudo ip6tables -S | grep -c HCW-; systemctl is-active hcw-host-firewall
+```
+
+Good is `0`, `0`, then `inactive`.
+
 ## Portainer through an SSH tunnel
 
 Portainer Business Edition runs for the owner only (owner decision
