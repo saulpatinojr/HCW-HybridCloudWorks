@@ -921,6 +921,28 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The `/education` page test computes its expectations on the day the page
+  renders, not on the runner's real date** (#495, #1092). Since #495,
+  `EducationIndexPage.test.jsx` has pinned the clock to 2026-09-10 in
+  `beforeAll` but read `today` with `todayIso()` in the file body. Vitest
+  runs a file's body while collecting it, before any hook, so the page
+  rendered on 2026-09-10 while the expectations used the runner's own date.
+  The two agreed only while no row's status differed between those days.
+  AB-400 was the first row that did: `availableDate` 2026-10-16 and
+  `statusReadDate` 2026-10-12 make it `upcoming` on the frozen day and
+  `active` from 2026-10-16. From midnight UTC that day the Linux runners
+  expected 49 bookable Azure exams and rendered 48, which failed
+  `coverage (qlty)` on run 38834846071. The `frontend` row passed only
+  because its path filter skipped its tests on that docs-only pull
+  request. A machine on Central time still read 2026-10-15 and passed. `today` is now
+  `todayIso(FROZEN_NOW)`, worked out from the frozen constant, and a new
+  first test renders `useToday(earliestDataAsOf())`, the call the page
+  makes, and requires it to return that same day. A clock mismatch now
+  fails on the first day the two clocks differ, not on the day a status
+  happens to change. The page needed no change: it reads one `useToday`
+  and passes it everywhere. A local matrix of four collection-time clocks
+  and six zones, UTC−12 to UTC+14, failed the old file in 19 of 24 cells;
+  the new file passes all 24.
 - **Monitor Functions Registered no longer fails on a storage window that a
   running deploy holds (#1205)**. On 2026-10-15 it read the host storage
   account at 22:45:38Z, while deploy run 38819173840 held its upload window
