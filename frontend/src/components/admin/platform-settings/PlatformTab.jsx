@@ -20,6 +20,108 @@ import { Shield, UserX, UserCheck, AlertTriangle, RefreshCw, Loader2 } from 'luc
 export const ADMINS_ROUTE = 'cms/admins';
 export const AVAILABLE_ROLES = ['viewer', 'editor', 'publisher', 'super_admin'];
 
+function roleBadgeVariant(role) {
+  if (role === 'super_admin') return 'destructive';
+  if (role === 'publisher') return 'default';
+  if (role === 'editor') return 'secondary';
+  return 'outline';
+}
+
+function getModalProps(target) {
+  if (!target) {
+    return { title: '', description: '', confirmLabel: '', destructive: false };
+  }
+  const { type, admin, newRole, newActive } = target;
+  const adminName = admin?.email || admin?.id || 'admin';
+
+  if (type === 'role') {
+    const fromRole = admin?.role?.replace('_', ' ');
+    const toRole = newRole?.replace('_', ' ');
+    return {
+      title: 'Change Administrator Role',
+      description: `Are you sure you want to change the role of ${adminName} from "${fromRole}" to "${toRole}"?`,
+      confirmLabel: 'Change Role',
+      destructive: false,
+    };
+  }
+
+  if (newActive) {
+    return {
+      title: 'Activate Administrator',
+      description: `Are you sure you want to activate ${adminName}? They will regain admin access.`,
+      confirmLabel: 'Activate',
+      destructive: false,
+    };
+  }
+
+  return {
+    title: 'Deactivate Administrator',
+    description: `Are you sure you want to deactivate ${adminName}? They will lose admin access immediately.`,
+    confirmLabel: 'Deactivate',
+    destructive: true,
+  };
+}
+
+function AdminTableRow({ admin, onRoleSelect, onStatusClick }) {
+  const adminLabel = admin.email || admin.id;
+  const toggleLabel = admin.active ? `Deactivate ${adminLabel}` : `Activate ${adminLabel}`;
+
+  return (
+    <tr className="hover:bg-muted/30">
+      <td className="py-3 px-4">
+        <div className="font-medium text-foreground">{adminLabel}</div>
+        <div className="text-xs text-muted-foreground font-mono">{admin.id}</div>
+      </td>
+      <td className="py-3 px-4">
+        <Badge variant={roleBadgeVariant(admin.role)} className="capitalize">
+          {admin.role?.replace('_', ' ')}
+        </Badge>
+      </td>
+      <td className="py-3 px-4">
+        {admin.active ? (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            <UserCheck className="h-3.5 w-3.5" /> Active
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            <UserX className="h-3.5 w-3.5" /> Inactive
+          </span>
+        )}
+      </td>
+      <td className="py-3 px-4">
+        <div className="flex items-center gap-2">
+          <label htmlFor={`role-select-${admin.id}`} className="sr-only">
+            Change role for {adminLabel}
+          </label>
+          <select
+            id={`role-select-${admin.id}`}
+            value={admin.role}
+            onChange={(e) => onRoleSelect(admin, e.target.value)}
+            aria-label={`Change role for ${adminLabel}`}
+            className="h-8 rounded-md border border-input bg-background px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {AVAILABLE_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {r.replace('_', ' ')}
+              </option>
+            ))}
+          </select>
+
+          <Button
+            variant={admin.active ? 'ghost' : 'outline'}
+            size="sm"
+            className="h-8 px-2 text-xs"
+            onClick={() => onStatusClick(admin)}
+            aria-label={toggleLabel}
+          >
+            {admin.active ? 'Deactivate' : 'Activate'}
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 export default function PlatformTab() {
   const { authReady } = useAuthReady();
   const [admins, setAdmins] = useState([]);
@@ -27,11 +129,9 @@ export default function PlatformTab() {
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState(null);
 
-  // Confirmation state
-  const [confirmTarget, setConfirmTarget] = useState(null); // { type: 'role' | 'status', admin, newRole?, newActive? }
-
-  const loadAdmins = useCallback(async () => {
+  const fetchAdmins = useCallback(async () => {
     if (!authReady) return;
     setLoading(true);
     setError(null);
@@ -46,26 +146,40 @@ export default function PlatformTab() {
   }, [authReady]);
 
   useEffect(() => {
-    loadAdmins();
-  }, [loadAdmins]);
+    let ignore = false;
+    async function loadInitial() {
+      if (!authReady) return;
+      try {
+        const data = await getJSON(ADMINS_ROUTE);
+        if (!ignore) {
+          setAdmins(data?.admins || []);
+          setError(null);
+        }
+      } catch (err) {
+        if (!ignore) {
+          setError(err?.message || 'Failed to load admins');
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    loadInitial();
+    return () => {
+      ignore = true;
+    };
+  }, [authReady]);
 
   const handleRoleChangeSelect = (admin, newRole) => {
     if (newRole === admin.role) return;
     setActionError(null);
-    setConfirmTarget({
-      type: 'role',
-      admin,
-      newRole,
-    });
+    setConfirmTarget({ type: 'role', admin, newRole });
   };
 
   const handleStatusToggle = (admin) => {
     setActionError(null);
-    setConfirmTarget({
-      type: 'status',
-      admin,
-      newActive: !admin.active,
-    });
+    setConfirmTarget({ type: 'status', admin, newActive: !admin.active });
   };
 
   const handleConfirmAction = async () => {
@@ -87,7 +201,7 @@ export default function PlatformTab() {
         });
       }
       setConfirmTarget(null);
-      await loadAdmins();
+      await fetchAdmins();
     } catch (err) {
       setActionError(err?.message || 'Operation failed');
     } finally {
@@ -95,18 +209,7 @@ export default function PlatformTab() {
     }
   };
 
-  const roleBadgeVariant = (role) => {
-    switch (role) {
-      case 'super_admin':
-        return 'destructive';
-      case 'publisher':
-        return 'default';
-      case 'editor':
-        return 'secondary';
-      default:
-        return 'outline';
-    }
-  };
+  const modalProps = getModalProps(confirmTarget);
 
   return (
     <div className="space-y-6">
@@ -118,14 +221,15 @@ export default function PlatformTab() {
               Administrators & Platform Access
             </CardTitle>
             <CardDescription className="mt-1">
-              Authoritative list of administrators configured for the platform. Role changes and deactivations
-              are protected by super-admin authorization and require explicit confirmation.
+              Authoritative list of administrators configured for the platform. Role changes and
+              deactivations are protected by super-admin authorization and require explicit
+              confirmation.
             </CardDescription>
           </div>
           <Button
             variant="outline"
             size="sm"
-            onClick={loadAdmins}
+            onClick={fetchAdmins}
             disabled={loading}
             aria-label="Refresh administrators"
             className="flex items-center gap-1.5"
@@ -136,91 +240,65 @@ export default function PlatformTab() {
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-2" role="alert">
+            <div
+              className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-2"
+              role="alert"
+            >
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span>{error}</span>
             </div>
           )}
 
           {actionError && (
-            <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-2" role="alert">
+            <div
+              className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive flex items-center gap-2"
+              role="alert"
+            >
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span>{actionError}</span>
             </div>
           )}
 
-          {loading ? (
+          {loading && (
             <div className="flex h-40 items-center justify-center text-muted-foreground">
               <Loader2 className="h-6 w-6 animate-spin mr-2" />
               Loading administrators...
             </div>
-          ) : admins.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No administrators found.</p>
-          ) : (
+          )}
+
+          {!loading && admins.length === 0 && (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No administrators found.
+            </p>
+          )}
+
+          {!loading && admins.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm" aria-label="Administrators">
                 <thead className="border-b border-border text-xs uppercase text-muted-foreground">
                   <tr>
-                    <th scope="col" className="py-3 px-4 font-medium">Administrator</th>
-                    <th scope="col" className="py-3 px-4 font-medium">Role</th>
-                    <th scope="col" className="py-3 px-4 font-medium">Status</th>
-                    <th scope="col" className="py-3 px-4 font-medium">Actions</th>
+                    <th scope="col" className="py-3 px-4 font-medium">
+                      Administrator
+                    </th>
+                    <th scope="col" className="py-3 px-4 font-medium">
+                      Role
+                    </th>
+                    <th scope="col" className="py-3 px-4 font-medium">
+                      Status
+                    </th>
+                    <th scope="col" className="py-3 px-4 font-medium">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {admins.map((admin) => (
-                    <tr key={admin.id} className="hover:bg-muted/30">
-                      <td className="py-3 px-4">
-                        <div className="font-medium text-foreground">{admin.email || admin.id}</div>
-                        <div className="text-xs text-muted-foreground font-mono">{admin.id}</div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <Badge variant={roleBadgeVariant(admin.role)} className="capitalize">
-                          {admin.role?.replace('_', ' ')}
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-4">
-                        {admin.active ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                            <UserCheck className="h-3.5 w-3.5" /> Active
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                            <UserX className="h-3.5 w-3.5" /> Inactive
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
-                          <label htmlFor={`role-select-${admin.id}`} className="sr-only">
-                            Change role for {admin.email || admin.id}
-                          </label>
-                          <select
-                            id={`role-select-${admin.id}`}
-                            value={admin.role}
-                            onChange={(e) => handleRoleChangeSelect(admin, e.target.value)}
-                            aria-label={`Change role for ${admin.email || admin.id}`}
-                            className="h-8 rounded-md border border-input bg-background px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          >
-                            {AVAILABLE_ROLES.map((r) => (
-                              <option key={r} value={r}>
-                                {r.replace('_', ' ')}
-                              </option>
-                            ))}
-                          </select>
-
-                          <Button
-                            variant={admin.active ? 'ghost' : 'outline'}
-                            size="sm"
-                            className="h-8 px-2 text-xs"
-                            onClick={() => handleStatusToggle(admin)}
-                            aria-label={admin.active ? `Deactivate ${admin.email || admin.id}` : `Activate ${admin.email || admin.id}`}
-                          >
-                            {admin.active ? 'Deactivate' : 'Activate'}
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
+                    <AdminTableRow
+                      key={admin.id}
+                      admin={admin}
+                      onRoleSelect={handleRoleChangeSelect}
+                      onStatusClick={handleStatusToggle}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -229,32 +307,13 @@ export default function PlatformTab() {
         </CardContent>
       </Card>
 
-      {/* Confirmation modal for role change or status toggle */}
       <ConfirmModal
         open={confirmTarget !== null}
         busy={busy}
-        title={
-          confirmTarget?.type === 'role'
-            ? 'Change Administrator Role'
-            : confirmTarget?.newActive
-            ? 'Activate Administrator'
-            : 'Deactivate Administrator'
-        }
-        description={
-          confirmTarget?.type === 'role'
-            ? `Are you sure you want to change the role of ${confirmTarget?.admin?.email || confirmTarget?.admin?.id} from "${confirmTarget?.admin?.role?.replace('_', ' ')}" to "${confirmTarget?.newRole?.replace('_', ' ')}"?`
-            : confirmTarget?.newActive
-            ? `Are you sure you want to activate ${confirmTarget?.admin?.email || confirmTarget?.admin?.id}? They will regain admin access.`
-            : `Are you sure you want to deactivate ${confirmTarget?.admin?.email || confirmTarget?.admin?.id}? They will lose admin access immediately.`
-        }
-        confirmLabel={
-          confirmTarget?.type === 'role'
-            ? 'Change Role'
-            : confirmTarget?.newActive
-            ? 'Activate'
-            : 'Deactivate'
-        }
-        destructive={confirmTarget?.type === 'status' && !confirmTarget?.newActive}
+        title={modalProps.title}
+        description={modalProps.description}
+        confirmLabel={modalProps.confirmLabel}
+        destructive={modalProps.destructive}
         onConfirm={handleConfirmAction}
         onCancel={() => {
           if (!busy) setConfirmTarget(null);

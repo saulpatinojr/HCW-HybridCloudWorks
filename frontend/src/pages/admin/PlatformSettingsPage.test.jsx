@@ -141,9 +141,9 @@ describe('tabs', () => {
   it('opens Platform from ?tab=platform, loading only administrators', async () => {
     renderAt('/admin/platform-settings?tab=platform');
     await screen.findByText('Administrators & Platform Access');
-    expect(
-      screen.getByRole('tab', { name: 'Platform' }).getAttribute('aria-selected')
-    ).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Platform' }).getAttribute('aria-selected')).toBe(
+      'true'
+    );
     expect(routesAsked()).toEqual(['cms/admins']);
     expect(postJSON).not.toHaveBeenCalled();
   });
