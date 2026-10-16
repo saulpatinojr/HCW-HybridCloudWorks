@@ -1,6 +1,6 @@
 {
   "$comment": "Written by scripts/lab/capture-docker-cli-requests.mjs; read by scripts/lab-host-docker-proxy.test.mjs. Container ids are <id>.",
-  "dockerCli": "29.9.0",
+  "dockerCli": "29.9.1",
   "apiVersion": "1.56",
   "job": {
     "jobDir": "/var/lib/hcw-labs-agent/tmp/labjob-Ab3xZ9",
@@ -502,8 +502,8 @@
   },
   "recordedFrom": {
     "package": "docker-ce-cli",
-    "version": "5:29.9.0-1~ubuntu.26.04~resolute",
-    "sha256": "60eb474c2f867f965a6f9e02be786b5e9083c7f7fcd1dfebfe2d12f9f1ae5f7c",
-    "url": "https://download.docker.com/linux/ubuntu/dists/resolute/pool/stable/amd64/docker-ce-cli_29.9.0-1~ubuntu.26.04~resolute_amd64.deb"
+    "version": "5:29.9.1-1~ubuntu.26.04~resolute",
+    "sha256": "3a72d12eccd38f5e0e7b4752ea1912ff36de7238acf7344badebe1c58ae36c82",
+    "url": "https://download.docker.com/linux/ubuntu/dists/resolute/pool/stable/amd64/docker-ce-cli_29.9.1-1~ubuntu.26.04~resolute_amd64.deb"
   }
 }
