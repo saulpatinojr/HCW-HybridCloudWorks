@@ -1,19 +1,17 @@
 # Test coverage for frontend/ and functions/, uploaded to Qlty (#568).
 #
-# NOT A REQUIRED CHECK, and it must not become one. The required contexts on
-# the `main` ruleset are the jobs in ci.yml (`frontend`, `functions (azure)`
-# and the rest) and they still run `npm test` with no instrumentation, so this
-# workflow adds no time to them: it runs beside them, on the same triggers.
-# Because it is not required, the T-523 doctrine in ci.yml (no `paths:` on a
-# required workflow's pull_request trigger) does not bind it; it still runs
-# on every pull request so Qlty has a coverage report for every head it
-# compares.
+# COVERAGE RATCHET (QA-2 #977):
+# Coverage configuration lives with each package's tests (frontend/vitest.config.js,
+# functions/vitest.config.js), which declare coverage thresholds with `autoUpdate: true`
+# acting as a ratchet. A pull request that lowers coverage below the ratchet fails
+# `npm run test:coverage` and fails this job.
 #
-# Coverage configuration lives with each package's tests
-# (frontend/vitest.config.js, functions/vitest.config.js). Both write
-# coverage/lcov.info with repository-relative paths (`frontend/src/...`,
-# `functions/src/...`), so one upload carries both packages and Qlty needs no
-# add-prefix or strip-prefix.
+# The required contexts on the `main` ruleset are the jobs in ci.yml (`frontend`,
+# `functions (azure)` and the rest) running `npm test` with no instrumentation.
+# Because it is separate, the T-523 doctrine in ci.yml does not bind it; it runs
+# on every pull request so Qlty has a coverage report for every head it compares.
+# Both write coverage/lcov.info with repository-relative paths (`frontend/src/...`,
+# `functions/src/...`), so one upload carries both packages.
 #
 # NO STORED TOKEN. The upload authenticates to Qlty with GitHub OIDC
 # (`oidc: true`, `id-token: write` on this job only), so there is no
