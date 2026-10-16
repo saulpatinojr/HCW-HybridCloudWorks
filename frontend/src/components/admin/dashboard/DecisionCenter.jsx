@@ -51,14 +51,14 @@ const describeError = (err) => err?.message || 'The decisions waiting could not 
 function PriorityCue({ priority }) {
   if (priority === 'high') {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-destructive/40 bg-destructive/5 px-2 py-0.5 text-[11px] font-medium text-destructive">
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-destructive/40 bg-destructive/5 px-2 py-0.5 text-xs font-medium text-destructive">
         <AlertTriangle className="h-3 w-3" aria-hidden="true" /> High
       </span>
     );
   }
   if (priority === 'low') {
     return (
-      <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+      <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
         Low
       </span>
     );
@@ -180,7 +180,7 @@ function TabLabel({ label, count }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       {label}
-      <span className="min-w-5 rounded-full bg-muted px-1.5 text-[11px] font-semibold text-muted-foreground">
+      <span className="min-w-5 rounded-full bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
         {count}
       </span>
     </span>

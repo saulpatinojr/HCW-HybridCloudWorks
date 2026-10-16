@@ -64,10 +64,7 @@ function HotspotCoordinates({ spot, onChange }) {
     <div className="grid grid-cols-2 gap-2">
       {COORDINATES.map(([axis, label]) => (
         <div key={axis}>
-          <label
-            htmlFor={`hotspot-${spot.id}-${axis}`}
-            className="text-[10px] text-muted-foreground"
-          >
+          <label htmlFor={`hotspot-${spot.id}-${axis}`} className="text-xs text-muted-foreground">
             {label}
           </label>
           <Input
@@ -243,7 +240,7 @@ export default function ArchitectureReviewBoard({ blog, onSave, onPublish, savin
                 // Position is derived from the diagram, so there is nothing
                 // to type. Showing the coordinates as editable fields would
                 // invite an edit that the next render silently discards.
-                <p className="text-[10px] text-muted-foreground font-mono truncate">
+                <p className="text-xs text-muted-foreground font-mono truncate">
                   Pinned to shape {spot.shapeId}
                 </p>
               ) : (

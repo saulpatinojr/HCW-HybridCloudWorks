@@ -137,7 +137,7 @@ function PipelineStage({ step, stage, count, isLast }) {
             {step}
           </span>
           {count > 0 && (
-            <span className="flex h-5 min-w-5.5 shrink-0 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[11px] font-bold text-white">
+            <span className="flex h-5 min-w-5.5 shrink-0 items-center justify-center rounded-full bg-amber-500 px-1.5 text-xs font-bold text-white">
               {count > 999 ? '999+' : count}
             </span>
           )}

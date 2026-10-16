@@ -66,22 +66,22 @@ function CertStatusBadges({ cert, isExpired, isExpiringSoon }) {
   return (
     <>
       {cert.featured && (
-        <Badge variant="outline" className="border-amber-400 text-amber-600 text-[10px]">
+        <Badge variant="outline" className="border-amber-400 text-amber-600 text-xs">
           Featured
         </Badge>
       )}
       {!cert.display && (
-        <Badge variant="outline" className="text-[10px]">
+        <Badge variant="outline" className="text-xs">
           Hidden
         </Badge>
       )}
       {isExpired && (
-        <Badge variant="destructive" className="text-[10px]">
+        <Badge variant="destructive" className="text-xs">
           Expired
         </Badge>
       )}
       {isExpiringSoon && (
-        <Badge variant="outline" className="border-amber-400 text-amber-600 text-[10px]">
+        <Badge variant="outline" className="border-amber-400 text-amber-600 text-xs">
           Expiring
         </Badge>
       )}
@@ -200,7 +200,7 @@ export default function CertCard({ cert, nowMs, busy = false, actions, children 
               <p className="font-semibold text-sm truncate">{cert.name || '(untitled)'}</p>
               <p className="text-xs text-slate-500 truncate flex items-center gap-1.5">
                 <span
-                  className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold ${getIssuerColor(issuer)}`}
+                  className={`inline-block px-1.5 py-0.5 rounded text-xs font-semibold ${getIssuerColor(issuer)}`}
                 >
                   {issuer}
                 </span>
@@ -210,7 +210,7 @@ export default function CertCard({ cert, nowMs, busy = false, actions, children 
               <CertStatusBadges cert={cert} isExpired={isExpired} isExpiringSoon={isExpiringSoon} />
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
+          <p className="text-xs text-slate-400 mt-1">
             {certDateValue(cert)}
             {cert.display_order !== null && cert.display_order !== undefined && (
               <> · order {cert.display_order}</>

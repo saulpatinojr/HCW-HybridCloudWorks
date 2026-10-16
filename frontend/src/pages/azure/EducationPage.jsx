@@ -1214,7 +1214,7 @@ export default function AzureEducationPage() {
                   chevron_right
                 </span>
               </button>
-              <span className="text-xs text-foreground/50 ml-2">
+              <span className="text-xs text-muted-foreground ml-2">
                 {carouselPage * VISIBLE_COUNT + 1}–
                 {Math.min((carouselPage + 1) * VISIBLE_COUNT, filteredCerts.length)} of{' '}
                 {filteredCerts.length}

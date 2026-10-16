@@ -351,7 +351,7 @@ function QueueItemDateMeta({ item }) {
 
   return (
     <>
-      {domain && <div className="font-mono text-[11px]">{domain}</div>}
+      {domain && <div className="font-mono text-xs">{domain}</div>}
       {dateInfo && (
         <div className={dateInfo.isFallback ? 'italic opacity-75' : ''}>{dateInfo.label}</div>
       )}

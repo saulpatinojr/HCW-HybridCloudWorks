@@ -368,18 +368,18 @@ export default function HomePage() {
             data-testid="capability-badges"
             className="flex flex-wrap items-center gap-2 mt-3.5 max-w-xl"
           >
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono tracking-tight bg-slate-900/60 dark:bg-slate-800/80 text-cyan-400 dark:text-cyan-300 border border-cyan-500/30">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono tracking-tight bg-slate-900 dark:bg-slate-800/80 text-cyan-400 dark:text-cyan-300 border border-cyan-500/30">
               <span
                 className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"
                 aria-hidden="true"
               />
               Terraform AVM Generator
             </span>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono tracking-tight bg-slate-900/60 dark:bg-slate-800/80 text-emerald-400 dark:text-emerald-300 border border-emerald-500/30">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono tracking-tight bg-slate-900 dark:bg-slate-800/80 text-emerald-400 dark:text-emerald-300 border border-emerald-500/30">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
               Ephemeral Container Labs
             </span>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono tracking-tight bg-slate-900/60 dark:bg-slate-800/80 text-purple-400 dark:text-purple-300 border border-purple-500/30">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono tracking-tight bg-slate-900 dark:bg-slate-800/80 text-purple-300 dark:text-purple-300 border border-purple-500/30">
               <span className="w-1.5 h-1.5 rounded-full bg-purple-400" aria-hidden="true" />
               FOCUS 1.4 FinOps
             </span>
@@ -807,7 +807,7 @@ export default function HomePage() {
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-400">
                   Quick Access Hubs
                 </h4>
-                <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">
+                <span className="text-xs font-mono font-medium px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border border-cyan-500/20">
                   Release Wire
                 </span>
               </div>
@@ -828,7 +828,7 @@ export default function HomePage() {
                           {hub.label}
                         </span>
                         {hub.tag && (
-                          <span className="text-[9px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-200/60 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 border border-slate-300/40 dark:border-slate-700/50 shrink-0">
+                          <span className="text-xs font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-200/60 dark:bg-slate-800/80 text-muted-foreground border border-slate-300/40 dark:border-slate-700/50 shrink-0">
                             {hub.tag}
                           </span>
                         )}

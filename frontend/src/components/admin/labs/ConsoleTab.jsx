@@ -162,7 +162,7 @@ function SubmitJobForm({ jobTypes, type, spec, payload, submitting, onType, onPa
             className="mt-1 font-mono text-xs"
           />
           {spec?.maxPayloadBytes && (
-            <p className="text-[10px] text-muted-foreground mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               Max {Math.round(spec.maxPayloadBytes / 1024)} KB
             </p>
           )}

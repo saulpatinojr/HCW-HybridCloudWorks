@@ -66,7 +66,7 @@ function DirectoryCard({ entry }) {
           <h3 className="text-sm font-semibold">{entry.name}</h3>
           <div className="flex flex-wrap items-center gap-2">
             <IntegrationBadge id={entry.id} size="xs" />
-            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+            <span className="rounded-full border border-border px-2 py-0.5 text-xs uppercase tracking-wide text-muted-foreground">
               {entry.categoryLabel}
             </span>
           </div>

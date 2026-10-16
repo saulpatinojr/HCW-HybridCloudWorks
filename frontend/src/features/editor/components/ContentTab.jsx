@@ -29,7 +29,7 @@ function renderEditingSurface({
   if (editorMode === 'raw') {
     return (
       <div className="space-y-1.5">
-        <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Full raw draft</p>
+        <p className="text-xs text-muted-foreground uppercase tracking-wide">Full raw draft</p>
         <Textarea
           value={fields.draft}
           onChange={(e) => setField('draft', e.target.value)}
@@ -49,7 +49,7 @@ function renderEditingSurface({
   if (selectedSection) {
     return (
       <div className="space-y-1.5">
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Editing: <span className="text-foreground font-medium">{selectedSection.title}</span> ·
           Section {selectedSectionIndex + 1} of {sections.length}
         </p>
@@ -108,7 +108,7 @@ export function ContentTab() {
     <div className="space-y-4 max-w-4xl mx-auto">
       {/* Top bar: sections label + word count + view mode toggle */}
       <div className="flex items-center justify-between">
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">
           Sections ({sections.length}) · {wordCount} words
         </p>
         <div className="flex items-center gap-1">
@@ -243,7 +243,7 @@ export function ContentTab() {
       {/* Disabled sections */}
       {disabledSections.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">
             Hidden sections (click to restore)
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -265,9 +265,7 @@ export function ContentTab() {
       {/* Deleted sections */}
       {deletedSections.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            Deleted sections
-          </p>
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">Deleted sections</p>
           <div className="flex flex-wrap gap-1.5">
             {deletedSections.map((section, delIdx) => (
               <Button

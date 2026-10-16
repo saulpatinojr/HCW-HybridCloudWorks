@@ -39,7 +39,7 @@ const TONE = {
   accentText: 'text-emerald-400',
   articleHover: 'hover:shadow-[0_0_25px_rgba(16,185,129,0.15)] hover:border-emerald-400/50',
   badge: 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-300',
-  button: 'bg-emerald-600 hover:bg-emerald-500 text-white',
+  button: 'bg-emerald-700 hover:bg-emerald-600 text-white',
   gettingStartedCard:
     'bg-gradient-to-br from-emerald-500/20 to-teal-900/20 backdrop-blur-md border border-emerald-500/30',
 };
@@ -481,7 +481,7 @@ export default function FinOpsEducationPage() {
                   chevron_right
                 </span>
               </button>
-              <span className="text-xs text-foreground/50 ml-2">
+              <span className="text-xs text-muted-foreground ml-2">
                 {carouselPage * VISIBLE_COUNT + 1}–
                 {Math.min((carouselPage + 1) * VISIBLE_COUNT, filteredCerts.length)} of{' '}
                 {filteredCerts.length}
@@ -584,7 +584,7 @@ export default function FinOpsEducationPage() {
                   href={selectedPath.certUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex-1 h-11 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+                  className="flex-1 h-11 px-4 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
                 >
                   <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
                     open_in_new

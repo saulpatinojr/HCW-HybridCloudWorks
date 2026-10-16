@@ -146,21 +146,21 @@ export function ImageGalleryPicker({ onSelect, provider = '', title = 'Add From 
                 className="h-28 w-full rounded object-cover"
               />
               <div className="flex flex-wrap gap-1">
-                <Badge variant="outline" className="text-[10px]">
+                <Badge variant="outline" className="text-xs">
                   {getSourceLabel(item.source || item.sourceCollection)}
                 </Badge>
                 {item.provider && (
-                  <Badge variant="secondary" className="text-[10px]">
+                  <Badge variant="secondary" className="text-xs">
                     {item.provider}
                   </Badge>
                 )}
                 {item.slot && (
-                  <Badge variant="secondary" className="text-[10px]">
+                  <Badge variant="secondary" className="text-xs">
                     {item.slot}
                   </Badge>
                 )}
                 {item.promptSet && (
-                  <Badge variant="secondary" className="text-[10px]" title="Image set">
+                  <Badge variant="secondary" className="text-xs" title="Image set">
                     {item.promptSet}
                   </Badge>
                 )}

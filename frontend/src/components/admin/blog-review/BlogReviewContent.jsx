@@ -158,13 +158,13 @@ function ImageSlotButton({ slot, index, onExpand }) {
         />
       ) : (
         <div className="h-full w-full flex flex-col items-center justify-center gap-1 px-2 text-center">
-          <span className="text-[11px] font-medium text-foreground/80">{label}</span>
-          <span className="text-[10px] text-muted-foreground line-clamp-4">
+          <span className="text-xs font-medium text-foreground/80">{label}</span>
+          <span className="text-xs text-muted-foreground line-clamp-4">
             {describeImageSlot(slot)}
           </span>
         </div>
       )}
-      <span className="absolute left-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
+      <span className="absolute left-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-xs font-medium text-white">
         {index + 1}
       </span>
     </button>
@@ -174,7 +174,7 @@ function ImageSlotButton({ slot, index, onExpand }) {
 function CoverStatusLines({ blog, isCoverGenerating }) {
   if (isCoverGenerating) {
     return (
-      <p className="text-[11px] text-blue-600 dark:text-blue-300">
+      <p className="text-xs text-blue-600 dark:text-blue-300">
         Hero cover regeneration is running. The new image will replace the Hero Cover slot when
         ready.
       </p>
@@ -183,12 +183,12 @@ function CoverStatusLines({ blog, isCoverGenerating }) {
   return (
     <>
       {blog.altCoverImageGeneratedAt && (
-        <p className="text-[11px] text-green-600 dark:text-green-300">
+        <p className="text-xs text-green-600 dark:text-green-300">
           Latest AI cover is available in the Hero Cover slot.
         </p>
       )}
       {blog.altCoverImageError && (
-        <p className="text-[11px] text-destructive">
+        <p className="text-xs text-destructive">
           AI cover generation failed: {blog.altCoverImageError}
         </p>
       )}
@@ -257,7 +257,7 @@ function ImageManagerCard({ images, provider, saving, actions }) {
 /** A collapsible markdown pane with a character-count badge; `empty` renders when there is no body. */
 function MarkdownCard({ icon, title, body, expanded, onToggle, contentClassName = '', empty }) {
   const badge = (
-    <Badge variant="outline" className="text-[10px] font-normal">
+    <Badge variant="outline" className="text-xs font-normal">
       {body ? `${body.length} chars` : 'Empty'}
     </Badge>
   );

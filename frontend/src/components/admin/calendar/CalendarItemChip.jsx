@@ -45,13 +45,13 @@ export default function CalendarItemChip({ item, conflict = false, compact = fal
       title={label}
       data-kind={item.kind}
       data-status={item.status}
-      className={`flex w-full items-center gap-1 rounded border px-1.5 py-0.5 text-left text-[11px] leading-tight hover:ring-2 hover:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${meta.chip} ${
+      className={`flex w-full items-center gap-1 rounded border px-1.5 py-0.5 text-left text-xs leading-tight hover:ring-2 hover:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${meta.chip} ${
         failed ? 'border-dashed' : ''
       } ${item.status === 'published' || item.status === 'sent' ? 'opacity-80' : ''} ${draggable ? 'cursor-grab' : ''}`}
     >
       <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
       {!compact && (
-        <span className="shrink-0 tabular-nums text-[10px] opacity-80">
+        <span className="shrink-0 tabular-nums text-xs opacity-80">
           {item.allDay ? '' : formatTime(item.start)}
         </span>
       )}

@@ -23,7 +23,7 @@ const STAGE_CLASS = {
 
 export function StageBadge({ stage }) {
   return (
-    <Badge variant="outline" className={`shrink-0 text-[10px] ${STAGE_CLASS[stage] || ''}`}>
+    <Badge variant="outline" className={`shrink-0 text-xs ${STAGE_CLASS[stage] || ''}`}>
       {STAGE_LABELS[stage] || stage}
     </Badge>
   );

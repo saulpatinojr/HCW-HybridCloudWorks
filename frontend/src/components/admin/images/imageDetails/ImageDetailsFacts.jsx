@@ -47,7 +47,7 @@ function FactValue({ row, item, onOpenSet }) {
       </a>
     );
   }
-  if (row.kind === 'code') return <code className="text-[10px]">{row.text}</code>;
+  if (row.kind === 'code') return <code className="text-xs">{row.text}</code>;
   return row.text;
 }
 
@@ -63,7 +63,7 @@ function PromptReveal({ prompt, open, onToggle }) {
         {open ? 'Hide' : 'Show'} the prompt that produced this image
       </button>
       {open && (
-        <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-[11px]">
+        <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-xs">
           {prompt}
         </pre>
       )}

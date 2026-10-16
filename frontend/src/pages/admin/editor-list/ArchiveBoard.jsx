@@ -80,11 +80,11 @@ function ArchiveRow({ item, busy, onRestore, onDelete }) {
       <div className="flex-1 min-w-0">
         <p className="font-medium truncate text-sm">{item.Title || item.title || 'Untitled'}</p>
         <div className="flex flex-wrap items-center gap-2 mt-0.5">
-          <Badge variant="outline" className="text-[11px]">
+          <Badge variant="outline" className="text-xs">
             {provider}
           </Badge>
           <span
-            className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${TYPE_BADGE[type] || TYPE_BADGE.blog}`}
+            className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${TYPE_BADGE[type] || TYPE_BADGE.blog}`}
           >
             {type}
           </span>
@@ -123,7 +123,7 @@ function ArchiveRow({ item, busy, onRestore, onDelete }) {
           View
         </a>
       )}
-      <Badge variant="secondary" className="text-[10px] shrink-0">
+      <Badge variant="secondary" className="text-xs shrink-0">
         archived
       </Badge>
       {/* Both ways out are a publisher's: Restore to live is the edge into
@@ -195,7 +195,7 @@ function ArchiveControls({
           <button
             key={p}
             onClick={() => onProviderFilter(p)}
-            className={`px-2 py-1 rounded-md text-[11px] font-medium transition-colors ${
+            className={`px-2 py-1 rounded-md text-xs font-medium transition-colors ${
               providerFilter === p
                 ? 'bg-primary text-primary-foreground'
                 : 'bg-muted text-muted-foreground hover:text-foreground'
@@ -210,7 +210,7 @@ function ArchiveControls({
           <button
             key={opt.value}
             onClick={() => onToggleSort(opt.value)}
-            className={`flex items-center gap-0.5 px-2 py-1 rounded-md text-[11px] font-medium transition-colors ${
+            className={`flex items-center gap-0.5 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
               sortField === opt.value
                 ? 'bg-muted text-foreground'
                 : 'text-muted-foreground hover:text-foreground'

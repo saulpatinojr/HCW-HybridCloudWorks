@@ -32,7 +32,7 @@ function RenewalDetail({ row }) {
         <span className="text-muted-foreground">{row.cert.renewalRequirements}</span>
       )}
       {row.cert.certState === false && (
-        <Badge variant="outline" className="text-[10px]">
+        <Badge variant="outline" className="text-xs">
           Marked inactive
         </Badge>
       )}

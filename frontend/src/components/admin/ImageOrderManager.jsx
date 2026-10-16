@@ -84,11 +84,11 @@ export function ImageOrderManager({
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <Badge variant={isHero ? 'default' : 'secondary'} className="text-[10px]">
+                    <Badge variant={isHero ? 'default' : 'secondary'} className="text-xs">
                       {isHero ? 'Hero' : `Secondary ${index}`}
                     </Badge>
                     {image.sourceLabel && (
-                      <Badge variant="outline" className="text-[10px]">
+                      <Badge variant="outline" className="text-xs">
                         {image.sourceLabel}
                       </Badge>
                     )}

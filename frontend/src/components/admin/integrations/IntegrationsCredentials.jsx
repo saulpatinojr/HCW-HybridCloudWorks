@@ -249,7 +249,7 @@ function CredentialRow({ credential, editing, busy, onEdit, onSave, onClear, onC
           <span className="font-mono break-all">{credential.name}</span>
           {reminder ? (
             <span
-              className={`mt-1 flex items-center gap-1 text-[11px] font-normal ${reminder.inStep === false ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}
+              className={`mt-1 flex items-center gap-1 text-xs font-normal ${reminder.inStep === false ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}
             >
               <BellRing className="h-3 w-3 shrink-0" aria-hidden="true" />
               {reminder.text}
@@ -261,7 +261,7 @@ function CredentialRow({ credential, editing, busy, onEdit, onSave, onClear, onC
         <td className="px-3 py-2 whitespace-nowrap">
           {describeAge(credential)}
           {ageSource ? (
-            <span className="block text-[11px] text-muted-foreground">{ageSource}</span>
+            <span className="block text-xs text-muted-foreground">{ageSource}</span>
           ) : null}
         </td>
         <td
@@ -269,18 +269,16 @@ function CredentialRow({ credential, editing, busy, onEdit, onSave, onClear, onC
         >
           {expiry.text}
           {expiry.kind ? (
-            <span className="block text-[11px] font-normal text-muted-foreground">
-              {expiry.kind}
-            </span>
+            <span className="block text-xs font-normal text-muted-foreground">{expiry.kind}</span>
           ) : null}
         </td>
         <td className="px-3 py-2 whitespace-nowrap">
           {RENEWAL_LABELS[credential.renewal] ?? credential.renewal}
-          {rule ? <span className="block text-[11px] text-muted-foreground">{rule}</span> : null}
+          {rule ? <span className="block text-xs text-muted-foreground">{rule}</span> : null}
         </td>
         <td className="px-3 py-2">
           <StatusBadge status={stateOf(credential)} size="xs" />
-          <span className="mt-1 block text-[11px] text-muted-foreground">{credential.reason}</span>
+          <span className="mt-1 block text-xs text-muted-foreground">{credential.reason}</span>
         </td>
         <td className="px-3 py-2 text-right">
           {credential.recordable && !editing ? (

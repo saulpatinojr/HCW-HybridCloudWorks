@@ -44,15 +44,12 @@ function renderTags(tags = []) {
     <div className="flex flex-wrap gap-1 items-center">
       <Tag className="h-3 w-3 text-muted-foreground shrink-0" />
       {tags.slice(0, 6).map((tag) => (
-        <span
-          key={tag}
-          className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded"
-        >
+        <span key={tag} className="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
           {tag}
         </span>
       ))}
       {tags.length > 6 && (
-        <span className="text-[10px] text-muted-foreground">+{tags.length - 6} more</span>
+        <span className="text-xs text-muted-foreground">+{tags.length - 6} more</span>
       )}
     </div>
   );
@@ -63,10 +60,10 @@ function renderCodePreview(codePreview, language) {
   return (
     <div className="rounded-md bg-slate-950 border border-slate-800 overflow-hidden">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800">
-        <span className="text-[10px] text-slate-400 font-mono">{language || 'code'}</span>
-        <span className="text-[10px] text-slate-500">preview</span>
+        <span className="text-xs text-slate-400 font-mono">{language || 'code'}</span>
+        <span className="text-xs text-slate-500">preview</span>
       </div>
-      <pre className="text-[11px] text-slate-300 font-mono p-3 overflow-x-auto leading-relaxed max-h-32 overflow-y-hidden">
+      <pre className="text-xs text-slate-300 font-mono p-3 overflow-x-auto leading-relaxed max-h-32 overflow-y-hidden">
         {codePreview}
       </pre>
     </div>
@@ -77,7 +74,7 @@ function renderBreakdown(sidebarContent) {
   if (!sidebarContent) return null;
   return (
     <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Breakdown</p>
+      <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Breakdown</p>
       <p className="text-xs text-muted-foreground line-clamp-2">{sidebarContent}</p>
     </div>
   );

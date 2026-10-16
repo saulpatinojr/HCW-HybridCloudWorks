@@ -68,7 +68,7 @@ function CarouselPagination({
           chevron_right
         </span>
       </button>
-      <span className="text-xs text-foreground/50 ml-2">
+      <span className="text-xs text-muted-foreground ml-2">
         {carouselPage * visibleCount + 1}–
         {Math.min((carouselPage + 1) * visibleCount, filteredCount)} of {filteredCount}
       </span>

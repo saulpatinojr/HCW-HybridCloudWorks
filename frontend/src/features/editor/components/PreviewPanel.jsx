@@ -216,11 +216,11 @@ export function PreviewPanel() {
     <div className="flex flex-col h-full">
       {/* Panel header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Preview</span>
+        <span className="text-xs uppercase tracking-wide text-muted-foreground">Preview</span>
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 px-2 text-[10px]"
+          className="h-6 px-2 text-xs"
           onClick={() => setShowFull((v) => !v)}
         >
           {showFull ? 'Current section' : 'Full draft'}

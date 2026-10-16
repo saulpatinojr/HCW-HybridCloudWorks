@@ -56,7 +56,7 @@ function DraftItemRow({ item }) {
             {provider}
           </Badge>
           <span
-            className={`inline-flex px-1.5 py-0.5 rounded text-[11px] font-medium ${TYPE_BADGE[type] || TYPE_BADGE.blog}`}
+            className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium ${TYPE_BADGE[type] || TYPE_BADGE.blog}`}
           >
             {type}
           </span>

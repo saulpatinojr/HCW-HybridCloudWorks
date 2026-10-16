@@ -94,7 +94,7 @@ function LiveLine({ row, days }) {
   return (
     <p className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-2 flex-wrap">
       <span>Podbean:</span>
-      <Badge variant={row.hostStatus === 'publish' ? 'default' : 'outline'} className="text-[10px]">
+      <Badge variant={row.hostStatus === 'publish' ? 'default' : 'outline'} className="text-xs">
         {liveStatusLabel(row.hostStatus)}
       </Badge>
       {href && (
@@ -133,7 +133,7 @@ function Group({ group, items, onRetry, busyKey, overview }) {
     <section className="space-y-2" aria-label={group.title}>
       <h3 className={`font-semibold text-sm flex items-center gap-2 ${group.tone}`}>
         {group.title}
-        <Badge variant="secondary" className="text-[10px]">
+        <Badge variant="secondary" className="text-xs">
           {items.length}
         </Badge>
       </h3>
@@ -165,7 +165,7 @@ function AlsoOnPodbean({ overview }) {
     <section className="space-y-2" aria-label="Also on Podbean">
       <h3 className="font-semibold text-sm flex items-center gap-2 text-slate-600 dark:text-slate-300">
         Also on Podbean
-        <Badge variant="secondary" className="text-[10px]">
+        <Badge variant="secondary" className="text-xs">
           {rows.length}
         </Badge>
       </h3>

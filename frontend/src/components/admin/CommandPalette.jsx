@@ -272,7 +272,7 @@ function PaletteBody({ debounceMs, role, onChoose }) {
                 <span className="block truncate font-medium text-foreground">{option.label}</span>
                 {option.hint && <span className="block truncate text-xs">{option.hint}</span>}
               </span>
-              <span className="shrink-0 text-[10px] uppercase tracking-wider">{option.tag}</span>
+              <span className="shrink-0 text-xs uppercase tracking-wider">{option.tag}</span>
             </li>
           );
         })}
@@ -288,7 +288,7 @@ function PaletteBody({ debounceMs, role, onChoose }) {
           {note}
         </p>
       )}
-      <p className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
+      <p className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
         ↑ ↓ to move · Enter to open · Esc to close
       </p>
     </>
@@ -340,9 +340,7 @@ export default function CommandPalette({ debounceMs = 250 }) {
         >
           <Search className="h-3.5 w-3.5" aria-hidden="true" />
           <span>Search…</span>
-          <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px]">
-            Ctrl K
-          </kbd>
+          <kbd className="rounded border border-border bg-muted px-1 font-mono text-xs">Ctrl K</kbd>
         </button>
       </div>
 

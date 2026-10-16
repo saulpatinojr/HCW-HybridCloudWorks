@@ -89,7 +89,7 @@ export default function AccountsTab() {
                   <div key={id} className={`flex items-center gap-2 p-3 rounded-lg border ${bg}`}>
                     <Icon className={`h-4 w-4 ${color}`} />
                     <span className="text-sm font-medium">{label}</span>
-                    <Badge variant="secondary" className="ml-auto text-[10px]">
+                    <Badge variant="secondary" className="ml-auto text-xs">
                       {count}
                     </Badge>
                   </div>

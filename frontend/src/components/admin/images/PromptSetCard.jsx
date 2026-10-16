@@ -41,15 +41,13 @@ export default function PromptSetCard({ set, selected, onOpen }) {
           <h3 className="truncate text-sm font-semibold" title={set.name}>
             {set.name}
           </h3>
-          <span className="shrink-0 text-[10px] text-muted-foreground">v{set.version}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">v{set.version}</span>
         </div>
         {set.purpose && <p className="line-clamp-2 text-xs text-muted-foreground">{set.purpose}</p>}
         {set.theme && (
-          <p className="line-clamp-1 text-[11px] italic text-muted-foreground">
-            Theme: {set.theme}
-          </p>
+          <p className="line-clamp-1 text-xs italic text-muted-foreground">Theme: {set.theme}</p>
         )}
-        <div className="flex flex-wrap gap-1 text-[10px]">
+        <div className="flex flex-wrap gap-1 text-xs">
           {set.archivedAt && (
             <StatusBadge
               status={{
@@ -72,7 +70,7 @@ export default function PromptSetCard({ set, selected, onOpen }) {
             </Badge>
           ))}
         </div>
-        <p className="mt-auto pt-1 text-[11px] text-muted-foreground">
+        <p className="mt-auto pt-1 text-xs text-muted-foreground">
           {set.prompts.length} prompt{set.prompts.length === 1 ? '' : 's'} · {live} image
           {live === 1 ? '' : 's'} · {set.pages.length} page{set.pages.length === 1 ? '' : 's'}
         </p>

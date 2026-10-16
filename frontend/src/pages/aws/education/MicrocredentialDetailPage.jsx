@@ -116,7 +116,7 @@ const COLOR = {
     accent: 'from-amber-900/30',
     glow: 'rgba(245,158,11,0.15)',
     icon: 'text-amber-400',
-    btn: 'bg-amber-500 hover:bg-amber-400',
+    btn: 'bg-amber-500 hover:bg-amber-400 text-slate-950',
     hover: 'hover:border-amber-400/30',
     num: 'bg-amber-500/20 text-amber-300',
     link: 'hover:text-amber-400',
@@ -127,7 +127,7 @@ const COLOR = {
     accent: 'from-violet-900/30',
     glow: 'rgba(139,92,246,0.15)',
     icon: 'text-violet-400',
-    btn: 'bg-violet-500 hover:bg-violet-400',
+    btn: 'bg-violet-600 hover:bg-violet-700 text-white',
     hover: 'hover:border-violet-400/30',
     num: 'bg-violet-500/20 text-violet-300',
     link: 'hover:text-violet-400',
@@ -138,7 +138,7 @@ const COLOR = {
     accent: 'from-red-900/30',
     glow: 'rgba(239,68,68,0.15)',
     icon: 'text-red-400',
-    btn: 'bg-red-500 hover:bg-red-400',
+    btn: 'bg-red-600 hover:bg-red-700 text-white',
     hover: 'hover:border-red-400/30',
     num: 'bg-red-500/20 text-red-300',
     link: 'hover:text-red-400',
@@ -149,7 +149,7 @@ const COLOR = {
     accent: 'from-sky-900/30',
     glow: 'rgba(14,165,233,0.15)',
     icon: 'text-sky-400',
-    btn: 'bg-sky-500 hover:bg-sky-400',
+    btn: 'bg-sky-500 hover:bg-sky-400 text-slate-950',
     hover: 'hover:border-sky-400/30',
     num: 'bg-sky-500/20 text-sky-300',
     link: 'hover:text-sky-400',
@@ -180,7 +180,7 @@ export default function MicrocredentialDetailPage() {
           </p>
           <Link
             to={routes.education('aws')}
-            className="px-6 h-11 bg-amber-500 hover:bg-amber-400 text-white font-bold rounded-lg transition-colors inline-flex items-center gap-2"
+            className="px-6 h-11 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg transition-colors inline-flex items-center gap-2"
           >
             <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
               arrow_back
@@ -407,7 +407,7 @@ export default function MicrocredentialDetailPage() {
                 href={mc.skillBuilderUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`flex items-center justify-center gap-2 w-full h-11 ${c.btn} text-white font-bold rounded-lg transition-colors`}
+                className={`flex items-center justify-center gap-2 w-full h-11 ${c.btn} font-bold rounded-lg transition-colors`}
               >
                 <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
                   open_in_new

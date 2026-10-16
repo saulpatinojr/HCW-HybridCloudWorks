@@ -35,7 +35,7 @@ function ProviderRow({ provider, wouldRun }) {
       <code className="text-foreground">{provider.id}</code>
       <StatusBadge system={system} size="xs" />
       {provider.id === wouldRun && (
-        <Badge variant="default" className="text-[10px]">
+        <Badge variant="default" className="text-xs">
           runs today
         </Badge>
       )}
@@ -115,7 +115,7 @@ export default function SettingsTab({ hub }) {
             <ul className="flex flex-wrap gap-1.5" aria-label="Gemini voices">
               {catalog.voices.gemini.map((voice) => (
                 <li key={voice.id}>
-                  <Badge variant="outline" className="text-[10px]" title={voice.descriptor}>
+                  <Badge variant="outline" className="text-xs" title={voice.descriptor}>
                     {voice.id}
                     {voice.descriptor ? ` · ${voice.descriptor}` : ''}
                   </Badge>

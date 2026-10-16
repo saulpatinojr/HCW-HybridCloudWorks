@@ -75,20 +75,20 @@ function ChapterBadges({ chapter }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <StatusBadge status={chapterStatus(chapter.status)} />
-      <Badge variant="outline" className="text-[10px]">
+      <Badge variant="outline" className="text-xs">
         {KIND_LABEL[chapter.kind] || chapter.kind}
       </Badge>
       {chapter.droppedFromGuide && (
         <Badge
           variant="secondary"
-          className="text-[10px]"
+          className="text-xs"
           title="The current study guide no longer lists this area; the lesson stays as it is until you archive it"
         >
           Not in current guide
         </Badge>
       )}
       {chapter.versionCount > 1 && (
-        <Badge variant="secondary" className="text-[10px]">
+        <Badge variant="secondary" className="text-xs">
           {chapter.versionCount} takes
         </Badge>
       )}
@@ -225,7 +225,7 @@ function ChapterActions({ chapter, noun, busy, progress, renaming, onRenameStart
         <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Delete
       </Button>
       {published && chapter.approvedAt && (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           Approved {new Date(chapter.approvedAt).toLocaleDateString()}
         </span>
       )}

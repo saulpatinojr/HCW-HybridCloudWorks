@@ -163,7 +163,7 @@ export function describeLastTest(provider, now = Date.now()) {
 
 // ─── Services Tab ─────────────────────────────────────────────────────────────
 
-const MODEL_BADGE = 'text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border';
+const MODEL_BADGE = 'text-xs uppercase tracking-wide px-1.5 py-0.5 rounded border';
 const MODEL_BADGES = {
   retired: { label: 'retired', cls: 'bg-slate-100 text-slate-500 border-slate-200' },
   unknown: { label: 'unconfirmed', cls: 'bg-amber-50 text-amber-700 border-amber-200' },

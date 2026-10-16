@@ -17,7 +17,7 @@ function PageRow({ page, groupLabel, row, options, locked, busy, onChoose, onAss
         <select
           value={row.choice}
           onChange={(e) => onChoose(page.path, e.target.value)}
-          className="rounded border border-input bg-background px-1.5 py-0.5 text-[11px]"
+          className="rounded border border-input bg-background px-1.5 py-0.5 text-xs"
           aria-label={`Prompt for ${groupLabel} ${page.label}`}
           disabled={locked}
         >
@@ -30,7 +30,7 @@ function PageRow({ page, groupLabel, row, options, locked, busy, onChoose, onAss
         <Button
           type="button"
           size="sm"
-          className="h-6 px-2 text-[11px]"
+          className="h-6 px-2 text-xs"
           disabled={locked}
           onClick={() => onAssign(page.path, row.choice)}
         >
@@ -41,7 +41,7 @@ function PageRow({ page, groupLabel, row, options, locked, busy, onChoose, onAss
             type="button"
             size="sm"
             variant="ghost"
-            className="h-6 px-2 text-[11px]"
+            className="h-6 px-2 text-xs"
             disabled={busy}
             onClick={() => onUnassign(page.path)}
           >

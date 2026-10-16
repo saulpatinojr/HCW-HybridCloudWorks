@@ -22,7 +22,12 @@
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { chromium } from '@playwright/test';
+import { IdentityStub } from '../e2e/fixtures/entra.js';
+
+const require = createRequire(import.meta.url);
+const AXE_PATH = require.resolve('axe-core/axe.min.js');
 
 const BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:4173';
 const FAIL_ON = (process.env.AXE_FAIL_ON || 'color-contrast')
@@ -33,8 +38,10 @@ const INCLUDE_INCOMPLETE = process.env.AXE_INCLUDE_INCOMPLETE === 'true';
 
 const PROVIDERS = ['aws', 'azure', 'gcp', 'github', 'terraform', 'finops'];
 
-// All publicly reachable routes (no auth required). Admin routes are excluded
-// because they require login; cover them with authenticated e2e tests.
+// Authenticated admin routes covered for colour-contrast (AP-F9).
+const ADMIN_ROUTES = ['/admin', '/admin/review-queue', '/admin/health'];
+
+// All publicly reachable routes (no auth required).
 const ROUTES = [
   '/',
   '/about',
@@ -82,7 +89,7 @@ const THEMES = ['light', 'dark'];
 
 async function runAxeOnPage(page) {
   await page.addScriptTag({
-    url: 'https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.10.3/axe.min.js',
+    path: AXE_PATH,
   });
   return page.evaluate(async () => {
     const runOnly = { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] };
@@ -129,16 +136,14 @@ async function main() {
         try {
           await page.goto(url, { waitUntil: 'networkidle' });
           // Wait for hydration; theme class must be present on <html>.
-          await page
-            .waitForFunction(
-              (t) =>
-                t === 'dark'
-                  ? document.documentElement.classList.contains('dark')
-                  : !document.documentElement.classList.contains('dark'),
-              theme,
-              { timeout: 5000 }
-            )
-            .catch(() => {});
+          await page.waitForFunction(
+            (t) =>
+              t === 'dark'
+                ? document.documentElement.classList.contains('dark')
+                : !document.documentElement.classList.contains('dark'),
+            theme,
+            { timeout: 5000 }
+          );
 
           const axeResult = await runAxeOnPage(page);
           const contrastNodes = (
@@ -178,6 +183,63 @@ async function main() {
         }
       }
 
+      for (const route of ADMIN_ROUTES) {
+        const url = `${BASE_URL}${route}`;
+        const adminPage = await context.newPage();
+        adminPage.setDefaultTimeout(20_000);
+        try {
+          const stub = new IdentityStub(adminPage, BASE_URL);
+          await stub.install();
+          await stub.signIn(route);
+          await adminPage.waitForFunction(
+            (t) =>
+              t === 'dark'
+                ? document.documentElement.classList.contains('dark')
+                : !document.documentElement.classList.contains('dark'),
+            theme,
+            { timeout: 5000 }
+          );
+
+          const axeResult = await runAxeOnPage(adminPage);
+          const contrastNodes = (
+            axeResult.violations.find((v) => v.id === 'color-contrast')?.nodes ?? []
+          ).map(summarizeNode);
+
+          results.push({
+            theme,
+            route,
+            url,
+            violations: axeResult.violations.map((v) => ({
+              id: v.id,
+              impact: v.impact,
+              help: v.help,
+              helpUrl: v.helpUrl,
+              nodeCount: v.nodes.length,
+              nodes:
+                v.id === 'color-contrast' ? contrastNodes : v.nodes.slice(0, 3).map(summarizeNode),
+            })),
+            incomplete: axeResult.incomplete.map((v) => ({
+              id: v.id,
+              impact: v.impact,
+              nodeCount: v.nodes.length,
+            })),
+            passCount: axeResult.passes.length,
+          });
+        } catch (err) {
+          results.push({
+            theme,
+            route,
+            url,
+            error: err.message,
+            violations: [],
+            incomplete: [],
+            passCount: 0,
+          });
+        } finally {
+          await adminPage.close().catch(() => {});
+        }
+      }
+
       await context.close();
     }
   } finally {
@@ -201,13 +263,14 @@ async function main() {
     0
   );
 
+  const allRoutesCount = ROUTES.length + ADMIN_ROUTES.length;
   const lines = [];
   lines.push(`# Axe Theme Scan Report`);
   lines.push(``);
   lines.push(`- **Generated:** ${startedAt}`);
   lines.push(`- **Base URL:** ${BASE_URL}`);
   lines.push(
-    `- **Routes scanned:** ${ROUTES.length} × ${THEMES.length} themes = ${ROUTES.length * THEMES.length}`
+    `- **Routes scanned:** ${allRoutesCount} × ${THEMES.length} themes = ${allRoutesCount * THEMES.length}`
   );
   lines.push(`- **Total contrast violation nodes:** ${totalContrast}`);
   lines.push(`- **Total violation nodes (all rules):** ${totalAll}`);
@@ -254,18 +317,25 @@ async function main() {
       .filter((v) => FAIL_ON.includes(v.id))
       .map((v) => ({ theme: r.theme, route: r.route, id: v.id, nodes: v.nodeCount }))
   );
+  const errors = results.filter((r) => r.error);
   const incompleteCount = INCLUDE_INCOMPLETE
     ? results.reduce((n, r) => n + r.incomplete.reduce((m, v) => m + v.nodeCount, 0), 0)
     : 0;
 
-  console.log(`Routes scanned: ${ROUTES.length} × ${THEMES.length}`);
+  console.log(`Routes scanned: ${allRoutesCount} × ${THEMES.length}`);
   console.log(`Contrast violation nodes: ${totalContrast}`);
   console.log(`Other violation nodes: ${totalAll - totalContrast}`);
+  if (errors.length > 0) {
+    console.error(`Route errors: ${errors.length}`);
+    for (const e of errors) {
+      console.error(`  - [${e.theme}] ${e.route}: ${e.error}`);
+    }
+  }
   console.log(`Reports written to: ${reportDir}/axe-theme-scan.{json,md}`);
 
-  if (failures.length > 0 || incompleteCount > 0) {
+  if (failures.length > 0 || incompleteCount > 0 || errors.length > 0) {
     console.error(
-      `\nFAIL: ${failures.length} route/rule combinations triggered configured fail-on rules (${FAIL_ON.join(', ')}).`
+      `\nFAIL: Scan encountered failures (failures: ${failures.length}, incomplete: ${incompleteCount}, errors: ${errors.length}).`
     );
     process.exit(1);
   }

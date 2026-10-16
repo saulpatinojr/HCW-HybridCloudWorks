@@ -36,7 +36,7 @@ export function checkedLine(result, now = Date.now()) {
 function StaleNote({ result }) {
   if (!result?.stale) return null;
   return (
-    <p className="text-[11px] text-muted-foreground" data-testid="probe-stale">
+    <p className="text-xs text-muted-foreground" data-testid="probe-stale">
       Stale: last {toSystemStatus(result.lastStatus).label}, older than its{' '}
       {describeWindow(result.windowMs)} window. Test again for a current answer.
     </p>
@@ -71,7 +71,7 @@ function ProbeActions({ probe, running, onRun }) {
         </Link>
       ) : null}
       {!probe.safe && probe.costNote ? (
-        <span className="text-[11px] text-muted-foreground">Not in Test all: {probe.costNote}</span>
+        <span className="text-xs text-muted-foreground">Not in Test all: {probe.costNote}</span>
       ) : null}
     </div>
   );
@@ -98,13 +98,13 @@ export function ProbeCard({ probe, result, running, onRun, now }) {
         </p>
         <StaleNote result={result} />
         {result?.detail ? (
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap wrap-break-word rounded border border-border/60 bg-muted/40 p-2 font-mono text-[11px]">
+          <pre className="max-h-32 overflow-auto whitespace-pre-wrap wrap-break-word rounded border border-border/60 bg-muted/40 p-2 font-mono text-xs">
             {result.detail}
           </pre>
         ) : null}
       </div>
       <footer className="mt-3 space-y-2 border-t border-border/60 pt-2" data-slot="footer">
-        <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
           <dt>Checked</dt>
           <dd data-testid="probe-checked">{checkedLine(result, now)}</dd>
           <dt>Impact</dt>

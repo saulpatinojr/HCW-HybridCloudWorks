@@ -145,7 +145,7 @@ function SectionBlock({ section, index, count, totalItems, disabled, onChange })
                 </a>
                 {item.manual && (
                   <span
-                    className="rounded border border-border px-1 text-[10px] text-muted-foreground"
+                    className="rounded border border-border px-1 text-xs text-muted-foreground"
                     title="Added by hand; not collected from the site"
                   >
                     manual

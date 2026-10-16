@@ -72,7 +72,7 @@ export default function AWSCertDetailPage() {
           </p>
           <Link
             to={routes.education('aws')}
-            className="px-6 h-11 bg-amber-500 hover:bg-amber-400 text-white font-bold rounded-lg transition-colors inline-flex items-center gap-2"
+            className="px-6 h-11 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg transition-colors inline-flex items-center gap-2"
           >
             <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
               arrow_back
@@ -306,7 +306,7 @@ export default function AWSCertDetailPage() {
                 href={cert.learnUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 w-full h-11 bg-amber-500 hover:bg-amber-400 text-white font-bold rounded-lg transition-colors"
+                className="flex items-center justify-center gap-2 w-full h-11 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg transition-colors"
               >
                 <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
                   open_in_new

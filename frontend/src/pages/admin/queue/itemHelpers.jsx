@@ -189,7 +189,7 @@ export function getDecayBadge(item) {
     return (
       <Badge
         variant="outline"
-        className="text-[10px] font-mono border-amber-400 text-amber-700 dark:border-amber-500 dark:text-amber-300"
+        className="text-xs font-mono border-amber-400 text-amber-700 dark:border-amber-500 dark:text-amber-300"
         title="Soft-deleted. Will be permanently removed when this counter reaches zero."
       >
         purges in {formatRemaining(remaining)}
@@ -204,7 +204,7 @@ export function getDecayBadge(item) {
     return (
       <Badge
         variant="outline"
-        className="text-[10px] font-mono border-orange-400 text-orange-700 dark:border-orange-500 dark:text-orange-300"
+        className="text-xs font-mono border-orange-400 text-orange-700 dark:border-orange-500 dark:text-orange-300"
         title="Rejected. Will be moved to soft-delete (7-day recovery) at the next 04:00 CT cron run."
       >
         soft-delete in {formatRemaining(remaining)}
@@ -218,7 +218,7 @@ export function getDecayBadge(item) {
 export function getSourceBadge(item) {
   if (item.source === 'rss') {
     return (
-      <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+      <Badge variant="outline" className="text-xs uppercase tracking-wide">
         RSS
       </Badge>
     );
@@ -226,7 +226,7 @@ export function getSourceBadge(item) {
 
   if (item.source === 'manual_url') {
     return (
-      <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+      <Badge variant="outline" className="text-xs uppercase tracking-wide">
         Manual URL
       </Badge>
     );
@@ -234,7 +234,7 @@ export function getSourceBadge(item) {
 
   if (item.source === 'forge-url') {
     return (
-      <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+      <Badge variant="outline" className="text-xs uppercase tracking-wide">
         Forged URL
       </Badge>
     );
@@ -243,7 +243,7 @@ export function getSourceBadge(item) {
   // Imported from docs/content by the queue's repository panel.
   if (item.source === 'repo') {
     return (
-      <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+      <Badge variant="outline" className="text-xs uppercase tracking-wide">
         Repository
       </Badge>
     );
@@ -262,10 +262,7 @@ export function getForgeBadge(item) {
   if (typeof overall !== 'number') return null;
   const staged = item?.contentStatus === 'forge_ready';
   return (
-    <Badge
-      variant={staged ? 'default' : 'secondary'}
-      className="text-[10px] uppercase tracking-wide"
-    >
+    <Badge variant={staged ? 'default' : 'secondary'} className="text-xs uppercase tracking-wide">
       Forge {Math.round(overall)}
     </Badge>
   );

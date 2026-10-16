@@ -115,9 +115,9 @@ export function TaxonomyList({ field, title, icon: Icon, blurb, entries, onChang
                       aria-label={`Label for ${entry.id}`}
                       className="h-8 max-w-xs text-sm"
                     />
-                    <code className="text-[11px] text-muted-foreground">{entry.id}</code>
+                    <code className="text-xs text-muted-foreground">{entry.id}</code>
                     {builtIn && (
-                      <span className="rounded-full border px-1.5 text-[10px] text-muted-foreground">
+                      <span className="rounded-full border px-1.5 text-xs text-muted-foreground">
                         built-in
                       </span>
                     )}
@@ -180,7 +180,7 @@ export function TaxonomyList({ field, title, icon: Icon, blurb, entries, onChang
             className="h-8 max-w-xs text-sm"
           />
           {newLabel && (
-            <code className="text-[11px] text-muted-foreground">
+            <code className="text-xs text-muted-foreground">
               {newId || '…'}
               {ids.has(newId) ? ' (already exists)' : ''}
             </code>

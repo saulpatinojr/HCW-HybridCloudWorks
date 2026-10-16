@@ -33,7 +33,7 @@ import {
   withTaskEntry,
 } from './selectionModel';
 
-const BADGE = 'rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide';
+const BADGE = 'rounded border px-1.5 py-0.5 text-xs uppercase tracking-wide';
 const BADGE_TONE = {
   public: 'border-sky-200 bg-sky-50 text-sky-700',
   warn: 'border-amber-200 bg-amber-50 text-amber-700',
@@ -233,7 +233,7 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
             {describeEffective(resolved, providers)}
           </p>
           {rejection && (
-            <p className="text-[11px] text-muted-foreground" data-testid={`rejected-${task}`}>
+            <p className="text-xs text-muted-foreground" data-testid={`rejected-${task}`}>
               {rejection}
             </p>
           )}
@@ -316,7 +316,7 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
           Test
         </Button>
         {media && (
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             Test resolves the chain only; it makes no audio or image.
           </span>
         )}
