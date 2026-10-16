@@ -2031,15 +2031,19 @@ the templates ("After a merge", above). The launcher's half reaches the
 host in the same run.
 
 - **One running workspace per learner.** A start is refused while another
-  workspace of the same learner is starting or running (its latest build is
-  a start that is queued, under way or done). Stopped workspaces do not
-  count, so a learner keeps one per lab. The refusal is a precondition on
-  the workspace container, checked at plan, so a refused start creates
-  nothing. Coder's build log carries `Stop your other lab first: <name>.`
-  In a pane on the site, the lab launcher reads that line, says `Only one of
-  your lab workspaces runs at a time, and <name> is running. Stop it on the
-  page below, and this lab starts.`, and frames Coder's page for that
-  workspace, where Stop is; once it has stopped, the launcher starts the
+  workspace of the same learner may have its container up: its latest build
+  is a start that is queued, under way, done or being cancelled, or a stop
+  that failed. Stopped workspaces do not count, so a learner keeps one per
+  lab, and neither does a start that failed, so a refused start never holds
+  the limit itself. The refusal is a precondition on the workspace
+  container, checked at plan, so a refused start creates nothing. Coder's
+  build log carries `Stop your other lab first: <name>.` In a pane on the
+  site, the lab launcher reads that line, says `Only one of your lab
+  workspaces runs at a time, and <name> is running. Stop it on the page
+  below, and this lab starts.`, the site's toolbar says `Stop your other lab
+  to continue`, and Coder's page for that workspace, where Stop is, is in
+  the frame. The pane waits for as long as that lab runs (its own autostop
+  ends it within the hour), and once it has stopped the launcher starts the
   refused one by itself. The check reads
   `http://127.0.0.1:7080/api/v2/workspaces?q=owner:me` from inside the
   `coder` container, where the provisioner runs Terraform, with the
@@ -2059,6 +2063,48 @@ host in the same run.
   the volume, by design: the AWS CLI's single sign-on and role caches,
   which it keeps under `~/.aws` whatever the variables say (the image ships
   no AWS CLI), and anything a learner writes there by hand.
+
+**Both bind the builds of a template version published with them, and no
+other.** A build runs the template version it is given, and Coder Community
+gives a start the workspace's own version: the build API without a version
+(`coderd/wsbuilder/wsbuilder.go`, `getTemplateVersionID`, "default is prior
+version"), and the dashboard's Start and Restart, which send the workspace's
+current version (`site/src/api/queries/workspaces.ts`, `startWorkspace`).
+The template's "require active version" setting, which would force every
+start onto the new version, is Premium, and a workspace's "automatic
+updates" setting changes only autostart and the CLI's `coder start`, not
+those buttons (`lab-host/coder/README.md`, "Community edition caps"). The
+lab launcher does start an outdated workspace on the active version (#911),
+so a workspace opened through the site picks both up on its next open. One
+that is still on a version from before #954 and is started any other way
+(Coder's own Start in the pane's frame) runs without them until that
+happens. So once, after the run that publishes the templates:
+
+1. List the workspaces and which are outdated, PowerShell, with a token of
+   yours in `$t` (`lab-host/README.md`, "The status token for the site",
+   step 1):
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder list --all --column workspace,template,status,outdated; }'"
+   ```
+
+   Good is a table with one row per workspace, each `<owner>/<name>`, and an
+   `OUTDATED` column. On 2026-10-16 there were two, both the owner's,
+   `lab-mde-wsl` and `lab-wslc` on `hcw-lab`.
+
+2. For each row whose `OUTDATED` is `true`: open its lab through the site
+   once, which starts it on the active version, then stop it from the
+   workspace's own menu in the pane (the lab page's **Your workspace** panel
+   says where); or, if its files are not wanted, delete it there. For
+   the owner's two those are
+   https://hybridcloudworks.com/education/labs/defender-wsl-plugin-walkthrough
+   (`lab-mde-wsl`) and
+   https://hybridcloudworks.com/education/labs/wsl-containers-walkthrough
+   (`lab-wslc`), one at a time. Another learner's outdated workspace
+   updates the same way on their next open through the site. Good is the
+   same line in step 1 listing no `true` under `OUTDATED` for the owner.
+   Template versions published from here on all carry both, so this is
+   needed once.
 
 ### Checking them
 
@@ -2093,16 +2139,21 @@ terminal (**Terminal** > **New Terminal** in the editor).
    in another tab, and confirm Coder's dialog if its workspace is new. Good
    is the pane saying `Only one of your lab workspaces runs at a time, and
    lab-tfv is running. Stop it on the page below, and this lab starts.`
-   above Coder's page for `lab-tfv`. Press **Stop** there: within a minute
+   above Coder's page for `lab-tfv`, and the toolbar above the pane saying
+   `Stop your other lab to continue`. Press **Stop** there: within a minute
    the pane says `Getting your lab workspace ready.` and then opens the
    editor for the second lab, with no click.
 
 A start that fails with `Your lab workspace could not check your other lab
-workspaces (answer <code>)` means the provisioner could not read Coder's
-API: `401` is a session token Coder refused, and a `5xx` is Coder failing,
-tried twice more first. A connection nothing answered fails the start with
-the provider's own `Error making request` instead. Either way, Coder's page
-for the workspace shows the failed build's log with the whole error.
+workspaces (answer <code>)` means Coder answered the read with a client
+error: `401` is a session token Coder refused, `403` or `404` a token that
+may not list the learner's workspaces. A `5xx`, and a connection nothing
+answered, never show that line: the provider tries twice more and then
+fails the start with its own `Error making request: GET
+http://127.0.0.1:7080/api/v2/workspaces?q=owner:me giving up after 3
+attempt(s)` (measured 2026-10-16 with `terraform plan` against a stand-in
+answering 500, and with nothing listening). Either way, Coder's page for
+the workspace shows the failed build's log with the whole error.
 
 ## Portainer through an SSH tunnel
 

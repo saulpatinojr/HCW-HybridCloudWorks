@@ -63,11 +63,15 @@ dashboard's own name so it has the learner's session and Coder's API:
    A failed start: `GET /api/v2/workspacebuilds/<build>/logs`, once per
    build. When an error line carries the template's `Stop your other lab
    first: <name>.` and `<name>` is a Coder workspace name, it reads
-   `/api/v2/users/me/workspace/<name>`. While that workspace is starting or
-   running, the pane says `Only one of your lab workspaces runs at a time,
-   and <name> is running. Stop it on the page below, and this lab starts.`
-   and frames `/@me/<name>`, where Stop is. Once it is not, it starts this
-   lab's workspace itself, once a visit, the same call as above.
+   `/api/v2/users/me/workspace/<name>`. While that workspace counts against
+   the limit (as the templates count it, below), the state is `limited`: the
+   pane says `Only one of your lab workspaces runs at a time, and <name> is
+   running. Stop it on the page below, and this lab starts.`, the site's
+   toolbar `Stop your other lab to continue`, and it frames `/@me/<name>`,
+   where Stop is. That wait is the learner's, so the ten-minute cap below
+   does not run during it and counts again once it ends. Once that
+   workspace no longer counts, it starts this lab's workspace itself, once
+   a visit, the same call as above.
 4. Waits, from one second between reads up to five, until the latest build
    is running, the agent is connected and ready, and the `code-server`
    app's `health` is `healthy`. Ten minutes, or six failed reads in a row,
@@ -100,30 +104,55 @@ Owner decision 2026-10-16 (#954), in all three templates, and checked by
   build only (its `count` needs `start_count` and the owner's session
   token, which a template import does not have), from inside the `coder`
   container where the provisioner runs Terraform, and fails the build
-  unless Coder answers 200. A precondition on the workspace container then
-  refuses the start while another of the owner's workspaces has a start
-  queued, under way or done (`pending`, `starting`, `running`), with
-  `Only one lab workspace can run at a time. Stop your other lab first:
+  unless Coder answers 200 (a `5xx` is retried twice by the provider and
+  then fails the start as `Error making request`). A precondition on the
+  workspace container then refuses the start while another of the owner's
+  workspaces has a latest build that leaves its container running, or may
+  (`local.blocking_builds`): a start that is `pending`, `starting`,
+  `running` or `canceling`, or a stop that `failed`. A failed start does
+  not count, so a refused start never holds the limit itself. The message
+  is `Only one lab workspace can run at a time. Stop your other lab first:
   <name>.` Checked at plan, so a refused start creates nothing. The limit
-  is `local.max_running_workspaces`, 1.
+  is `local.max_running_workspaces`, 1. The launcher's `isBlocking` counts
+  the same builds, and `template.test.mjs` holds the two equal.
 - **Sign-ins in memory.** A tmpfs at `/tmp/cloud-creds`, mounted
   `rw,nosuid,nodev,noexec,size=64m,uid=65534,gid=65534,mode=0700` through
   the container's `tmpfs` map (a `mounts` block's tmpfs options take no uid), and the
   agent's environment points `AZURE_CONFIG_DIR`, `AWS_CONFIG_FILE`,
   `AWS_SHARED_CREDENTIALS_FILE` and `CLOUDSDK_CONFIG` into it. A sign-in is
   never written to the home volume and ends when the workspace stops. Two
-  limits, by design: `az` keeps its extensions and the Bicep binary in its
-  configuration directory too, so they would be installed into a
-  `noexec` tmpfs and gone at the next stop (no lab uses them); and the
-  AWS CLI keeps its single sign-on and role caches under `~/.aws` whatever
-  the variables say (the image ships no AWS CLI).
+  limits, by design. `az` keeps its extensions (`AZURE_EXTENSION_DIR`
+  defaults to `cliextensions` under its configuration directory) and the
+  Bicep binary (under `bin`) there too. The tmpfs is `noexec`, so Bicep
+  cannot run from it, and neither can an extension that carries compiled
+  code (Python can still read a pure-Python one); and anything installed
+  there is gone at the next stop. No lab uses them; if one ever does, set
+  `AZURE_EXTENSION_DIR` (and install Bicep) on the home volume instead,
+  which holds code, not a sign-in. And the AWS CLI keeps its single
+  sign-on and role caches under `~/.aws` whatever the variables say (the
+  image ships no AWS CLI).
+- **Both bind the builds of a template version that carries them, and no
+  other.** Coder Community starts a workspace on its own version unless the
+  start names another: the build API (`coderd/wsbuilder/wsbuilder.go`,
+  `getTemplateVersionID`, "default is prior version") and the dashboard's
+  Start and Restart (`site/src/api/queries/workspaces.ts`,
+  `startWorkspace`, which sends `latest_build.template_version_id`). The
+  launcher starts an outdated workspace on the active version (#911), so
+  one opened through the site picks them up on its next open; one still on
+  a version from before #954 and started with Coder's own Start runs without
+  them until then. The runbook's "Coder workspaces: one running per
+  learner, sign-ins in memory" has the one-time step after the first
+  publish. Why Coder cannot force it is under "Community edition caps".
 
 Measured 2026-10-16 with `terraform plan -json`, run as Coder's
-provisioner runs it, for each template against a stand-in for Coder's API:
-another workspace running, starting or with a start queued is refused, one
-stopped, stopping, with a stop queued or with a failed start is not, the
-learner's own workspace never counts, a 401 or a 500 fails the start, and
-an import (no token) and a stop build never call the API.
+provisioner runs it, for each template against a stand-in for Coder's API
+(19 cases per template): another workspace running, starting, with a start
+queued or being cancelled, or with a failed stop is refused; one stopped,
+stopping, with a stop queued, with a failed or cancelled start, or with a
+failed delete is not; the learner's own workspace never counts; a 401, 403
+or 404 fails the start with the postcondition's message and a 500, after
+three tries, with `Error making request`; and an import (no token) and a
+stop build never call the API.
 
 ## The editor's settings
 
@@ -178,6 +207,20 @@ Written down so nobody rediscovers them (#659):
   number the host is sized for and the role asserts it against the host's
   memory; it is not a Coder setting. Per learner, the templates enforce
   one running workspace themselves (#954): Community has no quota for it.
+- No forcing a start onto the active template version. The template
+  setting "require active version" is Premium: its access-control store is
+  the enterprise one, swapped in only with the access-control feature
+  (`enterprise/coderd/coderd.go`, `FeatureAccessControl`), and Community's
+  never requires it. A workspace's "automatic updates" setting
+  (`automatic_updates: always`, `PUT /api/v2/workspaces/{id}/autoupdates`)
+  is Community, but in v2.38.0 it changes only autostart
+  (`coderd/autobuild/lifecycle_executor.go`, `useActiveVersion`), the CLI's
+  `coder start` (`cli/start.go`) and `resolve-autostart`: the build API
+  without a version and the dashboard's Start and Restart still build the
+  workspace's own version (checked 2026-10-16). So the templates' limit and
+  sign-in tmpfs bind the builds of a version that carries them, which is
+  every version from #954 on, and the launcher starts outdated workspaces
+  on the active version ("Running workspaces and sign-ins", above).
 - No user without a sign-in. In v2.37.3, `--login-type none` needs a
   service account, and service accounts are Premium (the server answers
   `Service Accounts is a Premium feature`; measured 2026-09-28). The site's
