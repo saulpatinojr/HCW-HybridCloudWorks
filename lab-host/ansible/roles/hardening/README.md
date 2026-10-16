@@ -400,6 +400,23 @@ carry it:
 Revisit if a second person gets a key, or if either of the coming controls
 is dropped.
 
+## Rolling back
+
+A rollback must keep `hardening_admin_authorized_keys` pinned in
+`group_vars/all.yml`. Once this role has run, root's `authorized_keys` is
+empty, so there is nothing left to copy from:
+
+- with the list set back to `[]`, this revision stops every
+  `bootstrap.sh` run at its empty-list check;
+- the revision before #953 copied root's keys into `hcwadmin`'s when the
+  list was empty, so with `[]` it finds none and stops every run at its own
+  "No public key" check.
+
+So revert the code if you need to, but leave the list as it is: every
+revision writes `hcwadmin`'s keys from a non-empty list. Rolling sshd's
+settings back is the same: revert the template and run `bootstrap.sh`; the
+reload keeps open sessions.
+
 ## Handlers
 
 `Reload ssh`, `Restart unattended-upgrades`, `Restart fail2ban`, `Reload
@@ -421,8 +438,9 @@ shares no key with `hcwadmin`'s file, or with root's while `hcwadmin`'s has
 none, stops it with both sides' fingerprints. A journal that cannot be
 read stops it too. The override lets a refused list through, a list that
 passes writes `hcwadmin`'s file to exactly the list, and a second run
-changes nothing. As root, because the module sets the file's owner; CI
-runs it in the `ansible-lint (lab-host)` job.
+changes nothing. No root needed: the administrative user is the account
+running the test, so it owns what the test writes. CI runs it in the
+`ansible-lint (lab-host)` job.
 `tests/sshd-apply.test.sh` runs `tasks/sshd.yml` against a stub `sshd`
 and scratch paths, with the role's handlers as written except that the
 reload of `ssh.service` becomes a log line recording the size of root's
