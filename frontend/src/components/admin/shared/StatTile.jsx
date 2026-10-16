@@ -63,7 +63,10 @@ export default function StatTile({
         <ChevronRight className="h-3 w-3 text-muted-foreground/30 transition-colors group-hover:text-muted-foreground" />
       </span>
       <span className="mt-2 text-2xl font-bold leading-8 tabular-nums">{value}</span>
-      <span className="truncate text-xs font-medium leading-4 tracking-tight text-muted-foreground" title={label}>
+      <span
+        className="truncate text-xs font-medium leading-4 tracking-tight text-muted-foreground"
+        title={label}
+      >
         {label}
       </span>
       {note ? (
@@ -78,7 +81,11 @@ export default function StatTile({
           {note}
         </span>
       ) : (
-        <span className="mt-0.5 text-xs leading-4 tracking-tight" aria-hidden="true" data-testid="stat-tile-note">
+        <span
+          className="mt-0.5 text-xs leading-4 tracking-tight"
+          aria-hidden="true"
+          data-testid="stat-tile-note"
+        >
           &nbsp;
         </span>
       )}
