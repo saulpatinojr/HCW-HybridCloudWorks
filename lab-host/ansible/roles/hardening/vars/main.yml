@@ -1,0 +1,43 @@
+---
+# Fixed names and patterns. Not meant to be overridden, which is why they are
+# vars and not defaults; tests/admin-keys.test.sh points the two paths at
+# scratch files with -e, which is the one override they get.
+
+# Root's authorized_keys. Root login is off, so the role keeps this file
+# empty (#953); break-glass is hPanel's Web Console with root's password,
+# which does not go through sshd.
+hardening_root_authorized_keys_path: /root/.ssh/authorized_keys
+
+# One public key line as hardening_admin_authorized_keys must hold it: a key
+# type sshd accepts, the base64 key blob, and an optional comment. No
+# authorized_keys options: the list is keys, and only keys.
+hardening_public_key_types: '(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)'
+hardening_public_key_pattern: '^{{ hardening_public_key_types }} AAAA[A-Za-z0-9+/]+={0,3}( \S.*)?$'
+
+# The key blob in an authorized_keys line, wherever it stands (after
+# options, before a comment). Every OpenSSH public key blob begins AAAA,
+# because it begins with the four-byte length of its type name, and it
+# carries that type name, so two lines name the same key exactly when their
+# blobs are equal.
+hardening_public_key_blob_pattern: '(?:^|\s)(AAAA[A-Za-z0-9+/]+={0,3})(?=\s|$)'
+
+# The connection sshd -T -C is asked about after the drop-in is written: a
+# label for the host and a TEST-NET-1 address (RFC 5737), which names no
+# real client. sshd's configuration on this host has no Match block, so the
+# address does not change the answer; a Match block added later would need
+# a test connection it covers.
+hardening_sshd_test_host: hcw-lab
+hardening_sshd_test_addr: 192.0.2.10
+# The sshd -T keywords the role holds to the drop-in, which its refusal
+# prints when they differ.
+hardening_sshd_checked_keywords:
+  - allowusers
+  - authenticationmethods
+  - pubkeyauthentication
+  - passwordauthentication
+  - permitrootlogin
+  - allowagentforwarding
+  - allowtcpforwarding
+  - permittunnel
+  - x11forwarding
+  - authorizedkeysfile

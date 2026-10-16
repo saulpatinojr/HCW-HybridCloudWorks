@@ -3,8 +3,11 @@ argument_specs:
   main:
     short_description: Harden SSH, the firewall, patching and brute-force protection on an Ubuntu 26.04 or 24.04 host
     description:
-      - Creates a key-only administrative user with passwordless sudo, then disables
-        password and root SSH login through a drop-in that sorts before cloud-init's.
+      - Creates a key-only administrative user with passwordless sudo (an accepted risk), writes
+        its authorized_keys from hardening_admin_authorized_keys alone behind a lockout guard,
+        then limits SSH to that user and to public keys through a drop-in that sorts before
+        cloud-init's, proven with sshd -t and sshd -T before sshd is reloaded. Root's
+        authorized_keys is kept empty.
       - Sets ufw to deny inbound and allow outbound with an explicit inbound TCP allowlist.
       - Turns on unattended-upgrades, with its own reboot off, once the timer that replaces it
         is verified active; cancels a reboot unattended-upgrades had already scheduled, and stops
@@ -36,10 +39,32 @@ argument_specs:
         required: false
         default: []
         description:
-          - Public keys for the administrative user.
-          - When empty the role copies /root/.ssh/authorized_keys, so the key the provisioner
-            installed for root keeps working under the new user. The role refuses to continue
-            if neither source yields a key.
+          - The public keys that may log in as the administrative user, one key line each (type,
+            key, optional comment; no authorized_keys options). The role writes the user's
+            authorized_keys from this list alone (exclusive) and keeps root's authorized_keys
+            empty (issue 953).
+          - The role stops before changing anything when the list is empty or an entry is not one
+            public key. There is no fallback to root's keys.
+          - The lockout guard. The role also stops when the list shares no key with the keys that
+            log in today, the administrative user's authorized_keys or, while that has none (the
+            first run after a reinstall), root's; see hardening_admin_keys_replace_all.
+      hardening_admin_keys_replace_all:
+        type: bool
+        required: false
+        default: false
+        description:
+          - Lets one run through the lockout guard, writing a key list that shares no key with the
+            keys that log in today. Pass it with -e for that run only, once you hold one of the new
+            keys or can reach hPanel's Web Console.
+      hardening_sshd_allow_users:
+        type: list
+        elements: str
+        required: false
+        description:
+          - sshd's AllowUsers, the only accounts that may log in over SSH. Defaults to a list of
+            hardening_admin_user alone. The role refuses a list that leaves the administrative user
+            out, names root, or holds anything but plain user names, and reads the result back
+            with sshd -T before it reloads sshd.
       hardening_ufw_allowed_tcp_ports:
         type: list
         elements: int

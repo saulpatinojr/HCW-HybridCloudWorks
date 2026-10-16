@@ -1,8 +1,13 @@
 ---
-- name: Restart ssh
+# A reload, never a restart (#953). ssh.service's ExecReload runs sshd -t and
+# then sends HUP to the listening sshd, which re-reads its settings; each open
+# session is its own sshd-session process and stays up. With ssh.service not
+# running yet (ssh.socket starts it on the first connection after boot), the
+# module starts it instead, which reads the new settings too.
+- name: Reload ssh
   ansible.builtin.systemd_service:
     name: ssh
-    state: restarted
+    state: reloaded
 
 - name: Restart unattended-upgrades
   ansible.builtin.systemd_service:

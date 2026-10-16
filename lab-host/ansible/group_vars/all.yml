@@ -25,15 +25,22 @@ lab_host_ubuntu_releases:
 lab_host_applied_commit_file: /etc/hcw/applied-commit.json
 
 # Hardening. SSH and the two web ports are the only inbound ports: vps-agent is
-# pull-based and node_exporter listens on loopback. The admin user's keys
-# default to whatever the provisioner installed for root, so the first run
-# never locks the host; set the list to pin them explicitly.
+# pull-based and node_exporter listens on loopback.
 hardening_ufw_allowed_tcp_ports:
   - 22
   - 80
   - 443
 hardening_admin_user: hcwadmin
-hardening_admin_authorized_keys: []
+# The only keys that may log in as hcwadmin (#953, owner decision 2026-10-16).
+# The hardening role writes hcwadmin's authorized_keys from this list and
+# nothing else, keeps root's empty, and stops on an empty list or one that
+# shares no key with the keys that log in today. A public key, comment
+# stripped. To add one: its line here, merge, run bootstrap.sh
+# (docs/runbooks/labs-host.md, "Connect from a desktop").
+hardening_admin_authorized_keys:
+  # The owner's workstation key, ~/.ssh/hcw-lab_ed25519.pub,
+  # SHA256:VTyaLLQLfYwi38RP1mHDD6Vtu0eSQsa4EPsNJTrdgG8
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGMVLRxb5ZqXZHNHUut7/6orbDsqBKz0zIbir4x5dUn0
 hardening_unattended_reboot_time: "04:30"
 
 # Azure Arc (#663, ADR 0032 decision 3). The switch is the HOST's, not this

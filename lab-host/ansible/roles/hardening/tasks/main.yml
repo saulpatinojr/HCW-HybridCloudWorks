@@ -10,44 +10,15 @@
     shell: /bin/bash
     create_home: true
     state: present
+  register: hardening_admin_account
 
-- name: Check for keys the provisioner installed for root
-  ansible.builtin.stat:
-    path: /root/.ssh/authorized_keys
-  register: hardening_root_keys_stat
+# The key list in group_vars, its refusals (empty, malformed, the lockout
+# guard) and hcwadmin's authorized_keys written from it alone (#953).
+- name: Pin the administrative user's keys
+  ansible.builtin.import_tasks: admin_keys.yml
 
-- name: Read the keys the provisioner installed for root
-  ansible.builtin.slurp:
-    src: /root/.ssh/authorized_keys
-  register: hardening_root_keys
-  when:
-    - hardening_admin_authorized_keys | length == 0
-    - hardening_root_keys_stat.stat.exists
-
-- name: Decide which public keys the administrative user gets
-  ansible.builtin.set_fact:
-    hardening_effective_authorized_keys: >-
-      {{ hardening_admin_authorized_keys
-         if hardening_admin_authorized_keys | length > 0
-         else hardening_root_keys.content | default('') | b64decode
-              | split('\n') | map('trim') | select('match', '^(ssh-|ecdsa-|sk-)') | list }}
-
-- name: Refuse to disable password login without a key for the administrative user
-  ansible.builtin.assert:
-    that:
-      - hardening_effective_authorized_keys | length > 0
-    fail_msg: >-
-      No public key for {{ hardening_admin_user }}. Set hardening_admin_authorized_keys
-      or install a key in /root/.ssh/authorized_keys before running this role;
-      otherwise PasswordAuthentication no and PermitRootLogin no lock everyone out.
-
-- name: Install the administrative user's public keys
-  ansible.posix.authorized_key:
-    user: "{{ hardening_admin_user }}"
-    key: "{{ hardening_effective_authorized_keys | join('\n') }}"
-    exclusive: true
-    state: present
-
+# Passwordless sudo is an accepted risk (owner decision 2026-10-16): README,
+# "Accepted risk: passwordless sudo", names the controls that carry it.
 - name: Let the administrative user sudo without a password
   ansible.builtin.copy:
     dest: /etc/sudoers.d/90-hcw-admin
@@ -57,23 +28,182 @@
     mode: "0440"
     validate: /usr/sbin/visudo -cf %s
 
-- name: Harden sshd through a drop-in that sorts before cloud-init's
-  ansible.builtin.template:
-    src: sshd_hardening.conf.j2
-    dest: /etc/ssh/sshd_config.d/00-hcw-hardening.conf
-    owner: root
-    group: root
-    mode: "0644"
-    validate: /usr/sbin/sshd -t -f %s
-  notify: Restart ssh
+- name: Refuse an sshd allowlist that leaves out the administrative user or lets root in
+  ansible.builtin.assert:
+    that:
+      - hardening_sshd_allow_users | length > 0
+      - hardening_admin_user in hardening_sshd_allow_users
+      - "'root' not in hardening_sshd_allow_users"
+      - hardening_sshd_allow_users | reject('match', '^[a-z_][a-z0-9_-]*$') | list | length == 0
+    fail_msg: >-
+      hardening_sshd_allow_users is {{ hardening_sshd_allow_users }}. It becomes sshd's AllowUsers, the
+      only accounts that may log in over SSH, so it must name {{ hardening_admin_user }}, must not name
+      root (root login is off), and holds plain user names only. Nothing in sshd has been changed.
+    quiet: true
 
-# Restart sshd now, not at the end of the play. On 2026-09-26 the first run
+# Written, then proven, then applied (#953). The template's validate parses
+# the drop-in on its own; sshd -t then parses the whole configuration it is
+# now part of, and sshd -T says what a login as hcwadmin and as root would
+# get, which is held to what this role means. If any of that fails, the
+# rescue puts the previous drop-in back before stopping: force_handlers in
+# site.yml still runs the reload a changed drop-in notified, and it must
+# reload the settings sshd had, not the ones that failed. In check mode a
+# changed drop-in is not on disk, so the reads would describe the old one;
+# they run when the drop-in is unchanged, which is every nightly drift run on
+# a converged host.
+- name: Harden sshd, and prove what it would apply before it reads the change
+  block:
+    - name: Harden sshd through a drop-in that sorts before cloud-init's
+      ansible.builtin.template:
+        src: sshd_hardening.conf.j2
+        dest: /etc/ssh/sshd_config.d/00-hcw-hardening.conf
+        owner: root
+        group: root
+        mode: "0644"
+        validate: /usr/sbin/sshd -t -f %s
+        backup: true
+      register: hardening_sshd_dropin
+      notify: Reload ssh
+
+    - name: Test the whole sshd configuration the drop-in is part of
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/sshd
+          - -t
+      changed_when: false
+      check_mode: false
+      when: not (ansible_check_mode and hardening_sshd_dropin is changed)
+
+    - name: Read what sshd would apply to a login as the administrative user and as root
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/sshd
+          - -T
+          - -C
+          - "user={{ item }},host={{ hardening_sshd_test_host }},addr={{ hardening_sshd_test_addr }}"
+      loop:
+        - "{{ hardening_admin_user }}"
+        - root
+      register: hardening_sshd_effective
+      changed_when: false
+      check_mode: false
+      when: not (ansible_check_mode and hardening_sshd_dropin is changed)
+
+    # sshd -T prints every keyword in lower case, and one `allowusers <name>`
+    # line per allowed user.
+    - name: Refuse an sshd configuration that is not the one this role writes
+      ansible.builtin.assert:
+        that:
+          - >-
+            hardening_sshd_effective.results[0].stdout_lines | select('match', '^allowusers ')
+            | map('regex_replace', '^allowusers ', '') | sort
+            == hardening_sshd_allow_users | sort
+          - "'authenticationmethods publickey' in hardening_sshd_effective.results[0].stdout_lines"
+          - "'pubkeyauthentication yes' in hardening_sshd_effective.results[0].stdout_lines"
+          - "'passwordauthentication no' in hardening_sshd_effective.results[0].stdout_lines"
+          - "'permitrootlogin no' in hardening_sshd_effective.results[0].stdout_lines"
+          - "'allowagentforwarding no' in hardening_sshd_effective.results[0].stdout_lines"
+          - "'allowtcpforwarding local' in hardening_sshd_effective.results[0].stdout_lines"
+          - "'permittunnel no' in hardening_sshd_effective.results[0].stdout_lines"
+          - "'x11forwarding no' in hardening_sshd_effective.results[0].stdout_lines"
+          - "'authorizedkeysfile .ssh/authorized_keys' in hardening_sshd_effective.results[0].stdout_lines"
+          - "'permitrootlogin no' in hardening_sshd_effective.results[1].stdout_lines"
+          - "'allowusers root' not in hardening_sshd_effective.results[1].stdout_lines"
+        fail_msg: >-
+          sshd would not apply the settings /etc/ssh/sshd_config.d/00-hcw-hardening.conf writes.
+          For {{ hardening_admin_user }} it says:
+          {{ hardening_sshd_effective.results[0].stdout_lines
+             | select('match', '^(' ~ hardening_sshd_checked_keywords | join('|') ~ ') ')
+             | join('; ') }};
+          for root:
+          {{ hardening_sshd_effective.results[1].stdout_lines
+             | select('match', '^(allowusers|permitrootlogin) ') | join('; ') }}.
+          sshd keeps the first value it reads, so a file in /etc/ssh/sshd_config.d that sorts before
+          00-hcw-hardening.conf, or a Match block, is the usual cause; bash, on the host,
+          ls /etc/ssh/sshd_config.d/ lists them.
+        quiet: true
+      when: not (ansible_check_mode and hardening_sshd_dropin is changed)
+
+    # The backup is only for the rescue below. Its name does not end in
+    # .conf, so sshd never read it, but nothing should leave copies of sshd
+    # settings lying in sshd_config.d.
+    - name: Remove the previous drop-in's backup once the new one has passed
+      ansible.builtin.file:
+        path: "{{ hardening_sshd_dropin.backup_file }}"
+        state: absent
+      when: hardening_sshd_dropin.backup_file is defined
+
+  rescue:
+    - name: Put the previous drop-in back, so the reload still to come keeps today's settings
+      ansible.builtin.copy:
+        src: "{{ hardening_sshd_dropin.backup_file }}"
+        dest: /etc/ssh/sshd_config.d/00-hcw-hardening.conf
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: hardening_sshd_dropin.backup_file is defined
+
+    - name: Remove the drop-in this run added where there was none
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/00-hcw-hardening.conf
+        state: absent
+      when:
+        - hardening_sshd_dropin is changed
+        - hardening_sshd_dropin.backup_file is not defined
+
+    - name: Stop, with sshd still on the settings it had
+      ansible.builtin.fail:
+        msg: >-
+          The sshd drop-in did not pass its checks.
+          {{ 'This run had changed it and has put the previous one back, so the reload still to come keeps
+          the settings sshd had.' if hardening_sshd_dropin is changed
+          else 'This run did not change it, so sshd keeps the settings it had.' }}
+          Task "{{ ansible_failed_task.name | default('unknown') }}" said:
+          {{ ansible_failed_result.msg | default('') }} {{ ansible_failed_result.stderr | default('') }}
+
+# Reload sshd now, not at the end of the play. On 2026-09-26 the first run
 # wrote this drop-in and then failed in the docker role, so the end-of-play
 # handler never ran; the next run found the file unchanged, notified
 # nothing, and root login stayed on until sshd was restarted by hand.
-# force_handlers in site.yml covers every other role the same way.
+# force_handlers in site.yml covers every other role the same way. A reload,
+# not a restart (#953): ssh.socket hands connections to ssh.service's sshd,
+# which hands each one to its own sshd-session process with the settings it
+# holds, so only that listener has to re-read them. ssh.service's own
+# ExecReload runs sshd -t before it sends HUP, and HUP leaves every open
+# session, the operator's included, where it is.
 - name: Apply the sshd drop-in before any later role can fail
   ansible.builtin.meta: flush_handlers
+
+# Root login is off, so root needs no key (#953). Break-glass is hPanel's Web
+# Console with root's password, which does not go through sshd. After the
+# reload above, so a run that stopped in the sshd block never took root's
+# keys away on a host where sshd still lets root in.
+- name: Make sure root's .ssh directory is root's alone
+  ansible.builtin.file:
+    path: "{{ hardening_root_authorized_keys_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Keep root's authorized_keys empty
+  ansible.builtin.copy:
+    dest: "{{ hardening_root_authorized_keys_path }}"
+    content: ""
+    owner: root
+    group: root
+    mode: "0600"
+
+# sshd reads .ssh/authorized_keys only (AuthorizedKeysFile in the drop-in),
+# so a second file would hold keys nothing manages.
+- name: Remove authorized_keys2, which sshd no longer reads
+  ansible.builtin.file:
+    path: "{{ item | dirname }}/authorized_keys2"
+    state: absent
+  loop:
+    - "{{ hardening_admin_authorized_keys_path }}"
+    - "{{ hardening_root_authorized_keys_path }}"
 
 - name: Default to denying inbound traffic
   community.general.ufw:

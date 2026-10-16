@@ -9,18 +9,46 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    not ship it, and both the administrative user's access and the play's own
    `become` depend on it (`bootstrap.sh` installs it too, before Ansible
    ever runs, for the same reason). Creates `hcwadmin` with passwordless
-   sudo (`/etc/sudoers.d/90-hcw-admin`, validated with `visudo`) and
-   installs its public keys. With
-   `hardening_admin_authorized_keys` empty the keys are copied from
-   `/root/.ssh/authorized_keys`, which is where the Hostinger provisioner
-   puts the key Terraform passes it. The role **refuses to continue** if no
-   key is found from either source, because the next step would lock the
-   host.
-2. Writes `/etc/ssh/sshd_config.d/00-hcw-hardening.conf` with
-   `PasswordAuthentication no`, `PermitRootLogin no` and
-   `KbdInteractiveAuthentication no`, validated with `sshd -t`. The `00-`
-   prefix matters: sshd keeps the first value it reads and Ubuntu's cloud
-   image ships `50-cloud-init.conf` with `PasswordAuthentication yes`.
+   sudo (`/etc/sudoers.d/90-hcw-admin`, validated with `visudo`; an
+   accepted risk, below) and writes its `authorized_keys` from
+   `hardening_admin_authorized_keys` and nothing else (`exclusive`, #953).
+   That list is in `group_vars/all.yml`: the owner's workstation key,
+   pinned. There is no fallback to root's keys any more. Before it writes
+   anything, the role **stops** (`tasks/admin_keys.yml`):
+   - when the list is empty, or an entry is not one public key line;
+   - when the list shares no key with the keys that log in today (the
+     **lockout guard**): `hcwadmin`'s `authorized_keys`, or root's while
+     `hcwadmin` has none, which is the first run after a reinstall, when the
+     operator is in as root with the key hPanel installed. Keys are compared
+     by their key blob, so comments and options do not matter. The refusal
+     prints the SHA256 fingerprints of both sides. A run that means to
+     replace every key passes `-e hardening_admin_keys_replace_all=true`.
+2. Writes `/etc/ssh/sshd_config.d/00-hcw-hardening.conf`: `AllowUsers`
+   from `hardening_sshd_allow_users` (`hcwadmin` alone),
+   `AuthenticationMethods publickey`, `PubkeyAuthentication yes`,
+   `AuthorizedKeysFile .ssh/authorized_keys` (no `authorized_keys2`),
+   `PasswordAuthentication no`, `KbdInteractiveAuthentication no`,
+   `PermitRootLogin no`, `MaxAuthTries 4`, `AllowAgentForwarding no`,
+   `AllowTcpForwarding local` (VS Code Remote-SSH and the Portainer `-L`
+   tunnel need local forwards), `PermitTunnel no`, `X11Forwarding no` and
+   `LogLevel VERBOSE`, which logs the fingerprint of the key each login
+   used. The `00-` prefix matters: sshd keeps the first value it reads and
+   Ubuntu's cloud image ships `50-cloud-init.conf` with
+   `PasswordAuthentication yes`. Before sshd reads it the role proves it:
+   `sshd -t -f` on the drop-in alone (the template's `validate`), `sshd -t`
+   on the whole configuration, and `sshd -T -C user=…,host=hcw-lab,addr=192.0.2.10`
+   for `hcwadmin` and for root, held to `allowusers hcwadmin`,
+   `authenticationmethods publickey`, `permitrootlogin no`,
+   `allowagentforwarding no` and the rest of the file, and to root not
+   being allowed. A failure puts the previous drop-in back before the run
+   stops, so the reload `force_handlers` still runs keeps today's settings.
+   Then sshd is **reloaded, never restarted**: `ssh.socket` hands each
+   connection to `ssh.service`'s listening `sshd`, which hands it to an
+   `sshd-session` process of its own, so only the listener has to re-read
+   its settings. The unit's `ExecReload` runs `sshd -t` and sends it `HUP`;
+   open sessions, the operator's included, stay up. Last, once sshd has
+   reloaded, root's `authorized_keys` is written empty and both users'
+   `authorized_keys2` are removed.
 3. ufw: default deny inbound, allow outbound, allow TCP 22, 80, 443.
    Docker's iptables rules for a published port come before ufw's, so ufw
    cannot close a port Docker publishes. That is why every publish on this
@@ -46,7 +74,9 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `hardening_admin_user` | `hcwadmin` | The key-only administrative login |
-| `hardening_admin_authorized_keys` | `[]` | Public keys; empty copies root's |
+| `hardening_admin_authorized_keys` | `[]` (group_vars pins the owner's workstation key) | The only keys that may log in as `hcwadmin`; empty stops the run |
+| `hardening_admin_keys_replace_all` | `false` | Lets one run (`-e`) through the lockout guard |
+| `hardening_sshd_allow_users` | `[hardening_admin_user]` | sshd's `AllowUsers`; must hold the administrative user and not root |
 | `hardening_ufw_allowed_tcp_ports` | `[22, 80, 443]` | Inbound TCP allowlist |
 | `hardening_ufw_logging` | `low` | ufw logging level |
 | `hardening_unattended_reboot_time` | `04:30` | The hour (HH:MM, host time) `hcw-reboot-when-idle.timer` asks whether the host may reboot |
@@ -318,14 +348,56 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    - On a clean run with no drift, logs `playbook check: no drift detected ...`
      at `daemon.notice` and exits 0.
 
+## Break-glass
+
+Root has no key (its `authorized_keys` is kept empty) and sshd lets in
+`hcwadmin` alone, by key. When SSH is not working, the way in is hPanel's
+**Web Console** (https://hpanel.hostinger.com/vps, **Manage** on the server,
+then **Web Console**), signed in as root with root's password. It is the
+VPS's console, so it does not go through sshd, `AllowUsers` or the keys
+above, and nothing here changes it. `docs/runbooks/labs-host.md`, "Connect
+from a desktop", has the steps.
+
+## Accepted risk: passwordless sudo
+
+`hcwadmin` keeps `NOPASSWD:ALL` (owner decision 2026-10-16, #953). Whoever
+holds a session as `hcwadmin` is root on the host with no second factor.
+The owner accepts that risk, and the controls in front of that session
+carry it:
+
+- **The pinned key.** `hcwadmin`'s `authorized_keys` holds exactly the keys
+  in `group_vars/all.yml`, rewritten on every run; the owner's workstation
+  key is the only one.
+- **`AllowUsers hcwadmin`** with `AuthenticationMethods publickey`: no other
+  account, and no password, logs in over SSH.
+- **Azure Arc SSH** (coming, #953): SSH through the Arc agent, after which
+  port 22 closes to the internet.
+- **The login alert** (coming, #953): an alert on every accepted SSH login,
+  which `LogLevel VERBOSE` logs with the fingerprint of the key it used.
+
+Revisit if a second person gets a key, or if either of the coming controls
+is dropped.
+
 ## Handlers
 
-`Restart ssh`, `Restart unattended-upgrades`, `Restart fail2ban`, `Reload
+`Reload ssh`, `Restart unattended-upgrades`, `Restart fail2ban`, `Reload
 systemd for the failure notifier`, `Reload systemd for the held-package
 report`, `Reload systemd for the idle reboot`, `Reload systemd for playbook
 drift detection`.
 
 ## Tests
+
+`tests/admin-keys.test.sh` runs `tasks/admin_keys.yml` with ansible-core
+against scratch copies of the two `authorized_keys` files: an empty list
+and a malformed entry stop the run with nothing written; a list that
+shares no key with `hcwadmin`'s file, or with root's while `hcwadmin`'s has
+none, stops it with both sides' fingerprints; the override lets it through;
+a list that keeps a key that logs in today writes `hcwadmin`'s file to
+exactly the list. As root, because the module sets the file's owner; CI
+runs it in the `ansible-lint (lab-host)` job.
+`scripts/lab-host-ssh-hardening.test.mjs` (vitest) holds the drop-in's
+directives, the pinned key and its fingerprint, the order of the checks
+before the reload, and root's empty file.
 
 `tests/hcw-playbook-drift.test.sh` renders the drift detection script and its
 two units with the role's defaults and runs the script against stub

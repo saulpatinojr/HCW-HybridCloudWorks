@@ -1,0 +1,174 @@
+---
+# The administrative user's keys (#953, owner decision 2026-10-16). The list
+# in group_vars is the whole truth: hcwadmin's authorized_keys is written
+# from it and nothing else, and tasks/main.yml keeps root's empty once sshd's
+# settings are applied. Three refusals come before anything is written: an
+# empty list, an entry that is not one public key, and a list that shares no
+# key with the keys that log in today (the lockout guard). This file reads
+# and writes those two files only, so tests/admin-keys.test.sh runs it
+# against scratch copies of them.
+
+- name: Refuse to run without a public key for the administrative user
+  ansible.builtin.assert:
+    that:
+      - hardening_admin_authorized_keys | length > 0
+    fail_msg: >-
+      hardening_admin_authorized_keys is empty. It is the whole list of keys that may log in as
+      {{ hardening_admin_user }}: this role writes {{ hardening_admin_user }}'s authorized_keys from it
+      alone, keeps root's empty, and sshd takes no password, so an empty list would leave no way in
+      over SSH. Nothing in SSH has been changed. Add your public key (the line in your .pub file, without
+      the comment at its end) to hardening_admin_authorized_keys in
+      lab-host/ansible/group_vars/all.yml, merge, and run bootstrap.sh again
+      (docs/runbooks/labs-host.md, "Connect from a desktop").
+    quiet: true
+
+- name: Refuse an entry in the key list that is not one public key
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match(hardening_public_key_pattern)
+    fail_msg: >-
+      Entry {{ hardening_key_index + 1 }} of hardening_admin_authorized_keys is not one public key
+      line: a key type, the key, and at most a comment, with no options and no line break. Nothing in SSH
+      has been changed. Copy the line from the .pub file into lab-host/ansible/group_vars/all.yml
+      again.
+    quiet: true
+  loop: "{{ hardening_admin_authorized_keys }}"
+  loop_control:
+    index_var: hardening_key_index
+    label: "entry {{ hardening_key_index + 1 }}"
+
+# The user task in tasks/main.yml registers hardening_admin_account; check
+# mode on a host without the user yet has no home to report.
+- name: Name the administrative user's authorized_keys
+  ansible.builtin.set_fact:
+    hardening_admin_authorized_keys_path: >-
+      {{ hardening_admin_account.home | default('/home/' ~ hardening_admin_user, true) }}/.ssh/authorized_keys
+
+- name: Look for the keys that log in today
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: false
+  loop:
+    - "{{ hardening_admin_authorized_keys_path }}"
+    - "{{ hardening_root_authorized_keys_path }}"
+  register: hardening_keys_files
+
+- name: Read the keys that log in today
+  ansible.builtin.slurp:
+    src: "{{ item.item }}"
+  loop: "{{ hardening_keys_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  register: hardening_keys_read
+  when: item.stat.exists
+
+# Keys are compared by their blob alone, so a comment or an options field
+# on either side does not hide a match (vars/main.yml).
+- name: List the keys on each side, by key blob
+  ansible.builtin.set_fact:
+    hardening_keys_wanted: >-
+      {{ hardening_admin_authorized_keys
+         | map('regex_findall', hardening_public_key_blob_pattern) | flatten | unique | list }}
+    hardening_keys_admin_text: "{{ hardening_keys_read.results[0].content | default('') | b64decode }}"
+    hardening_keys_root_text: "{{ hardening_keys_read.results[1].content | default('') | b64decode }}"
+
+# The keys that log in today are hcwadmin's. On the first run after a
+# reinstall hcwadmin has none yet, and the operator is in as root with the
+# key hPanel installed, so root's are the ones a wrong list would lock out.
+# With neither (a password login through the Web Console), no key logs in
+# today and none can be locked out.
+- name: Decide which keys log in today
+  ansible.builtin.set_fact:
+    hardening_keys_now_path: >-
+      {{ hardening_admin_authorized_keys_path
+         if hardening_keys_admin_text is search(hardening_public_key_blob_pattern, multiline=true)
+         else hardening_root_authorized_keys_path }}
+    hardening_keys_now_text: >-
+      {{ hardening_keys_admin_text
+         if hardening_keys_admin_text is search(hardening_public_key_blob_pattern, multiline=true)
+         else hardening_keys_root_text }}
+
+- name: Compare the key list with the keys that log in today
+  ansible.builtin.set_fact:
+    hardening_keys_now: >-
+      {{ hardening_keys_now_text | split('\n') | map('trim') | reject('match', '^(#|$)')
+         | map('regex_findall', hardening_public_key_blob_pattern) | flatten | unique | list }}
+
+- name: Decide whether the key list would replace every key that logs in today
+  ansible.builtin.set_fact:
+    hardening_keys_lockout: >-
+      {{ hardening_keys_now | length > 0
+         and hardening_keys_now | intersect(hardening_keys_wanted) | length == 0 }}
+
+# Only when the guard below has something to say, so the operator sees the
+# fingerprints ssh -v and the .pub files show, not key blobs.
+- name: Fingerprint both sides of the comparison
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -l
+      - -E
+      - sha256
+      - -f
+      - "-"
+    stdin: "{{ item.text }}"
+  loop:
+    - name: hardening_admin_authorized_keys
+      text: "{{ hardening_admin_authorized_keys | join('\n') }}"
+    - name: "{{ hardening_keys_now_path }}"
+      text: "{{ hardening_keys_now_text }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: hardening_keys_fingerprints
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: hardening_keys_lockout | bool
+
+- name: Refuse a key list that would replace every key that logs in today
+  ansible.builtin.assert:
+    that:
+      - not (hardening_keys_lockout | bool) or (hardening_admin_keys_replace_all | bool)
+    fail_msg: >-
+      No key in hardening_admin_authorized_keys
+      ({{ hardening_keys_fingerprints.results[0].stdout_lines | default([]) | join('; ') }}) is one
+      that logs in today ({{ hardening_keys_now_path }}:
+      {{ hardening_keys_fingerprints.results[1].stdout_lines | default([]) | join('; ') }}).
+      Writing the list would replace every key that works now, so this run has changed nothing in
+      SSH. If the key you log in with is missing from the list, add it to
+      hardening_admin_authorized_keys in lab-host/ansible/group_vars/all.yml, merge, and run
+      bootstrap.sh again. If replacing every key is what you mean, and you hold one of the new keys
+      or can reach hPanel's Web Console (https://hpanel.hostinger.com/vps, Manage on the server,
+      then Web Console), run it again with the override, bash, on the host:
+      sudo /opt/hcw-src/lab-host/bootstrap.sh -e hardening_admin_keys_replace_all=true
+    quiet: true
+
+- name: Say that the override let a key list through that replaces every key
+  ansible.builtin.debug:
+    msg: >-
+      hardening_admin_keys_replace_all is true: {{ hardening_keys_now_path }} held no key in
+      hardening_admin_authorized_keys, and this run replaces all of them.
+  when:
+    - hardening_keys_lockout | bool
+    - hardening_admin_keys_replace_all | bool
+
+# The whole file, one line per list entry and nothing else, so what sshd
+# reads is the list byte for byte. hardening_admin_account.group is the
+# user's primary group id; check mode on a host without the user yet has
+# none, and the file is not written then anyway.
+- name: Make sure the administrative user's .ssh directory is the user's alone
+  ansible.builtin.file:
+    path: "{{ hardening_admin_authorized_keys_path | dirname }}"
+    state: directory
+    owner: "{{ hardening_admin_user }}"
+    group: "{{ hardening_admin_account.group | default(omit) }}"
+    mode: "0700"
+
+- name: Write the administrative user's authorized_keys from the list, and nothing else
+  ansible.builtin.copy:
+    dest: "{{ hardening_admin_authorized_keys_path }}"
+    content: "{{ hardening_admin_authorized_keys | join('\n') }}\n"
+    owner: "{{ hardening_admin_user }}"
+    group: "{{ hardening_admin_account.group | default(omit) }}"
+    mode: "0600"

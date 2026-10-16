@@ -113,9 +113,11 @@ The VPS already exists, and the `hostinger/hostinger` provider runs a
 post-install script only at purchase or at reinstall, so there is none: the
 owner clones this repository onto the host and runs `bootstrap.sh` as root
 over SSH, with the one line in `infra-lab/README.md`, step 7. It needs a key
-in `/root/.ssh/authorized_keys` first (step 6 there), because the
-`hardening` role copies that key to `hcwadmin` before it turns root and
-password login off. The script checks the host is Ubuntu 26.04 LTS (24.04
+in `/root/.ssh/authorized_keys` first (step 6 there), and that key must be
+one `hardening_admin_authorized_keys` in `ansible/group_vars/all.yml` pins:
+the `hardening` role writes `hcwadmin`'s keys from that list alone, empties
+root's and turns root and password login off, and it refuses to run when
+the list shares no key with the keys that log in today (#953). The script checks the host is Ubuntu 26.04 LTS (24.04
 LTS is accepted and says it is the fallback; anything else stops), then
 checks the host is empty (below), installs
 `uv` 0.12.19 from its GitHub release after checking the archive's SHA256,

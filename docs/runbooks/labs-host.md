@@ -116,22 +116,53 @@ pwsh -NoProfile -File $HOME\Downloads\Connect-Lab.ps1 -User root
 
 ### What success looks like
 
-The run that sets a machine up ends with the public key, the ways to
-authorize it, and `Changed:` naming what it did. Every later run ends with
-`No changes: this machine was already set up for hcw-lab.` To authorize the
-key:
+The run that sets a machine up ends with the public key, the line that pins
+it, and `Changed:` naming what it did. Every later run ends with
+`No changes: this machine was already set up for hcw-lab.`
 
-- **The first key for the server:** paste the printed line in hPanel at
-  https://hpanel.hostinger.com/vps, **Manage** on the server, **Settings**,
-  **SSH keys**, **Add SSH key**. hPanel installs it as a key for root, and
-  the first `bootstrap.sh` run copies root's keys to `hcwadmin`
+**The pinned key (#953, owner decision 2026-10-16).** The keys that may log
+in are one list, `hardening_admin_authorized_keys` in
+`lab-host/ansible/group_vars/all.yml`. Every `bootstrap.sh` run writes
+`hcwadmin`'s `authorized_keys` from that list and nothing else, keeps
+root's empty, and lets `hcwadmin` alone in over SSH, by key only
+(`AllowUsers hcwadmin`, `AuthenticationMethods publickey`). The list holds
+one key, the owner's workstation key `hcw-lab_ed25519.pub`,
+`SHA256:VTyaLLQLfYwi38RP1mHDD6Vtu0eSQsa4EPsNJTrdgG8`. Before it writes, the
+run stops if the list is empty, or if it shares no key with the keys that
+log in today (the lockout guard), and says which keys it compared.
+
+- **A second key (another desktop):** the script prints the line to add,
+  `  - ssh-ed25519 AAAA…`, which is the key's type and key with the comment
+  stripped. Put it under `hardening_admin_authorized_keys` in
+  `lab-host/ansible/group_vars/all.yml` on a branch and merge it. Then, from
+  the machine that already connects, PowerShell:
+
+  ```powershell
+  ssh hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+  ```
+
+  Success is a play recap with `failed=0`, after which the new desktop's
+  `ssh hcw-lab hostname` prints the host name. To use the new desktop before
+  the merge, run the other line the script printed on the machine that
+  already connects: it adds the key to `hcwadmin`'s file at once, until the
+  next `bootstrap.sh` run removes it, and the nightly drift check reports
+  that file as drift until the key is in the list.
+- **The first key for a reinstalled server:** paste the public key in hPanel
+  at https://hpanel.hostinger.com/vps, **Manage** on the server,
+  **Settings**, **SSH keys**, **Add SSH key**. hPanel installs it for root,
+  and the first `bootstrap.sh` run, made as root, writes `hcwadmin`'s file
+  from the list and empties root's. While `hcwadmin` has no key the guard
+  compares the list with root's keys, so the run goes ahead only if the key
+  hPanel installed is in the list; the pinned workstation key is
   (`infra-lab/README.md`, steps 6 and 7).
-- **Another desktop, once one already connects:** run the one line the
-  script printed on the machine that already connects. It adds the key for
-  the login user, which works at once, and for root, which is what lasts:
-  the hardening role rebuilds `hcwadmin`'s `authorized_keys` from root's on
-  every `bootstrap.sh` run, so a key only in `hcwadmin`'s file is gone after
-  the next one.
+- **Replacing every key** (a lost or rebuilt workstation): put the new key
+  in the list instead of the old one and merge. The guard then stops the
+  run, because no key in the list logs in today. Run it once with the
+  override from hPanel's Web Console (below), bash, on the host:
+
+  ```bash
+  sudo /opt/hcw-src/lab-host/bootstrap.sh -e hardening_admin_keys_replace_all=true
+  ```
 
 Then this prints the server's host name, PowerShell:
 
@@ -176,10 +207,26 @@ The site itself never tunnels into the host: under ADR 0032 the host
 accepts inbound 22, 80 and 443 only, and the site's one view of it is the read-only
 status proxy in the Function App ([Labs host, Exposure](../architecture/labs-host.md#exposure)).
 SSH from a desktop is the only shell. When SSH is not working, hPanel's
-**Web Console** is the browser fallback: https://hpanel.hostinger.com/vps,
+**Web Console** is the break-glass: https://hpanel.hostinger.com/vps,
 **Manage** on the server, then **Web Console** on its overview. It usually
 signs in by itself; when it asks, Hostinger's instructions are `root` and
-the root password.
+the root password. It is the server's console, not an SSH login, so
+`AllowUsers`, the pinned key and root's empty `authorized_keys` do not
+apply to it (#953).
+
+After the first `bootstrap.sh` run with #953, this shows what sshd now
+applies. PowerShell:
+
+```powershell
+ssh hcw-lab 'sudo -n sshd -T | grep -e ^allowusers -e ^authenticationmethods'
+```
+
+Success is exactly these two lines:
+
+```text
+allowusers hcwadmin
+authenticationmethods publickey
+```
 
 ## The first-run host check
 

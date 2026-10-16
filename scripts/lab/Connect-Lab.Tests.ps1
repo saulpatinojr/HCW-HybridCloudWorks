@@ -229,13 +229,33 @@ Describe 'Test-LabHostName' {
 }
 
 Describe 'Get-LabAuthorizeCommand' {
-    It 'writes one PowerShell line that appends the key for the login user and for root' {
+    It 'writes one PowerShell line that appends the key for the login user only' {
         $line = Get-LabAuthorizeCommand -PublicKey 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample DESKTOP-1 hcw-lab' -Alias 'hcw-lab'
-        $line | Should -BeExactly ('$k = ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample DESKTOP-1 hcw-lab''; ssh hcw-lab "grep -qxF ''$k'' ~/.ssh/authorized_keys || echo ''$k'' >> ~/.ssh/authorized_keys; sudo grep -qxF ''$k'' /root/.ssh/authorized_keys || echo ''$k'' | sudo tee -a /root/.ssh/authorized_keys > /dev/null"')
+        $line | Should -BeExactly ('$k = ''ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample DESKTOP-1 hcw-lab''; ssh hcw-lab "grep -qxF ''$k'' ~/.ssh/authorized_keys || echo ''$k'' >> ~/.ssh/authorized_keys"')
+    }
+
+    It 'never writes root''s authorized_keys, which the playbook keeps empty' {
+        $line = Get-LabAuthorizeCommand -PublicKey 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample DESKTOP-1 hcw-lab' -Alias 'hcw-lab'
+        $line | Should -Not -Match '/root/'
+        $line | Should -Not -Match 'sudo'
     }
 
     It 'drops a comment that could break out of the single quotes' {
         $line = Get-LabAuthorizeCommand -PublicKey "ssh-ed25519 AAAAC3Example it's-mine" -Alias 'hcw-lab'
         $line | Should -Match "^\`$k = 'ssh-ed25519 AAAAC3Example'; "
+    }
+}
+
+Describe 'Get-LabGroupVarsKeyLine' {
+    It 'writes the group_vars list item with the type and key and no comment' {
+        Get-LabGroupVarsKeyLine -PublicKey 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample DESKTOP-1 hcw-lab' |
+            Should -BeExactly '  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample'
+    }
+
+    It 'gives the line group_vars pins for the owner''s workstation key' {
+        $groupVars = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..' '..' 'lab-host' 'ansible' 'group_vars' 'all.yml')
+        $pinned = [regex]::Match($groupVars, '(?m)^hardening_admin_authorized_keys:\r?\n(?:  #[^\r\n]*\r?\n)*(  - [^\r\n]+)').Groups[1].Value
+        $pinned | Should -Not -BeNullOrEmpty
+        Get-LabGroupVarsKeyLine -PublicKey ($pinned.Substring(4) + ' WSZ690E hcw-lab') | Should -BeExactly $pinned
     }
 }
