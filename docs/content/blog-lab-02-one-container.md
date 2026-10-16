@@ -135,18 +135,18 @@ changed.**
 PowerShell:
 
 ```powershell
-docker pull hybridcloudworks/hcw-lab:latest
+$d = docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'; $d; docker pull "hybridcloudworks/hcw-lab@$d"
 ```
 
 bash:
 
 ```bash
-docker pull hybridcloudworks/hcw-lab:latest
+d=$(docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-lab:latest --format '{{.Manifest.Digest}}'); echo "$d"; docker pull "hybridcloudworks/hcw-lab@$d"
 ```
 
-**Verify:** `docker image ls hybridcloudworks/hcw-lab` lists `latest`
-at about 2.7 GB. For anything automated, pin the digest rather than the tag;
-the workflow that publishes the image writes each digest to its job summary.
+**Verify:** `docker image ls hybridcloudworks/hcw-lab` lists the image
+at about 2.7 GB. Pinning the immutable digest (`hybridcloudworks/hcw-lab@$d`)
+ensures you run the exact reproducible build verified by SLSA build provenance.
 
 ### 2. Start it in the folder, with the network off
 
@@ -155,13 +155,13 @@ Change into the `landing-zone` folder first, then:
 PowerShell:
 
 ```powershell
-docker run --rm -it --network none -v "${PWD}:/workspace:ro" hybridcloudworks/hcw-lab:latest
+docker run --rm -it --network none -v "${PWD}:/workspace:ro" "hybridcloudworks/hcw-lab@$d"
 ```
 
 bash:
 
 ```bash
-docker run --rm -it --network none -v "$PWD:/workspace:ro" hybridcloudworks/hcw-lab:latest
+docker run --rm -it --network none -v "$PWD:/workspace:ro" "hybridcloudworks/hcw-lab@$d"
 ```
 
 Two flags do the work. `--network none` makes the offline claim testable: an
@@ -288,13 +288,13 @@ check pass under all of it, from the same folder:
 PowerShell:
 
 ```powershell
-docker run --rm --network none --read-only --security-opt no-new-privileges --cap-drop ALL --user 65534:65534 --tmpfs "/tmp/run:rw,size=64m,uid=65534,gid=65534,mode=0700" -v "${PWD}:/workspace:ro" hybridcloudworks/hcw-lab:latest hcw-terraform-validate
+docker run --rm --network none --read-only --security-opt no-new-privileges --cap-drop ALL --user 65534:65534 --tmpfs "/tmp/run:rw,size=64m,uid=65534,gid=65534,mode=0700" -v "${PWD}:/workspace:ro" "hybridcloudworks/hcw-lab@$d" hcw-terraform-validate
 ```
 
 bash:
 
 ```bash
-docker run --rm --network none --read-only --security-opt no-new-privileges --cap-drop ALL --user 65534:65534 --tmpfs "/tmp/run:rw,size=64m,uid=65534,gid=65534,mode=0700" -v "$PWD:/workspace:ro" hybridcloudworks/hcw-lab:latest hcw-terraform-validate
+docker run --rm --network none --read-only --security-opt no-new-privileges --cap-drop ALL --user 65534:65534 --tmpfs "/tmp/run:rw,size=64m,uid=65534,gid=65534,mode=0700" -v "$PWD:/workspace:ro" "hybridcloudworks/hcw-lab@$d" hcw-terraform-validate
 ```
 
 The tmpfs option is quoted so it reaches Docker as one argument in either
