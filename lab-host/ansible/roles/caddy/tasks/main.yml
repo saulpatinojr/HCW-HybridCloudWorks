@@ -241,3 +241,19 @@
       block from Caddyfile.j2.
   check_mode: false
   when: not ansible_check_mode or (caddy_admin_socket_live.stat.issock | default(false))
+
+# The old default was `localhost:2019`, and localhost can resolve to ::1, so
+# the IPv6 loopback is checked too: the runbook's `ss` check covers every
+# address, and this keeps the run to the same standard.
+- name: Refuse a Caddy still listening on IPv6 TCP 2019
+  ansible.builtin.wait_for:
+    host: "::1"
+    port: 2019
+    state: stopped
+    timeout: 10
+    msg: >-
+      Something still listens on [::1]:2019 after the move of Caddy's admin
+      API to {{ caddy_admin_socket }}. Read `sudo ss -ltnp sport = :2019` for
+      the process.
+  check_mode: false
+  when: not ansible_check_mode or (caddy_admin_socket_live.stat.issock | default(false))
