@@ -1169,8 +1169,12 @@ suspension is what ends it now.
 
    Success is `User <login> has been suspended!` and `Status`
    `suspended` in the table. A suspended account cannot sign in or use any
-   session or token it holds. Its workspaces stay, and stop at their
-   one-hour autostop; `coder users activate` in the same line undoes it.
+   session or token it holds. Its running workspaces are stopped on Coder's
+   next autobuild check, within about a minute (v2.38.0 stops a started
+   workspace whose owner is suspended: `coderd/autobuild/lifecycle_executor.go`,
+   `isEligibleForAutostop`, polled every `CODER_AUTOBUILD_POLL_INTERVAL`,
+   one minute by default); they are kept, stopped, with their files.
+   `coder users activate` in the same line undoes the suspension.
 
 ## The lab canary and the status-token check
 
