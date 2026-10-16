@@ -3,7 +3,7 @@
  * route names the frontend already calls (postJSON/authedFetch convention).
  * Registration only; semantics in lib/admin-identity.js.
  */
-import { httpRoute } from '../lib/auth/http-route.js';
+import { httpRoute, httpRouteByMethod } from '../lib/auth/http-route.js';
 import { getDefaultGuard } from '../lib/auth/default-guard.js';
 import { queryDocs, readDoc, upsertDoc, patchDoc, deleteDoc } from '../lib/cosmos-client.js';
 import { createAdminIdentityHandlers } from '../lib/admin-identity.js';
@@ -54,4 +54,27 @@ httpRoute('deleteSpeakerEvent', {
   authLevel: 'anonymous',
   route: 'deleteSpeakerEvent',
   handler: (request, context) => handlers().deleteSpeakerEvent(request, context),
+});
+
+httpRoute('cmsAdmins', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'cms/admins',
+  handler: (request, context) => handlers().listAdmins(request, context),
+});
+
+httpRouteByMethod('cmsAdminDetail', {
+  authLevel: 'anonymous',
+  route: 'cms/admins/{id}',
+  handlers: {
+    PATCH: (request, context) => handlers().updateAdmin(request, context),
+    DELETE: (request, context) => handlers().deactivateAdmin(request, context),
+  },
+});
+
+httpRoute('cmsBootstrapReset', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'cms/bootstrap/reset',
+  handler: (request, context) => handlers().resetBootstrapState(request, context),
 });

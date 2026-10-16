@@ -13,6 +13,7 @@ import { ENTRA_LAB_AGENT_APP_ROLE } from './auth/require-agent.js';
 import {
   createAdminIdentityHandlers,
   checkBootstrapAllowlist,
+  isGuestUser,
   getPermissionsForRole,
   normalizeSpeakerEventDate,
   validateSpeakerEventData,
@@ -65,13 +66,24 @@ describe('helpers', () => {
     expect(getPermissionsForRole('nonsense')).toEqual([]);
   });
 
-  it('bootstrap allowlist: locked with no env, matches oid or lowercased email', () => {
+  it('bootstrap allowlist: locked with no env, matches oid only, refuses email-only, and rejects guest accounts', () => {
     expect(checkBootstrapAllowlist(USER, {}).status).toBe(503);
     expect(checkBootstrapAllowlist(USER, { CMS_BOOTSTRAP_ALLOWED_UIDS: 'oid-1' }).ok).toBe(true);
+    expect(checkBootstrapAllowlist(USER, { OWNER_ADMIN_UID: 'oid-1' }).ok).toBe(true);
     expect(
-      checkBootstrapAllowlist(USER, { CMS_BOOTSTRAP_ALLOWED_EMAILS: 'FIRST@hcw.dev' }).ok
-    ).toBe(true);
+      checkBootstrapAllowlist(USER, { CMS_BOOTSTRAP_ALLOWED_EMAILS: 'FIRST@hcw.dev' }).status
+    ).toBe(503);
     expect(checkBootstrapAllowlist(USER, { OWNER_ADMIN_UID: 'someone-else' }).status).toBe(403);
+
+    const guestUser = { ...USER, userType: 'Guest' };
+    expect(
+      checkBootstrapAllowlist(guestUser, { CMS_BOOTSTRAP_ALLOWED_UIDS: 'oid-1' }).status
+    ).toBe(403);
+    expect(isGuestUser({ userType: 'Guest' })).toBe(true);
+    expect(isGuestUser({ acct: 1 })).toBe(true);
+    expect(isGuestUser({ idp: 'live.com' })).toBe(true);
+    expect(isGuestUser({ preferred_username: 'user_gmail.com#EXT#@domain.onmicrosoft.com' })).toBe(true);
+    expect(isGuestUser(USER)).toBe(false);
   });
 
   it('speaker date normalizer answers the calendar day for Date, epoch, string, Timestamp-like, junk', () => {
@@ -315,6 +327,192 @@ describe('bootstrapCurrentUserAdmin', () => {
     expect((await h.bootstrapCurrentUserAdmin(makeRequest({}), context)).status).toBe(403);
     expect(store.upsertDoc).not.toHaveBeenCalled();
     expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('rejects initial bootstrap with 409 if one-shot bootstrap has already completed', async () => {
+    const env = { CMS_BOOTSTRAP_ALLOWED_UIDS: 'oid-1' };
+    const store = makeStore({
+      readDoc: vi.fn(async (container, id) => {
+        if (container === 'admin_settings' && id === 'bootstrap-state') {
+          return { id: 'bootstrap-state', completed: true };
+        }
+        return null;
+      }),
+    });
+    const guard = guardWith();
+    const h = createAdminIdentityHandlers({ guard, store, env, ...fixed });
+
+    const res = await h.bootstrapCurrentUserAdmin(makeRequest({}), context);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body).error).toContain('already been completed');
+  });
+
+  it('rejects guest user attempting initial bootstrap with 403', async () => {
+    const env = { CMS_BOOTSTRAP_ALLOWED_UIDS: 'oid-guest' };
+    const guestUser = { oid: 'oid-guest', userType: 'Guest' };
+    const guard = guardWith({
+      requireUser: vi.fn(async () => ({ user: guestUser, role: null, error: null })),
+    });
+    const store = makeStore();
+    const h = createAdminIdentityHandlers({ guard, store, env, ...fixed });
+
+    const res = await h.bootstrapCurrentUserAdmin(makeRequest({}), context);
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toContain('Guest accounts');
+  });
+});
+
+describe('resetBootstrapState', () => {
+  it('requires super_admin role', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: null, role: null, error: { status: 403, body: '{}' } })),
+    });
+    const h = createAdminIdentityHandlers({ guard, store: makeStore(), ...fixed });
+    const res = await h.resetBootstrapState(makeRequest({}), context);
+    expect(res.status).toBe(403);
+    expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'super_admin');
+  });
+
+  it('resets bootstrap completed flag to false and logs audit mutation', async () => {
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: 'bootstrap-state', completed: true })),
+    });
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const h = createAdminIdentityHandlers({ guard, store, ...fixed });
+    const res = await h.resetBootstrapState(makeRequest({}), context);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body).success).toBe(true);
+    expect(store.upsertDoc).toHaveBeenCalledWith('admin_settings', expect.objectContaining({
+      id: 'bootstrap-state',
+      completed: false,
+      resetBy: 'oid-1',
+    }));
+  });
+});
+
+describe('listAdmins', () => {
+  it('requires super_admin role', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: null, role: null, error: { status: 403, body: '{}' } })),
+    });
+    const h = createAdminIdentityHandlers({ guard, store: makeStore(), ...fixed });
+    const res = await h.listAdmins(makeRequest(), context);
+    expect(res.status).toBe(403);
+    expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), 'super_admin');
+  });
+
+  it('returns sorted list of admins', async () => {
+    const store = makeStore({
+      queryDocs: vi.fn(async () => [
+        { id: '2', email: 'zara@hcw.dev', role: 'viewer' },
+        { id: '1', email: 'alice@hcw.dev', role: 'super_admin' },
+      ]),
+    });
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const h = createAdminIdentityHandlers({ guard, store, ...fixed });
+    const res = await h.listAdmins(makeRequest(), context);
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.admins).toHaveLength(2);
+    expect(body.admins[0].email).toBe('alice@hcw.dev');
+    expect(body.admins[1].email).toBe('zara@hcw.dev');
+  });
+});
+
+describe('updateAdmin and deactivateAdmin', () => {
+  it('requires super_admin role', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: null, role: null, error: { status: 403, body: '{}' } })),
+    });
+    const h = createAdminIdentityHandlers({ guard, store: makeStore(), ...fixed });
+    const res = await h.updateAdmin({ ...makeRequest({ role: 'editor' }), params: { id: 'oid-2' } }, context);
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 400 if admin id is missing', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const h = createAdminIdentityHandlers({ guard, store: makeStore(), ...fixed });
+    const res = await h.updateAdmin({ ...makeRequest({ role: 'editor' }), params: {} }, context);
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 404 if admin record does not exist', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const store = makeStore({ readDoc: vi.fn(async () => null) });
+    const h = createAdminIdentityHandlers({ guard, store, ...fixed });
+    const res = await h.updateAdmin({ ...makeRequest({ role: 'editor' }), params: { id: 'missing' } }, context);
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 400 on invalid role', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const store = makeStore({ readDoc: vi.fn(async () => ({ id: 'oid-2', role: 'editor', active: true })) });
+    const h = createAdminIdentityHandlers({ guard, store, ...fixed });
+    const res = await h.updateAdmin({ ...makeRequest({ role: 'invalid_role' }), params: { id: 'oid-2' } }, context);
+    expect(res.status).toBe(400);
+  });
+
+  it('prevents demoting the last active super admin', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: 'oid-1', role: 'super_admin', active: true })),
+      queryDocs: vi.fn(async () => [{ id: 'oid-1' }]),
+    });
+    const h = createAdminIdentityHandlers({ guard, store, ...fixed });
+    const res = await h.updateAdmin({ ...makeRequest({ role: 'editor' }), params: { id: 'oid-1' } }, context);
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toContain('Cannot demote or deactivate the last active super admin');
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('prevents deactivating the last active super admin', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const store = makeStore({
+      readDoc: vi.fn(async () => ({ id: 'oid-1', role: 'super_admin', active: true })),
+      queryDocs: vi.fn(async () => [{ id: 'oid-1' }]),
+    });
+    const h = createAdminIdentityHandlers({ guard, store, ...fixed });
+    const res = await h.deactivateAdmin({ ...makeRequest({}), params: { id: 'oid-1' } }, context);
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toContain('Cannot demote or deactivate the last active super admin');
+    expect(store.patchDoc).not.toHaveBeenCalled();
+  });
+
+  it('updates role and active status, clears guard cache, and writes audit log', async () => {
+    const guard = guardWith({
+      requireRole: vi.fn(async () => ({ user: USER, role: 'super_admin', error: null })),
+    });
+    const existing = { id: 'oid-2', role: 'editor', active: true };
+    const store = makeStore({
+      readDoc: vi.fn(async () => existing),
+      patchDoc: vi.fn(async (_c, id, patch) => ({ ...existing, ...patch })),
+    });
+    const h = createAdminIdentityHandlers({ guard, store, ...fixed });
+    const res = await h.updateAdmin({ ...makeRequest({ role: 'publisher', active: true, reason: 'Promoted' }), params: { id: 'oid-2' } }, context);
+    expect(res.status).toBe(200);
+    expect(store.patchDoc).toHaveBeenCalledWith('admins', 'oid-2', expect.objectContaining({
+      role: 'publisher',
+      active: true,
+      updatedBy: 'oid-1',
+    }));
+    expect(guard.clearCache).toHaveBeenCalled();
+    expect(store.upsertDoc).toHaveBeenCalledWith('admin_audit_logs', expect.objectContaining({
+      action: 'admin_role_changed',
+    }));
   });
 });
 

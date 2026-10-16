@@ -29,6 +29,7 @@ import { useSearchParams } from 'react-router';
 import { SlidersHorizontal } from 'lucide-react';
 import PageHeader from '@/components/admin/shared/PageHeader';
 import AllSettingsTab from '@/components/admin/platform-settings/AllSettingsTab';
+import PlatformTab from '@/components/admin/platform-settings/PlatformTab';
 import ContentDefaultsTab from '@/components/admin/platform-settings/ContentDefaultsTab';
 import SocialAutomationTab from '@/components/admin/platform-settings/SocialAutomationTab';
 import AudioTab from '@/components/admin/platform-settings/AudioTab';
@@ -39,6 +40,7 @@ import HubTabs from '@/components/admin/HubTabs';
 
 export const TABS = Object.freeze([
   { id: 'index', label: 'All settings', Component: AllSettingsTab },
+  { id: 'platform', label: 'Platform', Component: PlatformTab },
   { id: 'content', label: 'Content defaults', Component: ContentDefaultsTab },
   { id: 'taxonomy', label: 'Content types & origins', Component: TaxonomyTab },
   { id: 'social', label: 'Social automation', Component: SocialAutomationTab },
