@@ -1,4 +1,12 @@
 ---
+# Order matters (#958). Ansible runs notified handlers in the order they are
+# defined, not the order they were notified, and site.yml lists this role
+# before coder and addons, so Restart caddy runs before this file's Reload
+# and before their "Reload caddy for the coder route" and "Reload caddy for
+# the addons route". A restart starts Caddy from the current unit and
+# Caddyfile, which is what puts the admin API on the socket every reload
+# then goes through. Keep Restart first; scripts/lab-host-caddy-admin.test.mjs
+# fails if a reload of caddy is defined ahead of it.
 - name: Restart caddy
   ansible.builtin.systemd_service:
     name: caddy

@@ -941,6 +941,19 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab host: Caddy's admin API moves to a Unix socket, and HTTP/3 is off
+  (#958)**. The Caddyfile always renders a global block with
+  `admin unix//run/caddy/admin.sock` instead of TCP `127.0.0.1:2019`, and
+  `servers { protocols h1 h2 }`, so nothing listens on UDP 443 (ufw already
+  dropped it). `caddy.service` creates `/run/caddy` as
+  `RuntimeDirectory=caddy` (0700), and its `ExecReload` passes the socket as
+  `--address`, which only the `caddy` user and root can open. The first run
+  restarts Caddy before any reload, through handler order across the caddy,
+  coder and addons roles, which a test holds; and a running Caddy without
+  its socket is restarted. `caddy-adapt.test.sh` reads the admin listener
+  and protocols back from the pinned Caddy, and
+  `scripts/lab-host-caddy-admin.test.mjs` holds the unit, the socket path and
+  the handler order. Runbook: "Caddy: reloading by hand".
 - **`alert-kv-config-write` no longer fires when one of its own alerts is
   closed (#1216)**. An alert's state change is logged against its target, as
   `<vault id>/providers/Microsoft.AlertsManagement/alerts/<id>`. That sits

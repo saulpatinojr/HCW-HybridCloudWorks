@@ -155,3 +155,105 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# Every reload goes through the admin socket (#958), and the socket exists
+# only while a Caddy started from this unit and this Caddyfile runs: systemd
+# creates its directory at start and removes it at stop. A Caddy that is
+# running without it is still on an older configuration (the first run after
+# the move from TCP 2019, or a run interrupted between the unit change and
+# its handlers), and a reload, this role's or the coder and addons roles',
+# would find nothing listening. So that case notifies the restart, which
+# handlers/main.yml defines ahead of every reload of Caddy and therefore runs
+# first. Read-only, so check mode reports the same drift. Tagged `always`
+# because the reloads that need the socket also come from the coder and
+# addons roles: a `bootstrap.sh --tags coder` (or addons) run on a host whose
+# last run stopped mid-change must still restart Caddy before reloading it.
+- name: Check that the running Caddy answers on the admin socket
+  ansible.builtin.stat:
+    path: "{{ caddy_admin_socket }}"
+    get_checksum: false
+  register: caddy_admin_socket_stat
+  changed_when: not (caddy_admin_socket_stat.stat.issock | default(false))
+  notify: Restart caddy
+  tags: [always]
+
+# Prove the change took, not only that the files were written. Run the
+# pending restart or reload now, then read what is live: the socket exists,
+# is owned by the Caddy user and is write-only for it (Caddy's default mode
+# for an admin socket, 0200), Caddy answers on it, and nothing listens on TCP
+# 2019 any more. Flushing here keeps the restart ahead of every reload: the
+# coder and addons roles notify theirs later in the play. Caddy skips its
+# Host check on a Unix-socket admin listener, where the socket's permissions
+# are the access control, so a plain GET as root is answered.
+#
+# In check mode nothing restarted, so a missing socket is the drift the task
+# above already reported; the reads are skipped then rather than failing the
+# nightly drift run, and run when the socket is there.
+- name: Run any pending Caddy restart or reload before checking the result
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the admin socket Caddy is running with
+  ansible.builtin.stat:
+    path: "{{ caddy_admin_socket }}"
+    get_checksum: false
+  register: caddy_admin_socket_live
+  check_mode: false
+
+- name: Refuse an admin socket that is missing, not Caddy's or not write-only
+  ansible.builtin.assert:
+    that:
+      - caddy_admin_socket_live.stat.issock | default(false)
+      - caddy_admin_socket_live.stat.pw_name == caddy_user
+      - caddy_admin_socket_live.stat.mode == '0200'
+    fail_msg: >-
+      Caddy's admin socket {{ caddy_admin_socket }} should be a socket owned by
+      {{ caddy_user }} with mode 0200 after the restart; it is
+      {{ 'missing' if not (caddy_admin_socket_live.stat.exists | default(false))
+         else (caddy_admin_socket_live.stat.pw_name | default('?')) ~ ' '
+              ~ (caddy_admin_socket_live.stat.mode | default('?')) }}.
+      Reloads would fail. Read `systemctl status caddy` and
+      `journalctl -u caddy -n 50`, then see "Caddy: reloading by hand" in
+      docs/runbooks/labs-host.md.
+    quiet: true
+  when: not ansible_check_mode or (caddy_admin_socket_live.stat.issock | default(false))
+
+- name: Check that Caddy answers on the admin socket
+  ansible.builtin.uri:
+    url: http://localhost/config/
+    unix_socket: "{{ caddy_admin_socket }}"
+    method: GET
+    status_code: 200
+    return_content: false
+  check_mode: false
+  changed_when: false
+  when: not ansible_check_mode or (caddy_admin_socket_live.stat.issock | default(false))
+
+- name: Refuse a Caddy still listening on TCP 2019
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 2019
+    state: stopped
+    timeout: 10
+    msg: >-
+      Something still listens on 127.0.0.1:2019 after the move of Caddy's admin
+      API to {{ caddy_admin_socket }}. Read `sudo ss -ltnp sport = :2019` for
+      the process; if it is Caddy, its configuration did not take the global
+      block from Caddyfile.j2.
+  check_mode: false
+  when: not ansible_check_mode or (caddy_admin_socket_live.stat.issock | default(false))
+
+# The old default was `localhost:2019`, and localhost can resolve to ::1, so
+# the IPv6 loopback is checked too: the runbook's `ss` check covers every
+# address, and this keeps the run to the same standard.
+- name: Refuse a Caddy still listening on IPv6 TCP 2019
+  ansible.builtin.wait_for:
+    host: "::1"
+    port: 2019
+    state: stopped
+    timeout: 10
+    msg: >-
+      Something still listens on [::1]:2019 after the move of Caddy's admin
+      API to {{ caddy_admin_socket }}. Read `sudo ss -ltnp sport = :2019` for
+      the process.
+  check_mode: false
+  when: not ansible_check_mode or (caddy_admin_socket_live.stat.issock | default(false))
