@@ -347,6 +347,23 @@ export const DECLARED = [
   // the create beside the permanent diff, verify-alert-state.yml then read
   // the rule OK, and its fire test opened an alert at 00:01:44Z on
   // 2026-10-17.
+  //
+  // #953 (LAB-7): Arc SSH, the lab host's default connectivity endpoint and
+  // its SSH service configuration on port 22 (infra/lab-hybrid.tf). Created
+  // by the owner's next apply; delete both entries once that run has applied
+  // and `ssh hcw-lab hostname` has answered through Arc.
+  {
+    address: "azapi_resource.lab_hybrid_arc_connectivity_endpoint[0]",
+    action: "create",
+    reason:
+      "#953 LAB-7: the Arc machine's default connectivity endpoint, for Arc SSH",
+  },
+  {
+    address: "azapi_resource.lab_hybrid_arc_ssh_service_configuration[0]",
+    action: "create",
+    reason:
+      "#953 LAB-7: the endpoint's SSH service configuration, port 22 only",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

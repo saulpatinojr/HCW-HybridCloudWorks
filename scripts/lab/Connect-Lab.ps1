@@ -19,6 +19,10 @@
     printed or sent anywhere by this script: ssh-keygen writes it, ssh-add
     loads it, and the only key file this script opens is the .pub beside it.
 
+    With -Arc the block reaches the host through Azure Arc SSH instead of
+    port 22 (#953): see -Arc. Without it the block connects directly, which
+    stays the fallback until port 22 closes.
+
     The procedure around it, including the hPanel step for a first key, is
     docs/runbooks/labs-host.md, "Connect from a desktop".
 
@@ -27,12 +31,36 @@
     saulpatinojr/HCW-HybridCloudWorks when gh is installed, signed in and
     the variable is set; otherwise lab.hybridcloudworks.com. That record exists
     only after the hcw-lab Terraform apply, so until then set the variable (or
-    pass this) to the server's IPv4 address.
+    pass this) to the server's IPv4 address. With -Arc this is the name the
+    host's key is checked under (HostKeyAlias), so the key a direct
+    connection already accepted is the one an Arc connection must present.
 
 .PARAMETER User
     hcwadmin, the login the hardening role creates, or root for the window
     between an OS install and the first bootstrap.sh run. That run turns root
-    login off, so run this again without -User once it has finished.
+    login off, so run this again without -User once it has finished. -Arc
+    takes hcwadmin only.
+
+.PARAMETER Arc
+    Reach the host through Azure Arc SSH (docs/runbooks/labs-host.md, "Connect
+    through Azure Arc"). Before it changes anything it checks, read-only,
+    that az is installed and signed in, that the az ssh extension is
+    installed (`az extension add --name ssh` when it is not), and that the
+    Arc machine's SSH service configuration exists, which the hcw-azure apply
+    creates. It then writes ~/.ssh/hcw-lab-arc-proxy.ps1, a helper Windows
+    PowerShell 5.1 can run, and asks Azure once for relay credentials through
+    it, which also downloads the az ssh extension's proxy. Only when that
+    works does it replace the Host block, with a ProxyCommand that runs the
+    helper. The helper asks `az ssh config` for FRESH relay credentials on
+    every connection (they last an hour at most), in a folder private to
+    you (%LOCALAPPDATA%\hcw-lab-arc), reads them and deletes the folder
+    before the connection starts, then hands ssh's own standard input and
+    output to the extension's proxy, with the credentials in the proxy's
+    environment, so `ssh hcw-lab`, piped commands, `ssh -t`, `ssh -L` and VS
+    Code Remote-SSH work as they do directly, from PowerShell and Git Bash
+    alike. Every run of this script, with or without -Arc, deletes a folder
+    a killed connection left there once it is an hour old. Run without -Arc
+    to put the direct block back.
 
 .PARAMETER KeyPath
     The private key. Defaults to ~/.ssh/hcw-lab_ed25519; the public key is the
@@ -50,6 +78,9 @@
 
 .EXAMPLE
     ./scripts/lab/Connect-Lab.ps1 -User root -WhatIf
+
+.EXAMPLE
+    ./scripts/lab/Connect-Lab.ps1 -Arc
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -62,7 +93,9 @@ param(
 
     [switch] $Connect,
 
-    [switch] $Code
+    [switch] $Code,
+
+    [switch] $Arc
 )
 
 Set-StrictMode -Version Latest
@@ -101,28 +134,52 @@ function Get-LabSshHostBlock {
         The lines of the `Host <Alias>` block this script owns, in order.
         IdentityFile is written with forward slashes, which Windows OpenSSH
         and VS Code both accept, and quoted only when it contains whitespace.
+
+    .DESCRIPTION
+        With ProxyCommand (-Arc), HostName is the Arc machine's name, which
+        ssh only hands to known_hosts, and HostKeyAlias is the direct host
+        name, so the host key a direct connection already accepted is the
+        one checked through Arc too. ProxyCommand is written last and as
+        given; Get-LabArcProxyCommand builds it.
     #>
     [OutputType([string[]])]
     param(
         [Parameter(Mandatory)] [string] $Alias,
         [Parameter(Mandatory)] [string] $HostName,
         [Parameter(Mandatory)] [string] $User,
-        [Parameter(Mandatory)] [string] $IdentityFile
+        [Parameter(Mandatory)] [string] $IdentityFile,
+        [string] $ProxyCommand,
+        [string] $HostKeyAlias
     )
 
     $identity = $IdentityFile -replace '\\', '/'
     if ($identity -match '\s') {
         $identity = '"' + $identity + '"'
     }
-    return [string[]]@(
-        "Host $Alias",
-        '    # Written by scripts/lab/Connect-Lab.ps1. Run it again to change this block.',
-        "    HostName $HostName",
-        "    User $User",
-        "    IdentityFile $identity",
-        '    IdentitiesOnly yes',
-        '    ServerAliveInterval 30'
-    )
+    if (-not $ProxyCommand) {
+        return [string[]]@(
+            "Host $Alias",
+            '    # Written by scripts/lab/Connect-Lab.ps1. Run it again to change this block.',
+            "    HostName $HostName",
+            "    User $User",
+            "    IdentityFile $identity",
+            '    IdentitiesOnly yes',
+            '    ServerAliveInterval 30'
+        )
+    }
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add("Host $Alias")
+    $lines.Add('    # Written by scripts/lab/Connect-Lab.ps1 -Arc: through Azure Arc SSH. Run it again to change this block, or without -Arc for the direct path.')
+    $lines.Add("    HostName $HostName")
+    if ($HostKeyAlias) {
+        $lines.Add("    HostKeyAlias $HostKeyAlias")
+    }
+    $lines.Add("    User $User")
+    $lines.Add("    IdentityFile $identity")
+    $lines.Add('    IdentitiesOnly yes')
+    $lines.Add('    ServerAliveInterval 30')
+    $lines.Add("    ProxyCommand $ProxyCommand")
+    return [string[]]$lines.ToArray()
 }
 
 function Merge-LabSshHostBlock {
@@ -409,6 +466,596 @@ function Get-LabGroupVarsKeyLine {
 }
 
 # -----------------------------------------------------------------------------
+# Azure Arc SSH (#953). The functions from ConvertTo-LabArcArgument through
+# Invoke-LabArcProxy are also the ProxyCommand helper: Get-LabArcProxyScript
+# copies their text into ~/.ssh/hcw-lab-arc-proxy.ps1, which ssh runs with
+# Windows PowerShell 5.1 on Windows. So they use nothing PowerShell 7 added,
+# reach nothing else in this file, and stay ASCII (5.1 reads a file without a
+# byte order mark as the ANSI code page). Above all they write NOTHING to
+# standard output: in the helper, standard output is ssh's connection.
+# -----------------------------------------------------------------------------
+
+function ConvertTo-LabArcArgument {
+    <#
+    .SYNOPSIS
+        One argument for a Windows command line: as it is when it holds no
+        space, else in double quotes. A quote cannot be passed at all; no
+        value this helper builds holds one.
+    #>
+    [OutputType([string])]
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Value)
+
+    if ($Value.Contains('"')) {
+        throw "A double quote cannot be passed in an argument here: $Value"
+    }
+    if ($Value.Length -gt 0 -and $Value -notmatch '\s') {
+        return $Value
+    }
+    return '"' + ($Value -replace '(\\+)$', '$1$1') + '"'
+}
+
+function Get-LabArcAzArguments {
+    <#
+    .SYNOPSIS
+        The `az ssh config` arguments that write a config for the Arc machine
+        into ConfigPath, with relay credentials in a folder beside it. Every
+        value is passed, the subscription included, so nothing depends on
+        az's default subscription, which other windows share.
+    #>
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)] [string] $ResourceGroup,
+        [Parameter(Mandatory)] [string] $MachineName,
+        [Parameter(Mandatory)] [string] $Subscription,
+        [Parameter(Mandatory)] [string] $LocalUser,
+        [Parameter(Mandatory)] [int] $Port,
+        [Parameter(Mandatory)] [string] $ConfigPath
+    )
+
+    return [string[]]@(
+        'ssh', 'config',
+        '--resource-group', $ResourceGroup,
+        '--name', $MachineName,
+        '--resource-type', 'Microsoft.HybridCompute/machines',
+        '--local-user', $LocalUser,
+        '--port', [string]$Port,
+        '--file', $ConfigPath,
+        '--subscription', $Subscription,
+        '--only-show-errors'
+    )
+}
+
+function Get-LabArcAzHint {
+    <#
+    .SYNOPSIS
+        What to do about a failed az call, from what az wrote to standard
+        error: the one command that usually fixes it, or az's own first lines.
+    #>
+    [OutputType([string])]
+    param([AllowEmptyString()] [AllowNull()] [string] $Stderr)
+
+    $text = [string]$Stderr
+    if ($text -match "az login|az account|AADSTS|refresh token|expired") {
+        return 'az is not signed in, or its sign-in expired. Run: az login'
+    }
+    if ($text -match "extension" -and $text -match "\bssh\b") {
+        return 'The az ssh extension is missing. Run: az extension add --name ssh'
+    }
+    $first = @($text -split '\r?\n' | Where-Object { $_.Trim() } | Select-Object -First 3) -join ' '
+    if (-not $first) {
+        $first = 'az wrote nothing to say why.'
+    }
+    return $first
+}
+
+function Get-LabArcProxyLine {
+    <#
+    .SYNOPSIS
+        The program and the rest of the first ProxyCommand line in an ssh
+        config, as `az ssh config` writes it for an Arc machine:
+        `"<proxy>" -r "<relay info>" -p <port>`. The rest is kept as written,
+        a Windows command-line tail, and passed to the proxy unchanged. $null
+        when there is no such line.
+    #>
+    [OutputType([pscustomobject])]
+    param([AllowEmptyString()] [string] $ConfigText)
+
+    foreach ($line in ($ConfigText -split '\r?\n')) {
+        if ($line -match '^\s*ProxyCommand\s+(\S.*?)\s*$') {
+            $command = $Matches[1]
+            if ($command -match '^"([^"]+)"\s*(.*)$') {
+                return [pscustomobject]@{ Path = $Matches[1]; Arguments = $Matches[2] }
+            }
+            if ($command -match '^(\S+)\s*(.*)$') {
+                return [pscustomobject]@{ Path = $Matches[1]; Arguments = $Matches[2] }
+            }
+        }
+    }
+    return $null
+}
+
+function Split-LabArcRelayArgument {
+    <#
+    .SYNOPSIS
+        Splits `-r <relay info file>` out of the proxy's arguments: the file
+        az wrote the relay credentials to, and the arguments without it.
+        RelayPath is $null when there is no -r.
+    #>
+    [OutputType([pscustomobject])]
+    param([AllowEmptyString()] [string] $Arguments)
+
+    $match = [regex]::Match($Arguments, '(?:^|\s)-r\s+(?:"([^"]*)"|(\S+))')
+    if (-not $match.Success) {
+        return [pscustomobject]@{ RelayPath = $null; Arguments = $Arguments }
+    }
+    $path = $match.Groups[2].Value
+    if ($match.Groups[1].Success) {
+        $path = $match.Groups[1].Value
+    }
+    $before = $Arguments.Substring(0, $match.Index).TrimEnd()
+    $after = $Arguments.Substring($match.Index + $match.Length).TrimStart()
+    return [pscustomobject]@{ RelayPath = $path; Arguments = ($before + ' ' + $after).Trim() }
+}
+
+function Get-LabArcStateRoot {
+    <#
+    .SYNOPSIS
+        Where the run folders go: %LOCALAPPDATA%\hcw-lab-arc on Windows,
+        ~/.ssh/hcw-lab-arc elsewhere. Never the shared temporary folder.
+    #>
+    [OutputType([string])]
+    param()
+
+    if ($env:LOCALAPPDATA) {
+        return (Join-Path $env:LOCALAPPDATA 'hcw-lab-arc')
+    }
+    return (Join-Path (Join-Path $HOME '.ssh') 'hcw-lab-arc')
+}
+
+function Initialize-LabArcStateRoot {
+    <#
+    .SYNOPSIS
+        Creates the state folder when it is missing, readable by this user
+        alone: on Windows an access list that inherits nothing and grants
+        only the current user, which the run folders and files below it
+        inherit; elsewhere mode 0700.
+    #>
+    param([Parameter(Mandatory)] [string] $Path)
+
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+        return
+    }
+    $null = New-Item -ItemType Directory -Path $Path -Force
+    try {
+        if ($env:OS -eq 'Windows_NT') {
+            $security = New-Object System.Security.AccessControl.DirectorySecurity
+            $security.SetAccessRuleProtection($true, $false)
+            $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($user, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
+            $security.AddAccessRule($rule)
+            Set-Acl -LiteralPath $Path -AclObject $security
+        }
+        else {
+            $mode = 'System.IO.UnixFileMode' -as [type]
+            if ($null -ne $mode) {
+                [System.IO.File]::SetUnixFileMode($Path, [System.Enum]::Parse($mode, 'UserRead, UserWrite, UserExecute'))
+            }
+            else {
+                $null = & chmod 700 $Path 2>&1
+            }
+        }
+    }
+    catch {
+        Write-LabArcMessage -Message ('could not make ' + $Path + ' private to this user: ' + $_.Exception.Message)
+    }
+}
+
+function Remove-LabArcStaleState {
+    <#
+    .SYNOPSIS
+        Deletes this helper's run folders under Root last written more than
+        MaxAgeMinutes ago, an hour by default, which is as long as relay
+        credentials last, and returns how many it deleted. A run folder is
+        normally gone before the connection starts; this catches one left by
+        a helper killed while az was still writing it, at the next
+        connection and at every Connect-Lab.ps1 run.
+    #>
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory)] [string] $Root,
+        [Parameter(Mandatory)] [datetime] $Now,
+        [int] $MaxAgeMinutes = 60
+    )
+
+    $removed = 0
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        return $removed
+    }
+    $cutoff = $Now.ToUniversalTime().AddMinutes(-$MaxAgeMinutes)
+    foreach ($folder in @(Get-ChildItem -LiteralPath $Root -Directory -Filter 'run-*' -ErrorAction SilentlyContinue)) {
+        if ($folder.LastWriteTimeUtc -lt $cutoff) {
+            Remove-Item -LiteralPath $folder.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            if (-not (Test-Path -LiteralPath $folder.FullName)) {
+                $removed++
+            }
+        }
+    }
+    return $removed
+}
+
+function Write-LabArcMessage {
+    <#
+    .SYNOPSIS
+        One line to standard error, which ssh shows; never standard output,
+        which is the connection. The seam the tests mock.
+    #>
+    param([Parameter(Mandatory)] [string] $Message)
+
+    [Console]::Error.WriteLine('hcw-lab (Arc): ' + $Message)
+}
+
+function Resolve-LabArcAz {
+    <#
+    .SYNOPSIS
+        The full path of az, or $null. az.cmd first: on Windows the CLI's
+        folder also holds `az`, a shell script for Git Bash, which Windows
+        cannot start. The seam the tests mock.
+    #>
+    [OutputType([string])]
+    param()
+
+    foreach ($name in @('az.cmd', 'az')) {
+        $command = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $command) {
+            return $command.Path
+        }
+    }
+    return $null
+}
+
+function Invoke-LabArcAz {
+    <#
+    .SYNOPSIS
+        Runs az with its standard input closed and both outputs captured, and
+        returns the exit code and the two texts. Closed input means a prompt
+        fails rather than reading ssh's connection, and captured output means
+        nothing az prints reaches it. The seam the tests mock.
+    #>
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)] [string] $AzPath,
+        [Parameter(Mandatory)] [string[]] $Arguments
+    )
+
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $AzPath
+    $start.Arguments = (@($Arguments | ForEach-Object { ConvertTo-LabArcArgument -Value $_ }) -join ' ')
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($start)
+    $process.StandardInput.Close()
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    return [pscustomobject]@{ ExitCode = $process.ExitCode; Stdout = $stdout.Result; Stderr = $stderr.Result }
+}
+
+function Start-LabArcProxyProcess {
+    <#
+    .SYNOPSIS
+        Starts the extension's proxy on THIS process's standard input, output
+        and error, which in the helper are ssh's ProxyCommand pipes, waits for
+        it and returns its exit code. Nothing is redirected, and the proxy is
+        not started through PowerShell's own native-command handling, so the
+        connection's bytes pass between ssh and the proxy without this
+        process reading or re-encoding them. RelayInfo, when given, goes to
+        the proxy in SSHPROXY_RELAY_INFO, its environment alone, which is how
+        `az ssh arc` hands it the same credentials. The seam the tests mock.
+    #>
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [AllowEmptyString()] [string] $Arguments = '',
+        [AllowEmptyString()] [string] $RelayInfo = ''
+    )
+
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $Path
+    $start.Arguments = $Arguments
+    $start.UseShellExecute = $false
+    if ($RelayInfo) {
+        $start.EnvironmentVariables['SSHPROXY_RELAY_INFO'] = $RelayInfo
+    }
+    $process = [System.Diagnostics.Process]::Start($start)
+    $process.WaitForExit()
+    return $process.ExitCode
+}
+
+function Invoke-LabArcProxy {
+    <#
+    .SYNOPSIS
+        The ProxyCommand: fresh relay credentials from `az ssh config`, then
+        the extension's proxy on ssh's pipes. Returns an exit code, 0 when
+        the proxy ended cleanly; every message goes to standard error.
+
+    .DESCRIPTION
+        Each connection gets its own run folder under StateRoot
+        (Get-LabArcStateRoot: %LOCALAPPDATA%\hcw-lab-arc, or ~/.ssh/hcw-lab-arc,
+        private to this user), and az writes the config and the relay
+        credentials (an access key for this machine's endpoint, an hour at
+        most) into it. The helper reads the credentials, DELETES the folder,
+        and only then starts the proxy, handing it the credentials in its
+        environment. So nothing is left on disk while the connection runs,
+        and nothing when ssh ends it: Windows OpenSSH ends a ProxyCommand
+        with TerminateProcess, and no cleanup in this process would run. A
+        folder survives only if this process is killed while az is writing
+        it; folders older than an hour are deleted at every start and at
+        every Connect-Lab.ps1 run. If az ever names no relay file, the
+        proxy gets its arguments as written and the folder stays until the
+        proxy exits or the sweep.
+
+        With -Check it stops once the credentials are issued and the proxy is
+        on disk, and says so: Connect-Lab.ps1 -Arc runs that once before it
+        changes the Host block, which also downloads the proxy.
+    #>
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory)] [string] $ResourceGroup,
+        [Parameter(Mandatory)] [string] $MachineName,
+        [Parameter(Mandatory)] [string] $Subscription,
+        [Parameter(Mandatory)] [string] $LocalUser,
+        [int] $Port = 22,
+        [switch] $Check,
+        [string] $StateRoot = ''
+    )
+
+    if (-not $StateRoot) {
+        $StateRoot = Get-LabArcStateRoot
+    }
+    Initialize-LabArcStateRoot -Path $StateRoot
+    $null = Remove-LabArcStaleState -Root $StateRoot -Now (Get-Date)
+    $az = Resolve-LabArcAz
+    if (-not $az) {
+        Write-LabArcMessage -Message 'az is not on PATH, and Arc SSH needs it. Install the Azure CLI (winget install --exact --id Microsoft.AzureCLI), or reach the host directly: run scripts/lab/Connect-Lab.ps1 without -Arc.'
+        return 1
+    }
+    $run = Join-Path $StateRoot ('run-' + [guid]::NewGuid().ToString('n'))
+    $null = New-Item -ItemType Directory -Path $run -Force
+    try {
+        $config = Join-Path $run 'config'
+        $arguments = Get-LabArcAzArguments -ResourceGroup $ResourceGroup -MachineName $MachineName -Subscription $Subscription -LocalUser $LocalUser -Port $Port -ConfigPath $config
+        $result = Invoke-LabArcAz -AzPath $az -Arguments $arguments
+        if ($result.ExitCode -ne 0) {
+            Write-LabArcMessage -Message ("az ssh config failed (exit " + $result.ExitCode + "): " + (Get-LabArcAzHint -Stderr $result.Stderr))
+            return 1
+        }
+        if (-not (Test-Path -LiteralPath $config -PathType Leaf)) {
+            Write-LabArcMessage -Message 'az ssh config succeeded but wrote no config file, so there is no relay to connect through.'
+            return 1
+        }
+        $proxy = Get-LabArcProxyLine -ConfigText ([System.IO.File]::ReadAllText($config))
+        if ($null -eq $proxy) {
+            Write-LabArcMessage -Message ("az ssh config wrote no ProxyCommand for " + $MachineName + ". Is it an Arc machine in " + $ResourceGroup + "?")
+            return 1
+        }
+        if (-not (Test-Path -LiteralPath $proxy.Path -PathType Leaf)) {
+            Write-LabArcMessage -Message ("The relay proxy az named is not on disk: " + $proxy.Path)
+            return 1
+        }
+        $relay = Split-LabArcRelayArgument -Arguments $proxy.Arguments
+        $relayInfo = ''
+        if ($null -ne $relay.RelayPath) {
+            if (-not (Test-Path -LiteralPath $relay.RelayPath -PathType Leaf)) {
+                Write-LabArcMessage -Message ("az ssh config named relay information it did not write: " + $relay.RelayPath)
+                return 1
+            }
+            $relayInfo = ([System.IO.File]::ReadAllText($relay.RelayPath)).Trim()
+            if (-not $relayInfo) {
+                Write-LabArcMessage -Message ("The relay information az wrote is empty: " + $relay.RelayPath)
+                return 1
+            }
+        }
+        if ($Check) {
+            Write-LabArcMessage -Message ("relay credentials issued for " + $MachineName + "; proxy " + $proxy.Path + ".")
+            return 0
+        }
+        if ($relayInfo) {
+            # Off the disk before the connection starts; the proxy reads them
+            # from its environment.
+            Remove-Item -LiteralPath $run -Recurse -Force -ErrorAction SilentlyContinue
+            return (Start-LabArcProxyProcess -Path $proxy.Path -Arguments $relay.Arguments -RelayInfo $relayInfo)
+        }
+        return (Start-LabArcProxyProcess -Path $proxy.Path -Arguments $proxy.Arguments)
+    }
+    finally {
+        Remove-Item -LiteralPath $run -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-LabArcProxyScript {
+    <#
+    .SYNOPSIS
+        The text of ~/.ssh/hcw-lab-arc-proxy.ps1: the relay functions above,
+        copied from their definitions, and a call to Invoke-LabArcProxy with
+        the parameters the ProxyCommand passes. Refuses a non-ASCII result.
+    #>
+    [OutputType([string])]
+    param()
+
+    $names = @(
+        'ConvertTo-LabArcArgument',
+        'Get-LabArcAzArguments',
+        'Get-LabArcAzHint',
+        'Get-LabArcProxyLine',
+        'Split-LabArcRelayArgument',
+        'Get-LabArcStateRoot',
+        'Initialize-LabArcStateRoot',
+        'Remove-LabArcStaleState',
+        'Write-LabArcMessage',
+        'Resolve-LabArcAz',
+        'Invoke-LabArcAz',
+        'Start-LabArcProxyProcess',
+        'Invoke-LabArcProxy'
+    )
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('# hcw-lab-arc-proxy.ps1: the ProxyCommand of Host hcw-lab in ~/.ssh/config, for')
+    $lines.Add('# Azure Arc SSH (#953). Written by scripts/lab/Connect-Lab.ps1 -Arc from its own')
+    $lines.Add('# functions; run that again to rewrite this file rather than editing it.')
+    $lines.Add('# ssh runs it with Windows PowerShell 5.1 on Windows. Standard output is the')
+    $lines.Add('# connection itself, so it writes nothing there; messages go to standard error.')
+    $lines.Add('param(')
+    $lines.Add('    [Parameter(Mandatory)] [string] $ResourceGroup,')
+    $lines.Add('    [Parameter(Mandatory)] [string] $MachineName,')
+    $lines.Add('    [Parameter(Mandatory)] [string] $Subscription,')
+    $lines.Add('    [Parameter(Mandatory)] [string] $LocalUser,')
+    $lines.Add('    [int] $Port = 22')
+    $lines.Add(')')
+    $lines.Add('Set-StrictMode -Version 2.0')
+    $lines.Add('$ErrorActionPreference = ''Stop''')
+    $lines.Add('$ProgressPreference = ''SilentlyContinue''')
+    foreach ($name in $names) {
+        $body = (Get-Command -Name $name -CommandType Function).ScriptBlock.ToString()
+        $lines.Add('function ' + $name + ' {' + $body + '}')
+    }
+    $lines.Add('try {')
+    $lines.Add('    $code = Invoke-LabArcProxy -ResourceGroup $ResourceGroup -MachineName $MachineName -Subscription $Subscription -LocalUser $LocalUser -Port $Port')
+    $lines.Add('}')
+    $lines.Add('catch {')
+    $lines.Add('    [Console]::Error.WriteLine(''hcw-lab (Arc): '' + $_.Exception.Message)')
+    $lines.Add('    $code = 1')
+    $lines.Add('}')
+    $lines.Add('exit $code')
+    $text = ($lines -join "`n") + "`n"
+    if ($text -match '[^\x00-\x7F]') {
+        throw 'The Arc proxy helper would carry a non-ASCII character, which Windows PowerShell 5.1 misreads in a file without a byte order mark.'
+    }
+    return $text
+}
+
+function Get-LabArcProxyCommand {
+    <#
+    .SYNOPSIS
+        The ProxyCommand line for Arc mode: the helper, run by ShellPath
+        (Windows PowerShell 5.1 on Windows), with the machine to reach.
+
+    .DESCRIPTION
+        Written so that both ssh clients a Windows desktop has run it the
+        same way: Windows OpenSSH starts the line as a command line, and Git
+        Bash's ssh hands it to sh -c, where a double-quoted Windows path
+        keeps its backslashes. A path holding a double quote, a dollar sign
+        or a backtick is refused, because sh would read it; a percent sign
+        is doubled, because ssh expands %-tokens in ProxyCommand. The four
+        names are refused unless plain.
+    #>
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)] [string] $ShellPath,
+        [Parameter(Mandatory)] [string] $HelperPath,
+        [Parameter(Mandatory)] [string] $ResourceGroup,
+        [Parameter(Mandatory)] [string] $MachineName,
+        [Parameter(Mandatory)] [string] $Subscription,
+        [Parameter(Mandatory)] [string] $User,
+        [int] $Port = 22
+    )
+
+    foreach ($name in @($ResourceGroup, $MachineName, $Subscription, $User)) {
+        if ($name -notmatch '\A[A-Za-z0-9._-]+\z') {
+            throw "'$name' cannot go into a ProxyCommand: letters, digits, dots, hyphens and underscores only."
+        }
+    }
+    foreach ($path in @($ShellPath, $HelperPath)) {
+        if ($path -match '["$`\r\n]') {
+            throw "'$path' cannot go into a ProxyCommand: it holds a double quote, a dollar sign, a backtick or a line break."
+        }
+    }
+    $shell = '"' + ($ShellPath -replace '%', '%%') + '"'
+    $helper = '"' + ($HelperPath -replace '%', '%%') + '"'
+    return "$shell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helper -ResourceGroup $ResourceGroup -MachineName $MachineName -Subscription $Subscription -LocalUser $User -Port $Port"
+}
+
+function Test-LabArcPrerequisites {
+    <#
+    .SYNOPSIS
+        Whether this desktop and Azure are ready for Arc mode, read-only: the
+        az ssh extension is installed, az is signed in and sees the
+        subscription, and the Arc machine's SSH service configuration exists
+        on port 22. Returns the first problem and the one command that fixes
+        it, if there is one.
+
+    .DESCRIPTION
+        The service configuration is read rather than left to the extension
+        because the extension creates a missing one itself, outside
+        Terraform, and the hcw-azure apply that declares it
+        (infra/lab-hybrid.tf) would then fail on a resource that already
+        exists.
+    #>
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)] [string] $AzPath,
+        [Parameter(Mandatory)] [string] $Subscription,
+        [Parameter(Mandatory)] [string] $ResourceGroup,
+        [Parameter(Mandatory)] [string] $MachineName
+    )
+
+    $extension = Invoke-LabArcAz -AzPath $AzPath -Arguments @('extension', 'show', '--name', 'ssh', '-o', 'none', '--only-show-errors')
+    if ($extension.ExitCode -ne 0) {
+        return [pscustomobject]@{ Ready = $false; Problem = 'The az ssh extension is not installed on this desktop, and Arc SSH runs through it.'; Command = 'az extension add --name ssh' }
+    }
+    $account = Invoke-LabArcAz -AzPath $AzPath -Arguments @('account', 'show', '--subscription', $Subscription, '--query', 'id', '-o', 'tsv', '--only-show-errors')
+    $subscriptionId = ([string]$account.Stdout).Trim()
+    if ($account.ExitCode -ne 0 -or $subscriptionId -notmatch '\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z') {
+        return [pscustomobject]@{ Ready = $false; Problem = "az is not signed in, or this account cannot see $Subscription."; Command = 'az login' }
+    }
+    $url = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.HybridCompute/machines/$MachineName/providers/Microsoft.HybridConnectivity/endpoints/default/serviceConfigurations/SSH?api-version=2024-12-01"
+    $read = Invoke-LabArcAz -AzPath $AzPath -Arguments @('rest', '--method', 'get', '--url', $url, '-o', 'json', '--only-show-errors')
+    if ($read.ExitCode -ne 0) {
+        if ([string]$read.Stderr -match 'NotFound|\b404\b') {
+            return [pscustomobject]@{ Ready = $false; Problem = "$MachineName has no SSH service configuration yet. The hcw-azure run after #953 creates it (infra/lab-hybrid.tf); confirm that run first. Connecting before it would let the az ssh extension create one outside Terraform, and that run would then fail."; Command = $null }
+        }
+        return [pscustomobject]@{ Ready = $false; Problem = 'Reading the SSH service configuration failed: ' + (Get-LabArcAzHint -Stderr $read.Stderr); Command = $null }
+    }
+    $port = $null
+    try {
+        $port = (($read.Stdout | ConvertFrom-Json).properties).port
+    }
+    catch {
+        $port = $null
+    }
+    if ([string]$port -ne '22') {
+        return [pscustomobject]@{ Ready = $false; Problem = "The SSH service configuration on $MachineName names port '$port', not 22, so the relay would not reach sshd."; Command = $null }
+    }
+    return [pscustomobject]@{ Ready = $true; Problem = $null; Command = $null }
+}
+
+function Update-LabArcHelper {
+    <#
+    .SYNOPSIS
+        Writes the helper to Path when its text differs, as ASCII with LF
+        line endings. Returns 'Written', 'Unchanged', or 'Skipped' under
+        -WhatIf.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [string] $Content
+    )
+
+    if ((Test-Path -LiteralPath $Path -PathType Leaf) -and ([System.IO.File]::ReadAllText($Path) -ceq $Content)) {
+        return 'Unchanged'
+    }
+    if (-not $PSCmdlet.ShouldProcess($Path, 'Write the Arc SSH ProxyCommand helper')) {
+        return 'Skipped'
+    }
+    New-LabSshDirectory -Path (Split-Path -Parent $Path)
+    [System.IO.File]::WriteAllText($Path, $Content, [System.Text.ASCIIEncoding]::new())
+    return 'Written'
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
@@ -417,6 +1064,13 @@ $repository = 'saulpatinojr/HCW-HybridCloudWorks'
 $variable = 'LAB_SSH_HOST'
 $remoteFolder = '/opt/hcw-src'
 $changes = [System.Collections.Generic.List[string]]::new()
+# Arc mode's target, as infra/lab-hybrid.tf and lab-host/ansible/group_vars
+# name it (arc_resource_group, arc_resource_name); scripts/lab-host-arc-ssh.test.mjs
+# holds the three together.
+$arcResourceGroup = 'rg-lab-hybrid-prod-cus'
+$arcMachineName = 'arcs-lab-hybrid-prod-cus-01'
+$arcSubscription = 'sub-app-site-prod-cus'
+$arcHelperPath = Join-Path $HOME '.ssh' 'hcw-lab-arc-proxy.ps1'
 
 foreach ($tool in 'ssh', 'ssh-keygen', 'ssh-add') {
     if (-not (Get-Command $tool -CommandType Application -ErrorAction SilentlyContinue)) {
@@ -440,6 +1094,37 @@ else {
 }
 if (-not (Test-LabHostName -Name $HostName)) {
     throw "'$HostName' is not a host name or IPv4 address. Letters, digits, dots and hyphens only."
+}
+
+# Relay-credential folders a killed Arc connection left behind (#953), once
+# they are an hour old and so expired, in either mode. Nothing else is there.
+if (-not $WhatIfPreference) {
+    $arcStateRoot = Get-LabArcStateRoot
+    $swept = Remove-LabArcStaleState -Root $arcStateRoot -Now (Get-Date)
+    if ($swept -gt 0) {
+        Write-Host "Arc: deleted $swept relay-credential folder(s) older than an hour under $arcStateRoot."
+        $changes.Add("deleted $swept expired Arc relay-credential folder(s)")
+    }
+}
+
+# Arc mode's reads, before anything changes: a desktop or an estate that is
+# not ready is told what to run, and keeps the block it has.
+$azPath = $null
+if ($Arc) {
+    if ($User -ne 'hcwadmin') {
+        throw '-Arc logs in as hcwadmin, the only login sshd accepts once bootstrap.sh has run; drop -User.'
+    }
+    $azPath = Resolve-LabArcAz
+    if (-not $azPath) {
+        throw 'az is not on PATH, and -Arc needs the Azure CLI. Install it in PowerShell with: winget install --exact --id Microsoft.AzureCLI. Then sign in with az login and run this again. Nothing was changed.'
+    }
+    $ready = Test-LabArcPrerequisites -AzPath $azPath -Subscription $arcSubscription -ResourceGroup $arcResourceGroup -MachineName $arcMachineName
+    if (-not $ready.Ready) {
+        $fix = if ($ready.Command) { " Run this in PowerShell, then run this script again: $($ready.Command)" } else { '' }
+        throw "Arc SSH is not ready: $($ready.Problem)$fix Nothing was changed; the direct path still works."
+    }
+    Write-Host "Arc: the az ssh extension is installed, az is signed in, and $arcMachineName has its SSH service configuration on port 22."
+    Write-Host "Host key: checked under $HostName, the name a direct connection used, so the key accepted there is the one Arc must present."
 }
 
 $KeyPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($KeyPath)
@@ -469,9 +1154,39 @@ else {
     }
 }
 
-# 2. The Host block.
+# 2. The Host block. In Arc mode, first the helper the ProxyCommand runs, and
+# one relay check through it: only a desktop that has been seen to get relay
+# credentials loses its direct block.
 $configPath = Join-Path $HOME '.ssh' 'config'
-$block = Get-LabSshHostBlock -Alias $alias -HostName $HostName -User $User -IdentityFile $KeyPath
+if ($Arc) {
+    $helper = Update-LabArcHelper -Path $arcHelperPath -Content (Get-LabArcProxyScript)
+    if ($helper -eq 'Written') {
+        Write-Host "Arc helper: wrote $arcHelperPath."
+        $changes.Add("wrote the Arc helper $arcHelperPath")
+    }
+    elseif ($helper -eq 'Unchanged') {
+        Write-Host "Arc helper: $arcHelperPath is already current."
+    }
+    if ($WhatIfPreference) {
+        Write-Host 'Arc relay check: skipped under -WhatIf. A real run asks Azure once for relay credentials, as every connection will, and downloads the az ssh proxy on the first run.'
+    }
+    else {
+        Write-Host 'Arc relay check: asking Azure for relay credentials once, as every connection will. The first run also downloads the az ssh proxy.'
+        $checked = Invoke-LabArcProxy -ResourceGroup $arcResourceGroup -MachineName $arcMachineName -Subscription $arcSubscription -LocalUser $User -Port 22 -Check
+        if ($checked -ne 0) {
+            throw 'The Arc relay check failed, for the reason above. The Host block was not changed, so the direct path still works. Fix that and run this again.'
+        }
+    }
+    $arcShell = if ($IsWindows) { Join-Path $env:SystemRoot 'System32' 'WindowsPowerShell' 'v1.0' 'powershell.exe' } else { (Get-Process -Id $PID).Path }
+    if (-not (Test-Path -LiteralPath $arcShell -PathType Leaf)) {
+        $arcShell = (Get-Process -Id $PID).Path
+    }
+    $proxyCommand = Get-LabArcProxyCommand -ShellPath $arcShell -HelperPath $arcHelperPath -ResourceGroup $arcResourceGroup -MachineName $arcMachineName -Subscription $arcSubscription -User $User -Port 22
+    $block = Get-LabSshHostBlock -Alias $alias -HostName $arcMachineName -User $User -IdentityFile $KeyPath -ProxyCommand $proxyCommand -HostKeyAlias $HostName
+}
+else {
+    $block = Get-LabSshHostBlock -Alias $alias -HostName $HostName -User $User -IdentityFile $KeyPath
+}
 $update = Update-LabSshConfig -Path $configPath -Alias $alias -Block $block
 if ($update.Action -eq 'Unchanged') {
     Write-Host "SSH config: the Host $alias block in $configPath is already current."
@@ -568,7 +1283,13 @@ if (Test-Path -LiteralPath $publicKeyPath -PathType Leaf) {
     Write-Host ('  ' + (Get-LabAuthorizeCommand -PublicKey $publicKey -Alias $alias))
     Write-Host ''
     Write-Host "Then, here: ssh $alias hostname"
-    Write-Host '  Success prints the server''s host name. The first connection asks you to accept the host key.'
+    if ($Arc) {
+        Write-Host '  Success prints the server''s host name, after a few seconds while az fetches relay credentials, which it does on every connection. It asks to accept the host key only if no direct connection accepted it under that name first.'
+        Write-Host '  If it fails, the lines starting "hcw-lab (Arc):" say why. Without -Arc, this script puts the direct block back.'
+    }
+    else {
+        Write-Host '  Success prints the server''s host name. The first connection asks you to accept the host key.'
+    }
 }
 else {
     Write-Host "Public key: $publicKeyPath does not exist yet (-WhatIf), so there is nothing to print."

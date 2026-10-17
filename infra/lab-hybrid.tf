@@ -401,6 +401,67 @@ resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_key_vault" {
 }
 
 # -----------------------------------------------------------------------------
+# Arc SSH: the owner's way in once port 22 closes (#953, LAB-7)
+# -----------------------------------------------------------------------------
+# Azure Arc SSH carries an SSH session to the host through an Azure Relay
+# hybrid connection that the Connected Machine agent dials OUT to, so sshd
+# needs no inbound port (owner decision 2026-10-16; ADR 0032, the amendment
+# of that date under "Arc adds an identity to the host"). Two resources on the
+# Arc machine make it possible, and nothing else in Azure:
+#
+#   - the machine's default connectivity endpoint, and
+#   - that endpoint's SSH service configuration, port 22: the one port the
+#     relay may reach, matching the agent's incomingconnections.ports, which
+#     the arc role sets on the host (lab-host/ansible/roles/arc).
+#
+# The relay is a transport, not a login. A caller who may list the endpoint's
+# credentials (Microsoft.HybridConnectivity/endpoints/listCredentials/action:
+# Owner and Contributor on the machine or its group) can open a stream to
+# sshd on the host's loopback, and sshd still asks for the pinned key, exactly
+# as it does for a connection from the internet today. No role is granted
+# here: the owner, who connects, is Owner on the subscription.
+#
+# The az ssh extension would create both on first use if they were missing.
+# They are declared here instead, so that what the relay may reach is
+# reviewed in a pull request rather than decided by a client, and
+# scripts/lab/Connect-Lab.ps1 -Arc refuses to connect until they exist, so
+# the extension never creates them out of band.
+#
+# Gated like the vault seal grant above: while there is no Arc machine (a
+# rebuilt host before onboarding), both plan to nothing, and a new machine
+# gets new ones on the next apply. Port 22 stays open to the internet until
+# the owner has connected this way and through the Hostinger web console; a
+# later change closes it.
+resource "azapi_resource" "lab_hybrid_arc_connectivity_endpoint" {
+  count = local.lab_hybrid_arc_principal_id == "" ? 0 : 1
+
+  type      = "Microsoft.HybridConnectivity/endpoints@2024-12-01"
+  name      = "default"
+  parent_id = data.azapi_resource.lab_hybrid_arc_machine.id
+
+  body = {
+    properties = {
+      type = "default"
+    }
+  }
+}
+
+resource "azapi_resource" "lab_hybrid_arc_ssh_service_configuration" {
+  count = local.lab_hybrid_arc_principal_id == "" ? 0 : 1
+
+  type      = "Microsoft.HybridConnectivity/endpoints/serviceConfigurations@2024-12-01"
+  name      = "SSH"
+  parent_id = azapi_resource.lab_hybrid_arc_connectivity_endpoint[0].id
+
+  body = {
+    properties = {
+      serviceName = "SSH"
+      port        = 22
+    }
+  }
+}
+
+# -----------------------------------------------------------------------------
 # Lab alerts (LAB-2, estate review 2026-10-06)
 # -----------------------------------------------------------------------------
 # Three rules, all against the Management workspace the DCR above writes to,
