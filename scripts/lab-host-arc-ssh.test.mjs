@@ -160,6 +160,10 @@ describe('the arc role opens the same port, and nothing else', () => {
     expect(guard).toContain("| reject('match', '^(127[.]|[[]::1[]]|[[]::ffff:127[.])')");
     expect(guard).toContain('- (arc_sshd_listeners.rc | default(1)) == 0');
     expect(guard).toContain('- arc_sshd_public');
+    // And that listener must be sshd: it is asked for an SSH banner
+    // (CodeRabbit on #1263).
+    expect(guard).toContain("search_regex: '^SSH-2[.]0-'");
+    expect(guard).toContain("- (arc_ssh_banner.state | default('')) == 'started'");
     expect(yamlScalar(arcDefaults, 'arc_ss_path')).toBe('/usr/bin/ss');
   });
 

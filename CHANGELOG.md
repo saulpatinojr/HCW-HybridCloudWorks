@@ -49,11 +49,14 @@ This project has not cut a tagged release; entries are grouped under
     Disconnected.
   - **The listener check:** `privilege_checks_public_tcp_ports` admits 22
     only on a run where sshd listens on every address.
-  - **The arc role's guard:** it now also requires a live sshd listener
-    beyond the loopback before Arc SSH is turned off.
-  - **Tests:** `ufw-closed-ports.test.sh` has 52 checks, with real listeners
-    standing in for sshd, and `sshd-apply.test.sh` has 23. The runbook's
-    reopen now rebinds sshd too.
+  - **The arc role's guard:** it now also requires a live listener beyond
+    the loopback before Arc SSH is turned off, and that listener must answer
+    with an SSH banner.
+  - **The `sshd -T` read-back:** while sshd should listen on every address,
+    it requires an address beyond the loopback.
+  - **Tests:** `ufw-closed-ports.test.sh` has 53 checks, with real listeners
+    standing in for sshd and a bounded wait for each, and `sshd-apply.test.sh`
+    has 24. The runbook's reopen now rebinds sshd too.
 - **Lab host: turning Arc SSH off never leaves both SSH paths shut (#953
   follow-up, CodeRabbit on #1258)**. Port 22 has been closed at ufw while Arc
   SSH is ready since #1258. A run with `arc_incoming_ssh_enabled` false could

@@ -338,21 +338,45 @@ cat > "${work}/guard.yml" <<EOF
       ansible.builtin.import_tasks: $(cd "${role}/.." && pwd)/arc/tasks/ssh_off_guard.yml
 EOF
 # A stand-in for sshd's listener on port 22, at the address given, so the
-# guard's `ss` read sees what sshd would leave (#1257).
+# guard's `ss` read sees what sshd would leave (#1257). With `ssh` it sends
+# an SSH banner to each connection, as sshd does; without, it sends nothing.
 cat > "${work}/listen.py" <<'EOF'
-import socket, sys, time
+import socket, sys
 family = socket.AF_INET6 if ":" in sys.argv[1] else socket.AF_INET
 s = socket.socket(family, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+if family == socket.AF_INET6:
+    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
 s.bind((sys.argv[1], 22))
-s.listen(1)
-time.sleep(3600)
+s.listen(5)
+while True:
+    conn, _ = s.accept()
+    if sys.argv[2:] == ["ssh"]:
+        conn.sendall(b"SSH-2.0-OpenSSH_10.2p1 stand-in\r\n")
+    conn.close()
 EOF
-# listening: true once something listens on port 22.
-listening() { ss -Hltn 'sport = :22' | grep -q .; }
-python3 "${work}/listen.py" 0.0.0.0 &
-listener=$!
-until listening; do sleep 0.1; done
+# listen_on ADDRESS [ssh]: replace the stand-in with one on ADDRESS, and wait
+# for it to listen, at most five seconds; a stand-in that cannot bind fails
+# the test rather than hanging it (CodeRabbit on #1263).
+listen_on() {
+  if [ -n "${listener:-}" ]; then
+    kill "${listener}" 2> /dev/null || true
+    wait "${listener}" 2> /dev/null || true
+  fi
+  python3 "${work}/listen.py" "$@" > "${work}/listen.log" 2>&1 &
+  listener=$!
+  local tries=0
+  until ss -Hltn 'sport = :22' | grep -q .; do
+    tries=$((tries + 1))
+    if ! kill -0 "${listener}" 2> /dev/null || [ "${tries}" -ge 50 ]; then
+      not_ok "the stand-in listener on $1 did not start" "$(cat "${work}/listen.log")"
+      echo "ufw-closed-ports.test.sh: stopped at a listener that did not start" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+}
+listen_on 0.0.0.0 ssh
 guard guard_closed -e arc_incoming_ssh_enabled=false
 check "the arc role refuses to turn Arc SSH off while ufw keeps 22 closed" \
   "[ \"\$(rc guard_closed)\" -ne 0 ] && says guard_closed 'does not admit port 22 from Anywhere' && ! admits 22" "$(out guard_closed)"
@@ -371,19 +395,15 @@ check "but lets it with no ufw at all, which filters nothing" "[ \"\$(rc guard_n
 guard guard_ssbroken -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/no-ufw" -e "arc_ss_path=${work}/bin/ufw-broken"
 check "and refuses while ss does not answer" \
   "[ \"\$(rc guard_ssbroken)\" -ne 0 ] && says guard_ssbroken '\`ss\` did not answer (rc 1)'" "$(out guard_ssbroken)"
-kill "${listener}"
-wait "${listener}" 2> /dev/null || true
-python3 "${work}/listen.py" 127.0.0.1 &
-listener=$!
-until listening; do sleep 0.1; done
+listen_on 127.0.0.1 ssh
 guard guard_loopback -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/no-ufw"
 check "and refuses, with nothing filtering 22, while sshd listens on the loopback alone (#1257)" \
   "[ \"\$(rc guard_loopback)\" -ne 0 ] && says guard_loopback 'sshd listens on the loopback alone'" "$(out guard_loopback)"
-kill "${listener}"
-wait "${listener}" 2> /dev/null || true
-python3 "${work}/listen.py" :: &
-listener=$!
-until listening; do sleep 0.1; done
+listen_on 0.0.0.0
+guard guard_nobanner -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/no-ufw"
+check "and while what listens on 22 beyond the loopback is not sshd (CodeRabbit on #1263)" \
+  "[ \"\$(rc guard_nobanner)\" -ne 0 ] && says guard_nobanner 'sent no SSH banner'" "$(out guard_nobanner)"
+listen_on :: ssh
 run arcoff -e arc_incoming_ssh_enabled=false
 check "a run that turns Arc SSH off opens 22 first, though Arc is ready, and says why" \
   "[ \"\$(rc arcoff)\" -eq 0 ] && admits 22 && says arcoff 'being turned off (arc_incoming_ssh_enabled is false)' && says arcoff 'with arc_incoming_ssh_enabled true again'" "$(out arcoff)"

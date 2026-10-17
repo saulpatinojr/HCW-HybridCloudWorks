@@ -415,8 +415,10 @@ describe('port 22 closed to the internet behind the Arc gate (#953 stage 3)', ()
     expect(groupVars).toContain(
       'privilege_checks_public_tcp_ports: "{{ [80, 443] if (hardening_sshd_loopback_only | default(true) | bool) else [22, 80, 443] }}"'
     );
-    // And sshd -T must confirm whichever bind the run wrote.
-    expect(tasks).toContain("== ['listenaddress 127.0.0.1:22', 'listenaddress [::1]:22'])\n            == (hardening_sshd_loopback_only | bool)");
+    // And sshd -T must confirm whichever bind the run wrote: the pair
+    // exactly, or an address beyond the loopback (CodeRabbit on #1263).
+    expect(tasks).toContain("== ['listenaddress 127.0.0.1:22', 'listenaddress [::1]:22'])\n            if hardening_sshd_loopback_only | bool");
+    expect(tasks).toContain("| reject('match', '^listenaddress (127[.]|[[]::1[]]:|[[]::ffff:127[.])')");
   });
 
   it('runs tests/ufw-closed-ports.test.sh in CI, as root, with ufw installed', () => {

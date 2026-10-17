@@ -247,6 +247,13 @@ check "with sshd on every address, the drop-in lists no ListenAddress and the ru
 STUB_SSHD_T="${work}/sshd-T.good" run public-mismatch -e hardening_sshd_loopback_only=false
 check "and a run whose sshd still reports the loopback pair stops" \
   "[ \"\$(rc public-mismatch)\" -ne 0 ] && says public-mismatch 'The sshd drop-in did not pass its checks'" "$(out public-mismatch)"
+# Another file in sshd_config.d that leaves sshd on one loopback address is
+# not the pair, and still no path in (CodeRabbit on #1263).
+grep -v '^listenaddress ' "${work}/sshd-T.good" > "${work}/sshd-T.one-loopback"
+printf 'listenaddress 127.0.0.1:22\n' >> "${work}/sshd-T.one-loopback"
+STUB_SSHD_T="${work}/sshd-T.one-loopback" run public-one-loopback -e hardening_sshd_loopback_only=false
+check "and so does one whose sshd listens on 127.0.0.1 alone" \
+  "[ \"\$(rc public-one-loopback)\" -ne 0 ] && says public-one-loopback 'The sshd drop-in did not pass its checks'" "$(out public-one-loopback)"
 
 if [ "${failed}" -gt 0 ]; then
   echo "sshd-apply.test.sh: ${failed} of $((passed + failed)) checks failed" >&2

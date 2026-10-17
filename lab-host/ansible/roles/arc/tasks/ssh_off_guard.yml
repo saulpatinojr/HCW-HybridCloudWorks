@@ -10,9 +10,9 @@
 # incoming-connection writes; roles/hardening/tests/ufw-closed-ports.test.sh
 # runs it against a real ufw and real listeners.
 #
-# What passes, read conservatively (CodeRabbit on #1261), all of:
-# - sshd listening beyond the loopback on port 22, read live with `ss`;
-#   `ss` that does not answer refuses;
+# What passes, read conservatively (CodeRabbit on #1261 and #1263), all of:
+# - sshd listening beyond the loopback on port 22, read live with `ss`, and
+#   answering there with an SSH banner; `ss` that does not answer refuses;
 # - no ufw at arc_ufw_path, ufw inactive, or ufw active with a general allow
 #   of 22 from Anywhere (`22/tcp`, `22` or the OpenSSH profile, ALLOW or
 #   LIMIT) and no DENY or REJECT rule naming 22 anywhere, since ufw takes the
@@ -49,6 +49,33 @@
   check_mode: false
   when: arc_ufw_bin is not skipped
 
+# A listener is not a path unless it is sshd (CodeRabbit on #1263): the
+# first one beyond the loopback is asked for an SSH banner. A wildcard
+# listener (0.0.0.0, *, [::]) also answers on the loopback, so it is asked
+# there; a listener on one address is asked on that address.
+- name: Ask the listener beyond the loopback for an SSH banner
+  vars:
+    arc_sshd_public_addrs: >-
+      {{ arc_sshd_listeners.stdout_lines | default([])
+         | map('split') | map(attribute='3', default='')
+         | reject('match', '^(127[.]|[[]::1[]]|[[]::ffff:127[.])')
+         | reject('eq', '') | list }}
+    arc_sshd_probe_addr: >-
+      {{ (arc_sshd_public_addrs | first | default('')) | regex_replace(':22$', '') | regex_replace('[][]', '') }}
+  ansible.builtin.wait_for:
+    host: >-
+      {{ '127.0.0.1' if arc_sshd_probe_addr in ['0.0.0.0', '*']
+         else '::1' if arc_sshd_probe_addr == '::' else arc_sshd_probe_addr }}
+    port: 22
+    search_regex: '^SSH-2[.]0-'
+    timeout: 10
+  register: arc_ssh_banner
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - arc_ufw_bin is not skipped
+    - arc_sshd_public_addrs | length > 0
+
 - name: Refuse to turn Arc SSH off while nothing would answer on port 22
   vars:
     arc_ufw_lines: "{{ arc_ufw_status.stdout_lines | default([]) }}"
@@ -74,12 +101,15 @@
     that:
       - (arc_sshd_listeners.rc | default(1)) == 0
       - arc_sshd_public
+      - (arc_ssh_banner.state | default('')) == 'started'
       - arc_ufw_ok
     fail_msg: >-
       arc_incoming_ssh_enabled is false, which turns Azure Arc SSH off, and
       {{ '`ss` did not answer (rc ' ~ (arc_sshd_listeners.rc | default('none')) ~ ')'
          if (arc_sshd_listeners.rc | default(1)) != 0
          else 'sshd listens on the loopback alone' if not arc_sshd_public
+         else 'what listens on port 22 beyond the loopback sent no SSH banner'
+         if (arc_ssh_banner.state | default('')) != 'started'
          else 'ufw did not answer `ufw status` (rc ' ~ (arc_ufw_status.rc | default('none')) ~ ')'
          if (arc_ufw_status.rc | default(0)) != 0
          else 'ufw has a DENY or REJECT rule for port 22' if arc_ufw_denies_22
