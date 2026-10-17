@@ -31,7 +31,7 @@ This project has not cut a tagged release; entries are grouped under
   leaves 22 as it is. Otherwise, as on a rebuilt host that
   `Register-LabArc.ps1` onboards over 22, it keeps 22 open, and the run says
   which. `tests/ufw-closed-ports.test.sh` runs the tasks against the real ufw
-  in a scratch network and mount namespace with a stub `azcmagent`, 34
+  in a scratch network and mount namespace with a stub `azcmagent`, 36
   checks, in CI's `ansible-lint (lab-host)` job. `alert-lab-ssh-login` now pages any
   login that does not arrive through Arc (`lab_ssh_loopback_only` defaults
   to true). The query change is declared for the plan check, and Arc SSH's

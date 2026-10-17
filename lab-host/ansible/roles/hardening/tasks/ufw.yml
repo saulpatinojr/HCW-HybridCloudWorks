@@ -74,16 +74,27 @@
       failed_when: false
       check_mode: false
 
-    # A missing agent (a failed command) reads as NotInstalled and output that
-    # is not JSON as Unreadable. `config get` prints the bare value or
-    # `<key> : <value>`, reduced as the arc role reduces it
-    # (roles/arc/tasks/onboard.yml).
-    - name: Read the Arc agent's answers
+    # A missing agent (a failed command) reads as NotInstalled. Output that is
+    # not JSON, or JSON without a status, reads as Unreadable: from_json
+    # raises on the first, so it is parsed alone and the rescue settles it,
+    # rather than the run stopping before the gate decides (CodeRabbit on
+    # #1258).
+    - name: Read the Arc agent's connection state from its JSON
+      block:
+        - name: Parse the agent's status
+          ansible.builtin.set_fact:
+            hardening_arc_status: >-
+              {{ 'NotInstalled' if hardening_arc_show.rc is not defined or hardening_arc_show.rc != 0
+                 else (hardening_arc_show.stdout | from_json).status | default('Unreadable') }}
+      rescue:
+        - name: Read output that is not JSON as Unreadable
+          ansible.builtin.set_fact:
+            hardening_arc_status: Unreadable
+
+    # `config get` prints the bare value or `<key> : <value>`, reduced as the
+    # arc role reduces it (roles/arc/tasks/onboard.yml).
+    - name: Read the Arc agent's incoming-connection settings
       ansible.builtin.set_fact:
-        hardening_arc_status: >-
-          {{ 'NotInstalled' if hardening_arc_show.rc is not defined or hardening_arc_show.rc != 0
-             else ((hardening_arc_show.stdout | from_json).status | default('Unreadable'))
-             if hardening_arc_show.stdout | trim is match('[{]') else 'Unreadable' }}
         hardening_arc_incoming_enabled: >-
           {{ (hardening_arc_incoming.stdout_lines | default([]) | first | default(''))
              | regex_replace('^[^:]*:', '') | trim | lower }}

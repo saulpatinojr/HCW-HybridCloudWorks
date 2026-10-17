@@ -254,6 +254,15 @@ arc_state 'azcmagent: something went wrong' 'true' '[22]'
 run garbled
 check "an agent whose show is not JSON keeps 22 open" "[ \"\$(rc garbled)\" -eq 0 ] && admits 22 && says garbled 'agent Unreadable'" "$(out garbled)"
 
+arc_state '{"status":}' 'true' '[22]'
+run malformed
+check "so does one whose show looks like JSON and is not (CodeRabbit on #1258)" \
+  "[ \"\$(rc malformed)\" -eq 0 ] && [ \"\$(recap malformed failed)\" -eq 0 ] && admits 22 && says malformed 'agent Unreadable'" "$(out malformed)"
+
+arc_state '[1, 2]' 'true' '[22]'
+run nostatus
+check "and so does JSON without a status" "[ \"\$(rc nostatus)\" -eq 0 ] && admits 22 && says nostatus 'agent Unreadable'" "$(out nostatus)"
+
 arc_ready
 run onboarded
 check "the first run with Arc SSH ready closes 22" \
