@@ -409,10 +409,10 @@ const OTHER_ENTRIES = [
     store: "tfc-azure",
     consumer: "Cloudflare provider: DNS and the origin transform rule",
     issuer: "Cloudflare",
-    renewal: "hand",
+    renewal: "automation",
     lifetimeDays: null,
     rotate:
-      "Roll it in the Cloudflare dashboard and update the sensitive workspace variable.",
+      "Automated renewal via Cloudflare roll-token API and HCP Terraform variable API (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard and updating the sensitive workspace variable.",
   },
   {
     id: "tfc-azure-cloudflare-origin-secret",
@@ -452,10 +452,10 @@ const OTHER_ENTRIES = [
     store: "tfc-lab",
     consumer: "infra-lab lab DNS records",
     issuer: "Cloudflare",
-    renewal: "hand",
+    renewal: "automation",
     lifetimeDays: null,
     rotate:
-      "Roll it in the Cloudflare dashboard and update the sensitive workspace variable.",
+      "Automated renewal via Cloudflare roll-token API and HCP Terraform variable API (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard and updating the sensitive workspace variable.",
   },
 
   // ── Azure ───────────────────────────────────────────────────────────────
@@ -544,10 +544,10 @@ const OTHER_ENTRIES = [
     store: "lab-vault",
     consumer: "Caddy’s DNS-01 certificate renewals",
     issuer: "Cloudflare",
-    renewal: "hand",
+    renewal: "automation",
     lifetimeDays: null,
     rotate:
-      "Roll it in the Cloudflare dashboard, edit the vault key and re-run bootstrap.sh; also on every host rebuild.",
+      "Automated renewal via Cloudflare roll-token API and hcw-vault-set (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard, setting vault_cloudflare_api_token, and re-running bootstrap.sh.",
   },
   {
     id: "lab-addon-migration-turnstile-secret",
