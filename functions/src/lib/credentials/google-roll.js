@@ -409,7 +409,9 @@ export async function verifyGoogleApiKey({
  * @param {typeof fetch} [params.fetchImpl] Injectable fetch
  * @param {Function} [params.sleep] Injectable sleep
  * @param {boolean} [params.verify=true] Verify functional access before committing
- * @returns {Promise<{ ok: boolean, secretName: string, newKeyName: string, oldKeyDeleted: boolean }>}
+ * @param {boolean} [params.allowUnmanagedOldKey=false] Allow creating a new key if oldKeyString is not found
+ * @param {(params: { keyString: string, target: object }) => Promise<void>} [params.verifyFromApp] Optional post-refresh app verifier
+ * @returns {Promise<{ ok: boolean, secretName: string, newKeyName: string, oldKeyDeleted: boolean, refreshed: boolean, refreshReason: string|null }>}
  */
 export async function rollAndApplyGoogleKey({
   target,
@@ -421,6 +423,8 @@ export async function rollAndApplyGoogleKey({
   fetchImpl = globalThis.fetch,
   sleep = defaultSleep,
   verify = true,
+  allowUnmanagedOldKey = false,
+  verifyFromApp,
 }) {
   if (!target || typeof target !== 'object' || !target.secretName) {
     throw new Error('Target configuration with secretName is required');
@@ -437,18 +441,18 @@ export async function rollAndApplyGoogleKey({
 
   // Step 1: Discover old key resource if oldKeyString is provided
   if (oldKeyString && !resolvedOldKeyName) {
-    try {
-      const lookup = await lookupGoogleApiKey({ keyString: oldKeyString, gcpToken, fetchImpl });
-      if (lookup) {
-        resolvedOldKeyName = lookup.name;
-        resolvedParent ??= lookup.parent;
-        const details = await getGoogleKeyDetails({ keyName: lookup.name, gcpToken, fetchImpl });
-        if (details.restrictions && Object.keys(details.restrictions).length > 0) {
-          restrictions = details.restrictions;
-        }
+    const lookup = await lookupGoogleApiKey({ keyString: oldKeyString, gcpToken, fetchImpl });
+    if (lookup) {
+      resolvedOldKeyName = lookup.name;
+      resolvedParent ??= lookup.parent;
+      const details = await getGoogleKeyDetails({ keyName: lookup.name, gcpToken, fetchImpl });
+      if (details?.restrictions && Object.keys(details.restrictions).length > 0) {
+        restrictions = details.restrictions;
       }
-    } catch {
-      // Lookup error is non-fatal; we proceed with explicitParent or fallback
+    } else if (!allowUnmanagedOldKey) {
+      throw new Error(
+        `Failed to locate Google API key for ${target.secretName} in GCP; cannot rotate safely without revoking old key.`
+      );
     }
   }
 
@@ -498,12 +502,38 @@ export async function rollAndApplyGoogleKey({
   }
 
   // Step 4: Write to Azure Key Vault and refresh references
-  await vault.setSecret(target.secretName, newKeyString);
-  await vault.refreshReferences();
+  try {
+    await vault.setSecret(target.secretName, newKeyString);
+  } catch (writeErr) {
+    try {
+      await deleteGoogleApiKey({ keyName: newKeyName, gcpToken, fetchImpl });
+    } catch {}
+    throw writeErr;
+  }
 
-  // Step 5: Delete old key on Google Cloud
+  const refreshResult = await vault.refreshReferences();
+
+  // Post-refresh app verification if provided
+  if (verify && typeof verifyFromApp === 'function') {
+    try {
+      await verifyFromApp({ keyString: newKeyString, target });
+    } catch (appErr) {
+      if (oldKeyString) {
+        try {
+          await vault.setSecret(target.secretName, oldKeyString);
+          await vault.refreshReferences();
+        } catch {}
+      }
+      try {
+        await deleteGoogleApiKey({ keyName: newKeyName, gcpToken, fetchImpl });
+      } catch {}
+      throw new Error(`Post-refresh app verification failed for ${target.secretName}: ${appErr.message}`);
+    }
+  }
+
+  // Step 5: Delete old key on Google Cloud ONLY if App Service refreshed
   let oldKeyDeleted = false;
-  if (resolvedOldKeyName && resolvedOldKeyName !== newKeyName) {
+  if (refreshResult?.refreshed && resolvedOldKeyName && resolvedOldKeyName !== newKeyName) {
     try {
       await deleteGoogleApiKey({ keyName: resolvedOldKeyName, gcpToken, fetchImpl });
       oldKeyDeleted = true;
@@ -515,5 +545,7 @@ export async function rollAndApplyGoogleKey({
     secretName: target.secretName,
     newKeyName,
     oldKeyDeleted,
+    refreshed: Boolean(refreshResult?.refreshed),
+    refreshReason: refreshResult?.reason ?? null,
   };
 }

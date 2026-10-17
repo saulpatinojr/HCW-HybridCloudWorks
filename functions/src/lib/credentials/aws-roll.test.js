@@ -355,12 +355,91 @@ describe('rollAndApplyAwsKey', () => {
       ok: true,
       newAccessKeyId: 'AKIA-NEW-MINTED',
       oldAccessKeyIdDeleted: 'AKIA-OLD-CURRENT',
+      refreshed: true,
+      refreshReason: null,
     });
 
     expect(savedSecrets['AWS-ACCESS-KEY-ID']).toBe('AKIA-NEW-MINTED');
     expect(savedSecrets['AWS-SECRET-ACCESS-KEY']).toBe('NewSecretKeyActualValue123');
     expect(referencesRefreshed).toBe(true);
     expect(deletedKeys).toContain('AKIA-OLD-CURRENT');
+  });
+
+  it('retries pricing probe with backoff on eventual consistency and succeeds', async () => {
+    const mockVault = {
+      setSecret: vi.fn(async () => ({ version: 'v1' })),
+      refreshReferences: vi.fn(async () => ({ refreshed: true, reason: null })),
+    };
+
+    let probeAttempts = 0;
+    const mockPricingClient = {
+      send: vi.fn(async () => {
+        probeAttempts += 1;
+        if (probeAttempts === 1) {
+          throw new Error('UnrecognizedClientException: The security token included in the request is invalid');
+        }
+        return { PriceList: ['{"terms":{}}'] };
+      }),
+    };
+
+    const sleepCalls = [];
+    const mockSleep = vi.fn(async (ms) => {
+      sleepCalls.push(ms);
+    });
+
+    const mockFetch = vi.fn(async (url, options) => {
+      const body = options.body || '';
+      if (body.includes('Action=ListAccessKeys')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <ListAccessKeysResponse>
+              <ListAccessKeysResult>
+                <AccessKeyMetadata>
+                  <member><AccessKeyId>AKIA-OLD</AccessKeyId><Status>Active</Status></member>
+                </AccessKeyMetadata>
+              </ListAccessKeysResult>
+            </ListAccessKeysResponse>`,
+        };
+      }
+      if (body.includes('Action=CreateAccessKey')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <CreateAccessKeyResponse>
+              <CreateAccessKeyResult>
+                <AccessKey>
+                  <AccessKeyId>AKIA-NEW</AccessKeyId>
+                  <SecretAccessKey>sec-val</SecretAccessKey>
+                  <Status>Active</Status>
+                </AccessKey>
+              </CreateAccessKeyResult>
+            </CreateAccessKeyResponse>`,
+        };
+      }
+      if (body.includes('Action=DeleteAccessKey')) {
+        return { ok: true, status: 200, text: async () => '<DeleteAccessKeyResponse/>' };
+      }
+      throw new Error(`Unexpected request: ${body}`);
+    });
+
+    const res = await rollAndApplyAwsKey({
+      currentAccessKeyId: 'AKIA-OLD',
+      currentSecretAccessKey: 'sec',
+      vault: mockVault,
+      pricingClient: mockPricingClient,
+      fetchImpl: mockFetch,
+      sleepImpl: mockSleep,
+      now: new Date('2026-10-17T02:00:00Z'),
+    });
+
+    expect(res.ok).toBe(true);
+    expect(res.newAccessKeyId).toBe('AKIA-NEW');
+    expect(res.oldAccessKeyIdDeleted).toBe('AKIA-OLD');
+    expect(probeAttempts).toBe(2);
+    expect(sleepCalls).toEqual([1000]);
   });
 
   it('fails closed when IAM user already has 2 access keys', async () => {
@@ -386,6 +465,229 @@ describe('rollAndApplyAwsKey', () => {
         now: new Date('2026-10-17T02:00:00Z'),
       })
     ).rejects.toThrow(/IAM user already has 2 access keys \(maximum is 2\)/);
+  });
+
+  it('does not delete old IAM key when Key Vault reference refresh is not acknowledged (refreshed=false)', async () => {
+    const deletedKeys = [];
+    const mockVault = {
+      setSecret: vi.fn(async () => ({ version: 'v1' })),
+      refreshReferences: vi.fn(async () => ({ refreshed: false, reason: 'FUNCTION_APP_RESOURCE_ID is not set' })),
+    };
+
+    const mockPricingClient = {
+      send: vi.fn(async () => ({ PriceList: ['{}'] })),
+    };
+
+    const mockFetch = vi.fn(async (url, options) => {
+      const body = options.body || '';
+      if (body.includes('Action=ListAccessKeys')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <ListAccessKeysResponse>
+              <ListAccessKeysResult>
+                <AccessKeyMetadata>
+                  <member><AccessKeyId>AKIA-OLD</AccessKeyId><Status>Active</Status></member>
+                </AccessKeyMetadata>
+              </ListAccessKeysResult>
+            </ListAccessKeysResponse>`,
+        };
+      }
+      if (body.includes('Action=CreateAccessKey')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <CreateAccessKeyResponse>
+              <CreateAccessKeyResult>
+                <AccessKey>
+                  <AccessKeyId>AKIA-NEW</AccessKeyId>
+                  <SecretAccessKey>new-sec</SecretAccessKey>
+                  <Status>Active</Status>
+                </AccessKey>
+              </CreateAccessKeyResult>
+            </CreateAccessKeyResponse>`,
+        };
+      }
+      if (body.includes('Action=DeleteAccessKey')) {
+        deletedKeys.push(body);
+        return { ok: true, status: 200, text: async () => '<DeleteAccessKeyResponse/>' };
+      }
+      throw new Error(`Unexpected request: ${body}`);
+    });
+
+    const res = await rollAndApplyAwsKey({
+      currentAccessKeyId: 'AKIA-OLD',
+      currentSecretAccessKey: 'old-sec',
+      vault: mockVault,
+      pricingClient: mockPricingClient,
+      fetchImpl: mockFetch,
+      now: new Date('2026-10-17T02:00:00Z'),
+    });
+
+    expect(res.ok).toBe(true);
+    expect(res.newAccessKeyId).toBe('AKIA-NEW');
+    expect(res.oldAccessKeyIdDeleted).toBeNull();
+    expect(res.refreshed).toBe(false);
+    expect(res.refreshReason).toBe('FUNCTION_APP_RESOURCE_ID is not set');
+    expect(deletedKeys).toHaveLength(0);
+  });
+
+  it('rolls back access key ID in Key Vault and cleans up IAM key if secret write fails', async () => {
+    const deletedKeys = [];
+    const vaultWrites = [];
+    const mockVault = {
+      setSecret: vi.fn(async (name, val) => {
+        vaultWrites.push({ name, val });
+        if (name === 'AWS-SECRET-ACCESS-KEY') {
+          throw new Error('Key Vault refused to set AWS-SECRET-ACCESS-KEY: HTTP 403');
+        }
+        return { version: 'v1' };
+      }),
+      refreshReferences: vi.fn(),
+    };
+
+    const mockPricingClient = {
+      send: vi.fn(async () => ({ PriceList: ['{}'] })),
+    };
+
+    const mockFetch = vi.fn(async (url, options) => {
+      const body = options.body || '';
+      if (body.includes('Action=ListAccessKeys')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <ListAccessKeysResponse>
+              <ListAccessKeysResult>
+                <AccessKeyMetadata>
+                  <member><AccessKeyId>AKIA-OLD</AccessKeyId><Status>Active</Status></member>
+                </AccessKeyMetadata>
+              </ListAccessKeysResult>
+            </ListAccessKeysResponse>`,
+        };
+      }
+      if (body.includes('Action=CreateAccessKey')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <CreateAccessKeyResponse>
+              <CreateAccessKeyResult>
+                <AccessKey>
+                  <AccessKeyId>AKIA-NEW</AccessKeyId>
+                  <SecretAccessKey>new-sec</SecretAccessKey>
+                  <Status>Active</Status>
+                </AccessKey>
+              </CreateAccessKeyResult>
+            </CreateAccessKeyResponse>`,
+        };
+      }
+      if (body.includes('Action=DeleteAccessKey') && body.includes('AccessKeyId=AKIA-NEW')) {
+        deletedKeys.push('AKIA-NEW');
+        return { ok: true, status: 200, text: async () => '<DeleteAccessKeyResponse/>' };
+      }
+      throw new Error(`Unexpected request: ${body}`);
+    });
+
+    await expect(
+      rollAndApplyAwsKey({
+        currentAccessKeyId: 'AKIA-OLD',
+        currentSecretAccessKey: 'old-sec',
+        vault: mockVault,
+        pricingClient: mockPricingClient,
+        fetchImpl: mockFetch,
+        now: new Date('2026-10-17T02:00:00Z'),
+      })
+    ).rejects.toThrow(/Key Vault refused to set AWS-SECRET-ACCESS-KEY: HTTP 403/);
+
+    expect(deletedKeys).toContain('AKIA-NEW');
+    // ID was rolled back to AKIA-OLD
+    expect(vaultWrites).toEqual([
+      { name: 'AWS-ACCESS-KEY-ID', val: 'AKIA-NEW' },
+      { name: 'AWS-SECRET-ACCESS-KEY', val: 'new-sec' },
+      { name: 'AWS-ACCESS-KEY-ID', val: 'AKIA-OLD' },
+    ]);
+  });
+
+  it('executes post-refresh app verification and rolls back if app verification fails', async () => {
+    const deletedKeys = [];
+    const vaultWrites = [];
+    const mockVault = {
+      setSecret: vi.fn(async (name, val) => {
+        vaultWrites.push({ name, val });
+        return { version: 'v1' };
+      }),
+      refreshReferences: vi.fn(async () => ({ refreshed: true, reason: null })),
+    };
+
+    const mockPricingClient = {
+      send: vi.fn(async () => ({ PriceList: ['{}'] })),
+    };
+
+    const mockFetch = vi.fn(async (url, options) => {
+      const body = options.body || '';
+      if (body.includes('Action=ListAccessKeys')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <ListAccessKeysResponse>
+              <ListAccessKeysResult>
+                <AccessKeyMetadata>
+                  <member><AccessKeyId>AKIA-OLD</AccessKeyId><Status>Active</Status></member>
+                </AccessKeyMetadata>
+              </ListAccessKeysResult>
+            </ListAccessKeysResponse>`,
+        };
+      }
+      if (body.includes('Action=CreateAccessKey')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <CreateAccessKeyResponse>
+              <CreateAccessKeyResult>
+                <AccessKey>
+                  <AccessKeyId>AKIA-NEW</AccessKeyId>
+                  <SecretAccessKey>new-sec</SecretAccessKey>
+                  <Status>Active</Status>
+                </AccessKey>
+              </CreateAccessKeyResult>
+            </CreateAccessKeyResponse>`,
+        };
+      }
+      if (body.includes('Action=DeleteAccessKey') && body.includes('AccessKeyId=AKIA-NEW')) {
+        deletedKeys.push('AKIA-NEW');
+        return { ok: true, status: 200, text: async () => '<DeleteAccessKeyResponse/>' };
+      }
+      throw new Error(`Unexpected request: ${body}`);
+    });
+
+    const mockAppVerifier = vi.fn(async () => {
+      throw new Error('Pricing API through App Service proxy timed out');
+    });
+
+    await expect(
+      rollAndApplyAwsKey({
+        currentAccessKeyId: 'AKIA-OLD',
+        currentSecretAccessKey: 'old-sec',
+        vault: mockVault,
+        pricingClient: mockPricingClient,
+        fetchImpl: mockFetch,
+        verifyFromApp: mockAppVerifier,
+        now: new Date('2026-10-17T02:00:00Z'),
+      })
+    ).rejects.toThrow(/Post-refresh app verification failed: Pricing API through App Service proxy timed out/);
+
+    expect(deletedKeys).toContain('AKIA-NEW');
+    expect(vaultWrites).toEqual([
+      { name: 'AWS-ACCESS-KEY-ID', val: 'AKIA-NEW' },
+      { name: 'AWS-SECRET-ACCESS-KEY', val: 'new-sec' },
+      { name: 'AWS-ACCESS-KEY-ID', val: 'AKIA-OLD' },
+      { name: 'AWS-SECRET-ACCESS-KEY', val: 'old-sec' },
+    ]);
   });
 
   it('aborts and deletes newly minted key when pricing verification fails', async () => {
@@ -447,9 +749,10 @@ describe('rollAndApplyAwsKey', () => {
         vault: mockVault,
         pricingClient: mockPricingClient,
         fetchImpl: mockFetch,
+        sleepImpl: () => Promise.resolve(),
         now: new Date('2026-10-17T02:00:00Z'),
       })
-    ).rejects.toThrow(/New AWS access key verification failed \(AWS Pricing verification probe failed \(SignatureDoesNotMatch\)\)\. Minted key was deleted; old key preserved\./);
+    ).rejects.toThrow(/New AWS access key verification probe failed after 5 attempt\(s\) \(AWS Pricing verification probe failed \(SignatureDoesNotMatch\)\)\. Minted key was deleted; old key preserved\./);
 
     expect(deletedKeys).toContain('AKIA-DEFECTIVE');
     expect(mockVault.setSecret).not.toHaveBeenCalled();

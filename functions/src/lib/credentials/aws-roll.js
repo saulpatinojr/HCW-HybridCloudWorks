@@ -17,7 +17,6 @@
  */
 
 import crypto from 'node:crypto';
-import { PricingClient, GetProductsCommand } from '@aws-sdk/client-pricing';
 import { setVaultSecret, refreshKeyVaultReferences } from '../secret-vault.js';
 
 export const AWS_TARGETS = Object.freeze({
@@ -333,24 +332,31 @@ export async function verifyAwsPricingAccess({
     throw new Error('accessKeyId and secretAccessKey are required for verification');
   }
 
-  const client =
-    clientImpl ||
-    new PricingClient({
-      region: 'us-east-1',
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
-    });
-
-  const command = new GetProductsCommand({
-    ServiceCode: 'AmazonEC2',
-    Filters: [{ Type: 'TERM_MATCH', Field: 'regionCode', Value: 'us-east-1' }],
-    MaxResults: 1,
-  });
-
   try {
-    const response = await client.send(command);
+    let response;
+    const input = {
+      ServiceCode: 'AmazonEC2',
+      Filters: [{ Type: 'TERM_MATCH', Field: 'regionCode', Value: 'us-east-1' }],
+      MaxResults: 1,
+    };
+    if (clientImpl) {
+      response = await clientImpl.send({ input, ...input });
+    } else {
+      const { PricingClient, GetProductsCommand } = await import('@aws-sdk/client-pricing');
+      const client = new PricingClient({
+        region: 'us-east-1',
+        credentials: {
+          accessKeyId,
+          secretAccessKey,
+        },
+      });
+      const command = new GetProductsCommand({
+        ServiceCode: 'AmazonEC2',
+        Filters: [{ Type: 'TERM_MATCH', Field: 'regionCode', Value: 'us-east-1' }],
+        MaxResults: 1,
+      });
+      response = await client.send(command);
+    }
     if (!response || !Array.isArray(response.PriceList)) {
       throw new Error('Probe did not return a valid PriceList');
     }
@@ -377,8 +383,11 @@ export async function verifyAwsPricingAccess({
  * @param {typeof fetch} [params.fetchImpl] Injectable fetch
  * @param {object} [params.pricingClient] Injectable pricing client for probe
  * @param {boolean} [params.verify=true] Verify functional access before committing
+ * @param {number} [params.maxVerifyAttempts=5] Maximum attempts for verification probe
+ * @param {(ms: number) => Promise<void>} [params.sleepImpl] Injectable backoff sleep
+ * @param {(params: { accessKeyId: string, secretAccessKey: string }) => Promise<void>} [params.verifyFromApp] Optional post-refresh app verifier
  * @param {Date} [params.now] Injectable timestamp
- * @returns {Promise<{ ok: boolean, newAccessKeyId: string, oldAccessKeyIdDeleted: string }>}
+ * @returns {Promise<{ ok: boolean, newAccessKeyId: string, oldAccessKeyIdDeleted: string|null, refreshed: boolean, refreshReason: string|null }>}
  */
 export async function rollAndApplyAwsKey({
   currentAccessKeyId,
@@ -388,6 +397,9 @@ export async function rollAndApplyAwsKey({
   fetchImpl = globalThis.fetch,
   pricingClient,
   verify = true,
+  maxVerifyAttempts = 5,
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  verifyFromApp,
   now,
 }) {
   if (!currentAccessKeyId || typeof currentAccessKeyId !== 'string') {
@@ -421,15 +433,29 @@ export async function rollAndApplyAwsKey({
     now,
   });
 
-  // Step 3: Functionally probe new credentials against AWS Pricing API BEFORE committing or deleting
+  // Step 3: Functionally probe new credentials against AWS Pricing API with bounded retry and backoff
   if (verify) {
-    try {
-      await verifyAwsPricingAccess({
-        accessKeyId: newKey.accessKeyId,
-        secretAccessKey: newKey.secretAccessKey,
-        clientImpl: pricingClient,
-      });
-    } catch (verifyErr) {
+    let verified = false;
+    let lastVerifyError = null;
+
+    for (let attempt = 1; attempt <= maxVerifyAttempts; attempt += 1) {
+      try {
+        await verifyAwsPricingAccess({
+          accessKeyId: newKey.accessKeyId,
+          secretAccessKey: newKey.secretAccessKey,
+          clientImpl: pricingClient,
+        });
+        verified = true;
+        break;
+      } catch (err) {
+        lastVerifyError = err;
+        if (attempt < maxVerifyAttempts) {
+          await sleepImpl(attempt * 1000);
+        }
+      }
+    }
+
+    if (!verified) {
       // Clean up newly minted key so user quota is not exhausted
       try {
         await deleteAwsAccessKey({
@@ -442,29 +468,84 @@ export async function rollAndApplyAwsKey({
         });
       } catch {}
       throw new Error(
-        `New AWS access key verification failed (${verifyErr.message}). Minted key was deleted; old key preserved.`
+        `New AWS access key verification probe failed after ${maxVerifyAttempts} attempt(s) (${lastVerifyError?.message}). Minted key was deleted; old key preserved.`
       );
     }
   }
 
-  // Step 4: Write both parts to Azure Key Vault and refresh references
-  await vault.setSecret(AWS_TARGETS.pricing.idSecretName, newKey.accessKeyId);
-  await vault.setSecret(AWS_TARGETS.pricing.secretSecretName, newKey.secretAccessKey);
-  await vault.refreshReferences();
+  // Step 4: Write both parts to Azure Key Vault and refresh references with rollback on write failure
+  let idWritten = false;
+  try {
+    await vault.setSecret(AWS_TARGETS.pricing.idSecretName, newKey.accessKeyId);
+    idWritten = true;
+    await vault.setSecret(AWS_TARGETS.pricing.secretSecretName, newKey.secretAccessKey);
+  } catch (writeErr) {
+    if (idWritten && currentAccessKeyId) {
+      try {
+        await vault.setSecret(AWS_TARGETS.pricing.idSecretName, currentAccessKeyId);
+      } catch {}
+    }
+    try {
+      await deleteAwsAccessKey({
+        accessKeyId: currentAccessKeyId,
+        secretAccessKey: currentSecretAccessKey,
+        targetAccessKeyId: newKey.accessKeyId,
+        userName,
+        fetchImpl,
+        now,
+      });
+    } catch {}
+    throw writeErr;
+  }
 
-  // Step 5: Delete old access key on AWS IAM using the NEW credentials
-  await deleteAwsAccessKey({
-    accessKeyId: newKey.accessKeyId,
-    secretAccessKey: newKey.secretAccessKey,
-    targetAccessKeyId: currentAccessKeyId,
-    userName,
-    fetchImpl,
-    now,
-  });
+  const refreshResult = await vault.refreshReferences();
+
+  // Post-refresh app verification if provided
+  if (verify && typeof verifyFromApp === 'function') {
+    try {
+      await verifyFromApp({
+        accessKeyId: newKey.accessKeyId,
+        secretAccessKey: newKey.secretAccessKey,
+      });
+    } catch (appErr) {
+      try {
+        await vault.setSecret(AWS_TARGETS.pricing.idSecretName, currentAccessKeyId);
+        await vault.setSecret(AWS_TARGETS.pricing.secretSecretName, currentSecretAccessKey);
+        await vault.refreshReferences();
+      } catch {}
+      try {
+        await deleteAwsAccessKey({
+          accessKeyId: currentAccessKeyId,
+          secretAccessKey: currentSecretAccessKey,
+          targetAccessKeyId: newKey.accessKeyId,
+          userName,
+          fetchImpl,
+          now,
+        });
+      } catch {}
+      throw new Error(`Post-refresh app verification failed: ${appErr.message}`);
+    }
+  }
+
+  // Step 5: Delete old access key on AWS IAM using the NEW credentials ONLY if App Service refreshed
+  let oldAccessKeyIdDeleted = null;
+  if (refreshResult?.refreshed) {
+    await deleteAwsAccessKey({
+      accessKeyId: newKey.accessKeyId,
+      secretAccessKey: newKey.secretAccessKey,
+      targetAccessKeyId: currentAccessKeyId,
+      userName,
+      fetchImpl,
+      now,
+    });
+    oldAccessKeyIdDeleted = currentAccessKeyId;
+  }
 
   return {
     ok: true,
     newAccessKeyId: newKey.accessKeyId,
-    oldAccessKeyIdDeleted: currentAccessKeyId,
+    oldAccessKeyIdDeleted,
+    refreshed: Boolean(refreshResult?.refreshed),
+    refreshReason: refreshResult?.reason ?? null,
   };
 }

@@ -558,11 +558,144 @@ describe('rollAndApplyGoogleKey', () => {
       secretName: 'GEMINI-API-KEY',
       newKeyName: 'projects/123/locations/global/keys/new-key-uuid',
       oldKeyDeleted: true,
+      refreshed: true,
+      refreshReason: null,
     });
 
     expect(savedSecrets['GEMINI-API-KEY']).toBe('AIzaSyNewlyMintedSecretKey');
     expect(referencesRefreshed).toBe(true);
     expect(deletedKeys).toContain('old-key-uuid');
+  });
+
+  it('fails closed when oldKeyString cannot be looked up and allowUnmanagedOldKey is false', async () => {
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('keys:lookupKey')) {
+        return { ok: false, status: 404, statusText: 'Not Found' };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    await expect(
+      rollAndApplyGoogleKey({
+        target: GOOGLE_TARGETS.gemini,
+        gcpToken: 'tok',
+        oldKeyString: 'non-existent-key',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/Failed to locate Google API key for GEMINI-API-KEY in GCP; cannot rotate safely without revoking old key/);
+  });
+
+  it('does not delete old key when Key Vault reference refresh is not acknowledged (refreshed=false)', async () => {
+    const deletedKeys = [];
+    const mockVault = {
+      setSecret: vi.fn(async () => ({ version: 'v1' })),
+      refreshReferences: vi.fn(async () => ({ refreshed: false, reason: 'FUNCTION_APP_RESOURCE_ID is not set' })),
+    };
+
+    const mockFetch = vi.fn(async (url, options = {}) => {
+      if (url.includes('keys:lookupKey')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ name: 'projects/123/locations/global/keys/old-key', parent: 'projects/123' }),
+        };
+      }
+      if (url.endsWith('/keys/old-key') && (!options.method || options.method === 'GET')) {
+        return { ok: true, status: 200, json: async () => ({ name: 'projects/123/locations/global/keys/old-key' }) };
+      }
+      if (url.endsWith('/locations/global/keys') && options.method === 'POST') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ name: 'operations/op-1', done: true, response: { name: 'projects/123/locations/global/keys/new-key' } }),
+        };
+      }
+      if (url.endsWith('/new-key/keyString')) {
+        return { ok: true, status: 200, json: async () => ({ keyString: 'new-key-string' }) };
+      }
+      if (url.includes('generativelanguage.googleapis.com')) {
+        return { ok: true, status: 200 };
+      }
+      if (options.method === 'DELETE') {
+        deletedKeys.push(url);
+        return { ok: true, status: 200 };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const res = await rollAndApplyGoogleKey({
+      target: GOOGLE_TARGETS.gemini,
+      gcpToken: 'tok',
+      oldKeyString: 'old-key-val',
+      vault: mockVault,
+      fetchImpl: mockFetch,
+    });
+
+    expect(res.oldKeyDeleted).toBe(false);
+    expect(res.refreshed).toBe(false);
+    expect(res.refreshReason).toBe('FUNCTION_APP_RESOURCE_ID is not set');
+    expect(deletedKeys).toHaveLength(0);
+  });
+
+  it('executes post-refresh app verification and rolls back if app verification fails', async () => {
+    const deletedKeys = [];
+    let currentVaultVal = 'old-key-val';
+    const mockVault = {
+      setSecret: vi.fn(async (name, val) => {
+        currentVaultVal = val;
+        return { version: 'v1' };
+      }),
+      refreshReferences: vi.fn(async () => ({ refreshed: true, reason: null })),
+    };
+
+    const mockFetch = vi.fn(async (url, options = {}) => {
+      if (url.includes('keys:lookupKey')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ name: 'projects/123/locations/global/keys/old-key', parent: 'projects/123' }),
+        };
+      }
+      if (url.endsWith('/keys/old-key') && (!options.method || options.method === 'GET')) {
+        return { ok: true, status: 200, json: async () => ({ name: 'projects/123/locations/global/keys/old-key' }) };
+      }
+      if (url.endsWith('/locations/global/keys') && options.method === 'POST') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ name: 'operations/op-2', done: true, response: { name: 'projects/123/locations/global/keys/new-key' } }),
+        };
+      }
+      if (url.endsWith('/new-key/keyString')) {
+        return { ok: true, status: 200, json: async () => ({ keyString: 'new-key-string' }) };
+      }
+      if (url.includes('generativelanguage.googleapis.com')) {
+        return { ok: true, status: 200 };
+      }
+      if (options.method === 'DELETE') {
+        deletedKeys.push(url);
+        return { ok: true, status: 200 };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const mockAppVerifier = vi.fn(async () => {
+      throw new Error('App Service returned 503 during warmup with new key');
+    });
+
+    await expect(
+      rollAndApplyGoogleKey({
+        target: GOOGLE_TARGETS.gemini,
+        gcpToken: 'tok',
+        oldKeyString: 'old-key-val',
+        vault: mockVault,
+        fetchImpl: mockFetch,
+        verifyFromApp: mockAppVerifier,
+      })
+    ).rejects.toThrow(/Post-refresh app verification failed for GEMINI-API-KEY: App Service returned 503/);
+
+    expect(deletedKeys).toContain('https://apikeys.googleapis.com/v2/projects/123/locations/global/keys/new-key');
+    expect(currentVaultVal).toBe('old-key-val');
   });
 
   it('fails closed and deletes newly minted key if verification probe fails', async () => {
