@@ -153,12 +153,12 @@
     wait_timeout: 300
   when: coder_enabled | bool
 
+# A module that cannot reach the container returns no rc, so the defaults
+# below read that as an error too.
 - name: Count Coder's accounts in its database
-  ansible.builtin.command:
+  community.docker.docker_container_exec:
+    container: coder-postgres
     argv:
-      - docker
-      - exec
-      - coder-postgres
       - psql
       - -U
       - coder
@@ -176,7 +176,7 @@
   ansible.builtin.include_tasks: unpublish.yml
   when:
     - coder_enabled | bool
-    - not (coder_account_count.rc == 0 and (coder_account_count.stdout | trim | int) > 0)
+    - not ((coder_account_count.rc | default(1)) == 0 and (coder_account_count.stdout | default('') | trim | int) > 0)
 
 - name: Start Coder and PostgreSQL
   community.docker.docker_compose_v2:

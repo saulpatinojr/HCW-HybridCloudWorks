@@ -412,7 +412,9 @@ jobs:
           # docker-runner.js too: hcw-labjob-sweep.test.sh checks the
           # sweep's label against the JOB_LABEL it exports, and a PR that
           # renamed only the label would otherwise skip that check.
-          if grep -qE '^lab-host/|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$' <<<"$changed"; then
+          # docs/runbooks/labs-host.md too: coder-signin.test.sh and
+          # hcw-coder-automation.test.py check its Coder lines (#954).
+          if grep -qE '^lab-host/|^docs/runbooks/labs-host\.md$|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$' <<<"$changed"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "lab-host files changed — running all checks"
           else

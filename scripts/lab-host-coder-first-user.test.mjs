@@ -46,7 +46,8 @@ describe('the coder role keeps a Coder with no account unpublished', () => {
     const count = task(main, 'Count Coder\'s accounts in its database');
     // System accounts left out, as /api/v2/users/first leaves them out (v2.38.0 has `prebuilds`).
     expect(count).toContain('- SELECT count(*) FROM users WHERE NOT deleted AND NOT is_system');
-    expect(count).toContain('- coder-postgres');
+    expect(count).toContain('community.docker.docker_container_exec:');
+    expect(count).toContain('container: coder-postgres');
     expect(count).toContain('failed_when: false');
     expect(count).toContain('check_mode: false');
     // The container the query names is the Compose file's.
@@ -54,7 +55,9 @@ describe('the coder role keeps a Coder with no account unpublished', () => {
     const include = task(main, 'Take Coder\'s route down before a Coder with no account starts');
     expect(include).toContain('ansible.builtin.include_tasks: unpublish.yml');
     // Anything but a readable count above zero, an error included, takes the route down.
-    expect(include).toContain('- not (coder_account_count.rc == 0 and (coder_account_count.stdout | trim | int) > 0)');
+    expect(include).toContain(
+      "- not ((coder_account_count.rc | default(1)) == 0 and (coder_account_count.stdout | default('') | trim | int) > 0)"
+    );
   });
 
   it('removes the route and flushes the reload handler then and there, always reporting the removal', () => {
