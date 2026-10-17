@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { writeFileSync, unlinkSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -211,8 +211,9 @@ describe('CLI execution', () => {
   });
 
   it('passes with exit 0 on clean JSON files', () => {
-    const kvFile = join(tmpdir(), `kv-${Date.now()}.json`);
-    const storFile = join(tmpdir(), `stor-${Date.now()}.json`);
+    const dir = mkdtempSync(join(tmpdir(), 'check-deny-clean-'));
+    const kvFile = join(dir, 'kv.json');
+    const storFile = join(dir, 'stor.json');
     writeFileSync(kvFile, JSON.stringify({ properties: { networkAcls: { defaultAction: 'Deny' } } }));
     writeFileSync(storFile, JSON.stringify({ properties: { networkRuleSet: { defaultAction: 'Deny' } } }));
 
@@ -223,13 +224,13 @@ describe('CLI execution', () => {
       expect(res.status).toBe(0);
       expect(res.stdout).toMatch(/All posture checks passed/);
     } finally {
-      try { unlinkSync(kvFile); } catch {}
-      try { unlinkSync(storFile); } catch {}
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
   it('fails with exit 1 on failing JSON configuration', () => {
-    const kvFile = join(tmpdir(), `kv-bad-${Date.now()}.json`);
+    const dir = mkdtempSync(join(tmpdir(), 'check-deny-fail-'));
+    const kvFile = join(dir, 'kv.json');
     writeFileSync(kvFile, JSON.stringify({ properties: { networkAcls: { defaultAction: 'Allow' } } }));
 
     try {
@@ -239,7 +240,7 @@ describe('CLI execution', () => {
       expect(res.status).toBe(1);
       expect(res.stderr).toMatch(/Posture checks failed/);
     } finally {
-      try { unlinkSync(kvFile); } catch {}
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
