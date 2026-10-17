@@ -176,6 +176,20 @@ describe('the issue’s list', () => {
     }
   });
 
+  it('marks the Cloudflare API tokens as renewed by automation', () => {
+    for (const id of [
+      'tfc-azure-cloudflare-api-token',
+      'tfc-lab-cloudflare-api-token',
+      'lab-caddy-cloudflare-api-token',
+    ]) {
+      const entry = findCredential(id);
+      expect(entry.renewal, id).toBe('automation');
+      expect(entry.lifetimeDays, id).toBeNull();
+      expect(entry.rotate, id).toMatch(/roll-token|roll-cloudflare-tokens/i);
+      expect(isRecordable(entry), id).toBe(false);
+    }
+  });
+
   it('calls an identifier an identifier, not a credential to rotate', () => {
     for (const name of ['TELEGRAM-CHAT-ID', 'PUBLER-WORKSPACE-ID', 'PODBEAN-CLIENT-ID', 'CODER-URL']) {
       expect(findCredential(keyVaultCredentialId(name)).renewal).toBe('none');

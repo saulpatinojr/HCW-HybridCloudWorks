@@ -19,6 +19,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Secrets: Cloudflare API token auto-renewal via roll-token API (#1027)**.
+  - Implemented automated Cloudflare API token renewal in `functions/src/lib/credentials/cloudflare-roll.js` and CLI orchestrator `scripts/roll-cloudflare-tokens.mjs`.
+  - Supports all three estate targets: `tfc-azure-cloudflare-api-token` (`hcw-azure` HCP Terraform workspace), `tfc-lab-cloudflare-api-token` (`hcw-lab` HCP Terraform workspace), and `lab-caddy-cloudflare-api-token` (`vault_cloudflare_api_token` in lab host Ansible Vault).
+  - Enforces verify-before-apply semantics: verifies the newly generated token secret against Cloudflare's `/user/tokens/verify` endpoint before committing to HCP Terraform or the lab host vault.
+  - Updates HCP Terraform sensitive workspace variables via the JSON:API endpoint (`application/vnd.api+json`).
+  - Updates the lab host Ansible Vault via `hcw-vault-set`, piping secrets strictly to standard input.
+  - Updated `functions/src/lib/credentials/register.js` to set `renewal: 'automation'` for the three Cloudflare tokens.
+  - Added 33 unit tests across `functions/src/lib/credentials/cloudflare-roll.test.js`, `functions/src/lib/credentials/register.test.js`, and `scripts/roll-cloudflare-tokens.test.mjs`.
+
 - **Lab host: Azure Arc SSH as the owner's way in; port 22 stays open
   (#953, LAB-7 stage 2)**. Arc SSH carries the session through an Azure
   Relay connection the host's Arc agent dials out to, so sshd needs no
