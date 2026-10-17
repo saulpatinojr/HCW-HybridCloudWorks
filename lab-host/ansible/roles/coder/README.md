@@ -51,8 +51,9 @@ starts or stops it, adds the Caddy route and keeps a week of nightly dumps.
    restore that left the database empty, whoever reached Coder could make
    its first account, the Owner: through `/setup`, or through a GitHub
    sign-in, which Coder v2.38.0 lets through for the first account even with
-   sign-ups off. So the role takes Coder's Caddy route down, reloads Caddy at
-   once, and fails, leaving Coder on the host's loopback for the runbook's
+   sign-ups off. So the role takes Coder's Caddy route down and fails. The
+   route's reload handler still runs as the play ends (`force_handlers` in
+   `site.yml`), and Coder stays on the host's loopback for the runbook's
    "A Coder with no account yet". A 200 changes nothing.
 6. Installs the lab launcher, `lab-host/coder/launcher/` from the repository
    checkout, in `/etc/caddy/hcw-lab-launcher` (`coder_launcher_dir`; the
