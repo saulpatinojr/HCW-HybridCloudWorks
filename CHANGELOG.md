@@ -46,6 +46,14 @@ This project has not cut a tagged release; entries are grouped under
   - **Tests:** `template.test.mjs` (28) and `lab-host-launcher.test.mjs`,
     and the coder CI job now runs fmt, init and validate on every template.
 
+- **Audit finding PLAT-6: Rebuild inventory outside Terraform, custom roles bootstrap, secret escrow & origin-secret rotation (#966)**.
+  - Parameterized Azure custom role definitions: created `scripts/bootstrap-roles.ps1` and `scripts/bootstrap-roles.sh` allowing subscription ID injection (`-SubscriptionId`, `-ManagementSubscriptionId`) across all five custom roles (`keyvault-secret-writer`, `function-config-refresh`, `function-settings-reader`, `static-web-app-deployer`, `alert-rule-reader`), replacing hardcoded subscription GUIDs.
+  - Added unit test assertion in `scripts/terraform-role-definitions.test.mjs` verifying that bootstrap scripts cover all registered custom role definitions.
+  - Documented authoritative **Where to Re-obtain** paths in `docs/standards/required-inputs.md` §4.6 covering all 30 Key Vault secrets in `functions/src/lib/secret-catalog.js` (including portal URLs, CLI generation commands, Bitwarden item names, and auto-renewal tools). Updated §4.6b to document the five custom roles and bootstrap scripts.
+  - Authored `docs/runbooks/origin-secret-rotation.md` detailing the 3-way lock between Key Vault `CF-ORIGIN-SECRET`, HCP Terraform `cloudflare_origin_secret`, and Cloudflare Transform Rule `x-hcw-origin-secret`, complete with zero-downtime execution order, verification curls, and rollback steps.
+  - Authored `docs/runbooks/cold-rebuild.md` providing a single ordered, copy-pasteable disaster recovery guide from bare accounts to full production estate operation within the 8-hour RTO objective.
+  - Updated `mkdocs.yml` navigation under `Runbooks:`.
+
 - **Secrets: Google API keys and AWS price-list IAM access key auto-renewal (#1028)**.
   - Implemented automated Google Cloud API key renewal in `functions/src/lib/credentials/google-roll.js` via Google Cloud API Keys API v2 (`apikeys.googleapis.com`) with verify-before-delete semantics for `GEMINI-API-KEY`, `YOUTUBE-API-KEY`, and `GCP-BILLING-API-KEY`.
   - Implemented automated AWS IAM access key renewal in `functions/src/lib/credentials/aws-roll.js` using pure SigV4 signing (`node:crypto`) with verify-before-delete semantics for `AWS-ACCESS-KEY-ID` and `AWS-SECRET-ACCESS-KEY` scoped to `pricing:GetProducts`.
