@@ -42,7 +42,11 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    `PermitTunnel no`, `X11Forwarding no`,
    `PerSourcePenaltyExemptList 127.0.0.1,::1` (every Arc SSH session will
    arrive from the loopback, and OpenSSH's per-source penalties would
-   otherwise hold a few failures there against all of them) and
+   otherwise hold a few failures there against all of them),
+   `ListenAddress 127.0.0.1` and `ListenAddress ::1` (#1257: sshd listens on
+   the loopback alone for defense in depth; Ubuntu's `sshd-socket-generator`
+   derives `ssh.socket`'s `ListenStream=` lines from these at `daemon-reload`,
+   and `ssh.socket` is restarted once) and
    `LogLevel VERBOSE`. INFO already logs the fingerprint of the key each
    accepted login used (`Accepted publickey for …`); VERBOSE adds the
    fingerprints of keys offered and refused. The `00-` prefix matters: sshd keeps the first value it reads and
@@ -52,6 +56,7 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    on the whole configuration, and `sshd -T -C user=…,host=hcw-lab,addr=192.0.2.10`
    for `hcwadmin` and for root, held to `allowusers hcwadmin`,
    `authenticationmethods publickey`, `permitrootlogin no`,
+   `listenaddress 127.0.0.1:22`, `listenaddress [::1]:22`,
    `allowagentforwarding no` and the rest of the file, and to root not
    being allowed. A failure puts the previous drop-in back and removes its
    backup before the run stops, so the reload `force_handlers` still runs

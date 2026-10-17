@@ -53,11 +53,10 @@ argument_specs:
         type: list
         elements: int
         required: false
-        default: [22, 80, 443]
+        default: [80, 443]
         description:
-          - The only TCP ports that may listen beyond the loopback, sshd's and Caddy's. No UDP
-            port may. Port 22 is closed to the internet at ufw (#953 stage 3), but sshd still
-            listens on every address, so 22 stays until sshd binds to the loopback (#1257).
+          - The only TCP ports that may listen beyond the loopback, Caddy's (80 and 443). No UDP
+            port may. sshd listens on the loopback alone (#1257).
       privilege_checks_listeners_argv:
         type: list
         elements: str

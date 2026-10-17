@@ -26,6 +26,12 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: sshd listens on the loopback only (defense in depth after #953 stage 3, #1257)**.
+  - In `00-hcw-hardening.conf.j2`, added `ListenAddress 127.0.0.1` and `ListenAddress ::1` so sshd binds to the loopback alone.
+  - On Ubuntu, `sshd-socket-generator` derives `ssh.socket`'s `ListenStream=` lines from these directives at `systemctl daemon-reload`; added `daemon_reload: true` to `Reload ssh` and added `Restart ssh.socket` handler.
+  - Removed port 22 from `privilege_checks_public_tcp_ports` (`defaults: [80, 443]`), turning the loopback bind into a verified assertion in `tasks/listeners.yml`.
+  - Added `listenaddress` checks in `tasks/sshd.yml` against `sshd -T`, updated `sshd-apply.test.sh` and `listeners.test.sh`, and updated documentation in `docs/runbooks/labs-host.md` and role READMEs.
+
 - **Lab host: port 22 closed to the internet once Azure Arc SSH is ready
   (#953 stage 3, LAB-7)**. The hardening role's ufw tasks (now
   `tasks/ufw.yml`) delete the allow of each port in

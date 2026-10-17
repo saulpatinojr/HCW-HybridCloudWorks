@@ -109,17 +109,23 @@ describe('the sshd drop-in', () => {
     });
   });
 
+  it('listens on the loopback only (127.0.0.1 and ::1) for Arc SSH (#1257)', () => {
+    expect(dropIn).toMatch(/^ListenAddress 127\.0\.0\.1$/m);
+    expect(dropIn).toMatch(/^ListenAddress ::1$/m);
+  });
+
   it('logs at VERBOSE, for the refused keys INFO does not name', () => {
     expect(directives.LogLevel).toBe('VERBOSE');
     // INFO already names the accepted key; the reason given must not say otherwise.
     expect(dropIn).toContain('INFO already logs the fingerprint of the key each accepted login used');
   });
 
-  it('sets each keyword once, since sshd keeps the first value it reads', () => {
+  it('sets each keyword once, since sshd keeps the first value it reads (ListenAddress allows IPv4 and IPv6)', () => {
     const keywords = dropIn
       .split('\n')
       .filter((line) => line.trim() && !line.trim().startsWith('#'))
-      .map((line) => line.trim().split(/\s+/)[0]);
+      .map((line) => line.trim().split(/\s+/)[0])
+      .filter((k) => k !== 'ListenAddress');
     expect(new Set(keywords).size).toBe(keywords.length);
   });
 
@@ -297,6 +303,8 @@ describe('the drop-in reaches sshd only after it is proven', () => {
       'logingracetime 30',
       'persourcepenaltyexemptlist 127.0.0.1,::1',
       'passwordauthentication no',
+      'listenaddress 127.0.0.1:22',
+      'listenaddress [::1]:22',
     ]) {
       expect(block).toContain(`'${line}' in hardening_sshd_effective.results[0].stdout_lines`);
     }

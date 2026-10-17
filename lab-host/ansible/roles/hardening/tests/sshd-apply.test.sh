@@ -76,6 +76,8 @@ allowusers hcwadmin
 authenticationmethods publickey
 permittunnel no
 persourcepenaltyexemptlist 127.0.0.1,::1
+listenaddress 127.0.0.1:22
+listenaddress [::1]:22
 EOF
 sed 's/^allowagentforwarding no$/allowagentforwarding yes/' "${work}/sshd-T.good" > "${work}/sshd-T.bad"
 
@@ -94,15 +96,20 @@ chmod 0755 "${work}/bin/sshd"
 
 # The role's handlers as written, but for the reload of ssh.service, which
 # becomes a log line holding the size of root's authorized_keys then.
+# Restart ssh.socket is stubbed with true so the test needs no systemd.
 "${python}" - "${role}/handlers/main.yml" "${work}/handlers.yml" "${reloads}" "${root_keys}" <<'PY'
 import sys, yaml
 handlers = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-reload = next(h for h in handlers if h["name"] == "Reload ssh")
-assert reload.get("ansible.builtin.systemd_service", {}).get("state") == "reloaded", reload
-reload.pop("ansible.builtin.systemd_service")
-reload["ansible.builtin.command"] = {"argv": [
-    "bash", "-c", 'printf "reload root-keys-bytes=%s\\n" "$(wc -c < "$2" 2> /dev/null || echo none)" >> "$1"',
-    "stub-reload", sys.argv[3], sys.argv[4]]}
+for h in handlers:
+    if h.get("name") == "Reload ssh":
+        assert h.get("ansible.builtin.systemd_service", {}).get("state") == "reloaded", h
+        h.pop("ansible.builtin.systemd_service")
+        h["ansible.builtin.command"] = {"argv": [
+            "bash", "-c", 'printf "reload root-keys-bytes=%s\\n" "$(wc -c < "$2" 2> /dev/null || echo none)" >> "$1"',
+            "stub-reload", sys.argv[3], sys.argv[4]]}
+    elif h.get("name") == "Restart ssh.socket":
+        h.pop("ansible.builtin.systemd_service")
+        h["ansible.builtin.command"] = {"argv": ["true"]}
 open(sys.argv[2], "w", encoding="utf-8").write(yaml.safe_dump(handlers, sort_keys=False))
 PY
 
@@ -173,7 +180,9 @@ backups() { find "$(dirname "${dropin}")" -mindepth 1 ! -name "$(basename "${dro
 root_has_key
 run fresh
 check "a fresh write passes" "[ \"\$(rc fresh)\" -eq 0 ]" "$(out fresh)"
-check "and writes the drop-in" "grep -qxF 'AllowUsers hcwadmin' '${dropin}'" "$(cat "${dropin}" 2>&1)"
+check "and writes the drop-in" \
+  "grep -qxF 'AllowUsers hcwadmin' '${dropin}' && grep -qxF 'ListenAddress 127.0.0.1' '${dropin}' && grep -qxF 'ListenAddress ::1' '${dropin}'" \
+  "$(cat "${dropin}" 2>&1)"
 check "the reload was marked pending before the drop-in was written (sshd -t saw the marker)" \
   "grep -qE '^t marker-present -t -f ' '${sshd_log}' && ! grep -qE '^t marker-absent -t -f ' '${sshd_log}'" "$(cat "${sshd_log}")"
 check "sshd was reloaded once, while root's keys were still there" \
