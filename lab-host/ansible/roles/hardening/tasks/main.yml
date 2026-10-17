@@ -28,6 +28,13 @@
     mode: "0440"
     validate: /usr/sbin/visudo -cf %s
 
+# Whether this run closes SSH to the internet: port 22 at ufw and sshd's
+# listen addresses both follow it (#953 stage 3, #1257). Read-only, and run
+# whatever the tags, so privilege_checks reads the same decision.
+- name: Decide whether SSH is closed to the internet on this run
+  ansible.builtin.import_tasks: arc_gate.yml
+  tags: [always]
+
 # sshd's settings, proven before sshd reads them, then root's keys (#953).
 - name: Harden sshd and keep root's keys empty
   ansible.builtin.import_tasks: sshd.yml

@@ -25,6 +25,9 @@ arc_azcmagent_path: /opt/azcmagent/bin/azcmagent
 # ufw's CLI, read by tasks/ssh_off_guard.yml before Arc SSH is turned off.
 # Absent, nothing filters port 22; present, it must answer.
 arc_ufw_path: /usr/sbin/ufw
+# iproute2's ss, read by tasks/ssh_off_guard.yml for an sshd listener beyond
+# the loopback before Arc SSH is turned off. It must answer.
+arc_ss_path: /usr/bin/ss
 
 arc_cloud: AzureCloud
 

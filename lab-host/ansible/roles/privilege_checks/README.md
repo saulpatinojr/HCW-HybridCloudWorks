@@ -48,7 +48,10 @@ anything but the one script the role installs.
    loopback address, or is TCP on a port in `privilege_checks_public_tcp_ports`
    (80 and 443: Caddy). No UDP port is public, now that Caddy
    serves no HTTP/3. sshd listens on the loopback alone (#1257), so port 22
-   has left the list. The host daemon's published ports are also read from
+   has left the list. The exception is a run in which the hardening role's
+   Arc gate has sshd listen on every address, because Arc SSH is not ready,
+   as on a rebuilt host before onboarding. The lab host's `group_vars` then
+   lists 22 too (`hardening_sshd_loopback_only`). The host daemon's published ports are also read from
    the `nat` table's `DOCKER` chain, IPv4 and IPv6. Every `DNAT` rule must
    name a loopback destination, which holds even with Docker's userland
    proxy off, when a published port has no listener. `tests/listeners.test.sh`

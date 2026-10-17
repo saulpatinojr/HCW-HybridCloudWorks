@@ -111,6 +111,18 @@ argument_specs:
         default: /opt/azcmagent/bin/azcmagent
         description:
           - The Arc agent's CLI, read for hardening_ssh_arc_gate. The arc role's arc_azcmagent_path.
+      hardening_sshd_loopback_only:
+        type: bool
+        required: false
+        default: true
+        description:
+          - Whether sshd listens on 127.0.0.1 and ::1 alone (ListenAddress in the drop-in, which
+            Ubuntu's sshd-socket-generator turns into ssh.socket's listeners; issue 1257). With
+            hardening_ssh_arc_gate on and 22 in hardening_ufw_closed_tcp_ports, every run sets it
+            from the Arc agent, as it decides port 22 (tasks/arc_gate.yml). True while Arc SSH is
+            ready; false otherwise, so a rebuilt host is reachable over 22 for onboarding; while
+            the agent is Disconnected, whatever the drop-in says now. The default holds only
+            without the gate.
       hardening_ufw_logging:
         type: str
         required: false

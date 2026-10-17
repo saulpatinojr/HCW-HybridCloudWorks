@@ -35,6 +35,28 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: sshd's loopback bind follows the Arc gate, as port 22 does
+  (#1257 follow-up, CodeRabbit on #1261)**. #1260 bound sshd to the loopback
+  on every run. Opening 22 at ufw then no longer gave a path in, which broke
+  two documented routes: a rebuilt host's onboarding over 22
+  (`Register-LabArc.ps1`), and the Web Console reopen in "When Arc SSH is
+  down".
+  - **One decision:** the hardening role's new `tasks/arc_gate.yml` decides
+    once, before `sshd.yml` and on every run whatever the tags, from the Arc
+    agent. ufw's 22 rule and sshd's `ListenAddress` lines both follow it:
+    closed and on the loopback while Arc SSH is ready, open and on every
+    address while it is not, and left as they are while the agent reads
+    Disconnected.
+  - **The listener check:** `privilege_checks_public_tcp_ports` admits 22
+    only on a run where sshd listens on every address.
+  - **The arc role's guard:** it now also requires a live listener beyond
+    the loopback before Arc SSH is turned off, and that listener must answer
+    with an SSH banner.
+  - **The `sshd -T` read-back:** while sshd should listen on every address,
+    it requires an address beyond the loopback.
+  - **Tests:** `ufw-closed-ports.test.sh` has 53 checks, with real listeners
+    standing in for sshd and a bounded wait for each, and `sshd-apply.test.sh`
+    has 24. The runbook's reopen now rebinds sshd too.
 - **Lab host: turning Arc SSH off never leaves both SSH paths shut (#953
   follow-up, CodeRabbit on #1258)**. Port 22 has been closed at ufw while Arc
   SSH is ready since #1258. A run with `arc_incoming_ssh_enabled` false could

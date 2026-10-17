@@ -66,11 +66,14 @@ const task = (text, name) => {
 const fingerprint = (line) =>
   'SHA256:' + createHash('sha256').update(Buffer.from(line.split(' ')[1], 'base64')).digest('base64').replace(/=+$/, '');
 
-/** The directives of the drop-in, keyword to value, comments and blank lines dropped. */
+/** A line of the template that sshd reads: not blank, not a comment, not a Jinja tag. */
+const isDirective = (line) => line.trim() && !line.trim().startsWith('#') && !line.trim().startsWith('{%');
+
+/** The directives of the drop-in, keyword to value, comments, Jinja tags and blank lines dropped. */
 const directives = Object.fromEntries(
   dropIn
     .split('\n')
-    .filter((line) => line.trim() && !line.trim().startsWith('#'))
+    .filter(isDirective)
     .map((line) => {
       const [keyword, ...rest] = line.trim().split(/\s+/);
       return [keyword, rest.join(' ')];
@@ -123,7 +126,7 @@ describe('the sshd drop-in', () => {
   it('sets each keyword once, since sshd keeps the first value it reads (ListenAddress allows IPv4 and IPv6)', () => {
     const keywords = dropIn
       .split('\n')
-      .filter((line) => line.trim() && !line.trim().startsWith('#'))
+      .filter(isDirective)
       .map((line) => line.trim().split(/\s+/)[0])
       .filter((k) => k !== 'ListenAddress');
     expect(new Set(keywords).size).toBe(keywords.length);
@@ -355,6 +358,7 @@ describe('Connect-Lab.ps1', () => {
 
 describe('port 22 closed to the internet behind the Arc gate (#953 stage 3)', () => {
   const ufwTasks = read(`${role}/tasks/ufw.yml`);
+  const gateTasks = read(`${role}/tasks/arc_gate.yml`);
   const arcDefaults = read('lab-host/ansible/roles/arc/defaults/main.yml');
   const ci = read('.github/workflows/ci.yml');
   /** A top-level `key: value` scalar of a YAML file, quotes and comment dropped. */
@@ -375,7 +379,7 @@ describe('port 22 closed to the internet behind the Arc gate (#953 stage 3)', ()
     expect(scalar(defaults, 'hardening_arc_azcmagent_path')).toBe(scalar(arcDefaults, 'arc_azcmagent_path'));
   });
 
-  it('closes only the lists it settled, so the gate decides 22 for every task after it', () => {
+  it('closes only the lists the gate settled, so the gate decides 22 for every task after it', () => {
     expect(ufwTasks).toContain('loop: "{{ hardening_ufw_allow_now }}"');
     expect(ufwTasks).toContain('loop: "{{ hardening_ufw_close_now }}"');
     expect(ufwTasks).not.toMatch(/loop: "\{\{ hardening_ufw_(allowed|closed)_tcp_ports \}\}"/);
@@ -383,14 +387,38 @@ describe('port 22 closed to the internet behind the Arc gate (#953 stage 3)', ()
     // Disconnected agent may be a reset one being onboarded again over 22, so
     // 22 is left as it is; anything else keeps it open, so a rebuilt host stays
     // reachable for onboarding (pre-review of #953 stage 3).
-    expect(ufwTasks).toContain("{{ 'open' if not (hardening_arc_ssh_wanted | bool)");
-    expect(ufwTasks).toContain("else 'close' if hardening_arc_status == 'Connected'");
-    expect(ufwTasks).toContain("and hardening_arc_incoming_enabled == 'true'");
-    expect(ufwTasks).toContain("and '22' in hardening_arc_incoming_ports");
-    expect(ufwTasks).toContain("else 'hold' if hardening_arc_status == 'Disconnected'");
-    expect(ufwTasks).toContain("if hardening_ufw_gate_22 in ['open', 'hold'] else hardening_ufw_closed_ports");
+    expect(gateTasks).toContain("{{ 'open' if not (hardening_arc_ssh_wanted | bool)");
+    expect(gateTasks).toContain("else 'close' if hardening_arc_status == 'Connected'");
+    expect(gateTasks).toContain("and hardening_arc_incoming_enabled == 'true'");
+    expect(gateTasks).toContain("and '22' in hardening_arc_incoming_ports");
+    expect(gateTasks).toContain("else 'hold' if hardening_arc_status == 'Disconnected'");
+    expect(gateTasks).toContain("if hardening_ufw_gate_22 in ['open', 'hold'] else hardening_ufw_closed_ports");
     // The lists are compared as integers, so "22" cannot slip past the gate.
-    expect(ufwTasks).toContain("hardening_ufw_closed_tcp_ports | map('int') | list");
+    expect(gateTasks).toContain("hardening_ufw_closed_tcp_ports | map('int') | list");
+  });
+
+  it('decides once, before sshd.yml, whatever the tags, so sshd, ufw and the listener check agree (#1257)', () => {
+    const gateAt = mainTasks.indexOf('ansible.builtin.import_tasks: arc_gate.yml');
+    expect(gateAt, 'main.yml does not import arc_gate.yml').toBeGreaterThan(0);
+    expect(gateAt).toBeLessThan(mainTasks.indexOf('ansible.builtin.import_tasks: sshd.yml'));
+    expect(gateAt).toBeLessThan(mainTasks.indexOf('ansible.builtin.import_tasks: ufw.yml'));
+    expect(mainTasks.slice(gateAt, mainTasks.indexOf('\n\n', gateAt))).toContain('tags: [always]');
+    // sshd's bind follows the same decision: the loopback while Arc SSH is
+    // ready, every address while it is not, the drop-in's own choice while the
+    // agent is Disconnected.
+    expect(gateTasks).toContain("{{ true if hardening_ufw_ssh_gate == 'close'");
+    expect(gateTasks).toContain("else false if hardening_ufw_ssh_gate == 'open'");
+    expect(gateTasks).toContain("is search('^ListenAddress 127[.]0[.]0[.]1 *$', multiline=True)");
+    expect(dropIn).toMatch(/\{% if hardening_sshd_loopback_only \| bool %\}\n(?:#.*\n)*ListenAddress 127\.0\.0\.1\nListenAddress ::1\n\{% else %\}/);
+    expect(scalar(defaults, 'hardening_sshd_loopback_only')).toBe('true');
+    // The listener check admits 22 only while sshd is meant to listen on it.
+    expect(groupVars).toContain(
+      'privilege_checks_public_tcp_ports: "{{ [80, 443] if (hardening_sshd_loopback_only | default(true) | bool) else [22, 80, 443] }}"'
+    );
+    // And sshd -T must confirm whichever bind the run wrote: the pair
+    // exactly, or an address beyond the loopback (CodeRabbit on #1263).
+    expect(tasks).toContain("== ['listenaddress 127.0.0.1:22', 'listenaddress [::1]:22'])\n            if hardening_sshd_loopback_only | bool");
+    expect(tasks).toContain("| reject('match', '^listenaddress (127[.]|[[]::1[]]:|[[]::ffff:127[.])')");
   });
 
   it('runs tests/ufw-closed-ports.test.sh in CI, as root, with ufw installed', () => {

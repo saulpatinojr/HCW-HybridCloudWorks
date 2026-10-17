@@ -42,6 +42,10 @@ hardening_ssh_arc_gate: false
 hardening_arc_ssh_wanted: true
 # The Arc agent's CLI, read for that gate; the arc role's arc_azcmagent_path.
 hardening_arc_azcmagent_path: /opt/azcmagent/bin/azcmagent
+# Whether sshd listens on the loopback alone (#1257). With the Arc gate on,
+# tasks/arc_gate.yml sets it from the agent on every run, as it does port 22;
+# this default holds only with the gate off or 22 not in the closed list.
+hardening_sshd_loopback_only: true
 hardening_ufw_logging: "low"
 
 # The hour, host local time (HH:MM), at which hcw-reboot-when-idle.timer asks

@@ -31,11 +31,18 @@ X11Forwarding no
 # few failed attempts there against every later Arc session.
 PerSourcePenaltyExemptList 127.0.0.1,::1
 
+{% if hardening_sshd_loopback_only | bool %}
 # Bind sshd to the loopback alone (#1257). Ubuntu's sshd-socket-generator derives
 # ssh.socket's ListenStream= lines from these at daemon-reload. Arc SSH arrives on
 # the loopback, and hPanel's Web Console is a getty, so neither needs a public listener.
 ListenAddress 127.0.0.1
 ListenAddress ::1
+{% else %}
+# sshd listens on every address on this run: Azure Arc SSH is not ready to
+# replace port 22 (tasks/arc_gate.yml), as on a rebuilt host before it is
+# onboarded to Arc again. The first run with Arc SSH ready binds it to the
+# loopback (#1257).
+{% endif %}
 
 # INFO already logs the fingerprint of the key each accepted login used
 # (`Accepted publickey for ...`); VERBOSE adds the fingerprints of keys that

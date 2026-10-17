@@ -395,15 +395,25 @@ Once, in this order:
    else works.
 
 Port 22 closed after step 5 here and those console checks had both
-succeeded (2026-10-17; #953 stage 3). The hardening role deletes ufw's allow
-for 22 and fails a run in which any ALLOW or LIMIT rule still names it, or
-Ubuntu's `OpenSSH` profile. It closes 22 only while Arc SSH is ready: the
-agent Connected, with incoming connections on for port 22. While the agent
-reads `Disconnected` (a network drop, or an agent reset to be onboarded
-again) the run leaves 22 as ufw has it and prints a line beginning `Port 22
-is left as ufw has it on this run`. Otherwise (no agent, as on a rebuilt
-host before onboarding, or `Expired`) it keeps 22 open and prints `Port 22
-stays open to the internet on this run`. The SSH login alert
+succeeded (2026-10-17; #953 stage 3). Two things close it, and both follow
+one decision (the Arc gate, `roles/hardening/tasks/arc_gate.yml`):
+- **ufw:** the hardening role deletes ufw's allow for 22, and fails a run in
+  which any ALLOW or LIMIT rule still names it, or Ubuntu's `OpenSSH`
+  profile does.
+- **sshd's bind:** sshd listens on the loopback alone (#1257).
+
+The gate decides from the Arc agent:
+- **Connected,** with incoming connections on for port 22: SSH is closed to
+  the internet.
+- **`Disconnected`** (a network drop, or an agent reset to be onboarded
+  again): the run leaves ufw's 22 rule and sshd's bind as they are, and
+  prints a line beginning `Port 22 is left as ufw has it on this run`.
+- **Anything else** (no agent, as on a rebuilt host before onboarding, or
+  `Expired`): 22 stays open, sshd listens on every address, and the run
+  prints `Port 22 stays open to the internet on this run`. The listener
+  check admits 22 only then.
+
+The SSH login alert
 (`alert-lab-ssh-login`, `lab_ssh_loopback_only`) pages on any accepted
 login that did not come through Arc, so a login over a reopened 22 pages
 too, once the agent's syslog reaches the workspace. Before onboarding no
@@ -426,6 +436,13 @@ this prints nothing:
 
 ```bash
 sudo ufw status | grep -E '(^|[ ,])22([,/ ]|$)|OpenSSH'
+```
+
+And this prints only `127.0.0.1:22` and `[::1]:22` in its fourth column,
+sshd on the loopback alone:
+
+```bash
+ss -Hltn 'sport = :22'
 ```
 
 And from the desktop, PowerShell, this still prints the host's name,
@@ -451,17 +468,27 @@ Console**, signed in as `root`.
 
    `Disconnected` usually clears by itself once the host reaches Azure
    again. `Expired` means onboarding again: reset the agent ("Disconnecting",
-   step 3), reopen 22 (step 2 here), then "Re-onboarding a rebuilt host".
-   A reset agent reads `Disconnected`, and the hardening role leaves 22 as
-   ufw has it while the agent does. So the reopened 22 stays open through
-   `Register-LabArc.ps1 -Connect`, and the first run with the agent
-   `Connected` again closes it.
-2. **Reopen 22 for the repair**, bash, in the Web Console. Success is
-   `Rule added` and `Rule added (v6)`:
+   step 3), reopen SSH (step 2 here), then "Re-onboarding a rebuilt host".
+   A reset agent reads `Disconnected`, and the hardening role leaves ufw's
+   22 rule and sshd's bind as they are while the agent does. So the reopened
+   SSH stays open through `Register-LabArc.ps1 -Connect`, and the first run
+   with the agent `Connected` again closes it.
+2. **Reopen SSH for the repair**, bash, in the Web Console. Both halves are
+   needed: ufw admits 22, and sshd listens beyond the loopback (#1257).
 
    ```bash
-   ufw allow 22/tcp
+   ufw allow 22/tcp && sed -i '/^ListenAddress /d' /etc/ssh/sshd_config.d/00-hcw-hardening.conf && systemctl daemon-reload && systemctl restart ssh.socket
    ```
+
+   Success is `Rule added` and `Rule added (v6)`, and then this lists
+   `0.0.0.0:22` and `[::]:22` in its fourth column:
+
+   ```bash
+   ss -Hltn 'sport = :22'
+   ```
+
+   With no agent, or an `Expired` one, a `bootstrap.sh` run from the Web
+   Console does both itself, since the gate keeps SSH open then.
 
    Then point the desktop at the direct block, PowerShell, from the
    repository root:
@@ -475,8 +502,8 @@ Console**, signed in as `root`.
    agent is cut off. That is the alert working, not a second problem.
 3. **Close it again** once Arc SSH answers (`ssh hcw-lab hostname` after
    `Connect-Lab.ps1 -Arc`): run `bootstrap.sh` as in "Closing port 22: the
-   first run". It deletes the rule, and fails rather than leave it if it
-   cannot.
+   first run". It deletes the rule and binds sshd to the loopback again, and
+   fails rather than leave the rule if it cannot.
 
 ## The first-run host check
 
@@ -3500,10 +3527,11 @@ there, so the first run only mints a new secret and says `Nothing to set
 there`, and `-Connect` onboards the new host.
 
 Both steps reach the host over `ssh hcw-lab` on port 22, with the direct
-block (`Connect-Lab.ps1` without `-Arc`). Port 22 is open for them: the
-hardening role closes it only while Arc SSH is ready (#953 stage 3), and
-until `-Connect` has onboarded the agent each run says `Port 22 stays open
-to the internet on this run`. The first `bootstrap.sh` run after
+block (`Connect-Lab.ps1` without `-Arc`). SSH is open for them: the
+hardening role closes port 22 at ufw and binds sshd to the loopback only
+while Arc SSH is ready (#953 stage 3, #1257). Until `-Connect` has
+onboarded the agent, each run says `Port 22 stays open to the internet on
+this run, and sshd listens on every address`. The first `bootstrap.sh` run after
 onboarding closes it, so before that run make Arc SSH work for the new
 machine: the `hcw-azure` run that recreates its connectivity endpoint and
 SSH service configuration, then `Connect-Lab.ps1 -Arc` and its test (steps

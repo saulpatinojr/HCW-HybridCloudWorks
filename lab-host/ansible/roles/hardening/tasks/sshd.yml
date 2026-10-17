@@ -126,11 +126,20 @@
           - "'permittunnel no' in hardening_sshd_effective.results[0].stdout_lines"
           - "'x11forwarding no' in hardening_sshd_effective.results[0].stdout_lines"
           - "'authorizedkeysfile .ssh/authorized_keys' in hardening_sshd_effective.results[0].stdout_lines"
+          # The loopback pair exactly while arc_gate.yml binds sshd there; at
+          # least one address beyond the loopback (every address, by default)
+          # while it does not, so another file in sshd_config.d cannot leave a
+          # rebuilt host listening on the loopback alone (CodeRabbit on #1263).
           - >-
-            hardening_sshd_effective.results[0].stdout_lines
-            | select('match', '^listenaddress ')
-            | list | sort
-            == ['listenaddress 127.0.0.1:22', 'listenaddress [::1]:22']
+            (hardening_sshd_effective.results[0].stdout_lines
+             | select('match', '^listenaddress ')
+             | list | sort
+             == ['listenaddress 127.0.0.1:22', 'listenaddress [::1]:22'])
+            if hardening_sshd_loopback_only | bool
+            else (hardening_sshd_effective.results[0].stdout_lines
+                  | select('match', '^listenaddress ')
+                  | reject('match', '^listenaddress (127[.]|[[]::1[]]:|[[]::ffff:127[.])')
+                  | list | length > 0)
           - "'permitrootlogin no' in hardening_sshd_effective.results[1].stdout_lines"
           - "'allowusers root' not in hardening_sshd_effective.results[1].stdout_lines"
         fail_msg: >-

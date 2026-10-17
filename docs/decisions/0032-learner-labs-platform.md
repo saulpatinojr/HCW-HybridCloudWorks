@@ -982,9 +982,8 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   hardening role closes 22 only while the Arc agent is Connected with
   incoming connections on for port 22 (`hardening_ssh_arc_gate`), and leaves
   it as it is while the agent is Disconnected, because a rebuilt or reset
-  host is onboarded over port 22 by `Register-LabArc.ps1`. sshd
-  still listens on every address behind ufw until #1257 binds it to the
-  loopback.)*
+  host is onboarded over port 22 by `Register-LabArc.ps1`. Since #1257 sshd
+  also listens on the loopback alone, and that bind follows the same gate.)*
 - **Ingestion is bounded but not zero.** Heartbeat and auth syslog on one host
   are kilobytes a day against the workspace's 0.25 GB/day cap
   ([ADR 0031](0031-security-scanner-owner-decisions.md) records the headroom).

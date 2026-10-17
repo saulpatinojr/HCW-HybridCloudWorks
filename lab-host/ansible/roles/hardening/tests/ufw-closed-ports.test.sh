@@ -24,6 +24,7 @@
 # - turning Arc SSH off: a run with arc_incoming_ssh_enabled false opens 22
 #   though Arc is ready, and the arc role's guard (roles/arc/tasks/
 #   ssh_off_guard.yml) refuses to turn Arc SSH off while ufw keeps 22 closed
+#   or sshd listens on the loopback alone (a real listener stands in for it)
 #   and lets it once 22 is open;
 # - a port in both lists stops the run before any rule changes.
 #
@@ -58,7 +59,11 @@ command -v ufw > /dev/null || { echo "ufw is not installed (apt-get install ufw)
 work="$(mktemp -d)"
 # finish: remove the scratch directory, on every way out. The bind mounts
 # and the network namespace go with this process.
-finish() { umount /etc/default/ufw /etc/ufw 2> /dev/null || true; rm -rf "${work}"; }
+finish() {
+  [ -z "${listener:-}" ] || kill "${listener}" 2> /dev/null || true
+  umount /etc/default/ufw /etc/ufw 2> /dev/null || true
+  rm -rf "${work}"
+}
 trap finish EXIT
 
 # A fresh ufw: the installed configuration with the package's own rule files,
@@ -102,9 +107,20 @@ cat > "${work}/play.yml" <<EOF
     - ${role}/defaults/main.yml
     - ${group_vars}
   tasks:
+    - name: The Arc gate
+      ansible.builtin.import_tasks: ${role}/tasks/arc_gate.yml
     - name: The ufw tasks
       ansible.builtin.import_tasks: ${role}/tasks/ufw.yml
+    - name: Print what sshd and the listener check get from the gate
+      ansible.builtin.debug:
+        msg: "SSHD loopback_only={{ hardening_sshd_loopback_only | bool }} public={{ privilege_checks_public_tcp_ports | join(',') }}"
 EOF
+# The sshd drop-in the gate reads while the agent is Disconnected: the
+# loopback pair, as every run with Arc ready writes it (#1257).
+dropin="${work}/00-hcw-hardening.conf"
+printf 'ListenAddress 127.0.0.1\nListenAddress ::1\n' > "${dropin}"
+loopback='SSHD loopback_only=True public=80,443'
+everywhere='SSHD loopback_only=False public=22,80,443'
 
 cat > "${work}/ansible.cfg" <<'EOF'
 [defaults]
@@ -121,7 +137,8 @@ run() {
   shift
   set +e
   ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
-    ansible-playbook -i localhost, "${work}/play.yml" -e "hardening_arc_azcmagent_path=${agent}" "$@" > "${work}/${name}.out" 2>&1
+    ansible-playbook -i localhost, "${work}/play.yml" -e "hardening_arc_azcmagent_path=${agent}" \
+    -e "hardening_sshd_dropin_path=${dropin}" "$@" > "${work}/${name}.out" 2>&1
   echo $? > "${work}/${name}.rc"
   set -e
 }
@@ -160,6 +177,8 @@ check "and ufw no longer admits 22, for either family" "! admits 22 && ! ufw sta
 check "and still admits 80 and 443, for both families" \
   "[ \"\$(ufw status | grep -cE '^(80|443)/tcp( \(v6\))? +ALLOW')\" -eq 4 ]" "$(rules)"
 check "and ufw is active" "ufw status | grep -qx 'Status: active'" "$(rules)"
+check "and sshd binds to the loopback alone, so the listener check admits only 80 and 443 (#1257)" \
+  "says close '${loopback}'" "$(out close)"
 
 # 2. Converged.
 run again
@@ -222,18 +241,24 @@ arc_state '{"status":"Disconnected","resourceName":"arcs-lab-hybrid-prod-cus-01"
 run blip
 check "a Disconnected agent (a network drop) leaves a closed 22 closed" \
   "[ \"\$(rc blip)\" -eq 0 ] && [ \"\$(recap blip changed)\" -eq 0 ] && ! admits 22 && says blip '${held}'" "$(out blip)"
+check "and keeps sshd on the loopback, as the drop-in has it" "says blip '${loopback}'" "$(out blip)"
 # An agent reset with `azcmagent disconnect --force-local-only` (the way back
 # from Expired) also reads Disconnected, its local settings kept; the owner
-# has reopened 22 from the Web Console for Register-LabArc.ps1 -Connect.
+# has reopened 22 from the Web Console for Register-LabArc.ps1 -Connect, at
+# ufw and in the drop-in (docs/runbooks/labs-host.md, "When Arc SSH is down").
 arc_state '{"status":"Disconnected"}' 'true' '[22]'
 ufw allow 22/tcp > /dev/null
+printf '# ListenAddress lines removed from the Web Console\n' > "${dropin}"
 run reset
 check "and leaves a 22 reopened from the Web Console open, without failing, while the agent is reset" \
   "[ \"\$(rc reset)\" -eq 0 ] && [ \"\$(recap reset changed)\" -eq 0 ] && admits 22 && says reset '${held}'" "$(out reset)"
+check "and sshd on every address, as the reopened drop-in has it, with 22 admitted by the listener check" \
+  "says reset '${everywhere}' && says reset 'and sshd on every address'" "$(out reset)"
+printf 'ListenAddress 127.0.0.1\nListenAddress ::1\n' > "${dropin}"
 arc_ready
 run reconnected
 check "and the first run with the agent Connected again closes it" \
-  "[ \"\$(rc reconnected)\" -eq 0 ] && ! admits 22 && ! says reconnected '${held}'" "$(out reconnected)"
+  "[ \"\$(rc reconnected)\" -eq 0 ] && ! admits 22 && ! says reconnected '${held}' && says reconnected '${loopback}'" "$(out reconnected)"
 
 arc_missing
 run waiting --check
@@ -242,6 +267,8 @@ check "check mode with no agent reports opening 22 as a change, and opens nothin
 run rebuilt
 check "with no agent (a rebuilt host before onboarding), a run allows 22 and says why" \
   "[ \"\$(rc rebuilt)\" -eq 0 ] && admits 22 && says rebuilt '${waits}' && says rebuilt 'agent NotInstalled'" "$(out rebuilt)"
+check "and has sshd listen on every address, which the listener check admits, so onboarding reaches it over 22 (#1257)" \
+  "says rebuilt '${everywhere}' && says rebuilt 'and sshd listens on every address'" "$(out rebuilt)"
 check "for both families, beside 80 and 443" \
   "[ \"\$(ufw status | grep -cE '^(22|80|443)/tcp( \(v6\))? +ALLOW')\" -eq 6 ]" "$(rules)"
 
@@ -273,8 +300,8 @@ check "the first run with Arc SSH ready closes 22" \
   "[ \"\$(rc onboarded)\" -eq 0 ] && ! admits 22 && ! says onboarded '${waits}'" "$(out onboarded)"
 
 run ungated -e hardening_ssh_arc_gate=false -e "hardening_arc_azcmagent_path=${work}/bin/no-azcmagent"
-check "with the gate off, 22 is closed whatever the agent" \
-  "[ \"\$(rc ungated)\" -eq 0 ] && [ \"\$(recap ungated changed)\" -eq 0 ] && ! admits 22" "$(out ungated)"
+check "with the gate off, 22 is closed whatever the agent, and sshd stays on the loopback (the role's default)" \
+  "[ \"\$(rc ungated)\" -eq 0 ] && [ \"\$(recap ungated changed)\" -eq 0 ] && ! admits 22 && says ungated '${loopback}'" "$(out ungated)"
 
 arc_missing
 run quoted -e '{"hardening_ufw_closed_tcp_ports": ["22"], "hardening_ufw_allowed_tcp_ports": ["80", "443"]}'
@@ -310,6 +337,46 @@ cat > "${work}/guard.yml" <<EOF
     - name: The guard
       ansible.builtin.import_tasks: $(cd "${role}/.." && pwd)/arc/tasks/ssh_off_guard.yml
 EOF
+# A stand-in for sshd's listener on port 22, at the address given, so the
+# guard's `ss` read sees what sshd would leave (#1257). With `ssh` it sends
+# an SSH banner to each connection, as sshd does; without, it sends nothing.
+cat > "${work}/listen.py" <<'EOF'
+import socket, sys
+family = socket.AF_INET6 if ":" in sys.argv[1] else socket.AF_INET
+s = socket.socket(family, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+if family == socket.AF_INET6:
+    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+s.bind((sys.argv[1], 22))
+s.listen(5)
+while True:
+    conn, _ = s.accept()
+    if sys.argv[2:] == ["ssh"]:
+        conn.sendall(b"SSH-2.0-OpenSSH_10.2p1 stand-in\r\n")
+    conn.close()
+EOF
+# listen_on ADDRESS [ssh]: replace the stand-in with one on ADDRESS, and wait
+# for it to listen, at most five seconds; a stand-in that cannot bind fails
+# the test rather than hanging it (CodeRabbit on #1263).
+listen_on() {
+  if [ -n "${listener:-}" ]; then
+    kill "${listener}" 2> /dev/null || true
+    wait "${listener}" 2> /dev/null || true
+  fi
+  python3 "${work}/listen.py" "$@" > "${work}/listen.log" 2>&1 &
+  listener=$!
+  local tries=0
+  until ss -Hltn 'sport = :22' | grep -q .; do
+    tries=$((tries + 1))
+    if ! kill -0 "${listener}" 2> /dev/null || [ "${tries}" -ge 50 ]; then
+      not_ok "the stand-in listener on $1 did not start" "$(cat "${work}/listen.log")"
+      echo "ufw-closed-ports.test.sh: stopped at a listener that did not start" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+}
+listen_on 0.0.0.0 ssh
 guard guard_closed -e arc_incoming_ssh_enabled=false
 check "the arc role refuses to turn Arc SSH off while ufw keeps 22 closed" \
   "[ \"\$(rc guard_closed)\" -ne 0 ] && says guard_closed 'does not admit port 22 from Anywhere' && ! admits 22" "$(out guard_closed)"
@@ -325,6 +392,18 @@ check "and while an installed ufw does not answer (CodeRabbit on #1261)" \
   "[ \"\$(rc guard_broken)\" -ne 0 ] && says guard_broken 'did not answer' && says guard_broken '(rc 1)'" "$(out guard_broken)"
 guard guard_noufw -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/no-ufw"
 check "but lets it with no ufw at all, which filters nothing" "[ \"\$(rc guard_noufw)\" -eq 0 ]" "$(out guard_noufw)"
+guard guard_ssbroken -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/no-ufw" -e "arc_ss_path=${work}/bin/ufw-broken"
+check "and refuses while ss does not answer" \
+  "[ \"\$(rc guard_ssbroken)\" -ne 0 ] && says guard_ssbroken '\`ss\` did not answer (rc 1)'" "$(out guard_ssbroken)"
+listen_on 127.0.0.1 ssh
+guard guard_loopback -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/no-ufw"
+check "and refuses, with nothing filtering 22, while sshd listens on the loopback alone (#1257)" \
+  "[ \"\$(rc guard_loopback)\" -ne 0 ] && says guard_loopback 'sshd listens on the loopback alone'" "$(out guard_loopback)"
+listen_on 0.0.0.0
+guard guard_nobanner -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/no-ufw"
+check "and while what listens on 22 beyond the loopback is not sshd (CodeRabbit on #1263)" \
+  "[ \"\$(rc guard_nobanner)\" -ne 0 ] && says guard_nobanner 'sent no SSH banner'" "$(out guard_nobanner)"
+listen_on :: ssh
 run arcoff -e arc_incoming_ssh_enabled=false
 check "a run that turns Arc SSH off opens 22 first, though Arc is ready, and says why" \
   "[ \"\$(rc arcoff)\" -eq 0 ] && admits 22 && says arcoff 'being turned off (arc_incoming_ssh_enabled is false)' && says arcoff 'with arc_incoming_ssh_enabled true again'" "$(out arcoff)"

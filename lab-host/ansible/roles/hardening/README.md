@@ -46,7 +46,14 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    `ListenAddress 127.0.0.1` and `ListenAddress ::1` (#1257: sshd listens on
    the loopback alone for defense in depth; Ubuntu's `sshd-socket-generator`
    derives `ssh.socket`'s `ListenStream=` lines from these at `daemon-reload`,
-   and `ssh.socket` is restarted once) and
+   and `ssh.socket` is restarted once). The two lines follow the same Arc gate
+   as port 22 (`tasks/arc_gate.yml`, `hardening_sshd_loopback_only`):
+   - written while Arc SSH is ready;
+   - left out while it is not, so a rebuilt host is reachable over 22 for
+     onboarding;
+   - kept as the drop-in has them while the agent reads Disconnected.
+
+   The other directive is
    `LogLevel VERBOSE`. INFO already logs the fingerprint of the key each
    accepted login used (`Accepted publickey for …`); VERBOSE adds the
    fingerprints of keys offered and refused. The `00-` prefix matters: sshd keeps the first value it reads and
@@ -56,7 +63,8 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    on the whole configuration, and `sshd -T -C user=…,host=hcw-lab,addr=192.0.2.10`
    for `hcwadmin` and for root, held to `allowusers hcwadmin`,
    `authenticationmethods publickey`, `permitrootlogin no`,
-   `listenaddress 127.0.0.1:22`, `listenaddress [::1]:22`,
+   `listenaddress 127.0.0.1:22` and `listenaddress [::1]:22` exactly while
+   the gate binds sshd there (any other set while it does not),
    `allowagentforwarding no` and the rest of the file, and to root not
    being allowed. A failure puts the previous drop-in back and removes its
    backup before the run stops, so the reload `force_handlers` still runs
@@ -425,8 +433,9 @@ carry it:
 - **Azure Arc SSH** (#953): SSH through the Arc agent's relay, which hands
   each session to sshd on the loopback. Port 22 is closed to the internet
   at ufw since #953 stage 3, so a session needs the pinned key and an Azure
-  sign-in with access to the Arc machine. sshd itself still listens on
-  every address until #1257 binds it to the loopback.
+  sign-in with access to the Arc machine. sshd itself listens on the
+  loopback alone while Arc SSH is ready (#1257), so ufw is not the only
+  layer.
 - **The login alert** (`alert-lab-ssh-login`, #953): pages on every
   accepted SSH login that is not `hcwadmin` by public key with the pinned
   key, or that did not arrive from the loopback. It is keyed on the INFO

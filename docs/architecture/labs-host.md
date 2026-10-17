@@ -124,10 +124,10 @@ each session to sshd on the loopback, port 22 alone ([Summary](#summary),
 "Owner access"). sshd lets in `hcwadmin` alone, by the owner's pinned key
 only (#953). Port 22 has been closed to the internet at ufw since #953 stage
 3, once Arc SSH and hPanel's Web Console had both been used (2026-10-17).
-The hardening role closes it only while Arc SSH is ready, so a rebuilt host
-answers on 22 until it is onboarded to Arc again. sshd still listens on
-every address behind ufw until #1257 binds it to the loopback. Everything
-else is outbound:
+sshd also listens on the loopback alone (#1257), so ufw is not the only
+layer. The hardening role does both only while Arc SSH is ready (its Arc
+gate), so a rebuilt host answers on 22 until it is onboarded to Arc again.
+Everything else is outbound:
 
 - `vps-agent` polls the Functions API over 443 with its own Entra certificate;
 - the Arc and Azure Monitor agents call Azure over 443, the Arc agent's
