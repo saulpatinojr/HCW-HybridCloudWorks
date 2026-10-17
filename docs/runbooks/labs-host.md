@@ -1854,6 +1854,29 @@ plain run turns the remap on again and stops at the carry: it finds the
 pre-remap data newer than the copy it made the first time, refuses to use
 that older copy, and prints the three steps that carry the data again.
 
+### Listeners beyond the loopback
+
+Every service the roles run listens on the loopback: Coder on 7080,
+Portainer on 9443, Vault on 8200 and 8201, node_exporter on 9100, the Arc
+agent on 40341 to 40344, and each tool add-on on its own port. Only sshd
+(TCP 22) and Caddy (TCP 80 and 443) are public. The last check of every run
+(`roles/privilege_checks`, `tasks/listeners.yml`; #958, LAB-12) reads every
+TCP and UDP listener with `ss`, including the ports the rootless sandbox
+forwards for a workspace. It fails the run if anything else listens beyond
+the loopback, naming each one: `These listen beyond the loopback, and only
+TCP 22, 80, 443 may: …`.
+
+When it fails, this names the process behind each one, bash on the host:
+
+```bash
+sudo ss -ltnup
+```
+
+Bind that service to `127.0.0.1` (for a container, publish
+`127.0.0.1:<port>:<port>`), or stop it, then run `bootstrap.sh` again. Good
+is a recap with `failed=0`. Port 22 leaves `privilege_checks_public_tcp_ports`
+when it closes to the internet (#953, stage 3).
+
 ### Host firewall for the sandbox and bridges
 
 The `host_firewall` role (#954, #958; owner decision 2026-10-16) limits

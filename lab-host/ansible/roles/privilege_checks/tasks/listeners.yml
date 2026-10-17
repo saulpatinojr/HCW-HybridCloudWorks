@@ -1,0 +1,47 @@
+---
+# 8. Nothing listens beyond the loopback but the host's public ports (#958,
+# LAB-12). Every service the roles run binds 127.0.0.1 or ::1: Coder 7080,
+# Portainer 9443, Vault 8200 and 8201, node_exporter 9100, the Arc agent's
+# 4034x, the add-ons. Caddy and sshd are the public front, on
+# privilege_checks_public_tcp_ports. Read with ss, every TCP and UDP
+# listener the kernel holds, the rootless sandbox's forwarded ports included
+# (they are host sockets), so a port a role, a container or a workspace
+# opened to the internet fails the run instead of waiting for a scan.
+#
+# The local address is ss's fifth field: 127.0.0.1:7080, [::1]:40341,
+# 127.0.0.53%lo:53, [::ffff:127.0.0.1]:4317, *:443 or 0.0.0.0:22. The
+# address is everything before the last colon, its brackets and %interface
+# removed; loopback is 127.0.0.0/8, ::1 or an IPv4-mapped 127 address.
+
+- name: Read every listening TCP and UDP socket
+  ansible.builtin.command:
+    argv: "{{ privilege_checks_listeners_argv }}"
+  register: privilege_checks_listeners
+  changed_when: false
+  check_mode: false
+
+- name: Refuse a listener beyond the loopback that is not a public TCP port
+  vars:
+    privilege_checks_exposed_listeners: >-
+      {%- set exposed = [] -%}
+      {%- for line in privilege_checks_listeners.stdout_lines if line | trim -%}
+      {%-   set fields = line.split() -%}
+      {%-   set host = fields[4] | regex_replace('^(.*):[^:]*$', '\\1') | regex_replace('^\\[(.*)\\]$', '\\1') | regex_replace('%.*$', '') -%}
+      {%-   set port = fields[4] | regex_replace('^.*:([^:]*)$', '\\1') -%}
+      {%-   set loopback = host is match('^(127\\.|::1$|::ffff:127\\.)') -%}
+      {%-   set public = fields[0] == 'tcp' and (port | int) in privilege_checks_public_tcp_ports -%}
+      {%-   if not loopback and not public -%}
+      {%-     set _ = exposed.append(fields[0] ~ ' ' ~ fields[4]) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ exposed }}
+  ansible.builtin.assert:
+    that:
+      - privilege_checks_exposed_listeners | length == 0
+    fail_msg: >-
+      These listen beyond the loopback, and only TCP {{ privilege_checks_public_tcp_ports | join(', ') }}
+      may: {{ privilege_checks_exposed_listeners | join(', ') }}. Bind the service to 127.0.0.1 (a
+      published container port as 127.0.0.1:<port>:<port>), or stop it; sudo ss -ltnup names the
+      process (docs/runbooks/labs-host.md, "Listeners beyond the loopback").
+    quiet: true
+  when: not ansible_check_mode
