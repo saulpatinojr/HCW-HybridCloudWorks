@@ -43,7 +43,7 @@ This project has not cut a tagged release; entries are grouped under
     while ufw's rule stayed held.
   - **The fix:** a missing drop-in now keeps the role's default, the
     loopback alone.
-  - **Tests:** `tests/ufw-closed-ports.test.sh` covers the case (54 checks).
+  - **Tests:** `tests/ufw-closed-ports.test.sh` covers the case, and stops on a drop-in it cannot read (55 checks).
 - **Lab host: sshd's loopback bind follows the Arc gate, as port 22 does
   (#1257 follow-up, CodeRabbit on #1261)**. #1260 bound sshd to the loopback
   on every run. Opening 22 at ufw then no longer gave a path in, which broke

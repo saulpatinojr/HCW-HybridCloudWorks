@@ -258,6 +258,13 @@ rm -f "${dropin}"
 run reset-nodropin
 check "and, with no drop-in to read, keeps sshd on the loopback, the role's default (CodeRabbit on #1263)" \
   "[ \"\$(rc reset-nodropin)\" -eq 0 ] && says reset-nodropin '${loopback}'" "$(out reset-nodropin)"
+# A drop-in that is there and cannot be read (a directory in its place)
+# stops the run rather than being taken for a missing one (CodeRabbit on #1264).
+mkdir "${dropin}"
+run reset-unreadable
+check "but stops the run on a drop-in it cannot read" \
+  "[ \"\$(rc reset-unreadable)\" -ne 0 ] && ! says reset-unreadable 'SSHD loopback_only='" "$(out reset-unreadable)"
+rmdir "${dropin}"
 printf 'ListenAddress 127.0.0.1\nListenAddress ::1\n' > "${dropin}"
 arc_ready
 run reconnected
