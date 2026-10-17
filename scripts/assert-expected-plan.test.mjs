@@ -38,6 +38,8 @@ import {
   OVERDUE_LAST_DUE_BIN_AT,
   overdueQuery,
   redact,
+  SSH_LOGIN_ALERT_DESCRIPTION,
+  sshLoginAlertQuery,
   secretsOf,
 } from './assert-expected-plan.mjs';
 // The module-reading helper moved to its own file when a second check needed
@@ -963,13 +965,84 @@ describe('DECLARED', () => {
     expect(paths).not.toContain('app_settings.ADDON_CLOUD_ASSESSMENT_URL');
   });
 
-  it('prunes alert-lab-ssh-login and STREAMYARD_API_KEY once applied, and keeps the unapplied probe flag (#953, #1101, #701)', () => {
-    const addresses = DECLARED.map((entry) => entry.address);
+  it('prunes alert-lab-ssh-login’s create, Arc SSH’s two creates and STREAMYARD_API_KEY once applied, and keeps the unapplied probe flag (#953, #1101, #701)', () => {
+    const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
     const paths = DECLARED.map((entry) => entry.path);
-    expect(addresses).not.toContain('azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected');
+    expect(creates).not.toContain('azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected');
+    expect(creates).not.toContain('azapi_resource.lab_hybrid_arc_connectivity_endpoint[0]');
+    expect(creates).not.toContain('azapi_resource.lab_hybrid_arc_ssh_service_configuration[0]');
     expect(paths).not.toContain('app_settings.STREAMYARD_API_KEY');
     // Live "false" on 2026-10-17: the arming has not applied, so it stays.
     expect(paths).toContain('app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS');
+  });
+
+  /** alert-lab-ssh-login's resource block in the tree. */
+  const sshLoginRule = () => {
+    const block =
+      /resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_ssh_login_unexpected" \{[\s\S]*?\n\}\n/.exec(
+        infraSource
+      );
+    expect(block, 'lab_hybrid_ssh_login_unexpected not found').not.toBeNull();
+    return block[0];
+  };
+
+  /** A variable's default in the tree, as Terraform would interpolate it. */
+  const variableDefault = (name) => {
+    const match = new RegExp(`variable "${name}" \\{[\\s\\S]*?\\n\\s*default\\s*=\\s*([^\\n]+)\\n`).exec(infraSource);
+    expect(match, `var.${name} has no default`).not.toBeNull();
+    return match[1].trim();
+  };
+
+  it('renders alert-lab-ssh-login’s query exactly as the heredoc in infra/ does, with the tree’s defaults (#953)', () => {
+    // sshLoginAlertQuery() keeps its own copy of the query, so a heredoc
+    // change that does not move the copy would leave the declaration matching
+    // a query Terraform never renders. `<<-` strips the smallest indent and
+    // keeps the newline before the marker.
+    const heredoc = /query\s*=\s*<<-KQL\n([\s\S]*?)\n[ \t]*KQL\n/.exec(sshLoginRule());
+    expect(heredoc, 'lab_hybrid_ssh_login_unexpected query heredoc not found').not.toBeNull();
+    const lines = heredoc[1].split('\n');
+    const indent = Math.min(...lines.filter((line) => line.trim()).map((line) => /^ */.exec(line)[0].length));
+    const hostRows = /^\s*lab_hybrid_host_rows\s*=\s*"(.*)"$/m.exec(infraSource);
+    const machine = /^\s*lab_hybrid_machine_name\s*=\s*"([^"]+)"$/m.exec(infraSource);
+    expect(hostRows, 'local.lab_hybrid_host_rows not found').not.toBeNull();
+    expect(machine, 'local.lab_hybrid_machine_name not found').not.toBeNull();
+    const loopbackOnly = variableDefault('lab_ssh_loopback_only');
+    const rendered = `${lines.map((line) => line.slice(indent)).join('\n')}\n`
+      .replace('${jsonencode(var.lab_ssh_admin_users)}', JSON.stringify(JSON.parse(variableDefault('lab_ssh_admin_users'))))
+      .replace(
+        '${jsonencode(var.lab_ssh_admin_key_fingerprints)}',
+        JSON.stringify(JSON.parse(variableDefault('lab_ssh_admin_key_fingerprints')))
+      )
+      .replace('${var.lab_ssh_loopback_only}', loopbackOnly)
+      .replace(
+        '${local.lab_hybrid_host_rows}',
+        hostRows[1].replaceAll('\\"', '"').replace(
+          '${lower(local.lab_hybrid_machine_name)}',
+          machine[1]
+            .replace('${var.environment}', JSON.parse(variableDefault('environment')))
+            .replace('${var.region_abbreviation}', JSON.parse(variableDefault('region_abbreviation')))
+            .toLowerCase()
+        )
+      );
+    expect(loopbackOnly).toBe('true');
+    expect(sshLoginAlertQuery(true)).toBe(rendered);
+  });
+
+  it('declares alert-lab-ssh-login’s loopback rule and description, and nothing else of the rule, if it declares them at all (#953 stage 3)', () => {
+    const address = 'azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected';
+    const entries = DECLARED.filter((entry) => entry.address === address);
+    if (entries.length === 0) return;
+    expect(entries.map((entry) => entry.path).sort()).toEqual(['criteria[0].query', 'description']);
+    const query = entries.find((entry) => entry.path === 'criteria[0].query');
+    expect(query.before).toBe(sshLoginAlertQuery(false));
+    expect(query.after).toBe(sshLoginAlertQuery(true));
+    const after = query.after.split('\n');
+    const changed = query.before.split('\n').filter((line, i) => line !== after[i]);
+    expect(changed).toEqual(['let LoopbackOnly = false;']);
+    const description = entries.find((entry) => entry.path === 'description');
+    expect(description.after).toBe(SSH_LOGIN_ALERT_DESCRIPTION);
+    expect(sshLoginRule()).toContain(`description         = "${SSH_LOGIN_ALERT_DESCRIPTION}"`);
+    expect(description.before).not.toBe(description.after);
   });
 });
 

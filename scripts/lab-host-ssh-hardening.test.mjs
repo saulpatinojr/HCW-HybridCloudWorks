@@ -345,3 +345,50 @@ describe('Connect-Lab.ps1', () => {
     expect(connectLab).toContain('Write-Host (Get-LabGroupVarsKeyLine -PublicKey $publicKey)');
   });
 });
+
+describe('port 22 closed to the internet behind the Arc gate (#953 stage 3)', () => {
+  const ufwTasks = read(`${role}/tasks/ufw.yml`);
+  const arcDefaults = read('lab-host/ansible/roles/arc/defaults/main.yml');
+  const ci = read('.github/workflows/ci.yml');
+  /** A top-level `key: value` scalar of a YAML file, quotes and comment dropped. */
+  const scalar = (text, key) => {
+    const match = new RegExp(`^${key}:\\s*"?([^"#\\n]*?)"?\\s*(?:#.*)?$`, 'm').exec(text);
+    expect(match, `${key} is not set`).not.toBeNull();
+    return match[1];
+  };
+
+  it('runs the ufw tasks from tasks/ufw.yml, which the shell test runs as they ship', () => {
+    expect(mainTasks).toMatch(/ansible\.builtin\.import_tasks: ufw\.yml/);
+    expect(mainTasks).not.toContain('community.general.ufw');
+  });
+
+  it('turns the gate on for the lab host, and reads the agent where the arc role installs it', () => {
+    expect(scalar(groupVars, 'hardening_ssh_arc_gate')).toBe('true');
+    expect(scalar(defaults, 'hardening_ssh_arc_gate')).toBe('false');
+    expect(scalar(defaults, 'hardening_arc_azcmagent_path')).toBe(scalar(arcDefaults, 'arc_azcmagent_path'));
+  });
+
+  it('closes only the lists it settled, so the gate decides 22 for every task after it', () => {
+    expect(ufwTasks).toContain('loop: "{{ hardening_ufw_allow_now }}"');
+    expect(ufwTasks).toContain('loop: "{{ hardening_ufw_close_now }}"');
+    expect(ufwTasks).not.toMatch(/loop: "\{\{ hardening_ufw_(allowed|closed)_tcp_ports \}\}"/);
+    // Only Connected with incoming connections on for 22 closes it. A
+    // Disconnected agent may be a reset one being onboarded again over 22, so
+    // 22 is left as it is; anything else keeps it open, so a rebuilt host stays
+    // reachable for onboarding (pre-review of #953 stage 3).
+    expect(ufwTasks).toContain("{{ 'close' if hardening_arc_status == 'Connected'");
+    expect(ufwTasks).toContain("and hardening_arc_incoming_enabled == 'true'");
+    expect(ufwTasks).toContain("and '22' in hardening_arc_incoming_ports");
+    expect(ufwTasks).toContain("else 'hold' if hardening_arc_status == 'Disconnected'");
+    expect(ufwTasks).toContain("if hardening_ufw_gate_22 in ['open', 'hold'] else hardening_ufw_closed_ports");
+    // The lists are compared as integers, so "22" cannot slip past the gate.
+    expect(ufwTasks).toContain("hardening_ufw_closed_tcp_ports | map('int') | list");
+  });
+
+  it('runs tests/ufw-closed-ports.test.sh in CI, as root, with ufw installed', () => {
+    const step = /- name: ufw closed-ports test\n([\s\S]*?)\n\n/.exec(ci);
+    expect(step, 'ci.yml has no "ufw closed-ports test" step').not.toBeNull();
+    expect(step[1]).toContain('apt-get install -y -qq ufw');
+    expect(step[1]).toMatch(/sudo env "PATH=\$PATH" "ANSIBLE_COLLECTIONS_PATH=\$HOME\/\.ansible\/collections" bash roles\/hardening\/tests\/ufw-closed-ports\.test\.sh/);
+  });
+});

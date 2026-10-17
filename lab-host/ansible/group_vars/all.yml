@@ -24,12 +24,23 @@ lab_host_ubuntu_releases:
 # (#1009; the heartbeat half of LAB-4, #950).
 lab_host_applied_commit_file: /etc/hcw/applied-commit.json
 
-# Hardening. SSH and the two web ports are the only inbound ports: vps-agent is
-# pull-based and node_exporter listens on loopback.
+# Hardening. The two web ports are the only inbound ports: vps-agent is
+# pull-based and node_exporter listens on loopback. SSH arrives through Azure
+# Arc SSH, whose relay hands each session to sshd on the host's loopback, so
+# port 22 is closed to the internet (#953 stage 3, owner decision 2026-10-16,
+# once Arc SSH and hPanel's Web Console were both seen working on
+# 2026-10-17). The role deletes ufw's allow for each closed port and fails the
+# run if ufw still admits one. 22 closes only while Arc SSH is ready (the
+# agent onboarded, incoming connections on for 22): a rebuilt host keeps it
+# open until Register-LabArc.ps1 -Connect has onboarded it. The way back,
+# from the Web Console, is in docs/runbooks/labs-host.md, "When Arc SSH is
+# down".
 hardening_ufw_allowed_tcp_ports:
-  - 22
   - 80
   - 443
+hardening_ufw_closed_tcp_ports:
+  - 22
+hardening_ssh_arc_gate: true
 hardening_admin_user: hcwadmin
 # The only keys that may log in as hcwadmin (#953, owner decision 2026-10-16).
 # The hardening role writes hcwadmin's authorized_keys from this list and

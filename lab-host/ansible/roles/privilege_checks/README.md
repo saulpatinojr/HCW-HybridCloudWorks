@@ -47,7 +47,9 @@ anything but the one script the role installs.
    naming each one, unless it is on `127.0.0.0/8`, `::1` or an IPv4-mapped
    loopback address, or is TCP on a port in `privilege_checks_public_tcp_ports`
    (22, 80 and 443: sshd and Caddy). No UDP port is public, now that Caddy
-   serves no HTTP/3. The host daemon's published ports are also read from
+   serves no HTTP/3. ufw has refused 22 from outside since #953 stage 3, but
+   socket-activated sshd still listens on every address, so 22 stays on the
+   list until sshd binds to the loopback alone (#1257). The host daemon's published ports are also read from
    the `nat` table's `DOCKER` chain, IPv4 and IPv6. Every `DNAT` rule must
    name a loopback destination, which holds even with Docker's userland
    proxy off, when a published port has no listener. `tests/listeners.test.sh`

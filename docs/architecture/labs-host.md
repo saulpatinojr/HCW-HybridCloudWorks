@@ -33,7 +33,7 @@ itself, never from a published page.
 | Runtime | Docker Engine only; no Kubernetes (owner decision 2026-09-24) | live |
 | Public names | `lab.hybridcloudworks.com`, `*.lab.hybridcloudworks.com` and `*.coder.lab.hybridcloudworks.com`, Cloudflare DNS records managed from `hcw-lab` (`infra-lab/dns.tf`: the `lab` A record and CNAMEs to it for `*.lab`, `coder.lab` and `*.coder.lab`, all DNS-only; `coder.lab` has its own record because `*.coder.lab` makes it an empty non-terminal that `*.lab` does not answer for). One Caddy certificate carries all three names, issued by DNS-01. The target is the `_acme-challenge.lab` and `_acme-challenge.coder.lab` delegations into a dedicated lab zone; until that zone exists (owner decision 2026-09-25: none yet) there are no delegation records and Caddy writes its challenges in the production zone, the interim ADR 0032 accepts | live; DNS, the edge and the CSP matched the repository on 2026-10-08 (#1009) |
 | Hybrid control plane | Azure Arc-enabled server in `rg-lab-hybrid-prod-cus`; heartbeat, auth syslog, service syslog at Warning and above, and four host counters to the Log Analytics workspace in `rg-mgmt-plat-prod-cus`; three alert rules there page the owner on heartbeat absence (30 min), root disk past 85%, and a watched unit failing (LAB-2, 2026-10-06) | live |
-| Owner access | SSH as `hcwadmin` with the one pinned key. Directly on port 22 until a later change closes it, and through **Azure Arc SSH** (#953; [ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of 2026-10-16): `scripts/lab/Connect-Lab.ps1 -Arc` writes a `ProxyCommand` that fetches fresh relay credentials on every connection; `infra/lab-hybrid.tf` declares the Arc machine's connectivity endpoint with one SSH service configuration, port 22; the `arc` role turns the agent's incoming connections on for port 22 alone, extension allowlist unchanged. Arc SSH is a transport in front of sshd's key check, not a login. Break-glass is hPanel's **Web Console**, which needs neither Arc nor port 22 ([runbook](../runbooks/labs-host.md), "Connect through Azure Arc") | direct SSH live; Arc SSH merged, not yet applied: the `hcw-azure` run, the playbook run and the owner's first Arc connection are pending |
+| Owner access | SSH as `hcwadmin` with the one pinned key, through **Azure Arc SSH** (#953; [ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of 2026-10-16): `scripts/lab/Connect-Lab.ps1 -Arc` writes a `ProxyCommand` that fetches fresh relay credentials on every connection; `infra/lab-hybrid.tf` declares the Arc machine's connectivity endpoint with one SSH service configuration, port 22; the `arc` role turns the agent's incoming connections on for port 22 alone, extension allowlist unchanged. Arc SSH is a transport in front of sshd's key check, not a login. Port 22 is closed to the internet at ufw while Arc SSH is ready (#953 stage 3), and `alert-lab-ssh-login` pages any login that did not come through Arc. Break-glass is hPanel's **Web Console**, a console login that needs neither sshd, Arc nor port 22 ([runbook](../runbooks/labs-host.md), "When Arc SSH is down") | Arc SSH live since 2026-10-17; port 22 closed by the first `bootstrap.sh` run after #953 stage 3 merges and its `hcw-azure` run applies |
 | Owner | Workload owner | — |
 
 ## Applied state
@@ -117,15 +117,17 @@ on ([runbook](../runbooks/labs-host.md), "The first-run host check").
 
 ## Exposure
 
-Inbound: **22, 80 and 443 only.** SSH lets in `hcwadmin` alone, by the
-owner's pinned key only (#953).
-80 exists to answer ACME challenges and redirect to 443. Since #953 the owner
-can also reach sshd through Azure Arc SSH, which opens no inbound port: the
-Arc agent holds an outbound relay connection, and the relay hands each
-session to sshd on the loopback, port 22 alone ([Summary](#summary), "Owner
-access"). Port 22 closes to the internet in a later change, once that path
-and hPanel's Web Console have both been used. Everything else is
-outbound:
+Inbound: **80 and 443 only.** 80 exists to answer ACME challenges and
+redirect to 443. SSH arrives through Azure Arc SSH, which opens no inbound
+port: the Arc agent holds an outbound relay connection, and the relay hands
+each session to sshd on the loopback, port 22 alone ([Summary](#summary),
+"Owner access"). sshd lets in `hcwadmin` alone, by the owner's pinned key
+only (#953). Port 22 has been closed to the internet at ufw since #953 stage
+3, once Arc SSH and hPanel's Web Console had both been used (2026-10-17).
+The hardening role closes it only while Arc SSH is ready, so a rebuilt host
+answers on 22 until it is onboarded to Arc again. sshd still listens on
+every address behind ufw until #1257 binds it to the loopback. Everything
+else is outbound:
 
 - `vps-agent` polls the Functions API over 443 with its own Entra certificate;
 - the Arc and Azure Monitor agents call Azure over 443, the Arc agent's

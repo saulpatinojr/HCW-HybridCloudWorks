@@ -19,6 +19,27 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: port 22 closed to the internet once Azure Arc SSH is ready
+  (#953 stage 3, LAB-7)**. The hardening role's ufw tasks (now
+  `tasks/ufw.yml`) delete the allow of each port in
+  `hardening_ufw_closed_tcp_ports`, 22 on the lab host. A run then reads
+  `ufw status` and fails if any ALLOW or LIMIT rule still names a closed
+  port: alone or in a list, on any interface or address, or as Ubuntu's
+  `OpenSSH` profile. `hardening_ssh_arc_gate` closes 22 only while the Arc
+  agent is Connected with incoming connections on for port 22. While the
+  agent is Disconnected (a drop, or a reset agent being onboarded again) it
+  leaves 22 as it is. Otherwise, as on a rebuilt host that
+  `Register-LabArc.ps1` onboards over 22, it keeps 22 open, and the run says
+  which. `tests/ufw-closed-ports.test.sh` runs the tasks against the real ufw
+  in a scratch network and mount namespace with a stub `azcmagent`, 34
+  checks, in CI's `ansible-lint (lab-host)` job. `alert-lab-ssh-login` now pages any
+  login that does not arrive through Arc (`lab_ssh_loopback_only` defaults
+  to true). The query change is declared for the plan check, and Arc SSH's
+  two applied creates are pruned from it. sshd still listens on every
+  address behind ufw, so 22 stays in `privilege_checks_public_tcp_ports`
+  until #1257 binds sshd to the loopback. The runbook adds "Closing port 22:
+  the first run" and "When Arc SSH is down", the Web Console reopen.
+
 - **Lab host: the play also fails if the host daemon publishes a port beyond
   the loopback (#958 follow-up)**. A socket read sees a published port only
   through Docker's userland proxy, a daemon setting. So

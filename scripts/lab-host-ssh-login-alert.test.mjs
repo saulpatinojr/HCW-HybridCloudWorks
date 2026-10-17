@@ -185,7 +185,19 @@ describe('the rule reads those variables, and is the event-shaped rule ADR 0022 
     expect(rule).toContain('let AdminUsers = dynamic(${jsonencode(var.lab_ssh_admin_users)});');
     expect(rule).toContain('let PinnedKeys = dynamic(${jsonencode(var.lab_ssh_admin_key_fingerprints)});');
     expect(rule).toContain('let LoopbackOnly = ${var.lab_ssh_loopback_only};');
-    expect(/variable "lab_ssh_loopback_only" \{[\s\S]*?type\s*=\s*bool[\s\S]*?default\s*=\s*false/.test(variables)).toBe(true);
+    expect(/variable "lab_ssh_loopback_only" \{[\s\S]*?type\s*=\s*bool[\s\S]*?default\s*=\s*true/.test(variables)).toBe(true);
+  });
+
+  it('pages a login that is not from the loopback for as long as ufw keeps port 22 closed (#953 stage 3)', () => {
+    // The two halves of stage 3 live in different trees: ufw closing 22 in
+    // lab-host/, and the rule paging any login not through Arc SSH in infra/.
+    // Either one alone is a regression: 22 reopened with the rule still
+    // loopback-only pages every direct login, and the rule relaxed with 22
+    // closed stops paging a login that came round Arc.
+    const ports = (key) => yamlList(groupVars, key).map(Number);
+    expect(ports('hardening_ufw_closed_tcp_ports')).toContain(22);
+    expect(ports('hardening_ufw_allowed_tcp_ports')).not.toContain(22);
+    expect(variableBlock('lab_ssh_loopback_only')).toMatch(/^\s*default\s*=\s*true$/m);
   });
 
   it('pages at severity 1, stateless and unmuted, every 15 minutes over rows ingested in the last 20', () => {

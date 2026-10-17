@@ -69,8 +69,24 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
    `authorized_keys` is written empty and both users' `authorized_keys2`
    are removed, so root's keys are never taken while the running sshd may
    still let root in. These tasks are `tasks/sshd.yml`.
-3. ufw: default deny inbound, allow outbound, allow TCP 22, 80, 443.
-   Docker's iptables rules for a published port come before ufw's, so ufw
+3. ufw (`tasks/ufw.yml`): default deny inbound, allow outbound, allow
+   `hardening_ufw_allowed_tcp_ports` (on the lab host TCP 80 and 443), and
+   delete the allow of each port in `hardening_ufw_closed_tcp_ports` (on
+   the lab host 22, #953 stage 3), for IPv4 and IPv6. The run then reads
+   `ufw status` and fails if any ALLOW or LIMIT rule still names a closed
+   port (alone or in a port list, on any interface or destination address,
+   either family), or Ubuntu's `OpenSSH` profile for 22. The delete matches
+   only the plain `<port>/tcp` pair. A port range and an allow of
+   everything from one source are not read. The lists are compared as
+   integers. With `hardening_ssh_arc_gate` on, as on the lab host, 22
+   closes only while Azure Arc SSH is ready to replace it: the Arc agent
+   Connected with incoming connections on for port 22. While the agent
+   reads Disconnected, which a network drop and an agent reset with
+   `azcmagent disconnect` both do, 22 is left as ufw has it, and the run
+   says so in a line beginning `Port 22 is left as ufw has it on this run`.
+   Otherwise (no agent on a rebuilt host before `Register-LabArc.ps1
+   -Connect`, Expired, unreadable, or Arc SSH off) 22 stays allowed, in a
+   line beginning `Port 22 stays open to the internet on this run`. Docker's iptables rules for a published port come before ufw's, so ufw
    cannot close a port Docker publishes. That is why every publish on this
    host names the loopback: Coder's `127.0.0.1:7080` in its Compose file and
    Portainer's `127.0.0.1:9443`, which the `portainer` role refuses to move.
@@ -97,7 +113,10 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_admin_authorized_keys` | `[]` (group_vars pins the owner's workstation key) | The only keys that may log in as `hcwadmin`; empty stops the run |
 | `hardening_admin_keys_replace_all` | `false` | Lets one run (`-e`) through the lockout guard |
 | `hardening_sshd_allow_users` | `[hardening_admin_user]` | sshd's `AllowUsers`; must hold the administrative user and not root |
-| `hardening_ufw_allowed_tcp_ports` | `[22, 80, 443]` | Inbound TCP allowlist |
+| `hardening_ufw_allowed_tcp_ports` | `[22, 80, 443]` | Inbound TCP allowlist (the lab host's `group_vars`: `[80, 443]`) |
+| `hardening_ufw_closed_tcp_ports` | `[]` | Inbound TCP ports whose ufw allow is deleted; the run fails if ufw still admits one (the lab host's `group_vars`: `[22]`, #953) |
+| `hardening_ssh_arc_gate` | `false` | Close 22 only while the Arc agent is Connected with incoming connections on for 22; leave it as it is while Disconnected; keep it allowed otherwise (the lab host's `group_vars`: `true`) |
+| `hardening_arc_azcmagent_path` | `/opt/azcmagent/bin/azcmagent` | The Arc agent's CLI, read for that gate; the `arc` role's `arc_azcmagent_path` |
 | `hardening_ufw_logging` | `low` | ufw logging level |
 | `hardening_unattended_reboot_time` | `04:30` | The hour (HH:MM, host time) `hcw-reboot-when-idle.timer` asks whether the host may reboot |
 | `hardening_unattended_allowed_origins` | Ubuntu's four (`release`, `-security`, ESM apps, ESM infra) | The origins unattended-upgrades may move packages from; rendered into the override, the whole list |
@@ -397,15 +416,20 @@ carry it:
   key is the only one.
 - **`AllowUsers hcwadmin`** with `AuthenticationMethods publickey`: no other
   account, and no password, logs in over SSH.
-- **Azure Arc SSH** (coming, #953): SSH through the Arc agent, after which
-  port 22 closes to the internet.
-- **The login alert** (coming, #953): an alert on every accepted SSH login,
-  keyed on the INFO line `Accepted publickey for …`, which names the key's
-  fingerprint at any log level. It ignores VERBOSE's `Accepted key` and
-  `Accepted certificate` lines, so each login counts once.
+- **Azure Arc SSH** (#953): SSH through the Arc agent's relay, which hands
+  each session to sshd on the loopback. Port 22 is closed to the internet
+  at ufw since #953 stage 3, so a session needs the pinned key and an Azure
+  sign-in with access to the Arc machine. sshd itself still listens on
+  every address until #1257 binds it to the loopback.
+- **The login alert** (`alert-lab-ssh-login`, #953): pages on every
+  accepted SSH login that is not `hcwadmin` by public key with the pinned
+  key, or that did not arrive from the loopback. It is keyed on the INFO
+  line `Accepted publickey for …`, which names the key's fingerprint at any
+  log level. It ignores VERBOSE's `Accepted key` and `Accepted certificate`
+  lines, so each login counts once.
 
-Revisit if a second person gets a key, or if either of the coming controls
-is dropped.
+Revisit if a second person gets a key, or if either of those controls is
+dropped.
 
 ## Rolling back
 
@@ -460,6 +484,22 @@ backup removed, root's keys untouched, and the forced reload clears the
 marker; check mode with a marker left reports it and changes nothing. As
 root, because the tasks make root the owner of what they write; CI runs it
 with `sudo` in the `ansible-lint (lab-host)` job.
+`tests/ufw-closed-ports.test.sh` runs `tasks/ufw.yml` with the lab host's
+`group_vars` against the real ufw, in a network and mount namespace of its
+own so the machine's firewall is untouched, with a stub `azcmagent`.
+Seeded as the host was before #953 stage 3 (22, 80 and 443 open) with Arc
+SSH ready, a run deletes 22's pair and keeps the rest, and a second run
+and check mode change nothing. Check mode reports a re-added allow as
+drift. A bare `22`, `limit 22/tcp`, an interface rule, a port list, a
+destination address and the `OpenSSH` profile each fail the run at the
+read-back; 2222 and 220 do not. A Disconnected agent leaves 22 as it is:
+closed stays closed, and one reopened for re-onboarding stays open. 22 is
+allowed, with the line saying why, for a missing, Expired or unreadable
+agent or one without incoming port 22, and the next run with Arc ready
+closes it. A port written as a string goes through the gate the same way. A
+port in both lists stops the run before any rule changes. As root, for the
+namespaces; CI runs it with `sudo` in the `ansible-lint (lab-host)` job,
+after installing ufw.
 `scripts/lab-host-ssh-hardening.test.mjs` (vitest) holds the drop-in's
 directives, the pinned key and its fingerprint, the order of the checks
 before the reload, the pending-reload marker, and root's empty file.

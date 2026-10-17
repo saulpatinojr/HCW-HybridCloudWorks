@@ -254,6 +254,35 @@ export function overdueQuery(rows, { lastDue = OVERDUE_LAST_DUE } = {}) {
 }
 
 /**
+ * alert-lab-ssh-login's query (infra/lab-hybrid.tf) as Terraform renders it,
+ * with var.lab_ssh_loopback_only at `loopbackOnly`. The `false` rendering is
+ * the deployed query, read from Azure on 2026-10-17.
+ *
+ * @param {boolean} loopbackOnly
+ * @returns {string}
+ */
+export function sshLoginAlertQuery(loopbackOnly) {
+  return [
+    'let AdminUsers = dynamic(["hcwadmin"]);',
+    'let PinnedKeys = dynamic(["SHA256:VTyaLLQLfYwi38RP1mHDD6Vtu0eSQsa4EPsNJTrdgG8"]);',
+    `let LoopbackOnly = ${loopbackOnly};`,
+    "Syslog",
+    '| where tolower(_ResourceId) endswith "/providers/microsoft.hybridcompute/machines/arcs-lab-hybrid-prod-cus-01"',
+    "| where ingestion_time() > ago(20m)",
+    '| where Facility in ("auth", "authpriv") and ProcessName startswith "sshd"',
+    '| where SyslogMessage startswith "Accepted "',
+    '| where not(SyslogMessage startswith "Accepted key " or SyslogMessage startswith "Accepted certificate ")',
+    '| parse SyslogMessage with "Accepted " Method:string " for " User:string " from " Source:string " port " Port:int " " Proto:string ": " KeyType:string " " Fingerprint:string',
+    '| where Method != "publickey" or User !in (AdminUsers) or Fingerprint !in (PinnedKeys) or (LoopbackOnly and Source !in ("127.0.0.1", "::1"))',
+    "",
+  ].join("\n");
+}
+
+/** alert-lab-ssh-login's description in infra/lab-hybrid.tf (#953 stage 3). */
+export const SSH_LOGIN_ALERT_DESCRIPTION =
+  "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (and, while lab_ssh_loopback_only is set, through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953.";
+
+/**
  * Intended one-off changes, each declared by the pull request that makes it
  * (#719).
  *
@@ -349,21 +378,33 @@ export const DECLARED = [
   // the rule OK, and its fire test opened an alert at 00:01:44Z on
   // 2026-10-17.
   //
-  // #953 (LAB-7): Arc SSH, the lab host's default connectivity endpoint and
-  // its SSH service configuration on port 22 (infra/lab-hybrid.tf). Created
-  // by the owner's next apply; delete both entries once that run has applied
-  // and `ssh hcw-lab hostname` has answered through Arc.
+  // #953 (LAB-7)'s Arc SSH creates, the lab host's default connectivity
+  // endpoint and its SSH service configuration, applied in
+  // run-b3Wd3pqtJxikRWzu on 2026-10-17 and were deleted here. The service
+  // configuration read Succeeded on port 22, created at 02:25Z, and
+  // `ssh hcw-lab hostname` answered through Arc from the owner's desktop.
+  //
+  // #953 (LAB-7) stage 3: port 22 closed to the internet, so
+  // alert-lab-ssh-login also pages a login that does not arrive from the
+  // loopback, where Arc SSH reaches sshd (var.lab_ssh_loopback_only false ->
+  // true). Delete both entries once that run has applied.
   {
-    address: "azapi_resource.lab_hybrid_arc_connectivity_endpoint[0]",
-    action: "create",
+    address:
+      "azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected",
+    path: "criteria[0].query",
+    before: sshLoginAlertQuery(false),
+    after: sshLoginAlertQuery(true),
     reason:
-      "#953 LAB-7: the Arc machine's default connectivity endpoint, for Arc SSH",
+      "#953 stage 3: port 22 closed; a login not through Arc SSH pages",
   },
   {
-    address: "azapi_resource.lab_hybrid_arc_ssh_service_configuration[0]",
-    action: "create",
-    reason:
-      "#953 LAB-7: the endpoint's SSH service configuration, port 22 only",
+    address:
+      "azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected",
+    path: "description",
+    before:
+      "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (or, once lab_ssh_loopback_only is set, not through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953.",
+    after: SSH_LOGIN_ALERT_DESCRIPTION,
+    reason: "#953 stage 3: the description says the loopback rule is in force",
   },
 ];
 

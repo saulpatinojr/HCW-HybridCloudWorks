@@ -20,8 +20,11 @@
     loads it, and the only key file this script opens is the .pub beside it.
 
     With -Arc the block reaches the host through Azure Arc SSH instead of
-    port 22 (#953): see -Arc. Without it the block connects directly, which
-    stays the fallback until port 22 closes.
+    port 22 (#953): see -Arc. Port 22 is closed to the internet once Arc SSH
+    is ready (#953 stage 3), so -Arc is the way in. Without it the block
+    connects directly, which works only on a host Arc has not onboarded yet,
+    or once 22 is reopened from hPanel's Web Console (docs/runbooks/labs-host.md,
+    "When Arc SSH is down").
 
     The procedure around it, including the hPanel step for a first key, is
     docs/runbooks/labs-host.md, "Connect from a desktop".

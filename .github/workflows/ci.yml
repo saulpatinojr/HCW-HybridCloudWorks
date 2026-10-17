@@ -559,6 +559,27 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: sudo env "PATH=$PATH" bash roles/hardening/tests/sshd-apply.test.sh
 
+      # Port 22 closed to the internet (#953 stage 3): the hardening role's
+      # ufw tasks run with the lab host's group_vars against the real ufw,
+      # in a scratch network and mount namespace so the runner's own
+      # firewall is untouched. Seeded as the host was (22, 80 and 443 open),
+      # a run deletes 22's pair and keeps the rest, a second run and check
+      # mode change nothing, check mode reports a re-added allow as drift,
+      # a rule the delete cannot match (bare 22, limit, an interface, a
+      # port list, an address, the OpenSSH profile) fails the run at the
+      # read-back, the Arc gate closes 22 only for a Connected agent, leaves
+      # it as it is for a Disconnected one and opens it otherwise, and a
+      # port in both lists stops the run before any rule changes. As root,
+      # for the namespaces; env keeps this
+      # job's Python on PATH past sudo, and points ansible-playbook at the
+      # collections installed above, which are in the runner's home.
+      - name: ufw closed-ports test
+        if: steps.changes.outputs.relevant == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq ufw >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ufw >/dev/null; }
+          sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash roles/hardening/tests/ufw-closed-ports.test.sh
+
       # The nightly idle reboot (LAB-13, #959), rendered with the role's
       # defaults and run against stub apt-config, loginctl, docker, sleep,
       # systemctl and logger: a stand-down while unattended-upgrades' own
