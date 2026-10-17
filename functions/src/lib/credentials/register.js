@@ -134,6 +134,9 @@ const KEY_VAULT_METADATA = Object.freeze({
   "GEMINI-API-KEY": {
     issuer: "Google AI Studio",
     consumer: "AI router; Listen & Learn narration",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target gemini. Manual: mint in Google AI Studio or GCP API Keys, paste on Integrations → Keys, then revoke the old one.",
   },
   "ANTHROPIC-API-KEY": {
     issuer: "Anthropic Console",
@@ -198,6 +201,9 @@ const KEY_VAULT_METADATA = Object.freeze({
   "YOUTUBE-API-KEY": {
     issuer: "Google Cloud",
     consumer: "Listen & Learn “watch next” links",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target youtube. Manual: mint in Google Cloud Console Credentials, paste on Integrations → Keys, then revoke the old one.",
   },
   "PLAUD-EMBEDDED-CLIENT-ID": {
     issuer: "Plaud Embedded",
@@ -213,14 +219,23 @@ const KEY_VAULT_METADATA = Object.freeze({
   "AWS-ACCESS-KEY-ID": {
     issuer: "AWS IAM",
     consumer: "Cloud price comparison (AWS)",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target aws. Manual: create in AWS IAM console, paste on Integrations → Keys, then delete the old one.",
   },
   "AWS-SECRET-ACCESS-KEY": {
     issuer: "AWS IAM",
     consumer: "Cloud price comparison (AWS)",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target aws. Manual: create in AWS IAM console, paste on Integrations → Keys, then delete the old one.",
   },
   "GCP-BILLING-API-KEY": {
     issuer: "Google Cloud",
     consumer: "Cloud price comparison (Google)",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target billing. Manual: mint in Google Cloud Console Credentials, paste on Integrations → Keys, then revoke the old one.",
   },
   "QLTY-API-TOKEN": {
     issuer: "Qlty",
