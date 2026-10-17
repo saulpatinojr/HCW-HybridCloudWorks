@@ -126,8 +126,11 @@
           - "'permittunnel no' in hardening_sshd_effective.results[0].stdout_lines"
           - "'x11forwarding no' in hardening_sshd_effective.results[0].stdout_lines"
           - "'authorizedkeysfile .ssh/authorized_keys' in hardening_sshd_effective.results[0].stdout_lines"
-          - "'listenaddress 127.0.0.1:22' in hardening_sshd_effective.results[0].stdout_lines"
-          - "'listenaddress [::1]:22' in hardening_sshd_effective.results[0].stdout_lines"
+          - >-
+            hardening_sshd_effective.results[0].stdout_lines
+            | select('match', '^listenaddress ')
+            | list | sort
+            == ['listenaddress 127.0.0.1:22', 'listenaddress [::1]:22']
           - "'permitrootlogin no' in hardening_sshd_effective.results[1].stdout_lines"
           - "'allowusers root' not in hardening_sshd_effective.results[1].stdout_lines"
         fail_msg: >-

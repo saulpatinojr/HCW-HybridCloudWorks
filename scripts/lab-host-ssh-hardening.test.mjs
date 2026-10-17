@@ -303,11 +303,10 @@ describe('the drop-in reaches sshd only after it is proven', () => {
       'logingracetime 30',
       'persourcepenaltyexemptlist 127.0.0.1,::1',
       'passwordauthentication no',
-      'listenaddress 127.0.0.1:22',
-      'listenaddress [::1]:22',
     ]) {
       expect(block).toContain(`'${line}' in hardening_sshd_effective.results[0].stdout_lines`);
     }
+    expect(block).toContain("== ['listenaddress 127.0.0.1:22', 'listenaddress [::1]:22']");
     expect(block).toContain("'permitrootlogin no' in hardening_sshd_effective.results[1].stdout_lines");
     expect(block).toContain("'allowusers root' not in hardening_sshd_effective.results[1].stdout_lines");
   });
