@@ -28,6 +28,17 @@ hardening_ufw_allowed_tcp_ports:
   - 22
   - 80
   - 443
+# Inbound TCP ports to close: their ufw allow is deleted, and the run fails if
+# ufw still admits one. Listing a port only in neither list would leave an
+# allow an earlier run added, so a port is closed by naming it here.
+hardening_ufw_closed_tcp_ports: []
+# Close 22 (when the list above names it) only while Azure Arc SSH is ready to
+# replace it: the agent Connected, with incoming connections on for port 22.
+# A Disconnected agent leaves 22 as it is; otherwise 22 stays allowed. The run
+# says which (tasks/ufw.yml).
+hardening_ssh_arc_gate: false
+# The Arc agent's CLI, read for that gate; the arc role's arc_azcmagent_path.
+hardening_arc_azcmagent_path: /opt/azcmagent/bin/azcmagent
 hardening_ufw_logging: "low"
 
 # The hour, host local time (HH:MM), at which hcw-reboot-when-idle.timer asks

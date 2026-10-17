@@ -32,28 +32,10 @@
 - name: Harden sshd and keep root's keys empty
   ansible.builtin.import_tasks: sshd.yml
 
-- name: Default to denying inbound traffic
-  community.general.ufw:
-    direction: incoming
-    policy: deny
-
-- name: Default to allowing outbound traffic
-  community.general.ufw:
-    direction: outgoing
-    policy: allow
-
-- name: Allow the inbound TCP ports the host serves
-  community.general.ufw:
-    rule: allow
-    direction: in
-    proto: tcp
-    port: "{{ item }}"
-  loop: "{{ hardening_ufw_allowed_tcp_ports }}"
-
-- name: Enable ufw
-  community.general.ufw:
-    state: enabled
-    logging: "{{ hardening_ufw_logging }}"
+# Inbound denied but for the served ports; each closed port's allow deleted
+# and read back from ufw (#953 stage 3).
+- name: Firewall inbound traffic with ufw
+  ansible.builtin.import_tasks: ufw.yml
 
 - name: Turn on periodic unattended upgrades
   ansible.builtin.copy:

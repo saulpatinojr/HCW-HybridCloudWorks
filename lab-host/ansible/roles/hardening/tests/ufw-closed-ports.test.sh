@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+# Runs ../tasks/ufw.yml (#953 stage 3) with ansible-core and community.general
+# against the real ufw, with the lab host's group_vars, in a network and mount
+# namespace of its own: ufw's iptables rules land in a scratch network
+# namespace and its configuration in a scratch copy bound over /etc/ufw and
+# /etc/default/ufw, so the machine running it keeps its own. The Arc agent's
+# CLI is a stub that answers from scratch files. It checks:
+#
+# - seeded as the lab host was before stage 3 (22, 80 and 443 allowed, each
+#   for IPv4 and IPv6) with Azure Arc SSH ready, a run deletes 22's pair and
+#   keeps 80's and 443's; a second run, and a check-mode run, change nothing;
+# - check mode reports a closed port's allow as a change, which is how the
+#   nightly drift check sees one come back, and fails nothing;
+# - a rule the delete does not match fails the run at the read-back, naming
+#   it: a bare `ufw allow 22` (TCP and UDP), `limit`, an interface rule, a
+#   port list and a destination address, and Ubuntu's OpenSSH application
+#   profile; 2222 and 220 do not;
+# - the Arc gate: while the agent is Disconnected, 22 is left as ufw has it,
+#   closed through a network drop and reopened through a reset agent's
+#   re-onboarding; it is allowed, with a line saying why, while the agent is
+#   missing (a rebuilt host before onboarding), Expired, unreadable, or has
+#   no incoming connections for 22; the first run with Arc SSH ready closes
+#   it; a port written as a string goes through the gate the same way;
+# - a port in both lists stops the run before any rule changes.
+#
+# As root, for the namespaces and iptables. CI runs it in the
+# `ansible-lint (lab-host)` job with sudo, after installing ufw; no Docker.
+set -euo pipefail
+
+if [ -z "${HCW_UFW_TEST_NS:-}" ]; then
+  [ "$(id -u)" -eq 0 ] || { echo "run as root: the test makes namespaces and writes iptables (sudo env \"PATH=\$PATH\" bash $0)" >&2; exit 1; }
+  export HCW_UFW_TEST_NS=1
+  exec unshare --net --mount --propagation private bash "${BASH_SOURCE[0]}" "$@"
+fi
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+role="$(cd "${here}/.." && pwd)"
+group_vars="$(cd "${role}/../.." && pwd)/group_vars/all.yml"
+PATH="${PATH}:/usr/sbin:/sbin"
+
+passed=0
+failed=0
+# ok NAME: count and print a passing check, TAP style.
+ok() { passed=$((passed + 1)); echo "ok ${passed} - $1"; }
+# not_ok NAME [DETAIL]: count and print a failing check, with its detail indented.
+not_ok() { failed=$((failed + 1)); echo "not ok - $1" >&2; [ -z "${2:-}" ] || printf '    %s\n' "$2" >&2; }
+# check NAME COMMAND [DETAIL]: run COMMAND through eval and report it as ok or not ok.
+check() { if eval "$2"; then ok "$1"; else not_ok "$1" "${3:-}"; fi; }
+
+command -v ansible-playbook > /dev/null || { echo "ansible-playbook is not on PATH" >&2; exit 1; }
+command -v ufw > /dev/null || { echo "ufw is not installed (apt-get install ufw)" >&2; exit 1; }
+[ -r /usr/share/ufw/user.rules ] || { echo "ufw's pristine rules are not in /usr/share/ufw" >&2; exit 1; }
+
+work="$(mktemp -d)"
+# finish: remove the scratch directory, on every way out. The bind mounts
+# and the network namespace go with this process.
+finish() { umount /etc/default/ufw /etc/ufw 2> /dev/null || true; rm -rf "${work}"; }
+trap finish EXIT
+
+# A fresh ufw: the installed configuration with the package's own rule files,
+# disabled, IPv6 on as on the lab host.
+cp -a /etc/ufw "${work}/etc-ufw"
+for f in before after user before6 after6 user6; do cp "/usr/share/ufw/${f}.rules" "${work}/etc-ufw/${f}.rules"; done
+printf 'ENABLED=no\nLOGLEVEL=low\n' > "${work}/etc-ufw/ufw.conf"
+cp /etc/default/ufw "${work}/default-ufw"
+sed -i 's/^IPV6=.*/IPV6=yes/' "${work}/default-ufw"
+mount --bind "${work}/etc-ufw" /etc/ufw
+mount --bind "${work}/default-ufw" /etc/default/ufw
+ip link set lo up
+
+# The Arc agent's CLI: `show --json` and the two `config get` reads, each
+# answered from a file arc_state writes.
+mkdir -p "${work}/bin" "${work}/arc"
+cat > "${work}/bin/azcmagent" <<EOF
+#!/bin/sh
+case "\$1 \$2 \$3" in
+  "show --json "*) cat "${work}/arc/show" ;;
+  "config get incomingconnections.enabled") cat "${work}/arc/enabled" ;;
+  "config get incomingconnections.ports") cat "${work}/arc/ports" ;;
+  *) echo "stub azcmagent: unexpected arguments: \$*" >&2; exit 2 ;;
+esac
+EOF
+chmod 0755 "${work}/bin/azcmagent"
+agent="${work}/bin/azcmagent"
+# arc_state SHOW ENABLED PORTS: what the stub prints for each read.
+arc_state() { printf '%s\n' "$1" > "${work}/arc/show"; printf '%s\n' "$2" > "${work}/arc/enabled"; printf '%s\n' "$3" > "${work}/arc/ports"; agent="${work}/bin/azcmagent"; }
+# arc_ready: onboarded and Connected, incoming connections on for 22, as agent 1.68 prints it.
+arc_ready() { arc_state '{"status":"Connected","resourceName":"arcs-lab-hybrid-prod-cus-01"}' 'true' '[22]'; }
+# arc_missing: no agent at the path, as on a rebuilt host before onboarding.
+arc_missing() { agent="${work}/bin/no-azcmagent"; }
+
+cat > "${work}/play.yml" <<EOF
+- name: Run the hardening role's ufw tasks against a scratch ufw
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ${role}/defaults/main.yml
+    - ${group_vars}
+  tasks:
+    - name: The ufw tasks
+      ansible.builtin.import_tasks: ${role}/tasks/ufw.yml
+EOF
+
+cat > "${work}/ansible.cfg" <<'EOF'
+[defaults]
+stdout_callback = ansible.builtin.default
+interpreter_python = auto_silent
+retry_files_enabled = False
+EOF
+export ANSIBLE_CONFIG="${work}/ansible.cfg"
+
+# run NAME [EXTRA_ARGS...]: run the play against the current agent stub;
+# output to ${work}/NAME.out, exit code to ${work}/NAME.rc.
+run() {
+  local name="$1"
+  shift
+  set +e
+  ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
+    ansible-playbook -i localhost, "${work}/play.yml" -e "hardening_arc_azcmagent_path=${agent}" "$@" > "${work}/${name}.out" 2>&1
+  echo $? > "${work}/${name}.rc"
+  set -e
+}
+# rc NAME: the exit code of run NAME.
+rc() { cat "${work}/$1.rc"; }
+# out NAME: everything run NAME printed.
+out() { cat "${work}/$1.out"; }
+# says NAME TEXT: true when run NAME printed TEXT.
+says() { grep -qF -- "$2" "${work}/$1.out"; }
+# recap NAME FIELD: a number from run NAME's PLAY RECAP line, such as changed.
+recap() { sed -n "s/.*[[:space:]]$2=\([0-9]*\).*/\1/p" "${work}/$1.out" | tail -n 1; }
+# admits PORT: the active rules hold an ALLOW for PORT, alone or /tcp, either family.
+admits() { ufw status | grep -qE "^$1(/tcp)?( \(v6\))? +ALLOW"; }
+# rules: ufw's listing, for a failure's detail.
+rules() { ufw status 2>&1; }
+# list KEY: the items of a block list in group_vars, one per line.
+list() { sed -n "/^$1:/,/^[^ ]/p" "${group_vars}" | sed -n 's/^  - //p'; }
+waits='Port 22 stays open to the internet on this run'
+
+# The lab host's lists are what is run: 22 closed behind the Arc gate, 80 and 443 served.
+check "group_vars closes 22 behind the Arc gate and serves 80 and 443, and nothing else" \
+  "[ \"\$(list hardening_ufw_closed_tcp_ports | tr '\n' ' ')\" = '22 ' ] && [ \"\$(list hardening_ufw_allowed_tcp_ports | tr '\n' ' ')\" = '80 443 ' ] && grep -qx 'hardening_ssh_arc_gate: true' '${group_vars}'" \
+  "closed: $(list hardening_ufw_closed_tcp_ports | tr '\n' ' ')allowed: $(list hardening_ufw_allowed_tcp_ports | tr '\n' ' ')"
+
+# 1. Seeded as the lab host was before stage 3, Arc SSH ready.
+ufw default deny incoming > /dev/null
+for port in 22 80 443; do ufw allow "${port}/tcp" > /dev/null; done
+ufw --force enable > /dev/null
+check "the seed admits 22, 80 and 443" "admits 22 && admits 80 && admits 443" "$(rules)"
+
+arc_ready
+run close
+check "with Arc SSH ready, a run closes 22" \
+  "[ \"\$(rc close)\" -eq 0 ] && [ \"\$(recap close changed)\" -ge 1 ] && ! says close '${waits}'" "$(out close)"
+check "and ufw no longer admits 22, for either family" "! admits 22 && ! ufw status | grep -qE '^22'" "$(rules)"
+check "and still admits 80 and 443, for both families" \
+  "[ \"\$(ufw status | grep -cE '^(80|443)/tcp( \(v6\))? +ALLOW')\" -eq 4 ]" "$(rules)"
+check "and ufw is active" "ufw status | grep -qx 'Status: active'" "$(rules)"
+
+# 2. Converged.
+run again
+check "a second run changes nothing" "[ \"\$(rc again)\" -eq 0 ] && [ \"\$(recap again changed)\" -eq 0 ]" "$(out again)"
+run checked --check
+check "a check-mode run changes nothing and fails nothing" \
+  "[ \"\$(rc checked)\" -eq 0 ] && [ \"\$(recap checked changed)\" -eq 0 ]" "$(out checked)"
+
+# 3. 22 allowed again the way the role used to allow it: check mode reports
+#    the drift without failing, and a run takes it back out.
+ufw allow 22/tcp > /dev/null
+run drift --check
+check "check mode reports a closed port's allow as a change, without failing" \
+  "[ \"\$(rc drift)\" -eq 0 ] && [ \"\$(recap drift changed)\" -ge 1 ]" "$(out drift)"
+check "and leaves the rule for the real run" "admits 22" "$(rules)"
+run reclose
+check "the next run closes it again" "[ \"\$(rc reclose)\" -eq 0 ] && ! admits 22" "$(out reclose)"
+
+# 4. An allow the delete cannot match fails the run at the read-back.
+ufw allow 22 > /dev/null
+run bare
+check "a bare 'ufw allow 22' fails the run" \
+  "[ \"\$(rc bare)\" -ne 0 ] && says bare 'ufw still admits a closed port' && says bare '22 ALLOW Anywhere'" "$(out bare)"
+ufw delete allow 22 > /dev/null
+# each_admits NAME RULE...: add the ufw rule (ufw's own arguments), run, expect
+# the run to fail at the read-back, then delete the rule again.
+each_admits() {
+  local name="$1"
+  shift
+  ufw "$@" > /dev/null
+  run "${name}"
+  check "so does 'ufw $*'" "[ \"\$(rc ${name})\" -ne 0 ] && says ${name} 'ufw still admits a closed port'" "$(out "${name}"; rules)"
+  ufw delete "$@" > /dev/null
+}
+each_admits limit limit 22/tcp
+each_admits iface allow in on eth9 to any port 22 proto tcp
+each_admits multiport allow proto tcp from any to any port 22,2222
+each_admits address allow proto tcp from any to 192.0.2.1 port 22
+ufw allow 2222/tcp > /dev/null
+ufw allow 220/tcp > /dev/null
+run neighbours
+check "but 2222 and 220 are not 22" "[ \"\$(rc neighbours)\" -eq 0 ]" "$(out neighbours)"
+ufw delete allow 2222/tcp > /dev/null
+ufw delete allow 220/tcp > /dev/null
+if [ -r /etc/ufw/applications.d/openssh-server ]; then
+  ufw allow OpenSSH > /dev/null
+  run profile
+  check "so does Ubuntu's OpenSSH application profile" \
+    "[ \"\$(rc profile)\" -ne 0 ] && says profile 'OpenSSH ALLOW Anywhere'" "$(out profile)"
+  ufw delete allow OpenSSH > /dev/null
+else
+  # The profile ships with openssh-server; the CI runner has it.
+  echo "skip - the OpenSSH application profile is not installed here"
+fi
+check "with those removed, ufw admits 22 nowhere" "! ufw status | grep -qE '^(22|OpenSSH)'" "$(rules)"
+
+# 5. The Arc gate.
+held='Port 22 is left as ufw has it on this run'
+arc_state '{"status":"Disconnected","resourceName":"arcs-lab-hybrid-prod-cus-01"}' 'incomingconnections.enabled : true' 'incomingconnections.ports : [22]'
+run blip
+check "a Disconnected agent (a network drop) leaves a closed 22 closed" \
+  "[ \"\$(rc blip)\" -eq 0 ] && [ \"\$(recap blip changed)\" -eq 0 ] && ! admits 22 && says blip '${held}'" "$(out blip)"
+# An agent reset with `azcmagent disconnect --force-local-only` (the way back
+# from Expired) also reads Disconnected, its local settings kept; the owner
+# has reopened 22 from the Web Console for Register-LabArc.ps1 -Connect.
+arc_state '{"status":"Disconnected"}' 'true' '[22]'
+ufw allow 22/tcp > /dev/null
+run reset
+check "and leaves a 22 reopened from the Web Console open, without failing, while the agent is reset" \
+  "[ \"\$(rc reset)\" -eq 0 ] && [ \"\$(recap reset changed)\" -eq 0 ] && admits 22 && says reset '${held}'" "$(out reset)"
+arc_ready
+run reconnected
+check "and the first run with the agent Connected again closes it" \
+  "[ \"\$(rc reconnected)\" -eq 0 ] && ! admits 22 && ! says reconnected '${held}'" "$(out reconnected)"
+
+arc_missing
+run waiting --check
+check "check mode with no agent reports opening 22 as a change, and opens nothing" \
+  "[ \"\$(rc waiting)\" -eq 0 ] && [ \"\$(recap waiting changed)\" -ge 1 ] && says waiting '${waits}' && ! admits 22" "$(out waiting)"
+run rebuilt
+check "with no agent (a rebuilt host before onboarding), a run allows 22 and says why" \
+  "[ \"\$(rc rebuilt)\" -eq 0 ] && admits 22 && says rebuilt '${waits}' && says rebuilt 'agent NotInstalled'" "$(out rebuilt)"
+check "for both families, beside 80 and 443" \
+  "[ \"\$(ufw status | grep -cE '^(22|80|443)/tcp( \(v6\))? +ALLOW')\" -eq 6 ]" "$(rules)"
+
+arc_state '{"status":"Expired","resourceName":"arcs-lab-hybrid-prod-cus-01"}' 'true' '[22]'
+run expired
+check "an Expired agent keeps 22 open" "[ \"\$(rc expired)\" -eq 0 ] && admits 22 && says expired 'agent Expired'" "$(out expired)"
+
+arc_state '{"status":"Connected"}' 'true' '[]'
+run noports
+check "a Connected agent with no incoming port 22 keeps it open" \
+  "[ \"\$(rc noports)\" -eq 0 ] && admits 22 && says noports 'on ports []'" "$(out noports)"
+
+arc_state 'azcmagent: something went wrong' 'true' '[22]'
+run garbled
+check "an agent whose show is not JSON keeps 22 open" "[ \"\$(rc garbled)\" -eq 0 ] && admits 22 && says garbled 'agent Unreadable'" "$(out garbled)"
+
+arc_state '{"status":}' 'true' '[22]'
+run malformed
+check "so does one whose show looks like JSON and is not (CodeRabbit on #1258)" \
+  "[ \"\$(rc malformed)\" -eq 0 ] && [ \"\$(recap malformed failed)\" -eq 0 ] && admits 22 && says malformed 'agent Unreadable'" "$(out malformed)"
+
+arc_state '[1, 2]' 'true' '[22]'
+run nostatus
+check "and so does JSON without a status" "[ \"\$(rc nostatus)\" -eq 0 ] && admits 22 && says nostatus 'agent Unreadable'" "$(out nostatus)"
+
+arc_ready
+run onboarded
+check "the first run with Arc SSH ready closes 22" \
+  "[ \"\$(rc onboarded)\" -eq 0 ] && ! admits 22 && ! says onboarded '${waits}'" "$(out onboarded)"
+
+run ungated -e hardening_ssh_arc_gate=false -e "hardening_arc_azcmagent_path=${work}/bin/no-azcmagent"
+check "with the gate off, 22 is closed whatever the agent" \
+  "[ \"\$(rc ungated)\" -eq 0 ] && [ \"\$(recap ungated changed)\" -eq 0 ] && ! admits 22" "$(out ungated)"
+
+arc_missing
+run quoted -e '{"hardening_ufw_closed_tcp_ports": ["22"], "hardening_ufw_allowed_tcp_ports": ["80", "443"]}'
+check "a port written as a string still goes through the gate" \
+  "[ \"\$(rc quoted)\" -eq 0 ] && admits 22 && says quoted '${waits}'" "$(out quoted)"
+arc_ready
+run requoted -e '{"hardening_ufw_closed_tcp_ports": ["22"], "hardening_ufw_allowed_tcp_ports": ["80", "443"]}'
+check "and is closed once Arc SSH is ready" "[ \"\$(rc requoted)\" -eq 0 ] && ! admits 22" "$(out requoted)"
+
+# 6. A port in both lists stops the run before any rule changes.
+before="$(rules)"
+run both -e '{"hardening_ufw_allowed_tcp_ports": [22, 80, 443]}'
+check "22 in both lists stops the run" \
+  "[ \"\$(rc both)\" -ne 0 ] && says both '22 is in both hardening_ufw_allowed_tcp_ports and hardening_ufw_closed_tcp_ports'" "$(out both)"
+check "before any rule changes" "[ \"\$(rules)\" = \"\${before}\" ]" "$(rules)"
+
+if [ "${failed}" -gt 0 ]; then
+  echo "ufw-closed-ports.test.sh: ${failed} of $((passed + failed)) checks failed" >&2
+  exit 1
+fi
+echo "ufw-closed-ports.test.sh: all ${passed} checks passed"

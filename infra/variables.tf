@@ -1462,12 +1462,13 @@ variable "lab_ssh_admin_key_fingerprints" {
 }
 
 # Whether an expected login must also arrive through Azure Arc SSH, which
-# reaches sshd from the host's own loopback address. False while port 22 is
-# still open to the internet (ADR 0032, the 2026-10-16 staging of #953); the
-# change that closes port 22 sets it true, and from then a login from any
-# other address pages even with the pinned key.
+# reaches sshd from the host's own loopback address. True since port 22 closed
+# to the internet (#953 stage 3; ADR 0032, the 2026-10-16 staging): a login
+# from any other address pages even with the pinned key. It was false while
+# port 22 was open, until Arc SSH and hPanel's Web Console had both been seen
+# working (2026-10-17).
 variable "lab_ssh_loopback_only" {
-  description = "Page on any SSH login to the lab host that does not arrive from loopback, as Arc SSH does; set once port 22 is closed (alert-lab-ssh-login, #953)"
+  description = "Page on any SSH login to the lab host that does not arrive from loopback, as Arc SSH does; true since port 22 closed (alert-lab-ssh-login, #953)"
   type        = bool
-  default     = false
+  default     = true
 }

@@ -8,7 +8,9 @@ argument_specs:
         then limits SSH to that user and to public keys through a drop-in that sorts before
         cloud-init's, proven with sshd -t and sshd -T before sshd is reloaded. Root's
         authorized_keys is kept empty.
-      - Sets ufw to deny inbound and allow outbound with an explicit inbound TCP allowlist.
+      - Sets ufw to deny inbound and allow outbound with an explicit inbound TCP allowlist, deletes
+        the allow of each closed port and reads ufw back to prove it, closing 22 only while Azure
+        Arc SSH is ready when hardening_ssh_arc_gate is on.
       - Turns on unattended-upgrades, with its own reboot off, once the timer that replaces it
         is verified active; cancels a reboot unattended-upgrades had already scheduled, and stops
         at one it cannot attribute.
@@ -74,6 +76,32 @@ argument_specs:
         required: false
         default: [22, 80, 443]
         description: Inbound TCP ports allowed through ufw. Everything else inbound is denied.
+      hardening_ufw_closed_tcp_ports:
+        type: list
+        elements: int
+        required: false
+        default: []
+        description:
+          - Inbound TCP ports to close. Their ufw allow is deleted, and the run fails if ufw still
+            admits one, or if one is also in hardening_ufw_allowed_tcp_ports. The role only ever
+            adds an allow for the allowed list, so a port leaving it is closed by naming it here.
+      hardening_ssh_arc_gate:
+        type: bool
+        required: false
+        default: false
+        description:
+          - Close port 22, when hardening_ufw_closed_tcp_ports names it, only while Azure Arc SSH is
+            ready to replace it, read from the agent at hardening_arc_azcmagent_path. Ready is the
+            agent Connected with incoming connections on for port 22. While it reads Disconnected
+            (a network drop, or an agent reset to be onboarded again) 22 is left as ufw has it;
+            otherwise 22 stays allowed. The run says which (issue 953). A rebuilt host is reached
+            over 22 until scripts/lab/Register-LabArc.ps1 -Connect has onboarded it.
+      hardening_arc_azcmagent_path:
+        type: path
+        required: false
+        default: /opt/azcmagent/bin/azcmagent
+        description:
+          - The Arc agent's CLI, read for hardening_ssh_arc_gate. The arc role's arc_azcmagent_path.
       hardening_ufw_logging:
         type: str
         required: false

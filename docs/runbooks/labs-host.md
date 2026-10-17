@@ -208,26 +208,27 @@ ssh-keygen -R (ssh -G hcw-lab | Select-String -Pattern '^hostname (.+)$').Matche
 ```
 
 The site itself never tunnels into the host: under ADR 0032 the host
-accepts inbound 22, 80 and 443 only, and the site's one view of it is the read-only
+accepts inbound 80 and 443 only (22 too until Azure Arc SSH is ready, #953
+stage 3), and the site's one view of it is the read-only
 status proxy in the Function App ([Labs host, Exposure](../architecture/labs-host.md#exposure)).
-SSH from a desktop is the only shell. When SSH is not working, hPanel's
+SSH from a desktop, through Azure Arc ("Connect through Azure Arc", below),
+is the only shell. When SSH is not working, hPanel's
 **Web Console** is the break-glass: https://hpanel.hostinger.com/vps,
 **Manage** on the server, then **Web Console** on its overview. It usually
 signs in by itself; when it asks, Hostinger's instructions are `root` and
 the root password.
 
-**Whether the Web Console goes through sshd is unverified (#953).**
+**The Web Console does not go through sshd** (#953, verified 2026-10-17).
 Hostinger's own page says the session "functions exactly like a standard
 SSH connection"
-([How to use the Hostinger VPS Web Console](https://www.hostinger.com/support/how-to-use-the-web-console-in-hostinger/)).
-If it is an SSH login as root, `PermitRootLogin no`, `AllowUsers hcwadmin`,
-publickey only and root's empty `authorized_keys` would all refuse it, and
-the break-glass would be gone. What is known (read on the host
-2026-10-16): root login over SSH has been off since 2026-09-26, the journal
-shows no SSH login as root and no console login since then, and a getty
-runs on `tty1` and on the serial port `ttyS0`, which a VNC or serial
-console would use. None of that proves which one hPanel uses, so the owner
-checks it before and after the first run below.
+([How to use the Hostinger VPS Web Console](https://www.hostinger.com/support/how-to-use-the-web-console-in-hostinger/)),
+but on this host it is a console login. It shows the getty's
+`srv939861 login:` prompt, and it opened a shell on 2026-10-17 while sshd
+refused every root login (`PermitRootLogin no` since 2026-09-26,
+`AllowUsers hcwadmin`, publickey only, root's `authorized_keys` empty). A
+getty runs on `tty1` and on the serial port `ttyS0`, which a VNC or serial
+console uses. It needs neither sshd, Arc nor port 22, which is what makes
+it the break-glass with port 22 closed.
 
 ### The first `bootstrap.sh` run with #953
 
@@ -262,7 +263,8 @@ checks it before and after the first run below.
 5. Sign in to the Web Console again. Success is the same `root@` prompt. If
    it stopped working after the run, it was going through sshd: SSH still
    works (step 4), so nothing is locked out, but say so on #953, because
-   the break-glass has to be settled before port 22 closes.
+   with port 22 closed the console is the only way in when Arc SSH is down.
+   (Done on 2026-10-17: it is a console login, above.)
 
 Then this shows what sshd now applies. PowerShell:
 
@@ -281,11 +283,12 @@ authenticationmethods publickey
 
 Owner decision 2026-10-16 (#953; [ADR 0032](../decisions/0032-learner-labs-platform.md),
 amendment of that date): the owner reaches the host through **Azure Arc
-SSH**, and port 22 then closes to the internet, in a later change. Arc SSH
+SSH**, and port 22 is closed to the internet (#953 stage 3). Arc SSH
 carries the session through a relay the host's Arc agent dials out to, so
-sshd needs no open port; sshd still asks for the same pinned key. Until
-port 22 closes, the direct block above keeps working, and running the script
-without `-Arc` puts it back.
+sshd needs no open port; sshd still asks for the same pinned key. The
+direct block works only where 22 is open: on a rebuilt host before Arc
+onboards it ("Re-onboarding a rebuilt host"), or after "When Arc SSH is
+down", below. Running the script without `-Arc` puts it back.
 
 `Connect-Lab.ps1 -Arc` writes the same `Host hcw-lab` block with a
 `ProxyCommand`. That runs `$HOME\.ssh\hcw-lab-arc-proxy.ps1` (written by the
@@ -391,9 +394,89 @@ Once, in this order:
    neither Arc, the relay nor port 22, so it is the way in when nothing
    else works.
 
-Port 22 closes only after step 5 here and those console checks have both
-succeeded, in a later change, which also makes the SSH login alert (#953)
-page on any accepted login that did not come through Arc.
+Port 22 closed after step 5 here and those console checks had both
+succeeded (2026-10-17; #953 stage 3). The hardening role deletes ufw's allow
+for 22 and fails a run in which any ALLOW or LIMIT rule still names it, or
+Ubuntu's `OpenSSH` profile. It closes 22 only while Arc SSH is ready: the
+agent Connected, with incoming connections on for port 22. While the agent
+reads `Disconnected` (a network drop, or an agent reset to be onboarded
+again) the run leaves 22 as ufw has it and prints a line beginning `Port 22
+is left as ufw has it on this run`. Otherwise (no agent, as on a rebuilt
+host before onboarding, or `Expired`) it keeps 22 open and prints `Port 22
+stays open to the internet on this run`. The SSH login alert
+(`alert-lab-ssh-login`, `lab_ssh_loopback_only`) pages on any accepted
+login that did not come through Arc, so a login over a reopened 22 pages
+too, once the agent's syslog reaches the workspace. Before onboarding no
+syslog leaves the host, so nothing pages.
+
+### Closing port 22: the first run
+
+Once the `hcw-azure` run that turns `lab_ssh_loopback_only` on has applied
+(the change's own steps say which run), one `bootstrap.sh` run closes the
+port. Bash, on the host, through Arc (`ssh hcw-lab` from a desktop set up
+with `-Arc`):
+
+```bash
+sudo /opt/hcw-src/lab-host/bootstrap.sh
+```
+
+Success is a recap with `failed=0` and no line beginning `Port 22 stays
+open` or `Port 22 is left`. Then, from the same session, bash on the host,
+this prints nothing:
+
+```bash
+sudo ufw status | grep -E '(^|[ ,])22([,/ ]|$)|OpenSSH'
+```
+
+And from the desktop, PowerShell, this still prints the host's name,
+through Arc:
+
+```powershell
+ssh hcw-lab hostname
+```
+
+### When Arc SSH is down
+
+With port 22 closed, a broken Arc path (the agent, the relay, the az ssh
+extension or the Azure sign-in) leaves hPanel's Web Console as the way in:
+https://hpanel.hostinger.com/vps, **Manage** on the server, then **Web
+Console**, signed in as `root`.
+
+1. **Read the agent**, bash, in the Web Console. Success is `Agent Status
+   : Connected`:
+
+   ```bash
+   /opt/azcmagent/bin/azcmagent show
+   ```
+
+   `Disconnected` usually clears by itself once the host reaches Azure
+   again. `Expired` means onboarding again: reset the agent ("Disconnecting",
+   step 3), reopen 22 (step 2 here), then "Re-onboarding a rebuilt host".
+   A reset agent reads `Disconnected`, and the hardening role leaves 22 as
+   ufw has it while the agent does. So the reopened 22 stays open through
+   `Register-LabArc.ps1 -Connect`, and the first run with the agent
+   `Connected` again closes it.
+2. **Reopen 22 for the repair**, bash, in the Web Console. Success is
+   `Rule added` and `Rule added (v6)`:
+
+   ```bash
+   ufw allow 22/tcp
+   ```
+
+   Then point the desktop at the direct block, PowerShell, from the
+   repository root:
+
+   ```powershell
+   pwsh -NoProfile -File scripts/lab/Connect-Lab.ps1
+   ```
+
+   While it is open, every login over 22 pages `alert-lab-ssh-login`
+   (severity 1) once the agent's syslog reaches the workspace, late if the
+   agent is cut off. That is the alert working, not a second problem.
+3. **Close it again** once Arc SSH answers (`ssh hcw-lab hostname` after
+   `Connect-Lab.ps1 -Arc`): run `bootstrap.sh` as in "Closing port 22: the
+   first run". It deletes the rule, and fails rather than leave it if it
+   cannot.
 
 ## The first-run host check
 
@@ -1859,7 +1942,8 @@ that older copy, and prints the three steps that carry the data again.
 Every service the roles run listens on the loopback: Coder on 7080,
 Portainer on 9443, Vault on 8200 and 8201, node_exporter on 9100, the Arc
 agent on 40341 to 40344, and each tool add-on on its own port. Only sshd
-(TCP 22) and Caddy (TCP 80 and 443) are public. The last check of every run
+(TCP 22) and Caddy (TCP 80 and 443) listen beyond the loopback, and ufw
+refuses 22 from outside while Arc SSH is ready (#953 stage 3). The last check of every run
 (`roles/privilege_checks`, `tasks/listeners.yml`; #958, LAB-12) reads every
 TCP and UDP listener with `ss`, including the ports the rootless sandbox
 forwards for a workspace. It fails the run if anything else listens beyond
@@ -1874,8 +1958,10 @@ sudo ss -ltnup
 
 Bind that service to `127.0.0.1` (for a container, publish
 `127.0.0.1:<port>:<port>`), or stop it, then run `bootstrap.sh` again. Good
-is a recap with `failed=0`. Port 22 leaves `privilege_checks_public_tcp_ports`
-when it closes to the internet (#953, stage 3).
+is a recap with `failed=0`. Port 22 stays in `privilege_checks_public_tcp_ports`
+although ufw closes it to the internet (#953 stage 3): socket-activated sshd
+still listens on every address, and leaves the list once #1257 binds it to
+the loopback.
 
 The same check also reads the host daemon's published ports from the rules
 that carry them: every `DNAT` rule in the `nat` table's `DOCKER` chain, IPv4
@@ -3396,6 +3482,18 @@ the old host blocks the new one: delete it first (step 2 of
 Then run step 2 and step 4 again. The principal and its grant are still
 there, so the first run only mints a new secret and says `Nothing to set
 there`, and `-Connect` onboards the new host.
+
+Both steps reach the host over `ssh hcw-lab` on port 22, with the direct
+block (`Connect-Lab.ps1` without `-Arc`). Port 22 is open for them: the
+hardening role closes it only while Arc SSH is ready (#953 stage 3), and
+until `-Connect` has onboarded the agent each run says `Port 22 stays open
+to the internet on this run`. The first `bootstrap.sh` run after
+onboarding closes it, so before that run make Arc SSH work for the new
+machine: the `hcw-azure` run that recreates its connectivity endpoint and
+SSH service configuration, then `Connect-Lab.ps1 -Arc` and its test (steps
+1, 4 and 5 of "Connect through Azure Arc"). Run that `bootstrap.sh` through
+Arc. The role reads only the agent's side, so it cannot tell whether the
+endpoint exists in Azure.
 
 ## Troubleshooting
 

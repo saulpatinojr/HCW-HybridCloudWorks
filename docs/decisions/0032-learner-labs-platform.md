@@ -965,14 +965,22 @@ and expect the row; re-enable it. (4) The runbook's rehearsal line.
   then does a later change close port 22 and set `lab_ssh_loopback_only`,
   from which an accepted login from anywhere but loopback pages.
   ([SSH access to Azure Arc-enabled servers](https://learn.microsoft.com/azure/azure-arc/servers/ssh-arc-overview),
-  read 2026-10-16.)
+  read 2026-10-16.) *(2026-10-17, #953 stage 3: both preconditions were met
+  that day, so port 22 closes at ufw and `lab_ssh_loopback_only` is on. The
+  hardening role closes 22 only while the Arc agent is Connected with
+  incoming connections on for port 22 (`hardening_ssh_arc_gate`), and leaves
+  it as it is while the agent is Disconnected, because a rebuilt or reset
+  host is onboarded over port 22 by `Register-LabArc.ps1`. sshd
+  still listens on every address behind ufw until #1257 binds it to the
+  loopback.)*
 - **Ingestion is bounded but not zero.** Heartbeat and auth syslog on one host
   are kilobytes a day against the workspace's 0.25 GB/day cap
   ([ADR 0031](0031-security-scanner-owner-decisions.md) records the headroom).
   A chatty `authpriv` source under an SSH brute-force attempt is the case to
   watch, and the daily-cap alert already exists.
 - **Without Defender for Servers there is no managed EDR on the host.** The
-  controls are SSH keys only, an inbound policy of 22, 80 and 443, audit-only
+  controls are SSH keys only, an inbound policy of 22, 80 and 443 (80 and
+  443 since #953 stage 3, with SSH through Azure Arc), audit-only
   machine configuration, and the auth syslog above. This is a stated cost
   trade, revisited in the triggers below.
 - **Coder is a second identity system with its own users.** Learners have a

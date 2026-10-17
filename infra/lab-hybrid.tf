@@ -429,9 +429,9 @@ resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_key_vault" {
 #
 # Gated like the vault seal grant above: while there is no Arc machine (a
 # rebuilt host before onboarding), both plan to nothing, and a new machine
-# gets new ones on the next apply. Port 22 stays open to the internet until
-# the owner has connected this way and through the Hostinger web console; a
-# later change closes it.
+# gets new ones on the next apply. Port 22 closed to the internet once the
+# owner had connected this way and through the Hostinger web console
+# (2026-10-17, #953 stage 3); this is now the only SSH path.
 resource "azapi_resource" "lab_hybrid_arc_connectivity_endpoint" {
   count = local.lab_hybrid_arc_principal_id == "" ? 0 : 1
 
@@ -711,10 +711,11 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_vault_unwr
   depends_on = [azurerm_role_assignment.alerts_mgmt_workspace]
 }
 
-# A burst of failed SSH logins. Port 22 is open to the internet (the hardening
-# role's ufw allowlist) with keys only and fail2ban banning a source after
-# five failures in ten minutes, so a steady trickle of failures is the
-# internet's background, not an incident. A BURST is: the last 15 minutes
+# A burst of failed SSH logins. Port 22 was open to the internet until #953's
+# stage 3 closed it at ufw; with keys only and fail2ban banning a source after
+# five failures in ten minutes, a steady trickle of failures was the
+# internet's background, not an incident. Now every session arrives through
+# Arc SSH on the loopback, so a burst is rarer and means more. A BURST is: the last 15 minutes
 # hold more than four times the average quarter-hour of the 23 hours 45
 # minutes before them, and at least 50 lines. A relative threshold, because
 # the background has never been measured here and a fixed number would be a
@@ -790,10 +791,10 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_ssh_burst"
 #   - method publickey,
 #   - a user in var.lab_ssh_admin_users (the hardening role's admin login),
 #   - a key in var.lab_ssh_admin_key_fingerprints (the key that role pins),
-#   - and, once var.lab_ssh_loopback_only is set, a source on the host's own
-#     loopback, which is where Azure Arc SSH reaches sshd from. It stays false
-#     while port 22 is open to the internet; the change that closes the port
-#     sets it.
+#   - and, with var.lab_ssh_loopback_only set, a source on the host's own
+#     loopback, which is where Azure Arc SSH reaches sshd from. It was false
+#     while port 22 was open to the internet, and has been true since the
+#     change that closed the port (#953 stage 3).
 #
 # Every other accepted login pages, at severity 1: another user, a password or
 # keyboard-interactive login, a certificate, an unpinned key. The parse below
@@ -840,7 +841,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_ssh_login_
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   location            = azurerm_resource_group.platform_mgmt.location
   scopes              = [azurerm_log_analytics_workspace.hcw.id]
-  description         = "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (or, once lab_ssh_loopback_only is set, not through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953."
+  description         = "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (and, while lab_ssh_loopback_only is set, through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953."
   severity            = 1
 
   evaluation_frequency = "PT15M"

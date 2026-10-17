@@ -16,8 +16,9 @@ privilege_checks_userns_required: "{{ docker_userns_remap | default(true) }}"
 
 # The only ports that may listen beyond the loopback (tasks/listeners.yml,
 # #958): sshd and Caddy. TCP alone: Caddy serves no HTTP/3 (#958), so no UDP
-# port is public. Port 22 leaves this list when it closes to the internet
-# (#953, stage 3).
+# port is public. Port 22 is closed to the internet at ufw (#953 stage 3), but
+# socket-activated sshd still listens on every address, so 22 stays here
+# until sshd binds to the loopback alone (#1257).
 privilege_checks_public_tcp_ports: [22, 80, 443]
 # How the listeners are read; a test points it at a fixture.
 privilege_checks_listeners_argv: [ss, -H, -l, -n, -t, -u]

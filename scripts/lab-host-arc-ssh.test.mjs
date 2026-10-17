@@ -95,10 +95,12 @@ describe('the connectivity endpoint and its SSH service configuration (infra/lab
     expect(labHybrid).not.toMatch(/scope\s*=\s*azapi_resource\.lab_hybrid_arc_(connectivity_endpoint|ssh_service_configuration)/);
   });
 
-  it('are declared as creates for the plan check, until the apply', () => {
-    const creates = DECLARED.filter((d) => d.action === 'create').map((d) => d.address);
-    expect(creates).toContain('azapi_resource.lab_hybrid_arc_connectivity_endpoint[0]');
-    expect(creates).toContain('azapi_resource.lab_hybrid_arc_ssh_service_configuration[0]');
+  it('are no longer declared for the plan check, since their apply (run-b3Wd3pqtJxikRWzu, 2026-10-17)', () => {
+    // Declared as creates until the apply, then pruned as the plan check's
+    // header asks: a stale create would let a later recreate pass unread.
+    const addresses = DECLARED.map((d) => d.address);
+    expect(addresses).not.toContain('azapi_resource.lab_hybrid_arc_connectivity_endpoint[0]');
+    expect(addresses).not.toContain('azapi_resource.lab_hybrid_arc_ssh_service_configuration[0]');
   });
 });
 
