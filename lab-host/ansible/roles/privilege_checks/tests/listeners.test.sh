@@ -83,8 +83,11 @@ live="${here}/ss-lab-host-2026-10-17.txt"
 run live "${live}"
 check "the lab host as read on 2026-10-17 is refused" '[ "$(rc live)" -ne 0 ]' "$(tail -n 5 "${work}/live.out")"
 check "for Caddy's UDP 443 (HTTP/3, which #1233 turns off), named" 'says live "udp *:443"'
+# named NAME: the whole list the failure names, between "may: " and the
+# ". Bind the service" that follows it; addresses carry periods of their own.
+named() { sed -n 's/.*may: \(.*\)\. Bind the service.*/\1/p' "${work}/$1.out" | head -n 1; }
 check "and for nothing else: Coder, Vault, Portainer, Arc and node_exporter are all on the loopback" \
-  '! grep -oE "may: [^.]*" "${work}/live.out" | grep -qE "tcp |, "'
+  '[ "$(named live)" = "udp *:443" ]' "named: $(named live)"
 
 grep -v -E '^udp +UNCONN +[0-9]+ +[0-9]+ +\*:443 ' "${live}" > "${work}/live-no-http3.ss"
 run live-no-http3 "${work}/live-no-http3.ss"
@@ -102,6 +105,10 @@ check "TCP on * is refused and named" '[ "$(rc star)" -ne 0 ] && says star "tcp 
 
 run public "$(fixture public 'tcp LISTEN 0 4096 192.0.2.5:9000 0.0.0.0:*')"
 check "TCP on a public address is refused and named" '[ "$(rc public)" -ne 0 ] && says public "tcp 192.0.2.5:9000"'
+
+run twoudp "$(fixture twoudp 'udp UNCONN 0 0 0.0.0.0:5353 0.0.0.0:*' 'udp UNCONN 0 0 127.0.0.1:323 0.0.0.0:*' 'udp UNCONN 0 0 *:443 *:*')"
+check "every listener beyond the loopback is named, not the first alone" \
+  '[ "$(rc twoudp)" -ne 0 ] && [ "$(named twoudp)" = "udp 0.0.0.0:5353, udp *:443" ]' "named: $(named twoudp)"
 
 run udp22 "$(fixture udp22 'udp UNCONN 0 0 0.0.0.0:22 0.0.0.0:*')"
 check "a public port over UDP is refused: only TCP may listen beyond the loopback" \

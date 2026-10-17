@@ -31,7 +31,7 @@ This project has not cut a tagged release; entries are grouped under
   - **The isolation chain:** the other half of LAB-12's acceptance is the
     host firewall's read-back (#1236), which fails the play when the live
     chains differ from the files.
-  - **Tests:** `tests/listeners.test.sh` (14 checks, in the
+  - **Tests:** `tests/listeners.test.sh` (15 checks, in the
     `ansible-lint (lab-host)` job). On the lab host's own `ss` output of
     2026-10-17 it refuses only Caddy's UDP 443, which the next bootstrap
     removes, and passes without it. The runbook gains "Listeners beyond the
