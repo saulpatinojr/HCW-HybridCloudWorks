@@ -1,0 +1,6 @@
+-N DOCKER
+-A DOCKER -d 127.0.0.1/32 ! -i br-hcw-addons -p tcp -m tcp --dport 18081 -j DNAT --to-destination 172.29.0.2:8080
+-A DOCKER -d 127.0.0.1/32 ! -i br-hcw-addons -p tcp -m tcp --dport 18083 -j DNAT --to-destination 172.29.0.4:8080
+-A DOCKER -d 127.0.0.1/32 ! -i br-36a702e13fc7 -p tcp -m tcp --dport 7080 -j DNAT --to-destination 172.28.240.2:7080
+-A DOCKER -d 127.0.0.1/32 ! -i br-hcw-addons -p tcp -m tcp --dport 18082 -j DNAT --to-destination 172.29.0.3:8080
+-A DOCKER -d 127.0.0.1/32 ! -i docker0 -p tcp -m tcp --dport 9443 -j DNAT --to-destination 172.17.0.2:9443

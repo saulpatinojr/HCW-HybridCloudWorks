@@ -45,3 +45,38 @@
       process (docs/runbooks/labs-host.md, "Listeners beyond the loopback").
     quiet: true
   when: not ansible_check_mode
+
+# The same promise for the host daemon's published ports, read from the rules
+# that carry them rather than from a socket (#1252 review). A port published
+# on 127.0.0.1 is a DNAT rule in the nat table's DOCKER chain with
+# `-d 127.0.0.1/32`; one published on every address has no `-d` at all. The
+# socket read above sees each one too, through Docker's userland proxy, but
+# that proxy is a daemon setting, and with it off a published port has no
+# listener. Read 2026-10-17: five DNAT rules, every one -d 127.0.0.1/32, and
+# none for IPv6. A chain that does not exist (no Docker, or no IPv6 NAT)
+# reads as no rules.
+- name: Read the host daemon's published-port rules, IPv4 and IPv6
+  ansible.builtin.command:
+    argv: "{{ item }}"
+  loop: "{{ privilege_checks_dnat_argv }}"
+  register: privilege_checks_dnat
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Refuse a published port that is not on the loopback
+  vars:
+    privilege_checks_exposed_publishes: >-
+      {{ privilege_checks_dnat.results | map(attribute='stdout_lines') | flatten
+         | select('search', ' -j DNAT ')
+         | reject('search', ' -d (127[.][0-9.]+/32|::1/128) ')
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - privilege_checks_exposed_publishes | length == 0
+    fail_msg: >-
+      The host daemon publishes these beyond the loopback: {{ privilege_checks_exposed_publishes | join(' | ') }}.
+      Publish the container's port as 127.0.0.1:<port>:<port>, or remove the container
+      (docs/runbooks/labs-host.md, "Listeners beyond the loopback").
+    quiet: true
+  when: not ansible_check_mode
