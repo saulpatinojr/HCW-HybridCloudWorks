@@ -562,15 +562,13 @@ jobs:
             local started=$SECONDS
             local attempt=0
             local status=""
-            local body=""
+            local body_file
+            body_file=$(mktemp)
 
             echo "Probing ${label} at ${target_url}..."
             while :; do
               attempt=$((attempt + 1))
-              local resp
-              resp=$(curl -sS -m 20 -w $'\n%{http_code}' "${target_url}" 2>&1 || true)
-              status=$(printf '%s' "${resp}" | tail -n1)
-              body=$(printf '%s' "${resp}" | sed '$d')
+              status=$(curl -sS -m 20 -w '%{http_code}' -o "${body_file}" "${target_url}" 2>/dev/null || true)
               local elapsed=$((SECONDS - started))
               echo "  attempt ${attempt} at +${elapsed} s: HTTP ${status}"
               [ "${status}" = "200" ] && break
@@ -583,14 +581,17 @@ jobs:
 
             if [ "${status}" != "200" ]; then
               echo "::error::Probe failed for ${label}: HTTP ${status}"
-              echo "Response excerpt: ${body:0:300}"
+              echo "Response excerpt: $(head -c 300 "${body_file}" || true)"
+              rm -f "${body_file}"
               return 1
             fi
 
-            if ! printf '%s' "${body}" | grep -qiE "<(!DOCTYPE html|html|div id=\"root\")"; then
+            if ! grep -qiE "<(!DOCTYPE html|html|div id=\"root\")" "${body_file}"; then
               echo "::error::Probe response for ${label} did not contain expected HTML markup"
+              rm -f "${body_file}"
               return 1
             fi
+            rm -f "${body_file}"
             echo "  ${label} verified: HTTP 200 with valid HTML"
           }
 

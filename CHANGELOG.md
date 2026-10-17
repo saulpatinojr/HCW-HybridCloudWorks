@@ -31,6 +31,7 @@ This project has not cut a tagged release; entries are grouped under
 - **Deployment verification: fixed post-deploy frontend probe and deployed smoke test RPC check**.
   - In `scripts/smoke-deployed.mjs`, moved `POST /api/aiProxy` into the live admin guard verification (asserting 401/403 for unauthenticated callers) and verified that unmapped RPCs return 404 without cross-root file imports.
   - In `.github/workflows/deploy-azure-frontend.yml`, added `DEFAULT_HOSTNAME_OVERRIDE` defaulting to `calm-ground-0d0e6a010.7.azurestaticapps.net` (with fallback to `vars.STATIC_WEB_APP_DEFAULT_HOSTNAME`), enabling the post-deploy probe to verify HTTP 200 without requiring `Microsoft.Web/staticSites/read` permissions on the deployer identity.
+  - In `.github/workflows/deploy-azure-frontend.yml`, updated `probe_url` to stream curl bodies directly to a temporary file, eliminating `SIGPIPE` (`Broken pipe`) under `pipefail` when inspecting large HTML responses.
 
 
 - **Validation & regression test plan: completed contract, accessibility, and infrastructure test gates (#982)**.
