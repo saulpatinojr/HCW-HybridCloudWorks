@@ -1086,6 +1086,24 @@ anything, and the line beside the button reads *Validation on the lab isn't
 available right now. You can still download the files and validate
 locally.*
 
+## Visitor lab sessions (#1016)
+
+Visitors outside the `HybridCloudWorks` GitHub organization can start ephemeral 60-minute Coder lab sessions directly from the site without creating a Coder account.
+
+### Why Brokered
+Coder Community edition lacks per-user quotas, forced dormancy, and auto-stop enforcement. Opening GitHub sign-in to everyone would permit a visitor to consume the host's 5 workspace slots. To preserve team learner availability while offering interactive labs to visitors, the Function App brokers ephemeral Coder users and workspaces on demand.
+
+### Architecture & Broker Lifecycle
+1. **Request:** A visitor presses **Start visitor session** on a lab pane. The request sends the site's `Origin` and a Cloudflare Turnstile token (`action: visitor-session`) to `POST /api/public/labs/visitor-session`.
+2. **Provisioning:** The Function App broker (`functions/src/lib/labs/visitor-session.js`) uses `CODER_BROKER_TOKEN` to provision an ephemeral Coder user (`v-<hex>`) and workspace (`lab-lzb`, `lab-tfv`, etc.) from template `hcw-lab`.
+3. **Access:** The workspace's code-server access URL is returned and embedded in the browser lab pane.
+4. **Limits Enforced:**
+   - Maximum concurrent visitor sessions: `LABS_VISITOR_MAX_CONCURRENT` (default: 2, leaving remaining slots for team members).
+   - Daily limit: 2 sessions per visitor client key per UTC day.
+   - Session duration: 60 minutes (`VISITOR_SESSION_DURATION_MS`).
+   - Hard auto-reap: expired sessions are reaped opportunistically on status/start checks, and users can end their session via `DELETE /public/labs/visitor-session?sessionId=...`.
+5. **Emergency Switch:** Set `LABS_VISITOR_SESSIONS_ENABLED="false"` in app settings to instantly close visitor sessions.
+
 ## After a merge: the playbook, then the template, at once
 
 Nothing applies a merged change to the host on its own (#950), so the host

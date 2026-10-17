@@ -31,9 +31,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { LAB_TURNSTILE_ACTION } from '@/lib/turnstile';
 
 /** The render options: the site key, the fixed action, and a callback per phase. */
-const widgetOptions = (siteKey, set) => ({
+const widgetOptions = (siteKey, set, action = LAB_TURNSTILE_ACTION) => ({
   sitekey: siteKey,
-  action: LAB_TURNSTILE_ACTION,
+  action,
   appearance: 'interaction-only',
   'response-field': false,
   callback: (token) => set('ready', token),
@@ -49,7 +49,14 @@ const widgetOptions = (siteKey, set) => ({
  * the widget id, the current token), shared with `takeToken` and
  * `renewWidget` below. Nothing is written once the cleanup has run.
  */
-function mountWidget({ held, siteKey, load, containerRef, setPhase }) {
+function mountWidget({
+  held,
+  siteKey,
+  load,
+  containerRef,
+  setPhase,
+  action = LAB_TURNSTILE_ACTION,
+}) {
   let live = true;
   const set = (next, token = null) => {
     if (live) {
@@ -61,7 +68,7 @@ function mountWidget({ held, siteKey, load, containerRef, setPhase }) {
     (api) => {
       if (live && containerRef.current) {
         held.api = api;
-        held.id = api.render(containerRef.current, widgetOptions(siteKey, set));
+        held.id = api.render(containerRef.current, widgetOptions(siteKey, set, action));
       }
     },
     () => set('error')
@@ -100,7 +107,7 @@ function renewWidget(held, setPhase) {
  * @param {string} args.siteKey
  * @param {() => Promise<object>} args.load  resolves to Cloudflare's `turnstile` API
  */
-export function useLabTurnstile({ active, siteKey, load }) {
+export function useLabTurnstile({ active, siteKey, load, action = LAB_TURNSTILE_ACTION }) {
   const containerRef = useRef(null);
   const widget = useRef({ api: null, id: null, token: null });
   // Only callbacks write this; while the widget is off, `idle` is derived
@@ -110,8 +117,10 @@ export function useLabTurnstile({ active, siteKey, load }) {
 
   useEffect(
     () =>
-      on ? mountWidget({ held: widget.current, siteKey, load, containerRef, setPhase }) : undefined,
-    [on, siteKey, load]
+      on
+        ? mountWidget({ held: widget.current, siteKey, load, containerRef, setPhase, action })
+        : undefined,
+    [on, siteKey, load, action]
   );
 
   const take = useCallback(() => takeToken(widget.current, setPhase), []);

@@ -676,3 +676,58 @@ export async function fetchPublicLabJob(jobId) {
   }
   return data.job;
 }
+
+/**
+ * GET public/labs/visitor-session — check if visitor lab sessions are configured/open,
+ * active session for this client, and bounds (#1016).
+ *
+ * @returns {Promise<{ configured: boolean, open: boolean, code: string, reason: string, session?: object|null, bounds?: object }|null>}
+ */
+export async function fetchVisitorSessionStatus() {
+  const base = requireFunctionsBase('public/labs/visitor-session');
+  const res = await fetch(`${base}/public/labs/visitor-session`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw await labError(res, 'Visitor session status');
+  const data = await res.json();
+  return requireConfiguredFlag(data, 'Visitor session status');
+}
+
+/**
+ * POST public/labs/visitor-session — request an ephemeral visitor lab session (#1016).
+ *
+ * @param {{ labId: string, turnstileToken: string }} body
+ * @returns {Promise<{ ok: true, sessionId: string, labId: string, accessUrl: string, expiresAt: string }>}
+ */
+export async function startVisitorSession(body) {
+  const base = requireFunctionsBase('public/labs/visitor-session');
+  const res = await fetch(`${base}/public/labs/visitor-session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await labError(res, 'Start visitor session');
+  const data = await res.json();
+  if (typeof data.sessionId !== 'string' || !data.sessionId) {
+    throw new Error('Visitor session response carried no session id');
+  }
+  return data;
+}
+
+/**
+ * DELETE public/labs/visitor-session?sessionId=... — stop/terminate a visitor lab session (#1016).
+ *
+ * @param {string} sessionId
+ * @returns {Promise<{ ok: boolean, status: string }>}
+ */
+export async function stopVisitorSession(sessionId) {
+  const path = `public/labs/visitor-session?${new URLSearchParams({ sessionId })}`;
+  const base = requireFunctionsBase(path);
+  const res = await fetch(`${base}/${path}`, {
+    method: 'DELETE',
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) throw await labError(res, 'Stop visitor session');
+  return res.json();
+}

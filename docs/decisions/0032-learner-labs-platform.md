@@ -884,7 +884,19 @@ pull request: a blob under `host-backups/coder/` and one under
 `host-backups/vault/` dated the night after the host's run, readable in the
 portal, and a delete attempt on one refused with the immutability policy
 named. (3) The alert's fire test: stop the Coder backup timer for two nights
-and expect the row; re-enable it. (4) The runbook's rehearsal line.
+## Amendment 2026-10-17: visitor lab sessions outside the organization (#1016)
+
+**Context.** Under Decision 4, Coder is restricted to the `HybridCloudWorks` GitHub organisation (`CODER_OAUTH2_GITHUB_ALLOWED_ORGS: [HybridCloudWorks]`), and sign-ups remain off (`CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false`). However, visitors outside the organisation who wish to complete interactive walkthroughs without GitHub organisation membership could not access workspaces. Coder Community edition lacks enterprise per-user quotas, auto-stop enforcement, and dormancy. Opening sign-up would permit any visitor to exhaust the host's 5 workspace slots, violating Decision 4.
+
+**Decision, accepted 2026-10-08 and 2026-10-16 (#1016).**
+1. **Brokered sessions:** The site brokers ephemeral Coder workspaces on behalf of visitors. Visitors never receive persistent Coder accounts. The Function App acts as broker using a dedicated Coder broker token held in Key Vault (`CODER-BROKER-TOKEN`).
+2. **Access & Verification:** Requests require the site's exact Origin and a Cloudflare Turnstile token for the `visitor-session` action (`functions/src/lib/labs/public-lock.js`).
+3. **Capacity & Rate Limits:**
+   - Global concurrency cap (`LABS_VISITOR_MAX_CONCURRENT`, default 2), reserving remaining slots for team members.
+   - Per-client daily limit (2 sessions per client key).
+   - Hard session duration: 60 minutes (`VISITOR_SESSION_DURATION_MS`).
+   - Hard auto-reap: sessions past `expiresAt` are automatically reaped and deleted upon subsequent queries/requests, with an emergency shutoff switch (`LABS_VISITOR_SESSIONS_ENABLED=false`).
+4. **Hygiene:** Visitor workspaces sparse-clone public repositories with no secrets mounted, respecting #954 egress isolation (LAB-8).
 
 ## Consequences and accepted risks
 

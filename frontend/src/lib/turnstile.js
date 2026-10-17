@@ -31,6 +31,7 @@ export const TURNSTILE_SCRIPT_URL =
  * public-lock.test.js reads this line). At most 32 letters, digits, _ and -.
  */
 export const LAB_TURNSTILE_ACTION = 'lab-validate';
+export const VISITOR_TURNSTILE_ACTION = 'visitor-session';
 
 /** The build's site key, trimmed; '' when the build had none. */
 export function turnstileSiteKey(env = import.meta.env) {

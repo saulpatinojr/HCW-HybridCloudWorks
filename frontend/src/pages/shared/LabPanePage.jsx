@@ -140,13 +140,27 @@ import {
 } from '@/components/labs/labSignIn';
 import { providerName } from '@/components/labs/labsWords';
 import { usePublicData } from '@/hooks/usePublicData';
-import { fetchCoderStatus } from '@/lib/publicApi';
+import {
+  fetchCoderStatus,
+  fetchVisitorSessionStatus,
+  startVisitorSession,
+  stopVisitorSession,
+} from '@/lib/publicApi';
 import { routes, staticRoutes } from '@/lib/routeFactory';
 import { safeUrl } from '@/lib/safeUrl';
+import { loadTurnstile, turnstileSiteKey, VISITOR_TURNSTILE_ACTION } from '@/lib/turnstile';
+import { useLabTurnstile } from '@/pages/tools/landingZone/useLabTurnstile';
 
 export const UNAVAILABLE_SENTENCE = "Lab workspaces aren't available right now.";
 export const SIGN_IN_HEADING = 'Sign in with GitHub to open your lab workspace';
 export const OPENING_SENTENCE = 'Opening your lab workspace…';
+export const VISITOR_START_BUTTON = 'Start visitor session';
+export const VISITOR_CAPACITY_FULL_REASON =
+  'The lab is currently at full capacity (visitor limit reached). Please try again in a few minutes, or sign in if you are a team member.';
+export const DEFAULT_TURNSTILE = Object.freeze({
+  siteKey: turnstileSiteKey(),
+  load: loadTurnstile,
+});
 /**
  * The fallback clause is for a return this page cannot hear: storage that
  * is blocked, or a visit on www, whose storage the returning tab (always on
@@ -275,20 +289,28 @@ const readFullscreenEnabled = () => document.fullscreenEnabled === true;
 const serverFalse = () => false;
 const noSubscription = () => () => {};
 
-export default function LabPanePage() {
+export default function LabPanePage({ turnstile = DEFAULT_TURNSTILE } = {}) {
   const { labId, provider = null } = useParams();
   const lab = labById(labId);
   if (!lab) return <Navigate to={labsPath(provider)} replace />;
-  return <LabPane key={`${provider ?? ''}/${lab.id}`} lab={lab} provider={provider} />;
+  return (
+    <LabPane
+      key={`${provider ?? ''}/${lab.id}`}
+      lab={lab}
+      provider={provider}
+      turnstile={turnstile}
+    />
+  );
 }
 
 /** "I've already signed in": record it, which shows the pane. No argument, so the click event is not taken for a time. */
 const alreadySignedIn = () => markSignedIn();
 
-function LabPane({ lab, provider }) {
+function LabPane({ lab, provider, turnstile = DEFAULT_TURNSTILE }) {
   const status = usePublicData(() => fetchCoderStatus(), WORKSPACE_STATUS_KEY);
   const signedInAt = useSyncExternalStore(subscribeSignedIn, readSignedInAt, serverSignedInAt);
   const [pending, setPending] = useState(false);
+  const [visitorSession, setVisitorSession] = useState(null);
 
   const signInHref = safeUrl(coderSignInUrl());
   const startSignIn = () => {
@@ -359,11 +381,15 @@ function LabPane({ lab, provider }) {
         <PaneBody
           service={workspaceService(status)}
           signedInAt={signedInAt}
+          visitorSession={visitorSession}
           lab={lab}
           backTo={backTo}
           pending={pending}
           signInHref={signInHref}
           onStartSignIn={startSignIn}
+          onVisitorSessionStarted={setVisitorSession}
+          onStopVisitorSession={() => setVisitorSession(null)}
+          turnstile={turnstile}
         />
         {lab.id === 'defender-wsl-plugin-walkthrough' ? <DefenderWslSimulator /> : null}
         <LabDetails lab={lab} />
@@ -494,8 +520,20 @@ function DetailList({ id, title, items }) {
   );
 }
 
-/** Exactly one of: opening, unavailable, the sign-in step, or the pane. */
-function PaneBody({ service, signedInAt, lab, backTo, pending, signInHref, onStartSignIn }) {
+/** Exactly one of: opening, unavailable, active visitor session, the sign-in step, or the member pane. */
+function PaneBody({
+  service,
+  signedInAt,
+  visitorSession,
+  lab,
+  backTo,
+  pending,
+  signInHref,
+  onStartSignIn,
+  onVisitorSessionStarted,
+  onStopVisitorSession,
+  turnstile,
+}) {
   if (service === 'checking') {
     return (
       <p role="status" className={`text-sm ${MUTED}`} data-testid="lab-opening">
@@ -504,13 +542,26 @@ function PaneBody({ service, signedInAt, lab, backTo, pending, signInHref, onSta
     );
   }
   if (service === 'unavailable') return <Unavailable backTo={backTo} />;
+  if (visitorSession) {
+    return (
+      <VisitorPane
+        lab={lab}
+        session={visitorSession}
+        backTo={backTo}
+        onStopSession={onStopVisitorSession}
+      />
+    );
+  }
   if (!signedInAt) {
     return (
       <SignInStep
+        lab={lab}
         signInHref={signInHref}
         backTo={backTo}
         pending={pending}
         onStart={onStartSignIn}
+        onVisitorSessionStarted={onVisitorSessionStarted}
+        turnstile={turnstile}
       />
     );
   }
@@ -545,7 +596,137 @@ function Unavailable({ backTo }) {
   );
 }
 
-function SignInStep({ signInHref, backTo, pending, onStart }) {
+function VisitorPane({ lab, session, backTo, onStopSession }) {
+  const paneRef = useRef(null);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState(null);
+
+  const handleStop = async () => {
+    setStopping(true);
+    setStopError(null);
+    try {
+      await stopVisitorSession(session.id);
+      onStopSession?.();
+    } catch (err) {
+      setStopError(err?.message || 'Failed to stop session');
+      setStopping(false);
+    }
+  };
+
+  const src = safeUrl(session.accessUrl);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <section
+        ref={paneRef}
+        aria-label={`Visitor lab workspace: ${lab.title}`}
+        data-testid="visitor-lab-pane"
+        className="flex flex-col rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 h-[calc(100dvh-14rem)] min-h-128"
+      >
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-200 dark:border-slate-700">
+          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {lab.title} (Visitor Session)
+          </span>
+          <span className={`mr-auto text-xs ${MUTED}`}>
+            Ephemeral workspace · 60m duration limit
+          </span>
+          <button
+            type="button"
+            onClick={handleStop}
+            disabled={stopping}
+            data-testid="stop-visitor-session"
+            className={SECONDARY}
+          >
+            {stopping ? 'Stopping…' : 'End session'}
+          </button>
+          <Link to={backTo} className={SECONDARY}>
+            Back to labs
+          </Link>
+        </div>
+        {src ? (
+          <iframe
+            src={src}
+            title={`Visitor lab workspace: ${lab.title}`}
+            sandbox={PANE_SANDBOX}
+            allow={PANE_ALLOW}
+            className="block w-full flex-1 border-0"
+          />
+        ) : null}
+      </section>
+      {stopError ? <p className="text-xs text-rose-600 dark:text-rose-400">{stopError}</p> : null}
+      <p className={`text-xs ${MUTED}`}>
+        Visitor sessions are ephemeral and stop automatically when time expires.
+      </p>
+    </div>
+  );
+}
+
+function SignInStep({
+  lab,
+  signInHref,
+  backTo,
+  pending,
+  onStart,
+  onVisitorSessionStarted,
+  turnstile = DEFAULT_TURNSTILE,
+}) {
+  const [visitorStatus, setVisitorStatus] = useState(null);
+  const [visitorStarting, setVisitorStarting] = useState(false);
+  const [visitorError, setVisitorError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchVisitorSessionStatus()
+      .then((st) => {
+        if (!active || !st) return;
+        setVisitorStatus(st);
+        if (st.session) {
+          onVisitorSessionStarted?.(st.session);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [onVisitorSessionStarted]);
+
+  const turnstileActive = Boolean(visitorStatus?.configured && visitorStatus?.open);
+  const {
+    containerRef,
+    phase: turnstilePhase,
+    take: takeTurnstileToken,
+    renew: renewTurnstile,
+  } = useLabTurnstile({
+    active: turnstileActive,
+    siteKey: turnstile?.siteKey ?? turnstileSiteKey(),
+    load: turnstile?.load ?? loadTurnstile,
+    action: VISITOR_TURNSTILE_ACTION,
+  });
+
+  const handleStartVisitor = async () => {
+    setVisitorStarting(true);
+    setVisitorError(null);
+    try {
+      const turnstileToken = takeTurnstileToken();
+      if (!turnstileToken) {
+        setVisitorError('Please complete the verification check.');
+        setVisitorStarting(false);
+        return;
+      }
+      const res = await startVisitorSession({ labId: lab.id, turnstileToken });
+      onVisitorSessionStarted?.({
+        id: res.sessionId,
+        labId: res.labId,
+        accessUrl: res.accessUrl,
+        expiresAt: res.expiresAt,
+      });
+    } catch (err) {
+      renewTurnstile();
+      setVisitorError(err?.message || 'Failed to start visitor session');
+      setVisitorStarting(false);
+    }
+  };
+
   return (
     <section
       aria-labelledby="lab-sign-in-heading"
@@ -564,6 +745,49 @@ function SignInStep({ signInHref, backTo, pending, onStart }) {
           Lab workspaces are for members of the HybridCloudWorks organization on GitHub.
         </p>
       </div>
+
+      {visitorStatus?.configured ? (
+        <div className="flex flex-col gap-2 p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50">
+          <h3 className="text-sm font-semibold text-slate-950 dark:text-white">
+            Guest / Visitor Access
+          </h3>
+          <p className={`text-xs ${MUTED}`}>
+            Outside the organization? Start an ephemeral 60-minute workspace right in this browser
+            pane.
+          </p>
+          {visitorStatus.open ? (
+            <div className="flex flex-col gap-2 mt-1">
+              <div ref={containerRef} data-testid="visitor-check-container" />
+              <button
+                type="button"
+                onClick={handleStartVisitor}
+                disabled={
+                  visitorStarting || (turnstilePhase !== 'ready' && turnstilePhase !== 'idle')
+                }
+                data-testid="start-visitor-session-button"
+                className={`${PRIMARY} self-start`}
+              >
+                {visitorStarting ? 'Starting session…' : VISITOR_START_BUTTON}
+              </button>
+            </div>
+          ) : (
+            <p
+              className="text-xs text-amber-700 dark:text-amber-400"
+              data-testid="visitor-session-closed-notice"
+            >
+              {visitorStatus.reason || VISITOR_CAPACITY_FULL_REASON}
+            </p>
+          )}
+          {visitorError ? (
+            <p
+              className="text-xs text-rose-600 dark:text-rose-400"
+              data-testid="visitor-session-error"
+            >
+              {visitorError}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Pre-flight card with duration, toolchains, terminal preview and trust disclosures */}
       <LabPreflightCard compact headingLevel="h3" />

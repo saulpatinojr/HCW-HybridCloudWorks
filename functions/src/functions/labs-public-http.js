@@ -42,6 +42,7 @@ import { createCoderStatusHandlers } from '../lib/labs/coder-status.js';
 import { createEstateHandlers } from '../lib/labs/estate.js';
 import { createPublicSubmitHandlers } from '../lib/labs/public-submit.js';
 import { createResourceGraphClient } from '../lib/labs/resource-graph.js';
+import { createVisitorSessionHandlers } from '../lib/labs/visitor-session.js';
 
 const store = { queryDocs, readDoc, upsertDoc };
 
@@ -96,3 +97,26 @@ httpRoute('publicGetLabJob', {
   route: 'public/labs/job',
   handler: (request, context) => submit().getJob(request, context),
 });
+
+let visitorHandlers = null;
+const visitor = () => {
+  visitorHandlers ??= createVisitorSessionHandlers({
+    identity: createClientIdentity(),
+    store: { queryDocs, readDoc, upsertDoc, createDoc, incrementIf, replaceDocIfMatch },
+  });
+  return visitorHandlers;
+};
+
+httpRoute('publicLabsVisitorSession', {
+  methods: ['GET', 'POST', 'DELETE'],
+  authLevel: 'anonymous',
+  route: 'public/labs/visitor-session',
+  handler: (request, context) => {
+    const v = visitor();
+    if (request.method === 'GET') return v.getStatus(request, context);
+    if (request.method === 'POST') return v.startSession(request, context);
+    if (request.method === 'DELETE') return v.stopSession(request, context);
+    return { status: 405, headers: { Allow: 'GET, POST, DELETE' }, body: '' };
+  },
+});
+
