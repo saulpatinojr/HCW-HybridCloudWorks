@@ -130,10 +130,11 @@ jobs:
           # check-registered-functions.test.mjs parses with the script the
           # deploy and the registration monitor run (PLAT-2).
           # BuildingImagesPage.jsx and AddOnPanePage.jsx are read by supply-chain
-          # and visitor-copy tests.
+          # and visitor-copy tests. docs/runbooks/labs-host.md is read by
+          # lab-host-coder-first-user.test.mjs (#954).
           - name: scripts (operations)
             dir: scripts
-            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/(lib/(labs|rss/feeds|credentials/cloudflare-roll)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
+            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/labs-host\.md$|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/(lib/(labs|rss/feeds|credentials/cloudflare-roll)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
             lint: npm run lint
             test: npm test
           # vps-agent shells out to `docker run` with a payload that reached
@@ -411,7 +412,9 @@ jobs:
           # docker-runner.js too: hcw-labjob-sweep.test.sh checks the
           # sweep's label against the JOB_LABEL it exports, and a PR that
           # renamed only the label would otherwise skip that check.
-          if grep -qE '^lab-host/|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$' <<<"$changed"; then
+          # docs/runbooks/labs-host.md too: coder-signin.test.sh and
+          # hcw-coder-automation.test.py check its Coder lines (#954).
+          if grep -qE '^lab-host/|^docs/runbooks/labs-host\.md$|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$' <<<"$changed"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "lab-host files changed — running all checks"
           else
@@ -480,6 +483,15 @@ jobs:
       - name: hcw-coder-automation test
         if: steps.changes.outputs.relevant == 'true'
         run: python roles/coder/tests/hcw-coder-automation.test.py
+
+      # Who may sign in to Coder (#954): coder.env rendered by this job's
+      # ansible-core from group_vars carries the organisation, the
+      # lab-learners team and sign-ups off, and the role's sign-in checks
+      # refuse an empty team list or a team outside an allowed organisation.
+      # Needs neither root nor Docker.
+      - name: coder-signin test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/coder/tests/coder-signin.test.sh
 
       # The daily held-package report the hardening role installs (LAB-3,
       # #949), rendered with the role's defaults and run against stub

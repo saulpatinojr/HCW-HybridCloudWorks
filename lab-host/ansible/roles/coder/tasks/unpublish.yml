@@ -1,0 +1,24 @@
+---
+# Included only when Coder's database holds no account (tasks/main.yml), so
+# that Coder's route is down, and Caddy reloaded, BEFORE Coder starts (#1246
+# review). Otherwise a route an earlier deployment left would publish /setup
+# while Coder started. Caddy is reloaded by the role's handler, as every
+# Caddy reload is (scripts/lab-host-caddy-admin.test.mjs), and the handlers
+# are flushed here so it runs now. Flushing also runs any other handler
+# already notified in this play, earlier than the end of the play; that
+# happens only on this path, a fresh install or an empty restore.
+#
+# Not idempotent, on purpose: the removal always reports a change, so the
+# reload always runs on this path. Otherwise a run interrupted after removing
+# the file and before the reload would leave the route loaded in Caddy, and
+# the next run, finding no file to remove, would not reload it.
+
+- name: Remove the coder route
+  ansible.builtin.file:
+    path: "{{ coder_caddy_route_file }}"
+    state: absent
+  changed_when: true
+  notify: Reload caddy for the coder route
+
+- name: Reload Caddy now, before Coder starts
+  ansible.builtin.meta: flush_handlers

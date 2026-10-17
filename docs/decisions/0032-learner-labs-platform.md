@@ -109,7 +109,16 @@ are recorded once, here, before any of them is implemented.
    `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false` closes the door to new learners
    while existing ones keep working, and stopping the `coder` Compose
    service closes it to everyone (Caddy then answers 503 for the Coder
-   names). Two things on the host may drive the
+   names). (Owner decision 2026-10-16, #954: only the `lab-learners` team of
+   that organisation signs in, `CODER_OAUTH2_GITHUB_ALLOWED_TEAMS`, and
+   `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false` is now the normal setting rather
+   than a switch: no sign-in creates an account, and the owner creates each
+   learner's account before their first sign-in. Shutting one learner out is
+   taking them out of the team and suspending their Coder account; stopping
+   the `coder` service is still the switch for everyone, and an emptied list
+   is still neither. [Labs host runbook, "Coder sign-in: adding and removing
+   a learner"](../runbooks/labs-host.md#coder-sign-in-adding-and-removing-a-learner).)
+   Two things on the host may drive the
    Docker daemon, and nothing else (a third, Portainer, owner-only and on the
    loopback, since the amendment of 2026-09-26 below): the Coder **server** container, which has
    the socket mounted because that is how Coder's documented Docker install

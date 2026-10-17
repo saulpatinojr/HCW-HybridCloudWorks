@@ -181,19 +181,37 @@ caddy_direct_visit_redirect: https://hybridcloudworks.com/education/labs
 # as "no organisation restriction" and lets ANY GitHub account sign in, so
 # site.yml and the role both refuse to run with coder_enabled true and this
 # list empty. Set the organisation(s) whose members are allowed before
-# flipping coder_enabled. The kill switches are
-# coder_oauth2_github_allow_signups: false (no new learners; existing ones keep
-# working) or stopping the coder compose service (everyone), never an emptied
-# allowlist. Enabling also needs three vault keys (lab-host/README.md, "Coder").
+# flipping coder_enabled. Shutting learners out is never an emptied
+# allowlist: one learner leaves the lab-learners team and has their Coder
+# account suspended, and everyone is shut out by stopping the coder compose
+# service. Sign-ups are off as the normal setting since 2026-10-16 (below), so
+# no sign-in creates an account and there is no sign-up switch to throw.
+# Enabling also needs three vault keys (lab-host/README.md, "Coder").
 # On since 2026-09-28 (owner decision): Coder runs, and only members of the
 # HybridCloudWorks GitHub organisation may sign in. The owner signs in first,
 # which makes that account Coder's owner; nothing in this repository creates
 # a Coder user. The three vault_coder_* keys were in the host's vault that
 # day (checked by key name).
+# Narrowed 2026-10-16 (owner decision, #954): only members of the
+# lab-learners team sign in, and sign-ups are off, so a learner's account is
+# created by the owner before their first sign-in (docs/runbooks/labs-host.md,
+# "Coder sign-in: adding and removing a learner"; why in lab-host/README.md,
+# "Who signs in"). coder_oauth2_github_allowed_teams renders
+# CODER_OAUTH2_GITHUB_ALLOWED_TEAMS as <organisation>/<team-slug>. Like the
+# organisation list, an EMPTY team list is not a lock: Coder then lets every
+# member of the allowed organisations in. Coder checks a team only inside an
+# organisation the learner already passed, so the role also refuses a team
+# whose organisation is not in coder_oauth2_github_allowed_orgs.
+# Sign-ups off does NOT cover the first account. On a deployment with none,
+# Coder lets the first sign-in through, or /setup, and makes it the Owner.
+# The role therefore never publishes a Coder with no account
+# (roles/coder/tasks/first_user.yml).
 coder_enabled: true
 coder_oauth2_github_allowed_orgs:
   - HybridCloudWorks
-coder_oauth2_github_allow_signups: true
+coder_oauth2_github_allowed_teams:
+  - HybridCloudWorks/lab-learners
+coder_oauth2_github_allow_signups: false
 coder_domain: "coder.{{ lab_host_domain }}"
 # Concurrent workspaces the host is sized for. Coder Community enforces no
 # count; the role asserts 5 x 2 GiB (the template's limit) + 2.5 GiB for

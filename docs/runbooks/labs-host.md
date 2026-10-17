@@ -4,7 +4,8 @@ How to reach the Hostinger lab host from a desktop over SSH and VS Code (the
 first section); how to reinstall it, and what the first `bootstrap.sh` run
 checks before it changes anything; how the lab agent goes live, which is one
 PowerShell line; the order of the run after a merge (the playbook, then the
-Coder template, at once); how the host renews the site's Coder status token
+Coder template, at once); how the owner adds a learner to Coder and removes
+one ("Coder sign-in", #954); how the host renews the site's Coder status token
 and publishes the template on its own once the owner seeds one credential
 ("Automatic renewal"); how to check, after the run that turns it on, that the
 container runtime is privilege-separated and how to take that back (LAB-5);
@@ -1084,6 +1085,167 @@ published `hcw-lab` alone, so a change to `amo-guided-lab` or
    section says, and the next run publishes. A template can be published by
    hand in the meantime, which is the fallback under "Publishing the
    template" in `lab-host/README.md`.
+
+## Coder sign-in: adding and removing a learner
+
+Since 2026-10-16 (owner decision, #954) Coder signs in only members of the
+GitHub team `HybridCloudWorks/lab-learners`, and sign-ups are off: a
+GitHub sign-in that matches no Coder account is refused with `Signups are
+disabled` and nothing is created. So a learner needs two things, team
+membership and an account the owner made. Why, and what happens to
+accounts that already exist (they keep working; the team is checked at
+each GitHub sign-in), is in `lab-host/README.md`, "Who signs in".
+
+Every line below is PowerShell, run on the workstation, and needs a Coder
+token of the owner's in `$t`: `lab-host/README.md`, "The status token for
+the site", step 1, makes one (`hcw-setup`, shortest expiry) and holds it.
+
+### Adding a learner
+
+1. **The learner's GitHub login and primary email**, into variables. The
+   address must be the one GitHub marks **Primary** and verified on the
+   learner's https://github.com/settings/emails page: Coder matches a first
+   sign-in to an account by that address and no other. Paste each line,
+   then type the value at the prompt:
+
+   ```powershell
+   $login = Read-Host 'Learner GitHub login'
+   ```
+
+   ```powershell
+   $email = Read-Host 'Learner primary GitHub email'
+   ```
+
+2. **The team.** In the browser, on
+   https://github.com/orgs/HybridCloudWorks/teams/lab-learners/members,
+   choose **Add a member** and add `$login`'s account. Someone outside the
+   organisation is invited to it as well, and is refused at sign-in with
+   `You aren't a member of the authorized Github organizations!` until they
+   accept that invitation. Success is the login in the team's member list
+   without `Pending`.
+
+3. **The account.**
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder users create --username $login --email $email --login-type github && coder users show $login; }'"
+   ```
+
+   Success is `A new user has been created!` with `Login is authenticated
+   through GitHub.`, then the user's table with `Username` the login and
+   `Status` `dormant` (no sign-in yet). `already exists` means an account
+   with that name or address is already there: `coder users show` in the
+   same line, without the create, shows which.
+
+4. **The learner signs in** with the **Sign in with GitHub** button on any
+   lab's page on https://hybridcloudworks.com/education/labs. Success is
+   the lab opening in the pane, and the account's `Status` reading
+   `active` in the line above.
+
+What a refused sign-in says in the learner's tab, and what it means:
+
+| The learner's tab says | Meaning | Fix |
+| --- | --- | --- |
+| `Signups are disabled` | No account matched: step 3 has not run, or its address is not the learner's primary verified one on GitHub | Run step 3, or delete the account (`coder users delete $login` in step 3's line) and create it with the right address |
+| `You aren't a member of an authorized team in the [HybridCloudWorks] Github organization(s)!` | Not in `lab-learners` | Step 2 |
+| `You aren't a member of the authorized Github organizations!` | Not an active member of `HybridCloudWorks`, or the invitation is not accepted | Step 2, then the learner accepts the invitation |
+
+### Removing a learner
+
+Both steps, in this order. Removing the learner from the team stops their
+next GitHub sign-in, but Coder does not check the team for a session that
+is already open, and an open session is extended while it is used. The
+suspension is what ends it now.
+
+1. **The team.** In the browser, on
+   https://github.com/orgs/HybridCloudWorks/teams/lab-learners/members,
+   select the learner and choose **Remove from team**.
+
+2. **The account, suspended**, with the learner's login in `$login`
+   (step 1 above):
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; echo yes | coder users suspend $login; coder users show $login; }'"
+   ```
+
+   Success is `User <login> has been suspended!` and `Status`
+   `suspended` in the table. A suspended account cannot sign in or use any
+   session or token it holds. Its running workspaces are stopped on Coder's
+   next autobuild check, within about a minute (v2.38.0 stops a started
+   workspace whose owner is suspended: `coderd/autobuild/lifecycle_executor.go`,
+   `isEligibleForAutostop`, polled every `CODER_AUTOBUILD_POLL_INTERVAL`,
+   one minute by default); they are kept, stopped, with their files.
+   `coder users activate` in the same line undoes the suspension.
+
+### A Coder with no account yet
+
+Only after a fresh install, or a restore that left Coder's database empty.
+The live host has accounts, so this does not apply to it.
+
+**Why.** Coder v2.38.0 lets whoever reaches a deployment with no account
+make the first one, and that account is the Owner. Its `/setup` page makes a
+password account. A GitHub sign-in is let through as well, even with sign-ups
+off (`coderd/userauth.go`: `userCount == 0 || params.AllowSignups`). So
+`bootstrap.sh` never publishes such a Coder. Before Coder starts, the coder
+role counts the accounts in its database; with none, it takes Coder's Caddy
+route down and reloads Caddy, then and there. Once Coder is up, it asks
+`/api/v2/users/first` too, and on a 404 it fails with `Coder has no account
+yet`. Coder keeps running on the host's loopback only. Everything below was
+measured against v2.38.0 on 2026-10-17.
+
+Your GitHub account, `saulpatinojr`, must be a member of
+`HybridCloudWorks/lab-learners`, or step 4's sign-in is refused like any
+other outside the team. It has been since 2026-10-16. Success is
+`saulpatinojr` in the list at
+https://github.com/orgs/HybridCloudWorks/teams/lab-learners/members; if it
+is not there, add it with **Add a member** before step 4.
+
+1. **Your primary GitHub email**, into a variable: the address
+   https://github.com/settings/emails marks **Primary** and verified, which
+   is how Coder will match your first GitHub sign-in. PowerShell; paste the
+   line, then type the address at the prompt:
+
+   ```powershell
+   $email = Read-Host 'Your primary GitHub email'
+   ```
+
+2. **A break-glass Owner, and your GitHub account as Owner**, in one line on
+   the host's loopback. PowerShell:
+
+   ```powershell
+   ssh -t hcw-lab "sudo docker exec -it -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'coder login http://127.0.0.1:7080 --first-user-username hcw-breakglass --first-user-email breakglass@lab.hybridcloudworks.com --first-user-full-name Break-glass --first-user-trial=false && coder users create --username saulpatinojr --email $email --login-type github && coder users edit-roles saulpatinojr --roles owner -y; coder logout -y'"
+   ```
+
+   It asks for the break-glass account's password; keep it in your password
+   manager. Success is `A new user has been created!` with `Login is
+   authenticated through GitHub.`, then `You are no longer logged in.`
+   Any `Encountered an error` line names the step that failed.
+
+3. **Publish Coder.** PowerShell. Success is a play recap with `failed=0`:
+
+   ```powershell
+   ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+   ```
+
+4. **Sign in with GitHub** at https://coder.lab.hybridcloudworks.com.
+   Success is Coder's dashboard, signed in as `saulpatinojr`.
+
+5. **Retire the break-glass account**, with a token of yours in `$t` (step 1
+   of "The status token for the site", in `lab-host/README.md`). Coder will
+   not suspend an Owner, so its role is lowered first. PowerShell:
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder users edit-roles hcw-breakglass --roles auditor -y && echo yes | coder users suspend hcw-breakglass; }'"
+   ```
+
+   Success is `User hcw-breakglass has been suspended!`. A suspended account
+   cannot sign in, and `/api/v2/users/first` keeps answering 200, so later
+   runs publish Coder as usual. Should every Owner ever be lost, a new one
+   is made on the host straight in the database, without signing in, bash
+   on the host:
+
+   ```bash
+   sudo docker exec -it coder coder server create-admin-user
+   ```
 
 ## The lab canary and the status-token check
 

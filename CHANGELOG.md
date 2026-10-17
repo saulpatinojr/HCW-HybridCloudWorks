@@ -19,6 +19,35 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Coder: only the `lab-learners` team signs in, and no sign-in creates an
+  account (#954, LAB-8)**. Owner decision 2026-10-16.
+  - **The allowlist:** the `coder` role renders
+    `CODER_OAUTH2_GITHUB_ALLOWED_TEAMS=HybridCloudWorks/lab-learners`, and
+    `coder_oauth2_github_allow_signups` is `false`.
+  - **The checks:** `tasks/signin_policy.yml` refuses an empty team list,
+    or a team that is not `<organisation>/<team-slug>` in an allowed
+    organisation spelled the same way, since Coder v2.38.0 checks a team
+    only inside an organisation the learner already passed.
+  - **Who is affected:** existing accounts, the owner's included, keep
+    working, and the team is checked at each GitHub sign-in. A learner's
+    first sign-in matches only an account the owner made with their
+    primary verified GitHub email; the runbook's new "Coder sign-in:
+    adding and removing a learner" has the lines, and a suspended learner's
+    workspaces stop within a minute. Sign-ups off is the normal setting
+    now, not a kill switch: `group_vars`, ADR 0032 and
+    `docs/standards/required-inputs.md` say so.
+  - **No account, no route:** sign-ups off does not cover a deployment's
+    first account, which v2.38.0 lets through from GitHub or `/setup` and
+    makes the Owner. Before Coder starts, the role counts the accounts in
+    its database. With none, it takes Coder's Caddy route down and reloads
+    Caddy then and there. Once Coder is up, a 404 from
+    `/api/v2/users/first` fails the play. The runbook's "A Coder with no
+    account yet" has the owner's measured recovery, and
+    `scripts/lab-host-coder-first-user.test.mjs` holds it.
+  - **Runbook token lines:** they strip the carriage return with
+    `tr -d \\r`; one backslash had deleted every `r` from the token.
+  - **Tests:** `roles/coder/tests/coder-signin.test.sh` (23 checks) in the
+    `ansible-lint (lab-host)` job.
 - **Secrets: Cloudflare API token auto-renewal via roll-token API (#1027)**.
   - Implemented automated Cloudflare API token renewal in `functions/src/lib/credentials/cloudflare-roll.js` and CLI orchestrator `scripts/roll-cloudflare-tokens.mjs`.
   - Supports all three estate targets: `tfc-azure-cloudflare-api-token` (`hcw-azure` HCP Terraform workspace), `tfc-lab-cloudflare-api-token` (`hcw-lab` HCP Terraform workspace), and `lab-caddy-cloudflare-api-token` (`vault_cloudflare_api_token` in lab host Ansible Vault).

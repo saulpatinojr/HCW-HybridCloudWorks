@@ -1,0 +1,49 @@
+---
+# Who may sign in to Coder (ADR 0032; #954), checked before the role touches
+# the host. site.yml asserts the organisation allowlist too; it is repeated
+# here so the role's contract does not depend on the play. Its own file so
+# tests/coder-signin.test.sh can run exactly these checks against good and
+# bad allowlists.
+#
+# Coder v2.38.0 (coderd/userauth.go, userOAuth2Github) signs a learner in
+# only after two GitHub checks: an active membership of an organisation in
+# CODER_OAUTH2_GITHUB_ALLOWED_ORGS, then, when CODER_OAUTH2_GITHUB_ALLOWED_TEAMS
+# is set, a membership of one of those teams inside an organisation the first
+# check passed. An empty team list is not a lock: Coder starts with it and
+# lets every member of the allowed organisations in.
+- name: Refuse to enable Coder with an empty GitHub organisation allowlist
+  ansible.builtin.assert:
+    that:
+      - coder_oauth2_github_allowed_orgs | length > 0
+    fail_msg: >-
+      coder_enabled is true but coder_oauth2_github_allowed_orgs is empty. An empty
+      CODER_OAUTH2_GITHUB_ALLOWED_ORGS lets any GitHub account sign in (ADR 0032).
+    quiet: true
+  when: coder_enabled | bool
+
+- name: Refuse to enable Coder with an empty GitHub team allowlist
+  ansible.builtin.assert:
+    that:
+      - coder_oauth2_github_allowed_teams | length > 0
+    fail_msg: >-
+      coder_enabled is true but coder_oauth2_github_allowed_teams is empty. An empty
+      CODER_OAUTH2_GITHUB_ALLOWED_TEAMS lets every member of the allowed organisations sign
+      in, which is wider than the lab's sign-in policy (one team, owner decision 2026-10-16).
+      Name the team as <organisation>/<team-slug> in group_vars/all.yml.
+    quiet: true
+  when: coder_enabled | bool
+
+- name: Refuse a GitHub team that is not <organisation>/<team-slug> in an allowed organisation
+  ansible.builtin.assert:
+    that:
+      - item is match(coder_oauth2_github_team_pattern)
+      - (item.split('/', 1) | first) in coder_oauth2_github_allowed_orgs
+    fail_msg: >-
+      coder_oauth2_github_allowed_teams has {{ item }}. Each team must be written
+      <organisation>/<team-slug>, and its organisation must also be in
+      coder_oauth2_github_allowed_orgs ({{ coder_oauth2_github_allowed_orgs | join(', ') }}),
+      spelled the same way: Coder checks a team only inside an organisation the learner
+      already passed, so a team anywhere else would let nobody in.
+    quiet: true
+  loop: "{{ coder_oauth2_github_allowed_teams }}"
+  when: coder_enabled | bool

@@ -29,6 +29,11 @@ coder_secrets_present: >-
 # need no escaping there (RFC 3986 unreserved). `openssl rand -hex 32` is the
 # documented way to make one.
 coder_postgres_password_pattern: '^[A-Za-z0-9._~-]+$'
+# A GitHub team as CODER_OAUTH2_GITHUB_ALLOWED_TEAMS takes it:
+# <organisation>/<team-slug>, one slash, nothing else. Coder v2.38.0 splits
+# each entry at its first slash (cli/server.go, configureGithubOAuth2) and
+# compares the organisation with GitHub's login exactly, case included.
+coder_oauth2_github_team_pattern: '^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$'
 # Whole hours: hcw-coder-template-push compares Coder's read-back (a Go
 # duration, 1h0m0s) with this value, and refuses any other shape itself.
 coder_template_default_ttl_pattern: '^[1-9][0-9]*h$'
