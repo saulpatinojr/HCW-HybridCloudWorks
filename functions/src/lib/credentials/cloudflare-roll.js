@@ -7,14 +7,18 @@
  *
  * 1. ZERO VALUE LEAKAGE: Token secrets are never logged, printed, or included
  *    in error messages or return structures.
- * 2. VERIFY BEFORE APPLY: When rolling, the new token secret is verified
- *    against Cloudflare's `/user/tokens/verify` endpoint before committing it
- *    to the target store (HCP Terraform or lab host vault).
- * 3. STDIN FOR VAULT: Lab host Ansible Vault updates use `hcw-vault-set`,
+ * 2. WRITE BEFORE RETIRE: Because Cloudflare's roll endpoint immediately
+ *    invalidates the old token, the new token is committed to the target store
+ *    (with retries) immediately after rolling, ensuring no store is left with
+ *    a dead token.
+ * 3. POST-WRITE VERIFICATION: The newly written token is verified against
+ *    Cloudflare's `/user/tokens/verify` endpoint. Any verification anomaly is
+ *    reported as a warning rather than aborting an already-committed rotation.
+ * 4. STDIN FOR VAULT: Lab host Ansible Vault updates use `hcw-vault-set`,
  *    passing the token exclusively on stdin.
- * 4. JSON:API FOR TFC: HCP Terraform variables require
+ * 5. JSON:API FOR TFC: HCP Terraform variables require
  *    `Content-Type: application/vnd.api+json`.
- * 5. PURE & INJECTABLE: Network operations use an injectable `fetchImpl` and
+ * 6. PURE & INJECTABLE: Network operations use an injectable `fetchImpl` and
  *    shell operations use an injectable `execImpl` for testability without
  *    live external side-effects.
  */
@@ -57,6 +61,26 @@ export const CLOUDFLARE_TARGETS = Object.freeze({
     envTokenId: 'CLOUDFLARE_CADDY_TOKEN_ID',
   }),
 });
+
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Retries an asynchronous operation with exponential backoff.
+ */
+async function retry(fn, { attempts = 3, sleep = defaultSleep } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts) {
+        await sleep(50 * Math.pow(2, attempt - 1));
+      }
+    }
+  }
+  throw lastError;
+}
 
 /**
  * Rolls a Cloudflare user API token using Cloudflare's roll-token endpoint:
@@ -397,12 +421,9 @@ export async function updateLabVaultSecret({
 }
 
 /**
- * Orchestrates rolling a Cloudflare token, verifying it, and writing it back to its target.
- *
- * Sequence:
- * 1. Roll the token using Cloudflare roll-token API.
- * 2. Verify the newly generated token secret using Cloudflare verify API.
- * 3. Write the new token to the target store (HCP Terraform workspace or Lab host Ansible Vault).
+ * Orchestrates rolling a Cloudflare token, writing it back to its target store
+ * immediately with retries (preventing destination stores from being left with
+ * an invalidated token), and then verifying it.
  *
  * @param {object} params
  * @param {string} params.tokenId Cloudflare token ID to roll
@@ -411,8 +432,9 @@ export async function updateLabVaultSecret({
  * @param {string} [params.tfcToken] HCP Terraform API token (required if target.type === 'tfc')
  * @param {typeof fetch} [params.fetchImpl] Injectable fetch
  * @param {Function} [params.execImpl] Injectable runner for vault
- * @param {boolean} [params.verifyFirst=true] Verify token before write-back
- * @returns {Promise<{ ok: boolean, tokenId: string, targetType: string, targetName: string, action: string }>}
+ * @param {boolean} [params.verify=true] Verify token after writing
+ * @param {Function} [params.sleep] Injectable sleep for retry backoff
+ * @returns {Promise<{ ok: boolean, tokenId: string, targetType: string, targetName: string, action: string, verified: boolean, warning?: string }>}
  */
 export async function rollAndApplyCloudflareToken({
   tokenId,
@@ -421,43 +443,65 @@ export async function rollAndApplyCloudflareToken({
   tfcToken,
   fetchImpl = globalThis.fetch,
   execImpl,
-  verifyFirst = true,
+  verify = true,
+  sleep = defaultSleep,
 }) {
   if (!target || typeof target !== 'object') {
     throw new Error('Target configuration is required');
   }
 
-  // Step 1: Roll the token
+  // Step 1: Roll the token in Cloudflare.
+  // Note: Cloudflare's roll endpoint immediately invalidates the previous secret.
   const rolled = await rollCloudflareToken({ tokenId, rollToken, fetchImpl });
   const newTokenValue = rolled.tokenValue;
 
-  // Step 2: Verify the new token before committing/retiring
-  if (verifyFirst) {
-    await verifyCloudflareToken({ tokenValue: newTokenValue, fetchImpl });
+  // Step 2: Write back to target store immediately with retries so the active store
+  // is updated with the new valid secret.
+  let applyResult = null;
+  try {
+    if (target.type === 'tfc') {
+      applyResult = await retry(
+        () =>
+          updateTfcVariable({
+            tfcToken,
+            organization: target.organization || 'hcw',
+            workspace: target.workspace,
+            key: target.key || 'cloudflare_api_token',
+            value: newTokenValue,
+            category: target.category || 'terraform',
+            sensitive: target.sensitive ?? true,
+            description: target.description,
+            fetchImpl,
+          }),
+        { attempts: 3, sleep }
+      );
+    } else if (target.type === 'lab-vault') {
+      applyResult = await retry(
+        () =>
+          updateLabVaultSecret({
+            vaultKey: target.vaultKey || 'vault_cloudflare_api_token',
+            secretValue: newTokenValue,
+            execImpl,
+          }),
+        { attempts: 3, sleep }
+      );
+    } else {
+      throw new Error(`Unsupported target type: ${target.type}`);
+    }
+  } catch (err) {
+    throw new Error(
+      `Token was rolled in Cloudflare but failed to write to target ${target.name || target.workspace || target.vaultKey}: ${err.message}`
+    );
   }
 
-  // Step 3: Write back to target
-  let applyResult = null;
-  if (target.type === 'tfc') {
-    applyResult = await updateTfcVariable({
-      tfcToken,
-      organization: target.organization || 'hcw',
-      workspace: target.workspace,
-      key: target.key || 'cloudflare_api_token',
-      value: newTokenValue,
-      category: target.category || 'terraform',
-      sensitive: target.sensitive ?? true,
-      description: target.description,
-      fetchImpl,
-    });
-  } else if (target.type === 'lab-vault') {
-    applyResult = await updateLabVaultSecret({
-      vaultKey: target.vaultKey || 'vault_cloudflare_api_token',
-      secretValue: newTokenValue,
-      execImpl,
-    });
-  } else {
-    throw new Error(`Unsupported target type: ${target.type}`);
+  // Step 3: Verify the newly applied token against Cloudflare's verify API
+  let verificationWarning = null;
+  if (verify) {
+    try {
+      await verifyCloudflareToken({ tokenValue: newTokenValue, fetchImpl });
+    } catch (verifyErr) {
+      verificationWarning = verifyErr.message;
+    }
   }
 
   return {
@@ -466,5 +510,9 @@ export async function rollAndApplyCloudflareToken({
     targetType: target.type,
     targetName: target.name || target.workspace || target.vaultKey,
     action: applyResult.action,
+    verified: verificationWarning === null,
+    ...(verificationWarning
+      ? { warning: `Token applied, but post-write verification returned: ${verificationWarning}` }
+      : {}),
   };
 }

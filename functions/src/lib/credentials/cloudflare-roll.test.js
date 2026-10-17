@@ -478,6 +478,7 @@ describe('rollAndApplyCloudflareToken', () => {
       targetType: 'tfc',
       targetName: 'Azure HCP Terraform workspace (hcw/hcw-azure)',
       action: 'updated',
+      verified: true,
     });
   });
 
@@ -520,16 +521,17 @@ describe('rollAndApplyCloudflareToken', () => {
       targetType: 'lab-vault',
       targetName: 'Lab host Ansible Vault (vault_cloudflare_api_token)',
       action: 'updated',
+      verified: true,
     });
   });
 
-  it('aborts and throws before writing to target if verification fails', async () => {
+  it('writes to target and reports warning if post-write verification fails', async () => {
     const mockFetch = vi.fn(async (url) => {
-      if (url.includes('/tokens/tok-bad/value')) {
+      if (url.includes('/tokens/tok-warn/value')) {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ success: true, result: 'rolled-token-fails-verify' }),
+          json: async () => ({ success: true, result: 'rolled-token-needs-verification-warning' }),
         };
       }
       if (url.includes('/tokens/verify')) {
@@ -537,25 +539,58 @@ describe('rollAndApplyCloudflareToken', () => {
           ok: false,
           status: 401,
           statusText: 'Unauthorized',
-          json: async () => ({ success: false, errors: [{ message: 'Bad token' }] }),
+          json: async () => ({ success: false, errors: [{ message: 'Verification endpoint error' }] }),
         };
       }
-      throw new Error('Should not reach any further URL!');
+      throw new Error(`Unexpected URL: ${url}`);
     });
 
-    const mockExec = vi.fn();
+    let vaultWritten = false;
+    const mockExec = vi.fn(async (params) => {
+      expect(params.stdin).toBe('rolled-token-needs-verification-warning');
+      vaultWritten = true;
+      return { code: 0, stdout: 'ok', stderr: '' };
+    });
+
+    const res = await rollAndApplyCloudflareToken({
+      tokenId: 'tok-warn',
+      rollToken: 'roll-tok',
+      target: CLOUDFLARE_TARGETS.caddy,
+      fetchImpl: mockFetch,
+      execImpl: mockExec,
+    });
+
+    expect(vaultWritten).toBe(true);
+    expect(res.ok).toBe(true);
+    expect(res.verified).toBe(false);
+    expect(res.warning).toContain('post-write verification returned');
+  });
+
+  it('throws error if writing to target fails after retries', async () => {
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/tokens/tok-write-fail/value')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, result: 'valid-token' }),
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const mockExec = vi.fn(async () => {
+      return { code: 2, stdout: '', stderr: 'vault permission denied' };
+    });
 
     await expect(
       rollAndApplyCloudflareToken({
-        tokenId: 'tok-bad',
+        tokenId: 'tok-write-fail',
         rollToken: 'roll-tok',
         target: CLOUDFLARE_TARGETS.caddy,
         fetchImpl: mockFetch,
         execImpl: mockExec,
+        sleep: async () => {},
       })
-    ).rejects.toThrow(/Cloudflare token verification failed \(401\)/);
-
-    // Ensure mockExec was never called!
-    expect(mockExec).not.toHaveBeenCalled();
+    ).rejects.toThrow(/Token was rolled in Cloudflare but failed to write to target/);
   });
 });

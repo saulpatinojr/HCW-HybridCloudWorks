@@ -11,31 +11,27 @@ describe('parseArgs', () => {
     expect(opts).toEqual({
       target: 'all',
       tokenId: null,
-      rollToken: null,
-      tfcToken: null,
       dryRun: false,
       check: false,
       help: false,
+      invalid: null,
     });
   });
 
-  it('parses flags and parameter values', () => {
+  it('parses valid options without secrets in argv', () => {
     const opts = parseArgs([
       '--target', 'azure',
       '--token-id', 'tok-abc',
-      '--roll-token', 'rt-123',
-      '--tfc-token', 'tfc-999',
       '--dry-run',
       '--check',
     ]);
     expect(opts).toEqual({
       target: 'azure',
       tokenId: 'tok-abc',
-      rollToken: 'rt-123',
-      tfcToken: 'tfc-999',
       dryRun: true,
       check: true,
       help: false,
+      invalid: null,
     });
   });
 
@@ -43,10 +39,30 @@ describe('parseArgs', () => {
     expect(parseArgs(['-h']).help).toBe(true);
     expect(parseArgs(['--help']).help).toBe(true);
   });
+
+  it('flags unrecognized option', () => {
+    const opts = parseArgs(['--unknown-flag']);
+    expect(opts.invalid).toContain("Unrecognized option: '--unknown-flag'");
+  });
+
+  it('flags missing operand for --target', () => {
+    const opts = parseArgs(['--target']);
+    expect(opts.invalid).toContain('Option --target requires a target operand');
+  });
+
+  it('flags hyphen-prefixed operand for --target', () => {
+    const opts = parseArgs(['--target', '--dry-run']);
+    expect(opts.invalid).toContain('Option --target requires a target operand');
+  });
+
+  it('flags missing operand for --token-id', () => {
+    const opts = parseArgs(['--token-id']);
+    expect(opts.invalid).toContain('Option --token-id requires a non-empty token ID operand');
+  });
 });
 
 describe('printUsage', () => {
-  it('outputs usage options and target names', () => {
+  it('outputs usage options and target names without argv secrets', () => {
     const lines = [];
     printUsage((msg) => lines.push(msg));
     const output = lines.join('\n');
@@ -54,6 +70,8 @@ describe('printUsage', () => {
     expect(output).toContain('--target');
     expect(output).toContain('--dry-run');
     expect(output).toContain('--token-id');
+    expect(output).toContain('CLOUDFLARE_ROLL_TOKEN');
+    expect(output).toContain('TFC_TOKEN');
   });
 });
 
@@ -68,6 +86,16 @@ describe('runRoll', () => {
     expect(stdout.join('\n')).toContain('Usage: roll-cloudflare-tokens.mjs');
   });
 
+  it('fails with 2 on invalid options from parseArgs', async () => {
+    const stderr = [];
+    const code = await runRoll({
+      options: { invalid: "Unrecognized option: '--bad'" },
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(2);
+    expect(stderr.join('\n')).toContain("[error] Unrecognized option: '--bad'");
+  });
+
   it('fails with 1 on unknown target', async () => {
     const stderr = [];
     const code = await runRoll({
@@ -78,7 +106,7 @@ describe('runRoll', () => {
     expect(stderr.join('\n')).toContain("Unknown target: 'nonexistent'");
   });
 
-  it('refuses --token-id when targeting all targets', async () => {
+  it('refuses --token-id when targeting multiple targets', async () => {
     const stderr = [];
     const code = await runRoll({
       options: { target: 'all', tokenId: 'single-id' },
@@ -88,7 +116,24 @@ describe('runRoll', () => {
     expect(stderr.join('\n')).toContain('--token-id cannot be used when targeting multiple targets');
   });
 
-  it('exits with 2 when Cloudflare roll token is missing', async () => {
+  it('rejects duplicate token IDs across targets', async () => {
+    const stderr = [];
+    const code = await runRoll({
+      options: { target: 'all' },
+      env: {
+        CLOUDFLARE_AZURE_TOKEN_ID: 'duplicate-tok-id',
+        CLOUDFLARE_LAB_TOKEN_ID: 'duplicate-tok-id',
+        CLOUDFLARE_CADDY_TOKEN_ID: 'different-tok-id',
+        CLOUDFLARE_ROLL_TOKEN: 'cf-roll-tok',
+        TFC_TOKEN: 'tfc-tok',
+      },
+      stderr: (m) => stderr.push(m),
+    });
+    expect(code).toBe(1);
+    expect(stderr.join('\n')).toContain("Duplicate token ID 'duplicate-tok-id' detected");
+  });
+
+  it('exits with 2 when Cloudflare roll token is missing in env', async () => {
     const stderr = [];
     const code = await runRoll({
       options: { target: 'azure', dryRun: false },
@@ -102,19 +147,19 @@ describe('runRoll', () => {
   it('exits with 2 when TFC token is missing for a TFC target', async () => {
     const stderr = [];
     const code = await runRoll({
-      options: { target: 'azure', dryRun: false, rollToken: 'cf-roll-tok' },
-      env: {},
+      options: { target: 'azure', dryRun: false },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'cf-roll-tok' },
       stderr: (m) => stderr.push(m),
     });
     expect(code).toBe(2);
     expect(stderr.join('\n')).toContain('HCP Terraform token is required for TFC targets');
   });
 
-  it('exits with 1 when target token ID is missing', async () => {
+  it('exits with 1 when target token ID is missing in env', async () => {
     const stderr = [];
     const code = await runRoll({
-      options: { target: 'azure', dryRun: false, rollToken: 'cf-roll-tok', tfcToken: 'tfc-tok' },
-      env: {},
+      options: { target: 'azure', dryRun: false },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'cf-roll-tok', TFC_TOKEN: 'tfc-tok' },
       stderr: (m) => stderr.push(m),
     });
     expect(code).toBe(1);
@@ -137,6 +182,33 @@ describe('runRoll', () => {
     expect(out).toContain('[dry-run] Would roll token tok-azure-id and update Azure HCP Terraform workspace');
     expect(out).toContain('[dry-run] Would roll token tok-lab-id and update Lab HCP Terraform workspace');
     expect(out).toContain('[dry-run] Would roll token tok-caddy-id and update Lab host Ansible Vault');
+  });
+
+  it('performs live checks in --check mode', async () => {
+    const stdout = [];
+    const stderr = [];
+
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-mock' } }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const code = await runRoll({
+      options: { target: 'azure', check: true },
+      env: {
+        CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az',
+        TFC_TOKEN: 'valid-tfc-token',
+      },
+      fetchImpl: mockFetch,
+      stdout: (m) => stdout.push(m),
+      stderr: (m) => stderr.push(m),
+    });
+
+    expect(code).toBe(0);
+    expect(stderr).toEqual([]);
+    expect(stdout.join('\n')).toContain("[ok] Target 'azure': verified reachable and configured");
   });
 
   it('executes successful roll and apply across all three targets', async () => {
@@ -193,12 +265,10 @@ describe('runRoll', () => {
     const mockExec = vi.fn(async () => ({ code: 0, stdout: 'ok', stderr: '' }));
 
     const code = await runRoll({
-      options: {
-        target: 'all',
-        rollToken: 'cf-roll-token',
-        tfcToken: 'tfc-app-token',
-      },
+      options: { target: 'all' },
       env: {
+        CLOUDFLARE_ROLL_TOKEN: 'cf-roll-token',
+        TFC_TOKEN: 'tfc-app-token',
         CLOUDFLARE_AZURE_TOKEN_ID: 'tok-az',
         CLOUDFLARE_LAB_TOKEN_ID: 'tok-lb',
         CLOUDFLARE_CADDY_TOKEN_ID: 'tok-cd',
@@ -222,7 +292,7 @@ describe('runRoll', () => {
     expect(out).not.toContain('tfc-app-token');
   });
 
-  it('exits with 1 when a target fails to roll or verify', async () => {
+  it('exits with 1 when a target fails to roll', async () => {
     const stdout = [];
     const stderr = [];
 
@@ -239,12 +309,8 @@ describe('runRoll', () => {
     });
 
     const code = await runRoll({
-      options: {
-        target: 'caddy',
-        tokenId: 'tok-failing',
-        rollToken: 'cf-roll-token',
-      },
-      env: {},
+      options: { target: 'caddy', tokenId: 'tok-failing' },
+      env: { CLOUDFLARE_ROLL_TOKEN: 'cf-roll-token' },
       fetchImpl: mockFetch,
       stdout: (m) => stdout.push(m),
       stderr: (m) => stderr.push(m),

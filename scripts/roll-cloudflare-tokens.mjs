@@ -10,12 +10,13 @@
  *   all    - All three targets (default)
  *
  * Invariants:
- *   - Zero token secret leakage: values are never printed to stdout/stderr.
- *   - Verify-before-apply: new tokens are verified before being written to targets.
+ *   - Zero token secret leakage: secrets are NEVER accepted via argv (no --roll-token
+ *     or --tfc-token on the command line; env vars only) and never printed.
+ *   - Write before retire: new tokens are committed to stores immediately after rolling.
  *   - Stdin-only: vault updates pass secret strictly on standard input.
  *
  * Usage:
- *   node scripts/roll-cloudflare-tokens.mjs [--target <azure|lab|caddy|all>] [--dry-run] [--token-id <id>]
+ *   node scripts/roll-cloudflare-tokens.mjs [--target <azure|lab|caddy|all>] [--dry-run] [--check] [--token-id <id>]
  */
 
 import { fileURLToPath } from 'node:url';
@@ -25,7 +26,8 @@ import {
 } from '../functions/src/lib/credentials/cloudflare-roll.js';
 
 /**
- * Parses CLI arguments into an options bag.
+ * Parses CLI arguments into an options bag. Rejects unknown flags and
+ * flags with missing operands (exits or reports error).
  *
  * @param {string[]} argv
  * @returns {object}
@@ -34,11 +36,10 @@ export function parseArgs(argv) {
   const options = {
     target: 'all',
     tokenId: null,
-    rollToken: null,
-    tfcToken: null,
     dryRun: false,
     check: false,
     help: false,
+    invalid: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -49,14 +50,23 @@ export function parseArgs(argv) {
       options.dryRun = true;
     } else if (arg === '--check') {
       options.check = true;
-    } else if (arg === '--target' && i + 1 < argv.length) {
+    } else if (arg === '--target') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('-')) {
+        options.invalid = 'Option --target requires a target operand (azure, lab, caddy, or all)';
+        return options;
+      }
       options.target = argv[++i];
-    } else if (arg === '--token-id' && i + 1 < argv.length) {
+    } else if (arg === '--token-id') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('-')) {
+        options.invalid = 'Option --token-id requires a non-empty token ID operand';
+        return options;
+      }
       options.tokenId = argv[++i];
-    } else if (arg === '--roll-token' && i + 1 < argv.length) {
-      options.rollToken = argv[++i];
-    } else if (arg === '--tfc-token' && i + 1 < argv.length) {
-      options.tfcToken = argv[++i];
+    } else {
+      options.invalid = `Unrecognized option: '${arg}'`;
+      return options;
     }
   }
 
@@ -74,12 +84,17 @@ to HCP Terraform workspaces or the lab host's Ansible Vault (#1027).
 
 Options:
   --target <target>     Target to renew: 'azure', 'lab', 'caddy', or 'all' (default: 'all')
-  --token-id <id>       Override Cloudflare token ID for a single target
-  --roll-token <token>  Cloudflare token authorized to roll (default: $CLOUDFLARE_ROLL_TOKEN)
-  --tfc-token <token>   HCP Terraform token for workspace variables (default: $TFC_TOKEN or $TFE_TOKEN)
+  --token-id <id>       Override Cloudflare token ID (allowed only with a single target)
   --dry-run             Validate configuration and display actions without rolling or writing
-  --check               Verify that configured tokens and endpoints are reachable
+  --check               Verify that configured tokens and workspace targets are reachable
   --help, -h            Show this help message
+
+Environment variables:
+  CLOUDFLARE_ROLL_TOKEN   Cloudflare API token with 'API Tokens:Edit' permission (or CLOUDFLARE_API_TOKEN)
+  TFC_TOKEN               HCP Terraform token for workspace variables (or TFE_TOKEN)
+  CLOUDFLARE_AZURE_TOKEN_ID   Cloudflare token ID for the Azure HCP Terraform workspace
+  CLOUDFLARE_LAB_TOKEN_ID     Cloudflare token ID for the Lab HCP Terraform workspace
+  CLOUDFLARE_CADDY_TOKEN_ID   Cloudflare token ID for the Lab host Caddy Ansible Vault
 `);
 }
 
@@ -108,15 +123,13 @@ export async function runRoll({
     return 0;
   }
 
-  const rollToken =
-    options.rollToken ||
-    env.CLOUDFLARE_ROLL_TOKEN ||
-    env.CLOUDFLARE_API_TOKEN;
+  if (options.invalid) {
+    stderr(`[error] ${options.invalid}`);
+    return 2;
+  }
 
-  const tfcToken =
-    options.tfcToken ||
-    env.TFC_TOKEN ||
-    env.TFE_TOKEN;
+  const rollToken = env.CLOUDFLARE_ROLL_TOKEN || env.CLOUDFLARE_API_TOKEN;
+  const tfcToken = env.TFC_TOKEN || env.TFE_TOKEN;
 
   const targetKeys =
     options.target === 'all'
@@ -135,49 +148,89 @@ export async function runRoll({
     return 1;
   }
 
-  if (!options.dryRun && !rollToken) {
-    stderr('[error] Cloudflare roll token is required (set CLOUDFLARE_ROLL_TOKEN or pass --roll-token)');
+  if (!options.dryRun && !options.check && !rollToken) {
+    stderr('[error] Cloudflare roll token is required (set CLOUDFLARE_ROLL_TOKEN or CLOUDFLARE_API_TOKEN)');
     return 2;
   }
 
   const needsTfc = targetKeys.some((k) => CLOUDFLARE_TARGETS[k].type === 'tfc');
   if (!options.dryRun && needsTfc && !tfcToken) {
-    stderr('[error] HCP Terraform token is required for TFC targets (set TFC_TOKEN or pass --tfc-token)');
+    stderr('[error] HCP Terraform token is required for TFC targets (set TFC_TOKEN or TFE_TOKEN)');
     return 2;
   }
 
-  let failed = 0;
+  // Resolve and validate token IDs
+  const resolvedTargets = [];
+  const seenTokenIds = new Set();
+  let missing = 0;
 
   for (const key of targetKeys) {
     const target = CLOUDFLARE_TARGETS[key];
-    const tokenId =
-      options.tokenId ||
-      env[target.envTokenId] ||
-      env.CLOUDFLARE_TOKEN_ID;
+    let tokenId = options.tokenId || env[target.envTokenId];
+
+    // Only allow single-target fallback to generic CLOUDFLARE_TOKEN_ID
+    if (!tokenId && targetKeys.length === 1) {
+      tokenId = env.CLOUDFLARE_TOKEN_ID;
+    }
 
     if (!tokenId) {
-      stderr(`[error] Missing token ID for target '${key}' (${target.name}). Set ${target.envTokenId} or pass --token-id.`);
-      failed += 1;
+      stderr(`[error] Missing token ID for target '${key}' (${target.name}). Set ${target.envTokenId}.`);
+      missing += 1;
       continue;
     }
 
-    if (options.check) {
-      stdout(`[check] Checking token ID ${tokenId} for target '${key}'...`);
-      // When checking, we can verify if the token is valid or endpoint reachable
+    if (seenTokenIds.has(tokenId)) {
+      stderr(`[error] Duplicate token ID '${tokenId}' detected across multiple targets. Each target must have a distinct Cloudflare token.`);
+      return 1;
+    }
+    seenTokenIds.add(tokenId);
+
+    resolvedTargets.push({ key, target, tokenId });
+  }
+
+  if (missing > 0) {
+    return 1;
+  }
+
+  // Check mode: verifies connectivity and configuration without modifying anything
+  if (options.check) {
+    let checkFailures = 0;
+    for (const { key, target, tokenId } of resolvedTargets) {
+      stdout(`[check] Checking target '${key}' (${target.name}) with token ID ${tokenId}...`);
       try {
-        stdout(`[ok] Target '${key}': target configuration valid (ID: ${tokenId})`);
+        if (target.type === 'tfc' && tfcToken) {
+          const wsUrl = `https://app.terraform.io/api/v2/organizations/${encodeURIComponent(target.organization)}/workspaces/${encodeURIComponent(target.workspace)}`;
+          const res = await fetchImpl(wsUrl, {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${tfcToken}`,
+              'Content-Type': 'application/vnd.api+json',
+            },
+          });
+          if (!res.ok) {
+            throw new Error(`HCP Terraform workspace lookup returned HTTP ${res.status}`);
+          }
+        }
+        stdout(`[ok] Target '${key}': verified reachable and configured`);
       } catch (err) {
         stderr(`[fail] Target '${key}': check failed: ${err.message}`);
-        failed += 1;
+        checkFailures += 1;
       }
-      continue;
     }
+    return checkFailures === 0 ? 0 : 1;
+  }
 
-    if (options.dryRun) {
+  // Dry run mode
+  if (options.dryRun) {
+    for (const { target, tokenId } of resolvedTargets) {
       stdout(`[dry-run] Would roll token ${tokenId} and update ${target.name} (${target.type})`);
-      continue;
     }
+    return 0;
+  }
 
+  // Real execution
+  let failed = 0;
+  for (const { key, target, tokenId } of resolvedTargets) {
     try {
       stdout(`[roll] Rolling token for target '${key}' (${target.name})...`);
       const result = await rollAndApplyCloudflareToken({
@@ -187,8 +240,11 @@ export async function runRoll({
         tfcToken,
         fetchImpl,
         execImpl,
-        verifyFirst: true,
+        verify: true,
       });
+      if (result.warning) {
+        stdout(`[warn] Target '${key}': ${result.warning}`);
+      }
       stdout(`[ok] Target '${key}': successfully rolled token ${tokenId} and ${result.action} in ${target.name}`);
     } catch (err) {
       stderr(`[fail] Target '${key}': failed to roll and apply: ${err.message}`);
