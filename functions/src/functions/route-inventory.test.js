@@ -258,6 +258,11 @@ const PUBLIC_ROUTES = new Set([
   // job, a UUID check before any read, and never the payload, the agent or
   // the requester. Behind the same switch — lib/labs/public-submit.js.
   "public/labs/job",
+  // Visitor lab sessions (#1016, ADR 0032 amendment): brokered Coder workspaces
+  // for visitors outside the org. Locked to the site's origin, Cloudflare
+  // Turnstile verified, capped concurrency and daily client quota, automated
+  // session reaping, fail-closed switch — lib/labs/visitor-session.js.
+  "public/labs/visitor-session",
   // One AddOn's status through a server-side proxy (ADR 0035 decision 4),
   // so the site's pane at /tools/<id> opens only when the AddOn answers its
   // health read and the browser never calls the AddOn (connect-src stays

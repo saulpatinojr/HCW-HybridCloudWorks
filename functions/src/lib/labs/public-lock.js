@@ -196,31 +196,7 @@ const errorCodes = (answer) =>
   Array.isArray(answer['error-codes']) ? answer['error-codes'].map(String) : [];
 const listedCodes = (answer) => errorCodes(answer).join(', ') || 'none';
 
-/**
- * The rules a siteverify answer must pass, in order, each a verdict or null
- * to pass (the shape of BODY_CHECKS in public-bounds.js). The first is what
- * lets the others read fields: siteverify always answers a JSON object, and
- * anything else is Cloudflare or the network misbehaving, not a visitor
- * failing the check.
- */
-const SITEVERIFY_RULES = Object.freeze([
-  (answer) =>
-    isObject(answer) ? null : unavailable('siteverify answered with something other than a JSON object'),
-  (answer) =>
-    errorCodes(answer).some((code) => OUR_SIDE.has(code))
-      ? unavailable(`siteverify refused the request itself (error codes: ${listedCodes(answer)})`)
-      : null,
-  (answer) =>
-    answer.success === true ? null : failed(`siteverify said no (error codes: ${listedCodes(answer)})`),
-  (answer) =>
-    LAB_SITE_HOSTNAMES.includes(answer.hostname)
-      ? null
-      : failed(`the token was solved on ${quoted(answer.hostname)}, not on the site`),
-  (answer) =>
-    answer.action === LAB_TURNSTILE_ACTION
-      ? null
-      : failed(`the token is for the action ${quoted(answer.action)}, not ${LAB_TURNSTILE_ACTION}`),
-]);
+export const VISITOR_TURNSTILE_ACTION = 'visitor-session';
 
 /**
  * What a siteverify answer means for the job: `{ ok: true }`, or
@@ -229,9 +205,28 @@ const SITEVERIFY_RULES = Object.freeze([
  * sent). Pure, so each rule is a test.
  *
  * @param {unknown} answer the parsed JSON siteverify returned
+ * @param {string} [expectedAction] action to expect, defaults to LAB_TURNSTILE_ACTION
  */
-export function judgeSiteverify(answer) {
-  for (const rule of SITEVERIFY_RULES) {
+export function judgeSiteverify(answer, expectedAction = LAB_TURNSTILE_ACTION) {
+  const rules = [
+    (ans) =>
+      isObject(ans) ? null : unavailable('siteverify answered with something other than a JSON object'),
+    (ans) =>
+      errorCodes(ans).some((code) => OUR_SIDE.has(code))
+        ? unavailable(`siteverify refused the request itself (error codes: ${listedCodes(ans)})`)
+        : null,
+    (ans) =>
+      ans.success === true ? null : failed(`siteverify said no (error codes: ${listedCodes(ans)})`),
+    (ans) =>
+      LAB_SITE_HOSTNAMES.includes(ans.hostname)
+        ? null
+        : failed(`the token was solved on ${quoted(ans.hostname)}, not on the site`),
+    (ans) =>
+      ans.action === expectedAction
+        ? null
+        : failed(`the token is for the action ${quoted(ans.action)}, not ${expectedAction}`),
+  ];
+  for (const rule of rules) {
     const verdict = rule(answer);
     if (verdict) return verdict;
   }
@@ -249,6 +244,7 @@ export function judgeSiteverify(answer) {
  * @param {string} args.token
  * @param {string|null} [args.remoteIp]  identity.trustedClientIp(); omitted when null
  * @param {number} [args.timeoutMs]
+ * @param {string} [args.action]
  * @returns {Promise<{ ok: true } | { ok: false, kind: 'failed'|'unavailable', detail: string }>}
  */
 export async function verifyTurnstileToken({
@@ -257,6 +253,7 @@ export async function verifyTurnstileToken({
   token,
   remoteIp = null,
   timeoutMs = SITEVERIFY_TIMEOUT_MS,
+  action = LAB_TURNSTILE_ACTION,
 }) {
   if (token.length > TURNSTILE_TOKEN_MAX_CHARS) {
     return failed(`the token is ${token.length} characters, longer than Turnstile issues`);
@@ -283,5 +280,5 @@ export async function verifyTurnstileToken({
   } catch {
     return unavailable('siteverify answered with something other than JSON');
   }
-  return judgeSiteverify(answer);
+  return judgeSiteverify(answer, action);
 }

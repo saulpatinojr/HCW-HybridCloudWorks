@@ -17,6 +17,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Features
+
+- **Visitor lab sessions: brokered ephemeral Coder workspaces for visitors outside the org (#1016)**.
+  - Implemented `functions/src/lib/labs/visitor-session.js` to broker ephemeral Coder users (`v-<hex>`) and workspaces from template `hcw-lab` without granting permanent sign-up or accounts.
+  - Enforced strict fail-closed constraints: origin lock against site apex/www, Cloudflare Turnstile token validation (`action: visitor-session`), per-client daily quota (2 sessions/day), global concurrency limit (`LABS_VISITOR_MAX_CONCURRENT=2`), and a 60-minute hard duration limit.
+  - Added self-healing opportunistic reaper cleaning up expired workspaces and users from Coder and Cosmos DB `lab_jobs`.
+  - Registered anonymous API endpoint `public/labs/visitor-session` supporting GET (status & active session), POST (start session), and DELETE (stop session), registered in `.azure/api-surface.json` and `functions/function-inventory.json`.
+  - Updated frontend `publicApi.js` and `LabPanePage.jsx` to render visitor session controls with Turnstile verification, frame active visitor workspace URLs with an "End session" control, and display clear capacity notices when full.
+
 ### Quality & Verification
 
 - **Validation & regression test plan: completed contract, accessibility, and infrastructure test gates (#982)**.

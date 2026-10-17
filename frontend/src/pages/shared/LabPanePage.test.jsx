@@ -18,8 +18,14 @@ import { CODER_ORIGIN, coderSignInUrl, labById, labs } from '@/data/labs/catalog
 import { SIGNED_IN_KEY, SIGN_IN_PENDING_KEY, markSignedIn } from '@/components/labs/labSignIn';
 
 const fetchCoderStatus = vi.fn();
+const fetchVisitorSessionStatus = vi.fn();
+const startVisitorSession = vi.fn();
+const stopVisitorSession = vi.fn();
 vi.mock('@/lib/publicApi', () => ({
   fetchCoderStatus: () => fetchCoderStatus(),
+  fetchVisitorSessionStatus: () => fetchVisitorSessionStatus(),
+  startVisitorSession: (...args) => startVisitorSession(...args),
+  stopVisitorSession: (...args) => stopVisitorSession(...args),
 }));
 
 import LabPanePage, {
@@ -47,15 +53,18 @@ const REACHABLE = {
 /** Backend words a visitor must not read on this page, in any state. */
 const BEHIND_THE_SITE = /\bcoder\b|oauth|code-server|\bvps\b|callback|caddy|hostinger|\bapi\b/i;
 
-function renderPane(labId = LAB.id, provider = null) {
+function renderPane(labId = LAB.id, provider = null, turnstile = undefined) {
   const path = provider ? `/${provider}/education/labs/${labId}` : `/education/labs/${labId}`;
   return render(
     <HelmetProvider>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/education/labs/:labId" element={<LabPanePage />} />
+          <Route path="/education/labs/:labId" element={<LabPanePage turnstile={turnstile} />} />
           <Route path="/education/labs" element={<p>labs index</p>} />
-          <Route path="/:provider/education/labs/:labId" element={<LabPanePage />} />
+          <Route
+            path="/:provider/education/labs/:labId"
+            element={<LabPanePage turnstile={turnstile} />}
+          />
           <Route path="/:provider/education/labs" element={<p>provider labs</p>} />
         </Routes>
       </MemoryRouter>
@@ -132,6 +141,9 @@ const preventNavigation = (event) => {
 beforeEach(() => {
   window.localStorage.clear();
   fetchCoderStatus.mockReset();
+  fetchVisitorSessionStatus.mockReset().mockResolvedValue(null);
+  startVisitorSession.mockReset();
+  stopVisitorSession.mockReset();
   window.addEventListener('click', preventNavigation);
 });
 
@@ -690,5 +702,107 @@ describe('LabPanePage, the lab itself (ADR 0033 §4)', () => {
     fireEvent.click(screen.getByTestId('kql-preset-host-join'));
     expect(screen.getByTestId('kql-query-display')).toHaveTextContent('HostDeviceId');
     expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
+  });
+
+  describe('visitor lab sessions (#1016)', () => {
+    function fakeTurnstile({ siteKey = 'site-key-test', solve = true } = {}) {
+      return {
+        siteKey,
+        load: async () => ({
+          render: (_el, opts) => {
+            if (solve && opts?.callback) {
+              opts.callback('turnstile-token-visitor');
+            }
+            return 'widget-test-1';
+          },
+          remove: vi.fn(),
+          reset: vi.fn(),
+        }),
+      };
+    }
+
+    it('shows guest access start button and provisions an ephemeral visitor workspace when open', async () => {
+      fetchCoderStatus.mockResolvedValue(REACHABLE);
+      fetchVisitorSessionStatus.mockResolvedValue({
+        configured: true,
+        open: true,
+        code: 'OPEN',
+        reason: 'Visitor lab session available.',
+      });
+      startVisitorSession.mockResolvedValue({
+        ok: true,
+        sessionId: 'sess-v-101',
+        labId: LAB.id,
+        accessUrl: 'https://v-101.lab.hybridcloudworks.com',
+        expiresAt: '2026-10-17T03:30:00Z',
+      });
+      stopVisitorSession.mockResolvedValue({ ok: true, status: 'ended' });
+
+      const { container } = renderPane(LAB.id, 'azure', fakeTurnstile());
+      const startBtn = await screen.findByTestId('start-visitor-session-button');
+      expect(startBtn).toHaveTextContent('Start visitor session');
+      expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
+
+      await waitFor(() => expect(startBtn).not.toBeDisabled());
+      fireEvent.click(startBtn);
+
+      const pane = await screen.findByTestId('visitor-lab-pane');
+      expect(pane).toHaveTextContent(`${LAB.title} (Visitor Session)`);
+      expect(pane).toHaveTextContent('Ephemeral workspace · 60m duration limit');
+      expect(container.querySelector('iframe')).toHaveAttribute(
+        'src',
+        'https://v-101.lab.hybridcloudworks.com'
+      );
+      expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
+
+      const endBtn = screen.getByTestId('stop-visitor-session');
+      expect(endBtn).toHaveTextContent('End session');
+      fireEvent.click(endBtn);
+
+      await screen.findByTestId('lab-sign-in');
+      expect(stopVisitorSession).toHaveBeenCalledWith('sess-v-101');
+    });
+
+    it('shows capacity reached reason and suppresses visitor start button when full', async () => {
+      fetchCoderStatus.mockResolvedValue(REACHABLE);
+      fetchVisitorSessionStatus.mockResolvedValue({
+        configured: true,
+        open: false,
+        code: 'LAB_CAPACITY_REACHED',
+        reason:
+          'The lab is currently at full capacity (visitor limit reached). Please try again in a few minutes, or sign in if you are a team member.',
+      });
+
+      const { container } = renderPane(LAB.id, 'azure', fakeTurnstile());
+      const notice = await screen.findByTestId('visitor-session-closed-notice');
+      expect(notice).toHaveTextContent('The lab is currently at full capacity');
+      expect(screen.queryByTestId('start-visitor-session-button')).toBeNull();
+      // Team sign-in remains available
+      expect(screen.getByTestId('lab-sign-in-link')).toHaveTextContent('Sign in with GitHub');
+      expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
+    });
+
+    it('resumes active visitor session immediately if caller already has one running', async () => {
+      fetchCoderStatus.mockResolvedValue(REACHABLE);
+      fetchVisitorSessionStatus.mockResolvedValue({
+        configured: true,
+        open: true,
+        session: {
+          id: 'sess-v-active',
+          labId: LAB.id,
+          accessUrl: 'https://v-active.lab.hybridcloudworks.com',
+          expiresAt: '2026-10-17T03:30:00Z',
+        },
+      });
+
+      const { container } = renderPane(LAB.id, 'azure', fakeTurnstile());
+      const pane = await screen.findByTestId('visitor-lab-pane');
+      expect(pane).toHaveTextContent(`${LAB.title} (Visitor Session)`);
+      expect(container.querySelector('iframe')).toHaveAttribute(
+        'src',
+        'https://v-active.lab.hybridcloudworks.com'
+      );
+      expect(visibleWords(container)).not.toMatch(BEHIND_THE_SITE);
+    });
   });
 });

@@ -5,8 +5,14 @@
  * without the flag is refused, so a card can never render a shape it was
  * not promised.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { clearPublicGetCache, fetchCoderStatus, fetchLabsEstate } from './publicApi.js';
+import {
+  clearPublicGetCache,
+  fetchCoderStatus,
+  fetchLabsEstate,
+  fetchVisitorSessionStatus,
+  startVisitorSession,
+  stopVisitorSession,
+} from './publicApi.js';
 
 vi.mock('@/lib/functionsBase', () => ({
   requireFunctionsBase: () => 'https://api.test',
@@ -84,4 +90,91 @@ it('fetchLabsEstate returns the configured shape untouched', async () => {
     vi.fn(async () => jsonResponse(estate))
   );
   expect(await fetchLabsEstate()).toEqual(estate);
+});
+
+describe('fetchVisitorSessionStatus', () => {
+  it('GETs public/labs/visitor-session and returns configured data', async () => {
+    const data = {
+      configured: true,
+      open: true,
+      code: 'OPEN',
+      reason: 'Visitor session available',
+    };
+    const fetchMock = vi.fn(async () => jsonResponse(data));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await fetchVisitorSessionStatus();
+    expect(res).toEqual(data);
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://api.test/public/labs/visitor-session');
+  });
+
+  it('returns null on 404', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({}, 404))
+    );
+    expect(await fetchVisitorSessionStatus()).toBeNull();
+  });
+
+  it('throws when missing configured flag', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ open: true }))
+    );
+    await expect(fetchVisitorSessionStatus()).rejects.toThrow(
+      'Visitor session status response carried no configured flag'
+    );
+  });
+});
+
+describe('startVisitorSession', () => {
+  it('POSTs labId and turnstileToken to public/labs/visitor-session', async () => {
+    const sessionRes = {
+      ok: true,
+      sessionId: 'sess-123',
+      labId: 'landing-zone-builder-output',
+      accessUrl: 'https://v-123.lab.example.com',
+      expiresAt: '2026-10-17T03:00:00Z',
+    };
+    const fetchMock = vi.fn(async () => jsonResponse(sessionRes, 201));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await startVisitorSession({
+      labId: 'landing-zone-builder-output',
+      turnstileToken: 't-tok',
+    });
+    expect(res).toEqual(sessionRes);
+    expect(fetchMock).toHaveBeenCalledWith('https://api.test/public/labs/visitor-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ labId: 'landing-zone-builder-output', turnstileToken: 't-tok' }),
+    });
+  });
+
+  it('throws on missing sessionId in response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ ok: true }))
+    );
+    await expect(
+      startVisitorSession({ labId: 'landing-zone-builder-output', turnstileToken: 't-tok' })
+    ).rejects.toThrow('Visitor session response carried no session id');
+  });
+});
+
+describe('stopVisitorSession', () => {
+  it('DELETEs public/labs/visitor-session with sessionId query param', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ ok: true, status: 'ended' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await stopVisitorSession('sess-123');
+    expect(res).toEqual({ ok: true, status: 'ended' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.test/public/labs/visitor-session?sessionId=sess-123',
+      {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      }
+    );
+  });
 });
