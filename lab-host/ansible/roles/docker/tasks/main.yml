@@ -178,7 +178,9 @@
     argv:
       - /usr/local/libexec/hcw-docker-stale-bridges
   register: docker_stale_bridges
-  changed_when: (docker_stale_bridges.stdout | from_json).deleted | length > 0
+  changed_when: >-
+    ((docker_stale_bridges.stdout | from_json).deleted | length > 0) or
+    ((docker_stale_bridges.stdout | from_json).deleted_rules | default([]) | length > 0)
   when: not ansible_check_mode
 
 - name: Say which stale bridges were left because something is still attached

@@ -308,3 +308,44 @@
   loop_control:
     label: "hcw-addon-{{ item.item.id }}"
   when: not ansible_check_mode
+
+# 7. Every bridge interface named in iptables nat table rules exists as a live interface on the host (#1228).
+# Stale nat rules left behind by removed bridges masquerade inter-container traffic as the gateway.
+- name: Read the live network interface names
+  ansible.builtin.command:
+    argv:
+      - ip
+      - -j
+      - link
+      - show
+  register: privilege_checks_live_links
+  changed_when: false
+  check_mode: false
+
+- name: Read the IPv4 nat table rules
+  ansible.builtin.command:
+    argv:
+      - iptables
+      - -w
+      - -t
+      - nat
+      - -S
+  register: privilege_checks_nat_rules
+  changed_when: false
+  check_mode: false
+
+- name: Refuse nat table rules referencing bridge interfaces that do not exist
+  vars:
+    privilege_checks_live_ifnames: "{{ (privilege_checks_live_links.stdout | from_json) | map(attribute='ifname') | list }}"
+    privilege_checks_stale_nat_bridges: >-
+      {{ (privilege_checks_nat_rules.stdout | regex_findall('(?:!\\s+)?-[oi]\\s+(br-[A-Za-z0-9_-]+)') | unique)
+         | difference(privilege_checks_live_ifnames) }}
+  ansible.builtin.assert:
+    that:
+      - privilege_checks_stale_nat_bridges | length == 0
+    fail_msg: >-
+      The IPv4 nat table contains rules referencing bridge interfaces that do not exist:
+      {{ privilege_checks_stale_nat_bridges | join(', ') }}.
+      Run /usr/local/libexec/hcw-docker-stale-bridges to clean them up (roles/docker).
+    quiet: true
+  when: not ansible_check_mode
