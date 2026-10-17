@@ -89,6 +89,14 @@ describe('the coder role keeps a Coder with no account unpublished', () => {
     expect(ask).toContain('url: "http://127.0.0.1:{{ coder_http_port }}/api/v2/users/first"');
     expect(ask).toContain('status_code: [200, 404]');
     expect(ask).toContain('check_mode: false');
+    // Until Coder answers: a recreated container reset the connection two
+    // seconds after it started (2026-10-17), so one try failed the run.
+    expect(ask).toContain('until: coder_first_user.status in [200, 404]');
+    expect(ask).toMatch(/^\s+retries: (\d+)$/m);
+    expect(ask).toMatch(/^\s+delay: (\d+)$/m);
+    const retries = Number(/^\s+retries: (\d+)$/m.exec(ask)[1]);
+    const delay = Number(/^\s+delay: (\d+)$/m.exec(ask)[1]);
+    expect(retries * delay, 'waits about a minute').toBeGreaterThanOrEqual(60);
   });
 
   it('on a 404 takes the route down through the reload handler, which still runs when the play fails, and fails', () => {
