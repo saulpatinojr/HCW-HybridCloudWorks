@@ -116,6 +116,7 @@ the admin Labs page's Setup tab used to ask the owner to do by hand.
 | `hardening_ufw_allowed_tcp_ports` | `[22, 80, 443]` | Inbound TCP allowlist (the lab host's `group_vars`: `[80, 443]`) |
 | `hardening_ufw_closed_tcp_ports` | `[]` | Inbound TCP ports whose ufw allow is deleted; the run fails if ufw still admits one (the lab host's `group_vars`: `[22]`, #953) |
 | `hardening_ssh_arc_gate` | `false` | Close 22 only while the Arc agent is Connected with incoming connections on for 22; leave it as it is while Disconnected; keep it allowed otherwise (the lab host's `group_vars`: `true`) |
+| `hardening_arc_ssh_wanted` | `true` | Whether this run leaves Arc SSH on; false (a run turning it off) keeps 22 open whatever the agent reads (the lab host's `group_vars`: `arc_incoming_ssh_enabled`) |
 | `hardening_arc_azcmagent_path` | `/opt/azcmagent/bin/azcmagent` | The Arc agent's CLI, read for that gate; the `arc` role's `arc_azcmagent_path` |
 | `hardening_ufw_logging` | `low` | ufw logging level |
 | `hardening_unattended_reboot_time` | `04:30` | The hour (HH:MM, host time) `hcw-reboot-when-idle.timer` asks whether the host may reboot |
@@ -496,8 +497,11 @@ read-back; 2222 and 220 do not. A Disconnected agent leaves 22 as it is:
 closed stays closed, and one reopened for re-onboarding stays open. 22 is
 allowed, with the line saying why, for a missing, Expired or unreadable
 agent or one without incoming port 22, and the next run with Arc ready
-closes it. A port written as a string goes through the gate the same way. A
-port in both lists stops the run before any rule changes. As root, for the
+closes it. A port written as a string goes through the gate the same way.
+A run turning Arc SSH off opens 22 though Arc is ready. The arc role's
+`tasks/ssh_off_guard.yml` refuses to turn Arc SSH off while ufw keeps 22
+closed, and lets it once 22 is open. A port in both lists stops the run
+before any rule changes. As root, for the
 namespaces; CI runs it with `sudo` in the `ansible-lint (lab-host)` job,
 after installing ufw.
 `scripts/lab-host-ssh-hardening.test.mjs` (vitest) holds the drop-in's

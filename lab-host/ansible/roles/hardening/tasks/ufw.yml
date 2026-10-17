@@ -103,12 +103,18 @@
               | regex_replace('^[^:]*:', '') | regex_replace('[\[\]"\s]', '')).split(',')
              | reject('eq', '') | list }}
 
+    # A run that turns Arc SSH off (hardening_arc_ssh_wanted false, from
+    # arc_incoming_ssh_enabled) opens 22 here, before the arc role clears the
+    # agent's ports later in the same run, so the run never ends with neither
+    # path (CodeRabbit on #1258). The arc role refuses to turn Arc SSH off
+    # while ufw keeps 22 closed, which covers a run narrowed to its tag.
     - name: Decide what this run does with port 22
       ansible.builtin.set_fact:
         hardening_ufw_ssh_gate: >-
-          {{ 'close' if hardening_arc_status == 'Connected'
-                       and hardening_arc_incoming_enabled == 'true'
-                       and '22' in hardening_arc_incoming_ports
+          {{ 'open' if not (hardening_arc_ssh_wanted | bool)
+             else 'close' if hardening_arc_status == 'Connected'
+                            and hardening_arc_incoming_enabled == 'true'
+                            and '22' in hardening_arc_incoming_ports
              else 'hold' if hardening_arc_status == 'Disconnected'
              else 'open' }}
 
@@ -127,8 +133,9 @@
 - name: Say that port 22 stays open until Azure Arc SSH is ready
   ansible.builtin.debug:
     msg: >-
-      Port 22 stays open to the internet on this run: Azure Arc SSH is not ready here (agent
-      {{ hardening_arc_status }}, incoming connections {{ hardening_arc_incoming_enabled or 'unset' }}
+      Port 22 stays open to the internet on this run: Azure Arc SSH is
+      {{ 'being turned off (arc_incoming_ssh_enabled is false)' if not (hardening_arc_ssh_wanted | bool) else 'not ready here' }}
+      (agent {{ hardening_arc_status }}, incoming connections {{ hardening_arc_incoming_enabled or 'unset' }}
       on ports {{ hardening_arc_incoming_ports }}). It closes on the first bootstrap.sh run once the
       agent is Connected with incoming connections on for port 22 (docs/runbooks/labs-host.md,
       "Arc onboarding" and "Connect through Azure Arc").

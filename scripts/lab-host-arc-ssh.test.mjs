@@ -131,6 +131,32 @@ describe('the arc role opens the same port, and nothing else', () => {
     );
   });
 
+  it('refuses to turn Arc SSH off while ufw keeps port 22 closed, before any write that would (#953 stage 3)', () => {
+    // With 22 closed at ufw, Arc SSH is the only SSH path; a run narrowed to
+    // this role's tag would otherwise clear it and strand the host
+    // (CodeRabbit on #1258). ufw-closed-ports.test.sh runs the guard against
+    // a real ufw.
+    const guard = read('lab-host/ansible/roles/arc/tasks/ssh_off_guard.yml');
+    const importAt = onboard.indexOf('ansible.builtin.import_tasks: ssh_off_guard.yml');
+    expect(importAt, 'onboard.yml does not import ssh_off_guard.yml').toBeGreaterThan(0);
+    expect(importAt).toBeLessThan(onboard.indexOf('- name: Turn incoming connections through Arc on for Arc SSH, or off without it'));
+    expect(importAt).toBeLessThan(onboard.indexOf('- name: Clear the incoming ports when Arc SSH is off'));
+    expect(guard).toContain('- not (arc_incoming_ssh_enabled | bool)');
+    expect(guard).toContain("- arc_incoming_current == 'true'");
+    expect(guard).toContain("- \"'22' in arc_ports_current\"");
+    expect(guard).toContain('- not ansible_check_mode');
+  });
+
+  it('is turned off with port 22 reopened in the same run, by the hardening role that runs first', () => {
+    const groupVarsText = read('lab-host/ansible/group_vars/all.yml');
+    expect(groupVarsText).toContain('hardening_arc_ssh_wanted: "{{ arc_incoming_ssh_enabled | default(true) }}"');
+    const site = read('lab-host/ansible/site.yml');
+    expect(site.indexOf('- role: hardening')).toBeLessThan(site.indexOf('- role: arc'));
+    expect(read('lab-host/ansible/roles/hardening/tasks/ufw.yml')).toContain(
+      "{{ 'open' if not (hardening_arc_ssh_wanted | bool)"
+    );
+  });
+
   it('reads the settings in check mode too, and reports a difference there as a changed task the nightly drift check counts', () => {
     // hcw-playbook-drift (LAB-4) runs the play with --check --diff and counts
     // changed tasks as drift. Skipped reads made the agent's lockdown

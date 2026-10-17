@@ -37,6 +37,9 @@ hardening_ufw_closed_tcp_ports: []
 # A Disconnected agent leaves 22 as it is; otherwise 22 stays allowed. The run
 # says which (tasks/ufw.yml).
 hardening_ssh_arc_gate: false
+# Whether this run leaves Arc SSH on. False (a run that turns it off) keeps 22
+# open whatever the agent reads; group_vars follows arc_incoming_ssh_enabled.
+hardening_arc_ssh_wanted: true
 # The Arc agent's CLI, read for that gate; the arc role's arc_azcmagent_path.
 hardening_arc_azcmagent_path: /opt/azcmagent/bin/azcmagent
 hardening_ufw_logging: "low"

@@ -26,6 +26,17 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: turning Arc SSH off never leaves both SSH paths shut (#953
+  follow-up, CodeRabbit on #1258)**. Port 22 has been closed at ufw while Arc
+  SSH is ready since #1258. A run with `arc_incoming_ssh_enabled` false could
+  close 22 in the hardening role, then clear the Arc agent's incoming ports
+  later in the same run.
+  - **Hardening:** `hardening_arc_ssh_wanted`, which follows that switch in
+    `group_vars`, makes the gate open 22 in such a run.
+  - **Arc role:** the new `tasks/ssh_off_guard.yml` refuses to turn Arc SSH
+    off while ufw keeps 22 closed, as in a run narrowed to `--tags arc`.
+  - **Tests:** `tests/ufw-closed-ports.test.sh` runs both halves against the
+    real ufw (41 checks).
 - **Lab host: port 22 closed to the internet once Azure Arc SSH is ready
   (#953 stage 3, LAB-7)**. The hardening role's ufw tasks (now
   `tasks/ufw.yml`) delete the allow of each port in

@@ -96,6 +96,15 @@ argument_specs:
             (a network drop, or an agent reset to be onboarded again) 22 is left as ufw has it;
             otherwise 22 stays allowed. The run says which (issue 953). A rebuilt host is reached
             over 22 until scripts/lab/Register-LabArc.ps1 -Connect has onboarded it.
+      hardening_arc_ssh_wanted:
+        type: bool
+        required: false
+        default: true
+        description:
+          - Whether this run leaves Azure Arc SSH on. False, for a run that turns it off, keeps 22
+            open whatever the agent reads, so the arc role clearing the agent's ports later in the
+            same run never leaves the host with neither SSH path. The lab host's group_vars sets it
+            from arc_incoming_ssh_enabled.
       hardening_arc_azcmagent_path:
         type: path
         required: false

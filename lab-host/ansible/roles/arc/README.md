@@ -74,9 +74,14 @@ With `arc_enabled: true`:
    22 alone (`incomingconnections.enabled true`,
    `incomingconnections.ports 22`) while `arc_incoming_ssh_enabled` is true,
    its default since #953 (LAB-7; ADR 0032, amendment of 2026-10-16): that
-   is Azure Arc SSH, the owner's way to sshd once port 22 is closed to the
-   internet, and sshd still asks for the pinned key. False puts LAB-6's
-   state back, incoming connections off and no port listed. Each setting is
+   is Azure Arc SSH, the owner's way to sshd now that port 22 is closed to
+   the internet (#953 stage 3), and sshd still asks for the pinned key.
+   False puts LAB-6's state back, incoming connections off and no port
+   listed. In a full run, the hardening role reopens port 22 before this
+   role clears the ports (`hardening_arc_ssh_wanted` follows
+   `arc_incoming_ssh_enabled`). `tasks/ssh_off_guard.yml` refuses to turn
+   Arc SSH off while ufw keeps 22 closed, as it would in a run narrowed to
+   this role's tag, so no run leaves the host with neither path. Each setting is
    read with `azcmagent config get` and written with `config set` only when
    it differs, so a second run reports nothing changed; then all three are
    read back, and the run fails closed unless the allowlist is still the
