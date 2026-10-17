@@ -199,7 +199,7 @@ This project has not cut a tagged release; entries are grouped under
   container started, before Coder was serving. The published port reset the
   connection, and the run stopped there (2026-10-17). `up --wait` returns
   once the container runs, not once Coder serves. The question is now asked
-  until Coder answers 200 or 404, every 2 seconds for a minute. A Coder that
+  until Coder answers 200 or 404, every 2 seconds for a full minute (31 attempts). A Coder that
   never answers still fails the run before its route is written. Run against
   a stand-in server that started six seconds late, it answered 200 on the
   fourth try.

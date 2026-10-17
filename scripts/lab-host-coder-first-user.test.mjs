@@ -96,7 +96,9 @@ describe('the coder role keeps a Coder with no account unpublished', () => {
     expect(ask).toMatch(/^\s+delay: (\d+)$/m);
     const retries = Number(/^\s+retries: (\d+)$/m.exec(ask)[1]);
     const delay = Number(/^\s+delay: (\d+)$/m.exec(ask)[1]);
-    expect(retries * delay, 'waits about a minute').toBeGreaterThanOrEqual(60);
+    // `retries` counts attempts ("29 retries left" after the first of 30), so
+    // the waits between them are one fewer.
+    expect((retries - 1) * delay, 'waits a full minute').toBeGreaterThanOrEqual(60);
   });
 
   it('on a 404 takes the route down through the reload handler, which still runs when the play fails, and fails', () => {

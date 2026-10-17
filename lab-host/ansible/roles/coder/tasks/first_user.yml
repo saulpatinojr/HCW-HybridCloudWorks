@@ -34,7 +34,8 @@
     status_code: [200, 404]
   register: coder_first_user
   until: coder_first_user.status in [200, 404]
-  retries: 30
+  # Attempts, not waits: 31 attempts make 30 two-second waits, a full minute.
+  retries: 31
   delay: 2
   check_mode: false
 
