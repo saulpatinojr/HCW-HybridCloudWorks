@@ -17,6 +17,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Quality & Verification
+
+- **Validation & regression test plan: completed contract, accessibility, and infrastructure test gates (#982)**.
+  - **Contract**: added `scripts/ruleset-contexts.test.mjs` asserting strict 1:1 parity between GitHub Ruleset 20680114 required status checks and workflow job contexts declared on pull requests.
+  - **Accessibility**: extended `frontend/src/pages/admin/adminA11y.test.jsx` with full `vitest-axe` validation for `HealthPage` ensuring zero violations.
+  - **Infrastructure**: added `infra/tests/guards.tftest.hcl` with mocked providers verifying absence of keyless `AzureWebJobsStorage`, environment-only deploy identity subjects, Function App scoping of Cosmos DB data roles, and network isolation, wired directly into `.github/workflows/iac-validate.yml`.
+
 ### Security
 
 - **Lab host: port 22 closed to the internet once Azure Arc SSH is ready
