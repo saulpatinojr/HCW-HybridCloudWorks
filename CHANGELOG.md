@@ -25,7 +25,7 @@ This project has not cut a tagged release; entries are grouped under
   `privilege_checks/tasks/listeners.yml` also reads the `nat` table's
   `DOCKER` chain, IPv4 and IPv6, and refuses any `DNAT` rule without a
   loopback destination. On 2026-10-17 the host's five rules were all
-  `-d 127.0.0.1/32`. `tests/listeners.test.sh` now has 21 checks.
+  `-d 127.0.0.1/32`. `tests/listeners.test.sh` now has 23 checks, and the check refuses a Docker firewall backend other than iptables, which its rule read does not cover.
 - **Lab host: the play fails if anything listens beyond the loopback but sshd
   and Caddy (#958, LAB-12)**. The last check of every run
   (`roles/privilege_checks`, `tasks/listeners.yml`) reads every TCP and UDP

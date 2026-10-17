@@ -70,6 +70,7 @@ run() {
     ansible-playbook -i localhost, "${work}/play.yml" \
     -e "{\"privilege_checks_listeners_argv\": [\"cat\", \"${fixture}\"]}" \
     -e '{"privilege_checks_dnat_argv": [["cat", "/dev/null"], ["cat", "/dev/null"]]}' \
+    -e '{"privilege_checks_host": {"host_info": {"FirewallBackend": {"Driver": "iptables"}}}}' \
     "$@" > "${work}/${name}.out" 2>&1
   echo $? > "${work}/${name}.rc"
   set -e
@@ -169,6 +170,14 @@ check "a DOCKER chain that does not exist reads as no rules" '[ "$(rc dnat-nocha
 run dnat-denied "$(fixture dnat-denied-ss)" -e '{"privilege_checks_dnat_argv": [["cat", "/dev/null"], ["sh", "-c", "echo ip6tables v1.8.11 nf_tables: Could not fetch rule set generation id: Permission denied >&2; exit 4"]]}'
 check "a table that cannot be read fails the run instead of passing as no rules" \
   '[ "$(rc dnat-denied)" -ne 0 ] && says dnat-denied "Permission denied"' "$(tail -n 5 "${work}/dnat-denied.out")"
+
+# The published-port read covers Docker's iptables backend alone (#1253 review).
+run backend-nft "$(fixture backend-nft-ss)" -e '{"privilege_checks_host": {"host_info": {"FirewallBackend": {"Driver": "nftables"}}}}'
+check "a Docker on its nftables backend is refused: its publications would read as none" \
+  '[ "$(rc backend-nft)" -ne 0 ] && says backend-nft "firewall backend '"'"'nftables'"'"'"' "$(tail -n 5 "${work}/backend-nft.out")"
+run backend-none "$(fixture backend-none-ss)" -e '{"privilege_checks_host": {"host_info": {}}}'
+check "and so is a daemon that reports no firewall backend at all" \
+  '[ "$(rc backend-none)" -ne 0 ] && says backend-none "firewall backend '"''"'"' "$(tail -n 5 "${work}/backend-none.out")"
 
 if [ "${failed}" -eq 0 ]; then
   echo "listeners.test.sh: all ${passed} checks passed"

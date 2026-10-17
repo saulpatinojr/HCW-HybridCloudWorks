@@ -58,6 +58,26 @@
 # chain/target/match by that name." Any other failure fails the run, so a
 # table that could not be read is never taken for one with no rules (exit 4,
 # "Permission denied", unprivileged; read on the host 2026-10-17).
+#
+# That read covers Docker's iptables backend only. With its nftables backend
+# (Docker 29) the DOCKER chain would not exist and would read as no
+# publications. So the daemon's backend, from the docker info check 2 already
+# read (privilege_checks_host), must be iptables. Read on the host 2026-10-17:
+# iptables, userland proxy on (#1253 review).
+- name: Refuse a Docker firewall backend the published-port read does not cover
+  vars:
+    privilege_checks_firewall_backend: >-
+      {{ (privilege_checks_host.host_info.FirewallBackend | default({})).Driver | default('') }}
+  ansible.builtin.assert:
+    that:
+      - privilege_checks_firewall_backend == 'iptables'
+    fail_msg: >-
+      The host daemon reports firewall backend '{{ privilege_checks_firewall_backend }}', and the
+      published-port check reads iptables' nat table alone, so it would see no publications. Put the
+      daemon back on iptables, or extend tasks/listeners.yml to read that backend's rules first.
+    quiet: true
+  when: not ansible_check_mode
+
 - name: Read the host daemon's published-port rules, IPv4 and IPv6
   ansible.builtin.command:
     argv: "{{ item }}"
