@@ -13,6 +13,9 @@ argument_specs:
       - For every deployed tool add-on (ADR 0035), also fails unless hcw-addon-<id> runs with a
         read-only root, every capability dropped, not privileged, no bind mount, every published
         port bound to 127.0.0.1 and no host user namespace.
+      - Fails if any TCP or UDP socket listens beyond the loopback but a TCP port in
+        privilege_checks_public_tcp_ports, or if the host daemon publishes a port beyond the
+        loopback (tasks/listeners.yml; LAB-12).
       - Prints the docker group's other members, each of which is root on the host.
       - Changes nothing but the check script it installs; the check job removes its own container.
     author: HybridCloudWorks
@@ -46,6 +49,27 @@ argument_specs:
         description:
           - Fail unless the host daemon reports name=userns. Defaults to docker_userns_remap, so
             the deliberate way back is a warning instead.
+      privilege_checks_public_tcp_ports:
+        type: list
+        elements: int
+        required: false
+        default: [22, 80, 443]
+        description:
+          - The only TCP ports that may listen beyond the loopback, sshd's and Caddy's. No UDP
+            port may. Port 22 leaves the list when it closes to the internet (#953, stage 3).
+      privilege_checks_listeners_argv:
+        type: list
+        elements: str
+        required: false
+        default: [ss, -H, -l, -n, -t, -u]
+        description: The command that lists the listening sockets; a test points it at a fixture.
+      privilege_checks_dnat_argv:
+        type: list
+        elements: list
+        required: false
+        description:
+          - The commands that print the nat table's DOCKER chain, IPv4 then IPv6, whose DNAT rules
+            carry the host daemon's published ports; a test points them at fixtures.
       privilege_checks_coder_enabled:
         type: bool
         required: false

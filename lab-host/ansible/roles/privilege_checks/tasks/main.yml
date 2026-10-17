@@ -349,3 +349,6 @@
       Run /usr/local/libexec/hcw-docker-stale-bridges to clean them up (roles/docker).
     quiet: true
   when: not ansible_check_mode
+
+- name: Refuse a listener beyond the loopback that is not a public port
+  ansible.builtin.import_tasks: listeners.yml

@@ -35,6 +35,24 @@ anything but the one script the role installs.
    `coder-docker-proxy` is in the container's environment, its one mount is
    `/run/hcw-coder-docker`, and the daemon behind it reports
    `name=rootless`.
+6. **Every deployed tool add-on runs as the addons role describes** (ADR
+   0035): a read-only root, every capability dropped, not privileged, no
+   bind mount, one port published on `127.0.0.1`, and the daemon's
+   user-namespace remap.
+7. **No IPv4 nat rule names a bridge that no longer exists** (#1228): a
+   stale rule would masquerade traffic between containers as the gateway.
+8. **Nothing listens beyond the loopback but the public ports**
+   (`tasks/listeners.yml`; #958, LAB-12). `ss` lists every TCP and UDP
+   listener, the rootless sandbox's forwarded ports included. The run fails,
+   naming each one, unless it is on `127.0.0.0/8`, `::1` or an IPv4-mapped
+   loopback address, or is TCP on a port in `privilege_checks_public_tcp_ports`
+   (22, 80 and 443: sshd and Caddy). No UDP port is public, now that Caddy
+   serves no HTTP/3. The host daemon's published ports are also read from
+   the `nat` table's `DOCKER` chain, IPv4 and IPv6. Every `DNAT` rule must
+   name a loopback destination, which holds even with Docker's userland
+   proxy off, when a published port has no listener. `tests/listeners.test.sh`
+   runs both checks against the lab host's own output and against made-up
+   cases.
 
 ## Why paths are written here
 

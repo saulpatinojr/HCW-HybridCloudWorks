@@ -1,0 +1,107 @@
+---
+# 8. Nothing listens beyond the loopback but the host's public ports (#958,
+# LAB-12). Every service the roles run binds 127.0.0.1 or ::1: Coder 7080,
+# Portainer 9443, Vault 8200 and 8201, node_exporter 9100, the Arc agent's
+# 4034x, the add-ons. Caddy and sshd are the public front, on
+# privilege_checks_public_tcp_ports. Read with ss, every TCP and UDP
+# listener the kernel holds, the rootless sandbox's forwarded ports included
+# (they are host sockets), so a port a role, a container or a workspace
+# opened to the internet fails the run instead of waiting for a scan.
+#
+# The local address is ss's fifth field: 127.0.0.1:7080, [::1]:40341,
+# 127.0.0.53%lo:53, [::ffff:127.0.0.1]:4317, *:443 or 0.0.0.0:22. The
+# address is everything before the last colon, its brackets and %interface
+# removed; loopback is 127.0.0.0/8, ::1 or an IPv4-mapped 127 address.
+
+- name: Read every listening TCP and UDP socket
+  ansible.builtin.command:
+    argv: "{{ privilege_checks_listeners_argv }}"
+  register: privilege_checks_listeners
+  changed_when: false
+  check_mode: false
+
+- name: Refuse a listener beyond the loopback that is not a public TCP port
+  vars:
+    privilege_checks_exposed_listeners: >-
+      {%- set exposed = [] -%}
+      {%- for line in privilege_checks_listeners.stdout_lines if line | trim -%}
+      {%-   set fields = line.split() -%}
+      {%-   set host = fields[4] | regex_replace('^(.*):[^:]*$', '\\1') | regex_replace('^\\[(.*)\\]$', '\\1') | regex_replace('%.*$', '') -%}
+      {%-   set port = fields[4] | regex_replace('^.*:([^:]*)$', '\\1') -%}
+      {%-   set loopback = host is match('^(127\\.|::1$|::ffff:127\\.)') -%}
+      {%-   set public = fields[0] == 'tcp' and (port | int) in privilege_checks_public_tcp_ports -%}
+      {%-   if not loopback and not public -%}
+      {%-     set _ = exposed.append(fields[0] ~ ' ' ~ fields[4]) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ exposed }}
+  ansible.builtin.assert:
+    that:
+      - privilege_checks_exposed_listeners | length == 0
+    fail_msg: >-
+      These listen beyond the loopback, and only TCP {{ privilege_checks_public_tcp_ports | join(', ') }}
+      may: {{ privilege_checks_exposed_listeners | join(', ') }}. Bind the service to 127.0.0.1 (a
+      published container port as 127.0.0.1:<port>:<port>), or stop it; sudo ss -ltnup names the
+      process (docs/runbooks/labs-host.md, "Listeners beyond the loopback").
+    quiet: true
+  when: not ansible_check_mode
+
+# The same promise for the host daemon's published ports, read from the rules
+# that carry them rather than from a socket (#1252 review). A port published
+# on 127.0.0.1 is a DNAT rule in the nat table's DOCKER chain with
+# `-d 127.0.0.1/32`; one published on every address has no `-d` at all. The
+# socket read above sees each one too, through Docker's userland proxy, but
+# that proxy is a daemon setting, and with it off a published port has no
+# listener. Read 2026-10-17: five DNAT rules, every one -d 127.0.0.1/32, and
+# none for IPv6. A chain that does not exist (no Docker, or no IPv6 NAT)
+# reads as no rules: iptables and ip6tables both exit 1 with "No
+# chain/target/match by that name." Any other failure fails the run, so a
+# table that could not be read is never taken for one with no rules (exit 4,
+# "Permission denied", unprivileged; read on the host 2026-10-17).
+#
+# That read covers Docker's iptables backend only. With its nftables backend
+# (Docker 29) the DOCKER chain would not exist and would read as no
+# publications. So the daemon's backend, from the docker info check 2 already
+# read (privilege_checks_host), must be iptables. Read on the host 2026-10-17:
+# iptables, userland proxy on (#1253 review).
+- name: Refuse a Docker firewall backend the published-port read does not cover
+  vars:
+    privilege_checks_firewall_backend: >-
+      {{ (privilege_checks_host.host_info.FirewallBackend | default({})).Driver | default('') }}
+  ansible.builtin.assert:
+    that:
+      - privilege_checks_firewall_backend == 'iptables'
+    fail_msg: >-
+      The host daemon reports firewall backend '{{ privilege_checks_firewall_backend }}', and the
+      published-port check reads iptables' nat table alone, so it would see no publications. Put the
+      daemon back on iptables, or extend tasks/listeners.yml to read that backend's rules first.
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Read the host daemon's published-port rules, IPv4 and IPv6
+  ansible.builtin.command:
+    argv: "{{ item }}"
+  loop: "{{ privilege_checks_dnat_argv }}"
+  register: privilege_checks_dnat
+  changed_when: false
+  failed_when: >-
+    privilege_checks_dnat.rc != 0 and
+    'No chain/target/match by that name.' not in privilege_checks_dnat.stderr
+  check_mode: false
+
+- name: Refuse a published port that is not on the loopback
+  vars:
+    privilege_checks_exposed_publishes: >-
+      {{ privilege_checks_dnat.results | map(attribute='stdout_lines') | flatten
+         | select('search', ' -j DNAT ')
+         | reject('search', ' -d (127[.][0-9.]+/32|::1/128) ')
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - privilege_checks_exposed_publishes | length == 0
+    fail_msg: >-
+      The host daemon publishes these beyond the loopback: {{ privilege_checks_exposed_publishes | join(' | ') }}.
+      Publish the container's port as 127.0.0.1:<port>:<port>, or remove the container
+      (docs/runbooks/labs-host.md, "Listeners beyond the loopback").
+    quiet: true
+  when: not ansible_check_mode

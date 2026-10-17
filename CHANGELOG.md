@@ -19,6 +19,31 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: the play also fails if the host daemon publishes a port beyond
+  the loopback (#958 follow-up)**. A socket read sees a published port only
+  through Docker's userland proxy, a daemon setting. So
+  `privilege_checks/tasks/listeners.yml` also reads the `nat` table's
+  `DOCKER` chain, IPv4 and IPv6, and refuses any `DNAT` rule without a
+  loopback destination. On 2026-10-17 the host's five rules were all
+  `-d 127.0.0.1/32`. `tests/listeners.test.sh` now has 23 checks, and the check refuses a Docker firewall backend other than iptables, which its rule read does not cover.
+- **Lab host: the play fails if anything listens beyond the loopback but sshd
+  and Caddy (#958, LAB-12)**. The last check of every run
+  (`roles/privilege_checks`, `tasks/listeners.yml`) reads every TCP and UDP
+  listener with `ss`, the rootless sandbox's forwarded ports included.
+  - **What fails:** anything not on `127.0.0.0/8`, `::1` or an IPv4-mapped
+    loopback address, unless it is TCP on `privilege_checks_public_tcp_ports`
+    (22, 80 and 443). The failure names each one.
+  - **UDP and port 22:** no UDP port is public now that Caddy serves no
+    HTTP/3, and port 22 leaves the list when it closes (#953, stage 3).
+  - **The isolation chain:** the other half of LAB-12's acceptance is the
+    host firewall's read-back (#1236), which fails the play when the live
+    chains differ from the files.
+  - **Tests:** `tests/listeners.test.sh` (15 checks, in the
+    `ansible-lint (lab-host)` job). On the lab host's own `ss` output of
+    2026-10-17 it refuses only Caddy's UDP 443, which the next bootstrap
+    removes, and passes without it. The runbook gains "Listeners beyond the
+    loopback".
+
 - **Audit finding PLAT-8: Cosmos DB export immutability, dedicated state container, 90-day security log retention & PII data-plane auditing (#968)**.
   - Added time-based WORM immutability policy `azurerm_storage_container_immutability_policy.cosmos_export` in `infra/storage.tf` enforcing 35-day retention matching the `expire-cosmos-export` lifecycle policy so backup blobs cannot be deleted or overwritten by the application identity or non-admin roles. Parameterized locking via `var.cosmos_export_immutability_locked`.
   - Added dedicated mutable container `azurerm_storage_container.cosmos_export_state` (`cosmos-export-state`) for change-feed continuation tokens (`state/${container}.json`), preventing daily delta continuation token overwrites from failing against WORM container retention (`BlobImmutableDueToPolicy`). Updated `createExportBlobStore` in `functions/src/lib/backup/cosmos-export-edges.js` to route `state/` continuation blobs to `cosmos-export-state`.
@@ -175,6 +200,16 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Coder's first-account check waits for Coder to answer (#954)**. The first
+  bootstrap after #1246 recreated the Coder container with its new sign-in
+  settings. It then asked `/api/v2/users/first` two seconds after the
+  container started, before Coder was serving. The published port reset the
+  connection, and the run stopped there (2026-10-17). `up --wait` returns
+  once the container runs, not once Coder serves. The question is now asked
+  until Coder answers 200 or 404, every 2 seconds for a full minute (31 attempts). A Coder that
+  never answers still fails the run before its route is written. Run against
+  a stand-in server that started six seconds late, it answered 200 on the
+  fourth try.
 - **Data-subject request runbook: supported commands, real estate names, and reproducible exercise record (#1237)**.
   The runbook (`docs/runbooks/data-subject-requests.md`) was corrected to eliminate
   fictional Azure CLI commands (`az cosmosdb sql query`/`document delete`) and non-existent
