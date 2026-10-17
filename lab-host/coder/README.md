@@ -119,8 +119,12 @@ Owner decision 2026-10-16 (#954), in all three templates, and checked by
   `rw,nosuid,nodev,noexec,size=64m,uid=65534,gid=65534,mode=0700` through
   the container's `tmpfs` map (a `mounts` block's tmpfs options take no uid), and the
   agent's environment points `AZURE_CONFIG_DIR`, `AWS_CONFIG_FILE`,
-  `AWS_SHARED_CREDENTIALS_FILE` and `CLOUDSDK_CONFIG` into it. A sign-in is
-  never written to the home volume and ends when the workspace stops. Two
+  `AWS_SHARED_CREDENTIALS_FILE` and `CLOUDSDK_CONFIG` into it. The AWS CLI's
+  SSO and assumed-role caches (`~/.aws/sso/cache`, `~/.aws/cli/cache`) have
+  no setting, so the start script first makes all of `~/.aws` a link into
+  the tmpfs (`local.aws_home_link`), removing a directory an earlier start
+  left there. A sign-in is never written to the home volume and ends when
+  the workspace stops. Two
   limits, by design. `az` keeps its extensions (`AZURE_EXTENSION_DIR`
   defaults to `cliextensions` under its configuration directory) and the
   Bicep binary (under `bin`) there too. The tmpfs is `noexec`, so Bicep

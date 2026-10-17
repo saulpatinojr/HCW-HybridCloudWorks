@@ -2056,8 +2056,10 @@ host in the same run.
   sign-ins on a 64 MiB tmpfs at `/tmp/cloud-creds` (uid and gid 65534, mode
   0700, `noexec`, `nosuid`, `nodev`): `AZURE_CONFIG_DIR`, `AWS_CONFIG_FILE`,
   `AWS_SHARED_CREDENTIALS_FILE` and `CLOUDSDK_CONFIG` point there, never at
-  the workspace's home volume, so a sign-in ends when the workspace stops
-  and nothing of it is left on disk. On 2026-10-16 neither workspace volume
+  the workspace's home volume. The AWS CLI's SSO and assumed-role caches
+  have no setting, so every start makes all of `~/.aws` a link into the
+  tmpfs. A sign-in ends when the workspace stops, and nothing of it is left
+  on disk. On 2026-10-16 neither workspace volume
   on the sandbox daemon held a `.azure`, `.aws` or `.config/gcloud`
   directory, so there is nothing older to clear. Two things still land on
   the volume, by design: the AWS CLI's single sign-on and role caches,
