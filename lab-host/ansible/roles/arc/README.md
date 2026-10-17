@@ -69,10 +69,22 @@ With `arc_enabled: true`:
    arcs-lab-hybrid-prod-cus-01 in rg-lab-hybrid-prod-cus.`
 7. Locks the agent down (estate review 2026-10-06, LAB-6; ADR 0032,
    amendments of 2026-10-06 and 2026-10-07): the extension allowlist is
-   `arc_extensions_allowlist` alone (the Azure Monitor Agent), incoming
-   connections through Arc are off, and guest configuration is off. Each
-   setting is read with `azcmagent config get` and written with `config
-   set` only when it differs, so a second run reports nothing changed.
+   `arc_extensions_allowlist` alone (the Azure Monitor Agent), and guest
+   configuration is off. Incoming connections through Arc are on for port
+   22 alone (`incomingconnections.enabled true`,
+   `incomingconnections.ports 22`) while `arc_incoming_ssh_enabled` is true,
+   its default since #953 (LAB-7; ADR 0032, amendment of 2026-10-16): that
+   is Azure Arc SSH, the owner's way to sshd once port 22 is closed to the
+   internet, and sshd still asks for the pinned key. False puts LAB-6's
+   state back, incoming connections off and no port listed. Each setting is
+   read with `azcmagent config get` and written with `config set` only when
+   it differs, so a second run reports nothing changed; then all three are
+   read back, and the run fails closed unless the allowlist is still the
+   Azure Monitor Agent alone and port 22 is the only port admitted. In
+   check mode, which the nightly drift check (`hcw-playbook-drift`) runs,
+   the settings are read all the same and any difference is reported as one
+   changed task, which that check counts as drift, without stopping the
+   check of the roles after this one.
    These settings live on the host and cannot be changed from Azure, which
    is the point: a Contributor on the resource group can no longer push an
    extension or a Run Command, and a custom machine configuration policy
@@ -106,6 +118,8 @@ Connected, and then deletes the credential from Entra and the vault.
 | `arc_service_principal_secret` | `vault_arc_service_principal_secret` | Its client secret |
 | `arc_tenant_id` | `vault_arc_tenant_id` | Entra tenant id |
 | `arc_subscription_id` | `vault_arc_subscription_id` | Application subscription id |
+| `arc_extensions_allowlist` | `Microsoft.Azure.Monitor/AzureMonitorLinuxAgent` | The extensions the agent may install (LAB-6) |
+| `arc_incoming_ssh_enabled` | `true` | Azure Arc SSH: incoming connections on, port 22 alone (#953). False turns incoming connections off and clears the port |
 
 To bump the agent, read the versions the repository offers and change
 `arc_agent_version` in `group_vars/all.yml`. It is one pin because
@@ -150,8 +164,10 @@ None. The agent's services are started by its package and by `connect`.
 ## Check mode
 
 Safe. The status read runs in check mode because it is read-only; connect
-and the temporary file are skipped, and so are the lockdown reads and writes
-in step 7.
+and the temporary file are skipped. Step 7's reads of the agent's settings
+run in check mode too, and a difference is reported as one changed task,
+which the nightly drift check (`hcw-playbook-drift`) counts as drift. Its
+writes, and the read-back and fail-closed check after them, are skipped.
 
 ## Validated
 

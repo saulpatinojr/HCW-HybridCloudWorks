@@ -12,6 +12,15 @@ opened for you.
   the host. Everything a lab needs is already installed.
 - **Network is on**, so `az login --use-device-code` and `terraform init`
   work.
+- **A cloud sign-in lasts until the workspace stops.** `az login`, and the
+  AWS and Google Cloud CLIs if you add them, keep their sign-in in memory
+  (`/tmp/cloud-creds`), never in your home folder, so stopping the workspace
+  signs you out and leaves nothing of it on disk. Sign in again after a
+  start.
+- **One running lab at a time.** Starting a lab while another of yours is
+  starting or running is refused with `Stop your other lab first:` and that
+  lab's name. Stop it (your files stay) and start this one again. Stopped
+  labs do not count, so you can keep one for every lab.
 
 Source: `lab-host/coder/templates/hcw-lab` in
 [saulpatinojr/HCW-HybridCloudWorks](https://github.com/saulpatinojr/HCW-HybridCloudWorks).

@@ -85,6 +85,38 @@ describe('resolveLive', () => {
     expect(resolveLive(rotation, { coder })).toMatchObject({ lastRotatedAt: null, expiresAt: daysAhead(200) });
   });
 
+  it('reads Key Vault createdAt when lastWriteAt is not set', () => {
+    const live = resolveLive(anthropic, { secrets: { 'ANTHROPIC-API-KEY': { createdAt: daysAgo(20) } } });
+    expect(live).toMatchObject({ lastRotatedAt: daysAgo(20), lastRotatedSource: 'key-vault', expiresAt: null });
+  });
+
+  it('reads the lab host report for certificates', () => {
+    const labCert = findCredential('lab-agent-certificate');
+    const vaultCert = findCredential('lab-vault-tls-certificate');
+    const labCertificates = {
+      labAgent: { notBefore: daysAgo(10), notAfter: daysAhead(170) },
+      vaultTls: { notBefore: daysAgo(15), notAfter: daysAhead(165) },
+    };
+    expect(resolveLive(labCert, { labCertificates })).toMatchObject({
+      lastRotatedAt: daysAgo(10),
+      lastRotatedSource: 'lab-host',
+      expiresAt: daysAhead(170),
+    });
+    expect(resolveLive(vaultCert, { labCertificates })).toMatchObject({
+      lastRotatedAt: daysAgo(15),
+      lastRotatedSource: 'lab-host',
+      expiresAt: daysAhead(165),
+    });
+  });
+
+  it('reads SWA reset log for SWA deployment token', () => {
+    const swaReset = { lastResetAt: daysAgo(5) };
+    expect(resolveLive(swa, { swaReset })).toMatchObject({
+      lastRotatedAt: daysAgo(5),
+      lastRotatedSource: 'azure',
+    });
+  });
+
   it('reads an OAuth Connect server’s projected record: its connection and refresh time', () => {
     const record = {
       oauthStatus: 'connected',
@@ -290,6 +322,8 @@ describe('a source that could not be read (review of #1039)', () => {
   it('names the sources each entry’s dates come from', () => {
     expect(sourcesOf(anthropic)).toEqual(['secret-state', 'credential-register']);
     expect(sourcesOf(coderStatus)).toEqual(['secret-state', 'coder-automation']);
+    expect(sourcesOf(findCredential('lab-agent-certificate'))).toEqual(['lab-certificates', 'credential-register']);
+    expect(sourcesOf(findCredential('azure-swa-deployment-token'))).toEqual(['swa-reset', 'credential-register']);
     expect(sourcesOf(findCredential('mcp-plaud'))).toEqual(['mcp:plaud']);
     expect(sourcesOf(oidc)).toEqual([]);
   });

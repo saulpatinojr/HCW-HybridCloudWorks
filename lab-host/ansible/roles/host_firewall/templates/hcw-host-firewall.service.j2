@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+# Loads the host firewall's own chains and jumps at boot (roles/host_firewall;
+# #954, #958). After ufw, which appends its own jumps to INPUT and OUTPUT, and
+# before the network is configured, before Docker starts the host's
+# containers, and before the sandbox daemon's user manager, whose drop-in
+# requires this unit: if loading fails, the sandbox daemon does not start, and
+# hcw-unit-failed@ says so (alert-lab-unit-failed).
+[Unit]
+Description=HCW host firewall: sandbox egress and container-to-host rules
+Documentation=man:iptables-restore(8)
+DefaultDependencies=no
+Wants=network-pre.target local-fs.target
+After=local-fs.target ufw.service
+Before=network-pre.target docker.service
+OnFailure=hcw-unit-failed@%n.service
+# Stopping or restarting this unit would stop the sandbox user's manager with
+# it (the drop-in's Requires=) and would not remove a single rule. Re-apply
+# with `systemctl reload {{ host_firewall_unit }}`, which nothing follows.
+RefuseManualStop=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={{ host_firewall_script }} apply {{ host_firewall_config_dir }}
+ExecReload={{ host_firewall_script }} apply {{ host_firewall_config_dir }}
+
+[Install]
+WantedBy=multi-user.target

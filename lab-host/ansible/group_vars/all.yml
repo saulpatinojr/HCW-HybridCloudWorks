@@ -25,15 +25,22 @@ lab_host_ubuntu_releases:
 lab_host_applied_commit_file: /etc/hcw/applied-commit.json
 
 # Hardening. SSH and the two web ports are the only inbound ports: vps-agent is
-# pull-based and node_exporter listens on loopback. The admin user's keys
-# default to whatever the provisioner installed for root, so the first run
-# never locks the host; set the list to pin them explicitly.
+# pull-based and node_exporter listens on loopback.
 hardening_ufw_allowed_tcp_ports:
   - 22
   - 80
   - 443
 hardening_admin_user: hcwadmin
-hardening_admin_authorized_keys: []
+# The only keys that may log in as hcwadmin (#953, owner decision 2026-10-16).
+# The hardening role writes hcwadmin's authorized_keys from this list and
+# nothing else, keeps root's empty, and stops on an empty list or one
+# without the key of the most recent SSH login. A public key, comment
+# stripped. To add one: its line here, merge, run bootstrap.sh
+# (docs/runbooks/labs-host.md, "Connect from a desktop").
+hardening_admin_authorized_keys:
+  # The owner's workstation key, ~/.ssh/hcw-lab_ed25519.pub,
+  # SHA256:VTyaLLQLfYwi38RP1mHDD6Vtu0eSQsa4EPsNJTrdgG8
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGMVLRxb5ZqXZHNHUut7/6orbDsqBKz0zIbir4x5dUn0
 hardening_unattended_reboot_time: "04:30"
 
 # Azure Arc (#663, ADR 0032 decision 3). The switch is the HOST's, not this
@@ -174,19 +181,37 @@ caddy_direct_visit_redirect: https://hybridcloudworks.com/education/labs
 # as "no organisation restriction" and lets ANY GitHub account sign in, so
 # site.yml and the role both refuse to run with coder_enabled true and this
 # list empty. Set the organisation(s) whose members are allowed before
-# flipping coder_enabled. The kill switches are
-# coder_oauth2_github_allow_signups: false (no new learners; existing ones keep
-# working) or stopping the coder compose service (everyone), never an emptied
-# allowlist. Enabling also needs three vault keys (lab-host/README.md, "Coder").
+# flipping coder_enabled. Shutting learners out is never an emptied
+# allowlist: one learner leaves the lab-learners team and has their Coder
+# account suspended, and everyone is shut out by stopping the coder compose
+# service. Sign-ups are off as the normal setting since 2026-10-16 (below), so
+# no sign-in creates an account and there is no sign-up switch to throw.
+# Enabling also needs three vault keys (lab-host/README.md, "Coder").
 # On since 2026-09-28 (owner decision): Coder runs, and only members of the
 # HybridCloudWorks GitHub organisation may sign in. The owner signs in first,
 # which makes that account Coder's owner; nothing in this repository creates
 # a Coder user. The three vault_coder_* keys were in the host's vault that
 # day (checked by key name).
+# Narrowed 2026-10-16 (owner decision, #954): only members of the
+# lab-learners team sign in, and sign-ups are off, so a learner's account is
+# created by the owner before their first sign-in (docs/runbooks/labs-host.md,
+# "Coder sign-in: adding and removing a learner"; why in lab-host/README.md,
+# "Who signs in"). coder_oauth2_github_allowed_teams renders
+# CODER_OAUTH2_GITHUB_ALLOWED_TEAMS as <organisation>/<team-slug>. Like the
+# organisation list, an EMPTY team list is not a lock: Coder then lets every
+# member of the allowed organisations in. Coder checks a team only inside an
+# organisation the learner already passed, so the role also refuses a team
+# whose organisation is not in coder_oauth2_github_allowed_orgs.
+# Sign-ups off does NOT cover the first account. On a deployment with none,
+# Coder lets the first sign-in through, or /setup, and makes it the Owner.
+# The role therefore never publishes a Coder with no account
+# (roles/coder/tasks/first_user.yml).
 coder_enabled: true
 coder_oauth2_github_allowed_orgs:
   - HybridCloudWorks
-coder_oauth2_github_allow_signups: true
+coder_oauth2_github_allowed_teams:
+  - HybridCloudWorks/lab-learners
+coder_oauth2_github_allow_signups: false
 coder_domain: "coder.{{ lab_host_domain }}"
 # Concurrent workspaces the host is sized for. Coder Community enforces no
 # count; the role asserts 5 x 2 GiB (the template's limit) + 2.5 GiB for
@@ -225,6 +250,12 @@ coder_docker_proxy_image_digest: sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b33
 # server asks for is privileged inside that user's namespace only. Tied to
 # coder_enabled, so turning Coder off stops that daemon too.
 coder_sandbox_enabled: "{{ coder_enabled }}"
+# The user that daemon runs as, set once here. host_firewall's OUTPUT jump
+# matches that user's sockets, so it takes the same name by construction:
+# set apart, the jump would govern a user the daemon does not run as, and
+# the account check in host_firewall would still pass (#954 review).
+coder_sandbox_user: hcw-coder-docker
+host_firewall_sandbox_user: "{{ coder_sandbox_user }}"
 
 # vps-agent runs host-native as a systemd service (ADR 0032) from a checkout of
 # this repository. Its commit is the one this playbook runs from: the lookup
@@ -322,6 +353,12 @@ portainer_image_digest: sha256:64593d0645eec314e84b93c03aba51db67c72ec12c7609273
 # key below, never this file.
 # secret_env names the vault key each secret comes from; the role refuses to
 # start the container while the key is unset.
+# Sigstore cosign (LAB-X, #1069): verifies SLSA build provenance attestations
+# on add-on images before docker_image_pull. Pinned release from
+# https://github.com/sigstore/cosign/releases.
+cosign_version: 3.1.3
+cosign_checksum: sha256:4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71
+
 addons_enabled: true
 addons:
   - id: migration
@@ -329,6 +366,7 @@ addons:
     image: docker.io/hybridcloudworks/hcw-addon-migration
     image_tag: "0.3.1"
     image_digest: "sha256:7c317b26ed680eb65dd472d5b4767486758a9c56e71e0b6703a92045f0b29d7b"
+    attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-AzMigrateOrchestrator_Addon/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18081
     memory: 512m
     pids_limit: 256
@@ -353,6 +391,7 @@ addons:
     image: docker.io/hybridcloudworks/hcw-addon-network-assessment
     image_tag: "0.1.0"
     image_digest: "sha256:202bc43bba9b8842bc9594c1dbe203ff636fddf3514d4255b8a60aabcb60aa77"
+    attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-NetworkEyes_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18082
     memory: 512m
     pids_limit: 256
@@ -380,6 +419,7 @@ addons:
     image: docker.io/hybridcloudworks/hcw-addon-cloud-assessment
     image_tag: "0.1.0"
     image_digest: "sha256:d51be5be6496588d84bc56f843aa45971fab576bf4ee0d14968fd496888d551b"
+    attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-CloudAssessor_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18083
     memory: 512m
     pids_limit: 256

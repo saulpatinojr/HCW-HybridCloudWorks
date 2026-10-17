@@ -2,9 +2,37 @@
 # Named 00- on purpose. sshd keeps the FIRST value it reads for a keyword and
 # includes sshd_config.d/*.conf in lexical order, so this file must sort before
 # the cloud image's 50-cloud-init.conf, which sets PasswordAuthentication yes.
-PasswordAuthentication no
-PermitRootLogin no
-KbdInteractiveAuthentication no
+# AllowUsers is the exception: every AllowUsers line adds to the list, so no
+# other file may set one. The hardening role reads the result back with
+# sshd -T before it reloads sshd (#953).
+
+# Who, and how: one account, by key, from the one file the role writes.
+AllowUsers {{ hardening_sshd_allow_users | join(' ') }}
+AuthenticationMethods publickey
 PubkeyAuthentication yes
-X11Forwarding no
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
 MaxAuthTries 4
+LoginGraceTime 30
+
+# What a session may do. Local TCP forwards stay: VS Code Remote-SSH and the
+# Portainer tunnel (ssh -L) use them. No remote forwards, no Unix-socket
+# forwards, no agent forwarding, no tunnel devices, no X11.
+AllowAgentForwarding no
+AllowTcpForwarding local
+AllowStreamLocalForwarding no
+PermitTunnel no
+X11Forwarding no
+
+# Arc SSH sessions reach sshd from the loopback, so every one of them shares
+# one source address; OpenSSH's per-source penalties would otherwise hold a
+# few failed attempts there against every later Arc session.
+PerSourcePenaltyExemptList 127.0.0.1,::1
+
+# INFO already logs the fingerprint of the key each accepted login used
+# (`Accepted publickey for ...`); VERBOSE adds the fingerprints of keys that
+# were offered and refused. The login alert reads the `Accepted publickey`
+# line and ignores VERBOSE's `Accepted key` and `Accepted certificate` lines.
+LogLevel VERBOSE

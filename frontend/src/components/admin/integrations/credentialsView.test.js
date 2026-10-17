@@ -67,6 +67,7 @@ describe('the columns', () => {
     expect(describeAge(credential({ ageDays: 214 }))).toBe('214 days');
     expect(describeAgeSource(credential({ lastRotatedSource: 'owner' }))).toBe('recorded');
     expect(describeAgeSource(credential({ lastRotatedSource: 'key-vault' }))).toBe('Keys tab');
+    expect(describeAgeSource(credential({ lastRotatedSource: 'azure' }))).toBe('Activity Log');
     expect(describeAgeSource(credential())).toBeNull();
   });
 

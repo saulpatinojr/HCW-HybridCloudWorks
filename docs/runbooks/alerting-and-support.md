@@ -221,6 +221,7 @@ workspace makes them page, not sleep.
 | `alert-lab-unit-failed` | 2 | A `hcw-unit-failed` line in `Syslog` from the lab host in the last hour, evaluated every 15 min (stateless, muted 6 h: the line is an event). Management subscription | A unit that names the notifier in `OnFailure=` entered the failed state; the line names the unit. They are the Coder backup and Coder automation, the Vault backup, the labs agent, Caddy, Vault, the daily held-package report (`hcw-held-upgradable`, when apt fails), the nightly idle reboot (`hcw-reboot-when-idle`, when `apt-config`, logind or a docker daemon cannot answer, or the run times out; `sudo journalctl -t hcw-reboot-when-idle` says which), and the nightly playbook drift detection (`hcw-playbook-drift`, when drift is detected or the playbook fails; `sudo journalctl -t hcw-playbook-drift` says which). Stopping the idle reboot is not a failure | `ssh hcw-lab 'systemctl --failed --no-pager; sudo journalctl -t hcw-unit-failed --since -2h --no-pager'`, which lists the failed units and the notifier's own lines naming them |
 | `alert-lab-backup-missing-coder` | 2 | No successful blob write under `host-backups/coder/` in `stlabhybridprodcus01` (`StorageBlobLogs`, `PutBlob`/`PutBlockList`) in two days, hourly (stateful: resolves once a backup lands). Management subscription | The nightly Coder dump or its upload is failing, or the host is down; the 35-day immutable copies stop growing | `ssh hcw-lab 'systemctl status coder-postgres-backup.timer coder-postgres-backup --no-pager; sudo journalctl -t hcw-backup-upload --since -2d --no-pager; sudo ls -l /var/backups/coder'` |
 | `alert-lab-backup-missing-vault` | 2 | No successful blob write under `host-backups/vault/` in `stlabhybridprodcus01` in two days, hourly (stateful: resolves once a backup lands). Management subscription | The nightly Vault raft snapshot or its upload is failing (its token expired or was revoked), or the host is down | `ssh hcw-lab 'systemctl status hcw-vault-backup.timer hcw-vault-backup --no-pager; sudo journalctl -t hcw-backup-upload --since -2d --no-pager'` |
+| `alert-lab-ssh-login` | 1 | sshd on the lab host accepted a login that is not a `lab_ssh_admin_users` user (`hcwadmin`) by public key with a `lab_ssh_admin_key_fingerprints` key; once `lab_ssh_loopback_only` is set, also one that did not arrive through Arc SSH. Reads the `Syslog` rows ingested in the last 20 min, every 15 min (stateless, not muted: a login is an event, so one login can now and then mail twice). Management subscription (#953) | Someone other than the owner logged in; or the owner did with a password, another key, or (once port 22 is closed) not through Arc. A key changed in `lab-host/ansible/group_vars/all.yml` without its fingerprint in `infra/variables.tf` would page on every login, which `scripts/lab-host-ssh-login-alert.test.mjs` fails in CI first | The `Syslog` line behind the alert, through the mail's link to the query results: it names the method, user, address and key. Then `ssh hcw-lab 'who; last -a -n 20'` for the sessions open and recent |
 
 ### To check what is actually deployed
 
@@ -513,7 +514,11 @@ twelve hours. `alert-lab-unit-failed` mutes for six hours because its condition
 is a log line, an event. A stateful rule would call it resolved once the line
 left the query's one-hour window and two 15-minute evaluations then came back
 clear, about an hour and a half after the failure, whether or not the unit came
-back. Activity Log alerts are stateless by
+back. `alert-lab-ssh-login` is stateless for the same reason, a login being an
+event, and is not muted either: a mute would hide a second unexpected login in
+the muted hours. Each evaluation that sees a login mails, and a line ingested
+in the five minutes two evaluations' lookbacks share is seen by both, so one
+login can now and then mail twice (#953). Activity Log alerts are stateless by
 platform; each one is an event a person reads and closes.
 They were not stateful when they first went live, and `alert-app-exceptions`
 demonstrated the difference on the night of 2026-08-25: a stateless log rule
@@ -706,6 +711,7 @@ command it would run. The window stays open while a test waits.
 | `kv-errors-and-data-write` | `alert-kv-errors`, `alert-kv-data-write` | `az` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test kv-errors-and-data-write` |
 | `lab-vault-unwrap` | `alert-lab-vault-unwrap` | `az` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-vault-unwrap` |
 | `lab-ssh-burst` | `alert-lab-ssh-burst` | `az`, `ssh hcw-lab` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-ssh-burst` |
+| `lab-ssh-login` | `alert-lab-ssh-login` | `az`, `ssh hcw-lab` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-ssh-login` |
 | `jobs-poison` | `alert-jobs-poison` | `az`, `gh` | 50 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test jobs-poison` |
 | `lab-agent-offline` | `alert-lab-agent-offline` | `az`, `ssh hcw-lab` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-agent-offline` |
 | `swa-bandwidth` | `alert-swa-bandwidth` | `az` | 75 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test swa-bandwidth` |
@@ -732,8 +738,8 @@ written in its block below and confirms it with that block's read:
 
 The kv-config-write test keeps no record, because its tag is named for the
 moment; its recovery takes off any `plat4FireTest` tag the site vault still
-carries. `kv-errors-and-data-write`, `lab-vault-unwrap` and `lab-ssh-burst`
-change nothing, so they have no recovery.
+carries. `kv-errors-and-data-write`, `lab-vault-unwrap`, `lab-ssh-burst` and
+`lab-ssh-login` change nothing, so they have no recovery.
 
 **By hand.** The blocks below are the reference the script implements, step
 for step, and still the way to run a test without it.
@@ -1124,6 +1130,47 @@ ssh hcw-lab 'for i in {1..1000}; do logger -p auth.info -t sshd "Invalid user pl
 Success is `alert-lab-ssh-burst-prod-cus` within about 30 minutes. It
 resolves on its own once the burst leaves the 15-minute window.
 
+**`alert-lab-ssh-login`**: write one accepted-login line to the lab host's
+auth log under sshd's name, for a user that does not exist, from a
+documentation address, with a fingerprint no key has. It is written by
+`logger`, not by sshd, so no login happens and nothing on the host changes.
+The line has the shape of OpenSSH's own, which the rule parses, and both its
+user and its key are outside the expected pair, so the rule pages on it
+whether or not `lab_ssh_loopback_only` is set (#953).
+
+```powershell
+ssh hcw-lab 'logger -p auth.info -t sshd "Accepted publickey for firetest from 192.0.2.10 port 1 ssh2: ED25519 SHA256:firetest"'
+```
+
+Success is `alert-lab-ssh-login-prod-cus` within about 30 minutes. The rule
+is stateless, so no Resolved mail follows, and now and then a second alert for
+the same line arrives a quarter of an hour after the first: the duplicate the
+rule accepts rather than miss a login.
+
+**Adding, rotating or removing an admin SSH key.** The rule's approved keys
+are a reviewed list in `infra/` (`lab_ssh_admin_key_fingerprints`), never
+read from the host, so a key the host merely has is not trusted by the alert.
+A change to the keys the host accepts is therefore two edits in one pull
+request: the public key in `lab-host/ansible/group_vars/all.yml`
+(`hardening_admin_authorized_keys`) and its fingerprint in
+`infra/variables.tf`. `scripts/lab-host-ssh-login-alert.test.mjs` fails when
+the two lists differ. The fingerprint of the workstation key pinned today
+prints with this PowerShell line; for another key, run it on that key's own
+`.pub` file. The second field of the output, starting `SHA256:`, is the value
+to list:
+
+```powershell
+ssh-keygen -lf $HOME\.ssh\hcw-lab_ed25519.pub
+```
+
+Apply in this order:
+1. Confirm the `hcw-azure` run first, so the alert knows the new key.
+2. Then run `bootstrap.sh`, which installs the key on the host.
+
+The other order makes the first login with the new key page. Removing a
+key is the same two edits in the reverse order: bootstrap first, then the
+apply.
+
 **`alert-kv-config-write`**: add a tag to the site vault and take it off.
 A tag write is a Resource Manager write on the vault and touches nothing else.
 The key carries this moment's time, so it cannot be a tag the vault already
@@ -1460,6 +1507,7 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 | `alert-lab-ssh-burst` | 2026-10-15, 07:41Z | `Invoke-AlertFireTest.ps1 -Test lab-ssh-burst`: a thousand `sshd` lines from a documentation address, each with its own port, written by `logger` at 07:27Z; the alert opened at 07:41:48Z. The first run, with one fixed port, failed: rsyslog's `$RepeatedMsgReduction on` folded the burst into two Syslog rows (#964), which is why each line now differs |
 | `alert-lab-backup-missing-coder` | 2026-10-14, 06:23Z | On the real condition, not a staged one. The rule was created at 06:16:56Z, before the host had uploaded any Coder dump, and its first evaluation opened an alert at 06:23:14Z with its actions run. It opened again every hour, its actions muted for a day by the `mute_actions_after_alert_duration` it had then, until 03:23Z on 2026-10-15. The first dump, `coder/coder-20261015T033716Z.sql.gz`, landed at 03:37:18Z, and no evaluation has opened one since. Read from Alerts Management on 2026-10-16. So the two-night timer stop this row used to call for is not needed (#964, #955) |
 | `alert-lab-backup-missing-vault` | 2026-10-14, 06:30Z | The same way. Created at 06:16:56Z with no Vault snapshot uploaded yet, it opened an alert at 06:30:23Z with its actions run, and again hourly until 14:30Z. The first snapshot, `vault/vault-20261014T143509Z.snap`, landed at 14:35:10Z, and none has opened since (#964, #955) |
+| `alert-lab-ssh-login` | 2026-10-17, 00:01Z | `Invoke-AlertFireTest.ps1 -Test lab-ssh-login`: one accepted-login line for a user that does not exist, from a documentation address, written with `logger` at 23:55:40Z on 2026-10-16; the alert opened at 00:01:44Z. Created by `run-6uJYNGWLDxkdv5ZB`, and `verify-alert-state.yml` read it OK (#953) |
 | `alert-export-window-latency` | not yet | No fire test: a degraded export window cannot be staged without slowing production. Design test: the rule's query with `windowRequests >= 1` and `windowP95 > 0` under Application Insights → **Logs** returns one row on any night with requests in the window |
 
 ### What these still do not cover

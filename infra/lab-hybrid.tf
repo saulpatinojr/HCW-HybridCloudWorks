@@ -401,6 +401,67 @@ resource "azurerm_monitor_diagnostic_setting" "lab_hybrid_key_vault" {
 }
 
 # -----------------------------------------------------------------------------
+# Arc SSH: the owner's way in once port 22 closes (#953, LAB-7)
+# -----------------------------------------------------------------------------
+# Azure Arc SSH carries an SSH session to the host through an Azure Relay
+# hybrid connection that the Connected Machine agent dials OUT to, so sshd
+# needs no inbound port (owner decision 2026-10-16; ADR 0032, the amendment
+# of that date under "Arc adds an identity to the host"). Two resources on the
+# Arc machine make it possible, and nothing else in Azure:
+#
+#   - the machine's default connectivity endpoint, and
+#   - that endpoint's SSH service configuration, port 22: the one port the
+#     relay may reach, matching the agent's incomingconnections.ports, which
+#     the arc role sets on the host (lab-host/ansible/roles/arc).
+#
+# The relay is a transport, not a login. A caller who may list the endpoint's
+# credentials (Microsoft.HybridConnectivity/endpoints/listCredentials/action:
+# Owner and Contributor on the machine or its group) can open a stream to
+# sshd on the host's loopback, and sshd still asks for the pinned key, exactly
+# as it does for a connection from the internet today. No role is granted
+# here: the owner, who connects, is Owner on the subscription.
+#
+# The az ssh extension would create both on first use if they were missing.
+# They are declared here instead, so that what the relay may reach is
+# reviewed in a pull request rather than decided by a client, and
+# scripts/lab/Connect-Lab.ps1 -Arc refuses to connect until they exist, so
+# the extension never creates them out of band.
+#
+# Gated like the vault seal grant above: while there is no Arc machine (a
+# rebuilt host before onboarding), both plan to nothing, and a new machine
+# gets new ones on the next apply. Port 22 stays open to the internet until
+# the owner has connected this way and through the Hostinger web console; a
+# later change closes it.
+resource "azapi_resource" "lab_hybrid_arc_connectivity_endpoint" {
+  count = local.lab_hybrid_arc_principal_id == "" ? 0 : 1
+
+  type      = "Microsoft.HybridConnectivity/endpoints@2024-12-01"
+  name      = "default"
+  parent_id = data.azapi_resource.lab_hybrid_arc_machine.id
+
+  body = {
+    properties = {
+      type = "default"
+    }
+  }
+}
+
+resource "azapi_resource" "lab_hybrid_arc_ssh_service_configuration" {
+  count = local.lab_hybrid_arc_principal_id == "" ? 0 : 1
+
+  type      = "Microsoft.HybridConnectivity/endpoints/serviceConfigurations@2024-12-01"
+  name      = "SSH"
+  parent_id = azapi_resource.lab_hybrid_arc_connectivity_endpoint[0].id
+
+  body = {
+    properties = {
+      serviceName = "SSH"
+      port        = 22
+    }
+  }
+}
+
+# -----------------------------------------------------------------------------
 # Lab alerts (LAB-2, estate review 2026-10-06)
 # -----------------------------------------------------------------------------
 # Three rules, all against the Management workspace the DCR above writes to,
@@ -694,6 +755,112 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_ssh_burst"
     KQL
     time_aggregation_method = "Maximum"
     metric_measure_column   = "Burst"
+    operator                = "GreaterThan"
+    threshold               = 0
+
+    failing_periods {
+      number_of_evaluation_periods             = 1
+      minimum_failing_periods_to_trigger_alert = 1
+    }
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.alerts_mgmt.id]
+  }
+
+  tags = local.tags
+
+  depends_on = [azurerm_role_assignment.alerts_mgmt_workspace]
+}
+
+# -----------------------------------------------------------------------------
+# Lab login alert (#953, LAB-7, estate review 2026-10-06)
+# -----------------------------------------------------------------------------
+# A successful SSH login the owner did not expect. The burst rule above counts
+# failures; this one reads the lines sshd writes when it ACCEPTS a login, which
+# nothing paged on. In the 14 days to 2026-10-16 every accepted login was the
+# administrative user, by public key, with one key, so the expected login is
+# narrow enough to state exactly:
+#
+#   - method publickey,
+#   - a user in var.lab_ssh_admin_users (the hardening role's admin login),
+#   - a key in var.lab_ssh_admin_key_fingerprints (the key that role pins),
+#   - and, once var.lab_ssh_loopback_only is set, a source on the host's own
+#     loopback, which is where Azure Arc SSH reaches sshd from. It stays false
+#     while port 22 is open to the internet; the change that closes the port
+#     sets it.
+#
+# Every other accepted login pages, at severity 1: another user, a password or
+# keyboard-interactive login, a certificate, an unpinned key. The parse below
+# matches the line OpenSSH 10.2's `sshd-session` writes,
+#
+#   Accepted publickey for <user> from <address> port <n> ssh2: ED25519 SHA256:<fp>
+#
+# read on 2026-10-16 against the workspace's accepted-login rows for the 14
+# days before: all 201 parsed, and this query, run over them, returned none
+# (and all 201 with lab_ssh_loopback_only set, as none came through Arc). A
+# line that does not parse leaves Method empty, and an empty Method pages, so
+# a format change after an upgrade is a page rather than silence. sshd writes
+# three more lines that start "Accepted " at LogLevel VERBOSE, beside the
+# login line, and none of them is a login. Two follow every public-key login,
+# "Accepted key … found at …" and "Accepted certificate ID …", and are dropped
+# before the parse; without that, every expected login would page once
+# VERBOSE is on. The third, "Accepted <type> public key <fp> from
+# <user>@<host>" (auth2-hostbased.c), is written only for host-based
+# authentication, which sshd here does not offer. It is left in: it fails the
+# parse and pages, which is the right answer to a host-based login.
+#
+# STATELESS AND UNMUTED, by ADR 0022 decision 6 as amended 2026-10-16: a login
+# is an event, not a state, so there is nothing to resolve, and a mute would
+# swallow a second unexpected login inside the muted hours. Each evaluation
+# that finds a line opens an alert and mails.
+#
+# Rows are chosen by INGESTION time, not by the window alone: an evaluation
+# every 15 minutes looking back 20 sees every row at least once, however late
+# it was ingested relative to TimeGenerated. The cost is the overlap: a line
+# ingested in the five minutes two evaluations share is seen by both, so one
+# login can, now and then, mail twice. That duplicate is accepted; a missed
+# login is not. The window still bounds TimeGenerated, which is why it is a
+# day and not an hour: the measured p95 ingestion delay for these rows is 79
+# seconds, but after an outage or an agent restart the Azure Monitor Agent
+# sends its backlog late, and with a one-hour window a login written 45
+# minutes or more before it was ingested would never be evaluated. A day, as
+# on alert-lab-ssh-burst above, covers any backlog short of one that loses
+# rows anyway. Only Syslog rows from the host, in auth and authpriv, are read,
+# so the longer window costs nothing worth counting.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "lab_hybrid_ssh_login_unexpected" {
+  provider = azurerm.mgmt
+
+  name                = "alert-lab-ssh-login-${var.environment}-${var.region_abbreviation}"
+  resource_group_name = azurerm_resource_group.platform_mgmt.name
+  location            = azurerm_resource_group.platform_mgmt.location
+  scopes              = [azurerm_log_analytics_workspace.hcw.id]
+  description         = "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (or, once lab_ssh_loopback_only is set, not through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953."
+  severity            = 1
+
+  evaluation_frequency = "PT15M"
+  window_duration      = "P1D"
+
+  criteria {
+    query                   = <<-KQL
+      let AdminUsers = dynamic(${jsonencode(var.lab_ssh_admin_users)});
+      let PinnedKeys = dynamic(${jsonencode(var.lab_ssh_admin_key_fingerprints)});
+      let LoopbackOnly = ${var.lab_ssh_loopback_only};
+      Syslog
+      | ${local.lab_hybrid_host_rows}
+      | where ingestion_time() > ago(20m)
+      | where Facility in ("auth", "authpriv") and ProcessName startswith "sshd"
+      | where SyslogMessage startswith "Accepted "
+      | where not(SyslogMessage startswith "Accepted key " or SyslogMessage startswith "Accepted certificate ")
+      | parse SyslogMessage with "Accepted " Method:string " for " User:string " from " Source:string " port " Port:int " " Proto:string ": " KeyType:string " " Fingerprint:string
+      | where Method != "publickey" or User !in (AdminUsers) or Fingerprint !in (PinnedKeys) or (LoopbackOnly and Source !in ("127.0.0.1", "::1"))
+    KQL
+    time_aggregation_method = "Count"
     operator                = "GreaterThan"
     threshold               = 0
 

@@ -134,6 +134,9 @@ const KEY_VAULT_METADATA = Object.freeze({
   "GEMINI-API-KEY": {
     issuer: "Google AI Studio",
     consumer: "AI router; Listen & Learn narration",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target gemini. Manual: mint in Google AI Studio or GCP API Keys, paste on Integrations → Keys, then revoke the old one.",
   },
   "ANTHROPIC-API-KEY": {
     issuer: "Anthropic Console",
@@ -198,6 +201,9 @@ const KEY_VAULT_METADATA = Object.freeze({
   "YOUTUBE-API-KEY": {
     issuer: "Google Cloud",
     consumer: "Listen & Learn “watch next” links",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target youtube. Manual: mint in Google Cloud Console Credentials, paste on Integrations → Keys, then revoke the old one.",
   },
   "PLAUD-EMBEDDED-CLIENT-ID": {
     issuer: "Plaud Embedded",
@@ -213,14 +219,23 @@ const KEY_VAULT_METADATA = Object.freeze({
   "AWS-ACCESS-KEY-ID": {
     issuer: "AWS IAM",
     consumer: "Cloud price comparison (AWS)",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target aws. Manual: create in AWS IAM console, paste on Integrations → Keys, then delete the old one.",
   },
   "AWS-SECRET-ACCESS-KEY": {
     issuer: "AWS IAM",
     consumer: "Cloud price comparison (AWS)",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target aws. Manual: create in AWS IAM console, paste on Integrations → Keys, then delete the old one.",
   },
   "GCP-BILLING-API-KEY": {
     issuer: "Google Cloud",
     consumer: "Cloud price comparison (Google)",
+    renewal: "automation",
+    rotate:
+      "Automated: scripts/roll-cloud-credentials.mjs --target billing. Manual: mint in Google Cloud Console Credentials, paste on Integrations → Keys, then revoke the old one.",
   },
   "QLTY-API-TOKEN": {
     issuer: "Qlty",
@@ -409,10 +424,10 @@ const OTHER_ENTRIES = [
     store: "tfc-azure",
     consumer: "Cloudflare provider: DNS and the origin transform rule",
     issuer: "Cloudflare",
-    renewal: "hand",
+    renewal: "automation",
     lifetimeDays: null,
     rotate:
-      "Roll it in the Cloudflare dashboard and update the sensitive workspace variable.",
+      "Automated renewal via Cloudflare roll-token API and HCP Terraform variable API (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard and updating the sensitive workspace variable.",
   },
   {
     id: "tfc-azure-cloudflare-origin-secret",
@@ -452,10 +467,10 @@ const OTHER_ENTRIES = [
     store: "tfc-lab",
     consumer: "infra-lab lab DNS records",
     issuer: "Cloudflare",
-    renewal: "hand",
+    renewal: "automation",
     lifetimeDays: null,
     rotate:
-      "Roll it in the Cloudflare dashboard and update the sensitive workspace variable.",
+      "Automated renewal via Cloudflare roll-token API and HCP Terraform variable API (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard and updating the sensitive workspace variable.",
   },
 
   // ── Azure ───────────────────────────────────────────────────────────────
@@ -469,6 +484,7 @@ const OTHER_ENTRIES = [
     // TODO.md, accepted risk for #834: nothing stores it, so a reset breaks
     // nothing, and the compensating control is a reset every 90 days.
     lifetimeDays: SWA_TOKEN_RESET_DAYS,
+    source: { swaReset: true },
     rotate:
       "Reset it on the Static Web App (Manage deployment token, then Reset). Nothing stores it, so the next deploy reads the new one.",
   },
@@ -543,10 +559,10 @@ const OTHER_ENTRIES = [
     store: "lab-vault",
     consumer: "Caddy’s DNS-01 certificate renewals",
     issuer: "Cloudflare",
-    renewal: "hand",
+    renewal: "automation",
     lifetimeDays: null,
     rotate:
-      "Roll it in the Cloudflare dashboard, edit the vault key and re-run bootstrap.sh; also on every host rebuild.",
+      "Automated renewal via Cloudflare roll-token API and hcw-vault-set (scripts/roll-cloudflare-tokens.mjs); fall back to rolling in Cloudflare dashboard, setting vault_cloudflare_api_token, and re-running bootstrap.sh.",
   },
   {
     id: "lab-addon-migration-turnstile-secret",
@@ -582,6 +598,7 @@ const OTHER_ENTRIES = [
     issuer: "Self-signed on the lab host, registered in Entra",
     renewal: "hand",
     lifetimeDays: LAB_CERTIFICATE_DAYS,
+    source: { labCertificate: "labAgent" },
     rotate:
       'Generate the next pair on the host and register it with Register-LabAgent.ps1 -NextCertificate before the swap: lab-host/README.md, "Rotating the agent certificate".',
   },
@@ -593,6 +610,7 @@ const OTHER_ENTRIES = [
     issuer: "Self-signed on the lab host",
     renewal: "hand",
     lifetimeDays: LAB_CERTIFICATE_DAYS,
+    source: { labCertificate: "vaultTls" },
     rotate:
       'Remove the pair and re-run bootstrap.sh, then unseal: lab-host/ansible/roles/vault/README.md, "Rotating the certificate".',
   },

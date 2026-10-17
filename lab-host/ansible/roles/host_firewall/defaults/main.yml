@@ -1,0 +1,13 @@
+---
+# present loads the chains and wires them into boot; absent takes all of it
+# out again, in an order that never leaves the sandbox user's manager
+# requiring a unit that is gone (tasks/absent.yml; docs/runbooks/labs-host.md,
+# "Taking it out").
+host_firewall_state: present
+
+# The user the sandbox Docker daemon runs as: the coder_sandbox role's
+# coder_sandbox_user, which scripts/lab-host-host-firewall.test.mjs holds
+# equal to this. The sandbox chain governs every packet that user's processes
+# send. The jump names the user, not a uid, so the rules follow the account
+# if it is ever recreated.
+host_firewall_sandbox_user: hcw-coder-docker

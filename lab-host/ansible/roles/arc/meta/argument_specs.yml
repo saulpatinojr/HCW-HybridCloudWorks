@@ -23,6 +23,17 @@ argument_specs:
         required: false
         default: "Microsoft.Azure.Monitor/AzureMonitorLinuxAgent"
         description: The extensions the Arc agent may install, as azcmagent's extensions.allowlist value (LAB-6).
+      arc_incoming_ssh_enabled:
+        type: bool
+        required: false
+        default: true
+        description:
+          - Azure Arc SSH (#953, LAB-7; ADR 0032 amendment of 2026-10-16). True sets
+            incomingconnections.enabled true and incomingconnections.ports 22, so the
+            connectivity endpoint in infra/lab-hybrid.tf can carry SSH to sshd and to nothing
+            else. False puts LAB-6's state back, incoming connections off and no port listed.
+          - The extension allowlist is not touched either way, and the role fails closed if it
+            reads back anything but arc_extensions_allowlist.
       arc_enabled:
         type: bool
         required: true

@@ -17,8 +17,218 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Security
+
+- **Audit finding PLAT-8: Cosmos DB export immutability, dedicated state container, 90-day security log retention & PII data-plane auditing (#968)**.
+  - Added time-based WORM immutability policy `azurerm_storage_container_immutability_policy.cosmos_export` in `infra/storage.tf` enforcing 35-day retention matching the `expire-cosmos-export` lifecycle policy so backup blobs cannot be deleted or overwritten by the application identity or non-admin roles. Parameterized locking via `var.cosmos_export_immutability_locked`.
+  - Added dedicated mutable container `azurerm_storage_container.cosmos_export_state` (`cosmos-export-state`) for change-feed continuation tokens (`state/${container}.json`), preventing daily delta continuation token overwrites from failing against WORM container retention (`BlobImmutableDueToPolicy`). Updated `createExportBlobStore` in `functions/src/lib/backup/cosmos-export-edges.js` to route `state/` continuation blobs to `cosmos-export-state`.
+  - Increased Log Analytics workspace retention from 30 days to 90 days via `var.logs_retention_in_days` (default 90) in `infra/main.tf` and `infra/variables.tf`, satisfying compliance retention requirements for diagnostics, security tables, syslog, and activity logs.
+  - Enabled Cosmos DB `DataPlaneRequests` in `azurerm_monitor_diagnostic_setting.cosmos` in `infra/observability.tf`, with an ingestion-time table transformation (`azapi_update_resource.cosmos_data_plane_table`) filtering telemetry to personal data containers (`ambassador`), providing a compliant 90-day PII access audit trail without exhausting the workspace daily ingestion quota.
+  - Documented quarterly out-of-subscription export strategy, immutability verification commands, and state container isolation in `docs/decisions/0028-cosmos-out-of-account-export.md` and `docs/runbooks/cosmos-restore.md`.
+  - Added unit tests in `scripts/backup-immutability-retention.test.mjs`, `functions/src/lib/backup/cosmos-export-edges.test.js`, and updated `scripts/assert-expected-plan.mjs`.
+
+- **Coder: one running workspace per learner, and cloud sign-ins kept in
+  memory (#954, LAB-8)**. Owner decision 2026-10-16, in all three templates
+  (`hcw-lab`, `amo-guided-lab`, `na-guided-lab`).
+  - **Sign-ins in memory:** a 64 MiB tmpfs at `/tmp/cloud-creds` (0700,
+    `noexec`, `nosuid`, `nodev`), with `AZURE_CONFIG_DIR`,
+    `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` and `CLOUDSDK_CONFIG`
+    pointing into it. A cloud sign-in never reaches the home volume, and
+    ends when the workspace stops.
+  - **One running workspace:** on a start build only, the template reads
+    the owner's workspaces from Coder on the loopback with their session
+    token (`hashicorp/http` 3.6.2, locked), failing closed unless Coder
+    answers 200. A precondition refuses the start while another holds the
+    limit: a start pending, starting, running or cancelling, or a failed
+    stop. A failed start does not hold it.
+  - **The launcher and the site:** a start refused for another lab names
+    that lab, frames its Stop, and starts this one once the other stops. A
+    `limited` state reads "Stop your other lab to continue", and the
+    ten-minute cap does not run during that wait. The site's lab panel
+    says one workspace runs at a time and a sign-in lasts until the
+    workspace stops.
+  - **Which builds it binds:** builds of a template version that carries
+    it. Coder Community's dashboard Start rebuilds a workspace's own
+    version, so the runbook has a one-time owner step after the first
+    publish.
+  - **Tests:** `template.test.mjs` (28) and `lab-host-launcher.test.mjs`,
+    and the coder CI job now runs fmt, init and validate on every template.
+
+- **Audit finding PLAT-6: Rebuild inventory outside Terraform, custom roles bootstrap, secret escrow & origin-secret rotation (#966)**.
+  - Parameterized Azure custom role definitions: created `scripts/bootstrap-roles.ps1` and `scripts/bootstrap-roles.sh` allowing subscription ID injection (`-SubscriptionId`, `-ManagementSubscriptionId`) across all five custom roles (`keyvault-secret-writer`, `function-config-refresh`, `function-settings-reader`, `static-web-app-deployer`, `alert-rule-reader`), replacing hardcoded subscription GUIDs.
+  - Added unit test assertion in `scripts/terraform-role-definitions.test.mjs` verifying that bootstrap scripts cover all registered custom role definitions.
+  - Documented authoritative **Where to Re-obtain** paths in `docs/standards/required-inputs.md` §4.6 covering all 30 Key Vault secrets in `functions/src/lib/secret-catalog.js` (including portal URLs, CLI generation commands, Bitwarden item names, and auto-renewal tools). Updated §4.6b to document the five custom roles and bootstrap scripts.
+  - Authored `docs/runbooks/origin-secret-rotation.md` detailing the 3-way lock between Key Vault `CF-ORIGIN-SECRET`, HCP Terraform `cloudflare_origin_secret`, and Cloudflare Transform Rule `x-hcw-origin-secret`, complete with zero-downtime execution order, verification curls, and rollback steps.
+  - Authored `docs/runbooks/cold-rebuild.md` providing a single ordered, copy-pasteable disaster recovery guide from bare accounts to full production estate operation within the 8-hour RTO objective.
+  - Updated `mkdocs.yml` navigation under `Runbooks:`.
+
+- **Secrets: Google API keys and AWS price-list IAM access key auto-renewal (#1028)**.
+  - Implemented automated Google Cloud API key renewal in `functions/src/lib/credentials/google-roll.js` via Google Cloud API Keys API v2 (`apikeys.googleapis.com`) with verify-before-delete semantics for `GEMINI-API-KEY`, `YOUTUBE-API-KEY`, and `GCP-BILLING-API-KEY`.
+  - Implemented automated AWS IAM access key renewal in `functions/src/lib/credentials/aws-roll.js` using pure SigV4 signing (`node:crypto`) with verify-before-delete semantics for `AWS-ACCESS-KEY-ID` and `AWS-SECRET-ACCESS-KEY` scoped to `pricing:GetProducts`.
+  - Enforced verify-before-delete: newly minted credentials are functionally probed against their respective cloud services (Gemini models list, YouTube videos list, GCP Billing services list, AWS Pricing GetProducts) AND committed to Azure Key Vault before old credentials are deleted. If a probe fails, the newly minted key is deleted and the existing key remains active and undisturbed.
+  - Added CLI orchestrator `scripts/roll-cloud-credentials.mjs` supporting `--target <gemini|youtube|billing|google-all|aws|all>`, `--dry-run`, and `--check` modes with zero CLI argument secret leakage.
+  - Updated `functions/src/lib/credentials/register.js` to set `renewal: 'automation'` with rotation commands for all five credentials.
+  - Added 65 new unit tests across `google-roll.test.js`, `aws-roll.test.js`, `roll-cloud-credentials.test.mjs`, and `register.test.js`.
+
+- **Coder: only the `lab-learners` team signs in, and no sign-in creates an
+  account (#954, LAB-8)**. Owner decision 2026-10-16.
+  - **The allowlist:** the `coder` role renders
+    `CODER_OAUTH2_GITHUB_ALLOWED_TEAMS=HybridCloudWorks/lab-learners`, and
+    `coder_oauth2_github_allow_signups` is `false`.
+  - **The checks:** `tasks/signin_policy.yml` refuses an empty team list,
+    or a team that is not `<organisation>/<team-slug>` in an allowed
+    organisation spelled the same way, since Coder v2.38.0 checks a team
+    only inside an organisation the learner already passed.
+  - **Who is affected:** existing accounts, the owner's included, keep
+    working, and the team is checked at each GitHub sign-in. A learner's
+    first sign-in matches only an account the owner made with their
+    primary verified GitHub email; the runbook's new "Coder sign-in:
+    adding and removing a learner" has the lines, and a suspended learner's
+    workspaces stop within a minute. Sign-ups off is the normal setting
+    now, not a kill switch: `group_vars`, ADR 0032 and
+    `docs/standards/required-inputs.md` say so.
+  - **No account, no route:** sign-ups off does not cover a deployment's
+    first account, which v2.38.0 lets through from GitHub or `/setup` and
+    makes the Owner. Before Coder starts, the role counts the accounts in
+    its database. With none, it takes Coder's Caddy route down and reloads
+    Caddy then and there. Once Coder is up, a 404 from
+    `/api/v2/users/first` fails the play. The runbook's "A Coder with no
+    account yet" has the owner's measured recovery, and
+    `scripts/lab-host-coder-first-user.test.mjs` holds it.
+  - **Runbook token lines:** they strip the carriage return with
+    `tr -d \\r`; one backslash had deleted every `r` from the token.
+  - **Tests:** `roles/coder/tests/coder-signin.test.sh` (23 checks) in the
+    `ansible-lint (lab-host)` job.
+
+- **Secrets: Cloudflare API token auto-renewal via roll-token API (#1027)**.
+  - Implemented automated Cloudflare API token renewal in `functions/src/lib/credentials/cloudflare-roll.js` and CLI orchestrator `scripts/roll-cloudflare-tokens.mjs`.
+  - Supports all three estate targets: `tfc-azure-cloudflare-api-token` (`hcw-azure` HCP Terraform workspace), `tfc-lab-cloudflare-api-token` (`hcw-lab` HCP Terraform workspace), and `lab-caddy-cloudflare-api-token` (`vault_cloudflare_api_token` in lab host Ansible Vault).
+  - Enforces verify-before-apply semantics: verifies the newly generated token secret against Cloudflare's `/user/tokens/verify` endpoint before committing to HCP Terraform or the lab host vault.
+  - Updates HCP Terraform sensitive workspace variables via the JSON:API endpoint (`application/vnd.api+json`).
+  - Updates the lab host Ansible Vault via `hcw-vault-set`, piping secrets strictly to standard input.
+  - Updated `functions/src/lib/credentials/register.js` to set `renewal: 'automation'` for the three Cloudflare tokens.
+  - Added 33 unit tests across `functions/src/lib/credentials/cloudflare-roll.test.js`, `functions/src/lib/credentials/register.test.js`, and `scripts/roll-cloudflare-tokens.test.mjs`.
+
+- **Lab host: Azure Arc SSH as the owner's way in; port 22 stays open
+  (#953, LAB-7 stage 2)**. Arc SSH carries the session through an Azure
+  Relay connection the host's Arc agent dials out to, so sshd needs no
+  inbound port. sshd still asks for the pinned key. Port 22 closes in a
+  later change, once the owner has connected this way and through the
+  Web Console.
+  - **Azure:** `infra/lab-hybrid.tf` declares the Arc machine's default
+    connectivity endpoint and its SSH service configuration, port 22 only
+    (`Microsoft.HybridConnectivity` 2024-12-01). They are gated on the
+    machine existing, grant no role, and are declared in the plan check.
+  - **The host:** the `arc` role turns on the agent's incoming connections
+    for port 22 alone. It fails closed unless the extension allowlist is
+    still the Azure Monitor Agent alone, and the nightly drift check sees
+    each setting. `arc_incoming_ssh_enabled: false` restores LAB-6's state.
+  - **The desktop:** `Connect-Lab.ps1 -Arc` checks az, the ssh extension,
+    the sign-in and the service configuration before writing anything.
+    Its `ProxyCommand` helper gets fresh relay credentials on every
+    connection, deletes them from disk before the connection starts, and
+    passes them to the proxy in its environment alone. `HostKeyAlias`
+    keeps the host key already accepted. Without `-Arc` the direct block
+    returns.
+  - **Docs:** ADR 0032's amendment of 2026-10-16, the runbook's "Connect
+    through Azure Arc" and the architecture page.
+  - **Tests:** `scripts/lab-host-arc-ssh.test.mjs` holds the port, names and
+    api-version together across infra, the role and the script, and
+    `Connect-Lab.Tests.ps1` runs the generated helper end to end against a
+    stand-in az and proxy.
+- **Lab host SSH: one user, one pinned key, public key only, behind a
+  lockout guard (#953, LAB-7 stage 1)**. Port 22 stays open in this stage;
+  Arc SSH and closing 22 follow.
+  - **The key:** `group_vars` pins `hardening_admin_authorized_keys` to the
+    owner's workstation key, and the `hardening` role writes `hcwadmin`'s
+    `authorized_keys` from that list alone. Root's is emptied, and the
+    copy-from-root fallback is gone.
+  - **The guard:** before writing, the role stops on an empty list, an entry
+    that is not one public key, or a list without the key of the most
+    recent accepted login (read from 14 days of the journal).
+  - **sshd:** a drop-in adds `AllowUsers hcwadmin`,
+    `AuthenticationMethods publickey`, no agent, stream-local or tunnel
+    forwarding (local TCP forwards stay), `LoginGraceTime 30`,
+    `PerSourcePenaltyExemptList` for the loopback that Arc SSH will arrive
+    from, and `LogLevel VERBOSE`. It is validated, read back with `sshd -T`
+    and put back on failure. sshd is reloaded, never restarted.
+  - **Order:** a pending-reload marker keeps root's keys until sshd has
+    loaded the drop-in, even after an interrupted run.
+  - **Connect-Lab.ps1:** stops writing root's `authorized_keys`, and
+    prints the `group_vars` line that pins a key.
+  - **Accepted risk:** passwordless sudo stays, with its compensating
+    controls in the role README; hPanel's Web Console is the break-glass.
+  - **Tests:** `admin-keys.test.sh` (33 checks) and `sshd-apply.test.sh`
+    (21, as root) in the `ansible-lint (lab-host)` job, and
+    `lab-host-ssh-hardening.test.mjs`. `lab-host-ssh-login-alert.test.mjs`
+    now holds the pinned keys to the alert's fingerprints unconditionally.
+- **Add-on images: SLSA build provenance attestation verification before pull (#1069, part 1)**.
+  The `addons` Ansible role (`lab-host/ansible/roles/addons`) now verifies the
+  SLSA build provenance attestation of each deployed add-on image against Sigstore's
+  public transparency log and the expected GitHub Actions workflow identity
+  (`attestation_identity_regexp`) using `cosign verify-attestation` before calling
+  `docker_image_pull`. A missing attestation pattern, mismatched identity, or
+  unreachable transparency log fails the run closed, preventing untrusted or
+  unauthenticated images from being deployed. Sigstore `cosign` (v3.1.3) is pinned
+  and SHA-256 verified in `bootstrap.sh` and `group_vars/all.yml` and tracked upstream
+  via `scripts/lab-pins-upstream.mjs`.
+
+### Fixed
+
+- **Data-subject request runbook: supported commands, real estate names, and reproducible exercise record (#1237)**.
+  The runbook (`docs/runbooks/data-subject-requests.md`) was corrected to eliminate
+  fictional Azure CLI commands (`az cosmosdb sql query`/`document delete`) and non-existent
+  resource names (`cosmos-hcw-prod-cus`, `sthcwprodbackupscus`). It now establishes:
+  - Supported operational access: Web UI via the Admin Ambassador Hub with optimistic ETag
+    concurrency, and an operational CLI tool (`scripts/data-subject-search.mjs`) querying
+    Cosmos DB account `cosmos-site-prod-cus` and database `hcw` via `DefaultAzureCredential`.
+  - Thorough search: Recursive inspection of all text fields across `ambassador` records
+    and full enumeration of referenced files and images, providing Azure Storage CLI commands
+    to delete matched blobs from `stsiteprodcus01` (container `speakerevents`).
+  - Public submissions clarification: Confirms that public submissions in `content`
+    (`functions/src/lib/submissions.js`) are completely anonymous and store no submitter
+    or author email addresses.
+  - Backup retention verification: Replaces fictional backup accounts with the real
+    storage account `stsiteprodcus01`, container `cosmos-export`, and verifies lifecycle
+    rule `expire-cosmos-export` (35-day deletion).
+  - Verification exercise record: Replaces the unverified record with a verified,
+    reproducible PASS using real commands and real estate assets.
+
+- **Lab host: stale-bridge cleanup purges orphaned NAT rules for removed bridges (#1228)**.
+  When rootless / userns-remap setups or dead Docker networks leave stale bridges,
+  `hcw-docker-stale-bridges.py` removes the dead network bridge via `ip link delete`.
+  However, Docker's default iptables rules in the `nat` table (such as
+  `-A POSTROUTING -s <subnet> ! -o br-<id> -j MASQUERADE` and `DOCKER` chain jumps)
+  remained behind in netfilter, matching unintended host-egress traffic and masquerading
+  container-to-container connections as host gateway IPs. The script now inspects
+  the IPv4 `nat` table (`iptables -w -t nat -S`) and removes all matching `POSTROUTING`
+  and `DOCKER` rules referencing dead bridge interfaces by exact specification via
+  `iptables -w -t nat -D <chain> <rule_spec>`, reporting `deleted_rules` alongside
+  `deleted` bridges. The `docker` Ansible role triggers on either deleted bridges or
+  deleted rules, and `privilege_checks` enforces the invariant that no IPv4 `nat`
+  table rules reference nonexistent `br-*` interfaces.
+
 ### Changed
 
+- **`alert-lab-ssh-login` is live and has fired; its plan declaration and
+  StreamYard's are pruned (#953)**. The owner applied
+  `run-6uJYNGWLDxkdv5ZB`, whose plan `tfc-plan-check.yml` read as the
+  alert's create beside the permanent diff. `verify-alert-state.yml` then
+  read the rule OK, and `Invoke-AlertFireTest.ps1 -Test lab-ssh-login`
+  opened an alert at 00:01:44Z on 2026-10-17, six minutes after its line
+  was written. The fire record carries the row. The alert's `DECLARED` entry
+  and #1101's `STREAMYARD_API_KEY` reference, live as declared, are
+  deleted. The probe flag's entry (#701) stays: the live setting still
+  reads `false`. A test holds all three.
+- **Credential register reads live dates the estate already knows (#1066)**.
+  The credential register (`functions/src/lib/credentials/`) and Credentials tab
+  view (`frontend/src/components/admin/integrations/`) now automatically resolve live
+  dates from estate sources: Key Vault secrets resolve `createdAt` from metadata
+  when `lastWriteAt` has not yet been set; lab host certificates (`/etc/hcw/labs-agent.pem`
+  and `/etc/vault.d/tls/vault.crt`) resolve `notBefore` and `notAfter` from
+  `admin_config/lab_certificates` (reported via `vps-agent`); and the Static Web App
+  deployment token resolves its reset date from `admin_config/swa_reset`. Manual recording
+  remains supported for owner overrides.
 - **`alert-kv-config-write`'s plan declarations are pruned, and the loop is
   proven gone (#1216)**. The owner applied #1217 in
   `run-KZEnEksD78i8wtKr`, whose plan the check read as the four declared
@@ -941,6 +1151,66 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab host: a host firewall for the lab sandbox, the container bridges and
+  Coder's internal network (#954, #958)**. A new `host_firewall` role, run
+  after `coder_sandbox`, adds the host's own `HCW-SANDBOX-OUT`,
+  `HCW-BRIDGE-IN`, `HCW-CONTROL-OUT` and `HCW-REFUSE` chains, jumped to first
+  above ufw's.
+  - **The sandbox:** the sandbox daemon's user (the daemon and every
+    workspace) may reach DNS on systemd-resolved's stub, TCP 443 on the
+    host's own non-loopback addresses, and TCP 80/443 on public addresses.
+    Host-local, private, link-local, multicast and reserved destinations,
+    and all other traffic, are refused at once, and flows already open to
+    them are cut when the rules first load.
+  - **The bridges:** containers on `docker0` and `br-*` may open only TCP
+    80/443 to the host.
+  - **Coder's internal network:** the host's own new connections to it are
+    refused; Coder reaches it across its own bridge.
+  - **Loading:** `hcw-host-firewall` loads each family in one
+    `iptables-restore --noflush` transaction and keeps each jump first and
+    single. Both families are dry-run before either commits, a jump to an
+    undeclared `HCW-*` chain is refused first, and a lock in `/run` keeps
+    one run at a time. The play fails on any read-back difference, and check
+    mode reports drift.
+  - **Boot:** `hcw-host-firewall.service` re-applies the rules at boot, after
+    ufw and before Docker, and reports a failure to `hcw-unit-failed@`. The
+    sandbox user's manager requires it.
+  - **Failing closed:** if a run cannot load the firewall, the sandbox
+    keeps running only while the live rules exactly equal the last policy
+    the role verified live (`/etc/hcw/firewall/verified`); otherwise its
+    manager is stopped and the play fails.
+  - **Removal:** `host_firewall_state: absent` removes it all in a safe order.
+  - **Untouched:** ufw's rules and the add-ons' `DOCKER-USER` rules.
+  - **Tests:** `roles/host_firewall/tests/hcw-host-firewall.test.sh` (real
+    iptables in a scratch network namespace, 106 checks, in CI with ufw
+    required) and `scripts/lab-host-host-firewall.test.mjs`.
+- **No auto-delete on the owner's Ambassador hub (follow-up to #1234, SEC-4
+  #973)**. #1234 set a 90-day container TTL on the `ambassador` Cosmos
+  container, believing it held applicants' personal data. It holds the
+  owner's own programs, applications and evidence, kept until deleted. A
+  container TTL expires every document not written within the window, so it
+  would have deleted the owner's records. The tfc-plan-check flagged it as
+  undeclared before any run carrying it was confirmed, and it is taken off
+  before any apply. `generate-cosmos-container-spec.test.mjs` now refuses a
+  container TTL on the containers whose records are kept until deleted
+  (`ambassador`, `content`, `content_versions`, `blogs`). The data-subject
+  runbook keeps the hub in scope as a search of its free-text fields and
+  files, redacting matches and keeping the records. Its `content` queries
+  and its exercise record, which do not match the estate, are marked under
+  review and unverified until #1237.
+- **Lab host: Caddy's admin API moves to a Unix socket, and HTTP/3 is off
+  (#958)**. The Caddyfile always renders a global block with
+  `admin unix//run/caddy/admin.sock` instead of TCP `127.0.0.1:2019`, and
+  `servers { protocols h1 h2 }`, so nothing listens on UDP 443 (ufw already
+  dropped it). `caddy.service` creates `/run/caddy` as
+  `RuntimeDirectory=caddy` (0700), and its `ExecReload` passes the socket as
+  `--address`, which only the `caddy` user and root can open. The first run
+  restarts Caddy before any reload, through handler order across the caddy,
+  coder and addons roles, which a test holds; and a running Caddy without
+  its socket is restarted. `caddy-adapt.test.sh` reads the admin listener
+  and protocols back from the pinned Caddy, and
+  `scripts/lab-host-caddy-admin.test.mjs` holds the unit, the socket path and
+  the handler order. Runbook: "Caddy: reloading by hand".
 - **`alert-kv-config-write` no longer fires when one of its own alerts is
   closed (#1216)**. An alert's state change is logged against its target, as
   `<vault id>/providers/Microsoft.AlertsManagement/alerts/<id>`. That sits
@@ -1107,6 +1377,19 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Added
 
+- **Lab host: an alert on an unexpected SSH login (#953, LAB-7)**.
+  `alert-lab-ssh-login` (severity 1) pages when sshd accepts a login that is
+  not `hcwadmin` by public key with the pinned key
+  (`lab_ssh_admin_key_fingerprints`). Once the change that closes port 22
+  sets `lab_ssh_loopback_only`, it also pages on any login that did not
+  arrive through Arc SSH. It parses OpenSSH 10.2's `Accepted` line, drops
+  VERBOSE's `Accepted key`/`Accepted certificate` follow-ups, and pages on a
+  line it cannot parse. The rule is stateless and unmuted (ADR 0022 decision
+  6): rows are chosen by ingestion time over 20 minutes and evaluated every
+  15, inside a one-day window, so no login is missed (even one ingested late
+  after an agent backlog) and one may mail twice. A test keeps the
+  fingerprint variable equal to the key pinned in `group_vars`, and
+  `Invoke-AlertFireTest.ps1 -Test lab-ssh-login` fires it.
 - **Scanner triage: a CodeQL section** (SEC-5, #974). The triage standard
   covered Qlty, zizmor, checkov and Trivy but not CodeQL dismissals, of
   which 151 exist: 112 under the vendored harness, dismissed on 2026-08-21

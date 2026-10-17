@@ -24,6 +24,7 @@ the host has not run yet is
 | `node_exporter` | node_exporter 1.12.1, host-native, SHA256-verified, `127.0.0.1:9100` only | `/usr/local/bin/node_exporter`, `node_exporter.service` |
 | `caddy` | Caddy 2.11.4 built with `caddy-dns/cloudflare` 0.2.4, host-native under systemd; TLS for `lab.hybridcloudworks.com`, `*.lab.hybridcloudworks.com` and `*.coder.lab.hybridcloudworks.com` via DNS-01; placeholder response at the apex. Panes only (owner decision 2026-09-28): every name can be framed by the site alone, and a top-level browser visit is redirected to `https://hybridcloudworks.com/education/labs` (`roles/caddy/README.md`, "Panes only") | `/usr/local/bin/caddy`, `/opt/caddy/bin/` (versioned binary and its `.provenance`), `/etc/caddy/Caddyfile`, `/etc/caddy/conf.d/`, `/etc/caddy/env` (root:caddy, 0640), `caddy.service` running as `caddy` |
 | `coder_sandbox` | A **rootless** Docker daemon for Coder's workspaces, run by the unprivileged system user `hcw-coder-docker` from a systemd user unit kept up by lingering, with its own subordinate id range and the cpu, memory and pids controllers delegated so the workspace limits hold (LAB-5). Every workspace runs here, and a privileged container a compromised Coder server asks for is that user's, never root's. Off while Coder is | User `hcw-coder-docker` (home `/var/lib/hcw-coder-docker`, the daemon's data under `~/.local/share/docker`), `/etc/systemd/user/hcw-coder-docker.service`, socket `/run/hcw-coder-docker/docker.sock` (directory from `/etc/tmpfiles.d/hcw-coder-docker.conf`), `/etc/systemd/system/user@.service.d/delegate.conf` |
+| `host_firewall` | The host's own iptables chains, each jumped to first, above ufw (#954, #958): `HCW-SANDBOX-OUT` for everything the `coder_sandbox` user sends (the sandbox daemon and its workspaces), which allows DNS to systemd-resolved's stub, TCP 443 to the host's own non-loopback addresses and TCP 80 and 443 to public ones, and refuses the rest of the host and every private and reserved range; `HCW-BRIDGE-IN` for what containers on `docker0` and `br-*` send to the host, which allows TCP 80 and 443 and the replies to the host's own connections; `HCW-CONTROL-OUT`, which refuses the host's own new connections to Coder's internal network (`coder-control`, subnet read from Docker and the Compose file). Loaded at boot after ufw and before Docker, a failure reported to `hcw-unit-failed@`, and the sandbox user's manager requires it, so the sandbox daemon never starts without it. `host_firewall_state: absent` takes all of it out. Never touches ufw's rules or DOCKER-USER (`roles/host_firewall/README.md`) | `/etc/hcw/firewall/` (`hcw.v4.rules`, `hcw.v6.rules`, `hcw.jumps`), `/usr/local/libexec/hcw-host-firewall`, `hcw-host-firewall.service`, `/etc/systemd/system/user@<uid>.service.d/hcw-host-firewall.conf` |
 | `coder` | Coder Community edition v2.37.3, PostgreSQL 18.6 and a Docker socket proxy (tecnativa/docker-socket-proxy 0.3.0, read-only, holding the `coder_sandbox` daemon's socket and never the host's; LAB-5) under Docker Compose from `../coder/docker-compose.yml`, all by digest; the Caddy route for `coder.lab` and `*.coder.lab`; a nightly `pg_dump` keeping seven days; `hcw-coder-template-push`, which publishes the workspace template from the checkout ("Publishing the template", below); Coder automation, which once the owner seeds a rotation credential renews the site's status token daily and publishes the template on every run that changes it (`docs/runbooks/labs-host.md`, "Automatic renewal"). On since 2026-09-28, for members of the `HybridCloudWorks` GitHub organisation only | `/etc/hcw/coder/` (`docker-compose.yml`, `.env`, `coder.env` and `coder-postgres.env`, the last two root 0600, `automation.json`, and `automation/rotation-token`, root 0600 in a 0700 directory), `/etc/caddy/conf.d/10-coder.caddy`, `/usr/local/sbin/coder-postgres-backup`, `/usr/local/sbin/hcw-coder-template-push` and `/usr/local/sbin/hcw-coder-automation-seed` (root:root, 0750), `/usr/local/libexec/hcw-coder-automation`, `coder-postgres-backup.timer`, `hcw-coder-automation.timer`, `/var/backups/coder/`, `/var/lib/hcw-coder-automation/` |
 | `labs_agent` | `vps-agent` host-native as `hcw-labs-agent.service` under user `hcw-labs-agent`, **in no docker group** (LAB-5): it reaches Docker through `hcw-labs-agent-docker-proxy`, HAProxy 3.4.6 by digest with the allowlist in `roles/labs_agent/templates/docker-proxy.haproxy.cfg.j2` (the calls a job makes, and no create body that asks for privilege, a host namespace, a device, a mount or a bind beyond the job's own directory), on a Unix socket only the agent's group may open. Node.js 26.10.0 from NodeSource, repository checkout at the commit the playbook runs from, certificate generated on the host | `/opt/hcw-labs-agent`, `/etc/hcw/labs-agent.env` (root, 0600), `/etc/hcw/labs-agent.pem` (root:hcw-labs-agent, 0640), `/etc/hcw/labs-agent.crt`, `/etc/hcw/labs-agent-docker-proxy/haproxy.cfg`, socket `/run/hcw-labs-agent-docker/docker.sock` (root:hcw-labs-agent, 0660) |
 | `lab_images` | Every image a lab job runs, pulled by digest before any job needs it: each value of `IMAGES` in `vps-agent/lib/capabilities.js` into the host daemon, and the Coder workspace image from `../coder/templates/hcw-lab/main.tf` into the `coder_sandbox` daemon while `coder_enabled` is true. Read from the checkouts, never copied, so a pin bump needs no edit here; digests no pin names are removed from the lab's own repositories and nothing else is touched (`roles/lab_images/README.md`) | Docker's image store; the plan is `roles/lab_images/files/lab-images.mjs`, run from the playbook's checkout |
@@ -47,6 +48,9 @@ that runs a container, because it restarts the daemon at once when its
 configuration changes; `coder_sandbox` before `coder`, because Coder's
 proxy mounts that daemon's socket directory; `coder` after `caddy`, because
 its route is a file in Caddy's `conf.d`, and before `labs_agent`;
+`host_firewall` between `coder_sandbox` and `coder`, because its jump
+matches the user `coder_sandbox` creates and no workspace should start
+before its chains are loaded;
 `lab_images` straight after `labs_agent`, because its plan runs on the
 Node.js that role installs and reads the agent's checkout; `addons` after
 `lab_images`, because it needs docker and caddy and nothing of coder's, and
@@ -109,9 +113,12 @@ The VPS already exists, and the `hostinger/hostinger` provider runs a
 post-install script only at purchase or at reinstall, so there is none: the
 owner clones this repository onto the host and runs `bootstrap.sh` as root
 over SSH, with the one line in `infra-lab/README.md`, step 7. It needs a key
-in `/root/.ssh/authorized_keys` first (step 6 there), because the
-`hardening` role copies that key to `hcwadmin` before it turns root and
-password login off. The script checks the host is Ubuntu 26.04 LTS (24.04
+in `/root/.ssh/authorized_keys` first (step 6 there), and that key must be
+one `hardening_admin_authorized_keys` in `ansible/group_vars/all.yml` pins:
+the `hardening` role writes `hcwadmin`'s keys from that list alone, empties
+root's and turns root and password login off, and it refuses to run when
+the list does not hold the key of the most recent SSH login, which on that
+run is root's with this key (#953). The script checks the host is Ubuntu 26.04 LTS (24.04
 LTS is accepted and says it is the fallback; anything else stops), then
 checks the host is empty (below), installs
 `uv` 0.12.19 from its GitHub release after checking the archive's SHA256,
@@ -294,8 +301,8 @@ digest. The third is a Docker Engine or containerd move from the host pin set
 (the daemon restarts; `labs_agent` restarts the agent's socket proxy onto the
 daemon's new socket). The tags are the role names in `ansible/site.yml`:
 `hardening`, `vault_tools`, `arc`, `docker`, `node_exporter`, `caddy`,
-`coder_sandbox`, `coder`, `labs_agent`, `lab_images`, `addons`, `portainer`,
-`vault`, `backups`.
+`coder_sandbox`, `host_firewall`, `coder`, `labs_agent`, `lab_images`,
+`addons`, `portainer`, `vault`, `backups`.
 
 Two things a narrowed run is not. It is not a convergence: `bootstrap.sh`
 does not record it as a completed run and the play does not write the
@@ -557,8 +564,10 @@ and the hardening test are described in
 [`../coder/README.md`](../coder/README.md); this section is the operating
 procedure. `ansible/group_vars/all.yml` holds the switches: `coder_enabled`
 (`true` since 2026-09-28), `coder_oauth2_github_allowed_orgs`
-(`[HybridCloudWorks]` since the same day), `coder_oauth2_github_allow_signups`
-(`true`) and `coder_max_workspaces` (`5`).
+(`[HybridCloudWorks]` since the same day), `coder_oauth2_github_allowed_teams`
+(`[HybridCloudWorks/lab-learners]` since 2026-10-16),
+`coder_oauth2_github_allow_signups` (`false` since 2026-10-16) and
+`coder_max_workspaces` (`5`).
 
 **Coder is reached through panes on the site, never directly** (owner
 decision 2026-09-28). Opened in a browser tab, any Coder page, dashboard or
@@ -591,15 +600,22 @@ code-server is healthy the launcher replaces itself with code-server's own
 name, `code-server--<workspace>--<owner>.coder.lab.hybridcloudworks.com`.
 Each learner has one workspace per lab, named in the launcher's
 `LAB_WORKSPACES` (`lab-lzb`, `lab-tfv` and `lab-asc`, the same names as the
-site's catalogue). The launcher has no top-level exemption: opened in a tab,
-it is redirected like any other Coder page.
+site's catalogue), and one of them runs at a time: every template refuses a
+second start until the first stops, and the launcher says which lab to stop,
+then starts this one when it has (#954; [`../coder/README.md`](../coder/README.md),
+"Running workspaces and sign-ins", which also has the workspaces' cloud
+sign-ins, kept in memory). The launcher has no top-level exemption: opened
+in a tab, it is redirected like any other Coder page.
 
 **An empty allowlist is not a lock.** Coder treats an empty
 `CODER_OAUTH2_GITHUB_ALLOWED_ORGS` as "no organisation restriction" and lets
 any GitHub account sign in, so `site.yml` asserts in `pre_tasks`, and the
 role asserts again, that the list is non-empty whenever `coder_enabled` is
 true and fails the play otherwise; with `coder_enabled: false` the asserts
-are skipped.
+are skipped. The team list is the same: an empty
+`CODER_OAUTH2_GITHUB_ALLOWED_TEAMS` lets every member of the organisation in,
+so the role refuses it too, and refuses a team whose organisation is not in
+the organisation list ("Who signs in", below).
 
 ### Turning it on
 
@@ -690,7 +706,10 @@ what they then use. The **Sign in with GitHub** button on any lab's page on
 the site starts the same sign-in in a tab of its own, and brings that tab
 back to the lab.
 
-If the tab shows `You aren't a member of the authorized Github
+If the tab shows `You aren't a member of an authorized team in the
+[HybridCloudWorks] Github organization(s)!`, the account is in the
+organisation but not in the `lab-learners` team ("Who signs in", below).
+If it shows `You aren't a member of the authorized Github
 organizations!` instead of the labs page, GitHub did not report the account
 as a member of `HybridCloudWorks` to the app. Either the account is not a
 member, or the organisation restricts OAuth app access and has not approved
@@ -698,6 +717,50 @@ this app; that policy is at
 https://github.com/organizations/HybridCloudWorks/settings/oauth_application_policy.
 No Coder account was created, so the next successful sign-in is still the
 first.
+
+### Who signs in
+
+Owner decision 2026-10-16 (#954): only members of the GitHub team
+`HybridCloudWorks/lab-learners` sign in, and sign-ups are off. Read in
+Coder v2.38.0's source (`coderd/userauth.go`, `userOAuth2Github` and
+`oauthLogin`), a GitHub sign-in passes three gates in order:
+
+1. **The organisation.** The account must be an active member of
+   `HybridCloudWorks` (`CODER_OAUTH2_GITHUB_ALLOWED_ORGS`).
+2. **The team.** It must then be a member of `lab-learners` in that
+   organisation (`CODER_OAUTH2_GITHUB_ALLOWED_TEAMS`, written
+   `<organisation>/<team-slug>`). Coder looks for a team only inside an
+   organisation that passed the first gate, which is why the role refuses a
+   team in any other organisation: it would let nobody in.
+3. **The account.** With `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false`, a
+   sign-in that matches no Coder account is refused with `Signups are
+   disabled` and `Please contact your Coder administrator to request
+   access.`, and nothing is created. Coder matches an account first by the
+   GitHub account it was linked to at an earlier sign-in, then by the
+   GitHub account's **primary, verified** email address. So a learner's
+   first sign-in works only once the owner has created their account with
+   that address and the GitHub login type; it then links to the GitHub
+   account and is matched that way from then on. The one exception is the
+   very first account on an empty deployment, which Coder always admits
+   and makes the owner ("First admin sign-in", above).
+
+**Existing accounts keep working.** Nothing deletes or suspends an
+account, and a session already open is not checked again: Coder checks the
+organisation and the team only when someone signs in with GitHub, and an
+open browser session is extended while it is used (24 hours of idleness
+ends it, Coder's default). Every later GitHub sign-in passes all three
+gates again, so an account outside the team is refused at its next sign-in.
+On 2026-10-16 the deployment had one account that signs in with GitHub,
+the owner's, who is in the team. `hcw-status` ("The status token for the
+site", below) is not affected at all: it never signs in, Coder cannot even
+match a GitHub sign-in to its `.invalid` address, and the tokens it acts
+with (`coder tokens create`, login type `token`) are not checked against
+GitHub by any gate.
+
+Adding a learner is therefore two steps, the team and then the account,
+and removing one is the team and then a suspension; both, with the lines
+to paste, are in `docs/runbooks/labs-host.md`, "Coder sign-in: adding and
+removing a learner".
 
 ### Publishing the template
 
@@ -1020,15 +1083,14 @@ stay the way to renew by hand either way. Setting the host up is
 
 Two, in ADR 0032's words, and emptying the allowlist is neither.
 
-**No new learners; existing ones keep working.** Durable: a pull request
-setting `coder_oauth2_github_allow_signups: false` in
-`ansible/group_vars/all.yml`, merged and applied with `bootstrap.sh`.
-Immediate, bash, on the host (the next `bootstrap.sh` run re-renders the
-file from `group_vars`, so land the pull request too):
-
-```bash
-sudo sed -i 's/^CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=.*/CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false/' /etc/hcw/coder/coder.env && sudo docker compose --project-directory /etc/hcw/coder up -d
-```
+**No new learners; existing ones keep working.** This is how the lab runs
+since 2026-10-16: `coder_oauth2_github_allow_signups: false` in
+`ansible/group_vars/all.yml`, so no sign-in creates an account, and a new
+learner exists only once the owner creates their account ("Who signs in",
+above). Not creating accounts is the switch. To refuse even someone whose
+account was made but who has not signed in yet, suspend that account, the
+same line as removing a learner in `docs/runbooks/labs-host.md`, "Coder
+sign-in: adding and removing a learner".
 
 **Everyone, at once.** Immediate, bash, on the host:
 
@@ -1688,6 +1750,7 @@ advisories".
 | Collections, including the one transitive dependency | `requirements.yml` | Galaxy |
 | Ansible tooling | `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and `ANSIBLE_CORE_DEPS` in `../lab-image/versions.env`, which `bootstrap.sh` installs from (the weekly `chore/lab-pins-image-base` pull request moves them within their line); the pip pins in `ci.yml`; the image digest above | PyPI's JSON API (`https://pypi.org/pypi/<name>/<version>/json`, the wheel's `digests.sha256`); the image's `RepoDigests` |
 | Python and uv | `PYTHON_VERSION`, `UV_VERSION` and `UV_SHA256` at the top of `bootstrap.sh` | https://www.python.org/downloads/ for the newest release; https://github.com/astral-sh/uv/releases for uv, whose `.sha256` asset beside `uv-x86_64-unknown-linux-gnu.tar.gz` is the value |
+| Sigstore cosign | `cosign_version`, `cosign_checksum` in `ansible/group_vars/all.yml`; `COSIGN_VERSION`, `COSIGN_SHA256` at the top of `bootstrap.sh` | https://github.com/sigstore/cosign/releases, whose `cosign_checksums.txt` asset beside `cosign-linux-amd64` is the value (`roles/addons/README.md`) |
 
 All in `ansible/group_vars/all.yml` unless the table says otherwise.
 

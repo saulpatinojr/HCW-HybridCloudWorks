@@ -137,13 +137,24 @@ export function resolveLive(entry, sources = {}) {
   let expiresAt = null;
 
   if (source.secret) {
-    const at = instant(sources.secrets?.[source.secret]?.lastWriteAt);
+    const at = instant(sources.secrets?.[source.secret]?.lastWriteAt) ??
+      instant(sources.secrets?.[source.secret]?.createdAt);
     if (at) rotations.push({ at, source: 'key-vault' });
   }
   if (source.coder) {
     const dates = coderDates(source.coder, sources.coder);
     if (dates.rotatedAt) rotations.push({ at: dates.rotatedAt, source: 'lab-host' });
     expiresAt = dates.expiresAt;
+  }
+  if (source.labCertificate) {
+    const cert = sources.labCertificates?.[source.labCertificate];
+    const at = instant(cert?.notBefore);
+    if (at) rotations.push({ at, source: 'lab-host' });
+    if (cert?.notAfter) expiresAt = instant(cert.notAfter);
+  }
+  if (source.swaReset) {
+    const at = instant(sources.swaReset?.lastResetAt);
+    if (at) rotations.push({ at, source: 'azure' });
   }
   let connection = null;
   if (source.mcpServer) {
@@ -251,6 +262,8 @@ const SOURCE_WORDS = Object.freeze({
   'secret-state': 'Key Vault write date',
   'coder-automation': 'lab host report',
   'credential-register': 'recorded rotation date',
+  'lab-certificates': 'lab host certificate report',
+  'swa-reset': 'Static Web App reset log',
 });
 
 /**
@@ -263,6 +276,8 @@ export function sourcesOf(entry) {
   return [
     ...(source.secret ? ['secret-state'] : []),
     ...(source.coder ? ['coder-automation'] : []),
+    ...(source.labCertificate ? ['lab-certificates'] : []),
+    ...(source.swaReset ? ['swa-reset'] : []),
     ...(source.mcpServer ? [`mcp:${source.mcpServer}`] : []),
     ...(isRecordable(entry) ? ['credential-register'] : []),
   ];

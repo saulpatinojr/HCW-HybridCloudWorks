@@ -58,6 +58,33 @@ the binary it produced.
 6. Installs `caddy.service` running as `caddy:caddy` with
    `EnvironmentFile=/etc/caddy/env`, `AmbientCapabilities=CAP_NET_BIND_SERVICE`
    and `Type=notify`, then enables and starts it.
+7. Checks that the running Caddy has its admin socket (below), and restarts
+   it when it does not.
+
+## Admin API on a Unix socket, HTTP/3 off
+
+The Caddyfile's global options, rendered on every run (#958):
+
+- `admin unix//run/caddy/admin.sock`. The admin API, and the metrics it
+  serves, listen on a Unix socket, not on TCP `127.0.0.1:2019`. The unit
+  creates `/run/caddy` with `RuntimeDirectory=caddy` (owner `caddy`, mode
+  `0700`), and Caddy creates the socket with its default mode `0200`, so
+  only the `caddy` user and root can connect: access is decided by file
+  permission rather than by address. The unit's `ExecReload` runs
+  `caddy reload … --address unix//run/caddy/admin.sock` as the `caddy` user,
+  so `systemctl reload caddy` and every `Reload caddy…` handler go through it.
+  The path is `caddy_admin_socket` in `vars/main.yml`, a var because the
+  unit fixes its directory.
+- `servers { protocols h1 h2 }`. No HTTP/3: Caddy no longer listens on UDP
+  443 or advertises `h3` in `Alt-Svc`. ufw admits TCP 80 and 443 only.
+
+**The move from TCP.** The first run after this change finds Caddy running
+with its admin API on `127.0.0.1:2019` and installs a unit whose reload
+targets the socket. A reload before the restart would find nothing
+listening, so the unit change notifies `Restart caddy`, and that handler is
+defined ahead of every reload of Caddy (Handlers, below). The check in step
+7 covers a run interrupted between the two: a running Caddy without the
+socket is on an older configuration, and is restarted.
 
 **Fail closed.** With no token in the vault the Caddyfile serves a single
 HTTP-only apex that answers 503 and says TLS is off. It imports nothing from
@@ -118,7 +145,7 @@ and any route added later. A route does not have to repeat it.
 A script can send any of these headers, so this is a browsing rule, not
 access control. Coder's GitHub sign-in is the access control. ACME is
 unaffected (DNS-01, and Caddy answers an HTTP challenge before routes run),
-and so are Caddy's admin API and metrics on `127.0.0.1:2019`. The comments
+and so are Caddy's admin API and metrics on their Unix socket. The comments
 in `templates/Caddyfile.j2` go through each case, and
 `docs/architecture/labs-host.md`, "Panes only", records the decision.
 
@@ -168,7 +195,18 @@ Paths and the service user are in `defaults/main.yml`;
 
 ## Handlers
 
-`Restart caddy` (binary, env file, unit), `Reload caddy` (Caddyfile, conf.d).
+`Restart caddy` (binary, env file, unit, a running Caddy without its admin
+socket), `Reload caddy` (Caddyfile, conf.d).
+
+Ansible runs notified handlers in the order they are defined, whatever order
+they were notified in. `Restart caddy` is defined first in this role, and
+`site.yml` lists this role before `coder` and `addons`, whose own handlers
+(`Reload caddy for the coder route`, `Reload caddy for the addons route`)
+reload Caddy for their routes. So a run that notifies a restart and any
+reload restarts first, and every reload reaches a Caddy listening on the
+socket. `scripts/lab-host-caddy-admin.test.mjs` fails if a reload of
+`caddy` is defined ahead of the restart, in a role listed earlier, or as a
+task rather than a handler.
 
 ## Tests
 
@@ -180,9 +218,15 @@ release binary has no Cloudflare module), downloads the Caddy release
 `adapt` the result. It then reads the order Caddy settled on and fails unless
 the snippet's `vars lab_direct_visit_redirect` comes first, the addons
 route's `vars` for its name after it, the `redir` after both reading the
-placeholder, and nothing handles a request before the `vars`. No root, no
+placeholder, and nothing handles a request before the `vars`. It also fails
+unless the adapted admin listener is `unix//run/caddy/admin.sock` and every
+server's protocols are exactly `h1` and `h2`. No root, no
 Docker; `CADDY_BIN=<path>` skips the download. CI runs it in the
 `ansible-lint (lab-host)` job.
+
+`scripts/lab-host-caddy-admin.test.mjs` (vitest, the `scripts (operations)`
+row) holds the unit's `RuntimeDirectory=` and `ExecReload` to the socket
+path in `vars/main.yml`, and the handler order above.
 
 ## Check mode
 

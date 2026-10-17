@@ -130,10 +130,11 @@ jobs:
           # check-registered-functions.test.mjs parses with the script the
           # deploy and the registration monitor run (PLAT-2).
           # BuildingImagesPage.jsx and AddOnPanePage.jsx are read by supply-chain
-          # and visitor-copy tests.
+          # and visitor-copy tests. docs/runbooks/labs-host.md is read by
+          # lab-host-coder-first-user.test.mjs (#954).
           - name: scripts (operations)
             dir: scripts
-            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/(lib/(labs|rss/feeds)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
+            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/labs-host\.md$|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/(lib/(labs|rss/feeds|credentials/(cloudflare-roll|google-roll|aws-roll))\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
             lint: npm run lint
             test: npm test
           # vps-agent shells out to `docker run` with a payload that reached
@@ -236,6 +237,7 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: npm ci
 
+
       # Lint and format run before the build so style feedback arrives fast.
       # `npm run lint` exits non-zero only on errors, not warnings, so the 19
       # pre-existing warnings do not fail the job.
@@ -266,11 +268,10 @@ jobs:
   # The browser suites (frontend/e2e). Until 2026-10-06 nothing ran them: the
   # hydration, console-error and smoke specs had real assertions and executed
   # only when someone remembered, and the admin spec could not fail (estate
-  # review, finding QA-1). This job is NOT a required check: it is a signal
-  # for two weeks first, then the hydration spec becomes required in the
-  # ruleset. The build is the same `npm run build` the frontend row runs;
-  # `vite preview` serves it and the suites run against it on desktop Chrome
-  # and a Pixel 5.
+  # review, finding QA-1). Promoted to a required check in the ruleset: runs
+  # desktop Chrome and Pixel 5 mobile profiles across hydration.spec.js,
+  # contentforge.spec.js, and admin-authenticated.spec.js against the preview
+  # server. The build is the same `npm run build` the frontend row runs.
   #
   # Only the hydration and admin specs run here. The first run (PR #899)
   # showed why: the console-error and smoke specs assert a clean console on
@@ -289,7 +290,7 @@ jobs:
   # Pixel 5 drawer on four admin routes. All three specs together took 100 s
   # on one worker locally; the acceptance is a job under eight minutes.
   e2e:
-    name: e2e (playwright, not required)
+    name: e2e (playwright)
     runs-on: ubuntu-26.04
     timeout-minutes: 25
     permissions:
@@ -412,7 +413,9 @@ jobs:
           # docker-runner.js too: hcw-labjob-sweep.test.sh checks the
           # sweep's label against the JOB_LABEL it exports, and a PR that
           # renamed only the label would otherwise skip that check.
-          if grep -qE '^lab-host/|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$' <<<"$changed"; then
+          # docs/runbooks/labs-host.md too: coder-signin.test.sh and
+          # hcw-coder-automation.test.py check its Coder lines (#954).
+          if grep -qE '^lab-host/|^docs/runbooks/labs-host\.md$|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$' <<<"$changed"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "lab-host files changed — running all checks"
           else
@@ -482,6 +485,15 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: python roles/coder/tests/hcw-coder-automation.test.py
 
+      # Who may sign in to Coder (#954): coder.env rendered by this job's
+      # ansible-core from group_vars carries the organisation, the
+      # lab-learners team and sign-ups off, and the role's sign-in checks
+      # refuse an empty team list or a team outside an allowed organisation.
+      # Needs neither root nor Docker.
+      - name: coder-signin test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/coder/tests/coder-signin.test.sh
+
       # The daily held-package report the hardening role installs (LAB-3,
       # #949), rendered with the role's defaults and run against stub
       # apt-mark, apt and logger: one daemon.warning line per held package
@@ -512,6 +524,31 @@ jobs:
       - name: unattended-upgrades test
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/unattended-upgrades.test.sh
+
+      # The administrative user's keys (#953): the hardening role's key
+      # tasks run with this job's ansible-core against a journal fixture and
+      # scratch copies of the two authorized_keys files, with throwaway
+      # keys. An empty list and a malformed entry stop the run; a list
+      # without the key of the most recent login in the journal stops it
+      # (the lockout guard), falling back to the keys on file only for an
+      # empty journal, unless overridden; a list that passes is written
+      # exactly, and a second run changes nothing. Needs neither root nor
+      # Docker.
+      - name: admin-keys test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/hardening/tests/admin-keys.test.sh
+
+      # sshd's settings and root's keys (#953): the hardening role's sshd
+      # tasks run against a stub sshd and scratch paths, with the reload of
+      # ssh.service logged instead of done. The pending-reload marker is
+      # written before the drop-in, a marker an interrupted run left makes
+      # the next run reload before root's keys are emptied, and a drop-in
+      # sshd -T does not confirm is put back with its backup removed. As
+      # root, because the tasks make root the owner of what they write; env
+      # keeps this job's Python on PATH past sudo's secure_path.
+      - name: sshd-apply test
+        if: steps.changes.outputs.relevant == 'true'
+        run: sudo env "PATH=$PATH" bash roles/hardening/tests/sshd-apply.test.sh
 
       # The nightly idle reboot (LAB-13, #959), rendered with the role's
       # defaults and run against stub apt-config, loginctl, docker, sleep,
@@ -568,13 +605,34 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: sudo bash roles/addons/tests/hcw-addons-egress-clear.test.sh
 
+      # /usr/local/libexec/hcw-host-firewall loads the host_firewall role's
+      # chains (what the sandbox daemon's user may reach, what containers on
+      # the host's bridges may open to the host, what the host may open to
+      # Coder's internal network) and keeps each jump first.
+      # The role's templates are rendered with this job's Jinja2 and loaded
+      # into real iptables in a scratch network namespace: idempotent loads,
+      # --noflush replacing a chain, a refused transaction changing nothing,
+      # jumps put back first and single, the verdict for each destination
+      # class read from the counters with real packets, and ufw's own start,
+      # reload and restart leaving the chains in place. ufw is installed (not
+      # enabled: the package leaves it off) and HCW_REQUIRE_UFW=1 makes its
+      # proof fail rather than skip. As root, for the namespace; env keeps
+      # this job's Python (Jinja2) on PATH past sudo.
+      - name: hcw-host-firewall test
+        if: steps.changes.outputs.relevant == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq ufw >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ufw >/dev/null; }
+          sudo env "PATH=$PATH" HCW_REQUIRE_UFW=1 bash roles/host_firewall/tests/hcw-host-firewall.test.sh
+
       # The Caddyfile's per-name direct-visit redirect (ADR 0035) relies on
       # Caddy ordering every `vars` directive ahead of `redir` and letting a
       # route's later `vars` win for its name. Nothing but Caddy can say so:
       # this renders the Caddyfile and every conf.d route with this job's
       # ansible-core, has the pinned Caddy release (version from group_vars,
-      # SHA-512 in the script) adapt it, and checks the order it settled on.
-      # Needs neither root nor Docker.
+      # SHA-512 in the script) adapt it, and checks the order it settled on,
+      # and the global options: the admin API on its Unix socket and h1/h2
+      # only (#958). Needs neither root nor Docker.
       - name: Rendered Caddy configuration adapts, with the vars before the redir
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/caddy/tests/caddy-adapt.test.sh
@@ -738,20 +796,22 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
 
+      # Every template, not hcw-lab alone: the guided labs carry the same
+      # sign-in tmpfs and running-workspace check (#954).
       - name: Terraform fmt
         if: steps.changes.outputs.relevant == 'true'
-        working-directory: lab-host/coder/templates/hcw-lab
+        working-directory: lab-host/coder/templates
         run: terraform fmt -recursive -check -diff
 
       - name: Terraform init (no backend)
         if: steps.changes.outputs.relevant == 'true'
-        working-directory: lab-host/coder/templates/hcw-lab
-        run: terraform init -backend=false -input=false
+        working-directory: lab-host/coder/templates
+        run: for t in */; do terraform -chdir="$t" init -backend=false -input=false || exit 1; done
 
       - name: Terraform validate
         if: steps.changes.outputs.relevant == 'true'
-        working-directory: lab-host/coder/templates/hcw-lab
-        run: terraform validate -no-color
+        working-directory: lab-host/coder/templates
+        run: for t in */; do terraform -chdir="$t" validate -no-color || exit 1; done
 
   # hooks/claude_event.py runs on every Claude Code session start and stop, and
   # tooling/workflow.py owns the state the Stop guard reads. Both were shipped

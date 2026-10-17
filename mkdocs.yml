@@ -138,6 +138,12 @@ nav:
       - Copilot code review MCP servers: runbooks/copilot-code-review-mcp.md
       - Publer REST proxy and MCP server: runbooks/publer.md
       - MCP servers — OAuth Connect: runbooks/mcp-oauth-connect.md
+      - Credential compromise: runbooks/credential-compromise.md
+      - Lab host compromise: runbooks/host-compromise.md
+      - DNS token stolen: runbooks/dns-token-stolen.md
+      - Data-subject requests: runbooks/data-subject-requests.md
+      - Cold rebuild: runbooks/cold-rebuild.md
+      - Origin secret rotation: runbooks/origin-secret-rotation.md
   - Standards:
       - IaC repository standard: standards/iac-repository-standard.md
       - Naming convention: standards/naming-convention.md
@@ -146,6 +152,8 @@ nav:
       - AddOn integration standard: standards/addon-integration-standard.md
   - Security:
       - Scanner triage: security/scanner-triage.md
+      - Credential rotation schedule: security/credential-rotation-schedule.md
+      - AI provider data-processing notes: security/ai-data-processing-notes.md
   - Architecture:
       - How it is built: architecture/how-it-is-built.md
       - Target architecture: architecture/architecture.md

@@ -111,6 +111,7 @@ export function readPins(text) {
     vault: coreVersion(scalar(text, 'vault_version')),
     nodeExporter: coreVersion(scalar(text, 'node_exporter_version')),
     node: coreVersion(scalar(text, 'labs_agent_node_version')),
+    cosign: coreVersion(scalar(text, 'cosign_version')),
   };
 }
 
@@ -208,6 +209,7 @@ export function sources(env = process.env) {
     vault: async () => newestHashicorp(await fetchJson('https://releases.hashicorp.com/vault/index.json')),
     nodeExporter: gh('prometheus/node_exporter'),
     node: async () => newestNodeLine(await fetchJson('https://nodejs.org/dist/index.json'), 26),
+    cosign: gh('sigstore/cosign'),
   };
 }
 
@@ -224,6 +226,7 @@ export const LABELS = {
   vault: 'HashiCorp Vault',
   nodeExporter: 'node_exporter',
   node: 'Node.js (26 line)',
+  cosign: 'Sigstore cosign',
 };
 
 // ── Run ────────────────────────────────────────────────────────────────────
@@ -286,7 +289,10 @@ async function bumpMain(argv) {
   let plan;
   if (set === 'host') {
     const text = read(bump.GROUP_VARS_PATH);
-    const files = { [bump.CADDY_TEST_PATH]: read(bump.CADDY_TEST_PATH) };
+    const files = {
+      [bump.CADDY_TEST_PATH]: read(bump.CADDY_TEST_PATH),
+      [bump.BOOTSTRAP_PATH]: read(bump.BOOTSTRAP_PATH),
+    };
     const { rows } = await check({ pins: readPins(text), readers: sources() });
     plan = await bump.planHost({ text, files, rows, http });
   } else if (set === 'image-base') {

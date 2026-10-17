@@ -52,8 +52,11 @@ Say this before the drill, so nothing in it is a surprise:
 - **Document bodies are exact; system fields are not.** `_rid`, `_self`,
   `_etag`, `_attachments` and `_ts` are stripped on restore and re-minted by
   the target account. Nothing in the application reads them across restarts.
-- **Continuation state (`state/`) is not restored.** It belongs to the source
-  account's change feed and means nothing to another account.
+- **Continuation state (`cosmos-export-state` container) is not restored.** It lives in a dedicated container `cosmos-export-state` (isolated from immutable `cosmos-export` blobs under ADR 0028 / PLAT-8) and belongs to the source account's change feed; it means nothing to another account.
+- **Export container immutability (WORM).** The backup container `cosmos-export` enforces a 35-day time-based immutability policy (`azurerm_storage_container_immutability_policy.cosmos_export`). Run blobs cannot be overwritten or deleted until the retention period lapses. Verify the policy:
+  ```powershell
+  az storage container immutability-policy show --account-name stsiteprodcus01 --container-name cosmos-export -o json
+  ```
 
 ## Is the export running? Read this first
 

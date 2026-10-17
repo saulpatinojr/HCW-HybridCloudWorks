@@ -1,0 +1,392 @@
+#!/usr/bin/env bash
+# Loads the host firewall's own chains and keeps the jumps into them first in
+# the built-in chains (roles/host_firewall; #954, #958). The role installs it
+# as /usr/local/libexec/hcw-host-firewall, runs `apply` and then `verify` on
+# every play, and hcw-host-firewall.service runs `apply` at boot.
+#
+#   hcw-host-firewall apply  [dir]
+#   hcw-host-firewall verify [dir]
+#   hcw-host-firewall remove
+#
+# dir, /etc/hcw/firewall by default, holds three files the role renders:
+#
+#   hcw.v4.rules, hcw.v6.rules  iptables-restore input for the filter table
+#       that declares chains named HCW-* and appends their rules, and nothing
+#       else, each rule written the way `iptables -S` prints it.
+#   hcw.jumps  the jumps into those chains, one per line the way `iptables -S`
+#       prints them ("-A OUTPUT -m owner --uid-owner <user> -j HCW-..."), for
+#       both address families. The jumps a built-in chain names head that
+#       chain in the file's order, once each. A user name is looked up here.
+#
+# apply compares the live filter table with the files, family by family, and
+# changes only what differs, in one `iptables-restore --noflush` transaction
+# per family: the declared chains flushed and refilled (under --noflush a
+# chain line flushes an existing chain), and every jump to an HCW-* chain in
+# INPUT, FORWARD and OUTPUT deleted by its full specification and the wanted
+# ones inserted again at the top. Nothing else is touched: ufw's chains and
+# jumps, Docker's chains and DOCKER-USER stay as they are. Both families'
+# transactions are built and dry-run (`iptables-restore --test`) before
+# either is committed, so a rule iptables cannot parse (an unknown match or
+# target, a bad option) stops the run with neither family changed, rather
+# than with IPv4 new and IPv6 old. The dry run is userspace only: on
+# nf_tables it does not see what the kernel refuses at commit, such as a jump
+# to a chain that does not exist, so the files are checked for that here
+# first. Anything else the kernel refuses is reported for its family, after
+# IPv4 may have been committed, and the role's rescue stops the sandbox. A
+# transaction iptables rejects changes nothing. It prints one line per
+# change, nothing when the table already matches, and then reads the table
+# back and fails if it still differs (a rule not written in `iptables -S`
+# form would).
+#
+# verify prints every difference and exits 1 when there is one.
+#
+# remove reads no file: in one transaction per family, both dry-run first as
+# apply's are, it deletes every jump to an HCW-* chain from INPUT, FORWARD
+# and OUTPUT, then flushes and deletes every HCW-* chain, and touches nothing
+# else. It prints a line per family it changed and nothing when there was
+# nothing to take out. The role runs it when host_firewall_state is absent,
+# after the sandbox user's manager no longer requires the boot unit
+# (tasks/absent.yml).
+#
+# One run at a time: every mode holds a lock (below) for the whole run.
+#
+# Exit status: 0 matches (or now matches, or is now removed), 1 differs, 2 a
+# usage or file error, or the lock held too long by another run, 3
+# iptables-restore refused a transaction.
+set -euo pipefail
+export LC_ALL=C
+
+# usage: the command line, said on stderr, and exit 2.
+usage() {
+  echo "usage: $0 apply|verify [dir] | remove" >&2
+  exit 2
+}
+
+# fail MESSAGE: a file or usage error, said in one line.
+fail() {
+  echo "hcw-host-firewall: $*" >&2
+  exit 2
+}
+
+mode="${1:-}"
+dir="${2:-/etc/hcw/firewall}"
+case "${mode}" in apply | verify | remove) ;; *) usage ;; esac
+
+# One run at a time. apply and remove read the live tables and then change
+# them, so two at once (a play's apply beside a reload, or beside a remove)
+# could each act on what the other is replacing. The lock is directly in
+# /run, which systemd mounts before any unit starts: the boot unit runs
+# before /run/lock is certain to exist. The two variables are for the tests.
+lock="${HCW_FIREWALL_LOCK:-/run/hcw-host-firewall.lock}"
+lock_wait="${HCW_FIREWALL_LOCK_WAIT:-60}"
+exec 9>>"${lock}" || fail "cannot open the lock file ${lock}"
+flock -w "${lock_wait}" 9 || fail "another hcw-host-firewall run held ${lock} for ${lock_wait}s; nothing was changed"
+
+chain_shape='^HCW-[A-Z0-9-]+$'
+jumps_file="${dir}/hcw.jumps"
+
+# parse_rules FILE: reads FILE into `declared` (the chain names) and `wanted`
+# (the -A lines), refusing anything but one *filter table of HCW-* chain
+# declarations, rules appended to those chains, comments and COMMIT.
+parse_rules() {
+  local file="$1" line name policy counters chain number=0 table=0 committed=0
+  declared=()
+  wanted=()
+  [ -r "${file}" ] || fail "cannot read ${file}"
+  while IFS= read -r line || [ -n "${line}" ]; do
+    number=$((number + 1))
+    case "${line}" in
+      '' | '#'*) ;;
+      '*filter')
+        [ "${table}" -eq 0 ] && [ "${committed}" -eq 0 ] || fail "${file}:${number}: one *filter table only"
+        table=1
+        ;;
+      COMMIT)
+        [ "${table}" -eq 1 ] || fail "${file}:${number}: COMMIT outside *filter"
+        table=0
+        committed=1
+        ;;
+      :*)
+        [ "${table}" -eq 1 ] || fail "${file}:${number}: a chain outside *filter"
+        read -r name policy counters <<<"${line#:}"
+        [[ "${name}" =~ ${chain_shape} ]] && [ "${policy}" = "-" ] && [ "${counters}" = "[0:0]" ] \
+          || fail "${file}:${number}: declare HCW-* chains only, as :HCW-NAME - [0:0]"
+        declared+=("${name}")
+        ;;
+      '-A '*)
+        [ "${table}" -eq 1 ] || fail "${file}:${number}: a rule outside *filter"
+        read -r _ chain _ <<<"${line}"
+        is_declared "${chain}" || fail "${file}:${number}: appends to ${chain}, which the file does not declare"
+        wanted+=("${line}")
+        ;;
+      *) fail "${file}:${number}: not a chain declaration, an -A rule, a comment or COMMIT" ;;
+    esac
+  done <"${file}"
+  [ "${committed}" -eq 1 ] && [ "${table}" -eq 0 ] || fail "${file}: no COMMIT after the *filter table"
+  [ "${#declared[@]}" -gt 0 ] || fail "${file} declares no chain"
+  # A jump or goto to an HCW-* chain the file does not declare. iptables
+  # refuses one only when the transaction is committed (on nf_tables its
+  # --test dry run does not look), by which time the other family may have
+  # been, so it is refused here, before either is touched.
+  for line in "${wanted[@]}"; do
+    if [[ " ${line} " =~ \ -[jg]\ (HCW-[A-Z0-9-]+)\  ]] && ! is_declared "${BASH_REMATCH[1]}"; then
+      fail "${file}: a rule jumps to ${BASH_REMATCH[1]}, which the file does not declare"
+    fi
+  done
+}
+
+# is_declared CHAIN: true when the rules file just read declares CHAIN.
+is_declared() {
+  local name
+  for name in "${declared[@]}"; do [ "${name}" = "$1" ] && return 0; done
+  return 1
+}
+
+# parse_jumps: reads hcw.jumps into `jumps`, with any --uid-owner user name
+# replaced by its uid, the form `iptables -S` prints.
+parse_jumps() {
+  local line number=0 user uid
+  local shape='^-A (INPUT|FORWARD|OUTPUT)( [A-Za-z0-9 ._+:/-]+)? -j HCW-[A-Z0-9-]+$'
+  jumps=()
+  [ -r "${jumps_file}" ] || fail "cannot read ${jumps_file}"
+  while IFS= read -r line || [ -n "${line}" ]; do
+    number=$((number + 1))
+    case "${line}" in '' | '#'*) continue ;; esac
+    [[ "${line}" =~ ${shape} ]] || fail "${jumps_file}:${number}: not a jump from INPUT, FORWARD or OUTPUT to an HCW-* chain"
+    if [[ "${line}" =~ --uid-owner\ ([^ ]+) ]]; then
+      user="${BASH_REMATCH[1]}"
+      if ! [[ "${user}" =~ ^[0-9]+$ ]]; then
+        uid="$(id -u -- "${user}" 2>/dev/null)" || fail "${jumps_file}:${number}: the user ${user} does not exist"
+        line="${line/--uid-owner ${user} /--uid-owner ${uid} }"
+      fi
+    fi
+    jumps+=("${line}")
+  done <"${jumps_file}"
+  [ "${#jumps[@]}" -gt 0 ] || fail "${jumps_file} names no jump"
+}
+
+# chain_rules LISTING CHAIN: the -A lines of CHAIN in an `iptables -S` listing, in order.
+chain_rules() {
+  awk -v chain="$2" '$1 == "-A" && $2 == chain' <<<"$1"
+}
+
+# hcw_jumps LISTING CHAIN [numbered]: the rules of CHAIN that jump or go to
+# an HCW-* chain; with "numbered", each after its position in CHAIN and a tab.
+hcw_jumps() {
+  awk -v chain="$2" -v numbered="${3:-}" '
+    $1 == "-A" && $2 == chain {
+      n++
+      for (i = 3; i < NF; i++) {
+        if (($i == "-j" || $i == "-g") && $(i + 1) ~ /^HCW-/) {
+          if (numbered != "") printf "%d\t", n
+          print
+          next
+        }
+      }
+    }' <<<"$1"
+}
+
+# lines ARRAY...: its arguments one per line, or nothing for none.
+lines() {
+  [ "$#" -eq 0 ] || printf '%s\n' "$@"
+}
+
+# text STRING: STRING and a newline, or nothing when it is empty.
+text() {
+  [ -z "$1" ] || printf '%s\n' "$1"
+}
+
+# check_family VERSION: compares the live table of one family with its files,
+# setting `chains_differ` (0 or 1), `fixes` (the jump deletions and
+# insertions that would put the jumps right) and `problems` (what differs,
+# for verify to print). Reads `declared`, `wanted` and `jumps`.
+check_family() {
+  local version="$1" listing name want live builtin top count line index at
+  local -a builtin_wants removals
+  listing="$("${ipt}" -w -S)"
+  chains_differ=0
+  fixes=()
+  problems=()
+  for name in "${declared[@]}"; do
+    if ! grep -qxF -- "-N ${name}" <<<"${listing}"; then
+      chains_differ=1
+      problems+=("v${version}: ${name} does not exist")
+      continue
+    fi
+    want="$(lines "${wanted[@]}" | awk -v chain="${name}" '$2 == chain')"
+    live="$(chain_rules "${listing}" "${name}")"
+    if [ "${want}" != "${live}" ]; then
+      chains_differ=1
+      problems+=("v${version}: ${name} differs from ${rules_file} (- file, + live):")
+      while IFS= read -r line; do problems+=("  ${line}"); done < <(diff <(text "${want}") <(text "${live}") | grep -E '^[<>]' | sed -e 's/^</-/' -e 's/^>/+/' || true)
+    fi
+  done
+  for builtin in INPUT FORWARD OUTPUT; do
+    builtin_wants=()
+    for line in "${jumps[@]}"; do
+      if [ "$(awk '{print $2}' <<<"${line}")" = "${builtin}" ]; then builtin_wants+=("${line}"); fi
+    done
+    live="$(chain_rules "${listing}" "${builtin}")"
+    count="${#builtin_wants[@]}"
+    top="$(head -n "${count}" <<<"${live}")"
+    [ "${count}" -gt 0 ] || top=""
+    # Every jump to an HCW-* chain must be one of the wanted ones, at the top.
+    if [ "${top}" = "$(lines "${builtin_wants[@]}")" ] \
+      && [ -z "$(hcw_jumps "$(tail -n +"$((count + 1))" <<<"${live}")" "${builtin}")" ]; then
+      continue
+    fi
+    problems+=("v${version}: ${builtin} must start with these jumps, in this order, and hold no other jump to an HCW-* chain:")
+    for line in "${builtin_wants[@]}"; do problems+=("  want ${line}"); done
+    removals=()
+    while IFS=$'\t' read -r at line; do
+      [ -n "${line}" ] || continue
+      removals+=("${line}")
+      problems+=("  live at ${at} ${line}")
+    done < <(hcw_jumps "${live}" "${builtin}" numbered)
+    [ "${#removals[@]}" -gt 0 ] || problems+=("  live: none")
+    for line in "${removals[@]}"; do fixes+=("-D ${line#-A }"); done
+    for ((index = count - 1; index >= 0; index--)); do
+      line="${builtin_wants[index]}"
+      fixes+=("-I ${builtin} 1 ${line#-A "${builtin}" }")
+    done
+  done
+}
+
+# removal VERSION: sets `transaction` to the one that takes every HCW-* jump
+# and chain out of one family's filter table, the jumps first, then the
+# chains flushed (they jump to one another), then deleted, and `report` to
+# the line that says so; both empty when there is nothing to take out.
+removal() {
+  local version="$1" listing changed=0 line name
+  local -a chains=()
+  transaction="*filter"
+  report=""
+  listing="$("${ipt}" -w -S)"
+  for builtin in INPUT FORWARD OUTPUT; do
+    while IFS= read -r line; do
+      [ -n "${line}" ] || continue
+      transaction+=$'\n'"-D ${line#-A }"
+      changed=1
+    done < <(hcw_jumps "${listing}" "${builtin}")
+  done
+  while IFS= read -r name; do
+    [ -n "${name}" ] || continue
+    chains+=("${name}")
+  done < <(awk '$1 == "-N" && $2 ~ /^HCW-/ { print $2 }' <<<"${listing}")
+  for name in "${chains[@]}"; do transaction+=$'\n'"-F ${name}"; done
+  for name in "${chains[@]}"; do transaction+=$'\n'"-X ${name}"; done
+  [ "${#chains[@]}" -eq 0 ] || changed=1
+  if [ "${changed}" -eq 0 ]; then
+    transaction=""
+    return 0
+  fi
+  transaction+=$'\n'"COMMIT"
+  report="v${version}: removed the HCW-* jumps and the chains ${chains[*]:-(none)}"$'\n'
+}
+
+# set_family VERSION: points `ipt` at that family's iptables.
+set_family() {
+  if [ "$1" = 4 ]; then ipt=iptables; else ipt=ip6tables; fi
+}
+
+# dry_run VERSION WHAT: iptables-restore --test on `transaction`; when it
+# is refused, says so and exits 3 before either family has been changed.
+dry_run() {
+  if ! "${ipt}-restore" -w --noflush --test <<<"${transaction}"; then
+    echo "hcw-host-firewall: ${ipt}-restore refused the IPv$1 $2 in its dry run; nothing in either family was changed" >&2
+    exit 3
+  fi
+}
+
+# commit VERSION WHAT: iptables-restore on the family's stored transaction,
+# then its report. A refusal here, after both dry runs passed, is one the
+# kernel made: it says which family, since IPv4 may already be committed.
+commit() {
+  if ! "${ipt}-restore" -w --noflush <<<"${transactions[$1]}"; then
+    echo "hcw-host-firewall: ${ipt}-restore refused the IPv$1 $2; nothing in it was applied" >&2
+    exit 3
+  fi
+  printf '%s' "${reports[$1]}"
+}
+
+declare -A transactions=() reports=()
+
+if [ "${mode}" = remove ]; then
+  for version in 4 6; do
+    set_family "${version}"
+    removal "${version}"
+    [ -n "${transaction}" ] || continue
+    dry_run "${version}" removal
+    transactions[${version}]="${transaction}"
+    reports[${version}]="${report}"
+  done
+  for version in 4 6; do
+    [ -n "${transactions[${version}]:-}" ] || continue
+    set_family "${version}"
+    commit "${version}" removal
+  done
+  exit 0
+fi
+
+parse_jumps
+status=0
+# First pass: both families checked, and for apply their transactions built
+# and dry-run, before anything is committed.
+for version in 4 6; do
+  set_family "${version}"
+  rules_file="${dir}/hcw.v${version}.rules"
+  parse_rules "${rules_file}"
+  for line in "${jumps[@]}"; do
+    target="${line##* }"
+    is_declared "${target}" || fail "${jumps_file}: jumps to ${target}, which ${rules_file} does not declare"
+  done
+  check_family "${version}"
+
+  if [ "${mode}" = verify ]; then
+    if [ "${#problems[@]}" -gt 0 ]; then
+      lines "${problems[@]}"
+      status=1
+    fi
+    continue
+  fi
+
+  [ "${chains_differ}" -eq 1 ] || [ "${#fixes[@]}" -gt 0 ] || continue
+  transaction="*filter"
+  report=""
+  if [ "${chains_differ}" -eq 1 ]; then
+    for name in "${declared[@]}"; do transaction+=$'\n'":${name} - [0:0]"; done
+    for line in "${wanted[@]}"; do transaction+=$'\n'"${line}"; done
+    report+="v${version}: loaded ${declared[*]} from ${rules_file}"$'\n'
+  fi
+  for line in "${fixes[@]}"; do
+    transaction+=$'\n'"${line}"
+    case "${line}" in
+      -D*) report+="v${version}: removed -A ${line#-D }"$'\n' ;;
+      -I*) read -r _ name _ rest <<<"${line}" && report+="v${version}: put -A ${name} ${rest} first"$'\n' ;;
+    esac
+  done
+  transaction+=$'\n'"COMMIT"
+  dry_run "${version}" transaction
+  transactions[${version}]="${transaction}"
+  reports[${version}]="${report}"
+done
+[ "${mode}" = apply ] || exit "${status}"
+
+# Second pass: commit each family that differs, then read it back.
+for version in 4 6; do
+  [ -n "${transactions[${version}]:-}" ] || continue
+  set_family "${version}"
+  commit "${version}" transaction
+
+  # Read back: a rule iptables prints differently from the file would make
+  # every later run reload, so it fails here instead, saying which.
+  rules_file="${dir}/hcw.v${version}.rules"
+  parse_rules "${rules_file}"
+  check_family "${version}"
+  if [ "${#problems[@]}" -gt 0 ]; then
+    echo "hcw-host-firewall: after loading, the live IPv${version} table still differs; write the files the way iptables -S prints them:" >&2
+    lines "${problems[@]}" >&2
+    exit 1
+  fi
+done
+exit "${status}"

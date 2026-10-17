@@ -203,9 +203,13 @@ treating it as a failure.
 
 ### 6. Put your SSH key on the server (only if it has none)
 
-The first Ansible run copies root's `authorized_keys` to the `hcwadmin`
-user, then turns off root and password login. So root must have your key
-before step 7. If you already added one in hPanel, skip this step.
+Step 7 runs as root over SSH, so root must have your key first. The first
+Ansible run then writes the `hcwadmin` user's keys from
+`hardening_admin_authorized_keys` in `lab-host/ansible/group_vars/all.yml`,
+empties root's, and turns off root and password login; it refuses to run
+unless the key root has is in that list (#953). The list pins the
+`hcw-lab_ed25519` key below. If you already added that key in hPanel, skip
+this step.
 
 Otherwise, this prints your public key. Copy the one line it prints:
 

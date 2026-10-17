@@ -93,6 +93,12 @@
     # project whose proxy mounts its socket directory (LAB-5).
     - role: coder_sandbox
       tags: [coder_sandbox]
+    # The host's own chains (#954, #958): what the sandbox daemon's user may
+    # reach, and what the host daemon's containers may open to the host.
+    # After coder_sandbox, whose user its jump matches, and before coder, so
+    # no workspace starts on a host without them.
+    - role: host_firewall
+      tags: [host_firewall]
     - role: coder
       tags: [coder]
     - role: labs_agent

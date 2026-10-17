@@ -109,7 +109,16 @@ are recorded once, here, before any of them is implemented.
    `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false` closes the door to new learners
    while existing ones keep working, and stopping the `coder` Compose
    service closes it to everyone (Caddy then answers 503 for the Coder
-   names). Two things on the host may drive the
+   names). (Owner decision 2026-10-16, #954: only the `lab-learners` team of
+   that organisation signs in, `CODER_OAUTH2_GITHUB_ALLOWED_TEAMS`, and
+   `CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS=false` is now the normal setting rather
+   than a switch: no sign-in creates an account, and the owner creates each
+   learner's account before their first sign-in. Shutting one learner out is
+   taking them out of the team and suspending their Coder account; stopping
+   the `coder` service is still the switch for everyone, and an emptied list
+   is still neither. [Labs host runbook, "Coder sign-in: adding and removing
+   a learner"](../runbooks/labs-host.md#coder-sign-in-adding-and-removing-a-learner).)
+   Two things on the host may drive the
    Docker daemon, and nothing else (a third, Portainer, owner-only and on the
    loopback, since the amendment of 2026-09-26 below): the Coder **server** container, which has
    the socket mounted because that is how Coder's documented Docker install
@@ -927,6 +936,36 @@ and expect the row; re-enable it. (4) The runbook's rehearsal line.
   choice is an open owner question on #952. The evidence for all three
   settings is `sudo /opt/azcmagent/bin/azcmagent config list` on the host,
   which stays with the owner.
+
+  *Amendment 2026-10-16 (#953, LAB-7; owner decision that day):* the owner
+  reaches the host through **Azure Arc SSH**, and port 22 then closes to the
+  internet. LAB-6's "incoming connections off" is **partly reversed, for
+  port 22 only**, to carry it: the `arc` role sets
+  `incomingconnections.enabled true` and `incomingconnections.ports 22`
+  (`arc_incoming_ssh_enabled`, default true; false puts LAB-6's state back),
+  and `infra/lab-hybrid.tf` declares the machine's default connectivity
+  endpoint with one SSH service configuration, port 22. Windows Admin Center
+  and every other port stay refused. **The extension allowlist is
+  unchanged**, the Azure Monitor Linux agent alone, and the role fails
+  closed if it reads back anything else after setting the incoming ports.
+  Entra ID login over SSH (the `AADSSHLoginForLinux` extension) does not
+  support Ubuntu 26.04, so no login extension is added: the login is the
+  local user `hcwadmin` with the one pinned key, as it is directly. **Arc
+  SSH is a transport in front of sshd's own key check, not a login.** The
+  relay delivers a stream to sshd on the host's loopback; an identity that
+  may list the endpoint's credentials (Owner or Contributor on the machine
+  or its group) can open that stream, and still meets sshd asking for the
+  pinned key, as a connection from the internet does today. No role is
+  granted for it: the owner is Owner on the subscription. **Break-glass is
+  the Hostinger web console** (hPanel's Web Console), which depends on
+  neither Arc, the relay nor port 22. The order is staged: the keys,
+  `AllowUsers` and `alert-lab-ssh-login` land while port 22 is open; then
+  this; then the owner connects through Arc
+  (`scripts/lab/Connect-Lab.ps1 -Arc`) and signs in at the web console; only
+  then does a later change close port 22 and set `lab_ssh_loopback_only`,
+  from which an accepted login from anywhere but loopback pages.
+  ([SSH access to Azure Arc-enabled servers](https://learn.microsoft.com/azure/azure-arc/servers/ssh-arc-overview),
+  read 2026-10-16.)
 - **Ingestion is bounded but not zero.** Heartbeat and auth syslog on one host
   are kilobytes a day against the workspace's 0.25 GB/day cap
   ([ADR 0031](0031-security-scanner-owner-decisions.md) records the headroom).

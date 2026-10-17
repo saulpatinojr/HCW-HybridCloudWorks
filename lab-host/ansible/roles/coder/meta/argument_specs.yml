@@ -12,7 +12,8 @@ argument_specs:
         starts a nightly pg_dump timer keeping seven days under /var/backups/coder. With it false
         it runs docker compose down (volumes kept), empties the secret files, removes the
         launcher and the route and stops the timer.
-      - Fails closed when enabled without a non-empty GitHub organisation allowlist, without
+      - Fails closed when enabled without a non-empty GitHub organisation allowlist, without a
+        non-empty GitHub team allowlist whose every team is in an allowed organisation, without
         all three secrets, with a password that needs URL escaping, or on a host whose memory
         cannot hold coder_max_workspaces workspaces (ADR 0032).
       - Installs /usr/local/sbin/hcw-coder-template-push, root:root 0750, enabled or not. It
@@ -41,13 +42,26 @@ argument_specs:
           - GitHub organisations whose members may sign in, rendered comma-separated into
             CODER_OAUTH2_GITHUB_ALLOWED_ORGS. Must be non-empty while coder_enabled is true; an
             empty list would let any GitHub account in.
+      coder_oauth2_github_allowed_teams:
+        type: list
+        elements: str
+        required: true
+        description:
+          - GitHub teams whose members may sign in, each <organisation>/<team-slug>, rendered
+            comma-separated into CODER_OAUTH2_GITHUB_ALLOWED_TEAMS (Coder v2.38.0). Coder checks
+            a team only inside an organisation the learner already passed, so each team's
+            organisation must be in coder_oauth2_github_allowed_orgs, spelled the same way; the
+            role refuses any other. Must be non-empty while coder_enabled is true; an empty list
+            would let every member of the allowed organisations in.
       coder_oauth2_github_allow_signups:
         type: bool
         required: true
         description:
-          - CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS. True lets new members of the allowed
-            organisations create accounts; false is the "no new learners" kill switch and
-            leaves existing accounts working.
+          - CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS. True lets a member of an allowed team who has no
+            Coder account create one at their first GitHub sign-in. False (the setting since
+            2026-10-16) refuses that sign-in with "Signups are disabled", so the owner creates a
+            learner's account first (coder users create --login-type github with the learner's
+            primary verified GitHub email), and leaves existing accounts working.
       coder_domain:
         type: str
         required: true

@@ -66,6 +66,41 @@ describe('readCredentialSources', () => {
     expect(reminderDoc).toBeNull();
   });
 
+  it('reads lab_certificates and swa_reset documents when present', async () => {
+    const store = withMcp({
+      'admin_config/lab_certificates': {
+        id: 'lab_certificates',
+        certificates: {
+          labAgent: { notBefore: '2026-09-26T00:00:00.000Z', notAfter: '2027-03-25T00:00:00.000Z' },
+          vaultTls: { notBefore: '2026-09-26T00:00:00.000Z', notAfter: '2027-03-25T00:00:00.000Z' },
+        },
+      },
+      'admin_config/swa_reset': {
+        id: 'swa_reset',
+        lastResetAt: '2026-10-11T03:15:00.000Z',
+      },
+    });
+    const { sources, unavailable } = await readCredentialSources(store);
+    expect(unavailable).toEqual([]);
+    expect(sources.labCertificates).toEqual({
+      labAgent: { notBefore: '2026-09-26T00:00:00.000Z', notAfter: '2027-03-25T00:00:00.000Z' },
+      vaultTls: { notBefore: '2026-09-26T00:00:00.000Z', notAfter: '2027-03-25T00:00:00.000Z' },
+    });
+    expect(sources.swaReset).toEqual({
+      lastResetAt: '2026-10-11T03:15:00.000Z',
+    });
+  });
+
+  it('marks lab-certificates or swa-reset unavailable when malformed or failed', async () => {
+    const store = withMcp({
+      'admin_config/lab_certificates': { id: 'lab_certificates', certificates: 'bad' },
+      'admin_config/swa_reset': { id: 'swa_reset', lastResetAt: 'not-a-date' },
+    });
+    const { unavailable } = await readCredentialSources(store);
+    expect(unavailable).toContain('lab-certificates');
+    expect(unavailable).toContain('swa-reset');
+  });
+
   it('marks every MCP server unknown when the projected query fails', async () => {
     const store = withMcp({});
     store.fail('mcp_servers', '*', 'queryDocs', down());

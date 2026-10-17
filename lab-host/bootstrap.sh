@@ -46,6 +46,12 @@ UV_SHA256=23bf5552d220e0842b65c862097b2ebaeba0064b74eda5e565e77fd25969d8c8
 # CPython 3.14.7, the newest release of the newest line. uv 0.12.19 pins its
 # python-build-standalone 20260924 build by SHA256.
 PYTHON_VERSION=3.14.7
+# cosign 3.1.3, for SLSA build provenance attestation verification of add-on
+# images before pull (#1069). COSIGN_SHA256 is the sha256sum of cosign-linux-amd64
+# from https://github.com/sigstore/cosign/releases/tag/v3.1.3, equal to the
+# release's cosign_checksums.txt entry.
+COSIGN_VERSION=3.1.3
+COSIGN_SHA256=4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71
 # ansible-core is not pinned here. Its release, the SHA256 of its wheel and
 # the hash of every wheel it depends on are the ANSIBLE_CORE_VERSION,
 # ANSIBLE_CORE_SHA256 and ANSIBLE_CORE_DEPS lines of lab-image/versions.env,
@@ -89,6 +95,7 @@ HCW_VAULT_PASSWORD_FILE="${HCW_ANSIBLE_STATE_DIR}/vault-password"
 # equal. UV_TOOL_DIR is where an earlier bootstrap.sh kept ansible-core as a
 # uv tool, named here only so this script can retire it once nothing runs it.
 UV_BIN=/usr/local/bin/uv
+COSIGN_BIN=/usr/local/bin/cosign
 HCW_ANSIBLE_VENV=/opt/uv/ansible-core
 HCW_ANSIBLE_GENERATIONS=/opt/uv/ansible-core-generations
 HCW_VAULT_HELPER=/usr/local/sbin/hcw-vault-set
@@ -403,6 +410,22 @@ if ! "${UV_BIN}" --version 2>/dev/null | grep -qx "uv ${UV_VERSION}\( .*\)\?"; t
   tar -xzf "${uv_tmp}/${uv_archive}" -C "${uv_tmp}"
   install -m 0755 -o root -g root "${uv_tmp}/uv-x86_64-unknown-linux-gnu/uv" "${UV_BIN}"
   rm -rf "${uv_tmp}"
+  trap - EXIT
+fi
+
+if ! "${COSIGN_BIN}" version 2>/dev/null | grep -q "${COSIGN_VERSION}"; then
+  log "installing cosign ${COSIGN_VERSION} from its GitHub release, SHA256-verified"
+  cosign_tmp="$(mktemp -d)"
+  trap 'rm -rf "${cosign_tmp}"' EXIT
+  cosign_binary=cosign-linux-amd64
+  curl -fsSL --proto '=https' --tlsv1.2 -o "${cosign_tmp}/${cosign_binary}" \
+    "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/${cosign_binary}"
+  if [ "$(sha256sum "${cosign_tmp}/${cosign_binary}" | cut -d ' ' -f 1)" != "${COSIGN_SHA256}" ]; then
+    echo "refusing to install cosign: ${cosign_binary} does not match COSIGN_SHA256" >&2
+    exit 1
+  fi
+  install -m 0755 -o root -g root "${cosign_tmp}/${cosign_binary}" "${COSIGN_BIN}"
+  rm -rf "${cosign_tmp}"
   trap - EXIT
 fi
 

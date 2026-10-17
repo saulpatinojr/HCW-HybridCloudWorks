@@ -12,3 +12,14 @@ caddy_built_binary_name: >-
   caddy-{{ caddy_version }}-cloudflare-{{ caddy_cloudflare_module_version }}-{{ (caddy_builder_image_digest | replace('sha256:', ''))[:12] }}
 caddy_built_binary: "{{ caddy_build_dir }}/{{ caddy_built_binary_name }}"
 caddy_tls_enabled: "{{ caddy_cloudflare_api_token | length > 0 }}"
+# The admin API listens on this Unix socket, not on TCP (#958). Its directory
+# is the one caddy.service creates as RuntimeDirectory=caddy, owned by the
+# caddy user and removed when the unit stops, so the path is fixed by the
+# unit and is a var, not a default. Caddy creates the socket with its default
+# mode, 0200: only the caddy user (the unit's ExecReload runs as it) and root
+# can connect. caddy_admin_address is the same path in Caddy's network
+# address form, which the Caddyfile's admin option and `caddy reload
+# --address` both take. scripts/lab-host-caddy-admin.test.mjs holds the
+# three together.
+caddy_admin_socket: /run/caddy/admin.sock
+caddy_admin_address: "unix/{{ caddy_admin_socket }}"

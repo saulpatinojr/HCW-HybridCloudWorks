@@ -33,6 +33,7 @@ itself, never from a published page.
 | Runtime | Docker Engine only; no Kubernetes (owner decision 2026-09-24) | live |
 | Public names | `lab.hybridcloudworks.com`, `*.lab.hybridcloudworks.com` and `*.coder.lab.hybridcloudworks.com`, Cloudflare DNS records managed from `hcw-lab` (`infra-lab/dns.tf`: the `lab` A record and CNAMEs to it for `*.lab`, `coder.lab` and `*.coder.lab`, all DNS-only; `coder.lab` has its own record because `*.coder.lab` makes it an empty non-terminal that `*.lab` does not answer for). One Caddy certificate carries all three names, issued by DNS-01. The target is the `_acme-challenge.lab` and `_acme-challenge.coder.lab` delegations into a dedicated lab zone; until that zone exists (owner decision 2026-09-25: none yet) there are no delegation records and Caddy writes its challenges in the production zone, the interim ADR 0032 accepts | live; DNS, the edge and the CSP matched the repository on 2026-10-08 (#1009) |
 | Hybrid control plane | Azure Arc-enabled server in `rg-lab-hybrid-prod-cus`; heartbeat, auth syslog, service syslog at Warning and above, and four host counters to the Log Analytics workspace in `rg-mgmt-plat-prod-cus`; three alert rules there page the owner on heartbeat absence (30 min), root disk past 85%, and a watched unit failing (LAB-2, 2026-10-06) | live |
+| Owner access | SSH as `hcwadmin` with the one pinned key. Directly on port 22 until a later change closes it, and through **Azure Arc SSH** (#953; [ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of 2026-10-16): `scripts/lab/Connect-Lab.ps1 -Arc` writes a `ProxyCommand` that fetches fresh relay credentials on every connection; `infra/lab-hybrid.tf` declares the Arc machine's connectivity endpoint with one SSH service configuration, port 22; the `arc` role turns the agent's incoming connections on for port 22 alone, extension allowlist unchanged. Arc SSH is a transport in front of sshd's key check, not a login. Break-glass is hPanel's **Web Console**, which needs neither Arc nor port 22 ([runbook](../runbooks/labs-host.md), "Connect through Azure Arc") | direct SSH live; Arc SSH merged, not yet applied: the `hcw-azure` run, the playbook run and the owner's first Arc connection are pending |
 | Owner | Workload owner | — |
 
 ## Applied state
@@ -92,7 +93,7 @@ lose the note.
 | `vps-agent` | Pull-based lab job runner (`vps-agent/`); dials out to the Functions API, runs each job in `docker run --network none`. With LAB-5 its user is in no docker group (merged 2026-10-07 in #987, not yet on the host: [Applied state](#applied-state)): the CLI it spawns reaches the host daemon through `hcw-labs-agent-docker-proxy`, which passes the calls a job makes and refuses any create that asks for privilege, a host namespace, a device, a mount or a bind beyond the job's own directory | Host-native systemd service `hcw-labs-agent`, user `hcw-labs-agent`, `/opt/hcw-labs-agent`; the proxy is one container on no network, with a Unix socket only the agent's group may open |
 | node-exporter | Host metrics for the lab status page; listens on localhost only | Host-native systemd service |
 | Azure Connected Machine agent and Azure Monitor Agent | Arc onboarding as `arcs-lab-hybrid-prod-cus-01`; heartbeat, `auth`/`authpriv` syslog, the `daemon`/`syslog`/`kern`/`cron`/`user` facilities at Warning and above, and four host counters (CPU, memory, root disk used and free), by the data collection rule `dcr-lab-hybrid-prod-cus` | Host services. The Connected Machine agent is installed and connected by the Ansible `arc` role, switched on by the host's arc fact; the Azure Monitor Agent is an Arc extension added after onboarding. Both are started by the owner's `scripts/lab/Register-LabArc.ps1 -Connect` ([runbook](../runbooks/labs-host.md), "Arc onboarding", step 4) |
-| Coder workspaces and lab job containers | Transient. Workspaces carry Coder's `com.coder.resource=true` label and stop after an hour; job containers carry the `hcw.lab-job` label and live for one job. With LAB-5 (merged 2026-10-07 in #987, not yet on the host: [Applied state](#applied-state)) every container on the host daemon runs with user-namespace remapping (its root is an unprivileged uid on the host), and workspaces run on the sandbox daemon | Job containers: the host daemon, started by `vps-agent` through its proxy. Workspaces: the sandbox daemon, started by Coder through its proxy |
+| Coder workspaces and lab job containers | Transient. Workspaces carry Coder's `com.coder.resource=true` label and stop after an hour; job containers carry the `hcw.lab-job` label and live for one job. With LAB-5 (merged 2026-10-07 in #987, not yet on the host: [Applied state](#applied-state)) every container on the host daemon runs with user-namespace remapping (its root is an unprivileged uid on the host), and workspaces run on the sandbox daemon. Every template lets a learner have one workspace starting or running at a time, refusing a second start at plan, and gives the Azure, AWS and Google Cloud CLIs a 64 MiB tmpfs for their sign-ins, so none is written to the workspace's volume and each ends when the workspace stops (#954, owner decision 2026-10-16; reaches Coder when the run after the merge publishes the templates) | Job containers: the host daemon, started by `vps-agent` through its proxy. Workspaces: the sandbox daemon, started by Coder through its proxy |
 | Tool add-ons (`hcw-addon-<id>`) | Independently built tools the site shows in a pane at `/tools/<id>` ([ADR 0035](../decisions/0035-addon-pane-model.md); [AddOn integration standard](../standards/addon-integration-standard.md)): the first is `hcw-addon-migration`, the Azure migration assessment, at `migration.lab.hybridcloudworks.com`. Each takes an uploaded export, holds the assessment in memory for at most two hours, reaches no cloud by design, and gates uploads with its own human-verification widget whose secret is in the host's Ansible vault (`vault_addon_<id>_turnstile_secret`). Merged in the ADR 0035 pull request, not yet on the host: [Applied state](#applied-state) | One hardened container per row of `addons[]` in `group_vars`, run directly by the `addons` role (no Compose): `docker.io/hybridcloudworks/hcw-addon-<id>` by digest, read-only root, every capability dropped, no volume, no socket, under the user-namespace remap; `127.0.0.1:<port>` only (migration 18081; network assessment 18082 and cloud assessment 18083 reserved), behind Caddy on `<id>.lab` |
 | Portainer Business Edition | The owner's view of the host's Docker: containers, images, volumes, logs. Holds the Docker socket (with `--userns=host`, which the socket needs under the remap), so it is root on the host; it sees the host daemon, not the sandbox daemon the workspaces run on; reachable only through an SSH tunnel. Off until the owner turns it on (owner decision 2026-09-26) | One container, `portainer`, with a named volume; HTTPS on `127.0.0.1:9443` only, no Caddy route |
 | HashiCorp Vault | Secrets for the lab host only, never production HybridCloudWorks secrets (those stay in Key Vault `kv-site-prod-cus-01`). Initialised by the owner over SSH. Since 2026-09-29 it unseals itself at every start with the key `vault-seal` in the lab-only Key Vault `kv-labhybrid-prod-cus-01`, as the Arc machine's identity (#726; ADR 0032, amendment of 2026-09-29, accepted and live that day). The five Shamir keys are recovery keys. On since 2026-09-26 (#729; owner decision that day) | Host-native systemd service `vault`, user `vault`, raft storage in `/var/lib/vault`; `127.0.0.1:8200` and `127.0.0.1:8201` only. With auto-unseal, the unit also joins the `himds` group and reaches Key Vault over HTTPS |
@@ -116,12 +117,19 @@ on ([runbook](../runbooks/labs-host.md), "The first-run host check").
 
 ## Exposure
 
-Inbound: **22, 80 and 443 only.** SSH is key-only, for the owner and Ansible.
-80 exists to answer ACME challenges and redirect to 443. Everything else is
+Inbound: **22, 80 and 443 only.** SSH lets in `hcwadmin` alone, by the
+owner's pinned key only (#953).
+80 exists to answer ACME challenges and redirect to 443. Since #953 the owner
+can also reach sshd through Azure Arc SSH, which opens no inbound port: the
+Arc agent holds an outbound relay connection, and the relay hands each
+session to sshd on the loopback, port 22 alone ([Summary](#summary), "Owner
+access"). Port 22 closes to the internet in a later change, once that path
+and hPanel's Web Console have both been used. Everything else is
 outbound:
 
 - `vps-agent` polls the Functions API over 443 with its own Entra certificate;
-- the Arc and Azure Monitor agents call Azure over 443;
+- the Arc and Azure Monitor agents call Azure over 443, the Arc agent's
+  relay for Arc SSH included;
 - Coder reaches GitHub for OAuth over 443;
 - Docker pulls digest-pinned images over 443: from Docker Hub as `main`
   holds it (#1002, merged 2026-10-08), and from GHCR until the owner's next
@@ -148,6 +156,22 @@ roles refuse any other address. The owner reaches Portainer
 through an SSH tunnel and Vault through the CLI over SSH; neither has a Caddy
 route or a public name.
 
+Workspace egress is limited to what the labs need, and host-local and
+private destinations are refused (`host_firewall` role, #954 and #958; owner
+decision 2026-10-16; merged in its pull request, on the host from the next
+`bootstrap.sh` run: [Applied state](#applied-state)). Everything the sandbox
+daemon's user sends, the workspaces included, may reach DNS on
+systemd-resolved's stub, TCP 443 on the host's own addresses (Coder and the
+guided labs, through Caddy) and TCP 80 and 443 on public addresses, and
+nothing else; containers on the host daemon's bridges may open only TCP 80
+and 443 to the host; and the host's own new connections to Coder's internal
+network are refused (Coder reaches it across its own bridge). The rules are
+the host's own chains, jumped to ahead of ufw's and loaded at boot before
+Docker and the sandbox daemon, which does not start without them; a failed
+load is reported like any watched unit's. ufw's reload and Docker's restart
+leave them in place, and the add-ons' `DOCKER-USER` rules are separate
+([runbook](../runbooks/labs-host.md#host-firewall-for-the-sandbox-and-bridges)).
+
 ### Panes only
 
 **Owner decision 2026-09-28:** "The lab should only be accessible through
@@ -169,8 +193,10 @@ What keeps working, and why:
 - **Certificates.** Caddy obtains them by DNS-01, so no challenge request
   arrives over HTTP, and Caddy would answer one before any route in any
   case.
-- **Caddy's admin API and metrics** listen on `127.0.0.1:2019`, not on the
-  lab names.
+- **Caddy's admin API and metrics** listen on a Unix socket,
+  `/run/caddy/admin.sock`, that only the `caddy` user and root can open, not
+  on TCP and not on the lab names (#958). Caddy serves HTTP/1.1 and HTTP/2
+  only; HTTP/3 is off, so nothing listens on UDP 443.
 - **The lab agent** dials out to the Functions API and receives nothing
   inbound. Nothing else on the host takes a connection through Caddy apart
   from Coder and the tool add-ons, and Coder's own clients send no fetch
@@ -183,7 +209,9 @@ What keeps working, and why:
   level, and a stopped container answers 503 with the site's own sentence,
   `This tool isn't available right now.`
 - **Coder** (on since 2026-09-28, for members of the `HybridCloudWorks`
-  GitHub organisation only). Its route removes Coder's
+  GitHub organisation only; since 2026-10-16 for members of its
+  `lab-learners` team only, with sign-ups off, so the owner creates each
+  learner's account: #954, `lab-host/README.md`, "Who signs in"). Its route removes Coder's
   default `frame-ancestors 'self'`, because the browser enforces every
   policy it receives and that one would keep Coder out of the panes. It
   lets Coder's GitHub sign-in callback through at the top level, because
@@ -273,7 +301,7 @@ above.
 
 | Identity | Where it lives | Scope | Status |
 | --- | --- | --- | --- |
-| Owner and Ansible SSH public keys | `~/.ssh/authorized_keys`, written by Terraform at provisioning and managed by Ansible after | Shell access to the host | live: two ED25519 keys (the owner's and the Ansible `hcw-lab` key) in `hcwadmin`'s and root's files, identical, read 2026-10-14 (#980) |
+| Owner SSH public key | `hcwadmin`'s `~/.ssh/authorized_keys`, written on every `bootstrap.sh` run from `hardening_admin_authorized_keys` in `lab-host/ansible/group_vars/all.yml` and nothing else; root's `authorized_keys` is kept empty. hPanel installs a key for root only on a reinstall, for the first run | Shell access to the host as `hcwadmin`, the only account sshd lets in (`AllowUsers hcwadmin`, `AuthenticationMethods publickey`); root login is off, and break-glass is meant to be hPanel's Web Console with root's password; whether that console goes through sshd is unverified (Hostinger says it works like an SSH connection), so the owner checks it before and after the first run with #953 (runbook, "The first `bootstrap.sh` run with #953"). `hcwadmin` has passwordless sudo, an accepted risk (`roles/hardening/README.md`) | pinned (#953, owner decision 2026-10-16): one ED25519 key, the owner's workstation key `SHA256:VTyaLLQLfYwi38RP1mHDD6Vtu0eSQsa4EPsNJTrdgG8`; the role stops on an empty list or one without the key of the most recent SSH login in the journal. Before #953's first run: two keys in `hcwadmin`'s and root's files, read 2026-10-16, the second of which made no login in 14 days |
 | `vps-agent` Entra confidential client (certificate) | Private key generated on the host, `/etc/hcw/labs-agent.pem`, owner `root`, group `hcw-labs-agent`, mode `0640`, so the non-root service reads it and nothing else does; only the public certificate goes to the app registration | The `LabAgent` app role on the Functions API — four endpoints (the fourth, since 2026-10-08, hands over a renewed Coder status token the API verifies before storing), no database or Key Vault access | live: certificate issued 2026-09-26, expires 2028-09-25 (730 days, LAB-11 #957); the agent heartbeats (Heartbeat 2026-10-14) |
 | Arc machine identity | System-assigned by Azure at onboarding, held by the Connected Machine agent; processes in the `himds` group can request its tokens | Whatever roles `infra/` grants it: from #726, Key Vault Crypto Service Encryption User (read, wrap and unwrap) on the one key `vault-seal` in `kv-labhybrid-prod-cus-01`, which Vault uses to unseal itself once the owner turns auto-unseal on; and, from LAB-9 (#955), Storage Blob Data Contributor on the one container `host-backups` in `stlabhybridprodcus01`, which the host's backups are uploaded to; nothing else beyond the data collection rule | live: Vault reports seal type `azurekeyvault`, unsealed, and the lab vault's audit shows the wrap and unwrap calls; the first backup blob was written as this identity on 2026-10-14 (#955) |
 | Coder GitHub OAuth app secret | Coder's Docker Compose environment | Learner sign-in to Coder; nothing on the site | live: Coder has answered on its public name since 2026-09-28 |

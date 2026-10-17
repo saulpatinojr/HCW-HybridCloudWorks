@@ -4,13 +4,15 @@ How to reach the Hostinger lab host from a desktop over SSH and VS Code (the
 first section); how to reinstall it, and what the first `bootstrap.sh` run
 checks before it changes anything; how the lab agent goes live, which is one
 PowerShell line; the order of the run after a merge (the playbook, then the
-Coder template, at once); how the host renews the site's Coder status token
+Coder template, at once); how the owner adds a learner to Coder and removes
+one ("Coder sign-in", #954); how the host renews the site's Coder status token
 and publishes the template on its own once the owner seeds one credential
 ("Automatic renewal"); how to check, after the run that turns it on, that the
 container runtime is privilege-separated and how to take that back (LAB-5);
 how the owner reaches Portainer and
 initialises and unseals HashiCorp Vault on it (owner decision 2026-09-26),
 and moves that Vault to auto-unseal through the Arc identity (#726);
+how to reload Caddy by hand now that its admin API is a Unix socket (#958);
 how the owner turns on a tool add-on, the first being the migration
 assessment the site frames at `/tools/migration` ("Tool add-ons", ADR 0035);
 how fast a runc, containerd or Docker Engine advisory is fixed on the host,
@@ -115,22 +117,56 @@ pwsh -NoProfile -File $HOME\Downloads\Connect-Lab.ps1 -User root
 
 ### What success looks like
 
-The run that sets a machine up ends with the public key, the ways to
-authorize it, and `Changed:` naming what it did. Every later run ends with
-`No changes: this machine was already set up for hcw-lab.` To authorize the
-key:
+The run that sets a machine up ends with the public key, the line that pins
+it, and `Changed:` naming what it did. Every later run ends with
+`No changes: this machine was already set up for hcw-lab.`
 
-- **The first key for the server:** paste the printed line in hPanel at
-  https://hpanel.hostinger.com/vps, **Manage** on the server, **Settings**,
-  **SSH keys**, **Add SSH key**. hPanel installs it as a key for root, and
-  the first `bootstrap.sh` run copies root's keys to `hcwadmin`
+**The pinned key (#953, owner decision 2026-10-16).** The keys that may log
+in are one list, `hardening_admin_authorized_keys` in
+`lab-host/ansible/group_vars/all.yml`. Every `bootstrap.sh` run writes
+`hcwadmin`'s `authorized_keys` from that list and nothing else, keeps
+root's empty, and lets `hcwadmin` alone in over SSH, by key only
+(`AllowUsers hcwadmin`, `AuthenticationMethods publickey`). The list holds
+one key, the owner's workstation key `hcw-lab_ed25519.pub`,
+`SHA256:VTyaLLQLfYwi38RP1mHDD6Vtu0eSQsa4EPsNJTrdgG8`. Before it writes, the
+run stops if the list is empty, or if it does not hold the key of the most
+recent SSH login in the journal (the lockout guard; on a host with no login
+in the journal, if it shares no key with the keys on file), and says which
+keys it compared.
+
+- **A second key (another desktop):** the script prints the line to add,
+  `  - ssh-ed25519 AAAA…`, which is the key's type and key with the comment
+  stripped. Put it under `hardening_admin_authorized_keys` in
+  `lab-host/ansible/group_vars/all.yml` on a branch and merge it. Then, from
+  the machine that already connects, PowerShell:
+
+  ```powershell
+  ssh hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+  ```
+
+  Success is a play recap with `failed=0`, after which the new desktop's
+  `ssh hcw-lab hostname` prints the host name. To use the new desktop before
+  the merge, run the other line the script printed on the machine that
+  already connects: it adds the key to `hcwadmin`'s file at once, until the
+  next `bootstrap.sh` run removes it, and the nightly drift check reports
+  that file as drift until the key is in the list.
+- **The first key for a reinstalled server:** paste the public key in hPanel
+  at https://hpanel.hostinger.com/vps, **Manage** on the server,
+  **Settings**, **SSH keys**, **Add SSH key**. hPanel installs it for root,
+  and the first `bootstrap.sh` run, made as root, writes `hcwadmin`'s file
+  from the list and empties root's. The most recent login the guard finds
+  in the journal is that root login, so the run goes ahead only if the key
+  hPanel installed is in the list; the pinned workstation key is
   (`infra-lab/README.md`, steps 6 and 7).
-- **Another desktop, once one already connects:** run the one line the
-  script printed on the machine that already connects. It adds the key for
-  the login user, which works at once, and for root, which is what lasts:
-  the hardening role rebuilds `hcwadmin`'s `authorized_keys` from root's on
-  every `bootstrap.sh` run, so a key only in `hcwadmin`'s file is gone after
-  the next one.
+- **Replacing every key** (a lost or rebuilt workstation): put the new key
+  in the list instead of the old one and merge. The guard then stops the
+  run, because the key of the most recent login is no longer in the list.
+  Run it once with the override from hPanel's Web Console (below), bash, on
+  the host:
+
+  ```bash
+  sudo /opt/hcw-src/lab-host/bootstrap.sh -e hardening_admin_keys_replace_all=true
+  ```
 
 Then this prints the server's host name, PowerShell:
 
@@ -175,10 +211,189 @@ The site itself never tunnels into the host: under ADR 0032 the host
 accepts inbound 22, 80 and 443 only, and the site's one view of it is the read-only
 status proxy in the Function App ([Labs host, Exposure](../architecture/labs-host.md#exposure)).
 SSH from a desktop is the only shell. When SSH is not working, hPanel's
-**Web Console** is the browser fallback: https://hpanel.hostinger.com/vps,
+**Web Console** is the break-glass: https://hpanel.hostinger.com/vps,
 **Manage** on the server, then **Web Console** on its overview. It usually
 signs in by itself; when it asks, Hostinger's instructions are `root` and
 the root password.
+
+**Whether the Web Console goes through sshd is unverified (#953).**
+Hostinger's own page says the session "functions exactly like a standard
+SSH connection"
+([How to use the Hostinger VPS Web Console](https://www.hostinger.com/support/how-to-use-the-web-console-in-hostinger/)).
+If it is an SSH login as root, `PermitRootLogin no`, `AllowUsers hcwadmin`,
+publickey only and root's empty `authorized_keys` would all refuse it, and
+the break-glass would be gone. What is known (read on the host
+2026-10-16): root login over SSH has been off since 2026-09-26, the journal
+shows no SSH login as root and no console login since then, and a getty
+runs on `tty1` and on the serial port `ttyS0`, which a VNC or serial
+console would use. None of that proves which one hPanel uses, so the owner
+checks it before and after the first run below.
+
+### The first `bootstrap.sh` run with #953
+
+1. **Before the run**, sign in to the Web Console:
+   https://hpanel.hostinger.com/vps, **Manage** on the server, then
+   **Web Console**. Success is a `root@` prompt. If it does not get there,
+   stop and say so on #953 before running anything: SSH would then be the
+   only way in, and this change should not be applied until the
+   break-glass is settled.
+2. Open an SSH session and keep it open until step 4, PowerShell:
+
+   ```powershell
+   ssh hcw-lab
+   ```
+
+3. In that session, run the playbook, bash, on the host. Success is a play
+   recap with `failed=0`; leave the session open afterwards:
+
+   ```bash
+   sudo /opt/hcw-src/lab-host/bootstrap.sh
+   ```
+
+4. From a second PowerShell window, check that a new SSH login still works.
+   Success prints the server's host name:
+
+   ```powershell
+   ssh hcw-lab hostname
+   ```
+
+   If it fails, the open session from step 2 is still root through `sudo`,
+   and `sudo journalctl -u ssh.service -n 20` there says why.
+5. Sign in to the Web Console again. Success is the same `root@` prompt. If
+   it stopped working after the run, it was going through sshd: SSH still
+   works (step 4), so nothing is locked out, but say so on #953, because
+   the break-glass has to be settled before port 22 closes.
+
+Then this shows what sshd now applies. PowerShell:
+
+```powershell
+ssh hcw-lab 'sudo -n sshd -T | grep -e ^allowusers -e ^authenticationmethods'
+```
+
+Success is exactly these two lines:
+
+```text
+allowusers hcwadmin
+authenticationmethods publickey
+```
+
+### Connect through Azure Arc
+
+Owner decision 2026-10-16 (#953; [ADR 0032](../decisions/0032-learner-labs-platform.md),
+amendment of that date): the owner reaches the host through **Azure Arc
+SSH**, and port 22 then closes to the internet, in a later change. Arc SSH
+carries the session through a relay the host's Arc agent dials out to, so
+sshd needs no open port; sshd still asks for the same pinned key. Until
+port 22 closes, the direct block above keeps working, and running the script
+without `-Arc` puts it back.
+
+`Connect-Lab.ps1 -Arc` writes the same `Host hcw-lab` block with a
+`ProxyCommand`. That runs `$HOME\.ssh\hcw-lab-arc-proxy.ps1` (written by the
+script, run by Windows PowerShell 5.1), which asks `az ssh config` for fresh
+relay credentials on **every** connection, since they last an hour at most,
+and hands the connection to the az ssh extension's proxy. So `ssh hcw-lab`,
+piped commands, `ssh -t`, `ssh -L` and VS Code Remote-SSH work as they do
+directly, from PowerShell and Git Bash alike, and nothing expires an hour
+after setup. The credentials are written by az into a folder only you can
+read, under `$env:LOCALAPPDATA\hcw-lab-arc`; the helper reads them and
+deletes the folder **before** the connection starts, and the proxy gets
+them in its environment, so they are not on disk while you are connected,
+nor after: Windows OpenSSH ends a connection by killing the helper, so no
+cleanup at the end could be relied on. A folder is left only if the helper
+is killed in the few seconds az is writing it, and the next connection, or
+any run of `Connect-Lab.ps1`, deletes it once it is an hour old and the
+credentials in it have expired. Each connection takes a few seconds
+longer while az fetches the credentials. The host key is checked under the
+name a direct connection used (`HostKeyAlias`), so the key already accepted
+is the one Arc must present. After an OS reinstall, the old key is removed
+under that name, PowerShell:
+
+```powershell
+ssh-keygen -R (ssh -G hcw-lab | Select-String -Pattern '^hostkeyalias (.+)$').Matches[0].Groups[1].Value
+```
+
+Once, in this order:
+
+1. **The `hcw-azure` run** that creates the Arc machine's connectivity
+   endpoint and its SSH service configuration on port 22
+   (`infra/lab-hybrid.tf`): two creates,
+   `azapi_resource.lab_hybrid_arc_connectivity_endpoint[0]` and
+   `azapi_resource.lab_hybrid_arc_ssh_service_configuration[0]`, beside the
+   permanent diff, confirmed in the HCP Terraform UI. Run it before anything
+   below: the az ssh extension creates a missing endpoint itself, and this
+   run would then fail on one that already exists. The script refuses to
+   continue until it has run.
+2. **The playbook run** that turns on the agent's incoming connections for
+   port 22 alone (the `arc` role, `arc_incoming_ssh_enabled`), PowerShell:
+
+   ```powershell
+   ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+   ```
+
+   Success is a recap with `failed=0`, after the line `Arc agent: extension
+   allowlist Microsoft.Azure.Monitor/AzureMonitorLinuxAgent; incoming
+   connections on, port 22 only (Arc SSH).` The run stops instead if the
+   allowlist reads anything else.
+3. **The az ssh extension** on this desktop, PowerShell:
+
+   ```powershell
+   az extension add --name ssh
+   ```
+
+   Success is this printing a version, 2.0.4 or later:
+
+   ```powershell
+   az extension show --name ssh --query version -o tsv
+   ```
+
+4. **The script**, from the repository root on `main` once this change has
+   merged, signed in with `az login`. The script exists on `main` already,
+   so check for its `-Arc` switch instead; this prints `True` once the
+   working tree has it, PowerShell:
+
+   ```powershell
+   Select-String -Path scripts/lab/Connect-Lab.ps1 -Pattern '\[switch\] \$Arc' -Quiet
+   ```
+
+   Then, PowerShell:
+
+   ```powershell
+   pwsh -NoProfile -File scripts/lab/Connect-Lab.ps1 -Arc
+   ```
+
+   It reads first and changes nothing until each check passes: az, the
+   extension, the sign-in, and the service configuration from step 1. Then
+   it writes the helper, asks Azure once for relay credentials through it
+   (which also downloads the extension's proxy), and only then replaces the
+   block. Success ends with `Changed:` naming the helper and the block, after
+   the line `hcw-lab (Arc): relay credentials issued for
+   arcs-lab-hybrid-prod-cus-01; proxy …`. A refusal names the step to run
+   and leaves the direct block in place.
+5. **The test**, PowerShell:
+
+   ```powershell
+   ssh hcw-lab hostname
+   ```
+
+   Success prints the host's name, after a few seconds. That it came
+   through Arc is this, whose first field is `127.0.0.1` or `::1`, the
+   host's own loopback, where the relay hands connections to sshd:
+
+   ```powershell
+   ssh hcw-lab 'echo $SSH_CONNECTION'
+   ```
+
+   A failure prints lines starting `hcw-lab (Arc):` that say why. VS Code
+   opens the repository the same way as before; if Remote-SSH gives up
+   connecting, raise its **Remote.SSH: Connect Timeout** setting to 60.
+6. **The break-glass path**: the Web Console checks of "The first
+   `bootstrap.sh` run with #953" above (its steps 1 and 5). It needs
+   neither Arc, the relay nor port 22, so it is the way in when nothing
+   else works.
+
+Port 22 closes only after step 5 here and those console checks have both
+succeeded, in a later change, which also makes the SSH login alert (#953)
+page on any accepted login that did not come through Arc.
 
 ## The first-run host check
 
@@ -871,6 +1086,167 @@ published `hcw-lab` alone, so a change to `amo-guided-lab` or
    hand in the meantime, which is the fallback under "Publishing the
    template" in `lab-host/README.md`.
 
+## Coder sign-in: adding and removing a learner
+
+Since 2026-10-16 (owner decision, #954) Coder signs in only members of the
+GitHub team `HybridCloudWorks/lab-learners`, and sign-ups are off: a
+GitHub sign-in that matches no Coder account is refused with `Signups are
+disabled` and nothing is created. So a learner needs two things, team
+membership and an account the owner made. Why, and what happens to
+accounts that already exist (they keep working; the team is checked at
+each GitHub sign-in), is in `lab-host/README.md`, "Who signs in".
+
+Every line below is PowerShell, run on the workstation, and needs a Coder
+token of the owner's in `$t`: `lab-host/README.md`, "The status token for
+the site", step 1, makes one (`hcw-setup`, shortest expiry) and holds it.
+
+### Adding a learner
+
+1. **The learner's GitHub login and primary email**, into variables. The
+   address must be the one GitHub marks **Primary** and verified on the
+   learner's https://github.com/settings/emails page: Coder matches a first
+   sign-in to an account by that address and no other. Paste each line,
+   then type the value at the prompt:
+
+   ```powershell
+   $login = Read-Host 'Learner GitHub login'
+   ```
+
+   ```powershell
+   $email = Read-Host 'Learner primary GitHub email'
+   ```
+
+2. **The team.** In the browser, on
+   https://github.com/orgs/HybridCloudWorks/teams/lab-learners/members,
+   choose **Add a member** and add `$login`'s account. Someone outside the
+   organisation is invited to it as well, and is refused at sign-in with
+   `You aren't a member of the authorized Github organizations!` until they
+   accept that invitation. Success is the login in the team's member list
+   without `Pending`.
+
+3. **The account.**
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder users create --username $login --email $email --login-type github && coder users show $login; }'"
+   ```
+
+   Success is `A new user has been created!` with `Login is authenticated
+   through GitHub.`, then the user's table with `Username` the login and
+   `Status` `dormant` (no sign-in yet). `already exists` means an account
+   with that name or address is already there: `coder users show` in the
+   same line, without the create, shows which.
+
+4. **The learner signs in** with the **Sign in with GitHub** button on any
+   lab's page on https://hybridcloudworks.com/education/labs. Success is
+   the lab opening in the pane, and the account's `Status` reading
+   `active` in the line above.
+
+What a refused sign-in says in the learner's tab, and what it means:
+
+| The learner's tab says | Meaning | Fix |
+| --- | --- | --- |
+| `Signups are disabled` | No account matched: step 3 has not run, or its address is not the learner's primary verified one on GitHub | Run step 3, or delete the account (`coder users delete $login` in step 3's line) and create it with the right address |
+| `You aren't a member of an authorized team in the [HybridCloudWorks] Github organization(s)!` | Not in `lab-learners` | Step 2 |
+| `You aren't a member of the authorized Github organizations!` | Not an active member of `HybridCloudWorks`, or the invitation is not accepted | Step 2, then the learner accepts the invitation |
+
+### Removing a learner
+
+Both steps, in this order. Removing the learner from the team stops their
+next GitHub sign-in, but Coder does not check the team for a session that
+is already open, and an open session is extended while it is used. The
+suspension is what ends it now.
+
+1. **The team.** In the browser, on
+   https://github.com/orgs/HybridCloudWorks/teams/lab-learners/members,
+   select the learner and choose **Remove from team**.
+
+2. **The account, suspended**, with the learner's login in `$login`
+   (step 1 above):
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; echo yes | coder users suspend $login; coder users show $login; }'"
+   ```
+
+   Success is `User <login> has been suspended!` and `Status`
+   `suspended` in the table. A suspended account cannot sign in or use any
+   session or token it holds. Its running workspaces are stopped on Coder's
+   next autobuild check, within about a minute (v2.38.0 stops a started
+   workspace whose owner is suspended: `coderd/autobuild/lifecycle_executor.go`,
+   `isEligibleForAutostop`, polled every `CODER_AUTOBUILD_POLL_INTERVAL`,
+   one minute by default); they are kept, stopped, with their files.
+   `coder users activate` in the same line undoes the suspension.
+
+### A Coder with no account yet
+
+Only after a fresh install, or a restore that left Coder's database empty.
+The live host has accounts, so this does not apply to it.
+
+**Why.** Coder v2.38.0 lets whoever reaches a deployment with no account
+make the first one, and that account is the Owner. Its `/setup` page makes a
+password account. A GitHub sign-in is let through as well, even with sign-ups
+off (`coderd/userauth.go`: `userCount == 0 || params.AllowSignups`). So
+`bootstrap.sh` never publishes such a Coder. Before Coder starts, the coder
+role counts the accounts in its database; with none, it takes Coder's Caddy
+route down and reloads Caddy, then and there. Once Coder is up, it asks
+`/api/v2/users/first` too, and on a 404 it fails with `Coder has no account
+yet`. Coder keeps running on the host's loopback only. Everything below was
+measured against v2.38.0 on 2026-10-17.
+
+Your GitHub account, `saulpatinojr`, must be a member of
+`HybridCloudWorks/lab-learners`, or step 4's sign-in is refused like any
+other outside the team. It has been since 2026-10-16. Success is
+`saulpatinojr` in the list at
+https://github.com/orgs/HybridCloudWorks/teams/lab-learners/members; if it
+is not there, add it with **Add a member** before step 4.
+
+1. **Your primary GitHub email**, into a variable: the address
+   https://github.com/settings/emails marks **Primary** and verified, which
+   is how Coder will match your first GitHub sign-in. PowerShell; paste the
+   line, then type the address at the prompt:
+
+   ```powershell
+   $email = Read-Host 'Your primary GitHub email'
+   ```
+
+2. **A break-glass Owner, and your GitHub account as Owner**, in one line on
+   the host's loopback. PowerShell:
+
+   ```powershell
+   ssh -t hcw-lab "sudo docker exec -it -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'coder login http://127.0.0.1:7080 --first-user-username hcw-breakglass --first-user-email breakglass@lab.hybridcloudworks.com --first-user-full-name Break-glass --first-user-trial=false && coder users create --username saulpatinojr --email $email --login-type github && coder users edit-roles saulpatinojr --roles owner -y; coder logout -y'"
+   ```
+
+   It asks for the break-glass account's password; keep it in your password
+   manager. Success is `A new user has been created!` with `Login is
+   authenticated through GitHub.`, then `You are no longer logged in.`
+   Any `Encountered an error` line names the step that failed.
+
+3. **Publish Coder.** PowerShell. Success is a play recap with `failed=0`:
+
+   ```powershell
+   ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+   ```
+
+4. **Sign in with GitHub** at https://coder.lab.hybridcloudworks.com.
+   Success is Coder's dashboard, signed in as `saulpatinojr`.
+
+5. **Retire the break-glass account**, with a token of yours in `$t` (step 1
+   of "The status token for the site", in `lab-host/README.md`). Coder will
+   not suspend an Owner, so its role is lowered first. PowerShell:
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder users edit-roles hcw-breakglass --roles auditor -y && echo yes | coder users suspend hcw-breakglass; }'"
+   ```
+
+   Success is `User hcw-breakglass has been suspended!`. A suspended account
+   cannot sign in, and `/api/v2/users/first` keeps answering 200, so later
+   runs publish Coder as usual. Should every Owner ever be lost, a new one
+   is made on the host straight in the database, without signing in, bash
+   on the host:
+
+   ```bash
+   sudo docker exec -it coder coder server create-admin-user
+   ```
+
 ## The lab canary and the status-token check
 
 Two Health Hub probes watch what #1009 found broken with nothing saying so,
@@ -1478,6 +1854,308 @@ plain run turns the remap on again and stops at the carry: it finds the
 pre-remap data newer than the copy it made the first time, refuses to use
 that older copy, and prints the three steps that carry the data again.
 
+### Host firewall for the sandbox and bridges
+
+The `host_firewall` role (#954, #958; owner decision 2026-10-16) limits
+workspace egress to what the labs need, refuses host-local and private
+destinations, lets containers on the host daemon's bridges open only HTTP
+and HTTPS to the host, and refuses the host's own new connections to Coder's
+internal network. It is on the host from the first `bootstrap.sh` run after
+its pull request merges. Four chains of the host's own, each jumped to first,
+above ufw's:
+
+- **`HCW-SANDBOX-OUT`**, for everything the sandbox user `hcw-coder-docker`
+  sends (the sandbox daemon and its workspaces): DNS to systemd-resolved's
+  stub `127.0.0.53`, TCP 443 to the host's own non-loopback addresses
+  (Caddy: Coder and the guided labs), then the rest of the host and every
+  private, link-local, multicast and reserved range refused, then replies,
+  TCP 80 and 443 to public addresses, and everything else (mail, SSH, other
+  UDP) refused. The refusals come before replies, so a flow to a refused
+  destination that was open when the rules first loaded is cut.
+- **`HCW-BRIDGE-IN`**, for what containers on `docker0` and `br-*` send to
+  the host: replies to the host's own connections and TCP 80 and 443;
+  everything else refused.
+- **`HCW-CONTROL-OUT`**, for what the host itself sends to Coder's internal
+  network (`coder-control`): the host's own new connections there are
+  refused, and its answers to connections opened from there go. Coder
+  reaches that network across its own bridge. The subnet is read from
+  Docker and from the Compose file at every run.
+- **`HCW-REFUSE`**, which the others use to refuse: a TCP reset or an ICMP
+  port-unreachable, so a refused TCP connection fails at once rather than
+  timing out.
+
+`hcw-host-firewall.service` loads them at every boot, after ufw and before
+Docker, and the sandbox user's manager requires it, so the sandbox daemon
+does not start without them; a failed load is reported through
+`hcw-unit-failed@` (`alert-lab-unit-failed`). ufw's reload and Docker's
+restart leave them in place; the add-ons' `DOCKER-USER` rules are separate
+and untouched.
+
+**Reading it.** Each command is bash, on the host, one line. Whether the
+live chains and jumps match the files the role rendered:
+
+```bash
+sudo /usr/local/libexec/hcw-host-firewall verify; echo "exit=$?"
+```
+
+Good is `exit=0` and nothing before it. A difference prints one line per
+chain or jump that differs, under `v4:` or `v6:`. The rules as loaded:
+
+```bash
+sudo iptables -S HCW-SANDBOX-OUT
+```
+
+Good is the rules in the order above, each with an `hcw:` comment, the
+`https to this host` line reading `! -d 127.0.0.0/8 -p tcp -m tcp --dport 443
+-m addrtype --dst-type LOCAL`, and the last line
+`-A HCW-SANDBOX-OUT -m comment --comment "hcw: refused" -j HCW-REFUSE`. The
+jumps:
+
+```bash
+sudo iptables -S OUTPUT | sed -n 2,3p; sudo iptables -S INPUT | sed -n 2,3p
+```
+
+Good is four lines: `-A OUTPUT -m owner --uid-owner` followed by the
+number `id -u hcw-coder-docker` prints and `-j HCW-SANDBOX-OUT`, then
+`-A OUTPUT -j HCW-CONTROL-OUT`, `-A INPUT -i docker0 -j HCW-BRIDGE-IN` and
+`-A INPUT -i br-+ -j HCW-BRIDGE-IN`. `ip6tables` in place of `iptables`
+gives the IPv6 side, which reads the same with IPv6 ranges. The internal
+network's rules:
+
+```bash
+sudo iptables -S HCW-CONTROL-OUT
+```
+
+Good is two lines per subnet of `coder-control` (the subnet
+`sudo docker network inspect coder-control --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'`
+prints): one ending `"hcw: replies on the internal network" -j RETURN`, one
+ending `"hcw: internal network, refused" -j HCW-REFUSE`. The boot unit:
+
+```bash
+systemctl is-active hcw-host-firewall; systemctl show "user@$(id -u hcw-coder-docker).service" -p Requires
+```
+
+Good is `active`, then a `Requires=` line that names
+`hcw-host-firewall.service`.
+
+**When a lab cannot reach something.** From the workspace's terminal, a
+refused TCP destination fails at once with `Connection refused`. UDP (DNS to
+a public resolver, QUIC) may instead simply time out, and so does a
+destination that is down, so a timeout alone says nothing either way: read
+the counters. Read them, make the lab try again, and read them again; the
+line whose packet count grew is the verdict:
+
+```bash
+sudo iptables -L HCW-SANDBOX-OUT -v -n --line-numbers
+```
+
+`hcw: private or reserved, refused` and `hcw: host-local, refused` mean the
+lab tried a private or host address; `hcw: refused` means a port or protocol
+other than TCP 80 and 443 (`git` over SSH, a mail port, DNS to a public
+resolver, QUIC). Labs use HTTPS for all of these. A lab that genuinely needs
+more is a change to `lab-host/ansible/roles/host_firewall/vars/main.yml` in
+a reviewed pull request (owner decision), not an edit on the host. The same
+command with `HCW-BRIDGE-IN` reads what the host's own containers were
+refused.
+
+**Putting it back.** If `verify` reports a difference (something rewrote
+the filter table), re-apply from the files:
+
+```bash
+sudo systemctl reload hcw-host-firewall; sudo /usr/local/libexec/hcw-host-firewall verify; echo "exit=$?"
+```
+
+Good is `exit=0`. Do not `restart` or `stop` the unit: it refuses, because
+stopping it would stop the sandbox user's manager and every workspace with
+it, and would not remove a rule. Re-running the role alone also works:
+`sudo /opt/hcw-src/lab-host/bootstrap.sh --tags host_firewall`.
+
+If the unit failed at boot (the `alert-lab-unit-failed` mail names
+`hcw-host-firewall.service`, and workspaces do not start, because the
+sandbox user's manager requires it), read why with
+`sudo journalctl -u hcw-host-firewall -b --no-pager`, put right what it
+names, then start the unit and the manager that waited for it:
+
+```bash
+sudo systemctl start hcw-host-firewall && sudo systemctl start "user@$(id -u hcw-coder-docker).service"
+```
+
+Then:
+
+```bash
+systemctl is-active hcw-host-firewall "user@$(id -u hcw-coder-docker).service"
+```
+
+Good is two lines, `active` and `active`.
+
+The same two commands recover a `bootstrap.sh` run that stopped the
+sandbox: when the role cannot load the firewall and the live rules do not
+exactly equal the last policy it verified (`/etc/hcw/firewall/verified`), it
+stops the sandbox user's manager and fails the run, and its message says so. Put right what the message names, then
+run the role on its own first, because a plain run starts that manager in
+`coder_sandbox`, before this role, and the manager waits for the firewall:
+
+```bash
+sudo /opt/hcw-src/lab-host/bootstrap.sh --tags host_firewall
+```
+
+Good is `failed=0`. Then the two commands above, with the same good result.
+A run that fails while the live rules still equal that verified policy
+stops nothing: its message says so.
+
+**Taking it out.** The role removes everything it put on the host when run
+with `host_firewall_state=absent`: the drop-in first, so the sandbox user's
+manager stops requiring the unit, then the unit, then the jumps and the
+chains, then the helper and its files. Nothing restarts the user's manager or
+Docker. The sandbox and the bridges are then as unrestricted as before the
+role existed, until the next plain run, which puts it all back. Bash, on the
+host:
+
+```bash
+sudo /opt/hcw-src/lab-host/bootstrap.sh --tags host_firewall -e host_firewall_state=absent
+```
+
+Good is `failed=0` in the `PLAY RECAP`, and then:
+
+```bash
+sudo iptables -S | grep -c HCW-; sudo ip6tables -S | grep -c HCW-; systemctl is-active hcw-host-firewall
+```
+
+Good is `0`, `0`, then `inactive`.
+
+## Coder workspaces: one running per learner, sign-ins in memory (#954)
+
+Owner decision 2026-10-16. Every template under `lab-host/coder/templates`
+carries both, and they reach Coder when the run after the merge publishes
+the templates ("After a merge", above). The launcher's half reaches the
+host in the same run.
+
+- **One running workspace per learner.** A start is refused while another
+  workspace of the same learner may have its container up: its latest build
+  is a start that is queued, under way, done or being cancelled, or a stop
+  that failed. Stopped workspaces do not count, so a learner keeps one per
+  lab, and neither does a start that failed, so a refused start never holds
+  the limit itself. The refusal is a precondition on the workspace
+  container, checked at plan, so a refused start creates nothing. Coder's
+  build log carries `Stop your other lab first: <name>.` In a pane on the
+  site, the lab launcher reads that line, says `Only one of your lab
+  workspaces runs at a time, and <name> is running. Stop it on the page
+  below, and this lab starts.`, the site's toolbar says `Stop your other lab
+  to continue`, and Coder's page for that workspace, where Stop is, is in
+  the frame. The pane waits for as long as that lab runs (its own autostop
+  ends it within the hour), and once it has stopped the launcher starts the
+  refused one by itself. The check reads
+  `http://127.0.0.1:7080/api/v2/workspaces?q=owner:me` from inside the
+  `coder` container, where the provisioner runs Terraform, with the
+  learner's own session token, which Coder makes for each start build. It
+  runs on a start only, never on a stop, a delete or a template import, and
+  it fails closed: when Coder does not answer 200, the start fails with
+  `Your lab workspace could not check your other lab workspaces (answer
+  <code>). Try again in a minute.`
+- **Sign-ins in memory.** The Azure, AWS and Google Cloud CLIs keep their
+  sign-ins on a 64 MiB tmpfs at `/tmp/cloud-creds` (uid and gid 65534, mode
+  0700, `noexec`, `nosuid`, `nodev`): `AZURE_CONFIG_DIR`, `AWS_CONFIG_FILE`,
+  `AWS_SHARED_CREDENTIALS_FILE` and `CLOUDSDK_CONFIG` point there, never at
+  the workspace's home volume. The AWS CLI's SSO and assumed-role caches
+  have no setting, so every start makes all of `~/.aws` a link into the
+  tmpfs. A sign-in ends when the workspace stops, and nothing of it is left
+  on disk. On 2026-10-16 neither workspace volume
+  on the sandbox daemon held a `.azure`, `.aws` or `.config/gcloud`
+  directory, so there is nothing older to clear. One thing still lands on
+  the volume, by design: anything a learner writes outside `~/.aws` and
+  `/tmp/cloud-creds` by hand.
+
+**Both bind the builds of a template version published with them, and no
+other.** A build runs the template version it is given, and Coder Community
+gives a start the workspace's own version: the build API without a version
+(`coderd/wsbuilder/wsbuilder.go`, `getTemplateVersionID`, "default is prior
+version"), and the dashboard's Start and Restart, which send the workspace's
+current version (`site/src/api/queries/workspaces.ts`, `startWorkspace`).
+The template's "require active version" setting, which would force every
+start onto the new version, is Premium, and a workspace's "automatic
+updates" setting changes only autostart and the CLI's `coder start`, not
+those buttons (`lab-host/coder/README.md`, "Community edition caps"). The
+lab launcher does start an outdated workspace on the active version (#911),
+so a workspace opened through the site picks both up on its next open. One
+that is still on a version from before #954 and is started any other way
+(Coder's own Start in the pane's frame) runs without them until that
+happens. So once, after the run that publishes the templates:
+
+1. List the workspaces and which are outdated, PowerShell, with a token of
+   yours in `$t` (`lab-host/README.md`, "The status token for the site",
+   step 1):
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder list --all --column workspace,template,status,outdated; }'"
+   ```
+
+   Good is a table with one row per workspace, each `<owner>/<name>`, and an
+   `OUTDATED` column. On 2026-10-16 there were two, both the owner's,
+   `lab-mde-wsl` and `lab-wslc` on `hcw-lab`.
+
+2. For each row whose `OUTDATED` is `true`: open its lab through the site
+   once, which starts it on the active version, then stop it from the
+   workspace's own menu in the pane (the lab page's **Your workspace** panel
+   says where); or, if its files are not wanted, delete it there. For
+   the owner's two those are
+   https://hybridcloudworks.com/education/labs/defender-wsl-plugin-walkthrough
+   (`lab-mde-wsl`) and
+   https://hybridcloudworks.com/education/labs/wsl-containers-walkthrough
+   (`lab-wslc`), one at a time. Another learner's outdated workspace
+   updates the same way on their next open through the site. Good is the
+   same line in step 1 listing no `true` under `OUTDATED` for the owner.
+   Template versions published from here on all carry both, so this is
+   needed once.
+
+### Checking them
+
+After the run that publishes the templates. Each check is in a browser
+signed in to the site; the commands are bash, in the workspace's own
+terminal (**Terminal** > **New Terminal** in the editor).
+
+1. **Sign-ins in memory.** Open
+   https://hybridcloudworks.com/education/labs/terraform-validate-walkthrough
+   and wait for the editor. In its terminal:
+
+   ```bash
+   az login --use-device-code
+   ```
+
+   Finish the sign-in at the address, and with the code, that it prints.
+   Then:
+
+   ```bash
+   ls -la /tmp/home/.azure; ls -la /tmp/cloud-creds/azure; grep ' /tmp/cloud-creds ' /proc/mounts
+   ```
+
+   Good is `ls: cannot access '/tmp/home/.azure': No such file or
+   directory`, then a listing of `/tmp/cloud-creds/azure` that includes
+   `azureProfile.json`, then one `tmpfs /tmp/cloud-creds tmpfs
+   rw,nosuid,nodev,noexec,relatime,size=65536k,mode=700,uid=65534,gid=65534`
+   line. After the workspace stops and starts again, `az account show`
+   says to run `az login`.
+
+2. **One running workspace.** With that lab still open and running, open
+   https://hybridcloudworks.com/education/labs/ansible-syntax-check-walkthrough
+   in another tab, and confirm Coder's dialog if its workspace is new. Good
+   is the pane saying `Only one of your lab workspaces runs at a time, and
+   lab-tfv is running. Stop it on the page below, and this lab starts.`
+   above Coder's page for `lab-tfv`, and the toolbar above the pane saying
+   `Stop your other lab to continue`. Press **Stop** there: within a minute
+   the pane says `Getting your lab workspace ready.` and then opens the
+   editor for the second lab, with no click.
+
+A start that fails with `Your lab workspace could not check your other lab
+workspaces (answer <code>)` means Coder answered the read with a client
+error: `401` is a session token Coder refused, `403` or `404` a token that
+may not list the learner's workspaces. A `5xx`, and a connection nothing
+answered, never show that line: the provider tries twice more and then
+fails the start with its own `Error making request: GET
+http://127.0.0.1:7080/api/v2/workspaces?q=owner:me giving up after 3
+attempt(s)` (measured 2026-10-16 with `terraform plan` against a stand-in
+answering 500, and with nothing listening). Either way, Coder's page for
+the workspace shows the failed build's log with the whole error.
+
 ## Portainer through an SSH tunnel
 
 Portainer Business Edition runs for the owner only (owner decision
@@ -1874,6 +2552,48 @@ Management workspace as an `AzureDiagnostics` row with the caller's IP
 address, from the vault's AuditEvent diagnostic setting. When the owner has
 seen the host come back unsealed from a reboot, the cold copy can go:
 `sudo rm /root/vault-before-726.tgz`.
+
+## Caddy: reloading by hand
+
+Since #958 Caddy's admin API, which every reload goes through, listens on
+the Unix socket `/run/caddy/admin.sock` instead of TCP `127.0.0.1:2019`, and
+HTTP/3 is off. Only the `caddy` user and root can open the socket. The
+playbook reloads Caddy itself whenever the Caddyfile or a route changes, so
+a reload by hand is only for a file edited on the host, which the next
+`bootstrap.sh` run puts back. Bash, on the host:
+
+```bash
+sudo systemctl reload caddy
+```
+
+Success prints nothing and exits 0, and the journal
+(`sudo journalctl -u caddy -n 5`) ends with `Reloaded caddy.service - Caddy.`
+The unit's reload is this line, run as the `caddy` user, which is the same
+thing by hand. Bash, on the host:
+
+```bash
+sudo -u caddy /usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --address unix//run/caddy/admin.sock
+```
+
+A reload that fails with `connect: no such file or directory` on
+`/run/caddy/admin.sock` means the Caddy running now was started before the
+unit gained its runtime directory, so it is still on TCP 2019. The playbook
+restarts it in that case; by hand, bash, on the host (a restart closes open
+connections for a few seconds, and panes reconnect):
+
+```bash
+sudo systemctl restart caddy
+```
+
+After the first `bootstrap.sh` run with #958, these show the move took.
+Bash, on the host; the first two print `0` (nothing on TCP 2019, nothing on
+UDP 443) and the third a line beginning `s-w-------` owned by `caddy caddy`:
+
+```bash
+sudo ss -Hltn 'sport = :2019' | wc -l
+sudo ss -Hlun 'sport = :443' | wc -l
+sudo ls -l /run/caddy/admin.sock
+```
 
 ## Tool add-ons
 

@@ -104,9 +104,12 @@ variable "lab_hostname" {
 
 # Optional, and unset for the adoption plan. Setting it registers the key in
 # the Hostinger account and attaches it to the VM, which puts it in
-# /root/.ssh/authorized_keys: the key the hardening role copies to hcwadmin
-# before it turns root and password login off. It is a second, separate plan
-# with its own counts (infra-lab/README.md, "Adding an SSH key").
+# /root/.ssh/authorized_keys: the key the first bootstrap.sh run logs in with
+# as root. That run gives hcwadmin the keys pinned in
+# lab-host/ansible/group_vars/all.yml, empties root's file and turns root
+# and password login off, and it refuses to run unless this key is pinned
+# there (#953). It is a second, separate plan with its own counts
+# (infra-lab/README.md, "Adding an SSH key").
 #
 # ed25519 and RSA only. The provider's own validation accepts keys beginning
 # `ssh-rsa`, `ssh-ed25519` or `ssh-ecdsa`, and real ECDSA keys begin

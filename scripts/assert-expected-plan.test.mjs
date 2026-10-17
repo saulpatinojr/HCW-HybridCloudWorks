@@ -962,6 +962,15 @@ describe('DECLARED', () => {
     expect(paths).not.toContain('app_settings.ADDON_NETWORK_ASSESSMENT_URL');
     expect(paths).not.toContain('app_settings.ADDON_CLOUD_ASSESSMENT_URL');
   });
+
+  it('prunes alert-lab-ssh-login and STREAMYARD_API_KEY once applied, and keeps the unapplied probe flag (#953, #1101, #701)', () => {
+    const addresses = DECLARED.map((entry) => entry.address);
+    const paths = DECLARED.map((entry) => entry.path);
+    expect(addresses).not.toContain('azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected');
+    expect(paths).not.toContain('app_settings.STREAMYARD_API_KEY');
+    // Live "false" on 2026-10-17: the arming has not applied, so it stays.
+    expect(paths).toContain('app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS');
+  });
 });
 
 describe('conditional replacements and declared creates (#816)', () => {
