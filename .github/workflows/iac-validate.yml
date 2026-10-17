@@ -146,6 +146,13 @@ jobs:
           # Raises the anonymous GitHub API rate limit for plugin download.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Offline contract tests (infra/tests/): mocked providers, asserting no
+      # AzureWebJobsStorage, environment-only subjects on deploy identity,
+      # no Cosmos data role on CI identities, and network filter on Cosmos DB.
+      - name: Terraform test (infra)
+        if: steps.changes.outputs.infra == 'true'
+        run: terraform test -no-color
+
       # infra-lab/ — the same four checks against the hcw-lab root module. Its
       # own .tflint.hcl and .terraform.lock.hcl sit in that directory, and
       # `-backend=false` means the `cloud` block naming hcw-lab is never
