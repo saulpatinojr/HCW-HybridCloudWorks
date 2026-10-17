@@ -1,10 +1,8 @@
-/**
- * Unit tests for functions/src/lib/credentials/cloudflare-roll.js (#1027).
- */
-
+import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
 import {
   CLOUDFLARE_TARGETS,
+  defaultSpawnRunner,
   rollCloudflareToken,
   verifyCloudflareToken,
   updateTfcVariable,
@@ -355,6 +353,119 @@ describe('updateTfcVariable', () => {
       workspace: 'hcw/hcw-lab',
     });
   });
+
+  it('throws error when HCP Terraform PATCH fails', async () => {
+    const mockFetch = vi.fn(async (url, options) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1' } }) };
+      }
+      if (url.includes('/workspaces/ws-1/vars') && (!options?.method || options?.method === 'GET')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [{ id: 'var-1', attributes: { key: 'cloudflare_api_token', category: 'terraform' } }],
+          }),
+        };
+      }
+      if (url.includes('/vars/var-1') && options.method === 'PATCH') {
+        return {
+          ok: false,
+          status: 422,
+          statusText: 'Unprocessable Entity',
+          json: async () => ({ errors: [{ detail: 'Variable locked by active run' }] }),
+        };
+      }
+      throw new Error(`Unexpected call: ${url}`);
+    });
+
+    await expect(
+      updateTfcVariable({
+        tfcToken: 'tok',
+        organization: 'hcw',
+        workspace: 'hcw-azure',
+        key: 'cloudflare_api_token',
+        value: 'val',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/HCP Terraform update variable cloudflare_api_token in hcw\/hcw-azure failed \(422\): Variable locked by active run/);
+  });
+
+  it('throws error when HCP Terraform POST fails', async () => {
+    const mockFetch = vi.fn(async (url, options) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1' } }) };
+      }
+      if (url.includes('/workspaces/ws-1/vars') && options.method === 'GET') {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      if (url.includes('/workspaces/ws-1/vars') && options.method === 'POST') {
+        return {
+          ok: false,
+          status: 403,
+          statusText: 'Forbidden',
+          json: async () => ({ errors: [{ title: 'Insufficient permissions' }] }),
+        };
+      }
+      throw new Error(`Unexpected call: ${url}`);
+    });
+
+    await expect(
+      updateTfcVariable({
+        tfcToken: 'tok',
+        organization: 'hcw',
+        workspace: 'hcw-azure',
+        key: 'cloudflare_api_token',
+        value: 'val',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/HCP Terraform create variable cloudflare_api_token in hcw\/hcw-azure failed \(403\): Insufficient permissions/);
+  });
+
+  it('throws error when HCP Terraform workspace lookup fails', async () => {
+    const mockFetch = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      json: async () => ({ errors: [{ detail: 'Workspace not found' }] }),
+    }));
+
+    await expect(
+      updateTfcVariable({
+        tfcToken: 'tok',
+        organization: 'hcw',
+        workspace: 'missing-ws',
+        key: 'cloudflare_api_token',
+        value: 'val',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/HCP Terraform workspace hcw\/missing-ws lookup failed \(404\): Workspace not found/);
+  });
+
+  it('throws error when HCP Terraform list vars fails', async () => {
+    const mockFetch = vi.fn(async (url) => {
+      if (url.includes('/organizations/hcw/workspaces/hcw-azure')) {
+        return { ok: true, status: 200, json: async () => ({ data: { id: 'ws-1' } }) };
+      }
+      return {
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        json: async () => ({ errors: [{ title: 'Internal error' }] }),
+      };
+    });
+
+    await expect(
+      updateTfcVariable({
+        tfcToken: 'tok',
+        organization: 'hcw',
+        workspace: 'hcw-azure',
+        key: 'cloudflare_api_token',
+        value: 'val',
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/HCP Terraform list vars failed for hcw\/hcw-azure \(500\): Internal error/);
+  });
 });
 
 describe('updateLabVaultSecret', () => {
@@ -410,6 +521,72 @@ describe('updateLabVaultSecret', () => {
         execImpl: mockExec,
       })
     ).rejects.toThrow(/hcw-vault-set failed \(exit code 2\)/);
+  });
+
+});
+
+describe('defaultSpawnRunner', () => {
+  it('writes stdin and captures stdout on close 0', async () => {
+    const mockProc = new EventEmitter();
+    mockProc.stdout = new EventEmitter();
+    mockProc.stderr = new EventEmitter();
+    mockProc.stdin = { write: vi.fn(), end: vi.fn() };
+    const mockSpawn = vi.fn().mockReturnValue(mockProc);
+
+    const promise = defaultSpawnRunner({
+      command: 'echo',
+      args: ['hello'],
+      stdin: 'input-data',
+      spawnImpl: mockSpawn,
+    });
+
+    mockProc.stdout.emit('data', 'output-data');
+    mockProc.emit('close', 0);
+
+    const res = await promise;
+    expect(res).toEqual({ code: 0, stdout: 'output-data', stderr: '' });
+    expect(mockProc.stdin.write).toHaveBeenCalledWith('input-data');
+    expect(mockProc.stdin.end).toHaveBeenCalled();
+  });
+
+  it('captures stderr and non-zero exit code', async () => {
+    const mockProc = new EventEmitter();
+    mockProc.stdout = new EventEmitter();
+    mockProc.stderr = new EventEmitter();
+    mockProc.stdin = { write: vi.fn(), end: vi.fn() };
+    const mockSpawn = vi.fn().mockReturnValue(mockProc);
+
+    const promise = defaultSpawnRunner({
+      command: 'bad-cmd',
+      args: [],
+      stdin: 'input',
+      spawnImpl: mockSpawn,
+    });
+
+    mockProc.stderr.emit('data', 'error occurred');
+    mockProc.emit('close', 1);
+
+    const res = await promise;
+    expect(res).toEqual({ code: 1, stdout: '', stderr: 'error occurred' });
+  });
+
+  it('rejects on proc error event', async () => {
+    const mockProc = new EventEmitter();
+    mockProc.stdout = new EventEmitter();
+    mockProc.stderr = new EventEmitter();
+    mockProc.stdin = { write: vi.fn(), end: vi.fn() };
+    const mockSpawn = vi.fn().mockReturnValue(mockProc);
+
+    const promise = defaultSpawnRunner({
+      command: 'missing-cmd',
+      args: [],
+      stdin: 'input',
+      spawnImpl: mockSpawn,
+    });
+
+    mockProc.emit('error', new Error('spawn ENOENT'));
+
+    await expect(promise).rejects.toThrow('spawn ENOENT');
   });
 });
 
@@ -592,5 +769,29 @@ describe('rollAndApplyCloudflareToken', () => {
         sleep: async () => {},
       })
     ).rejects.toThrow(/Token was rolled in Cloudflare but failed to write to target/);
+  });
+
+  it('rejects missing target or unsupported target type', async () => {
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 't1',
+        rollToken: 'r1',
+        target: null,
+      })
+    ).rejects.toThrow('Target configuration is required');
+
+    await expect(
+      rollAndApplyCloudflareToken({
+        tokenId: 't1',
+        rollToken: 'r1',
+        target: { type: 'unsupported_provider' },
+        fetchImpl: vi.fn(async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, result: 'new-tok' }),
+        })),
+        sleep: async () => {},
+      })
+    ).rejects.toThrow(/Unsupported target type: unsupported_provider/);
   });
 });

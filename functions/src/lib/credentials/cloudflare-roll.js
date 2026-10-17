@@ -357,6 +357,29 @@ export async function updateTfcVariable({
   }
 }
 
+export async function defaultSpawnRunner({
+  command,
+  args,
+  stdin,
+  spawnImpl = spawn,
+}) {
+  return new Promise((resolve, reject) => {
+    const proc = spawnImpl(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (d) => {
+      stdout += d;
+    });
+    proc.stderr.on('data', (d) => {
+      stderr += d;
+    });
+    proc.on('error', reject);
+    proc.on('close', (code) => resolve({ code, stdout, stderr }));
+    proc.stdin.write(stdin);
+    proc.stdin.end();
+  });
+}
+
 /**
  * Updates a secret in the lab host Ansible Vault via `hcw-vault-set`.
  * Secret is passed strictly on stdin.
@@ -381,25 +404,7 @@ export async function updateLabVaultSecret({
     throw new Error('Secret value must be a non-empty string');
   }
 
-  const runner =
-    execImpl ||
-    (async ({ command, args, stdin }) => {
-      return new Promise((resolve, reject) => {
-        const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-        let stdout = '';
-        let stderr = '';
-        proc.stdout.on('data', (d) => {
-          stdout += d;
-        });
-        proc.stderr.on('data', (d) => {
-          stderr += d;
-        });
-        proc.on('error', reject);
-        proc.on('close', (code) => resolve({ code, stdout, stderr }));
-        proc.stdin.write(stdin);
-        proc.stdin.end();
-      });
-    });
+  const runner = execImpl || defaultSpawnRunner;
 
   const res = await runner({
     command: 'sudo',
