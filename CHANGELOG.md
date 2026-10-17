@@ -32,6 +32,16 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **`alert-lab-ssh-login` is live and has fired; its plan declaration and
+  StreamYard's are pruned (#953)**. The owner applied
+  `run-6uJYNGWLDxkdv5ZB`, whose plan `tfc-plan-check.yml` read as the
+  alert's create beside the permanent diff. `verify-alert-state.yml` then
+  read the rule OK, and `Invoke-AlertFireTest.ps1 -Test lab-ssh-login`
+  opened an alert at 00:01:44Z on 2026-10-17, six minutes after its line
+  was written. The fire record carries the row. The alert's `DECLARED` entry
+  and #1101's `STREAMYARD_API_KEY` reference, live as declared, are
+  deleted. The probe flag's entry (#701) stays: the live setting still
+  reads `false`. A test holds all three.
 - **Credential register reads live dates the estate already knows (#1066)**.
   The credential register (`functions/src/lib/credentials/`) and Credentials tab
   view (`frontend/src/components/admin/integrations/`) now automatically resolve live
