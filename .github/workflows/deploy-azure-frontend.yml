@@ -537,14 +537,18 @@ jobs:
         env:
           APP: ${{ vars.STATIC_WEB_APP_NAME || 'stapp-site-prod-cus-01' }}
           RG: ${{ vars.STATIC_WEB_APP_RESOURCE_GROUP || 'rg-web-site-prod-cus' }}
+          DEFAULT_HOSTNAME_OVERRIDE: ${{ vars.STATIC_WEB_APP_DEFAULT_HOSTNAME || 'calm-ground-0d0e6a010.7.azurestaticapps.net' }}
           POLL_INTERVAL_S: '5'
           POLL_BUDGET_S: '90'
         run: |
           set -euo pipefail
 
-          DEFAULT_HOSTNAME=$(az staticwebapp show --name "${APP}" --resource-group "${RG}" --query "defaultHostname" -o tsv)
+          DEFAULT_HOSTNAME="${DEFAULT_HOSTNAME_OVERRIDE:-}"
           if [ -z "${DEFAULT_HOSTNAME}" ]; then
-            echo "::error::Could not read defaultHostname for ${APP} from ARM"
+            DEFAULT_HOSTNAME=$(az staticwebapp show --name "${APP}" --resource-group "${RG}" --query "defaultHostname" -o tsv 2>/dev/null || true)
+          fi
+          if [ -z "${DEFAULT_HOSTNAME}" ]; then
+            echo "::error::Could not read defaultHostname for ${APP}"
             exit 1
           fi
 
