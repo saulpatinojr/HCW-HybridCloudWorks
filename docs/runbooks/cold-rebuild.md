@@ -181,7 +181,7 @@ Ensure GitHub Environment `production` is configured:
 
 ## Phase 6: Key Vault secret escrow seeding
 
-Using the authoritative **Where to Re-obtain** paths documented in [Required inputs §4.6](../standards/required-inputs.md#46-key-vault-secrets--kv-site-prod-cus-01), seed all 30 Key Vault secrets into `kv-site-prod-cus-01`:
+Using the authoritative **Where to Re-obtain** paths documented in [Required inputs §4.6](../standards/required-inputs.md#46-key-vault-secrets-kv-site-prod-cus-01), seed all 30 Key Vault secrets into `kv-site-prod-cus-01`:
 
 ```powershell
 # Generated high-entropy secrets (retrieve from Bitwarden or generate fresh):
