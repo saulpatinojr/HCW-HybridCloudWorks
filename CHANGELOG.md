@@ -40,6 +40,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: a missing sshd drop-in keeps sshd on the loopback while the
+  Arc agent is Disconnected (#1263 follow-up, CodeRabbit on #1263)**.
+  - **The gap:** in its hold state, the Arc gate keeps sshd's bind as the
+    drop-in has it. With no drop-in to read, it set
+    `hardening_sshd_loopback_only` false, so sshd listened on every address
+    while ufw's rule stayed held.
+  - **The fix:** a missing drop-in now keeps the role's default, the
+    loopback alone.
+  - **Tests:** `tests/ufw-closed-ports.test.sh` covers the case, and stops on a drop-in it cannot read (55 checks).
 - **Lab host: sshd's loopback bind follows the Arc gate, as port 22 does
   (#1257 follow-up, CodeRabbit on #1261)**. #1260 bound sshd to the loopback
   on every run. Opening 22 at ufw then no longer gave a path in, which broke
