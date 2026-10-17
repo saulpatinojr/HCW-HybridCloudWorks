@@ -20,13 +20,23 @@
 # GET /api/v2/users/first answers 404 until an account exists and 200 after,
 # whatever that account's status. Measured on v2.38.0 on 2026-10-17: it
 # stayed 200 with the first account suspended.
-
+#
+# Asked until Coder answers. `up --wait` returns once the container runs,
+# not once Coder serves: on 2026-10-17 a recreated container was asked two
+# seconds after it started, its published port reset the connection, and the
+# run failed here. Coder answered 200 well within a minute. A Coder that never
+# answers 200 or 404 within that minute still fails the run, before the
+# route below is written.
 - name: Ask Coder whether its first account exists
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ coder_http_port }}/api/v2/users/first"
     method: GET
     status_code: [200, 404]
   register: coder_first_user
+  until: coder_first_user.status in [200, 404]
+  # Attempts, not waits: 31 attempts make 30 two-second waits, a full minute.
+  retries: 31
+  delay: 2
   check_mode: false
 
 # The second line of defence: tasks/main.yml has already taken the route
