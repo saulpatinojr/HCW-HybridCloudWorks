@@ -19,6 +19,32 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Coder: one running workspace per learner, and cloud sign-ins kept in
+  memory (#954, LAB-8)**. Owner decision 2026-10-16, in all three templates
+  (`hcw-lab`, `amo-guided-lab`, `na-guided-lab`).
+  - **Sign-ins in memory:** a 64 MiB tmpfs at `/tmp/cloud-creds` (0700,
+    `noexec`, `nosuid`, `nodev`), with `AZURE_CONFIG_DIR`,
+    `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` and `CLOUDSDK_CONFIG`
+    pointing into it. A cloud sign-in never reaches the home volume, and
+    ends when the workspace stops.
+  - **One running workspace:** on a start build only, the template reads
+    the owner's workspaces from Coder on the loopback with their session
+    token (`hashicorp/http` 3.6.2, locked), failing closed unless Coder
+    answers 200. A precondition refuses the start while another holds the
+    limit: a start pending, starting, running or cancelling, or a failed
+    stop. A failed start does not hold it.
+  - **The launcher and the site:** a start refused for another lab names
+    that lab, frames its Stop, and starts this one once the other stops. A
+    `limited` state reads "Stop your other lab to continue", and the
+    ten-minute cap does not run during that wait. The site's lab panel
+    says one workspace runs at a time and a sign-in lasts until the
+    workspace stops.
+  - **Which builds it binds:** builds of a template version that carries
+    it. Coder Community's dashboard Start rebuilds a workspace's own
+    version, so the runbook has a one-time owner step after the first
+    publish.
+  - **Tests:** `template.test.mjs` (28) and `lab-host-launcher.test.mjs`,
+    and the coder CI job now runs fmt, init and validate on every template.
 - **Coder: only the `lab-learners` team signs in, and no sign-in creates an
   account (#954, LAB-8)**. Owner decision 2026-10-16.
   - **The allowlist:** the `coder` role renders
