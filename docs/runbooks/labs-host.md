@@ -2061,10 +2061,9 @@ host in the same run.
   tmpfs. A sign-in ends when the workspace stops, and nothing of it is left
   on disk. On 2026-10-16 neither workspace volume
   on the sandbox daemon held a `.azure`, `.aws` or `.config/gcloud`
-  directory, so there is nothing older to clear. Two things still land on
-  the volume, by design: the AWS CLI's single sign-on and role caches,
-  which it keeps under `~/.aws` whatever the variables say (the image ships
-  no AWS CLI), and anything a learner writes there by hand.
+  directory, so there is nothing older to clear. One thing still lands on
+  the volume, by design: anything a learner writes outside `~/.aws` and
+  `/tmp/cloud-creds` by hand.
 
 **Both bind the builds of a template version published with them, and no
 other.** A build runs the template version it is given, and Coder Community

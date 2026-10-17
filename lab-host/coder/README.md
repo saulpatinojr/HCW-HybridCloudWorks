@@ -124,17 +124,14 @@ Owner decision 2026-10-16 (#954), in all three templates, and checked by
   no setting, so the start script first makes all of `~/.aws` a link into
   the tmpfs (`local.aws_home_link`), removing a directory an earlier start
   left there. A sign-in is never written to the home volume and ends when
-  the workspace stops. Two
-  limits, by design. `az` keeps its extensions (`AZURE_EXTENSION_DIR`
+  the workspace stops. One limit, by design: `az` keeps its extensions (`AZURE_EXTENSION_DIR`
   defaults to `cliextensions` under its configuration directory) and the
   Bicep binary (under `bin`) there too. The tmpfs is `noexec`, so Bicep
   cannot run from it, and neither can an extension that carries compiled
   code (Python can still read a pure-Python one); and anything installed
   there is gone at the next stop. No lab uses them; if one ever does, set
   `AZURE_EXTENSION_DIR` (and install Bicep) on the home volume instead,
-  which holds code, not a sign-in. And the AWS CLI keeps its single
-  sign-on and role caches under `~/.aws` whatever the variables say (the
-  image ships no AWS CLI).
+  which holds code, not a sign-in.
 - **Both bind the builds of a template version that carries them, and no
   other.** Coder Community starts a workspace on its own version unless the
   start names another: the build API (`coderd/wsbuilder/wsbuilder.go`,
