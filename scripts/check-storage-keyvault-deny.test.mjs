@@ -16,6 +16,13 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptPath = join(here, 'check-storage-keyvault-deny.mjs');
 
+describe('DISALLOWED_STANDING_ROLES', () => {
+  it('contains Owner and Contributor', () => {
+    expect(DISALLOWED_STANDING_ROLES.has('Owner')).toBe(true);
+    expect(DISALLOWED_STANDING_ROLES.has('Contributor')).toBe(true);
+  });
+});
+
 describe('parseInput', () => {
   it('parses valid JSON string', () => {
     expect(parseInput('{"status": "ok"}')).toEqual({ status: 'ok' });
