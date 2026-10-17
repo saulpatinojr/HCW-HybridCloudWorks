@@ -31,9 +31,10 @@
 | **`QLTY-API-TOKEN`** | Qlty Code Quality Platform | Key Vault | 90 days | Mint new Personal Access Token in Qlty settings -> update Key Vault -> restart Function App. Revoke old token. | Function App restart |
 | **`PLAUD-EMBEDDED-API-KEY`** | Plaud Audio Transcription | Key Vault | 180 days | Generate client secret in Plaud Embedded Portal -> update Key Vault -> restart Function App. | Function App restart |
 | **`TELEGRAM-BOT-TOKEN`** | Telegram Alerts Bot | Key Vault | 365 days | Re-issue token via `@BotFather` -> update Key Vault -> restart Function App. | Function App restart |
+| **`TELEGRAM-WEBHOOK-SECRET`** | Telegram Inbound Webhook (SEC-6) | Key Vault / Env | 90 days | Generate random string -> update Key Vault / env -> re-register via `scripts/cutover/04-telegram-webhook.ps1 -WebhookSecret`. | Zero downtime |
 | **`PREVIEW-SIGNING-SECRET`** | Staging Preview HMAC Signer | Key Vault | 90 days | Generate 32-byte hex string -> update Key Vault -> restart Function App. | Function App restart |
 | **`CODER-STATUS-TOKEN`** | Hybrid Lab Coder Status Proxy | Key Vault | 90 days | Issue read-only status token in Coder CLI (`coder tokens create`) -> update Key Vault -> restart Function App. | Function App restart |
-| **SWA Deployment Token** | Azure Static Web Apps | GitHub Secrets | 180 days | `az staticwebapp secrets reset-api-key` -> update `AZURE_STATIC_WEB_APPS_API_TOKEN` in GitHub repository secrets. | Zero downtime |
+| **SWA Deployment Token** | Azure Static Web Apps | ARM / JIT OIDC (Fallback Secret) | 90 days | Minted JIT via federated OIDC (T-727). Fallback token rotated on 90-day cadence via `az staticwebapp secrets reset-api-key`. | Zero downtime |
 | **Cloudflare DNS Token** | Cloudflare DNS API | TFC / GitHub Secrets | 180 days | Re-create scoped custom API token in Cloudflare -> update Terraform Cloud / GitHub repository secrets. | Zero downtime |
 | **GitHub App Private Key** | Manifest & Copilot Review Apps | Key Vault / GitHub Secrets | 365 days | Generate new private key PEM in GitHub App settings -> update Key Vault / secrets -> delete old key after 7 days. | Zero downtime |
 | **`/etc/hcw/labs-agent.pem`** | Lab Host Heartbeat TLS Client | Lab Host Disk | 365 days | Issue new TLS client cert signed by CA -> deploy to `/etc/hcw/labs-agent.pem` -> restart `hcw-agent`. | Zero downtime |
@@ -67,3 +68,20 @@ node scripts/check-unresolved-secrets.mjs
 
 - **Weekly automation:** `.github/workflows/monitor-unresolved-secrets.yml` runs daily and verifies all Key Vault references resolve without failure.
 - **Credential Age Verification:** Quarterly review of Key Vault secret metadata (`created` and `updated` timestamps) to ensure no credential exceeds its scheduled rotation cadence.
+
+---
+
+## 4. State readers and infrastructure access boundaries (SEC-6)
+
+### A. Terraform state readers
+Terraform state is stored exclusively in HCP Terraform (`hcw/hcw-azure` and `hcw/hcw-lab`). The state disclosure boundary is restricted to:
+1. **Workload Owner**: Interactive access via HCP Terraform user authentication (MFA-enforced).
+2. **GitHub Actions CI/CD (`TFC_TOKEN`)**: Scoped to plan verification (`tfc-plan-check.yml`), deploy concurrency checks (`deploy-functions.yml`), and deploy drift monitoring (`monitor-deploy-drift.yml`).
+3. **No External Storage Readers**: State is not backed by Azure Blob Storage or Amazon S3; no standing storage keys or data-plane reader identities exist for state inspection.
+
+### B. Deny-by-default on storage and Key Vault
+All data and secrets backends enforce strict deny-by-default:
+- **Key Vault (`kv-site-prod-cus-01`)**: `network_acls.default_action = "Deny"`, admitting only the Functions integration subnet. Zero standing IP rules exist outside controlled maintenance windows.
+- **Storage Accounts (`stsiteprodcus01`, `stsitefuncprodcus01`)**: `network_rules.default_action = "Deny"`, admitting only AzureServices and designated VNet subnets.
+- **Verification**: `scripts/check-storage-keyvault-deny.mjs` verifies Key Vault and storage network postures and asserts 0 standing broad role grants (Owner, Contributor, or subscription-wide Reader).
+

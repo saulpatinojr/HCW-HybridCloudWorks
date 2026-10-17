@@ -61,10 +61,26 @@ function makeBot(overrides = {}) {
 const message = (text, chatId = 4242) => ({ message: { text, chat: { id: chatId } } });
 
 describe('webhook secret', () => {
-  it('derives from the bot token, so there is only one secret to rotate', () => {
+  it('derives from the bot token, so there is only one secret to rotate by default', () => {
     expect(SECRET).toMatch(/^[0-9a-f]{64}$/);
     expect(expectedWebhookSecret({ TELEGRAM_BOT_TOKEN: 'test-token' })).toBe(SECRET);
     expect(expectedWebhookSecret({ TELEGRAM_BOT_TOKEN: 'other' })).not.toBe(SECRET);
+  });
+
+  it('prefers an explicitly configured TELEGRAM_WEBHOOK_SECRET (SEC-6)', () => {
+    const independentSecret = 'independent-webhook-secret-token-12345';
+    expect(
+      expectedWebhookSecret({
+        TELEGRAM_WEBHOOK_SECRET: independentSecret,
+        TELEGRAM_BOT_TOKEN: 'test-token',
+      })
+    ).toBe(independentSecret);
+
+    expect(
+      expectedWebhookSecret({
+        TELEGRAM_WEBHOOK_SECRET: independentSecret,
+      })
+    ).toBe(independentSecret);
   });
 
   it('is empty when no token is configured, so the route can refuse rather than accept', () => {
