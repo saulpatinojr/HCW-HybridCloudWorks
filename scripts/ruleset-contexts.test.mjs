@@ -57,7 +57,7 @@ describe('Ruleset required status checks contract (T-982)', () => {
 
     // Find all declared job names across PR workflows
     const jobNames = new Set();
-    for (const { file, content } of allWorkflowTexts) {
+    for (const { content } of allWorkflowTexts) {
       if (!content.includes('pull_request:')) continue;
 
       const lines = content.split('\n');
