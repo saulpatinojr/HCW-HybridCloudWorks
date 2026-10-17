@@ -182,6 +182,7 @@ export const EXPECTED = {
  */
 export const CONDITIONAL_REPLACED = [
   "azapi_update_resource.cosmos_computed_properties",
+  "azapi_update_resource.cosmos_data_plane_table",
 ];
 
 /** `type.name["key"]` -> `type.name`, the address a for_each instance belongs to. */

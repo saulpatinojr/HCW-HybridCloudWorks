@@ -149,6 +149,24 @@ geo-replicated to a paired region. It does not live in a different
 subscription; that alternative is recorded below as the revisit path if
 subscription-loss becomes the scenario being designed for.
 
+> **Amended 2026-10-16 (PLAT-8, #968).**
+> 1. **Export Immutability:** A time-based WORM immutability policy
+>    (`azurerm_storage_container_immutability_policy.cosmos_export`) is enforced
+>    on `cosmos-export` with a 35-day retention period (`immutability_period_in_days = 35`,
+>    unlocked by default, lockable via `cosmos_export_immutability_locked`). This ensures
+>    neither the application managed identity (`func_blob`) nor any non-owner role can delete
+>    or overwrite backup blobs during the retention period.
+> 2. **Continuation State Container:** Because container-level immutability blocks in-place
+>    blob updates, change-feed continuation tokens (`state/${container}.json`) are isolated in
+>    a dedicated mutable container `cosmos-export-state` (`azurerm_storage_container.cosmos_export_state`).
+> 3. **90-Day Log Retention & PII Data-Plane Auditing:** Log Analytics workspace retention is
+>    increased from 30 to 90 days (`logs_retention_in_days = 90`). Diagnostic settings for Cosmos DB
+>    now enable `DataPlaneRequests`, filtered at ingestion time by an Azure Monitor workspace table
+>    transformation (`transformKql`) to PII containers (`ambassador`), preserving a 90-day access
+>    audit trail without exceeding the workspace daily ingestion quota.
+> 4. **Out-of-Subscription Copy:** Full exports are archived quarterly to an offline or secondary
+>    subscription storage account to mitigate subscription-loss risk.
+
 ### 5. Monitoring: alert on the missing run
 
 A scheduled query rule in the existing alerting fabric (ADR 0022) fires to the

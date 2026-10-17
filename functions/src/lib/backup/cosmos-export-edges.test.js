@@ -198,4 +198,45 @@ describe('createExportBlobStore', () => {
     expect(await store.listNames('full/2026-09-13/')).toEqual(['full/2026-09-13/a.marker.json']);
     expect(storage.listBlobs).toHaveBeenCalledWith('cosmos-export', 'full/2026-09-13/');
   });
+
+  it('routes state/ blobs to cosmos-export-state by default while run blobs stay in cosmos-export (PLAT-8, #968)', async () => {
+    const storage = fakeStorage();
+    const store = createExportBlobStore({ storage });
+    await store.putJson('state/content.json', { token: 't1' });
+    expect(storage.uploadBlob).toHaveBeenCalledWith(
+      'cosmos-export-state',
+      'state/content.json',
+      expect.any(Buffer),
+      'application/json',
+      {},
+      { overwrite: true }
+    );
+
+    await store.readJson('state/content.json');
+    expect(storage.readBlobForDelivery).toHaveBeenCalledWith('cosmos-export-state', 'state/content.json');
+
+    await store.putJson('full/2026-09-13/manifest.json', { runId: '2026-09-13' });
+    expect(storage.uploadBlob).toHaveBeenCalledWith(
+      'cosmos-export',
+      'full/2026-09-13/manifest.json',
+      expect.any(Buffer),
+      'application/json',
+      {},
+      { overwrite: true }
+    );
+  });
+
+  it('allows overriding stateContainer explicitly', async () => {
+    const storage = fakeStorage();
+    const store = createExportBlobStore({ storage, stateContainer: 'custom-state-container' });
+    await store.putJson('state/content.json', { token: 't1' });
+    expect(storage.uploadBlob).toHaveBeenCalledWith(
+      'custom-state-container',
+      'state/content.json',
+      expect.any(Buffer),
+      'application/json',
+      {},
+      { overwrite: true }
+    );
+  });
 });

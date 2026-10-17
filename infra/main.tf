@@ -78,7 +78,7 @@ resource "azurerm_log_analytics_workspace" "hcw" {
   location            = azurerm_resource_group.platform_mgmt.location
   resource_group_name = azurerm_resource_group.platform_mgmt.name
   sku                 = "PerGB2018"
-  retention_in_days   = 30
+  retention_in_days   = var.logs_retention_in_days
   # T-505: the plan's telemetry cost ceiling. When the cap trips, ingestion
   # stops until the daily reset — Cosmos DataPlaneRequests (observability.tf)
   # is the likeliest culprit; prune that category before raising the cap.

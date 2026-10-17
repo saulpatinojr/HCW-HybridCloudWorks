@@ -255,6 +255,33 @@ resource "azurerm_storage_container" "cosmos_export" {
   container_access_type = "private" # Cosmos export runs and change-feed state; never served
 }
 
+# Dedicated container for Cosmos export change-feed continuation tokens (PLAT-8, #968).
+# Kept separate from cosmos-export so that azurerm_storage_container_immutability_policy
+# on cosmos-export can enforce strict WORM retention on backup runs without blocking
+# daily in-place continuation token overwrites.
+resource "azurerm_storage_container" "cosmos_export_state" {
+  #checkov:skip=CKV2_AZURE_21:Blob read logging is on for this account via azurerm_monitor_diagnostic_setting.content_blob (StorageRead). docs/security/scanner-triage.md#checkov
+  name                  = "cosmos-export-state"
+  storage_account_id    = azurerm_storage_account.hcw.id
+  container_access_type = "private" # Cosmos export change-feed continuation tokens; mutable state, never served
+}
+
+# Time-based immutability policy for Cosmos DB out-of-account backup exports (PLAT-8, #968).
+# Enforces WORM retention for 35 days matching the expire-cosmos-export lifecycle rule
+# so that blobs under full/ and delta/ cannot be deleted or overwritten by the application
+# managed identity or non-admin roles.
+resource "azurerm_storage_container_immutability_policy" "cosmos_export" {
+  storage_container_resource_manager_id = azurerm_storage_container.cosmos_export.id
+  immutability_period_in_days           = 35
+  locked                                = var.cosmos_export_immutability_locked
+  protected_append_writes_all_enabled   = false
+  protected_append_writes_enabled       = false
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 # Storage lifecycle management for generated and uploaded website media.
 #
 # KNOWN INERT as written. Azure matches `prefix_match` against

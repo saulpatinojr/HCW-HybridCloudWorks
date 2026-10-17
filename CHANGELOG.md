@@ -19,6 +19,14 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Audit finding PLAT-8: Cosmos DB export immutability, dedicated state container, 90-day security log retention & PII data-plane auditing (#968)**.
+  - Added time-based WORM immutability policy `azurerm_storage_container_immutability_policy.cosmos_export` in `infra/storage.tf` enforcing 35-day retention matching the `expire-cosmos-export` lifecycle policy so backup blobs cannot be deleted or overwritten by the application identity or non-admin roles. Parameterized locking via `var.cosmos_export_immutability_locked`.
+  - Added dedicated mutable container `azurerm_storage_container.cosmos_export_state` (`cosmos-export-state`) for change-feed continuation tokens (`state/${container}.json`), preventing daily delta continuation token overwrites from failing against WORM container retention (`BlobImmutableDueToPolicy`). Updated `createExportBlobStore` in `functions/src/lib/backup/cosmos-export-edges.js` to route `state/` continuation blobs to `cosmos-export-state`.
+  - Increased Log Analytics workspace retention from 30 days to 90 days via `var.logs_retention_in_days` (default 90) in `infra/main.tf` and `infra/variables.tf`, satisfying compliance retention requirements for diagnostics, security tables, syslog, and activity logs.
+  - Enabled Cosmos DB `DataPlaneRequests` in `azurerm_monitor_diagnostic_setting.cosmos` in `infra/observability.tf`, with an ingestion-time table transformation (`azapi_update_resource.cosmos_data_plane_table`) filtering telemetry to personal data containers (`ambassador`), providing a compliant 90-day PII access audit trail without exhausting the workspace daily ingestion quota.
+  - Documented quarterly out-of-subscription export strategy, immutability verification commands, and state container isolation in `docs/decisions/0028-cosmos-out-of-account-export.md` and `docs/runbooks/cosmos-restore.md`.
+  - Added unit tests in `scripts/backup-immutability-retention.test.mjs`, `functions/src/lib/backup/cosmos-export-edges.test.js`, and updated `scripts/assert-expected-plan.mjs`.
+
 - **Coder: one running workspace per learner, and cloud sign-ins kept in
   memory (#954, LAB-8)**. Owner decision 2026-10-16, in all three templates
   (`hcw-lab`, `amo-guided-lab`, `na-guided-lab`).

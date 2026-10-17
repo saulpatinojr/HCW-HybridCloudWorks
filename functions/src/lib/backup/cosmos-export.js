@@ -53,6 +53,8 @@ import { EXPORT_MODES, exportPlanFor } from './export-classification.js';
 
 /** The private blob container on `stsiteprodcus01` (Terraform: infra/storage.tf). */
 export const EXPORT_CONTAINER = 'cosmos-export';
+/** The private blob container for change-feed continuation tokens (PLAT-8, #968). */
+export const EXPORT_STATE_CONTAINER = 'cosmos-export-state';
 /** The platform job type one message per container is enqueued as. */
 export const EXPORT_JOB_TYPE = 'cosmos-export-container';
 /** The Application Insights custom event the missing-run alert counts. */
