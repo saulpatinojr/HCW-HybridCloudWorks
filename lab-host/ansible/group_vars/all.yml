@@ -202,6 +202,10 @@ caddy_direct_visit_redirect: https://hybridcloudworks.com/education/labs
 # member of the allowed organisations in. Coder checks a team only inside an
 # organisation the learner already passed, so the role also refuses a team
 # whose organisation is not in coder_oauth2_github_allowed_orgs.
+# Sign-ups off does NOT cover the first account. On a deployment with none,
+# Coder lets the first sign-in through, or /setup, and makes it the Owner.
+# The role therefore never publishes a Coder with no account
+# (roles/coder/tasks/first_user.yml).
 coder_enabled: true
 coder_oauth2_github_allowed_orgs:
   - HybridCloudWorks

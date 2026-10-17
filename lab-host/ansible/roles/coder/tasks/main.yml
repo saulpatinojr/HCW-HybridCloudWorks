@@ -143,6 +143,12 @@
     wait_timeout: 300
   when: coder_enabled | bool
 
+# Before the route below is written: a Coder with no account is never
+# published, because whoever reached it could make its Owner.
+- name: Keep a Coder with no account unpublished
+  ansible.builtin.import_tasks: first_user.yml
+  when: coder_enabled | bool
+
 - name: Stop and remove the Coder containers while Coder is disabled
   community.docker.docker_compose_v2:
     project_src: "{{ coder_project_dir }}"

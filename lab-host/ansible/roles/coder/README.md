@@ -46,6 +46,14 @@ starts or stops it, adds the Caddy route and keeps a week of nightly dumps.
    with the volume kept when not. A changed `coder.env` recreates the
    `coder` container on the next run, which is how a rotated secret takes
    effect.
+   Then it asks `http://127.0.0.1:7080/api/v2/users/first` whether Coder has
+   an account (`tasks/first_user.yml`). On a 404, after a fresh install or a
+   restore that left the database empty, whoever reached Coder could make
+   its first account, the Owner: through `/setup`, or through a GitHub
+   sign-in, which Coder v2.38.0 lets through for the first account even with
+   sign-ups off. So the role takes Coder's Caddy route down, reloads Caddy at
+   once, and fails, leaving Coder on the host's loopback for the runbook's
+   "A Coder with no account yet". A 200 changes nothing.
 6. Installs the lab launcher, `lab-host/coder/launcher/` from the repository
    checkout, in `/etc/caddy/hcw-lab-launcher` (`coder_launcher_dir`; the
    directory `root:caddy` `0750`, its four files `0640`, copied by name from

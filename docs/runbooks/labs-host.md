@@ -1176,6 +1176,68 @@ suspension is what ends it now.
    one minute by default); they are kept, stopped, with their files.
    `coder users activate` in the same line undoes the suspension.
 
+### A Coder with no account yet
+
+Only after a fresh install, or a restore that left Coder's database empty.
+The live host has accounts, so this does not apply to it.
+
+**Why.** Coder v2.38.0 lets whoever reaches a deployment with no account
+make the first one, and that account is the Owner. Its `/setup` page makes a
+password account. A GitHub sign-in is let through as well, even with sign-ups
+off (`coderd/userauth.go`: `userCount == 0 || params.AllowSignups`). So
+`bootstrap.sh` never publishes such a Coder. The coder role reads
+`/api/v2/users/first`; on a 404 it takes Coder's Caddy route down and fails
+with `Coder has no account yet`, and Coder keeps running on the host's
+loopback only. Everything below was measured against v2.38.0 on 2026-10-17.
+
+1. **Your primary GitHub email**, into a variable: the address
+   https://github.com/settings/emails marks **Primary** and verified, which
+   is how Coder will match your first GitHub sign-in. PowerShell; paste the
+   line, then type the address at the prompt:
+
+   ```powershell
+   $email = Read-Host 'Your primary GitHub email'
+   ```
+
+2. **A break-glass Owner, and your GitHub account as Owner**, in one line on
+   the host's loopback. PowerShell:
+
+   ```powershell
+   ssh -t hcw-lab "sudo docker exec -it -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'coder login http://127.0.0.1:7080 --first-user-username hcw-breakglass --first-user-email breakglass@lab.hybridcloudworks.com --first-user-full-name Break-glass --first-user-trial=false && coder users create --username saulpatinojr --email $email --login-type github && coder users edit-roles saulpatinojr --roles owner -y; coder logout -y'"
+   ```
+
+   It asks for the break-glass account's password; keep it in your password
+   manager. Success is `A new user has been created!` with `Login is
+   authenticated through GitHub.`, then `You are no longer logged in.`
+   Any `Encountered an error` line names the step that failed.
+
+3. **Publish Coder.** PowerShell. Success is a play recap with `failed=0`:
+
+   ```powershell
+   ssh -t hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+   ```
+
+4. **Sign in with GitHub** at https://coder.lab.hybridcloudworks.com.
+   Success is Coder's dashboard, signed in as `saulpatinojr`.
+
+5. **Retire the break-glass account**, with a token of yours in `$t` (step 1
+   of "The status token for the site", in `lab-host/README.md`). Coder will
+   not suspend an Owner, so its role is lowered first. PowerShell:
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder users edit-roles hcw-breakglass --roles auditor -y && echo yes | coder users suspend hcw-breakglass; }'"
+   ```
+
+   Success is `User hcw-breakglass has been suspended!`. A suspended account
+   cannot sign in, and `/api/v2/users/first` keeps answering 200, so later
+   runs publish Coder as usual. Should every Owner ever be lost, a new one
+   is made on the host straight in the database, without signing in, bash
+   on the host:
+
+   ```bash
+   sudo docker exec -it coder coder server create-admin-user
+   ```
+
 ## The lab canary and the status-token check
 
 Two Health Hub probes watch what #1009 found broken with nothing saying so,

@@ -1,0 +1,54 @@
+---
+# A Coder with no account is never published (#954 review).
+#
+# Coder v2.38.0 lets whoever reaches a deployment that has no account make
+# the first one, and that account is the deployment's Owner. Its /setup page
+# makes a password account. A GitHub sign-in is let through as well, even
+# with sign-ups off (coderd/userauth.go: `userCount == 0 ||
+# params.AllowSignups`), limited only by the organisation and team
+# allowlists. So on a fresh install, or after a restore that left the
+# database empty, this stops before the Caddy route in tasks/main.yml is
+# written. It takes down a route an earlier run left, and fails with the
+# owner's steps (docs/runbooks/labs-host.md, "A Coder with no account yet").
+#
+# Coder keeps running on the host's loopback only (127.0.0.1:7080), where
+# those steps reach it. The sandbox user's firewall refuses host-local
+# destinations, so no workspace reaches it there.
+#
+# GET /api/v2/users/first answers 404 until an account exists and 200 after,
+# whatever that account's status. Measured on v2.38.0 on 2026-10-17: it
+# stayed 200 with the first account suspended.
+
+- name: Ask Coder whether its first account exists
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ coder_http_port }}/api/v2/users/first"
+    method: GET
+    status_code: [200, 404]
+  register: coder_first_user
+  check_mode: false
+
+- name: Take down the coder route while Coder has no account
+  ansible.builtin.file:
+    path: "{{ coder_caddy_route_file }}"
+    state: absent
+  register: coder_first_user_route
+  when: coder_first_user.status == 404
+
+# Now, not at the end of the play: the fail below ends it before handlers run.
+- name: Reload Caddy so the route is gone now
+  ansible.builtin.systemd_service:
+    name: caddy
+    state: reloaded
+  when:
+    - coder_first_user.status == 404
+    - coder_first_user_route is changed
+    - not ansible_check_mode
+
+- name: Refuse to publish a Coder with no account
+  ansible.builtin.fail:
+    msg: >-
+      Coder has no account yet (GET /api/v2/users/first answered 404). In that state whoever reaches it
+      could make the first account, which is the deployment's Owner, so it stays unpublished, on this
+      host's loopback only. Make that account as docs/runbooks/labs-host.md, "A Coder with no account
+      yet", says, then run sudo /opt/hcw-src/lab-host/bootstrap.sh again.
+  when: coder_first_user.status == 404
