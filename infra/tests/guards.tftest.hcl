@@ -27,7 +27,7 @@ override_data {
 }
 
 override_resource {
-  target = azurerm_cosmosdb_account.hcw
+  target          = azurerm_cosmosdb_account.hcw
   override_during = plan
   values = {
     id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-db/providers/Microsoft.DocumentDB/databaseAccounts/cosmos-hcw"
