@@ -174,6 +174,8 @@ export const PANE_STATE_WORDS = Object.freeze({
   'signed-out': 'Sign in to open your workspace',
   create: 'Confirm to create your workspace',
   stopped: 'Start your workspace to continue',
+  // Another of the learner's workspaces is running; one runs at a time.
+  limited: 'Stop your other lab to continue',
   starting: 'Starting your workspace…',
   ready: 'Workspace ready',
 });
@@ -411,6 +413,11 @@ function LabDetails({ lab }) {
             reset are in the workspace&apos;s own menu, top left inside the pane under the workspace
             name: Stop keeps your files for next time, and deleting the workspace resets the lab to
             its starting folder. Workspaces also stop by themselves after an hour of inactivity.
+          </p>
+          <p className={`text-sm ${MUTED}`}>
+            Only one of your workspaces runs at a time: opening a lab while another is running asks
+            you to stop that one first. A cloud sign-in made in a workspace lasts until the
+            workspace stops, so sign in again after it starts.
           </p>
           <p className={`text-xs ${MUTED}`}>
             Prefer your own machine? The{' '}
