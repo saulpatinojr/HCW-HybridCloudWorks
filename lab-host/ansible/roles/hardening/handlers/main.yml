@@ -4,10 +4,20 @@
 # session is its own sshd-session process and stays up. With ssh.service not
 # running yet (ssh.socket starts it on the first connection after boot), the
 # module starts it instead, which reads the new settings too.
+# Ubuntu's sshd-socket-generator derives ssh.socket's ListenStream= lines
+# from sshd's ListenAddress directives at daemon-reload. Restarting ssh.socket
+# rebinds the listener to the loopback alone (#1257).
 - name: Reload ssh
   ansible.builtin.systemd_service:
     name: ssh
     state: reloaded
+    daemon_reload: true
+
+- name: Restart ssh.socket
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+    state: restarted
+  listen: Reload ssh
 
 # Notified with Reload ssh and defined after it, so it runs after the reload
 # and only once the reload has succeeded (a failed handler stops the host's

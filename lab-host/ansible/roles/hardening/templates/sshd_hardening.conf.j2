@@ -31,6 +31,12 @@ X11Forwarding no
 # few failed attempts there against every later Arc session.
 PerSourcePenaltyExemptList 127.0.0.1,::1
 
+# Bind sshd to the loopback alone (#1257). Ubuntu's sshd-socket-generator derives
+# ssh.socket's ListenStream= lines from these at daemon-reload. Arc SSH arrives on
+# the loopback, and hPanel's Web Console is a getty, so neither needs a public listener.
+ListenAddress 127.0.0.1
+ListenAddress ::1
+
 # INFO already logs the fingerprint of the key each accepted login used
 # (`Accepted publickey for ...`); VERBOSE adds the fingerprints of keys that
 # were offered and refused. The login alert reads the `Accepted publickey`

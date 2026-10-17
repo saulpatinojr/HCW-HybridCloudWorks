@@ -15,11 +15,10 @@ privilege_checks_agent_proxy_container: hcw-labs-agent-docker-proxy
 privilege_checks_userns_required: "{{ docker_userns_remap | default(true) }}"
 
 # The only ports that may listen beyond the loopback (tasks/listeners.yml,
-# #958): sshd and Caddy. TCP alone: Caddy serves no HTTP/3 (#958), so no UDP
-# port is public. Port 22 is closed to the internet at ufw (#953 stage 3), but
-# socket-activated sshd still listens on every address, so 22 stays here
-# until sshd binds to the loopback alone (#1257).
-privilege_checks_public_tcp_ports: [22, 80, 443]
+# #958): Caddy. TCP alone: Caddy serves no HTTP/3 (#958), so no UDP
+# port is public. Port 22 is closed to the internet at ufw (#953 stage 3)
+# and sshd listens on the loopback alone (#1257), so only 80 and 443 remain.
+privilege_checks_public_tcp_ports: [80, 443]
 # How the listeners are read; a test points it at a fixture.
 privilege_checks_listeners_argv: [ss, -H, -l, -n, -t, -u]
 # How the host daemon's published-port rules are read, IPv4 then IPv6; a test
