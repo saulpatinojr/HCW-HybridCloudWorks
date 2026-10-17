@@ -33,6 +33,10 @@
     The bot token. Omitted, the script reads it from Key Vault, which needs a
     firewall window — pass it directly if you have it to hand.
 
+.PARAMETER WebhookSecret
+    Optional independent webhook secret (SEC-6). If omitted, falls back to
+    TELEGRAM-WEBHOOK-SECRET in Key Vault if present, or derives sha256(BotToken).
+
 .EXAMPLE
     ./04-telegram-webhook.ps1 -Mode Show
     ./04-telegram-webhook.ps1
@@ -50,6 +54,7 @@ param(
     [ValidateSet('Set', 'Show', 'Delete')]
     [string] $Mode = 'Set',
     [string] $BotToken,
+    [string] $WebhookSecret,
     [string] $ApiBase = 'https://api-azure.hybridcloudworks.com/api',
     [string] $VaultName = 'kv-site-prod-cus-01',
     # Addressing the vault by name ALONE makes az search the subscription, and
@@ -82,6 +87,10 @@ try {
             Start-Sleep -Seconds 20
             $BotToken = az keyvault secret show --vault-name $VaultName --name 'TELEGRAM-BOT-TOKEN' `
                 --query 'value' -o tsv
+            if (-not $WebhookSecret) {
+                $WebhookSecret = az keyvault secret show --vault-name $VaultName --name 'TELEGRAM-WEBHOOK-SECRET' `
+                    --query 'value' -o tsv 2>$null
+            }
         }
         else {
             Write-Host 'skipped: no vault window opened and no token read.' -ForegroundColor Yellow
@@ -92,12 +101,19 @@ try {
     if ([string]::IsNullOrWhiteSpace($BotToken)) { throw 'No bot token available.' }
     Write-Host "bot token: $($BotToken.Length) characters (value not printed)"
 
-    # Same derivation as expectedWebhookSecret() in lib/telegram/bot.js.
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    $secret = ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($BotToken)) |
-        ForEach-Object { $_.ToString('x2') }) -join ''
-    $sha.Dispose()
-    Write-Host "derived secret: $($secret.Substring(0,8))... (sha256 of the token)"
+    # Secret resolution (SEC-6): prefers explicit $WebhookSecret, otherwise derives sha256(BotToken).
+    if (-not [string]::IsNullOrWhiteSpace($WebhookSecret)) {
+        $secret = $WebhookSecret
+        Write-Host "independent webhook secret configured (SEC-6, value not printed)"
+    }
+    else {
+        # Same derivation as expectedWebhookSecret() in lib/telegram/bot.js.
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $secret = ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($BotToken)) |
+            ForEach-Object { $_.ToString('x2') }) -join ''
+        $sha.Dispose()
+        Write-Host "derived secret: $($secret.Substring(0,8))... (sha256 of the token)"
+    }
 
     $api = "https://api.telegram.org/bot$BotToken"
 

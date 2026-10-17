@@ -130,6 +130,23 @@ describe('the secret-token gate', () => {
     expect(response).toEqual({ status: 200, body: 'ok' });
     expect(handleUpdate).toHaveBeenCalledWith(update);
   });
+
+  it('passes a request carrying an independent TELEGRAM_WEBHOOK_SECRET (SEC-6)', async () => {
+    const saved = process.env.TELEGRAM_WEBHOOK_SECRET;
+    process.env.TELEGRAM_WEBHOOK_SECRET = 'independent-secret-val-999';
+    try {
+      const update = { update_id: 8, message: { text: '/help' } };
+      const response = await route().handler(
+        makeRequest({ secret: 'independent-secret-val-999', body: update }),
+        makeContext()
+      );
+      expect(response).toEqual({ status: 200, body: 'ok' });
+      expect(handleUpdate).toHaveBeenCalledWith(update);
+    } finally {
+      if (saved === undefined) delete process.env.TELEGRAM_WEBHOOK_SECRET;
+      else process.env.TELEGRAM_WEBHOOK_SECRET = saved;
+    }
+  });
 });
 
 describe('always 200 once the secret is valid, so Telegram never retry-storms', () => {

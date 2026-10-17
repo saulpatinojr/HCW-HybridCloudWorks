@@ -88,13 +88,16 @@ const ASSISTANT_SYSTEM_PROMPT = `You are the operations assistant for HybridClou
 /**
  * The webhook secret Telegram will echo back.
  *
- * Derived from the bot token rather than stored separately, exactly as upstream
- * did — one secret to rotate, not two, and no way for the two to drift apart.
+ * SEC-6: Prefers an explicitly configured independent webhook secret
+ * (`TELEGRAM_WEBHOOK_SECRET`), falling back to sha256(token) for backward
+ * compatibility if not set.
  *
  * @param {Record<string, string|undefined>} env
- * @returns {string} hex digest, or '' when the token is not configured
+ * @returns {string} hex digest or explicit secret, or '' when neither is configured
  */
 export function expectedWebhookSecret(env = process.env) {
+  const explicit = readKey(env, 'TELEGRAM_WEBHOOK_SECRET');
+  if (explicit) return explicit;
   const token = readKey(env, 'TELEGRAM_BOT_TOKEN');
   if (!token) return '';
   return createHash('sha256').update(token).digest('hex');
