@@ -415,6 +415,14 @@ for (const name of TEMPLATES) {
       assert.match(value, /^\$\{local\.cloud_creds_dir\}\/[a-z]+(\/[a-z]+)?$/, `${variable} is under the tmpfs`);
     }
     assert.match(agent.body, /^\s*env\s*=\s*merge\(local\.cloud_creds_env,\s*\{\s*$/m, 'the agent env merges them');
+    // The AWS CLI's caches (sso/cache, cli/cache) have no setting, so all of
+    // ~/.aws is a link into the tmpfs, made first thing at every start.
+    assert.ok(locals.includes("    mkdir -p '${local.cloud_creds_dir}/aws'\n"), 'local.aws_home_link makes the directory');
+    assert.ok(locals.includes('    if [ ! -L "$HOME/.aws" ]; then rm -rf "$HOME/.aws"; fi\n'), 'and removes a directory left there');
+    assert.ok(locals.includes("    ln -sfn '${local.cloud_creds_dir}/aws' \"$HOME/.aws\"\n"), 'and links ~/.aws to the tmpfs');
+    const start = agent.body.slice(agent.body.indexOf('startup_script = <<-EOT'));
+    const firstLines = start.split('\n').slice(1, 4).map((line) => line.trim());
+    assert.ok(firstLines.includes('${local.aws_home_link}'), `the start script calls it first: ${firstLines.join(' | ')}`);
     assert.doesNotMatch(
       agent.body,
       /^\s*(AZURE_CONFIG_DIR|AWS_CONFIG_FILE|AWS_SHARED_CREDENTIALS_FILE|CLOUDSDK_CONFIG)\s*=/m,

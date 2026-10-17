@@ -179,8 +179,9 @@ locals {
   # here, a tmpfs the container gets (docker_container.workspace, tmpfs), not
   # the home volume: memory only, gone when the workspace stops. Owned by the
   # learner's uid with mode 0700; noexec, nosuid and nodev, because nothing
-  # in it is meant to run. az and gcloud create their directories and the
-  # AWS CLI the files' parent, so the tmpfs starts empty.
+  # in it is meant to run. az and gcloud create their directories, and the
+  # start script makes the AWS CLI's (local.aws_home_link), so the tmpfs
+  # starts empty.
   cloud_creds_dir = "/tmp/cloud-creds"
   cloud_creds_env = {
     AZURE_CONFIG_DIR            = "${local.cloud_creds_dir}/azure"
@@ -188,6 +189,17 @@ locals {
     AWS_SHARED_CREDENTIALS_FILE = "${local.cloud_creds_dir}/aws/credentials"
     CLOUDSDK_CONFIG             = "${local.cloud_creds_dir}/gcloud"
   }
+  # The AWS CLI keeps SSO tokens and assumed-role credentials in caches
+  # under ~/.aws (sso/cache, cli/cache) that no setting moves, and newer
+  # versions add more there. So the whole of ~/.aws is a link into the
+  # tmpfs, made at every start, before anything else. A directory an
+  # earlier start or the learner left at ~/.aws is removed first, with
+  # whatever it held, so no sign-in outlives the workspace on the volume.
+  aws_home_link = <<-EOT
+    mkdir -p '${local.cloud_creds_dir}/aws'
+    if [ ! -L "$HOME/.aws" ]; then rm -rf "$HOME/.aws"; fi
+    ln -sfn '${local.cloud_creds_dir}/aws' "$HOME/.aws"
+  EOT
 
   # How many of a learner's workspaces may be starting or running at once.
   # Stopped ones do not count: the launcher makes one workspace per lab.
@@ -314,6 +326,7 @@ resource "coder_agent" "main" {
   startup_script = <<-EOT
     set -euo pipefail
     export HOME=${local.home}
+    ${local.aws_home_link}
     export HCW_REPO_URL='${local.repo_url}'
     export HCW_REPO_REF='${local.image_tag}'
     LAB_ID='${data.coder_parameter.lab.value}'
