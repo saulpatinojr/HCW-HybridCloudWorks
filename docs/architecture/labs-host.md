@@ -116,7 +116,8 @@ on ([runbook](../runbooks/labs-host.md), "The first-run host check").
 
 ## Exposure
 
-Inbound: **22, 80 and 443 only.** SSH is key-only, for the owner and Ansible.
+Inbound: **22, 80 and 443 only.** SSH lets in `hcwadmin` alone, by the
+owner's pinned key only (#953).
 80 exists to answer ACME challenges and redirect to 443. Everything else is
 outbound:
 
@@ -291,7 +292,7 @@ above.
 
 | Identity | Where it lives | Scope | Status |
 | --- | --- | --- | --- |
-| Owner and Ansible SSH public keys | `~/.ssh/authorized_keys`, written by Terraform at provisioning and managed by Ansible after | Shell access to the host | live: two ED25519 keys (the owner's and the Ansible `hcw-lab` key) in `hcwadmin`'s and root's files, identical, read 2026-10-14 (#980) |
+| Owner SSH public key | `hcwadmin`'s `~/.ssh/authorized_keys`, written on every `bootstrap.sh` run from `hardening_admin_authorized_keys` in `lab-host/ansible/group_vars/all.yml` and nothing else; root's `authorized_keys` is kept empty. hPanel installs a key for root only on a reinstall, for the first run | Shell access to the host as `hcwadmin`, the only account sshd lets in (`AllowUsers hcwadmin`, `AuthenticationMethods publickey`); root login is off, and break-glass is meant to be hPanel's Web Console with root's password; whether that console goes through sshd is unverified (Hostinger says it works like an SSH connection), so the owner checks it before and after the first run with #953 (runbook, "The first `bootstrap.sh` run with #953"). `hcwadmin` has passwordless sudo, an accepted risk (`roles/hardening/README.md`) | pinned (#953, owner decision 2026-10-16): one ED25519 key, the owner's workstation key `SHA256:VTyaLLQLfYwi38RP1mHDD6Vtu0eSQsa4EPsNJTrdgG8`; the role stops on an empty list or one without the key of the most recent SSH login in the journal. Before #953's first run: two keys in `hcwadmin`'s and root's files, read 2026-10-16, the second of which made no login in 14 days |
 | `vps-agent` Entra confidential client (certificate) | Private key generated on the host, `/etc/hcw/labs-agent.pem`, owner `root`, group `hcw-labs-agent`, mode `0640`, so the non-root service reads it and nothing else does; only the public certificate goes to the app registration | The `LabAgent` app role on the Functions API — four endpoints (the fourth, since 2026-10-08, hands over a renewed Coder status token the API verifies before storing), no database or Key Vault access | live: certificate issued 2026-09-26, expires 2028-09-25 (730 days, LAB-11 #957); the agent heartbeats (Heartbeat 2026-10-14) |
 | Arc machine identity | System-assigned by Azure at onboarding, held by the Connected Machine agent; processes in the `himds` group can request its tokens | Whatever roles `infra/` grants it: from #726, Key Vault Crypto Service Encryption User (read, wrap and unwrap) on the one key `vault-seal` in `kv-labhybrid-prod-cus-01`, which Vault uses to unseal itself once the owner turns auto-unseal on; and, from LAB-9 (#955), Storage Blob Data Contributor on the one container `host-backups` in `stlabhybridprodcus01`, which the host's backups are uploaded to; nothing else beyond the data collection rule | live: Vault reports seal type `azurekeyvault`, unsealed, and the lab vault's audit shows the wrap and unwrap calls; the first backup blob was written as this identity on 2026-10-14 (#955) |
 | Coder GitHub OAuth app secret | Coder's Docker Compose environment | Learner sign-in to Coder; nothing on the site | live: Coder has answered on its public name since 2026-09-28 |

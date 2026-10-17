@@ -12,7 +12,8 @@
          timestamped backup of the file before it writes;
       3. on Windows, starts the ssh-agent service if it is installed and
          stopped, then loads the key into the agent;
-      4. prints the public key and the step that authorizes it on the host.
+      4. prints the public key, the line that pins it in
+         lab-host/ansible/group_vars/all.yml, and how to use it before then.
 
     A second run changes nothing and says so. The private key is never read,
     printed or sent anywhere by this script: ssh-keygen writes it, ssh-add
@@ -363,12 +364,14 @@ function Get-LabAuthorizeCommand {
 
     .DESCRIPTION
         It appends the key to the login user's authorized_keys, which takes
-        effect at once, and to root's, which is what makes it last: the
-        hardening role rebuilds hcwadmin's authorized_keys from root's on
-        every bootstrap.sh run (exclusive: true), so a key only in hcwadmin's
-        file is gone after the next run. grep -qxF makes both halves safe to
-        repeat. The key comment is kept only when it is plain text, so the
-        single quotes around it cannot be broken out of.
+        effect at once and lasts until the next bootstrap.sh run: the
+        hardening role writes hcwadmin's authorized_keys from
+        hardening_admin_authorized_keys in lab-host/ansible/group_vars/all.yml
+        alone, and keeps root's empty (#953). So the key lasts only once its
+        line is in that list (Get-LabGroupVarsKeyLine). Nothing is written for
+        root. grep -qxF makes the line safe to repeat. The key comment is kept
+        only when it is plain text, so the single quotes around it cannot be
+        broken out of.
     #>
     [OutputType([string])]
     param(
@@ -382,9 +385,27 @@ function Get-LabAuthorizeCommand {
     if ($comment -match '\A[A-Za-z0-9 ._@-]+\z') {
         $key = $key + ' ' + $comment
     }
-    $remote = "grep -qxF '`$k' ~/.ssh/authorized_keys || echo '`$k' >> ~/.ssh/authorized_keys; " +
-        "sudo grep -qxF '`$k' /root/.ssh/authorized_keys || echo '`$k' | sudo tee -a /root/.ssh/authorized_keys > /dev/null"
+    $remote = "grep -qxF '`$k' ~/.ssh/authorized_keys || echo '`$k' >> ~/.ssh/authorized_keys"
     return "`$k = '$key'; ssh $Alias `"$remote`""
+}
+
+function Get-LabGroupVarsKeyLine {
+    <#
+    .SYNOPSIS
+        The line that pins PublicKey under hardening_admin_authorized_keys in
+        lab-host/ansible/group_vars/all.yml.
+
+    .DESCRIPTION
+        A YAML list item holding the key's type and key and no comment, which
+        is how the list holds keys (owner decision 2026-10-16, #953). The
+        hardening role writes hcwadmin's authorized_keys from that list alone
+        on every bootstrap.sh run, so this line is what makes a key last.
+    #>
+    [OutputType([string])]
+    param([Parameter(Mandatory)] [string] $PublicKey)
+
+    $fields = @(-split $PublicKey)
+    return '  - ' + (($fields | Select-Object -First 2) -join ' ')
 }
 
 # -----------------------------------------------------------------------------
@@ -531,13 +552,18 @@ if (Test-Path -LiteralPath $publicKeyPath -PathType Leaf) {
     Write-Host ''
     Write-Host $publicKey
     Write-Host ''
-    Write-Host 'Authorize it on the host, whichever applies:'
+    Write-Host 'Authorize it on the host. The keys that may log in are the list hardening_admin_authorized_keys in'
+    Write-Host 'lab-host/ansible/group_vars/all.yml; every bootstrap.sh run writes hcwadmin''s keys from it alone.'
+    Write-Host 'So a key lasts once this line is in that list, merged, and bootstrap.sh has run:'
     Write-Host ''
-    Write-Host '  The first key for this server: open https://hpanel.hostinger.com/vps, choose Manage on the server,'
-    Write-Host '  then Settings, SSH keys, Add SSH key, and paste the line above.'
+    Write-Host (Get-LabGroupVarsKeyLine -PublicKey $publicKey)
     Write-Host ''
-    Write-Host '  Another machine already reaches the host: run this there, in PowerShell. It adds the key for the'
-    Write-Host '  login user now and for root, whose list the hardening role copies on every bootstrap.sh run:'
+    Write-Host '  The first key for a reinstalled server: open https://hpanel.hostinger.com/vps, choose Manage on the'
+    Write-Host '  server, then Settings, SSH keys, Add SSH key, and paste the public key above. bootstrap.sh refuses'
+    Write-Host '  to run unless that key is also in the list.'
+    Write-Host ''
+    Write-Host '  To use this machine before then, while another machine already reaches the host: run this there,'
+    Write-Host '  in PowerShell. It adds the key for hcwadmin until the next bootstrap.sh run:'
     Write-Host ''
     Write-Host ('  ' + (Get-LabAuthorizeCommand -PublicKey $publicKey -Alias $alias))
     Write-Host ''
