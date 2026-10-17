@@ -148,11 +148,19 @@ describe('the arc role opens the same port, and nothing else', () => {
     // Read conservatively (CodeRabbit on #1261): an installed ufw must answer,
     // any DENY or REJECT naming 22 refuses, and only a general allow counts.
     expect(guard).toContain('not arc_ufw_bin.stat.exists');
-    expect(guard).toContain('or (arc_ufw_status.rc == 0');
+    expect(guard).toContain('or ((arc_ufw_status.rc | default(1)) == 0');
     expect(guard).toContain('(arc_ufw_admits_22 and not arc_ufw_denies_22)');
     expect(guard).toContain('+(DENY|REJECT)');
     expect(guard).toContain('+(ALLOW|LIMIT)( IN)? +Anywhere *$');
     expect(yamlScalar(arcDefaults, 'arc_ufw_path')).toBe('/usr/sbin/ufw');
+    // ufw admitting 22 is not a path unless sshd answers on it: since #1257
+    // sshd is bound to the loopback while Arc SSH is ready, so a live listener
+    // beyond the loopback is required too (CodeRabbit on #1261).
+    expect(guard).toContain('argv: ["{{ arc_ss_path }}", -H, -l, -n, -t, sport, "=", ":22"]');
+    expect(guard).toContain("| reject('match', '^(127[.]|[[]::1[]]|[[]::ffff:127[.])')");
+    expect(guard).toContain('- (arc_sshd_listeners.rc | default(1)) == 0');
+    expect(guard).toContain('- arc_sshd_public');
+    expect(yamlScalar(arcDefaults, 'arc_ss_path')).toBe('/usr/bin/ss');
   });
 
   it('is turned off with port 22 reopened in the same run, by the hardening role that runs first', () => {
@@ -160,9 +168,12 @@ describe('the arc role opens the same port, and nothing else', () => {
     expect(groupVarsText).toContain('hardening_arc_ssh_wanted: "{{ arc_incoming_ssh_enabled | default(true) }}"');
     const site = read('lab-host/ansible/site.yml');
     expect(site.indexOf('- role: hardening')).toBeLessThan(site.indexOf('- role: arc'));
-    expect(read('lab-host/ansible/roles/hardening/tasks/ufw.yml')).toContain(
+    expect(read('lab-host/ansible/roles/hardening/tasks/arc_gate.yml')).toContain(
       "{{ 'open' if not (hardening_arc_ssh_wanted | bool)"
     );
+    // sshd.yml flushes its handlers, so the socket restart that rebinds sshd
+    // to every address happens before the arc role's guard reads `ss`.
+    expect(read('lab-host/ansible/roles/hardening/tasks/sshd.yml')).toContain('ansible.builtin.meta: flush_handlers');
   });
 
   it('reads the settings in check mode too, and reports a difference there as a changed task the nightly drift check counts', () => {

@@ -1,21 +1,24 @@
 ---
-# Turning Arc SSH off must not leave the host with no SSH path: the hardening
-# role closes port 22 at ufw while Arc SSH is on (#953 stage 3). A full run
-# reopens 22 in the hardening role first (hardening_arc_ssh_wanted follows
-# arc_incoming_ssh_enabled), so this passes; a run narrowed to this role's
-# tag, or one with 22 closed some other way, stops here before anything
-# changes on the agent (CodeRabbit on #1258). Imported by onboard.yml before
-# the incoming-connection writes; roles/hardening/tests/ufw-closed-ports.test.sh
-# runs it against a real ufw.
+# Turning Arc SSH off must not leave the host with no SSH path. While Arc SSH
+# is on, the hardening role closes port 22 at ufw (#953 stage 3) and binds
+# sshd to the loopback (#1257). A full run reopens both in the hardening role
+# first (hardening_arc_ssh_wanted follows arc_incoming_ssh_enabled, and
+# sshd.yml flushes its handlers, so sshd listens on every address before this
+# role runs), so this passes. A run narrowed to this role's tag, or one with
+# 22 closed some other way, stops here before anything changes on the agent
+# (CodeRabbit on #1258 and #1261). Imported by onboard.yml before the
+# incoming-connection writes; roles/hardening/tests/ufw-closed-ports.test.sh
+# runs it against a real ufw and real listeners.
 #
-# What passes, read conservatively (CodeRabbit on #1261):
-# - no ufw at arc_ufw_path: nothing filters 22;
-# - ufw inactive;
-# - ufw active with a general allow of 22 from Anywhere (`22/tcp`, `22` or
-#   the OpenSSH profile, ALLOW or LIMIT) and no DENY or REJECT rule naming
-#   22 anywhere, since ufw takes the first matching rule and a deny may come
-#   first. Rule order is not modelled: any deny refuses.
-# An installed ufw that does not answer `ufw status` refuses too.
+# What passes, read conservatively (CodeRabbit on #1261), all of:
+# - sshd listening beyond the loopback on port 22, read live with `ss`;
+#   `ss` that does not answer refuses;
+# - no ufw at arc_ufw_path, ufw inactive, or ufw active with a general allow
+#   of 22 from Anywhere (`22/tcp`, `22` or the OpenSSH profile, ALLOW or
+#   LIMIT) and no DENY or REJECT rule naming 22 anywhere, since ufw takes the
+#   first matching rule and a deny may come first. Rule order is not
+#   modelled: any deny refuses. An installed ufw that does not answer
+#   `ufw status` refuses too.
 
 - name: Find ufw before Arc SSH is turned off
   ansible.builtin.stat:
@@ -37,7 +40,16 @@
     - arc_ufw_bin is not skipped
     - arc_ufw_bin.stat.exists
 
-- name: Refuse to turn Arc SSH off while ufw keeps port 22 closed
+- name: Read where sshd listens before Arc SSH is turned off
+  ansible.builtin.command:
+    argv: ["{{ arc_ss_path }}", -H, -l, -n, -t, sport, "=", ":22"]
+  register: arc_sshd_listeners
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: arc_ufw_bin is not skipped
+
+- name: Refuse to turn Arc SSH off while nothing would answer on port 22
   vars:
     arc_ufw_lines: "{{ arc_ufw_status.stdout_lines | default([]) }}"
     arc_ufw_admits_22: >-
@@ -46,22 +58,36 @@
       {{ arc_ufw_lines
          | select('match', '^(.* )?(([0-9,]*,)?22(,[0-9,]*)?(/tcp)?|OpenSSH)( [(]v6[)])?( on [^ ]+)? +(DENY|REJECT)')
          | list | length > 0 }}
+    # The fourth field of each `ss` line is the local address:port; any that
+    # is not a loopback address is a listener beyond it.
+    arc_sshd_public: >-
+      {{ arc_sshd_listeners.stdout_lines | default([])
+         | map('split') | map(attribute='3', default='')
+         | reject('match', '^(127[.]|[[]::1[]]|[[]::ffff:127[.])')
+         | list | length > 0 }}
+    arc_ufw_ok: >-
+      {{ not arc_ufw_bin.stat.exists
+         or ((arc_ufw_status.rc | default(1)) == 0
+             and ('Status: inactive' in (arc_ufw_status.stdout | default(''))
+                  or (arc_ufw_admits_22 and not arc_ufw_denies_22))) }}
   ansible.builtin.assert:
     that:
-      - >-
-        not arc_ufw_bin.stat.exists
-        or (arc_ufw_status.rc == 0
-            and ('Status: inactive' in arc_ufw_status.stdout
-                 or (arc_ufw_admits_22 and not arc_ufw_denies_22)))
+      - (arc_sshd_listeners.rc | default(1)) == 0
+      - arc_sshd_public
+      - arc_ufw_ok
     fail_msg: >-
-      arc_incoming_ssh_enabled is false, which turns Azure Arc SSH off, and ufw
-      {{ 'did not answer `ufw status` (rc ' ~ (arc_ufw_status.rc | default('none')) ~ ')'
+      arc_incoming_ssh_enabled is false, which turns Azure Arc SSH off, and
+      {{ '`ss` did not answer (rc ' ~ (arc_sshd_listeners.rc | default('none')) ~ ')'
+         if (arc_sshd_listeners.rc | default(1)) != 0
+         else 'sshd listens on the loopback alone' if not arc_sshd_public
+         else 'ufw did not answer `ufw status` (rc ' ~ (arc_ufw_status.rc | default('none')) ~ ')'
          if (arc_ufw_status.rc | default(0)) != 0
-         else 'has a DENY or REJECT rule for port 22' if arc_ufw_denies_22
-         else 'does not admit port 22 from Anywhere' }},
+         else 'ufw has a DENY or REJECT rule for port 22' if arc_ufw_denies_22
+         else 'ufw does not admit port 22 from Anywhere' }},
       so the host could be left with no SSH path. Run the whole of bootstrap.sh, whose hardening
-      role opens 22 first, or open it from hPanel's Web Console (docs/runbooks/labs-host.md, "When
-      Arc SSH is down"). Nothing has changed on the agent.
+      role opens 22 and has sshd listen on every address first, or open both from hPanel's Web
+      Console (docs/runbooks/labs-host.md, "When Arc SSH is down"). Nothing has changed on the
+      agent.
     quiet: true
   when:
     - not ansible_check_mode

@@ -1,0 +1,167 @@
+---
+# The Arc gate (#953 stage 3, #1257): whether this run closes SSH to the
+# internet, decided once, before sshd.yml and ufw.yml act on it. Imported by
+# main.yml with the `always` tag, read-only, so privilege_checks reads the
+# same decision on a run narrowed to other tags.
+#
+# Port 22 at ufw and sshd's listen addresses both follow it:
+# - 'close': the Arc agent is Connected with incoming connections on for
+#   port 22. ufw deletes 22's allow and sshd listens on the loopback alone.
+# - 'hold': the agent reads Disconnected. A network drop and an agent reset
+#   with `azcmagent disconnect` (the way back from Expired) both read so, and
+#   only the first is safe to close over, so both are left as they are: ufw's
+#   22 rule, and the drop-in's ListenAddress lines. Closed stays closed
+#   through a drop; a 22 reopened from hPanel's Web Console stays open while
+#   Register-LabArc.ps1 -Connect onboards the agent again over it.
+# - 'open': anything else. No agent on a rebuilt host before -Connect, which
+#   reaches the host over 22 before and after its bootstrap.sh run; Expired;
+#   output that cannot be read; Connected without incoming port 22; or a run
+#   that turns Arc SSH off (hardening_arc_ssh_wanted false). ufw allows 22
+#   and sshd listens on every address.
+# With hardening_ssh_arc_gate off, or 22 not in the closed list, nothing is
+# read: 22 follows the lists and sshd hardening_sshd_loopback_only's default.
+#
+# tests/ufw-closed-ports.test.sh runs this file against a stub agent.
+
+# As integers, so a port written "22" in a vars file is still the port the
+# gate compares with 22. The argument spec checks the type but does not
+# convert the variable.
+- name: Read the port lists as integers
+  ansible.builtin.set_fact:
+    hardening_ufw_allowed_ports: "{{ hardening_ufw_allowed_tcp_ports | map('int') | list }}"
+    hardening_ufw_closed_ports: "{{ hardening_ufw_closed_tcp_ports | map('int') | list }}"
+
+- name: Refuse a port that is both allowed and closed
+  ansible.builtin.assert:
+    that:
+      - hardening_ufw_allowed_ports | intersect(hardening_ufw_closed_ports) | length == 0
+    fail_msg: >-
+      {{ hardening_ufw_allowed_ports | intersect(hardening_ufw_closed_ports) | join(', ') }}
+      is in both hardening_ufw_allowed_tcp_ports and hardening_ufw_closed_tcp_ports; a port is one or the other.
+    quiet: true
+
+# Read in check mode too, so the drift check computes the same decision.
+- name: Read whether Azure Arc SSH is ready to replace port 22
+  when:
+    - hardening_ssh_arc_gate | bool
+    - 22 in hardening_ufw_closed_ports
+  block:
+    - name: Read the Arc agent's connection state
+      ansible.builtin.command:
+        argv: ["{{ hardening_arc_azcmagent_path }}", show, --json]
+      register: hardening_arc_show
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Read whether the Arc agent accepts incoming connections
+      ansible.builtin.command:
+        argv: ["{{ hardening_arc_azcmagent_path }}", config, get, incomingconnections.enabled]
+      register: hardening_arc_incoming
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Read the ports the Arc agent's incoming connections may reach
+      ansible.builtin.command:
+        argv: ["{{ hardening_arc_azcmagent_path }}", config, get, incomingconnections.ports]
+      register: hardening_arc_ports
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # A missing agent (a failed command) reads as NotInstalled. Output that is
+    # not JSON, or JSON without a status, reads as Unreadable: from_json
+    # raises on the first, so it is parsed alone and the rescue settles it,
+    # rather than the run stopping before the gate decides (CodeRabbit on
+    # #1258).
+    - name: Read the Arc agent's connection state from its JSON
+      block:
+        - name: Parse the agent's status
+          ansible.builtin.set_fact:
+            hardening_arc_status: >-
+              {{ 'NotInstalled' if hardening_arc_show.rc is not defined or hardening_arc_show.rc != 0
+                 else (hardening_arc_show.stdout | from_json).status | default('Unreadable') }}
+      rescue:
+        - name: Read output that is not JSON as Unreadable
+          ansible.builtin.set_fact:
+            hardening_arc_status: Unreadable
+
+    # `config get` prints the bare value or `<key> : <value>`, reduced as the
+    # arc role reduces it (roles/arc/tasks/onboard.yml).
+    - name: Read the Arc agent's incoming-connection settings
+      ansible.builtin.set_fact:
+        hardening_arc_incoming_enabled: >-
+          {{ (hardening_arc_incoming.stdout_lines | default([]) | first | default(''))
+             | regex_replace('^[^:]*:', '') | trim | lower }}
+        hardening_arc_incoming_ports: >-
+          {{ ((hardening_arc_ports.stdout_lines | default([]) | first | default(''))
+              | regex_replace('^[^:]*:', '') | regex_replace('[\[\]"\s]', '')).split(',')
+             | reject('eq', '') | list }}
+
+    # A run that turns Arc SSH off (hardening_arc_ssh_wanted false, from
+    # arc_incoming_ssh_enabled) opens 22 here, before the arc role clears the
+    # agent's ports later in the same run, so the run never ends with neither
+    # path (CodeRabbit on #1258). The arc role refuses to turn Arc SSH off
+    # while ufw keeps 22 closed, which covers a run narrowed to its tag.
+    - name: Decide what this run does with port 22
+      ansible.builtin.set_fact:
+        hardening_ufw_ssh_gate: >-
+          {{ 'open' if not (hardening_arc_ssh_wanted | bool)
+             else 'close' if hardening_arc_status == 'Connected'
+                            and hardening_arc_incoming_enabled == 'true'
+                            and '22' in hardening_arc_incoming_ports
+             else 'hold' if hardening_arc_status == 'Disconnected'
+             else 'open' }}
+
+    # 'hold' keeps the drop-in's choice: loopback alone if it says so now,
+    # every address if it does not (a Web Console reopen removes the lines).
+    - name: Read sshd's listen addresses while the Arc agent is Disconnected
+      ansible.builtin.slurp:
+        src: "{{ hardening_sshd_dropin_path }}"
+      register: hardening_sshd_dropin_now
+      failed_when: false
+      when: hardening_ufw_ssh_gate == 'hold'
+
+    - name: Decide whether sshd listens on the loopback alone
+      ansible.builtin.set_fact:
+        hardening_sshd_loopback_only: >-
+          {{ true if hardening_ufw_ssh_gate == 'close'
+             else false if hardening_ufw_ssh_gate == 'open'
+             else (hardening_sshd_dropin_now.content | default('') | b64decode)
+                  is search('^ListenAddress 127[.]0[.]0[.]1 *$', multiline=True) }}
+
+# The lists this run applies: the configured ones, unless the gate keeps 22
+# allowed ('open') or leaves it as it is ('hold') on this run.
+- name: Settle the ports this run allows and closes
+  ansible.builtin.set_fact:
+    hardening_ufw_allow_now: >-
+      {{ hardening_ufw_allowed_ports + ([22] if hardening_ufw_gate_22 == 'open' else []) }}
+    hardening_ufw_close_now: >-
+      {{ hardening_ufw_closed_ports | reject('eq', 22) | list
+         if hardening_ufw_gate_22 in ['open', 'hold'] else hardening_ufw_closed_ports }}
+  vars:
+    hardening_ufw_gate_22: "{{ hardening_ufw_ssh_gate | default('close') }}"
+
+- name: Say that SSH stays open until Azure Arc SSH is ready
+  ansible.builtin.debug:
+    msg: >-
+      Port 22 stays open to the internet on this run, and sshd listens on every address: Azure Arc
+      SSH is
+      {{ 'being turned off (arc_incoming_ssh_enabled is false)' if not (hardening_arc_ssh_wanted | bool) else 'not ready here' }}
+      (agent {{ hardening_arc_status }}, incoming connections {{ hardening_arc_incoming_enabled or 'unset' }}
+      on ports {{ hardening_arc_incoming_ports }}). Both close on the first bootstrap.sh run
+      {{ 'with arc_incoming_ssh_enabled true again, ' if not (hardening_arc_ssh_wanted | bool) else '' }}once
+      the agent is Connected with incoming connections on for port 22 (docs/runbooks/labs-host.md,
+      "Arc onboarding" and "Connect through Azure Arc").
+  when: hardening_ufw_ssh_gate | default('close') == 'open'
+
+- name: Say that SSH is left as it is while the Arc agent is Disconnected
+  ansible.builtin.debug:
+    msg: >-
+      Port 22 is left as ufw has it on this run, and sshd
+      {{ 'on the loopback alone' if hardening_sshd_loopback_only | bool else 'on every address' }}: the
+      Azure Arc agent reports Disconnected, which a network drop and an agent reset both read as.
+      Both close on the first bootstrap.sh run once the agent is Connected with incoming
+      connections on for port 22.
+  when: hardening_ufw_ssh_gate | default('close') == 'hold'

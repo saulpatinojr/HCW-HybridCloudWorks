@@ -56,7 +56,8 @@ argument_specs:
         default: [80, 443]
         description:
           - The only TCP ports that may listen beyond the loopback, Caddy's (80 and 443). No UDP
-            port may. sshd listens on the loopback alone (#1257).
+            port may. sshd listens on the loopback alone (#1257). The lab host's group_vars adds
+            22 for a run in which the hardening role's Arc gate has sshd listen on every address.
       privilege_checks_listeners_argv:
         type: list
         elements: str

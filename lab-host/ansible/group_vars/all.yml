@@ -44,6 +44,10 @@ hardening_ssh_arc_gate: true
 # A run that turns Arc SSH off (arc_incoming_ssh_enabled false) keeps 22 open,
 # so the arc role clearing the agent's ports later in it strands nobody.
 hardening_arc_ssh_wanted: "{{ arc_incoming_ssh_enabled | default(true) }}"
+# The listener check admits 22 beyond the loopback only on a run where the Arc
+# gate has sshd listen on every address: while Arc SSH is not ready, as on a
+# rebuilt host before onboarding (roles/hardening/tasks/arc_gate.yml, #1257).
+privilege_checks_public_tcp_ports: "{{ [80, 443] if (hardening_sshd_loopback_only | default(true) | bool) else [22, 80, 443] }}"
 hardening_admin_user: hcwadmin
 # The only keys that may log in as hcwadmin (#953, owner decision 2026-10-16).
 # The hardening role writes hcwadmin's authorized_keys from this list and

@@ -234,6 +234,20 @@ check "and root's keys are untouched" "[ -s '${root_keys}' ]"
 check "and the reload still runs, on the restored drop-in, and clears the marker" \
   "[ \"\$(reload_count)\" -eq 4 ] && [ ! -e '${marker}' ]" "$(cat "${reloads}")"
 
+# 6. While Azure Arc SSH is not ready, tasks/arc_gate.yml sets
+# hardening_sshd_loopback_only false: the drop-in lists no ListenAddress, and
+# sshd -T must not report the loopback pair (#1257). As a rebuilt host's runs
+# before onboarding, which reach it over port 22.
+grep -v '^listenaddress ' "${work}/sshd-T.good" > "${work}/sshd-T.public"
+printf 'listenaddress [::]:22\nlistenaddress 0.0.0.0:22\n' >> "${work}/sshd-T.public"
+STUB_SSHD_T="${work}/sshd-T.public" run public -e hardening_sshd_loopback_only=false
+check "with sshd on every address, the drop-in lists no ListenAddress and the run passes" \
+  "[ \"\$(rc public)\" -eq 0 ] && grep -qxF 'AllowUsers hcwadmin' '${dropin}' && ! grep -q '^ListenAddress' '${dropin}' && [ \"\$(reload_count)\" -eq 5 ]" \
+  "$(out public; cat "${dropin}")"
+STUB_SSHD_T="${work}/sshd-T.good" run public-mismatch -e hardening_sshd_loopback_only=false
+check "and a run whose sshd still reports the loopback pair stops" \
+  "[ \"\$(rc public-mismatch)\" -ne 0 ] && says public-mismatch 'The sshd drop-in did not pass its checks'" "$(out public-mismatch)"
+
 if [ "${failed}" -gt 0 ]; then
   echo "sshd-apply.test.sh: ${failed} of $((passed + failed)) checks failed" >&2
   exit 1
