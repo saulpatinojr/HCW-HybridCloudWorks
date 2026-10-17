@@ -58,7 +58,7 @@ for entry in "${roles[@]}"; do
     fs.writeFileSync('$temp_file', JSON.stringify(role, null, 2));
   "
 
-  existing_id="$(az role definition list --name "$role_name" --query "[0].id" -o tsv 2>/dev/null || true)"
+  existing_id="$(az role definition list --name "$role_name" --scope "/subscriptions/$SUBSCRIPTION_ID" --query "[0].id" -o tsv 2>/dev/null || true)"
 
   if [[ -n "$existing_id" ]]; then
     echo "  Updating existing role definition..."

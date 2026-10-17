@@ -66,10 +66,7 @@ Write the new secret value into Key Vault `kv-site-prod-cus-01`:
 
 #### Option A: Azure CLI
 ```powershell
-az keyvault secret set `
-  --vault-name "kv-site-prod-cus-01" `
-  --name "CF-ORIGIN-SECRET" `
-  --value "<NEW_SECRET_VALUE>"
+az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CF-ORIGIN-SECRET" --value "<NEW_SECRET_VALUE>"
 ```
 
 #### Option B: Admin UI
@@ -79,12 +76,11 @@ Navigate to `https://hybridcloudworks.com/admin/integrations?tab=keys`, locate *
 App Service must evict the cached secret and resolve the latest version from Key Vault. Restart the Function App to make the new secret active in runtime memory immediately:
 
 ```powershell
-az functionapp restart `
-  --name "func-site-prod-cus-01" `
-  --resource-group "rg-web-site-prod-cus"
+az functionapp restart --name "func-site-prod-cus-01" --resource-group "rg-web-site-prod-cus"
 ```
 
-*Note: For a few moments while the app restarts and Cloudflare has not yet updated, requests will fail origin verification. Proceed immediately to Step 4.*
+!!! warning "Planned service interruption window"
+    Because the Azure Functions runtime immediately resolves the new secret upon restart while Cloudflare continues stamping the previous secret until the Terraform apply completes, there is an unavoidable brief service interruption window (typically 30–90 seconds) during which anonymous public requests will receive HTTP 403 Forbidden (`unverified origin`). Execute Steps 4 and 5 immediately to minimize the window.
 
 ### Step 4: Update HCP Terraform workspace variable
 1. Log in to [HCP Terraform](https://app.terraform.io/) and navigate to organization `hcw`, workspace `hcw-azure`.
@@ -112,11 +108,12 @@ Perform end-to-end verification across edge and origin:
    ```
    Must return `200 OK`.
 
-2. **Verify origin secret rejection**:
-   Send a request directly or with an invalid origin header to verify that unauthorized callers are rejected:
+2. **Verify direct origin rejection (bypassing Cloudflare)**:
+   Verify that traffic attempting to reach the Function App directly without passing through Cloudflare is rejected by App Service access restrictions:
    ```bash
-   curl -i -H "x-hcw-origin-secret: invalid-test-secret" "https://api-azure.hybridcloudworks.com/api/public/addons/migration/status"
+   curl -i "https://func-site-prod-cus-01.azurewebsites.net/api/public/addons/migration/status"
    ```
+   Must return `403 Forbidden` (`Ip Forbidden`). Note that Cloudflare's transform rule overwrites `x-hcw-origin-secret` on all proxied traffic through `api-azure.hybridcloudworks.com`.
 
 3. **Check Application Insights live metrics**:
    Query recent traces in Log Analytics `log-plat-prod-cus-01`:

@@ -184,7 +184,7 @@ Ensure GitHub Environment `production` is configured:
 Using the authoritative **Where to Re-obtain** paths documented in [Required inputs §4.6](../standards/required-inputs.md#46-key-vault-secrets-kv-site-prod-cus-01), seed all 30 Key Vault secrets into `kv-site-prod-cus-01`:
 
 ```powershell
-# Generated high-entropy secrets (retrieve from Bitwarden or generate fresh):
+# Generated high-entropy secrets (retrieve from Bitwarden escrow, or generate fresh with `openssl rand -hex 32` and immediately escrow in Bitwarden):
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CF-ORIGIN-SECRET" --value "<FROM_BITWARDEN>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CLIENT-IP-SALT" --value "<FROM_BITWARDEN>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "PREVIEW-SIGNING-SECRET" --value "<FROM_BITWARDEN>"
@@ -195,6 +195,7 @@ az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "ANTHROPIC-API-
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "OPENAI-API-KEY" --value "<KEY>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "NVIDIA-API-KEY" --value "<KEY>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "ELEVENLABS-API-KEY" --value "<KEY>"
+az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "AZURE-SPEECH-KEY" --value "<KEY>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "FIRECRAWL-API-KEY" --value "<KEY>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "REPLICATE-API-KEY" --value "<KEY>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "PUBLER-API-KEY" --value "<KEY>"

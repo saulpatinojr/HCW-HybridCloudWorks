@@ -323,12 +323,14 @@ here. Run the parameterized bootstrap script once, from an account with Owner or
 the subscription:
 
 ```powershell
+# Defaults to active subscription from `az account show` if -SubscriptionId is omitted:
 pwsh scripts/bootstrap-roles.ps1 -SubscriptionId "<workload-subscription-id>" -ManagementSubscriptionId "<mgmt-subscription-id>"
 ```
 
 Or on POSIX shells:
 
 ```bash
+# bash
 scripts/bootstrap-roles.sh "<workload-subscription-id>" "<mgmt-subscription-id>"
 ```
 
@@ -338,7 +340,7 @@ scripts/bootstrap-roles.sh "<workload-subscription-id>" "<mgmt-subscription-id>"
 | `HCW Function Config Refresh` | `Microsoft.Web/sites/config/Write`, with `config/list/action` excluded | The API Keys page, so a seeded secret goes live in seconds rather than on App Service's 24-hour cache cycle |
 | `HCW Function Settings Reader` | `Microsoft.Web/sites/config/list/action` and nothing else | `monitor-functions-registered.yml`, the one thing the `Reader` role cannot express — listing app settings is an action, not a read |
 | `HCW Static Web App Deployer` | `Microsoft.Web/staticSites/listSecrets/action` and nothing else | `deploy-azure-frontend.yml` via OIDC to retrieve just-in-time deployment token |
-| `HCW Alert Rule Reader` | `Microsoft.Insights/scheduledQueryRules/read` on app and mgmt subscriptions | `verify-alert-state.yml` to verify alerting fabric rules |
+| `HCW Alert Rule Reader` | Read alert rules (scheduled query rules, metric alerts, activity log alerts), action groups, and Resource Health availability statuses in `rg-web-site-prod-cus` and `rg-mgmt-plat-prod-cus` | `verify-alert-state.yml` to verify alerting fabric rules |
 
 The first two were declared as Terraform `resource` blocks when the API Keys
 page landed, which would have failed the very apply that turns the page on.

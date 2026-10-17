@@ -98,15 +98,21 @@ foreach ($config in $roleConfigs) {
     Write-Host "`nProcessing role '$roleName'..."
     Write-Host "  AssignableScopes: $($config.Scopes -join ', ')"
 
-    $existingRoleId = (az role definition list --name "$roleName" --query "[0].id" -o tsv 2>$null)
+    $existingRoleId = (az role definition list --name "$roleName" --scope "/subscriptions/$SubscriptionId" --query "[0].id" -o tsv 2>$null)
 
     if ($existingRoleId) {
       Write-Host "  Updating existing role definition..."
       az role definition update --role-definition "@$tempFile" --output none
+      if ($LASTEXITCODE -ne 0) {
+        throw "Failed to update role definition '$roleName' (exit code $LASTEXITCODE)."
+      }
       Write-Host "  ✓ Updated successfully."
     } else {
       Write-Host "  Creating new role definition..."
       az role definition create --role-definition "@$tempFile" --output none
+      if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create role definition '$roleName' (exit code $LASTEXITCODE)."
+      }
       Write-Host "  ✓ Created successfully."
     }
   } finally {
