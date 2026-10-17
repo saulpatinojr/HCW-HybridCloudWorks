@@ -154,12 +154,19 @@ run() {
   echo $? > "${work}/${name}.rc"
   set -e
 }
+# rc NAME: the exit code of run NAME.
 rc() { cat "${work}/$1.rc"; }
+# out NAME: everything run NAME printed.
 out() { cat "${work}/$1.out"; }
+# says NAME TEXT: true when run NAME printed TEXT.
 says() { grep -qF -- "$2" "${work}/$1.out"; }
+# reload_count: how many times the stand-in reload has run so far.
 reload_count() { wc -l < "${reloads}" | tr -d ' '; }
+# last_reload: the most recent stand-in reload's line, with root's key bytes at that moment.
 last_reload() { tail -n 1 "${reloads}"; }
+# root_has_key: root's authorized_keys holds one stand-in key, as before the first run.
 root_has_key() { mkdir -p "$(dirname "${root_keys}")"; echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandInRootKey stand-in' > "${root_keys}"; }
+# backups: how many files beside the drop-in its directory holds, a backup being one.
 backups() { find "$(dirname "${dropin}")" -mindepth 1 ! -name "$(basename "${dropin}")" | wc -l | tr -d ' '; }
 
 # 1. A fresh write.

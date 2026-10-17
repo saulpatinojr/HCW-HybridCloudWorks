@@ -29,6 +29,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** A repository file as text. */
 const read = (relative) => readFileSync(path.join(repoRoot, relative), 'utf8');
 const role = 'lab-host/ansible/roles/hardening';
 
@@ -54,6 +55,7 @@ function items(text) {
     body: text.slice(m.index, i + 1 < starts.length ? starts[i + 1].index : text.length),
   }));
 }
+/** The task named `name` in a task file, failing the test when there is none. */
 const task = (text, name) => {
   const found = items(text).find((t) => t.name === name);
   expect(found, `no task named "${name}"`).toBeDefined();

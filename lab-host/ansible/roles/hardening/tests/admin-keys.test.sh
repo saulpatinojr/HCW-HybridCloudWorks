@@ -45,7 +45,9 @@ for k in one two three; do
   cut -d' ' -f1,2 "${work}/${k}.pub" > "${work}/${k}.bare"
   ssh-keygen -l -E sha256 -f "${work}/${k}.pub" | cut -d' ' -f2 > "${work}/${k}.fp"
 done
+# bare KEY: that test key's public line, type and key only, as the list holds it.
 bare() { cat "${work}/$1.bare"; }
+# fp KEY: that test key's SHA256 fingerprint, as ssh-keygen -l prints it.
 fp() { cat "${work}/$1.fp"; }
 
 cat > "${work}/play.yml" <<EOF
@@ -78,11 +80,13 @@ journal="${work}/journal"
 me="$(id -un)"
 
 # reset: empty scratch homes, as a host has them, and an empty journal (a
-# fresh host); then admin_has/root_has write a file's lines and journal_has
-# the journal's.
+# fresh host).
 reset() { rm -rf "${work}/admin" "${work}/root"; mkdir -p "${work}/admin" "${work}/root"; : > "${journal}"; }
+# admin_has LINE...: the administrative user's authorized_keys holds these lines.
 admin_has() { mkdir -p "$(dirname "${admin_file}")"; printf '%s\n' "$@" > "${admin_file}"; }
+# root_has LINE...: root's authorized_keys holds these lines.
 root_has() { mkdir -p "$(dirname "${root_file}")"; printf '%s\n' "$@" > "${root_file}"; }
+# journal_has LINE...: the journal the guard reads holds these lines.
 journal_has() { printf '%s\n' "$@" > "${journal}"; }
 # login USER KEY: sshd's INFO line for an accepted login with that key.
 login() { printf 'Accepted publickey for %s from 192.0.2.7 port 50022 ssh2: ED25519 %s' "$1" "$(fp "$2")"; }
@@ -105,9 +109,13 @@ run() {
   echo $? > "${work}/${name}.rc"
   set -e
 }
+# rc NAME: the exit code of run NAME.
 rc() { cat "${work}/$1.rc"; }
+# out NAME: everything run NAME printed.
 out() { cat "${work}/$1.out"; }
+# says NAME TEXT: true when run NAME printed TEXT.
 says() { grep -qF -- "$2" "${work}/$1.out"; }
+# json LINE: a one-entry JSON list of LINE, for run's KEYS_JSON.
 json() { printf '["%s"]' "$1"; }
 
 # 1. An empty list stops the run before anything is written.
