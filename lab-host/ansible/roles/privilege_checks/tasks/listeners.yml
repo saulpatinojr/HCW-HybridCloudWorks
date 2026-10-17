@@ -45,3 +45,63 @@
       process (docs/runbooks/labs-host.md, "Listeners beyond the loopback").
     quiet: true
   when: not ansible_check_mode
+
+# The same promise for the host daemon's published ports, read from the rules
+# that carry them rather than from a socket (#1252 review). A port published
+# on 127.0.0.1 is a DNAT rule in the nat table's DOCKER chain with
+# `-d 127.0.0.1/32`; one published on every address has no `-d` at all. The
+# socket read above sees each one too, through Docker's userland proxy, but
+# that proxy is a daemon setting, and with it off a published port has no
+# listener. Read 2026-10-17: five DNAT rules, every one -d 127.0.0.1/32, and
+# none for IPv6. A chain that does not exist (no Docker, or no IPv6 NAT)
+# reads as no rules: iptables and ip6tables both exit 1 with "No
+# chain/target/match by that name." Any other failure fails the run, so a
+# table that could not be read is never taken for one with no rules (exit 4,
+# "Permission denied", unprivileged; read on the host 2026-10-17).
+#
+# That read covers Docker's iptables backend only. With its nftables backend
+# (Docker 29) the DOCKER chain would not exist and would read as no
+# publications. So the daemon's backend, from the docker info check 2 already
+# read (privilege_checks_host), must be iptables. Read on the host 2026-10-17:
+# iptables, userland proxy on (#1253 review).
+- name: Refuse a Docker firewall backend the published-port read does not cover
+  vars:
+    privilege_checks_firewall_backend: >-
+      {{ (privilege_checks_host.host_info.FirewallBackend | default({})).Driver | default('') }}
+  ansible.builtin.assert:
+    that:
+      - privilege_checks_firewall_backend == 'iptables'
+    fail_msg: >-
+      The host daemon reports firewall backend '{{ privilege_checks_firewall_backend }}', and the
+      published-port check reads iptables' nat table alone, so it would see no publications. Put the
+      daemon back on iptables, or extend tasks/listeners.yml to read that backend's rules first.
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Read the host daemon's published-port rules, IPv4 and IPv6
+  ansible.builtin.command:
+    argv: "{{ item }}"
+  loop: "{{ privilege_checks_dnat_argv }}"
+  register: privilege_checks_dnat
+  changed_when: false
+  failed_when: >-
+    privilege_checks_dnat.rc != 0 and
+    'No chain/target/match by that name.' not in privilege_checks_dnat.stderr
+  check_mode: false
+
+- name: Refuse a published port that is not on the loopback
+  vars:
+    privilege_checks_exposed_publishes: >-
+      {{ privilege_checks_dnat.results | map(attribute='stdout_lines') | flatten
+         | select('search', ' -j DNAT ')
+         | reject('search', ' -d (127[.][0-9.]+/32|::1/128) ')
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - privilege_checks_exposed_publishes | length == 0
+    fail_msg: >-
+      The host daemon publishes these beyond the loopback: {{ privilege_checks_exposed_publishes | join(' | ') }}.
+      Publish the container's port as 127.0.0.1:<port>:<port>, or remove the container
+      (docs/runbooks/labs-host.md, "Listeners beyond the loopback").
+    quiet: true
+  when: not ansible_check_mode

@@ -21,6 +21,11 @@ privilege_checks_userns_required: "{{ docker_userns_remap | default(true) }}"
 privilege_checks_public_tcp_ports: [22, 80, 443]
 # How the listeners are read; a test points it at a fixture.
 privilege_checks_listeners_argv: [ss, -H, -l, -n, -t, -u]
+# How the host daemon's published-port rules are read, IPv4 then IPv6; a test
+# points them at fixtures.
+privilege_checks_dnat_argv:
+  - [iptables, -w, -t, nat, -S, DOCKER]
+  - [ip6tables, -w, -t, nat, -S, DOCKER]
 
 privilege_checks_coder_enabled: "{{ coder_enabled }}"
 privilege_checks_coder_compose_file: /etc/hcw/coder/docker-compose.yml

@@ -1877,6 +1877,21 @@ Bind that service to `127.0.0.1` (for a container, publish
 is a recap with `failed=0`. Port 22 leaves `privilege_checks_public_tcp_ports`
 when it closes to the internet (#953, stage 3).
 
+The same check also reads the host daemon's published ports from the rules
+that carry them: every `DNAT` rule in the `nat` table's `DOCKER` chain, IPv4
+and IPv6, must name a loopback destination (`-d 127.0.0.1/32` or
+`-d ::1/128`). That holds even with Docker's userland proxy off, when a
+published port has no listener for `ss` to see. A failure says `The host
+daemon publishes these beyond the loopback:` and quotes each rule. This
+lists them, bash on the host:
+
+```bash
+sudo iptables -w -t nat -S DOCKER; sudo ip6tables -w -t nat -S DOCKER
+```
+
+Publish the container's port as `127.0.0.1:<port>:<port>`, or remove the
+container, then run `bootstrap.sh` again.
+
 ### Host firewall for the sandbox and bridges
 
 The `host_firewall` role (#954, #958; owner decision 2026-10-16) limits
