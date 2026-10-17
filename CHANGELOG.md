@@ -19,6 +19,27 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Coder: only the `lab-learners` team signs in, and no sign-in creates an
+  account (#954, LAB-8)**. Owner decision 2026-10-16.
+  - **The allowlist:** the `coder` role renders
+    `CODER_OAUTH2_GITHUB_ALLOWED_TEAMS=HybridCloudWorks/lab-learners`, and
+    `coder_oauth2_github_allow_signups` is `false`.
+  - **The checks:** `tasks/signin_policy.yml` refuses an empty team list,
+    or a team that is not `<organisation>/<team-slug>` in an allowed
+    organisation spelled the same way, since Coder v2.38.0 checks a team
+    only inside an organisation the learner already passed.
+  - **Who is affected:** existing accounts, the owner's included, keep
+    working, and the team is checked at each GitHub sign-in. A learner's
+    first sign-in matches only an account the owner made with their
+    primary verified GitHub email; the runbook's new "Coder sign-in:
+    adding and removing a learner" has the lines, and a suspended learner's
+    workspaces stop within a minute. Sign-ups off is the normal setting
+    now, not a kill switch: `group_vars`, ADR 0032 and
+    `docs/standards/required-inputs.md` say so.
+  - **Runbook token lines:** they strip the carriage return with
+    `tr -d \\r`; one backslash had deleted every `r` from the token.
+  - **Tests:** `roles/coder/tests/coder-signin.test.sh` (23 checks) in the
+    `ansible-lint (lab-host)` job.
 - **Lab host: Azure Arc SSH as the owner's way in; port 22 stays open
   (#953, LAB-7 stage 2)**. Arc SSH carries the session through an Azure
   Relay connection the host's Arc agent dials out to, so sshd needs no
