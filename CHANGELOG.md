@@ -19,6 +19,24 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: the play fails if anything listens beyond the loopback but sshd
+  and Caddy (#958, LAB-12)**. The last check of every run
+  (`roles/privilege_checks`, `tasks/listeners.yml`) reads every TCP and UDP
+  listener with `ss`, the rootless sandbox's forwarded ports included.
+  - **What fails:** anything not on `127.0.0.0/8`, `::1` or an IPv4-mapped
+    loopback address, unless it is TCP on `privilege_checks_public_tcp_ports`
+    (22, 80 and 443). The failure names each one.
+  - **UDP and port 22:** no UDP port is public now that Caddy serves no
+    HTTP/3, and port 22 leaves the list when it closes (#953, stage 3).
+  - **The isolation chain:** the other half of LAB-12's acceptance is the
+    host firewall's read-back (#1236), which fails the play when the live
+    chains differ from the files.
+  - **Tests:** `tests/listeners.test.sh` (15 checks, in the
+    `ansible-lint (lab-host)` job). On the lab host's own `ss` output of
+    2026-10-17 it refuses only Caddy's UDP 443, which the next bootstrap
+    removes, and passes without it. The runbook gains "Listeners beyond the
+    loopback".
+
 - **Audit finding PLAT-8: Cosmos DB export immutability, dedicated state container, 90-day security log retention & PII data-plane auditing (#968)**.
   - Added time-based WORM immutability policy `azurerm_storage_container_immutability_policy.cosmos_export` in `infra/storage.tf` enforcing 35-day retention matching the `expire-cosmos-export` lifecycle policy so backup blobs cannot be deleted or overwritten by the application identity or non-admin roles. Parameterized locking via `var.cosmos_export_immutability_locked`.
   - Added dedicated mutable container `azurerm_storage_container.cosmos_export_state` (`cosmos-export-state`) for change-feed continuation tokens (`state/${container}.json`), preventing daily delta continuation token overwrites from failing against WORM container retention (`BlobImmutableDueToPolicy`). Updated `createExportBlobStore` in `functions/src/lib/backup/cosmos-export-edges.js` to route `state/` continuation blobs to `cosmos-export-state`.

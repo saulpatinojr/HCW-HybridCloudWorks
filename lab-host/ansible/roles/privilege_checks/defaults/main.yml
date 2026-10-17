@@ -14,6 +14,14 @@ privilege_checks_agent_proxy_container: hcw-labs-agent-docker-proxy
 # docker_userns_remap=false) is reported as a warning, not a failure.
 privilege_checks_userns_required: "{{ docker_userns_remap | default(true) }}"
 
+# The only ports that may listen beyond the loopback (tasks/listeners.yml,
+# #958): sshd and Caddy. TCP alone: Caddy serves no HTTP/3 (#958), so no UDP
+# port is public. Port 22 leaves this list when it closes to the internet
+# (#953, stage 3).
+privilege_checks_public_tcp_ports: [22, 80, 443]
+# How the listeners are read; a test points it at a fixture.
+privilege_checks_listeners_argv: [ss, -H, -l, -n, -t, -u]
+
 privilege_checks_coder_enabled: "{{ coder_enabled }}"
 privilege_checks_coder_compose_file: /etc/hcw/coder/docker-compose.yml
 privilege_checks_sandbox_socket_dir: /run/hcw-coder-docker

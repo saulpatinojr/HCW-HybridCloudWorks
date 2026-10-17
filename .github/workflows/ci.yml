@@ -538,6 +538,15 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/hardening/tests/admin-keys.test.sh
 
+      # Listeners beyond the loopback (#958, LAB-12): the privilege_checks
+      # role's listener check runs with this job's ansible-core against the
+      # lab host's own ss output of 2026-10-17 and against made-up listeners.
+      # It refuses anything beyond the loopback but TCP 22, 80 and 443, and
+      # names each one. Needs neither root nor Docker.
+      - name: listeners test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/privilege_checks/tests/listeners.test.sh
+
       # sshd's settings and root's keys (#953): the hardening role's sshd
       # tasks run against a stub sshd and scratch paths, with the reload of
       # ssh.service logged instead of done. The pending-reload marker is
