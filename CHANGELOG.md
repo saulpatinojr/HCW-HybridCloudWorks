@@ -36,6 +36,12 @@ This project has not cut a tagged release; entries are grouped under
     workspaces stop within a minute. Sign-ups off is the normal setting
     now, not a kill switch: `group_vars`, ADR 0032 and
     `docs/standards/required-inputs.md` say so.
+  - **No account, no route:** sign-ups off does not cover a deployment's
+    first account, which v2.38.0 lets through from GitHub or `/setup` and
+    makes the Owner. After Coder starts, the role reads
+    `/api/v2/users/first`; on a 404 it takes Coder's Caddy route down and
+    fails, and the runbook's "A Coder with no account yet" has the owner's
+    measured recovery. `scripts/lab-host-coder-first-user.test.mjs` holds it.
   - **Runbook token lines:** they strip the carriage return with
     `tr -d \\r`; one backslash had deleted every `r` from the token.
   - **Tests:** `roles/coder/tests/coder-signin.test.sh` (23 checks) in the
