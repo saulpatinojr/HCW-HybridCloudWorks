@@ -76,6 +76,11 @@ run "infrastructure_security_guards" {
     error_message = "Cosmos DB built-in Data Contributor role definition must be assigned to the Function App."
   }
 
+  assert {
+    condition     = azurerm_cosmosdb_sql_role_assignment.func_cosmos.scope == azurerm_cosmosdb_account.hcw.id
+    error_message = "Cosmos DB role assignment must be scoped strictly to the Cosmos DB account."
+  }
+
   # 4. Cosmos network isolation and keyless authentication (T-504)
   assert {
     condition     = azurerm_cosmosdb_account.hcw.is_virtual_network_filter_enabled == true

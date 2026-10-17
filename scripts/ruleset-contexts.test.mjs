@@ -11,8 +11,9 @@
  * Conversely, if a required check is removed from the ruleset, an essential gate
  * could be silently dropped.
  *
- * This contract asserts exact 1:1 correspondence between the required status checks
- * in the ruleset and the jobs declared across .github/workflows/*.yml on pull requests.
+ * Like `scripts/workflow-write-permissions.test.mjs` and `scripts/oidc-subjects.test.mjs`,
+ * this list represents the canonical offline tripwire for required branch protection
+ * rulesets without requiring external network API calls during unit tests.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -59,22 +60,57 @@ describe('Ruleset required status checks contract (T-982)', () => {
     for (const { file, content } of allWorkflowTexts) {
       if (!content.includes('pull_request:')) continue;
 
-      // Extract explicit 'name:' lines under jobs and matrix items
       const lines = content.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const match = line.match(/^\s*(?:-\s*)?name:\s+['"]?([^'"]+)['"]?\s*$/);
-        if (match) {
-          const rawName = match[1].trim();
-          jobNames.add(rawName);
+      let inJobsSection = false;
+      let inMatrixInclude = false;
+      let codeqlJobTemplate = null;
+      const codeqlLanguages = [];
+
+      for (const line of lines) {
+        if (/^[a-zA-Z0-9_-]+:/.test(line)) {
+          inJobsSection = line.startsWith('jobs:');
+          inMatrixInclude = false;
+          continue;
+        }
+
+        if (!inJobsSection) continue;
+
+        if (/^\s{6,12}include:/.test(line)) {
+          inMatrixInclude = true;
+          continue;
+        }
+
+        // Job-level name: (indented 4 spaces under job id)
+        const jobNameMatch = line.match(/^\s{4}name:\s+['"]?([^'"]+)['"]?\s*$/);
+        if (jobNameMatch) {
+          const rawName = jobNameMatch[1].trim();
+          if (rawName.includes('${{ matrix.language }}')) {
+            codeqlJobTemplate = rawName;
+          } else if (!rawName.includes('${{ matrix.')) {
+            jobNames.add(rawName);
+          }
+        }
+
+        // Matrix include items:
+        if (inMatrixInclude) {
+          // Matrix name: (e.g. in ci.yml)
+          const matrixNameMatch = line.match(/^\s{10,12}-\s*name:\s+['"]?([^'"]+)['"]?\s*$/);
+          if (matrixNameMatch) {
+            jobNames.add(matrixNameMatch[1].trim());
+          }
+          // Matrix language: (e.g. in codeql.yml)
+          const matrixLangMatch = line.match(/^\s{10,12}-\s*language:\s+['"]?([^'"]+)['"]?\s*$/);
+          if (matrixLangMatch) {
+            codeqlLanguages.push(matrixLangMatch[1].trim());
+          }
         }
       }
 
-      // Handle CodeQL matrix languages (Analyze javascript-typescript, Analyze actions, Analyze python)
-      if (file === 'codeql.yml') {
-        jobNames.add('Analyze javascript-typescript');
-        jobNames.add('Analyze actions');
-        jobNames.add('Analyze python');
+      // Expand CodeQL matrix languages if template and languages found
+      if (codeqlJobTemplate && codeqlLanguages.length > 0) {
+        for (const lang of codeqlLanguages) {
+          jobNames.add(codeqlJobTemplate.replace('${{ matrix.language }}', lang));
+        }
       }
     }
 
