@@ -134,7 +134,7 @@ jobs:
           # lab-host-coder-first-user.test.mjs (#954).
           - name: scripts (operations)
             dir: scripts
-            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/labs-host\.md$|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/(lib/(labs|rss/feeds|credentials/cloudflare-roll)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
+            filter: '^(scripts/|\.github/workflows/|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/labs-host\.md$|([^/]+/)*package\.json$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/(lib/(labs|rss/feeds|credentials/(cloudflare-roll|google-roll|aws-roll))\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
             lint: npm run lint
             test: npm test
           # vps-agent shells out to `docker run` with a payload that reached
@@ -235,6 +235,11 @@ jobs:
       # how a bad dependency bump shows up.
       - name: Install (lockfile-strict)
         if: steps.changes.outputs.relevant == 'true'
+        run: npm ci
+
+      - name: Install functions dependencies for cross-package operations
+        if: steps.changes.outputs.relevant == 'true' && matrix.name == 'scripts (operations)'
+        working-directory: ${{ github.workspace }}/functions
         run: npm ci
 
       # Lint and format run before the build so style feedback arrives fast.
