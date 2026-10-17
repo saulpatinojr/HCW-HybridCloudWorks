@@ -142,7 +142,12 @@ describe('Admin accessibility assertions (QA-4 / AP-F9)', () => {
       }
       return Promise.resolve({
         success: true,
-        readiness: { functionsConfigured: true, publishedItems: 14, missingSlugCount: 2, rssSources: 11 },
+        readiness: {
+          functionsConfigured: true,
+          publishedItems: 14,
+          missingSlugCount: 2,
+          rssSources: 11,
+        },
         digest: {
           digestDate: '2026-04-12',
           totalQueued: 8,
