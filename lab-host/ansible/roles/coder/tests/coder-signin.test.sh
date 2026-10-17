@@ -30,8 +30,11 @@ ansible="$(cd "${here}/../../.." && pwd)"
 
 passed=0
 failed=0
+# ok NAME: count and print a passing check, TAP style.
 ok() { passed=$((passed + 1)); echo "ok ${passed} - $1"; }
+# not_ok NAME [DETAIL]: count and print a failing check, with its detail indented.
 not_ok() { failed=$((failed + 1)); echo "not ok - $1" >&2; [ -z "${2:-}" ] || printf '    %s\n' "$2" >&2; }
+# check NAME CONDITION [DETAIL]: evaluate CONDITION and report it as ok or not ok.
 check() { if eval "$2"; then ok "$1"; else not_ok "$1" "${3:-}"; fi; }
 
 command -v ansible > /dev/null || { echo "ansible is not on PATH; install ansible-core" >&2; exit 1; }
@@ -59,6 +62,7 @@ else
   exit 1
 fi
 
+# line_count NAME: how many lines of the rendered coder.env set NAME.
 line_count() { grep -c "^$1=" "${env_file}" || true; }
 for name in CODER_OAUTH2_GITHUB_ALLOWED_ORGS CODER_OAUTH2_GITHUB_ALLOWED_TEAMS CODER_OAUTH2_GITHUB_ALLOW_SIGNUPS; do
   check "coder.env sets ${name} exactly once" "[ \"\$(line_count ${name})\" = 1 ]" "$(grep -n '^CODER_OAUTH2_' "${env_file}" | sed 's/CLIENT_SECRET=.*/CLIENT_SECRET=(hidden)/')"
@@ -91,7 +95,9 @@ policy() {
   (cd "${ansible}" && ansible-playbook "${work}/policy.yml" "${common[@]}" -e "$2") > "${work}/$1.out" 2>&1 || rc=$?
   echo "${rc}" > "${work}/$1.rc"
 }
+# rc_of NAME: the exit code of policy NAME.
 rc_of() { cat "${work}/$1.rc"; }
+# said NAME TEXT: true when policy NAME printed TEXT.
 said() { grep -qF -- "$2" "${work}/$1.out"; }
 
 policy as_merged '{}'
