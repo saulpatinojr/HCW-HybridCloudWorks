@@ -116,6 +116,8 @@
 
     # 'hold' keeps the drop-in's choice: loopback alone if it says so now,
     # every address if it does not (a Web Console reopen removes the lines).
+    # No drop-in to read keeps the loopback, the role's default (CodeRabbit
+    # on #1263).
     - name: Read sshd's listen addresses while the Arc agent is Disconnected
       ansible.builtin.slurp:
         src: "{{ hardening_sshd_dropin_path }}"
@@ -128,8 +130,9 @@
         hardening_sshd_loopback_only: >-
           {{ true if hardening_ufw_ssh_gate == 'close'
              else false if hardening_ufw_ssh_gate == 'open'
-             else (hardening_sshd_dropin_now.content | default('') | b64decode)
-                  is search('^ListenAddress 127[.]0[.]0[.]1 *$', multiline=True) }}
+             else (hardening_sshd_dropin_now.content is not defined
+                   or (hardening_sshd_dropin_now.content | b64decode)
+                      is search('^ListenAddress 127[.]0[.]0[.]1 *$', multiline=True)) }}
 
 # The lists this run applies: the configured ones, unless the gate keeps 22
 # allowed ('open') or leaves it as it is ('hold') on this run.

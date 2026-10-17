@@ -254,6 +254,10 @@ check "and leaves a 22 reopened from the Web Console open, without failing, whil
   "[ \"\$(rc reset)\" -eq 0 ] && [ \"\$(recap reset changed)\" -eq 0 ] && admits 22 && says reset '${held}'" "$(out reset)"
 check "and sshd on every address, as the reopened drop-in has it, with 22 admitted by the listener check" \
   "says reset '${everywhere}' && says reset 'and sshd on every address'" "$(out reset)"
+rm -f "${dropin}"
+run reset-nodropin
+check "and, with no drop-in to read, keeps sshd on the loopback, the role's default (CodeRabbit on #1263)" \
+  "[ \"\$(rc reset-nodropin)\" -eq 0 ] && says reset-nodropin '${loopback}'" "$(out reset-nodropin)"
 printf 'ListenAddress 127.0.0.1\nListenAddress ::1\n' > "${dropin}"
 arc_ready
 run reconnected
