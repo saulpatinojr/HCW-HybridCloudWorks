@@ -33,10 +33,14 @@ A qualifying bridge with an interface attached is reported and left alone.
 docker0, every bridge of the running root and every other program's bridge
 stay, whatever they are named.
 
+Any rule in the IPv4 nat table (POSTROUTING masquerade or DOCKER chain return/DNAT)
+referencing a br-* interface that does not exist among live bridges on the host
+is deleted so orphaned rules cannot masquerade or misroute traffic (#1228).
+
     hcw-docker-stale-bridges [--dry-run] [--docker-dir /var/lib/docker]
 
-Prints one JSON object on stdout, {"deleted": [...], "kept_attached": [...]},
-and exits 0; exits non-zero with the reason on stderr when docker or ip
+Prints one JSON object on stdout, {"deleted": [...], "kept_attached": [...], "deleted_rules": [...]},
+and exits 0; exits non-zero with the reason on stderr when docker, ip or iptables
 cannot be read. --dry-run reports what it would delete and deletes nothing.
 """
 
@@ -44,6 +48,8 @@ import argparse
 import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 
@@ -54,6 +60,9 @@ NETWORK_DB = os.path.join("network", "files", "local-kv.db")
 
 
 def run(argv):
+    executable = shutil.which(argv[0])
+    if executable:
+        argv = [executable] + argv[1:]
     result = subprocess.run(argv, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         print(
@@ -100,8 +109,9 @@ def recorded_prefixes(root):
 
 def other_roots_prefixes(docker_dir, current):
     prefixes = set()
+    current_norm = os.path.normcase(current)
     for root in data_roots(docker_dir):
-        if os.path.realpath(root) != current:
+        if os.path.normcase(os.path.realpath(root)) != current_norm:
             prefixes |= recorded_prefixes(root)
     return prefixes
 
@@ -125,6 +135,47 @@ def candidates(bridges, left_behind, owned):
     return found
 
 
+def nat_rule_lines():
+    """Rules from the IPv4 nat table as iptables -S outputs them."""
+    output = run(["iptables", "-w", "-t", "nat", "-S"])
+    return [line.strip() for line in output.splitlines() if line.startswith("-A ")]
+
+
+def rule_bridge_interfaces(tokens):
+    """The br-* interfaces referenced by -o, ! -o, -i, or ! -i in a rule's tokens."""
+    ifaces = []
+    i = 0
+    while i < len(tokens):
+        if tokens[i] in ("-o", "-i") and i + 1 < len(tokens):
+            iface = tokens[i + 1]
+            if iface.startswith("br-") and not iface.endswith("+"):
+                ifaces.append(iface)
+            i += 2
+        elif tokens[i] == "!" and i + 2 < len(tokens) and tokens[i + 1] in ("-o", "-i"):
+            iface = tokens[i + 2]
+            if iface.startswith("br-") and not iface.endswith("+"):
+                ifaces.append(iface)
+            i += 3
+        else:
+            i += 1
+    return ifaces
+
+
+def stale_nat_rules(live_bridges):
+    """Rules in the IPv4 nat table whose br-* interface is not among live_bridges."""
+    stale = []
+    for line in nat_rule_lines():
+        tokens = shlex.split(line)
+        if len(tokens) < 2 or tokens[0] != "-A":
+            continue
+        chain = tokens[1]
+        if chain in ("POSTROUTING", "DOCKER") or chain.startswith("DOCKER"):
+            bridge_ifaces = rule_bridge_interfaces(tokens)
+            if bridge_ifaces and any(iface not in live_bridges for iface in bridge_ifaces):
+                stale.append((line, chain, tokens[2:]))
+    return stale
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dry-run", action="store_true", help="report, delete nothing")
@@ -132,7 +183,7 @@ def main():
     args = parser.parse_args()
 
     left_behind = other_roots_prefixes(args.docker_dir, running_root())
-    report = {"deleted": [], "kept_attached": []}
+    report = {"deleted": [], "kept_attached": [], "deleted_rules": []}
     for bridge in candidates(bridge_names(), left_behind, owned_prefixes()):
         if attached(bridge):
             report["kept_attached"].append(bridge)
@@ -144,6 +195,13 @@ def main():
         if not args.dry_run:
             run(["ip", "link", "delete", bridge])
         report["deleted"].append(bridge)
+
+    live_bridges = set(bridge_names()) - set(report["deleted"])
+    for line, chain, rule_spec in stale_nat_rules(live_bridges):
+        if not args.dry_run:
+            run(["iptables", "-w", "-t", "nat", "-D", chain] + rule_spec)
+        report["deleted_rules"].append(line)
+
     print(json.dumps(report))
 
 

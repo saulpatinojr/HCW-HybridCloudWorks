@@ -70,28 +70,72 @@ case "$*" in
   *) echo "unexpected ip $*" >&2; exit 2 ;;
 esac
 EOF
-chmod +x "${bin}/docker" "${bin}/ip"
+
+cat > "${bin}/iptables" <<'EOF'
+#!/usr/bin/env bash
+[ -n "${FAKE_IPTABLES_FAIL:-}" ] && { echo "iptables: error communicating with netfilter" >&2; exit 1; }
+case "$*" in
+  "-w -t nat -S")
+    if [ -f "${FAKE_IPTABLES_NAT_RULES:-}" ]; then
+      cat "${FAKE_IPTABLES_NAT_RULES}"
+    fi ;;
+  "-w -t nat -D "*)
+    echo "$*" >> "${FAKE_IPTABLES_DELETED}" ;;
+  *) echo "unexpected iptables $*" >&2; exit 2 ;;
+esac
+EOF
+chmod +x "${bin}/docker" "${bin}/ip" "${bin}/iptables"
 
 deleted="${work}/deleted"
-run_helper() { PATH="${bin}:${PATH}" FAKE_IP_DELETED="${deleted}" python3 "${helper}" --docker-dir "${docker_dir}" "$@"; }
+deleted_rules="${work}/deleted-rules"
+nat_rules="${work}/nat-rules"
+run_helper() {
+  PATH="${bin}:${PATH}" \
+  FAKE_IP_DELETED="${deleted}" \
+  FAKE_IPTABLES_NAT_RULES="${nat_rules}" \
+  FAKE_IPTABLES_DELETED="${deleted_rules}" \
+  python3 "${helper}" --docker-dir "${docker_dir}" "$@";
+}
+
+cat > "${nat_rules}" <<'EOF'
+-P PREROUTING ACCEPT
+-P INPUT ACCEPT
+-P OUTPUT ACCEPT
+-P POSTROUTING ACCEPT
+-N DOCKER
+-A POSTROUTING -s 172.28.240.0/24 ! -o br-0d1f60c06b21 -j MASQUERADE
+-A DOCKER -i br-0d1f60c06b21 -j RETURN
+-A POSTROUTING -s 172.28.241.0/24 ! -o br-fc10ca1d255f -j MASQUERADE
+-A POSTROUTING -s 172.28.240.0/24 ! -o br-36a702e13fc7 -j MASQUERADE
+-A DOCKER -i br-36a702e13fc7 -j RETURN
+-A POSTROUTING -s 172.28.242.0/24 ! -o br-aaaaaaaaaaaa -j MASQUERADE
+-A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE
+-A POSTROUTING -s 172.28.243.0/24 ! -o br-eeeeeeeeeeee -j MASQUERADE
+EOF
 
 : > "${deleted}"
+: > "${deleted_rules}"
 out="$(run_helper)"
 check "deletes the two Coder bridges the legacy root left behind, in the kernel's order" \
   '[ "$(cat "${deleted}")" = "$(printf "br-0d1f60c06b21\nbr-fc10ca1d255f")" ]' "deleted: $(tr '\n' ' ' < "${deleted}")"
-check "reports them, and keeps the left-behind one with a port attached" \
-  '[ "${out}" = "{\"deleted\": [\"br-0d1f60c06b21\", \"br-fc10ca1d255f\"], \"kept_attached\": [\"br-aaaaaaaaaaaa\"]}" ]' "${out}"
+check "reports them, the deleted rules, and keeps the left-behind one with a port attached" \
+  '[ "${out}" = "{\"deleted\": [\"br-0d1f60c06b21\", \"br-fc10ca1d255f\"], \"kept_attached\": [\"br-aaaaaaaaaaaa\"], \"deleted_rules\": [\"-A POSTROUTING -s 172.28.240.0/24 ! -o br-0d1f60c06b21 -j MASQUERADE\", \"-A DOCKER -i br-0d1f60c06b21 -j RETURN\", \"-A POSTROUTING -s 172.28.241.0/24 ! -o br-fc10ca1d255f -j MASQUERADE\", \"-A POSTROUTING -s 172.28.243.0/24 ! -o br-eeeeeeeeeeee -j MASQUERADE\"]}" ]' "${out}"
+check "deletes the nat rules for removed bridges and pre-existing dead bridges" \
+  'grep -q "br-0d1f60c06b21" "${deleted_rules}" && grep -q "br-fc10ca1d255f" "${deleted_rules}" && grep -q "br-eeeeeeeeeeee" "${deleted_rules}"'
 check "leaves every bridge of the running root, docker0 and virbr0" \
   '! grep -qE "br-36a702e13fc7|br-dd814074ae36|br-4f1e2d3c4b5a|docker0|virbr0" "${deleted}"'
+check "leaves nat rules for live bridges, kept attached bridges, and docker0" \
+  '! grep -qE "br-36a702e13fc7|br-aaaaaaaaaaaa|docker0" "${deleted_rules}"'
 check "leaves another program's bridge named the way Docker names one: no Docker root records it" \
   '! grep -q "br-123456abcdef" "${deleted}"'
 check "leaves a network the running daemon created after the listing: its own root records it, not another" \
   '! grep -q "br-9e9e9e9e9e9e" "${deleted}"'
 
 : > "${deleted}"
+: > "${deleted_rules}"
 out="$(run_helper --dry-run)"
 check "--dry-run reports and deletes nothing" \
-  '[ ! -s "${deleted}" ] && echo "${out}" | grep -q "br-0d1f60c06b21"' "${out}"
+  '[ ! -s "${deleted}" ] && [ ! -s "${deleted_rules}" ] && echo "${out}" | grep -q "br-0d1f60c06b21" && echo "${out}" | grep -q "deleted_rules"' "${out}"
 
 # Before any switch there is only the legacy root, and the daemon runs on it.
 solo="${work}/solo"
@@ -100,16 +144,28 @@ write_db "${solo}/network/files/local-kv.db" "$(id 36a702e13fc7)"
 sed "s#${docker_dir}/100000.100000#${solo}#" "${bin}/docker" > "${bin}/docker.solo" && chmod +x "${bin}/docker.solo"
 mv "${bin}/docker.solo" "${bin}/docker"
 : > "${deleted}"
-out="$(PATH="${bin}:${PATH}" FAKE_IP_DELETED="${deleted}" python3 "${helper}" --docker-dir "${solo}")"
-check "deletes nothing on a host with one data root" \
-  '[ ! -s "${deleted}" ] && [ "${out}" = "{\"deleted\": [], \"kept_attached\": []}" ]' "${out}"
+: > "${deleted_rules}"
+: > "${nat_rules}"
+out="$(PATH="${bin}:${PATH}" FAKE_IP_DELETED="${deleted}" FAKE_IPTABLES_NAT_RULES="${nat_rules}" FAKE_IPTABLES_DELETED="${deleted_rules}" python3 "${helper}" --docker-dir "${solo}")"
+check "deletes nothing on a host with one data root and clean nat rules" \
+  '[ ! -s "${deleted}" ] && [ ! -s "${deleted_rules}" ] && [ "${out}" = "{\"deleted\": [], \"kept_attached\": [], \"deleted_rules\": []}" ]' "${out}"
 
 : > "${deleted}"
+: > "${deleted_rules}"
 if FAKE_DOCKER_FAIL=1 run_helper > "${work}/stdout" 2> "${work}/stderr"; then
   not_ok "fails when the daemon cannot be read" "it exited 0"
 else
   check "fails when the daemon cannot be read, and deletes nothing" \
-    '[ ! -s "${deleted}" ] && grep -q "Cannot connect" "${work}/stderr"' "$(cat "${work}/stderr")"
+    '[ ! -s "${deleted}" ] && [ ! -s "${deleted_rules}" ] && grep -q "Cannot connect" "${work}/stderr"' "$(cat "${work}/stderr")"
+fi
+
+: > "${deleted}"
+: > "${deleted_rules}"
+if FAKE_IPTABLES_FAIL=1 run_helper > "${work}/stdout" 2> "${work}/stderr"; then
+  not_ok "fails when iptables cannot be read" "it exited 0"
+else
+  check "fails when iptables cannot be read, and deletes no rules" \
+    '[ ! -s "${deleted_rules}" ] && grep -q "error communicating with netfilter" "${work}/stderr"' "$(cat "${work}/stderr")"
 fi
 
 echo "1..${passed}"

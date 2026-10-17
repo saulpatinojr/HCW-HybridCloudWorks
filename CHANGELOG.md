@@ -30,6 +30,22 @@ This project has not cut a tagged release; entries are grouped under
   and SHA-256 verified in `bootstrap.sh` and `group_vars/all.yml` and tracked upstream
   via `scripts/lab-pins-upstream.mjs`.
 
+### Fixed
+
+- **Lab host: stale-bridge cleanup purges orphaned NAT rules for removed bridges (#1228)**.
+  When rootless / userns-remap setups or dead Docker networks leave stale bridges,
+  `hcw-docker-stale-bridges.py` removes the dead network bridge via `ip link delete`.
+  However, Docker's default iptables rules in the `nat` table (such as
+  `-A POSTROUTING -s <subnet> ! -o br-<id> -j MASQUERADE` and `DOCKER` chain jumps)
+  remained behind in netfilter, matching unintended host-egress traffic and masquerading
+  container-to-container connections as host gateway IPs. The script now inspects
+  the IPv4 `nat` table (`iptables -w -t nat -S`) and removes all matching `POSTROUTING`
+  and `DOCKER` rules referencing dead bridge interfaces by exact specification via
+  `iptables -w -t nat -D <chain> <rule_spec>`, reporting `deleted_rules` alongside
+  `deleted` bridges. The `docker` Ansible role triggers on either deleted bridges or
+  deleted rules, and `privilege_checks` enforces the invariant that no IPv4 `nat`
+  table rules reference nonexistent `br-*` interfaces.
+
 ### Changed
 
 - **`alert-lab-ssh-login` is live and has fired; its plan declaration and

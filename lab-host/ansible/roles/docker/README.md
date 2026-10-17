@@ -117,9 +117,12 @@ list it when checked again just before the delete, and nothing may be
 attached. Another program's bridge named like Docker's is in no Docker
 database, and a network the running daemon creates is recorded in its own
 root, so neither can be deleted. One with an interface still attached is
-left, and the run names it. `tests/hcw-docker-stale-bridges.test.sh` runs it
-against stand-ins for `docker` and `ip` and a scratch data root (CI,
-`ansible-lint (lab-host)`).
+left, and the run names it. In addition, it purges orphaned IPv4 `nat` table
+rules (`POSTROUTING` masquerades and `DOCKER` returns/DNATs) whose `br-*`
+interface no longer exists in the kernel, ensuring removed networks cannot
+masquerade inter-container traffic (#1228).
+`tests/hcw-docker-stale-bridges.test.sh` runs it against stand-ins for
+`docker`, `ip`, and `iptables` and a scratch data root (CI, `ansible-lint (lab-host)`).
 
 ## Variables
 
