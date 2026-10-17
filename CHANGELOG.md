@@ -19,6 +19,14 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Secrets: Google API keys and AWS price-list IAM access key auto-renewal (#1028)**.
+  - Implemented automated Google Cloud API key renewal in `functions/src/lib/credentials/google-roll.js` via Google Cloud API Keys API v2 (`apikeys.googleapis.com`) with verify-before-delete semantics for `GEMINI-API-KEY`, `YOUTUBE-API-KEY`, and `GCP-BILLING-API-KEY`.
+  - Implemented automated AWS IAM access key renewal in `functions/src/lib/credentials/aws-roll.js` using pure SigV4 signing (`node:crypto`) with verify-before-delete semantics for `AWS-ACCESS-KEY-ID` and `AWS-SECRET-ACCESS-KEY` scoped to `pricing:GetProducts`.
+  - Enforced verify-before-delete: newly minted credentials are functionally probed against their respective cloud services (Gemini models list, YouTube videos list, GCP Billing services list, AWS Pricing GetProducts) AND committed to Azure Key Vault before old credentials are deleted. If a probe fails, the newly minted key is deleted and the existing key remains active and undisturbed.
+  - Added CLI orchestrator `scripts/roll-cloud-credentials.mjs` supporting `--target <gemini|youtube|billing|google-all|aws|all>`, `--dry-run`, and `--check` modes with zero CLI argument secret leakage.
+  - Updated `functions/src/lib/credentials/register.js` to set `renewal: 'automation'` with rotation commands for all five credentials.
+  - Added 65 new unit tests across `google-roll.test.js`, `aws-roll.test.js`, `roll-cloud-credentials.test.mjs`, and `register.test.js`.
+
 - **Coder: only the `lab-learners` team signs in, and no sign-in creates an
   account (#954, LAB-8)**. Owner decision 2026-10-16.
   - **The allowlist:** the `coder` role renders
@@ -48,6 +56,7 @@ This project has not cut a tagged release; entries are grouped under
     `tr -d \\r`; one backslash had deleted every `r` from the token.
   - **Tests:** `roles/coder/tests/coder-signin.test.sh` (23 checks) in the
     `ansible-lint (lab-host)` job.
+
 - **Secrets: Cloudflare API token auto-renewal via roll-token API (#1027)**.
   - Implemented automated Cloudflare API token renewal in `functions/src/lib/credentials/cloudflare-roll.js` and CLI orchestrator `scripts/roll-cloudflare-tokens.mjs`.
   - Supports all three estate targets: `tfc-azure-cloudflare-api-token` (`hcw-azure` HCP Terraform workspace), `tfc-lab-cloudflare-api-token` (`hcw-lab` HCP Terraform workspace), and `lab-caddy-cloudflare-api-token` (`vault_cloudflare_api_token` in lab host Ansible Vault).
