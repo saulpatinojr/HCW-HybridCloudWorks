@@ -295,7 +295,9 @@ export const DECLARED = [
   // flag from one nobody armed, because an enabled_timers without
   // PROBE_AI_PROVIDERS also plans no diff. The probe's last run, 2026-10-05
   // 06:15 UTC, logged "disabled - skipping". Its next run (Mondays 06:15 UTC)
-  // says which: delete this entry once it runs instead of skipping.
+  // says which: delete this entry once it runs instead of skipping. Read
+  // again on 2026-10-17: the live setting is still "false", so it has not
+  // applied and the entry stays.
   {
     address: "azurerm_function_app_flex_consumption.hcw",
     path: "app_settings.FEATURE_FLAG_PROBE_AI_PROVIDERS",
@@ -324,14 +326,9 @@ export const DECLARED = [
   // run under the new identity read every rule in both groups.
   // #1089's ADDON_NETWORK_ASSESSMENT_URL and ADDON_CLOUD_ASSESSMENT_URL
   // applied in run-rK5qZUjro4G4K7rz on 2026-10-12 and were deleted here.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.STREAMYARD_API_KEY",
-    before: undefined,
-    after:
-      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/STREAMYARD-API-KEY)",
-    reason: "StreamYard On-Air: Key Vault reference for STREAMYARD-API-KEY",
-  },
+  // #1101's STREAMYARD_API_KEY Key Vault reference was deleted here on
+  // 2026-10-17. Plans had shown it as "declared, not in this plan", and the
+  // live app settings that day held the declared reference.
   // #1098's five creates (github_manifest_window, its two federated
   // credentials, Config Refresh on the site and Reader on the web group) and
   // its one delete (github_reader_origin_window) applied in
@@ -345,17 +342,11 @@ export const DECLARED = [
   // were deleted here. tfc-plan-check.yml read each run as its declared
   // changes beside the permanent diff and nothing else.
   //
-  // #953 (LAB-7): alert-lab-ssh-login, a successful SSH login on the lab host
-  // that is not the admin user with the pinned key. Created by the owner's
-  // next apply; delete this entry once verify-alert-state.yml reads the rule
-  // OK.
-  {
-    address:
-      "azurerm_monitor_scheduled_query_rules_alert_v2.lab_hybrid_ssh_login_unexpected",
-    action: "create",
-    reason:
-      "#953 LAB-7: alert-lab-ssh-login, an accepted SSH login that is not the admin user with the pinned key",
-  },
+  // #953 (LAB-7)'s alert-lab-ssh-login create applied in run-6uJYNGWLDxkdv5ZB
+  // on 2026-10-16 and was deleted here. tfc-plan-check.yml read that run as
+  // the create beside the permanent diff, verify-alert-state.yml then read
+  // the rule OK, and its fire test opened an alert at 00:01:44Z on
+  // 2026-10-17.
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
