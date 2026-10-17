@@ -1185,10 +1185,19 @@ The live host has accounts, so this does not apply to it.
 make the first one, and that account is the Owner. Its `/setup` page makes a
 password account. A GitHub sign-in is let through as well, even with sign-ups
 off (`coderd/userauth.go`: `userCount == 0 || params.AllowSignups`). So
-`bootstrap.sh` never publishes such a Coder. The coder role reads
-`/api/v2/users/first`; on a 404 it takes Coder's Caddy route down and fails
-with `Coder has no account yet`, and Coder keeps running on the host's
-loopback only. Everything below was measured against v2.38.0 on 2026-10-17.
+`bootstrap.sh` never publishes such a Coder. Before Coder starts, the coder
+role counts the accounts in its database; with none, it takes Coder's Caddy
+route down and reloads Caddy, then and there. Once Coder is up, it asks
+`/api/v2/users/first` too, and on a 404 it fails with `Coder has no account
+yet`. Coder keeps running on the host's loopback only. Everything below was
+measured against v2.38.0 on 2026-10-17.
+
+Your GitHub account, `saulpatinojr`, must be a member of
+`HybridCloudWorks/lab-learners`, or step 4's sign-in is refused like any
+other outside the team. It has been since 2026-10-16. Success is
+`saulpatinojr` in the list at
+https://github.com/orgs/HybridCloudWorks/teams/lab-learners/members; if it
+is not there, add it with **Add a member** before step 4.
 
 1. **Your primary GitHub email**, into a variable: the address
    https://github.com/settings/emails marks **Primary** and verified, which

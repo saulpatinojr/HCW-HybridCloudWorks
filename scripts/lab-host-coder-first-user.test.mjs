@@ -33,6 +33,42 @@ function task(text, name) {
 }
 
 describe('the coder role keeps a Coder with no account unpublished', () => {
+  it('counts the accounts in the database and takes the route down BEFORE Coder starts', () => {
+    const names = [
+      'Start PostgreSQL alone, to read whether Coder has an account',
+      'Count Coder\'s accounts in its database',
+      'Take Coder\'s route down before a Coder with no account starts',
+      'Start Coder and PostgreSQL',
+    ].map((name) => main.indexOf(`- name: ${name}\n`));
+    expect(names.every((at) => at >= 0), String(names)).toBe(true);
+    expect([...names].sort((a, b) => a - b)).toEqual(names);
+    expect(task(main, 'Start PostgreSQL alone, to read whether Coder has an account')).toContain('services: [coder-postgres]');
+    const count = task(main, 'Count Coder\'s accounts in its database');
+    // System accounts left out, as /api/v2/users/first leaves them out (v2.38.0 has `prebuilds`).
+    expect(count).toContain('- SELECT count(*) FROM users WHERE NOT deleted AND NOT is_system');
+    expect(count).toContain('- coder-postgres');
+    expect(count).toContain('failed_when: false');
+    expect(count).toContain('check_mode: false');
+    // The container the query names is the Compose file's.
+    expect(read('lab-host/coder/docker-compose.yml')).toMatch(/^\s+container_name: coder-postgres$/m);
+    const include = task(main, 'Take Coder\'s route down before a Coder with no account starts');
+    expect(include).toContain('ansible.builtin.include_tasks: unpublish.yml');
+    // Anything but a readable count above zero, an error included, takes the route down.
+    expect(include).toContain('- not (coder_account_count.rc == 0 and (coder_account_count.stdout | trim | int) > 0)');
+  });
+
+  it('removes the route and flushes the reload handler then and there, always reporting the removal', () => {
+    const unpublish = read(`${role}/tasks/unpublish.yml`);
+    const remove = task(unpublish, 'Remove the coder route');
+    expect(remove).toContain('path: "{{ coder_caddy_route_file }}"');
+    expect(remove).toContain('state: absent');
+    // A route removed by an interrupted run may still be loaded: the reload always runs.
+    expect(remove).toContain('changed_when: true');
+    expect(remove).toContain('notify: Reload caddy for the coder route');
+    expect(task(unpublish, 'Reload Caddy now, before Coder starts')).toContain('ansible.builtin.meta: flush_handlers');
+    expect(unpublish).not.toMatch(/state: (reloaded|restarted)/);
+  });
+
   it('asks after Coder starts and before the Caddy route is written', () => {
     const start = main.indexOf('- name: Start Coder and PostgreSQL');
     const guard = main.indexOf('- name: Keep a Coder with no account unpublished');
@@ -61,6 +97,7 @@ describe('the coder role keeps a Coder with no account unpublished', () => {
     // Caddy is reloaded by handlers only (lab-host-caddy-admin.test.mjs), and
     // force_handlers runs this one although the fail ends the play.
     expect(takeDown).toContain('notify: Reload caddy for the coder route');
+    expect(takeDown).toContain('changed_when: true');
     expect(read(`${role}/handlers/main.yml`)).toContain('- name: Reload caddy for the coder route\n');
     expect(read('lab-host/ansible/site.yml')).toMatch(/^\s+force_handlers: true$/m);
     expect(firstUser).not.toMatch(/state: (reloaded|restarted)/);

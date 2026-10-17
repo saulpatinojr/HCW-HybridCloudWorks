@@ -133,6 +133,51 @@
     state: present
   when: coder_enabled | bool
 
+# Whether Coder has an account, read BEFORE Coder starts (#1246 review). A
+# Coder with none lets whoever reaches it make the first account, its Owner
+# (tasks/first_user.yml says how). So PostgreSQL starts first and alone, and
+# Coder's users table answers. System accounts are left out, as Coder's own
+# /api/v2/users/first leaves them out: v2.38.0 has one, `prebuilds`. A
+# database Coder has not migrated yet has no users table, so psql exits 1
+# (`relation "users" does not exist`). That counts as no account, and so does
+# any other error, so a database this cannot read never gets a published
+# Coder. Measured on v2.38.0 and PostgreSQL 18.6 on 2026-10-17: no schema
+# exits 1, migrated with no account prints 0, one account prints 1.
+- name: Start PostgreSQL alone, to read whether Coder has an account
+  community.docker.docker_compose_v2:
+    project_src: "{{ coder_project_dir }}"
+    services: [coder-postgres]
+    state: present
+    pull: missing
+    wait: true
+    wait_timeout: 300
+  when: coder_enabled | bool
+
+- name: Count Coder's accounts in its database
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - coder-postgres
+      - psql
+      - -U
+      - coder
+      - -d
+      - coder
+      - -tAc
+      - SELECT count(*) FROM users WHERE NOT deleted AND NOT is_system
+  register: coder_account_count
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: coder_enabled | bool
+
+- name: Take Coder's route down before a Coder with no account starts
+  ansible.builtin.include_tasks: unpublish.yml
+  when:
+    - coder_enabled | bool
+    - not (coder_account_count.rc == 0 and (coder_account_count.stdout | trim | int) > 0)
+
 - name: Start Coder and PostgreSQL
   community.docker.docker_compose_v2:
     project_src: "{{ coder_project_dir }}"

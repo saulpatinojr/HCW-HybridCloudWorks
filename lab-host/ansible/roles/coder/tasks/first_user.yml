@@ -6,10 +6,12 @@
 # makes a password account. A GitHub sign-in is let through as well, even
 # with sign-ups off (coderd/userauth.go: `userCount == 0 ||
 # params.AllowSignups`), limited only by the organisation and team
-# allowlists. So on a fresh install, or after a restore that left the
-# database empty, this stops before the Caddy route in tasks/main.yml is
-# written. It takes down a route an earlier run left, and fails with the
-# owner's steps (docs/runbooks/labs-host.md, "A Coder with no account yet").
+# allowlists. Two layers keep such a Coder unpublished. First, tasks/main.yml
+# counts the accounts in Coder's database before Coder starts, and takes the
+# route down, reloading Caddy then and there (tasks/unpublish.yml). Second,
+# this asks Coder itself once it is up, before the route is written. On a
+# 404 it takes down any route left, and fails with the owner's steps
+# (docs/runbooks/labs-host.md, "A Coder with no account yet").
 #
 # Coder keeps running on the host's loopback only (127.0.0.1:7080), where
 # those steps reach it. The sandbox user's firewall refuses host-local
@@ -27,13 +29,18 @@
   register: coder_first_user
   check_mode: false
 
-# Caddy is reloaded by the role's handler, never by a task
-# (scripts/lab-host-caddy-admin.test.mjs). site.yml sets force_handlers, so
-# the handler still runs although the fail below ends the play.
+# The second line of defence: tasks/main.yml has already taken the route
+# down before Coder started, from the database's own count. Caddy is reloaded
+# by the role's handler, never by a task (scripts/lab-host-caddy-admin.test.mjs),
+# and site.yml sets force_handlers, so it still runs although the fail below
+# ends the play. Not idempotent, on purpose, as in tasks/unpublish.yml: the
+# removal always reports a change on this path, so the reload always runs,
+# even for a route an interrupted run removed without reloading.
 - name: Take down the coder route while Coder has no account
   ansible.builtin.file:
     path: "{{ coder_caddy_route_file }}"
     state: absent
+  changed_when: true
   notify: Reload caddy for the coder route
   when: coder_first_user.status == 404
 
