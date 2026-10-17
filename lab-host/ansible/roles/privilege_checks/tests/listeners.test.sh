@@ -60,7 +60,8 @@ EOF
 export ANSIBLE_CONFIG="${work}/ansible.cfg"
 
 # run NAME FIXTURE [EXTRA_ARGS...]: run the check with ss's output read from
-# FIXTURE; the output goes to ${work}/NAME.out and the exit code to NAME.rc.
+# FIXTURE and no published-port rules (a later -e gives some); the output goes
+# to ${work}/NAME.out and the exit code to NAME.rc.
 run() {
   local name="$1" fixture="$2"
   shift 2
@@ -68,6 +69,8 @@ run() {
   ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
     ansible-playbook -i localhost, "${work}/play.yml" \
     -e "{\"privilege_checks_listeners_argv\": [\"cat\", \"${fixture}\"]}" \
+    -e '{"privilege_checks_dnat_argv": [["cat", "/dev/null"], ["cat", "/dev/null"]]}' \
+    -e '{"privilege_checks_host": {"host_info": {"FirewallBackend": {"Driver": "iptables"}}}}' \
     "$@" > "${work}/${name}.out" 2>&1
   echo $? > "${work}/${name}.rc"
   set -e
@@ -138,6 +141,43 @@ check "check mode refuses nothing" '[ "$(rc checkmode)" -eq 0 ]' "$(tail -n 5 "$
 run port22closed "$(fixture port22closed 'tcp LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*')" -e '{"privilege_checks_public_tcp_ports": [80, 443]}'
 check "with 22 off the public list (#953 stage 3), sshd on 0.0.0.0 is refused" \
   '[ "$(rc port22closed)" -ne 0 ] && says port22closed "tcp 0.0.0.0:22"'
+
+# Published ports, from the rules that carry them (#1252 review).
+# dnat NAME IPV4_FILE IPV6_FILE: run with no listeners and these DOCKER chains.
+dnat() {
+  run "$1" "$(fixture "$1-ss")" -e "{\"privilege_checks_dnat_argv\": [[\"cat\", \"$2\"], [\"cat\", \"$3\"]]}"
+}
+empty="$(fixture empty-chain)"
+dnat dnat-live "${here}/dnat-lab-host-2026-10-17.txt" "${empty}"
+check "the lab host's five published ports, every one on 127.0.0.1, pass" '[ "$(rc dnat-live)" -eq 0 ]' "$(tail -n 5 "${work}/dnat-live.out")"
+
+dnat dnat-any "$(fixture dnat-any '-A DOCKER ! -i docker0 -p tcp -m tcp --dport 8080 -j DNAT --to-destination 172.17.0.3:8080')" "${empty}"
+check "a port published on every address (no -d) is refused and named" \
+  '[ "$(rc dnat-any)" -ne 0 ] && says dnat-any "--dport 8080 -j DNAT"'
+
+dnat dnat-public "$(fixture dnat-public '-A DOCKER -d 192.0.2.5/32 ! -i docker0 -p tcp -m tcp --dport 8080 -j DNAT --to-destination 172.17.0.3:8080')" "${empty}"
+check "a port published on a public address is refused" '[ "$(rc dnat-public)" -ne 0 ] && says dnat-public "-d 192.0.2.5/32"'
+
+dnat dnat-v6 "${empty}" "$(fixture dnat-v6 \
+  '-A DOCKER -d ::1/128 ! -i docker0 -p tcp -m tcp --dport 9443 -j DNAT --to-destination [fd00::2]:9443' \
+  '-A DOCKER ! -i docker0 -p tcp -m tcp --dport 8443 -j DNAT --to-destination [fd00::3]:8443')"
+check "IPv6: ::1 passes, and a port published on every address is refused alone" \
+  '[ "$(rc dnat-v6)" -ne 0 ] && says dnat-v6 "--dport 8443" && ! says dnat-v6 "--dport 9443 -j DNAT"'
+
+run dnat-nochain "$(fixture dnat-nochain-ss)" -e '{"privilege_checks_dnat_argv": [["sh", "-c", "echo iptables: No chain/target/match by that name. >&2; exit 1"], ["cat", "/dev/null"]]}'
+check "a DOCKER chain that does not exist reads as no rules" '[ "$(rc dnat-nochain)" -eq 0 ]' "$(tail -n 5 "${work}/dnat-nochain.out")"
+
+run dnat-denied "$(fixture dnat-denied-ss)" -e '{"privilege_checks_dnat_argv": [["cat", "/dev/null"], ["sh", "-c", "echo ip6tables v1.8.11 nf_tables: Could not fetch rule set generation id: Permission denied >&2; exit 4"]]}'
+check "a table that cannot be read fails the run instead of passing as no rules" \
+  '[ "$(rc dnat-denied)" -ne 0 ] && says dnat-denied "Permission denied"' "$(tail -n 5 "${work}/dnat-denied.out")"
+
+# The published-port read covers Docker's iptables backend alone (#1253 review).
+run backend-nft "$(fixture backend-nft-ss)" -e '{"privilege_checks_host": {"host_info": {"FirewallBackend": {"Driver": "nftables"}}}}'
+check "a Docker on its nftables backend is refused: its publications would read as none" \
+  '[ "$(rc backend-nft)" -ne 0 ] && says backend-nft "firewall backend '"'"'nftables'"'"'"' "$(tail -n 5 "${work}/backend-nft.out")"
+run backend-none "$(fixture backend-none-ss)" -e '{"privilege_checks_host": {"host_info": {}}}'
+check "and so is a daemon that reports no firewall backend at all" \
+  '[ "$(rc backend-none)" -ne 0 ] && says backend-none "firewall backend '"''"'"' "$(tail -n 5 "${work}/backend-none.out")"
 
 if [ "${failed}" -eq 0 ]; then
   echo "listeners.test.sh: all ${passed} checks passed"
