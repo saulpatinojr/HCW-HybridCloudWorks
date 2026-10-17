@@ -383,7 +383,8 @@ describe('port 22 closed to the internet behind the Arc gate (#953 stage 3)', ()
     // Disconnected agent may be a reset one being onboarded again over 22, so
     // 22 is left as it is; anything else keeps it open, so a rebuilt host stays
     // reachable for onboarding (pre-review of #953 stage 3).
-    expect(ufwTasks).toContain("{{ 'close' if hardening_arc_status == 'Connected'");
+    expect(ufwTasks).toContain("{{ 'open' if not (hardening_arc_ssh_wanted | bool)");
+    expect(ufwTasks).toContain("else 'close' if hardening_arc_status == 'Connected'");
     expect(ufwTasks).toContain("and hardening_arc_incoming_enabled == 'true'");
     expect(ufwTasks).toContain("and '22' in hardening_arc_incoming_ports");
     expect(ufwTasks).toContain("else 'hold' if hardening_arc_status == 'Disconnected'");

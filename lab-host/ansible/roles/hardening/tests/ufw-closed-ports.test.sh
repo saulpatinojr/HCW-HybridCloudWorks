@@ -21,6 +21,10 @@
 #   missing (a rebuilt host before onboarding), Expired, unreadable, or has
 #   no incoming connections for 22; the first run with Arc SSH ready closes
 #   it; a port written as a string goes through the gate the same way;
+# - turning Arc SSH off: a run with arc_incoming_ssh_enabled false opens 22
+#   though Arc is ready, and the arc role's guard (roles/arc/tasks/
+#   ssh_off_guard.yml) refuses to turn Arc SSH off while ufw keeps 22 closed
+#   and lets it once 22 is open;
 # - a port in both lists stops the run before any rule changes.
 #
 # As root, for the namespaces and iptables. CI runs it in the
@@ -280,7 +284,65 @@ arc_ready
 run requoted -e '{"hardening_ufw_closed_tcp_ports": ["22"], "hardening_ufw_allowed_tcp_ports": ["80", "443"]}'
 check "and is closed once Arc SSH is ready" "[ \"\$(rc requoted)\" -eq 0 ] && ! admits 22" "$(out requoted)"
 
-# 6. A port in both lists stops the run before any rule changes.
+# 6. Turning Arc SSH off (arc_incoming_ssh_enabled false): the hardening role
+#    opens 22 before the arc role clears the agent's ports, and the arc role's
+#    guard (roles/arc/tasks/ssh_off_guard.yml) refuses while ufw keeps 22
+#    closed, as in a run narrowed to its tag.
+# guard NAME [EXTRA_ARGS...]: run the arc role's guard alone, as Arc SSH is on.
+guard() {
+  local name="$1"
+  shift
+  set +e
+  ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=0 ANSIBLE_INVENTORY_UNPARSED_WARNING=0 \
+    ansible-playbook -i localhost, "${work}/guard.yml" -e arc_incoming_current=true -e '{"arc_ports_current": ["22"]}' "$@" \
+    > "${work}/${name}.out" 2>&1
+  echo $? > "${work}/${name}.rc"
+  set -e
+}
+cat > "${work}/guard.yml" <<EOF
+- name: Run the arc role's guard against a scratch ufw
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - $(cd "${role}/.." && pwd)/arc/defaults/main.yml
+  tasks:
+    - name: The guard
+      ansible.builtin.import_tasks: $(cd "${role}/.." && pwd)/arc/tasks/ssh_off_guard.yml
+EOF
+guard guard_closed -e arc_incoming_ssh_enabled=false
+check "the arc role refuses to turn Arc SSH off while ufw keeps 22 closed" \
+  "[ \"\$(rc guard_closed)\" -ne 0 ] && says guard_closed 'does not admit port 22 from Anywhere' && ! admits 22" "$(out guard_closed)"
+ufw allow proto tcp from 192.0.2.5 to any port 22 > /dev/null
+guard guard_source -e arc_incoming_ssh_enabled=false
+check "and while 22 is allowed from one source only" \
+  "[ \"\$(rc guard_source)\" -ne 0 ] && says guard_source 'does not admit port 22 from Anywhere'" "$(out guard_source)"
+ufw delete allow proto tcp from 192.0.2.5 to any port 22 > /dev/null
+printf '#!/bin/sh\necho "ERROR: problem running iptables" >&2\nexit 1\n' > "${work}/bin/ufw-broken"
+chmod 0755 "${work}/bin/ufw-broken"
+guard guard_broken -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/ufw-broken"
+check "and while an installed ufw does not answer (CodeRabbit on #1261)" \
+  "[ \"\$(rc guard_broken)\" -ne 0 ] && says guard_broken 'did not answer' && says guard_broken '(rc 1)'" "$(out guard_broken)"
+guard guard_noufw -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/no-ufw"
+check "but lets it with no ufw at all, which filters nothing" "[ \"\$(rc guard_noufw)\" -eq 0 ]" "$(out guard_noufw)"
+run arcoff -e arc_incoming_ssh_enabled=false
+check "a run that turns Arc SSH off opens 22 first, though Arc is ready, and says why" \
+  "[ \"\$(rc arcoff)\" -eq 0 ] && admits 22 && says arcoff 'being turned off (arc_incoming_ssh_enabled is false)' && says arcoff 'with arc_incoming_ssh_enabled true again'" "$(out arcoff)"
+guard guard_open -e arc_incoming_ssh_enabled=false
+check "and then the arc role's guard lets it" "[ \"\$(rc guard_open)\" -eq 0 ]" "$(out guard_open)"
+ufw insert 1 deny in on eth9 to any port 22 proto tcp > /dev/null
+check "(the DENY is listed ahead of the allow)" "[ \"\$(ufw status | grep -m 1 -E '^22/tcp' | grep -c DENY)\" -eq 1 ]" "$(rules)"
+guard guard_deny -e arc_incoming_ssh_enabled=false
+check "but not with a DENY for 22 ahead of the allow, which ufw would match first (CodeRabbit on #1261)" \
+  "[ \"\$(rc guard_deny)\" -ne 0 ] && says guard_deny 'has a DENY or REJECT rule for port 22'" "$(out guard_deny; rules)"
+ufw delete deny in on eth9 to any port 22 proto tcp > /dev/null
+guard guard_on
+check "the guard reads nothing while Arc SSH stays on" \
+  "[ \"\$(rc guard_on)\" -eq 0 ] && ! says guard_on 'would be left'" "$(out guard_on)"
+run arcback
+check "and with Arc SSH wanted again, the next run closes 22" "[ \"\$(rc arcback)\" -eq 0 ] && ! admits 22" "$(out arcback)"
+
+# 7. A port in both lists stops the run before any rule changes.
 before="$(rules)"
 run both -e '{"hardening_ufw_allowed_tcp_ports": [22, 80, 443]}'
 check "22 in both lists stops the run" \

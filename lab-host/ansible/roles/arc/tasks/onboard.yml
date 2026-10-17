@@ -343,6 +343,11 @@
     - arc_incoming_ssh_enabled | bool
     - arc_ports_current != arc_incoming_ports_wanted
 
+# Turning Arc SSH off must not leave the host with no SSH path (#953 stage 3;
+# CodeRabbit on #1258). Before anything changes on the agent.
+- name: Refuse to turn Arc SSH off while ufw keeps port 22 closed
+  ansible.builtin.import_tasks: ssh_off_guard.yml
+
 - name: Turn incoming connections through Arc on for Arc SSH, or off without it
   ansible.builtin.command:
     argv:

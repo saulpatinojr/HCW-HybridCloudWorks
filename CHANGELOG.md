@@ -26,6 +26,20 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: turning Arc SSH off never leaves both SSH paths shut (#953
+  follow-up, CodeRabbit on #1258)**. Port 22 has been closed at ufw while Arc
+  SSH is ready since #1258. A run with `arc_incoming_ssh_enabled` false could
+  close 22 in the hardening role, then clear the Arc agent's incoming ports
+  later in the same run.
+  - **Hardening:** `hardening_arc_ssh_wanted`, which follows that switch in
+    `group_vars`, makes the gate open 22 in such a run.
+  - **Arc role:** the new `tasks/ssh_off_guard.yml` refuses to turn Arc SSH
+    off while ufw keeps 22 closed, as in a run narrowed to `--tags arc`. It
+    reads ufw conservatively: an installed ufw must answer, any DENY or
+    REJECT naming 22 refuses, and only a general allow from Anywhere counts.
+  - **Tests:** `tests/ufw-closed-ports.test.sh` runs both halves against the
+    real ufw (46 checks).
+
 - **Lab host: sshd listens on the loopback only (defense in depth after #953 stage 3, #1257)**.
   - In `00-hcw-hardening.conf.j2`, added `ListenAddress 127.0.0.1` and `ListenAddress ::1` so sshd binds to the loopback alone.
   - On Ubuntu, `sshd-socket-generator` derives `ssh.socket`'s `ListenStream=` lines from these directives at `systemctl daemon-reload`; added `daemon_reload: true` to `Reload ssh` and added `Restart ssh.socket` handler.

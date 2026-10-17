@@ -41,6 +41,9 @@ hardening_ufw_allowed_tcp_ports:
 hardening_ufw_closed_tcp_ports:
   - 22
 hardening_ssh_arc_gate: true
+# A run that turns Arc SSH off (arc_incoming_ssh_enabled false) keeps 22 open,
+# so the arc role clearing the agent's ports later in it strands nobody.
+hardening_arc_ssh_wanted: "{{ arc_incoming_ssh_enabled | default(true) }}"
 hardening_admin_user: hcwadmin
 # The only keys that may log in as hcwadmin (#953, owner decision 2026-10-16).
 # The hardening role writes hcwadmin's authorized_keys from this list and

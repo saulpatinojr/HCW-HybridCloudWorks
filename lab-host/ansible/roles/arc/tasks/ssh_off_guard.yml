@@ -1,0 +1,68 @@
+---
+# Turning Arc SSH off must not leave the host with no SSH path: the hardening
+# role closes port 22 at ufw while Arc SSH is on (#953 stage 3). A full run
+# reopens 22 in the hardening role first (hardening_arc_ssh_wanted follows
+# arc_incoming_ssh_enabled), so this passes; a run narrowed to this role's
+# tag, or one with 22 closed some other way, stops here before anything
+# changes on the agent (CodeRabbit on #1258). Imported by onboard.yml before
+# the incoming-connection writes; roles/hardening/tests/ufw-closed-ports.test.sh
+# runs it against a real ufw.
+#
+# What passes, read conservatively (CodeRabbit on #1261):
+# - no ufw at arc_ufw_path: nothing filters 22;
+# - ufw inactive;
+# - ufw active with a general allow of 22 from Anywhere (`22/tcp`, `22` or
+#   the OpenSSH profile, ALLOW or LIMIT) and no DENY or REJECT rule naming
+#   22 anywhere, since ufw takes the first matching rule and a deny may come
+#   first. Rule order is not modelled: any deny refuses.
+# An installed ufw that does not answer `ufw status` refuses too.
+
+- name: Find ufw before Arc SSH is turned off
+  ansible.builtin.stat:
+    path: "{{ arc_ufw_path }}"
+  register: arc_ufw_bin
+  when:
+    - not (arc_incoming_ssh_enabled | bool)
+    - arc_incoming_current == 'true'
+    - "'22' in arc_ports_current"
+
+- name: Read whether ufw admits port 22 before Arc SSH is turned off
+  ansible.builtin.command:
+    argv: ["{{ arc_ufw_path }}", status]
+  register: arc_ufw_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - arc_ufw_bin is not skipped
+    - arc_ufw_bin.stat.exists
+
+- name: Refuse to turn Arc SSH off while ufw keeps port 22 closed
+  vars:
+    arc_ufw_lines: "{{ arc_ufw_status.stdout_lines | default([]) }}"
+    arc_ufw_admits_22: >-
+      {{ arc_ufw_lines | select('match', '^(22(/tcp)?|OpenSSH) +(ALLOW|LIMIT)( IN)? +Anywhere *$') | list | length > 0 }}
+    arc_ufw_denies_22: >-
+      {{ arc_ufw_lines
+         | select('match', '^(.* )?(([0-9,]*,)?22(,[0-9,]*)?(/tcp)?|OpenSSH)( [(]v6[)])?( on [^ ]+)? +(DENY|REJECT)')
+         | list | length > 0 }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        not arc_ufw_bin.stat.exists
+        or (arc_ufw_status.rc == 0
+            and ('Status: inactive' in arc_ufw_status.stdout
+                 or (arc_ufw_admits_22 and not arc_ufw_denies_22)))
+    fail_msg: >-
+      arc_incoming_ssh_enabled is false, which turns Azure Arc SSH off, and ufw
+      {{ 'did not answer `ufw status` (rc ' ~ (arc_ufw_status.rc | default('none')) ~ ')'
+         if (arc_ufw_status.rc | default(0)) != 0
+         else 'has a DENY or REJECT rule for port 22' if arc_ufw_denies_22
+         else 'does not admit port 22 from Anywhere' }},
+      so the host could be left with no SSH path. Run the whole of bootstrap.sh, whose hardening
+      role opens 22 first, or open it from hPanel's Web Console (docs/runbooks/labs-host.md, "When
+      Arc SSH is down"). Nothing has changed on the agent.
+    quiet: true
+  when:
+    - not ansible_check_mode
+    - arc_ufw_bin is not skipped
