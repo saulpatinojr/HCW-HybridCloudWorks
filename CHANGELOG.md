@@ -200,6 +200,16 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The lab host records the commit it converged from again**.
+  `site.yml`'s `Record the commit this host converged from` runs only on a
+  full run (`ansible_run_tags == ['all']`). On ansible-core 2.21,
+  `ansible_run_tags` is a tuple, which never equals a list, so no run has
+  written `/etc/hcw/applied-commit.json` since the upgrade. On 2026-10-17 it
+  still named 2026-10-14's commit after two full runs, and the agent's
+  heartbeat reported that commit. The condition now reads
+  `ansible_run_tags | list == ['all']`. Run on ansible-core 2.21.4, it is
+  true on a full run and false with `--tags` or `--skip-tags`, and
+  `lab-host-site-tags.test.mjs` refuses the old comparison.
 - **Coder's first-account check waits for Coder to answer (#954)**. The first
   bootstrap after #1246 recreated the Coder container with its new sign-in
   settings. It then asked `/api/v2/users/first` two seconds after the

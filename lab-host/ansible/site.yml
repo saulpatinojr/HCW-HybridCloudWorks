@@ -163,9 +163,12 @@
       changed_when: false
       check_mode: false
 
+    # `| list`: ansible-core 2.21 gives ansible_run_tags as a tuple, and a
+    # tuple never equals a list, so without it no run wrote this record after
+    # the upgrade (the host's file stayed at 2026-10-14 through full runs).
     - name: Record the commit this host converged from, for the agent's heartbeat
       tags: [always]
-      when: ansible_run_tags == ['all'] and ansible_skip_tags | length == 0
+      when: ansible_run_tags | list == ['all'] and ansible_skip_tags | length == 0
       ansible.builtin.copy:
         dest: "{{ lab_host_applied_commit_file }}"
         content: "{{ lab_host_applied_commit_record | to_nice_json }}\n"
