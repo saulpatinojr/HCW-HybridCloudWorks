@@ -40,9 +40,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { terraformSource, INFRA } from './terraform-source.mjs';
 
+const ROOT = dirname(INFRA);
 const ROLES = join(INFRA, 'roles');
 
 /** `Name` from every reviewed role JSON, which is what `az role definition create` registers. */
@@ -123,5 +124,19 @@ describe('custom role definitions', () => {
           .map((s) => `${f}: ${s} is a root or wildcard scope, which ARM refuses`);
       });
     expect(bad).toEqual([]);
+  });
+
+  it('provides bootstrap-roles scripts that cover every reviewed custom role', () => {
+    const ps1Path = join(ROOT, 'scripts', 'bootstrap-roles.ps1');
+    const shPath = join(ROOT, 'scripts', 'bootstrap-roles.sh');
+
+    const ps1 = readFileSync(ps1Path, 'utf8');
+    const sh = readFileSync(shPath, 'utf8');
+
+    const roles = readdirSync(ROLES).filter((f) => f.endsWith('.json'));
+    for (const roleFile of roles) {
+      expect(ps1).toContain(roleFile);
+      expect(sh).toContain(roleFile);
+    }
   });
 });
