@@ -22,7 +22,6 @@ import { fileURLToPath } from 'node:url';
 import {
   CLOUDFLARE_TARGETS,
   rollAndApplyCloudflareToken,
-  verifyCloudflareToken,
 } from '../functions/src/lib/credentials/cloudflare-roll.js';
 
 /**
