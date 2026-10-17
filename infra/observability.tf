@@ -137,6 +137,34 @@ resource "azurerm_monitor_diagnostic_setting" "cosmos" {
   enabled_log {
     category = "ControlPlaneRequests"
   }
+
+  # DataPlaneRequests enabled with ingestion-time table transformation below
+  # (PLAT-8, #968). By filtering to PII containers only, data access auditing is
+  # preserved for personal data records without blowing past the workspace cap.
+  enabled_log {
+    category = "DataPlaneRequests"
+  }
+}
+
+# Ingestion-time transformation for Cosmos DB data-plane requests (PLAT-8, #968).
+# Ingests only operations on PII containers ('ambassador'), dropping the
+# high-volume telemetry from non-sensitive collections that previously exhausted the daily cap.
+resource "azapi_update_resource" "cosmos_data_plane_table" {
+  type        = "Microsoft.OperationalInsights/workspaces/tables@2022-10-01"
+  resource_id = "${azurerm_log_analytics_workspace.hcw.id}/tables/CDBDataPlaneRequests"
+
+  body = {
+    properties = {
+      plan                 = "Analytics"
+      retentionInDays      = var.logs_retention_in_days
+      totalRetentionInDays = var.logs_retention_in_days
+      transformKql         = "source | where CollectionName in ('ambassador') or ContainerName in ('ambassador')"
+    }
+  }
+
+  depends_on = [
+    azurerm_monitor_diagnostic_setting.cosmos,
+  ]
 }
 
 # Content storage, blob service — read/write/delete against the media the

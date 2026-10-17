@@ -718,6 +718,23 @@ variable "logs_daily_quota_gb" {
   }
 }
 
+variable "logs_retention_in_days" {
+  description = <<-EOT
+    Log retention period in days for the Log Analytics workspace (PLAT-8, #968).
+
+    30 days is the Azure PerGB2018 included minimum. 90 days satisfies the compliance
+    audit finding for retaining security logs, audit events, syslog, and diagnostics.
+    At the 0.25 GB/day daily cap, 90 days retention incurs negligible additional cost (~$1.50/mo).
+  EOT
+  type        = number
+  default     = 90
+
+  validation {
+    condition     = var.logs_retention_in_days >= 30 && var.logs_retention_in_days <= 730
+    error_message = "logs_retention_in_days must be between 30 and 730 days."
+  }
+}
+
 variable "availability_probe_alert_enabled" {
   description = <<-EOT
     Arm the alert on the Cloudflare Worker reachability probe (ADR 0024).
@@ -778,6 +795,21 @@ variable "cosmos_export_enabled" {
     Insights — and schedulers_master_enabled is true, because a timer
     registered through schedulers.js is held off by FEATURE_FLAG_SCHEDULERS
     = "false" whatever this variable says.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "cosmos_export_immutability_locked" {
+  description = <<-EOT
+    Lock the time-based immutability policy on the cosmos-export container (ADR 0028, PLAT-8).
+
+    When false (unlocked), WORM retention (35 days) is enforced by Azure Storage against
+    non-admin and application identities, while subscription owners can modify or delete
+    the policy for testing and administrative maintenance. When true (locked), the policy
+    becomes legally binding and completely irrevocable: neither subscription owners nor
+    Microsoft support can shorten the retention period or delete the container/blobs until
+    the 35-day retention expires.
   EOT
   type        = bool
   default     = false

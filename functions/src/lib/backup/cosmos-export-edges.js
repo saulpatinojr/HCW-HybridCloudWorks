@@ -17,7 +17,7 @@ import { ChangeFeedMode, ChangeFeedStartFrom, StatusCodes } from '@azure/cosmos'
 
 import { getContainer as defaultGetContainer } from '../cosmos-client.js';
 import * as defaultStorage from '../blob-storage.js';
-import { EXPORT_CONTAINER } from './cosmos-export.js';
+import { EXPORT_CONTAINER, EXPORT_STATE_CONTAINER } from './cosmos-export.js';
 
 /** 4 MiB blocks: the SDK's `uploadStream` buffer size for the gzip body. */
 export const UPLOAD_BUFFER_BYTES = 4 * 1024 * 1024;
@@ -79,17 +79,33 @@ function isAlreadyExists(error) {
 /**
  * @param {object} [deps]
  * @param {string} [deps.container]
+ * @param {string} [deps.stateContainer]
  * @param {typeof defaultStorage} [deps.storage]
  * @returns {import('./cosmos-export.js').ExportBlobStore}
  */
 export function createExportBlobStore({
   container = EXPORT_CONTAINER,
+  stateContainer,
   storage = defaultStorage,
 } = {}) {
+  const effectiveStateContainer =
+    stateContainer !== undefined
+      ? stateContainer
+      : container === EXPORT_CONTAINER
+        ? EXPORT_STATE_CONTAINER
+        : container;
+
+  function targetContainer(name) {
+    if (typeof name === 'string' && name.startsWith('state/')) {
+      return effectiveStateContainer;
+    }
+    return container;
+  }
+
   return {
     async uploadGzipStream(name, stream, { tier, metadata } = {}) {
       await storage.uploadBlobFromStream(
-        container,
+        targetContainer(name),
         name,
         stream,
         UPLOAD_BUFFER_BYTES,
@@ -104,7 +120,7 @@ export function createExportBlobStore({
     async putJson(name, value, { overwrite = true } = {}) {
       const body = Buffer.from(JSON.stringify(value, null, 2), 'utf8');
       try {
-        await storage.uploadBlob(container, name, body, 'application/json', {}, { overwrite });
+        await storage.uploadBlob(targetContainer(name), name, body, 'application/json', {}, { overwrite });
         return true;
       } catch (error) {
         if (!overwrite && isAlreadyExists(error)) return false;
@@ -113,13 +129,13 @@ export function createExportBlobStore({
     },
 
     async readJson(name) {
-      const blob = await storage.readBlobForDelivery(container, name);
+      const blob = await storage.readBlobForDelivery(targetContainer(name), name);
       if (!blob) return null;
       return JSON.parse(blob.body.toString('utf8'));
     },
 
     async listNames(prefix) {
-      const blobs = await storage.listBlobs(container, prefix);
+      const blobs = await storage.listBlobs(targetContainer(prefix), prefix);
       return blobs.map((b) => b.name);
     },
   };
