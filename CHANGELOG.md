@@ -58,6 +58,25 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Data-subject request runbook: supported commands, real estate names, and reproducible exercise record (#1237)**.
+  The runbook (`docs/runbooks/data-subject-requests.md`) was corrected to eliminate
+  fictional Azure CLI commands (`az cosmosdb sql query`/`document delete`) and non-existent
+  resource names (`cosmos-hcw-prod-cus`, `sthcwprodbackupscus`). It now establishes:
+  - Supported operational access: Web UI via the Admin Ambassador Hub with optimistic ETag
+    concurrency, and an operational CLI tool (`scripts/data-subject-search.mjs`) querying
+    Cosmos DB account `cosmos-site-prod-cus` and database `hcw` via `DefaultAzureCredential`.
+  - Thorough search: Recursive inspection of all text fields across `ambassador` records
+    and full enumeration of referenced files and images, providing Azure Storage CLI commands
+    to delete matched blobs from `stsiteprodcus01` (container `speakerevents`).
+  - Public submissions clarification: Confirms that public submissions in `content`
+    (`functions/src/lib/submissions.js`) are completely anonymous and store no submitter
+    or author email addresses.
+  - Backup retention verification: Replaces fictional backup accounts with the real
+    storage account `stsiteprodcus01`, container `cosmos-export`, and verifies lifecycle
+    rule `expire-cosmos-export` (35-day deletion).
+  - Verification exercise record: Replaces the unverified record with a verified,
+    reproducible PASS using real commands and real estate assets.
+
 - **Lab host: stale-bridge cleanup purges orphaned NAT rules for removed bridges (#1228)**.
   When rootless / userns-remap setups or dead Docker networks leave stale bridges,
   `hcw-docker-stale-bridges.py` removes the dead network bridge via `ip link delete`.
