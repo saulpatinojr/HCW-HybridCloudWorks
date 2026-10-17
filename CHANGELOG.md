@@ -19,6 +19,33 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: Azure Arc SSH as the owner's way in; port 22 stays open
+  (#953, LAB-7 stage 2)**. Arc SSH carries the session through an Azure
+  Relay connection the host's Arc agent dials out to, so sshd needs no
+  inbound port. sshd still asks for the pinned key. Port 22 closes in a
+  later change, once the owner has connected this way and through the
+  Web Console.
+  - **Azure:** `infra/lab-hybrid.tf` declares the Arc machine's default
+    connectivity endpoint and its SSH service configuration, port 22 only
+    (`Microsoft.HybridConnectivity` 2024-12-01). They are gated on the
+    machine existing, grant no role, and are declared in the plan check.
+  - **The host:** the `arc` role turns on the agent's incoming connections
+    for port 22 alone. It fails closed unless the extension allowlist is
+    still the Azure Monitor Agent alone, and the nightly drift check sees
+    each setting. `arc_incoming_ssh_enabled: false` restores LAB-6's state.
+  - **The desktop:** `Connect-Lab.ps1 -Arc` checks az, the ssh extension,
+    the sign-in and the service configuration before writing anything.
+    Its `ProxyCommand` helper gets fresh relay credentials on every
+    connection, deletes them from disk before the connection starts, and
+    passes them to the proxy in its environment alone. `HostKeyAlias`
+    keeps the host key already accepted. Without `-Arc` the direct block
+    returns.
+  - **Docs:** ADR 0032's amendment of 2026-10-16, the runbook's "Connect
+    through Azure Arc" and the architecture page.
+  - **Tests:** `scripts/lab-host-arc-ssh.test.mjs` holds the port, names and
+    api-version together across infra, the role and the script, and
+    `Connect-Lab.Tests.ps1` runs the generated helper end to end against a
+    stand-in az and proxy.
 - **Lab host SSH: one user, one pinned key, public key only, behind a
   lockout guard (#953, LAB-7 stage 1)**. Port 22 stays open in this stage;
   Arc SSH and closing 22 follow.
