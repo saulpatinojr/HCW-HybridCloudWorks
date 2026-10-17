@@ -166,6 +166,10 @@ check "IPv6: ::1 passes, and a port published on every address is refused alone"
 run dnat-nochain "$(fixture dnat-nochain-ss)" -e '{"privilege_checks_dnat_argv": [["sh", "-c", "echo iptables: No chain/target/match by that name. >&2; exit 1"], ["cat", "/dev/null"]]}'
 check "a DOCKER chain that does not exist reads as no rules" '[ "$(rc dnat-nochain)" -eq 0 ]' "$(tail -n 5 "${work}/dnat-nochain.out")"
 
+run dnat-denied "$(fixture dnat-denied-ss)" -e '{"privilege_checks_dnat_argv": [["cat", "/dev/null"], ["sh", "-c", "echo ip6tables v1.8.11 nf_tables: Could not fetch rule set generation id: Permission denied >&2; exit 4"]]}'
+check "a table that cannot be read fails the run instead of passing as no rules" \
+  '[ "$(rc dnat-denied)" -ne 0 ] && says dnat-denied "Permission denied"' "$(tail -n 5 "${work}/dnat-denied.out")"
+
 if [ "${failed}" -eq 0 ]; then
   echo "listeners.test.sh: all ${passed} checks passed"
 else

@@ -54,14 +54,19 @@
 # that proxy is a daemon setting, and with it off a published port has no
 # listener. Read 2026-10-17: five DNAT rules, every one -d 127.0.0.1/32, and
 # none for IPv6. A chain that does not exist (no Docker, or no IPv6 NAT)
-# reads as no rules.
+# reads as no rules: iptables and ip6tables both exit 1 with "No
+# chain/target/match by that name." Any other failure fails the run, so a
+# table that could not be read is never taken for one with no rules (exit 4,
+# "Permission denied", unprivileged; read on the host 2026-10-17).
 - name: Read the host daemon's published-port rules, IPv4 and IPv6
   ansible.builtin.command:
     argv: "{{ item }}"
   loop: "{{ privilege_checks_dnat_argv }}"
   register: privilege_checks_dnat
   changed_when: false
-  failed_when: false
+  failed_when: >-
+    privilege_checks_dnat.rc != 0 and
+    'No chain/target/match by that name.' not in privilege_checks_dnat.stderr
   check_mode: false
 
 - name: Refuse a published port that is not on the loopback
