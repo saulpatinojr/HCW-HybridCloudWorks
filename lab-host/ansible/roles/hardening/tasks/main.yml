@@ -10,44 +10,15 @@
     shell: /bin/bash
     create_home: true
     state: present
+  register: hardening_admin_account
 
-- name: Check for keys the provisioner installed for root
-  ansible.builtin.stat:
-    path: /root/.ssh/authorized_keys
-  register: hardening_root_keys_stat
+# The key list in group_vars, its refusals (empty, malformed, the lockout
+# guard) and hcwadmin's authorized_keys written from it alone (#953).
+- name: Pin the administrative user's keys
+  ansible.builtin.import_tasks: admin_keys.yml
 
-- name: Read the keys the provisioner installed for root
-  ansible.builtin.slurp:
-    src: /root/.ssh/authorized_keys
-  register: hardening_root_keys
-  when:
-    - hardening_admin_authorized_keys | length == 0
-    - hardening_root_keys_stat.stat.exists
-
-- name: Decide which public keys the administrative user gets
-  ansible.builtin.set_fact:
-    hardening_effective_authorized_keys: >-
-      {{ hardening_admin_authorized_keys
-         if hardening_admin_authorized_keys | length > 0
-         else hardening_root_keys.content | default('') | b64decode
-              | split('\n') | map('trim') | select('match', '^(ssh-|ecdsa-|sk-)') | list }}
-
-- name: Refuse to disable password login without a key for the administrative user
-  ansible.builtin.assert:
-    that:
-      - hardening_effective_authorized_keys | length > 0
-    fail_msg: >-
-      No public key for {{ hardening_admin_user }}. Set hardening_admin_authorized_keys
-      or install a key in /root/.ssh/authorized_keys before running this role;
-      otherwise PasswordAuthentication no and PermitRootLogin no lock everyone out.
-
-- name: Install the administrative user's public keys
-  ansible.posix.authorized_key:
-    user: "{{ hardening_admin_user }}"
-    key: "{{ hardening_effective_authorized_keys | join('\n') }}"
-    exclusive: true
-    state: present
-
+# Passwordless sudo is an accepted risk (owner decision 2026-10-16): README,
+# "Accepted risk: passwordless sudo", names the controls that carry it.
 - name: Let the administrative user sudo without a password
   ansible.builtin.copy:
     dest: /etc/sudoers.d/90-hcw-admin
@@ -57,23 +28,9 @@
     mode: "0440"
     validate: /usr/sbin/visudo -cf %s
 
-- name: Harden sshd through a drop-in that sorts before cloud-init's
-  ansible.builtin.template:
-    src: sshd_hardening.conf.j2
-    dest: /etc/ssh/sshd_config.d/00-hcw-hardening.conf
-    owner: root
-    group: root
-    mode: "0644"
-    validate: /usr/sbin/sshd -t -f %s
-  notify: Restart ssh
-
-# Restart sshd now, not at the end of the play. On 2026-09-26 the first run
-# wrote this drop-in and then failed in the docker role, so the end-of-play
-# handler never ran; the next run found the file unchanged, notified
-# nothing, and root login stayed on until sshd was restarted by hand.
-# force_handlers in site.yml covers every other role the same way.
-- name: Apply the sshd drop-in before any later role can fail
-  ansible.builtin.meta: flush_handlers
+# sshd's settings, proven before sshd reads them, then root's keys (#953).
+- name: Harden sshd and keep root's keys empty
+  ansible.builtin.import_tasks: sshd.yml
 
 - name: Default to denying inbound traffic
   community.general.ufw:

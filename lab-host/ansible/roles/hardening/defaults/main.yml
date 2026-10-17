@@ -9,10 +9,20 @@ hardening_packages:
   - unattended-upgrades
 
 hardening_admin_user: hcwadmin
-# Public keys for the administrative user. Empty means: copy whatever the
-# provisioner installed in /root/.ssh/authorized_keys, so disabling root and
-# password login never removes the only way in.
+# The public keys that may log in as the administrative user, and the only
+# ones (#953): the role writes its authorized_keys from this list alone and
+# keeps root's empty. Empty here on purpose, so the host's list lives in
+# group_vars/all.yml; the role stops on an empty list rather than guess.
 hardening_admin_authorized_keys: []
+# The lockout guard. A run whose key list does not hold the key of the most
+# recent SSH login in the journal (or, on a host with none there, shares no
+# key with the keys on file) stops before it writes anything, unless this
+# is true. Meant for one run, passed with -e, never set in a file.
+hardening_admin_keys_replace_all: false
+# sshd's AllowUsers: the only accounts that may log in over SSH. The role
+# refuses a list without the administrative user or with root.
+hardening_sshd_allow_users:
+  - "{{ hardening_admin_user }}"
 
 hardening_ufw_allowed_tcp_ports:
   - 22

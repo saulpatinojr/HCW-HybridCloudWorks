@@ -19,6 +19,32 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host SSH: one user, one pinned key, public key only, behind a
+  lockout guard (#953, LAB-7 stage 1)**. Port 22 stays open in this stage;
+  Arc SSH and closing 22 follow.
+  - **The key:** `group_vars` pins `hardening_admin_authorized_keys` to the
+    owner's workstation key, and the `hardening` role writes `hcwadmin`'s
+    `authorized_keys` from that list alone. Root's is emptied, and the
+    copy-from-root fallback is gone.
+  - **The guard:** before writing, the role stops on an empty list, an entry
+    that is not one public key, or a list without the key of the most
+    recent accepted login (read from 14 days of the journal).
+  - **sshd:** a drop-in adds `AllowUsers hcwadmin`,
+    `AuthenticationMethods publickey`, no agent, stream-local or tunnel
+    forwarding (local TCP forwards stay), `LoginGraceTime 30`,
+    `PerSourcePenaltyExemptList` for the loopback that Arc SSH will arrive
+    from, and `LogLevel VERBOSE`. It is validated, read back with `sshd -T`
+    and put back on failure. sshd is reloaded, never restarted.
+  - **Order:** a pending-reload marker keeps root's keys until sshd has
+    loaded the drop-in, even after an interrupted run.
+  - **Connect-Lab.ps1:** stops writing root's `authorized_keys`, and
+    prints the `group_vars` line that pins a key.
+  - **Accepted risk:** passwordless sudo stays, with its compensating
+    controls in the role README; hPanel's Web Console is the break-glass.
+  - **Tests:** `admin-keys.test.sh` (33 checks) and `sshd-apply.test.sh`
+    (21, as root) in the `ansible-lint (lab-host)` job, and
+    `lab-host-ssh-hardening.test.mjs`. `lab-host-ssh-login-alert.test.mjs`
+    now holds the pinned keys to the alert's fingerprints unconditionally.
 - **Add-on images: SLSA build provenance attestation verification before pull (#1069, part 1)**.
   The `addons` Ansible role (`lab-host/ansible/roles/addons`) now verifies the
   SLSA build provenance attestation of each deployed add-on image against Sigstore's
