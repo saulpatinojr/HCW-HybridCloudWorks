@@ -52,26 +52,20 @@ describe('the coder role keeps a Coder with no account unpublished', () => {
     expect(ask).toContain('check_mode: false');
   });
 
-  it('on a 404 takes the route down, reloads Caddy before failing, and fails', () => {
-    const order = [
-      'Take down the coder route while Coder has no account',
-      'Reload Caddy so the route is gone now',
-      'Refuse to publish a Coder with no account',
-    ].map((name) => firstUser.indexOf(`- name: ${name}\n`));
-    expect(order.every((at) => at >= 0), String(order)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(task(firstUser, 'Take down the coder route while Coder has no account')).toContain(
-      'path: "{{ coder_caddy_route_file }}"'
-    );
-    const reload = task(firstUser, 'Reload Caddy so the route is gone now');
-    expect(reload).toContain('state: reloaded');
-    expect(reload).toContain('- coder_first_user_route is changed');
-    for (const name of [
-      'Take down the coder route while Coder has no account',
-      'Reload Caddy so the route is gone now',
-      'Refuse to publish a Coder with no account',
-    ]) {
-      expect(task(firstUser, name), name).toContain('coder_first_user.status == 404');
+  it('on a 404 takes the route down through the reload handler, which still runs when the play fails, and fails', () => {
+    const takeDown = task(firstUser, 'Take down the coder route while Coder has no account');
+    const refuse = task(firstUser, 'Refuse to publish a Coder with no account');
+    expect(firstUser.indexOf(takeDown)).toBeLessThan(firstUser.indexOf(refuse));
+    expect(takeDown).toContain('path: "{{ coder_caddy_route_file }}"');
+    expect(takeDown).toContain('state: absent');
+    // Caddy is reloaded by handlers only (lab-host-caddy-admin.test.mjs), and
+    // force_handlers runs this one although the fail ends the play.
+    expect(takeDown).toContain('notify: Reload caddy for the coder route');
+    expect(read(`${role}/handlers/main.yml`)).toContain('- name: Reload caddy for the coder route\n');
+    expect(read('lab-host/ansible/site.yml')).toMatch(/^\s+force_handlers: true$/m);
+    expect(firstUser).not.toMatch(/state: (reloaded|restarted)/);
+    for (const body of [takeDown, refuse]) {
+      expect(body).toContain('coder_first_user.status == 404');
     }
     expect(task(firstUser, 'Refuse to publish a Coder with no account')).toContain('"A Coder with no account');
   });

@@ -27,22 +27,15 @@
   register: coder_first_user
   check_mode: false
 
+# Caddy is reloaded by the role's handler, never by a task
+# (scripts/lab-host-caddy-admin.test.mjs). site.yml sets force_handlers, so
+# the handler still runs although the fail below ends the play.
 - name: Take down the coder route while Coder has no account
   ansible.builtin.file:
     path: "{{ coder_caddy_route_file }}"
     state: absent
-  register: coder_first_user_route
+  notify: Reload caddy for the coder route
   when: coder_first_user.status == 404
-
-# Now, not at the end of the play: the fail below ends it before handlers run.
-- name: Reload Caddy so the route is gone now
-  ansible.builtin.systemd_service:
-    name: caddy
-    state: reloaded
-  when:
-    - coder_first_user.status == 404
-    - coder_first_user_route is changed
-    - not ansible_check_mode
 
 - name: Refuse to publish a Coder with no account
   ansible.builtin.fail:
