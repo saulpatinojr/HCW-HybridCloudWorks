@@ -164,8 +164,10 @@ None. The agent's services are started by its package and by `connect`.
 ## Check mode
 
 Safe. The status read runs in check mode because it is read-only; connect
-and the temporary file are skipped, and so are the lockdown reads and writes
-in step 7.
+and the temporary file are skipped. Step 7's reads of the agent's settings
+run in check mode too, and a difference is reported as one changed task,
+which the nightly drift check (`hcw-playbook-drift`) counts as drift. Its
+writes, and the read-back and fail-closed check after them, are skipped.
 
 ## Validated
 
