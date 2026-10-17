@@ -19,6 +19,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab host: the play also fails if the host daemon publishes a port beyond
+  the loopback (#958 follow-up)**. A socket read sees a published port only
+  through Docker's userland proxy, a daemon setting. So
+  `privilege_checks/tasks/listeners.yml` also reads the `nat` table's
+  `DOCKER` chain, IPv4 and IPv6, and refuses any `DNAT` rule without a
+  loopback destination. On 2026-10-17 the host's five rules were all
+  `-d 127.0.0.1/32`. `tests/listeners.test.sh` now has 20 checks.
 - **Lab host: the play fails if anything listens beyond the loopback but sshd
   and Caddy (#958, LAB-12)**. The last check of every run
   (`roles/privilege_checks`, `tasks/listeners.yml`) reads every TCP and UDP
