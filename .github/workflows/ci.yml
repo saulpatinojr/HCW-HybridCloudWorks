@@ -237,10 +237,6 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: npm ci
 
-      - name: Install functions dependencies for cross-package operations
-        if: steps.changes.outputs.relevant == 'true' && matrix.name == 'scripts (operations)'
-        working-directory: ${{ github.workspace }}/functions
-        run: npm ci
 
       # Lint and format run before the build so style feedback arrives fast.
       # `npm run lint` exits non-zero only on errors, not warnings, so the 19
