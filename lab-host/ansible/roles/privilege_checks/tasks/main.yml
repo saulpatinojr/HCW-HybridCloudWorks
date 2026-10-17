@@ -349,4 +349,3 @@
       Run /usr/local/libexec/hcw-docker-stale-bridges to clean them up (roles/docker).
     quiet: true
   when: not ansible_check_mode
-
