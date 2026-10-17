@@ -145,6 +145,14 @@ describe('the arc role opens the same port, and nothing else', () => {
     expect(guard).toContain("- arc_incoming_current == 'true'");
     expect(guard).toContain("- \"'22' in arc_ports_current\"");
     expect(guard).toContain('- not ansible_check_mode');
+    // Read conservatively (CodeRabbit on #1261): an installed ufw must answer,
+    // any DENY or REJECT naming 22 refuses, and only a general allow counts.
+    expect(guard).toContain('not arc_ufw_bin.stat.exists');
+    expect(guard).toContain('or (arc_ufw_status.rc == 0');
+    expect(guard).toContain('(arc_ufw_admits_22 and not arc_ufw_denies_22)');
+    expect(guard).toContain('+(DENY|REJECT)');
+    expect(guard).toContain('+(ALLOW|LIMIT)( IN)? +Anywhere *$');
+    expect(yamlScalar(arcDefaults, 'arc_ufw_path')).toBe('/usr/sbin/ufw');
   });
 
   it('is turned off with port 22 reopened in the same run, by the hardening role that runs first', () => {

@@ -22,6 +22,10 @@ arc_apt_repository_url: "https://packages.microsoft.com/ubuntu/{{ ansible_facts[
 # Where the package installs the CLI on Linux.
 arc_azcmagent_path: /opt/azcmagent/bin/azcmagent
 
+# ufw's CLI, read by tasks/ssh_off_guard.yml before Arc SSH is turned off.
+# Absent, nothing filters port 22; present, it must answer.
+arc_ufw_path: /usr/sbin/ufw
+
 arc_cloud: AzureCloud
 
 # Onboarding identity and target, from the vault file bootstrap.sh passes with

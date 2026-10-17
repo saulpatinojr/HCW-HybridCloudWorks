@@ -312,12 +312,30 @@ cat > "${work}/guard.yml" <<EOF
 EOF
 guard guard_closed -e arc_incoming_ssh_enabled=false
 check "the arc role refuses to turn Arc SSH off while ufw keeps 22 closed" \
-  "[ \"\$(rc guard_closed)\" -ne 0 ] && says guard_closed 'would be left with no SSH path' && ! admits 22" "$(out guard_closed)"
+  "[ \"\$(rc guard_closed)\" -ne 0 ] && says guard_closed 'does not admit port 22 from Anywhere' && ! admits 22" "$(out guard_closed)"
+ufw allow proto tcp from 192.0.2.5 to any port 22 > /dev/null
+guard guard_source -e arc_incoming_ssh_enabled=false
+check "and while 22 is allowed from one source only" \
+  "[ \"\$(rc guard_source)\" -ne 0 ] && says guard_source 'does not admit port 22 from Anywhere'" "$(out guard_source)"
+ufw delete allow proto tcp from 192.0.2.5 to any port 22 > /dev/null
+printf '#!/bin/sh\necho "ERROR: problem running iptables" >&2\nexit 1\n' > "${work}/bin/ufw-broken"
+chmod 0755 "${work}/bin/ufw-broken"
+guard guard_broken -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/ufw-broken"
+check "and while an installed ufw does not answer (CodeRabbit on #1261)" \
+  "[ \"\$(rc guard_broken)\" -ne 0 ] && says guard_broken 'did not answer' && says guard_broken '(rc 1)'" "$(out guard_broken)"
+guard guard_noufw -e arc_incoming_ssh_enabled=false -e "arc_ufw_path=${work}/bin/no-ufw"
+check "but lets it with no ufw at all, which filters nothing" "[ \"\$(rc guard_noufw)\" -eq 0 ]" "$(out guard_noufw)"
 run arcoff -e arc_incoming_ssh_enabled=false
 check "a run that turns Arc SSH off opens 22 first, though Arc is ready, and says why" \
-  "[ \"\$(rc arcoff)\" -eq 0 ] && admits 22 && says arcoff 'being turned off (arc_incoming_ssh_enabled is false)'" "$(out arcoff)"
+  "[ \"\$(rc arcoff)\" -eq 0 ] && admits 22 && says arcoff 'being turned off (arc_incoming_ssh_enabled is false)' && says arcoff 'with arc_incoming_ssh_enabled true again'" "$(out arcoff)"
 guard guard_open -e arc_incoming_ssh_enabled=false
 check "and then the arc role's guard lets it" "[ \"\$(rc guard_open)\" -eq 0 ]" "$(out guard_open)"
+ufw insert 1 deny in on eth9 to any port 22 proto tcp > /dev/null
+check "(the DENY is listed ahead of the allow)" "[ \"\$(ufw status | grep -m 1 -E '^22/tcp' | grep -c DENY)\" -eq 1 ]" "$(rules)"
+guard guard_deny -e arc_incoming_ssh_enabled=false
+check "but not with a DENY for 22 ahead of the allow, which ufw would match first (CodeRabbit on #1261)" \
+  "[ \"\$(rc guard_deny)\" -ne 0 ] && says guard_deny 'has a DENY or REJECT rule for port 22'" "$(out guard_deny; rules)"
+ufw delete deny in on eth9 to any port 22 proto tcp > /dev/null
 guard guard_on
 check "the guard reads nothing while Arc SSH stays on" \
   "[ \"\$(rc guard_on)\" -eq 0 ] && ! says guard_on 'would be left'" "$(out guard_on)"

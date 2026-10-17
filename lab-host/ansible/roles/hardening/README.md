@@ -499,8 +499,13 @@ allowed, with the line saying why, for a missing, Expired or unreadable
 agent or one without incoming port 22, and the next run with Arc ready
 closes it. A port written as a string goes through the gate the same way.
 A run turning Arc SSH off opens 22 though Arc is ready. The arc role's
-`tasks/ssh_off_guard.yml` refuses to turn Arc SSH off while ufw keeps 22
-closed, and lets it once 22 is open. A port in both lists stops the run
+`tasks/ssh_off_guard.yml` refuses to turn Arc SSH off in four cases:
+- while ufw keeps 22 closed;
+- while 22 is allowed from one source only;
+- while ufw does not answer;
+- while a DENY for 22 sits ahead of the allow.
+
+It passes with no ufw at all, and once 22 is open. A port in both lists stops the run
 before any rule changes. As root, for the
 namespaces; CI runs it with `sudo` in the `ansible-lint (lab-host)` job,
 after installing ufw.

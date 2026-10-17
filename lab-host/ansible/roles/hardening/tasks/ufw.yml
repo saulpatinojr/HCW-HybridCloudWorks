@@ -136,8 +136,9 @@
       Port 22 stays open to the internet on this run: Azure Arc SSH is
       {{ 'being turned off (arc_incoming_ssh_enabled is false)' if not (hardening_arc_ssh_wanted | bool) else 'not ready here' }}
       (agent {{ hardening_arc_status }}, incoming connections {{ hardening_arc_incoming_enabled or 'unset' }}
-      on ports {{ hardening_arc_incoming_ports }}). It closes on the first bootstrap.sh run once the
-      agent is Connected with incoming connections on for port 22 (docs/runbooks/labs-host.md,
+      on ports {{ hardening_arc_incoming_ports }}). It closes on the first bootstrap.sh run
+      {{ 'with arc_incoming_ssh_enabled true again, ' if not (hardening_arc_ssh_wanted | bool) else '' }}once
+      the agent is Connected with incoming connections on for port 22 (docs/runbooks/labs-host.md,
       "Arc onboarding" and "Connect through Azure Arc").
   when: hardening_ufw_ssh_gate | default('close') == 'open'
 

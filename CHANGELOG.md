@@ -34,9 +34,11 @@ This project has not cut a tagged release; entries are grouped under
   - **Hardening:** `hardening_arc_ssh_wanted`, which follows that switch in
     `group_vars`, makes the gate open 22 in such a run.
   - **Arc role:** the new `tasks/ssh_off_guard.yml` refuses to turn Arc SSH
-    off while ufw keeps 22 closed, as in a run narrowed to `--tags arc`.
+    off while ufw keeps 22 closed, as in a run narrowed to `--tags arc`. It
+    reads ufw conservatively: an installed ufw must answer, any DENY or
+    REJECT naming 22 refuses, and only a general allow from Anywhere counts.
   - **Tests:** `tests/ufw-closed-ports.test.sh` runs both halves against the
-    real ufw (41 checks).
+    real ufw (46 checks).
 - **Lab host: port 22 closed to the internet once Azure Arc SSH is ready
   (#953 stage 3, LAB-7)**. The hardening role's ufw tasks (now
   `tasks/ufw.yml`) delete the allow of each port in
