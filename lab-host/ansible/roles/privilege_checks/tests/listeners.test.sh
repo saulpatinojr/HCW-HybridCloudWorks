@@ -118,13 +118,13 @@ check "a public port over UDP is refused: only TCP may listen beyond the loopbac
   '[ "$(rc udp22)" -ne 0 ] && says udp22 "udp 0.0.0.0:22"'
 
 run fronts "$(fixture fronts \
-  'tcp LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*' \
-  'tcp LISTEN 0 4096 [::]:22 [::]:*' \
   'tcp LISTEN 0 4096 *:80 *:*' \
   'tcp LISTEN 0 4096 *:443 *:*')"
-check "sshd and Caddy on TCP 22, 80 and 443 pass, on every address" '[ "$(rc fronts)" -eq 0 ]' "$(tail -n 5 "${work}/fronts.out")"
+check "Caddy on TCP 80 and 443 passes, on every address" '[ "$(rc fronts)" -eq 0 ]' "$(tail -n 5 "${work}/fronts.out")"
 
 run loopback "$(fixture loopback \
+  'tcp LISTEN 0 4096 127.0.0.1:22 0.0.0.0:*' \
+  'tcp LISTEN 0 4096 [::1]:22 [::]:*' \
   'tcp LISTEN 0 4096 127.0.0.1:7080 0.0.0.0:*' \
   'tcp LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:*' \
   'udp UNCONN 0 0 127.0.0.54:53 0.0.0.0:*' \
@@ -138,8 +138,8 @@ check "no listener at all passes" '[ "$(rc none)" -eq 0 ]' "$(tail -n 5 "${work}
 run checkmode "$(fixture checkmode 'tcp LISTEN 0 4096 0.0.0.0:8080 0.0.0.0:*')" --check
 check "check mode refuses nothing" '[ "$(rc checkmode)" -eq 0 ]' "$(tail -n 5 "${work}/checkmode.out")"
 
-run port22closed "$(fixture port22closed 'tcp LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*')" -e '{"privilege_checks_public_tcp_ports": [80, 443]}'
-check "with 22 off the public list (#953 stage 3), sshd on 0.0.0.0 is refused" \
+run port22closed "$(fixture port22closed 'tcp LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*')"
+check "with 22 off the public list (#1257), sshd on 0.0.0.0 is refused" \
   '[ "$(rc port22closed)" -ne 0 ] && says port22closed "tcp 0.0.0.0:22"'
 
 # Published ports, from the rules that carry them (#1252 review).

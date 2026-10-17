@@ -70,3 +70,4 @@ hardening_sshd_checked_keywords:
   - permittunnel
   - x11forwarding
   - authorizedkeysfile
+  - listenaddress

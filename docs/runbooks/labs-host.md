@@ -1941,14 +1941,14 @@ that older copy, and prints the three steps that carry the data again.
 
 Every service the roles run listens on the loopback: Coder on 7080,
 Portainer on 9443, Vault on 8200 and 8201, node_exporter on 9100, the Arc
-agent on 40341 to 40344, and each tool add-on on its own port. Only sshd
-(TCP 22) and Caddy (TCP 80 and 443) listen beyond the loopback, and ufw
-refuses 22 from outside while Arc SSH is ready (#953 stage 3). The last check of every run
-(`roles/privilege_checks`, `tasks/listeners.yml`; #958, LAB-12) reads every
-TCP and UDP listener with `ss`, including the ports the rootless sandbox
-forwards for a workspace. It fails the run if anything else listens beyond
-the loopback, naming each one: `These listen beyond the loopback, and only
-TCP 22, 80, 443 may: …`.
+agent on 40341 to 40344, each tool add-on on its own port, and sshd (TCP 22,
+#1257). In addition, ufw refuses 22 from outside while Arc SSH is ready
+(#953 stage 3). Only Caddy (TCP 80 and 443) listens beyond the loopback. The
+last check of every run (`roles/privilege_checks`, `tasks/listeners.yml`; #958,
+LAB-12) reads every TCP and UDP listener with `ss`, including the ports the
+rootless sandbox forwards for a workspace. It fails the run if anything else
+listens beyond the loopback, naming each one: `These listen beyond the loopback,
+and only TCP 80, 443 may: …`.
 
 When it fails, this names the process behind each one, bash on the host:
 
@@ -1958,10 +1958,8 @@ sudo ss -ltnup
 
 Bind that service to `127.0.0.1` (for a container, publish
 `127.0.0.1:<port>:<port>`), or stop it, then run `bootstrap.sh` again. Good
-is a recap with `failed=0`. Port 22 stays in `privilege_checks_public_tcp_ports`
-although ufw closes it to the internet (#953 stage 3): socket-activated sshd
-still listens on every address, and leaves the list once #1257 binds it to
-the loopback.
+is a recap with `failed=0`. Port 22 has left `privilege_checks_public_tcp_ports`
+now that sshd binds to the loopback alone (#1257).
 
 The same check also reads the host daemon's published ports from the rules
 that carry them: every `DNAT` rule in the `nat` table's `DOCKER` chain, IPv4
