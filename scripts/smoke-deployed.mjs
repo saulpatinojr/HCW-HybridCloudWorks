@@ -196,6 +196,7 @@ async function tierAnonymous(base) {
       ['GET', 'getCurrentAdminStatus'],
       ['POST', 'saveEditorDraft'],
       ['GET', 'cms/content?limit=1'],
+      ['POST', 'aiProxy'],
     ]) {
       const res = await fetch(`${base}/${path}`, { method });
       if (![401, 403].includes(res.status)) {
@@ -215,9 +216,11 @@ async function tierAnonymous(base) {
   });
 
   await check(1, 'notImplemented RPCs still 404 (contract holds)', async () => {
-    // If one of the seventeen starts existing, the contract must move it to
-    // implemented — this failing is the deployed twin of api-contract.test.js.
-    const res = await fetch(`${base}/aiProxy`, { method: 'POST' });
+    // An unregistered or missing RPC must 404 rather than answering 200 or 500.
+    // api-contract.test.js enforces that all historical notImplemented RPCs
+    // are now implemented and registered; this proves the host fails closed on
+    // unmapped RPC endpoints.
+    const res = await fetch(`${base}/notImplementedRpcCheck`, { method: 'POST' });
     expectStatus(res, 404);
   });
 
