@@ -41,7 +41,9 @@ describe('site.yml narrowed runs', () => {
   it('the commit record is written only by a full run, in the play and in bootstrap.sh', () => {
     const post = site.slice(site.indexOf('  post_tasks:'));
     const record = post.slice(post.indexOf('- name: Record the commit this host converged from'));
-    expect(record).toContain("when: ansible_run_tags == ['all'] and ansible_skip_tags | length == 0");
+    // `| list`: ansible-core 2.21 gives the tags as a tuple, which never equals a list.
+    expect(record).toContain("when: ansible_run_tags | list == ['all'] and ansible_skip_tags | length == 0");
+    expect(site).not.toMatch(/ansible_run_tags == \[/);
     expect(bootstrap).toContain('--tags | --tags=* | -t* | --skip-tags | --skip-tags=*) hcw_partial=1 ;;');
     expect(bootstrap).toContain('if [ -z "${hcw_check_mode}" ] && [ -z "${hcw_partial}" ]; then');
   });
