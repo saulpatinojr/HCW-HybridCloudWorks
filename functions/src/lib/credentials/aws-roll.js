@@ -474,13 +474,16 @@ export async function rollAndApplyAwsKey({
   }
 
   // Step 4: Write both parts to Azure Key Vault and refresh references with rollback on write failure
-  let idWritten = false;
+  // The ID write is a remote PUT that can fail after Key Vault accepted it, so
+  // the rollback keys on the attempt, not on the response: restoring the old ID
+  // when the write never landed is a same-value version, never a wrong one.
+  let idWriteAttempted = false;
   try {
+    idWriteAttempted = true;
     await vault.setSecret(AWS_TARGETS.pricing.idSecretName, newKey.accessKeyId);
-    idWritten = true;
     await vault.setSecret(AWS_TARGETS.pricing.secretSecretName, newKey.secretAccessKey);
   } catch (writeErr) {
-    if (idWritten) {
+    if (idWriteAttempted) {
       try {
         await vault.setSecret(AWS_TARGETS.pricing.idSecretName, currentAccessKeyId);
       } catch {}

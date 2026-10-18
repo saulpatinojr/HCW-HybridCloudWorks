@@ -611,6 +611,82 @@ describe('rollAndApplyAwsKey', () => {
     ]);
   });
 
+  it('restores the old access key ID when the ID write itself fails, since the PUT may have landed', async () => {
+    const deletedKeys = [];
+    const vaultWrites = [];
+    const mockVault = {
+      setSecret: vi.fn(async (name, val) => {
+        vaultWrites.push({ name, val });
+        if (name === 'AWS-ACCESS-KEY-ID' && val === 'AKIA-NEW') {
+          throw new Error('Key Vault: request timed out after the PUT was sent');
+        }
+        return { version: 'v1' };
+      }),
+      refreshReferences: vi.fn(),
+    };
+
+    const mockPricingClient = {
+      send: vi.fn(async () => ({ PriceList: ['{}'] })),
+    };
+
+    const mockFetch = vi.fn(async (url, options) => {
+      const body = options.body || '';
+      if (body.includes('Action=ListAccessKeys')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <ListAccessKeysResponse>
+              <ListAccessKeysResult>
+                <AccessKeyMetadata>
+                  <member><AccessKeyId>AKIA-OLD</AccessKeyId><Status>Active</Status></member>
+                </AccessKeyMetadata>
+              </ListAccessKeysResult>
+            </ListAccessKeysResponse>`,
+        };
+      }
+      if (body.includes('Action=CreateAccessKey')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `
+            <CreateAccessKeyResponse>
+              <CreateAccessKeyResult>
+                <AccessKey>
+                  <AccessKeyId>AKIA-NEW</AccessKeyId>
+                  <SecretAccessKey>new-sec</SecretAccessKey>
+                  <Status>Active</Status>
+                </AccessKey>
+              </CreateAccessKeyResult>
+            </CreateAccessKeyResponse>`,
+        };
+      }
+      if (body.includes('Action=DeleteAccessKey') && body.includes('AccessKeyId=AKIA-NEW')) {
+        deletedKeys.push('AKIA-NEW');
+        return { ok: true, status: 200, text: async () => '<DeleteAccessKeyResponse/>' };
+      }
+      throw new Error(`Unexpected request: ${body}`);
+    });
+
+    await expect(
+      rollAndApplyAwsKey({
+        currentAccessKeyId: 'AKIA-OLD',
+        currentSecretAccessKey: 'old-sec',
+        vault: mockVault,
+        pricingClient: mockPricingClient,
+        fetchImpl: mockFetch,
+        now: new Date('2026-10-17T02:00:00Z'),
+      })
+    ).rejects.toThrow(/request timed out after the PUT was sent/);
+
+    expect(deletedKeys).toContain('AKIA-NEW');
+    // The attempted ID write is followed by the old ID, whether or not the PUT landed
+    expect(vaultWrites).toEqual([
+      { name: 'AWS-ACCESS-KEY-ID', val: 'AKIA-NEW' },
+      { name: 'AWS-ACCESS-KEY-ID', val: 'AKIA-OLD' },
+    ]);
+  });
+
   it('executes post-refresh app verification and rolls back if app verification fails', async () => {
     const deletedKeys = [];
     const vaultWrites = [];
