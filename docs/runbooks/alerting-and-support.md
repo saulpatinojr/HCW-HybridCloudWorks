@@ -701,20 +701,25 @@ One test at a time, quickest first. Adding `-WhatIf` to a line runs only the
 reads, so a stop condition still refuses, and prints every change as the one
 command it would run. The window stays open while a test waits.
 `lab-agent-offline` keeps the agent stopped for a quarter of an hour of it, and
-`swa-bandwidth` and `timer-overdue` keep their change until the alert fires.
+`swa-bandwidth`, `lab-heartbeat`, `lab-disk` and `timer-overdue` keep their
+change until the alert fires: the Azure Monitor Agent stopped, a file filling
+the lab host's root to 87%, the rule's threshold or the timer's setting.
 
 | Test | Rules it proves | Needs | Up to | PowerShell |
 | --- | --- | --- | --- | --- |
 | `kv-config-write` | `alert-kv-config-write` | `az` | 20 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test kv-config-write` |
 | `rbac-assignment` | `alert-rbac-assignment-mgmt`, `-app` | `az` | 25 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test rbac-assignment` |
 | `rbac-definition` | `alert-rbac-definition-mgmt`, `-app` | `az` | 30 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test rbac-definition` |
+| `lab-unit-failed` | `alert-lab-unit-failed` | `az`, `ssh hcw-lab` | 35 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-unit-failed` |
 | `kv-errors-and-data-write` | `alert-kv-errors`, `alert-kv-data-write` | `az` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test kv-errors-and-data-write` |
 | `lab-vault-unwrap` | `alert-lab-vault-unwrap` | `az` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-vault-unwrap` |
 | `lab-ssh-burst` | `alert-lab-ssh-burst` | `az`, `ssh hcw-lab` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-ssh-burst` |
 | `lab-ssh-login` | `alert-lab-ssh-login` | `az`, `ssh hcw-lab` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-ssh-login` |
 | `jobs-poison` | `alert-jobs-poison` | `az`, `gh` | 50 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test jobs-poison` |
 | `lab-agent-offline` | `alert-lab-agent-offline` | `az`, `ssh hcw-lab` | 45 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-agent-offline` |
+| `lab-heartbeat` | `alert-lab-heartbeat` | `az`, `ssh hcw-lab`, no lab job running | 55 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-heartbeat` |
 | `swa-bandwidth` | `alert-swa-bandwidth` | `az` | 75 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test swa-bandwidth` |
+| `lab-disk` | `alert-lab-disk` | `az`, `ssh hcw-lab`, root at most 80% used | 80 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test lab-disk` |
 | `timer-overdue` | `alert-timer-overdue` | `az` | 90 min | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Test timer-overdue` |
 
 Success is a `PASS` line for every rule and a `$LASTEXITCODE` of `0`. `1`
@@ -733,13 +738,19 @@ written in its block below and confirms it with that block's read:
 | `rbac-definition` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test rbac-definition` |
 | `jobs-poison` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test jobs-poison` |
 | `lab-agent-offline` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test lab-agent-offline` |
+| `lab-heartbeat` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test lab-heartbeat` |
 | `swa-bandwidth` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test swa-bandwidth` |
+| `lab-disk` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test lab-disk` |
 | `timer-overdue` | `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest.ps1 -Recover -Test timer-overdue` |
 
 The kv-config-write test keeps no record, because its tag is named for the
 moment; its recovery takes off any `plat4FireTest` tag the site vault still
-carries. `kv-errors-and-data-write`, `lab-vault-unwrap`, `lab-ssh-burst` and
-`lab-ssh-login` change nothing, so they have no recovery.
+carries. `lab-heartbeat` and `lab-disk` keep none either, because the host is
+the record: their recoveries start the Azure Monitor Agent again and remove
+the test file, and confirm each with the block's own read.
+`kv-errors-and-data-write`, `lab-vault-unwrap`, `lab-ssh-burst`,
+`lab-ssh-login` and `lab-unit-failed` change nothing, so they have no
+recovery.
 
 **By hand.** The blocks below are the reference the script implements, step
 for step, and still the way to run a test without it.
@@ -1147,6 +1158,117 @@ is stateless, so no Resolved mail follows, and now and then a second alert for
 the same line arrives a quarter of an hour after the first: the duplicate the
 rule accepts rather than miss a login.
 
+**`alert-lab-unit-failed`** (#981, LAB-2): write one line to the lab host's
+syslog exactly as the `hcw-unit-failed@` notifier writes its own
+(`lab-host/ansible/roles/hardening/templates/hcw-unit-failed@.service.j2`:
+`logger -t hcw-unit-failed -p daemon.err "unit %i entered the failed state on
+%H"`), naming a unit called `hcw-fire-test-<UTC stamp>.service`, which does
+not exist. The tag is what the rule reads (`ProcessName == "hcw-unit-failed"`),
+and the daemon facility at err is within what the lab DCR ships. No unit
+fails, nothing is stopped, and nothing is put back: the rule is stateless and
+the line leaves its hour-long window on its own.
+
+**Stop condition:** this must print nothing. A line means a unit failed in the
+last hour, or an earlier run of this test is still in the window; either way
+the alert that opens next could be that line's, so look at the unit first
+(`systemctl --failed --no-pager` names it).
+
+```powershell
+ssh hcw-lab 'sudo journalctl -t hcw-unit-failed --since -1h --no-pager -q -o cat'
+```
+
+The stamp is the moment of the write, so the mail and the Fire record can
+quote the unit:
+
+```powershell
+$stamp = [datetime]::UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'"); ssh hcw-lab ('logger -t hcw-unit-failed -p daemon.err "unit hcw-fire-test-' + $stamp + '.service entered the failed state on $(hostname)"')
+```
+
+Success is `alert-lab-unit-failed-prod-cus` within about 20 minutes (a
+15-minute evaluation plus Syslog's ingestion), its mail naming the
+`hcw-fire-test` unit. No Resolved mail follows, and for six hours after it the
+rule's actions are muted: a real failure in that time opens an alert but sends
+no mail, which is the mute doing what ADR 0022 says.
+
+**`alert-lab-heartbeat`** (#981, LAB-2): stop the Azure Monitor Agent on the
+lab host until the rule sees an empty 30-minute window, then start it again.
+The unit is `azuremonitoragent`, installed by the Arc extension
+`Microsoft.Azure.Monitor/AzureMonitorLinuxAgent`; it is the unit that writes
+the `Heartbeat` rows. The Arc agent itself (`himdsd`) is not touched, so the
+machine stays Connected and Arc SSH keeps working, which is the path that puts
+it back. While it is stopped the host ships nothing to Log Analytics: no
+`Heartbeat`, and no `Perf` or `Syslog` rows either, so `alert-lab-disk`,
+`alert-lab-unit-failed` and the two ssh rules see nothing from the host for
+that window. Run it with no lab job running, when
+`https://hybridcloudworks.com/admin/labs?tab=agents` shows the agent idle.
+
+**Stop conditions:** the first must print nothing (a `labjob-` name is a lab
+job running), and the second must print `active`. Anything else means the host
+is already shipping nothing and the alert is open or about to be; do not run
+the test, and find out why instead.
+
+```powershell
+ssh hcw-lab 'sudo docker ps --filter name=labjob- --format {{.Names}}'
+```
+
+```powershell
+ssh hcw-lab 'systemctl is-active azuremonitoragent'
+```
+
+```powershell
+ssh hcw-lab 'sudo systemctl stop azuremonitoragent'
+```
+
+The window is empty 30 minutes after the stop, and the next quarter-hour
+evaluation after that opens the alert: 30 to 45 minutes, plus delivery. Then
+start the agent again. This line is also the recovery if the test is
+interrupted, from any window, and success is its last line reading `active`:
+
+```powershell
+ssh hcw-lab 'sudo systemctl start azuremonitoragent; systemctl is-active azuremonitoragent'
+```
+
+Success is `alert-lab-heartbeat-prod-cus` within about 45 minutes of the stop
+and `azuremonitoragent` active again. The alert is stateful and resolves on
+its own once heartbeats resume.
+
+**`alert-lab-disk`** (#981, LAB-2): allocate one file on the lab host's root
+filesystem so that it reads 87% used, past the rule's 85%, hold it until the
+alert fires, and remove it. The file is `/var/tmp/hcw-fire-test-disk.img`
+(`/var/tmp`, not `/tmp`, which may be a tmpfs). Usage is measured as `df`'s
+`Use%` does, used over used plus available, which is what the agent reports as
+`% Used Space`; the lab DCR (`infra/lab-hybrid.tf`, `performance_counter`)
+samples it every 60 seconds, so the sample lands within a minute, and the rule
+evaluates hourly over the hour's maximum, which is the wait.
+
+**Stop conditions:** the file must not be there (an earlier run did not
+finish; the remove below is its recovery), the root must be at most 80% used,
+and 87% must leave at least 10 GiB free. `df -h /` shows the first two at a
+glance; the script computes the third, and refuses on any of them. The
+allocation below recomputes the size from `df` at that moment, rounded down to
+a MiB, and refuses with exit 4 if the numbers have moved past the same limits.
+
+```powershell
+ssh hcw-lab 'df -h /; ls -l /var/tmp/hcw-fire-test-disk.img'
+```
+
+```powershell
+ssh hcw-lab 'set -e; set -- $(df -B1 --output=size,used,avail / | tail -n 1); used=$2; avail=$3; total=$((used+avail)); add=$(( (87*total/100 - used) / 1048576 * 1048576 )); if [ $((used*100/total)) -gt 80 ] || [ $add -le 0 ] || [ $((avail-add)) -lt 10737418240 ]; then echo "refused: df moved past a stop condition (used=$used avail=$avail add=$add)"; exit 4; fi; sudo fallocate -l $add /var/tmp/hcw-fire-test-disk.img; echo "allocated $add bytes"; df -B1 --output=size,used,avail /'
+```
+
+Wait for the alert: the first hourly evaluation after the sample lands, so up
+to an hour and a few minutes. Then remove the file. This line is also the
+recovery if the test is interrupted, from any window, and success is `absent`
+followed by `df`'s row reading as it did before:
+
+```powershell
+ssh hcw-lab 'sudo rm -f /var/tmp/hcw-fire-test-disk.img; test -e /var/tmp/hcw-fire-test-disk.img && echo present || echo absent; df -B1 --output=size,used,avail /'
+```
+
+Success is `alert-lab-disk-prod-cus` within about 65 minutes and `df` reading
+as it did before. The alert is stateful and resolves two clear evaluations
+after the file is gone.
+
 **Adding, rotating or removing an admin SSH key.** The rule's approved keys
 are a reviewed list in `infra/` (`lab_ssh_admin_key_fingerprints`), never
 read from the host, so a key the host merely has is not trusted by the alert.
@@ -1508,6 +1630,9 @@ Remove-Item -LiteralPath (Join-Path $HOME 'plat4-roledef-test.json')
 | `alert-lab-backup-missing-coder` | 2026-10-14, 06:23Z | On the real condition, not a staged one. The rule was created at 06:16:56Z, before the host had uploaded any Coder dump, and its first evaluation opened an alert at 06:23:14Z with its actions run. It opened again every hour, its actions muted for a day by the `mute_actions_after_alert_duration` it had then, until 03:23Z on 2026-10-15. The first dump, `coder/coder-20261015T033716Z.sql.gz`, landed at 03:37:18Z, and no evaluation has opened one since. Read from Alerts Management on 2026-10-16. So the two-night timer stop this row used to call for is not needed (#964, #955) |
 | `alert-lab-backup-missing-vault` | 2026-10-14, 06:30Z | The same way. Created at 06:16:56Z with no Vault snapshot uploaded yet, it opened an alert at 06:30:23Z with its actions run, and again hourly until 14:30Z. The first snapshot, `vault/vault-20261014T143509Z.snap`, landed at 14:35:10Z, and none has opened since (#964, #955) |
 | `alert-lab-ssh-login` | 2026-10-17, 00:01Z | `Invoke-AlertFireTest.ps1 -Test lab-ssh-login`: one accepted-login line for a user that does not exist, from a documentation address, written with `logger` at 23:55:40Z on 2026-10-16; the alert opened at 00:01:44Z. Created by `run-6uJYNGWLDxkdv5ZB`, and `verify-alert-state.yml` read it OK (#953) |
+| `alert-lab-heartbeat` | not yet | `Invoke-AlertFireTest.ps1 -Test lab-heartbeat` stages it (#981, LAB-2): the Azure Monitor Agent stopped until the 30-minute window is empty, started again after. The 2026-10-06 alert at its first evaluation was the `Computer` predicate misreading an Arc machine, not a missing heartbeat, and does not count |
+| `alert-lab-disk` | not yet | `Invoke-AlertFireTest.ps1 -Test lab-disk` stages it (#981, LAB-2): one file taking the root filesystem to 87% until the hourly evaluation, removed after |
+| `alert-lab-unit-failed` | not yet | `Invoke-AlertFireTest.ps1 -Test lab-unit-failed` stages it (#981, LAB-2): one `hcw-unit-failed` line written as the notifier writes its own, naming a `hcw-fire-test-<stamp>.service` unit that does not exist |
 | `alert-export-window-latency` | not yet | No fire test: a degraded export window cannot be staged without slowing production. Design test: the rule's query with `windowRequests >= 1` and `windowP95 > 0` under Application Insights → **Logs** returns one row on any night with requests in the window |
 
 ### What these still do not cover

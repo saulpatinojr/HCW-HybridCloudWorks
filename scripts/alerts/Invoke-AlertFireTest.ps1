@@ -35,9 +35,12 @@
          within <n> minutes", and never PASS without that instance;
       5. prints a Fire record row per rule, ready to paste into the runbook.
 
-    timer-overdue and swa-bandwidth hold their change for about an hour, and
-    lab-agent-offline stops the agent for a quarter of an hour; each waits in
-    the script. Nothing is printed that could be a secret: app settings are
+    timer-overdue and swa-bandwidth hold their change for about an hour,
+    lab-agent-offline stops the agent for a quarter of an hour, and the two
+    LAB-2 tests that change the host (#981) hold their change until the alert
+    fires: lab-heartbeat keeps the Azure Monitor Agent stopped for up to 55
+    minutes, and lab-disk keeps its file for up to 80; each waits in the
+    script. Nothing is printed that could be a secret: app settings are
     read into memory and only the setting a test needs is named, and the Key
     Vault token lab-vault-unwrap sends stays in a variable.
 
@@ -51,16 +54,19 @@
 
 .PARAMETER Test
     The runbook block to run. kv-config-write, rbac-assignment,
-    rbac-definition, kv-errors-and-data-write, lab-vault-unwrap,
-    lab-ssh-burst and lab-ssh-login finish in under an hour; jobs-poison and
-    lab-agent-offline in about an hour; swa-bandwidth and timer-overdue in up
-    to an hour and a half.
+    rbac-definition, lab-unit-failed, kv-errors-and-data-write,
+    lab-vault-unwrap, lab-ssh-burst and lab-ssh-login finish in under an
+    hour; jobs-poison, lab-agent-offline and lab-heartbeat in about an hour;
+    swa-bandwidth, lab-disk and timer-overdue in up to an hour and a half.
 
 .PARAMETER Recover
     Do the runbook's recovery for -Test from its record file, then confirm it
     with the runbook's stop-condition read. For a test that changes nothing
     (kv-errors-and-data-write, lab-vault-unwrap, lab-ssh-burst,
-    lab-ssh-login) there is nothing to recover, and it says so.
+    lab-ssh-login, lab-unit-failed) there is nothing to recover, and it says
+    so. lab-heartbeat's recovery starts the Azure Monitor Agent again, and
+    lab-disk's removes its file; neither keeps a record file, because the
+    host itself is the record.
 
 .PARAMETER TimeoutMinutes
     How long to wait for the alerts once the test's change is made, instead
@@ -86,7 +92,7 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('kv-config-write', 'rbac-assignment', 'rbac-definition', 'kv-errors-and-data-write', 'lab-vault-unwrap', 'lab-ssh-burst', 'lab-ssh-login', 'jobs-poison', 'lab-agent-offline', 'swa-bandwidth', 'timer-overdue')]
+    [ValidateSet('kv-config-write', 'rbac-assignment', 'rbac-definition', 'lab-unit-failed', 'kv-errors-and-data-write', 'lab-vault-unwrap', 'lab-ssh-burst', 'lab-ssh-login', 'jobs-poison', 'lab-agent-offline', 'lab-heartbeat', 'swa-bandwidth', 'lab-disk', 'timer-overdue')]
     [string] $Test,
 
     [switch] $Recover,
@@ -144,10 +150,10 @@ function Get-AlertEstate {
 function Get-AlertRuleCatalog {
     <#
     .SYNOPSIS
-        The rules these tests prove, PLAT-4's thirteen and #953's login rule:
-        where each lives and what kind it is. Declared in
-        infra/observability.tf and infra/lab-hybrid.tf; the tests hold this
-        table to those files.
+        The rules these tests prove, PLAT-4's thirteen, #953's login rule and
+        LAB-2's three lab-host rules (#981): where each lives and what kind it
+        is. Declared in infra/observability.tf and infra/lab-hybrid.tf; the
+        tests hold this table to those files.
     #>
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
     param()
@@ -173,7 +179,10 @@ function Get-AlertRuleCatalog {
         @('alert-rbac-definition-mgmt', $mgmt, $plat, $activity),
         @('alert-lab-vault-unwrap', $mgmt, $plat, $log),
         @('alert-lab-ssh-burst', $mgmt, $plat, $log),
-        @('alert-lab-ssh-login', $mgmt, $plat, $log)
+        @('alert-lab-ssh-login', $mgmt, $plat, $log),
+        @('alert-lab-heartbeat', $mgmt, $plat, $log),
+        @('alert-lab-disk', $mgmt, $plat, $log),
+        @('alert-lab-unit-failed', $mgmt, $plat, $log)
     )
     $catalog = [ordered]@{}
     foreach ($row in $rows) {
@@ -195,7 +204,13 @@ function Get-AlertTestDefinition {
         are a margin over the runbook's "within about": ten minutes becomes
         20, thirty becomes 45 (30 after lab-agent-offline's quarter hour,
         since the runbook counts from the stop), and the two hour-long tests
-        get the evaluation and delivery after it.
+        get the evaluation and delivery after it. The three LAB-2 tests
+        (#981) are sized from their rules in infra/lab-hybrid.tf:
+        lab-unit-failed's rule evaluates every 15 minutes, so a quarter of an
+        hour plus Syslog's ingestion becomes 35; lab-heartbeat's needs an
+        empty 30-minute window at a quarter-hour evaluation, so 45 becomes 55;
+        lab-disk's evaluates hourly, so an hour plus one 60-second Perf sample
+        and its ingestion becomes 80.
     #>
     [OutputType([pscustomobject])]
     param([Parameter(Mandatory)] [string] $Test)
@@ -216,6 +231,11 @@ function Get-AlertTestDefinition {
             return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-rbac-definition-mgmt', 'alert-rbac-definition-app'); Optional = $none; TimeoutMinutes = 20; Tools = [string[]]@('az'); RecoverTools = [string[]]@('az')
                 Summary = 'Creates a throwaway custom role (read resource groups, assignable at one group, never assigned) in each subscription and deletes it by the name it recorded first.'
                 Success = 'alert-rbac-definition-mgmt-prod-cus and alert-rbac-definition-app-prod-cus within about ten minutes, and no plat4-fire-test-* role left at either group.' }
+        }
+        'lab-unit-failed' {
+            return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-lab-unit-failed'); Optional = $none; TimeoutMinutes = 35; Tools = [string[]]@('az', 'ssh'); RecoverTools = [string[]]@('az')
+                Summary = 'Writes one line to the lab host''s syslog with logger, under the hcw-unit-failed tag and at daemon.err exactly as the hcw-unit-failed@ notifier writes its own, naming a unit called for this test and this moment that does not exist. No unit fails, nothing is stopped, and there is nothing to put back: the rule is stateless and the line leaves its hour-long window on its own.'
+                Success = 'alert-lab-unit-failed-prod-cus within about 20 minutes (a 15-minute evaluation plus Syslog''s ingestion), its mail naming the hcw-fire-test unit. No Resolved mail follows, and for six hours after it the rule''s actions are muted, so a real failure in that time opens an alert but sends no mail.' }
         }
         'kv-errors-and-data-write' {
             return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-kv-errors', 'alert-kv-data-write'); Optional = $none; TimeoutMinutes = 45; Tools = [string[]]@('az'); RecoverTools = [string[]]@('az')
@@ -247,10 +267,20 @@ function Get-AlertTestDefinition {
                 Summary = 'Stops the labs agent on the lab host for a quarter of an hour and starts it again. Public lab submissions are closed meanwhile.'
                 Success = 'alert-lab-agent-offline-prod-cus within about 30 minutes of the stop, Telegram''s "offline" and "back online" messages, and hcw-labs-agent active again.' }
         }
+        'lab-heartbeat' {
+            return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-lab-heartbeat'); Optional = $none; TimeoutMinutes = 55; Tools = [string[]]@('az', 'ssh'); RecoverTools = [string[]]@('az', 'ssh')
+                Summary = 'Stops azuremonitoragent, the Azure Monitor Agent unit on the lab host, until the alert fires, and starts it again. The Arc agent (himdsd) is not touched, so the host stays Connected. While the agent is stopped the host ships nothing to Log Analytics: no Heartbeat, and no Perf or Syslog rows either, so the lab-disk, unit-failed and ssh rules see nothing from the host for that window.'
+                Success = 'alert-lab-heartbeat-prod-cus within about 45 minutes of the stop (the 30-minute window must be empty at a quarter-hour evaluation), and azuremonitoragent active again. The alert is stateful and resolves on its own once heartbeats resume.' }
+        }
         'swa-bandwidth' {
             return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-swa-bandwidth'); Optional = $none; TimeoutMinutes = 75; Tools = [string[]]@('az'); RecoverTools = [string[]]@('az')
                 Summary = 'Saves the rule''s definition exactly as ARM returns it, lowers the threshold to one byte until the alert fires (an hourly evaluation), and puts the saved definition back.'
                 Success = 'alert-swa-bandwidth-prod-cus at the next hourly evaluation, and the threshold reading 2666666666 again.' }
+        }
+        'lab-disk' {
+            return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-lab-disk'); Optional = $none; TimeoutMinutes = 80; Tools = [string[]]@('az', 'ssh'); RecoverTools = [string[]]@('az', 'ssh')
+                Summary = 'Reads df on the lab host, refuses if the root filesystem is already past 80% used or if 87% would leave less than 10 GiB free, then allocates one file at /var/tmp/hcw-fire-test-disk.img, sized on the host from df at that moment and rounded down to a MiB, so that usage reads 87%. The file stays until the alert fires and is removed after. The lab DCR samples % Used Space every 60 seconds, so the sample lands within a minute; the rule evaluates hourly, which sets the wait.'
+                Success = 'alert-lab-disk-prod-cus at the first hourly evaluation after the sample lands, so within about 65 minutes, and df reading as it did before. The alert is stateful and resolves two clear evaluations after the file is gone.' }
         }
         'timer-overdue' {
             return [pscustomobject]@{ Test = $Test; Required = [string[]]@('alert-timer-overdue'); Optional = $none; TimeoutMinutes = 90; Tools = [string[]]@('az'); RecoverTools = [string[]]@('az')
@@ -1956,6 +1986,87 @@ function Invoke-AlertTestLabSshLogin {
     Wait-AlertFired -Context $Context -Required @('alert-lab-ssh-login') -TimeoutMinutes (Get-AlertTestDefinition -Test 'lab-ssh-login').TimeoutMinutes
 }
 
+# --- lab-unit-failed ----------------------------------------------------------
+
+function Get-AlertUnitFailedLines {
+    <#
+    .SYNOPSIS
+        The hcw-unit-failed lines in the lab host's journal from the last
+        hour, the rule's window: the stop-condition read. A read, so it runs
+        under -WhatIf too. -q keeps journalctl's own "-- No entries --" out,
+        so every line returned is a notifier line.
+    #>
+    [OutputType([string[]])]
+    param([Parameter(Mandatory)] [string] $HostAlias)
+
+    $run = Invoke-AlertSsh -HostAlias $HostAlias -Command 'sudo journalctl -t hcw-unit-failed --since -1h --no-pager -q -o cat'
+    Assert-AlertSshReached -ExitCode $run.ExitCode -HostAlias $HostAlias
+    if ($run.ExitCode -ne 0) {
+        throw "Reading the hcw-unit-failed lines on $HostAlias failed (exit $($run.ExitCode)): $((@($run.Lines) | Select-Object -Last 3) -join ' ')"
+    }
+    # No unary comma: callers wrap this in @(), which would otherwise read an
+    # empty answer as one item holding an empty array.
+    return [string[]]@(@($run.Lines) | Where-Object { $_ -and $_.Trim() })
+}
+
+function Get-AlertUnitFailedUnit {
+    <#
+    .SYNOPSIS
+        The unit the test's line names: hcw-fire-test-<stamp>.service, a unit
+        that does not exist, named for the moment so the mail reads as this
+        test's and the Fire record can quote it.
+    #>
+    [OutputType([string])]
+    param([Parameter(Mandatory)] [datetime] $Utc)
+
+    return 'hcw-fire-test-' + (ConvertTo-AlertUtc -Value $Utc).ToString("yyyyMMdd'T'HHmmss'Z'", [cultureinfo]::InvariantCulture) + '.service'
+}
+
+function Invoke-AlertTestLabUnitFailed {
+    <#
+    .SYNOPSIS
+        alert-lab-unit-failed (#981, LAB-2): one line under the notifier's
+        tag, written by logger exactly as hcw-unit-failed@.service writes its
+        own (lab-host/ansible/roles/hardening/templates/hcw-unit-failed@
+        .service.j2: logger -t hcw-unit-failed -p daemon.err "unit %i entered
+        the failed state on %H"), naming a unit that does not exist. The
+        daemon facility at err is within what the lab DCR ships, so the line
+        reaches Syslog with ProcessName hcw-unit-failed, which is all the
+        rule reads. No unit fails and nothing on the host changes.
+
+    .DESCRIPTION
+        The stop condition is that the hour's window holds no notifier line
+        already: the rule is stateless and fires at every evaluation while
+        one is in the window, so an alert that opened after the test started
+        could be that line's rather than this one's, and a real failure is
+        the thing to look at first. There is no put-back: the line leaves the
+        window on its own, and the rule's six-hour mute follows the alert
+        whether the line was staged or real.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)] [pscustomobject] $Context)
+
+    $existing = @(Get-AlertUnitFailedLines -HostAlias $Context.HostAlias)
+    if ($existing.Count -gt 0) {
+        throw (New-AlertStop -Message "Stop: the lab host's journal already holds $($existing.Count) hcw-unit-failed line(s) from the last hour ($($existing[0])), so the rule's window is not empty: a unit failed, or an earlier run of this test is still in the window. An alert that opens now could be that line's. Look at the unit first; nothing was changed." -Command "ssh $($Context.HostAlias) 'systemctl --failed --no-pager; sudo journalctl -t hcw-unit-failed --since -2h --no-pager'")
+    }
+    Write-Host 'Stop condition: no hcw-unit-failed line in the last hour on the lab host.'
+
+    $Context.StartUtc = Get-AlertUtcNow
+    $unit = Get-AlertUnitFailedUnit -Utc $Context.StartUtc
+    $command = 'logger -t hcw-unit-failed -p daemon.err "unit ' + $unit + ' entered the failed state on $(hostname)"'
+    Write-Host "Line: the notifier's own shape, naming $unit, a unit that does not exist."
+    $run = Invoke-AlertSshChange -HostAlias $Context.HostAlias -Command $command -What 'Write one hcw-unit-failed line to the lab host''s syslog'
+    if ($run.Ran) {
+        Assert-AlertSshReached -ExitCode $run.ExitCode -HostAlias $Context.HostAlias
+        if ($run.ExitCode -ne 0) {
+            throw "Writing the line on $($Context.HostAlias) failed (exit $($run.ExitCode)): $((@($run.Lines) | Select-Object -Last 3) -join ' ')"
+        }
+        Write-Host 'Written: one line. Nothing to put back: the rule is stateless, and the line leaves its hour-long window on its own.'
+    }
+    Wait-AlertFired -Context $Context -Required @('alert-lab-unit-failed') -TimeoutMinutes (Get-AlertTestDefinition -Test 'lab-unit-failed').TimeoutMinutes -Hints @{ 'alert-lab-unit-failed' = 'the rule evaluates every 15 minutes over the last hour; the line must reach Syslog with ProcessName hcw-unit-failed, which the lab DCR ships for the daemon facility at Warning and above' }
+}
+
 # --- jobs-poison --------------------------------------------------------------
 
 function Get-AlertDeployRuns {
@@ -2258,6 +2369,123 @@ function Invoke-AlertTestLabAgentOffline {
     Wait-AlertFired -Context $Context -Required @('alert-lab-agent-offline') -TimeoutMinutes (Get-AlertTestDefinition -Test 'lab-agent-offline').TimeoutMinutes
 }
 
+# --- lab-heartbeat ------------------------------------------------------------
+
+function Get-AlertMonitorAgentState {
+    <#
+    .SYNOPSIS
+        What `systemctl is-active azuremonitoragent` prints on the host: the
+        Azure Monitor Agent's unit, installed by the Arc extension
+        Microsoft.Azure.Monitor/AzureMonitorLinuxAgent (lab-host/ansible/
+        roles/arc, arc_extensions_allowlist). It is the unit that writes the
+        Heartbeat rows; the Arc agent itself (himdsd) does not. A read, so it
+        runs under -WhatIf too.
+    #>
+    [OutputType([string])]
+    param([Parameter(Mandatory)] [string] $HostAlias)
+
+    $run = Invoke-AlertSsh -HostAlias $HostAlias -Command 'systemctl is-active azuremonitoragent'
+    Assert-AlertSshReached -ExitCode $run.ExitCode -HostAlias $HostAlias
+    return (Get-AlertLastLine -Lines $run.Lines)
+}
+
+function Get-AlertRunningLabJobs {
+    <#
+    .SYNOPSIS
+        The lab job containers running on the host, by the name the labs
+        agent gives them (labjob-<12 hex>, lab-host/ansible/roles/labs_agent).
+        A read, so it runs under -WhatIf too.
+    #>
+    [OutputType([string[]])]
+    param([Parameter(Mandatory)] [string] $HostAlias)
+
+    $run = Invoke-AlertSsh -HostAlias $HostAlias -Command 'sudo docker ps --filter name=labjob- --format {{.Names}}'
+    Assert-AlertSshReached -ExitCode $run.ExitCode -HostAlias $HostAlias
+    if ($run.ExitCode -ne 0) {
+        throw "Listing the lab job containers on $HostAlias failed (exit $($run.ExitCode)): $((@($run.Lines) | Select-Object -Last 3) -join ' ')"
+    }
+    # No unary comma, for the same reason as Get-AlertUnitFailedLines.
+    return [string[]]@(@($run.Lines) | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() })
+}
+
+function Restore-AlertMonitorAgent {
+    <#
+    .SYNOPSIS
+        Starts the Azure Monitor Agent again; success is the last line
+        reading active. Anything else is a problem that names the exact line
+        to run by hand, because until it is active the host ships no
+        Heartbeat, Perf or Syslog rows at all.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)] [pscustomobject] $Context)
+
+    $command = 'sudo systemctl start azuremonitoragent; systemctl is-active azuremonitoragent'
+    $line = "ssh $($Context.HostAlias) " + (Format-AlertArgument -Value $command)
+    $run = Invoke-AlertSshChange -HostAlias $Context.HostAlias -Command $command -What 'Start the Azure Monitor Agent again'
+    if (-not $run.Ran) {
+        return
+    }
+    $last = Get-AlertLastLine -Lines $run.Lines
+    if ($last -eq 'active') {
+        Write-Host 'Put back: azuremonitoragent is active. Heartbeat, Perf and Syslog rows resume from here, and the alert resolves on its own.'
+    }
+    else {
+        Add-AlertProblem -Context $Context -Message "azuremonitoragent did not come back: the last line reads '$last' (ssh exited $($run.ExitCode)). The lab host ships no Heartbeat, Perf or Syslog rows until it does, and alert-lab-heartbeat-prod-cus stays open." -Command $line
+    }
+}
+
+function Invoke-AlertTestLabHeartbeat {
+    <#
+    .SYNOPSIS
+        alert-lab-heartbeat (#981, LAB-2): stop the Azure Monitor Agent until
+        the rule sees an empty 30-minute window, then start it again. Only
+        azuremonitoragent is stopped: himdsd and the rest of the Arc agent
+        keep running, so the machine stays Connected and Arc SSH keeps
+        working, which is the path this script uses to put it back.
+
+    .DESCRIPTION
+        Three stop conditions, all reads: ssh reaches the host (anything else
+        says nothing about the agent); no lab job container is running, since
+        nothing the host logs in the next hour reaches Log Analytics; and the
+        agent is active now, because a stopped agent means the alert is
+        either already open or about to be, and the thing to do is find out
+        why. The wait runs inside the try, as swa-bandwidth's does, so the
+        agent is started again in the finally whether the alert came, the
+        limit passed, a step failed, or Ctrl+C.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)] [pscustomobject] $Context)
+
+    $estate = Get-AlertEstate
+    $jobs = @(Get-AlertRunningLabJobs -HostAlias $Context.HostAlias)
+    if ($jobs.Count -gt 0) {
+        throw (New-AlertStop -Message "Stop: $($jobs.Count) lab job container(s) running on the lab host ($($jobs -join ', ')). Nothing the host logs while the agent is stopped reaches Log Analytics, so run this when $($estate.LabsUrl) shows the agent idle; nothing was changed.")
+    }
+    Write-Host 'Stop condition: no lab job container is running on the lab host.'
+    $state = Get-AlertMonitorAgentState -HostAlias $Context.HostAlias
+    if ($state -ne 'active') {
+        throw (New-AlertStop -Message "Stop: azuremonitoragent is '$state', not active, so the host is already shipping nothing and the alert is open or about to be. Do not run the test; find out why instead. Nothing was changed." -Command "ssh $($Context.HostAlias) 'systemctl status azuremonitoragent himdsd --no-pager'")
+    }
+    Write-Host 'Stop condition: azuremonitoragent is active.'
+    Write-Host 'While it is stopped the host ships no Heartbeat, Perf or Syslog rows, so no lab-host rule can see anything from it; himdsd and Arc SSH are not touched.'
+
+    $Context.StartUtc = Get-AlertUtcNow
+    try {
+        $stop = Invoke-AlertSshChange -HostAlias $Context.HostAlias -Command 'sudo systemctl stop azuremonitoragent' -What 'Stop the Azure Monitor Agent'
+        if ($stop.Ran) {
+            Assert-AlertSshReached -ExitCode $stop.ExitCode -HostAlias $Context.HostAlias
+            if ($stop.ExitCode -ne 0) {
+                throw "Stopping azuremonitoragent failed (exit $($stop.ExitCode)): $((@($stop.Lines) | Select-Object -Last 3) -join ' ')"
+            }
+            Write-Host "Stopped at $(Format-AlertTime -Utc $Context.StartUtc). The 30-minute window is empty from $(Format-AlertTime -Utc $Context.StartUtc.AddMinutes(30)); the next quarter-hour evaluation after that opens the alert. Ctrl+C starts the agent again."
+        }
+        Wait-AlertFired -Context $Context -Required @('alert-lab-heartbeat') -TimeoutMinutes (Get-AlertTestDefinition -Test 'lab-heartbeat').TimeoutMinutes -Hints @{ 'alert-lab-heartbeat' = 'the rule counts Heartbeat rows in the last 30 minutes every 15 minutes, so the alert comes 30 to 45 minutes after the stop plus delivery; an agent that was restarted meanwhile, by anything, refills the window' }
+    }
+    finally {
+        Restore-AlertMonitorAgent -Context $Context
+    }
+}
+
 # --- swa-bandwidth --------------------------------------------------------------
 
 function Get-AlertSwaRuleUrl {
@@ -2406,6 +2634,226 @@ function Invoke-AlertRecoverSwaBandwidth {
     Restore-AlertSwaRule -Context $Context -RecordPath $bf -Url $u -Threshold ([decimal]$saved)
 }
 
+# --- lab-disk -----------------------------------------------------------------
+
+function Get-AlertDiskFilePath {
+    <#
+    .SYNOPSIS
+        The one file the lab-disk test allocates on the host. /var/tmp, not
+        /tmp: /tmp may be a tmpfs or cleared at boot, and the file must sit
+        on the root filesystem the rule reads.
+    #>
+    [OutputType([string])]
+    param()
+
+    return '/var/tmp/hcw-fire-test-disk.img'
+}
+
+function Format-AlertGiB {
+    <#
+    .SYNOPSIS
+        A byte count as GiB with one decimal, for the messages.
+    #>
+    [OutputType([string])]
+    param([Parameter(Mandatory)] [long] $Bytes)
+
+    return [string]::Format([cultureinfo]::InvariantCulture, '{0:N1} GiB', ($Bytes / 1073741824.0))
+}
+
+function ConvertFrom-AlertDfLine {
+    <#
+    .SYNOPSIS
+        The size, used and available bytes from the output of
+        `df -B1 --output=size,used,avail /`: the one line holding three
+        numbers and nothing else, or $null when there is none.
+    #>
+    [OutputType([pscustomobject])]
+    param([AllowEmptyCollection()] [AllowNull()] [string[]] $Lines)
+
+    foreach ($line in @($Lines)) {
+        if ($line -match '\A\s*(\d+)\s+(\d+)\s+(\d+)\s*\z') {
+            return [pscustomobject]@{ Size = [long]$Matches[1]; Used = [long]$Matches[2]; Avail = [long]$Matches[3] }
+        }
+    }
+    return $null
+}
+
+function Get-AlertDiskState {
+    <#
+    .SYNOPSIS
+        df for the root filesystem on the host, in bytes, and whether the
+        test's file is already there: the stop-condition read. A read, so it
+        runs under -WhatIf too.
+    #>
+    [OutputType([pscustomobject])]
+    param([Parameter(Mandatory)] [string] $HostAlias)
+
+    $file = Get-AlertDiskFilePath
+    $run = Invoke-AlertSsh -HostAlias $HostAlias -Command "df -B1 --output=size,used,avail /; test -e $file && echo present || echo absent"
+    Assert-AlertSshReached -ExitCode $run.ExitCode -HostAlias $HostAlias
+    $df = ConvertFrom-AlertDfLine -Lines $run.Lines
+    if ($null -eq $df) {
+        throw "df on $HostAlias printed no size, used and avail row (exit $($run.ExitCode)): $((@($run.Lines) | Select-Object -Last 3) -join ' ')"
+    }
+    return [pscustomobject]@{ Size = $df.Size; Used = $df.Used; Avail = $df.Avail; FilePresent = (@($run.Lines | ForEach-Object { [string]$_ }) -contains 'present') }
+}
+
+function Get-AlertDiskPlan {
+    <#
+    .SYNOPSIS
+        What one df row means for the test: usage now as the rule measures
+        it, the bytes that take it to 87%, what would be free after, and the
+        reason to stop when there is one. Pure, so the tests can feed it rows.
+
+    .DESCRIPTION
+        Usage is used / (used + available), df's own Use%, which is what the
+        Azure Monitor Agent reports as "% Used Space": the root's reserved
+        blocks are outside both. The allocation is rounded down to a MiB. The
+        stops: usage already past 80%; 87% leaving less than 10 GiB free; or
+        the usage it would land at above 90%, which the first two make
+        unreachable from a consistent df row and is kept as the guard it is.
+    #>
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)] [long] $Size,
+        [Parameter(Mandatory)] [long] $Used,
+        [Parameter(Mandatory)] [long] $Avail
+    )
+
+    $mib = [long]1048576
+    $gib = [long]1073741824
+    $total = $Used + $Avail
+    if ($Size -le 0 -or $total -le 0) {
+        throw "df printed a size of $Size and used plus available of $total, which cannot be the root filesystem."
+    }
+    $usedPct = [double]$Used * 100 / $total
+    $target = [long][math]::Floor(87.0 * $total / 100)
+    $add = [long][math]::Floor(($target - $Used) / [double]$mib) * $mib
+    $freeAfter = $Avail - $add
+    $afterPct = [double]($Used + $add) * 100 / $total
+    $stop = ''
+    if ($usedPct -gt 80) {
+        $stop = "the root filesystem is already $([math]::Round($usedPct, 1))% used ($(Format-AlertGiB -Bytes $Used) of $(Format-AlertGiB -Bytes $total)), past the 80% this test starts from; the rule's own threshold is 85%, so look at what is filling it instead"
+    }
+    elseif ($freeAfter -lt 10 * $gib -or $add -le 0) {
+        $stop = "taking the root filesystem to 87% would leave $(Format-AlertGiB -Bytes $freeAfter) free, less than the 10 GiB this test keeps for the host"
+    }
+    elseif ($afterPct -gt 90) {
+        $stop = "the allocation would land the root filesystem at $([math]::Round($afterPct, 1))% used, above the 90% this test allows"
+    }
+    return [pscustomobject]@{ UsedPct = $usedPct; AddBytes = $add; FreeAfter = $freeAfter; AfterPct = $afterPct; Total = $total; Stop = $stop }
+}
+
+function Get-AlertDiskStageCommand {
+    <#
+    .SYNOPSIS
+        The one bash line that allocates the file on the host. It reads df
+        again at that moment and computes the same plan the stop condition
+        did (87% of used plus available, rounded down to a MiB), refuses with
+        exit 4 if the numbers have moved past the same limits, and prints df
+        after, so the landing is read from the host rather than assumed.
+    #>
+    [OutputType([string])]
+    param()
+
+    $file = Get-AlertDiskFilePath
+    return 'set -e; set -- $(df -B1 --output=size,used,avail / | tail -n 1); used=$2; avail=$3; total=$((used+avail)); add=$(( (87*total/100 - used) / 1048576 * 1048576 )); if [ $((used*100/total)) -gt 80 ] || [ $add -le 0 ] || [ $((avail-add)) -lt 10737418240 ]; then echo "refused: df moved past a stop condition (used=$used avail=$avail add=$add)"; exit 4; fi; sudo fallocate -l $add ' + $file + '; echo "allocated $add bytes"; df -B1 --output=size,used,avail /'
+}
+
+function Restore-AlertDiskFile {
+    <#
+    .SYNOPSIS
+        Removes the test's file, reads whether it is gone and df after, and
+        names the exact line to run by hand when the remove did not confirm.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)] [pscustomobject] $Context)
+
+    $file = Get-AlertDiskFilePath
+    $command = "sudo rm -f $file; test -e $file && echo present || echo absent; df -B1 --output=size,used,avail /"
+    $line = "ssh $($Context.HostAlias) 'sudo rm -f $file'"
+    $run = Invoke-AlertSshChange -HostAlias $Context.HostAlias -Command $command -What 'Remove the test file from the lab host'
+    if (-not $run.Ran) {
+        return
+    }
+    $lines = @($run.Lines | ForEach-Object { [string]$_ })
+    if ($run.ExitCode -eq 255 -or -not ($lines -contains 'absent')) {
+        Add-AlertProblem -Context $Context -Message "$file may still be on the lab host: the remove did not confirm it gone (ssh exited $($run.ExitCode); last line '$(Get-AlertLastLine -Lines $run.Lines)'). The root filesystem stays filled until it is removed." -Command $line
+        return
+    }
+    $df = ConvertFrom-AlertDfLine -Lines $run.Lines
+    if ($null -ne $df) {
+        $pct = [math]::Round([double]$df.Used * 100 / ($df.Used + $df.Avail), 1)
+        Write-Host "Put back: no $file on the lab host; the root filesystem reads $pct% used, $(Format-AlertGiB -Bytes $df.Avail) free."
+    }
+    else {
+        Write-Host "Put back: no $file on the lab host."
+    }
+}
+
+function Invoke-AlertTestLabDisk {
+    <#
+    .SYNOPSIS
+        alert-lab-disk (#981, LAB-2): allocate one file on the lab host's
+        root filesystem so that it reads 87% used, past the rule's 85%, hold
+        it until the alert fires, and remove it.
+
+    .DESCRIPTION
+        The stop conditions are reads: the file is not already there (an
+        earlier run did not finish; its recovery removes it), and
+        Get-AlertDiskPlan finds nothing to refuse in df. The host recomputes
+        the size from df at the moment it allocates and refuses if the
+        numbers have moved; the landing is read from df after, and above 90%
+        the file is removed and the run stops. The wait runs inside the try,
+        as swa-bandwidth's does, so the file is removed in the finally
+        whether the alert came, the limit passed, a step failed, or Ctrl+C.
+        The lab DCR (infra/lab-hybrid.tf, performance_counter) samples
+        "% Used Space" every 60 seconds, so the sample lands within a minute;
+        the rule evaluates hourly over the hour's maximum, which is the wait.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)] [pscustomobject] $Context)
+
+    $file = Get-AlertDiskFilePath
+    $disk = Get-AlertDiskState -HostAlias $Context.HostAlias
+    if ($disk.FilePresent) {
+        throw (New-AlertStop -Message "Stop: $file is already on the lab host, so an earlier run did not finish. Do its recovery first; this run changed nothing." -Command $Context.RecoverCommand)
+    }
+    Write-Host "Stop condition: no $file on the lab host."
+    $plan = Get-AlertDiskPlan -Size $disk.Size -Used $disk.Used -Avail $disk.Avail
+    if ($plan.Stop) {
+        throw (New-AlertStop -Message "Stop: $($plan.Stop). Nothing was changed." -Command "ssh $($Context.HostAlias) 'df -h /; sudo docker system df; sudo ls -l /var/backups/coder'")
+    }
+    Write-Host "Stop condition: the root filesystem reads $([math]::Round($plan.UsedPct, 1))% used ($(Format-AlertGiB -Bytes $disk.Used) of $(Format-AlertGiB -Bytes $plan.Total)); 87% is $(Format-AlertGiB -Bytes $plan.AddBytes) more, leaving $(Format-AlertGiB -Bytes $plan.FreeAfter) free. The host recomputes this from df as it allocates, rounded down to a MiB, and refuses if the numbers have moved past these limits."
+
+    $Context.StartUtc = Get-AlertUtcNow
+    try {
+        $stage = Invoke-AlertSshChange -HostAlias $Context.HostAlias -Command (Get-AlertDiskStageCommand) -What 'Allocate the test file so that the root filesystem reads 87% used'
+        if ($stage.Ran) {
+            Assert-AlertSshReached -ExitCode $stage.ExitCode -HostAlias $Context.HostAlias
+            if ($stage.ExitCode -eq 4) {
+                throw "The lab host refused to allocate: $(Get-AlertLastLine -Lines $stage.Lines). df moved between the read and the write; nothing was allocated."
+            }
+            if ($stage.ExitCode -ne 0) {
+                throw "Allocating $file on $($Context.HostAlias) failed (exit $($stage.ExitCode)): $((@($stage.Lines) | Select-Object -Last 3) -join ' ')"
+            }
+            $landed = ConvertFrom-AlertDfLine -Lines $stage.Lines
+            if ($null -eq $landed) {
+                throw "The lab host allocated the file but printed no df row after it, so the landing cannot be read; the file is removed."
+            }
+            $landedPct = [double]$landed.Used * 100 / ($landed.Used + $landed.Avail)
+            if ($landedPct -gt 90) {
+                throw "The root filesystem reads $([math]::Round($landedPct, 1))% used after the allocation, above the 90% this test allows; the file is removed."
+            }
+            Write-Host "Allocated: the root filesystem reads $([math]::Round($landedPct, 1))% used, $(Format-AlertGiB -Bytes $landed.Avail) free. The lab DCR samples it within a minute; the rule's next hourly evaluation opens the alert. Ctrl+C removes the file."
+        }
+        Wait-AlertFired -Context $Context -Required @('alert-lab-disk') -TimeoutMinutes (Get-AlertTestDefinition -Test 'lab-disk').TimeoutMinutes -Hints @{ 'alert-lab-disk' = 'the rule evaluates hourly over the last hour''s maximum % Used Space, which the lab DCR samples every 60 seconds, so the alert comes at the first evaluation after the sample lands' }
+    }
+    finally {
+        Restore-AlertDiskFile -Context $Context
+    }
+}
+
 # --- timer-overdue ------------------------------------------------------------
 
 function Restore-AlertTimerSetting {
@@ -2546,7 +2994,9 @@ function Invoke-AlertTestRun {
             'rbac-definition' { Invoke-AlertRecoverRbacDefinition -Context $Context }
             'jobs-poison' { Invoke-AlertRecoverJobsPoison -Context $Context }
             'lab-agent-offline' { Restore-AlertLabAgent -Context $Context }
+            'lab-heartbeat' { Restore-AlertMonitorAgent -Context $Context }
             'swa-bandwidth' { Invoke-AlertRecoverSwaBandwidth -Context $Context }
+            'lab-disk' { Restore-AlertDiskFile -Context $Context }
             'timer-overdue' { Invoke-AlertRecoverTimerOverdue -Context $Context }
             default { Write-Host "Nothing to recover: $($Context.Test) changes nothing, so the runbook gives it no recovery." }
         }
@@ -2556,13 +3006,16 @@ function Invoke-AlertTestRun {
         'kv-config-write' { Invoke-AlertTestKvConfigWrite -Context $Context }
         'rbac-assignment' { Invoke-AlertTestRbacAssignment -Context $Context }
         'rbac-definition' { Invoke-AlertTestRbacDefinition -Context $Context }
+        'lab-unit-failed' { Invoke-AlertTestLabUnitFailed -Context $Context }
         'kv-errors-and-data-write' { Invoke-AlertTestKvErrorsAndDataWrite -Context $Context }
         'lab-vault-unwrap' { Invoke-AlertTestLabVaultUnwrap -Context $Context }
         'lab-ssh-burst' { Invoke-AlertTestLabSshBurst -Context $Context }
         'lab-ssh-login' { Invoke-AlertTestLabSshLogin -Context $Context }
         'jobs-poison' { Invoke-AlertTestJobsPoison -Context $Context }
         'lab-agent-offline' { Invoke-AlertTestLabAgentOffline -Context $Context }
+        'lab-heartbeat' { Invoke-AlertTestLabHeartbeat -Context $Context }
         'swa-bandwidth' { Invoke-AlertTestSwaBandwidth -Context $Context }
+        'lab-disk' { Invoke-AlertTestLabDisk -Context $Context }
         'timer-overdue' { Invoke-AlertTestTimerOverdue -Context $Context }
         default { throw "No fire test is named '$($Context.Test)'." }
     }
