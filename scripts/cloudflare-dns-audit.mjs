@@ -85,10 +85,12 @@ export const ENV = {
 export const TFC_API = 'https://app.terraform.io/api/v2';
 export const TFC_ORGANIZATION = 'hcw';
 export const TFC_WORKSPACE = 'hcw-azure';
-/** An apply's window, padded: the provider's first write can land a little before `applying-at` is stamped, and the last a little after `applied-at`. */
+/** An apply's window, padded: the provider's first write can land a little before `applying-at` is stamped, and the last a little after the apply ended. */
 export const APPLY_LEAD_MS = 2 * 60 * 1000;
 export const APPLY_TAIL_MS = 5 * 60 * 1000;
-/** Pages of 100 applied runs read back from the newest; the window is days, not years. */
+/** The stamps that end an apply, in the order one of them is set: an apply that errored or was cancelled still wrote until then. */
+export const APPLY_END_STAMPS = ['applied-at', 'errored-at', 'canceled-at', 'force-canceled-at'];
+/** Pages of 100 runs (every status; plan-only runs carry no `applying-at` and are skipped) read back from the newest; the window is days, not years. */
 export const MAX_RUN_PAGES = 10;
 
 /**
@@ -454,11 +456,16 @@ async function tfcGet(path, token, fetchImpl) {
 }
 
 /**
- * The applies of the workspace that touch the window: `[{ runId, start, end }]`
- * with epoch milliseconds, from HCP Terraform's own run record. `start` is
- * when the apply began (`applying-at`, else when the run was created) and
- * `end` when it finished (`applied-at`). Read newest first and stopped once a
- * page lies wholly before the window.
+ * The applies of the workspace that touch the window: `[{ runId, start, end,
+ * outcome }]` with epoch milliseconds, from HCP Terraform's own run record.
+ * Every run whose apply BEGAN counts, whatever became of it: `start` is
+ * `applying-at`, and `end` the first of APPLY_END_STAMPS that is set, or the
+ * end of the window for an apply still running. An apply that errored or was
+ * cancelled wrote records until it stopped (the 2026-10-06 and 2026-10-10
+ * edits on the first live runs were exactly those), so `filter[status]=applied`
+ * would hide the very applies that explain them. Plan-only runs carry no
+ * `applying-at` and are skipped. Read newest first, every status, and stopped
+ * once a page was created wholly before the window.
  */
 export async function fetchTerraformApplies({ token, since, before, fetchImpl = fetch }) {
   const ws = await tfcGet(`/organizations/${TFC_ORGANIZATION}/workspaces/${TFC_WORKSPACE}`, token, fetchImpl);
@@ -468,23 +475,25 @@ export async function fetchTerraformApplies({ token, since, before, fetchImpl = 
   const beforeMs = Date.parse(before) + APPLY_LEAD_MS;
   const windows = [];
   for (let page = 1; page <= MAX_RUN_PAGES; page += 1) {
-    const doc = await tfcGet(`/workspaces/${workspaceId}/runs?filter%5Bstatus%5D=applied&page%5Bsize%5D=100&page%5Bnumber%5D=${page}`, token, fetchImpl);
+    const doc = await tfcGet(`/workspaces/${workspaceId}/runs?page%5Bsize%5D=100&page%5Bnumber%5D=${page}`, token, fetchImpl);
     if (!Array.isArray(doc.data)) throw new AuditReadError('HCP Terraform returned a runs payload without a `data` array');
     let oldestOnPage = Number.POSITIVE_INFINITY;
     for (const run of doc.data) {
       const a = run?.attributes ?? {};
       const stamps = a['status-timestamps'] ?? {};
-      if (a.status !== 'applied') continue;
-      const end = Date.parse(str(stamps['applied-at']));
-      const start = Date.parse(str(stamps['applying-at']) || str(a['created-at']));
-      if (Number.isNaN(end) || Number.isNaN(start)) continue;
-      oldestOnPage = Math.min(oldestOnPage, start);
-      if (end >= sinceMs && start <= beforeMs) windows.push({ runId: str(run.id), start, end });
+      const created = Date.parse(str(a['created-at']));
+      if (!Number.isNaN(created)) oldestOnPage = Math.min(oldestOnPage, created);
+      const start = Date.parse(str(stamps['applying-at']));
+      if (Number.isNaN(start)) continue; // never applied: a plan, a discard, a run still waiting
+      const endStamp = APPLY_END_STAMPS.find((k) => str(stamps[k]) !== '');
+      const end = endStamp ? Date.parse(str(stamps[endStamp])) : beforeMs;
+      if (Number.isNaN(end)) continue;
+      if (end >= sinceMs && start <= beforeMs) windows.push({ runId: str(run.id), start, end, outcome: str(a.status) || 'unknown' });
     }
     const nextPage = doc.meta?.pagination?.['next-page'];
     if (doc.data.length === 0 || nextPage === null || nextPage === undefined || oldestOnPage < sinceMs) return windows;
   }
-  throw new AuditReadError(`more than ${MAX_RUN_PAGES} pages of applied runs in the window; narrow it with --since and --before`);
+  throw new AuditReadError(`more than ${MAX_RUN_PAGES} pages of runs in the window; narrow it with --since and --before`);
 }
 
 /** RFC3339 at second precision, UTC. */
