@@ -411,7 +411,13 @@ export function describeActor(change) {
   return `${how} ${who}${from}`;
 }
 
-const cell = (text) => String(text ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+// A Markdown table cell: backslashes first, so a value ending in one cannot
+// turn the escaped pipe back into a column break; then pipes; then newlines.
+const cell = (text) =>
+  String(text ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ');
 
 /** The Markdown the workflow writes to the job summary and, on exit 2, the issue. */
 export function renderReport({ window, entries, pages, judged, settings }) {

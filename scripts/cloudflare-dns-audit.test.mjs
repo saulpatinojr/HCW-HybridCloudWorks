@@ -439,6 +439,16 @@ describe('main', () => {
     const md = renderReport({ window: { since: 's', before: 'b', hours: 26 }, entries: 1, pages: 1, judged, settings: { ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, zoneId: ZONE } });
     expect(md).toContain('`a\\|b.hybridcloudworks.com`');
   });
+
+  it('renders a backslash before a pipe without the pipe becoming a column break', () => {
+    // `a\|b` escaped pipe-only would read `a\\|b`: a literal backslash, then a
+    // live pipe. Backslashes are doubled first, so the pipe's escape survives.
+    const judged = [{ ...normalise(entry({ actor: STRANGER, record: { name: 'a\\|b.hybridcloudworks.com', type: 'TXT' } })), verdict: 'UNEXPECTED', rule: null }];
+    const md = renderReport({ window: { since: 's', before: 'b', hours: 26 }, entries: 1, pages: 1, judged, settings: { ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, zoneId: ZONE } });
+    expect(md).toContain('`a\\\\\\|b.hybridcloudworks.com`');
+    const row = md.split('\n').find((l) => l.includes('b.hybridcloudworks.com'));
+    expect(row.split(/(?<!\\)\|/).length).toBe(md.split('\n').find((l) => l.startsWith('| Time')).split('|').length);
+  });
 });
 
 describe('the entry point', () => {
