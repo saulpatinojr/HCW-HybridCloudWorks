@@ -42,6 +42,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **CodeRabbit's approval is the required review (#972, option F)**. Owner
+  decision 2026-10-18: `.coderabbit.yaml` turns on
+  `reviews.request_changes_workflow`, so CodeRabbit requests changes while a
+  finding is open and approves the head once every thread is resolved and
+  its pre-merge checks pass, and sets `reviews.allow_author_approval: false`,
+  so `@coderabbitai approve` from the author (sessions author as the owner's
+  account) cannot stand in for it. The `Default` ruleset's `pull_request` rule
+  takes `required_approving_review_count: 1` with `require_last_push_approval`
+  by the owner's `PUT`; the rollback is the same `PUT` with the count at 0.
 - **Lab host: a missing sshd drop-in keeps sshd on the loopback while the
   Arc agent is Disconnected (#1263 follow-up, CodeRabbit on #1263)**.
   - **The gap:** in its hold state, the Arc gate keeps sshd's bind as the
