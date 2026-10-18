@@ -134,7 +134,7 @@ describe('workspace_reach: where it runs and as whom', () => {
     }
     // Never a digest in the unit: a narrowed run that moves the pin would
     // leave it naming an image lab_images has removed.
-    expect(code(tasks)).not.toContain('image_digest\\s');
+    expect(unit).not.toMatch(/image_digest|sha256:/);
   });
 });
 

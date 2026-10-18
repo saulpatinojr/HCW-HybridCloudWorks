@@ -54,7 +54,10 @@ coder_host=${coder_url#*://}
 coder_host=${coder_host%%/*}
 coder_host=${coder_host%%:*}
 
+# One line of the check's own, on stdout.
 say() { echo "workspace reach: $*"; }
+# The check's verdict when something is wrong: one line on stderr, naming the
+# runbook section, and exit 1, which fails the unit and the play.
 fail() {
   echo "workspace reach: FAILED: $* (${runbook})" >&2
   exit 1
@@ -68,6 +71,7 @@ flock -w 600 9 || fail "another check held the lock for ten minutes"
 # The CLI's own state in a directory of this run's, not in the user's home.
 DOCKER_CONFIG=$(mktemp -d)
 export DOCKER_CONFIG
+# Every docker call goes to the sandbox daemon, never to a default socket.
 docker() { command docker -H "${docker_host}" "$@"; }
 
 # Anything an earlier run left (a killed run cannot clean up after itself),

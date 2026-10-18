@@ -2221,7 +2221,7 @@ ends in a line beginning `workspace reach: FAILED:`, which names the step:
 
 - **`cannot resolve coder.lab.hybridcloudworks.com`:** the workspace's DNS.
   Read the sandbox daemon's nameserver for workspaces, and what rootlesskit
-  runs:
+  runs. Bash, on the host:
 
   ```bash
   sudo grep -A2 '"dns"' /var/lib/hcw-coder-docker/.config/docker/daemon.json; sudo curl -s --unix-socket "/run/user/$(id -u hcw-coder-docker)/dockerd-rootless/api.sock" http://rootlesskit/v1/info; echo; grep '^nameserver' /etc/resolv.conf
@@ -2230,9 +2230,10 @@ ends in a line beginning `workspace reach: FAILED:`, which names the step:
   Good is `"10.0.2.3"` under `"dns"`, JSON with `"dns":["10.0.2.3"]`, and
   `nameserver 127.0.0.53` alone. A missing `"dns"` means the `coder_sandbox`
   role has not run since #1267 merged. Run
-  `sudo /opt/hcw-src/lab-host/bootstrap.sh --tags coder_sandbox` (the
-  check runs at its end), then start each stuck workspace again (below).
-  The firewall's counters show where lookups go:
+  `sudo /opt/hcw-src/lab-host/bootstrap.sh --tags coder_sandbox` (bash, on
+  the host; the check runs at its end), then start each stuck workspace
+  again (below). The firewall's counters show where lookups go. Bash, on the
+  host:
 
   ```bash
   sudo iptables -L HCW-SANDBOX-OUT -v -n -x | grep -E 'host resolver|hcw: refused \*/'

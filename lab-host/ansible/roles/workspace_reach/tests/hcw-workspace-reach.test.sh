@@ -31,8 +31,11 @@ script="${here}/../files/hcw-workspace-reach"
 
 passed=0
 failed=0
+# A passing check: counted and printed as TAP.
 ok() { passed=$((passed + 1)); echo "ok ${passed} - $1"; }
+# A failing check: counted, printed, and $2 (what was seen) printed under it.
 not_ok() { failed=$((failed + 1)); echo "not ok - $1" >&2; [ -z "${2:-}" ] || printf '    %s\n' "$2" >&2; }
+# check <name> <condition> [<what to print on failure>]: evaluates the condition.
 check() { if eval "$2"; then ok "$1"; else not_ok "$1" "${3:-}"; fi; }
 
 work="$(mktemp -d)"
@@ -60,6 +63,7 @@ for arg in "\$@"; do args+=("\${arg//\$'\n'/\\\\n}"); done
 (IFS=\$'\t'; echo "\${args[*]}") >> "\${FAKE_DOCKER_LOG}"
 [ "\$1" = "-H" ] || { echo "no -H" >&2; exit 2; }
 shift 2
+# next <file>: add one to the count in the file and print the new count.
 next() { n=\$(cat "\$1" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\${n}" > "\$1"; echo "\${n}"; }
 case "\$1 \${2:-}" in
   "version --format")
@@ -101,12 +105,15 @@ run() {
 }
 # How many calls began with the words $1 (after -H <host>).
 calls() { cut -f3- "${FAKE_DOCKER_LOG}" | tr '\t' ' ' | grep -c "^$1" || true; }
-# The log line, or its line number, of the first call that began with $1.
+# The log line of the first call that began with $1.
 call() { awk -v want="$1" '{ line = $0; sub(/^[^\t]*\t[^\t]*\t/, "", line); gsub(/\t/, " ", line) } index(line, want) == 1 { print $0; exit }' "${FAKE_DOCKER_LOG}"; }
+# The line number in the log of the first call that began with $1.
 line_of() { awk -v want="$1" '{ line = $0; sub(/^[^\t]*\t[^\t]*\t/, "", line); gsub(/\t/, " ", line) } index(line, want) == 1 { print NR; exit }' "${FAKE_DOCKER_LOG}"; }
+# Whether the call in $1 passes the argument $2, whole.
 has_arg() { printf '%s\n' "$1" | tr '\t' '\n' | grep -qxF -- "$2"; }
 # Whether the call in $1 passes the flag $2 with the value $3 straight after it.
 has_pair() { printf '%s\n' "$1" | tr '\t' '\n' | awk -v flag="$2" -v value="$3" 'previous == flag && $0 == value { found = 1 } { previous = $0 } END { exit !found }'; }
+# Whether the run's last two calls removed the container and then the network.
 cleaned_up() { [ "$(tail -n 2 "${FAKE_DOCKER_LOG}" | cut -f3,4 | tr '\t\n' ' ;')" = "rm -f;network rm;" ]; }
 
 # --- usage
