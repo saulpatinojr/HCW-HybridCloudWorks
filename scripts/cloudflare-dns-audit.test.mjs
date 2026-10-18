@@ -86,6 +86,12 @@ const TERRAFORM = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token'
 const CADDY = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token', email: OWNER, ip_address: '198.51.100.7', token_id: 'dead00beef0123456789abcdefabcdef', token_name: CADDY_TOKEN, type: 'user' };
 const OWNER_DASH = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'dash', email: OWNER, ip_address: '192.0.2.44', type: 'user' };
 const STRANGER = { id: '0000000000000000000000000000beef', context: 'api_token', email: 'mallory@example.org', ip_address: '192.0.2.99', token_id: 'bad0bad0bad0bad0bad0bad0bad0bad0', token_name: 'totally-legit', type: 'user' };
+// The shapes the first live run (2026-10-18) showed: no token_name or token_id anywhere.
+const CADDY_HOST_IP = '198.51.100.7';
+const TFC_ACCOUNT_TOKEN = { id: ACCOUNT, context: 'api_token', ip_address: '54.242.151.9', type: 'account' };
+const OWNER_USER_TOKEN = { id: 'f6b5de0326bb5182b8a4840ee01ec774', context: 'api_token', email: OWNER, ip_address: '192.0.2.44', type: 'user' };
+const CADDY_BY_IP = { id: ACCOUNT, context: 'api_token', ip_address: CADDY_HOST_IP, type: 'account' };
+const TERRAFORM_RAW = { user_agent: 'terraform-provider-cloudflare/5.27.0 terraform-plugin-framework/1.15.0 Terraform/1.16.0' };
 
 const envelope = (result, cursor = '') => ({ success: true, errors: [], messages: [], result, result_info: { count: String(result.length), cursor } });
 
@@ -103,7 +109,7 @@ function fakeFetch(pages, { status = 200, text } = {}) {
   return fn;
 }
 
-const ENVIRONMENT = { [ENV.token]: 'cf-test-token-never-printed', [ENV.accountId]: ACCOUNT, [ENV.zoneId]: ZONE, [ENV.ownerEmail]: OWNER, [ENV.caddyTokenName]: CADDY_TOKEN };
+const ENVIRONMENT = { [ENV.token]: 'cf-test-token-never-printed', [ENV.accountId]: ACCOUNT, [ENV.zoneId]: ZONE, [ENV.ownerEmail]: OWNER, [ENV.caddyTokenName]: CADDY_TOKEN, [ENV.caddyHostIp]: CADDY_HOST_IP };
 const NOW = Date.parse('2026-10-18T05:50:00Z');
 
 async function run(pages, { env = ENVIRONMENT, argv = [], fetchOptions } = {}) {
@@ -122,18 +128,45 @@ async function run(pages, { env = ENVIRONMENT, argv = [], fetchOptions } = {}) {
 }
 
 describe('the allowlist', () => {
-  const settings = { zoneId: ZONE, ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN };
+  const settings = { zoneId: ZONE, ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, caddyHostIp: CADDY_HOST_IP };
 
-  it('names three entries, each with a reason', () => {
-    expect(ALLOWLIST.map((e) => e.id)).toEqual(['hcp-terraform', 'caddy-acme', 'owner-dashboard']);
+  it('names four entries, each with a reason', () => {
+    expect(ALLOWLIST.map((e) => e.id)).toEqual(['hcp-terraform', 'terraform-owner-token', 'caddy-acme', 'owner-dashboard']);
     for (const e of ALLOWLIST) expect(e.reason.length, e.id).toBeGreaterThan(40);
   });
 
-  it("allows every record action by the HCP Terraform token, by the token's name", () => {
+  it("allows every record action by the HCP Terraform token, by the token's name when the log carries it", () => {
     const e = normalise(entry({ actor: TERRAFORM, action: 'update', record: { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' } }));
     expect(classify(e, settings)).toEqual({ verdict: 'EXPECTED', rule: 'hcp-terraform' });
     const del = normalise(entry({ actor: TERRAFORM, action: 'delete', resource: { request: {}, response: {} } }));
     expect(classify(del, settings)).toEqual({ verdict: 'EXPECTED', rule: 'hcp-terraform' });
+  });
+
+  it('allows the HCP Terraform token as the log really carries it: an account token with the provider user agent and no name', () => {
+    // The shape of the first live run (2026-10-18): actor {context, id, ip_address, type}, no token fields.
+    const e = normalise(entry({ actor: TFC_ACCOUNT_TOKEN, action: 'update', record: { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' }, raw: TERRAFORM_RAW }));
+    expect(e.tokenName).toBe('');
+    expect(classify(e, settings)).toEqual({ verdict: 'EXPECTED', rule: 'hcp-terraform' });
+    const created = normalise(entry({ actor: TFC_ACCOUNT_TOKEN, action: 'create', record: { name: 'new.hybridcloudworks.com', type: 'A', content: '192.0.2.1' }, raw: TERRAFORM_RAW }));
+    expect(classify(created, settings).rule).toBe('hcp-terraform');
+  });
+
+  it('refuses an account token without the provider user agent, and the provider user agent from the lab host', () => {
+    const curl = normalise(entry({ actor: TFC_ACCOUNT_TOKEN, record: { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' }, raw: { user_agent: 'curl/8.5.0' } }));
+    expect(classify(curl, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    // A Terraform user agent is a header anyone can send: from the Caddy token's address it is the Caddy token, judged by its own rule.
+    const fromHost = normalise(entry({ actor: { ...TFC_ACCOUNT_TOKEN, ip_address: CADDY_HOST_IP }, record: { name: 'www.hybridcloudworks.com', type: 'A', content: '192.0.2.1' }, raw: TERRAFORM_RAW }));
+    expect(classify(fromHost, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+  });
+
+  it("allows the owner's own terraform runs under their own entry, and not another user's", () => {
+    // The 2026-10-06 00:26Z shape: a user-owned token, the owner's e-mail, the provider user agent.
+    const owner = normalise(entry({ actor: OWNER_USER_TOKEN, action: 'update', record: { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' }, raw: TERRAFORM_RAW }));
+    expect(classify(owner, settings)).toEqual({ verdict: 'EXPECTED', rule: 'terraform-owner-token' });
+    const other = normalise(entry({ actor: { ...OWNER_USER_TOKEN, email: 'mallory@example.org' }, action: 'update', record: { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' }, raw: TERRAFORM_RAW }));
+    expect(classify(other, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    const ownerCurl = normalise(entry({ actor: OWNER_USER_TOKEN, action: 'update', record: { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' }, raw: { user_agent: 'curl/8.5.0' } }));
+    expect(classify(ownerCurl, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
   });
 
   it('allows the Caddy token only on a TXT _acme-challenge record for a lab name', () => {
@@ -141,6 +174,16 @@ describe('the allowlist', () => {
     expect(classify(txt, settings)).toEqual({ verdict: 'EXPECTED', rule: 'caddy-acme' });
     const coder = normalise(entry({ actor: CADDY, record: { name: '_acme-challenge.coder.lab.hybridcloudworks.com', type: 'TXT' } }));
     expect(classify(coder, settings)).toEqual({ verdict: 'EXPECTED', rule: 'caddy-acme' });
+  });
+
+  it("allows the Caddy token by the lab host's address when the log carries no token name", () => {
+    const txt = normalise(entry({ actor: CADDY_BY_IP, record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' }, raw: { user_agent: 'Caddy/2.11.4 (libdns-cloudflare)' } }));
+    expect(txt.tokenName).toBe('');
+    expect(classify(txt, settings)).toEqual({ verdict: 'EXPECTED', rule: 'caddy-acme' });
+    const a = normalise(entry({ actor: CADDY_BY_IP, record: { name: 'www.hybridcloudworks.com', type: 'A', content: '192.0.2.1' } }));
+    expect(classify(a, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    const elsewhere = normalise(entry({ actor: { ...CADDY_BY_IP, ip_address: '192.0.2.200' }, record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
+    expect(classify(elsewhere, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
   });
 
   it('refuses the Caddy token on an A record, a non-challenge TXT, and a challenge for a site name', () => {
@@ -164,13 +207,20 @@ describe('the allowlist', () => {
   });
 
   it('is inactive, never permissive, when a setting it needs is unset', () => {
-    const none = { zoneId: ZONE, ownerEmail: '', caddyTokenName: '' };
+    const none = { zoneId: ZONE, ownerEmail: '', caddyTokenName: '', caddyHostIp: '' };
     const txt = normalise(entry({ actor: CADDY, record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
     expect(classify(txt, none).verdict).toBe('UNEXPECTED');
+    const byIp = normalise(entry({ actor: CADDY_BY_IP, record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
+    expect(classify(byIp, none).verdict).toBe('UNEXPECTED');
     const dash = normalise(entry({ actor: OWNER_DASH, record: { name: 'www.hybridcloudworks.com', type: 'CNAME' } }));
     expect(classify(dash, none).verdict).toBe('UNEXPECTED');
+    const ownerTf = normalise(entry({ actor: OWNER_USER_TOKEN, record: { name: 'www.hybridcloudworks.com', type: 'CNAME' }, raw: TERRAFORM_RAW }));
+    expect(classify(ownerTf, none).verdict).toBe('UNEXPECTED');
     const unnamed = normalise(entry({ actor: { ...CADDY, token_name: '' }, record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
     expect(classify(unnamed, none).verdict).toBe('UNEXPECTED');
+    // The HCP entry needs no setting; an empty caddyHostIp never makes it match a host request by accident.
+    const tfc = normalise(entry({ actor: TFC_ACCOUNT_TOKEN, record: { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' }, raw: TERRAFORM_RAW }));
+    expect(classify(tfc, none)).toEqual({ verdict: 'EXPECTED', rule: 'hcp-terraform' });
   });
 
   it('refuses an unknown actor whatever the record', () => {
@@ -357,7 +407,7 @@ describe('main', () => {
     expect(got.report).toContain('| EXPECTED (`hcp-terraform`) |');
     expect(got.report).toContain('| TXT | `_acme-challenge.lab.hybridcloudworks.com` | EXPECTED (`caddy-acme`) |');
     expect(got.report).toContain('| delete | TXT | `_acme-challenge.lab.hybridcloudworks.com (from the paired entry)` | EXPECTED (`caddy-acme`) |');
-    expect(got.report).toContain('`hcp-terraform` active, `caddy-acme` active, `owner-dashboard` active.');
+    expect(got.report).toContain('`hcp-terraform` active, `terraform-owner-token` active, `caddy-acme` active, `owner-dashboard` active.');
     for (const secret of ['cf-test-token-never-printed', 'func-site-prod-cus-01.azurewebsites.net', 'AbCdEf-challenge-token', SECRET_CONTENT, OWNER]) {
       expect(got.report, secret).not.toContain(secret);
       expect(got.out, secret).not.toContain(secret);
@@ -462,6 +512,17 @@ describe('main', () => {
     expect(shape).toContain(`\`${longUa.slice(0, 60)}…\``);
     expect(shape).not.toContain(ACCOUNT);
     expect(shape).not.toContain(SECRET_CONTENT);
+  });
+
+  it('keeps a hostile user agent inside its code span: backticks and link syntax render as text', () => {
+    const actor = { id: ACCOUNT, context: 'api_token', ip_address: '192.0.2.99', type: 'account' };
+    const raw = { user_agent: '`[click me](https://evil.example)` curl', method: 'POST' };
+    const judged = [{ ...normalise(entry({ actor, record: { name: 'x.hybridcloudworks.com', type: 'A' }, raw })), verdict: 'UNEXPECTED', rule: null }];
+    const md = renderReport({ window: { since: 's', before: 'b', hours: 26 }, entries: 1, pages: 1, judged, settings: { ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, zoneId: ZONE } });
+    const shape = md.split('\n').find((l) => l.startsWith('- `') && l.includes('actor fields'));
+    expect(shape).toContain("user agent `'[click me](https://evil.example)' curl`");
+    // Every code span on the line opens and closes: an even count of backticks, none from the value.
+    expect((shape.match(/`/g) || []).length % 2).toBe(0);
   });
 
   it('prints no shape section when every change is expected', () => {

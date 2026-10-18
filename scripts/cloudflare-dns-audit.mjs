@@ -39,8 +39,8 @@
  *
  * Environment: CLOUDFLARE_AUDIT_LOG_TOKEN (secret; Account Settings Read on the
  * one account), CLOUDFLARE_ACCOUNT_ID, and optionally CLOUDFLARE_ZONE_ID,
- * CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL and CLOUDFLARE_CADDY_TOKEN_NAME; ENV below
- * says what each one does.
+ * CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL, CLOUDFLARE_CADDY_HOST_IP and
+ * CLOUDFLARE_CADDY_TOKEN_NAME; ENV below says what each one does.
  */
 import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -72,9 +72,36 @@ export const ENV = {
   zoneId: 'CLOUDFLARE_ZONE_ID',
   /** The owner's dashboard sign-in (optional): the owner-dashboard allowlist entry is inactive without it. */
   ownerEmail: 'CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL',
-  /** The Caddy runtime token's name, as the API Tokens page shows it (optional): the caddy-acme entry is inactive without it. */
+  /** The Caddy runtime token's name, as the API Tokens page shows it (optional): matched when the log carries `actor.token_name`, which the first live run showed it does not for this account's tokens. */
   caddyTokenName: 'CLOUDFLARE_CADDY_TOKEN_NAME',
+  /** The lab host's public address, the one the Caddy token's client-IP filter allows (optional): the identity the log does carry for that token. The caddy-acme entry is inactive without this or the name. */
+  caddyHostIp: 'CLOUDFLARE_CADDY_HOST_IP',
 };
+
+/**
+ * What the audit log carried for the HCP Terraform workspace's edits on the
+ * first live run (2026-10-18, #948): `actor.context` `api_token`, no
+ * `token_name` or `token_id`, and this user agent. The provider's agent is
+ * the identity the log gives, so it is the one the allowlist binds to.
+ */
+export const TERRAFORM_USER_AGENT_PREFIX = 'terraform-provider-cloudflare/';
+
+/** An API-token request whose user agent is the Cloudflare Terraform provider. */
+function isTerraformProviderRequest(change) {
+  return change.actorContext === 'api_token' && change.userAgent.startsWith(TERRAFORM_USER_AGENT_PREFIX);
+}
+
+/** The request came from the lab host: the only place the Caddy token works, by its client-IP filter. */
+function isFromCaddyHost(change, settings) {
+  return settings.caddyHostIp !== '' && change.actorIp === settings.caddyHostIp;
+}
+
+/** The Caddy token, by the name the log would carry or by the address the token's IP filter pins it to. */
+function isCaddyToken(change, settings) {
+  if (change.actorContext !== 'api_token') return false;
+  if (settings.caddyTokenName !== '' && change.tokenName === settings.caddyTokenName) return true;
+  return isFromCaddyHost(change, settings);
+}
 
 /**
  * THE ALLOWLIST. A change is EXPECTED when one entry matches it and
@@ -93,10 +120,33 @@ export const ALLOWLIST = [
     reason:
       `The \`${HCP_TERRAFORM_TOKEN_NAME}\` API token is the HCP Terraform workspace's: every record it ` +
       'creates, updates or deletes is a plan the owner confirmed in the HCP Terraform UI, and the ' +
-      'plan check holds those records to the declared diff. Identified by the token name the audit ' +
-      'record carries (`actor.token_name`), the field the dashboard shows and the owner can read back.',
+      'plan check holds those records to the declared diff. Identified by what the audit log carries ' +
+      'for it (read on the first live run, 2026-10-18): an account-owned API token (`actor.type` ' +
+      '`account`, `actor.context` `api_token`, no token name) whose request came from the Cloudflare ' +
+      `Terraform provider (user agent \`${TERRAFORM_USER_AGENT_PREFIX}…\`) and not from the lab host, ` +
+      "whose address belongs to the Caddy token's entry. The token name is matched too, should the log " +
+      'ever carry it.',
     active: () => true,
-    matches: (change) => change.tokenName !== '' && change.tokenName === HCP_TERRAFORM_TOKEN_NAME,
+    matches: (change, settings) =>
+      (change.tokenName !== '' && change.tokenName === HCP_TERRAFORM_TOKEN_NAME) ||
+      (change.actorType === 'account' && isTerraformProviderRequest(change) && !isFromCaddyHost(change, settings)),
+  },
+  {
+    id: 'terraform-owner-token',
+    reason:
+      "The owner's own `terraform` runs from the workstation, authenticated with a user-owned API token " +
+      '(`actor.type` `user`, `actor.context` `api_token`, the owner\'s e-mail, the provider\'s user agent): ' +
+      'the 2026-10-06 00:26Z edits on the first live run were these. The HCP Terraform workspace is the ' +
+      'normal path, so these stay visible in the report under their own entry rather than folded into ' +
+      "`hcp-terraform`; a reader who sees many of them asks why applies are leaving the workspace. " +
+      `Identified by the e-mail in \`${ENV.ownerEmail}\` and the provider's user agent.`,
+    active: (settings) => settings.ownerEmail !== '',
+    matches: (change, settings) =>
+      settings.ownerEmail !== '' &&
+      change.actorType === 'user' &&
+      change.actorEmail.toLowerCase() === settings.ownerEmail.toLowerCase() &&
+      isTerraformProviderRequest(change) &&
+      !isFromCaddyHost(change, settings),
   },
   {
     id: 'caddy-acme',
@@ -106,11 +156,12 @@ export const ALLOWLIST = [
       '`_acme-challenge.coder.lab.hybridcloudworks.com`), created and then deleted minutes later. ' +
       'That is ALL this token may do: an A, CNAME or MX record from it, or a challenge TXT for a ' +
       'name outside the lab (`_acme-challenge.www…`, which would be a certificate for the site), ' +
-      `is the finding this poller exists for. Identified by the token name in \`${ENV.caddyTokenName}\`.`,
-    active: (settings) => settings.caddyTokenName !== '',
+      "is the finding this poller exists for. Identified by the lab host's address in " +
+      `\`${ENV.caddyHostIp}\` (the token's client-IP filter allows that address alone, so any API-token ` +
+      `request from it is this token), or by the token name in \`${ENV.caddyTokenName}\` should the log carry it.`,
+    active: (settings) => settings.caddyTokenName !== '' || settings.caddyHostIp !== '',
     matches: (change, settings) =>
-      settings.caddyTokenName !== '' &&
-      change.tokenName === settings.caddyTokenName &&
+      isCaddyToken(change, settings) &&
       change.recordType === 'TXT' &&
       isLabAcmeChallenge(change.recordName),
   },
@@ -119,7 +170,8 @@ export const ALLOWLIST = [
     reason:
       "The owner's own edits in the Cloudflare dashboard (the apex and `www` records are hand-made " +
       'by design; docs/runbooks/edge-dns-verification.md). A dashboard session signed in as the ' +
-      `owner, by the e-mail in \`${ENV.ownerEmail}\`; the owner's API tokens are not this entry.`,
+      `owner, by the e-mail in \`${ENV.ownerEmail}\`; the owner's API tokens are \`terraform-owner-token\` ` +
+      'when the provider made the request, and nothing otherwise.',
     active: (settings) => settings.ownerEmail !== '',
     matches: (change, settings) =>
       settings.ownerEmail !== '' &&
@@ -280,6 +332,7 @@ export function settingsFrom(env) {
     zoneId: str(env[ENV.zoneId]).trim(),
     ownerEmail: str(env[ENV.ownerEmail]).trim(),
     caddyTokenName: str(env[ENV.caddyTokenName]).trim(),
+    caddyHostIp: str(env[ENV.caddyHostIp]).trim(),
   };
 }
 
@@ -366,7 +419,7 @@ function usage() {
     '1 when the log could not be read.',
     '',
     `Environment: ${ENV.token} (secret), ${ENV.accountId}; optional ${ENV.zoneId},`,
-    `${ENV.ownerEmail}, ${ENV.caddyTokenName}.`,
+    `${ENV.ownerEmail}, ${ENV.caddyHostIp}, ${ENV.caddyTokenName}.`,
   ].join('\n');
 }
 
@@ -410,24 +463,30 @@ export function resolveWindow(options, now = Date.now()) {
 
 /** The actor cell: a token by name, a dashboard user by masked e-mail, anything else by type and id. */
 export function describeActor(change) {
-  const from = change.actorIp ? ` from ${change.actorIp}` : '';
+  // Every part the actor chose (a token name, an e-mail, an id, an address)
+  // goes through `cell` here, so the cell itself is placed in the table as is.
+  const from = change.actorIp ? ` from ${cell(change.actorIp)}` : '';
   if (change.tokenName || change.tokenId) {
-    const id = change.tokenId ? ` (${change.tokenId.slice(0, 8)}…)` : '';
-    return `token \`${change.tokenName || 'unnamed'}\`${id}${from}`;
+    const id = change.tokenId ? ` (${cell(change.tokenId.slice(0, 8))}…)` : '';
+    return `token \`${cell(change.tokenName || 'unnamed')}\`${id}${from}`;
   }
-  if (change.actorContext === 'dash') return `dashboard ${change.actorType || 'user'} ${maskEmail(change.actorEmail) || change.actorId}${from}`;
-  const who = maskEmail(change.actorEmail) || change.actorId || 'unknown';
-  const how = [change.actorType, change.actorContext].filter(Boolean).join('/') || 'unknown';
+  if (change.actorContext === 'dash') return `dashboard ${cell(change.actorType || 'user')} ${cell(maskEmail(change.actorEmail) || change.actorId)}${from}`;
+  const who = cell(maskEmail(change.actorEmail) || change.actorId || 'unknown');
+  const how = cell([change.actorType, change.actorContext].filter(Boolean).join('/') || 'unknown');
   return `${how} ${who}${from}`;
 }
 
-// A Markdown table cell: backslashes first, so a value ending in one cannot
-// turn the escaped pipe back into a column break; then pipes; then newlines.
+// A Markdown table cell or code span: backslashes first, so a value ending in
+// one cannot turn the escaped pipe back into a column break; then pipes; then
+// newlines; and a backtick becomes a plain apostrophe, so a value the report
+// wraps in a code span (an id, a record name, a user agent — text the actor
+// chose) cannot close the span and inject Markdown into the summary or issue.
 const cell = (text) =>
   String(text ?? '')
     .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
-    .replace(/\r?\n/g, ' ');
+    .replace(/\r?\n/g, ' ')
+    .replace(/`/g, "'");
 
 /** The Markdown the workflow writes to the job summary and, on exit 2, the issue. */
 export function renderReport({ window, entries, pages, judged, settings }) {
@@ -447,7 +506,7 @@ export function renderReport({ window, entries, pages, judged, settings }) {
       ALLOWLIST.map((e) => {
         const active = e.active(settings);
         if (active) return `\`${e.id}\` active`;
-        const needs = e.id === 'caddy-acme' ? ENV.caddyTokenName : ENV.ownerEmail;
+        const needs = e.id === 'caddy-acme' ? `${ENV.caddyHostIp} and ${ENV.caddyTokenName}` : ENV.ownerEmail;
         return `\`${e.id}\` inactive (\`${needs}\` unset; its edits read UNEXPECTED)`;
       }).join(', ') +
       '.',
@@ -459,7 +518,7 @@ export function renderReport({ window, entries, pages, judged, settings }) {
       const action = j.result === 'success' ? j.actionType : `${j.actionType} (${j.result})`;
       const name = j.nameSource === 'sibling' ? `${j.recordName} (from the paired entry)` : j.recordName;
       const verdict = j.verdict === 'EXPECTED' ? `EXPECTED (\`${j.rule}\`)` : '**UNEXPECTED**';
-      lines.push(`| ${cell(j.time)} | ${cell(describeActor(j))} | ${cell(action)} | ${cell(j.recordType)} | \`${cell(name)}\` | ${verdict} | \`${cell(j.id || '-')}\` |`);
+      lines.push(`| ${cell(j.time)} | ${describeActor(j)} | ${cell(action)} | ${cell(j.recordType)} | \`${cell(name)}\` | ${verdict} | \`${cell(j.id || '-')}\` |`);
     }
     lines.push('');
   }

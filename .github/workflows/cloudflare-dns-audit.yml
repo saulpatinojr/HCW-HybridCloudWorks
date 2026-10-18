@@ -36,8 +36,9 @@
 # THE FIRST RUN FAILS, ON PURPOSE, until the owner stores the
 # `CLOUDFLARE_AUDIT_LOG_TOKEN` secret and the `CLOUDFLARE_ACCOUNT_ID`
 # variable (docs/runbooks/edge-dns-verification.md, "The daily DNS audit").
-# The two optional variables, `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` and
-# `CLOUDFLARE_CADDY_TOKEN_NAME`, arm the allowlist entries that need them;
+# The optional variables, `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL`,
+# `CLOUDFLARE_CADDY_HOST_IP` and `CLOUDFLARE_CADDY_TOKEN_NAME`, arm the
+# allowlist entries that need them;
 # unset, those entries are inactive and their edits read UNEXPECTED, which
 # costs an issue to read and never a missed edit.
 #
@@ -139,6 +140,7 @@ jobs:
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
           CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL: ${{ vars.CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL }}
           CLOUDFLARE_CADDY_TOKEN_NAME: ${{ vars.CLOUDFLARE_CADDY_TOKEN_NAME }}
+          CLOUDFLARE_CADDY_HOST_IP: ${{ vars.CLOUDFLARE_CADDY_HOST_IP }}
           SINCE: ${{ steps.window.outputs.since }}
           BEFORE: ${{ inputs.before }}
         run: |

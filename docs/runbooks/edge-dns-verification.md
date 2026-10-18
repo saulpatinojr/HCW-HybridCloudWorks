@@ -267,14 +267,25 @@ allowlist does not name is UNEXPECTED. A run that could not read the log
 fails, on purpose: a quiet run means the window was read and every change
 was expected, never that the token was missing.
 
-**The allowlist, and how to extend it.** Three entries, each with its reason
-beside it in the script:
+**The allowlist, and how to extend it.** Four entries, each with its reason
+beside it in the script. They are bound to what the audit log really carries,
+read on the first live run (2026-10-18): for this account's API tokens the
+entries have **no `token_name` or `token_id`** (the API reference lists both
+as optional), so a token is told by its actor type and context, the request's
+user agent, and — for the Caddy token — the address its client-IP filter pins
+it to.
 
 | Entry | Allows | Identified by |
 | --- | --- | --- |
-| `hcp-terraform` | every DNS-record action by the HCP Terraform workspace's token | the token name `hcp-terraform-cloudflare-dns` in the entry's `actor.token_name` |
-| `caddy-acme` | the Caddy runtime token, **only** on a `TXT` record named `_acme-challenge.<lab name>` (`_acme-challenge.lab.hybridcloudworks.com` or `_acme-challenge.coder.lab.hybridcloudworks.com`); an A record from it, or a challenge for `www`, is the finding the poller exists for | the token name in the `CLOUDFLARE_CADDY_TOKEN_NAME` repository variable |
-| `owner-dashboard` | the owner's own edits in the Cloudflare dashboard (the apex and `www` records are hand-made by design, above) | a `dash` session whose e-mail is the `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` repository variable; the owner's API tokens are not this entry |
+| `hcp-terraform` | every DNS-record action by the HCP Terraform workspace's token | an account-owned API token (`actor.type` `account`, `actor.context` `api_token`) whose request came from the Cloudflare Terraform provider (user agent `terraform-provider-cloudflare/…`) and not from the lab host's address; the token name `hcp-terraform-cloudflare-dns` too, should the log ever carry it |
+| `terraform-owner-token` | the owner's own `terraform` runs from the workstation with a user-owned token (the 2026-10-06 00:26Z edits) — kept as a separate entry so they stay visible: the workspace is the normal path | a user-owned API token (`actor.type` `user`, `actor.context` `api_token`) under the `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` e-mail with the provider's user agent |
+| `caddy-acme` | the Caddy runtime token, **only** on a `TXT` record named `_acme-challenge.<lab name>` (`_acme-challenge.lab.hybridcloudworks.com` or `_acme-challenge.coder.lab.hybridcloudworks.com`); an A record from it, or a challenge for `www`, is the finding the poller exists for | an API-token request from the lab host's address in the `CLOUDFLARE_CADDY_HOST_IP` repository variable (the token's client-IP filter allows that address alone), or the token name in `CLOUDFLARE_CADDY_TOKEN_NAME` should the log carry it |
+| `owner-dashboard` | the owner's own edits in the Cloudflare dashboard (the apex and `www` records are hand-made by design, above) | a `dash` session whose e-mail is the `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` repository variable |
+
+A Terraform user agent is a header anyone can send, which is why the two
+Terraform entries exclude the lab host's address: a request from there is
+the Caddy token (Cloudflare lets that token work from nowhere else) and is
+judged by `caddy-acme`, whatever its user agent says.
 
 An entry whose variable is unset is inactive, and the report says so: its
 edits then read UNEXPECTED, which costs an issue to read and never a missed
@@ -288,8 +299,8 @@ Cloudflare API token with *Account → Account Settings → Read* on the one
 account and nothing else (that is the permission the audit-log endpoint
 accepts; the token catalogue has no separate audit-log read), and the
 `CLOUDFLARE_ACCOUNT_ID` repository variable. Optional: `CLOUDFLARE_ZONE_ID`
-(the zone is matched by name regardless), and the two allowlist variables
-above. All four are in
+(the zone is matched by name regardless), and the three allowlist variables
+above. All five are in
 [Required inputs](../standards/required-inputs.md), §4.2 and §4.3.
 
 **Running it by hand.** Open the workflow page linked above → **Run
@@ -302,7 +313,7 @@ Cloudflare sent them, the request method, the user agent) so a new allowlist
 entry is written to what the audit log really carries. A scheduled run always
 escalates. The report is the run's
 summary. Success looks like a green run whose summary reads
-`N DNS-record changes on the zone, **0 unexpected**` and lists all three
+`N DNS-record changes on the zone, **0 unexpected**` and lists all four
 allowlist entries as active. A red run is a read failure, and its summary
 says which: a missing secret or variable, an expired token (`HTTP 401` or
 `403`), or an API failure.
