@@ -39,8 +39,9 @@
  *
  * Environment: CLOUDFLARE_AUDIT_LOG_TOKEN (secret; Account Settings Read on the
  * one account), CLOUDFLARE_ACCOUNT_ID, and optionally CLOUDFLARE_ZONE_ID,
- * CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL, CLOUDFLARE_CADDY_HOST_IP and
- * CLOUDFLARE_CADDY_TOKEN_NAME; ENV below says what each one does.
+ * CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL, CLOUDFLARE_CADDY_HOST_IP,
+ * CLOUDFLARE_CADDY_TOKEN_NAME and TFC_TOKEN (secret); ENV below says what each
+ * one does.
  */
 import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -76,7 +77,19 @@ export const ENV = {
   caddyTokenName: 'CLOUDFLARE_CADDY_TOKEN_NAME',
   /** The lab host's public address, the one the Caddy token's client-IP filter allows (optional): the identity the log does carry for that token. The caddy-acme entry is inactive without this or the name. */
   caddyHostIp: 'CLOUDFLARE_CADDY_HOST_IP',
+  /** The HCP Terraform API token the repository already holds (read-only here): the hcp-terraform entry is inactive without it, because a Terraform-looking edit is EXPECTED only while an apply of the workspace was in progress. */
+  tfcToken: 'TFC_TOKEN',
 };
+
+/** HCP Terraform: the organisation and workspace whose applies own the zone's Terraform-managed records. */
+export const TFC_API = 'https://app.terraform.io/api/v2';
+export const TFC_ORGANIZATION = 'hcw';
+export const TFC_WORKSPACE = 'hcw-azure';
+/** An apply's window, padded: the provider's first write can land a little before `applying-at` is stamped, and the last a little after `applied-at`. */
+export const APPLY_LEAD_MS = 2 * 60 * 1000;
+export const APPLY_TAIL_MS = 5 * 60 * 1000;
+/** Pages of 100 applied runs read back from the newest; the window is days, not years. */
+export const MAX_RUN_PAGES = 10;
 
 /**
  * What the audit log carried for the HCP Terraform workspace's edits on the
@@ -94,6 +107,18 @@ function isTerraformProviderRequest(change) {
 /** The request came from the lab host: the only place the Caddy token works, by its client-IP filter. */
 function isFromCaddyHost(change, settings) {
   return settings.caddyHostIp !== '' && change.actorIp === settings.caddyHostIp;
+}
+
+/**
+ * Was an apply of the workspace in progress when the change was made? The
+ * windows come from HCP Terraform's own run record (`fetchTerraformApplies`);
+ * null means they could not be read, and nothing matches.
+ */
+export function withinApply(time, applyWindows) {
+  if (!Array.isArray(applyWindows)) return false;
+  const t = Date.parse(time);
+  if (Number.isNaN(t)) return false;
+  return applyWindows.some((w) => t >= w.start - APPLY_LEAD_MS && t <= w.end + APPLY_TAIL_MS);
 }
 
 /** The Caddy token, by the name the log would carry or by the address the token's IP filter pins it to. */
@@ -120,16 +145,21 @@ export const ALLOWLIST = [
     reason:
       `The \`${HCP_TERRAFORM_TOKEN_NAME}\` API token is the HCP Terraform workspace's: every record it ` +
       'creates, updates or deletes is a plan the owner confirmed in the HCP Terraform UI, and the ' +
-      'plan check holds those records to the declared diff. Identified by what the audit log carries ' +
-      'for it (read on the first live run, 2026-10-18): an account-owned API token (`actor.type` ' +
-      '`account`, `actor.context` `api_token`, no token name) whose request came from the Cloudflare ' +
-      `Terraform provider (user agent \`${TERRAFORM_USER_AGENT_PREFIX}…\`) and not from the lab host, ` +
-      "whose address belongs to the Caddy token's entry. The token name is matched too, should the log " +
-      'ever carry it.',
-    active: () => true,
+      'plan check holds those records to the declared diff. The audit log carries no token name or id ' +
+      'for it (read on the first live run, 2026-10-18), and a user agent is a header anyone can send, ' +
+      'so the identity is a correlation with the apply itself: an account-owned API token ' +
+      '(`actor.type` `account`, `actor.context` `api_token`) whose request came from the Cloudflare ' +
+      `Terraform provider (user agent \`${TERRAFORM_USER_AGENT_PREFIX}…\`), not from the lab host (whose ` +
+      "address belongs to the Caddy token's entry), WHILE an apply of the " +
+      `\`${TFC_ORGANIZATION}/${TFC_WORKSPACE}\` workspace was in progress by HCP Terraform's own run ` +
+      `record, read with \`${ENV.tfcToken}\`. The token name is matched too, should the log ever carry it.`,
+    active: (settings) => Array.isArray(settings.applyWindows),
     matches: (change, settings) =>
       (change.tokenName !== '' && change.tokenName === HCP_TERRAFORM_TOKEN_NAME) ||
-      (change.actorType === 'account' && isTerraformProviderRequest(change) && !isFromCaddyHost(change, settings)),
+      (change.actorType === 'account' &&
+        isTerraformProviderRequest(change) &&
+        !isFromCaddyHost(change, settings) &&
+        withinApply(change.time, settings.applyWindows)),
   },
   {
     id: 'terraform-owner-token',
@@ -333,6 +363,8 @@ export function settingsFrom(env) {
     ownerEmail: str(env[ENV.ownerEmail]).trim(),
     caddyTokenName: str(env[ENV.caddyTokenName]).trim(),
     caddyHostIp: str(env[ENV.caddyHostIp]).trim(),
+    // Filled by main from HCP Terraform; null until then, so nothing matches by accident.
+    applyWindows: null,
   };
 }
 
@@ -397,6 +429,64 @@ export async function fetchAuditLog({ accountId, since, before, token, fetchImpl
   throw new AuditReadError(`more than ${MAX_PAGES} pages of ${PAGE_LIMIT} in the window; narrow it with --since and --before`);
 }
 
+/** One JSON:API GET against HCP Terraform; every failure is an AuditReadError, because an unread run record cannot clear a change. */
+async function tfcGet(path, token, fetchImpl) {
+  let response;
+  try {
+    response = await fetchImpl(`${TFC_API}${path}`, {
+      headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.api+json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    throw new AuditReadError(`HCP Terraform ${path}: the request failed (${error?.message ?? error})`);
+  }
+  const text = await response.text();
+  let doc = null;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    doc = null;
+  }
+  if (!response.ok) throw new AuditReadError(`HCP Terraform ${path}: HTTP ${response.status}`);
+  if (!doc || typeof doc !== 'object') throw new AuditReadError(`HCP Terraform ${path}: the answer is not JSON`);
+  return doc;
+}
+
+/**
+ * The applies of the workspace that touch the window: `[{ runId, start, end }]`
+ * with epoch milliseconds, from HCP Terraform's own run record. `start` is
+ * when the apply began (`applying-at`, else when the run was created) and
+ * `end` when it finished (`applied-at`). Read newest first and stopped once a
+ * page lies wholly before the window.
+ */
+export async function fetchTerraformApplies({ token, since, before, fetchImpl = fetch }) {
+  const ws = await tfcGet(`/organizations/${TFC_ORGANIZATION}/workspaces/${TFC_WORKSPACE}`, token, fetchImpl);
+  const workspaceId = str(ws?.data?.id);
+  if (!workspaceId) throw new AuditReadError(`HCP Terraform returned no id for workspace ${TFC_ORGANIZATION}/${TFC_WORKSPACE}`);
+  const sinceMs = Date.parse(since) - APPLY_TAIL_MS;
+  const beforeMs = Date.parse(before) + APPLY_LEAD_MS;
+  const windows = [];
+  for (let page = 1; page <= MAX_RUN_PAGES; page += 1) {
+    const doc = await tfcGet(`/workspaces/${workspaceId}/runs?filter%5Bstatus%5D=applied&page%5Bsize%5D=100&page%5Bnumber%5D=${page}`, token, fetchImpl);
+    if (!Array.isArray(doc.data)) throw new AuditReadError('HCP Terraform returned a runs payload without a `data` array');
+    let oldestOnPage = Number.POSITIVE_INFINITY;
+    for (const run of doc.data) {
+      const a = run?.attributes ?? {};
+      const stamps = a['status-timestamps'] ?? {};
+      if (a.status !== 'applied') continue;
+      const end = Date.parse(str(stamps['applied-at']));
+      const start = Date.parse(str(stamps['applying-at']) || str(a['created-at']));
+      if (Number.isNaN(end) || Number.isNaN(start)) continue;
+      oldestOnPage = Math.min(oldestOnPage, start);
+      if (end >= sinceMs && start <= beforeMs) windows.push({ runId: str(run.id), start, end });
+    }
+    const nextPage = doc.meta?.pagination?.['next-page'];
+    if (doc.data.length === 0 || nextPage === null || nextPage === undefined || oldestOnPage < sinceMs) return windows;
+  }
+  throw new AuditReadError(`more than ${MAX_RUN_PAGES} pages of applied runs in the window; narrow it with --since and --before`);
+}
+
 /** RFC3339 at second precision, UTC. */
 export const iso = (date) => new Date(date).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
@@ -419,7 +509,8 @@ function usage() {
     '1 when the log could not be read.',
     '',
     `Environment: ${ENV.token} (secret), ${ENV.accountId}; optional ${ENV.zoneId},`,
-    `${ENV.ownerEmail}, ${ENV.caddyHostIp}, ${ENV.caddyTokenName}.`,
+    `${ENV.ownerEmail}, ${ENV.caddyHostIp}, ${ENV.caddyTokenName}, ${ENV.tfcToken} (secret; without it`,
+    'the hcp-terraform entry is inactive).',
   ].join('\n');
 }
 
@@ -505,8 +596,12 @@ export function renderReport({ window, entries, pages, judged, settings }) {
     '**Allowlist:** ' +
       ALLOWLIST.map((e) => {
         const active = e.active(settings);
+        if (active && e.id === 'hcp-terraform') {
+          const n = settings.applyWindows.length;
+          return `\`${e.id}\` active (${n} ${n === 1 ? 'apply' : 'applies'} of \`${TFC_ORGANIZATION}/${TFC_WORKSPACE}\` in the window)`;
+        }
         if (active) return `\`${e.id}\` active`;
-        const needs = e.id === 'caddy-acme' ? `${ENV.caddyHostIp} and ${ENV.caddyTokenName}` : ENV.ownerEmail;
+        const needs = e.id === 'caddy-acme' ? `${ENV.caddyHostIp} and ${ENV.caddyTokenName}` : e.id === 'hcp-terraform' ? ENV.tfcToken : ENV.ownerEmail;
         return `\`${e.id}\` inactive (\`${needs}\` unset; its edits read UNEXPECTED)`;
       }).join(', ') +
       '.',
@@ -584,6 +679,18 @@ export async function main(argv, io = {}) {
     read = await fetchAuditLog({ accountId: settings.accountId, since: window.since, before: window.before, token, fetchImpl: io.fetch });
   } catch (error) {
     return cannotRead(options, log, error instanceof AuditReadError ? error.message : `unexpected failure: ${error?.message ?? error}`);
+  }
+
+  // The applies that can clear a Terraform-looking change. Unset token: the
+  // entry stays inactive and such changes read UNEXPECTED; a token that cannot
+  // read the run record is a read failure, not a quiet green.
+  const tfcToken = str(env[ENV.tfcToken]).trim();
+  if (tfcToken) {
+    try {
+      settings.applyWindows = await fetchTerraformApplies({ token: tfcToken, since: window.since, before: window.before, fetchImpl: io.fetch });
+    } catch (error) {
+      return cannotRead(options, log, error instanceof AuditReadError ? error.message : `unexpected failure: ${error?.message ?? error}`);
+    }
   }
 
   const changes = dnsRecordChanges(read.entries, settings);

@@ -31,6 +31,10 @@ import {
   recordFields,
   renderReport,
   resolveWindow,
+  TFC_API,
+  TFC_WORKSPACE,
+  fetchTerraformApplies,
+  withinApply,
 } from './cloudflare-dns-audit.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'cloudflare-dns-audit.mjs');
@@ -95,11 +99,33 @@ const TERRAFORM_RAW = { user_agent: 'terraform-provider-cloudflare/5.27.0 terraf
 
 const envelope = (result, cursor = '') => ({ success: true, errors: [], messages: [], result, result_info: { count: String(result.length), cursor } });
 
-/** A fetch that answers from `pages` (an array of bodies, one per cursor hop) and records every URL it was given. */
-function fakeFetch(pages, { status = 200, text } = {}) {
+/** An applied HCP Terraform run in the JSON:API shape, with its apply window. */
+const WORKSPACE_ID = 'ws-test0000000001';
+function appliedRun(id, applyingAt, appliedAt, status = 'applied') {
+  return { id, type: 'runs', attributes: { status, 'created-at': applyingAt, 'status-timestamps': { 'applying-at': applyingAt, 'applied-at': appliedAt } } };
+}
+/** Fixture entries are stamped 2026-10-18T0N:00:00Z, so one apply across the morning clears them all. */
+const DEFAULT_APPLIES = [appliedRun('run-morning', '2026-10-18T00:30:00Z', '2026-10-18T09:30:00Z')];
+const runsPage = (runs, nextPage = null) => ({ data: runs, meta: { pagination: { 'current-page': 1, 'next-page': nextPage } } });
+
+/**
+ * A fetch that answers the Cloudflare audit log from `pages` (an array of
+ * bodies, one per cursor hop), HCP Terraform from `tfc` (the workspace lookup
+ * and the applied runs, one body per page number), and records every URL.
+ */
+function fakeFetch(pages, { status = 200, text, tfc = { runs: [runsPage(DEFAULT_APPLIES)] }, tfcStatus = 200 } = {}) {
   const calls = [];
   const fn = async (url, init) => {
     calls.push({ url, init });
+    if (url.startsWith(TFC_API)) {
+      const u = new URL(url);
+      if (u.pathname.endsWith(`/workspaces/${TFC_WORKSPACE}`)) {
+        return { ok: tfcStatus < 300, status: tfcStatus, text: async () => JSON.stringify({ data: { id: WORKSPACE_ID, type: 'workspaces' } }) };
+      }
+      const n = Number(u.searchParams.get('page[number]') ?? '1');
+      const body = tfc.runs[n - 1] ?? runsPage([]);
+      return { ok: tfcStatus < 300, status: tfcStatus, text: async () => JSON.stringify(body) };
+    }
     const cursor = new URL(url).searchParams.get('cursor') ?? '';
     const page = cursor === '' ? pages[0] : pages[Number(cursor.replace('cursor-', ''))];
     const body = text !== undefined ? text : JSON.stringify(page ?? envelope([]));
@@ -109,7 +135,7 @@ function fakeFetch(pages, { status = 200, text } = {}) {
   return fn;
 }
 
-const ENVIRONMENT = { [ENV.token]: 'cf-test-token-never-printed', [ENV.accountId]: ACCOUNT, [ENV.zoneId]: ZONE, [ENV.ownerEmail]: OWNER, [ENV.caddyTokenName]: CADDY_TOKEN, [ENV.caddyHostIp]: CADDY_HOST_IP };
+const ENVIRONMENT = { [ENV.token]: 'cf-test-token-never-printed', [ENV.accountId]: ACCOUNT, [ENV.zoneId]: ZONE, [ENV.ownerEmail]: OWNER, [ENV.caddyTokenName]: CADDY_TOKEN, [ENV.caddyHostIp]: CADDY_HOST_IP, [ENV.tfcToken]: 'tfc-test-token-never-printed' };
 const NOW = Date.parse('2026-10-18T05:50:00Z');
 
 async function run(pages, { env = ENVIRONMENT, argv = [], fetchOptions } = {}) {
@@ -128,7 +154,8 @@ async function run(pages, { env = ENVIRONMENT, argv = [], fetchOptions } = {}) {
 }
 
 describe('the allowlist', () => {
-  const settings = { zoneId: ZONE, ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, caddyHostIp: CADDY_HOST_IP };
+  const MORNING_APPLY = { runId: 'run-morning', start: Date.parse('2026-10-18T00:30:00Z'), end: Date.parse('2026-10-18T09:30:00Z') };
+  const settings = { zoneId: ZONE, ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, caddyHostIp: CADDY_HOST_IP, applyWindows: [MORNING_APPLY] };
 
   it('names four entries, each with a reason', () => {
     expect(ALLOWLIST.map((e) => e.id)).toEqual(['hcp-terraform', 'terraform-owner-token', 'caddy-acme', 'owner-dashboard']);
@@ -149,6 +176,22 @@ describe('the allowlist', () => {
     expect(classify(e, settings)).toEqual({ verdict: 'EXPECTED', rule: 'hcp-terraform' });
     const created = normalise(entry({ actor: TFC_ACCOUNT_TOKEN, action: 'create', record: { name: 'new.hybridcloudworks.com', type: 'A', content: '192.0.2.1' }, raw: TERRAFORM_RAW }));
     expect(classify(created, settings).rule).toBe('hcp-terraform');
+  });
+
+  it('allows the account token only while an apply was in progress, with the lead and tail, and never without the run record', () => {
+    const record = { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' };
+    const at = (time) => normalise(entry({ actor: TFC_ACCOUNT_TOKEN, action: 'update', record, raw: TERRAFORM_RAW, time }));
+    const narrow = { ...settings, applyWindows: [{ runId: 'run-1', start: Date.parse('2026-10-18T12:00:00Z'), end: Date.parse('2026-10-18T12:10:00Z') }] };
+    expect(classify(at('2026-10-18T11:58:30Z'), narrow).rule).toBe('hcp-terraform'); // inside the two-minute lead
+    expect(classify(at('2026-10-18T12:05:00Z'), narrow).rule).toBe('hcp-terraform');
+    expect(classify(at('2026-10-18T12:14:30Z'), narrow).rule).toBe('hcp-terraform'); // inside the five-minute tail
+    expect(classify(at('2026-10-18T11:57:00Z'), narrow)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(classify(at('2026-10-18T12:16:00Z'), narrow)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(classify(at('2026-10-18T12:05:00Z'), { ...settings, applyWindows: [] })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(classify(at('2026-10-18T12:05:00Z'), { ...settings, applyWindows: null })).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(withinApply('not a time', [MORNING_APPLY])).toBe(false);
+    // The token name, when the log carries it, needs no apply window.
+    expect(classify(normalise(entry({ actor: TERRAFORM, action: 'update', record, time: '2026-10-18T22:00:00Z' })), { ...settings, applyWindows: [] }).rule).toBe('hcp-terraform');
   });
 
   it('refuses an account token without the provider user agent, and the provider user agent from the lab host', () => {
@@ -207,7 +250,7 @@ describe('the allowlist', () => {
   });
 
   it('is inactive, never permissive, when a setting it needs is unset', () => {
-    const none = { zoneId: ZONE, ownerEmail: '', caddyTokenName: '', caddyHostIp: '' };
+    const none = { zoneId: ZONE, ownerEmail: '', caddyTokenName: '', caddyHostIp: '', applyWindows: null };
     const txt = normalise(entry({ actor: CADDY, record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
     expect(classify(txt, none).verdict).toBe('UNEXPECTED');
     const byIp = normalise(entry({ actor: CADDY_BY_IP, record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
@@ -218,9 +261,10 @@ describe('the allowlist', () => {
     expect(classify(ownerTf, none).verdict).toBe('UNEXPECTED');
     const unnamed = normalise(entry({ actor: { ...CADDY, token_name: '' }, record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
     expect(classify(unnamed, none).verdict).toBe('UNEXPECTED');
-    // The HCP entry needs no setting; an empty caddyHostIp never makes it match a host request by accident.
+    // Without the run record (TFC_TOKEN unset) the HCP entry is inactive: a Terraform-looking account-token edit reads UNEXPECTED.
     const tfc = normalise(entry({ actor: TFC_ACCOUNT_TOKEN, record: { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' }, raw: TERRAFORM_RAW }));
-    expect(classify(tfc, none)).toEqual({ verdict: 'EXPECTED', rule: 'hcp-terraform' });
+    expect(classify(tfc, none)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    expect(ALLOWLIST.find((e) => e.id === 'hcp-terraform').active(none)).toBe(false);
   });
 
   it('refuses an unknown actor whatever the record', () => {
@@ -383,14 +427,45 @@ describe('fetchAuditLog', () => {
   });
 });
 
+describe('fetchTerraformApplies', () => {
+  const since = '2026-10-10T00:00:00Z';
+  const before = '2026-10-18T00:00:00Z';
+
+  it('looks the workspace up by name, pages the applied runs, keeps the ones touching the window, and stops before it', async () => {
+    const page1 = runsPage([
+      appliedRun('run-new', '2026-10-17T10:00:00Z', '2026-10-17T10:04:00Z'),
+      appliedRun('run-mid', '2026-10-12T08:00:00Z', '2026-10-12T08:03:00Z'),
+      { id: 'run-plan-only', type: 'runs', attributes: { status: 'planned_and_finished', 'created-at': '2026-10-11T00:00:00Z', 'status-timestamps': {} } },
+    ], 2);
+    const page2 = runsPage([appliedRun('run-old', '2026-10-01T00:00:00Z', '2026-10-01T00:02:00Z')], 3);
+    const fetchImpl = fakeFetch([], { tfc: { runs: [page1, page2, runsPage([appliedRun('run-older', '2026-09-01T00:00:00Z', '2026-09-01T00:02:00Z')])] } });
+    const windows = await fetchTerraformApplies({ token: 'tfc-tok', since, before, fetchImpl });
+    expect(windows.map((w) => w.runId)).toEqual(['run-new', 'run-mid']);
+    expect(windows[0].end - windows[0].start).toBe(4 * 60 * 1000);
+    const urls = fetchImpl.calls.map((c) => c.url);
+    expect(urls[0]).toBe(`${TFC_API}/organizations/hcw/workspaces/${TFC_WORKSPACE}`);
+    expect(urls[1]).toContain(`/workspaces/${WORKSPACE_ID}/runs?filter%5Bstatus%5D=applied`);
+    expect(urls).toHaveLength(3); // page 2's oldest run lies before the window: page 3 is never asked for
+    for (const c of fetchImpl.calls) expect(c.init.headers.authorization).toBe('Bearer tfc-tok');
+  });
+
+  it('turns a non-200 and a missing data array into AuditReadError', async () => {
+    const forbidden = fakeFetch([], { tfcStatus: 403 });
+    await expect(fetchTerraformApplies({ token: 't', since, before, fetchImpl: forbidden })).rejects.toThrow(/HCP Terraform .*HTTP 403/);
+    const odd = fakeFetch([], { tfc: { runs: [{ nope: true }] } });
+    await expect(fetchTerraformApplies({ token: 't', since, before, fetchImpl: odd })).rejects.toThrow(/without a `data` array/);
+  });
+});
+
 describe('main', () => {
   it('exits 0 on an empty window and says nothing changed', async () => {
     const got = await run([envelope([])]);
     expect(got.code).toBe(0);
     expect(got.report).toContain('0 DNS-record changes on the zone, **0 unexpected**');
     expect(got.report).toContain('No DNS record in the zone was created, updated or deleted in the window.');
-    expect(got.calls).toHaveLength(1);
-    expect(got.calls[0].url).toContain('since=2026-10-17T03%3A50%3A00Z');
+    const audit = got.calls.filter((c) => !c.url.startsWith(TFC_API));
+    expect(audit).toHaveLength(1);
+    expect(audit[0].url).toContain('since=2026-10-17T03%3A50%3A00Z');
   });
 
   it("exits 0 on an expected Terraform edit and an expected Caddy challenge, and prints neither the token nor a record's content", async () => {
@@ -407,7 +482,7 @@ describe('main', () => {
     expect(got.report).toContain('| EXPECTED (`hcp-terraform`) |');
     expect(got.report).toContain('| TXT | `_acme-challenge.lab.hybridcloudworks.com` | EXPECTED (`caddy-acme`) |');
     expect(got.report).toContain('| delete | TXT | `_acme-challenge.lab.hybridcloudworks.com (from the paired entry)` | EXPECTED (`caddy-acme`) |');
-    expect(got.report).toContain('`hcp-terraform` active, `terraform-owner-token` active, `caddy-acme` active, `owner-dashboard` active.');
+    expect(got.report).toContain('`hcp-terraform` active (1 apply of `hcw/hcw-azure` in the window), `terraform-owner-token` active, `caddy-acme` active, `owner-dashboard` active.');
     for (const secret of ['cf-test-token-never-printed', 'func-site-prod-cus-01.azurewebsites.net', 'AbCdEf-challenge-token', SECRET_CONTENT, OWNER]) {
       expect(got.report, secret).not.toContain(secret);
       expect(got.out, secret).not.toContain(secret);
@@ -452,8 +527,33 @@ describe('main', () => {
     ];
     const got = await run(pages);
     expect(got.code).toBe(2);
-    expect(got.calls).toHaveLength(2);
+    expect(got.calls.filter((c) => !c.url.startsWith(TFC_API))).toHaveLength(2);
     expect(got.report).toContain('over 2 pages; 2 DNS-record changes on the zone, **1 unexpected**');
+  });
+
+  it('clears an account-token edit only inside an apply, reports the apply count, and reads it UNEXPECTED without TFC_TOKEN', async () => {
+    const record = { name: 'api-azure.hybridcloudworks.com', type: 'CNAME' };
+    const inside = entry({ actor: TFC_ACCOUNT_TOKEN, action: 'update', record, raw: TERRAFORM_RAW, time: '2026-10-18T03:00:00Z' });
+    const outside = entry({ actor: TFC_ACCOUNT_TOKEN, action: 'update', record, raw: TERRAFORM_RAW, time: '2026-10-17T20:00:00Z' });
+    const cleared = await run([envelope([inside])]);
+    expect(cleared.code).toBe(0);
+    expect(cleared.report).toContain('`hcp-terraform` active (1 apply of `hcw/hcw-azure` in the window)');
+    const stray = await run([envelope([outside])]);
+    expect(stray.code).toBe(2);
+    expect(stray.report).toContain('**UNEXPECTED**');
+    const { [ENV.tfcToken]: _unused, ...withoutTfc } = ENVIRONMENT;
+    const inactive = await run([envelope([inside])], { env: withoutTfc });
+    expect(inactive.code).toBe(2);
+    expect(inactive.report).toContain('`hcp-terraform` inactive (`TFC_TOKEN` unset; its edits read UNEXPECTED)');
+    expect(inactive.calls.every((c) => !c.url.startsWith(TFC_API))).toBe(true);
+    for (const got of [cleared, stray, inactive]) expect(got.out).not.toContain('tfc-test-token-never-printed');
+  });
+
+  it('exits 1 when HCP Terraform cannot be read, and judges nothing', async () => {
+    const got = await run([envelope([entry({ actor: TFC_ACCOUNT_TOKEN, record: { name: 'x.hybridcloudworks.com', type: 'A' }, raw: TERRAFORM_RAW })])], { fetchOptions: { tfcStatus: 500 } });
+    expect(got.code).toBe(1);
+    expect(got.report).toContain('The audit log was not read');
+    expect(got.report).toContain('HCP Terraform');
   });
 
   it('exits 1 on a non-200, and the report says the log was not read', async () => {

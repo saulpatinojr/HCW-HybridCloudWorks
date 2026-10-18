@@ -138,12 +138,16 @@ day (T-525). `READER_CLIENT_ID` was added to the table on 2026-08-29 (T-728) and
 is **not yet set**, so a reader comparing this against `gh variable list` should
 find exactly that one difference until the split is applied. Seeded from
 Terraform outputs by `scripts/set-github-variables.ps1` — never written by
-hand, with four exceptions, each for a value Terraform does not manage:
+hand, with these exceptions, each for a value Terraform does not manage:
 `COPILOT_REVIEW_APP_ID` identifies a GitHub App, so it is set by hand from the
 App page (runbook step 4), `VITE_TURNSTILE_SITE_KEY` is the site key of a
-Turnstile widget created in the Cloudflare dashboard, and `DOCKERHUB_CONNECTION`
+Turnstile widget created in the Cloudflare dashboard, `DOCKERHUB_CONNECTION`
 and `DOCKERHUB_ENABLED` belong to a Docker OIDC connection created in Docker
-Home (§4.11). Each row says so.
+Home (§4.11), and the five Cloudflare audit inputs (`CLOUDFLARE_ACCOUNT_ID`,
+`CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL`,
+`CLOUDFLARE_CADDY_TOKEN_NAME`, `CLOUDFLARE_CADDY_HOST_IP`) are read from the
+Cloudflare dashboard and the Caddy token's own settings (#948), so a rebuild
+sets them by hand too. Each row says so.
 
 | Name | Status | Consumer |
 | --- | --- | --- |
@@ -194,7 +198,7 @@ by OIDC. The one Azure-issued secret this section used to list is retired
 | Name | Status | Consumer |
 | --- | --- | --- |
 | ~~`AZURE_STATIC_WEB_APPS_API_TOKEN`~~ | **RETIRED 2026-08-30, DELETED 2026-08-31 (T-727)** | Nothing. `deploy-azure-frontend.yml` mints the deployment token from ARM under federated identity at deploy time, so no stored value is needed and there is nothing to rotate. The secret was removed from repository settings by the owner on 2026-08-31, after the role assignment applied |
-| `TFC_TOKEN` | **SET 2026-08-30** | An HCP Terraform API token for the `hcw-azure` workspace. Not an Azure credential. `tfc-plan-check.yml` reads a run's JSON plan with it and holds the plan to the permanent diff (`scripts/assert-expected-plan.mjs`). `deploy-functions.yml` asks the workspace whether an apply is in flight before deploying, because a deploy and an apply that write the app-settings map minutes apart lose settings (#454); that guard fails closed without the token (PLAT-3, #963). `monitor-deploy-drift.yml` reads the workspace's last applied run with it, as the Terraform row's deployed baseline; without the token that row reads ⚠️ and the job fails, never ✅ |
+| `TFC_TOKEN` | **SET 2026-08-30** | An HCP Terraform API token for the `hcw-azure` workspace. Not an Azure credential. `tfc-plan-check.yml` reads a run's JSON plan with it and holds the plan to the permanent diff (`scripts/assert-expected-plan.mjs`). `cloudflare-dns-audit.yml` reads the workspace's applied runs with it (read-only), so a Terraform-looking DNS edit is EXPECTED only while an apply was in progress (#948). `deploy-functions.yml` asks the workspace whether an apply is in flight before deploying, because a deploy and an apply that write the app-settings map minutes apart lose settings (#454); that guard fails closed without the token (PLAT-3, #963). `monitor-deploy-drift.yml` reads the workspace's last applied run with it, as the Terraform row's deployed baseline; without the token that row reads ⚠️ and the job fails, never ✅ |
 | `MANIFEST_APP_PRIVATE_KEY` | **SET 2026-09-01** | Private key of the repository's GitHub App, with `MANIFEST_APP_ID` (§4.2). `scripts/github-app-token.mjs` mints a one-hour installation token from it, and revokes it after use, for the jobs that push a branch and open a pull request: `publish-content-manifest.yml`, `update-avm-versions.yml`, `update-learn-catalogue.yml` and `update-version-floors.yml`. Each job holds it for the length of two API calls and installs nothing, and each self-arms while it is unset |
 | `CLOUDFLARE_AUDIT_LOG_TOKEN` | **SET 2026-10-18** (owner, #948) | A Cloudflare API token with *Account → Account Settings → Read* on the HybridCloudWorks account only, with an end date at most a year out: the one permission the Audit Logs v2 endpoint accepts (the token catalogue has no separate audit-log read; *Access: Audit Logs Read* is Zero Trust's and not this). `cloudflare-dns-audit.yml` hands it to `scripts/cloudflare-dns-audit.mjs` for one daily read of the account audit log ([Edge and DNS verification](../runbooks/edge-dns-verification.md), "The daily DNS audit"). Read-only, so a leak reads the audit log and changes nothing; roll it in the dashboard and set the secret again. While it is unset the daily run fails, on purpose |
 

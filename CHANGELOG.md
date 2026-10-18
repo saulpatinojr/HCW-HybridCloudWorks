@@ -56,8 +56,11 @@ This project has not cut a tagged release; entries are grouped under
   user agent; never values), because the first run showed the HCP Terraform
   token's edits arrive as `account/api_token` with no `token_name`. The
   allowlist is rebound to what the log carries: `hcp-terraform` is an
-  account-owned token with the Cloudflare Terraform provider's user agent
-  and not the lab host's address; a new `terraform-owner-token` entry keeps
+  account-owned token with the Cloudflare Terraform provider's user agent,
+  not the lab host's address, **while an apply of `hcw/hcw-azure` was in
+  progress** by HCP Terraform's own run record (read with the `TFC_TOKEN`
+  secret; a user agent alone is a header anyone can send, as CodeRabbit
+  noted); a new `terraform-owner-token` entry keeps
   the owner's own workstation `terraform` runs (the 2026-10-06 00:26Z
   edits) visible under their own name; `caddy-acme` is told by the lab
   host's address in the new `CLOUDFLARE_CADDY_HOST_IP` variable, the one
