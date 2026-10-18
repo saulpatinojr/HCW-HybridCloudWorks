@@ -10,11 +10,12 @@ lab_images_checkouts:
   - "{{ lab_images_playbook_checkout }}"
   - "{{ labs_agent_home }}"
 
-# Plan the Coder workspace image on the sandbox daemon the workspaces run on
-# (the coder_sandbox role; LAB-5): pull it there, and remove the ones no pin
-# names. Coder pulls it itself on the first workspace start; pulled here, that
-# start does not wait for it. Off while Coder is, because that daemon is then
-# stopped.
+# Plan the Coder workspace images, one per template under
+# lab-host/coder/templates, on the sandbox daemon the workspaces run on (the
+# coder_sandbox role; LAB-5): pull each there, and remove the ones no pin
+# names. Coder pulls an image itself on a template's first workspace start;
+# pulled here, that start does not wait for it. Off while Coder is, because
+# that daemon is then stopped.
 lab_images_pull_workspace: "{{ coder_enabled }}"
 
 # The sandbox daemon's socket, the coder_sandbox role's fixed path.

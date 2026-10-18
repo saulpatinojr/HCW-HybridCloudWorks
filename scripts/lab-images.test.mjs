@@ -3,12 +3,13 @@
  * removes the digests a pin no longer names (lab-host/ansible/roles/
  * lab_images). The list comes from the pins themselves, read on the host by
  * lab-images.mjs, never from a copy: a bump to IMAGES in
- * vps-agent/lib/capabilities.js, or to the workspace image in the Coder
+ * vps-agent/lib/capabilities.js, or to the workspace image in any Coder
  * template, must reach the host with no second edit.
  *
- * So this test holds the helper to the two files as they are in this
- * repository (the CLI Ansible runs, against this checkout, prints exactly
- * IMAGES and the template's image), and holds the plan to what the role
+ * So this test holds the helper to the files as they are in this repository
+ * (the CLI Ansible runs, against this checkout, prints exactly IMAGES and
+ * every template's image; #1268 found it reading hcw-lab's alone while the
+ * guided labs pinned another digest), and holds the plan to what the role
  * promises: pulls by repository@digest, removals only inside the lab's own
  * repositories, never a pinned digest, never an image a container uses.
  *
@@ -17,7 +18,7 @@
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,18 +26,42 @@ import { fileURLToPath } from 'node:url';
 import {
   CAPABILITIES_FILE,
   LAB_REPOSITORY_PATTERN,
+  WORKSPACE_TEMPLATES_DIR,
   WORKSPACE_TEMPLATE_FILE,
   parseReference,
   planImages,
   readPins,
   workspaceImageFromTemplate,
+  workspaceTemplateFiles,
 } from '../lab-host/ansible/roles/lab_images/files/lab-images.mjs';
 import { IMAGES } from '../vps-agent/lib/capabilities.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
 const helper = path.join(repoRoot, 'lab-host', 'ansible', 'roles', 'lab_images', 'files', 'lab-images.mjs');
-const templateText = readFileSync(path.join(repoRoot, WORKSPACE_TEMPLATE_FILE), 'utf8');
+
+// Every template this repository publishes, read here without the helper, so
+// the test and the helper cannot share a blind spot (#1268).
+const templateNames = readdirSync(path.join(repoRoot, WORKSPACE_TEMPLATES_DIR), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .sort();
+const templateFile = (name) => path.join(WORKSPACE_TEMPLATES_DIR, name, WORKSPACE_TEMPLATE_FILE);
+/** A template's pinned image, from the one `image_digest` line and the one local that uses it. */
+function pinnedInTemplate(name) {
+  const lines = readFileSync(path.join(repoRoot, templateFile(name)), 'utf8')
+    .split('\n')
+    .filter((line) => !/^\s*#/.test(line));
+  const digests = lines.map((line) => line.match(/^\s*image_digest\s*=\s*"(sha256:[0-9a-f]{64})"\s*$/)).filter(Boolean);
+  const repositories = lines
+    .map((line) => line.match(/^\s*(?:default_)?image\s*=\s*"([^"@$]+)@\$\{local\.image_digest\}"\s*$/))
+    .filter(Boolean);
+  expect(digests, `${templateFile(name)} pins one image_digest`).toHaveLength(1);
+  expect(repositories, `${templateFile(name)} builds one image from local.image_digest`).toHaveLength(1);
+  return `${parseReference(repositories[0][1]).repository}@${digests[0][1]}`;
+}
+/** What the sandbox daemon must hold: each template's image, once. */
+const workspacePulls = [...new Set(templateNames.map(pinnedInTemplate))];
 
 const hex = (c) => c.repeat(64);
 // The familiar form, as Docker lists Docker Hub images in RepoTags and
@@ -50,16 +75,24 @@ const scratch = mkdtempSync(path.join(os.tmpdir(), 'lab-images-test-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 let fixtureCount = 0;
-/** A checkout holding only the two files the helper reads. */
-function fixtureCheckout({ images, template }) {
+/**
+ * A checkout holding only the files the helper reads: capabilities.js and
+ * one main.tf per template, `template` as hcw-lab's alone or `templates` by
+ * name. An empty `templates` makes a checkout with no template at all.
+ */
+function fixtureCheckout({ images, template, templates = { 'hcw-lab': template } }) {
   const root = path.join(scratch, `checkout-${(fixtureCount += 1)}`);
   mkdirSync(path.join(root, path.dirname(CAPABILITIES_FILE)), { recursive: true });
-  mkdirSync(path.join(root, path.dirname(WORKSPACE_TEMPLATE_FILE)), { recursive: true });
+  mkdirSync(path.join(root, WORKSPACE_TEMPLATES_DIR), { recursive: true });
   writeFileSync(path.join(root, CAPABILITIES_FILE), `export const IMAGES = ${JSON.stringify(images)};\n`);
-  writeFileSync(path.join(root, WORKSPACE_TEMPLATE_FILE), template);
+  for (const [name, text] of Object.entries(templates)) {
+    mkdirSync(path.join(root, WORKSPACE_TEMPLATES_DIR, name), { recursive: true });
+    if (text !== null) writeFileSync(path.join(root, templateFile(name)), text);
+  }
   return root;
 }
 
+/** hcw-lab's shape: `image = "<repository>@${local.image_digest}"`. */
 function templateWith(digest, repository = WORKSPACE) {
   return [
     'locals {',
@@ -70,6 +103,22 @@ function templateWith(digest, repository = WORKSPACE) {
     '}',
     'resource "docker_container" "workspace" {',
     '  image = docker_image.hcw_lab.image_id',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/** The guided labs' shape (amo-guided-lab, na-guided-lab): the same local named `default_image`. */
+function guidedTemplateWith(digest, repository = WORKSPACE) {
+  return [
+    'locals {',
+    `  image_tag      = "e3d24c3eab7ca2d4eb314cef190197f9700733da"`,
+    `  image_digest   = "${digest}"`,
+    `  default_image  = "${repository}@\${local.image_digest}"`,
+    '  home           = "/tmp/home"',
+    '}',
+    'resource "docker_image" "workspace" {',
+    '  name         = local.default_image',
     '}',
     '',
   ].join('\n');
@@ -97,13 +146,23 @@ describe('the pins, read from this repository', () => {
     }
   });
 
-  it('include the workspace image the Coder template runs, from its image and image_digest locals', async () => {
+  it('include the workspace image of every Coder template, from its image_digest and image or default_image locals', async () => {
     const pins = await readPins(repoRoot);
-    expect(pins.workspace.repository).toMatch(LAB_REPOSITORY_PATTERN);
-    expect(pins.workspace.pull).toBe(`${pins.workspace.repository}@${pins.workspace.digest}`);
-    const digestLines = templateText.split('\n').filter((line) => line.includes(pins.workspace.digest));
-    expect(digestLines).toHaveLength(1);
-    expect(digestLines[0]).toMatch(/^\s*image_digest\s*=/);
+    expect(await workspaceTemplateFiles(repoRoot)).toEqual(templateNames.map((name) => path.join(repoRoot, templateFile(name))));
+    expect(pins.workspaces.map((w) => w.source)).toEqual(templateNames.map((name) => path.join(repoRoot, templateFile(name))));
+    for (const [i, name] of templateNames.entries()) {
+      const pin = pins.workspaces[i];
+      expect(pin.repository, name).toMatch(LAB_REPOSITORY_PATTERN);
+      expect(pin.pull, name).toBe(`${pin.repository}@${pin.digest}`);
+      expect(pin.pull, name).toBe(pinnedInTemplate(name));
+    }
+  });
+
+  it('cover the templates #1268 found missing, which pin their image as default_image', () => {
+    expect(templateNames).toEqual(expect.arrayContaining(['hcw-lab', 'amo-guided-lab', 'na-guided-lab']));
+    for (const name of ['amo-guided-lab', 'na-guided-lab']) {
+      expect(readFileSync(path.join(repoRoot, templateFile(name)), 'utf8')).toMatch(/^\s*default_image\s*=/m);
+    }
   });
 
   it('are what the CLI prints for this checkout, the command the role runs', () => {
@@ -117,18 +176,85 @@ describe('the pins, read from this repository', () => {
       return `${parseReference(name).repository}@${digest}`;
     });
     expect(plan.pull).toEqual(capabilityPulls);
-    expect(plan.pinned).toHaveLength(capabilityPulls.length + 1);
+    expect(plan.pinned).toEqual([...capabilityPulls, ...workspacePulls]);
     expect(plan.remove).toEqual([]);
   });
 
-  it('adds the workspace image to the pulls only with --pull-workspace', () => {
+  it('adds every template\'s workspace image to the pulls only with --pull-workspace', () => {
     const run = (args) =>
       JSON.parse(execFileSync(process.execPath, [helper, ...args], { input: '', encoding: 'utf8' }));
     const off = run([repoRoot]);
     const on = run(['--pull-workspace', repoRoot]);
-    expect(on.pull).toHaveLength(off.pull.length + 1);
-    expect(on.pull.at(-1)).toMatch(new RegExp(`^${WORKSPACE}@sha256:[0-9a-f]{64}$`));
+    expect(on.pull).toEqual([...off.pull, ...workspacePulls]);
+    for (const pull of workspacePulls) expect(pull).toMatch(new RegExp(`^${WORKSPACE}@sha256:[0-9a-f]{64}$`));
     expect(off.pinned).toEqual(on.pinned);
+  });
+});
+
+describe('every template\'s image is in the sandbox plan (#1268)', () => {
+  // The role's promise is that no lab image is first downloaded while a
+  // visitor waits. Until #1268 the sandbox plan held hcw-lab's image alone,
+  // and the guided labs' first workspace pulled 2.75 GB on start.
+  const alpine = `alpine:3.24.2@sha256:${hex('a')}`;
+  const runner = `${RUNNER}:new@sha256:${hex('b')}`;
+
+  it('is what the CLI prints for this checkout, the command the role runs against the sandbox daemon', () => {
+    const plan = JSON.parse(
+      execFileSync(process.execPath, [helper, '--scope', 'workspaces', repoRoot], { input: '', encoding: 'utf8' })
+    );
+    for (const name of templateNames) {
+      expect(plan.pull, `${name}'s image is pulled onto the sandbox daemon`).toContain(pinnedInTemplate(name));
+    }
+    expect(plan.pull).toEqual(workspacePulls);
+    expect(plan.pinned).toEqual(workspacePulls);
+  });
+
+  it('reads both shapes, image and default_image, and pulls each distinct digest once', async () => {
+    const pins = await readPins(
+      fixtureCheckout({
+        images: { alpine, hcwLabRunner: runner },
+        templates: {
+          'hcw-lab': templateWith(`sha256:${hex('c')}`),
+          'na-guided-lab': guidedTemplateWith(`sha256:${hex('d')}`),
+          'amo-guided-lab': guidedTemplateWith(`sha256:${hex('d')}`),
+        },
+      })
+    );
+    expect(pins.workspaces.map((w) => path.basename(path.dirname(w.source)))).toEqual(['amo-guided-lab', 'hcw-lab', 'na-guided-lab']);
+    const plan = planImages({
+      checkouts: [pins],
+      scope: 'workspaces',
+      images: [image(hex('c'), [`${WORKSPACE}@sha256:${hex('c')}`]), image(hex('8'), [`${WORKSPACE}@sha256:${hex('8')}`])],
+    });
+    expect(plan.pull).toEqual([`${WORKSPACE}@sha256:${hex('d')}`, `${WORKSPACE}@sha256:${hex('c')}`]);
+    expect(plan.pinned).toEqual(plan.pull);
+    expect(plan.remove).toEqual([`${WORKSPACE}@sha256:${hex('8')}`]);
+  });
+
+  it('fails when one template\'s image cannot be read, rather than planning without it', async () => {
+    const broken = fixtureCheckout({
+      images: { alpine, hcwLabRunner: runner },
+      templates: { 'hcw-lab': templateWith(`sha256:${hex('c')}`), 'x-guided-lab': 'locals {\n  image = "x"\n}\n' },
+    });
+    await expect(readPins(broken)).rejects.toThrow(/x-guided-lab[\\/]main\.tf: expected exactly one `image_digest = "sha256:<64 hex>"` local, found 0/);
+    let failure;
+    try {
+      execFileSync(process.execPath, [helper, '--scope', 'workspaces', broken], { input: '', encoding: 'utf8', stdio: 'pipe' });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure?.status).toBe(1);
+    expect(failure.stderr).toMatch(/^lab-images: .*x-guided-lab[\\/]main\.tf: expected exactly one/);
+  });
+
+  it('fails when a template directory has no main.tf, or a checkout has no template at all', async () => {
+    const noFile = fixtureCheckout({
+      images: { alpine, hcwLabRunner: runner },
+      templates: { 'hcw-lab': templateWith(`sha256:${hex('c')}`), 'y-guided-lab': null },
+    });
+    await expect(readPins(noFile)).rejects.toThrow(/y-guided-lab[\\/]main\.tf/);
+    const none = fixtureCheckout({ images: { alpine, hcwLabRunner: runner }, templates: {} });
+    await expect(readPins(none)).rejects.toThrow(/holds no template directory/);
   });
 });
 
@@ -162,6 +288,16 @@ describe('a pin that is not a digest reference', () => {
     );
     const twice = templateWith(`sha256:${hex('2')}`) + `locals {\n  image_digest = "sha256:${hex('3')}"\n}\n`;
     expect(() => workspaceImageFromTemplate(twice, 'main.tf')).toThrow(/found 2/);
+    const noImage = `locals {\n  image_digest = "sha256:${hex('2')}"\n}\n`;
+    expect(() => workspaceImageFromTemplate(noImage, 'main.tf')).toThrow(/`default_image = "<repository>@\$\{local\.image_digest\}"` local, found 0/);
+    const both = templateWith(`sha256:${hex('2')}`) + `locals {\n  default_image = "${WORKSPACE}@\${local.image_digest}"\n}\n`;
+    expect(() => workspaceImageFromTemplate(both, 'main.tf')).toThrow(/found 2/);
+  });
+
+  it('reads the guided labs\' default_image local as it reads hcw-lab\'s image local', () => {
+    const guided = workspaceImageFromTemplate(guidedTemplateWith(`sha256:${hex('d')}`, `docker.io/${WORKSPACE}`), 'main.tf');
+    expect(guided.pull).toBe(`${WORKSPACE}@sha256:${hex('d')}`);
+    expect(guided.repository).toBe(WORKSPACE);
   });
 
   it('fails when capabilities.js is missing from a checkout', async () => {
@@ -254,7 +390,7 @@ describe('the plan', () => {
     // The same bytes under both names, as on the host after the first pull
     // from Docker Hub: one reference is a pin, so the image stays whole.
     const pins = await readPins(current());
-    const pinned = pins.workspace;
+    const [pinned] = pins.workspaces;
     expect(pinned.repository).toBe(WORKSPACE);
     const plan = planImages({
       checkouts: [pins],
@@ -415,8 +551,8 @@ describe('a plan scoped to one daemon (LAB-5)', () => {
     });
     expect(jobs.pull).toEqual(capabilityPulls);
     expect(jobs.pinned).toEqual(capabilityPulls);
-    expect(workspaces.pull).toHaveLength(1);
-    expect(workspaces.pull[0]).toMatch(new RegExp(`^${WORKSPACE}@sha256:[0-9a-f]{64}$`));
+    expect(workspaces.pull).toEqual(workspacePulls);
+    for (const pull of workspaces.pull) expect(pull).toMatch(new RegExp(`^${WORKSPACE}@sha256:[0-9a-f]{64}$`));
     expect(workspaces.pinned).toEqual(workspaces.pull);
   });
 

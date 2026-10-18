@@ -770,7 +770,8 @@ bodies.
 **Consequences of this amendment.**
 
 - Two daemons and two image stores. `lab_images` plans each: the job images
-  on the host daemon, the workspace image (about 484 MB) on the sandbox's.
+  on the host daemon, the workspace image (about 484 MB) on the sandbox's;
+  since #1268, every template's workspace image, not `hcw-lab`'s alone.
   Portainer sees the host daemon only.
 - On the run that turns it on, running jobs fail, workspaces stop, every
   image is pulled again, and a workspace starts again with an empty home

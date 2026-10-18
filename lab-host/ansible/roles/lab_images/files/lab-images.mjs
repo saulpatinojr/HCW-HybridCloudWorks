@@ -8,9 +8,13 @@
  *   - every value of `IMAGES` in vps-agent/lib/capabilities.js, read by
  *     importing that module, so Node itself is the parser and whatever the
  *     module exports is what gets pulled;
- *   - the Coder workspace image, `local.image` in
- *     lab-host/coder/templates/hcw-lab/main.tf, rebuilt from the template's
- *     `image` and `image_digest` locals the way Terraform does.
+ *   - the Coder workspace image of every template under
+ *     lab-host/coder/templates (each directory's main.tf), rebuilt from the
+ *     template's `image_digest` local and its `image` (hcw-lab) or
+ *     `default_image` (the guided labs) local the way Terraform does. Two
+ *     templates on one digest are one pull; a template whose image cannot
+ *     be read fails the plan, rather than leaving that image to a visitor's
+ *     first start (#1268).
  *
  * Every pin must be `name[:tag]@sha256:<64 hex>`. A tag alone is refused,
  * as capabilities.test.js refuses it, because a mutable tag is the thing the
@@ -45,17 +49,20 @@
  * workspace image pulled only under --pull-workspace.
  *
  * Prints the plan as one JSON object on stdout. Exits 1, with the reason on
- * stderr, when a checkout lacks either file, a pin is not a digest
- * reference, or the template's image cannot be found.
+ * stderr, when a checkout lacks capabilities.js or a template's main.tf, has
+ * no template at all, a pin is not a digest reference, or a template's image
+ * cannot be found.
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /** Where the pins live, relative to a checkout of this repository. */
 export const CAPABILITIES_FILE = 'vps-agent/lib/capabilities.js';
-export const WORKSPACE_TEMPLATE_FILE = 'lab-host/coder/templates/hcw-lab/main.tf';
+/** Every directory here is a Coder template, and its WORKSPACE_TEMPLATE_FILE pins its image. */
+export const WORKSPACE_TEMPLATES_DIR = 'lab-host/coder/templates';
+export const WORKSPACE_TEMPLATE_FILE = 'main.tf';
 
 /**
  * The lab's own repositories beyond the ones the pins name: the images
@@ -163,8 +170,11 @@ function onlyMatch(text, pattern, what, source) {
 }
 
 /**
- * The workspace image the Coder template runs: `local.image`, which main.tf
- * builds as "<repository>@${local.image_digest}".
+ * The workspace image a Coder template runs: the local its main.tf builds as
+ * "<repository>@${local.image_digest}", named `image` in hcw-lab and
+ * `default_image` in the guided-lab templates (#1268). Either name, but
+ * exactly one of them, so a template that pins two images is refused rather
+ * than half planned.
  */
 export function workspaceImageFromTemplate(text, source) {
   const code = codeLines(text);
@@ -176,17 +186,35 @@ export function workspaceImageFromTemplate(text, source) {
   );
   const repository = onlyMatch(
     code,
-    /^\s*image\s*=\s*"([^"@$]+)@\$\{local\.image_digest\}"\s*$/gm,
-    '`image = "<repository>@${local.image_digest}"` local',
+    /^\s*(?:default_)?image\s*=\s*"([^"@$]+)@\$\{local\.image_digest\}"\s*$/gm,
+    '`image = "<repository>@${local.image_digest}"` or `default_image = "<repository>@${local.image_digest}"` local',
     source
   );
   return pinFrom(`${repository}@${digest}`, source);
 }
 
-/** The pins one checkout carries: the capability images and the workspace image. */
+/**
+ * The main.tf of every template under WORKSPACE_TEMPLATES_DIR in a checkout,
+ * one per directory there, in name order so the plan does not follow the
+ * filesystem's. A checkout with no template is refused: a plan with no
+ * workspace image would leave every first start to pull one.
+ */
+export async function workspaceTemplateFiles(checkout) {
+  const templatesDir = path.resolve(checkout, WORKSPACE_TEMPLATES_DIR);
+  const entries = await readdir(templatesDir, { withFileTypes: true });
+  const templates = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  if (templates.length === 0) {
+    throw new Error(`${templatesDir} holds no template directory; the lab_images plan reads the workspace image from each`);
+  }
+  return templates.map((name) => path.join(templatesDir, name, WORKSPACE_TEMPLATE_FILE));
+}
+
+/** The pins one checkout carries: the capability images and every template's workspace image. */
 export async function readPins(checkout) {
   const capabilitiesPath = path.resolve(checkout, CAPABILITIES_FILE);
-  const templatePath = path.resolve(checkout, WORKSPACE_TEMPLATE_FILE);
   const { IMAGES } = await import(pathToFileURL(capabilitiesPath).href);
   if (!IMAGES || typeof IMAGES !== 'object' || Object.keys(IMAGES).length === 0) {
     throw new Error(`${capabilitiesPath} exports no IMAGES entries`);
@@ -194,8 +222,11 @@ export async function readPins(checkout) {
   const capabilities = Object.entries(IMAGES).map(([key, reference]) =>
     pinFrom(reference, `IMAGES.${key} in ${capabilitiesPath}`)
   );
-  const workspace = workspaceImageFromTemplate(await readFile(templatePath, 'utf8'), templatePath);
-  return { checkout: path.resolve(checkout), capabilities, workspace };
+  const workspaces = [];
+  for (const templatePath of await workspaceTemplateFiles(checkout)) {
+    workspaces.push(workspaceImageFromTemplate(await readFile(templatePath, 'utf8'), templatePath));
+  }
+  return { checkout: path.resolve(checkout), capabilities, workspaces };
 }
 
 function unique(values) {
@@ -213,8 +244,8 @@ export const SCOPES = Object.freeze(['all', 'jobs', 'workspaces']);
 /** The pins a daemon in `scope` holds, from one checkout's readPins result. */
 function pinsInScope(checkout, scope) {
   if (scope === 'jobs') return checkout.capabilities;
-  if (scope === 'workspaces') return [checkout.workspace];
-  return [...checkout.capabilities, checkout.workspace];
+  if (scope === 'workspaces') return checkout.workspaces;
+  return [...checkout.capabilities, ...checkout.workspaces];
 }
 
 /**
@@ -253,14 +284,15 @@ export function planImages({
   const isLabRepository = (repository) =>
     pinnedRepositories.has(repository) || LAB_REPOSITORY_PATTERN.test(repository);
   const isWorkspaceRepository = (repository) =>
-    checkouts.some((c) => c.workspace && c.workspace.repository === repository) ||
+    checkouts.some((c) => c.workspaces.some((w) => w.repository === repository)) ||
     repository.endsWith('/hcw-lab') ||
     repository === 'hybridcloudworks/hcw-lab';
 
+  // unique: two templates on one digest are one pull.
   const pull = unique(
     checkouts
       .flatMap((c) =>
-        scope === 'all' ? [...c.capabilities, ...(pullWorkspace ? [c.workspace] : [])] : pinsInScope(c, scope)
+        scope === 'all' ? [...c.capabilities, ...(pullWorkspace ? c.workspaces : [])] : pinsInScope(c, scope)
       )
       .map((p) => p.pull)
   );
