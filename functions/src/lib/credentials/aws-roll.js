@@ -480,7 +480,7 @@ export async function rollAndApplyAwsKey({
     idWritten = true;
     await vault.setSecret(AWS_TARGETS.pricing.secretSecretName, newKey.secretAccessKey);
   } catch (writeErr) {
-    if (idWritten && currentAccessKeyId) {
+    if (idWritten) {
       try {
         await vault.setSecret(AWS_TARGETS.pricing.idSecretName, currentAccessKeyId);
       } catch {}

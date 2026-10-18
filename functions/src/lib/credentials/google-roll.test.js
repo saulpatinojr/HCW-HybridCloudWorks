@@ -16,6 +16,9 @@ import {
   rollAndApplyGoogleKey,
 } from './google-roll.js';
 
+// Stubs match a probe by its host, not by a substring anywhere in the URL.
+const hostOf = (url) => new URL(url).hostname;
+
 describe('GOOGLE_TARGETS', () => {
   it('declares the three Google Cloud API key targets', () => {
     expect(Object.keys(GOOGLE_TARGETS).sort()).toEqual(['billing', 'gemini', 'youtube']);
@@ -534,7 +537,7 @@ describe('rollAndApplyGoogleKey', () => {
         };
       }
       // 5. Verification probe
-      if (url.includes('generativelanguage.googleapis.com')) {
+      if (hostOf(url) === 'generativelanguage.googleapis.com') {
         return { ok: true, status: 200 };
       }
       // 6. Delete old key
@@ -613,7 +616,7 @@ describe('rollAndApplyGoogleKey', () => {
       if (url.endsWith('/new-key/keyString')) {
         return { ok: true, status: 200, json: async () => ({ keyString: 'new-key-string' }) };
       }
-      if (url.includes('generativelanguage.googleapis.com')) {
+      if (hostOf(url) === 'generativelanguage.googleapis.com') {
         return { ok: true, status: 200 };
       }
       if (options.method === 'DELETE') {
@@ -669,7 +672,7 @@ describe('rollAndApplyGoogleKey', () => {
       if (url.endsWith('/new-key/keyString')) {
         return { ok: true, status: 200, json: async () => ({ keyString: 'new-key-string' }) };
       }
-      if (url.includes('generativelanguage.googleapis.com')) {
+      if (hostOf(url) === 'generativelanguage.googleapis.com') {
         return { ok: true, status: 200 };
       }
       if (options.method === 'DELETE') {

@@ -11,6 +11,9 @@ import {
 } from './roll-cloud-credentials.mjs';
 import { GOOGLE_TARGETS } from '../functions/src/lib/credentials/google-roll.js';
 
+// Stubs match a probe by its host, not by a substring anywhere in the URL.
+const hostOf = (url) => new URL(url).hostname;
+
 describe('parseArgs', () => {
   it('defaults to target all and no dry-run or check', () => {
     const opts = parseArgs([]);
@@ -180,11 +183,11 @@ describe('main', () => {
     let out = '';
     const mockFetch = vi.fn(async (url, options = {}) => {
       // Google Gemini probe
-      if (url.includes('generativelanguage.googleapis.com')) {
+      if (hostOf(url) === 'generativelanguage.googleapis.com') {
         return { ok: true, status: 200 };
       }
       // AWS IAM list keys
-      if (url.includes('iam.amazonaws.com')) {
+      if (hostOf(url) === 'iam.amazonaws.com') {
         return {
           ok: true,
           status: 200,
@@ -254,9 +257,9 @@ describe('main', () => {
           json: async () => ({ keyString: 'AIzaNewGeminiSecret' }),
         };
       }
-      if (url.includes('generativelanguage.googleapis.com') ||
-          url.includes('youtube/v3/videos') ||
-          url.includes('cloudbilling.googleapis.com')) {
+      if (hostOf(url) === 'generativelanguage.googleapis.com' ||
+          hostOf(url) === 'www.googleapis.com' ||
+          hostOf(url) === 'cloudbilling.googleapis.com') {
         return { ok: true, status: 200 };
       }
 

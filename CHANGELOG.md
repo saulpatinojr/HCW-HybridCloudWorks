@@ -28,6 +28,7 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Quality & Verification
 
+- **Credential-roll code scanning alerts closed (#1247, #1248 follow-up)**. The AWS roll's Key Vault rollback no longer re-checks `currentAccessKeyId`, which the function already requires (CodeQL `js/trivial-conditional`, alert 1416); the fetch stubs in `functions/src/lib/credentials/google-roll.test.js` and `scripts/roll-cloud-credentials.test.mjs` match a probe by `new URL(url).hostname` rather than by a substring anywhere in the URL (CodeQL `js/incomplete-url-substring-sanitization`, alerts 1409–1415), so a stub can no longer answer for a host that merely embeds the vendor's name.
 - **Deployment verification: fixed post-deploy frontend probe and deployed smoke test RPC check**.
   - In `scripts/smoke-deployed.mjs`, moved `POST /api/aiProxy` into the live admin guard verification (asserting 401/403 for unauthenticated callers) and verified that unmapped RPCs return 404 without cross-root file imports.
   - In `.github/workflows/deploy-azure-frontend.yml`, added `DEFAULT_HOSTNAME_OVERRIDE` defaulting to `calm-ground-0d0e6a010.7.azurestaticapps.net` (with fallback to `vars.STATIC_WEB_APP_DEFAULT_HOSTNAME`), enabling the post-deploy probe to verify HTTP 200 without requiring `Microsoft.Web/staticSites/read` permissions on the deployer identity.
