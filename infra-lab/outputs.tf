@@ -16,3 +16,11 @@ output "lab_aliases" {
   description = "The CNAMEs that point at the lab host: the *.lab wildcard, coder.lab and the *.coder.lab wildcard."
   value       = sort([for record in cloudflare_dns_record.lab_alias : record.name])
 }
+
+output "lab_acme_delegations" {
+  description = "The _acme-challenge CNAMEs in the production zone and the one name in the lab zone they point at; Caddy's dns_challenge_override_domain must be that name."
+  value = {
+    names  = sort([for record in cloudflare_dns_record.lab_acme_delegation : record.name])
+    target = var.lab_acme_challenge_target
+  }
+}

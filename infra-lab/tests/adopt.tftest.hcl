@@ -77,6 +77,24 @@ run "adoption_plan_writes_the_four_lab_names" {
   }
 
   assert {
+    condition = toset([for r in cloudflare_dns_record.lab_acme_delegation : r.name]) == toset([
+      "_acme-challenge.lab.hybridcloudworks.com",
+      "_acme-challenge.coder.lab.hybridcloudworks.com",
+    ])
+    error_message = "The DNS-01 delegations must be _acme-challenge.lab (apex and *.lab) and _acme-challenge.coder.lab (*.coder.lab), and nothing else (#948)."
+  }
+
+  assert {
+    condition     = alltrue([for r in cloudflare_dns_record.lab_acme_delegation : r.type == "CNAME" && r.content == "_acme-challenge.lab.hybridcloudinsights.com" && !r.proxied && r.zone_id == var.cloudflare_zone_id])
+    error_message = "Each delegation is a DNS-only CNAME in the production zone to the one target in the lab zone, the name roles/caddy renders as dns_challenge_override_domain."
+  }
+
+  assert {
+    condition     = output.lab_acme_delegations.target == "_acme-challenge.lab.hybridcloudinsights.com" && length(output.lab_acme_delegations.names) == 2
+    error_message = "The output names the two delegations and their one target."
+  }
+
+  assert {
     condition     = length(hostinger_vps_ssh_key.owner) == 0 && hostinger_vps.lab.ssh_key_ids == null
     error_message = "With ssh_public_key unset, the adoption plan must register no key and attach nothing."
   }

@@ -54,6 +54,22 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab DNS-01 by delegation into a dedicated lab zone (LAB-1, #948)**. Owner
+  decision 2026-10-18: the lab zone is `hybridcloudinsights.com`, a domain the
+  owner already held, connected to the same Cloudflare account that day
+  (Free plan, nameservers moved at Hostinger, zone emptied). `infra-lab/dns.tf`
+  adds `_acme-challenge.lab` and `_acme-challenge.coder.lab` as DNS-only CNAMEs
+  to `_acme-challenge.lab.hybridcloudinsights.com` (variable
+  `lab_acme_challenge_target`, output `lab_acme_delegations`, test asserts);
+  `roles/caddy` gains `caddy_dns_challenge_override_domain`, rendered as the
+  Caddyfile's `dns_challenge_override_domain`, because certmagic finds the
+  zone for a challenge name by SOA walk and does not follow a CNAME. The
+  runtime token is re-issued with DNS edit on the lab zone alone and rotated
+  with `hcw-vault-set` + `bootstrap.sh`; the lab-host README has the token
+  form, the forced-issuance proof (the stored certificate copied aside first,
+  with the restore line) and the revocation of the production-zone token.
+  ADR 0032 records the cut-over as begun; the owner's apply, rotation and
+  proof on #948 complete it.
 - **Cloudflare DNS audit: an apply that errored or was cancelled is still an
   apply (#948)**. The first live run of the apply-correlated `hcp-terraform`
   entry (2026-10-18 14:09Z) read 44 applies and still left four account-token

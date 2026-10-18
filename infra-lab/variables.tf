@@ -124,3 +124,25 @@ variable "ssh_public_key" {
     error_message = "ssh_public_key is a single ssh-ed25519 or ssh-rsa public key line (the contents of the .pub file). ECDSA keys are not accepted by the provider."
   }
 }
+
+# The one name in the dedicated lab zone that both _acme-challenge CNAMEs
+# point at, and the name roles/caddy renders as dns_challenge_override_domain
+# (lab-host/ansible/group_vars/all.yml, caddy_dns_challenge_override_domain):
+# the two must agree, or the CA follows the CNAME to a name Caddy never
+# writes. The zone is hybridcloudinsights.com (owner decision 2026-10-18,
+# #948); this workspace does not manage that zone, only the CNAMEs into it.
+variable "lab_acme_challenge_target" {
+  description = "Full name in the dedicated lab zone that the production zone's _acme-challenge CNAMEs point at; Caddy writes its DNS-01 TXT records there."
+  type        = string
+  default     = "_acme-challenge.lab.hybridcloudinsights.com"
+
+  validation {
+    condition     = can(regex("^_acme-challenge\\.([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$", var.lab_acme_challenge_target))
+    error_message = "lab_acme_challenge_target is a lowercase fully qualified name starting with _acme-challenge., no trailing dot."
+  }
+
+  validation {
+    condition     = !endswith(var.lab_acme_challenge_target, ".${var.lab_hostname}") && var.lab_acme_challenge_target != "_acme-challenge.${var.lab_hostname}"
+    error_message = "lab_acme_challenge_target must lie outside the lab host's own name: a target inside lab_hostname is the production zone again, which is the interim the delegation ends."
+  }
+}

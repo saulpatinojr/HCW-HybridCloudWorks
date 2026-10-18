@@ -18,11 +18,18 @@ Nothing here reads `hcw-azure`, and nothing in `infra/` reads this.
 | `cloudflare_dns_record.lab_alias["wildcard"]` | `*.lab.hybridcloudworks.com`, CNAME to `lab` | DNS-only |
 | `cloudflare_dns_record.lab_alias["coder"]` | `coder.lab.hybridcloudworks.com`, CNAME to `lab` | DNS-only. Needed because `*.coder.lab` makes `coder.lab` an empty non-terminal, and Cloudflare (RFC 4592) does not answer a wildcard for one |
 | `cloudflare_dns_record.lab_alias["coder_wildcard"]` | `*.coder.lab.hybridcloudworks.com`, CNAME to `lab` | DNS-only. Coder's workspace apps |
+| `cloudflare_dns_record.lab_acme_delegation["lab"]` | `_acme-challenge.lab.hybridcloudworks.com`, CNAME to `_acme-challenge.lab.hybridcloudinsights.com` | DNS-only. The DNS-01 delegation for the apex and `*.lab` certificates (#948) |
+| `cloudflare_dns_record.lab_acme_delegation["coder"]` | `_acme-challenge.coder.lab.hybridcloudworks.com`, CNAME to the same target | DNS-only. The DNS-01 delegation for the `*.coder.lab` certificate |
 | `hostinger_vps_ssh_key.owner` | The owner's SSH public key | Only when `ssh_public_key` is set, as a separate, later plan |
 
-There are no `_acme-challenge` records. There is no dedicated lab zone yet
-(owner decision 2026-09-25), so Caddy's runtime token edits this production
-zone directly. ADR 0032 records that as an accepted interim risk.
+The two `_acme-challenge` CNAMEs point into the dedicated lab zone,
+`hybridcloudinsights.com`, a domain the owner already held and connected to
+the same Cloudflare account on 2026-10-18 (#948). Caddy writes its challenge
+TXT records at the target name with a token scoped to that zone alone, and
+`roles/caddy` tells it the name with `dns_challenge_override_domain`,
+because certmagic does not follow a CNAME by itself. Nothing here manages the
+lab zone: this workspace holds the production zone id only, and the lab zone
+holds nothing but the TXT records Caddy writes and removes.
 
 ## Why it is only ever imported
 

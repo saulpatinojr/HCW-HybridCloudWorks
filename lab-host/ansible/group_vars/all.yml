@@ -172,11 +172,18 @@ caddy_builder_image_digest: sha256:d842facfd63b960922e57444ff76fd8f0793a66dfdcf4
 caddy_site_domain: "{{ lab_host_domain }}"
 # The three names ADR 0032 puts on the certificate. DNS-01 for each is answered
 # through the CNAME delegation of _acme-challenge.lab and _acme-challenge.coder.lab
-# to the dedicated lab zone (#661).
+# to the dedicated lab zone (#661; cut over 2026-10-18, #948).
 caddy_site_names:
   - "{{ lab_host_domain }}"
   - "*.{{ lab_host_domain }}"
   - "*.coder.{{ lab_host_domain }}"
+# Where Caddy writes every DNS-01 TXT record: the one name in the dedicated
+# lab zone (hybridcloudinsights.com, owner decision 2026-10-18, #948) that
+# infra-lab/dns.tf's two _acme-challenge CNAMEs point at. Must equal that
+# workspace's lab_acme_challenge_target, or the CA follows the CNAME to a
+# name Caddy never writes. The vault's Cloudflare token is scoped to the lab
+# zone alone from the same day; the token itself stays in the vault.
+caddy_dns_challenge_override_domain: _acme-challenge.lab.hybridcloudinsights.com
 # Panes only. Owner decision 2026-09-28: "The lab should only be accessible
 # through 'panes' from my site, lock to that", and a direct visit goes to the
 # labs page. Caddy sends frame-ancestors with this list on every response for

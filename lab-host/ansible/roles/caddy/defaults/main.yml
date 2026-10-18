@@ -17,6 +17,10 @@ caddy_env_file: /etc/caddy/env
 # that answers 503 and imports nothing from conf.d.
 caddy_cloudflare_api_token: "{{ vault_cloudflare_api_token | default('') }}"
 caddy_acme_email: "{{ vault_caddy_acme_email | default('') }}"
+# Where Caddy writes its DNS-01 TXT records: the one name in the dedicated lab
+# zone that the production zone's _acme-challenge CNAMEs point at
+# (infra-lab/dns.tf, #948). group_vars sets it; empty renders no override.
+caddy_dns_challenge_override_domain: ""
 
 # Every name here can be framed by the site (lab_panes_only), so these two
 # bodies can render inside a pane, where a visitor reads them. They name no

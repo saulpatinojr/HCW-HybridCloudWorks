@@ -541,21 +541,85 @@ comment added in the editor does not survive its next run. Re-run
 ### The Cloudflare runtime token and its scope
 
 Caddy answers the DNS-01 challenge for all three names through CNAME
-delegation: `_acme-challenge.lab.hybridcloudworks.com` and
-`_acme-challenge.coder.lab.hybridcloudworks.com` point into a dedicated lab
-zone, and Caddy follows the CNAME to write the TXT record there. That zone
-does not exist yet (owner decision 2026-09-25), so `infra-lab/dns.tf`
-writes no delegation records; they are added there when it does. Once that zone exists, the runtime token needs `Zone:DNS:Edit` on the
-lab zone only. **Until it exists, the token has `Zone:DNS:Edit` on the
-production `hybridcloudworks.com` zone.** That is the interim risk ADR 0032
-accepts, and it is written here so the follow-up — re-issue the token scoped
-to the lab zone and rotate it in the vault — is a recorded step, not a
-forgotten one. The token is in `/etc/caddy/env` and nowhere else on the
-host. That file is owner `root`, group `caddy`, mode `0640` (ADR 0032): the
-`caddy` unit runs as the non-root `caddy` user and reads it through
-`EnvironmentFile=`, so the group read is what lets certificate renewals
-keep working, and nobody outside that group can read it. The play writes
-it with `no_log`.
+delegation, cut over on 2026-10-18 (#948, LAB-1; the cut-over completes
+when the owner's forced issuance below succeeds and is posted on #948):
+`infra-lab/dns.tf` makes
+`_acme-challenge.lab.hybridcloudworks.com` and
+`_acme-challenge.coder.lab.hybridcloudworks.com` CNAMEs to
+`_acme-challenge.lab.hybridcloudinsights.com`, one name in the dedicated lab
+zone `hybridcloudinsights.com` (a domain the owner already held, connected
+to the same Cloudflare account that day; it holds nothing else). The CA
+follows those CNAMEs. Caddy does not: certmagic finds the zone for a
+challenge name by SOA walk, so `group_vars/all.yml` sets
+`caddy_dns_challenge_override_domain` to the same target and the Caddyfile
+renders `dns_challenge_override_domain` with it; Caddy then writes every
+challenge TXT at that name, and the runtime token needs `Zone:DNS:Edit` and
+`Zone:Zone:Read` on the lab zone **only**. The two names must agree
+(`infra-lab` tests and `roles/caddy/tests/caddy-adapt.test.sh` both pin
+them), or the CA follows the CNAME to a name Caddy never writes.
+
+The token is in `/etc/caddy/env` and nowhere else on the host. That file is
+owner `root`, group `caddy`, mode `0640` (ADR 0032): the `caddy` unit runs
+as the non-root `caddy` user and reads it through `EnvironmentFile=`, so the
+group read is what lets certificate renewals keep working, and nobody
+outside that group can read it. The play writes it with `no_log`.
+
+**Re-issuing the token** (on every host rebuild, and once at the 2026-10-18
+cut-over). In Cloudflare, https://dash.cloudflare.com/profile/api-tokens →
+**Create Token** → **Create Custom Token**: a name that says which host and
+zone (`lab-host-caddy-hybridcloudinsights`), permissions **Zone → DNS →
+Edit** and **Zone → Zone → Read**, zone resources **Include → Specific zone
+→ `hybridcloudinsights.com`** and nothing else, **Client IP Address
+Filtering → Allow** the lab host's address, a TTL ending within a year.
+Then, PowerShell on the workstation, the token held in a variable and
+piped to the host's vault setter, never typed into a command line:
+
+```powershell
+$t = Read-Host "Caddy token" -AsSecureString; [Net.NetworkCredential]::new('', $t).Password | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-vault-set vault_cloudflare_api_token"; $t = $null
+```
+
+```powershell
+ssh hcw-lab "sudo -n /opt/hcw-src/lab-host/bootstrap.sh"
+```
+
+Success: the run ends `failed=0`, and `ssh hcw-lab "sudo -n caddy validate
+--config /etc/caddy/Caddyfile --adapter caddyfile"` prints `Valid
+configuration`. Prove the delegation before trusting it with a renewal date:
+force one issuance of the `*.lab` certificate. Caddy only issues for a name
+it holds no certificate for, so the stored one is **copied aside first** and
+put back if the issuance fails; while Caddy has no certificate for `*.lab`
+the lab's TLS handshakes fail, so this is done in one sitting with the
+restore line ready. Let's Encrypt allows five identical certificates a week;
+one forced issuance is within limits. Bash, on the host:
+
+```bash
+sudo cp -a /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/wildcard_.lab.hybridcloudworks.com /root/caddy-wildcard-lab-before-delegation && sudo ls /root/caddy-wildcard-lab-before-delegation
+```
+
+Success: the copy lists the `.crt`, `.key` and `.json` files. Then:
+
+```bash
+sudo systemctl stop caddy && sudo rm -rf /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/wildcard_.lab.hybridcloudworks.com && sudo systemctl start caddy && sleep 90 && sudo journalctl -u caddy --since -3min --no-pager | grep -E 'certificate obtained successfully|dns_challenge|error'
+```
+
+Success: `certificate obtained successfully` for `*.lab.hybridcloudworks.com`,
+and no `error` line; the Cloudflare audit log of `hybridcloudinsights.com`
+shows the TXT create and delete, and the production zone's audit log shows
+nothing from the token. Then `sudo rm -rf
+/root/caddy-wildcard-lab-before-delegation`, and revoke the old
+production-zone token at the same API Tokens page. **If it fails** (an
+`error` line, no `obtained` line within a few minutes): put the copy back
+and the lab serves again on the old certificate while the cause is read
+(the token's zone or permissions, the CNAME not yet applied, the override
+name not matching the CNAME target):
+
+```bash
+sudo systemctl stop caddy && sudo cp -a /root/caddy-wildcard-lab-before-delegation /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/wildcard_.lab.hybridcloudworks.com && sudo chown -R caddy:caddy /var/lib/caddy/.local/share/caddy/certificates && sudo systemctl start caddy && curl -sS -o /dev/null -w '%{http_code}\n' --resolve coder.lab.hybridcloudworks.com:443:127.0.0.1 https://coder.lab.hybridcloudworks.com/
+```
+
+Good is a three-digit status (the handshake works again). The daily DNS
+audit (`cloudflare-dns-audit.yml`) keeps watching the production zone, where
+the lab-zone token has no access.
 
 ## Coder
 

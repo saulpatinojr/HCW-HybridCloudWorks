@@ -17,15 +17,19 @@
 # Vault) would return no address even though *.lab exists
 # (developers.cloudflare.com/dns/manage-dns-records/reference/wildcard-dns-records).
 #
-# No _acme-challenge records, on purpose. ADR 0032 chooses DNS-01 by CNAME
-# delegation into a dedicated lab zone, and that zone does not exist yet
-# (owner decision 2026-09-25: no separate lab zone for now). Until it does,
-# Caddy's runtime token has DNS edit on this production zone and writes its
-# TXT challenges here directly, which is the interim risk the ADR accepts:
-# docs/decisions/0032-learner-labs-platform.md, Consequences, the bullet on
-# zone-scoped Cloudflare tokens. When the lab zone exists, the two
-# _acme-challenge CNAMEs are added in this file and the runtime token is
-# re-issued against the lab zone.
+# Two _acme-challenge CNAMEs, since 2026-10-18 (#948, LAB-1). ADR 0032 chooses
+# DNS-01 by CNAME delegation into a dedicated lab zone, and that zone is
+# hybridcloudinsights.com, a domain the owner already held, connected to the
+# same Cloudflare account that day (owner decision 2026-10-18). The names the
+# ACME CA looks up, _acme-challenge.lab and _acme-challenge.coder.lab (for the
+# apex, *.lab and *.coder.lab certificates), are CNAMEs to one target in the
+# lab zone, var.lab_acme_challenge_target. Caddy writes its TXT records at
+# that target: certmagic does not follow a CNAME on its own (it finds the zone
+# by SOA walk), so roles/caddy renders `dns_challenge_override_domain` with
+# the same name, and the runtime token is scoped to the lab zone alone. One
+# target for both names is fine: certmagic keeps same-named TXT records apart
+# by value. Nothing in this configuration touches the lab zone itself; this
+# workspace holds the production zone id only.
 # =============================================================================
 
 locals {
@@ -35,6 +39,12 @@ locals {
     wildcard       = "*.${var.lab_hostname}"
     coder          = "coder.${var.lab_hostname}"
     coder_wildcard = "*.coder.${var.lab_hostname}"
+  }
+  # The challenge names the ACME CA resolves for the three certificates: the
+  # apex and *.lab share one, *.coder.lab has its own.
+  lab_acme_challenge_names = {
+    lab   = "_acme-challenge.${var.lab_hostname}"
+    coder = "_acme-challenge.coder.${var.lab_hostname}"
   }
 }
 
@@ -83,6 +93,29 @@ resource "cloudflare_dns_record" "lab_alias" {
   # terraform-provider-cloudflare #7387, #7396; seen here 2026-10-06 on 5.27.0).
   # Ignoring it is the provider's documented workaround and changes nothing
   # about the record. Drop it when a release removes the default.
+  lifecycle {
+    ignore_changes = [include_shadow_metadata]
+  }
+}
+
+# The DNS-01 delegations (#948, LAB-1): the two challenge names are CNAMEs to
+# one target in the dedicated lab zone, so the CA follows them there and
+# Caddy, told the same name by dns_challenge_override_domain, writes its TXT
+# records with a token that can edit that zone alone. DNS-only like the rest:
+# a CNAME the CA must follow cannot sit behind the proxy.
+resource "cloudflare_dns_record" "lab_acme_delegation" {
+  for_each = local.lab_acme_challenge_names
+
+  zone_id = var.cloudflare_zone_id
+  name    = each.value
+  content = var.lab_acme_challenge_target
+  type    = "CNAME"
+  proxied = false
+  ttl     = 300
+  comment = "HCW lab DNS-01 delegation into the lab zone, managed by infra-lab (#948)"
+
+  # include_shadow_metadata: the same provider workaround as the records
+  # above; drop it when a release removes the default.
   lifecycle {
     ignore_changes = [include_shadow_metadata]
   }
