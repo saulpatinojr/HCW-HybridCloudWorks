@@ -245,12 +245,15 @@ is a **full outage of the public API** rather than a degradation. See
 The four checks above run on a trigger. Between triggers, one thing watches
 the zone itself: the
 [Cloudflare DNS audit](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/cloudflare-dns-audit.yml)
-workflow, added 2026-10-18 as the LAB-1 interim (#948). The lab host's Caddy
-holds a token with DNS edit on `hybridcloudworks.com` until a dedicated lab
-zone exists ([ADR 0032](../decisions/0032-learner-labs-platform.md)), and
-Cloudflare has no notification type for audit-log or DNS-record events on any
-plan, so a poller of the account audit log stands in for the notification
-that does not exist.
+workflow, added 2026-10-18 as the LAB-1 interim (#948). Until that evening
+the lab host's Caddy held a token with DNS edit on `hybridcloudworks.com`
+([ADR 0032](../decisions/0032-learner-labs-platform.md)); the challenge names
+are now delegated into the lab zone `hybridcloudinsights.com`, the runtime
+token is scoped to that zone alone and the production-zone token is revoked
+(#1279). Cloudflare has no notification type for audit-log or DNS-record
+events on any plan, so a poller of the account audit log stands in for the
+notification that does not exist, and it keeps watching the production zone
+after the cut-over.
 
 **What it checks.** Daily at 05:50 UTC, `scripts/cloudflare-dns-audit.mjs`
 reads the account audit log (Audit Logs v2,

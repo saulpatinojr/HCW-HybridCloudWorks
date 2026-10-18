@@ -2,15 +2,19 @@
 # zone that the allowlist does not name? (estate review 2026-10-06, LAB-1;
 # #948)
 #
-# The lab host's Caddy holds a Cloudflare token with DNS edit on
-# `hybridcloudworks.com`, the interim ADR 0032 records until a dedicated lab
-# zone exists. The token is zone-scoped, pinned to the host's address and
-# dated (owner, 2026-10-07), and the only record of what it did is
-# Cloudflare's own audit log: the HCP Terraform plan covers the records it
-# manages, the deploy-drift monitor reads GitHub, and Cloudflare has no
-# notification type for audit-log or DNS-record events on any plan (read
-# 2026-10-18). Owner decision 2026-10-18, on #948: a poller of the audit
-# log stands in for the notification that does not exist.
+# Until 2026-10-18 the lab host's Caddy held a Cloudflare token with DNS
+# edit on `hybridcloudworks.com`, the interim ADR 0032 recorded until a
+# dedicated lab zone existed. That evening the `_acme-challenge` names were
+# delegated into the lab zone `hybridcloudinsights.com`, the runtime token
+# was re-issued on that zone alone and the production-zone token was
+# revoked (#948, #1279). The only record of what any token did to the
+# production zone is Cloudflare's own audit log: the HCP Terraform plan
+# covers the records it manages, the deploy-drift monitor reads GitHub, and
+# Cloudflare has no notification type for audit-log or DNS-record events on
+# any plan (read 2026-10-18). Owner decision 2026-10-18, on #948: a poller
+# of the audit log stands in for the notification that does not exist, and
+# it keeps watching the production zone after the cut-over, where no
+# credential on the lab host has access any more.
 #
 # Daily, this runs scripts/cloudflare-dns-audit.mjs over the account audit
 # log since the previous successful SCHEDULED run of this workflow, less two

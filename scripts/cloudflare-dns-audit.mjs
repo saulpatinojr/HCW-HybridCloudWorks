@@ -3,14 +3,19 @@
  * cloudflare-dns-audit.mjs — did anything edit a DNS record in the production
  * zone that was not supposed to? (estate review 2026-10-06, LAB-1; #948)
  *
- * The lab host's Caddy holds a Cloudflare token with DNS edit on
- * `hybridcloudworks.com`, because the DNS-01 challenge for the lab's wildcard
- * certificate is answered in that zone until a dedicated lab zone exists (ADR
- * 0032). The token is zone-scoped, pinned to the host's address and dated,
- * and still the only record of what it did is Cloudflare's own audit log:
- * neither the HCP Terraform plan nor the deploy-drift monitor reads the zone,
- * and Cloudflare has no notification type for audit-log or DNS-record events
- * on any plan (read 2026-10-18; the owner's decision on #948 is this poller).
+ * Until 2026-10-18 the lab host's Caddy held a Cloudflare token with DNS
+ * edit on `hybridcloudworks.com`, because the DNS-01 challenge for the lab's
+ * wildcard certificate was answered in that zone until a dedicated lab zone
+ * existed (ADR 0032). That evening the `_acme-challenge` names were delegated
+ * into the lab zone `hybridcloudinsights.com`, the runtime token re-issued on
+ * that zone alone, and the production-zone token revoked (#948, #1279). The
+ * only record of what any token did to the production zone is Cloudflare's
+ * own audit log: neither the HCP Terraform plan nor the deploy-drift monitor
+ * reads the zone, and Cloudflare has no notification type for audit-log or
+ * DNS-record events on any plan (read 2026-10-18; the owner's decision on
+ * #948 is this poller, and it keeps watching the production zone after the
+ * cut-over). The caddy-acme allowlist entry below stays for the audit-log
+ * tail of the interim; a match on it after the cut-over is worth a look.
  *
  * Once a day, cloudflare-dns-audit.yml runs this over the account audit log
  * (Audit Logs v2, `GET /accounts/{account_id}/logs/audit`), keeps the

@@ -153,10 +153,13 @@ in `templates/Caddyfile.j2` go through each case, and
 
 `_acme-challenge.lab.hybridcloudworks.com` and
 `_acme-challenge.coder.lab.hybridcloudworks.com` are CNAMEs into a dedicated
-lab zone (#661); Caddy follows the CNAME and writes the TXT record there, so
-the runtime token only needs DNS edit on that zone. Until the lab zone exists
-the token has DNS edit on the production zone, the interim risk ADR 0032
-accepts, recorded in `lab-host/README.md`.
+lab zone, `hybridcloudinsights.com` (#948, #1279). Caddy does not follow the
+CNAME on its own — certmagic finds the zone to write in by walking up to the
+nearest SOA — so `caddy_dns_challenge_override_domain` names the delegation
+target and the TXT record is written there; the runtime token then needs DNS
+edit and zone read on the lab zone alone. Until 2026-10-18 the token had DNS
+edit on the production zone, the interim risk ADR 0032 accepted; that token
+is revoked, as `lab-host/README.md` records.
 
 ## Adding a route (how #679 slots in)
 
