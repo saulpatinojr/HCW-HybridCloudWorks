@@ -28,6 +28,13 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Quality & Verification
 
+- **The three LAB-2 lab-host rules are on the Fire record (#981)**. The owner
+  ran the three tests from `main` on 2026-10-18: `alert-lab-unit-failed`
+  fired at 14:46Z (ten minutes after the one syslog line),
+  `alert-lab-heartbeat` at 15:36Z (the agent stopped 14:52Z, started again
+  and active), `alert-lab-disk` at 16:20Z (a 138.9 GiB file to 87%, removed,
+  15% again). Every rule the lab host carries has now been seen to fire;
+  the runbook's Fire record rows replace the three `not yet` rows.
 - **Fire tests for the three LAB-2 lab-host rules that had never fired (#981, LAB-2)**. `scripts/alerts/Invoke-AlertFireTest.ps1` gains `lab-unit-failed`, `lab-heartbeat` and `lab-disk`, in the script's own shape: a stop condition read over `ssh hcw-lab`, one staged change, a bounded wait on Azure Monitor's fired alerts, and a put-back in a `finally` that runs on failure or Ctrl+C and names the exact ssh line when it cannot confirm.
   - `lab-unit-failed` writes one syslog line with `logger -t hcw-unit-failed -p daemon.err`, exactly as the `hcw-unit-failed@` notifier does, naming a `hcw-fire-test-<UTC stamp>.service` unit that does not exist; it refuses while the hour's window already holds a notifier line, and has nothing to put back (stateless rule, six-hour mute). Up to 35 minutes.
   - `lab-heartbeat` stops `azuremonitoragent` (never `himdsd`) until `alert-lab-heartbeat` sees an empty 30-minute window, and starts it again in the `finally`; it refuses when ssh cannot reach the host, a `labjob-` container is running, or the agent is not active beforehand. Up to 55 minutes, during which the host ships no `Heartbeat`, `Perf` or `Syslog` rows.
