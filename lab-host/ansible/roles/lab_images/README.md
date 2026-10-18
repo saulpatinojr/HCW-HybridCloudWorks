@@ -21,21 +21,26 @@ the host can hold them before any job asks.
    the host's `node` and, for each checkout in `lab_images_checkouts`,
    imports `vps-agent/lib/capabilities.js` and takes every value of
    `IMAGES`, so Node itself parses the file and whatever the module exports
-   is what the host holds. It also reads the Coder workspace image,
-   `local.image` in `lab-host/coder/templates/hcw-lab/main.tf`, from its
-   `image` and `image_digest` locals. A pin bump in either file reaches the
-   host on the next `bootstrap.sh` run with no edit here.
-   `scripts/lab-images.test.mjs` holds the helper to both files as they are
-   in the repository, so a change of shape that the helper cannot read fails
-   CI rather than the host.
+   is what the host holds. It also reads the Coder workspace image of every
+   template under `lab-host/coder/templates`, from the `image_digest` local
+   in each `main.tf` and the local built from it: `image` in `hcw-lab`,
+   `default_image` in the guided labs (`amo-guided-lab`, `na-guided-lab`).
+   Two templates on one digest are one pull. A pin bump in any of these
+   files reaches the host on the next `bootstrap.sh` run with no edit here.
+   `scripts/lab-images.test.mjs` holds the helper to the files as they are
+   in the repository, and holds every template's pinned image to the sandbox
+   plan, so a change of shape that the helper cannot read, or a template it
+   does not plan, fails CI rather than the host. Until #1268 it read
+   `hcw-lab` alone, and the guided labs' first workspace pulled 2.75 GB while
+   the visitor waited.
 2. **Refuses a pin that is not a digest.** Every pin must be
    `name[:tag]@sha256:<64 hex>`; anything else fails the play at the plan
    step, naming the entry (`IMAGES.alpine in .../capabilities.js is ...`).
 3. **Pulls by `repository@digest`**, with
    `community.docker.docker_image_pull` and `pull: not_present`: every
-   capability image into the host daemon, which runs the jobs, and the
-   workspace image into the `coder_sandbox` daemon, which runs the
-   workspaces, while `lab_images_pull_workspace` is true (it defaults to
+   capability image into the host daemon, which runs the jobs, and every
+   template's workspace image into the `coder_sandbox` daemon, which runs
+   the workspaces, while `lab_images_pull_workspace` is true (it defaults to
    `coder_enabled`). Since 2026-10-07 (LAB-5) the plan runs once per
    daemon, `--scope jobs` against the host's listing and `--scope
    workspaces` against the sandbox's, and each daemon's pins are its own
@@ -116,4 +121,5 @@ run moves the checkout first and then removes it.
 `lab_images_defer_workspace_cleanup`,
 `lab_images_sandbox_docker_host` and `lab_images_node`, in
 `defaults/main.yml`; `meta/argument_specs.yml` is the contract. Nothing
-here is a pin: the pins are the two files above.
+here is a pin: the pins are `capabilities.js` and each template's `main.tf`
+above.

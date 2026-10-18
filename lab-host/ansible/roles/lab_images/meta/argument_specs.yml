@@ -4,10 +4,10 @@ argument_specs:
     short_description: Hold every digest-pinned lab image on the host and remove the ones no pin names
     description:
       - Reads the pins from checkouts of this repository with files/lab-images.mjs, which imports
-        IMAGES from vps-agent/lib/capabilities.js and reads the workspace image from
-        lab-host/coder/templates/hcw-lab/main.tf, so a pin bump needs no edit here.
-      - Pulls each capability image into the host daemon, and the workspace image into the
-        coder_sandbox daemon while lab_images_pull_workspace is true (LAB-5), by
+        IMAGES from vps-agent/lib/capabilities.js and reads the workspace image of every template
+        under lab-host/coder/templates from its main.tf, so a pin bump needs no edit here.
+      - Pulls each capability image into the host daemon, and each template's workspace image into
+        the coder_sandbox daemon while lab_images_pull_workspace is true (LAB-5), by
         repository@digest with community.docker.docker_image_pull, pull not_present, so a digest
         already there is ok. Each daemon's plan pins only its own images.
       - Removes, with docker image rm, every reference in the lab's own repositories (those the
@@ -30,8 +30,9 @@ argument_specs:
         type: bool
         required: false
         description:
-          - Plan the Coder workspace image on the sandbox daemon (pull it, remove superseded
-            ones). Defaults to coder_enabled, because that daemon stops while Coder is off.
+          - Plan every template's Coder workspace image on the sandbox daemon (pull each, remove
+            superseded ones). Defaults to coder_enabled, because that daemon stops while Coder is
+            off.
       lab_images_sandbox_docker_host:
         type: str
         required: false

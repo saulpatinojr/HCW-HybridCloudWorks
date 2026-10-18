@@ -295,6 +295,20 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The lab host pre-pulls every template's workspace image, not `hcw-lab`'s
+  alone (#1268)**. `lab_images` pulled one image into the Coder sandbox
+  daemon, the digest `lab-host/coder/templates/hcw-lab/main.tf` pins. The
+  guided-lab templates (`amo-guided-lab`, `na-guided-lab`) pin another, and
+  name the local `default_image` rather than `image`, so their first
+  workspace after any bootstrap pulled about 2.75 GB while the visitor
+  waited. `files/lab-images.mjs` now reads the image of every template under
+  `lab-host/coder/templates` (either local name) and plans each distinct
+  digest onto the sandbox daemon; a template whose image it cannot read
+  fails the plan rather than going unplanned. `scripts/lab-images.test.mjs`
+  and `roles/lab_images/tests/lab-images-role.test.sh` hold every
+  template's pinned image to the sandbox plan, reading the pins without the
+  helper. The templates' digests are unchanged; the host holds two images
+  until the guided labs move to `hcw-lab`'s.
 - **Lab workspaces resolve names again, and the lab host proves it at every
   run and every 15 minutes (#1267)**. From the host firewall's first run on
   2026-10-17, every Coder workspace started its container and then never

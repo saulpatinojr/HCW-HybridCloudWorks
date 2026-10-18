@@ -11,6 +11,8 @@
 # 6. roles/coder/tasks/main.yml sets coder_template_publication_skipped and manages
 #    the runtime marker.
 # 7. lab-images.mjs executes with --defer-workspace-cleanup and defers workspace removals.
+# 8. The sandbox plan pulls the image every template under lab-host/coder/templates
+#    pins, not hcw-lab's alone (#1268).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,6 +85,19 @@ if command -v node >/dev/null 2>&1; then
   plan="$(node "${helper}" --scope workspaces --defer-workspace-cleanup "${repo}" < "${work}/docker.json")"
   check "lab-images.mjs with --defer-workspace-cleanup defers workspace removal" \
     "node -e 'const p = JSON.parse(process.argv[1]); if (p.remove.length !== 0 || !p.deferred.some(d => d.includes(\"hybridcloudworks/hcw-lab@sha256:8888\"))) process.exit(1);' \"\${plan}\""
+
+  # 10. Every template's pinned image is in the sandbox plan (#1268). The pin
+  # is read here with grep, not the helper, so the two cannot share a blind
+  # spot; the guided labs name the local default_image, hcw-lab names it image.
+  templates=0
+  for template in "${repo}"/lab-host/coder/templates/*/main.tf; do
+    templates=$((templates + 1))
+    digest="$(grep -E '^[[:space:]]*image_digest[[:space:]]*=[[:space:]]*"sha256:[0-9a-f]{64}"' "${template}" | sed -E 's/.*"(sha256:[0-9a-f]{64})".*/\1/')"
+    repository="$(grep -E '^[[:space:]]*(default_)?image[[:space:]]*=[[:space:]]*"[^"@$]+@\$\{local\.image_digest\}"' "${template}" | sed -E 's/.*"([^"@$]+)@.*/\1/; s#^docker\.io/##')"
+    check "lab-images.mjs plans ${template#"${repo}/"}'s image ${repository}@${digest:0:19} onto the sandbox daemon" \
+      "[ -n '${digest}' ] && [ -n '${repository}' ] && node -e 'const p = JSON.parse(process.argv[1]); if (!p.pull.includes(process.argv[2])) process.exit(1);' \"\${plan}\" '${repository}@${digest}'"
+  done
+  check "lab-host/coder/templates holds more than the hcw-lab template" "[ ${templates} -ge 2 ]"
 else
   echo "skip - node not on PATH; skipping CLI execution test"
 fi

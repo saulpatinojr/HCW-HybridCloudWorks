@@ -22,10 +22,10 @@
   register: lab_images_docker
 
 # Read-only, so it runs in check mode too: the pins come from capabilities.js
-# and the Coder template in each checkout, and the plan from what Docker holds
-# (files/lab-images.mjs says how). A pin that is not a digest reference, or a
-# template the helper cannot read the image from, fails the play here with
-# the entry named.
+# and every Coder template in each checkout, and the plan from what Docker
+# holds (files/lab-images.mjs says how). A pin that is not a digest reference,
+# or a template the helper cannot read the image from, fails the play here
+# with the entry named.
 - name: Plan the job images on the host daemon from the pins in each checkout
   ansible.builtin.command:
     argv: "{{ lab_images_host_plan_argv }}"
@@ -80,9 +80,10 @@
   loop_control:
     label: "{{ item.image }}"
 
-# The workspace image, on the rootless daemon Coder's workspaces run on
+# The workspace images, one per template under lab-host/coder/templates
+# (#1268), on the rootless daemon Coder's workspaces run on
 # (roles/coder_sandbox; LAB-5). Same plan, scoped to that daemon: the
-# workspace image is its only pin, so a superseded workspace digest is
+# workspace images are its only pins, so a superseded workspace digest is
 # removed there once no workspace container uses it.
 - name: Read the images and containers the sandbox daemon holds
   community.docker.docker_host_info:
@@ -109,7 +110,7 @@
          or (lab_images_publication_skipped_stat.stat.exists | default(false)) }}
   when: lab_images_pull_workspace | bool
 
-- name: Plan the workspace image on the sandbox daemon
+- name: Plan every template's workspace image on the sandbox daemon
   ansible.builtin.command:
     argv: >-
       {{ lab_images_sandbox_plan_argv + (['--defer-workspace-cleanup'] if (lab_images_effective_defer_cleanup | bool) else []) }}
@@ -124,7 +125,7 @@
     lab_images_sandbox_plan: "{{ lab_images_sandbox_plan_run.stdout | from_json }}"
   when: lab_images_pull_workspace | bool
 
-- name: Pull the pinned workspace image into the sandbox daemon
+- name: Pull every pinned workspace image into the sandbox daemon
   community.docker.docker_image_pull:
     docker_host: "{{ lab_images_sandbox_docker_host }}"
     name: "{{ item }}"

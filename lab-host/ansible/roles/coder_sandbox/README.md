@@ -32,8 +32,8 @@ daemon, or a daemon whose every container is unprivileged by construction.
   is privileged only there and `/` is what that user may see. It comes from
   the same Docker apt repository at the same pin as `docker-ce`
   (`docker-ce-rootless-extras`), and the check that it is rootless is one
-  line of `docker info`. The cost is a second image store (the workspace
-  image is pulled into it, by `lab_images`), a user manager kept up by
+  line of `docker info`. The cost is a second image store (every template's
+  workspace image is pulled into it, by `lab_images`), a user manager kept up by
   lingering, and cgroup delegation so the template's limits still apply.
 
 ## What it does
