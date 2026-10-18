@@ -47,6 +47,25 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Cloudflare DNS audit: the first live run's lessons (#948)**. The
+  workflow's audit step caught the script's exit code on the command itself
+  (the runner's `bash -e` ended the step before `$?` was read, so the first
+  run failed instead of recording exit 2); a manual run can untick
+  `open_issue` to report without escalating; and the report prints, for each
+  UNEXPECTED change, the entry's shape (actor field names, request method,
+  user agent; never values), because the first run showed the HCP Terraform
+  token's edits arrive as `account/api_token` with no `token_name`. The
+  allowlist is rebound to what the log carries: `hcp-terraform` is an
+  account-owned token with the Cloudflare Terraform provider's user agent,
+  not the lab host's address, **while an apply of `hcw/hcw-azure` was in
+  progress** by HCP Terraform's own run record (read with the `TFC_TOKEN`
+  secret; a user agent alone is a header anyone can send, as CodeRabbit
+  noted); a new `terraform-owner-token` entry keeps
+  the owner's own workstation `terraform` runs (the 2026-10-06 00:26Z
+  edits) visible under their own name; `caddy-acme` is told by the lab
+  host's address in the new `CLOUDFLARE_CADDY_HOST_IP` variable, the one
+  address the token's client-IP filter allows, with the token name kept as
+  a second key should the log ever carry it.
 - **Cloudflare DNS audit: a daily poller of the account audit log stands in
   for the notification Cloudflare does not have (LAB-1 interim, #948)**.
   Owner decision 2026-10-18: Cloudflare has no notification type for

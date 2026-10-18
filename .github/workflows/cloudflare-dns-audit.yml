@@ -20,9 +20,14 @@
 # leaving a gap nobody read (CodeRabbit on #1274). It
 # keeps the create, update and delete events on DNS records in the zone,
 # and judges each against the allowlist
-# at the top of that script: the HCP Terraform token's edits, the Caddy
-# token's `_acme-challenge.*.lab` TXT edits, and the owner's own dashboard
-# edits. The script's exit code is the contract:
+# at the top of that script: the HCP Terraform workspace's edits (an account
+# token with the Terraform provider's user agent WHILE an apply of hcw-azure
+# was in progress, read from HCP Terraform with TFC_TOKEN — the log carries
+# no token name, and a user agent alone is a header anyone can send), the
+# owner's own workstation terraform runs, the Caddy token's
+# `_acme-challenge.*.lab` TXT edits (told by the lab host's address, the one
+# the token's IP filter allows), and the owner's own dashboard edits. The
+# script's exit code is the contract:
 #
 #   0  every change is expected, or there was none: a green run and nothing else;
 #   2  an UNEXPECTED change: one issue, labelled `Security` and `live-check`,
@@ -36,8 +41,9 @@
 # THE FIRST RUN FAILS, ON PURPOSE, until the owner stores the
 # `CLOUDFLARE_AUDIT_LOG_TOKEN` secret and the `CLOUDFLARE_ACCOUNT_ID`
 # variable (docs/runbooks/edge-dns-verification.md, "The daily DNS audit").
-# The two optional variables, `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` and
-# `CLOUDFLARE_CADDY_TOKEN_NAME`, arm the allowlist entries that need them;
+# The optional variables, `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL`,
+# `CLOUDFLARE_CADDY_HOST_IP` and `CLOUDFLARE_CADDY_TOKEN_NAME`, arm the
+# allowlist entries that need them;
 # unset, those entries are inactive and their edits read UNEXPECTED, which
 # costs an issue to read and never a missed edit.
 #
@@ -61,6 +67,11 @@ on:
         description: 'End of the window (YYYY-MM-DD or RFC3339, UTC). Empty: now.'
         required: false
         default: ''
+      open_issue:
+        description: 'Open or update the issue on an UNEXPECTED change. Off while tuning the allowlist: the report still lands in the run summary.'
+        required: false
+        type: boolean
+        default: true
 
 # No workflow-level permissions: the one job declares its own.
 permissions: {}
@@ -74,6 +85,11 @@ jobs:
     name: DNS-record changes on the production zone against the allowlist
     runs-on: ubuntu-26.04
     timeout-minutes: 10
+    # For the two secrets, and nothing else: a secret is reachable only from
+    # a job GitHub has admitted into an environment (zizmor secrets-outside-env,
+    # #567; monitor-deploy-drift.yml says the same), and `automation` rather
+    # than `production` because a scheduled run cannot wait on an approval gate.
+    environment: automation
     permissions:
       contents: read # checkout only
       issues: write # open or comment on the one unexpected-change issue
@@ -134,6 +150,10 @@ jobs:
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
           CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL: ${{ vars.CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL }}
           CLOUDFLARE_CADDY_TOKEN_NAME: ${{ vars.CLOUDFLARE_CADDY_TOKEN_NAME }}
+          CLOUDFLARE_CADDY_HOST_IP: ${{ vars.CLOUDFLARE_CADDY_HOST_IP }}
+          # Read-only here: one workspace lookup and the applied runs in the
+          # window, which are what clear a Terraform-looking edit.
+          TFC_TOKEN: ${{ secrets.TFC_TOKEN }}
           SINCE: ${{ steps.window.outputs.since }}
           BEFORE: ${{ inputs.before }}
         run: |
@@ -141,8 +161,11 @@ jobs:
           args=()
           if [ -n "${SINCE}" ]; then args+=(--since "${SINCE}"); fi
           if [ -n "${BEFORE}" ]; then args+=(--before "${BEFORE}"); fi
-          node scripts/cloudflare-dns-audit.mjs "${args[@]}" --report "${RUNNER_TEMP}/dns-audit.md"
-          code=$?
+          # The runner's shell is `bash -e`, so a non-zero exit must be caught
+          # on the command itself: a bare `$?` on the next line is never reached
+          # (the first live run, 2026-10-18, ended here with exit 2 unrecorded).
+          code=0
+          node scripts/cloudflare-dns-audit.mjs "${args[@]}" --report "${RUNNER_TEMP}/dns-audit.md" || code=$?
           echo "exit=${code}" >> "$GITHUB_OUTPUT"
           if [ -s "${RUNNER_TEMP}/dns-audit.md" ]; then cat "${RUNNER_TEMP}/dns-audit.md" >> "$GITHUB_STEP_SUMMARY"; fi
           exit 0
@@ -151,8 +174,10 @@ jobs:
       # the title prefix is open, commented on when one is. The prefix is the
       # search key and the script exports it (ISSUE_TITLE_PREFIX); the date
       # follows it in the title of a new issue.
+      # A scheduled run always escalates; a manual run with `open_issue` off
+      # only reports (the summary carries the table and the entries' shape).
       - name: Open or update the issue on an unexpected change
-        if: steps.audit.outputs.exit == '2'
+        if: steps.audit.outputs.exit == '2' && (github.event_name != 'workflow_dispatch' || inputs.open_issue)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
