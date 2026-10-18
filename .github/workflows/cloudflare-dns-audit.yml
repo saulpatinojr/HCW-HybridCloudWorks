@@ -151,8 +151,9 @@ jobs:
           CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL: ${{ vars.CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL }}
           CLOUDFLARE_CADDY_TOKEN_NAME: ${{ vars.CLOUDFLARE_CADDY_TOKEN_NAME }}
           CLOUDFLARE_CADDY_HOST_IP: ${{ vars.CLOUDFLARE_CADDY_HOST_IP }}
-          # Read-only here: one workspace lookup and the applied runs in the
-          # window, which are what clear a Terraform-looking edit.
+          # Read-only here: one workspace lookup and the runs whose apply began
+          # in the window (applied, errored or cancelled: an apply that stopped
+          # early still wrote until it stopped), which clear a Terraform-looking edit.
           TFC_TOKEN: ${{ secrets.TFC_TOKEN }}
           SINCE: ${{ steps.window.outputs.since }}
           BEFORE: ${{ inputs.before }}

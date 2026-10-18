@@ -47,6 +47,17 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Cloudflare DNS audit: an apply that errored or was cancelled is still an
+  apply (#948)**. The first live run of the apply-correlated `hcp-terraform`
+  entry (2026-10-18 14:09Z) read 44 applies and still left four account-token
+  edits UNEXPECTED — 2026-10-06 00:10Z and 2026-10-10 21:40Z, HCP Terraform
+  runs whose apply stopped early after writing, which `filter[status]=applied`
+  excluded. `fetchTerraformApplies` now reads every run, keeps each one whose
+  apply began (`applying-at`) and closes its window at the first of
+  `applied-at`, `errored-at`, `canceled-at` or `force-canceled-at` (the end
+  of the read window for an apply still running); plan-only and discarded
+  runs carry no `applying-at` and are skipped. The report names each apply's
+  outcome.
 - **Cloudflare DNS audit: the first live run's lessons (#948)**. The
   workflow's audit step caught the script's exit code on the command itself
   (the runner's `bash -e` ended the step before `$?` was read, so the first

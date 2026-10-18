@@ -99,10 +99,13 @@ const TERRAFORM_RAW = { user_agent: 'terraform-provider-cloudflare/5.27.0 terraf
 
 const envelope = (result, cursor = '') => ({ success: true, errors: [], messages: [], result, result_info: { count: String(result.length), cursor } });
 
-/** An applied HCP Terraform run in the JSON:API shape, with its apply window. */
+/** An HCP Terraform run whose apply began, in the JSON:API shape; `status` picks which end stamp is set (`applied`, `errored`, `canceled`, or `applying` for none). */
 const WORKSPACE_ID = 'ws-test0000000001';
-function appliedRun(id, applyingAt, appliedAt, status = 'applied') {
-  return { id, type: 'runs', attributes: { status, 'created-at': applyingAt, 'status-timestamps': { 'applying-at': applyingAt, 'applied-at': appliedAt } } };
+const END_STAMP = { applied: 'applied-at', errored: 'errored-at', canceled: 'canceled-at', force_canceled: 'force-canceled-at' };
+function appliedRun(id, applyingAt, endedAt, status = 'applied') {
+  const stamps = { 'applying-at': applyingAt };
+  if (END_STAMP[status]) stamps[END_STAMP[status]] = endedAt;
+  return { id, type: 'runs', attributes: { status, 'created-at': applyingAt, 'status-timestamps': stamps } };
 }
 /** Fixture entries are stamped 2026-10-18T0N:00:00Z, so one apply across the morning clears them all. */
 const DEFAULT_APPLIES = [appliedRun('run-morning', '2026-10-18T00:30:00Z', '2026-10-18T09:30:00Z')];
@@ -431,22 +434,36 @@ describe('fetchTerraformApplies', () => {
   const since = '2026-10-10T00:00:00Z';
   const before = '2026-10-18T00:00:00Z';
 
-  it('looks the workspace up by name, pages the applied runs, keeps the ones touching the window, and stops before it', async () => {
+  it('looks the workspace up by name, pages every run, keeps the applies that began in the window whatever their outcome, and stops before it', async () => {
     const page1 = runsPage([
       appliedRun('run-new', '2026-10-17T10:00:00Z', '2026-10-17T10:04:00Z'),
+      appliedRun('run-errored', '2026-10-15T21:40:00Z', '2026-10-15T21:41:30Z', 'errored'),
+      appliedRun('run-cancelled', '2026-10-14T00:10:00Z', '2026-10-14T00:12:00Z', 'canceled'),
       appliedRun('run-mid', '2026-10-12T08:00:00Z', '2026-10-12T08:03:00Z'),
-      { id: 'run-plan-only', type: 'runs', attributes: { status: 'planned_and_finished', 'created-at': '2026-10-11T00:00:00Z', 'status-timestamps': {} } },
+      { id: 'run-plan-only', type: 'runs', attributes: { status: 'planned_and_finished', 'created-at': '2026-10-11T00:00:00Z', 'status-timestamps': { 'planned-at': '2026-10-11T00:01:00Z' } } },
+      { id: 'run-discarded', type: 'runs', attributes: { status: 'discarded', 'created-at': '2026-10-10T12:00:00Z', 'status-timestamps': { 'discarded-at': '2026-10-10T12:05:00Z' } } },
     ], 2);
     const page2 = runsPage([appliedRun('run-old', '2026-10-01T00:00:00Z', '2026-10-01T00:02:00Z')], 3);
     const fetchImpl = fakeFetch([], { tfc: { runs: [page1, page2, runsPage([appliedRun('run-older', '2026-09-01T00:00:00Z', '2026-09-01T00:02:00Z')])] } });
     const windows = await fetchTerraformApplies({ token: 'tfc-tok', since, before, fetchImpl });
-    expect(windows.map((w) => w.runId)).toEqual(['run-new', 'run-mid']);
+    expect(windows.map((w) => `${w.runId}:${w.outcome}`)).toEqual(['run-new:applied', 'run-errored:errored', 'run-cancelled:canceled', 'run-mid:applied']);
     expect(windows[0].end - windows[0].start).toBe(4 * 60 * 1000);
+    expect(windows[1].end - windows[1].start).toBe(90 * 1000);
     const urls = fetchImpl.calls.map((c) => c.url);
     expect(urls[0]).toBe(`${TFC_API}/organizations/hcw/workspaces/${TFC_WORKSPACE}`);
-    expect(urls[1]).toContain(`/workspaces/${WORKSPACE_ID}/runs?filter%5Bstatus%5D=applied`);
-    expect(urls).toHaveLength(3); // page 2's oldest run lies before the window: page 3 is never asked for
+    expect(urls[1]).toContain(`/workspaces/${WORKSPACE_ID}/runs?page%5Bsize%5D=100&page%5Bnumber%5D=1`);
+    expect(urls[1]).not.toContain('filter');
+    expect(urls).toHaveLength(3); // page 2's oldest run was created before the window: page 3 is never asked for
     for (const c of fetchImpl.calls) expect(c.init.headers.authorization).toBe('Bearer tfc-tok');
+  });
+
+  it('closes a still-running apply at the end of the window, so edits during it are cleared', async () => {
+    const running = appliedRun('run-live', '2026-10-17T23:50:00Z', null, 'applying');
+    const fetchImpl = fakeFetch([], { tfc: { runs: [runsPage([running])] } });
+    const [w] = await fetchTerraformApplies({ token: 't', since, before, fetchImpl });
+    expect(w.outcome).toBe('applying');
+    expect(w.end).toBe(Date.parse(before) + 2 * 60 * 1000);
+    expect(withinApply('2026-10-17T23:59:00Z', [w])).toBe(true);
   });
 
   it('turns a non-200 and a missing data array into AuditReadError', async () => {
