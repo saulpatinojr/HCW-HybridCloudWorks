@@ -68,8 +68,18 @@ argument_specs:
         required: false
         default: ""
         description:
-          - Cloudflare API token with DNS edit on the zone holding the _acme-challenge records;
-            defaults to vault_cloudflare_api_token. Empty fails closed.
+          - Cloudflare API token with DNS edit on the zone holding the _acme-challenge TXT records,
+            the dedicated lab zone since 2026-10-18 (#948); defaults to vault_cloudflare_api_token.
+            Empty fails closed.
+      caddy_dns_challenge_override_domain:
+        type: str
+        required: false
+        default: ""
+        description:
+          - The full name Caddy writes every DNS-01 TXT record at, the target of the
+            _acme-challenge CNAMEs in the production zone (Caddyfile dns_challenge_override_domain;
+            certmagic does not follow a CNAME by itself). Empty renders no override, so Caddy
+            writes at the challenge name itself, which needs a token on the production zone.
       caddy_acme_email:
         type: str
         required: false

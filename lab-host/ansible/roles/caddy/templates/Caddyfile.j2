@@ -88,6 +88,13 @@
   tls {
     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
     resolvers 1.1.1.1 1.0.0.1
+{% if caddy_dns_challenge_override_domain | length > 0 %}
+    # DNS-01 by delegation (#948): the production zone's _acme-challenge
+    # CNAMEs point at this name in the lab zone, the CA follows them, and
+    # Caddy writes every challenge TXT here with a token scoped to that zone.
+    # certmagic does not follow the CNAME by itself, hence the override.
+    dns_challenge_override_domain {{ caddy_dns_challenge_override_domain }}
+{% endif %}
   }
 
   import lab_panes_only

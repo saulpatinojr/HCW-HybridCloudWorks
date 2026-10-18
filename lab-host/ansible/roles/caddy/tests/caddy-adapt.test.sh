@@ -88,6 +88,19 @@ render roles/caddy/templates/00-apex.caddy.j2 "${work}/config/conf.d/00-apex.cad
 render roles/coder/templates/10-coder.caddy.j2 "${work}/config/conf.d/10-coder.caddy"
 render roles/addons/templates/20-addons.caddy.j2 "${work}/config/conf.d/20-addons.caddy"
 check "the rendered Caddyfile is the TLS site block" "grep -q '^  import lab_panes_only$' \"${work}/config/Caddyfile\" && ! grep -q '^http://' \"${work}/config/Caddyfile\""
+# The DNS-01 delegation (#948): with the role default (empty) no override is
+# rendered; with the group_vars value the tls block names the lab-zone target
+# exactly, because certmagic does not follow the CNAME by itself.
+check "no dns_challenge_override_domain renders while the variable is empty" "! grep -q 'dns_challenge_override_domain' \"${work}/config/Caddyfile\""
+(cd "${ansible}" && ansible localhost -c local -e ansible_become=false -m ansible.builtin.template \
+  -a "src=roles/caddy/templates/Caddyfile.j2 dest=${work}/config/Caddyfile.delegated" \
+  -e @roles/caddy/defaults/main.yml -e @roles/caddy/vars/main.yml \
+  -e vault_cloudflare_api_token=placeholder -e vault_caddy_acme_email= \
+  -e caddy_dns_challenge_override_domain=_acme-challenge.lab.hybridcloudinsights.com \
+  -e "caddy_sites_dir=${work}/config/conf.d" > "${work}/render-delegated.log" 2>&1) \
+  || { cat "${work}/render-delegated.log" >&2; echo "rendering the delegated Caddyfile failed" >&2; exit 1; }
+check "the delegated render names the lab-zone target inside the tls block" "grep -q '^    dns_challenge_override_domain _acme-challenge.lab.hybridcloudinsights.com$' \"${work}/config/Caddyfile.delegated\""
+check "group_vars sets the override to the lab-zone target infra-lab delegates to" "grep -q '^caddy_dns_challenge_override_domain: _acme-challenge.lab.hybridcloudinsights.com$' \"${ansible}/group_vars/all.yml\" && grep -q 'default     = \"_acme-challenge.lab.hybridcloudinsights.com\"' \"${ansible}/../../infra-lab/variables.tf\""
 # The tls block, which needs the Cloudflare module the release binary lacks.
 "${python}" - "${work}/config/Caddyfile" <<'PY'
 import re, sys
