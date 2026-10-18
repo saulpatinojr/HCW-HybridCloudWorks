@@ -240,6 +240,89 @@ the value must change in all three places in one window, and a partial rotation
 is a **full outage of the public API** rather than a degradation. See
 [TODO and accepted risks](../repo/todo.md).
 
+## The daily DNS audit
+
+The four checks above run on a trigger. Between triggers, one thing watches
+the zone itself: the
+[Cloudflare DNS audit](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/cloudflare-dns-audit.yml)
+workflow, added 2026-10-18 as the LAB-1 interim (#948). The lab host's Caddy
+holds a token with DNS edit on `hybridcloudworks.com` until a dedicated lab
+zone exists ([ADR 0032](../decisions/0032-learner-labs-platform.md)), and
+Cloudflare has no notification type for audit-log or DNS-record events on any
+plan, so a poller of the account audit log stands in for the notification
+that does not exist.
+
+**What it checks.** Daily at 05:50 UTC, `scripts/cloudflare-dns-audit.mjs`
+reads the account audit log (Audit Logs v2,
+`GET /accounts/{account_id}/logs/audit`, paged through in full) from two
+hours before the workflow's previous successful **scheduled** run — never
+less than 26 hours back, never more than 14 days, and 26 hours when there is
+no previous success — so a failed or missed run widens the next window
+rather than leaving a gap. Manual runs (`workflow_dispatch`) never move that
+resume point, so a narrow `since` by hand cannot hide the time before it; a
+longer outage is read in manual windows, each judged on its own. It keeps the
+create, update and delete events on DNS records in the production zone, and
+judges each against the allowlist at the top of the script. Anything the
+allowlist does not name is UNEXPECTED. A run that could not read the log
+fails, on purpose: a quiet run means the window was read and every change
+was expected, never that the token was missing.
+
+**The allowlist, and how to extend it.** Three entries, each with its reason
+beside it in the script:
+
+| Entry | Allows | Identified by |
+| --- | --- | --- |
+| `hcp-terraform` | every DNS-record action by the HCP Terraform workspace's token | the token name `hcp-terraform-cloudflare-dns` in the entry's `actor.token_name` |
+| `caddy-acme` | the Caddy runtime token, **only** on a `TXT` record named `_acme-challenge.<lab name>` (`_acme-challenge.lab.hybridcloudworks.com` or `_acme-challenge.coder.lab.hybridcloudworks.com`); an A record from it, or a challenge for `www`, is the finding the poller exists for | the token name in the `CLOUDFLARE_CADDY_TOKEN_NAME` repository variable |
+| `owner-dashboard` | the owner's own edits in the Cloudflare dashboard (the apex and `www` records are hand-made by design, above) | a `dash` session whose e-mail is the `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` repository variable; the owner's API tokens are not this entry |
+
+An entry whose variable is unset is inactive, and the report says so: its
+edits then read UNEXPECTED, which costs an issue to read and never a missed
+edit. A new legitimate actor is a new entry with its reason, added to
+`ALLOWLIST` in `scripts/cloudflare-dns-audit.mjs` with a case in
+`scripts/cloudflare-dns-audit.test.mjs`, in a reviewed pull request; an
+existing entry is never widened in place.
+
+**What it needs.** The `CLOUDFLARE_AUDIT_LOG_TOKEN` repository secret, a
+Cloudflare API token with *Account → Account Settings → Read* on the one
+account and nothing else (that is the permission the audit-log endpoint
+accepts; the token catalogue has no separate audit-log read), and the
+`CLOUDFLARE_ACCOUNT_ID` repository variable. Optional: `CLOUDFLARE_ZONE_ID`
+(the zone is matched by name regardless), and the two allowlist variables
+above. All four are in
+[Required inputs](../standards/required-inputs.md), §4.2 and §4.3.
+
+**Running it by hand.** Open the workflow page linked above → **Run
+workflow**; leave `since` and `before` empty for the default window, or set
+either as `YYYY-MM-DD` or an RFC3339 timestamp (UTC) to read a wider or older
+window, up to the 18 months Cloudflare retains. The report is the run's
+summary. Success looks like a green run whose summary reads
+`N DNS-record changes on the zone, **0 unexpected**` and lists all three
+allowlist entries as active. A red run is a read failure, and its summary
+says which: a missing secret or variable, an expired token (`HTTP 401` or
+`403`), or an API failure.
+
+**What an issue from it means.** The workflow opens
+`Cloudflare DNS audit: unexpected record change (<date>)`, labelled
+`Security` and `live-check`, and comments on it rather than opening another
+while one is open. Each UNEXPECTED row names the time, the actor (a token by
+name, a dashboard user by masked e-mail, with the client address), the
+action, the record's type and name, and the audit log entry id. Record
+contents are not in the report by design. Then:
+
+1. Open the entry in the dashboard at
+   `https://dash.cloudflare.com/?to=/:account/audit-log` (search the entry id)
+   and read what was written.
+2. **The Caddy token on anything but a lab `_acme-challenge` TXT, or an actor
+   you do not recognise:** treat it as the token compromise ADR 0032 accepted
+   the risk of. Roll the token first
+   ([DNS token stolen](dns-token-stolen.md); the Caddy token is rotated through
+   the lab host's Vault, [Labs host](labs-host.md)), then revert the record,
+   then run the four checks above and record the run below.
+3. **An edit you recognise and the allowlist does not name** (a new workflow's
+   token, say): revert nothing, add the entry with its reason as described
+   above, and close the issue naming the pull request.
+
 ## Recording a run
 
 This page is the durable record — issue #357 held the first runs and is closed
@@ -289,6 +372,8 @@ than assumed.
   checks sit alongside
 - [Alerting and support](../runbooks/alerting-and-support.md) — what pages an operator, and
   the 404-on-every-route failure that no rule catches
+- [DNS token stolen](../runbooks/dns-token-stolen.md) — the roll, when the daily DNS audit
+  above names a token on a record it may not touch
 - [Cutover runbook, step 3b](../history/cutover-runbook.md#3b-custom-domains-on-the-static-web-app)
   — how the apex and `www` were bound, and why they are not in Terraform
 - `infra/frontend.tf` — every record, the custom hostname binding, and the

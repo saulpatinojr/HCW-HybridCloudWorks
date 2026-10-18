@@ -1081,7 +1081,22 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   hand-made. The only record of a zone edit is Cloudflare's own audit log.
   Until the lab zone exists, the compensating steps are the token's
   client-IP filter and expiry in Cloudflare and an audit-log notification
-  for DNS changes on the production zone, both owner steps.
+  for DNS changes on the production zone, both owner steps. *Revised
+  2026-10-18 (#948):* the client-IP filter and the 2027-01-04 expiry are
+  live (owner, 2026-10-07, read back 2026-10-18); the notification is not
+  possible, because Cloudflare has no notification type for audit-log or
+  DNS-record events on any plan, and a subdomain zone is Enterprise-only, so
+  the dedicated lab zone means a second registered domain, a purchase
+  decision for later. The interim is now a poller of the account audit log:
+  `.github/workflows/cloudflare-dns-audit.yml` runs
+  `scripts/cloudflare-dns-audit.mjs` daily over the window since its previous
+  successful scheduled run (at least 26 hours, at most 14 days), allows the
+  `hcp-terraform-cloudflare-dns` token's edits, the Caddy token's
+  `_acme-challenge.*.lab` TXT edits and the owner's own dashboard edits, and
+  opens an issue on anything else; a run that cannot read the log fails
+  rather than passing quietly
+  ([Edge and DNS verification](../runbooks/edge-dns-verification.md), "The
+  daily DNS audit"). The audit-read token it needs is the owner step.
 - **`lab-image/` is a new supply-chain surface.** Every image it publishes
   must be digest-pinned where consumed, and the existing
   `capabilities.test.js` assertion that every capability names a digest is the

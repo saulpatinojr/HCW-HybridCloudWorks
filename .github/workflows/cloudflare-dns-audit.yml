@@ -1,0 +1,186 @@
+# Cloudflare DNS audit — did anything edit a DNS record in the production
+# zone that the allowlist does not name? (estate review 2026-10-06, LAB-1;
+# #948)
+#
+# The lab host's Caddy holds a Cloudflare token with DNS edit on
+# `hybridcloudworks.com`, the interim ADR 0032 records until a dedicated lab
+# zone exists. The token is zone-scoped, pinned to the host's address and
+# dated (owner, 2026-10-07), and the only record of what it did is
+# Cloudflare's own audit log: the HCP Terraform plan covers the records it
+# manages, the deploy-drift monitor reads GitHub, and Cloudflare has no
+# notification type for audit-log or DNS-record events on any plan (read
+# 2026-10-18). Owner decision 2026-10-18, on #948: a poller of the audit
+# log stands in for the notification that does not exist.
+#
+# Daily, this runs scripts/cloudflare-dns-audit.mjs over the account audit
+# log since the previous successful SCHEDULED run of this workflow, less two
+# hours of overlap (never less than 26 hours, never more than 14 days; 26
+# hours when there is no previous success; manual runs never move the resume
+# point), so a failed or missed run widens the next window instead of
+# leaving a gap nobody read (CodeRabbit on #1274). It
+# keeps the create, update and delete events on DNS records in the zone,
+# and judges each against the allowlist
+# at the top of that script: the HCP Terraform token's edits, the Caddy
+# token's `_acme-challenge.*.lab` TXT edits, and the owner's own dashboard
+# edits. The script's exit code is the contract:
+#
+#   0  every change is expected, or there was none: a green run and nothing else;
+#   2  an UNEXPECTED change: one issue, labelled `Security` and `live-check`,
+#      opened when none is open and commented on when one is; the run stays
+#      green, because the issue is the signal and the run's job is to read;
+#   1  the log could not be read (no token, a non-200, a body that is not
+#      the `success: true` envelope): THE RUN FAILS. A failing daily run is
+#      the signal that the token or the API broke; a quiet run never means
+#      "no edits" unless the window was read in full.
+#
+# THE FIRST RUN FAILS, ON PURPOSE, until the owner stores the
+# `CLOUDFLARE_AUDIT_LOG_TOKEN` secret and the `CLOUDFLARE_ACCOUNT_ID`
+# variable (docs/runbooks/edge-dns-verification.md, "The daily DNS audit").
+# The two optional variables, `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` and
+# `CLOUDFLARE_CADDY_TOKEN_NAME`, arm the allowlist entries that need them;
+# unset, those entries are inactive and their edits read UNEXPECTED, which
+# costs an issue to read and never a missed edit.
+#
+# No npm ci: the script imports node: built-ins only and uses the runtime's
+# fetch. The token reaches one step, as an environment variable, and is
+# never written to an output or a file.
+name: Cloudflare DNS audit
+
+on:
+  schedule:
+    # Daily 05:50 UTC, off the hour and clear of the other scheduled jobs
+    # (publish-lab-image 05:20 Tuesdays, publish-content-manifest 06:15).
+    - cron: '50 5 * * *'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Start of the window (YYYY-MM-DD or RFC3339, UTC). Empty: 26 hours before `before`.'
+        required: false
+        default: ''
+      before:
+        description: 'End of the window (YYYY-MM-DD or RFC3339, UTC). Empty: now.'
+        required: false
+        default: ''
+
+# No workflow-level permissions: the one job declares its own.
+permissions: {}
+
+concurrency:
+  group: cloudflare-dns-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: DNS-record changes on the production zone against the allowlist
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout only
+      issues: write # open or comment on the one unexpected-change issue
+      actions: read # the previous successful run's time, which starts the window
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      # The window starts where the last successful SCHEDULED run left off,
+      # less two hours, so a run that failed (token, API, issue creation) or
+      # never happened is read by the next one that succeeds. Manual runs do
+      # not move the resume point: one with a narrow `since` would otherwise
+      # leave the time before it unread. Bounds: never less
+      # than 26 hours back (a quick re-run still reads a full day), never
+      # more than 14 days (a longer outage is read in manual windows, each
+      # judged on its own). A `since` input wins outright.
+      - name: Choose the window
+        id: window
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SINCE_INPUT: ${{ inputs.since }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SINCE_INPUT}" ]; then
+            echo "since=${SINCE_INPUT}" >> "$GITHUB_OUTPUT"
+            echo "Window start from the input: ${SINCE_INPUT}"
+            exit 0
+          fi
+          default=$(date -u -d '26 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          floor=$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          last=$(gh run list --repo "$REPO" --workflow cloudflare-dns-audit.yml --event schedule --status success --limit 1 --json createdAt --jq '.[0].createdAt // empty')
+          since="$default"
+          if [ -n "$last" ]; then
+            resume=$(date -u -d "${last} - 2 hours" +%Y-%m-%dT%H:%M:%SZ)
+            if [[ "$resume" < "$since" ]]; then since="$resume"; fi
+            if [[ "$since" < "$floor" ]]; then since="$floor"; fi
+          fi
+          echo "since=${since}" >> "$GITHUB_OUTPUT"
+          echo "Window start: ${since} (last successful run: ${last:-none})"
+
+      # `set -uo pipefail` without `-e`: the exit code is read into an output
+      # and judged by the steps below, so a 2 opens the issue and a 1 fails
+      # the run after the report is in the summary either way.
+      - name: Read the audit log and judge the DNS-record changes
+        id: audit
+        env:
+          CLOUDFLARE_AUDIT_LOG_TOKEN: ${{ secrets.CLOUDFLARE_AUDIT_LOG_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL: ${{ vars.CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL }}
+          CLOUDFLARE_CADDY_TOKEN_NAME: ${{ vars.CLOUDFLARE_CADDY_TOKEN_NAME }}
+          SINCE: ${{ steps.window.outputs.since }}
+          BEFORE: ${{ inputs.before }}
+        run: |
+          set -uo pipefail
+          args=()
+          if [ -n "${SINCE}" ]; then args+=(--since "${SINCE}"); fi
+          if [ -n "${BEFORE}" ]; then args+=(--before "${BEFORE}"); fi
+          node scripts/cloudflare-dns-audit.mjs "${args[@]}" --report "${RUNNER_TEMP}/dns-audit.md"
+          code=$?
+          echo "exit=${code}" >> "$GITHUB_OUTPUT"
+          if [ -s "${RUNNER_TEMP}/dns-audit.md" ]; then cat "${RUNNER_TEMP}/dns-audit.md" >> "$GITHUB_STEP_SUMMARY"; fi
+          exit 0
+
+      # One issue per unexpected change, kept current: created when none with
+      # the title prefix is open, commented on when one is. The prefix is the
+      # search key and the script exports it (ISSUE_TITLE_PREFIX); the date
+      # follows it in the title of a new issue.
+      - name: Open or update the issue on an unexpected change
+        if: steps.audit.outputs.exit == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          prefix="Cloudflare DNS audit: unexpected record change"
+          title="${prefix} ($(date -u +%Y-%m-%d))"
+          {
+            echo "Daily check, run ${RUN_URL}, $(date -u +%Y-%m-%dT%H:%MZ)."
+            echo
+            cat "${RUNNER_TEMP}/dns-audit.md"
+            echo
+            echo "**What this means:** a DNS record in \`hybridcloudworks.com\` was created, updated or deleted by an actor, or on a record, that the allowlist in \`scripts/cloudflare-dns-audit.mjs\` does not name. Treat it as the token compromise ADR 0032 accepted the risk of until shown otherwise: open the entry in the Cloudflare audit log, read what was written, and follow docs/runbooks/edge-dns-verification.md, \"The daily DNS audit\" (and docs/runbooks/dns-token-stolen.md when it was the Caddy or Terraform token). An edit that turns out to be legitimate is a new allowlist entry with its reason, in a reviewed pull request, never a widened one."
+          } > "${RUNNER_TEMP}/issue.md"
+          existing=$(gh issue list --repo "$REPO" --state open --search "\"${prefix}\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body-file "${RUNNER_TEMP}/issue.md"
+            echo "::warning::Unexpected DNS-record change; commented on #${existing}."
+          else
+            url=$(gh issue create --repo "$REPO" --title "$title" --label Security --label live-check --body-file "${RUNNER_TEMP}/issue.md")
+            echo "::warning::Unexpected DNS-record change; opened ${url}."
+          fi
+
+      - name: Fail the run when the audit log could not be read
+        if: steps.audit.outputs.exit != '0' && steps.audit.outputs.exit != '2'
+        env:
+          AUDIT_EXIT: ${{ steps.audit.outputs.exit }}
+        run: |
+          echo "::error::The Cloudflare audit log was not read (exit ${AUDIT_EXIT}); nothing was evaluated. See the summary: a missing CLOUDFLARE_AUDIT_LOG_TOKEN secret or CLOUDFLARE_ACCOUNT_ID variable, an expired token, or an API failure."
+          exit 1
