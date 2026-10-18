@@ -31,7 +31,14 @@ tone_instructions: >-
 
 reviews:
   profile: "chill"
-  request_changes_workflow: false
+  # Owner decision 2026-10-18 (#972, option F): CodeRabbit's approval is the
+  # one approving review the Default ruleset now requires, so its review is a
+  # request for changes while a finding is open and an approval once every
+  # thread is resolved and the pre-merge checks pass. Author approval is off:
+  # sessions author as the owner's account, and "@coderabbitai approve" from
+  # the author would make the gate approve itself.
+  request_changes_workflow: true
+  allow_author_approval: false
   high_level_summary: true
   poem: false
   review_status: true
