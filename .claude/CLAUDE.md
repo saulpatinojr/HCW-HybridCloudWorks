@@ -225,7 +225,9 @@ so it is recorded here, where every session reads it.
   as the owner's account, which is also why `@coderabbitai approve` from the
   author is off. If CodeRabbit stops reviewing (a rate limit, an outage, a
   plan change), every PR waits on it; the rollback is the owner's single
-  `PUT` of the rule with the count at 0, recorded on #972.
+  full-ruleset `PUT` with `required_approving_review_count` at `0` and
+  `require_last_push_approval` at `false`, the pre-change payload recorded
+  on #972.
 - **Every review bot is worked, for at most three rounds each; then all
   green is the merge.** Owner instruction 2026-10-08, after Copilot reviews
   resumed on #1034 and #1035 and CodeRabbit (#1031) began posting a
