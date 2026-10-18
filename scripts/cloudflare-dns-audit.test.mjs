@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ALLOWLIST,
   AuditReadError,
+  CADDY_PRODUCTION_ZONE_ACCESS_ENDED,
   DEFAULT_WINDOW_HOURS,
   ENV,
   HCP_TERRAFORM_TOKEN_NAME,
@@ -239,6 +240,18 @@ describe('the allowlist', () => {
     expect(classify(txt, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
     const site = normalise(entry({ actor: CADDY, record: { name: '_acme-challenge.www.hybridcloudworks.com', type: 'TXT' } }));
     expect(classify(site, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+  });
+
+  it('refuses a Caddy-shaped challenge TXT in the production zone once the host switched tokens (2026-10-18 cut-over)', () => {
+    expect(CADDY_PRODUCTION_ZONE_ACCESS_ENDED).toBe('2026-10-18T20:53:00Z');
+    const lastInterim = normalise(entry({ actor: CADDY_BY_IP, time: '2026-10-18T20:52:59Z', record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
+    expect(classify(lastInterim, settings)).toEqual({ verdict: 'EXPECTED', rule: 'caddy-acme' });
+    const atCutOver = normalise(entry({ actor: CADDY_BY_IP, time: CADDY_PRODUCTION_ZONE_ACCESS_ENDED, record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
+    expect(classify(atCutOver, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    const later = normalise(entry({ actor: CADDY, time: '2026-11-02T03:15:00Z', record: { name: '_acme-challenge.coder.lab.hybridcloudworks.com', type: 'TXT' } }));
+    expect(classify(later, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
+    const undated = normalise(entry({ actor: CADDY_BY_IP, time: '', record: { name: '_acme-challenge.lab.hybridcloudworks.com', type: 'TXT' } }));
+    expect(classify(undated, settings)).toEqual({ verdict: 'UNEXPECTED', rule: null });
   });
 
   it("allows the owner's dashboard edits, not the owner's API-token edits, and not another dashboard user", () => {

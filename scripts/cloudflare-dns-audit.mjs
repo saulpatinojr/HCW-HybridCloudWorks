@@ -3,14 +3,21 @@
  * cloudflare-dns-audit.mjs — did anything edit a DNS record in the production
  * zone that was not supposed to? (estate review 2026-10-06, LAB-1; #948)
  *
- * The lab host's Caddy holds a Cloudflare token with DNS edit on
- * `hybridcloudworks.com`, because the DNS-01 challenge for the lab's wildcard
- * certificate is answered in that zone until a dedicated lab zone exists (ADR
- * 0032). The token is zone-scoped, pinned to the host's address and dated,
- * and still the only record of what it did is Cloudflare's own audit log:
- * neither the HCP Terraform plan nor the deploy-drift monitor reads the zone,
- * and Cloudflare has no notification type for audit-log or DNS-record events
- * on any plan (read 2026-10-18; the owner's decision on #948 is this poller).
+ * Until 2026-10-18 the lab host's Caddy held a Cloudflare token with DNS
+ * edit on `hybridcloudworks.com`, because the DNS-01 challenge for the lab's
+ * wildcard certificate was answered in that zone until a dedicated lab zone
+ * existed (ADR 0032). That evening the `_acme-challenge` names were delegated
+ * into the lab zone `hybridcloudinsights.com`, the runtime token re-issued on
+ * that zone alone, and the production-zone token revoked (#948, #1279). The
+ * only record of what any token did to the production zone is Cloudflare's
+ * own audit log: neither the HCP Terraform plan nor the deploy-drift monitor
+ * reads the zone, and Cloudflare has no notification type for audit-log or
+ * DNS-record events on any plan (read 2026-10-18; the owner's decision on
+ * #948 is this poller, and it keeps watching the production zone after the
+ * cut-over). The caddy-acme allowlist entry below is dated: it matches a
+ * challenge TXT from the lab host only up to the minute the host switched
+ * tokens (CADDY_PRODUCTION_ZONE_ACCESS_ENDED); after that no credential on
+ * the host can write the production zone, so a later match is UNEXPECTED.
  *
  * Once a day, cloudflare-dns-audit.yml runs this over the account audit log
  * (Audit Logs v2, `GET /accounts/{account_id}/logs/audit`), keeps the
@@ -101,6 +108,23 @@ export const MAX_RUN_PAGES = 10;
  */
 export const TERRAFORM_USER_AGENT_PREFIX = 'terraform-provider-cloudflare/';
 
+/**
+ * When the lab host stopped holding a token that can write the production
+ * zone: bootstrap.sh at 0d00bc89 rotated `/etc/caddy/env` to the lab-zone
+ * token and restarted Caddy at 2026-10-18T20:52:52Z (#948, #1279); the
+ * production-zone token was revoked later that evening. A challenge TXT in
+ * the production zone from the host's address before this instant was the
+ * interim ADR 0032 recorded; one at or after it has no credential that could
+ * legitimately have made it, so the `caddy-acme` entry refuses it.
+ */
+export const CADDY_PRODUCTION_ZONE_ACCESS_ENDED = '2026-10-18T20:53:00Z';
+
+/** Before the lab host switched tokens; an unparseable time is not before anything. */
+export function beforeCaddyCutOver(time) {
+  const t = Date.parse(time);
+  return !Number.isNaN(t) && t < Date.parse(CADDY_PRODUCTION_ZONE_ACCESS_ENDED);
+}
+
 /** An API-token request whose user agent is the Cloudflare Terraform provider. */
 function isTerraformProviderRequest(change) {
   return change.actorContext === 'api_token' && change.userAgent.startsWith(TERRAFORM_USER_AGENT_PREFIX);
@@ -183,19 +207,23 @@ export const ALLOWLIST = [
   {
     id: 'caddy-acme',
     reason:
-      "The lab host's Caddy renews the lab wildcard by DNS-01, which is a TXT record under " +
-      `\`${ACME_CHALLENGE_PREFIX}\` for a lab name (\`_acme-challenge.lab.hybridcloudworks.com\` or ` +
-      '`_acme-challenge.coder.lab.hybridcloudworks.com`), created and then deleted minutes later. ' +
-      'That is ALL this token may do: an A, CNAME or MX record from it, or a challenge TXT for a ' +
-      'name outside the lab (`_acme-challenge.www…`, which would be a certificate for the site), ' +
-      "is the finding this poller exists for. Identified by the lab host's address in " +
-      `\`${ENV.caddyHostIp}\` (the token's client-IP filter allows that address alone, so any API-token ` +
-      `request from it is this token), or by the token name in \`${ENV.caddyTokenName}\` should the log carry it.`,
+      `Until ${CADDY_PRODUCTION_ZONE_ACCESS_ENDED} the lab host's Caddy renewed the lab wildcard by DNS-01 ` +
+      `in this zone, which is a TXT record under \`${ACME_CHALLENGE_PREFIX}\` for a lab name ` +
+      '(`_acme-challenge.lab.hybridcloudworks.com` or `_acme-challenge.coder.lab.hybridcloudworks.com`), ' +
+      'created and then deleted minutes later; that was ALL its token could do, and an A, CNAME or MX ' +
+      'record from it, or a challenge TXT for a name outside the lab (`_acme-challenge.www…`, which ' +
+      'would be a certificate for the site), is the finding this poller exists for. Since that instant ' +
+      'the challenge names are delegated into the lab zone and the host holds no token for this zone ' +
+      '(the production-zone token is revoked), so a matching change dated at or after it is UNEXPECTED ' +
+      "too. Identified by the lab host's address in " +
+      `\`${ENV.caddyHostIp}\` (the token's client-IP filter allowed that address alone, so any API-token ` +
+      `request from it was this token), or by the token name in \`${ENV.caddyTokenName}\` should the log carry it.`,
     active: (settings) => settings.caddyTokenName !== '' || settings.caddyHostIp !== '',
     matches: (change, settings) =>
       isCaddyToken(change, settings) &&
       change.recordType === 'TXT' &&
-      isLabAcmeChallenge(change.recordName),
+      isLabAcmeChallenge(change.recordName) &&
+      beforeCaddyCutOver(change.time),
   },
   {
     id: 'owner-dashboard',
