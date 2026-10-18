@@ -255,11 +255,12 @@ that does not exist.
 **What it checks.** Daily at 05:50 UTC, `scripts/cloudflare-dns-audit.mjs`
 reads the account audit log (Audit Logs v2,
 `GET /accounts/{account_id}/logs/audit`, paged through in full) from two
-hours before the workflow's previous successful run — never less than 26
-hours back, never more than 14 days, and 26 hours when there is no previous
-success — so a failed or missed run widens the next window rather than
-leaving a gap; a longer outage is read in manual windows (`since` input),
-each judged on its own. It keeps the
+hours before the workflow's previous successful **scheduled** run — never
+less than 26 hours back, never more than 14 days, and 26 hours when there is
+no previous success — so a failed or missed run widens the next window
+rather than leaving a gap. Manual runs (`workflow_dispatch`) never move that
+resume point, so a narrow `since` by hand cannot hide the time before it; a
+longer outage is read in manual windows, each judged on its own. It keeps the
 create, update and delete events on DNS records in the production zone, and
 judges each against the allowlist at the top of the script. Anything the
 allowlist does not name is UNEXPECTED. A run that could not read the log

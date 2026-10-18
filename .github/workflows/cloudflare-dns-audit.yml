@@ -13,10 +13,11 @@
 # log stands in for the notification that does not exist.
 #
 # Daily, this runs scripts/cloudflare-dns-audit.mjs over the account audit
-# log since the previous SUCCESSFUL run of this workflow, less two hours of
-# overlap (never less than 26 hours, never more than 14 days; 26 hours when
-# there is no previous success), so a failed or missed run widens the next
-# window instead of leaving a gap nobody read (CodeRabbit on #1274). It
+# log since the previous successful SCHEDULED run of this workflow, less two
+# hours of overlap (never less than 26 hours, never more than 14 days; 26
+# hours when there is no previous success; manual runs never move the resume
+# point), so a failed or missed run widens the next window instead of
+# leaving a gap nobody read (CodeRabbit on #1274). It
 # keeps the create, update and delete events on DNS records in the zone,
 # and judges each against the allowlist
 # at the top of that script: the HCP Terraform token's edits, the Caddy
@@ -89,9 +90,11 @@ jobs:
           node-version: '26'
           package-manager-cache: false
 
-      # The window starts where the last successful run left off, less two
-      # hours, so a run that failed (token, API, issue creation) or never
-      # happened is read by the next one that succeeds. Bounds: never less
+      # The window starts where the last successful SCHEDULED run left off,
+      # less two hours, so a run that failed (token, API, issue creation) or
+      # never happened is read by the next one that succeeds. Manual runs do
+      # not move the resume point: one with a narrow `since` would otherwise
+      # leave the time before it unread. Bounds: never less
       # than 26 hours back (a quick re-run still reads a full day), never
       # more than 14 days (a longer outage is read in manual windows, each
       # judged on its own). A `since` input wins outright.
@@ -110,7 +113,7 @@ jobs:
           fi
           default=$(date -u -d '26 hours ago' +%Y-%m-%dT%H:%M:%SZ)
           floor=$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)
-          last=$(gh run list --repo "$REPO" --workflow cloudflare-dns-audit.yml --status success --limit 1 --json createdAt --jq '.[0].createdAt // empty')
+          last=$(gh run list --repo "$REPO" --workflow cloudflare-dns-audit.yml --event schedule --status success --limit 1 --json createdAt --jq '.[0].createdAt // empty')
           since="$default"
           if [ -n "$last" ]; then
             resume=$(date -u -d "${last} - 2 hours" +%Y-%m-%dT%H:%M:%SZ)
