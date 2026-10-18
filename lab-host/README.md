@@ -541,9 +541,9 @@ comment added in the editor does not survive its next run. Re-run
 ### The Cloudflare runtime token and its scope
 
 Caddy answers the DNS-01 challenge for all three names through CNAME
-delegation, cut over on 2026-10-18 (#948, LAB-1; the cut-over completes
-when the owner's forced issuance below succeeds and is posted on #948):
-`infra-lab/dns.tf` makes
+delegation, cut over on 2026-10-18 (#948, LAB-1; the forced issuance below
+succeeded at 21:04Z that day and the production-zone token was revoked the
+same evening): `infra-lab/dns.tf` makes
 `_acme-challenge.lab.hybridcloudworks.com` and
 `_acme-challenge.coder.lab.hybridcloudworks.com` CNAMEs to
 `_acme-challenge.lab.hybridcloudinsights.com`, one name in the dedicated lab
