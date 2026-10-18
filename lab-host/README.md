@@ -570,9 +570,15 @@ cut-over). In Cloudflare, https://dash.cloudflare.com/profile/api-tokens →
 zone (`lab-host-caddy-hybridcloudinsights`), permissions **Zone → DNS →
 Edit** and **Zone → Zone → Read**, zone resources **Include → Specific zone
 → `hybridcloudinsights.com`** and nothing else, **Client IP Address
-Filtering → Allow** the lab host's address, a TTL ending within a year.
-Then, PowerShell on the workstation, the token held in a variable and
-piped to the host's vault setter, never typed into a command line:
+Filtering → Is in** the lab host's IPv4 address **and, as a second row, its
+IPv6 address with `/128`** (a reinstalled Ubuntu reaches the Cloudflare API
+over IPv6; on 2026-10-18 every issuance failed with `Cannot use the access
+token from location` until that row was added, and the form rejects a
+trailing space as `invalid CIDR`), a TTL ending within a year. On a host
+rebuild, **Roll** the existing token from its row's menu instead: a new
+value, same name, scope, filter and end date. Then, PowerShell on the
+workstation, the token held in a variable and piped to the host's vault
+setter, never typed into a command line:
 
 ```powershell
 $t = Read-Host "Caddy token" -AsSecureString; [Net.NetworkCredential]::new('', $t).Password | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-vault-set vault_cloudflare_api_token"; $t = $null

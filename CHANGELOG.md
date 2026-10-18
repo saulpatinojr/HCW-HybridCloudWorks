@@ -54,6 +54,28 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **LAB-9 rebuild rehearsal done on the live lab host: 66 min 42 s (#955)**.
+  2026-10-18, VM 939861 recreated through Hostinger's API on the same plain
+  Ubuntu 26.04 template; Vault unsealed on the snapshot's data 66 min 42 s
+  after the click, Coder back on the restored database at 58 min. The
+  runbook's "Reinstalling the host" step 7 is rewritten in the order the
+  rehearsal proved: the nine vault keys set by hand (three add-on Turnstile
+  secrets, not one), Arc's two runs and then `Connect-Lab.ps1 -Arc` before
+  any further play (the post-onboarding run closes port 22), the `hcw-azure`
+  run for the new machine identity, `bootstrap.sh --skip-tags coder` (Coder's
+  first account cannot be made by password on this build, and the restore
+  brings the accounts back), the Coder restore, the seal check, the agent
+  go-live as the publishing run, Vault init and restore in one on-host
+  command whose root token never reaches a screen, the generate-root seed,
+  the Coder automation's rotation credential, Portainer 2.45.2's
+  self-created `local` environment. The Caddy token's client-IP filter now
+  names both of the host's addresses, because the rebuilt host reaches the
+  Cloudflare API over IPv6 and issuance failed until the `/128` was added;
+  the token is rolled, not re-created, on a rebuild. Required inputs record
+  a Cloudflare token naming rule (where it lives, what uses it, what it
+  reaches) after the audit poller's token was revoked in place of the
+  production-zone Caddy token on the cut-over evening; both corrected the
+  same night, the poller reading again with 0 unexpected.
 - **Lab DNS-01 by delegation into a dedicated lab zone (LAB-1, #948)**. Owner
   decision 2026-10-18: the lab zone is `hybridcloudinsights.com`, a domain the
   owner already held, connected to the same Cloudflare account that day
