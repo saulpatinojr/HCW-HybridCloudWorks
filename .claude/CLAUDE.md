@@ -211,6 +211,23 @@ so it is recorded here, where every session reads it.
   recommends changes, or any review thread still unresolved on the head, is
   not that: fix, push, and wait for the next review of the new head. Ready
   for review on its own is still not permission to merge.
+- **CodeRabbit's approval is the ruleset's required review.** Owner decision
+  2026-10-18 on #972 (option F, with Copilot out of credits until
+  2026-10-31): the `Default` ruleset's `pull_request` rule carries
+  `required_approving_review_count: 1` with `require_last_push_approval`,
+  and `.coderabbit.yaml` has `request_changes_workflow: true` with
+  `allow_author_approval: false`. CodeRabbit posts a request-changes review
+  while any of its findings is open and approves the head once every thread
+  is resolved and its pre-merge checks pass; that approval is what satisfies
+  the rule, so the merge button follows the loop above rather than replacing
+  it. Proven on #1272, which sat `REVIEW_REQUIRED` until CodeRabbit's
+  `APPROVED` review and merged on it. A session cannot approve: it authors
+  as the owner's account, which is also why `@coderabbitai approve` from the
+  author is off. If CodeRabbit stops reviewing (a rate limit, an outage, a
+  plan change), every PR waits on it; the rollback is the owner's single
+  full-ruleset `PUT` with `required_approving_review_count` at `0` and
+  `require_last_push_approval` at `false`, the pre-change payload recorded
+  on #972.
 - **Every review bot is worked, for at most three rounds each; then all
   green is the merge.** Owner instruction 2026-10-08, after Copilot reviews
   resumed on #1034 and #1035 and CodeRabbit (#1031) began posting a
