@@ -446,7 +446,7 @@ describe('main', () => {
     const judged = [{ ...normalise(entry({ actor: STRANGER, record: { name: 'a\\|b.hybridcloudworks.com', type: 'TXT' } })), verdict: 'UNEXPECTED', rule: null }];
     const md = renderReport({ window: { since: 's', before: 'b', hours: 26 }, entries: 1, pages: 1, judged, settings: { ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, zoneId: ZONE } });
     expect(md).toContain('`a\\\\\\|b.hybridcloudworks.com`');
-    const row = md.split('\n').find((l) => l.includes('b.hybridcloudworks.com'));
+    const row = md.split('\n').find((l) => l.startsWith('| ') && l.includes('UNEXPECTED'));
     expect(row.split(/(?<!\\)\|/).length).toBe(md.split('\n').find((l) => l.startsWith('| Time')).split('|').length);
   });
 });
