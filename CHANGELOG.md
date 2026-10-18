@@ -66,8 +66,10 @@ This project has not cut a tagged release; entries are grouped under
   zone for a challenge name by SOA walk and does not follow a CNAME. The
   runtime token is re-issued with DNS edit on the lab zone alone and rotated
   with `hcw-vault-set` + `bootstrap.sh`; the lab-host README has the token
-  form, the forced-issuance proof and the revocation of the production-zone
-  token. ADR 0032's LAB-1 interim is closed with the date.
+  form, the forced-issuance proof (the stored certificate copied aside first,
+  with the restore line) and the revocation of the production-zone token.
+  ADR 0032 records the cut-over as begun; the owner's apply, rotation and
+  proof on #948 complete it.
 - **Cloudflare DNS audit: an apply that errored or was cancelled is still an
   apply (#948)**. The first live run of the apply-correlated `hcp-terraform`
   entry (2026-10-18 14:09Z) read 44 applies and still left four account-token

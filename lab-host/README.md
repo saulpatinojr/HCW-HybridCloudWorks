@@ -541,7 +541,9 @@ comment added in the editor does not survive its next run. Re-run
 ### The Cloudflare runtime token and its scope
 
 Caddy answers the DNS-01 challenge for all three names through CNAME
-delegation, live since 2026-10-18 (#948, LAB-1): `infra-lab/dns.tf` makes
+delegation, cut over on 2026-10-18 (#948, LAB-1; the cut-over completes
+when the owner's forced issuance below succeeds and is posted on #948):
+`infra-lab/dns.tf` makes
 `_acme-challenge.lab.hybridcloudworks.com` and
 `_acme-challenge.coder.lab.hybridcloudworks.com` CNAMEs to
 `_acme-challenge.lab.hybridcloudinsights.com`, one name in the dedicated lab
@@ -583,8 +585,18 @@ ssh hcw-lab "sudo -n /opt/hcw-src/lab-host/bootstrap.sh"
 Success: the run ends `failed=0`, and `ssh hcw-lab "sudo -n caddy validate
 --config /etc/caddy/Caddyfile --adapter caddyfile"` prints `Valid
 configuration`. Prove the delegation before trusting it with a renewal date:
-force one issuance (bash, on the host; Let's Encrypt allows five identical
-certificates a week, so one forced issuance is within limits):
+force one issuance of the `*.lab` certificate. Caddy only issues for a name
+it holds no certificate for, so the stored one is **copied aside first** and
+put back if the issuance fails; while Caddy has no certificate for `*.lab`
+the lab's TLS handshakes fail, so this is done in one sitting with the
+restore line ready. Let's Encrypt allows five identical certificates a week;
+one forced issuance is within limits. Bash, on the host:
+
+```bash
+sudo cp -a /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/wildcard_.lab.hybridcloudworks.com /root/caddy-wildcard-lab-before-delegation && sudo ls /root/caddy-wildcard-lab-before-delegation
+```
+
+Success: the copy lists the `.crt`, `.key` and `.json` files. Then:
 
 ```bash
 sudo systemctl stop caddy && sudo rm -rf /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/wildcard_.lab.hybridcloudworks.com && sudo systemctl start caddy && sleep 90 && sudo journalctl -u caddy --since -3min --no-pager | grep -E 'certificate obtained successfully|dns_challenge|error'
@@ -593,9 +605,21 @@ sudo systemctl stop caddy && sudo rm -rf /var/lib/caddy/.local/share/caddy/certi
 Success: `certificate obtained successfully` for `*.lab.hybridcloudworks.com`,
 and no `error` line; the Cloudflare audit log of `hybridcloudinsights.com`
 shows the TXT create and delete, and the production zone's audit log shows
-nothing from the token. Then revoke the old production-zone token at the
-same API Tokens page. The daily DNS audit (`cloudflare-dns-audit.yml`)
-keeps watching the production zone, where this token now has no access.
+nothing from the token. Then `sudo rm -rf
+/root/caddy-wildcard-lab-before-delegation`, and revoke the old
+production-zone token at the same API Tokens page. **If it fails** (an
+`error` line, no `obtained` line within a few minutes): put the copy back
+and the lab serves again on the old certificate while the cause is read
+(the token's zone or permissions, the CNAME not yet applied, the override
+name not matching the CNAME target):
+
+```bash
+sudo systemctl stop caddy && sudo cp -a /root/caddy-wildcard-lab-before-delegation /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/wildcard_.lab.hybridcloudworks.com && sudo chown -R caddy:caddy /var/lib/caddy/.local/share/caddy/certificates && sudo systemctl start caddy && curl -sS -o /dev/null -w '%{http_code}\n' --resolve coder.lab.hybridcloudworks.com:443:127.0.0.1 https://coder.lab.hybridcloudworks.com/
+```
+
+Good is a three-digit status (the handshake works again). The daily DNS
+audit (`cloudflare-dns-audit.yml`) keeps watching the production zone, where
+the lab-zone token has no access.
 
 ## Coder
 

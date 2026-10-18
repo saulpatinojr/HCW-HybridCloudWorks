@@ -172,7 +172,7 @@ caddy_builder_image_digest: sha256:d842facfd63b960922e57444ff76fd8f0793a66dfdcf4
 caddy_site_domain: "{{ lab_host_domain }}"
 # The three names ADR 0032 puts on the certificate. DNS-01 for each is answered
 # through the CNAME delegation of _acme-challenge.lab and _acme-challenge.coder.lab
-# to the dedicated lab zone (#661, live since 2026-10-18 under #948).
+# to the dedicated lab zone (#661; cut over 2026-10-18, #948).
 caddy_site_names:
   - "{{ lab_host_domain }}"
   - "*.{{ lab_host_domain }}"

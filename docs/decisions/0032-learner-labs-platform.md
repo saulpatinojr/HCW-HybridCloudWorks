@@ -1097,7 +1097,7 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   rather than passing quietly
   ([Edge and DNS verification](../runbooks/edge-dns-verification.md), "The
   daily DNS audit"). The audit-read token it needs is the owner step.
-  *Closed 2026-10-18 (#948):* the dedicated lab zone exists. It is
+  *Cut-over begun 2026-10-18 (#948):* the dedicated lab zone exists. It is
   `hybridcloudinsights.com`, a domain the owner already held, connected to
   the same Cloudflare account that day (Free plan, nameservers moved at
   Hostinger, zone emptied); no public name changes, the zone only ever
@@ -1105,11 +1105,14 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   `_acme-challenge` CNAMEs to `_acme-challenge.lab.hybridcloudinsights.com`,
   and `roles/caddy` renders `dns_challenge_override_domain` with that name,
   because certmagic finds the zone for a challenge name by SOA walk and does
-  not follow a CNAME. The runtime token is re-issued with DNS edit on the lab
-  zone alone and rotated on the host; the production-zone token is revoked
-  once a renewal has succeeded through the delegation. The audit-log poller
-  keeps watching the production zone, where the Caddy token then has no
-  access at all.
+  not follow a CNAME. Still the owner's, tracked on #948: the Terraform
+  apply of the two CNAMEs, the runtime token re-issued with DNS edit on the
+  lab zone alone and rotated on the host, one forced issuance as the proof,
+  and the revocation of the production-zone token. The interim this bullet
+  describes ends when that proof is posted; until then the production-zone
+  token and the audit-log poller stand as before. The poller keeps watching
+  the production zone afterwards, where the Caddy token then has no access
+  at all.
 - **`lab-image/` is a new supply-chain surface.** Every image it publishes
   must be digest-pinned where consumed, and the existing
   `capabilities.test.js` assertion that every capability names a digest is the
