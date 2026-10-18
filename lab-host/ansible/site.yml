@@ -109,6 +109,12 @@
     # visitor waits.
     - role: lab_images
       tags: [lab_images]
+    # A container shaped like a workspace resolves Coder's name, fetches the
+    # agent and reaches the lab repository, now and every 15 minutes (#1267).
+    # After everything a workspace needs: the sandbox daemon, the host
+    # firewall, Coder and Caddy, and the workspace image lab_images pulls.
+    - role: workspace_reach
+      tags: [workspace_reach]
     # Tool add-ons (ADR 0035): one hardened container per row of `addons` in
     # group_vars, by digest, on the loopback, each with a route in Caddy's
     # conf.d. Needs docker and caddy, and nothing of coder's; it stops on a

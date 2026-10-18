@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# hcw-workspace-reach: a lab workspace's first minute, checked
+# (roles/workspace_reach; #1267).
+#
+# Starts one throwaway container on the Coder sandbox daemon, shaped the way
+# lab-host/coder/templates/hcw-lab/main.tf shapes a workspace: the pinned
+# workspace image, uid 65534, every capability dropped, no privilege gain, on
+# a bridge network of its own, and with no nameserver of its own, so it gets
+# what the daemon gives every workspace. It is created the way the Terraform
+# docker provider creates a workspace (kreuzwerker/docker 4.6.0): on the
+# default bridge, then disconnected from it and connected to its own network,
+# then started. That order decides which nameservers a container keeps
+# (roles/coder_sandbox/README.md, "Workspace DNS"). `docker run --network`
+# takes the other path, and on 2026-10-17 it resolved on the very host where
+# no workspace could (#1267). From inside it, the two things a workspace does
+# before a learner sees anything:
+#
+#   1. resolve the name in Coder's access URL and fetch the start of the agent
+#      from <url>/bin/coder-linux-amd64. Coder's init script does that first,
+#      and retries it forever when it cannot, which the learner sees as
+#      "Agent is taking longer than expected to connect";
+#   2. reach the lab repository a lab's startup script checks its folder out
+#      of (git ls-remote).
+#
+# Run as the sandbox daemon's user, by the timer and by the play alike. It tries
+# HCW_REACH_ATTEMPTS times (default 3), HCW_REACH_WAIT seconds apart
+# (default 20), so a daemon or Coder restarting at that moment is not reported.
+#
+# Usage: hcw-workspace-reach <docker-host> <image> <coder-url> <repo-url>
+# Exits 0 when both work and 1 when one does not after every attempt; the last
+# line then says which, and what to read. Exits 2 on a usage error.
+set -euo pipefail
+
+if [ "$#" -ne 4 ]; then
+  echo "usage: hcw-workspace-reach <docker-host> <image> <coder-url> <repo-url>" >&2
+  exit 2
+fi
+
+docker_host=$1
+image=$2
+coder_url=${3%/}
+repo_url=$4
+attempts=${HCW_REACH_ATTEMPTS:-3}
+wait_seconds=${HCW_REACH_WAIT:-20}
+container=hcw-workspace-reach
+network=hcw-workspace-reach
+runbook='docs/runbooks/labs-host.md, "Workspace reach"'
+coder_host=${coder_url#*://}
+coder_host=${coder_host%%/*}
+coder_host=${coder_host%%:*}
+
+say() { echo "workspace reach: $*"; }
+fail() {
+  echo "workspace reach: FAILED: $* (${runbook})" >&2
+  exit 1
+}
+
+# One check at a time: the timer and a bootstrap run can meet. The lock is the
+# script itself, which every caller can read.
+exec 9<"$0"
+flock -w 600 9 || fail "another check held the lock for ten minutes"
+
+# The CLI's own state in a directory of this run's, not in the user's home.
+DOCKER_CONFIG=$(mktemp -d)
+export DOCKER_CONFIG
+docker() { command docker -H "${docker_host}" "$@"; }
+
+# Anything an earlier run left (a killed run cannot clean up after itself),
+# and this run's own, on the way out.
+remove_ours() {
+  docker rm -f "${container}" >/dev/null 2>&1 || true
+  docker network rm "${network}" >/dev/null 2>&1 || true
+}
+trap 'remove_ours; rm -rf "${DOCKER_CONFIG}"' EXIT
+
+if ! daemon_error=$(docker version --format '{{.Server.Version}}' 2>&1 >/dev/null); then
+  fail "the sandbox daemon does not answer on ${docker_host}, so no workspace can start (${daemon_error}). Read sudo journalctl _UID=\$(id -u hcw-coder-docker) -n 80 --no-pager"
+fi
+
+if ! docker image inspect "${image}" >/dev/null 2>&1; then
+  fail "the workspace image ${image} is not on the sandbox daemon, so every workspace would pull it first. The lab_images role pulls it: sudo /opt/hcw-src/lab-host/bootstrap.sh --tags lab_images"
+fi
+
+# What runs inside, as the workspace's own user. A constant: the URLs reach it
+# as environment variables, never as part of the script.
+# shellcheck disable=SC2016 # expanded inside the container, not here
+inner='
+set -u
+getent hosts "${HCW_CODER_HOST}" >/dev/null || exit 11
+curl -fsS --max-time 30 -r 0-99 -o /dev/null "${HCW_CODER_URL}/bin/coder-linux-amd64" || exit 12
+GIT_TERMINAL_PROMPT=0 timeout 60 git ls-remote --exit-code "${HCW_REPO_URL}" HEAD >/dev/null || exit 13
+'
+
+# The workspace's shape (template.test.mjs holds the template to it): no
+# --dns, no --privileged, no mount, no published port. Created on the default
+# bridge and moved, as the provider does it; `docker start --attach` exits
+# with the container's own status.
+reach() {
+  docker create --name "${container}" --network bridge --pull never \
+    --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges:true \
+    --memory 256m --memory-swap 256m --cpus 0.5 --pids-limit 128 \
+    --label hcw.workspace-reach=true \
+    --env HOME=/tmp/home \
+    --env "HCW_CODER_HOST=${coder_host}" \
+    --env "HCW_CODER_URL=${coder_url}" \
+    --env "HCW_REPO_URL=${repo_url}" \
+    --entrypoint sh "${image}" -c "${inner}" >/dev/null || return 125
+  docker network disconnect bridge "${container}" || return 125
+  docker network connect "${network}" "${container}" || return 125
+  docker start --attach "${container}"
+}
+
+attempt=1
+while :; do
+  remove_ours
+  if output=$(docker network create --driver bridge --label hcw.workspace-reach=true "${network}" 2>&1 >/dev/null); then
+    set +e
+    output=$(reach 2>&1)
+    status=$?
+    set -e
+  else
+    status=125
+  fi
+  remove_ours
+  [ "${status}" -eq 0 ] && break
+  if [ "${attempt}" -ge "${attempts}" ]; then
+    break
+  fi
+  say "attempt ${attempt} of ${attempts} did not come through (exit ${status}); trying again in ${wait_seconds} s" >&2
+  sleep "${wait_seconds}"
+  attempt=$((attempt + 1))
+done
+
+case "${status}" in
+  0)
+    say "OK: a container shaped like a workspace resolved ${coder_host}, fetched the agent from ${coder_url}/bin/coder-linux-amd64 and reached ${repo_url} (attempt ${attempt} of ${attempts})"
+    ;;
+  11)
+    fail "a workspace cannot resolve ${coder_host}, so none can download its agent and every lab waits at \"Agent is taking longer than expected to connect\". The sandbox daemon must give workspaces slirp4netns's forwarder (dns in /var/lib/hcw-coder-docker/.config/docker/daemon.json, the coder_sandbox role), and /etc/resolv.conf must name only the stub 127.0.0.53 (the host_firewall role). In sudo iptables -L HCW-SANDBOX-OUT -v -n, lookups that reach the stub count on 'hcw: the host resolver'; a rising 'hcw: refused' means they go elsewhere"
+    ;;
+  12)
+    fail "a workspace resolved ${coder_host} but could not fetch ${coder_url}/bin/coder-linux-amd64, so none can start its agent. Look at Caddy (systemctl status caddy), Coder (sudo docker logs --tail 50 coder) and the firewall's 'hcw: https to this host' rule (sudo iptables -L HCW-SANDBOX-OUT -v -n)"
+    ;;
+  13)
+    fail "a workspace reached Coder but not ${repo_url}, so lab folders start empty. Look at the firewall's 'hcw: web egress' rule (sudo iptables -L HCW-SANDBOX-OUT -v -n) and whether the repository is public"
+    ;;
+  *)
+    fail "the check's container did not run (exit ${status}): $(printf '%s' "${output}" | tail -n 5 | tr '\n' ' ')"
+    ;;
+esac

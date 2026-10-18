@@ -1,0 +1,22 @@
+---
+# group_vars/all.yml ties workspace_reach_enabled to coder_enabled, the user
+# to coder_sandbox_user and the URL to coder_domain; these are the values they
+# resolve to on the lab host.
+workspace_reach_enabled: true
+
+# The sandbox daemon's user: the check runs as it, the way a workspace's
+# traffic leaves the host as it, so the host_firewall role's sandbox chain
+# judges the check exactly as it judges a workspace.
+workspace_reach_user: hcw-coder-docker
+
+# The sandbox daemon's socket (roles/coder_sandbox, vars/main.yml).
+workspace_reach_docker_host: unix:///run/hcw-coder-docker/docker.sock
+
+# Coder's access URL, which every workspace's init script downloads the agent
+# from (CODER_ACCESS_URL in lab-host/coder/docker-compose.yml).
+workspace_reach_coder_url: https://coder.lab.hybridcloudworks.com
+
+# How long after boot the timer first runs the check (the sandbox daemon and
+# Coder start at boot), and how often after that.
+workspace_reach_boot_delay: 15min
+workspace_reach_interval: 15min

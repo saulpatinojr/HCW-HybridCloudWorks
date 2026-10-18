@@ -1,0 +1,32 @@
+# {{ ansible_managed }}
+#
+# A lab workspace's first minute, checked (roles/workspace_reach; #1267): one
+# throwaway container shaped like a workspace, on the Coder sandbox daemon,
+# resolves Coder's name, fetches the agent and reaches the lab repository.
+# When it cannot, every lab waits at "Agent is taking longer than expected to
+# connect". A failure is one syslog line through the hardening role's
+# notifier and the alert-lab-unit-failed alert (LAB-2), not a learner's
+# report. Run by hcw-workspace-reach.timer and by every bootstrap.sh run.
+[Unit]
+Description=Check that a lab workspace reaches Coder and the lab repository (hcw-workspace-reach)
+Documentation=https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/lab-host/ansible/roles/workspace_reach
+After=network-online.target docker.service
+Wants=network-online.target
+OnFailure=hcw-unit-failed@%n.service
+
+[Service]
+Type=oneshot
+# The sandbox daemon's user, so the host firewall's sandbox chain judges the
+# check's traffic as it judges a workspace's, and the check can reach that
+# daemon and nothing else.
+User={{ workspace_reach_user }}
+Group={{ workspace_reach_user }}
+ExecStart={{ workspace_reach_script }} {{ workspace_reach_docker_host }} {{ workspace_reach_image }} {{ workspace_reach_coder_url }} {{ workspace_reach_repo_url }}
+# Three attempts of up to two minutes each, 20 s apart, and the lock wait.
+TimeoutStartSec=20min
+Nice=10
+UMask=0077
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

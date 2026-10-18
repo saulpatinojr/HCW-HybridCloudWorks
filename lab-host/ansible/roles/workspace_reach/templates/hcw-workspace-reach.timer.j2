@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run hcw-workspace-reach.service every {{ workspace_reach_interval }}
+
+[Timer]
+OnBootSec={{ workspace_reach_boot_delay }}
+OnUnitActiveSec={{ workspace_reach_interval }}
+RandomizedDelaySec=1min
+Unit={{ workspace_reach_unit }}.service
+
+[Install]
+WantedBy=timers.target

@@ -294,6 +294,43 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Lab workspaces resolve names again, and the lab host proves it at every
+  run and every 15 minutes (#1267)**. From the host firewall's first run on
+  2026-10-17, every Coder workspace started its container and then never
+  connected. Coder showed "Agent is taking longer than expected to connect",
+  because the container could not resolve `coder.lab.hybridcloudworks.com`
+  to download its agent. The Terraform docker provider (`kreuzwerker/docker`
+  4.6.0) creates each workspace on the sandbox daemon's default bridge and
+  then moves it to the workspace's own network. A container born on the
+  default bridge gets systemd-resolved's upstream servers, not the stub, and
+  keeps them. `dockerd` then asked them from the host's namespace as
+  `hcw-coder-docker`, which `HCW-SANDBOX-OUT` refuses: at 23:20Z it had
+  refused 576 packets since the 13:12Z boot, and its resolver rule had
+  matched none. The
+  firewall's README had said only a container on the default bridge,
+  "which no template uses", would get those servers.
+  - **The fix:** the sandbox daemon's `daemon.json` now sets `dns:
+    ["10.0.2.3"]`, slirp4netns's forwarder, for every container. Its lookups
+    reach the host stub, the one resolver the firewall allows, whichever
+    network a container was created on. Every template is covered, with no
+    template edit. After each start, `coder_sandbox` reads rootlesskit's
+    API and refuses a forwarder that is anything else. On the host, the
+    provider's create sequence with that nameserver resolved, fetched the
+    agent, and booted all nine `hcw-lab` labs.
+  - **The check that would have caught it:** a new `workspace_reach` role,
+    run after `lab_images`. At every run, and every 15 minutes from
+    `hcw-workspace-reach.timer`, it creates one container the way the
+    provider creates a workspace, as the sandbox user, on the sandbox
+    daemon. From inside, the container resolves Coder's name, fetches 100
+    bytes of the agent and runs `git ls-remote` on the lab repository. A
+    failure fails the run, naming the step and where to look. From the
+    timer, it reaches `alert-lab-unit-failed` through `hcw-unit-failed@`.
+    A plain `docker run --network` resolved on the broken host, so the
+    check copies the provider's creation order, and its test holds that
+    order.
+  - The `host_firewall` and `coder_sandbox` READMEs now describe the path
+    as measured. The runbook gains "Workspace reach", which covers reading
+    each failure and restarting a workspace that was stuck before the fix.
 - **The lab host records the commit it converged from again**.
   `site.yml`'s `Record the commit this host converged from` runs only on a
   full run (`ansible_run_tags == ['all']`). On ansible-core 2.21,
