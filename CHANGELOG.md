@@ -42,6 +42,35 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Cloudflare DNS audit: a daily poller of the account audit log stands in
+  for the notification Cloudflare does not have (LAB-1 interim, #948)**.
+  Owner decision 2026-10-18: Cloudflare has no notification type for
+  audit-log or DNS-record events on any plan, so the interim for the Caddy
+  token's DNS edit on the production zone is
+  `.github/workflows/cloudflare-dns-audit.yml`. Daily at 05:50 UTC it runs
+  `scripts/cloudflare-dns-audit.mjs`, which reads the last 26 hours of
+  Audit Logs v2 (`GET /accounts/{account_id}/logs/audit`, every page), keeps
+  the create, update and delete events on DNS records in
+  `hybridcloudworks.com`, and judges each against an allowlist carried at
+  the top of the script with the reason for every entry: the
+  `hcp-terraform-cloudflare-dns` token's edits, the Caddy token's `TXT`
+  `_acme-challenge.*.lab` edits (an A record from it, or a challenge for a
+  site name, is the finding), and the owner's own dashboard edits. An
+  UNEXPECTED change opens `Cloudflare DNS audit: unexpected record change
+  (<date>)`, labelled `Security` and `live-check`, or comments on the open
+  one; a read that fails (no token, a non-200, a body that is not the
+  `success: true` envelope, more than twenty pages) fails the run rather
+  than passing quietly. Content-free: the token never leaves the
+  environment, record contents are not read into the report, and e-mail
+  addresses are masked. `scripts/cloudflare-dns-audit.test.mjs` covers each
+  allowlist entry, the refusals, two-page reads, the non-200 and the empty
+  window from hand-written fixtures in the documented shape. The runbook
+  section is `docs/runbooks/edge-dns-verification.md`, "The daily DNS
+  audit"; ADR 0032's LAB-1 bullet now names this as the interim. The owner
+  steps are the `CLOUDFLARE_AUDIT_LOG_TOKEN` secret (*Account → Account
+  Settings → Read*, the permission the endpoint accepts) and the
+  `CLOUDFLARE_ACCOUNT_ID` variable, with the two optional allowlist
+  variables, in `docs/standards/required-inputs.md` §4.2 and §4.3.
 - **CodeRabbit's approval is the required review (#972, option F)**. Owner
   decision 2026-10-18: `.coderabbit.yaml` turns on
   `reviews.request_changes_workflow`, so CodeRabbit requests changes while a
