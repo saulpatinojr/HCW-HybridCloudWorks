@@ -160,11 +160,13 @@ Describe 'The rule table agrees with the Terraform and the runbook' {
         $fireRecord | Should -Match ('(?m)^\| `' + [regex]::Escape($Short) + '` \| ')
     }
 
-    It 'offers the eleven tests, in the order the caller asked for, each with a definition whose rules are in the table' {
+    It 'offers the fourteen tests, quickest first as the runbook''s table orders them, each with a definition whose rules are in the table' {
         $parameter = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Test' }
         $set = $parameter.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' }
         $values = @($set.PositionalArguments | ForEach-Object { $_.Value })
-        ($values -join ',') | Should -BeExactly 'kv-config-write,rbac-assignment,rbac-definition,kv-errors-and-data-write,lab-vault-unwrap,lab-ssh-burst,lab-ssh-login,jobs-poison,lab-agent-offline,swa-bandwidth,timer-overdue'
+        ($values -join ',') | Should -BeExactly 'kv-config-write,rbac-assignment,rbac-definition,lab-unit-failed,kv-errors-and-data-write,lab-vault-unwrap,lab-ssh-burst,lab-ssh-login,jobs-poison,lab-agent-offline,lab-heartbeat,swa-bandwidth,lab-disk,timer-overdue'
+        $runbookRows = @([regex]::Matches($runbook, '(?m)^\| `([a-z-]+)` \| `alert-[^|]+\| [^|]+\| \d+ min \| `pwsh -NoProfile -File scripts/alerts/Invoke-AlertFireTest\.ps1 -Test ([a-z-]+)`') | ForEach-Object { $_.Groups[2].Value })
+        ($runbookRows -join ',') | Should -BeExactly ($values -join ',') -Because 'the runbook''s fire-test table lists every test, in the script''s order'
         $catalog = Get-AlertRuleCatalog
         $covered = [System.Collections.Generic.HashSet[string]]::new()
         foreach ($value in $values) {
@@ -509,10 +511,32 @@ Describe 'The tests themselves' {
         $script:azLog = [System.Collections.Generic.List[string]]::new()
         $script:sshLog = [System.Collections.Generic.List[string]]::new()
         $script:azAnswers = Get-BaseAnswers
+        # The lab host's root filesystem as df -B1 prints it: 100 GiB, 40 GiB
+        # used, 55 GiB available (5 GiB reserved), so 42.1% used as the rule
+        # measures it, and the file that takes it to 87% is 43673 MiB,
+        # 45794459648 bytes.
+        $script:dfHeader = '        Size         Used        Avail'
+        $script:dfRow = '107374182400  42949672960  59055800320'
+        $script:dfRowAfter = '107374182400  88744132608  13261340672'
+        $script:sshReads = @(
+            'systemctl is-active hcw-labs-agent',
+            'systemctl is-active azuremonitoragent',
+            'sudo docker ps --filter name=labjob- --format {{.Names}}',
+            'sudo journalctl -t hcw-unit-failed --since -1h --no-pager -q -o cat',
+            'df -B1 --output=size,used,avail /; test -e /var/tmp/hcw-fire-test-disk.img && echo present || echo absent'
+        )
         $script:sshAnswers = @{
-            'systemctl is-active hcw-labs-agent'                                         = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('active') }
-            'sudo systemctl stop hcw-labs-agent'                                         = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@() }
-            'sudo systemctl start hcw-labs-agent; systemctl is-active hcw-labs-agent' = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('active') }
+            'systemctl is-active hcw-labs-agent'                                                                   = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('active') }
+            'sudo systemctl stop hcw-labs-agent'                                                                   = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@() }
+            'sudo systemctl start hcw-labs-agent; systemctl is-active hcw-labs-agent'                           = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('active') }
+            'systemctl is-active azuremonitoragent'                                                                = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('active') }
+            'sudo docker ps --filter name=labjob- --format {{.Names}}'                                             = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@() }
+            'sudo systemctl stop azuremonitoragent'                                                                = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@() }
+            'sudo systemctl start azuremonitoragent; systemctl is-active azuremonitoragent'                     = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('active') }
+            'sudo journalctl -t hcw-unit-failed --since -1h --no-pager -q -o cat'                                  = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@() }
+            'df -B1 --output=size,used,avail /; test -e /var/tmp/hcw-fire-test-disk.img && echo present || echo absent' = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@($script:dfHeader, $script:dfRow, 'absent') }
+            (Get-AlertDiskStageCommand)                                                                            = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('allocated 45794459648 bytes', $script:dfHeader, $script:dfRowAfter) }
+            'sudo rm -f /var/tmp/hcw-fire-test-disk.img; test -e /var/tmp/hcw-fire-test-disk.img && echo present || echo absent; df -B1 --output=size,used,avail /' = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('absent', $script:dfHeader, $script:dfRow) }
         }
         Mock Write-Host { $script:hostLines.Add([string]$Object) }
         Mock Wait-AlertSeconds { }
@@ -545,19 +569,22 @@ Describe 'The tests themselves' {
             @{ Test = 'kv-config-write' },
             @{ Test = 'rbac-assignment' },
             @{ Test = 'rbac-definition' },
+            @{ Test = 'lab-unit-failed' },
             @{ Test = 'kv-errors-and-data-write' },
             @{ Test = 'lab-vault-unwrap' },
             @{ Test = 'lab-ssh-burst' },
             @{ Test = 'lab-ssh-login' },
             @{ Test = 'jobs-poison' },
             @{ Test = 'lab-agent-offline' },
+            @{ Test = 'lab-heartbeat' },
             @{ Test = 'swa-bandwidth' },
+            @{ Test = 'lab-disk' },
             @{ Test = 'timer-overdue' }
         ) {
             $context = New-TestContext -Test $Test
             Invoke-AlertTestRun -Context $context -WhatIf
             Get-AzWrites | Should -BeNullOrEmpty
-            @($script:sshLog | Where-Object { $_ -ne 'systemctl is-active hcw-labs-agent' }) | Should -BeNullOrEmpty
+            @($script:sshLog | Where-Object { $_ -notin $script:sshReads }) | Should -BeNullOrEmpty
             Should -Invoke Get-AlertVaultToken -Times 0 -Exactly
             Should -Invoke Invoke-AlertVaultWrap -Times 0 -Exactly
             Should -Invoke Wait-AlertSeconds -Times 0 -Exactly
@@ -663,6 +690,71 @@ Describe 'The tests themselves' {
         It 'lab-agent-offline refuses when ssh cannot reach the host' {
             $script:sshAnswers['systemctl is-active hcw-labs-agent'] = [pscustomobject]@{ ExitCode = 255; Lines = [string[]]@('ssh: connect to host hcw-lab port 22: Connection timed out') }
             { Invoke-AlertTestLabAgentOffline -Context (New-TestContext -Test 'lab-agent-offline') } | Should -Throw '*ssh could not reach hcw-lab*'
+        }
+
+        It 'lab-unit-failed refuses when the hour''s window already holds a notifier line, and names the units to look at' {
+            $script:sshAnswers['sudo journalctl -t hcw-unit-failed --since -1h --no-pager -q -o cat'] = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('unit hcw-coder-automation.service entered the failed state on lab') }
+            $caught = $null
+            try { Invoke-AlertTestLabUnitFailed -Context (New-TestContext -Test 'lab-unit-failed') } catch { $caught = $_.Exception }
+            $caught.Message | Should -BeLike '*already holds 1 hcw-unit-failed line(s) from the last hour (unit hcw-coder-automation.service entered the failed state on lab)*'
+            $caught.Data['AlertCommand'] | Should -BeExactly "ssh hcw-lab 'systemctl --failed --no-pager; sudo journalctl -t hcw-unit-failed --since -2h --no-pager'"
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@('sudo journalctl -t hcw-unit-failed --since -1h --no-pager -q -o cat') -join "`n")
+        }
+
+        It 'lab-unit-failed refuses when ssh cannot reach the host' {
+            $script:sshAnswers['sudo journalctl -t hcw-unit-failed --since -1h --no-pager -q -o cat'] = [pscustomobject]@{ ExitCode = 255; Lines = [string[]]@('ssh: connect to host hcw-lab port 22: Connection timed out') }
+            { Invoke-AlertTestLabUnitFailed -Context (New-TestContext -Test 'lab-unit-failed') } | Should -Throw '*ssh could not reach hcw-lab*'
+        }
+
+        It 'lab-heartbeat refuses while a lab job container is running, before reading the agent' {
+            $script:sshAnswers['sudo docker ps --filter name=labjob- --format {{.Names}}'] = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('labjob-0123456789ab') }
+            { Invoke-AlertTestLabHeartbeat -Context (New-TestContext -Test 'lab-heartbeat') } | Should -Throw '*1 lab job container(s) running on the lab host (labjob-0123456789ab)*'
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@('sudo docker ps --filter name=labjob- --format {{.Names}}') -join "`n")
+        }
+
+        It 'lab-heartbeat refuses when the Azure Monitor Agent is not active, and names the status line' {
+            $script:sshAnswers['systemctl is-active azuremonitoragent'] = [pscustomobject]@{ ExitCode = 3; Lines = [string[]]@('inactive') }
+            $caught = $null
+            try { Invoke-AlertTestLabHeartbeat -Context (New-TestContext -Test 'lab-heartbeat') } catch { $caught = $_.Exception }
+            $caught.Message | Should -BeLike "*azuremonitoragent is 'inactive', not active*"
+            $caught.Data['AlertCommand'] | Should -BeExactly "ssh hcw-lab 'systemctl status azuremonitoragent himdsd --no-pager'"
+            $script:sshLog | Should -Not -Contain 'sudo systemctl stop azuremonitoragent'
+        }
+
+        It 'lab-heartbeat refuses when ssh cannot reach the host' {
+            $script:sshAnswers['sudo docker ps --filter name=labjob- --format {{.Names}}'] = [pscustomobject]@{ ExitCode = 255; Lines = [string[]]@('ssh: connect to host hcw-lab port 22: Connection timed out') }
+            { Invoke-AlertTestLabHeartbeat -Context (New-TestContext -Test 'lab-heartbeat') } | Should -Throw '*ssh could not reach hcw-lab*'
+        }
+
+        It 'lab-disk refuses when its file is already on the host, and names the recovery' {
+            $script:sshAnswers[$script:sshReads[4]] = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@($script:dfHeader, $script:dfRow, 'present') }
+            $context = New-TestContext -Test 'lab-disk'
+            $caught = $null
+            try { Invoke-AlertTestLabDisk -Context $context } catch { $caught = $_.Exception }
+            $caught.Message | Should -BeLike '*/var/tmp/hcw-fire-test-disk.img is already on the lab host, so an earlier run did not finish*'
+            $caught.Data['AlertCommand'] | Should -BeExactly $context.RecoverCommand
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@($script:sshReads[4]) -join "`n")
+        }
+
+        It 'lab-disk refuses when the root filesystem is already past 80% used' {
+            # 82 GiB used, 13 GiB available: 86.3% as the rule measures it.
+            $script:sshAnswers[$script:sshReads[4]] = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@($script:dfHeader, '107374182400  88046829568  13958643712', 'absent') }
+            { Invoke-AlertTestLabDisk -Context (New-TestContext -Test 'lab-disk') } | Should -Throw '*already 86.3% used (82.0 GiB of 95.0 GiB), past the 80%*'
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@($script:sshReads[4]) -join "`n")
+        }
+
+        It 'lab-disk refuses when 87% would leave less than 10 GiB free' {
+            # A 50 GiB root at 42%: 87% of it leaves 6.2 GiB.
+            $script:sshAnswers[$script:sshReads[4]] = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@($script:dfHeader, '53687091200  21474836480  29527900160', 'absent') }
+            { Invoke-AlertTestLabDisk -Context (New-TestContext -Test 'lab-disk') } | Should -Throw '*would leave 6.2 GiB free, less than the 10 GiB*'
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@($script:sshReads[4]) -join "`n")
+        }
+
+        It 'lab-disk refuses when ssh cannot reach the host, and when df prints no row' {
+            $script:sshAnswers[$script:sshReads[4]] = [pscustomobject]@{ ExitCode = 255; Lines = [string[]]@('ssh: connect to host hcw-lab port 22: Connection timed out') }
+            { Invoke-AlertTestLabDisk -Context (New-TestContext -Test 'lab-disk') } | Should -Throw '*ssh could not reach hcw-lab*'
+            $script:sshAnswers[$script:sshReads[4]] = [pscustomobject]@{ ExitCode = 1; Lines = [string[]]@('df: /: No such file or directory') }
+            { Invoke-AlertTestLabDisk -Context (New-TestContext -Test 'lab-disk') } | Should -Throw '*df on hcw-lab printed no size, used and avail row (exit 1)*'
         }
 
         It 'swa-bandwidth refuses when its record exists' {
@@ -803,6 +895,84 @@ Describe 'The tests themselves' {
             $context.Problems[0] | Should -BeLike "*ssh hcw-lab 'sudo systemctl start hcw-labs-agent; systemctl is-active hcw-labs-agent'*"
         }
 
+        It 'lab-heartbeat starts the Azure Monitor Agent again when the wait is interrupted, and never touches himdsd' {
+            Mock Wait-AlertFired { throw 'interrupted' }
+            $context = New-TestContext -Test 'lab-heartbeat'
+            { Invoke-AlertTestLabHeartbeat -Context $context } | Should -Throw 'interrupted'
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@('sudo docker ps --filter name=labjob- --format {{.Names}}', 'systemctl is-active azuremonitoragent', 'sudo systemctl stop azuremonitoragent', 'sudo systemctl start azuremonitoragent; systemctl is-active azuremonitoragent') -join "`n")
+            @($script:sshLog | Where-Object { $_ -match 'himdsd|azcmagent|hcw-labs-agent' }) | Should -BeNullOrEmpty
+            $context.StartUtc | Should -Be $start
+            $context.Problems.Count | Should -Be 0
+        }
+
+        It 'lab-heartbeat holds the stop through the whole wait, then starts the agent' {
+            Mock Wait-AlertFired { $script:sshLog.Add('(waiting)') }
+            $context = New-TestContext -Test 'lab-heartbeat'
+            Invoke-AlertTestLabHeartbeat -Context $context
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@('sudo docker ps --filter name=labjob- --format {{.Names}}', 'systemctl is-active azuremonitoragent', 'sudo systemctl stop azuremonitoragent', '(waiting)', 'sudo systemctl start azuremonitoragent; systemctl is-active azuremonitoragent') -join "`n")
+            Should -Invoke Wait-AlertFired -Times 1 -Exactly -ParameterFilter { ($Required -join ',') -eq 'alert-lab-heartbeat' -and $TimeoutMinutes -eq 55 }
+            Get-HostText | Should -Match 'Put back: azuremonitoragent is active'
+        }
+
+        It 'lab-heartbeat reports an agent that does not come back, with the line to run by hand' {
+            $script:sshAnswers['sudo systemctl start azuremonitoragent; systemctl is-active azuremonitoragent'] = [pscustomobject]@{ ExitCode = 3; Lines = [string[]]@('failed') }
+            Mock Wait-AlertFired { }
+            $context = New-TestContext -Test 'lab-heartbeat'
+            Invoke-AlertTestLabHeartbeat -Context $context
+            $context.Problems.Count | Should -Be 1
+            $context.Problems[0] | Should -BeLike "*azuremonitoragent did not come back: the last line reads 'failed'*"
+            $context.Problems[0] | Should -BeLike "*ssh hcw-lab 'sudo systemctl start azuremonitoragent; systemctl is-active azuremonitoragent'*"
+            Get-AlertExitCode -Context $context | Should -Be 3
+        }
+
+        It 'lab-disk removes the file when the wait is interrupted, and reads df after' {
+            Mock Wait-AlertFired { throw 'interrupted' }
+            $context = New-TestContext -Test 'lab-disk'
+            { Invoke-AlertTestLabDisk -Context $context } | Should -Throw 'interrupted'
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@($script:sshReads[4], (Get-AlertDiskStageCommand), 'sudo rm -f /var/tmp/hcw-fire-test-disk.img; test -e /var/tmp/hcw-fire-test-disk.img && echo present || echo absent; df -B1 --output=size,used,avail /') -join "`n")
+            Get-HostText | Should -Match 'Allocated: the root filesystem reads 87% used, 12\.4 GiB free\.'
+            Get-HostText | Should -Match 'Put back: no /var/tmp/hcw-fire-test-disk\.img on the lab host; the root filesystem reads 42\.1% used, 55\.0 GiB free\.'
+            $context.Problems.Count | Should -Be 0
+        }
+
+        It 'lab-disk holds the file through the whole wait, then removes it' {
+            Mock Wait-AlertFired { $script:sshLog.Add('(waiting)') }
+            $context = New-TestContext -Test 'lab-disk'
+            Invoke-AlertTestLabDisk -Context $context
+            @($script:sshLog)[2] | Should -BeExactly '(waiting)'
+            @($script:sshLog)[3] | Should -BeLike 'sudo rm -f /var/tmp/hcw-fire-test-disk.img;*'
+            Should -Invoke Wait-AlertFired -Times 1 -Exactly -ParameterFilter { ($Required -join ',') -eq 'alert-lab-disk' -and $TimeoutMinutes -eq 80 }
+            Get-HostText | Should -Match 'Stop condition: the root filesystem reads 42\.1% used \(40\.0 GiB of 95\.0 GiB\); 87% is 42\.6 GiB more, leaving 12\.4 GiB free\.'
+        }
+
+        It 'lab-disk reports a file that remains, with the line that removes it' {
+            $script:sshAnswers['sudo rm -f /var/tmp/hcw-fire-test-disk.img; test -e /var/tmp/hcw-fire-test-disk.img && echo present || echo absent; df -B1 --output=size,used,avail /'] = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('rm: cannot remove: Operation not permitted', 'present', $script:dfHeader, $script:dfRowAfter) }
+            Mock Wait-AlertFired { }
+            $context = New-TestContext -Test 'lab-disk'
+            Invoke-AlertTestLabDisk -Context $context
+            $context.Problems.Count | Should -Be 1
+            $context.Problems[0] | Should -BeLike '*/var/tmp/hcw-fire-test-disk.img may still be on the lab host*'
+            $context.Problems[0] | Should -BeLike "*ssh hcw-lab 'sudo rm -f /var/tmp/hcw-fire-test-disk.img'*"
+            Get-AlertExitCode -Context $context | Should -Be 3
+        }
+
+        It 'lab-disk removes the file and stops when the landing reads above 90%' {
+            $script:sshAnswers[(Get-AlertDiskStageCommand)] = [pscustomobject]@{ ExitCode = 0; Lines = [string[]]@('allocated 45794459648 bytes', $script:dfHeader, '107374182400  97710505984  4294967296') }
+            Mock Wait-AlertFired { throw 'the wait must not start' }
+            $context = New-TestContext -Test 'lab-disk'
+            { Invoke-AlertTestLabDisk -Context $context } | Should -Throw '*reads 95.8% used after the allocation, above the 90%*'
+            @($script:sshLog)[2] | Should -BeLike 'sudo rm -f /var/tmp/hcw-fire-test-disk.img;*'
+            Should -Invoke Wait-AlertFired -Times 0 -Exactly
+            $context.Problems.Count | Should -Be 0
+        }
+
+        It 'lab-disk stops when the host refuses because df moved, and still runs the remove' {
+            $script:sshAnswers[(Get-AlertDiskStageCommand)] = [pscustomobject]@{ ExitCode = 4; Lines = [string[]]@('refused: df moved past a stop condition (used=90000000000 avail=12005473280 add=-1048576)') }
+            Mock Wait-AlertFired { throw 'the wait must not start' }
+            { Invoke-AlertTestLabDisk -Context (New-TestContext -Test 'lab-disk') } | Should -Throw '*refused to allocate: refused: df moved past a stop condition*nothing was allocated*'
+            @($script:sshLog)[2] | Should -BeLike 'sudo rm -f /var/tmp/hcw-fire-test-disk.img;*'
+        }
+
         It 'swa-bandwidth puts the saved original back when the wait is interrupted' {
             Mock Wait-AlertFired { throw 'interrupted' }
             $context = New-TestContext -Test 'swa-bandwidth'
@@ -933,6 +1103,69 @@ Describe 'The tests themselves' {
             { Invoke-AlertTestLabSshLogin -Context (New-TestContext -Test 'lab-ssh-login') } | Should -Throw '*Writing the line on hcw-lab failed (exit 1)*'
         }
 
+        It 'lab-unit-failed writes the notifier''s own line with logger, naming a unit for the moment, and waits for its rule alone' {
+            Mock Wait-AlertFired { }
+            $context = New-TestContext -Test 'lab-unit-failed'
+            Invoke-AlertTestLabUnitFailed -Context $context
+            $command = 'logger -t hcw-unit-failed -p daemon.err "unit hcw-fire-test-20261010T120000Z.service entered the failed state on $(hostname)"'
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@('sudo journalctl -t hcw-unit-failed --since -1h --no-pager -q -o cat', $command) -join "`n")
+            Get-AzWrites | Should -BeNullOrEmpty
+            Get-HostText | Should -Match 'Written: one line\. Nothing to put back'
+            $context.StartUtc | Should -Be $start
+            Should -Invoke Wait-AlertFired -Times 1 -Exactly -ParameterFilter { ($Required -join ',') -eq 'alert-lab-unit-failed' -and -not $Optional -and $TimeoutMinutes -eq 35 }
+        }
+
+        It 'lab-unit-failed''s line has the shape of the notifier unit in lab-host/ansible, tag and priority included' {
+            $template = Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot 'lab-host/ansible/roles/hardening/templates/hcw-unit-failed@.service.j2')
+            $template | Should -Match '(?m)^ExecStart=/usr/bin/logger -t hcw-unit-failed -p daemon\.err "unit %i entered the failed state on %H"$'
+            Mock Wait-AlertFired { }
+            Invoke-AlertTestLabUnitFailed -Context (New-TestContext -Test 'lab-unit-failed')
+            @($script:sshLog)[1] | Should -Match '^logger -t hcw-unit-failed -p daemon\.err "unit hcw-fire-test-\d{8}T\d{6}Z\.service entered the failed state on \$\(hostname\)"$'
+        }
+
+        It 'lab-unit-failed stops when logger fails' {
+            $command = 'logger -t hcw-unit-failed -p daemon.err "unit hcw-fire-test-20261010T120000Z.service entered the failed state on $(hostname)"'
+            $script:sshAnswers[$command] = [pscustomobject]@{ ExitCode = 1; Lines = [string[]]@('logger: socket /dev/log: No such file or directory') }
+            { Invoke-AlertTestLabUnitFailed -Context (New-TestContext -Test 'lab-unit-failed') } | Should -Throw '*Writing the line on hcw-lab failed (exit 1)*'
+        }
+
+        It 'Get-AlertDiskPlan sizes the file for 87% as the rule measures it, rounded down to a MiB' {
+            $plan = Get-AlertDiskPlan -Size 107374182400 -Used 42949672960 -Avail 59055800320
+            $plan.Stop | Should -BeExactly ''
+            $plan.AddBytes | Should -Be 45794459648
+            ($plan.AddBytes % 1048576) | Should -Be 0
+            $plan.AfterPct | Should -BeLessOrEqual 87
+            $plan.AfterPct | Should -BeGreaterThan 86.99
+            $plan.FreeAfter | Should -Be 13261340672
+            [math]::Round($plan.UsedPct, 1) | Should -Be 42.1
+        }
+
+        It 'Get-AlertDiskPlan refuses past 80%, under 10 GiB free, and a row that cannot be a filesystem' {
+            (Get-AlertDiskPlan -Size 107374182400 -Used 88046829568 -Avail 13958643712).Stop | Should -BeLike 'the root filesystem is already 86.3% used*'
+            (Get-AlertDiskPlan -Size 53687091200 -Used 21474836480 -Avail 29527900160).Stop | Should -BeLike 'taking the root filesystem to 87% would leave 6.2 GiB free*'
+            { Get-AlertDiskPlan -Size 0 -Used 0 -Avail 0 } | Should -Throw '*cannot be the root filesystem*'
+        }
+
+        It 'ConvertFrom-AlertDfLine reads the one numeric row and nothing else' {
+            $df = ConvertFrom-AlertDfLine -Lines @($script:dfHeader, 'noise 1 2', $script:dfRow, 'absent')
+            $df.Size | Should -Be 107374182400
+            $df.Used | Should -Be 42949672960
+            $df.Avail | Should -Be 59055800320
+            ConvertFrom-AlertDfLine -Lines @($script:dfHeader, 'absent') | Should -BeNullOrEmpty
+            ConvertFrom-AlertDfLine -Lines @() | Should -BeNullOrEmpty
+        }
+
+        It 'the disk stage line recomputes the same plan on the host, refuses with exit 4, and pastes as one quoted argument' {
+            $line = Get-AlertDiskStageCommand
+            $line | Should -Not -Match "'"
+            $line | Should -Match '87\*total/100 - used\) / 1048576 \* 1048576'
+            $line | Should -Match '-gt 80 \]'
+            $line | Should -Match '-lt 10737418240 \]'
+            $line | Should -Match 'exit 4; fi; sudo fallocate -l \$add /var/tmp/hcw-fire-test-disk\.img;'
+            $line | Should -Match 'df -B1 --output=size,used,avail /$'
+            (Format-AlertArgument -Value $line) | Should -BeExactly ("'" + $line + "'")
+        }
+
         It 'rbac-assignment, end to end: both halves, each recorded, granted, deleted and confirmed' {
             Mock Wait-AlertFired { }
             $context = New-TestContext -Test 'rbac-assignment'
@@ -1025,12 +1258,28 @@ Describe 'The tests themselves' {
             @{ Test = 'lab-vault-unwrap' },
             @{ Test = 'lab-ssh-burst' },
             @{ Test = 'lab-ssh-login' },
+            @{ Test = 'lab-unit-failed' },
             @{ Test = 'rbac-definition' },
             @{ Test = 'swa-bandwidth' }
         ) {
             Invoke-AlertTestRun -Context (New-TestContext -Test $Test) -Recover
             Get-AzWrites | Should -BeNullOrEmpty
+            $script:sshLog.Count | Should -Be 0
             Get-HostText | Should -Match 'Nothing to recover'
+        }
+
+        It 'lab-heartbeat''s recovery starts the Azure Monitor Agent and confirms it active' {
+            Invoke-AlertTestRun -Context (New-TestContext -Test 'lab-heartbeat') -Recover
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@('sudo systemctl start azuremonitoragent; systemctl is-active azuremonitoragent') -join "`n")
+            Get-AzWrites | Should -BeNullOrEmpty
+            Get-HostText | Should -Match 'Put back: azuremonitoragent is active'
+        }
+
+        It 'lab-disk''s recovery removes the file and reads df after' {
+            Invoke-AlertTestRun -Context (New-TestContext -Test 'lab-disk') -Recover
+            (@(@($script:sshLog)) -join "`n") | Should -BeExactly (@('sudo rm -f /var/tmp/hcw-fire-test-disk.img; test -e /var/tmp/hcw-fire-test-disk.img && echo present || echo absent; df -B1 --output=size,used,avail /') -join "`n")
+            Get-AzWrites | Should -BeNullOrEmpty
+            Get-HostText | Should -Match 'Put back: no /var/tmp/hcw-fire-test-disk\.img on the lab host; the root filesystem reads 42\.1% used'
         }
     }
 }
