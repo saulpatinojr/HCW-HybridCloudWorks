@@ -2190,6 +2190,74 @@ sudo iptables -S | grep -c HCW-; sudo ip6tables -S | grep -c HCW-; systemctl is-
 
 Good is `0`, `0`, then `inactive`.
 
+## Workspace reach
+
+**The symptom:** a lab's Coder page says **"Agent is taking longer than
+expected to connect"** and the CPU, Memory and Home disk gauges stay empty.
+The workspace's container is running, but the agent inside it never
+started, because the container could not download it from Coder. That
+happened to every lab on 2026-10-17 (#1267). The sandbox firewall refused
+the workspaces' DNS: the Terraform docker provider creates each workspace on
+the default bridge, which gave it systemd-resolved's upstream servers
+instead of the stub, and the firewall lets the sandbox reach the stub only
+(`lab-host/ansible/roles/coder_sandbox/README.md`, "Workspace DNS").
+
+The `workspace_reach` role checks this before a learner can. At the end of
+every `bootstrap.sh` run, whatever the tags, and every 15 minutes from
+`hcw-workspace-reach.timer`, it creates one throwaway container the way the
+provider creates a workspace, on the sandbox daemon, as its user. The container resolves
+Coder's name, fetches the start of the agent and runs `git ls-remote` on the
+lab repository. A failure fails the run, and from the timer it raises
+`alert-lab-unit-failed` through `hcw-unit-failed@`.
+
+**Run it now.** Bash, on the host (`ssh hcw-lab`):
+
+```bash
+sudo systemctl start hcw-workspace-reach.service; systemctl show -p Result --value hcw-workspace-reach.service; sudo journalctl -t hcw-workspace-reach -n 3 --no-pager --output=cat
+```
+
+Good is `success`, then a line beginning `workspace reach: OK:`. Anything else
+ends in a line beginning `workspace reach: FAILED:`, which names the step:
+
+- **`cannot resolve coder.lab.hybridcloudworks.com`:** the workspace's DNS.
+  Read the sandbox daemon's nameserver for workspaces, and what rootlesskit
+  runs. Bash, on the host:
+
+  ```bash
+  sudo grep -A2 '"dns"' /var/lib/hcw-coder-docker/.config/docker/daemon.json; sudo curl -s --unix-socket "/run/user/$(id -u hcw-coder-docker)/dockerd-rootless/api.sock" http://rootlesskit/v1/info; echo; grep '^nameserver' /etc/resolv.conf
+  ```
+
+  Good is `"10.0.2.3"` under `"dns"`, JSON with `"dns":["10.0.2.3"]`, and
+  `nameserver 127.0.0.53` alone. A missing `"dns"` means the `coder_sandbox`
+  role has not run since #1267 merged. Run
+  `sudo /opt/hcw-src/lab-host/bootstrap.sh --tags coder_sandbox` (bash, on
+  the host; the check runs at its end), then start each stuck workspace
+  again (below). The firewall's counters show where lookups go. Bash, on the
+  host:
+
+  ```bash
+  sudo iptables -L HCW-SANDBOX-OUT -v -n -x | grep -E 'host resolver|hcw: refused \*/'
+  ```
+
+  Good is the `the host resolver` rule's first column rising when a
+  workspace starts, while the `refused` line's stays put.
+- **`resolved … but could not fetch …/bin/coder-linux-amd64`:** Caddy,
+  Coder, or the firewall's `hcw: https to this host` rule. Start with
+  `systemctl status caddy --no-pager` and `sudo docker logs --tail 50 coder`.
+- **`reached Coder but not https://github.com/…`:** the firewall's
+  `hcw: web egress` rule, or the repository is no longer public. Labs then
+  start with empty folders.
+- **`the sandbox daemon does not answer`**, **`no hybridcloudworks/hcw-lab
+  image is on the sandbox daemon`**, or **`the check's container did not
+  run`:** the `coder_sandbox` or `lab_images` role. The message gives the
+  command.
+
+Applying the fix restarts the sandbox daemon, which stops every workspace's
+container, so a workspace that was stuck stays down until it is started
+again: from Coder (stop, then start), or from the lab's page on the site.
+Docker gives the new container its nameservers when it starts, now from
+the daemon's `dns`.
+
 ## Coder workspaces: one running per learner, sign-ins in memory (#954)
 
 Owner decision 2026-10-16. Every template under `lab-host/coder/templates`

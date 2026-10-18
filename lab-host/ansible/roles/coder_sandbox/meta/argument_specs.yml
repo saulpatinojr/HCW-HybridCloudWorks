@@ -16,6 +16,10 @@ argument_specs:
         present where unprivileged user namespaces are restricted, and unless the daemon
         reports rootless, cgroup v2 under systemd, and memory, CPU quota and pids limits,
         which the workspace template sets.
+      - Gives every container the daemon starts slirp4netns's DNS forwarder (10.0.2.3) as its
+        nameserver, which reaches systemd-resolved's stub, the one DNS destination the
+        host_firewall role lets this user reach, and refuses to continue unless rootlesskit
+        reports that forwarder after the daemon starts (#1267).
       - While coder_sandbox_enabled is false, turns lingering off, which stops the daemon.
     author: HybridCloudWorks
     options:

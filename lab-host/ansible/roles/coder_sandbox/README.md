@@ -59,7 +59,8 @@ daemon, or a daemon whose every container is unprivileged by construction.
    proxy that mounts it and before rootlesskit copies `/run` up.
 6. Writes the daemon's `daemon.json` (`~/.config/docker/`, root-owned,
    group-readable, so the daemon cannot rewrite it): the socket in that
-   directory, `json-file` logs 10 MB x 3.
+   directory, `json-file` logs 10 MB x 3, and `dns: ["10.0.2.3"]` for every
+   container it starts (see "Workspace DNS" below).
 7. Installs the user unit `/etc/systemd/user/hcw-coder-docker.service`
    (what `dockerd-rootless-setuptool.sh install` writes, with the network
    driver named), enables it for user managers the way `systemctl --global
@@ -71,10 +72,52 @@ daemon, or a daemon whose every container is unprivileged by construction.
    waits for the socket, and refuses to continue unless `docker info`
    there reports `name=rootless`, cgroup v2 with the systemd driver, and
    memory, CPU quota and pids limits.
+9. Reads rootlesskit's API (`/run/user/<uid>/dockerd-rootless/api.sock`,
+   `GET /v1/info`) and refuses to continue unless its DNS forwarder is
+   the nameserver `daemon.json` gives every workspace.
 
 While `coder_sandbox_enabled` is false (group_vars ties it to
 `coder_enabled`), lingering is turned off and the user's manager stopped,
 which stops the daemon. Its images and volumes stay under the user's home.
+
+## Workspace DNS
+
+rootlesskit runs `dockerd` in the host's network namespace; only the
+containers live in the namespace slirp4netns serves. A container's lookups
+go to `dockerd`'s embedded resolver, which forwards them to the nameservers
+the container was given when it was created. Which ones depends on the
+network it was created on:
+
+- **Created on its own network**, as `docker run --network <net>` does: the
+  host's `/etc/resolv.conf`, which names only systemd-resolved's stub
+  `127.0.0.53`. The resolver forwards from the host's namespace as
+  `hcw-coder-docker` to the stub, and the `host_firewall` role allows that.
+- **Created on the default bridge and moved afterwards**, as the Terraform
+  docker provider (`kreuzwerker/docker` 4.6.0) creates every workspace. It
+  calls `ContainerCreate` with the network mode `bridge`, then
+  `NetworkDisconnect` from `bridge`, then `NetworkConnect` to the
+  workspace's network. A container on the default bridge cannot reach the
+  stub, so Docker gives it systemd-resolved's upstream servers from
+  `/run/systemd/resolve/resolv.conf`, and it keeps them after the move. The
+  resolver then asks those public servers from the host's namespace, as
+  `hcw-coder-docker`, on UDP 53, and the firewall refuses that. The
+  workspace's own `/etc/resolv.conf` shows it: `Based on host file:
+  '/run/systemd/resolve/resolv.conf'`, `ExtServers: [host(…) host(…)
+  host(…)]`. On 2026-10-17 no workspace could resolve Coder's name, so none
+  could download its agent, and every lab sat at "Agent is taking longer
+  than expected to connect" (#1267).
+
+`dns: ["10.0.2.3"]` gives every container slirp4netns's own forwarder
+instead, whichever network it was created on (`ExtServers: [10.0.2.3]`).
+The resolver forwards to it from the container's namespace, and
+slirp4netns answers by asking the nameserver in the host's
+`/etc/resolv.conf`, which is the stub, so the firewall allows it.
+`dockerd`'s own lookups (image pulls) read `/etc/resolv.conf` and reach the
+stub directly. The `host_firewall` role refuses a host whose
+`/etc/resolv.conf` names any other nameserver. This role refuses a
+rootlesskit whose forwarder is not `10.0.2.3`. The `workspace_reach` role
+creates a container the way the provider does, at every run and every 15
+minutes, to prove a lookup and the agent download work.
 
 ## Owner commands
 
@@ -92,7 +135,14 @@ sudo docker -H unix:///run/hcw-coder-docker/docker.sock ps --format '{{.Names}} 
 ```
 
 Every line names a `coder-...` container with `com.coder.resource=true`
-among its labels. Its log, through the user's journal:
+among its labels. The DNS forwarder rootlesskit runs for them:
+
+```bash
+sudo curl -s --unix-socket "/run/user/$(id -u hcw-coder-docker)/dockerd-rootless/api.sock" http://rootlesskit/v1/info
+```
+
+Good is JSON whose `networkDriver` reads `"driver":"slirp4netns","dns":["10.0.2.3"]`.
+Its log, through the user's journal:
 
 ```bash
 sudo journalctl _UID=$(id -u hcw-coder-docker) -n 80 --no-pager

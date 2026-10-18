@@ -274,6 +274,14 @@ coder_sandbox_enabled: "{{ coder_enabled }}"
 # the account check in host_firewall would still pass (#954 review).
 coder_sandbox_user: hcw-coder-docker
 host_firewall_sandbox_user: "{{ coder_sandbox_user }}"
+# A container shaped like a workspace, on that daemon, as that user, at every
+# run and every 15 minutes: it resolves Coder's name, fetches the agent and
+# reaches the lab repository, or the run fails and the lab alert fires
+# (roles/workspace_reach; #1267). On with Coder, as the daemon is, and aimed
+# at the access URL the coder role gives Coder.
+workspace_reach_enabled: "{{ coder_enabled }}"
+workspace_reach_user: "{{ coder_sandbox_user }}"
+workspace_reach_coder_url: "https://{{ coder_domain }}"
 
 # vps-agent runs host-native as a systemd service (ADR 0032) from a checkout of
 # this repository. Its commit is the one this playbook runs from: the lookup

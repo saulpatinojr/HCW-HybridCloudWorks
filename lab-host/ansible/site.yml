@@ -140,6 +140,19 @@
       ansible.builtin.import_role:
         name: privilege_checks
 
+    # A container shaped like a workspace resolves Coder's name, fetches the
+    # agent and reaches the lab repository, now and every 15 minutes after
+    # (roles/workspace_reach; #1267). Here, not among the roles: after the
+    # handlers they notified (the coder route's Caddy reload among them), so
+    # it checks the host as it now is; after every role, so a failure that is
+    # not this host's (public DNS, the certificate, GitHub) stops nothing but
+    # the commit record; and whatever the tags, so a narrowed run that touches
+    # the sandbox, the firewall, Caddy or Coder is checked as a full one is.
+    - name: Check that a lab workspace reaches Coder and the lab repository
+      tags: [always]
+      ansible.builtin.import_role:
+        name: workspace_reach
+
     # Last of all, once every role, the handlers they notified and the checks
     # above have passed: the commit this host now runs, for the agent to send
     # on its heartbeat and the site to compare with main (#1009; the

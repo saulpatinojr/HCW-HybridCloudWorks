@@ -11,12 +11,41 @@ coder_sandbox_socket_dir: /run/hcw-coder-docker
 coder_sandbox_socket: "{{ coder_sandbox_socket_dir }}/docker.sock"
 coder_sandbox_docker_host: "unix://{{ coder_sandbox_socket }}"
 
+# The nameserver every workspace is given: slirp4netns's own DNS forwarder,
+# the third address of rootlesskit's default 10.0.2.0/24. slirp4netns answers
+# it by asking the nameserver in the host's /etc/resolv.conf, systemd-resolved's
+# stub 127.0.0.53, which is the one DNS destination the host_firewall role lets
+# this user reach (#1267). Without it, the templates' containers resolve
+# nothing: the Terraform docker provider creates each one on the default
+# bridge and only then moves it to the workspace's network, and Docker gives
+# a container born on the default bridge systemd-resolved's upstream servers
+# (/run/systemd/resolve/resolv.conf), because the stub cannot be reached from
+# there. The container keeps them after the move, and dockerd, which
+# rootlesskit runs in the host's network namespace, forwards each lookup to
+# them from there as this user, which the firewall refuses. On 2026-10-17 no
+# workspace could resolve Coder's name, so none started its agent (README.md,
+# "Workspace DNS"). The role reads the address back from rootlesskit after
+# every start (coder_sandbox_rootlesskit_api) and refuses a daemon whose
+# forwarder is anywhere else.
+coder_sandbox_dns: 10.0.2.3
+
+# rootlesskit's API socket, under the state directory dockerd-rootless.sh
+# gives it in $XDG_RUNTIME_DIR. GET /v1/info names the network driver and its
+# DNS forwarder.
+coder_sandbox_rootlesskit_api: "/run/user/{{ coder_sandbox_uid }}/dockerd-rootless/api.sock"
+
 # The daemon's own configuration, read by dockerd-rootless.sh's dockerd from
 # $XDG_CONFIG_HOME/docker/daemon.json. `hosts` moves the socket out of
 # $XDG_RUNTIME_DIR (/run/user/<uid>, a 0700 tmpfs that exists only while the
-# user manager runs) to the fixed directory above.
+# user manager runs) to the fixed directory above. `dns` is the default for
+# every container this daemon starts, so it holds for every template under
+# lab-host/coder/templates and for any container a template does not
+# describe; dockerd's own lookups (image pulls) still read /etc/resolv.conf
+# and reach the stub directly.
 coder_sandbox_daemon_config:
   hosts:
     - "{{ coder_sandbox_docker_host }}"
+  dns:
+    - "{{ coder_sandbox_dns }}"
   log-driver: json-file
   log-opts: "{{ coder_sandbox_log_opts }}"

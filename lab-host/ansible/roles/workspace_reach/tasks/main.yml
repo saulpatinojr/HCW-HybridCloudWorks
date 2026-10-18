@@ -1,0 +1,197 @@
+---
+# A lab workspace's first minute, checked (#1267). On 2026-10-17 every
+# workspace started its container and then waited forever for an agent that
+# could not resolve Coder's name, and every run of this playbook still passed,
+# because nothing in it started a workspace. This role does: one throwaway
+# container shaped like a workspace, created the way the Terraform docker
+# provider creates one, at the end of every run and every
+# workspace_reach_interval after. site.yml runs it from post_tasks, after
+# every role and the handlers they notified, whatever the tags. README.md
+# beside this file says what it checks and why.
+
+- name: Read the workspace template this host publishes
+  ansible.builtin.set_fact:
+    workspace_reach_template_text: "{{ lookup('ansible.builtin.file', workspace_reach_template) }}"
+  when: workspace_reach_enabled | bool
+
+# The image's repository, read the way lab_images reads the pinned image
+# (files/lab-images.mjs, workspaceImageFromTemplate), and the repository a
+# lab's startup script checks out. Not the digest: the script finds the
+# newest image of the repository on the daemon at every run, so a pin moved
+# by a narrowed run never leaves the unit naming an image that is gone.
+- name: Read the workspace image's repository and the lab repository from the template
+  ansible.builtin.set_fact:
+    workspace_reach_repositories: >-
+      {{ workspace_reach_template_text
+         | regex_findall('(?m)^\s*image\s*=\s*"([^"@$]+)@[$][{]local[.]image_digest[}]"\s*$') }}
+    workspace_reach_repo_urls: >-
+      {{ workspace_reach_template_text
+         | regex_findall('(?m)^\s*repo_url\s*=\s*"(https://[^"]+)"\s*$') }}
+  when: workspace_reach_enabled | bool
+
+- name: Refuse a template the check cannot read its image or repository from
+  ansible.builtin.assert:
+    that:
+      - workspace_reach_repositories | length == 1
+      - workspace_reach_repo_urls | length == 1
+    fail_msg: >-
+      {{ workspace_reach_template }} should hold exactly one `image = "<repository>@${local.image_digest}"`
+      and one `repo_url = "https://..."` local; it holds {{ workspace_reach_repositories | length }} and
+      {{ workspace_reach_repo_urls | length }}. The lab_images role reads the image the same way, so a
+      template that moved them needs both roles changed in the same pull request.
+    quiet: true
+  when: workspace_reach_enabled | bool
+
+- name: Record what the check runs and reaches
+  ansible.builtin.set_fact:
+    workspace_reach_image_repository: "{{ workspace_reach_repositories[0] }}"
+    workspace_reach_repo_url: "{{ workspace_reach_repo_urls[0] }}"
+  when: workspace_reach_enabled | bool
+
+- name: Install the check
+  ansible.builtin.copy:
+    src: hcw-workspace-reach
+    dest: "{{ workspace_reach_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: workspace_reach_enabled | bool
+
+- name: Install the check's unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - "{{ workspace_reach_unit }}.service"
+    - "{{ workspace_reach_unit }}.timer"
+  when: workspace_reach_enabled | bool
+
+# Read after the install, so in check mode it says whether a real run has
+# installed the timer yet: systemd cannot enable a unit it has no file for,
+# and a preview before the first real run must not stop here.
+- name: Look for the timer
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ workspace_reach_unit }}.timer"
+  register: workspace_reach_timer_file
+
+# Before the check runs, so a check that fails below is run again every
+# interval, and alerts again, until it passes.
+- name: Enable the timer
+  ansible.builtin.systemd_service:
+    name: "{{ workspace_reach_unit }}.timer"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - workspace_reach_enabled | bool
+    - not ansible_check_mode or workspace_reach_timer_file.stat.exists
+
+# Through the unit, so the run checks what the timer will run: its user,
+# its sandboxing and its arguments. A failure here also reaches
+# hcw-unit-failed@, which is right: no workspace can start.
+- name: Run the check once now, as the timer runs it
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - start
+      - "{{ workspace_reach_unit }}.service"
+  register: workspace_reach_run
+  changed_when: false
+  failed_when: false
+  when:
+    - workspace_reach_enabled | bool
+    - not ansible_check_mode
+
+# A unit whose condition does not hold is skipped, and `systemctl start`
+# still exits 0: that is not a pass.
+- name: Read whether the check ran or was skipped
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=ConditionResult
+      - --value
+      - "{{ workspace_reach_unit }}.service"
+  register: workspace_reach_condition
+  changed_when: false
+  when:
+    - workspace_reach_enabled | bool
+    - not ansible_check_mode
+
+- name: Read which run of the unit that was
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=InvocationID
+      - --value
+      - "{{ workspace_reach_unit }}.service"
+  register: workspace_reach_invocation
+  changed_when: false
+  when:
+    - workspace_reach_enabled | bool
+    - not ansible_check_mode
+
+- name: Read what the check said
+  ansible.builtin.command:
+    argv:
+      - journalctl
+      - "_SYSTEMD_INVOCATION_ID={{ workspace_reach_invocation.stdout | trim }}"
+      - --output=cat
+      - --no-pager
+  register: workspace_reach_said
+  changed_when: false
+  failed_when: false
+  when:
+    - workspace_reach_enabled | bool
+    - not ansible_check_mode
+    - workspace_reach_invocation.stdout | trim | length > 0
+
+- name: Refuse a check that was skipped because the sandbox daemon is not kept up
+  ansible.builtin.assert:
+    that:
+      - workspace_reach_condition.stdout | trim == 'yes'
+    fail_msg: >-
+      {{ workspace_reach_unit }}.service did not run: its condition, lingering for
+      {{ workspace_reach_user }} (/var/lib/systemd/linger/{{ workspace_reach_user }}), does not hold, so
+      the sandbox daemon is not kept up and no workspace can start. The coder_sandbox role turns
+      lingering on while coder_enabled is true: run sudo /opt/hcw-src/lab-host/bootstrap.sh --tags coder_sandbox.
+    quiet: true
+  when:
+    - workspace_reach_enabled | bool
+    - not ansible_check_mode
+
+- name: Refuse a host where a workspace cannot reach Coder or the lab repository
+  ansible.builtin.assert:
+    that:
+      - workspace_reach_run.rc == 0
+    fail_msg: >-
+      {{ workspace_reach_unit }}.service failed, so no lab workspace on this host can start its agent
+      or check out its folder. What it said:
+      {{ (workspace_reach_said.stdout_lines | default([]) | select('match', '^workspace reach:') | list)[-1:] | join('')
+         or (workspace_reach_run.stderr | default('nothing; read sudo journalctl -t ' ~ workspace_reach_unit ~ ' -n 5')) }}
+    quiet: true
+  when:
+    - workspace_reach_enabled | bool
+    - not ansible_check_mode
+
+- name: Say what the check saw
+  ansible.builtin.debug:
+    msg: "{{ (workspace_reach_said.stdout_lines | default([]) | select('match', '^workspace reach:') | list)[-1:] | join('') or 'The check passed.' }}"
+  when:
+    - workspace_reach_enabled | bool
+    - not ansible_check_mode
+
+# Coder off stops the sandbox daemon, so the check would only fail; the unit's
+# condition already skips it from the moment coder_sandbox turns lingering off.
+- name: Stop and disable the timer while the check is off
+  ansible.builtin.systemd_service:
+    name: "{{ workspace_reach_unit }}.timer"
+    enabled: false
+    state: stopped
+  when:
+    - not workspace_reach_enabled | bool
+    - workspace_reach_timer_file.stat.exists

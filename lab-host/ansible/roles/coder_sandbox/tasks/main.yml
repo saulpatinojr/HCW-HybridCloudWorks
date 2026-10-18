@@ -310,6 +310,42 @@
     - coder_sandbox_enabled | bool
     - not ansible_check_mode
 
+# daemon.json gives every workspace coder_sandbox_dns as its nameserver
+# (vars/main.yml), which works only while it is slirp4netns's forwarder.
+# rootlesskit says where that forwarder is; a daemon started with another
+# subnet or driver would leave every workspace unable to resolve a name, the
+# way #1267 did, so that is said here rather than found by a learner.
+- name: Read the sandbox network's DNS forwarder from rootlesskit
+  ansible.builtin.uri:
+    unix_socket: "{{ coder_sandbox_rootlesskit_api }}"
+    url: http://rootlesskit/v1/info
+    return_content: true
+  register: coder_sandbox_rootlesskit_info
+  check_mode: false
+  when:
+    - coder_sandbox_enabled | bool
+    - not ansible_check_mode
+
+- name: Refuse a sandbox network whose DNS forwarder is not the nameserver workspaces are given
+  ansible.builtin.assert:
+    that:
+      - coder_sandbox_rootlesskit_dns == [coder_sandbox_dns]
+    fail_msg: >-
+      rootlesskit reports the network driver {{ coder_sandbox_rootlesskit_network.driver | default('(none)') }}
+      with the DNS forwarder {{ coder_sandbox_rootlesskit_dns | join(', ') or '(none)' }}, and daemon.json gives
+      every workspace {{ coder_sandbox_dns }} as its nameserver, so no workspace would resolve a name
+      and none would start its agent. Read it with
+      sudo curl -s --unix-socket {{ coder_sandbox_rootlesskit_api }} http://rootlesskit/v1/info,
+      then change coder_sandbox_dns in roles/coder_sandbox/vars/main.yml to the forwarder it names, in a
+      reviewed change, and re-run bootstrap.sh.
+    quiet: true
+  vars:
+    coder_sandbox_rootlesskit_network: "{{ (coder_sandbox_rootlesskit_info.content | from_json).networkDriver | default({}) }}"
+    coder_sandbox_rootlesskit_dns: "{{ coder_sandbox_rootlesskit_network.dns | default([]) }}"
+  when:
+    - coder_sandbox_enabled | bool
+    - not ansible_check_mode
+
 - name: Turn lingering off while Coder is disabled, which stops the sandbox daemon
   ansible.builtin.command:
     argv:

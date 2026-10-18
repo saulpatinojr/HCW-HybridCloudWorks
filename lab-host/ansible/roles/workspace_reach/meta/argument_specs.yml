@@ -1,0 +1,59 @@
+---
+argument_specs:
+  main:
+    short_description: Prove a Coder workspace can reach Coder and the lab repository, now and every 15 minutes
+    description:
+      - Installs /usr/local/libexec/hcw-workspace-reach. It starts one throwaway container on the
+        coder_sandbox daemon, shaped like a workspace (the newest image of the hcw-lab template's
+        repository on the daemon, uid 65534, no capabilities, no privilege gain, the daemon's own
+        DNS) and created the way the Terraform docker provider creates one (on the default bridge,
+        then moved to a bridge network of its own). From inside, the container resolves the name in
+        Coder's access URL, fetches the start of the agent from <url>/bin/coder-linux-amd64, and
+        runs git ls-remote against the lab repository the template names. It removes the container
+        and the network afterwards.
+      - Runs that check through hcw-workspace-reach.service, as the sandbox daemon's user, and
+        fails the play with the check's own last line when the check fails or is skipped (#1267).
+        site.yml runs this role from post_tasks, whatever the tags.
+      - Enables hcw-workspace-reach.timer, which runs the check workspace_reach_boot_delay after boot
+        and every workspace_reach_interval after that, while the sandbox user lingers. A failed
+        check is reported to hcw-unit-failed@ (alert-lab-unit-failed).
+      - Reads the image's repository and the lab repository from
+        lab-host/coder/templates/hcw-lab/main.tf in the playbook's checkout, and refuses to continue
+        unless it finds exactly one of each.
+      - While workspace_reach_enabled is false, stops and disables the timer.
+    author: HybridCloudWorks
+    options:
+      workspace_reach_enabled:
+        type: bool
+        required: false
+        default: true
+        description: Run the check and its timer. group_vars/all.yml sets it to coder_enabled.
+      workspace_reach_user:
+        type: str
+        required: false
+        default: hcw-coder-docker
+        description:
+          - The sandbox daemon's user, which the check runs as. group_vars/all.yml sets it to
+            coder_sandbox_user.
+      workspace_reach_docker_host:
+        type: str
+        required: false
+        default: unix:///run/hcw-coder-docker/docker.sock
+        description: The sandbox daemon's socket.
+      workspace_reach_coder_url:
+        type: str
+        required: false
+        default: https://coder.lab.hybridcloudworks.com
+        description:
+          - Coder's access URL, which every workspace downloads its agent from. group_vars/all.yml
+            builds it from coder_domain.
+      workspace_reach_boot_delay:
+        type: str
+        required: false
+        default: 15min
+        description: How long after boot the timer first runs the check (a systemd time span).
+      workspace_reach_interval:
+        type: str
+        required: false
+        default: 15min
+        description: How often the timer runs the check after that (a systemd time span).

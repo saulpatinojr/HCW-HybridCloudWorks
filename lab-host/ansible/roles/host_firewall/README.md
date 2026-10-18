@@ -73,14 +73,26 @@ reviewed pull request, never per run.
   could go stale. `scripts/lab-host-host-firewall.test.mjs` holds the
   sandbox daemon to the user-mode network driver this role is written for,
   so a change of driver has to revisit the role.
-- **DNS through the stub.** The daemon and the embedded resolver of every
-  workspace network forward to the nameservers in the host's
-  `/etc/resolv.conf`, so all of it reaches `127.0.0.53` (Docker 29.9's
-  `buildSandboxPlatformOptions` and `TransformForIntNS`, read 2026-10-16).
-  The role refuses a host whose `/etc/resolv.conf` names any other
-  nameserver, because workspaces would then resolve nothing. A container on
-  the sandbox daemon's default bridge, which no template uses, would be
-  given the upstream servers instead, and would not resolve.
+- **DNS through the stub.** All of the sandbox's DNS reaches `127.0.0.53`.
+  `dockerd`, which rootlesskit runs in the host's network namespace,
+  resolves its own names (image pulls) through the host's
+  `/etc/resolv.conf`. Every container is given slirp4netns's forwarder
+  `10.0.2.3` as its nameserver (`dns` in the sandbox daemon's
+  `daemon.json`, the `coder_sandbox` role), and slirp4netns answers it by
+  asking the nameserver in that same file. Before #1267 this README said
+  the daemon's defaults already did that for every workspace network, and
+  that only a container on the default bridge, "which no template uses",
+  would be given the upstream servers. But the Terraform docker provider
+  creates every workspace on the default bridge and moves it to the
+  workspace's network afterwards. Each one kept systemd-resolved's
+  upstream servers, which `dockerd` asked from the host's namespace as the
+  sandbox user. This chain refused them at its last rule, and on
+  2026-10-17 no workspace could resolve a name (`coder_sandbox`'s README,
+  "Workspace DNS"). This role refuses a host whose `/etc/resolv.conf` names
+  any nameserver but the stub. `coder_sandbox` refuses a rootlesskit whose
+  forwarder is not `10.0.2.3`. The `workspace_reach` role creates a
+  container the way the provider does, at every run and every 15 minutes,
+  and fails the run or raises the alert when a lookup does not come back.
 - **Refusals before replies.** `conntrack` is not installed on the host, so
   there is no flushing of flows that predate the rules; the rule order is
   what cuts them. Replies are matched in the reply direction only: the

@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: workspace_reach
+  namespace: hcw
+  author: HybridCloudWorks
+  description: >-
+    Check, at every run and every 15 minutes, that a container shaped like a Coder workspace on the
+    sandbox daemon resolves Coder's name, fetches the agent and reaches the lab repository
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - resolute
+        - noble
+  galaxy_tags:
+    - coder
+    - docker
+    - monitoring
+
+dependencies: []

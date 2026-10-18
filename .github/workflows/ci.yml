@@ -623,6 +623,17 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: bash roles/docker/tests/hcw-docker-stale-bridges.test.sh
 
+      # /usr/local/libexec/hcw-workspace-reach starts a container shaped like
+      # a Coder workspace on the sandbox daemon and checks that it resolves
+      # Coder's name, fetches the agent and reaches the lab repository (#1267).
+      # Run against a stand-in for docker that records every call: the
+      # container's shape, its creation in the Terraform provider's order (on
+      # the default bridge, then moved), which decides its nameservers, each
+      # failure's words, the retries and the clean-up. No root needed.
+      - name: hcw-workspace-reach test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/workspace_reach/tests/hcw-workspace-reach.test.sh
+
       # /usr/local/libexec/hcw-addons-egress-clear removes the addons role's
       # egress rules from DOCKER-USER before the role rebuilds them, behind a
       # reject it holds on the subnet until the rebuild is done. The inline

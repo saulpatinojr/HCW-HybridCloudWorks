@@ -88,12 +88,12 @@
       ansible.builtin.systemd_service:
         daemon_reload: true
 
-    # The sandbox daemon and the embedded resolver of every workspace network
-    # forward to the nameservers in this file (README.md, "DNS through the
-    # stub"). The chain allows DNS to those named in vars/main.yml
-    # only, so a host whose file names another would leave every workspace
-    # unable to resolve a name; that is said here rather than found by a
-    # learner.
+    # The sandbox daemon's own lookups, and every container's through
+    # slirp4netns's forwarder (coder_sandbox's daemon.json `dns`), go to the
+    # nameservers in this file (README.md, "DNS through the stub"; #1267).
+    # The chain allows DNS to those named in vars/main.yml only, so a host
+    # whose file names another would leave every workspace unable to resolve
+    # a name; that is said here rather than found by a learner.
     - name: Read the host's resolver configuration
       ansible.builtin.slurp:
         src: /etc/resolv.conf

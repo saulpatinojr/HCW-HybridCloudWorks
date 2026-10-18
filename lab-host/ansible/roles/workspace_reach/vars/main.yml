@@ -1,0 +1,10 @@
+---
+# Derived values, not knobs.
+
+workspace_reach_script: /usr/local/libexec/hcw-workspace-reach
+workspace_reach_unit: hcw-workspace-reach
+
+# The workspace template the image and the lab repository are read from, in
+# the playbook's own checkout, so a pin bump needs no edit here. The lab_images
+# role pulls the same image into the sandbox daemon from the same file.
+workspace_reach_template: "{{ role_path }}/../../../coder/templates/hcw-lab/main.tf"
