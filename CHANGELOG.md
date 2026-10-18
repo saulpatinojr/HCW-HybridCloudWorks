@@ -317,17 +317,20 @@ This project has not cut a tagged release; entries are grouped under
     API and refuses a forwarder that is anything else. On the host, the
     provider's create sequence with that nameserver resolved, fetched the
     agent, and booted all nine `hcw-lab` labs.
-  - **The check that would have caught it:** a new `workspace_reach` role,
-    run after `lab_images`. At every run, and every 15 minutes from
+  - **The check that would have caught it:** a new `workspace_reach` role.
+    It runs from `post_tasks` after `privilege_checks`, whatever the tags,
+    so it follows every role and the handlers they notified, and a failure
+    stops only the commit record. At every run, and every 15 minutes from
     `hcw-workspace-reach.timer`, it creates one container the way the
     provider creates a workspace, as the sandbox user, on the sandbox
-    daemon. From inside, the container resolves Coder's name, fetches 100
-    bytes of the agent and runs `git ls-remote` on the lab repository. A
-    failure fails the run, naming the step and where to look. From the
-    timer, it reaches `alert-lab-unit-failed` through `hcw-unit-failed@`.
-    A plain `docker run --network` resolved on the broken host, so the
-    check copies the provider's creation order, and its test holds that
-    order.
+    daemon, from the newest `hcw-lab` image there. From inside, the
+    container resolves Coder's name, fetches 100 bytes of the agent and runs
+    `git ls-remote` on the lab repository. A failure fails the run, naming
+    the step, what curl or git said, and where to look. From the timer, it
+    reaches `alert-lab-unit-failed` through `hcw-unit-failed@`, and it is
+    skipped while the sandbox user does not linger (Coder off). A plain
+    `docker run --network` resolved on the broken host, so the check copies
+    the provider's creation order, and its test holds that order.
   - The `host_firewall` and `coder_sandbox` READMEs now describe the path
     as measured. The runbook gains "Workspace reach", which covers reading
     each failure and restarting a workspace that was stuck before the fix.

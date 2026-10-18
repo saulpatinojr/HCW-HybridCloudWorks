@@ -91,15 +91,22 @@ describe("the sandbox's DNS (#1267)", () => {
 });
 
 describe('workspace_reach: where it runs and as whom', () => {
-  it('runs after everything a workspace needs, and before the add-ons', () => {
-    const roles = [...site.matchAll(/^ {4}- role: ([a-z_]+)$/gm)].map((m) => m[1]);
-    const at = (name) => roles.indexOf(name);
-    expect(at('workspace_reach')).toBeGreaterThan(-1);
-    for (const before of ['coder_sandbox', 'host_firewall', 'caddy', 'coder', 'lab_images']) {
-      expect(at('workspace_reach'), before).toBeGreaterThan(at(before));
-    }
-    expect(at('workspace_reach')).toBe(at('lab_images') + 1);
-    expect(site).toContain('    - role: workspace_reach\n      tags: [workspace_reach]\n');
+  // From post_tasks: after every role and the handlers they notified (a new
+  // Caddy route is reloaded before the check fetches through it), after the
+  // privilege checks, before the commit record, and whatever the tags.
+  it('runs from post_tasks, after the privilege checks and before the commit record, whatever the tags', () => {
+    const roles = site.slice(site.indexOf('  roles:'), site.indexOf('  post_tasks:'));
+    expect(roles).not.toContain('workspace_reach');
+    const post = site.slice(site.indexOf('  post_tasks:'));
+    const privilege = post.indexOf("- name: Check the container runtime's privilege separation");
+    const task = post.indexOf('- name: Check that a lab workspace reaches Coder and the lab repository');
+    const record = post.indexOf('- name: Read the commit this playbook runs from');
+    expect(privilege).toBeGreaterThan(-1);
+    expect(task).toBeGreaterThan(privilege);
+    expect(record).toBeGreaterThan(task);
+    expect(post.slice(task, record)).toContain(
+      '      tags: [always]\n      ansible.builtin.import_role:\n        name: workspace_reach\n',
+    );
   });
 
   it('is on with Coder, as the sandbox user, aimed at Coder\'s access URL', () => {
@@ -113,20 +120,21 @@ describe('workspace_reach: where it runs and as whom', () => {
     expect(defaults).toContain('workspace_reach_docker_host: unix:///run/hcw-coder-docker/docker.sock');
   });
 
-  it('reads the image and repository from the hcw-lab template, which holds exactly one of each', () => {
+  it("reads the image's repository and the lab repository from the hcw-lab template, which holds exactly one of each", () => {
     expect(vars).toContain('workspace_reach_template: "{{ role_path }}/../../../coder/templates/hcw-lab/main.tf"');
     const hcwLab = templates.find((t) => t.name === 'hcw-lab').text;
-    // The role's three patterns, as JavaScript.
-    expect([...hcwLab.matchAll(/^\s*image_digest\s*=\s*"(sha256:[0-9a-f]{64})"\s*$/gm)]).toHaveLength(1);
+    // The role's two patterns, as JavaScript.
     expect([...hcwLab.matchAll(/^\s*image\s*=\s*"([^"@$]+)@[$][{]local[.]image_digest[}]"\s*$/gm)]).toHaveLength(1);
     expect([...hcwLab.matchAll(/^\s*repo_url\s*=\s*"(https:\/\/[^"]+)"\s*$/gm)]).toHaveLength(1);
     for (const pattern of [
-      `regex_findall('(?m)^\\s*image_digest\\s*=\\s*"(sha256:[0-9a-f]{64})"\\s*$')`,
       `regex_findall('(?m)^\\s*image\\s*=\\s*"([^"@$]+)@[$][{]local[.]image_digest[}]"\\s*$')`,
       `regex_findall('(?m)^\\s*repo_url\\s*=\\s*"(https://[^"]+)"\\s*$')`,
     ]) {
       expect(tasks).toContain(pattern);
     }
+    // Never a digest in the unit: a narrowed run that moves the pin would
+    // leave it naming an image lab_images has removed.
+    expect(code(tasks)).not.toContain('image_digest\\s');
   });
 });
 
@@ -136,8 +144,14 @@ describe('workspace_reach: the unit and the timer', () => {
     expect(unit).toMatch(/^OnFailure=hcw-unit-failed@%n\.service$/m);
     expect(unit).toMatch(/^Type=oneshot$/m);
     expect(unit).toContain(
-      'ExecStart={{ workspace_reach_script }} {{ workspace_reach_docker_host }} {{ workspace_reach_image }} {{ workspace_reach_coder_url }} {{ workspace_reach_repo_url }}',
+      'ExecStart={{ workspace_reach_script }} {{ workspace_reach_docker_host }} {{ workspace_reach_image_repository }} {{ workspace_reach_coder_url }} {{ workspace_reach_repo_url }}',
     );
+    // Its own name in the journal, which the README's and the runbook's
+    // commands read with -t.
+    expect(unit).toMatch(/^SyslogIdentifier=\{\{ workspace_reach_unit \}\}$/m);
+    expect(vars).toMatch(/^workspace_reach_unit: hcw-workspace-reach$/m);
+    // Skipped, not failed, once coder_sandbox turns lingering off (Coder off).
+    expect(unit).toMatch(/^ConditionPathExists=\/var\/lib\/systemd\/linger\/\{\{ workspace_reach_user \}\}$/m);
     for (const line of ['ProtectSystem=strict', 'ProtectHome=true', 'PrivateTmp=true', 'NoNewPrivileges=true']) {
       expect(unit).toMatch(new RegExp(`^${line}$`, 'm'));
     }
@@ -158,6 +172,14 @@ describe('workspace_reach: the unit and the timer', () => {
     expect(refuse).toBeGreaterThan(run);
     expect(tasks.slice(run, refuse)).toContain('- start\n      - "{{ workspace_reach_unit }}.service"');
     expect(tasks.slice(refuse)).toContain('- workspace_reach_run.rc == 0');
+    // A skipped run is not a pass.
+    expect(tasks).toContain("- workspace_reach_condition.stdout | trim == 'yes'");
+  });
+
+  it('enables the timer in check mode only where a real run installed it', () => {
+    const enable = tasks.slice(tasks.indexOf('- name: Enable the timer'), tasks.indexOf('- name: Run the check once now'));
+    expect(tasks.indexOf('- name: Look for the timer')).toBeLessThan(tasks.indexOf('- name: Enable the timer'));
+    expect(enable).toContain('- not ansible_check_mode or workspace_reach_timer_file.stat.exists');
   });
 });
 
@@ -169,6 +191,13 @@ describe('workspace_reach: the script', () => {
     expect(script).toContain('docker network connect "${network}" "${container}"');
     expect(script).toContain('docker start --attach "${container}"');
     expect(code(script)).not.toMatch(/--dns\b/);
+  });
+
+  it('asks the daemon and finds the image inside each attempt, so a restart is retried, not reported', () => {
+    const attempt = script.slice(script.indexOf('attempt_once() {'), script.indexOf('\n}\n', script.indexOf('attempt_once() {')));
+    expect(attempt).toContain("docker version --format '{{.Server.Version}}'");
+    expect(attempt).toContain('docker image ls --quiet --no-trunc --filter "reference=${repository}"');
+    expect(script.indexOf('attempt_once\n')).toBeGreaterThan(script.indexOf('while :; do'));
   });
 
   it('is tested in CI', () => {

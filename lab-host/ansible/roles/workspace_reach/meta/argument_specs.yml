@@ -4,18 +4,22 @@ argument_specs:
     short_description: Prove a Coder workspace can reach Coder and the lab repository, now and every 15 minutes
     description:
       - Installs /usr/local/libexec/hcw-workspace-reach. It starts one throwaway container on the
-        coder_sandbox daemon, shaped like a workspace (the hcw-lab template's pinned image, uid
-        65534, no capabilities, no privilege gain, a bridge network of its own, the daemon's own
-        DNS). From inside, the container resolves the name in Coder's access URL, fetches the start
-        of the agent from <url>/bin/coder-linux-amd64, and runs git ls-remote against the lab
-        repository the template names. It removes the container and the network afterwards.
-      - Runs that check through hcw-workspace-reach.service, as the sandbox daemon's user, at every
-        run, and fails the play with the check's own words when the check fails (#1267).
+        coder_sandbox daemon, shaped like a workspace (the newest image of the hcw-lab template's
+        repository on the daemon, uid 65534, no capabilities, no privilege gain, the daemon's own
+        DNS) and created the way the Terraform docker provider creates one (on the default bridge,
+        then moved to a bridge network of its own). From inside, the container resolves the name in
+        Coder's access URL, fetches the start of the agent from <url>/bin/coder-linux-amd64, and
+        runs git ls-remote against the lab repository the template names. It removes the container
+        and the network afterwards.
+      - Runs that check through hcw-workspace-reach.service, as the sandbox daemon's user, and
+        fails the play with the check's own last line when the check fails or is skipped (#1267).
+        site.yml runs this role from post_tasks, whatever the tags.
       - Enables hcw-workspace-reach.timer, which runs the check workspace_reach_boot_delay after boot
-        and every workspace_reach_interval after that. A failed check is reported to
-        hcw-unit-failed@ (alert-lab-unit-failed).
-      - Reads the image and the repository from lab-host/coder/templates/hcw-lab/main.tf in the
-        playbook's checkout, and refuses to continue unless it finds exactly one of each.
+        and every workspace_reach_interval after that, while the sandbox user lingers. A failed
+        check is reported to hcw-unit-failed@ (alert-lab-unit-failed).
+      - Reads the image's repository and the lab repository from
+        lab-host/coder/templates/hcw-lab/main.tf in the playbook's checkout, and refuses to continue
+        unless it finds exactly one of each.
       - While workspace_reach_enabled is false, stops and disables the timer.
     author: HybridCloudWorks
     options:

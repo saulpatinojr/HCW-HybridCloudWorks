@@ -2202,10 +2202,10 @@ the default bridge, which gave it systemd-resolved's upstream servers
 instead of the stub, and the firewall lets the sandbox reach the stub only
 (`lab-host/ansible/roles/coder_sandbox/README.md`, "Workspace DNS").
 
-The `workspace_reach` role checks this before a learner can. At every
-`bootstrap.sh` run, and every 15 minutes from `hcw-workspace-reach.timer`,
-it creates one throwaway container the way the provider creates a
-workspace, on the sandbox daemon, as its user. The container resolves
+The `workspace_reach` role checks this before a learner can. At the end of
+every `bootstrap.sh` run, whatever the tags, and every 15 minutes from
+`hcw-workspace-reach.timer`, it creates one throwaway container the way the
+provider creates a workspace, on the sandbox daemon, as its user. The container resolves
 Coder's name, fetches the start of the agent and runs `git ls-remote` on the
 lab repository. A failure fails the run, and from the timer it raises
 `alert-lab-unit-failed` through `hcw-unit-failed@`.
@@ -2213,7 +2213,7 @@ lab repository. A failure fails the run, and from the timer it raises
 **Run it now.** Bash, on the host (`ssh hcw-lab`):
 
 ```bash
-sudo systemctl start hcw-workspace-reach.service; systemctl show -p Result --value hcw-workspace-reach.service; sudo journalctl -u hcw-workspace-reach.service -n 3 --no-pager --output=cat
+sudo systemctl start hcw-workspace-reach.service; systemctl show -p Result --value hcw-workspace-reach.service; sudo journalctl -t hcw-workspace-reach -n 3 --no-pager --output=cat
 ```
 
 Good is `success`, then a line beginning `workspace reach: OK:`. Anything else
@@ -2230,9 +2230,9 @@ ends in a line beginning `workspace reach: FAILED:`, which names the step:
   Good is `"10.0.2.3"` under `"dns"`, JSON with `"dns":["10.0.2.3"]`, and
   `nameserver 127.0.0.53` alone. A missing `"dns"` means the `coder_sandbox`
   role has not run since #1267 merged. Run
-  `sudo /opt/hcw-src/lab-host/bootstrap.sh --tags coder_sandbox,workspace_reach`,
-  then restart each stuck workspace from Coder (stop, then start). The
-  firewall's counters show where lookups go:
+  `sudo /opt/hcw-src/lab-host/bootstrap.sh --tags coder_sandbox` (the
+  check runs at its end), then start each stuck workspace again (below).
+  The firewall's counters show where lookups go:
 
   ```bash
   sudo iptables -L HCW-SANDBOX-OUT -v -n -x | grep -E 'host resolver|hcw: refused \*/'
@@ -2246,14 +2246,16 @@ ends in a line beginning `workspace reach: FAILED:`, which names the step:
 - **`reached Coder but not https://github.com/…`:** the firewall's
   `hcw: web egress` rule, or the repository is no longer public. Labs then
   start with empty folders.
-- **`the sandbox daemon does not answer`**, **`the workspace image … is not
-  on the sandbox daemon`**, or **`the check's container did not run`:** the
-  `coder_sandbox` or `lab_images` role. The message gives the command.
+- **`the sandbox daemon does not answer`**, **`no hybridcloudworks/hcw-lab
+  image is on the sandbox daemon`**, or **`the check's container did not
+  run`:** the `coder_sandbox` or `lab_images` role. The message gives the
+  command.
 
-A workspace that was started while the check was failing stays stuck after
-the fix: its init script retries the download every 30 seconds, but its
-nameservers were fixed when it was created. Stop and start it from Coder, or
-from the lab's page on the site.
+Applying the fix restarts the sandbox daemon, which stops every workspace's
+container, so a workspace that was stuck stays down until it is started
+again: from Coder (stop, then start), or from the lab's page on the site.
+Docker gives the new container its nameservers when it starts, now from
+the daemon's `dns`.
 
 ## Coder workspaces: one running per learner, sign-ins in memory (#954)
 
