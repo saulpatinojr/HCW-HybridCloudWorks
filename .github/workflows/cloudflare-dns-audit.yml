@@ -12,10 +12,13 @@
 # 2026-10-18). Owner decision 2026-10-18, on #948: a poller of the audit
 # log stands in for the notification that does not exist.
 #
-# Daily, this runs scripts/cloudflare-dns-audit.mjs over the last 26 hours of
-# the account audit log (two hours of overlap with the previous run, so a
-# late start leaves no minute unread), keeps the create, update and delete
-# events on DNS records in the zone, and judges each against the allowlist
+# Daily, this runs scripts/cloudflare-dns-audit.mjs over the account audit
+# log since the previous SUCCESSFUL run of this workflow, less two hours of
+# overlap (never less than 26 hours, never more than 14 days; 26 hours when
+# there is no previous success), so a failed or missed run widens the next
+# window instead of leaving a gap nobody read (CodeRabbit on #1274). It
+# keeps the create, update and delete events on DNS records in the zone,
+# and judges each against the allowlist
 # at the top of that script: the HCP Terraform token's edits, the Caddy
 # token's `_acme-challenge.*.lab` TXT edits, and the owner's own dashboard
 # edits. The script's exit code is the contract:
@@ -73,6 +76,7 @@ jobs:
     permissions:
       contents: read # checkout only
       issues: write # open or comment on the one unexpected-change issue
+      actions: read # the previous successful run's time, which starts the window
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -85,6 +89,37 @@ jobs:
           node-version: '26'
           package-manager-cache: false
 
+      # The window starts where the last successful run left off, less two
+      # hours, so a run that failed (token, API, issue creation) or never
+      # happened is read by the next one that succeeds. Bounds: never less
+      # than 26 hours back (a quick re-run still reads a full day), never
+      # more than 14 days (a longer outage is read in manual windows, each
+      # judged on its own). A `since` input wins outright.
+      - name: Choose the window
+        id: window
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SINCE_INPUT: ${{ inputs.since }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SINCE_INPUT}" ]; then
+            echo "since=${SINCE_INPUT}" >> "$GITHUB_OUTPUT"
+            echo "Window start from the input: ${SINCE_INPUT}"
+            exit 0
+          fi
+          default=$(date -u -d '26 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          floor=$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          last=$(gh run list --repo "$REPO" --workflow cloudflare-dns-audit.yml --status success --limit 1 --json createdAt --jq '.[0].createdAt // empty')
+          since="$default"
+          if [ -n "$last" ]; then
+            resume=$(date -u -d "${last} - 2 hours" +%Y-%m-%dT%H:%M:%SZ)
+            if [[ "$resume" < "$since" ]]; then since="$resume"; fi
+            if [[ "$since" < "$floor" ]]; then since="$floor"; fi
+          fi
+          echo "since=${since}" >> "$GITHUB_OUTPUT"
+          echo "Window start: ${since} (last successful run: ${last:-none})"
+
       # `set -uo pipefail` without `-e`: the exit code is read into an output
       # and judged by the steps below, so a 2 opens the issue and a 1 fails
       # the run after the report is in the summary either way.
@@ -96,7 +131,7 @@ jobs:
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
           CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL: ${{ vars.CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL }}
           CLOUDFLARE_CADDY_TOKEN_NAME: ${{ vars.CLOUDFLARE_CADDY_TOKEN_NAME }}
-          SINCE: ${{ inputs.since }}
+          SINCE: ${{ steps.window.outputs.since }}
           BEFORE: ${{ inputs.before }}
         run: |
           set -uo pipefail

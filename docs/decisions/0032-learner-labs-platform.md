@@ -1089,7 +1089,8 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
   the dedicated lab zone means a second registered domain, a purchase
   decision for later. The interim is now a poller of the account audit log:
   `.github/workflows/cloudflare-dns-audit.yml` runs
-  `scripts/cloudflare-dns-audit.mjs` daily over the last 26 hours, allows the
+  `scripts/cloudflare-dns-audit.mjs` daily over the window since its previous
+  successful run (at least 26 hours, at most 14 days), allows the
   `hcp-terraform-cloudflare-dns` token's edits, the Caddy token's
   `_acme-challenge.*.lab` TXT edits and the owner's own dashboard edits, and
   opens an issue on anything else; a run that cannot read the log fails

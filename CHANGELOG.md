@@ -48,8 +48,10 @@ This project has not cut a tagged release; entries are grouped under
   audit-log or DNS-record events on any plan, so the interim for the Caddy
   token's DNS edit on the production zone is
   `.github/workflows/cloudflare-dns-audit.yml`. Daily at 05:50 UTC it runs
-  `scripts/cloudflare-dns-audit.mjs`, which reads the last 26 hours of
-  Audit Logs v2 (`GET /accounts/{account_id}/logs/audit`, every page), keeps
+  `scripts/cloudflare-dns-audit.mjs`, which reads Audit Logs v2
+  (`GET /accounts/{account_id}/logs/audit`, every page) from two hours
+  before the previous successful run (at least 26 hours, at most 14 days,
+  so a failed run widens the next window rather than leaving a gap), keeps
   the create, update and delete events on DNS records in
   `hybridcloudworks.com`, and judges each against an allowlist carried at
   the top of the script with the reason for every entry: the
