@@ -47,6 +47,15 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Cloudflare DNS audit: the first live run's lessons (#948)**. The
+  workflow's audit step caught the script's exit code on the command itself
+  (the runner's `bash -e` ended the step before `$?` was read, so the first
+  run failed instead of recording exit 2); a manual run can untick
+  `open_issue` to report without escalating; and the report prints, for each
+  UNEXPECTED change, the entry's shape (actor field names, request method,
+  user agent; never values), because the first run showed the HCP Terraform
+  token's edits arrive as `account/api_token` with no `token_name`, so an
+  allowlist entry has to be bound to what the log carries.
 - **Cloudflare DNS audit: a daily poller of the account audit log stands in
   for the notification Cloudflare does not have (LAB-1 interim, #948)**.
   Owner decision 2026-10-18: Cloudflare has no notification type for

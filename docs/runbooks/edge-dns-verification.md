@@ -295,7 +295,12 @@ above. All four are in
 **Running it by hand.** Open the workflow page linked above → **Run
 workflow**; leave `since` and `before` empty for the default window, or set
 either as `YYYY-MM-DD` or an RFC3339 timestamp (UTC) to read a wider or older
-window, up to the 18 months Cloudflare retains. The report is the run's
+window, up to the 18 months Cloudflare retains. Untick `open_issue` while
+tuning the allowlist: the run then only reports, and for each UNEXPECTED
+change the summary adds the shape of the entry (the actor's field names as
+Cloudflare sent them, the request method, the user agent) so a new allowlist
+entry is written to what the audit log really carries. A scheduled run always
+escalates. The report is the run's
 summary. Success looks like a green run whose summary reads
 `N DNS-record changes on the zone, **0 unexpected**` and lists all three
 allowlist entries as active. A red run is a read failure, and its summary

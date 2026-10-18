@@ -61,6 +61,11 @@ on:
         description: 'End of the window (YYYY-MM-DD or RFC3339, UTC). Empty: now.'
         required: false
         default: ''
+      open_issue:
+        description: 'Open or update the issue on an UNEXPECTED change. Off while tuning the allowlist: the report still lands in the run summary.'
+        required: false
+        type: boolean
+        default: true
 
 # No workflow-level permissions: the one job declares its own.
 permissions: {}
@@ -141,8 +146,11 @@ jobs:
           args=()
           if [ -n "${SINCE}" ]; then args+=(--since "${SINCE}"); fi
           if [ -n "${BEFORE}" ]; then args+=(--before "${BEFORE}"); fi
-          node scripts/cloudflare-dns-audit.mjs "${args[@]}" --report "${RUNNER_TEMP}/dns-audit.md"
-          code=$?
+          # The runner's shell is `bash -e`, so a non-zero exit must be caught
+          # on the command itself: a bare `$?` on the next line is never reached
+          # (the first live run, 2026-10-18, ended here with exit 2 unrecorded).
+          code=0
+          node scripts/cloudflare-dns-audit.mjs "${args[@]}" --report "${RUNNER_TEMP}/dns-audit.md" || code=$?
           echo "exit=${code}" >> "$GITHUB_OUTPUT"
           if [ -s "${RUNNER_TEMP}/dns-audit.md" ]; then cat "${RUNNER_TEMP}/dns-audit.md" >> "$GITHUB_STEP_SUMMARY"; fi
           exit 0
@@ -151,8 +159,10 @@ jobs:
       # the title prefix is open, commented on when one is. The prefix is the
       # search key and the script exports it (ISSUE_TITLE_PREFIX); the date
       # follows it in the title of a new issue.
+      # A scheduled run always escalates; a manual run with `open_issue` off
+      # only reports (the summary carries the table and the entries' shape).
       - name: Open or update the issue on an unexpected change
-        if: steps.audit.outputs.exit == '2'
+        if: steps.audit.outputs.exit == '2' && (github.event_name != 'workflow_dispatch' || inputs.open_issue)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

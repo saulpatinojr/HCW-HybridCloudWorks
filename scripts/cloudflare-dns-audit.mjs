@@ -236,6 +236,16 @@ export function normalise(entry, siblings = []) {
     actorIp: str(actor.ip_address),
     tokenName: str(actor.token_name),
     tokenId: str(actor.token_id),
+    // The shape of the actor as Cloudflare sent it (field names only, never
+    // values) and the request's user agent: what the report prints for an
+    // UNEXPECTED change, so an allowlist entry can be bound to what the audit
+    // log really carries for that actor rather than to what the docs promise.
+    actorFields: Object.keys(actor)
+      .filter((k) => str(actor[k]) !== '')
+      .sort()
+      .join(','),
+    userAgent: str(entry?.raw?.user_agent),
+    method: str(entry?.raw?.method).toUpperCase(),
     zoneId: str(entry?.zone?.id),
     zoneName: str(entry?.zone?.name),
     resourceId,
@@ -450,6 +460,17 @@ export function renderReport({ window, entries, pages, judged, settings }) {
       const name = j.nameSource === 'sibling' ? `${j.recordName} (from the paired entry)` : j.recordName;
       const verdict = j.verdict === 'EXPECTED' ? `EXPECTED (\`${j.rule}\`)` : '**UNEXPECTED**';
       lines.push(`| ${cell(j.time)} | ${cell(describeActor(j))} | ${cell(action)} | ${cell(j.recordType)} | \`${cell(name)}\` | ${verdict} | \`${cell(j.id || '-')}\` |`);
+    }
+    lines.push('');
+  }
+  if (unexpected.length > 0) {
+    // What the audit log carries for each unexpected actor, so the next
+    // allowlist entry is written to the real record (field names, request
+    // method, user agent) and not to a guess. Names of fields, never values.
+    lines.push('**Shape of the unexpected entries** (actor field names as sent, request method, user agent):', '');
+    for (const j of unexpected) {
+      const ua = j.userAgent ? `\`${cell(j.userAgent.slice(0, 60))}${j.userAgent.length > 60 ? '…' : ''}\`` : 'none';
+      lines.push(`- \`${cell(j.id || '-')}\`: actor fields \`{${cell(j.actorFields) || 'none'}}\`; ${j.method ? `\`${cell(j.method)}\`` : 'no method'}; user agent ${ua}`);
     }
     lines.push('');
   }

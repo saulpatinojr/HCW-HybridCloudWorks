@@ -449,6 +449,26 @@ describe('main', () => {
     const row = md.split('\n').find((l) => l.startsWith('| ') && l.includes('UNEXPECTED'));
     expect(row.split(/(?<!\\)\|/).length).toBe(md.split('\n').find((l) => l.startsWith('| Time')).split('|').length);
   });
+
+  it('prints the shape of each unexpected entry: actor field names, method and user agent, never values', () => {
+    const actor = { id: ACCOUNT, context: 'api_token', ip_address: '54.242.151.9', type: 'account' };
+    const longUa = 'terraform-provider-cloudflare/5.12.0 (+https://registry.terraform.io/providers/cloudflare/cloudflare) Terraform/1.16.0';
+    const raw = { user_agent: longUa, method: 'post' };
+    const judged = [{ ...normalise(entry({ actor, record: { name: 'edge.hybridcloudworks.com', type: 'A' }, raw })), verdict: 'UNEXPECTED', rule: null }];
+    const md = renderReport({ window: { since: 's', before: 'b', hours: 26 }, entries: 1, pages: 1, judged, settings: { ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, zoneId: ZONE } });
+    const shape = md.split('\n').find((l) => l.startsWith('- `') && l.includes('actor fields'));
+    expect(shape).toContain('actor fields `{context,id,ip_address,type}`');
+    expect(shape).toContain('`POST`');
+    expect(shape).toContain(`\`${longUa.slice(0, 60)}…\``);
+    expect(shape).not.toContain(ACCOUNT);
+    expect(shape).not.toContain(SECRET_CONTENT);
+  });
+
+  it('prints no shape section when every change is expected', () => {
+    const judged = [{ ...normalise(entry({ actor: TERRAFORM, record: { name: 'edge.hybridcloudworks.com', type: 'A' } })), verdict: 'EXPECTED', rule: 'hcp-terraform' }];
+    const md = renderReport({ window: { since: 's', before: 'b', hours: 26 }, entries: 1, pages: 1, judged, settings: { ownerEmail: OWNER, caddyTokenName: CADDY_TOKEN, zoneId: ZONE } });
+    expect(md).not.toContain('Shape of the unexpected entries');
+  });
 });
 
 describe('the entry point', () => {
