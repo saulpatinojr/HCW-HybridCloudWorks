@@ -71,6 +71,22 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Coder rotation credential: measured, and kept unscoped with the reason (#1037)**.
+  On the live Coder 2.38.0 on 2026-10-19, with throwaway tokens of
+  `hcw-status`: a token with `coder:templates.author`, `organization:read`
+  and `user:read` publishes the template and cannot mint keys; a token with
+  `api_key:create` and `user:read` mints tokens with scopes it does not hold
+  and those tokens use them, so the inheritance rule in Coder's current docs
+  is not enforced on this version; scopes are enforced on reads by filtering
+  (`workspace:read` alone sees no templates), and an out-of-scope write
+  answers 500 rather than 403. Since any credential that renews the status
+  token can mint any scope, narrowing the rotation credential contains
+  nothing against a leak; it stays `coder:all` and containment stays on the
+  account. The results are the second table under "The status token for the
+  site" in `lab-host/README.md`; the role README and the runbook point at it.
+  Three tokens of `hcw-status` that nothing held (two hand-made status tokens
+  superseded on 2026-10-10, and the old host's rotation credential restored
+  by the snapshot) were deleted.
 - **LAB-9 rebuild rehearsal done on the live lab host: 66 min 42 s (#955)**.
   2026-10-18, VM 939861 recreated through Hostinger's API on the same plain
   Ubuntu 26.04 template; Vault unsealed on the snapshot's data 66 min 42 s

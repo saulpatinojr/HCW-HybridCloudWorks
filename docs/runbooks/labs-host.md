@@ -1554,6 +1554,10 @@ token (`CODER-STATUS-TOKEN`) and publishes the `hcw-lab` template on its
 own, with one credential the owner seeds once: the **rotation credential**,
 an unscoped Coder token of `hcw-status`, which is a Template Admin and never
 an Owner, kept root-only at `/etc/hcw/coder/automation/rotation-token`.
+Unscoped on purpose: measured on 2026-10-19 (#1037, the second table under
+"The status token for the site" in `lab-host/README.md`), a token that can
+renew the status token can mint any scope on Coder 2.38.0, so a narrower
+credential would contain nothing; containment is the account, below.
 After the seed:
 
 - `hcw-coder-automation.timer` runs `hcw-coder-automation.service` daily at
