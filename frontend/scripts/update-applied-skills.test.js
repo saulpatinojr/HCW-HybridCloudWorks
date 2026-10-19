@@ -291,6 +291,51 @@ describe.each(['AZ-800', 'AZ-801'])('%s on the first Monday after 2026-09-30 (#4
       replacedBy: 'az-802',
     });
   });
+
+  it('keeps statusReadDate and availableDate (#1091), which hold a badge until the vendor’s day', () => {
+    // PL-400 as stored on 2026-10-12: retired ahead of its 2026-10-30 day, and
+    // the day it was read on. The 2026-10-19 run dropped statusReadDate, so
+    // deriveStatus showed `retired` two weeks early and the data test refused
+    // the pull request. AB-400 is the mirror case: active ahead of its day.
+    const retiredAhead = {
+      id: 'pl-400',
+      slug: 'pl-400',
+      code: 'PL-400',
+      title: 'Exam PL-400',
+      status: 'retired',
+      expiryDate: '2026-10-30',
+      statusReadDate: '2026-10-12',
+      replacedBy: 'ab-400',
+    };
+    const activeAhead = {
+      id: 'ab-400',
+      slug: 'ab-400',
+      code: 'AB-400',
+      title: 'Exam AB-400',
+      status: 'active',
+      availableDate: '2026-10-16',
+      statusReadDate: '2026-10-12',
+    };
+    const none = { byCode: new Map(), byTitle: new Map() };
+    const existing = {
+      byCode: new Map([
+        ['PL-400', retiredAhead],
+        ['AB-400', activeAhead],
+      ]),
+      byTitle: new Map(),
+    };
+
+    expect(
+      buildCertificationFromSources({ code: 'PL-400', title: 'Exam PL-400' }, none, existing)
+    ).toMatchObject({ status: 'retired', expiryDate: '2026-10-30', statusReadDate: '2026-10-12' });
+    expect(
+      buildCertificationFromSources({ code: 'AB-400', title: 'Exam AB-400' }, none, existing)
+    ).toMatchObject({
+      status: 'active',
+      availableDate: '2026-10-16',
+      statusReadDate: '2026-10-12',
+    });
+  });
 });
 
 /**

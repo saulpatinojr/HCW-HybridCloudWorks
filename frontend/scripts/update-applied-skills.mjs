@@ -658,6 +658,15 @@ export function buildCertificationFromSources(
     ...(existing.betaEndDate ? { betaEndDate: existing.betaEndDate } : {}),
     ...(existing.betaDiscount ? { betaDiscount: existing.betaDiscount } : {}),
     ...(existing.gaDate ? { gaDate: existing.gaDate } : {}),
+    // #1091 (2026-10-12): a status read ahead of the vendor's day is stored
+    // with the day it was read on, and a row stored before its availability
+    // with that day; deriveStatus holds the badge on them until the day. Both
+    // are the file's, never the sources', and the 2026-10-19 run proved a
+    // field this list omits is a field the next run deletes: PL-400 lost its
+    // statusReadDate, turned `retired` two weeks early, and the data test
+    // refused the pull request.
+    ...(existing.statusReadDate ? { statusReadDate: existing.statusReadDate } : {}),
+    ...(existing.availableDate ? { availableDate: existing.availableDate } : {}),
     description:
       existing.description ||
       `${normalizeCertificationTitle(title)} validates role-based Microsoft cloud skills.`,
