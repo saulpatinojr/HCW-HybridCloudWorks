@@ -460,6 +460,8 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Study-guide refresher: an exam stored retired ahead of its day keeps its outline until the day**. The refresher and the outlines test judged liveness by the stored status, so the first green updater run after #1289 deleted PL-400's outline eleven days before its last exam day (#1291, closed). Both now ask `deriveStatus` for today, as the badge does; `eligibleCerts` lives in `scripts/study-guide-eligibility.mjs` with a unit test.
+
 - **Learn-catalogue updater: a refresh no longer deletes `statusReadDate` and `availableDate`** (#1091's fields). The rebuild of every poster row carried an allowlist of fields that predated them, so each run erased them, PL-400 turned `retired` two weeks before its October 30 day and the data check refused the pull request (run 39218206063, after #1288). Both fields are carried now, with a unit test; a real run against Learn left only the sync date changed and the data tests green.
 
 - **Learn-catalogue updater: two Node set-ups, because the two trees it installs pin two lines**. The Monday job failed on 2026-10-19 at `npm ci` in `frontend/` (`EBADENGINE`: the frontend has required Node 26.9 since the floors moved in #1161, `functions/` is pinned to the Node 24 line, both engine-strict). It now installs `functions/` under Node 24 and everything else under Node 26. The AVM updater's separate failure is #1287.
