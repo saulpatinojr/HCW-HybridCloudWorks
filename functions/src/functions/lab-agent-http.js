@@ -1,7 +1,8 @@
 /**
- * lab-agent-http.js — the four routes the Labs VPS agent may call.
+ * lab-agent-http.js — the five routes the Labs VPS agent may call.
  * Registration only; semantics in lib/lab-agent.js (and, for the Coder
- * automation report, lib/labs/coder-automation.js), authorization in
+ * automation report, lib/labs/coder-automation.js; for a host check's
+ * report, lib/labs/host-checks.js), authorization in
  * lib/auth/require-agent.js.
  *
  * These are guarded, but not by `requireRole`: the agent is a machine identity
@@ -67,4 +68,17 @@ httpRoute('reportCoderAutomation', {
   authLevel: 'anonymous',
   route: 'agent/reportCoderAutomation',
   handler: (request, context) => handlers(context).reportCoderAutomation(request, context),
+});
+
+// A check the lab host runs on itself (2026-10-19, #1282): the portainer
+// role's hcw-portainer-check, every fifteen minutes, through
+// vps-agent/bin/report-host-check.js. Anonymous at the host level like the
+// four above, because requireAgent is the guard: the body's agentId bound to
+// the token's object id, active agents only. The same createDoc then
+// replaceDocIfMatch pair writes its one document (lib/labs/host-checks.js).
+httpRoute('reportHostCheck', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'agent/reportHostCheck',
+  handler: (request, context) => handlers(context).reportHostCheck(request, context),
 });

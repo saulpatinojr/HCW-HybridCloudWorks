@@ -48,10 +48,11 @@ const parse = (res) => JSON.parse(res.body);
 
 describe('every handler is guarded', () => {
   // The fourth since 2026-10-08; its own containment tests, the vault and
-  // Coder included, are in labs/coder-automation.test.js.
-  const HANDLERS = ['claimLabJob', 'heartbeatAgent', 'completeLabJob', 'reportCoderAutomation'];
+  // Coder included, are in labs/coder-automation.test.js. The fifth since
+  // 2026-10-19 (#1282); its own are in labs/host-checks.test.js.
+  const HANDLERS = ['claimLabJob', 'heartbeatAgent', 'completeLabJob', 'reportCoderAutomation', 'reportHostCheck'];
 
-  it('is exactly these four', () => {
+  it('is exactly these five', () => {
     expect(Object.keys(make(allowGuard(), emptyStore())).sort()).toEqual([...HANDLERS].sort());
   });
 

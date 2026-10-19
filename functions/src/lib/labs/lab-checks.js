@@ -18,6 +18,12 @@
  *   coder-token     Does Coder accept the site's status token? Coder's last
  *                   answers to it (admin_config/coder_status_token,
  *                   labs/coder-status.js recordTokenAnswer).
+ *   portainer       Is Portainer on the lab host up, licensed, reaching its
+ *                   local environment, with no container unhealthy or
+ *                   restarting and no running image behind its registry?
+ *                   The host's own fifteen-minute read of it
+ *                   (admin_config/host_checks, labs/host-checks.js);
+ *                   portainerVerdict below judges it (#1282).
  *
  * WHY THE TEMPLATE IS COMPARED ON THE HOST'S TWO DIGESTS, NOT THE SITE'S
  * BUILD. A digest of lab-host/coder/templates/hcw-lab computed when the
@@ -40,14 +46,25 @@ import { CODER_AUTOMATION_DOC_ID } from './coder-automation.js';
 import { LAB_CANARY_DOC_ID, UNREACHED_OUTCOMES } from './canary.js';
 import { TOKEN_OPERATIONS, TOKEN_STATE_DOC_ID, isRefusing } from './coder-status.js';
 import { LAB_DRIFT_DOC_ID, agoText, labDriftVerdict } from './drift.js';
+import { HOST_CHECKS_DOC_ID } from './host-checks.js';
 import { storedFailure } from '../http/error-response.js';
 
 export const LAB_DRIFT_PROBE = 'lab-drift';
 export const CODER_TEMPLATE_PROBE = 'coder-template';
 export const LAB_CANARY_PROBE = 'lab-canary';
 export const CODER_TOKEN_PROBE = 'coder-token';
+export const PORTAINER_PROBE = 'portainer';
 
-const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+/**
+ * Three missed fifteen-minute runs of hcw-portainer-check: the host is not
+ * reporting, and its last reading is no longer evidence (#1282).
+ */
+export const PORTAINER_REPORT_STALE_AFTER_MS = 45 * MINUTE_MS;
+/** A Portainer licence this close to its end is raised before it lapses. */
+export const PORTAINER_LICENCE_WARNING_DAYS = 30;
 /** Three missed hourly runs: the canary has stopped, and its last result is no longer evidence. */
 export const CANARY_STALE_AFTER_MS = 3 * HOUR_MS;
 /**
@@ -255,6 +272,147 @@ export function coderTokenVerdict(state, nowMs) {
   );
 }
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** "Portainer 2.45.2 EE", or as much of it as the reading carries. */
+const portainerName = (entry) => ['Portainer', entry.version, entry.edition].filter(Boolean).join(' ');
+
+/** The images clause of a healthy summary: a check with nothing to check, or none made (CE has no image status), is said. */
+function imagesText(entry) {
+  if (entry.imagesChecked === null || entry.imagesChecked === undefined) return 'images not checked';
+  if (entry.imagesChecked === 0) return 'no running image to check';
+  return 'images current';
+}
+
+/** The licence clause of a healthy summary. */
+function licenceText(entry) {
+  if (entry.licenseExpiresAt) return `licence to ${day(entry.licenseExpiresAt)}`;
+  if (entry.licenseValid === true) return 'licence valid';
+  return 'no licence reported';
+}
+
+/**
+ * The licence's complaint, or null: Portainer calls it invalid, or its end is
+ * within PORTAINER_LICENCE_WARNING_DAYS of now (an end already passed
+ * included, in case Portainer still calls the licence valid in a grace
+ * period).
+ */
+function licenceWarning(entry, nowMs) {
+  const expiry = entry.licenseExpiresAt ? day(entry.licenseExpiresAt) : null;
+  if (entry.licenseValid === false) {
+    return `Portainer reports its licence as not valid${expiry ? ` (expiry ${expiry})` : ''}; renew it before the Business Edition features lapse.`;
+  }
+  const expiresMs = Date.parse(String(entry.licenseExpiresAt ?? ''));
+  if (!Number.isFinite(expiresMs)) return null;
+  const daysLeft = Math.floor((expiresMs - nowMs) / DAY_MS);
+  if (daysLeft > PORTAINER_LICENCE_WARNING_DAYS) return null;
+  if (daysLeft < 0) return `Portainer's licence expired ${expiry}; renew it.`;
+  return `Portainer's licence expires ${expiry}, in ${plural(daysLeft, 'day')}; renew it before then.`;
+}
+
+/** Every number the reading carries, one line each; counts and states only, as the report itself is. */
+function portainerDetail(entry) {
+  const c = entry.containers ?? {};
+  const licence =
+    entry.licenseValid === null || entry.licenseValid === undefined
+      ? 'not reported'
+      : entry.licenseValid
+        ? 'valid'
+        : 'not valid';
+  return [
+    `${portainerName(entry)}${entry.up === false ? ' (not answering)' : ''}`,
+    `environment ${entry.environmentName || '?'} ${entry.environmentUp ? 'up' : 'down'}`,
+    `containers ${c.total ?? '?'} total, ${c.running ?? '?'} running, ${c.unhealthy ?? '?'} unhealthy, ${c.restarting ?? '?'} restarting, ${c.exited ?? '?'} exited`,
+    entry.imagesChecked === null || entry.imagesChecked === undefined
+      ? 'images not checked'
+      : `images ${entry.imagesChecked} checked, ${entry.imagesOutdated ?? '?'} outdated`,
+    `licence ${licence}${entry.licenseExpiresAt ? `, expires ${day(entry.licenseExpiresAt)}` : ''}`,
+    `read ${entry.checkedAt ?? '?'}, received ${entry.receivedAt ?? '?'}`,
+  ].join('\n');
+}
+
+/**
+ * Whether Portainer on the lab host is up and sound, from the host's own
+ * last reading of it (host-checks.js; #1282). Pure.
+ *
+ * No entry is `unknown`: the host has not reported, which until the first
+ * bootstrap.sh run with the token is the expected state. A reading older
+ * than PORTAINER_REPORT_STALE_AFTER_MS is `critical`, not `offline`: it is
+ * the host's timer, not Portainer, that has stopped, its unit's OnFailure
+ * path is the LAB-2 alert, and the card says the same thing. Portainer not
+ * answering, its local environment down or the check itself failing is
+ * `critical` with the reason. Unhealthy or restarting containers, images
+ * with an update available, and a licence invalid or within
+ * PORTAINER_LICENCE_WARNING_DAYS of its end are `degraded`, every reason
+ * named at once; otherwise `healthy` with the numbers. `warning` is not a
+ * word the status model has (health/status-model.js), so what #1282 calls
+ * a warning is degraded here.
+ *
+ * @param {object|null} entry admin_config/host_checks → checks.portainer
+ * @param {number} nowMs
+ */
+export function portainerVerdict(entry, nowMs) {
+  if (!entry || typeof entry !== 'object') {
+    return result(
+      'unknown',
+      "Portainer has not reported: the host's check needs vault_portainer_api_token (lab-host/README.md, Portainer)."
+    );
+  }
+  const receivedMs = Date.parse(String(entry.receivedAt ?? ''));
+  if (!Number.isFinite(receivedMs) || nowMs - receivedMs > PORTAINER_REPORT_STALE_AFTER_MS) {
+    const since = Number.isFinite(receivedMs)
+      ? `${entry.receivedAt} (${agoText(entry.receivedAt, nowMs)})`
+      : 'an unknown time';
+    return result(
+      'critical',
+      `No Portainer report since ${since}; the host's hcw-portainer-check timer is not running or cannot reach the site.`,
+      portainerDetail(entry)
+    );
+  }
+  const read = agoText(entry.receivedAt, nowMs);
+  const detail = portainerDetail(entry);
+  const name = entry.environmentName || 'local';
+  if (entry.up === false) {
+    return result(
+      'critical',
+      `Portainer on the lab host did not answer its check ${read}: ${entry.error || 'no reason recorded'}.`,
+      detail
+    );
+  }
+  if (entry.error) {
+    return result('critical', `Portainer answered but its check failed ${read}: ${entry.error}.`, detail);
+  }
+  if (entry.environmentUp === false) {
+    return result(
+      'critical',
+      `Portainer is up but its ${name} environment is down ${read}, so it cannot reach the host's Docker engine.`,
+      detail
+    );
+  }
+  const containers = entry.containers ?? {};
+  const unhealthy = Number(containers.unhealthy) || 0;
+  const restarting = Number(containers.restarting) || 0;
+  const reasons = [];
+  if (unhealthy + restarting > 0) {
+    reasons.push(
+      `${unhealthy} unhealthy and ${restarting} restarting of ${Number(containers.total) || 0} containers on the lab host, as Portainer saw them ${read}.`
+    );
+  }
+  if (Number(entry.imagesOutdated) > 0) {
+    reasons.push(
+      `${entry.imagesOutdated} of ${entry.imagesChecked ?? '?'} running images have an update available in their registry.`
+    );
+  }
+  const licence = licenceWarning(entry, nowMs);
+  if (licence) reasons.push(licence);
+  if (reasons.length > 0) return result('degraded', reasons.join(' '), detail);
+  return result(
+    'healthy',
+    `${portainerName(entry)}, ${name} Up, ${plural(Number(containers.running) || 0, 'container')} running, ${imagesText(entry)}, ${licenceText(entry)}; read ${read}.`,
+    detail
+  );
+}
+
 /** The drift verdict from the registry rows given, or read here when none are. */
 export async function readLabDrift(store, nowMs, agentRows = null) {
   const [agents, drift] = await Promise.all([
@@ -286,6 +444,12 @@ export async function readCoderToken(store, nowMs) {
   );
 }
 
+/** The Portainer verdict from the host's last reading of it; no document, or no entry, is "not reported". */
+export async function readPortainer(store, nowMs) {
+  const doc = await store.readDoc('admin_config', HOST_CHECKS_DOC_ID, ADMIN_CONFIG_PARTITION);
+  return portainerVerdict(doc?.checks?.portainer ?? null, nowMs);
+}
+
 /**
  * A check that could not be read is said as such, never as healthy: a
  * sentence with the error's code, never the store's own words (#945).
@@ -306,11 +470,12 @@ const unreadable = (error) =>
  * @param {object[]} agentRows the registry rows the snapshot already read
  */
 export async function readLabChecks(store, nowMs, agentRows) {
-  const [drift, template, canary, token] = await Promise.all([
+  const [drift, template, canary, token, portainer] = await Promise.all([
     readLabDrift(store, nowMs, agentRows).catch((error) => ({ ...unreadable(error), agents: {} })),
     readCoderTemplate(store, nowMs).catch(unreadable),
     readLabCanary(store, nowMs).catch(unreadable),
     readCoderToken(store, nowMs).catch(unreadable),
+    readPortainer(store, nowMs).catch(unreadable),
   ]);
   const { agents: _perAgent, ...driftCheck } = drift;
   return {
@@ -319,6 +484,7 @@ export async function readLabChecks(store, nowMs, agentRows) {
       [CODER_TEMPLATE_PROBE]: template,
       [LAB_CANARY_PROBE]: canary,
       [CODER_TOKEN_PROBE]: token,
+      [PORTAINER_PROBE]: portainer,
     },
     drift,
   };

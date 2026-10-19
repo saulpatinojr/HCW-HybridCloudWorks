@@ -64,6 +64,10 @@ export const HEALTH_PROBES = Object.freeze({
   // accepts the site's status token. Recorded the same way.
   "lab-canary": probe("live", "viewer"),
   "coder-token": probe("live", "viewer"),
+  // #1282: Portainer on the lab host, from the host's own fifteen-minute
+  // read of it (labs/host-checks.js, labs/lab-checks.js). Recorded the same
+  // way; the Labs snapshot serves it to the card's Run.
+  portainer: probe("live", "viewer"),
   "labs-noop": probe("session", "editor"),
   "labs-unauth": probe("session", "viewer"),
   "hybrid-lab": probe("live", "viewer"),

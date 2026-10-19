@@ -13,6 +13,19 @@ argument_specs:
       - Creates no administrator and holds no licence key. The owner creates the first
         administrator in the UI within five minutes of Portainer starting and enters the
         licence key there; neither value is in the repository or the Ansible vault.
+      - Installs /usr/local/libexec/hcw-portainer-check and hcw-portainer-check.service and
+        .timer (#1282). Every portainer_check_interval the check reads Portainer over the
+        loopback with GET only (version, edition, licence, the environment named
+        portainer_check_environment_name, container states, images with updates) and hands
+        one content-free report to the site through the lab agent's CLI, where the Health
+        Hub's Portainer card shows it. A failed run is reported to hcw-unit-failed@
+        (alert-lab-unit-failed).
+      - The check's token is the owner's own Portainer access token (owner decision
+        2026-10-19), set with hcw-vault-set as vault_portainer_api_token and never declared
+        by this role. While it is set, the role writes it root 0600 to
+        portainer_check_token_file, the unit reads it through LoadCredential=, and the timer
+        is enabled and the check run once. While it is not, the file is removed, the unit's
+        condition skips every run, and the run says how to set it.
     author: HybridCloudWorks
     options:
       portainer_enabled:
@@ -51,3 +64,96 @@ argument_specs:
         required: false
         default: 512m
         description: The container's memory limit.
+      portainer_check_enabled:
+        type: bool
+        required: false
+        default: true
+        description:
+          - Install and run the Portainer check (#1282). It runs only while portainer_enabled is
+            also true and vault_portainer_api_token is set.
+      portainer_check_interval:
+        type: str
+        required: false
+        default: 15min
+        description: How often the timer runs the check (a systemd time span).
+      portainer_check_boot_delay:
+        type: str
+        required: false
+        default: 5min
+        description: How long after boot the timer first runs the check (a systemd time span).
+      portainer_check_environment_name:
+        type: str
+        required: false
+        default: local
+        description:
+          - The Portainer environment the check reports on, found by name among /endpoints. On
+            this host it is the local daemon, whose Id is 3, not 1.
+      portainer_check_script:
+        type: str
+        required: false
+        default: /usr/local/libexec/hcw-portainer-check
+        description: Where the check is installed, root:root 0750.
+      portainer_check_unit:
+        type: str
+        required: false
+        default: hcw-portainer-check
+        description: The name of the check's service and timer, and its journal identifier.
+      portainer_check_token_file:
+        type: str
+        required: false
+        default: /etc/hcw/portainer/api-token
+        description:
+          - Where the owner's token is written, root 0600, from vault_portainer_api_token. The
+            unit's LoadCredential= reads it; the check itself never opens it. Its directory is
+            root 0700 and holds the configuration too.
+      portainer_check_config_file:
+        type: str
+        required: false
+        default: /etc/hcw/portainer/check.json
+        description: The check's configuration (URL, names and the agent's paths), no secret.
+      portainer_check_report_timeout_seconds:
+        type: int
+        required: false
+        default: 60
+        description: How long the site's CLI may take before systemd stops it and the run fails.
+      portainer_check_agent_user:
+        type: str
+        required: false
+        default: hcw-labs-agent
+        description:
+          - The lab agent's user, which the site's CLI runs as. The same value as
+            coder_automation_agent_user and labs_agent_user.
+      portainer_check_agent_group:
+        type: str
+        required: false
+        default: hcw-labs-agent
+        description: The lab agent's group. The same value as coder_automation_agent_group.
+      portainer_check_agent_env_file:
+        type: str
+        required: false
+        default: /etc/hcw/labs-agent.env
+        description:
+          - The lab agent's EnvironmentFile, which systemd reads as root for the CLI. The same
+            value as coder_automation_agent_env_file and labs_agent_env_file.
+      portainer_check_agent_app_dir:
+        type: str
+        required: false
+        default: /opt/hcw-labs-agent/vps-agent
+        description:
+          - The lab agent's own checkout, which has its node_modules, where the CLI runs. The
+            same value as coder_automation_agent_app_dir and labs_agent_app_dir.
+      portainer_check_agent_node:
+        type: str
+        required: false
+        default: /usr/bin/node
+        description: The node the agent's unit runs with, which runs the CLI.
+      portainer_check_systemd_run:
+        type: str
+        required: false
+        default: /usr/bin/systemd-run
+        description: systemd-run, which starts the CLI as the agent's user with its environment.
+      portainer_check_report_cli:
+        type: str
+        required: false
+        default: bin/report-host-check.js
+        description: The CLI in the agent's checkout that hands the site the report.

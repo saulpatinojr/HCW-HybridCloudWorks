@@ -495,7 +495,7 @@ describe('the heartbeat and sync runners', () => {
   });
 
   it('registers every lab check as a live, Test-all-safe probe that reads the snapshot', async () => {
-    for (const id of ['lab-drift', 'coder-template', 'lab-canary', 'coder-token']) {
+    for (const id of ['lab-drift', 'coder-template', 'lab-canary', 'coder-token', 'portainer']) {
       expect(byId(id), id).toMatchObject({ kind: 'live', safe: true, hub: 'enhanced' });
       // Test all may press it: its run reads the snapshot and writes nothing.
       postJSON.mockResolvedValueOnce({

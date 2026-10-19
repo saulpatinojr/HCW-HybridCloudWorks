@@ -1478,8 +1478,9 @@ is not there, add it with **Add a member** before step 4.
 Two Health Hub probes watch what #1009 found broken with nothing saying so,
 beside **Lab host runs main** and **Coder template published** (above). All
 four are on the **Checks** tab,
-<https://hybridcloudworks.com/admin/health?tab=checks>, under Enhanced, and
-the health pulse records each every five minutes.
+<https://hybridcloudworks.com/admin/health?tab=checks>, under Enhanced, with
+**Portainer** beside them since 2026-10-19 (#1282; "Portainer through an SSH
+tunnel", below), and the health pulse records each every five minutes.
 
 - **Lab job canary.** Once an hour, at 20 past, `labCanary` enqueues one
   `shell-echo` job whose payload is `hcw-canary <job id>`, waits up to 150
@@ -2551,6 +2552,26 @@ one. The key goes into this page only, never into the repository or the
 Ansible vault. Portainer then offers its environment wizard, where **Get
 Started** adds this host's Docker, through the socket, as the environment
 `local`; no environment exists before that.
+
+**Since 2026-10-19 the host watches Portainer itself (#1282).** The
+`portainer` role's `hcw-portainer-check` reads it on the loopback every 15
+minutes with the owner's access token, `GET` only, and reports counts and
+states to the Health Hub's **Portainer** card on the **Checks** tab,
+<https://hybridcloudworks.com/admin/health?tab=checks>, under Enhanced:
+healthy with the version, edition, running count and licence end; degraded
+on an unhealthy or restarting container, a running image with an update or
+a licence within 30 days of its end; critical when Portainer or its `local`
+environment is down, the check itself failed, or no report has arrived for
+45 minutes. The card's detail names what the check saw. What the check said
+on the host, bash, in the tunnel shell:
+
+```bash
+sudo journalctl -t hcw-portainer-check -n 3 --no-pager --output=cat
+```
+
+Good ends with a line beginning `hcw-portainer-check: checked:`. The token
+and the paste line that seeds it are in `lab-host/README.md`, "The Portainer
+check"; until it is seeded the card reads `Portainer has not reported`.
 
 Success is Portainer's **Home** page listing `local`, **Docker Standalone**,
 **Up**, whose containers include `portainer`. If the page says the instance

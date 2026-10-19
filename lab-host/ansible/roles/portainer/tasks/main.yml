@@ -71,6 +71,183 @@
     - portainer_enabled | bool
     - not ansible_check_mode
 
+# --- The check (#1282) ------------------------------------------------------
+# Portainer read every portainer_check_interval and reported to the site's
+# Health Hub through the lab agent (README.md beside this role, "The check").
+# The token is the owner's own Portainer access token (owner decision
+# 2026-10-19), set with hcw-vault-set as vault_portainer_api_token. This role
+# never declares that key (hcw-vault-set refuses a key the playbook defines)
+# and reads it through a lookup with an empty default, so a host without it
+# installs the check and leaves it skipped.
+- name: Read whether the Portainer check has its token
+  ansible.builtin.set_fact:
+    portainer_check_configured: >-
+      {{ portainer_enabled | bool and portainer_check_enabled | bool
+         and lookup('ansible.builtin.vars', 'vault_portainer_api_token', default='') | length > 0 }}
+
+- name: Create the check's directory, root-only
+  ansible.builtin.file:
+    path: "{{ portainer_check_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+# Root 0600 beside a root 0700 directory: an access token carries the whole
+# authority of its user, and the unit hands it to the check as a credential
+# (LoadCredential=), so nothing but root and that unit ever reads it.
+- name: Write the Portainer token for the check, root-only
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.vars', 'vault_portainer_api_token', default='') }}\n"
+    dest: "{{ portainer_check_token_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: portainer_check_configured | bool
+
+# Without the file the unit's condition does not hold and the timer's runs
+# are skipped, not failed, so turning the check off pages nobody.
+- name: Remove the token while the check is off or its key is unset
+  ansible.builtin.file:
+    path: "{{ portainer_check_token_file }}"
+    state: absent
+  when: not portainer_check_configured | bool
+
+- name: Write the check's configuration (the URL, names and the agent's paths, no secret)
+  ansible.builtin.template:
+    src: hcw-portainer-check.json.j2
+    dest: "{{ portainer_check_config_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+- name: Install the check
+  ansible.builtin.copy:
+    src: hcw-portainer-check
+    dest: "{{ portainer_check_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+- name: Install the check's unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - "{{ portainer_check_unit }}.service"
+    - "{{ portainer_check_unit }}.timer"
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+
+# Read after the install, so in check mode it says whether a real run has
+# installed the timer yet: systemd cannot enable a unit it has no file for,
+# and a preview before the first real run must not stop here.
+- name: Look for the check's timer
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ portainer_check_unit }}.timer"
+  register: portainer_check_timer_file
+
+# Before the check runs, so a check that fails below is run again every
+# interval, and alerts again, until it passes.
+- name: Enable the check's timer
+  ansible.builtin.systemd_service:
+    name: "{{ portainer_check_unit }}.timer"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - portainer_check_configured | bool
+    - not ansible_check_mode or portainer_check_timer_file.stat.exists
+
+# Through the unit, so the run checks what the timer will run: its credential,
+# its sandboxing and its arguments. A failure here also reaches
+# hcw-unit-failed@, and is said below rather than failing the play: this role
+# runs among the others, and a token the owner has yet to put right should
+# not leave Vault, the add-ons and the backups unapplied behind it.
+- name: Run the check once now, as the timer runs it
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - start
+      - "{{ portainer_check_unit }}.service"
+  register: portainer_check_run
+  changed_when: false
+  failed_when: false
+  when:
+    - portainer_check_configured | bool
+    - not ansible_check_mode
+
+- name: Read which run of the check that was
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=InvocationID
+      - --value
+      - "{{ portainer_check_unit }}.service"
+  register: portainer_check_invocation
+  changed_when: false
+  when:
+    - portainer_check_configured | bool
+    - not ansible_check_mode
+
+- name: Read what the check said
+  ansible.builtin.command:
+    argv:
+      - journalctl
+      - "_SYSTEMD_INVOCATION_ID={{ portainer_check_invocation.stdout | trim }}"
+      - --output=cat
+      - --no-pager
+  register: portainer_check_said
+  changed_when: false
+  failed_when: false
+  when:
+    - portainer_check_configured | bool
+    - not ansible_check_mode
+    - portainer_check_invocation.stdout | trim | length > 0
+
+- name: Say what the check saw
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'The Portainer check failed, which also raised the lab alert (hcw-unit-failed@): '
+         if portainer_check_run.rc != 0 else '' }}{{
+      (portainer_check_said.stdout_lines | default([]) | select('match', '^hcw-portainer-check: ') | list)[-1:] | join('')
+         or ('nothing was read from its journal; read sudo journalctl -t ' ~ portainer_check_unit ~ ' -n 5') }}
+  when:
+    - portainer_check_configured | bool
+    - not ansible_check_mode
+
+- name: Say that the Portainer check is not configured
+  ansible.builtin.debug:
+    msg: 'The Portainer check is not configured: set vault_portainer_api_token (lab-host/README.md, "Portainer") and re-run bootstrap.sh.'
+  when:
+    - portainer_enabled | bool
+    - portainer_check_enabled | bool
+    - not portainer_check_configured | bool
+
+- name: Stop and disable the check's timer while the check is off or its key is unset
+  ansible.builtin.systemd_service:
+    name: "{{ portainer_check_unit }}.timer"
+    enabled: false
+    state: stopped
+  when:
+    - not portainer_check_configured | bool
+    - portainer_check_timer_file.stat.exists
+
 - name: Stop and remove the Portainer container while Portainer is disabled
   community.docker.docker_container:
     name: "{{ portainer_container_name }}"

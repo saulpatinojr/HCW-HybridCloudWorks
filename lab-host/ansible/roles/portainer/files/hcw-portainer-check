@@ -1,0 +1,588 @@
+#!/usr/bin/python3 -I
+"""Read Portainer on the lab host and report it to the site's Health Hub.
+
+Installed by the portainer role as /usr/local/libexec/hcw-portainer-check,
+root:root 0750, and run as root by hcw-portainer-check.service, every 15
+minutes from its timer and once at the end of every bootstrap.sh run (#1282):
+
+    hcw-portainer-check [--config PATH]
+
+The configuration (default /etc/hcw/portainer/check.json) is rendered by the
+portainer role from its variables: Portainer's loopback URL, the environment
+to report on, and the lab agent's user and paths; no secret. README.md
+beside the role, "The check", has the design.
+
+THE TOKEN is the owner's own Portainer access token (owner decision
+2026-10-19), set with hcw-vault-set as vault_portainer_api_token and written
+by the role to /etc/hcw/portainer/api-token, root 0600. This helper never
+opens that file: the unit's LoadCredential= hands it a copy in
+$CREDENTIALS_DIRECTORY, the one place it is read from. It is never taken
+from an argument (visible in ps, the unit file and the journal) or from the
+environment (which every child inherits). An access token carries the whole
+authority of its user, which is why the file is root-only and why this
+helper only ever reads.
+
+Portainer's API (2.45, the release group_vars/all.yml pins), GET and nothing
+else, relative to https://127.0.0.1:9443/api:
+
+- /system/status                                    {"Version": "2.45.2", ...}
+- /system/version                                   {"ServerEdition": "EE", "UpdateAvailable": false, ...}
+- /licenses                                         [{"expiresAt": <epoch seconds>, "valid": true|false|null, ...}]
+- /endpoints                                        [{"Id": 3, "Name": "local", "Status": 1, ...}]
+- /endpoints/<id>/docker/containers/json?all=true   Docker's own list: State and Status per container
+- /docker/<id>/containers/<container>/image_status  {"Status": "updated"|"outdated"|...}
+
+The environment is found by its name, never by an Id: on this host the local
+daemon is Id 3, not 1. Certificate verification is off, because the
+certificate is the one Portainer generates for itself and the connection
+never leaves the loopback; the helper refuses any other address.
+
+The report holds counts, states, a version and dates, never a container's
+name, an image's name or a digest, and the site refuses anything else
+(functions/src/lib/labs/host-checks.js). It reaches the site through the lab
+agent's own CLI, vps-agent/bin/report-host-check.js, run as the agent's user
+with the agent's environment through systemd-run, exactly as
+hcw-coder-automation does, with {"check": "portainer", "report": {...}} on
+its stdin.
+
+Exit status: 0 when Portainer answered, the report is complete and the site
+took it; 1 when Portainer was unreachable or refused the token, the
+environment is missing or down, or the report did not reach the site. The
+report goes out first whatever happened, with `error` set, so the Health Hub
+card says why; the unit's OnFailure= notifier then raises the lab alert
+(LAB-2). Unhealthy containers and outdated images are the site's warnings,
+not this helper's failures. It prints one summary line, after any error
+lines, and every line is scrubbed of the token.
+"""
+
+import argparse
+import datetime
+import json
+import os
+import ssl
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+DEFAULT_CONFIG = "/etc/hcw/portainer/check.json"
+CREDENTIAL_NAME = "api-token"
+HTTP_TIMEOUT_SECONDS = 20
+# Portainer asks the registry for an image's digest the first time it is
+# asked about it, so the per-image reads share one budget: containers it does
+# not get to are left unchecked, and imagesChecked says how many it did. With
+# the five reads before them, the CLI's RuntimeMaxSec and 30 s of grace, the
+# whole run fits the unit's TimeoutStartSec of six minutes with margin.
+IMAGE_STATUS_TIMEOUT_SECONDS = 15
+IMAGE_STATUS_BUDGET_SECONDS = 90
+# The site's limits for the report's strings (functions/src/lib/labs/host-checks.js).
+VERSION_MAX = 32
+ENVIRONMENT_NAME_MAX = 64
+ERROR_MAX = 300
+# Portainer labels its builds CE, BE and EE (api/portainer.go, GetEditionLabel).
+# BE and EE are the one Business Edition image this host runs, and the site's
+# contract knows EE and CE; anything else leaves the field out.
+EDITIONS = {"EE": "EE", "BE": "EE", "CE": "CE"}
+# Verification is off, which is safe on the loopback and nowhere else.
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+CONFIG_KEYS = {
+    "portainer_url": str,
+    "environment_name": str,
+    "systemd_run": str,
+    "node": str,
+    "agent_user": str,
+    "agent_group": str,
+    "agent_env_file": str,
+    "agent_app_dir": str,
+    "report_cli": str,
+    "report_timeout_seconds": int,
+}
+# The environment every program this helper starts gets, and nothing more: the
+# token never travels in one, $CREDENTIALS_DIRECTORY does not reach the CLI,
+# and a proxy variable cannot reach it either.
+CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+me = "hcw-portainer-check"
+SECRETS = set()
+
+
+class Failure(Exception):
+    """Why a step failed, in words that hold no token."""
+
+
+class Unreachable(Failure):
+    """Portainer did not answer at all."""
+
+
+class NotDelivered(Failure):
+    """A report that certainly never reached the site."""
+
+
+class DeliveryUnknown(Failure):
+    """The site's CLI ran and did not answer ok."""
+
+
+def remember(token):
+    """Mark the token for scrubbing from every message."""
+    SECRETS.add(token)
+    return token
+
+
+def scrub(text):
+    """Replace the remembered token, wherever it appears, with [token]."""
+    for value in sorted(SECRETS, key=len, reverse=True):
+        if value:
+            text = text.replace(value, "[token]")
+    return text
+
+
+def say(message):
+    """Print a scrubbed line to stdout under this helper's name."""
+    print(f"{me}: {scrub(message)}", flush=True)
+
+
+def warn(message):
+    """Print a scrubbed line to stderr under this helper's name."""
+    print(f"{me}: {scrub(message)}", file=sys.stderr, flush=True)
+
+
+def now():
+    """The current UTC time, to the second."""
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+
+
+def iso(moment):
+    """A time as RFC 3339 UTC with seconds and a Z, the form every report field takes."""
+    return moment.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def clip(errors):
+    """The errors as one scrubbed line of at most ERROR_MAX characters, for the report.
+
+    One line, with no control character: the site refuses a report whose
+    error carries a line break or a control character (host-checks.js), so
+    each is folded to a space before the length is cut.
+    """
+    text = scrub("; ".join(errors))
+    text = "".join(" " if (ord(c) < 32 or ord(c) == 127) else c for c in text)
+    return text if len(text) <= ERROR_MAX else text[: ERROR_MAX - 3] + "..."
+
+
+def load_config(path):
+    """The JSON configuration the role writes, refused when a key is missing or of the wrong type."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise Failure(f"cannot read the configuration {path} ({type(error).__name__}); re-run bootstrap.sh") from None
+    if not isinstance(config, dict):
+        raise Failure(f"the configuration {path} is not a JSON object")
+    for name, kind in CONFIG_KEYS.items():
+        if not isinstance(config.get(name), kind) or isinstance(config.get(name), bool):
+            raise Failure(f"the configuration {path} has no {kind.__name__} {name}; re-run bootstrap.sh")
+    return config
+
+
+def read_credential():
+    """The token systemd handed this run, from $CREDENTIALS_DIRECTORY/api-token and nowhere else.
+
+    No mode check: the directory is the unit's own, made by systemd for this
+    run and root-only; the file the credential is copied from is the role's,
+    root 0600 in a root 0700 directory.
+    """
+    directory = os.environ.get("CREDENTIALS_DIRECTORY")
+    if not directory:
+        raise Failure(
+            "no $CREDENTIALS_DIRECTORY: run this through hcw-portainer-check.service, whose "
+            f"LoadCredential= hands it the token as {CREDENTIAL_NAME}; it is read from nowhere else"
+        )
+    path = os.path.join(directory, CREDENTIAL_NAME)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            token = handle.read().strip()
+    except OSError as error:
+        raise Failure(
+            f"cannot read the credential {CREDENTIAL_NAME} ({type(error).__name__}); the unit's "
+            "LoadCredential= should have placed it"
+        ) from None
+    if not token or any(character.isspace() for character in token):
+        raise Failure(
+            f"the credential {CREDENTIAL_NAME} is empty or holds whitespace; set vault_portainer_api_token "
+            "again (lab-host/README.md, \"Portainer\")"
+        )
+    return remember(token)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # urllib would follow a redirect and send the token header with it.
+    # Portainer on the loopback never redirects an API call; refuse it if it does.
+    def redirect_request(self, *args, **kwargs):
+        """Refuse every redirect, so the token header never follows one."""
+        return None
+
+
+class Portainer:
+    """Portainer's API on the host's loopback: GET only, no proxy, no redirect."""
+
+    def __init__(self, url):
+        """A client for the Portainer at url, which must be on the loopback."""
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("https", "http") or parts.hostname not in LOOPBACK_HOSTS:
+            raise Failure(
+                f"refusing the Portainer URL {url}: certificate verification is off, which is safe on the "
+                "loopback only, so the role publishes Portainer on 127.0.0.1 and this helper reads it there"
+            )
+        self.url = url.rstrip("/") + "/api"
+        # Portainer's certificate on 9443 is the one it generates for itself,
+        # and the address is the loopback, checked above: there is no name to
+        # verify and no network between the two ends.
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        self.opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context), _NoRedirect
+        )
+
+    def get(self, path, token, timeout=HTTP_TIMEOUT_SECONDS):
+        """(HTTP status, parsed JSON or None) of one GET. Unreachable when Portainer did not answer."""
+        request = urllib.request.Request(self.url + path, method="GET")
+        request.add_header("X-API-Key", token)
+        request.add_header("Accept", "application/json")
+        try:
+            with self.opener.open(request, timeout=timeout) as response:
+                status, raw = response.status, response.read()
+        except urllib.error.HTTPError as error:
+            status, raw = error.code, b""
+            error.close()
+        except (urllib.error.URLError, OSError) as error:
+            reason = getattr(error, "reason", error)
+            raise Unreachable(f"Portainer did not answer at {self.url} ({type(reason).__name__})") from None
+        if not 200 <= status < 300 or not raw:
+            return status, None
+        try:
+            return status, json.loads(raw)
+        except ValueError:
+            raise Failure(f"Portainer's answer to GET {path.split('?')[0]} is not JSON") from None
+
+
+# --- The report -------------------------------------------------------------
+
+
+def base_report(config, started):
+    """The report before Portainer is asked anything: down, nothing known."""
+    return {
+        "checkedAt": iso(started),
+        "up": False,
+        "licenseValid": None,
+        "licenseExpiresAt": None,
+        "environmentName": config["environment_name"][:ENVIRONMENT_NAME_MAX],
+        "environmentUp": False,
+        "containers": {"total": 0, "running": 0, "unhealthy": 0, "restarting": 0, "exited": 0},
+        "imagesChecked": None,
+        "imagesOutdated": None,
+        "error": None,
+    }
+
+
+def edition_of(version):
+    """EE or CE from /system/version's ServerEdition, or None when it is neither."""
+    label = version.get("ServerEdition") if isinstance(version, dict) else None
+    return EDITIONS.get(label.strip().upper()) if isinstance(label, str) else None
+
+
+def licence_state(licences):
+    """(licenseValid, licenseExpiresAt) from /licenses.
+
+    Valid when any licence says so, not valid when one says so and none is
+    valid, unknown (None) when Portainer says neither, which a fresh instance
+    does. The expiry is the latest among the valid licences, or among all of
+    them when none is valid, so the card can say when the last one ran out.
+    """
+    items = [item for item in licences if isinstance(item, dict)]
+    flags = [item.get("valid") for item in items]
+    if any(flag is True for flag in flags):
+        valid = True
+    elif any(flag is False for flag in flags):
+        valid = False
+    else:
+        valid = None
+    counted = [item for item in items if item.get("valid") is True] if valid else items
+    expiries = [item["expiresAt"] for item in counted
+                if type(item.get("expiresAt")) in (int, float) and item["expiresAt"] > 0]
+    if not expiries:
+        return valid, None
+    try:
+        expires = datetime.datetime.fromtimestamp(max(expiries), datetime.timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return valid, None
+    return valid, iso(expires)
+
+
+def container_counts(containers):
+    """The counts the report carries, and the ids of the running containers (for image_status)."""
+    counts = {"total": 0, "running": 0, "unhealthy": 0, "restarting": 0, "exited": 0}
+    running = []
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        counts["total"] += 1
+        state = str(container.get("State") or "").lower()
+        if state == "running":
+            counts["running"] += 1
+            if isinstance(container.get("Id"), str) and container["Id"]:
+                running.append(container["Id"])
+        elif state == "restarting":
+            counts["restarting"] += 1
+        elif state == "exited":
+            counts["exited"] += 1
+        if "(unhealthy)" in str(container.get("Status") or ""):
+            counts["unhealthy"] += 1
+    return counts, running
+
+
+def image_status(portainer, token, environment_id, running):
+    """(imagesChecked, imagesOutdated) over the running containers, within the budget.
+
+    Checked means Portainer gave a verdict, updated or outdated; processing,
+    skipped and error are not verdicts, and a read that fails or times out
+    is left out the same way rather than failing the run.
+    """
+    deadline = time.monotonic() + IMAGE_STATUS_BUDGET_SECONDS
+    checked = outdated = 0
+    for container_id in running:
+        if time.monotonic() >= deadline:
+            break
+        path = f"/docker/{environment_id}/containers/{urllib.parse.quote(container_id, safe='')}/image_status"
+        try:
+            status, body = portainer.get(path, token, timeout=IMAGE_STATUS_TIMEOUT_SECONDS)
+        except Failure:
+            continue
+        verdict = body.get("Status") if status == 200 and isinstance(body, dict) else None
+        if not isinstance(verdict, str) or verdict.lower() not in ("updated", "outdated"):
+            continue
+        checked += 1
+        if verdict.lower() == "outdated":
+            outdated += 1
+    return checked, outdated
+
+
+def refused(status):
+    """The failure a 401 means: the token is no longer one Portainer accepts."""
+    return Failure(
+        f"Portainer refused the token (HTTP {status}): it was revoked or replaced. Set "
+        "vault_portainer_api_token again (lab-host/README.md, \"Portainer\") and re-run bootstrap.sh"
+    )
+
+
+def inspect(portainer, token, config, report):
+    """Fill the report from Portainer; returns (notes, update available).
+
+    Raises Failure at the first read the report cannot do without. A read it
+    can do without (the edition, the licence) leaves its fields unknown and
+    a note for the journal instead.
+    """
+    notes = []
+    status, body = portainer.get("/system/status", token)
+    if status != 200 or not isinstance(body, dict):
+        raise Failure(f"GET /system/status answered HTTP {status}")
+    report["up"] = True
+    version = body.get("Version")
+    if isinstance(version, str):
+        # The site accepts a version's characters only (letters, digits, dot,
+        # plus, hyphen; host-checks.js VERSION_SHAPE): anything else is dropped
+        # rather than refused, so an odd build string never costs the report.
+        version = "".join(c for c in version.strip() if c.isalnum() or c in ".+-")[:VERSION_MAX]
+        if version and version[0].isalnum():
+            report["version"] = version
+
+    status, body = portainer.get("/system/version", token)
+    if status == 401:
+        raise refused(status)
+    update_available = False
+    if status == 200 and isinstance(body, dict):
+        edition = edition_of(body)
+        if edition:
+            report["edition"] = edition
+        update_available = body.get("UpdateAvailable") is True
+    else:
+        notes.append(f"GET /system/version answered HTTP {status}; the edition is left out")
+
+    status, body = portainer.get("/licenses", token)
+    if status == 401:
+        raise refused(status)
+    if status == 200 and isinstance(body, list):
+        report["licenseValid"], report["licenseExpiresAt"] = licence_state(body)
+    else:
+        notes.append(f"GET /licenses answered HTTP {status}; the licence is reported as unknown")
+
+    status, body = portainer.get("/endpoints", token)
+    if status == 401:
+        raise refused(status)
+    if status != 200 or not isinstance(body, list):
+        raise Failure(f"GET /endpoints answered HTTP {status}")
+    name = config["environment_name"]
+    environment = next((item for item in body if isinstance(item, dict) and item.get("Name") == name), None)
+    if environment is None:
+        raise Failure(f"Portainer lists no environment named {name} among its {len(body)}")
+    identifier = environment.get("Id")
+    if type(identifier) is not int:
+        raise Failure(f"the environment {name} has no numeric Id")
+    report["environmentUp"] = environment.get("Status") == 1
+    if not report["environmentUp"]:
+        raise Failure(f"the environment {name} is down (Portainer Status {environment.get('Status')})")
+
+    status, body = portainer.get(f"/endpoints/{identifier}/docker/containers/json?all=true", token)
+    if status == 401:
+        raise refused(status)
+    if status != 200 or not isinstance(body, list):
+        raise Failure(f"GET /endpoints/{identifier}/docker/containers/json answered HTTP {status}")
+    report["containers"], running = container_counts(body)
+    report["imagesChecked"], report["imagesOutdated"] = image_status(portainer, token, identifier, running)
+    return notes, update_available
+
+
+# --- The site's CLI ---------------------------------------------------------
+
+
+def deliver(config, report):
+    """Hand the report to the site through the lab agent's CLI.
+
+    Returns the CLI's answer, {"ok": true}. Raises NotDelivered when the CLI
+    certainly never ran, DeliveryUnknown when it ran and did not answer ok.
+    """
+    if not os.path.isfile(config["agent_env_file"]):
+        raise NotDelivered(
+            f"the lab agent is not configured ({config['agent_env_file']} is missing), "
+            "so nothing could be sent to the site"
+        )
+    payload = {"check": "portainer", "report": report}
+    timeout = config["report_timeout_seconds"]
+    argv = [
+        config["systemd_run"],
+        "--pipe",
+        "--wait",
+        "--quiet",
+        "--collect",
+        "--service-type=exec",
+        f"--uid={config['agent_user']}",
+        f"--gid={config['agent_group']}",
+        f"--property=EnvironmentFile={config['agent_env_file']}",
+        f"--property=WorkingDirectory={config['agent_app_dir']}",
+        "--property=Environment=NODE_ENV=production",
+        "--property=NoNewPrivileges=yes",
+        "--property=PrivateTmp=yes",
+        "--property=ProtectSystem=full",
+        "--property=ProtectHome=yes",
+        # systemd stops the CLI itself before this helper gives up on it, so
+        # a hung CLI never outlives the run that started it.
+        f"--property=RuntimeMaxSec={timeout}",
+        "--",
+        config["node"],
+        config["report_cli"],
+    ]
+    try:
+        completed = subprocess.run(
+            argv,
+            input=(json.dumps(payload) + "\n").encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={"PATH": CHILD_PATH, "LC_ALL": "C"},
+            timeout=timeout + 30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise DeliveryUnknown(f"the site's CLI did not finish within {timeout} seconds") from None
+    except OSError as error:
+        raise NotDelivered(f"the site's CLI could not be started ({type(error).__name__})") from None
+    for line in completed.stderr.decode("utf-8", "replace").splitlines():
+        if line.strip():
+            print(f"{me}: site CLI: {scrub(line)}", file=sys.stderr, flush=True)
+    if completed.returncode != 0:
+        raise DeliveryUnknown(f"the site's CLI exited with {completed.returncode}")
+    lines = [line for line in completed.stdout.decode("utf-8", "replace").splitlines() if line.strip()]
+    try:
+        answer = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict) or answer.get("ok") is not True:
+        raise DeliveryUnknown("the site's CLI did not answer {\"ok\": true}")
+    return answer
+
+
+# --- The run ----------------------------------------------------------------
+
+
+def summary(report, update_available, delivered, failed):
+    """The one journal line: what was seen, in counts and dates, and whether the site has it."""
+    parts = []
+    if report["up"]:
+        head = f"Portainer {report.get('version', 'of unknown version')}"
+        if report.get("edition"):
+            head += f" {report['edition']}"
+        parts.append(head + " up")
+    else:
+        parts.append("Portainer is not answering")
+    name = report["environmentName"]
+    if report["environmentUp"]:
+        counts = report["containers"]
+        parts.append(
+            f"environment {name} up with {counts['total']} containers ({counts['running']} running, "
+            f"{counts['unhealthy']} unhealthy, {counts['restarting']} restarting, {counts['exited']} exited)"
+        )
+        parts.append(f"{report['imagesChecked']} images checked, {report['imagesOutdated']} outdated")
+    elif report["up"]:
+        parts.append(f"environment {name} down or not found")
+    if report["licenseValid"] is True:
+        parts.append(f"licence valid to {report['licenseExpiresAt'][:10]}" if report["licenseExpiresAt"] else "licence valid")
+    elif report["licenseValid"] is False:
+        parts.append(f"licence not valid (expired {report['licenseExpiresAt'][:10]})" if report["licenseExpiresAt"] else "licence not valid")
+    if update_available:
+        parts.append("a Portainer update is available")
+    parts.append("reported to the site" if delivered else "the report did not reach the site")
+    return f"{'failed' if failed else 'checked'}: " + "; ".join(parts)
+
+
+def run(config):
+    """One run: read the credential, read Portainer, deliver the report, say what was seen. 0 or 1."""
+    portainer = Portainer(config["portainer_url"])
+    token = read_credential()
+    started = now()
+    report = base_report(config, started)
+    errors, notes, update_available = [], [], False
+    try:
+        notes, update_available = inspect(portainer, token, config, report)
+    except Failure as error:
+        errors.append(str(error))
+    report["error"] = clip(errors) if errors else None
+    delivered = False
+    try:
+        deliver(config, report)
+        delivered = True
+    except Failure as error:
+        errors.append(f"the report did not reach the site: {error}")
+    for note in notes:
+        warn(note)
+    for error in errors:
+        warn(error)
+    say(summary(report, update_available, delivered, bool(errors)))
+    return 1 if errors else 0
+
+
+def main(argv=None):
+    """Parse the command line and run once: 1 for a failure."""
+    parser = argparse.ArgumentParser(prog=me, description=__doc__.splitlines()[0])
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
+    args = parser.parse_args(argv)
+    os.umask(0o077)
+    try:
+        return run(load_config(args.config))
+    except Failure as failure:
+        warn(str(failure))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,7 +1,7 @@
 /**
  * The agent's only link to the platform (#817).
  *
- * Everything this process may do is these four POSTs, so what they carry is
+ * Everything this process may do is these five POSTs, so what they carry is
  * the contract: a bearer token from the certificate credential on every call,
  * the agentId in every body (the server checks it against the token), and a
  * refusal that surfaces as an error with the server's status and message
@@ -238,6 +238,46 @@ describe('reportCoderAutomation', () => {
     const { api } = client({ responses: [{ status: 422, body: { ok: false, stored: false, error: 'Coder refused the token (HTTP 401); the token was not stored' } }] });
     await assert.rejects(api.reportCoderAutomation({ report }), (error) => {
       assert.equal(error.status, 422);
+      return true;
+    });
+  });
+});
+
+describe('reportHostCheck (#1282)', () => {
+  // Counts and states only, as the Portainer check reports them; no name of
+  // a container or an image ever travels in this body.
+  const report = {
+    checkedAt: '2026-10-19T04:30:00Z',
+    up: true,
+    version: '2.45.2',
+    edition: 'EE',
+    licenseValid: true,
+    licenseExpiresAt: '2027-09-26T00:00:00Z',
+    environmentName: 'local',
+    environmentUp: true,
+    containers: { total: 10, running: 8, unhealthy: 0, restarting: 0, exited: 2 },
+    imagesChecked: 8,
+    imagesOutdated: 0,
+    error: null,
+  };
+
+  it('posts the check name and the report to agent/reportHostCheck and returns the answer', async () => {
+    const { api, calls } = client({ responses: [{ status: 200, body: { ok: true } }] });
+    assert.deepEqual(await api.reportHostCheck({ check: 'portainer', report }), { ok: true });
+    assert.equal(calls[0].url, `${API}/agent/reportHostCheck`);
+    assert.deepEqual(calls[0].body, { agentId: 'vps-hostinger-01', check: 'portainer', report });
+  });
+
+  it('sends no agentId but its own', async () => {
+    const { api, calls } = client();
+    await api.reportHostCheck({ check: 'portainer', report, agentId: 'someone-else' });
+    assert.deepEqual(calls[0].body, { agentId: 'vps-hostinger-01', check: 'portainer', report });
+  });
+
+  it('surfaces a refused report as an error carrying the status', async () => {
+    const { api } = client({ responses: [{ status: 400, body: { ok: false, error: 'report.up must be a boolean' } }] });
+    await assert.rejects(api.reportHostCheck({ check: 'portainer', report: { ...report, up: 'yes' } }), (error) => {
+      assert.equal(error.status, 400);
       return true;
     });
   });

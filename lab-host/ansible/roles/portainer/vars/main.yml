@@ -20,3 +20,6 @@ portainer_advice_setup_token: >-
   Creating the administrator needs the setup_token that sudo docker logs
   {{ portainer_container_name }} prints for the current start (docs/runbooks/labs-host.md,
   "Portainer through an SSH tunnel").
+# The check's directory (#1282): where the token and the configuration live,
+# root 0700, derived from the token's path so the two cannot part.
+portainer_check_dir: "{{ portainer_check_token_file | dirname }}"

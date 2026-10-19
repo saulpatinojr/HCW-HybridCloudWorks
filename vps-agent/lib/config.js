@@ -1,14 +1,15 @@
 /**
  * The agent's API settings, read from the environment in one place.
  *
- * Two entry points need them: index.js, the long-running agent, and
+ * Three entry points need them: index.js, the long-running agent;
  * bin/report-coder-automation.js, the one-shot the lab host's Coder upkeep
- * calls (2026-10-08). Both are started with the same environment file
- * (labs-agent.env, rendered by the labs_agent role from
- * vps-agent/.env.example's names), so both must read the same names the
- * same way, and the one-shot must not grow a second, slightly different
- * idea of where the API is or which agent it is. These six lines were
- * index.js's, moved unchanged.
+ * calls (2026-10-08); and bin/report-host-check.js, the one-shot a host
+ * check such as hcw-portainer-check calls (2026-10-19, #1282). All are
+ * started with the same environment file (labs-agent.env, rendered by the
+ * labs_agent role from vps-agent/.env.example's names), so all must read the
+ * same names the same way, and no one-shot may grow a second, slightly
+ * different idea of where the API is or which agent it is. These six lines
+ * were index.js's, moved unchanged.
  *
  * ONLY THE API SETTINGS. The job limits and the poll interval stay in
  * index.js, as `process.env.LABS_AGENT_* || <default>`, because

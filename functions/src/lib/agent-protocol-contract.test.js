@@ -58,8 +58,9 @@ function makeConfigStore(initial = {}) {
 }
 
 describe('agent protocol contract (QA-3 #978): functions API', () => {
-  it('contract fixture defines all four required agent RPCs', () => {
-    const expectedRpcs = ['claimLabJob', 'heartbeat', 'completeLabJob', 'reportCoderAutomation'];
+  it('contract fixture defines all five required agent RPCs', () => {
+    // reportHostCheck joined on 2026-10-19 (#1282).
+    const expectedRpcs = ['claimLabJob', 'heartbeat', 'completeLabJob', 'reportCoderAutomation', 'reportHostCheck'];
     expect(Object.keys(contract.rpcs).sort()).toEqual(expectedRpcs.sort());
   });
 
@@ -357,6 +358,57 @@ describe('agent protocol contract (QA-3 #978): functions API', () => {
       const body = parse(res);
       expect(body.ok).toBe(true);
       expect(body.stored).toBe(false);
+    });
+  });
+
+  describe('reportHostCheck contract (#1282)', () => {
+    const rpc = contract.rpcs.reportHostCheck;
+
+    it('accepts the sample report and returns the contract success response', async () => {
+      const store = makeConfigStore();
+      const handlers = createLabAgentHandlers({ guard: allowGuard(), store, now: () => NOW });
+
+      const res = await handlers.reportHostCheck(req(rpc.request.sample), context);
+      expect(res.status).toBe(200);
+
+      const body = parse(res);
+      for (const field of rpc.response.success.requiredFields) {
+        expect(body).toHaveProperty(field);
+      }
+      expect(body).toEqual(rpc.response.success.sample);
+
+      // The entry is the sample's report, every required field present, plus
+      // the site's time of receipt; nothing the contract does not name.
+      const entry = store.createDoc.mock.calls[0][1].checks[rpc.request.sample.check];
+      for (const field of rpc.request.reportFields.requiredFields) {
+        expect(entry).toHaveProperty(field);
+      }
+      for (const field of rpc.request.reportFields.containerFields.requiredFields) {
+        expect(entry.containers).toHaveProperty(field);
+      }
+      expect(Object.keys(entry).sort()).toEqual(
+        [...rpc.request.reportFields.requiredFields, ...rpc.request.reportFields.optionalFields, 'agentId', 'receivedAt'].sort()
+      );
+    });
+
+    it('accepts every check the contract lists, and refuses one it does not', async () => {
+      for (const check of rpc.request.validChecks) {
+        const handlers = createLabAgentHandlers({ guard: allowGuard(), store: makeConfigStore(), now: () => NOW });
+        const res = await handlers.reportHostCheck(req({ ...rpc.request.sample, check }), context);
+        expect(res.status, check).toBe(200);
+      }
+      const handlers = createLabAgentHandlers({ guard: allowGuard(), store: makeConfigStore(), now: () => NOW });
+      const res = await handlers.reportHostCheck(req({ ...rpc.request.sample, check: 'coder' }), context);
+      expect(res.status).toBe(400);
+      expect(parse(res).error).toMatch(/check must name a host check/);
+    });
+
+    it('refuses a report missing a required contract field', async () => {
+      const { up: _omitted, ...report } = rpc.request.sample.report;
+      const handlers = createLabAgentHandlers({ guard: allowGuard(), store: makeConfigStore(), now: () => NOW });
+      const res = await handlers.reportHostCheck(req({ ...rpc.request.sample, report }), context);
+      expect(res.status).toBe(400);
+      expect(parse(res).error).toMatch(/report\.up is required/);
     });
   });
 });

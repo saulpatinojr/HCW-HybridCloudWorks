@@ -1,0 +1,52 @@
+# {{ ansible_managed }}
+#
+# Portainer, read and reported (roles/portainer, "The check"; #1282): every
+# {{ portainer_check_interval }} the script reads Portainer over the loopback
+# with the owner's token (version, edition, licence, the {{ portainer_check_environment_name }}
+# environment, container states, images with updates) and hands one
+# content-free report to the site through the lab agent's CLI, where the
+# Health Hub's Portainer card shows it. Nothing it logs holds the token or a
+# container's name. A failure is one syslog line through the hardening role's
+# notifier and the alert-lab-unit-failed alert (LAB-2). Run by
+# {{ portainer_check_unit }}.timer and once at the end of every bootstrap.sh run.
+[Unit]
+Description=Read Portainer and report it to the site ({{ portainer_check_unit }})
+Documentation=https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/lab-host/ansible/roles/portainer
+After=network-online.target docker.service
+Wants=network-online.target
+# Until the owner has set vault_portainer_api_token there is nothing to read
+# Portainer with, and the run is skipped rather than failed, so no alert
+# fires every quarter hour before then (lab-host/README.md, "Portainer").
+ConditionPathExists={{ portainer_check_token_file }}
+OnFailure=hcw-unit-failed@%n.service
+
+[Service]
+Type=oneshot
+# The token reaches the script as a credential: systemd copies the root-only
+# file into this unit's private credentials directory and the script reads
+# $CREDENTIALS_DIRECTORY/api-token, never an argument (visible in ps and the
+# journal) and never the environment (inherited by every child).
+LoadCredential=api-token:{{ portainer_check_token_file }}
+ExecStart={{ portainer_check_script }} --config {{ portainer_check_config_file }}
+# Its own name in the journal, so `journalctl -t {{ portainer_check_unit }}` reads
+# the check's lines without systemd's around them.
+SyslogIdentifier={{ portainer_check_unit }}
+# Five short reads, one image read per running container within the script's
+# own 90 s budget, and the CLI's {{ portainer_check_report_timeout_seconds }} s with 30 s of grace.
+TimeoutStartSec=6min
+Nice=10
+UMask=0077
+# Root, because systemd-run, which starts the agent's CLI as the agent's user
+# with the agent's environment file, needs it; the token file is root-only
+# for the same reason. The hardening is hcw-workspace-reach.service's, which
+# is also what hcw-coder-automation.service runs systemd-run under: the
+# script talks to PID 1 over its AF_UNIX socket and to Portainer over the
+# loopback, and none of these lines touches either. What is left out on
+# purpose, because it would: User= (systemd-run needs root), and
+# RestrictAddressFamilies=, PrivateNetwork=, IPAddressDeny= and
+# ProtectProc=, which would close the socket or the loopback. Nothing is
+# written, so there is no ReadWritePaths=.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

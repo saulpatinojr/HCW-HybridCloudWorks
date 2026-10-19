@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run {{ portainer_check_unit }}.service every {{ portainer_check_interval }}
+
+[Timer]
+OnBootSec={{ portainer_check_boot_delay }}
+OnUnitActiveSec={{ portainer_check_interval }}
+RandomizedDelaySec=1min
+Unit={{ portainer_check_unit }}.service
+
+[Install]
+WantedBy=timers.target

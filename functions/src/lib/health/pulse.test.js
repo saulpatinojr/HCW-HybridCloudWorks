@@ -117,8 +117,29 @@ describe('the pulse run', () => {
       id: 'coder_status_token',
       operations: { status: { lastAcceptedAt: minutesAgo(30) } },
     });
+    // And the lab host read Portainer a few minutes ago and found it sound (#1282).
+    store.data.set('host_checks', {
+      id: 'host_checks',
+      checks: {
+        portainer: {
+          checkedAt: minutesAgo(4),
+          up: true,
+          version: '2.45.2',
+          edition: 'EE',
+          licenseValid: true,
+          licenseExpiresAt: '2027-09-26T00:00:00.000Z',
+          environmentName: 'local',
+          environmentUp: true,
+          containers: { total: 10, running: 8, unhealthy: 0, restarting: 0, exited: 2 },
+          imagesChecked: 8,
+          imagesOutdated: 0,
+          error: null,
+          receivedAt: minutesAgo(3),
+        },
+      },
+    });
     const summary = await pulse(store).run();
-    expect(summary).toMatchObject({ checks: 18, recorded: 18, failures: 0 });
+    expect(summary).toMatchObject({ checks: 19, recorded: 19, failures: 0 });
 
     for (const id of [
       'cosmos',
@@ -139,6 +160,7 @@ describe('the pulse run', () => {
       'coder-template',
       'lab-canary',
       'coder-token',
+      'portainer',
     ]) {
       const doc = stored(store, id);
       expect(doc, id).toBeTruthy();
@@ -154,8 +176,8 @@ describe('the pulse run', () => {
       lastBeatAt: NOW.toISOString(),
       intervalMs: PULSE_INTERVAL_MS,
       lateAfterMs: PULSE_LATE_AFTER_MS,
-      checks: 18,
-      recorded: 18,
+      checks: 19,
+      recorded: 19,
       failures: [],
     });
     expect(store.upsertDoc.mock.calls.at(-1)[1].id).toBe(PULSE_DOC_ID);

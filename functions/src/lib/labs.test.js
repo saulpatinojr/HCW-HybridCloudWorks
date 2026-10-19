@@ -368,7 +368,9 @@ describe('getLabsSnapshot', () => {
     expect(behind.drift.summary).toMatch(/^behind is behind main: 1 change/);
     expect(silent.applied).toBeNull();
     expect(silent.drift.summary).toMatch(/has not reported the commit it converged from/);
-    expect(Object.keys(body.checks).sort()).toEqual(['coder-template', 'coder-token', 'lab-canary', 'lab-drift']);
+    expect(Object.keys(body.checks).sort()).toEqual(['coder-template', 'coder-token', 'lab-canary', 'lab-drift', 'portainer']);
+    // No host_checks document yet: the Portainer card says so rather than failing (#1282).
+    expect(body.checks.portainer.status).toBe('unknown');
     expect(body.checks['lab-drift'].status).toBe('critical');
     expect(body.checks['lab-drift']).not.toHaveProperty('agents');
     expect(body.checks['coder-template'].status).toBe('unknown');

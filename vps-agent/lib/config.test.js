@@ -61,11 +61,12 @@ describe('missingConfig', () => {
   });
 });
 
-describe('both entry points read the API settings through this module', () => {
+describe('every entry point reads the API settings through this module', () => {
   const strip = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-  it('index.js and the Coder automation one-shot import it and read no API name themselves', () => {
-    for (const file of ['../index.js', './report-coder-automation.js']) {
+  it('index.js and the two one-shots import it and read no API name themselves', () => {
+    // The host checks' one-shot joined the Coder automation's on 2026-10-19 (#1282).
+    for (const file of ['../index.js', './report-coder-automation.js', './report-host-check.js']) {
       const code = strip(readFileSync(new URL(file, import.meta.url), 'utf8'));
       assert.match(code, /from '\.\/(lib\/)?config\.js'/, `${file} does not import lib/config.js`);
       for (const name of API_NAMES) {

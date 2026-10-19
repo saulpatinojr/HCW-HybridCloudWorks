@@ -19,6 +19,23 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **Portainer read-only check on the lab host, reported into the Health Hub
+  (#1282)**. The `portainer` role installs `hcw-portainer-check`: every 15
+  minutes, and once on each `bootstrap.sh` run, it reads Portainer on the
+  host's loopback with the owner's access token (`GET` only; the token root
+  `0600`, handed to the unit through `LoadCredential`, never on a command
+  line) and hands one content-free report of counts, states, version and
+  licence dates to the site through the lab agent's new
+  `bin/report-host-check.js` and `POST /api/agent/reportHostCheck`, kept in
+  `admin_config/host_checks`. The Health Hub's **Portainer** card (Enhanced)
+  judges it: degraded on an unhealthy or restarting container, an image with
+  an update or a licence within 30 days of its end; critical when Portainer
+  or its `local` environment is down, the check failed, or no report has
+  arrived for 45 minutes. A failed run raises the existing LAB-2 alert; no
+  new rule. The token is the owner's own (owner decision 2026-10-19), set
+  with `hcw-vault-set` as `vault_portainer_api_token`; until it is set the
+  check is skipped and the card says so.
+
 - **Visitor lab sessions: brokered ephemeral Coder workspaces for visitors outside the org (#1016)**.
   - Implemented `functions/src/lib/labs/visitor-session.js` to broker ephemeral Coder users (`v-<hex>`) and workspaces from template `hcw-lab` without granting permanent sign-up or accounts.
   - Enforced strict fail-closed constraints: origin lock against site apex/www, Cloudflare Turnstile token validation (`action: visitor-session`), per-client daily quota (2 sessions/day), global concurrency limit (`LABS_VISITOR_MAX_CONCURRENT=2`), and a 60-minute hard duration limit.
