@@ -994,6 +994,32 @@ belonged to another user:
 | Template Admin, no scope | 200, 200, `count` 1 | **200, changed** | **200, deleted** | 403 |
 | Member, Auditor or User Admin | 200, 200, `count` **0** | Refused | not tried | Refused |
 
+**Measured again on 2026-10-19, on v2.38.0 (#1037),** with throwaway
+tokens of `hcw-status` minted by the rotation credential and deleted after,
+to answer whether that credential can be split or narrowed:
+
+| Question | Token's scopes | Result |
+| --- | --- | --- |
+| Can a scoped token publish? | `coder:templates.author` alone | `templates push` and `templates versions list` fail at `get organizations: Resource not found` |
+| | `coder:templates.author`, `organization:read`, `user:read` | **Publishes** (`templates push` and `templates edit --default-ttl` succeed); cannot mint keys (500 `rbac: forbidden`) |
+| Can `api_key:create` mint beyond itself? | `api_key:create` alone | 404 on the user path: it cannot resolve `hcw-status` without `user:read` |
+| | `template:read`, `workspace:read`, `api_key:read`, `user:read`, `api_key:create`, `api_key:delete` | **Mints a token with `template:read` and `template:update`, which it does not hold, and that token updates the template (200)**. The inheritance rule in Coder's current docs is not enforced on 2.38.0 |
+| Least set that renews the status token | the six scopes above | Reads itself, templates and running workspaces; creates a status-shaped token, reads its record, deletes it (201, 200, 204) |
+| Is scoping enforced on reads? | `workspace:read` alone | Templates list answers 200 with **0** of 3; `/users/me` 404: enforcement is by filtering, not refusal |
+
+Also seen: `organization_member:read` is an internal scope a token cannot
+request; a write outside a token's scopes answers 500 (`rbac: forbidden`)
+rather than 403; and the measurement left one same-content version of
+`hcw-lab` active. **Decision:** the rotation credential stays unscoped
+(`coder:all`): a credential that can renew the status token can mint any
+scope on this version, so narrowing it contains nothing against a leak,
+and containment stays on the account (`roles/coder/README.md`, "Coder
+automation", and the runbook's leak containment). Three leftover tokens
+of `hcw-status` that nothing held any more were deleted the same day: the
+2026-09-28 and 2026-10-07 hand-made status tokens, superseded on
+2026-10-10, and `hcw-status-rotation-2026-10-10`, the old host's
+credential restored by the 2026-10-18 snapshot.
+
 **Before you start.** Coder is on and you have signed in as its owner
 ("First admin sign-in", above). The steps run Coder's CLI inside the `coder`
 container on the host, over `ssh hcw-lab`, so nothing is installed on the

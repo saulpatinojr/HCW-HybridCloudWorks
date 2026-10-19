@@ -229,14 +229,20 @@ the `/` it mounts is that user's view of the host: a bad template is
 contained, not refused, and it still reaches every learner's workspace.
 `template.test.mjs` keeps this repository's template from doing that, but a
 token pushes whatever it is given, and Coder's API answers it from anywhere
-on the internet through Caddy. The narrowest v2.37.3 token that could
-publish still carries template write (`template:update`, with
-`file:create` for the upload; the exact set `templates push` needs has not
-been measured), and `--allow template:<id>` can hold it to the one template,
-but no scope holds it to this host. That is why the token was the owner's,
-made in a pane for the one run and expiring on its own, until the bounds
-above were accepted; and why the rotation credential is unscoped rather
-than a scope set nobody has measured against `templates push`.
+on the internet through Caddy. The narrowest token that publishes was
+measured on v2.38.0 on 2026-10-19 (#1037; the table in `lab-host/README.md`,
+"The status token for the site"): `coder:templates.author` plus
+`organization:read` and `user:read`, the two reads the CLI resolves the
+organisation through; `--allow template:<id>` can hold it to the one
+template, but no scope holds it to this host. That is why the token was the
+owner's, made in a pane for the one run and expiring on its own, until the
+bounds above were accepted; and why the rotation credential stays unscoped
+even now that the set is known: on this version a token that holds
+`api_key:create` (which renewing the status token needs) mints tokens with
+scopes it does not hold itself, so a narrowed credential contains nothing
+against a leak, and a scope list would have to track what Coder's CLI
+needs from release to release for no gain. Containment works on the
+account, below.
 
 ## Coder automation
 
@@ -268,6 +274,8 @@ created with none) belonging to `hcw-status`, a Template Admin and never an
 Owner. With it the host creates and deletes `hcw-status`'s own tokens,
 renews the credential itself and publishes the template, and nothing more:
 it cannot manage users, change deployment settings or act as anyone else.
+Measured on 2026-10-19 (#1037) and kept unscoped on purpose: the paragraph
+above "Coder automation" says why a scoped set would not contain it.
 The seed and every run refuse it if `hcw-status` holds Owner or is not a
 Template Admin, which reading every workspace and publishing need; the seed
 keeps a stored credential only while both still hold, never on its username
