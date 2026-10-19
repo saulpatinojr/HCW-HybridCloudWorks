@@ -640,13 +640,26 @@ ADR 0032 rebuilds the host rather than repairing it.
    Accept the new host key after comparing its fingerprint with the one the
    Web Console shows ("Connect from a desktop", above). Success is the
    server's host name. A session with no terminal to answer the prompt
-   verifies first and connects second: the owner reads the fingerprint
-   from the Web Console, the session reads the host's with
-   `ssh-keyscan -t ed25519 148.230.91.226 | ssh-keygen -lf -`, and only when
-   the two match does it connect with `ssh -o
-   StrictHostKeyChecking=accept-new hcw-lab hostname`. On 2026-10-18 the
-   session connected first and recorded the fingerprint
-   (`SHA256:RgkOkM9UDA8TtHeLrDjOXymTrzanqCZ39z0iDuzW4yg`) without the
+   pins the key it compared, so the connection cannot be answered by a
+   different one: it scans the key once, shows that scan's fingerprint for
+   the owner to compare with the Web Console's, and appends that same scan
+   to `known_hosts` under the alias's name before connecting with the
+   default strict checking, which refuses any other key. PowerShell:
+
+   ```powershell
+   $k = ssh-keyscan -t ed25519 lab.hybridcloudworks.com 2>$null; $k | ssh-keygen -lf -
+   ```
+
+   Only when the fingerprint matches the Web Console's:
+
+   ```powershell
+   Add-Content -Path $HOME\.ssh\known_hosts -Value $k; ssh hcw-lab hostname
+   ```
+
+   Never `StrictHostKeyChecking=accept-new` here: it records whichever key
+   the connection meets, which need not be the one that was compared. On
+   2026-10-18 the session did exactly that and recorded the fingerprint
+   (`SHA256:RgkOkM9UDA8TtHeLrDjOXymTrzanqCZ39z0iDuzW4yg`) without a
    comparison; that is written on #955 as a divergence, and this paragraph
    is the correction.
 6. **First run**: `infra-lab/README.md`, step 7. Success is `host check: no
