@@ -530,7 +530,8 @@ describe('defaultSpawnRunner', () => {
     const mockProc = new EventEmitter();
     mockProc.stdout = new EventEmitter();
     mockProc.stderr = new EventEmitter();
-    mockProc.stdin = { write: vi.fn(), end: vi.fn() };
+    mockProc.stdin = new EventEmitter();
+    mockProc.stdin.end = vi.fn();
     const mockSpawn = vi.fn().mockReturnValue(mockProc);
 
     const promise = defaultSpawnRunner({
@@ -545,15 +546,15 @@ describe('defaultSpawnRunner', () => {
 
     const res = await promise;
     expect(res).toEqual({ code: 0, stdout: 'output-data', stderr: '' });
-    expect(mockProc.stdin.write).toHaveBeenCalledWith('input-data');
-    expect(mockProc.stdin.end).toHaveBeenCalled();
+    expect(mockProc.stdin.end).toHaveBeenCalledWith('input-data');
   });
 
-  it('captures stderr and non-zero exit code', async () => {
+  it('captures stderr and non-zero exit code, ignoring stdin EPIPE', async () => {
     const mockProc = new EventEmitter();
     mockProc.stdout = new EventEmitter();
     mockProc.stderr = new EventEmitter();
-    mockProc.stdin = { write: vi.fn(), end: vi.fn() };
+    mockProc.stdin = new EventEmitter();
+    mockProc.stdin.end = vi.fn();
     const mockSpawn = vi.fn().mockReturnValue(mockProc);
 
     const promise = defaultSpawnRunner({
@@ -563,6 +564,7 @@ describe('defaultSpawnRunner', () => {
       spawnImpl: mockSpawn,
     });
 
+    mockProc.stdin.emit('error', new Error('EPIPE'));
     mockProc.stderr.emit('data', 'error occurred');
     mockProc.emit('close', 1);
 
@@ -574,7 +576,8 @@ describe('defaultSpawnRunner', () => {
     const mockProc = new EventEmitter();
     mockProc.stdout = new EventEmitter();
     mockProc.stderr = new EventEmitter();
-    mockProc.stdin = { write: vi.fn(), end: vi.fn() };
+    mockProc.stdin = new EventEmitter();
+    mockProc.stdin.end = vi.fn();
     const mockSpawn = vi.fn().mockReturnValue(mockProc);
 
     const promise = defaultSpawnRunner({

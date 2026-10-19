@@ -375,8 +375,10 @@ export async function defaultSpawnRunner({
     });
     proc.on('error', reject);
     proc.on('close', (code) => resolve({ code, stdout, stderr }));
-    proc.stdin.write(stdin);
-    proc.stdin.end();
+    proc.stdin.on('error', () => {
+      // Ignore EPIPE. The 'close' event reports the exit code.
+    });
+    proc.stdin.end(stdin);
   });
 }
 

@@ -427,6 +427,8 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **Cloudflare token roll: a child process that exits before reading its input no longer throws `EPIPE`** (`functions/src/lib/credentials/cloudflare-roll.js`). The spawn helper installs an `error` handler on stdin and writes with `end(input)`, so callers get the exit code and stderr through `close`; the tests model stdin as an emitter and add the `EPIPE` case. Found as an unlanded stash from #1247.
+
 - **The lab host pre-pulls every template's workspace image, not `hcw-lab`'s
   alone (#1268)**. `lab_images` pulled one image into the Coder sandbox
   daemon, the digest `lab-host/coder/templates/hcw-lab/main.tf` pins. The
