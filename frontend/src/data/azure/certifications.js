@@ -2,7 +2,7 @@
 // Verified by hand against the Learn credentials browse API
 // (https://learn.microsoft.com/api/contentbrowser/search/credentials) and the credential-retirement page
 // (https://learn.microsoft.com/en-us/credentials/support/credential-retirement) on the date below.
-// Last manual sync: 2026-10-05
+// Last manual sync: 2026-10-19
 //
 // THE GITHUB EXAMS ARE NOT CARRIED HERE (#496, owner decision 2026-09-11).
 // GH-100, GH-200, GH-300, GH-500, GH-600 and GH-900 used to sit in this file as
@@ -137,7 +137,7 @@
 // Only these rows were re-read, so `DATA_AS_OF` and the sync line above are
 // deliberately unchanged.
 
-export const DATA_AS_OF = '2026-10-05';
+export const DATA_AS_OF = '2026-10-19';
 
 /**
  * The page a reader can check this catalogue's freshness claim against.
@@ -2025,8 +2025,8 @@ export const certifications = [
     level: 'Associate',
     status: 'retired',
     expiryDate: '2026-10-30',
-    statusReadDate: '2026-10-12',
     replacedBy: 'ab-400',
+    statusReadDate: '2026-10-12',
     description: 'Design, develop, secure, and troubleshoot Power Platform solutions.',
     longDescription:
       'Validate expertise developing custom Power Platform components, connectors, and integrations using code-first approaches and Azure services. PL-400 becomes AB-400 on October 16, 2026: registration for PL-400 closes that day, and anyone registered by then can take it through October 30, 2026. The certification earned, Power Platform Developer Associate, is unchanged.',
