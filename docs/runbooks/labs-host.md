@@ -595,8 +595,15 @@ ADR 0032 rebuilds the host rather than repairing it.
    application, because the host check refuses anything those leave in
    `/opt` or running.
    Give root your SSH key there (the key `scripts/lab/Connect-Lab.ps1`
-   printed; `infra-lab/README.md`, step 6). Reinstalling wipes the disk: the
-   Ansible vault on the host, Portainer's data and Vault's data go with it.
+   printed; `infra-lab/README.md`, step 6). The same two steps exist in
+   Hostinger's API, which is how the 2026-10-18 rehearsal ran them: `POST
+   /api/vps/v1/virtual-machines/939861/recreate` with `template_id` `1214`
+   (plain Ubuntu 26.04 LTS, the id the server already ran, so step 3 had
+   nothing to set), then `POST /api/vps/v1/virtual-machines/939861/ssh-keys`
+   with the public key; port 22 answered 45 seconds after the recreate was
+   accepted. Reinstalling wipes the disk: the Ansible vault on the host,
+   Portainer's data, Vault's data and the Coder automation's rotation
+   credential go with it (step 7 brings each back).
 3. **The workspace variable.** If the `hcw-lab` workspace exists, its
    `hostinger_template_id` must match the new install, or its next plan stops
    at the postcondition. Read the new value with the line in
@@ -632,7 +639,29 @@ ADR 0032 rebuilds the host rather than repairing it.
 
    Accept the new host key after comparing its fingerprint with the one the
    Web Console shows ("Connect from a desktop", above). Success is the
-   server's host name.
+   server's host name. A session with no terminal to answer the prompt
+   pins the key it compared, so the connection cannot be answered by a
+   different one: it scans the key once, shows that scan's fingerprint for
+   the owner to compare with the Web Console's, and appends that same scan
+   to `known_hosts` under the alias's name before connecting with the
+   default strict checking, which refuses any other key. PowerShell:
+
+   ```powershell
+   $k = ssh-keyscan -t ed25519 lab.hybridcloudworks.com 2>$null; $k | ssh-keygen -lf -
+   ```
+
+   Only when the fingerprint matches the Web Console's:
+
+   ```powershell
+   Add-Content -Path $HOME\.ssh\known_hosts -Value $k; ssh hcw-lab hostname
+   ```
+
+   Never `StrictHostKeyChecking=accept-new` here: it records whichever key
+   the connection meets, which need not be the one that was compared. On
+   2026-10-18 the session did exactly that and recorded the fingerprint
+   (`SHA256:RgkOkM9UDA8TtHeLrDjOXymTrzanqCZ39z0iDuzW4yg`) without a
+   comparison; that is written on #955 as a divergence, and this paragraph
+   is the correction.
 6. **First run**: `infra-lab/README.md`, step 7. Success is `host check: no
    other workloads found` near the top (above), and, because there is no
    vault yet and Coder is on (since 2026-09-28), a `PLAY RECAP` for
@@ -640,86 +669,147 @@ ADR 0032 rebuilds the host rather than repairing it.
    its three vault secrets`. Every role before it has run, so root login is
    off and `hcw-vault-set` is installed; the re-run in step 7 finishes the
    rest. Run `Connect-Lab.ps1` again without `-User root`.
-7. **Everything the disk held, again.** Create the Ansible vault's
-   password and set its keys (`lab-host/README.md`, "The vault"), rotating
-   the values marked "rotate on every host rebuild" in
-   [Required inputs §4.7](../standards/required-inputs.md#47-vps-agent-hostinger-env-never-committed)
-   (the Caddy DNS token and the Coder GitHub OAuth secret). Then re-run
-   `bootstrap.sh`, which now ends with `failed=0`. The agent's key
-   pair is new, and the vault that held its four keys is gone, so run "The
-   lab agent's go-live" (below) again: it appends the new certificate and
-   writes the four keys back. Re-onboard Arc ("Re-onboarding a rebuilt host", below).
-   Portainer gets a new administrator and its licence key (below).
-   **Keep the old Vault recovery keys.** The Vault snapshot about to be
-   restored carries its own recovery authority, and after the restore those
-   five keys, the ones already in the password manager, are the restored
+7. **Everything the disk held, again, in this order.** The 2026-10-18
+   rehearsal found that the order matters more than the earlier text said:
+   every role after `coder` is installed only once the play gets past
+   Coder, and the play gets past Coder only once its database is back.
+   1. **The Ansible vault.** Create its password and set every key the host
+      cannot make itself (`lab-host/README.md`, "The vault"), rotating the
+      values marked "rotate on every host rebuild" in
+      [Required inputs §4.7](../standards/required-inputs.md#47-vps-agent-hostinger-env-never-committed).
+      Seven keys by hand: `vault_cloudflare_api_token` (**Roll** the Caddy
+      token at https://dash.cloudflare.com/profile/api-tokens, which keeps
+      its name, scope, filter and end date, and check the client-IP filter
+      holds **both** of the host's
+      addresses, IPv4 and the IPv6 `/128`: a reinstalled Ubuntu reaches the
+      Cloudflare API over IPv6, and every issuance failed with `Cannot use
+      the access token from location` until the second address was added),
+      `vault_coder_oauth2_github_client_id` and
+      `vault_coder_oauth2_github_client_secret` (the `HCW Labs` app at
+      https://github.com/organizations/HybridCloudWorks/settings/applications:
+      **Edit**, read the Client ID, **Generate a new client secret**), the
+      three add-on Turnstile secrets `vault_addon_migration_turnstile_secret`,
+      `vault_addon_network_assessment_turnstile_secret` and
+      `vault_addon_cloud_assessment_turnstile_secret` (each widget's
+      **Secret key** under **Settings** at
+      https://dash.cloudflare.com/?to=/:account/turnstile, widgets
+      `hcw-addon-migration`, `HCW-NetworkEyes_AddOn` and
+      `HCW-CloudAssessor_AddOn`; the play names a missing one), and
+      `vault_coder_postgres_password`, generated on the host. Each goes in
+      with the `hcw-vault-set` clipboard line in "The vault". The four
+      `vault_arc_*` and four `vault_labs_agent_*` keys are the scripts'
+      below, so the vault holds fifteen keys when step 7 is done.
+   2. **Arc, both runs** ("Re-onboarding a rebuilt host", below):
+      `Register-LabArc.ps1`, then `Register-LabArc.ps1 -Connect`. The
+      `-Connect` run's `bootstrap.sh` stops at `coder : Coder has no account
+      yet`, because the restored database is not there yet; Arc still
+      connects, the credential is still removed and the monitoring agent
+      still installed, and the run says `Arc onboarding does not depend on
+      it`. **Before any further `bootstrap.sh`, run `Connect-Lab.ps1
+      -Arc`:** the next run closes port 22 (the hardening keeps sshd on the
+      loopback once Arc is Connected), and the agent has already created the
+      connectivity endpoint and the SSH service configuration, so Arc SSH
+      works at once. A session that ran the next step first was locked out
+      until it switched.
+   3. **The `hcw-azure` run**, started by hand at
+      https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs (**+ New
+      run**, Plan and apply): the two role assignments on the machine
+      identity (`lab_hybrid_vault_seal`, `lab_hybrid_backups_writer`) are
+      replaced, because the identity is new. Both restores below read the
+      container as that identity, so they wait on this apply.
+   4. **Everything after Coder, without Coder.** Bash, on the host:
+
+      ```bash
+      sudo /opt/hcw-src/lab-host/bootstrap.sh --skip-tags coder
+      ```
+
+      The roles after `coder` (agent, images, add-ons, Portainer, Vault,
+      backups) are installed; the run ends `failed=1` at the workspace-reach
+      post-task, which cannot pass while Coder is unpublished, and here that
+      is expected. Do not make Coder's first account by hand: the
+      `--first-user` line in "A Coder with no account yet" answers `Password
+      authentication is disabled.` (the Compose file sets
+      `CODER_DISABLE_PASSWORD_AUTH`), and the restore brings the accounts
+      back anyway.
+   5. **Coder, from the container** ("Off-host backups", below, has what
+      each line does). Bash, on the host:
+
+      ```bash
+      sudo /usr/local/sbin/hcw-backup-restore list
+      ```
+
+      ```bash
+      sudo /usr/local/sbin/hcw-backup-restore coder --yes
+      ```
+
+      Success is `restored coder/coder-<UTC stamp>.sql.gz into coder-postgres`
+      and the `buildinfo` line under "Enabling" in `lab-host/README.md`
+      answering within a minute; signed-in learners and the templates are
+      back. **Note the time: Coder is back.**
+   6. **The seal, before Vault holds anything**, because the snapshot was
+      taken under the Azure Key Vault seal and only a Vault under the same
+      seal can open it: steps 4 and 5 of "HashiCorp Vault: moving to
+      auto-unseal" (the seal fact, then `bootstrap.sh --tags
+      vault_seal_check`, whose result is the `The Arc identity reads …`
+      line; that run too ends at the workspace-reach post-task).
+   7. **The lab agent's go-live** (below): `Register-LabAgent.ps1` appends
+      the new certificate, writes the four keys back and runs the full
+      `bootstrap.sh`, which now publishes Coder on its restored accounts,
+      renders the seal into Vault's configuration, starts the agent and
+      passes the workspace-reach check: `failed=0`. The agent id is pinned
+      (`labs_agent_id`), so the registry document already binds it and
+      there is nothing to register; its "Press Enter" takes Enter, or a
+      newline on standard input.
+   8. **Vault.** `vault status` now says `Seal Type azurekeyvault` and
+      `Initialized false`. Initialise under the seal and restore in one
+      command on the host: the fresh initialisation's root token goes from a
+      root-only file into the restore helper's standard input and the file
+      is shredded, because after the restore those credentials open
+      nothing, so they never need to reach a screen or a password manager.
+      Bash, on the host:
+
+      ```bash
+      sudo -i bash -c 'umask 077; vault operator init -recovery-shares=5 -recovery-threshold=3 -format=json > /root/vault-init.json && python3 -c "import json; print(json.load(open(\"/root/vault-init.json\"))[\"root_token\"])" | /usr/local/sbin/hcw-backup-restore vault --yes; rc=$?; shred -u /root/vault-init.json; exit $rc'
+      ```
+
+      The helper refuses a Vault whose seal is not `azurekeyvault`, naming
+      step 6. Success is `Vault accepted vault/vault-<UTC stamp>.snap for
+      restore and now reports Initialized true, Sealed false`. That is
+      acceptance, not completion: Vault replaces its data in the background,
+      so before relying on it, bash, on the host:
+
+      ```bash
+      sudo journalctl -u vault -n 30 --no-pager && vault status
+      ```
+
+      Good is `post-unseal setup complete` in the log, `Sealed false`, and
+      `vault status` with no error. If it reports `Sealed true`, `sudo
+      systemctl restart vault` unseals it with the same key. **Clock stops
+      here.** The snapshot's own root token was revoked when the snapshot
+      was taken, so seed the snapshot token file again with a root token
+      from `generate-root`, using three of the *old* recovery keys ("The
+      root token", below, has the Vault 2.x switch it needs; "Off-host
+      backups" has the seed line), then take the first snapshot on the
+      rebuilt host, `sudo systemctl start hcw-vault-backup.service`, and
+      read its `uploaded vault/…` journal line.
+   9. **The Coder automation's rotation credential**, which was on the
+      disk: `hcw-coder-automation.service` skips on
+      `ConditionPathExists=/etc/hcw/coder/automation/rotation-token` until
+      `hcw-coder-automation-seed` runs again ("Automatic renewal", below).
+   10. **Portainer**: a new administrator and its licence key (below).
+       Portainer 2.45.2 creates the `local` environment itself during setup
+       and then opens an Edge Agent wizard; close it.
+   **Keep the old Vault recovery keys.** The Vault snapshot restored in step
+   8 carries its own recovery authority, and after the restore those five
+   keys, the ones already in the password manager, are the restored
    Vault's; `generate-root` needs three of them. Nothing from the old Vault
-   is deleted until the restore below has succeeded, and then it is the
-   *fresh* initialisation's keys and root token that are deleted, because
-   they open nothing any more.
-   **Then the restore from the container** ("Off-host backups", below, has
-   what each line does). The `bootstrap.sh` run just made installed
-   `hcw-backup-restore`, and the host is Connected to Arc again, so it reads
-   the container. Bash, on the host, Coder first:
-
-   ```bash
-   sudo /usr/local/sbin/hcw-backup-restore list
-   ```
-
-   ```bash
-   sudo /usr/local/sbin/hcw-backup-restore coder --yes
-   ```
-
-   Success is `restored coder/coder-<UTC stamp>.sql.gz into coder-postgres`
-   and the `buildinfo` line under "Enabling" in `lab-host/README.md`
-   answering within a minute; signed-in learners and the templates are back.
-   **Vault, in this order, because the snapshot was taken under the Azure
-   Key Vault seal and only a Vault under the same seal can open it.** First
-   put the new host under the seal before Vault holds anything: steps 4 and 5
-   of "HashiCorp Vault: moving to auto-unseal" (the seal fact, then the key
-   read as the Arc identity), then one more `bootstrap.sh` run, which renders
-   the seal into Vault's configuration; `vault status` then says `Seal Type
-   azurekeyvault` and `Initialized false`. Initialise it under the seal:
-
-   ```bash
-   vault operator init -recovery-shares=5 -recovery-threshold=3
-   ```
-
-   Hold its root token in PowerShell on the workstation, the way the seed's
-   token is held, and restore:
-
-   ```powershell
-   $t = [Net.NetworkCredential]::new('', (Read-Host 'Vault root token' -AsSecureString)).Password
-   ```
-
-   ```powershell
-   $t | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-backup-restore vault --yes"; $t = $null
-   ```
-
-   The helper refuses a Vault whose seal is not `azurekeyvault`, naming the
-   two steps above. Success is `Vault accepted vault/vault-<UTC stamp>.snap
-   for restore and now reports Initialized true, Sealed false`. That is
-   acceptance, not completion: Vault replaces its data in the background, so
-   before relying on it, bash, on the host:
-
-   ```bash
-   sudo journalctl -u vault -n 30 --no-pager && vault status
-   ```
-
-   Good is the log reporting the restore completed and the seal
-   re-established, `Sealed false`, and `vault status` with no error. If it
-   reports `Sealed true`, `sudo systemctl restart vault` unseals it with the
-   same key. Now the fresh initialisation's five recovery keys and root token
-   can be deleted from the password manager: Vault's data is the snapshot's,
-   whose recovery keys are the old ones. The snapshot's own root token was
-   revoked when the snapshot was taken, so the snapshot token file is seeded
-   again with a root token from `generate-root`, using three of the *old*
-   recovery keys ("The root token", below, has the Vault 2.x switch it
-   needs; "Off-host backups" has the seed line).
-   **Last rehearsed / elapsed:** not yet. The rehearsal is the owner's, on a
-   fresh VPS: the time from the reinstall click to Coder answering on the
-   restored database and Vault unsealed with the snapshot's data goes here,
-   with the date. Until a date stands here, this restore is untested.
+   is deleted, and the fresh initialisation's keys and root token never
+   left the host.
+   **Last rehearsed / elapsed:** 2026-10-18, on the live host (VPS 939861;
+   there is no spare): **66 min 42 s** from the reinstall click (22:36:58Z)
+   to Vault unsealed on the snapshot's data (23:43:40Z); Coder back on the
+   restored database at 23:35:00Z. #955 has the record; the order above is
+   what that rehearsal corrected.
 8. **Retire the old agent record.** If the go-live registered the rebuilt
    host under a new agent id, the old id's card stays on
    https://hybridcloudworks.com/admin/labs?tab=agents, Offline, until it is
@@ -1307,7 +1397,15 @@ suspension is what ends it now.
 ### A Coder with no account yet
 
 Only after a fresh install, or a restore that left Coder's database empty.
-The live host has accounts, so this does not apply to it.
+The live host has accounts, so this does not apply to it, and neither does
+it apply to a rebuild that restores last night's dump: step 7 of
+"Reinstalling the host" runs the play with `--skip-tags coder`, restores the
+database and publishes Coder on the next full run. Tried on the 2026-10-18
+rebuild, the line in step 2 below answered `Password authentication is
+disabled.`: the Compose file sets `CODER_DISABLE_PASSWORD_AUTH`, so the
+break-glass account cannot be made that way on this build. For a genuinely
+empty database, `coder server create-admin-user` at the end of this section
+is the way in.
 
 **Why.** Coder v2.38.0 lets whoever reaches a deployment with no account
 make the first one, and that account is the Owner. Its `/setup` page makes a
@@ -2402,11 +2500,13 @@ already has an SSH login, which carries `sudo`.
 It is off until a pull request sets `portainer_enabled: true` in
 `lab-host/ansible/group_vars/all.yml` and `bootstrap.sh` runs after the
 merge. Success for that run is a `PLAY RECAP` with `failed=0` and the task
-`portainer : Say how to reach Portainer` printing `Portainer 2.45.1 answers
-on https://127.0.0.1:9443 on this host and nowhere else`.
+`portainer : Say how to reach Portainer` printing `Portainer 2.45.2 answers
+on https://127.0.0.1:9443 on this host and nowhere else` (the version is
+`portainer_image_tag` in `group_vars`, 2.45.2 since the pin moved).
 
 **The first sign-in.** Two guards stand in front of a fresh Portainer, and
-both were measured on the pinned 2.45.1 on 2026-09-26. Until an
+both were measured on the then-pinned 2.45.1 on 2026-09-26 and seen again
+on 2.45.2 at the 2026-10-18 rebuild. Until an
 administrator exists it stops serving five minutes after it starts: the
 container stays up and every request answers `Administrator initialization
 timeout`. And creating the administrator needs a one-time **setup token**
