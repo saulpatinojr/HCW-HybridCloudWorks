@@ -357,6 +357,22 @@ export async function updateTfcVariable({
   }
 }
 
+/**
+ * Runs a command with its input on stdin and resolves with its exit code and
+ * output once it closes. Rejects when the process cannot be spawned, or when
+ * writing its stdin fails for any reason other than the child closing the
+ * pipe first (`EPIPE`): that case is the child's to report through its exit
+ * code and stderr, which the `close` event carries; any other stdin failure
+ * means the child may have run on incomplete input, so a zero exit code must
+ * not be reported as success.
+ *
+ * @param {object} params
+ * @param {string} params.command Executable to run
+ * @param {string[]} params.args Arguments
+ * @param {string} params.stdin Text written to the child's standard input
+ * @param {Function} [params.spawnImpl] Injectable `child_process.spawn`
+ * @returns {Promise<{ code: number | null, stdout: string, stderr: string }>}
+ */
 export async function defaultSpawnRunner({
   command,
   args,
@@ -375,8 +391,13 @@ export async function defaultSpawnRunner({
     });
     proc.on('error', reject);
     proc.on('close', (code) => resolve({ code, stdout, stderr }));
-    proc.stdin.on('error', () => {
-      // Ignore EPIPE. The 'close' event reports the exit code.
+    proc.stdin.on('error', (err) => {
+      if (err && err.code === 'EPIPE') {
+        // The child closed its stdin before reading it all; its exit code
+        // and stderr, delivered by 'close', are the result.
+        return;
+      }
+      reject(err);
     });
     proc.stdin.end(stdin);
   });

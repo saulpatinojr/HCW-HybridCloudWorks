@@ -564,12 +564,33 @@ describe('defaultSpawnRunner', () => {
       spawnImpl: mockSpawn,
     });
 
-    mockProc.stdin.emit('error', new Error('EPIPE'));
+    mockProc.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
     mockProc.stderr.emit('data', 'error occurred');
     mockProc.emit('close', 1);
 
     const res = await promise;
     expect(res).toEqual({ code: 1, stdout: '', stderr: 'error occurred' });
+  });
+
+  it('rejects on a stdin error other than EPIPE, even when the child then exits 0', async () => {
+    const mockProc = new EventEmitter();
+    mockProc.stdout = new EventEmitter();
+    mockProc.stderr = new EventEmitter();
+    mockProc.stdin = new EventEmitter();
+    mockProc.stdin.end = vi.fn();
+    const mockSpawn = vi.fn().mockReturnValue(mockProc);
+
+    const promise = defaultSpawnRunner({
+      command: 'hcw-vault-set',
+      args: ['vault_key'],
+      stdin: 'secret',
+      spawnImpl: mockSpawn,
+    });
+
+    mockProc.stdin.emit('error', Object.assign(new Error('write ECONNRESET'), { code: 'ECONNRESET' }));
+    mockProc.emit('close', 0);
+
+    await expect(promise).rejects.toThrow('write ECONNRESET');
   });
 
   it('rejects on proc error event', async () => {
