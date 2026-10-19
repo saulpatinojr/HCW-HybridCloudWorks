@@ -15,11 +15,12 @@
  * a file someone has to exfiltrate.
  *
  * Even so, assume the credential is stealable — a VPS is a machine you do not
- * fully control. What bounds the damage is the server: the four endpoints
+ * fully control. What bounds the damage is the server: the five endpoints
  * this file calls are the whole of what the credential can do, and each is
  * constrained further (claim only registered job types, complete only jobs
  * this agent holds, hand over only the Coder status token and only a
- * working, read-only key of the status user, as Coder itself shows it).
+ * working, read-only key of the status user, as Coder itself shows it,
+ * record a host check's counts and states under a closed set of fields).
  * See functions/src/lib/lab-agent.js.
  */
 
@@ -149,6 +150,17 @@ export function createApiClient({
      */
     reportCoderAutomation({ statusToken, report }) {
       return post('agent/reportCoderAutomation', { statusToken, report });
+    },
+
+    /**
+     * A check the lab host runs on itself, by name, and what it saw
+     * (bin/report-host-check.js; 2026-10-19, #1282). The first is
+     * `portainer`, the fifteen-minute read of Portainer on the loopback. The
+     * server owns the names and the report's fields, refuses anything
+     * outside them, and answers `{ ok }`.
+     */
+    reportHostCheck({ check, report }) {
+      return post('agent/reportHostCheck', { check, report });
     },
   };
 }

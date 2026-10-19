@@ -25,7 +25,10 @@
  * from the host's daily Coder upkeep report). And two more: whether the last
  * real lab job ran end to end (`lab-canary`, the hourly canary's record), and
  * whether Coder accepts the site's status token (`coder-token`, Coder's last
- * recorded answers to it).
+ * recorded answers to it). And one more (#1282): whether Portainer on the
+ * lab host is up and sound (`portainer`, from the host's own fifteen-minute
+ * read of it, admin_config/host_checks), so the card has a value within one
+ * pulse of the host's first report and nobody has to press Run.
  *
  * WHAT IT DOES NOT. It calls no third party and spends nothing: the service
  * tests (Publer, Resend, the models) stay on their Test buttons, and the AI
@@ -61,10 +64,12 @@ import {
   CODER_TOKEN_PROBE,
   LAB_CANARY_PROBE,
   LAB_DRIFT_PROBE,
+  PORTAINER_PROBE,
   readCoderTemplate,
   readCoderToken,
   readLabCanary,
   readLabDrift,
+  readPortainer,
 } from '../labs/lab-checks.js';
 
 export const PULSE_ACTOR = 'pulse';
@@ -155,6 +160,8 @@ export function createHealthPulse({
       timed(CODER_TEMPLATE_PROBE, () => readCoderTemplate(store, nowMs)),
       timed(LAB_CANARY_PROBE, () => readLabCanary(store, nowMs)),
       timed(CODER_TOKEN_PROBE, () => readCoderToken(store, nowMs)),
+      // The lab host's own reading of Portainer (#1282): one point read.
+      timed(PORTAINER_PROBE, () => readPortainer(store, nowMs)),
     ]);
 
   async function record(checkedAt, row) {

@@ -74,6 +74,143 @@ token, administrator, licence) is in `docs/runbooks/labs-host.md`, "Portainer
 through an SSH tunnel". An 11-character administrator password was refused
 and a 32-character one accepted.
 
+## The check
+
+Since 2026-10-19 (#1282) the role also installs a read-only check of
+Portainer itself, so the owner's container UI for the lab host cannot be
+down, unlicensed or drifting without anyone seeing it. The site's Health Hub
+shows it as the **Portainer** card on the Enhanced hub, beside the other
+lab-host probes; the card goes critical when no report has arrived for 45
+minutes, so a timer that stops is seen too.
+
+**What it reads.** `/usr/local/libexec/hcw-portainer-check` (Python 3,
+standard library only, `files/hcw-portainer-check`) makes six kinds of
+`GET` against `https://127.0.0.1:9443/api`, each with the token in
+`X-API-Key`:
+
+| Read | For |
+| --- | --- |
+| `/system/status` | `Version` |
+| `/system/version` | `ServerEdition` (EE or BE as `EE`, CE as `CE`; anything else leaves the field out) and `UpdateAvailable`, said in the journal line |
+| `/licenses` | `valid` and `expiresAt` (epoch seconds). Valid when one licence says so; not valid when one says so and none is; unknown when Portainer says neither, which a fresh instance does |
+| `/endpoints` | The environment whose `Name` is `portainer_check_environment_name` (`local`), found by name because its `Id` is 3 on this host, not 1; `Status` 1 is up |
+| `/endpoints/<id>/docker/containers/json?all=true` | Docker's own list: `State` counted as running, restarting and exited; `(unhealthy)` in `Status` counted as unhealthy |
+| `/docker/<id>/containers/<container>/image_status` | One per running container: `updated` or `outdated` is a verdict and is counted as checked; `processing`, `skipped` and `error` are not. The reads share a 90 s budget, so a slow registry leaves containers unchecked rather than failing the run |
+
+Certificate verification is off for these reads, because the certificate is
+the one Portainer generates for itself and the connection never leaves the
+loopback: the script refuses a URL on any other address, so the setting
+cannot be carried somewhere it would matter.
+
+**What it reports.** One JSON object, `{"check": "portainer", "report":
+{...}}`, whose report holds `checkedAt`, `up`, `version`, `edition`,
+`licenseValid`, `licenseExpiresAt`, `environmentName`, `environmentUp`,
+`containers` (`total`, `running`, `unhealthy`, `restarting`, `exited`),
+`imagesChecked`, `imagesOutdated` and `error`: counts, states, a version and
+dates, never a container's name, an image's name or a digest. The site
+refuses a report holding anything else (`functions/src/lib/labs/host-checks.js`),
+which is what lets the Health Hub show it to an admin without showing what
+runs on the host. With no container running, zero images were checked and
+zero are outdated; `null` in those two fields means the containers could not
+be read at all. The journal gets one summary line in the same terms:
+
+```text
+hcw-portainer-check: checked: Portainer 2.45.2 EE up; environment local up with 8 containers (7 running, 0 unhealthy, 0 restarting, 1 exited); 7 images checked, 0 outdated; licence valid to 2027-09-26; reported to the site
+```
+
+**How it reaches the site.** Through the lab agent's own CLI,
+`vps-agent/bin/report-host-check.js`, run as the agent's user with the
+agent's environment file and checkout through `systemd-run`, exactly as
+`hcw-coder-automation` hands the site its reports (`../coder/README.md`,
+"Coder automation"): the same `--uid`, `--gid`, `EnvironmentFile`,
+`WorkingDirectory` and sandboxing properties, the JSON on stdin, the exit
+status propagated by `--wait`. The agent's values are repeated in this role's
+`portainer_check_agent_*` defaults because roles do not read each other's
+variables; the test beside this role fails when they part from the coder
+role's or the `labs_agent` role's.
+
+**The token, and why it is root-only and read through a credential.** Owner
+decision 2026-10-19: the check runs with the owner's own Portainer access
+token (`hcw-portainer-write`, kept on the owner's account), not with a token
+of a read-only Portainer user. A Portainer access token carries the whole
+authority of its user, so this one can do anything the owner can in
+Portainer, and the handling follows from that:
+
+- It is set with `hcw-vault-set` as `vault_portainer_api_token` and never
+  declared by this role (`hcw-vault-set` refuses a key the playbook
+  defines). The role reads it with
+  `lookup('ansible.builtin.vars', 'vault_portainer_api_token', default='')`,
+  so a host without it installs the check and leaves it skipped.
+- The role writes it to `/etc/hcw/portainer/api-token`, root `0600`, in a
+  root `0700` directory, with `no_log` on the task. Root on this host can
+  already read Portainer's volume, so a root-only file adds no reach to
+  someone who has root, and nothing else can read it.
+- The unit's `LoadCredential=api-token:/etc/hcw/portainer/api-token` copies
+  it into the unit's private credentials directory for each run, and the
+  script reads `$CREDENTIALS_DIRECTORY/api-token` and nothing else: never an
+  argument, which `ps`, the unit file and the journal would show, and never
+  the environment, which every child inherits. The environment the script
+  gives `systemd-run` is `PATH` and `LC_ALL` alone, so neither the token
+  nor `$CREDENTIALS_DIRECTORY` reaches the agent's CLI.
+- Every line the script prints is scrubbed of the token first, and the
+  test's leak check reads every output, every `systemd-run` argument and
+  every report for it.
+- It is rotated on every host rebuild (`docs/standards/required-inputs.md`,
+  section 4.7).
+
+**Why GET only.** The token could change anything; the check has one job,
+which is to read. The script has one HTTP method, and the test's fake
+Portainer answers every other method with 405 and records it, so a change
+that made the check write would fail the test before it reached the host.
+
+**When it fails.** The run exits 1, and the unit's
+`OnFailure=hcw-unit-failed@%n.service` raises the lab alert (LAB-2;
+`alert-lab-unit-failed`), when Portainer does not answer, refuses the token
+(it was revoked or replaced), lists no environment of that name or lists it
+down, or when the report does not reach the site. The report goes out first
+whatever happened, with `up` false where that is what was seen and `error`
+set to the reason, so the card says why. Unhealthy or restarting containers,
+outdated images and a licence that is not valid are the site's warnings and
+the run's exit 0: they are states to look at, not a check that could not do
+its job. A read the report can do without (the edition, the licence) that
+fails leaves its fields unknown and a note in the journal.
+
+**Turning it on.** With the token on the clipboard, PowerShell:
+
+```powershell
+(Get-Clipboard -Raw) | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-vault-set vault_portainer_api_token"
+```
+
+Then re-run `bootstrap.sh`. The run writes the file, enables the timer, runs
+the check once and prints its line; until then it prints `The Portainer
+check is not configured: set vault_portainer_api_token (lab-host/README.md,
+"Portainer") and re-run bootstrap.sh.` and the timer stays off. A run with
+the check failing says so and goes on: this role runs among the others, and
+a token the owner has yet to put right should not leave Vault, the add-ons
+and the backups unapplied behind it. Removing the key removes the file, and
+the unit's `ConditionPathExists=` skips every run from then on, so turning
+the check off pages nobody.
+
+**Owner commands.** Bash, on the host. Run the check now, exactly as the
+timer runs it:
+
+```bash
+sudo systemctl start hcw-portainer-check.service; systemctl show -p Result --value hcw-portainer-check.service
+```
+
+Good is `success`. What it said, without systemd's own lines:
+
+```bash
+sudo journalctl -t hcw-portainer-check -n 3 --no-pager --output=cat
+```
+
+Good ends with a line beginning `hcw-portainer-check: checked:`. When the
+timer next runs:
+
+```bash
+systemctl list-timers hcw-portainer-check.timer --no-pager
+```
+
 ## Variables
 
 | Variable | Default | Purpose |
@@ -84,6 +221,13 @@ and a 32-character one accepted.
 | `portainer_volume_name` | `portainer-data` | Data volume, kept while disabled |
 | `portainer_https_port` | `9443` | Port on `127.0.0.1`; the address is fixed |
 | `portainer_memory` | `512m` | Memory limit |
+| `portainer_check_enabled` | `true` | Install and run the check; it also needs `portainer_enabled` and the vault key |
+| `portainer_check_interval`, `portainer_check_boot_delay` | `15min`, `5min` | The timer |
+| `portainer_check_environment_name` | `local` | The environment reported on, found by name |
+| `portainer_check_script`, `portainer_check_unit` | `/usr/local/libexec/hcw-portainer-check`, `hcw-portainer-check` | Where the check is installed, and its unit and journal name |
+| `portainer_check_token_file`, `portainer_check_config_file` | `/etc/hcw/portainer/api-token`, `/etc/hcw/portainer/check.json` | The token (root `0600`) and the configuration beside it; the directory is derived in `vars/main.yml` |
+| `portainer_check_report_timeout_seconds` | `60` | How long the site's CLI may take |
+| `portainer_check_agent_user`, `_group`, `_env_file`, `_app_dir`, `_node`, `portainer_check_systemd_run`, `portainer_check_report_cli` | the coder role's values | The lab agent's user and paths, `systemd-run`, and the CLI |
 
 `meta/argument_specs.yml` is the contract.
 
@@ -120,4 +264,27 @@ release between the old pin and the new before moving it.
 ## Check mode
 
 Safe. `docker_volume` and `docker_container` report what they would do; the
-wait is skipped.
+wait is skipped. The check's script, units and configuration show as diffs
+and the token file as a change without its content; the timer is enabled
+only where a real run has installed it, and the check is not run.
+
+## Tests
+
+`tests/hcw-portainer-check.test.py` runs the script as it ships against a
+fake Portainer (a decoy environment with Id 1 beside the local one with Id
+3, Docker's container list, an image verdict per container, every method
+but `GET` answered 405 and recorded), a fake `systemd-run` that reads the
+environment file and runs the CLI in the agent's checkout, and a fake site
+CLI that records the payload. It covers the healthy report, an unhealthy
+container, a restarting one, an outdated image, an image still being
+processed, no container running, each licence state, each edition label, a
+missing or down environment, a refused token, Portainer down (the `up:false`
+report still delivered, exit 1), the site's CLI failing (exit 1), a URL off
+the loopback refused, and that the token and no container or image name is
+in any output, any `systemd-run` argument or any report. It also renders the
+role's files with its defaults and holds them to the coder role, the
+`labs_agent` role, the hardening role's notifier and this README's
+not-configured sentence, where PyYAML and Jinja2 are importable (CI's are;
+under `python -I` on a workstation that has them as user-site installs,
+those checks are skipped and say so). CI runs it in the
+`ansible-lint (lab-host)` job. Needs neither root nor Docker.

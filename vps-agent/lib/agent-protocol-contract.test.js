@@ -46,8 +46,9 @@ function createTestClient(responses = []) {
 }
 
 describe('agent protocol contract (QA-3 #978): vps-agent client', () => {
-  it('contract fixture defines all four required agent RPCs', () => {
-    const expectedRpcs = ['claimLabJob', 'heartbeat', 'completeLabJob', 'reportCoderAutomation'];
+  it('contract fixture defines all five required agent RPCs', () => {
+    // reportHostCheck joined on 2026-10-19 (#1282).
+    const expectedRpcs = ['claimLabJob', 'heartbeat', 'completeLabJob', 'reportCoderAutomation', 'reportHostCheck'];
     assert.deepEqual(Object.keys(contract.rpcs).sort(), expectedRpcs.sort());
   });
 
@@ -206,6 +207,40 @@ describe('agent protocol contract (QA-3 #978): vps-agent client', () => {
       }
       assert.equal(res.ok, true);
       assert.equal(res.stored, true);
+    });
+  });
+
+  describe('reportHostCheck contract (#1282)', () => {
+    const rpc = contract.rpcs.reportHostCheck;
+
+    it('sends reportHostCheck matching contract required fields and response', async () => {
+      const sample = rpc.request.sample;
+      const { api, calls } = createTestClient([{ status: 200, body: rpc.response.success.sample }]);
+      const res = await api.reportHostCheck({ check: sample.check, report: sample.report });
+
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, `${API_BASE}/${rpc.path}`);
+      assert.equal(calls[0].init.method, rpc.method);
+
+      for (const field of rpc.request.requiredFields) {
+        assert.ok(Object.hasOwn(calls[0].body, field), `reportHostCheck body must have required field: ${field}`);
+      }
+      assert.ok(rpc.request.validChecks.includes(calls[0].body.check), 'the sample names a check the contract lists');
+      for (const field of rpc.request.reportFields.requiredFields) {
+        assert.ok(Object.hasOwn(calls[0].body.report, field), `report must have required field: ${field}`);
+      }
+      for (const field of rpc.request.reportFields.containerFields.requiredFields) {
+        assert.ok(
+          Object.hasOwn(calls[0].body.report.containers, field),
+          `report.containers must have required field: ${field}`
+        );
+      }
+      assert.deepEqual(calls[0].body.report, sample.report);
+
+      for (const field of rpc.response.success.requiredFields) {
+        assert.ok(Object.hasOwn(res, field), `Response must have required field: ${field}`);
+      }
+      assert.deepEqual(res, rpc.response.success.sample);
     });
   });
 });

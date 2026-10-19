@@ -204,6 +204,7 @@
     "rejectNewsletter",
     "renderElevenLabsSample",
     "reportCoderAutomation",
+    "reportHostCheck",
     "requestContentInspection",
     "rescheduleNewsletter",
     "resetContentReviewState",

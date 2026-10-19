@@ -29,7 +29,7 @@ the host has not run yet is
 | `labs_agent` | `vps-agent` host-native as `hcw-labs-agent.service` under user `hcw-labs-agent`, **in no docker group** (LAB-5): it reaches Docker through `hcw-labs-agent-docker-proxy`, HAProxy 3.4.6 by digest with the allowlist in `roles/labs_agent/templates/docker-proxy.haproxy.cfg.j2` (the calls a job makes, and no create body that asks for privilege, a host namespace, a device, a mount or a bind beyond the job's own directory), on a Unix socket only the agent's group may open. Node.js 26.10.0 from NodeSource, repository checkout at the commit the playbook runs from, certificate generated on the host | `/opt/hcw-labs-agent`, `/etc/hcw/labs-agent.env` (root, 0600), `/etc/hcw/labs-agent.pem` (root:hcw-labs-agent, 0640), `/etc/hcw/labs-agent.crt`, `/etc/hcw/labs-agent-docker-proxy/haproxy.cfg`, socket `/run/hcw-labs-agent-docker/docker.sock` (root:hcw-labs-agent, 0660) |
 | `lab_images` | Every image a lab job runs, pulled by digest before any job needs it: each value of `IMAGES` in `vps-agent/lib/capabilities.js` into the host daemon, and the Coder workspace image of every template under `../coder/templates` (each `main.tf`) into the `coder_sandbox` daemon while `coder_enabled` is true. Read from the checkouts, never copied, so a pin bump needs no edit here; digests no pin names are removed from the lab's own repositories and nothing else is touched (`roles/lab_images/README.md`) | Docker's image store; the plan is `roles/lab_images/files/lab-images.mjs`, run from the playbook's checkout |
 | `addons` | The tool add-ons (ADR 0035): one hardened container per enabled row of `addons` in `group_vars`, `hcw-addon-<id>`, from `docker.io/hybridcloudworks/hcw-addon-<id>` by digest, published on **127.0.0.1:<port> only** (migration 18081), read-only root, every capability dropped, no volume, no socket, under the user-namespace remap, the row's env plus each secret from the vault key it names; a Caddy route per name with a 503 that is the site's own sentence while the container is stopped, and a direct-visit redirect to the add-on's page on the site. A row with an empty digest is not deployed and the run says so ("Tool add-ons", below) | Containers `hcw-addon-<id>`, `/etc/caddy/conf.d/20-addons.caddy` |
-| `portainer` | Portainer Business Edition 2.45.2 (LTS) by digest, one container with the Docker socket (and `--userns=host`, which the socket needs under the remap), HTTPS on **127.0.0.1:9443 only**, plain HTTP off, no Caddy route; reached through an SSH tunnel. Nothing until `portainer_enabled` is true | Container `portainer`, volume `portainer-data` |
+| `portainer` | Portainer Business Edition 2.45.2 (LTS) by digest, one container with the Docker socket (and `--userns=host`, which the socket needs under the remap), HTTPS on **127.0.0.1:9443 only**, plain HTTP off, no Caddy route; reached through an SSH tunnel. Nothing until `portainer_enabled` is true. Since 2026-10-19 (#1282) also the Portainer check, `hcw-portainer-check`: `GET` reads of Portainer on the loopback with the owner's access token every 15 minutes and once on every run, reported as counts and states to the Health Hub's **Portainer** card through the lab agent's CLI; skipped, with no alert, until `vault_portainer_api_token` is set ("The Portainer check", below) | Container `portainer`, volume `portainer-data`; `/usr/local/libexec/hcw-portainer-check`, `hcw-portainer-check.service` and `hcw-portainer-check.timer`, `/etc/hcw/portainer/api-token` (root, 0600, in a root 0700 directory) and `/etc/hcw/portainer/check.json` (rendered from `roles/portainer/templates/hcw-portainer-check.json.j2`: the URL, names and the agent's paths, no secret) |
 | `vault` | HashiCorp Vault 2.1.1 host-native as `vault.service` under user `vault`, the download checked against HashiCorp's signature on SHA256SUMS; raft storage; API on **127.0.0.1:8200** and cluster port on **127.0.0.1:8201**, TLS from a certificate generated on the host. For lab-host secrets only; never initialised or unsealed by the role. Nothing until `vault_enabled` is true | `/usr/local/bin/vault`, `/opt/vault/` (downloads, signing key), `/etc/vault.d/vault.hcl` (root:vault, 0640), `/etc/vault.d/tls/`, `/var/lib/vault` (vault, 0700), `/etc/profile.d/hcw-vault.sh` |
 | `backups` | Off-host backups (LAB-9): `hcw-backup-upload`, which puts one file in the `host-backups` container of `stlabhybridprodcus01` as the Arc machine's identity (a token from the agent on 127.0.0.1:40342 by `hcw-arc-token`; no storage key on the host), the Coder dump uploaded after it is written, a nightly Vault raft snapshot (`hcw-vault-backup.timer`, 03:45 UTC) with a token the owner seeds once (`hcw-vault-backup-seed`), and a listing of the container at every run to prove the grant. On while Arc is | `/usr/local/sbin/hcw-backup-upload`, `/usr/local/sbin/hcw-vault-backup-seed`, `/usr/local/libexec/hcw-arc-token`, `/usr/local/libexec/hcw-vault-backup`, `/etc/hcw/backups/`, `/var/backups/vault/`, `hcw-vault-backup.service` and `.timer` |
 | `privilege_checks` (from `post_tasks`) | Nothing but its check script: fails the run unless `hcw-labs-agent` is in no docker group, `docker info` reports `name=userns`, the agent's proxy socket is root:hcw-labs-agent 0660, one shell-echo job run as the agent user through the proxy prints its payload while `docker ps` and a privileged `docker run` are refused, (with Coder on) `coder-docker-proxy` carries every policy key the installed Compose file sets, mounts the sandbox daemon's socket directory alone, and that daemon reports `name=rootless`, and every deployed `hcw-addon-<id>` is read-only, has every capability dropped, is not privileged, has no bind mount, publishes on `127.0.0.1` only and is not in the host's user namespace (ADR 0035) | `/usr/local/libexec/hcw-labs-agent-proxy-check.mjs` |
@@ -1392,6 +1392,93 @@ what success looks like, are in
 through an SSH tunnel". The administrator's password is in the owner's
 password manager and the licence key is entered in Portainer's UI; neither
 is in the repository or the Ansible vault.
+
+### The Portainer check
+
+Since 2026-10-19 (#1282) the role also installs `hcw-portainer-check`, a
+read-only check of Portainer itself, so the owner's container UI cannot be
+down, unlicensed or drifting with nobody seeing it
+(`ansible/roles/portainer/README.md`, "The check", has what it reads and why
+the token is handled as it is). `hcw-portainer-check.timer` runs it every 15
+minutes, five minutes after boot, and every `bootstrap.sh` run runs it once
+when the `portainer` role reaches it. Each run makes `GET` reads of Portainer
+on the host's loopback with the owner's access token, read from
+`/etc/hcw/portainer/api-token` through the unit's `LoadCredential`, and
+hands one content-free report (counts, states, a version and dates; never a
+container's name, an image's name or a digest) to the site through the lab
+agent's `bin/report-host-check.js`, exactly as the Coder automation delivers
+its report. The Health Hub's **Portainer** card on the **Checks** tab,
+<https://hybridcloudworks.com/admin/health?tab=checks>, under Enhanced,
+shows it, and the health pulse records it every five minutes.
+
+**The token.** Owner decision 2026-10-19: the check runs with the owner's
+own access token, kept on the owner's administrator account, not with a
+token of a read-only Portainer user (one was proposed on #1282 and
+declined). An access token carries the whole authority of its user, which is
+why the file is root `0600` in a root `0700` directory, why it reaches the
+check only as a systemd credential and never on a command line, in the
+environment or in a log, and why the check is held to `GET` by its test.
+Create it in Portainer through the tunnel: open the tunnel with the
+PowerShell line above, then <https://localhost:9443/#!/account>, **Access
+tokens**, **Add access token**, description `hcw-portainer-write`, and copy
+the token Portainer shows once. With it on the clipboard, PowerShell, on the
+workstation; the value goes from the clipboard to the host's vault and is
+never printed:
+
+```powershell
+(Get-Clipboard -Raw) | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-vault-set vault_portainer_api_token"
+```
+
+Then re-run `bootstrap.sh` (above). The run writes the token file, enables
+the timer and runs the check once. Until the key is set the run prints `The
+Portainer check is not configured: set vault_portainer_api_token
+(lab-host/README.md, "Portainer") and re-run bootstrap.sh.`, the timer stays
+off and nothing alerts, and the card reads `Portainer has not reported: the
+host's check needs vault_portainer_api_token (lab-host/README.md,
+Portainer).` The role never declares the key, because `hcw-vault-set`
+refuses a key the playbook defines.
+
+**What success looks like.** Three places, in the order they report:
+
+- The run's task `portainer : Say what the check saw` prints one line
+  beginning `hcw-portainer-check: checked:`, of the shape
+  `hcw-portainer-check: checked: Portainer 2.45.2 EE up; environment local
+  up with 8 containers (7 running, 0 unhealthy, 0 restarting, 1 exited); 7
+  images checked, 0 outdated; licence valid to 2027-09-26; reported to the
+  site`. A line beginning `The Portainer check failed, which also raised the
+  lab alert` means the run went on without it, and the rest of the line
+  says why.
+- On the host, bash; the check's own lines without systemd's around them:
+
+  ```bash
+  sudo journalctl -t hcw-portainer-check -n 3 --no-pager --output=cat
+  ```
+
+  Good ends with the same `hcw-portainer-check: checked:` line.
+- The **Portainer** card healthy within 15 minutes, with a summary of the
+  shape `Portainer 2.45.2 EE, local Up, 7 containers running, images
+  current, licence to 2027-09-26; read 3 min ago.` and the counts one per
+  line in its detail.
+
+**What the card's states mean.** The status model has no warning state, so
+what the issue called warnings show as **degraded**: an unhealthy or
+restarting container, a running image with an update available in its
+registry, or a licence Portainer calls not valid or that ends within 30
+days, every reason named in the summary. **Critical** is Portainer not
+answering, the `local` environment down, the check itself failing, or no
+report received for 45 minutes, which is the timer stopped or the host
+unable to reach the site. The check exits 1, and the unit's
+`OnFailure=hcw-unit-failed@%n.service` raises the existing LAB-2
+`alert-lab-unit-failed` alert, when Portainer does not answer, refuses the
+token, lists no `local` environment or lists it down, and when the report
+does not reach the site; the report goes out first in every case, with
+`error` set, so the card says why before the alert arrives. No new alert
+rule was added. The degraded states are the run's exit 0: states to look
+at, not a check that could not do its job.
+
+Turning Portainer off (below), or removing the key, removes the token file;
+the unit's `ConditionPathExists=` then skips every timer run, so turning the
+check off pages nobody.
 
 ### Turning it off
 

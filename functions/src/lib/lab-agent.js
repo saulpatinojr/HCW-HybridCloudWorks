@@ -1,10 +1,10 @@
 /**
- * The Labs agent API — the four operations the VPS agent is allowed to
+ * The Labs agent API — the five operations the VPS agent is allowed to
  * perform, and nothing else.
  *
  * This replaces the agent's direct Cosmos access (T-401). The reasoning for the
  * credential model is in `auth/require-agent.js`; this file is what that model
- * buys. The blast radius of a credential stolen off the VPS is these four
+ * buys. The blast radius of a credential stolen off the VPS is these five
  * handlers, under the constraints written into them, rather than read/write
  * over two containers:
  *
@@ -19,6 +19,10 @@
  *                      over a renewed Coder status token: one secret, by
  *                      name, stored only after Coder accepts it
  *                      (labs/coder-automation.js, 2026-10-08)
+ *   reportHostCheck  — record what a check the host runs on itself saw, by
+ *                      the check's name and under a closed set of counts and
+ *                      states, in one admin_config document and nowhere
+ *                      else (labs/host-checks.js, 2026-10-19, #1282)
  *
  * The API owns the job claim and completion rules. The standalone `vps-agent/`
  * process only polls these handlers with its scoped Entra credential; it never
@@ -38,6 +42,7 @@ import {
   createCoderAutomationReporter,
   parseIsoDateTime,
 } from './labs/coder-automation.js';
+import { createHostCheckRecorder } from './labs/host-checks.js';
 import {
   BACK_ONLINE_SENT,
   OFFLINE_NOTIFY_AFTER_MS,
@@ -497,12 +502,26 @@ async function reportCoderAutomation(ctx, request, context) {
 }
 
 /**
+ * A host check's report (#1282): the same two first steps, then
+ * labs/host-checks.js, which validates the closed set of fields and records
+ * the entry under admin_config/host_checks. No token, no vault, no audit
+ * row: the report is counts and states, every fifteen minutes.
+ */
+async function reportHostCheck(ctx, request, context) {
+  const parsed = await authenticatedAgentBody(ctx.guard, request);
+  if (parsed.error) return parsed.error;
+  return ctx.recordHostCheck(parsed, context);
+}
+
+/**
  * @param {object} deps
  * @param {{ requireAgent: Function }} deps.guard
  * @param {{ queryDocs: Function, readDoc: Function, patchDoc: Function, replaceDocIfMatch: Function, createDoc?: Function, upsertDoc?: Function }} deps.store
  *        createDoc and upsertDoc are the Coder automation report's: the
  *        first write of its document and of the secret state (both
- *        ETag-guarded, replaceDocIfMatch after), and the audit row
+ *        ETag-guarded, replaceDocIfMatch after), and the audit row.
+ *        createDoc is also the host check report's first write
+ *        (labs/host-checks.js), replaceDocIfMatch after
  * @param {() => Date} [deps.now]
  * @param {object} [deps.coderAutomation] env, fetchImpl, vault and uuid for
  *        the report (labs/coder-automation.js); production defaults otherwise
@@ -516,11 +535,13 @@ export function createLabAgentHandlers({
   coderAutomation = {},
 }) {
   const reportAutomation = createCoderAutomationReporter({ store, now, ...coderAutomation });
-  const ctx = { guard, store, now, uuid, notifier, reportAutomation };
+  const recordHostCheck = createHostCheckRecorder({ store, now });
+  const ctx = { guard, store, now, uuid, notifier, reportAutomation, recordHostCheck };
   return {
     claimLabJob: (request, context) => claimLabJob(ctx, request, context),
     heartbeatAgent: (request, context) => heartbeatAgent(ctx, request, context),
     completeLabJob: (request, context) => completeLabJob(ctx, request, context),
     reportCoderAutomation: (request, context) => reportCoderAutomation(ctx, request, context),
+    reportHostCheck: (request, context) => reportHostCheck(ctx, request, context),
   };
 }

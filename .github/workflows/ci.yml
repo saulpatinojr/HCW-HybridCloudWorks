@@ -415,7 +415,7 @@ jobs:
           # renamed only the label would otherwise skip that check.
           # docs/runbooks/labs-host.md too: coder-signin.test.sh and
           # hcw-coder-automation.test.py check its Coder lines (#954).
-          if grep -qE '^lab-host/|^docs/runbooks/labs-host\.md$|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$' <<<"$changed"; then
+          if grep -qE '^lab-host/|^docs/runbooks/labs-host\.md$|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$|^vps-agent/bin/report-host-check\.js$' <<<"$changed"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "lab-host files changed — running all checks"
           else
@@ -484,6 +484,19 @@ jobs:
       - name: hcw-coder-automation test
         if: steps.changes.outputs.relevant == 'true'
         run: python roles/coder/tests/hcw-coder-automation.test.py
+
+      # /usr/local/libexec/hcw-portainer-check reads Portainer with the
+      # owner's own access token and reports to the site through the lab
+      # agent (#1282), so the file the portainer role installs is run as it
+      # ships against a fake Portainer, a fake systemd-run and a fake site
+      # CLI: GET and nothing else, the environment found by name (its Id is
+      # not 1), the counts and the licence, an up:false report still
+      # delivered when Portainer is down, exit 1 on that and on a failed
+      # delivery, the token in no argument, output, environment or report.
+      # Needs neither root nor Docker.
+      - name: hcw-portainer-check test
+        if: steps.changes.outputs.relevant == 'true'
+        run: python roles/portainer/tests/hcw-portainer-check.test.py
 
       # Who may sign in to Coder (#954): coder.env rendered by this job's
       # ansible-core from group_vars carries the organisation, the

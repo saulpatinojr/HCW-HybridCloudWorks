@@ -67,6 +67,21 @@ export const ENHANCED_PROBES = [
     href: LABS,
     run: () => runLabCheck('coder-token'),
   }),
+  // #1282: the host's own Portainer check reports every 15 minutes; the card reads its
+  // verdict from the same labs snapshot as the other lab checks, so Test all may press it.
+  liveProbe({
+    id: 'portainer',
+    label: 'Portainer',
+    hub: 'enhanced',
+    covers:
+      'Portainer on the lab host, read every 15 minutes by the host’s own check: up, licence, the local environment, unhealthy or restarting containers, images with updates.',
+    impact:
+      'The owner’s container UI for the lab host is down or drifting without anyone seeing it.',
+    action:
+      'Open Portainer through the SSH tunnel (docs/runbooks/labs-host.md, Portainer through an SSH tunnel); the card’s detail names what the check saw.',
+    href: LABS,
+    run: () => runLabCheck('portainer'),
+  }),
   sessionProbe({
     id: 'labs-noop',
     label: 'Labs job round trip',

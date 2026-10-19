@@ -49,8 +49,12 @@ export const MAX_INPUT_BYTES = 16 * 1024;
 /** The keys stdin may carry: the route's body without agentId. */
 export const INPUT_FIELDS = Object.freeze(['statusToken', 'report']);
 
-/** A failure named by its code, which is also its whole message: there is nothing else to say. */
-const failure = (code) => Object.assign(new Error(code), { code });
+/**
+ * A failure named by its code, which is also its whole message: there is
+ * nothing else to say. Exported since 2026-10-19 for report-host-check.js,
+ * the host checks' one-shot (#1282), which fails in the same words.
+ */
+export const failure = (code) => Object.assign(new Error(code), { code });
 
 /** All of `stream`, as UTF-8, refusing more than `limit` bytes. */
 export async function readInput(stream, limit = MAX_INPUT_BYTES) {
@@ -66,11 +70,16 @@ export async function readInput(stream, limit = MAX_INPUT_BYTES) {
 }
 
 /**
- * The one object stdin holds, as the API method takes it. The report's own
+ * The one object stdin holds, as the API method takes it: exactly the keys
+ * in `fields`, each present or undefined, in that order. The report's own
  * fields are the server's to judge: it answers 400 with a sentence, and a
  * second copy of those rules here would only drift from the first.
+ *
+ * `fields` defaults to this one-shot's own; report-host-check.js passes its
+ * own list (2026-10-19, #1282), so the two one-shots refuse input by one
+ * rule rather than two copies of it.
  */
-export function parseInput(text) {
+export function parseInput(text, fields = INPUT_FIELDS) {
   let value;
   try {
     value = JSON.parse(text);
@@ -80,12 +89,15 @@ export function parseInput(text) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw failure('INVALID_INPUT');
   }
-  if (Object.keys(value).some((key) => !INPUT_FIELDS.includes(key))) throw failure('INVALID_INPUT');
-  return { statusToken: value.statusToken, report: value.report };
+  if (Object.keys(value).some((key) => !fields.includes(key))) throw failure('INVALID_INPUT');
+  return Object.fromEntries(fields.map((key) => [key, value[key]]));
 }
 
-/** Write and wait for it to be flushed, so the caller may exit straight after. */
-const write = (stream, text) =>
+/**
+ * Write and wait for it to be flushed, so the caller may exit straight
+ * after. Exported for report-host-check.js (2026-10-19, #1282).
+ */
+export const write = (stream, text) =>
   new Promise((resolve) => {
     stream.write(text, () => resolve());
   });

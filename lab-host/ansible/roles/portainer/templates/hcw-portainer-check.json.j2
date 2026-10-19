@@ -1,0 +1,19 @@
+{#
+  The configuration /usr/local/libexec/hcw-portainer-check reads (files/hcw-portainer-check):
+  Portainer's loopback URL, the environment it reports on and the lab agent's user and
+  paths, never the token, which the unit hands the script as a credential. JSON has no
+  comments, so this note stays in the template; README.md beside this role, "The check",
+  has each key.
+#}
+{
+  "portainer_url": {{ ('https://127.0.0.1:' ~ portainer_https_port) | to_json }},
+  "environment_name": {{ portainer_check_environment_name | to_json }},
+  "systemd_run": {{ portainer_check_systemd_run | to_json }},
+  "node": {{ portainer_check_agent_node | to_json }},
+  "agent_user": {{ portainer_check_agent_user | to_json }},
+  "agent_group": {{ portainer_check_agent_group | to_json }},
+  "agent_env_file": {{ portainer_check_agent_env_file | to_json }},
+  "agent_app_dir": {{ portainer_check_agent_app_dir | to_json }},
+  "report_cli": {{ portainer_check_report_cli | to_json }},
+  "report_timeout_seconds": {{ portainer_check_report_timeout_seconds | int }}
+}

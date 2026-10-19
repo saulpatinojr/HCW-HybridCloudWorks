@@ -14,3 +14,40 @@ portainer_https_port: 9443
 # Portainer uses about 100 MB on one Docker host; the limit keeps it from
 # eating into the memory the coder role's capacity assertion counts on.
 portainer_memory: 512m
+
+# The check (#1282; README.md beside this role, "The check"): Portainer read
+# over the loopback every portainer_check_interval and reported to the site's
+# Health Hub through the lab agent. It runs only while portainer_enabled is
+# true, this is true, and the vault key vault_portainer_api_token is set;
+# that key is the owner's and is never declared here, because hcw-vault-set
+# refuses a key the playbook defines.
+portainer_check_enabled: true
+portainer_check_interval: 15min
+# Portainer starts with Docker at boot and needs a moment to open its
+# database; five minutes is well clear of that.
+portainer_check_boot_delay: 5min
+# The Portainer environment the check reports on: the host's own daemon,
+# found by this name, never by its Id (which is 3 on this host, not 1).
+portainer_check_environment_name: local
+portainer_check_script: /usr/local/libexec/hcw-portainer-check
+portainer_check_unit: hcw-portainer-check
+# The owner's token, root 0600 in a root 0700 directory, handed to the unit
+# through LoadCredential= and read from $CREDENTIALS_DIRECTORY only. The
+# check's own configuration (URL, names and the agent's paths, no secret)
+# sits beside it.
+portainer_check_token_file: /etc/hcw/portainer/api-token
+portainer_check_config_file: /etc/hcw/portainer/check.json
+# How long the site's CLI may take before systemd stops it and the run fails.
+portainer_check_report_timeout_seconds: 60
+# The lab agent, whose CLI hands the site the report. The same values as the
+# coder role's coder_automation_agent_* (roles do not read each other's
+# variables), which repeat labs_agent_user (group_vars/all.yml),
+# labs_agent_group, labs_agent_env_file and labs_agent_app_dir; the test
+# beside this role fails when any of them differ.
+portainer_check_agent_user: hcw-labs-agent
+portainer_check_agent_group: hcw-labs-agent
+portainer_check_agent_env_file: /etc/hcw/labs-agent.env
+portainer_check_agent_app_dir: /opt/hcw-labs-agent/vps-agent
+portainer_check_agent_node: /usr/bin/node
+portainer_check_systemd_run: /usr/bin/systemd-run
+portainer_check_report_cli: bin/report-host-check.js
