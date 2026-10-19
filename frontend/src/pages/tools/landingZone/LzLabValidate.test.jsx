@@ -55,7 +55,16 @@ import {
   unresolvedLine,
   visitorReport,
 } from './labValidateRules';
-import { DEFAULT_STATE, decodeLz, emitFiles } from '@/lib/landingZone';
+import {
+  AVM_MODULES,
+  DEFAULT_STATE,
+  LAB_IMAGE_AVM,
+  chooseVendored,
+  decodeLz,
+  emitFiles,
+  parseVersion,
+  vendoredModules,
+} from '@/lib/landingZone';
 import { decodeTarPayload, parseTar } from '../../../../../vps-agent/lib/docker-runner.js';
 import { buildVisitorReport } from '../../../../../functions/src/lib/labs/visitor-report.js';
 import { clearPublicGetCache } from '@/lib/publicApi';
@@ -249,19 +258,35 @@ describe('closed until the server says open', () => {
   });
 });
 
+// The spoke module's pin and what the lab carries of it are read from
+// avmVersions.js and LAB_IMAGE_AVM, not written here, so the weekly bump
+// moves these expectations with the pins (#1287).
+const SPOKE = 'avm-res-network-virtualnetwork';
+const SPOKE_PIN = AVM_MODULES[SPOKE].version;
+const ALZ_PIN = AVM_MODULES['avm-ptn-alz'].version;
+/** Every version of the spoke module the lab has, in the order the pane lists them. */
+const SPOKE_CARRIED = vendoredModules(LAB_IMAGE_AVM)[SPOKE].map((c) => c.text);
+/** A release the lab does not carry: one patch above the highest it has. */
+const SPOKE_ABSENT = (() => {
+  const [major, minor, patch] = parseVersion(
+    chooseVendored(vendoredModules(LAB_IMAGE_AVM), SPOKE, '')
+  );
+  return `${major}.${minor}.${patch + 1}`;
+})();
+
 /** One spoke pinned to a release the lab does not carry. */
 const UNVENDORED = [
   {
     path: 'main.tf',
-    content:
-      'module "spoke" {\n  source  = "Azure/avm-res-network-virtualnetwork/azurerm"\n  version = "0.23.0"\n}\n',
+    content: `module "spoke" {\n  source  = "Azure/${SPOKE}/azurerm"\n  version = "${SPOKE_ABSENT}"\n}\n`,
   },
 ];
 
 describe('what the lab can resolve', () => {
   // The builder's full default build: every component, the identity, corp
   // and online spokes among them. Until the image vendored the spokes'
-  // avm-res-network-virtualnetwork 0.22.2 (2026-09-27), this was refused.
+  // avm-res-network-virtualnetwork at the builder's pin (0.22.2 on
+  // 2026-09-27), this was refused.
   it('accepts the full default build, spokes included, and sends it on a click', async () => {
     const requests = requestsFor({
       jobs: [{ id: 'job-1', status: 'succeeded', exitCode: 0, output: 'Success!' }],
@@ -282,12 +307,8 @@ describe('what the lab can resolve', () => {
   it('still refuses a build calling a version the lab does not have, naming it', async () => {
     const requests = requestsFor();
     renderControl({ files: UNVENDORED, requests });
-    await waitFor(() =>
-      expect(line().textContent).toContain('avm-res-network-virtualnetwork 0.23.0')
-    );
-    expect(line().textContent).toBe(
-      unresolvedLine([{ module: 'avm-res-network-virtualnetwork', constraint: '0.23.0' }])
-    );
+    await waitFor(() => expect(line().textContent).toContain(`${SPOKE} ${SPOKE_ABSENT}`));
+    expect(line().textContent).toBe(unresolvedLine([{ module: SPOKE, constraint: SPOKE_ABSENT }]));
     expect(button()).toBeDisabled();
     expect(requests.submit).not.toHaveBeenCalled();
   });
@@ -298,11 +319,11 @@ describe('what the lab can resolve', () => {
     const text = Array.from(rows).map((li) => [li.dataset.vendored, li.textContent]);
     expect(text).toContainEqual([
       'true',
-      'module "alz" (Azure/avm-ptn-alz/azurerm 0.21.0) → the lab\'s copy, avm-ptn-alz@0.21.0',
+      `module "alz" (Azure/avm-ptn-alz/azurerm ${ALZ_PIN}) → the lab's copy, avm-ptn-alz@${ALZ_PIN}`,
     ]);
     expect(text).toContainEqual([
       'true',
-      'module "spoke_identity" (Azure/avm-res-network-virtualnetwork/azurerm 0.22.2) → the lab\'s copy, avm-res-network-virtualnetwork@0.22.2',
+      `module "spoke_identity" (Azure/${SPOKE}/azurerm ${SPOKE_PIN}) → the lab's copy, ${SPOKE}@${SPOKE_PIN}`,
     ]);
     expect(text.every(([vendored]) => vendored === 'true')).toBe(true);
   });
@@ -310,10 +331,11 @@ describe('what the lab can resolve', () => {
   it('names what the lab has for a module it cannot resolve', async () => {
     render(<LzLabValidate files={UNVENDORED} requests={requestsFor()} />);
     const rows = screen.getByTestId('lz-lab-modules').querySelectorAll('li');
+    expect(SPOKE_CARRIED).toContain(SPOKE_PIN);
     expect(Array.from(rows).map((li) => [li.dataset.vendored, li.textContent])).toEqual([
       [
         'false',
-        'module "spoke" (Azure/avm-res-network-virtualnetwork/azurerm 0.23.0) → not on the lab (it has 0.15.0, 0.22.2)',
+        `module "spoke" (Azure/${SPOKE}/azurerm ${SPOKE_ABSENT}) → not on the lab (it has ${SPOKE_CARRIED.join(', ')})`,
       ],
     ]);
   });
