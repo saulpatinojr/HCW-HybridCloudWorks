@@ -38,7 +38,8 @@
             ".github/workflows/ci.yml > verify > functions (azure)",
             ".github/workflows/coverage.yml > coverage > Set up Node.js 24 for functions",
             ".github/workflows/deploy-functions.yml",
-            ".github/workflows/update-learn-catalogue.yml > update > Setup Node.js 24 for the functions install"
+            ".github/workflows/update-learn-catalogue.yml > update > Setup Node.js 24 for the functions install",
+            ".github/workflows/update-learn-catalogue.yml > update > Setup Node.js 24 for the study-guide refresh (functions code)"
           ]
         }
       }

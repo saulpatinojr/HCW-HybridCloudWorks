@@ -154,9 +154,33 @@ jobs:
       # So a single retitled Learn page cannot block the catalogue refresh —
       # but it must not vanish either, which is why the summary is carried into
       # the pull request body below.
+      #
+      # Under Node 24 again: this script runs functions/ code (the Listen &
+      # Learn parser), and the functions ceiling in scripts/version-floors.json
+      # names 24 for every pin that builds, tests, deploys or runs that code,
+      # because Flex Consumption runs 24. The frontend's own scripts run under
+      # 26, so the job switches here and back.
+      - name: Setup Node.js 24 for the study-guide refresh (functions code)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            functions/package-lock.json
+
       - name: Refresh the study-guide outlines
         working-directory: frontend
         run: node scripts/update-study-guides.mjs --summary "${RUNNER_TEMP}/study-guides-summary.md"
+
+      - name: Setup Node.js 26 for the frontend checks
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            functions/package-lock.json
 
       # The data tests fail the day a stored status contradicts its dates; a
       # refresh that would open a pull request destined to go red stops here
