@@ -18,7 +18,7 @@ import {
   outlineKeyFor,
 } from './study-guides/index.js';
 import { certifications } from './certifications';
-import { todayIso } from '@/lib/certStatus';
+import { deriveStatus, todayIso } from '@/lib/certStatus';
 import { loadStudyGuideOutline, loadableGuideKeys } from '@/lib/studyGuideOutline';
 
 const modules = import.meta.glob(['./study-guides/*.js', '!./study-guides/index.js'], {
@@ -56,8 +56,11 @@ describe('Azure study-guide outlines', () => {
   it('carries an outline for every live catalogue exam that has a study guide', () => {
     // Retired exams are skipped on purpose: Learn redirects their guides to
     // the browse page, and a redirect parses as a valid page with no areas.
+    // Retired as rendered today (deriveStatus), the rule the updater applies
+    // (scripts/update-study-guides.mjs, eligibleCerts): a row stored `retired`
+    // ahead of its day keeps its outline until the day.
     const expected = certifications
-      .filter((c) => c.studyGuideUrl && c.status !== 'retired')
+      .filter((c) => c.studyGuideUrl && deriveStatus(c, todayIso()) !== 'retired')
       .map((c) => guideKeyFor(c.studyGuideUrl));
     const missing = expected.filter((key) => !STUDY_GUIDES[key]);
     expect(missing, 'exams with a studyGuideUrl but no outline').toEqual([]);

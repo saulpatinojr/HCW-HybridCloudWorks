@@ -59,6 +59,7 @@ import {
   fetchStudyGuide,
   StudyGuideError,
 } from '../../functions/src/lib/listen-and-learn/studyguide.js';
+import { eligibleCerts } from './study-guide-eligibility.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -159,10 +160,9 @@ export async function collectOutlines(
   return { outlines, failures };
 }
 
-/** Certifications with a guide to fetch: retired exams redirect, so skip them. */
-export function eligibleCerts(certifications) {
-  return certifications.filter((c) => c.studyGuideUrl && c.status !== 'retired');
-}
+// eligibleCerts lives in study-guide-eligibility.mjs, which carries no import
+// beyond certStatus, so its test runs without the parser's dependencies.
+export { eligibleCerts };
 
 function parseArgs(argv) {
   const args = { summaryPath: null, limit: null };
