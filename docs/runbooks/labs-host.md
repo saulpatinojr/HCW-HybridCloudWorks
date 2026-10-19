@@ -640,10 +640,15 @@ ADR 0032 rebuilds the host rather than repairing it.
    Accept the new host key after comparing its fingerprint with the one the
    Web Console shows ("Connect from a desktop", above). Success is the
    server's host name. A session with no terminal to answer the prompt
-   accepts it with `ssh -o StrictHostKeyChecking=accept-new hcw-lab
-   hostname` and records the fingerprint in the rehearsal note instead of
-   comparing it first (2026-10-18: `SHA256:RgkOkM9UDA8TtHeLrDjOXymTrzanqCZ39z0iDuzW4yg`);
-   that is a divergence to write down, not a habit.
+   verifies first and connects second: the owner reads the fingerprint
+   from the Web Console, the session reads the host's with
+   `ssh-keyscan -t ed25519 148.230.91.226 | ssh-keygen -lf -`, and only when
+   the two match does it connect with `ssh -o
+   StrictHostKeyChecking=accept-new hcw-lab hostname`. On 2026-10-18 the
+   session connected first and recorded the fingerprint
+   (`SHA256:RgkOkM9UDA8TtHeLrDjOXymTrzanqCZ39z0iDuzW4yg`) without the
+   comparison; that is written on #955 as a divergence, and this paragraph
+   is the correction.
 6. **First run**: `infra-lab/README.md`, step 7. Success is `host check: no
    other workloads found` near the top (above), and, because there is no
    vault yet and Coder is on (since 2026-09-28), a `PLAY RECAP` for
@@ -659,22 +664,28 @@ ADR 0032 rebuilds the host rather than repairing it.
       cannot make itself (`lab-host/README.md`, "The vault"), rotating the
       values marked "rotate on every host rebuild" in
       [Required inputs §4.7](../standards/required-inputs.md#47-vps-agent-hostinger-env-never-committed).
-      Nine keys by hand: `vault_cloudflare_api_token` (**Roll** the Caddy
-      token at the API Tokens page, which keeps its name, scope, filter and
-      end date, and check the client-IP filter holds **both** of the host's
+      Seven keys by hand: `vault_cloudflare_api_token` (**Roll** the Caddy
+      token at https://dash.cloudflare.com/profile/api-tokens, which keeps
+      its name, scope, filter and end date, and check the client-IP filter
+      holds **both** of the host's
       addresses, IPv4 and the IPv6 `/128`: a reinstalled Ubuntu reaches the
       Cloudflare API over IPv6, and every issuance failed with `Cannot use
       the access token from location` until the second address was added),
       `vault_coder_oauth2_github_client_id` and
-      `vault_coder_oauth2_github_client_secret` (regenerate the secret on
-      the OAuth app's page), the three add-on Turnstile secrets
-      `vault_addon_migration_turnstile_secret`,
+      `vault_coder_oauth2_github_client_secret` (the `HCW Labs` app at
+      https://github.com/organizations/HybridCloudWorks/settings/applications:
+      **Edit**, read the Client ID, **Generate a new client secret**), the
+      three add-on Turnstile secrets `vault_addon_migration_turnstile_secret`,
       `vault_addon_network_assessment_turnstile_secret` and
-      `vault_addon_cloud_assessment_turnstile_secret` (each widget's Secret
-      key in the Turnstile dashboard; the play names the missing one), and
-      `vault_coder_postgres_password`, generated on the host. The four
+      `vault_addon_cloud_assessment_turnstile_secret` (each widget's
+      **Secret key** under **Settings** at
+      https://dash.cloudflare.com/?to=/:account/turnstile, widgets
+      `hcw-addon-migration`, `HCW-NetworkEyes_AddOn` and
+      `HCW-CloudAssessor_AddOn`; the play names a missing one), and
+      `vault_coder_postgres_password`, generated on the host. Each goes in
+      with the `hcw-vault-set` clipboard line in "The vault". The four
       `vault_arc_*` and four `vault_labs_agent_*` keys are the scripts'
-      below.
+      below, so the vault holds fifteen keys when step 7 is done.
    2. **Arc, both runs** ("Re-onboarding a rebuilt host", below):
       `Register-LabArc.ps1`, then `Register-LabArc.ps1 -Connect`. The
       `-Connect` run's `bootstrap.sh` stops at `coder : Coder has no account
@@ -2476,11 +2487,13 @@ already has an SSH login, which carries `sudo`.
 It is off until a pull request sets `portainer_enabled: true` in
 `lab-host/ansible/group_vars/all.yml` and `bootstrap.sh` runs after the
 merge. Success for that run is a `PLAY RECAP` with `failed=0` and the task
-`portainer : Say how to reach Portainer` printing `Portainer 2.45.1 answers
-on https://127.0.0.1:9443 on this host and nowhere else`.
+`portainer : Say how to reach Portainer` printing `Portainer 2.45.2 answers
+on https://127.0.0.1:9443 on this host and nowhere else` (the version is
+`portainer_image_tag` in `group_vars`, 2.45.2 since the pin moved).
 
 **The first sign-in.** Two guards stand in front of a fresh Portainer, and
-both were measured on the pinned 2.45.1 on 2026-09-26. Until an
+both were measured on the then-pinned 2.45.1 on 2026-09-26 and seen again
+on 2.45.2 at the 2026-10-18 rebuild. Until an
 administrator exists it stops serving five minutes after it starts: the
 container stays up and every request answers `Administrator initialization
 timeout`. And creating the administrator needs a one-time **setup token**
