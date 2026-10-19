@@ -238,8 +238,10 @@ template, but no scope holds it to this host. That is why the token was the
 owner's, made in a pane for the one run and expiring on its own, until the
 bounds above were accepted; and why the rotation credential stays unscoped
 even now that the set is known: on this version a token that holds
-`api_key:create` (which renewing the status token needs) mints tokens with
-scopes it does not hold itself, so a narrowed credential contains nothing
+`api_key:create` together with `user:read` (both of which renewing the
+status token needs; `api_key:create` alone cannot even resolve the user,
+404) mints tokens with scopes it does not hold itself, so a narrowed
+credential contains nothing
 against a leak, and a scope list would have to track what Coder's CLI
 needs from release to release for no gain. Containment works on the
 account, below.
