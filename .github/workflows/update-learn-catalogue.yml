@@ -93,7 +93,14 @@ jobs:
       # code, and functions code runs on the line Azure Functions Flex
       # Consumption supports. scripts/version-floors.json holds it there with
       # every other functions pin (#715).
-      - name: Setup Node.js
+      # Two Node set-ups, because the two trees this job installs pin two
+      # lines and both are engine-strict: functions/ is ^24.19 (the Flex
+      # Consumption runtime) and frontend/ has been >=26.9 since the version
+      # floors moved on 2026-10-14 (#1161). One Node 24 for both failed
+      # `npm ci` in frontend/ with EBADENGINE on 2026-10-19; the install-time
+      # pin is the only thing Node 24 is needed for, so functions/ is
+      # installed first under it and everything after runs under 26.
+      - name: Setup Node.js 24 for the functions install
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
@@ -106,19 +113,28 @@ jobs:
             frontend/package-lock.json
             functions/package-lock.json
 
+      # The study-guide script imports the Listen & Learn parser from
+      # functions/src/lib/listen-and-learn/studyguide.js, so `node` resolves
+      # cheerio out of functions/node_modules — without this the import fails
+      # at resolution, before a single guide is fetched. `--ignore-scripts`:
+      # nothing this job uses has an install-time script.
+      - name: Install functions dependencies (the study-guide parser)
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      - name: Setup Node.js 26 for the frontend and the updater
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            functions/package-lock.json
+
       # `--ignore-scripts`: the updater needs pdf-parse and prettier, neither
       # of which has an install-time script; nothing else in the tree is used.
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm ci --ignore-scripts
-
-      # The study-guide script imports the Listen & Learn parser from
-      # functions/src/lib/listen-and-learn/studyguide.js, so `node` resolves
-      # cheerio out of functions/node_modules — without this the import fails
-      # at resolution, before a single guide is fetched. `--ignore-scripts`
-      # for the same reason as above.
-      - name: Install functions dependencies (the study-guide parser)
-        working-directory: functions
         run: npm ci --ignore-scripts
 
       # A source that cannot be fetched or parses to zero items ends this step
@@ -138,9 +154,33 @@ jobs:
       # So a single retitled Learn page cannot block the catalogue refresh —
       # but it must not vanish either, which is why the summary is carried into
       # the pull request body below.
+      #
+      # Under Node 24 again: this script runs functions/ code (the Listen &
+      # Learn parser), and the functions ceiling in scripts/version-floors.json
+      # names 24 for every pin that builds, tests, deploys or runs that code,
+      # because Flex Consumption runs 24. The frontend's own scripts run under
+      # 26, so the job switches here and back.
+      - name: Setup Node.js 24 for the study-guide refresh (functions code)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            functions/package-lock.json
+
       - name: Refresh the study-guide outlines
         working-directory: frontend
         run: node scripts/update-study-guides.mjs --summary "${RUNNER_TEMP}/study-guides-summary.md"
+
+      - name: Setup Node.js 26 for the frontend checks
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            functions/package-lock.json
 
       # The data tests fail the day a stored status contradicts its dates; a
       # refresh that would open a pull request destined to go red stops here
