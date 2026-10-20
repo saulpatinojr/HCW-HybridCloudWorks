@@ -70,6 +70,21 @@ This project has not cut a tagged release; entries are grouped under
   `enabled_timers`. [Required inputs](docs/standards/required-inputs.md)
   §4.1, §4.2, §4.5, §4.6, §4.8 and §4.10 carry the rows.
 
+- **GitKraken article series: three how-to drafts for the Q4 2026 Ambassador
+  quarter (#1078).** `docs/content/blog-gitkraken-01-commit-graph.md` reads
+  this repository's 1,193 commits in GitLens 19.4's Commit Graph without an
+  account; `blog-gitkraken-02-mcp-server.md` explains what the GitKraken MCP
+  server's Git and pull-request tools do inside an AI coding session on a
+  platform that ships every change through a pull request; and
+  `blog-gitkraken-03-stacked-prs.md` sets the working agreements' one-conflict-
+  at-a-time rule and the `CHANGELOG.md` collision beside GitLens 19.3's Rebase
+  Stack and Desktop 12.6's stacked pull requests. Every repository figure was
+  read on 2026-10-20 and every product claim is quoted from the release notes
+  of that day, with the unverified items listed in each file's trailing
+  Sources comment. Listed in `mkdocs.yml` as drafts like the lab and Docker
+  series. The owner imports them once from Admin → Drafts, reviews, publishes,
+  and logs each on the programme's quarterly check-in by 2026-12-31; the
+  programme asks for two pieces a quarter.
 - **Portainer read-only check on the lab host, reported into the Health Hub
   (#1282)**. The `portainer` role installs `hcw-portainer-check`: every 15
   minutes, and once on each `bootstrap.sh` run, it reads Portainer on the
@@ -527,6 +542,43 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The AVM versions bot regenerates the image's record of what each pinned
+  version calls, so its pull request arrives green (#1306, #1309)**.
+  `AVM_CHILD_CALLS` in `lab-image/versions.env` is keyed by each builder
+  module's version, and what a new release calls is only known once the
+  image's vendor stage resolves it, so every bump the bot opened carried
+  the record of the old versions: #1306 (`avm-ptn-alz` 0.22.0, the
+  connectivity module 0.17.7, the spoke module 0.22.3) arrived with
+  `scripts (operations)` red on "records nothing for avm-ptn-alz@0.22.0 in
+  AVM_CHILD_CALLS" and the image's Build and smoke red in `vendor-avm.sh`,
+  which the pull request body called by design. `update-avm-versions.mjs`
+  now does what that body told the reviewer to do: after writing the pins
+  it runs `docker build --target vendor --build-arg AVM_PRINT_PINS=1
+  --progress=plain lab-image` (with `--no-cache-filter vendor`, since a
+  cached stage prints nothing), echoing the build log to stderr, splices the
+  `AVM_CHILD_MODULES` and `AVM_CHILD_CALLS` blocks it prints over the two in
+  `versions.env` (no other line changes, and splicing twice is the same
+  text), rewrites `LAB_IMAGE_CHILD_AVM` in `labImage.js` when the child
+  list changed, and moves the exact pin on the module's block in the smoke
+  payload (`smoke/terraform-validate-payload/main.tf`, whose `module "alz"`
+  pins the builder's exact version on purpose and so broke on every bump of
+  it). A build that fails, a print-out without the blocks, a line that is
+  not the printed shape, or a record keyed by versions the file does not
+  pin ends the run with exit code 1 and one sentence after the log, and no
+  pull request opens. The workflow runs
+  `scripts/lab-image-avm-vendoring.test.mjs` on the result before the
+  upload, stages the two new paths by name (five, asserted by
+  `avm-versions-workflow.test.mjs`), and the body says the record was
+  regenerated. The vendoring test's own "goes red" cases carried the spoke
+  module's pin as a literal (`0.22.2`), which would have failed the first
+  bump of that module with a perfect record in hand; they read the pin now,
+  as #1300 did for the frontend suites. Rehearsed against #1306's pins on a
+  workstation with Docker: the vendor stage printed 17 children and 19 call
+  lines, the splice changed exactly the 18 lines keyed by the three moved
+  versions beside the six pin lines, and the vendoring test went from six
+  failures to nine passed. `--children <log>` splices from a saved
+  print-out for a run without Docker.
+
 - **Study-guide refresher: an exam stored retired ahead of its day keeps its outline until the day**. The refresher and the outlines test judged liveness by the stored status, so the first green updater run after #1289 deleted PL-400's outline eleven days before its last exam day (#1291, closed). Both now ask `deriveStatus` for today, as the badge does; `eligibleCerts` lives in `scripts/study-guide-eligibility.mjs` with a unit test.
 
 - **Learn-catalogue updater: a refresh no longer deletes `statusReadDate` and `availableDate`** (#1091's fields). The rebuild of every poster row carried an allowlist of fields that predated them, so each run erased them, PL-400 turned `retired` two weeks before its October 30 day and the data check refused the pull request (run 39218206063, after #1288). Both fields are carried now, with a unit test; a real run against Learn left only the sync date changed and the data tests green.
@@ -643,6 +695,67 @@ This project has not cut a tagged release; entries are grouped under
   table rules reference nonexistent `br-*` interfaces.
 
 ### Changed
+
+- **Ambassador hub: the seeded programmes carry the published rules (read
+  2026-10-20) (#1304).** The Evidence tab counts against what each programme
+  publishes, not against a first seed's guess.
+  - **Docker Captain** takes its rules from docker.com/community/captains and
+    the Advocu join form: open internationally at 18+, the three tracks
+    (Advisor on a Docker member's recommendation, Thought Leader at 5,000
+    monthly views, Community Contributor at five years), the "sail the extra
+    mile" exceptions, a one-year term renewed on continuous contribution with
+    no numeric content quota, rolling applications with interviews a month or
+    more out, and the perks as listed (discounts, not free seats or a
+    pull-rate exemption). Its requirements become a measured audience figure,
+    Docker content, community leadership and hands-on material, and the
+    application link is the join form. A stored row still holding the guess
+    updates itself on the next read, field by field
+    (`SUPERSEDED_SEED_VALUES`, revision 2); a field the owner edited stays.
+  - **Docker-Sponsored Open Source**, **HashiCorp Ambassador** and **Coder
+    Champion** join the seeded catalogue, from their pages. DSOS: public Hub
+    repositories under an OSI licence, updates within six months, no
+    pathway to commercialization (donations allowed), the grants listed, a
+    yearly renewal, and a paid subscription and DSOS mutually exclusive.
+    HashiCorp: the three pillars, the three contribution categories, the
+    Principles, specific examples from the preceding twelve months,
+    self-nomination, the award expiring each year, and the 1 December to
+    5 January window with its notification form. Coder: five community
+    chats, two people helped in `#help`, the starred repository and public
+    templates, year-long then audited quarterly, self-nominated through
+    the programme page.
+  - **GitKraken Ambassador** (revision 3) words its rule as the page's tiers
+    (Content Creator at 2+ pieces a quarter, Influencer, Community
+    Ambassador, Feature Tester, Event Host at 30+ developers), the
+    programme-wide asks (brand guidelines, the logo on the site and
+    profiles, the quarterly check-in form) and the perks. The quarterly
+    upkeep and the one counted requirement are unchanged; the logo and the
+    check-in form are recommended activities, because the model counts
+    evidence and neither is a count of evidence. A seed's superseded record
+    now keeps its whole history (`revisions`, each step the values it
+    replaced), and the backfill matches a stored row against every step
+    above its own revision, so a row from the first seed that never saw
+    revision 2 is corrected rather than stamped current with the guess kept
+    (CodeRabbit on #1304).
+  - **Windows for the coming year**: MIEE moves to 1 May to 31 July 2027 on
+    the 2026 pattern, its description and its "apply before" line rolled
+    with it so the seed does not contradict its own window, and AWS
+    Community Builders' note records the 2026 close (2026-01-21) and the
+    January 2027 cycle. Each moves through `SUPERSEDED_SEED_VALUES`, so a
+    stored value the owner never edited follows the seed, and one they
+    edited stays. MCT Regional Lead is not moved: its October 2026 window is
+    open until 2026-10-31, and a stored row would show it a year away while
+    it is live; it rolls to October 2027 in November.
+- **CodeRabbit spends its one included review an hour on the head someone
+  will read**. The Advanced trial's ten reviews an hour became the
+  open-source tier's one on 2026-10-20 (#1301 and #1304 sat on `Review rate
+  limited`; #1304 asked eleven times and was refused ten), and
+  `.coderabbit.yaml` now reviews no draft, pauses incremental reviews after
+  two reviewed commits, skips Dependabot's pull requests (the owner approves
+  those, #1299) and turns off the docstring pre-merge check, which has only
+  ever reported zero functions. Pull requests from `hcw-site-app[bot]` stay
+  reviewed, because CodeRabbit's approval is their required review (#1293).
+  A review on this repository is asked for by hand with
+  `@coderabbitai review`.
 
 - **Foundry's first month is recorded on an estimate, and #849 closes on it**.
   `docs/architecture/cost-analysis.md` gains *Foundry — first measured month

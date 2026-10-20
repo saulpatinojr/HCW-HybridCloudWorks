@@ -23,6 +23,7 @@ import {
   programGate,
   seedBackfillFor,
   SUPERSEDED_SEED_VALUES,
+  currentSeedRevision,
   toCalendarDate,
   validateApplication,
   validateEvidence,
@@ -250,6 +251,9 @@ describe('programs', () => {
     'Microsoft Management Community',
     'MCT Regional Lead',
     'AWS Community Builders',
+    'Docker-Sponsored Open Source',
+    'HashiCorp Ambassador',
+    'Coder Champion',
   ];
 
   it('seeds every default on the first read of an empty container, each editable and enabled', async () => {
@@ -300,9 +304,9 @@ describe('programs', () => {
     expect(grid.rows).toHaveLength(15);
     expect(grid.options).toEqual(['Daily', 'Weekly', 'Monthly', 'Rarely', 'Never']);
     expect(miee.applicationWindow).toEqual({
-      opens: '2026-05-01',
-      closes: '2026-07-31',
-      note: 'Applications May to 31 July 2026; announcements September 2026.',
+      opens: '2027-05-01',
+      closes: '2027-07-31',
+      note: expect.stringMatching(/^Applications May to 31 July 2027/),
     });
   });
 
@@ -335,15 +339,18 @@ describe('programs', () => {
       'Microsoft Management Community',
       'MCT Regional Lead',
       'AWS Community Builders',
+      'Docker-Sponsored Open Source',
+      'HashiCorp Ambassador',
+      'Coder Champion',
     ]);
     // Appended after the highest stored order (7), in seed order.
-    expect(body.items.slice(7).map((p) => p.order)).toEqual([8, 9, 10, 11]);
+    expect(body.items.slice(7).map((p) => p.order)).toEqual([8, 9, 10, 11, 12, 13, 14]);
     expect(body.items.find((p) => p.id === 'program-github-star').enabled).toBe(false);
-    expect(store.createDoc).toHaveBeenCalledTimes(4);
+    expect(store.createDoc).toHaveBeenCalledTimes(7);
     expect(store.data.get('ambassador').get(gone.id).softDeletedAt).toBe(stamp);
     // Nothing more on the next read.
     await h.listPrograms(makeRequest(), context);
-    expect(store.createDoc).toHaveBeenCalledTimes(4);
+    expect(store.createDoc).toHaveBeenCalledTimes(7);
   });
 
   it('two overlapping reads that both miss a seed leave the first insert, edits included, and never surface a soft-deleted one', async () => {
@@ -388,6 +395,9 @@ describe('programs', () => {
       'program-microsoft-management-community',
       'program-microsoft-mct-regional-lead',
       'program-aws-community-builders',
+      'program-docker-sponsored-oss',
+      'program-hashicorp-ambassador',
+      'program-coder-champion',
     ]);
   });
 
@@ -432,7 +442,7 @@ describe('programs', () => {
       ...base,
       seeded: true,
       order: 10 + i,
-      ...(SUPERSEDED_SEED_VALUES[p.id] ? { seedRevision: SUPERSEDED_SEED_VALUES[p.id].revision } : {}),
+      ...(SUPERSEDED_SEED_VALUES[p.id] ? { seedRevision: currentSeedRevision(p.id) } : {}),
     }));
     const store = memStore({ ambassador: [storedMvp, storedMct, ownManagement, ...otherSeeds] });
     const log = { error: vi.fn(), info: vi.fn() };
@@ -1263,7 +1273,9 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
 describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)', () => {
   const GITKRAKEN = 'program-gitkraken-ambassador';
   const seed = DEFAULT_PROGRAMS.find((p) => p.id === GITKRAKEN);
-  const { revision, fields: old } = SUPERSEDED_SEED_VALUES[GITKRAKEN];
+  // The first step of the history records what #873 seeded; the stamp is the last.
+  const old = SUPERSEDED_SEED_VALUES[GITKRAKEN].revisions[0].fields;
+  const revision = currentSeedRevision(GITKRAKEN);
   /** A GitKraken row as #873 stored it: the first seed, before upkeep existed. */
   const storedFirstSeed = () => {
     const row = { ...seed, ...old, seeded: true, membershipStatus: 'active' };
@@ -1279,10 +1291,18 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
       note: expect.stringMatching(/contribution tracker, on that quarter’s tab/),
     });
     expect(seed.renewalCadence).toBe('quarterly');
+    // The criteria are the page's tiers since 2026-10-20; the check-in's
+    // focus stays as the recommended activities.
     expect(seed.criteria).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/G2, Capterra and TrustRadius/),
-        expect.stringMatching(/Merge Conflicts, Dev AI Use, Commit Graph/),
+        expect.stringMatching(/^Content Creator: 2\+ pieces of content per quarter/),
+        expect.stringMatching(/^Community Ambassador: 2\+ reviews or helpful posts a quarter/),
+      ])
+    );
+    expect(seed.recommendedActivities).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/G2, Capterra or TrustRadius/),
+        expect.stringMatching(/Merge Conflicts, Dev AI Use or Commit Graph/),
       ])
     );
     expect(seed.requirements).toEqual([
@@ -1297,7 +1317,7 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
       provider: 'AWS',
       applicationUrl: 'https://builder.aws.com/community/community-builders',
     });
-    expect(builders.applicationWindow.note).toMatch(/Waitlist open/);
+    expect(builders.applicationWindow.note).toMatch(/waitlist on builder\.aws\.com/);
     expect(builders.applicationQuestions).toBeUndefined();
   });
 
@@ -1357,42 +1377,44 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
     await h.listPrograms(makeRequest(), context);
     expect(store.data.get('ambassador').get(GITKRAKEN).seedRevision).toBe(revision);
-    // MVP and Docker Captain have revisions of their own since #1302 (a
-    // `reach` requirement that counts manual rows); a seed with no history
-    // carries no stamp.
+    // The MVP (revision 2, #1302) and Docker Captain (revision 3, #1302 on
+    // top of the 2026-10-20 rules) carry stamps of their own; a seed with
+    // no history carries none.
     expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBe(2);
-    expect(store.data.get('ambassador').get('program-docker-captain').seedRevision).toBe(2);
-    expect(store.data.get('ambassador').get('program-aws-community-builders').seedRevision).toBeUndefined();
+    expect(store.data.get('ambassador').get('program-docker-captain').seedRevision).toBe(3);
+    expect(store.data.get('ambassador').get('program-microsoft-mct').seedRevision).toBeUndefined();
   });
 
   // #1302: a stored MVP or Docker Captain seed whose requirements are still
-  // the first seed's takes revision 2 — `manual` under `reach` — in one
-  // patch; the edited case is proven on the MVP earlier in this file.
-  it.each(['program-microsoft-mvp', 'program-docker-captain'])(
-    'replaces an unedited first-seed requirements list on %s with revision 2',
-    (id) => {
-      const current = DEFAULT_PROGRAMS.find((p) => p.id === id);
-      const { revision: rev, fields: v1 } = SUPERSEDED_SEED_VALUES[id];
-      expect(rev).toBe(2);
-      expect(Object.keys(v1)).toEqual(['requirements']);
-      const patch = seedBackfillFor({ ...current, ...v1, seeded: true }, current);
-      expect(patch).toEqual({ requirements: current.requirements, seedRevision: 2 });
-      expect(patch.requirements).not.toEqual(v1.requirements);
-      expect(patch.requirements.find((r) => r.id === 'reach').evidenceTypes).toContain('manual');
-    }
-  );
+  // the previous revision's takes the current list — `manual` under `reach`,
+  // and off Docker's `labs` — in one patch; the edited case is proven on the
+  // MVP earlier in this file.
+  it.each([
+    ['program-microsoft-mvp', 2],
+    ['program-docker-captain', 3],
+  ])('replaces an unedited requirements list on %s with revision %i', (id, rev) => {
+    const current = DEFAULT_PROGRAMS.find((p) => p.id === id);
+    const step = SUPERSEDED_SEED_VALUES[id].revisions.at(-1);
+    expect(step.revision).toBe(rev);
+    expect(Object.keys(step.fields)).toEqual(['requirements']);
+    const stored = { ...current, ...step.fields, seeded: true, seedRevision: rev - 1 };
+    const patch = seedBackfillFor(stored, current);
+    expect(patch).toEqual({ requirements: current.requirements, seedRevision: rev });
+    expect(patch.requirements).not.toEqual(step.fields.requirements);
+    expect(patch.requirements.find((r) => r.id === 'reach').evidenceTypes).toContain('manual');
+    expect(seedBackfillFor({ ...stored, ...patch }, current)).toBeNull();
+  });
 
   // The audience rows are manual evidence filed under Docker's `reach`;
   // readiness matches by sourceModule alone, so `labs` must not list
   // `manual` or two audience months would read as hands-on material met.
-  it('lists manual evidence under Docker Captain’s reach only, with the first seed’s labs list kept for the compare', () => {
+  it('counts Docker Captain’s audience rows under reach and never as hands-on material, with revision 2’s labs list kept for the compare', () => {
     const docker = DEFAULT_PROGRAMS.find((p) => p.id === 'program-docker-captain');
     const types = Object.fromEntries(docker.requirements.map((r) => [r.id, r.evidenceTypes]));
     expect(types.labs).toEqual(['labs']);
     expect(types.reach).toEqual(['manual']);
-    expect(docker.requirements.filter((r) => r.evidenceTypes.includes('manual')).map((r) => r.id)).toEqual(['reach']);
-    const v1 = SUPERSEDED_SEED_VALUES['program-docker-captain'].fields.requirements;
-    expect(v1.find((r) => r.id === 'labs').evidenceTypes).toEqual(['labs', 'manual']);
+    const v2 = SUPERSEDED_SEED_VALUES['program-docker-captain'].revisions.at(-1).fields.requirements;
+    expect(v2.find((r) => r.id === 'labs').evidenceTypes).toEqual(['labs', 'manual']);
     const audience = {
       id: 'e-audience',
       title: 'Audience, September 2026',
