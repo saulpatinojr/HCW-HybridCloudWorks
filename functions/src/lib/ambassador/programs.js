@@ -502,19 +502,20 @@ const DOCKER_CAPTAIN_TRACKS = [
 ];
 
 /**
- * Seed values a later seed replaced, by program id: the seed's `revision`
- * and the replaced `fields`. A stored seed below that revision whose field
- * still equals the replaced value never had that field edited, so the
- * backfill (steps.js) gives it the current seed's value, once, and stamps
- * `seedRevision`. A field the owner changed is left alone, and after the
- * stamp so is one the owner later sets back to the old value on purpose
+ * Seed values a later seed replaced, by program id: the seed's `revisions`,
+ * ascending, each the `revision` that landed and the `fields` it replaced
+ * (the values the revision before it seeded). A stored seed below the last
+ * revision whose field still equals a value recorded by any revision above
+ * its own never had that field edited, so the backfill (steps.js) gives it
+ * the current seed's value, once, and stamps `seedRevision` at the last
+ * revision. A field the owner changed is left alone, and after the stamp
+ * so is one the owner later sets back to an old value on purpose
  * (CodeRabbit on #1077). A program seeded fresh is stamped at creation.
  *
- * One revision per program, holding the values the revision before it
- * seeded: a row two revisions behind is stamped but keeps the older value,
- * since it no longer equals anything recorded here. The backfill runs on
- * every read of the catalogue, so a row that far behind is one never read
- * between the two seeds landing.
+ * The whole history is kept, not only the last step, so a row that missed
+ * a revision (seeded by #873, never read while revision 2 was current) is
+ * still matched against the values it holds and corrected, rather than
+ * stamped current with the guess kept (CodeRabbit on #1304).
  *
  * GitKraken Ambassador's first seed (#873) guessed its rules ("As published
  * 2026; edit to match"); revision 2 (#1077) took the quarterly check-in of
@@ -529,97 +530,139 @@ const DOCKER_CAPTAIN_TRACKS = [
  * stored row would show it a year away while it is live. It rolls to
  * October 2027 in November.
  */
+/** One step of a seed's history: the revision that landed and the values it replaced. */
+const revised = (revision, fields) => Object.freeze({ revision, fields: Object.freeze(fields) });
+
 export const SUPERSEDED_SEED_VALUES = Object.freeze({
   'program-gitkraken-ambassador': Object.freeze({
-    revision: 3,
-    fields: Object.freeze({
-      description:
-        'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Two or more content pieces a quarter keep a membership active, each logged on the program’s contribution tracker on that quarter’s tab (the program’s quarterly check-in, October 2026).',
-      criteria: GITKRAKEN_FOCUS,
-      requirements: [
-        gitkrakenQuarterly(
-          `At least 2 a quarter keep the membership active: a review, a Reddit thread, an article, a shared GitKraken post or a video, each logged on the contribution tracker. Readiness over one quarter’s dates is that quarter’s count. ${EDIT_NOTE}`
-        ),
-      ],
-      recommendedActivities: [
-        'Log each piece on the contribution tracker, on the quarter’s tab, when it is published',
-        'In articles, use data: the time saved, the commits, the conflicts resolved',
-        'Re-share the GitKraken content dropped weekly in the ambassadors’ Slack',
-        'A YouTube video on one theme: Merge Conflicts, Dev AI Use or Commit Graph',
-        'A review on G2, Capterra or TrustRadius',
-      ],
-    }),
+    revisions: Object.freeze([
+      // Revision 2 (#1077) replaced the first seed's guess (#873).
+      revised(2, {
+        description:
+          'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Applications through the form on the programme page. As published 2026; edit to match.',
+        criteria: ['Content', 'Speaking', 'Supporting users'],
+        renewalCadence: 'annual',
+        expirationRule: 'Reviewed annually. As published 2026; edit to match.',
+        requirements: [
+          requirement(
+            'content',
+            'Git and tooling content',
+            `Articles, videos or posts on Git and developer tooling. ${EDIT_NOTE}`,
+            { evidenceTypes: ['content'], minCount: 3, weight: 3 }
+          ),
+          requirement('talks', 'Speaking', `Sessions on Git workflows and tooling. ${EDIT_NOTE}`, {
+            evidenceTypes: ['speaking'],
+            minCount: 1,
+            weight: 2,
+          }),
+          requirement('tutorials', 'Tutorials and labs', `Hands-on tutorials and labs. ${EDIT_NOTE}`, {
+            evidenceTypes: ['labs', 'content'],
+            minCount: 1,
+            weight: 1,
+          }),
+        ],
+        recommendedActivities: [
+          'Publish Git workflow tutorials',
+          'Answer questions in the GitKraken community',
+        ],
+      }),
+      // Revision 3 (2026-10-20) replaced the check-in wording of 2026-10-08.
+      revised(3, {
+        description:
+          'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Two or more content pieces a quarter keep a membership active, each logged on the program’s contribution tracker on that quarter’s tab (the program’s quarterly check-in, October 2026).',
+        criteria: GITKRAKEN_FOCUS,
+        requirements: [
+          gitkrakenQuarterly(
+            `At least 2 a quarter keep the membership active: a review, a Reddit thread, an article, a shared GitKraken post or a video, each logged on the contribution tracker. Readiness over one quarter’s dates is that quarter’s count. ${EDIT_NOTE}`
+          ),
+        ],
+        recommendedActivities: [
+          'Log each piece on the contribution tracker, on the quarter’s tab, when it is published',
+          'In articles, use data: the time saved, the commits, the conflicts resolved',
+          'Re-share the GitKraken content dropped weekly in the ambassadors’ Slack',
+          'A YouTube video on one theme: Merge Conflicts, Dev AI Use or Commit Graph',
+          'A review on G2, Capterra or TrustRadius',
+        ],
+      }),
+    ]),
   }),
   'program-docker-captain': Object.freeze({
-    revision: 2,
-    fields: Object.freeze({
-      description:
-        'Docker Captains: technology experts and leaders in the Docker community who share their knowledge. Selected by Docker.',
-      applicationUrl: 'https://www.docker.com/community/captains/',
-      eligibility: [
-        'Demonstrated Docker expertise',
-        'Regular public Docker content or speaking',
-        'Not a Docker employee',
-      ],
-      criteria: ['Expertise', 'Community sharing', 'Consistency'],
-      applicationWindow: {
-        opens: null,
-        closes: null,
-        note: 'Selection by Docker; express interest through the program page.',
-      },
-      expirationRule: 'Reviewed annually.',
-      requirements: [
-        requirement('content', 'Docker content', `Articles and guides on Docker. ${EDIT_NOTE}`, {
-          evidenceTypes: ['content', 'newsletter'],
-          minCount: 4,
-          weight: 3,
-        }),
-        requirement('talks', 'Docker talks', `Sessions on containers and Docker. ${EDIT_NOTE}`, {
-          evidenceTypes: ['speaking'],
-          minCount: 2,
-          weight: 2,
-        }),
-        requirement(
-          'labs',
-          'Hands-on material',
-          `Labs, repositories, Compose examples. ${EDIT_NOTE}`,
-          { evidenceTypes: ['labs', 'manual'], minCount: 2, weight: 1 }
-        ),
-      ],
-      recommendedActivities: [
-        'Publish Docker Desktop and image-building guides',
-        'Speak at a Docker community event',
-      ],
-    }),
+    revisions: Object.freeze([
+      revised(2, {
+        description:
+          'Docker Captains: technology experts and leaders in the Docker community who share their knowledge. Selected by Docker.',
+        applicationUrl: 'https://www.docker.com/community/captains/',
+        eligibility: [
+          'Demonstrated Docker expertise',
+          'Regular public Docker content or speaking',
+          'Not a Docker employee',
+        ],
+        criteria: ['Expertise', 'Community sharing', 'Consistency'],
+        applicationWindow: {
+          opens: null,
+          closes: null,
+          note: 'Selection by Docker; express interest through the program page.',
+        },
+        expirationRule: 'Reviewed annually.',
+        requirements: [
+          requirement('content', 'Docker content', `Articles and guides on Docker. ${EDIT_NOTE}`, {
+            evidenceTypes: ['content', 'newsletter'],
+            minCount: 4,
+            weight: 3,
+          }),
+          requirement('talks', 'Docker talks', `Sessions on containers and Docker. ${EDIT_NOTE}`, {
+            evidenceTypes: ['speaking'],
+            minCount: 2,
+            weight: 2,
+          }),
+          requirement(
+            'labs',
+            'Hands-on material',
+            `Labs, repositories, Compose examples. ${EDIT_NOTE}`,
+            { evidenceTypes: ['labs', 'manual'], minCount: 2, weight: 1 }
+          ),
+        ],
+        recommendedActivities: [
+          'Publish Docker Desktop and image-building guides',
+          'Speak at a Docker community event',
+        ],
+      }),
+    ]),
   }),
   'program-microsoft-elevate-educator-expert': Object.freeze({
-    revision: 2,
-    fields: Object.freeze({
-      description:
-        'Microsoft Elevate Educator – Expert, the programme formerly called Microsoft Innovative Educator Expert (MIEE): educators who use Microsoft tools and AI to change learning, selected each year through an application. The 2026-2027 application opens in May 2026 and closes 31 July 2026, with announcements in September 2026 (FAQ: aka.ms/EducatorFAQ). The questions below are the official 2026-2027 list; program rules as published 2026.',
-      applicationWindow: {
-        opens: '2026-05-01',
-        closes: '2026-07-31',
-        note: 'Applications May to 31 July 2026; announcements September 2026.',
-      },
-      recommendedActivities: [
-        'Finish both Expert learning paths before the window opens',
-        'Keep one worked AI example with what was created or improved',
-        'Apply before 31 July 2026',
-      ],
-    }),
+    revisions: Object.freeze([
+      revised(2, {
+        description:
+          'Microsoft Elevate Educator – Expert, the programme formerly called Microsoft Innovative Educator Expert (MIEE): educators who use Microsoft tools and AI to change learning, selected each year through an application. The 2026-2027 application opens in May 2026 and closes 31 July 2026, with announcements in September 2026 (FAQ: aka.ms/EducatorFAQ). The questions below are the official 2026-2027 list; program rules as published 2026.',
+        applicationWindow: {
+          opens: '2026-05-01',
+          closes: '2026-07-31',
+          note: 'Applications May to 31 July 2026; announcements September 2026.',
+        },
+        recommendedActivities: [
+          'Finish both Expert learning paths before the window opens',
+          'Keep one worked AI example with what was created or improved',
+          'Apply before 31 July 2026',
+        ],
+      }),
+    ]),
   }),
   'program-aws-community-builders': Object.freeze({
-    revision: 2,
-    fields: Object.freeze({
-      applicationWindow: {
-        opens: null,
-        closes: null,
-        note: 'Waitlist open now; the application cycle has opened once a year, in January. Edit to match.',
-      },
-    }),
+    revisions: Object.freeze([
+      revised(2, {
+        applicationWindow: {
+          opens: null,
+          closes: null,
+          note: 'Waitlist open now; the application cycle has opened once a year, in January. Edit to match.',
+        },
+      }),
+    ]),
   }),
 });
+
+/** The revision a program's seed is at now: its last superseded step, or null without a history. */
+export const currentSeedRevision = (programId) =>
+  SUPERSEDED_SEED_VALUES[programId]?.revisions.at(-1).revision ?? null;
 
 export const DEFAULT_PROGRAMS = Object.freeze([
   {

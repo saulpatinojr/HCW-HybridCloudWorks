@@ -7,7 +7,7 @@
  */
 import { actorName } from '../auth/actor-name.js';
 import { CONTAINER, NOT_PROVISIONED } from './model.js';
-import { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES } from './programs.js';
+import { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES, currentSeedRevision } from './programs.js';
 import { str } from './fields.js';
 import { validateApplication, validateEvidence, validateProgram } from './validate.js';
 
@@ -83,7 +83,7 @@ function seededDoc(ctx, program, order) {
     // A seed with a superseded history starts at its current revision, so
     // nothing of it is ever "corrected".
     ...(SUPERSEDED_SEED_VALUES[program.id]
-      ? { seedRevision: SUPERSEDED_SEED_VALUES[program.id].revision }
+      ? { seedRevision: currentSeedRevision(program.id) }
       : {}),
     createdAt: stamp,
     updatedAt: stamp,
@@ -209,17 +209,26 @@ export function seedBackfillFor(stored, seed) {
     if (wanted(stored, seed)) patch[field] = seed[field];
   }
   // Once per revision (programs.js SUPERSEDED_SEED_VALUES): a field still
-  // holding an earlier seed's value was never edited, so the current seed's
-  // value replaces it, and the stamp keeps a later deliberate return to the
-  // old value from being corrected again.
-  const superseded = SUPERSEDED_SEED_VALUES[seed.id];
-  if (superseded && (Number(stored.seedRevision) || 1) < superseded.revision) {
-    for (const [field, old] of Object.entries(superseded.fields)) {
-      if (field in seed && field in stored && canonical(stored[field]) === canonical(old)) {
-        patch[field] = seed[field];
-      }
+  // holding the value of any earlier seed above the stored revision was
+  // never edited, so the current seed's value replaces it, and the stamp
+  // keeps a later deliberate return to an old value from being corrected
+  // again. Every step above the stored revision is read, not only the last,
+  // so a row that missed a revision is still matched against what it holds
+  // (CodeRabbit on #1304).
+  const history = SUPERSEDED_SEED_VALUES[seed.id]?.revisions || [];
+  const storedRevision = Number(stored.seedRevision) || 1;
+  const target = currentSeedRevision(seed.id);
+  if (history.length > 0 && storedRevision < target) {
+    const missed = history.filter((step) => step.revision > storedRevision);
+    for (const field of new Set(missed.flatMap((step) => Object.keys(step.fields)))) {
+      if (!(field in seed) || !(field in stored)) continue;
+      const held = canonical(stored[field]);
+      const replaced = missed.some(
+        (step) => field in step.fields && canonical(step.fields[field]) === held
+      );
+      if (replaced) patch[field] = seed[field];
     }
-    patch.seedRevision = superseded.revision;
+    patch.seedRevision = target;
   }
   return Object.keys(patch).length > 0 ? patch : null;
 }

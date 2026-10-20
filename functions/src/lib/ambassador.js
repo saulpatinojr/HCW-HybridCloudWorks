@@ -46,7 +46,11 @@ export {
   programGate,
   toCalendarDate,
 } from './ambassador/model.js';
-export { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES } from './ambassador/programs.js';
+export {
+  DEFAULT_PROGRAMS,
+  SUPERSEDED_SEED_VALUES,
+  currentSeedRevision,
+} from './ambassador/programs.js';
 export { validateApplication, validateEvidence, validateProgram } from './ambassador/validate.js';
 export {
   computeReadiness,

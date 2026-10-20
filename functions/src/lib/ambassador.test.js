@@ -23,6 +23,7 @@ import {
   programGate,
   seedBackfillFor,
   SUPERSEDED_SEED_VALUES,
+  currentSeedRevision,
   toCalendarDate,
   validateApplication,
   validateEvidence,
@@ -441,7 +442,7 @@ describe('programs', () => {
       ...base,
       seeded: true,
       order: 10 + i,
-      ...(SUPERSEDED_SEED_VALUES[p.id] ? { seedRevision: SUPERSEDED_SEED_VALUES[p.id].revision } : {}),
+      ...(SUPERSEDED_SEED_VALUES[p.id] ? { seedRevision: currentSeedRevision(p.id) } : {}),
     }));
     const store = memStore({ ambassador: [storedMvp, storedMct, ownManagement, ...otherSeeds] });
     const log = { error: vi.fn(), info: vi.fn() };
@@ -1269,7 +1270,9 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
 describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)', () => {
   const GITKRAKEN = 'program-gitkraken-ambassador';
   const seed = DEFAULT_PROGRAMS.find((p) => p.id === GITKRAKEN);
-  const { revision, fields: old } = SUPERSEDED_SEED_VALUES[GITKRAKEN];
+  // The first step of the history records what #873 seeded; the stamp is the last.
+  const old = SUPERSEDED_SEED_VALUES[GITKRAKEN].revisions[0].fields;
+  const revision = currentSeedRevision(GITKRAKEN);
   /** A GitKraken row as #873 stored it: the first seed, before upkeep existed. */
   const storedFirstSeed = () => {
     const row = { ...seed, ...old, seeded: true, membershipStatus: 'active' };

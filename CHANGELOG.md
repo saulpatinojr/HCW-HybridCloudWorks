@@ -627,7 +627,12 @@ This project has not cut a tagged release; entries are grouped under
     profiles, the quarterly check-in form) and the perks. The quarterly
     upkeep and the one counted requirement are unchanged; the logo and the
     check-in form are recommended activities, because the model counts
-    evidence and neither is a count of evidence.
+    evidence and neither is a count of evidence. A seed's superseded record
+    now keeps its whole history (`revisions`, each step the values it
+    replaced), and the backfill matches a stored row against every step
+    above its own revision, so a row from the first seed that never saw
+    revision 2 is corrected rather than stamped current with the guess kept
+    (CodeRabbit on #1304).
   - **Windows for the coming year**: MIEE moves to 1 May to 31 July 2027 on
     the 2026 pattern, its description and its "apply before" line rolled
     with it so the seed does not contradict its own window, and AWS

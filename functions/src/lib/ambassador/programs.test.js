@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES } from './programs.js';
+import { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES, currentSeedRevision } from './programs.js';
 import { EVIDENCE_SOURCES, toCalendarDate } from './model.js';
 import { seedBackfillFor } from './steps.js';
 
 const byId = (id) => DEFAULT_PROGRAMS.find((p) => p.id === id);
 const rule = (req) => [req.id, req.minCount, req.weight, req.evidenceTypes];
+/** A program's history as [revision, fields] steps, oldest first. */
+const stepsOf = (id) => SUPERSEDED_SEED_VALUES[id].revisions.map((s) => [s.revision, s.fields]);
 
 describe('ambassador seed programs (ADR 0033 §4)', () => {
   it('exports a frozen list of default programs', () => {
@@ -69,11 +71,23 @@ describe('ambassador seed programs (ADR 0033 §4)', () => {
 
     const gk = SUPERSEDED_SEED_VALUES['program-gitkraken-ambassador'];
     expect(gk).toBeDefined();
-    expect(gk.revision).toBe(3);
-    expect(typeof gk.fields).toBe('object');
-    expect(gk.fields.criteria).toContain('Reviews of GitKraken on G2, Capterra and TrustRadius');
-    expect(Array.isArray(gk.fields.requirements)).toBe(true);
-    expect(gk.fields.requirements.length).toBeGreaterThan(0);
+    expect(currentSeedRevision('program-gitkraken-ambassador')).toBe(3);
+    expect(currentSeedRevision('program-microsoft-mvp')).toBeNull();
+    // Each program's history: ascending revisions from 2, each step a
+    // non-empty record of the fields it replaced, every one a seed field.
+    for (const [id, { revisions }] of Object.entries(SUPERSEDED_SEED_VALUES)) {
+      const seed = byId(id);
+      expect(seed, id).toBeDefined();
+      expect(Object.isFrozen(revisions), id).toBe(true);
+      expect(revisions.length, id).toBeGreaterThan(0);
+      let previous = 1;
+      for (const step of revisions) {
+        expect(step.revision, id).toBeGreaterThan(previous);
+        previous = step.revision;
+        expect(Object.keys(step.fields).length, `${id} rev ${step.revision}`).toBeGreaterThan(0);
+        for (const field of Object.keys(step.fields)) expect(field in seed, `${id}.${field}`).toBe(true);
+      }
+    }
   });
 });
 
@@ -208,65 +222,110 @@ describe('the published rules read on 2026-10-20', () => {
   });
 
   it('records, for each superseded revision, exactly what the current seed replaced', () => {
-    for (const [id, { revision, fields }] of Object.entries(SUPERSEDED_SEED_VALUES)) {
+    for (const [id, { revisions }] of Object.entries(SUPERSEDED_SEED_VALUES)) {
       const seed = byId(id);
-      expect(seed, id).toBeDefined();
-      expect(revision, id).toBeGreaterThanOrEqual(2);
-      expect(Object.keys(fields).length, id).toBeGreaterThan(0);
-      for (const [field, old] of Object.entries(fields)) {
-        expect(field in seed, `${id}.${field}`).toBe(true);
+      // The last step is what this file replaced; no recorded value is the seed's own.
+      for (const [field, old] of Object.entries(revisions.at(-1).fields)) {
         expect(JSON.stringify(seed[field]), `${id}.${field}`).not.toBe(JSON.stringify(old));
       }
     }
-    const gk = SUPERSEDED_SEED_VALUES['program-gitkraken-ambassador'];
-    expect(gk.revision).toBe(3);
-    expect(gk.fields.description).toMatch(/quarterly check-in, October 2026\)\.$/);
-    expect(gk.fields.criteria).toContain('Reviews of GitKraken on G2, Capterra and TrustRadius');
-    expect(gk.fields.requirements.map(rule)).toEqual([['quarterly-content', 2, 1, []]]);
+    const [[, first], [, second]] = stepsOf('program-gitkraken-ambassador');
+    expect(stepsOf('program-gitkraken-ambassador').map(([r]) => r)).toEqual([2, 3]);
+    // Revision 2 replaced #873's guess.
+    expect(first.description).toMatch(/As published 2026; edit to match\.$/);
+    expect(first.criteria).toEqual(['Content', 'Speaking', 'Supporting users']);
+    expect(first.renewalCadence).toBe('annual');
+    expect(first.expirationRule).toBe('Reviewed annually. As published 2026; edit to match.');
+    expect(first.requirements.map(rule)).toEqual([
+      ['content', 3, 3, ['content']],
+      ['talks', 1, 2, ['speaking']],
+      ['tutorials', 1, 1, ['labs', 'content']],
+    ]);
+    expect(first.recommendedActivities).toEqual([
+      'Publish Git workflow tutorials',
+      'Answer questions in the GitKraken community',
+    ]);
+    // Revision 3 replaced the check-in wording of 2026-10-08.
+    expect(second.description).toMatch(/quarterly check-in, October 2026\)\.$/);
+    expect(second.criteria).toContain('Reviews of GitKraken on G2, Capterra and TrustRadius');
+    expect(second.requirements.map(rule)).toEqual([['quarterly-content', 2, 1, []]]);
 
-    const captain = SUPERSEDED_SEED_VALUES['program-docker-captain'];
-    expect(captain.revision).toBe(2);
-    expect(captain.fields.description).toBe(
+    const [[captainRevision, captain]] = stepsOf('program-docker-captain');
+    expect(captainRevision).toBe(2);
+    expect(captain.description).toBe(
       'Docker Captains: technology experts and leaders in the Docker community who share their knowledge. Selected by Docker.'
     );
-    expect(captain.fields.applicationUrl).toBe('https://www.docker.com/community/captains/');
-    expect(captain.fields.requirements.map(rule)).toEqual([
+    expect(captain.applicationUrl).toBe('https://www.docker.com/community/captains/');
+    expect(captain.requirements.map(rule)).toEqual([
       ['content', 4, 3, ['content', 'newsletter']],
       ['talks', 2, 2, ['speaking']],
       ['labs', 2, 1, ['labs', 'manual']],
     ]);
 
-    const miee = SUPERSEDED_SEED_VALUES['program-microsoft-elevate-educator-expert'];
-    expect(miee.revision).toBe(2);
-    expect(Object.keys(miee.fields).sort()).toEqual([
-      'applicationWindow',
-      'description',
-      'recommendedActivities',
-    ]);
-    expect(miee.fields.applicationWindow).toEqual({
+    const [[mieeRevision, miee]] = stepsOf('program-microsoft-elevate-educator-expert');
+    expect(mieeRevision).toBe(2);
+    expect(Object.keys(miee).sort()).toEqual(['applicationWindow', 'description', 'recommendedActivities']);
+    expect(miee.applicationWindow).toEqual({
       opens: '2026-05-01',
       closes: '2026-07-31',
       note: 'Applications May to 31 July 2026; announcements September 2026.',
     });
-    expect(miee.fields.description).toMatch(/opens in May 2026 and closes 31 July 2026/);
-    expect(miee.fields.recommendedActivities).toContain('Apply before 31 July 2026');
+    expect(miee.description).toMatch(/opens in May 2026 and closes 31 July 2026/);
+    expect(miee.recommendedActivities).toContain('Apply before 31 July 2026');
     // The October 2026 window is open until 2026-10-31; it moves in November.
     expect(SUPERSEDED_SEED_VALUES['program-microsoft-mct-regional-lead']).toBeUndefined();
-    expect(
-      SUPERSEDED_SEED_VALUES['program-aws-community-builders'].fields.applicationWindow.note
-    ).toMatch(/^Waitlist open now/);
+    const [[, builders]] = stepsOf('program-aws-community-builders');
+    expect(builders.applicationWindow.note).toMatch(/^Waitlist open now/);
   });
 
   it('brings a stored row still holding each replaced value up to the current seed, once', () => {
-    for (const [id, { revision, fields }] of Object.entries(SUPERSEDED_SEED_VALUES)) {
+    for (const [id, { revisions }] of Object.entries(SUPERSEDED_SEED_VALUES)) {
       const seed = byId(id);
-      const stored = { ...seed, ...fields, seeded: true };
-      const patch = seedBackfillFor(stored, seed);
-      expect(Object.keys(patch).sort(), id).toEqual([...Object.keys(fields), 'seedRevision'].sort());
-      expect(patch.seedRevision, id).toBe(revision);
-      for (const field of Object.keys(fields)) expect(patch[field], `${id}.${field}`).toEqual(seed[field]);
-      expect(seedBackfillFor({ ...stored, ...patch }, seed), id).toBeNull();
+      const target = currentSeedRevision(id);
+      // A row seeded by the revision before each step, holding exactly what that step replaced.
+      for (const { revision, fields } of revisions) {
+        const stored = { ...seed, ...fields, seeded: true, seedRevision: revision - 1 };
+        const patch = seedBackfillFor(stored, seed);
+        const label = `${id} at ${revision - 1}`;
+        expect(Object.keys(patch).sort(), label).toEqual([...Object.keys(fields), 'seedRevision'].sort());
+        expect(patch.seedRevision, label).toBe(target);
+        for (const field of Object.keys(fields)) expect(patch[field], `${label}.${field}`).toEqual(seed[field]);
+        expect(seedBackfillFor({ ...stored, ...patch }, seed), label).toBeNull();
+      }
     }
+  });
+
+  // CodeRabbit on #1304: a row that missed a revision is matched against the
+  // values it actually holds, not only against the last step's.
+  it('corrects a GitKraken row from #873 that never saw revision 2, and a revision-2 row alike, and keeps an edit at either', () => {
+    const id = 'program-gitkraken-ambassador';
+    const seed = byId(id);
+    const [[, guess], [, checkIn]] = stepsOf(id);
+
+    // The first seed stored no revision; a row from #873 holds the guess.
+    const fromFirstSeed = { ...seed, ...guess, seeded: true };
+    delete fromFirstSeed.seedRevision;
+    const first = seedBackfillFor(fromFirstSeed, seed);
+    expect(first.seedRevision).toBe(3);
+    for (const field of Object.keys(guess)) expect(first[field], field).toEqual(seed[field]);
+    expect(seedBackfillFor({ ...fromFirstSeed, ...first }, seed)).toBeNull();
+
+    // A row revision 2 corrected holds the check-in wording.
+    const fromCheckIn = { ...seed, ...checkIn, seeded: true, seedRevision: 2 };
+    const second = seedBackfillFor(fromCheckIn, seed);
+    expect(second.seedRevision).toBe(3);
+    for (const field of Object.keys(checkIn)) expect(second[field], field).toEqual(seed[field]);
+    expect(seedBackfillFor({ ...fromCheckIn, ...second }, seed)).toBeNull();
+
+    // An edited field at either revision is the owner's and stays.
+    const editedFirst = seedBackfillFor({ ...fromFirstSeed, description: 'Mine.' }, seed);
+    expect(editedFirst.description).toBeUndefined();
+    expect(editedFirst.criteria).toEqual(seed.criteria);
+    const editedSecond = seedBackfillFor({ ...fromCheckIn, criteria: ['Mine'] }, seed);
+    expect(editedSecond.criteria).toBeUndefined();
+    expect(editedSecond.description).toBe(seed.description);
+    // A field set back to the guess after the stamp is deliberate, and kept.
+    expect(seedBackfillFor({ ...seed, seeded: true, seedRevision: 3, criteria: guess.criteria }, seed)).toBeNull();
   });
 
   it('gives every fixed-date window real days in order, and the coming cycle its dates', () => {
