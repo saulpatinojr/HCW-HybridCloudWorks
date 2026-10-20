@@ -45,6 +45,22 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Quality & Verification
 
+- **The AVM versions bot's check step reads the pins instead of remembering
+  them (#1287)**. `update-avm-versions.yml` failed on 2026-10-06 and
+  2026-10-13 in its own `vitest` step after a bump: seven expectations in
+  `labImage.test.js`, `hcl.test.js` and `LzLabValidate.test.jsx` carried the
+  pinned versions (`0.21.0`, `0.9.0`, `0.22.2`, the lab's `0.15.0, 0.22.2`,
+  an absent `0.23.0`) as literals that `-u` cannot refresh. They now derive
+  the pin from `AVM_MODULES`, what the lab carries from `LAB_IMAGE_AVM`, and
+  an absent release as one patch above the highest carried; the constraint
+  evaluator's table keeps a fixed shelf of its own, since its rule is not
+  about the pins. The same fix moved the path filter in front of `-u`:
+  `vitest run -u <path>` took the path as the flag's value and ran the whole
+  suite, refreshing every snapshot in the tree; and the bot's plain check
+  now runs the lab pane's suite as well. Proven by applying the bot's
+  2026-10-13 bump (`avm-ptn-alz` 0.22.0, the connectivity module 0.17.7, the
+  spoke module 0.22.3) locally: the seven failures reproduced before the
+  change and the three suites passed after it.
 - **The three LAB-2 lab-host rules are on the Fire record (#981)**. The owner
   ran the three tests from `main` on 2026-10-18: `alert-lab-unit-failed`
   fired at 14:46Z (ten minutes after the one syslog line),
