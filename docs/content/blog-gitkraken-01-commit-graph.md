@@ -1,5 +1,5 @@
 ---
-title: Reading a 1,300-pull-request repository with the Commit Graph, no account needed
+title: Reading 1,193 commits in the Commit Graph, no account needed
 subtitle: Clone this site's public repository, open it in VS Code with GitLens 19.4, open the Commit Graph without signing in, and read what 1,193 commits on main say about how the site is built.
 date: 2026-10-20
 track: how-to
@@ -210,8 +210,14 @@ On 2026-10-20: 39 of the 75 Dependabot commits on `main` landed on a Monday,
 
 ### 6. Spot where a branch left main
 
-Open the graph's branch list. Every remote branch that is not yet in `main` is
-a lane, and the row where its lane leaves `main` is its fork point. On
+First make every branch visible. In the filter dropdown beside the graph's
+search box choose **All Branches**, and in the same dropdown's Graph Options
+turn on remote-only branches. With **Current Branch** or **Smart Branches**
+selected, or remote-only branches hidden, an unmerged branch has no lane, and
+the comparison below finds nothing.
+
+Now every remote branch that is not yet in `main` is a lane, and the row
+where its lane leaves `main` is its fork point. On
 2026-10-20 the repository had 11 remote refs, six of them Dependabot branches
 named `dependabot/…`, each one commit above the `main` it was created from.
 Those exact branches will be gone by the time you read this; the repository
@@ -224,8 +230,24 @@ on your day make the same shape.
 git branch -r --no-merged origin/main
 ```
 
-Every name it prints is a lane in the graph. For any one of them, the first
-row where the lane and `main` share a commit is the fork point.
+Every name it prints is a lane in the graph. That names the lanes; it does
+not name the fork point. For that, take the first branch it printed and ask
+git for the newest commit the branch and `main` share.
+
+PowerShell:
+
+```powershell
+$b = (git branch -r --no-merged origin/main | Select-Object -First 1).Trim(); git log --oneline -1 (git merge-base origin/main $b)
+```
+
+bash:
+
+```bash
+b=$(git branch -r --no-merged origin/main | head -1 | tr -d ' '); git log --oneline -1 "$(git merge-base origin/main "$b")"
+```
+
+The one line it prints is the row on `main` where that branch's lane leaves
+it. Find the same subject in the graph; the lane starts on the row above it.
 
 <!-- screenshot: the graph with one dependabot/ branch selected, its single commit on its own lane and the main row it forked from -->
 
@@ -282,12 +304,14 @@ today.
 
 ## What's next
 
-[Part 2](https://hybridcloudworks.com/github/blog/the-gitkraken-mcp-server-inside-an-ai-coding-session)
+[Part 2](https://docs.hybridcloudworks.com/content/blog-gitkraken-02-mcp-server/)
 puts the same repository in front of an AI coding session, with the GitKraken
 MCP server as its hands on git and pull requests.
-[Part 3](https://hybridcloudworks.com/github/blog/merge-conflicts-on-stacked-pull-requests-a-repositorys-rules-meet-auto-rebase-st)
+[Part 3](https://docs.hybridcloudworks.com/content/blog-gitkraken-03-stacked-prs/)
 takes the repository's one-conflict-at-a-time rule to GitLens 19.3's
-Auto-Rebase Stack.
+Auto-Rebase Stack. Both links point at the drafts on the documentation site;
+once an article is published, it lives on hybridcloudworks.com under
+`/github/blog/` and its title's slug.
 
 The author is a GitKraken Ambassador; GitKraken did not review this article
 and the numbers in it come from the repository, not from GitKraken.

@@ -65,8 +65,8 @@ the same upstream change twice, with no way to reuse the first answer.
 The repository's `CHANGELOG.md` records completed work only, under Keep a
 Changelog headings, and each pull request adds its own entry at the top of
 its section. Two pull requests on 2026-10-19 and 2026-10-20 show the shape.
-#1300 inserted 16 lines at line 45, under **Quality & Verification**. #1301
-inserted 13 lines at line 593, under **Changed**. Different sections, so no
+Pull request #1300 inserted 16 lines at line 45, under **Quality &
+Verification**, and #1301 inserted 13 lines at line 593, under **Changed**. Different sections, so no
 conflict. Had both been features, both would have inserted at line 20, and
 git would have had two different insertions at one point with no way to
 order them.
@@ -229,15 +229,20 @@ rebasing the next onto it. Those agree. What the tools change is the cost of
 each turn, not the order of turns.
 
 **Verify, if you run it:** after any automatic resolution, count the entries
-under the Features heading before and after. An entry the AI dropped is the
-failure to look for, and it is one `grep` away:
+under the Unreleased Features heading before and after. An entry the AI
+dropped is the failure to look for, and it is one `awk` away. bash, or Git
+Bash on Windows:
 
 ```bash
-grep -c '^- \*\*' CHANGELOG.md
+awk '/^## \[Unreleased\]$/{u=1;next} u&&/^## /{exit} u&&/^### Features$/{f=1;next} f&&/^### /{exit} f&&/^- \*\*/{n++} END{print n+0}' CHANGELOG.md
 ```
 
-The number after the rebase is the number before plus the entries your
-branches added. Anything less is a lost entry.
+It counts only the entries between `### Features` and the next heading under
+`## [Unreleased]`. On this repository's changelog on 2026-10-20 it printed
+`3`, against `753` for a count of the whole file, and the whole-file count is
+the one to avoid: a change elsewhere in the file can cancel a dropped entry
+and let the check pass. The number after the rebase is the number before plus
+the entries your branches added. Anything less is a lost entry.
 
 ### 6. Read what GitKraken Desktop 12.6 adds at the other end
 
@@ -289,10 +294,13 @@ the rest of the stack, not just the branch you fixed".
 
 ## What's next
 
-[Part 1](https://hybridcloudworks.com/github/blog/reading-a-1300-pull-request-repository-with-the-commit-graph-no-account-needed)
+[Part 1](https://docs.hybridcloudworks.com/content/blog-gitkraken-01-commit-graph/)
 reads this repository's history in the Commit Graph with no account, and
-[part 2](https://hybridcloudworks.com/github/blog/the-gitkraken-mcp-server-inside-an-ai-coding-session)
+[part 2](https://docs.hybridcloudworks.com/content/blog-gitkraken-02-mcp-server/)
 puts the GitKraken MCP server in front of a coding session that works it.
+Both links point at the drafts on the documentation site; once an article is
+published, it lives on hybridcloudworks.com under `/github/blog/` and its
+title's slug.
 
 The author is a GitKraken Ambassador; GitKraken did not review this article,
 and the counts in it are the repository's own.

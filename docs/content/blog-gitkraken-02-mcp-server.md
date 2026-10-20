@@ -5,7 +5,7 @@ date: 2026-10-20
 track: how-to
 part: 2 of 3
 tags: [git, gitkraken, mcp, ai-agents, github, pull-requests]
-reading: 8
+reading: 9
 ---
 
 This site is built by one person, and between 2026-07-22 and 2026-10-20 its
@@ -29,18 +29,26 @@ not do, which is merge.
 | A definition | What an MCP server is, in two paragraphs, and what "tools" means in that sentence |
 | An installed server | GitKraken's MCP server wired into your coding session with `gk mcp install` |
 | A tool inventory | What the session can now do to a repository and to its pull requests, named by what they do |
-| One worked flow | A change taken from a worktree to an open pull request, the way this repository does it |
+| One worked flow | A change taken from a worktree to a pushed branch and a reviewed pull request, the way this repository does it, naming which step is the server's and which is the GitHub CLI's |
 | The boundary | What the review bots do, what the rules do, and why no tool in this part merges |
 
 ## What it costs
 
-**Nothing for the server.** The GitKraken CLI is a free download, and its MCP
-documentation lists one prerequisite before the install: the CLI "installed
-and authenticated (`gk auth login`)". So this part, unlike
-[part 1](https://hybridcloudworks.com/github/blog/reading-a-1300-pull-request-repository-with-the-commit-graph-no-account-needed),
-needs a GitKraken account. A free one is enough to install and run the
-server; this part does not use anything the documentation marks as a paid
-feature. The coding session itself is whatever you already pay for.
+**Nothing for the server, and a plan for half of the tools.** The GitKraken
+CLI is a free download, and its MCP documentation lists one prerequisite
+before the install: the CLI "installed and authenticated (`gk auth login`)".
+So this part, unlike
+[part 1](https://docs.hybridcloudworks.com/content/blog-gitkraken-01-commit-graph/),
+needs a GitKraken account. Which plan depends on which tools you use, and the
+MCP tools reference (last updated March 2026, read 2026-10-20) draws the line
+by section. The Git tools are "available on all plans; private remote
+operations require Pro or higher", so steps 1 to 4 below run on any plan
+against a public repository. The pull request tools "require Pro or higher",
+and the issue tools require "Pro or higher for cloud issue trackers (GitHub
+Issues, GitLab, Jira Cloud)", so step 6 does not. The GitLens tools "require a
+GitLens plan". The author's plan comes with the Ambassador programme named at
+the end of this article. The coding session itself is whatever you already
+pay for.
 
 ---
 
@@ -66,11 +74,13 @@ name as its argument.
 
 A session working this repository needs two kinds of tool. The first is git:
 status, log, diff, branch, worktree, commit, push. The second is the hosting
-platform: open a pull request, read its reviews, read an issue. Most git
-servers stop at the first half. GitKraken's documentation describes its
-server as wrapping git and the GitHub and issue-tracker actions together, so
-a session can take a change from a worktree to an open pull request through
-one server and one authentication.
+platform: read a pull request and its reviews, read an issue. Most git
+servers stop at the first half. GitKraken's tools reference lists git,
+GitLens, issue and pull request sections together, so a session can take a
+change from a worktree to a pushed branch and read the review that follows
+through one server and one authentication. What the reference does not list,
+opening the pull request and merging it among them, stays with the GitHub
+CLI, and this part says so at each step.
 
 The alternative is letting the session run `git` and `gh` as shell commands.
 That works, and this repository's sessions did it for months. What a server
@@ -124,23 +134,40 @@ claude mcp add -t stdio gitkraken gk mcp
 ```
 
 **Verify:** restart the host, and its MCP server list shows one named
-`gitkraken`. Ask the session what has changed in the repository; a host that
-can render apps shows the Git Status panel, and one that cannot shows the
-same answer as text.
+`gitkraken`. Then use the documentation's own prompt for the status app,
+"What changes are pending in the repo"; a host that can render apps shows the
+Git Status panel, and one that cannot shows the same answer as text.
 
 <!-- screenshot: the host's MCP server list with "gitkraken" present, and the Git Status panel open on a clean working tree -->
 
 ### 2. Read the inventory
 
-Ask the session to list the server's tools. Group them by what they touch.
-On the repository side: status, log, diff, branch, worktree, commit, push. On
-the platform side: pull request and issue tools, a launchpad view of the work
-assigned to you, and a review starter. Nothing in the first group reaches the
-network except push, and nothing in the second group writes except the tools
-that open or comment on a pull request.
+Ask the session to list the server's tools, and read the list against
+GitKraken's MCP tools reference, which groups them by section and says of
+itself that it "will change over time as we add more tools and consolidate
+the existing ones". As read on 2026-10-20:
 
-**Verify:** you can name, for each tool, which of the two groups it is in and
-whether it writes. If you cannot, do not let the session use it yet.
+- **Git**, on the repository: status; log or diff; blame; branch (list or
+  create); checkout; worktree (list or add); stash; add or commit; push.
+- **Repository**: read a file's content.
+- **GitLens**: open Launchpad, open the commit composer, start work on an
+  issue, start a review of a pull request. Each opens a worktree and a window
+  and hands the task to an agent.
+- **Issues**: the ones assigned to you, one issue's detail, and add a comment.
+- **Pull requests**: the ones assigned to you, one pull request's detail, its
+  comments, and create a review.
+- **GitKraken**: list your workspaces.
+
+Now mark what writes. On the repository side: commit, push, stash, and
+checkout, which changes the working tree. On the platform side: the issue
+comment and the pull request review. Everything else reads. And mark what is
+not on the list at all: creating a pull request, replying on or resolving a
+review thread, reading a check's status, and merging. This repository's
+sessions do those with the GitHub CLI, which is why the steps below name
+which tool does what.
+
+**Verify:** you can name, for each tool, which section it is in and whether
+it writes. If you cannot, do not let the session use it yet.
 
 ### 3. Start the change in a worktree
 
@@ -169,11 +196,15 @@ commits the file it meant to leave out.
 **Verify:** the commit tool's answer carries a new SHA, and the log tool shows
 it as the branch's one commit above `origin/main`.
 
-### 5. Push and open the pull request
+### 5. Push, then open the pull request with the GitHub CLI
 
-Push with the push tool, then open the pull request with the pull request
-tool. Two of the repository's agreements apply here, and the session has to
-know them because no tool does. The description follows
+Push with the push tool. Opening the pull request is not one of the server's
+tools, so the session does it with `gh pr create`, the way it did before the
+server was connected; the repository's
+[`.claude/settings.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.claude/settings.json)
+allows `gh pr` commands for exactly this. Two of the repository's agreements
+apply here, and the session has to know them because no tool does. The
+description follows
 [`.github/pull_request_template.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/pull_request_template.md),
 whose eight sections run from Summary to Author checklist. And the pull
 request opens **ready for review, not as a draft**: an owner decision from
@@ -197,10 +228,15 @@ and posts each alert as a review comment. The repository's ruleset requires
 every review conversation resolved before a merge, so an informational
 comment blocks the button as surely as a finding.
 
-Ask the session to read the pull request with the review tools: the verdict,
-the inline comments, the checks. Then it fixes each finding in the worktree,
-commits, pushes, replies on each thread naming the commit, and resolves the
-thread. The working agreements cap this at three rounds per bot.
+Ask the session to read the pull request with the server's detail and
+comments tools: the verdict is in the review's body, the findings are the
+inline comments. The check results and the threads' resolved state are not in
+either tool; the session reads those with the GitHub CLI, as the working
+agreements' own command lines do. Then it fixes each finding in the worktree,
+commits and pushes with the server, and replies on each thread naming the
+commit and resolves the thread through the GitHub API, because the server
+has no tool for either. The working agreements cap this at three rounds per
+bot.
 
 **Verify:** every thread on the pull request is resolved, the required checks
 are green on the current head, and CodeRabbit's latest review of that head
@@ -217,8 +253,9 @@ approves.
 
 Then the merge, which is the step this part does not have a tool for. The
 session merges with the GitHub CLI, when the current head carries an
-approving review and green checks. The server opened the pull request and
-read the reviews; the rules decided when it was done. Those are different
+approving review and green checks. The server made the worktree, the commits
+and the push, and read the reviews; the GitHub CLI opened the pull request
+and will merge it; the rules decided when it was done. Those are different
 jobs, and keeping them in different hands is what makes a one-person
 repository safe to automate.
 
@@ -250,10 +287,13 @@ commit or the reason, then resolve. Never resolve to get past it.
 
 ## What's next
 
-[Part 3](https://hybridcloudworks.com/github/blog/merge-conflicts-on-stacked-pull-requests-a-repositorys-rules-meet-auto-rebase-st)
+[Part 3](https://docs.hybridcloudworks.com/content/blog-gitkraken-03-stacked-prs/)
 takes two of these pull requests that touch the same file, which in this
 repository is nearly always `CHANGELOG.md`, and puts the repository's
-one-conflict-at-a-time rule beside GitLens 19.3's Auto-Rebase Stack.
+one-conflict-at-a-time rule beside GitLens 19.3's Auto-Rebase Stack. The
+links in this article point at the drafts on the documentation site; once an
+article is published, it lives on hybridcloudworks.com under `/github/blog/`
+and its title's slug.
 
 The author is a GitKraken Ambassador; GitKraken did not review this article,
 and the repository facts in it are the repository's own.
@@ -269,7 +309,8 @@ and the repository facts in it are the repository's own.
   git log --merges: branches named HybridCloudWorks/claude/... and HybridCloudWorks/codex/... in August 2026 merge commits: evidence the pull requests were written in AI sessions
   .coderabbit.yaml: auto_review enabled, request_changes_workflow true, allow_author_approval false
   .github/workflows/codeql.yml: pull_request and push on main, weekly schedule
-  not in the repository: help.gitkraken.com/mcp/mcp-apps/ (gk mcp install <client>, vscode / vscode-insiders / claude-desktop, gk mcp config, Git Status and Git Graph, "If it does not, the base tool output appears normally", gk auth login prerequisite); help.gitkraken.com/cli/gk-cli-mcp/ (claude mcp add -t stdio gitkraken gk mcp)
-  not verified from the repository: that the site's sessions have the GitKraken MCP server connected and which tools it exposes; no .mcp.json or MCP configuration is tracked in the repository. The tool inventory in step 2 is the list supplied for this draft, named by verb.
+  not in the repository: help.gitkraken.com/mcp/mcp-apps/ (gk mcp install <client>, vscode / vscode-insiders / claude-desktop, gk mcp config, Git Status and Git Graph, prompt "What changes are pending in the repo", "If it does not, the base tool output appears normally", gk auth login prerequisite); help.gitkraken.com/cli/gk-cli-mcp/ (claude mcp add -t stdio gitkraken gk mcp)
+  not in the repository: help.gitkraken.com/mcp/mcp-tools-reference/ (last updated March 2026, read 2026-10-20): the tool list in step 2 is that page's, section by section, and its plan lines are quoted in "What it costs"; the page lists no tool that creates a pull request, replies on or resolves a review thread, reads checks, or merges
+  not verified from the repository: that the site's sessions have the GitKraken MCP server connected; no .mcp.json or MCP configuration is tracked in the repository. The GitHub CLI steps are supported by .claude/settings.json's gh permissions and the working agreements' command lines.
   not verified from the repository: the rule that every pull request is built in its own worktree is not written in a tracked file; the evidence is the .vscode exclusion, the CHANGELOG entry and the sessions' practice
 -->
