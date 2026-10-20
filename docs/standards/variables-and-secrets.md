@@ -693,6 +693,19 @@ Note what is **not** contractual, because that is where the mistakes are made:
 - `VITE_AZURE_FUNCTIONS_URL` — the `VITE_` prefix is contractual, the rest is
   ours. But `frontend/src/lib/functionsBase.js` reads it and a test enforces
   that it is the only reader, so this one is *coordinated*, not safe-now.
+- `CF_WEB_ANALYTICS_TOKEN`, `CF_WEB_ANALYTICS_SITE_TAG`, `CF_ACCOUNT_ID` —
+  ours, and each carries the provider prefix the core rules refuse, which
+  `VITE_TURNSTILE_SITE_KEY` (another Cloudflare value) does not. Recorded as
+  the exception rather than renamed (#1302), on the `CF_ORIGIN_SECRET`
+  precedent in the per-store table above: shipped code reads all three
+  (`frontend/scripts/cf-web-analytics.mjs` through `VITE_CF_WEB_ANALYTICS_TOKEN`,
+  `functions/src/lib/timers/ambassador-audience.js` the two app settings), so
+  each is *coordinated*, and the prefix is what tells the public site token
+  apart from `CLOUDFLARE-ANALYTICS-TOKEN`, the read-only API credential that
+  sits beside it. The account id is **one value spelled three ways** —
+  `cloudflare_account_id` (Terraform variable), `CF_ACCOUNT_ID` (app
+  setting), `CLOUDFLARE_ACCOUNT_ID` (repository variable, #948, named
+  first) — and a rename of any one is a coordinated change across the three.
 
 ### Which bucket a rename falls into
 

@@ -46,12 +46,15 @@ The same picture in words:
   #1302: the Docker Captain application goes in on the Thought Leader track,
   and the Microsoft MVP form asks for impact metrics). It counts page views
   with no cookies, no client-side state and no fingerprinting, and the site is
-  registered in Cloudflare's lite mode, which keeps visitors from the EU out
-  of the count, so the figure is a floor. Nothing is shown to visitors: once
-  a day the `ambassadorAudienceMonthly` timer reads the previous month's
-  total back from Cloudflare's GraphQL Analytics API with a read-only token,
-  adds the show's downloads from Podbean, and records one evidence row per
-  programme in the Ambassador hub, once per month.
+  created with Cloudflare's lite option, which asks Cloudflare not to measure
+  visitors in the EU — documented for the snippet Cloudflare's proxy injects,
+  unverified for the hand-placed one this site carries until the owner has
+  confirmed it on the site's Manage page in the Web Analytics dashboard — so
+  the figure is aggregate page views, read as a floor. Nothing is shown to
+  visitors: once a day the `ambassadorAudienceMonthly` timer reads the
+  previous month's total back from Cloudflare's GraphQL Analytics API with a
+  read-only token, adds the show's downloads from Podbean, and records one
+  evidence row per programme in the Ambassador hub, once per month.
 
 | Layer | Technology |
 | --- | --- |

@@ -417,20 +417,27 @@ resource "cloudflare_ruleset" "origin_secret" {
 # month's totals back through the Cloudflare API (functionapp.tf, the
 # CLOUDFLARE_ANALYTICS_TOKEN reference) and records one number.
 #
-# `host` AND THE SNIPPET, NOT `auto_install`. Automatic injection rewrites
-# HTML as it passes through the proxy, so it only works on an orange-clouded
-# hostname. The apex and www are DNS-only (gray-clouded) records that resolve
-# straight to the Static Web App — the "Nothing caches in front of that
-# 100 GB" note above — and the only proxied hostname in this zone is the API
-# origin, which serves JSON. So `auto_install` stays unset (the schema's
-# default, false) and the beacon is served by the page itself: the frontend
-# builds the snippet in from `site_token`, which is the reason that value is
-# an output below rather than a dashboard copy.
+# `host` AND THE SNIPPET, NOT AUTOMATIC INJECTION. Automatic injection
+# rewrites HTML as it passes through the proxy, so it only works on an
+# orange-clouded hostname. The apex and www are DNS-only (gray-clouded)
+# records that resolve straight to the Static Web App — the "Nothing caches
+# in front of that 100 GB" note above — and the only proxied hostname in
+# this zone is the API origin, which serves JSON. So `auto_install = false`,
+# written out rather than left unset: the schema has no default for it, the
+# API echoes the value back on every read, and an attribute that is null in
+# the configuration against false in state would plan `false -> null` on
+# every run, which tfc-plan-check would report as UNEXPECTED on every main
+# plan. The beacon is served by the page itself: the frontend builds the
+# snippet in from `site_token`, which is the reason that value is an output
+# below rather than a dashboard copy.
 #
-# `lite = true`: the provider documents it as "the JavaScript snippet will
-# not be injected for visitors from the EU". The figure this exists for is a
-# count, not a profile, and a count that leaves EU visitors out is still a
-# count; the alternative is a consent prompt on a site that has none.
+# `lite = true` asks Cloudflare not to measure visitors in the EU. Cloudflare
+# documents it for the proxy-injected snippet ("the JavaScript snippet will
+# not be injected for visitors from the EU"), and whether it applies to a
+# hand-placed one is unverified until the owner confirms the option on the
+# site's Manage page in the Web Analytics dashboard. The figure this exists
+# for is a count, not a profile, and a count that leaves EU visitors out is
+# still a count; the alternative is a consent prompt on a site that has none.
 #
 # NOT MARKED SENSITIVE, ON PURPOSE. `site_token` is the value the beacon
 # carries in every page it is loaded from (`data-cf-beacon='{"token": "…"}'`
@@ -455,12 +462,13 @@ resource "cloudflare_ruleset" "origin_secret" {
 # cloudflare_origin_secret in variables.tf carries the full list.
 #
 # `enabled` is left unset: the schema says it can be used only when
-# auto_install is true, and it is not.
+# auto_install is true, and it is false.
 # =============================================================================
 resource "cloudflare_web_analytics_site" "hcw" {
   count = var.cloudflare_account_id == null ? 0 : 1
 
-  account_id = var.cloudflare_account_id
-  host       = var.domain
-  lite       = true
+  account_id   = var.cloudflare_account_id
+  host         = var.domain
+  auto_install = false
+  lite         = true
 }

@@ -273,7 +273,11 @@ describe('the rows', () => {
       });
       expect(row.description).toContain('Page views: 5,100');
       expect(row.description).toContain('Podcast downloads: 210');
-      expect(row.description).toContain('lite mode');
+      // The lite option is a request to Cloudflare, not a measured fact, so
+      // the row says "floor" and never states EU exclusion as done.
+      expect(row.description).toContain('aggregate page views');
+      expect(row.description).toContain('lite option asks Cloudflare to exclude EU visitors, so treat the figure as a floor');
+      expect(row.description).not.toMatch(/are not counted/);
       expect(row.description).toContain('Read on 2026-10-01');
       expect(row.snapshot).toEqual({
         title: row.title,
@@ -412,6 +416,61 @@ describe('the rows', () => {
     expect(store.patchDoc).toHaveBeenCalledTimes(2);
     expect(store.patchDoc.mock.calls[0][3]).toEqual({});
   });
+
+  describe('a 412 on the update (the row changed after the read)', () => {
+    /** A store after one run, with the next run forced to re-read the month (as in the soft-delete test above). */
+    const staleRun = async () => {
+      const store = memStore();
+      await reader({ store }).read.run();
+      const dockerId = audienceEvidenceId('2026-09', 'program-docker-captain');
+      const stale = store.rows.get(dockerId)._etag;
+      store.readDoc.mockImplementationOnce(async () => null);
+      return { store, dockerId, stale };
+    };
+    const precondition = () => Object.assign(new Error('Precondition Failed'), { code: 412 });
+
+    it('re-reads the row and patches once on the fresh ETag, keeping what the owner changed in the gap', async () => {
+      const { store, dockerId, stale } = await staleRun();
+      // The owner's edit lands between the run's read and its write: the
+      // stored ETag moves, and Cosmos answers the first patch with 412.
+      store.patchDoc.mockImplementationOnce(async (_name, id) => {
+        store.rows.set(id, { ...store.rows.get(id), notes: 'edited meanwhile', _etag: 'etag-fresh' });
+        throw precondition();
+      });
+      const result = await reader({ store, cf: cloudflare({ count: 5250 }) }).read.run();
+      expect(result.rows).toEqual({ created: 0, updated: 2, skipped: 0 });
+      expect(store.patchDoc).toHaveBeenCalledTimes(3);
+      expect(store.patchDoc.mock.calls[0].slice(1, 4)).toEqual([dockerId, expect.any(Object), { ifMatch: stale }]);
+      expect(store.patchDoc.mock.calls[1].slice(1, 4)).toEqual([dockerId, expect.any(Object), { ifMatch: 'etag-fresh' }]);
+      expect(store.rows.get(dockerId)).toMatchObject({ notes: 'edited meanwhile', metrics: { views: 5250 } });
+    });
+
+    it('honours a soft-delete that landed in the gap: the row is left deleted and nothing is written over it', async () => {
+      const { store, dockerId } = await staleRun();
+      store.patchDoc.mockImplementationOnce(async (_name, id) => {
+        store.rows.set(id, { ...store.rows.get(id), softDeletedAt: '2026-10-02T06:44:00.000Z', _etag: 'etag-fresh' });
+        throw precondition();
+      });
+      const result = await reader({ store, cf: cloudflare({ count: 5250 }) }).read.run();
+      expect(result.rows).toEqual({ created: 0, updated: 1, skipped: 1 });
+      // The 412 patch for Docker and the MVP row's own; no blind second write.
+      expect(store.patchDoc).toHaveBeenCalledTimes(2);
+      expect(store.patchDoc.mock.calls[1][1]).toBe(audienceEvidenceId('2026-09', 'program-microsoft-mvp'));
+      expect(store.rows.get(dockerId)).toMatchObject({ softDeletedAt: '2026-10-02T06:44:00.000Z', metrics: { views: 5100 } });
+    });
+
+    it('lets a second 412 fail the run rather than write without an ETag', async () => {
+      const { store, dockerId } = await staleRun();
+      store.patchDoc.mockRejectedValueOnce(precondition()).mockRejectedValueOnce(precondition());
+      await expect(reader({ store, cf: cloudflare({ count: 5250 }) }).read.run()).rejects.toMatchObject({ code: 412 });
+      expect(store.patchDoc).toHaveBeenCalledTimes(2);
+      for (const call of store.patchDoc.mock.calls) {
+        expect(call[1]).toBe(dockerId);
+        expect(call[3]).toEqual({ ifMatch: store.rows.get(dockerId)._etag });
+      }
+      expect(store.rows.get(dockerId).metrics.views).toBe(5100);
+    });
+  });
 });
 
 describe('the Podbean half', () => {
@@ -421,11 +480,14 @@ describe('the Podbean half', () => {
     expect(client.getDownloadStats).toHaveBeenCalledWith({ start: '2026-09-01', end: '2026-09-30', period: 'd' });
   });
 
+  // The codes are the ones podbean.js emits (NOT_CONFIGURED :444,
+  // TOKEN_REJECTED :603 with the 401 Podbean answers invalid_token with);
+  // `recorded` is the code-and-status the row and the log carry.
   it.each([
-    ['the credential is absent', new PodbeanError('Podbean publishing is not configured', { status: null, code: 'NOT_CONFIGURED' }), 'NOT_CONFIGURED'],
-    ['Podbean refuses the token', new PodbeanError('invalid_token', { status: 400, code: 'REJECTED' }), 'REJECTED'],
-    ['the read throws something else', new TypeError('fetch failed'), 'UNEXPECTED'],
-  ])('when %s, the row says the downloads are unavailable and the page views still land', async (_what, error, code) => {
+    ['the credential is absent', new PodbeanError('Podbean publishing is not configured', { status: null, code: 'NOT_CONFIGURED' }), 'NOT_CONFIGURED', 'NOT_CONFIGURED)'],
+    ['Podbean refuses the token', new PodbeanError('invalid_token', { status: 401, code: 'TOKEN_REJECTED' }), 'TOKEN_REJECTED', 'TOKEN_REJECTED HTTP 401)'],
+    ['the read throws something else', new TypeError('fetch failed'), 'UNEXPECTED', 'UNEXPECTED)'],
+  ])('when %s, the row says the downloads are unavailable and the page views still land', async (_what, error, code, recorded) => {
     const client = { getDownloadStats: vi.fn(async () => { throw error; }) };
     const { read, store, log } = reader({ client });
     const result = await read.run();
@@ -434,10 +496,10 @@ describe('the Podbean half', () => {
     expect(result.rows).toEqual({ created: 2, updated: 0, skipped: 0 });
     const row = store.rows.get(audienceEvidenceId('2026-09', 'program-docker-captain'));
     expect(row.title).toBe('Audience, September 2026: 5,100 page views, podcast downloads unavailable');
-    expect(row.description).toContain('Podcast downloads: unavailable this month');
-    expect(row.description).toContain(code);
+    expect(row.description).toContain(`Podcast downloads: unavailable this month (Podbean read ${recorded}`);
+    expect(row.description).not.toContain('invalid_token');
     expect(row.metrics).toEqual({ reach: null, attendees: null, views: 5100, credits: null });
-    expect(log.log.mock.calls.flat().join('\n')).toContain(`podbean read: unavailable (${code}`);
+    expect(log.log.mock.calls.flat().join('\n')).toContain(`podbean read: unavailable (${recorded}`);
     expect(log.error).not.toHaveBeenCalled();
   });
 });

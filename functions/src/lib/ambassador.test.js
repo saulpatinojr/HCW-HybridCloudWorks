@@ -1365,6 +1365,47 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     expect(store.data.get('ambassador').get('program-aws-community-builders').seedRevision).toBeUndefined();
   });
 
+  // #1302: a stored MVP or Docker Captain seed whose requirements are still
+  // the first seed's takes revision 2 — `manual` under `reach` — in one
+  // patch; the edited case is proven on the MVP earlier in this file.
+  it.each(['program-microsoft-mvp', 'program-docker-captain'])(
+    'replaces an unedited first-seed requirements list on %s with revision 2',
+    (id) => {
+      const current = DEFAULT_PROGRAMS.find((p) => p.id === id);
+      const { revision: rev, fields: v1 } = SUPERSEDED_SEED_VALUES[id];
+      expect(rev).toBe(2);
+      expect(Object.keys(v1)).toEqual(['requirements']);
+      const patch = seedBackfillFor({ ...current, ...v1, seeded: true }, current);
+      expect(patch).toEqual({ requirements: current.requirements, seedRevision: 2 });
+      expect(patch.requirements).not.toEqual(v1.requirements);
+      expect(patch.requirements.find((r) => r.id === 'reach').evidenceTypes).toContain('manual');
+    }
+  );
+
+  // The audience rows are manual evidence filed under Docker's `reach`;
+  // readiness matches by sourceModule alone, so `labs` must not list
+  // `manual` or two audience months would read as hands-on material met.
+  it('lists manual evidence under Docker Captain’s reach only, with the first seed’s labs list kept for the compare', () => {
+    const docker = DEFAULT_PROGRAMS.find((p) => p.id === 'program-docker-captain');
+    const types = Object.fromEntries(docker.requirements.map((r) => [r.id, r.evidenceTypes]));
+    expect(types.labs).toEqual(['labs']);
+    expect(types.reach).toEqual(['manual']);
+    expect(docker.requirements.filter((r) => r.evidenceTypes.includes('manual')).map((r) => r.id)).toEqual(['reach']);
+    const v1 = SUPERSEDED_SEED_VALUES['program-docker-captain'].fields.requirements;
+    expect(v1.find((r) => r.id === 'labs').evidenceTypes).toEqual(['labs', 'manual']);
+    const audience = {
+      id: 'e-audience',
+      title: 'Audience, September 2026',
+      date: '2026-09-30',
+      sourceModule: 'manual',
+      programIds: ['program-docker-captain'],
+    };
+    const readiness = computeReadiness(docker, [audience, { ...audience, id: 'e-audience-2', date: '2026-08-31' }]);
+    const byId = Object.fromEntries(readiness.requirements.map((r) => [r.id, r]));
+    expect(byId.reach.count).toBe(2);
+    expect(byId.labs).toMatchObject({ count: 0, met: false });
+  });
+
   it('cleans upkeep and the tracker link, and refuses what is not one', () => {
     const ok = validateProgram(
       {

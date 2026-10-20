@@ -25,9 +25,12 @@ This project has not cut a tagged release; entries are grouped under
   Thought Leader track, which asks for 5,000 monthly views, and the Microsoft
   MVP form asks for impact metrics, so the site has to be able to state a
   monthly audience figure. Nothing is shown to visitors. `infra/frontend.tf`
-  creates a Cloudflare Web Analytics site for `hybridcloudworks.com` in lite
-  mode (no cookies, no client-side state, no fingerprinting; visitors in the
-  EU are not counted, so the figure is a floor), counted on the new
+  creates a Cloudflare Web Analytics site for `hybridcloudworks.com` with
+  Cloudflare's lite option (no cookies, no client-side state, no
+  fingerprinting; the option asks Cloudflare not to measure visitors in the
+  EU, which Cloudflare documents for the snippet its proxy injects and which
+  is unverified for the hand-placed one this site carries, so the figure is
+  aggregate page views, read as a floor), counted on the new
   `cloudflare_account_id` workspace variable so that a plan without it stays
   whole, and the `cloudflare_api_token` gains Account → Account Settings →
   Write for the one account-level create. `web_analytics_site_token` and
@@ -51,11 +54,16 @@ This project has not cut a tagged release; entries are grouped under
   footer carries a "GitKraken Ambassador" text link, and the Landing Zone
   Builder's credit reads "based on HashiCorp's validated pattern", the
   wording HashiCorp's trademark policy allows, with the pattern linked. The
-  privacy policy names Cloudflare Web Analytics as a processor. Owner steps,
-  in order: add Account → Account Settings → Write to the
+  privacy policy names Cloudflare Web Analytics as a processor and says we
+  have asked Cloudflare to exclude EU visitors, not that they are excluded.
+  Owner steps, in order: add Account → Account Settings → Write to the
   `hcp-terraform-cloudflare-dns` token; set `cloudflare_account_id` on
-  `hcw-azure` and apply; set `CF_WEB_ANALYTICS_TOKEN` from the
-  `web_analytics_site_token` output and deploy the frontend; mint the
+  `hcw-azure` and apply; confirm the EU option on the new site's Manage page
+  in the Web Analytics dashboard
+  (`https://dash.cloudflare.com/?to=/:account/web-analytics`) and record the
+  date in the `cloudflare_account_id` row of required inputs §4.1; set
+  `CF_WEB_ANALYTICS_TOKEN` from the `web_analytics_site_token` output and
+  deploy the frontend; mint the
   read-only token and seed `CLOUDFLARE-ANALYTICS-TOKEN` on Integrations →
   Keys, then take `CLOUDFLARE_ANALYTICS_TOKEN` off `EXPECTED_UNRESOLVED` in
   `scripts/check-unresolved-secrets.mjs`; add `AMBASSADOR_AUDIENCE_MONTHLY` to

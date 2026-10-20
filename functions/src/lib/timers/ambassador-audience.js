@@ -32,8 +32,11 @@
  * and a transcript of the dashboard's query); NOT measured against the live
  * API, which is why every name is listed here in one place.
  *
- * The site is registered in lite mode (infra/frontend.tf), which keeps EU
- * visitors out of the beacon, so the count is a floor and the row says so.
+ * The site is registered with the lite option (infra/frontend.tf), which
+ * asks Cloudflare not to measure visitors in the EU: documented for the
+ * proxy-injected snippet, unverified for a hand-placed one until the owner
+ * confirms the option on the site's Manage page. Either way the count is at
+ * best a floor, and the row says so.
  *
  * PODCAST DOWNLOADS come from Podbean through the client the Recording Hub
  * already uses (lib/podcast/podbean.js): `GET /v1/podcastStats/stats` over
@@ -189,8 +192,8 @@ export function audienceDescription({ month, pageViews, podcast, readAt }) {
   const lines = [
     `Page views: ${count(pageViews)}. Cloudflare Web Analytics page loads on the site, ` +
       `${month.start} to ${month.end} (UTC), read from the GraphQL Analytics API ` +
-      `(rumPageloadEventsAdaptiveGroups, count). The site is registered in lite mode, so ` +
-      `visitors from the EU are not counted and the figure is a floor.`,
+      `(rumPageloadEventsAdaptiveGroups, count); aggregate page views. The site's lite option ` +
+      `asks Cloudflare to exclude EU visitors, so treat the figure as a floor.`,
     podcast.available
       ? `Podcast downloads: ${count(podcast.downloads)}. Podbean download count for the same ` +
         `days (podcastStats/stats, daily, summed).`
@@ -361,8 +364,10 @@ export async function monthRecorded(store, monthKey) {
 
 /**
  * Store one month's row for one programme: create it, or patch the owned
- * fields of the stored one on its ETag (once more without the ETag only
- * after a 412, when the row changed between the read and the write). A row
+ * fields of the stored one on its ETag. A 412 means the row changed between
+ * the read and the write, so the row is read again: a soft-delete that
+ * landed in between is honoured, otherwise the patch goes once more on the
+ * fresh ETag, and a second 412 is thrown rather than written over. A row
  * the owner soft-deleted is left as it is.
  */
 async function writeRow(store, doc) {
@@ -384,7 +389,12 @@ async function writeRow(store, doc) {
     await store.patchDoc(CONTAINER, doc.id, patch, etag ? { ifMatch: etag } : {});
   } catch (error) {
     if (error?.code !== 412) throw error;
-    await store.patchDoc(CONTAINER, doc.id, patch, {});
+    // Never a blind write: the owner may have soft-deleted the row in the
+    // gap, and a patch without the ETag would not see it. A row that is gone
+    // outright is left for the next day's run, which reads the month again.
+    const fresh = await store.readDoc(CONTAINER, doc.id, doc.id);
+    if (!fresh || fresh.softDeletedAt) return 'skipped';
+    await store.patchDoc(CONTAINER, doc.id, patch, { ifMatch: fresh._etag });
   }
   return 'updated';
 }

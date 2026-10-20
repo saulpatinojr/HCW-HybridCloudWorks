@@ -484,7 +484,16 @@ const GITKRAKEN_FOCUS = [
  * counts `manual` evidence on 2026-10-20 (#1302): the monthly audience timer
  * files one manual row a month, and a stored seed whose requirements are
  * still the first seed's takes the new list so those rows count. A list the
- * owner edited is left as it is.
+ * owner edited is left as it is. Docker's `labs` requirement lost `manual`
+ * in the same revision, so an audience row counts toward `reach` only; the
+ * old value below still lists it, because that is what a stored first seed
+ * holds and what the canonical compare must match.
+ *
+ * FOR THE OWNER, BEHAVIOUR AND NOT A BUG: readiness (readiness.js) counts a
+ * row that names no program (`programIds: []`) toward EVERY program, so a
+ * general manual row the owner files by hand counts toward both `reach`
+ * requirements as well. The audience timer's rows name their program and
+ * count for that one only.
  */
 export const SUPERSEDED_SEED_VALUES = Object.freeze({
   'program-microsoft-mvp': Object.freeze({
@@ -844,11 +853,17 @@ export const DEFAULT_PROGRAMS = Object.freeze([
         minCount: 2,
         weight: 2,
       }),
+      // `labs` no longer lists `manual` (revision 2, #1302 review): readiness
+      // matches a row to a requirement by sourceModule alone, and the
+      // monthly audience rows below are manual, so with `manual` here two
+      // audience months would read as "Hands-on material" met with no lab
+      // on file. The first seed's list keeps `manual` in
+      // SUPERSEDED_SEED_VALUES so an unedited stored seed is recognised.
       requirement(
         'labs',
         'Hands-on material',
         `Labs, repositories, Compose examples. ${EDIT_NOTE}`,
-        { evidenceTypes: ['labs', 'manual'], minCount: 2, weight: 1 }
+        { evidenceTypes: ['labs'], minCount: 2, weight: 1 }
       ),
       // The Thought Leader track (owner decision 2026-10-20, #1302): "at
       // least 5,000 monthly views across blogs, social media, or other

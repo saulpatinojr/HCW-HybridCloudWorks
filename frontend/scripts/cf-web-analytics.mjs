@@ -32,14 +32,15 @@
  * construction and not by the pattern alone.
  *
  * LITE MODE. The site resource is created with `lite = true` (infra/
- * frontend.tf), which Cloudflare documents as keeping visitors from the EU
- * out of the beacon ("the JavaScript snippet will not be injected for
- * visitors from the EU"). The beacon reads its site's settings from
- * Cloudflare when it loads, so a hand-placed snippet is covered by the same
- * setting; documented, not measured here. The figure this exists for is a
- * count, not a profile, and a count that leaves EU visitors out is still a
- * count. No cookies are set and no consent prompt is needed; the privacy
- * policy names Cloudflare as a processor.
+ * frontend.tf). The option asks Cloudflare not to measure visitors in the
+ * EU; that is documented for the proxy-injected snippet ("the JavaScript
+ * snippet will not be injected for visitors from the EU") and unverified
+ * for a hand-placed snippet such as this one — beacon.min.js carries no EU
+ * logic of its own — until the owner confirms the option on the site's
+ * Manage page. The figure this exists for is a count, not a profile, and
+ * the audience row treats it as a floor either way. No cookies are set and
+ * no consent prompt is needed; the privacy policy names Cloudflare as a
+ * processor.
  *
  * WHERE THE TAG GOES, AND WHY IT SURVIVES THE PRE-RENDER. The plugin inserts
  * the tag just before `</head>` of the index.html `vite build` writes.

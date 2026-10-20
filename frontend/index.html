@@ -49,14 +49,8 @@
     />
 
     <!--
-      NO ANALYTICS TAG HERE. The Cloudflare Web Analytics beacon — the
-      page-view count behind the monthly audience figure the Ambassador hub
-      records — is added at build time by scripts/cf-web-analytics.mjs, just
-      before </head>, and only when VITE_CF_WEB_ANALYTICS_TOKEN is set. The
-      token it carries is public by nature (it ships in every page), the
-      beacon sets no cookie, and the site is registered in lite mode, which
-      keeps EU visitors out of the beacon. A build without the variable
-      serves exactly this file, with nothing added.
+      NO ANALYTICS TAG HERE. A page-view beacon is built in at build time,
+      only when configured; scripts/cf-web-analytics.mjs says how and why.
     -->
   </head>
   <body>
