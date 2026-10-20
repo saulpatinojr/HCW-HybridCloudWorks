@@ -50,8 +50,9 @@ resource "azurerm_service_plan" "hcw" {
 # The catalogue is the authority on which timers exist. It must match the
 # `timer(name, FLAG, ...)` registrations in
 # functions/src/functions/schedulers.js plus platformJobSweeper in
-# jobs-sweeper.js, refreshToolServiceCache in cloud-tools-jobs.js and
-# labsWeeklyRollup in labs-jobs.js —
+# jobs-sweeper.js, refreshToolServiceCache in cloud-tools-jobs.js,
+# labsWeeklyRollup in labs-jobs.js and ambassadorAudienceMonthly in
+# ambassador-audience.js —
 # route-inventory.test.js asserts the timer set, so a timer added there
 # without a flag here ships disarmed and one removed there leaves a dead
 # setting behind.
@@ -111,6 +112,14 @@ locals {
     # its minute cache. A job on the owner's host every hour, so it stays off
     # until the owner adds LAB_CANARY.
     LAB_CANARY = "labCanary — hourly at 20 past, runs one shell-echo lab job end to end for the Health Hub and deletes it"
+    # #1302: the monthly audience figure. Reads the previous month's page-view
+    # totals from Cloudflare Web Analytics with CLOUDFLARE_ANALYTICS_TOKEN and
+    # records one number per month; nothing is shown to visitors. Runs daily
+    # and writes only when the previous month is not yet recorded, so a
+    # failed first-of-the-month run is caught up the next day and
+    # alert-timer-overdue in observability.tf can watch it as a 1d period
+    # (a day-of-month NCRONTAB has no fixed period for that rule to compute).
+    AMBASSADOR_AUDIENCE_MONTHLY = "ambassadorAudienceMonthly — daily 06:45 UTC, records the previous month's audience figure from Cloudflare Web Analytics once per month (ambassador-audience.js)"
   }
 
   timer_flags = {
@@ -434,6 +443,27 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # rate-limit key in production.
     "CF_ORIGIN_SECRET" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CF-ORIGIN-SECRET)"
     "CLIENT_IP_SALT"   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CLIENT-IP-SALT)"
+
+    # The monthly audience read (#1302). A SECOND Cloudflare token, not the
+    # workspace's: cloudflare_api_token writes DNS and account settings, and
+    # the app has no business holding it. This one carries Account → Account
+    # Analytics → Read on the HybridCloudWorks account and nothing else, so a
+    # leak reads page-view totals and changes nothing. The owner seeds it
+    # through the API-keys page like every other vendor credential; until
+    # then the reference resolves to nothing and the timer records nothing.
+    "CLOUDFLARE_ANALYTICS_TOKEN" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CLOUDFLARE-ANALYTICS-TOKEN)"
+
+    # The Web Analytics site the read is scoped to, taken STRAIGHT FROM THE
+    # RESOURCE in frontend.tf and never typed by the owner: a copied site tag
+    # drifts the day the site is recreated, and the resource knows its own
+    # tag. Not a secret (it is the site's identifier in the API path; the
+    # token above is the credential). Empty, not absent, while
+    # cloudflare_account_id is unset and the site does not exist, so the timer
+    # reads "" as "not configured" rather than a missing setting as a deploy
+    # fault. Unknown until the first apply creates the site, which
+    # tfc-plan-check reports as an unknown app_settings difference once; it
+    # cannot be declared and is read by hand on that run.
+    "CF_WEB_ANALYTICS_SITE_TAG" = var.cloudflare_account_id == null ? "" : cloudflare_web_analytics_site.hcw[0].site_tag
 
     # -------------------------------------------------------------------------
     # Runtime Key Vault bindings.

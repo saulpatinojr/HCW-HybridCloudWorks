@@ -196,6 +196,30 @@ output "workspace_id" {
 }
 
 # -----------------------------------------------------------------------------
+# Cloudflare Web Analytics (#1302)
+# -----------------------------------------------------------------------------
+# NOT SENSITIVE, and not an exception to the header's rule, because neither
+# value is a key. `site_token` ships in every page the beacon is loaded from —
+# it is the `token` inside the snippet's data-cf-beacon attribute, readable in
+# any browser's view-source — and the frontend build reads it from here to
+# put it there. `site_tag` is the site's identifier in the Cloudflare API
+# path. The API authenticates with an API token, and these are not one.
+#
+# `one()` over the splat, because the resource is counted on
+# cloudflare_account_id (frontend.tf): until the owner sets that variable
+# both outputs read null, and a consumer that gets null has its answer — the
+# site does not exist yet — instead of an index error on a list of zero.
+output "web_analytics_site_token" {
+  description = "Cloudflare Web Analytics site token, the public value the page's beacon carries; null until cloudflare_account_id is set (#1302)"
+  value       = one(cloudflare_web_analytics_site.hcw[*].site_token)
+}
+
+output "web_analytics_site_tag" {
+  description = "Cloudflare Web Analytics site tag, the site's identifier in the API path; null until cloudflare_account_id is set (#1302)"
+  value       = one(cloudflare_web_analytics_site.hcw[*].site_tag)
+}
+
+# -----------------------------------------------------------------------------
 # Networking
 # -----------------------------------------------------------------------------
 output "subnet_id" {

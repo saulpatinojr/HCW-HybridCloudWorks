@@ -993,7 +993,7 @@ variable "admin_object_ids" {
 # Cloudflare (DNS management)
 # -----------------------------------------------------------------------------
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain"
+  description = "Cloudflare API token — Zone:Read + DNS:Edit scoped to the domain, plus Transform Rules:Edit, Account Rulesets:Read and (for the Web Analytics site) Account Settings:Write; the permission list is beside cloudflare_origin_secret"
   type        = string
   sensitive   = true
 }
@@ -1001,6 +1001,38 @@ variable "cloudflare_api_token" {
 variable "cloudflare_zone_id" {
   description = "Cloudflare Zone ID for the domain"
   type        = string
+}
+
+# The Cloudflare ACCOUNT, not the zone: cloudflare_web_analytics_site in
+# frontend.tf is an account-level resource and the API takes the account id in
+# its path. An identifier, not a credential: the dashboard prints it on the
+# zone's Overview page under API, beside the zone id, and the GitHub
+# repository variable CLOUDFLARE_ACCOUNT_ID already holds the same value for
+# the daily DNS audit (docs/standards/required-inputs.md §4.2). Set it in the
+# hcw-azure workspace as a plain Terraform variable with that value.
+#
+# Null by default, like arc_onboarding_principal_id, rather than required
+# like cloudflare_zone_id, because of what an unset value does to the plan.
+# The zone id is the address of every DNS record this estate serves on, so a
+# plan with no zone id has nothing to say and SHOULD fail. The account id
+# serves one resource that no visitor-facing path depends on, and a required
+# variable would fail every plan — the merge's queued run, the speculative
+# plans, tfc-plan-check's read — until the owner has typed the value into the
+# workspace. Null keeps the apply whole: the Web Analytics site and its two
+# app-setting readers are simply not created until the id is set, and the
+# outputs read null. Thirty-two lowercase hex characters, which is the shape
+# Cloudflare account ids take; a wrong value fails at plan time here rather
+# than at apply time as a 404 on /accounts/<id>/rum/site_info that names the
+# wrong thing.
+variable "cloudflare_account_id" {
+  description = "Cloudflare account id (32 hex characters) that owns the zone; null until set, which leaves cloudflare_web_analytics_site uncreated (#1302)"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.cloudflare_account_id == null || can(regex("^[0-9a-f]{32}$", var.cloudflare_account_id))
+    error_message = "cloudflare_account_id must be the 32-character lowercase hex account id the Cloudflare dashboard shows under API on the zone Overview page, or null."
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -1035,6 +1067,19 @@ variable "cloudflare_zone_id" {
 # DNS:Edit the records need. A DNS-only token applies every cloudflare_dns_record
 # cleanly and fails on the ruleset alone with "Authentication error (10000)",
 # which names neither the token nor the permission.
+#
+# AND, SINCE #1302, ONE ACCOUNT-LEVEL WRITE. cloudflare_web_analytics_site
+# (frontend.tf) is created through POST /accounts/{account_id}/rum/site_info,
+# which Cloudflare's API reference lists under the permission Account →
+# Account Settings → Write. Add it to the same token
+# (hcp-terraform-cloudflare-dns in the dashboard) before the apply that
+# creates the site. The failure without it is the same shape as the ruleset's:
+# every record and the ruleset apply, and the one new resource errors — by
+# the documented pattern, "Authentication error (10000)", though that exact
+# code on this endpoint is inferred from the ruleset case rather than
+# observed. The widening is accepted for this resource only: a Web Analytics
+# site holds no secret and serves no visitor-facing path, so the trade the
+# Turnstile note in frontend.tf refused still stands for anything that does.
 variable "cloudflare_origin_secret" {
   description = "Shared secret Cloudflare injects as x-hcw-origin-secret; MUST equal the CF-ORIGIN-SECRET value in Key Vault"
   type        = string
@@ -1302,7 +1347,7 @@ variable "enabled_timers" {
         "SYNC_SOCIAL_CALENDAR", "CLEANUP_TEMP_STORAGE", "CLEANUP_UNUSED_CERT_IMAGES",
         "PLATFORM_JOB_SWEEPER", "BUILD_WEEKLY_NEWSLETTER", "REFRESH_TOOL_SERVICE_CACHE",
         "LABS_WEEKLY_ROLLUP", "PROBE_AI_PROVIDERS", "SEND_REMINDERS", "HEALTH_PULSE",
-        "LAB_CANARY",
+        "LAB_CANARY", "AMBASSADOR_AUDIENCE_MONTHLY",
       ], name)
     ])
     error_message = "enabled_timers accepts only flag suffixes from local.timer_catalogue in functionapp.tf, e.g. SYNC_RSS_FEEDS — not the function name, and not the full FEATURE_FLAG_ prefix."

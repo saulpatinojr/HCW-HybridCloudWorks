@@ -1500,6 +1500,11 @@ locals {
   # Thursday, so the weekly anchors are 2026-01-02 (Friday), 2026-01-04
   # (Sunday) and 2026-01-05 (Monday); the test checks each weekday too.
   timer_schedules = {
+    # Daily, not monthly, by design (#1302): a day-of-month NCRONTAB has no
+    # fixed period for lastDue below to compute, so the timer runs every day
+    # and records the month only when it is not yet recorded. The rule then
+    # watches it like any other daily timer.
+    ambassadorAudienceMonthly   = { period = "1d", anchor = "2026-01-01 06:45" }  # 0 45 6 * * *
     buildWeeklyNewsletter       = { period = "7d", anchor = "2026-01-05 13:00" }  # 0 0 13 * * 1
     checkAgentHealth            = { period = "5m", anchor = "2026-01-01 00:00" }  # 0 */5 * * * *
     checkLiveLinks              = { period = "7d", anchor = "2026-01-05 06:00" }  # 0 0 6 * * 1
