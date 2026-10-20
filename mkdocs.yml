@@ -183,6 +183,9 @@ nav:
       - Lab 03 agent explains (draft): content/blog-lab-03-agent-explains.md
       - Docker 01 building images (draft): content/blog-docker-01-building-images.md
       - Docker 02 Desktop (draft): content/blog-docker-02-desktop.md
+      - GitKraken 01 Commit Graph (draft): content/blog-gitkraken-01-commit-graph.md
+      - GitKraken 02 MCP server (draft): content/blog-gitkraken-02-mcp-server.md
+      - GitKraken 03 stacked PRs (draft): content/blog-gitkraken-03-stacked-prs.md
   - Repository:
       - README: repo/readme.md
       - CHANGELOG: repo/changelog.md
