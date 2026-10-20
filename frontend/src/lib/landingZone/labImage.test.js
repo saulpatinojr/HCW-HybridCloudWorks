@@ -5,8 +5,15 @@
  * case; the module scan is tf_rewrite.py's (top-level blocks, depth-1
  * `source` and `version` only, registry AVM sources only, `.tf` files only);
  * and against the builder's own output it says what the image will do: every
- * module the full default build calls resolves, the spokes' 0.22.2 included,
- * and a version the image does not carry is named.
+ * module the full default build calls resolves, the spokes' pinned version
+ * included, and a version the image does not carry is named.
+ *
+ * NO PIN IS WRITTEN HERE (#1287). Every version these tests expect is read
+ * from avmVersions.js or lab-image/versions.env, the two files the weekly
+ * bump rewrites, so a bump moves the expectations with it; the bot's own
+ * check step failed twice on literals that `vitest -u` cannot refresh. The
+ * one shelf of literal versions is the constraint evaluator's fixture, which
+ * is about the evaluator's rule and not about what the image carries.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -64,6 +71,25 @@ function vendoredByImage() {
 }
 
 const state = (query) => decodeLz(new URLSearchParams(query));
+
+const SPOKE = 'avm-res-network-virtualnetwork';
+
+/** The builder's pinned version of a module, as avmVersions.js has it today. */
+const pinned = (name) => AVM_MODULES[name].version;
+
+/** `0.9.0` → `0.9`: the `~>` series a pessimistic constraint names. */
+const series = (version) => version.split('.').slice(0, 2).join('.');
+
+/** Every version of `name` the image carries, in LAB_IMAGE_AVM order, as a report's `have` lists them. */
+const carried = (name) => (vendoredModules(LAB_IMAGE_AVM)[name] ?? []).map((c) => c.text);
+
+/** A release the image does not carry: one patch above the highest it has, whatever that is this week. */
+const absent = (name) => {
+  const [major, minor, patch] = parseVersion(
+    chooseVendored(vendoredModules(LAB_IMAGE_AVM), name, '')
+  );
+  return `${major}.${minor}.${patch + 1}`;
+};
 
 describe('LAB_IMAGE_AVM is what lab-image/ vendors', () => {
   it('reads the builder modules from versions.env the way the Dockerfile does', () => {
@@ -126,18 +152,34 @@ describe('Terraform constraints, as tf_constraints.py reads them', () => {
   });
 
   it('picks the highest vendored version that satisfies, as the registry would', () => {
-    const vendored = vendoredModules(LAB_IMAGE_AVM);
+    // A fixed shelf, not the image's: this is the evaluator's rule, and the
+    // rule does not move when the pins do. Two versions of one module side
+    // by side, as the image carries the spoke module (the builder's and the
+    // connectivity module's own child).
+    const vendored = vendoredModules([
+      'avm-res-network-routetable@0.3.1',
+      'avm-res-network-routetable@0.5.0',
+      'avm-res-network-virtualnetwork@0.15.0',
+      'avm-res-network-virtualnetwork@0.22.2',
+      'avm-utl-interfaces@0.5.0',
+      'avm-utl-interfaces@0.6.0',
+    ]);
     expect(chooseVendored(vendored, 'avm-res-network-routetable', '>= 0.3')).toBe('0.5.0');
     expect(chooseVendored(vendored, 'avm-res-network-routetable', '~> 0.3.0')).toBe('0.3.1');
     expect(chooseVendored(vendored, 'avm-utl-interfaces', '~> 0.5.0')).toBe('0.5.0');
     expect(chooseVendored(vendored, 'avm-utl-interfaces', '')).toBe('0.6.0');
-    // Two versions of the spoke module, side by side: the builder's and the
-    // connectivity module's own child.
     expect(chooseVendored(vendored, 'avm-res-network-virtualnetwork', '0.22.2')).toBe('0.22.2');
     expect(chooseVendored(vendored, 'avm-res-network-virtualnetwork', '~> 0.15.0')).toBe('0.15.0');
     expect(chooseVendored(vendored, 'avm-res-network-virtualnetwork', '>= 0.15.0')).toBe('0.22.2');
     expect(chooseVendored(vendored, 'avm-res-network-virtualnetwork', '0.23.0')).toBeNull();
     expect(chooseVendored(vendored, 'avm-not-vendored', '')).toBeNull();
+  });
+
+  it('resolves the builder’s own spoke pin on the image, and nothing above what the image has', () => {
+    const vendored = vendoredModules(LAB_IMAGE_AVM);
+    expect(carried(SPOKE)).toContain(pinned(SPOKE));
+    expect(chooseVendored(vendored, SPOKE, pinned(SPOKE))).toBe(pinned(SPOKE));
+    expect(chooseVendored(vendored, SPOKE, absent(SPOKE))).toBeNull();
   });
 });
 
@@ -151,7 +193,7 @@ describe('the module scan, as tf_rewrite.py does it', () => {
         [
           'module "alz" {',
           '  source  = "Azure/avm-ptn-alz/azurerm"',
-          '  version = "0.21.0"',
+          `  version = "${pinned('avm-ptn-alz')}"`,
           '  nested = {',
           '    source  = "Azure/avm-res-network-virtualnetwork/azurerm"',
           '    version = "9.9.9"',
@@ -163,8 +205,8 @@ describe('the module scan, as tf_rewrite.py does it', () => {
     expect(row).toMatchObject({
       block: 'alz',
       module: 'avm-ptn-alz',
-      constraint: '0.21.0',
-      vendored: 'avm-ptn-alz@0.21.0',
+      constraint: pinned('avm-ptn-alz'),
+      vendored: `avm-ptn-alz@${pinned('avm-ptn-alz')}`,
     });
   });
 
@@ -175,7 +217,7 @@ describe('the module scan, as tf_rewrite.py does it', () => {
         [
           'module "prefixed" {',
           '  source = "registry.terraform.io/Azure/avm-ptn-alz-management/azurerm"',
-          '  version = "~> 0.9"',
+          `  version = "~> ${series(pinned('avm-ptn-alz-management'))}"`,
           '}',
           'module "sub" {',
           '  source = "Azure/avm-ptn-alz/azurerm//modules/x"',
@@ -191,8 +233,8 @@ describe('the module scan, as tf_rewrite.py does it', () => {
       ),
     ]);
     expect(report.map((r) => [r.block, r.vendored])).toEqual([
-      ['prefixed', 'avm-ptn-alz-management@0.9.0'],
-      ['sub', 'avm-ptn-alz@0.21.0'],
+      ['prefixed', `avm-ptn-alz-management@${pinned('avm-ptn-alz-management')}`],
+      ['sub', `avm-ptn-alz@${pinned('avm-ptn-alz')}`],
     ]);
   });
 
@@ -223,8 +265,9 @@ describe('against the builder’s own output', () => {
   });
 
   it('names a module version the image does not carry, once however many blocks call it', () => {
+    const missing = absent(SPOKE);
     const spoke = (name) =>
-      `module "${name}" {\n  source  = "Azure/avm-res-network-virtualnetwork/azurerm"\n  version = "0.23.0"\n}\n`;
+      `module "${name}" {\n  source  = "Azure/${SPOKE}/azurerm"\n  version = "${missing}"\n}\n`;
     const { ok, unresolved } = labResolution([
       { path: 'a.tf', content: spoke('one') },
       { path: 'b.tf', content: spoke('two') },
@@ -232,10 +275,11 @@ describe('against the builder’s own output', () => {
     expect(ok).toBe(false);
     expect(unresolved).toHaveLength(1);
     expect(unresolved[0]).toMatchObject({
-      module: 'avm-res-network-virtualnetwork',
-      constraint: '0.23.0',
-      have: ['0.15.0', '0.22.2'],
+      module: SPOKE,
+      constraint: missing,
+      have: carried(SPOKE),
     });
+    expect(carried(SPOKE)).toContain(pinned(SPOKE));
   });
 
   it('can validate a build with no spoke', () => {

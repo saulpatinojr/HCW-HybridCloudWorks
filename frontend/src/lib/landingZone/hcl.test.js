@@ -7,6 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  AVM_MODULES,
   BASELINE_ASSIGNMENTS,
   DEFAULT_STATE,
   HUB_PREFIX_RANGE,
@@ -427,7 +428,10 @@ describe('emitFiles', () => {
     ]) {
       expect(readme).toContain(`**${label}**`);
     }
-    expect(readme).toContain('`Azure/avm-res-network-virtualnetwork/azurerm` 0.22.2');
+    // The pinned version, read rather than written, so the weekly bump
+    // moves this line with avmVersions.js (#1287).
+    const spoke = AVM_MODULES['avm-res-network-virtualnetwork'];
+    expect(readme).toContain(`\`${spoke.source}\` ${spoke.version}`);
   });
 });
 
