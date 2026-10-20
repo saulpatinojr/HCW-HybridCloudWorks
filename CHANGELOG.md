@@ -477,7 +477,7 @@ This project has not cut a tagged release; entries are grouped under
 ### Fixed
 
 - **The AVM versions bot regenerates the image's record of what each pinned
-  version calls, so its pull request arrives green (#1306, #TBD)**.
+  version calls, so its pull request arrives green (#1306, #1309)**.
   `AVM_CHILD_CALLS` in `lab-image/versions.env` is keyed by each builder
   module's version, and what a new release calls is only known once the
   image's vendor stage resolves it, so every bump the bot opened carried
