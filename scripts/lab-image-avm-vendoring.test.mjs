@@ -79,55 +79,72 @@ describe('the lab image vendors what the Landing Zone Builder emits', () => {
   });
 });
 
+// The versions below are read from the pins, not remembered (#1287, #1300):
+// the weekly bumper runs this file after a bump, and a literal `0.22.2`
+// here would fail the bump that moved it with a perfect record in hand.
 describe('the check goes red when the image is left behind', () => {
   const bumped = (name, version) =>
     MODULES.map((m) => (m.name === name ? { ...m, version } : m));
 
+  const SPOKE = 'avm-res-network-virtualnetwork';
+  const spokePin = AVM_MODULES[SPOKE].version;
+  const spokeId = `${SPOKE}@${spokePin}`;
+  /** A release the image does not carry: one patch above the builder's pin. */
+  const absent = spokePin.replace(/\d+$/, (patch) => String(Number(patch) + 1));
+  /** The one registry child the spoke module calls, per the record. */
+  const [spokeChild, ...otherChildren] = [...(childCalls(ENV).get(spokeId) ?? [])];
+  const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   it('fails a builder pin bump that versions.env did not follow (the state #737 found)', () => {
     const problems = vendoringProblems({
-      modules: bumped('avm-res-network-virtualnetwork', '0.23.0'),
+      modules: bumped(SPOKE, absent),
       env: ENV,
       fixture: FIXTURE,
     });
     expect(problems.join('\n')).toContain(
-      'the builder emits avm-res-network-virtualnetwork 0.23.0, and lab-image/versions.env vendors 0.22.2'
+      `the builder emits ${SPOKE} ${absent}, and lab-image/versions.env vendors ${spokePin}`
     );
     expect(problems.join('\n')).toContain(
-      'records nothing for avm-res-network-virtualnetwork@0.23.0 in AVM_CHILD_CALLS'
+      `records nothing for ${SPOKE}@${absent} in AVM_CHILD_CALLS`
     );
   });
 
   it('fails a bump that moved the version line but not the record of its children', () => {
     const env = ENV.replace(
       /^AVM_RES_NETWORK_VIRTUALNETWORK_VERSION=.*$/m,
-      'AVM_RES_NETWORK_VIRTUALNETWORK_VERSION=0.23.0'
+      `AVM_RES_NETWORK_VIRTUALNETWORK_VERSION=${absent}`
     );
     const problems = vendoringProblems({
-      modules: bumped('avm-res-network-virtualnetwork', '0.23.0'),
+      modules: bumped(SPOKE, absent),
       env,
       fixture: FIXTURE,
     });
     expect(problems).toHaveLength(2);
-    expect(problems[0]).toContain('records nothing for avm-res-network-virtualnetwork@0.23.0');
-    expect(problems[1]).toContain('AVM_CHILD_CALLS records avm-res-network-virtualnetwork@0.22.2');
+    expect(problems[0]).toContain(`records nothing for ${SPOKE}@${absent}`);
+    expect(problems[1]).toContain(`AVM_CHILD_CALLS records ${spokeId}`);
   });
 
   it('fails a builder module the image does not vendor at all', () => {
     const env = ENV.replace(/^AVM_RES_NETWORK_VIRTUALNETWORK_(VERSION|SHA256)=.*\n/gm, '');
     const problems = vendoringProblems({ modules: MODULES, env, fixture: FIXTURE });
     expect(problems[0]).toBe(
-      'the builder emits avm-res-network-virtualnetwork 0.22.2, and lab-image/versions.env has no AVM_RES_NETWORK_VIRTUALNETWORK_VERSION line, so the image does not vendor it'
+      `the builder emits ${SPOKE} ${spokePin}, and lab-image/versions.env has no AVM_RES_NETWORK_VIRTUALNETWORK_VERSION line, so the image does not vendor it`
     );
   });
 
   it('fails a recorded child that is not pinned, and a pin nothing calls', () => {
-    const lost = ENV.replace(/^avm-utl-interfaces@0\.6\.0 [0-9a-f]{64}\n/m, '');
+    expect(spokeChild, `${spokeId} calls one registry child`).toBeDefined();
+    expect(otherChildren).toEqual([]);
+    const lost = ENV.replace(new RegExp(`^${escaped(spokeChild)} [0-9a-f]{64}\\n`, 'm'), '');
     expect(vendoringProblems({ modules: MODULES, env: lost, fixture: FIXTURE })).toEqual([
-      'avm-res-network-virtualnetwork@0.22.2 calls avm-utl-interfaces@0.6.0, and AVM_CHILD_MODULES does not pin it, so the image does not vendor it',
+      `${spokeId} calls ${spokeChild}, and AVM_CHILD_MODULES does not pin it, so the image does not vendor it`,
     ]);
-    const stale = ENV.replace(/^avm-res-network-virtualnetwork@0\.22\.2 avm-utl-interfaces@0\.6\.0\n/m, 'avm-res-network-virtualnetwork@0.22.2\n');
+    const stale = ENV.replace(
+      new RegExp(`^${escaped(spokeId)} ${escaped(spokeChild)}\\n`, 'm'),
+      `${spokeId}\n`
+    );
     expect(vendoringProblems({ modules: MODULES, env: stale, fixture: FIXTURE })).toEqual([
-      'AVM_CHILD_MODULES pins avm-utl-interfaces@0.6.0, which no AVM_CHILD_CALLS line calls',
+      `AVM_CHILD_MODULES pins ${spokeChild}, which no AVM_CHILD_CALLS line calls`,
     ]);
   });
 

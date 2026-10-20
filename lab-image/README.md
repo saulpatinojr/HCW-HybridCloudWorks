@@ -436,12 +436,20 @@ and attests. Where each sum comes from:
   module added to `avmVersions.js` needs its pair added here by hand, once;
   the static test names the missing line.
 
-  The workflow does not refresh the child modules, so do that by hand on its
-  pull request, which is red until you do: `AVM_CHILD_CALLS` is keyed by
-  each builder module's version, so the new version has no record, and a
-  bump often changes what the module calls, so the build fails until
-  `AVM_CHILD_MODULES` matches as well. Print both blocks and paste them over
-  the old two. bash, from the repository root:
+  The same run regenerates the child modules (#1306): `AVM_CHILD_CALLS` is
+  keyed by each builder module's version, so the new version would have no
+  record, and a bump can change what the module calls, so the build would
+  fail until `AVM_CHILD_MODULES` matched as well. The updater builds the
+  vendor stage in print mode (the command below), splices the two blocks it
+  prints over the old two, rewrites `LAB_IMAGE_CHILD_AVM` in
+  `frontend/src/lib/landingZone/labImage.js` when the child list changed,
+  moves the exact pin on the module's block in
+  `smoke/terraform-validate-payload/main.tf` where it has one, and runs
+  `scripts/lab-image-avm-vendoring.test.mjs` on the result before the pull
+  request opens; a vendor stage that fails fails the run with its log, and
+  no pull request opens with the old record. A hand bump, or a module added
+  to `avmVersions.js`, still does the same by hand: print both blocks and
+  paste them over the old two. bash, from the repository root:
 
   ```bash
   docker build --target vendor --build-arg AVM_PRINT_PINS=1 --progress=plain lab-image 2>&1 | sed -n "/^#[0-9]* [0-9.]* AVM_CHILD_[A-Z]*='/,/^#[0-9]* [0-9.]* '$/p" | sed -E 's/^#[0-9]+ [0-9.]+ //'

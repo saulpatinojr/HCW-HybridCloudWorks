@@ -476,6 +476,43 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The AVM versions bot regenerates the image's record of what each pinned
+  version calls, so its pull request arrives green (#1306, #TBD)**.
+  `AVM_CHILD_CALLS` in `lab-image/versions.env` is keyed by each builder
+  module's version, and what a new release calls is only known once the
+  image's vendor stage resolves it, so every bump the bot opened carried
+  the record of the old versions: #1306 (`avm-ptn-alz` 0.22.0, the
+  connectivity module 0.17.7, the spoke module 0.22.3) arrived with
+  `scripts (operations)` red on "records nothing for avm-ptn-alz@0.22.0 in
+  AVM_CHILD_CALLS" and the image's Build and smoke red in `vendor-avm.sh`,
+  which the pull request body called by design. `update-avm-versions.mjs`
+  now does what that body told the reviewer to do: after writing the pins
+  it runs `docker build --target vendor --build-arg AVM_PRINT_PINS=1
+  --progress=plain lab-image` (with `--no-cache-filter vendor`, since a
+  cached stage prints nothing), echoing the build log to stderr, splices the
+  `AVM_CHILD_MODULES` and `AVM_CHILD_CALLS` blocks it prints over the two in
+  `versions.env` (no other line changes, and splicing twice is the same
+  text), rewrites `LAB_IMAGE_CHILD_AVM` in `labImage.js` when the child
+  list changed, and moves the exact pin on the module's block in the smoke
+  payload (`smoke/terraform-validate-payload/main.tf`, whose `module "alz"`
+  pins the builder's exact version on purpose and so broke on every bump of
+  it). A build that fails, a print-out without the blocks, a line that is
+  not the printed shape, or a record keyed by versions the file does not
+  pin ends the run with exit code 1 and one sentence after the log, and no
+  pull request opens. The workflow runs
+  `scripts/lab-image-avm-vendoring.test.mjs` on the result before the
+  upload, stages the two new paths by name (five, asserted by
+  `avm-versions-workflow.test.mjs`), and the body says the record was
+  regenerated. The vendoring test's own "goes red" cases carried the spoke
+  module's pin as a literal (`0.22.2`), which would have failed the first
+  bump of that module with a perfect record in hand; they read the pin now,
+  as #1300 did for the frontend suites. Rehearsed against #1306's pins on a
+  workstation with Docker: the vendor stage printed 17 children and 19 call
+  lines, the splice changed exactly the 18 lines keyed by the three moved
+  versions beside the six pin lines, and the vendoring test went from six
+  failures to nine passed. `--children <log>` splices from a saved
+  print-out for a run without Docker.
+
 - **Study-guide refresher: an exam stored retired ahead of its day keeps its outline until the day**. The refresher and the outlines test judged liveness by the stored status, so the first green updater run after #1289 deleted PL-400's outline eleven days before its last exam day (#1291, closed). Both now ask `deriveStatus` for today, as the badge does; `eligibleCerts` lives in `scripts/study-guide-eligibility.mjs` with a unit test.
 
 - **Learn-catalogue updater: a refresh no longer deletes `statusReadDate` and `availableDate`** (#1091's fields). The rebuild of every poster row carried an allowlist of fields that predated them, so each run erased them, PL-400 turned `retired` two weeks before its October 30 day and the data check refused the pull request (run 39218206063, after #1288). Both fields are carried now, with a unit test; a real run against Learn left only the sync date changed and the data tests green.
