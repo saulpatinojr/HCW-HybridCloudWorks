@@ -373,11 +373,14 @@ Seeded by hand; referenced from `infra/functionapp.tf` app settings as
 | `GCP-BILLING-API-KEY` | not inventoried | Cloud Billing Catalog API key for the public GCP price list — Google's documented auth for it. Replaced a ~2.3 KB service-account JSON on 2026-08-29 |
 | `GITHUB-APP-PRIVATE-KEY` | not inventoried | Multi-line PEM. **Not referenced by any app setting in `infra/` and read by nothing** — it has no app setting and no seeding path, deliberately. Like the two above, unconfirmed in the vault, and the owner's to delete if it is there (below) |
 | `TURNSTILE-SECRET-KEY` | not inventoried | Cloudflare Turnstile secret key for the Landing Zone Builder's "Validate on the lab" ([ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of 2026-09-28), sent only to Cloudflare's siteverify. Its site key is public and is store 3 (`VITE_TURNSTILE_SITE_KEY`). The widget is created in the Cloudflare dashboard rather than as `cloudflare_turnstile_widget`, because that resource's read-only `secret` attribute would put this value in state, the rule in the next section |
+| `CLOUDFLARE-ANALYTICS-TOKEN` | not inventoried | Read-only Cloudflare API token (Account → Account Analytics → Read, the HybridCloudWorks account only) the `ambassadorAudienceMonthly` timer reads the previous month's page views with (#1302), sent only as a Bearer header to Cloudflare's GraphQL endpoint. Store 1 and not store 2: the workspace's `cloudflare_api_token` writes DNS and account settings, and the Function App must never hold that one, so a second token that can only read is the least the read can run on. The site tag and account id beside it are identifiers Terraform writes as plain app settings, not secrets |
 
-`infra/functionapp.tf` declares **29** `@Microsoft.KeyVault` references and no
-run-time reads (2026-10-09, after #1029 removed the Perplexity one; setting
+`infra/functionapp.tf` declares **31** `@Microsoft.KeyVault` references and no
+run-time reads (2026-10-20: 29 on 2026-10-09 after #1029 removed the Perplexity
+one, thirty on `main` before #1302 once the StreamYard and Podbean names had
+arrived (#1101, #1117), thirty-one with `CLOUDFLARE-ANALYTICS-TOKEN`; setting
 lines only, since comments in the module mention the form too, and
-`secret-catalog.test.js` holds the catalogue to the same 29).
+`secret-catalog.test.js` holds the catalogue to the same 31).
 CHECKLIST §1–§8 inventories a handful of them. That gap is recorded below
 rather than papered over.
 
@@ -429,13 +432,13 @@ dictated by HashiCorp and Microsoft and are contractual.
 | `subscription_app`, `subscription_mgmt`, `subscription_conn` | Provider targets. No defaults on purpose: a wrong guess deploys the workload into a platform subscription, so an unset value must fail the plan. There is deliberately no `subscription_ident` — the Identity zone is empty, so an alias for it would be an unused declaration and one more value that has to be right before a plan can run | yes (log hygiene) |
 | `entra_tenant_id` | Feeds the `ENTRA_TENANT_ID` app setting and JWT validation | yes (log hygiene) |
 | `entra_api_audience` | Validated as the JWT `aud`. Empty silently disables audience validation, hence the non-empty validation block | no |
-| `cloudflare_api_token` | A genuine credential, and the reason it is here rather than in Key Vault: as a provider argument it never enters state, whereas a vault data-source read would put it there | yes |
+| `cloudflare_api_token` | A genuine credential, and the reason it is here rather than in Key Vault: as a provider argument it never enters state, whereas a vault data-source read would put it there. Since #1302 it also carries Account → Account Settings → Write, for the Web Analytics site; the token the Function App reads the figures with is a different, read-only one in store 1 (`CLOUDFLARE-ANALYTICS-TOKEN`) | yes |
 | `cloudflare_zone_id` | Identifier | no |
 | `budget_alert_email` | Notification target | no |
 | `admin_ip_rules`, `cosmos_admin_ip_rules`, `functions_storage_admin_ip_rules` | Populated only for a seeding or inspection window; empty is the steady state | no |
 
 Most of the rest of `infra/variables.tf` has a default and needs no workspace
-entry. Eight are the exception, and they are the ones an operator actually
+entry. Nine are the exception, and they are the ones an operator actually
 reaches for. Each but one carries the *safe* value as its default, so the
 unsafe or armed value is a deliberate workspace edit and the default is the
 rollback. The one is `labs_public_submission_enabled`, which carries the
@@ -452,6 +455,7 @@ rollback is `false` in the workspace:
 | `availability_probe_alert_enabled` | `false` | The alert on the Cloudflare Worker reachability probe ([ADR 0024](../decisions/0024-edge-availability-probe.md)). It fires on *missing* probe successes, so flipping it before the Worker is deployed and observed writing `success == 1` rows creates a rule that fires immediately and permanently |
 | `cosmos_export_enabled` | `false` | Arms the Cosmos exporter timer (`FEATURE_FLAG_COSMOS_EXPORT`) and creates its two missing-run alert rules in one flip ([ADR 0028](../decisions/0028-cosmos-out-of-account-export.md)). One variable for both so the alert cannot exist without the exporter. Flip it Monday to Saturday, after the exporter code is deployed and has been seen emitting `cosmosExportCompleted` |
 | `storage_shared_access_key_enabled` | `false` | Shared-key auth on the content and Functions host accounts. False is the intended posture — both consumers use Entra — and `true` is the one-variable rollback if a key path turns out to be needed |
+| `cloudflare_account_id` | `null` | The Cloudflare account that owns the zone, an identifier (#1302). Null leaves `cloudflare_web_analytics_site` uncreated, its two outputs null and the `CF_WEB_ANALYTICS_SITE_TAG` and `CF_ACCOUNT_ID` app settings empty, so the monthly audience read stays off; set, the site is created and the read can run. Defaulted rather than required because a required variable would fail every plan until typed in, for a resource no visitor-facing path depends on. The same value as the `CLOUDFLARE_ACCOUNT_ID` repository variable (store 3) |
 
 Everything else there is a default nobody is expected to override.
 
@@ -472,6 +476,7 @@ Everything else there is a default nobody is expected to override.
 | `VITE_SOCIAL_X_URL`, `VITE_SOCIAL_LINKEDIN_URL`, `VITE_SOCIAL_GITHUB_URL` | §6, §7 | Public URLs |
 | `VITE_TRANSLATIONS`, `VITE_DEFAULT_LANGUAGE` | §6 | Feature flags in a public bundle (`VITE_NEWS_ENABLE_INSIGHTS` was retired with the insights panel on 2026-09-05, T-765) |
 | `VITE_TURNSTILE_SITE_KEY` | — | The Cloudflare Turnstile site key for "Validate on the lab". Public by construction (Cloudflare renders it into the page), so store 3 by the rule above; the matching secret key is store 1, `TURNSTILE-SECRET-KEY`. Set by hand from the Cloudflare dashboard, since Terraform does not manage the widget |
+| `CF_WEB_ANALYTICS_TOKEN` | — | The Cloudflare Web Analytics site token the frontend build puts in every page's beacon as `VITE_CF_WEB_ANALYTICS_TOKEN` (#1302). Public by nature (it ships in the page, and the Cloudflare API authenticates with an API token, which this is not), so store 3 by the rule above; the read-only token that reads the figures back is store 1, `CLOUDFLARE-ANALYTICS-TOKEN`. A Terraform output (`web_analytics_site_token`), copied by hand until `scripts/set-github-variables.ps1` learns it |
 | `DOCKERHUB_CONNECTION`, `DOCKERHUB_ENABLED` | — | The ID of the Docker OIDC connection `publish-lab-image.yml` signs in to Docker Hub through, and the switch that runs that job (#779). An identifier and a flag, so store 3: the connection trusts one GitHub subject, so the ID grants nothing on its own, which is the same reasoning as `CLIENT_ID`. Two words each, `DOCKERHUB` naming the system as `COPILOT_REVIEW_` does. The workflow maps the first onto `DOCKERHUB_OIDC_CONNECTIONID`, the contractual environment variable `docker/login-action` reads. Set by hand, since Docker Home, not Terraform, creates the connection ([Required inputs](required-inputs.md) §4.11) |
 
 ### Store 4 — GitHub Actions secrets, with justification
@@ -500,6 +505,7 @@ available. An entry that cannot answer both belongs in store 3 or nowhere.
 | `NODE_ENV`, `REGION_NAME`, `WEBSITE_SITE_NAME` | §5 | Host-provided, or a literal in `infra/functionapp.tf` |
 | `FEATURE_FLAG_SCHEDULERS` and the per-timer flags | §5 | Derived from store 2 Terraform variables — `schedulers_master_enabled` for the master flag, `enabled_timers` for the per-timer flags via `local.timer_flags`. The live value of each is whatever the latest `hcw-azure` apply set: a timer runs only when the master flag is on and its name is in `enabled_timers`. Until 2026-08-24 the master flag was a **literal** in `main.tf`, as this row used to say; that is what made all 18 timers permanent no-ops regardless of `enabled_timers` |
 | `ENTRA_TENANT_ID`, `ENTRA_API_AUDIENCE` (app settings) | §1 | Derived from store 2 Terraform variables |
+| `CF_WEB_ANALYTICS_SITE_TAG`, `CF_ACCOUNT_ID` (app settings) | — | Derived — the first from `cloudflare_web_analytics_site.hcw[0].site_tag`, the second from the store 2 variable `cloudflare_account_id` (#1302); both empty strings while that variable is null. Identifiers in the Cloudflare API path, not credentials |
 | `STORAGE_ACCOUNT_KEY`, `STORAGE_CONNECTION_STRING`, `COSMOS_CONNECTION_STRING` | §2 | Deliberately absent; two are test-enforced |
 | `COSMOS_KEY` | §7 | Deliberately absent |
 | `AZURE_OPENAI_KEY` | §4 | Deliberately absent — see below |
@@ -687,6 +693,19 @@ Note what is **not** contractual, because that is where the mistakes are made:
 - `VITE_AZURE_FUNCTIONS_URL` — the `VITE_` prefix is contractual, the rest is
   ours. But `frontend/src/lib/functionsBase.js` reads it and a test enforces
   that it is the only reader, so this one is *coordinated*, not safe-now.
+- `CF_WEB_ANALYTICS_TOKEN`, `CF_WEB_ANALYTICS_SITE_TAG`, `CF_ACCOUNT_ID` —
+  ours, and each carries the provider prefix the core rules refuse, which
+  `VITE_TURNSTILE_SITE_KEY` (another Cloudflare value) does not. Recorded as
+  the exception rather than renamed (#1302), on the `CF_ORIGIN_SECRET`
+  precedent in the per-store table above: shipped code reads all three
+  (`frontend/scripts/cf-web-analytics.mjs` through `VITE_CF_WEB_ANALYTICS_TOKEN`,
+  `functions/src/lib/timers/ambassador-audience.js` the two app settings), so
+  each is *coordinated*, and the prefix is what tells the public site token
+  apart from `CLOUDFLARE-ANALYTICS-TOKEN`, the read-only API credential that
+  sits beside it. The account id is **one value spelled three ways** —
+  `cloudflare_account_id` (Terraform variable), `CF_ACCOUNT_ID` (app
+  setting), `CLOUDFLARE_ACCOUNT_ID` (repository variable, #948, named
+  first) — and a rename of any one is a coordinated change across the three.
 
 ### Which bucket a rename falls into
 

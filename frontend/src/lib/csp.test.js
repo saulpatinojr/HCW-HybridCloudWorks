@@ -136,6 +136,26 @@ describe('Content-Security-Policy', () => {
     expect(connect).toContain('https://nominatim.openstreetmap.org');
   });
 
+  // The Cloudflare Web Analytics beacon (#1302): its script loads from
+  // static.cloudflareinsights.com, which script-src has carried, and it
+  // REPORTS to https://cloudflareinsights.com/cdn-cgi/rum — a different
+  // host, which connect-src must name or every page view is blocked at the
+  // beacon's fetch and the monthly audience figure reads zero with nothing
+  // in the console but a CSP line. Two exact origins, no *.cloudflareinsights.com,
+  // and the report host in connect-src only.
+  it('lets the Web Analytics beacon load from its script origin and report to its one endpoint', () => {
+    expect(directive('script-src')).toContain('https://static.cloudflareinsights.com');
+    expect(directive('connect-src')).toContain('https://cloudflareinsights.com');
+    expect(directive('connect-src')).not.toContain('https://static.cloudflareinsights.com');
+    expect(CSP).not.toMatch(/\*\.cloudflareinsights\.com/);
+    const REPORT_ORIGIN = 'https://cloudflareinsights.com';
+    const granting = CSP.split(';')
+      .map((part) => part.trim().split(/\s+/))
+      .filter(([, ...sources]) => sources.some((source) => source === REPORT_ORIGIN))
+      .map(([name]) => name);
+    expect(granting).toEqual(['connect-src']);
+  });
+
   // The Landing Zone Builder's "Validate on the lab" is locked to the site's
   // pane by a Cloudflare Turnstile token (ADR 0032 decision 6, revised
   // 2026-09-28). The widget is a script from challenges.cloudflare.com that

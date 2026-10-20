@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { cfWebAnalyticsPlugin } from './scripts/cf-web-analytics.mjs';
 
 function pickMarkdownChunk(id) {
   if (
@@ -267,7 +268,15 @@ export default defineConfig(({ mode }) => {
   console.log('--------------------------');
 
   return {
-    plugins: [react()],
+    plugins: [
+      react(),
+      // The Cloudflare Web Analytics beacon, in index.html only when the
+      // repository variable is set (#1302). Not in `browserEnvVars`: no module
+      // reads it, so it has no business in the bundle — it lives in the HTML
+      // and nowhere else. scripts/cf-web-analytics.mjs says why it is whole or
+      // absent and why its shape is checked.
+      cfWebAnalyticsPlugin(browserEnvValue(env, 'VITE_CF_WEB_ANALYTICS_TOKEN')),
+    ],
     logLevel: mode === 'production' ? 'warn' : 'info',
     resolve: {
       alias: {

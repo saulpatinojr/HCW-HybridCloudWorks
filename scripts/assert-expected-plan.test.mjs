@@ -921,7 +921,7 @@ describe('DECLARED', () => {
     expect(rendered).not.toContain('bin_at(');
   });
 
-  it('declares alert-timer-overdue’s query for the timer map in the tree, if it declares it at all (#1009, #964)', () => {
+  it('declares alert-timer-overdue’s query for the timer map in the tree, if it declares it at all (#1302, #1009, #964)', () => {
     const declaration = DECLARED.find(
       (entry) =>
         entry.address === 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue' &&
@@ -931,23 +931,29 @@ describe('DECLARED', () => {
     const rows = treeTimerRows();
     expect(rows.length).toBeGreaterThan(20);
     expect(declaration.after).toBe(overdueQuery(rows));
-    // Each declaration of this rule states its own shape; #1009's was one
-    // row more. #964's is the same rows with the due-time line alone
-    // different: the bin_at() line the live rule carries, and nothing else.
-    expect(declaration.before).toBe(overdueQuery(rows, { lastDue: OVERDUE_LAST_DUE_BIN_AT }));
-    const after = declaration.after.split('\n');
-    const changed = declaration.before.split('\n').filter((line, i) => line !== after[i]);
-    expect(changed).toEqual([OVERDUE_LAST_DUE_BIN_AT]);
+    // Each declaration of this rule states its own shape. #964's changed the
+    // due-time line alone; #1302's, like #1009's, is one row more: `before`
+    // is the tree's rows without ambassadorAudienceMonthly, and the only line
+    // the update adds is that timer's row. Neither value carries the bin_at()
+    // line Kusto refuses (#964), applied away on 2026-10-15.
+    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => name !== 'ambassadorAudienceMonthly')));
+    const before = declaration.before.split('\n');
+    const added = declaration.after.split('\n').filter((line) => !before.includes(line));
+    expect(added).toEqual(['  "ambassadorAudienceMonthly", 1d, datetime(2026-01-01 06:45),']);
+    expect(declaration.before).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
+    expect(declaration.after).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
   });
 
-  it('prunes the stateful-rule, timer-overdue and export-latency entries once applied (#1207, #964, #970)', () => {
+  it('prunes the stateful-rule and export-latency entries once applied (#1207, #964, #970)', () => {
+    // timer_overdue left this list when #1302 declared the rule again (one
+    // row more, the test above); it returns once that change has applied
+    // and the entry is deleted.
     const addresses = DECLARED.map((entry) => entry.address);
     for (const name of [
       'lab_hybrid_backup_missing_coder',
       'lab_hybrid_backup_missing_vault',
       'lab_hybrid_disk_used',
       'logs_daily_cap',
-      'timer_overdue',
       'export_window_latency',
     ]) {
       expect(addresses, name).not.toContain(`azurerm_monitor_scheduled_query_rules_alert_v2.${name}`);

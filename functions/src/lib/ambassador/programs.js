@@ -502,6 +502,41 @@ const DOCKER_CAPTAIN_TRACKS = [
 ];
 
 /**
+ * Docker Captain's counted rows since revision 2, with the evidence types
+ * its hands-on row lists. Revision 3 (#1302) took `manual` off `labs`:
+ * readiness (readiness.js) matches a row to a requirement by sourceModule
+ * alone, and the monthly audience rows (lib/timers/ambassador-audience.js)
+ * are manual, filed under `reach`, so with `manual` here two audience months
+ * would read as "Hands-on material" met with no lab on file. Revision 2's
+ * list keeps `manual` in SUPERSEDED_SEED_VALUES, so a stored, unedited
+ * revision-2 seed is recognised and brought up.
+ */
+const dockerCaptainRequirements = (labsEvidenceTypes) => [
+  requirement(
+    'reach',
+    'Monthly audience',
+    `The Thought Leader track’s line: 5,000 or more monthly views across blogs, social media or other online avenues. One measured audience figure — the site’s monthly views, recorded as evidence with the number — meets it; the figure, not the row count, is what Docker reads. ${EDIT_NOTE}`,
+    { evidenceTypes: ['manual'], minCount: 1, weight: 3 }
+  ),
+  requirement('content', 'Docker content', `Articles, guides and videos on Docker. ${EDIT_NOTE}`, {
+    evidenceTypes: ['content', 'newsletter'],
+    minCount: 4,
+    weight: 2,
+  }),
+  requirement(
+    'community',
+    'Community leadership',
+    `Helping people with Docker and leading in its community: questions answered, talks given, groups run. ${EDIT_NOTE}`,
+    { evidenceTypes: ['manual', 'speaking'], minCount: 2, weight: 2 }
+  ),
+  requirement('labs', 'Hands-on material', `Labs, repositories, Compose examples. ${EDIT_NOTE}`, {
+    evidenceTypes: labsEvidenceTypes,
+    minCount: 2,
+    weight: 1,
+  }),
+];
+
+/**
  * Seed values a later seed replaced, by program id: the seed's `revisions`,
  * ascending, each the `revision` that landed and the `fields` it replaced
  * (the values the revision before it seeded). A stored seed below the last
@@ -522,18 +557,63 @@ const DOCKER_CAPTAIN_TRACKS = [
  * 2026-10-08 (two or more content pieces a quarter, logged on its tracker);
  * revision 3 (2026-10-20) words the same rule as the programme page's tiers.
  * Docker Captain's first seed guessed too; revision 2 (2026-10-20) carries
- * the tracks and the term from docker.com and the join form. The two window
+ * the tracks and the term from docker.com and the join form, with a `reach`
+ * requirement that counts `manual` evidence; revision 3 (#1302) takes
+ * `manual` off its `labs` requirement, so the monthly audience rows the
+ * timer files under `reach` do not read as hands-on material
+ * (`dockerCaptainRequirements` above says why). Microsoft MVP's revision 2
+ * (#1302) adds `manual` to its `reach` requirement for the same rows. A
+ * requirements list the owner edited is left as it is. The two window
  * revisions (MIEE, AWS Community Builders) move a window the year has passed
  * into the coming cycle; MIEE's description and its "apply before" line roll
  * with it, so the seed does not contradict its own window. MCT Regional
  * Lead's October 2026 window is open until 2026-10-31 and is not moved: a
  * stored row would show it a year away while it is live. It rolls to
  * October 2027 in November.
+ *
+ * FOR THE OWNER, BEHAVIOUR AND NOT A BUG: readiness (readiness.js) counts a
+ * row that names no program (`programIds: []`) toward EVERY program, so a
+ * general manual row the owner files by hand counts toward both `reach`
+ * requirements as well. The audience timer's rows name their program and
+ * count for that one only.
  */
 /** One step of a seed's history: the revision that landed and the values it replaced. */
 const revised = (revision, fields) => Object.freeze({ revision, fields: Object.freeze(fields) });
 
 export const SUPERSEDED_SEED_VALUES = Object.freeze({
+  'program-microsoft-mvp': Object.freeze({
+    revisions: Object.freeze([
+      // Revision 2 (#1302) added `manual` to `reach`, for the monthly audience rows.
+      revised(2, {
+        requirements: [
+          requirement(
+            'talks',
+            'Speaking engagements',
+            `Sessions delivered at conferences, user groups or online events. ${EDIT_NOTE}`,
+            { evidenceTypes: ['speaking'], minCount: 4, weight: 3 }
+          ),
+          requirement(
+            'articles',
+            'Published content',
+            `Articles, tutorials or documentation published publicly. ${EDIT_NOTE}`,
+            { evidenceTypes: ['content', 'newsletter'], minCount: 6, weight: 3 }
+          ),
+          requirement(
+            'depth',
+            'Technical depth',
+            `Certifications or labs that evidence depth in the award category. ${EDIT_NOTE}`,
+            { evidenceTypes: ['certifications', 'labs'], minCount: 1, weight: 1 }
+          ),
+          requirement(
+            'reach',
+            'Audio and video',
+            `Podcast episodes, recordings or Listen & Learn chapters. ${EDIT_NOTE}`,
+            { evidenceTypes: ['listen-and-learn'], minCount: 2, weight: 1 }
+          ),
+        ],
+      }),
+    ]),
+  }),
   'program-gitkraken-ambassador': Object.freeze({
     revisions: Object.freeze([
       // Revision 2 (#1077) replaced the first seed's guess (#873).
@@ -627,6 +707,8 @@ export const SUPERSEDED_SEED_VALUES = Object.freeze({
           'Speak at a Docker community event',
         ],
       }),
+      // Revision 3 (#1302) took `manual` off `labs`; the other rows are unchanged.
+      revised(3, { requirements: dockerCaptainRequirements(['labs', 'manual']) }),
     ]),
   }),
   'program-microsoft-elevate-educator-expert': Object.freeze({
@@ -707,9 +789,9 @@ export const DEFAULT_PROGRAMS = Object.freeze([
       ),
       requirement(
         'reach',
-        'Audio and video',
-        `Podcast episodes, recordings or Listen & Learn chapters. ${EDIT_NOTE}`,
-        { evidenceTypes: ['listen-and-learn'], minCount: 2, weight: 1 }
+        'Audience and reach',
+        `Podcast episodes, recordings or Listen & Learn chapters, and the monthly audience figure the site records (page views and podcast downloads). ${EDIT_NOTE}`,
+        { evidenceTypes: ['listen-and-learn', 'manual'], minCount: 2, weight: 1 }
       ),
     ],
     recommendedActivities: [
@@ -927,31 +1009,7 @@ export const DEFAULT_PROGRAMS = Object.freeze([
     renewalCadence: 'annual',
     expirationRule:
       'One-year term; renewal needs the joining criteria kept up and continuous contribution, evaluated by Docker at term end.',
-    requirements: [
-      requirement(
-        'reach',
-        'Monthly audience',
-        `The Thought Leader track’s line: 5,000 or more monthly views across blogs, social media or other online avenues. One measured audience figure — the site’s monthly views, recorded as evidence with the number — meets it; the figure, not the row count, is what Docker reads. ${EDIT_NOTE}`,
-        { evidenceTypes: ['manual'], minCount: 1, weight: 3 }
-      ),
-      requirement('content', 'Docker content', `Articles, guides and videos on Docker. ${EDIT_NOTE}`, {
-        evidenceTypes: ['content', 'newsletter'],
-        minCount: 4,
-        weight: 2,
-      }),
-      requirement(
-        'community',
-        'Community leadership',
-        `Helping people with Docker and leading in its community: questions answered, talks given, groups run. ${EDIT_NOTE}`,
-        { evidenceTypes: ['manual', 'speaking'], minCount: 2, weight: 2 }
-      ),
-      requirement(
-        'labs',
-        'Hands-on material',
-        `Labs, repositories, Compose examples. ${EDIT_NOTE}`,
-        { evidenceTypes: ['labs', 'manual'], minCount: 2, weight: 1 }
-      ),
-    ],
+    requirements: dockerCaptainRequirements(['labs']),
     recommendedActivities: [
       'Publish a monthly view figure for the site and record it as evidence',
       'Docker tutorials built from the lab images',

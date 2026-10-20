@@ -18,28 +18,30 @@
  * valid, the setting was valid, and only their combination was wrong.
  *
  * Re-adding the setting — or `TZ`, which does the same job — would silently
- * move **twenty** of the twenty-five registered timers and make the same six
- * sentences wrong again. There is no plan diff that reads as "every timer
- * moved five hours"; it reads as one app setting.
+ * move every registered timer that names an hour (all but the five
+ * minute-only ones) and make the same six sentences wrong again. There is
+ * no plan diff that reads as "every timer moved five hours"; it reads as one
+ * app setting.
  *
- * Twenty is the number this file enforces, and it is worth splitting
- * because the two halves matter differently to an operator:
+ * That set is what this file enforces, and it is worth splitting because
+ * the two halves matter differently to an operator:
  *
- *   - **Fourteen change the instant they run.** The fixed-hour and fixed-day
- *     schedules — a 07:00 digest becomes a 07:00 UTC digest, five hours
- *     earlier in wall-clock terms. This is the half that shows up as "the
- *     report arrived in the middle of the night".
- *   - **Six change phase but not cadence.** The hour-interval forms — every
- *     two, four, six and twelve hours — still fire that often; WHICH hours
- *     shifts by minus five, modulo the interval. Nothing depends on those
- *     landing on particular hours, which is why they are the quieter half —
- *     but they ARE clock-dependent, and a guard that ignored them would pass
- *     while the estate moved underneath it.
+ *   - **The fixed-hour and fixed-day schedules change the instant they
+ *     run** — a 07:00 digest becomes a 07:00 UTC digest, five hours earlier
+ *     in wall-clock terms. This is the half that shows up as "the report
+ *     arrived in the middle of the night".
+ *   - **The hour-interval forms change phase but not cadence.** Every two,
+ *     four, six and twelve hours still fire that often; WHICH hours shifts
+ *     by minus five, modulo the interval. Nothing depends on those landing
+ *     on particular hours, which is why they are the quieter half — but they
+ *     ARE clock-dependent, and a guard that ignored them would pass while
+ *     the estate moved underneath it.
  *
  * The remaining five are minute-only, every five or fifteen minutes, and
  * cannot move in any zone. The classifier below decides which bucket each one
  * is in from its hour field rather than from a list, so this comment describes
- * the count and does not produce it.
+ * the shape and does not produce the count — a count written here drifted the
+ * first time a timer was added (T-722's lesson, learned again on #1302).
  *
  * (Interval expressions are spelled out in words here rather than written
  * literally: an asterisk-slash sequence inside a block comment closes it, and
@@ -103,6 +105,7 @@ await import('./jobs-sweeper.js');
 await import('./cosmos-export.js');
 await import('./cloud-tools-jobs.js');
 await import('./labs-jobs.js');
+await import('./ambassador-audience.js');
 
 /**
  * Every schedule whose firing INSTANTS depend on the app clock, and the UTC
@@ -126,6 +129,9 @@ const CLOCK_DEPENDENT = {
   generateReviewerDigest: { schedule: '0 0 7 * * *', utc: 'daily 07:00' },
   // Late enough that the day it describes is nearly over (#665).
   labsWeeklyRollup: { schedule: '0 55 23 * * *', utc: 'daily 23:55' },
+  // Daily, recording each month once (#1302): after both sources have
+  // settled the last day of the month just ended.
+  ambassadorAudienceMonthly: { schedule: '0 45 6 * * *', utc: 'daily 06:45' },
   // Fixed hour on one weekday — the day moves too if the clock does.
   reVerifyCertifications: { schedule: '0 0 0 * * 0', utc: 'Sunday 00:00' },
   checkLiveLinks: { schedule: '0 0 6 * * 1', utc: 'Monday 06:00' },
@@ -181,7 +187,7 @@ describe('timer schedules are UTC', () => {
     // Guards the guard. An empty read on either side would make every
     // assertion below pass by inspecting nothing.
     expect(terraformSource(INFRA).length).toBeGreaterThan(1000);
-    expect(timerRegistrations.size).toBe(26);
+    expect(timerRegistrations.size).toBe(27);
   });
 
   it('the app clock is UTC — no WEBSITE_TIME_ZONE or TZ app setting exists', () => {

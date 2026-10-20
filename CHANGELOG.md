@@ -19,6 +19,57 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **A monthly audience figure the site can state: a Cloudflare Web Analytics
+  beacon at the edge and a monthly read into the Ambassador hub (#1302)**.
+  Owner decision 2026-10-20: the Docker Captain application goes in on the
+  Thought Leader track, which asks for 5,000 monthly views, and the Microsoft
+  MVP form asks for impact metrics, so the site has to be able to state a
+  monthly audience figure. Nothing is shown to visitors. `infra/frontend.tf`
+  creates a Cloudflare Web Analytics site for `hybridcloudworks.com` with
+  Cloudflare's lite option (no cookies, no client-side state, no
+  fingerprinting; the option asks Cloudflare not to measure visitors in the
+  EU, which Cloudflare documents for the snippet its proxy injects and which
+  is unverified for the hand-placed one this site carries, so the figure is
+  aggregate page views, read as a floor), counted on the new
+  `cloudflare_account_id` workspace variable so that a plan without it stays
+  whole, and the `cloudflare_api_token` gains Account → Account Settings →
+  Write for the one account-level create. `web_analytics_site_token` and
+  `web_analytics_site_tag` are outputs and not sensitive, because the token
+  ships in every page. The frontend build
+  (`frontend/scripts/cf-web-analytics.mjs`) puts the beacon before `</head>`
+  only when `VITE_CF_WEB_ANALYTICS_TOKEN` is set — `deploy-azure-frontend.yml`
+  reads it from the `CF_WEB_ANALYTICS_TOKEN` repository variable — leaving
+  `index.html` byte for byte unchanged without it and failing the build on a
+  value that is not token-shaped; `connect-src` gains
+  `https://cloudflareinsights.com`. The `ambassadorAudienceMonthly` timer
+  runs daily at 06:45 UTC, because `alert-timer-overdue` cannot express a
+  calendar month, and records the previous month once: page views from
+  Cloudflare's GraphQL Analytics API with the read-only
+  `CLOUDFLARE_ANALYTICS_TOKEN` (Account Analytics: Read, a second token and
+  never the workspace's) and podcast downloads from Podbean through the
+  existing client ("podcast downloads unavailable" in the row until that
+  credential is seeded), as one `manual` evidence row per programme under
+  Docker Captain's and Microsoft MVP's `reach` requirement, dated the last
+  day of the month and idempotent by a deterministic id. Two riders: the
+  footer carries a "GitKraken Ambassador" text link, and the Landing Zone
+  Builder's credit reads "based on HashiCorp's validated pattern", the
+  wording HashiCorp's trademark policy allows, with the pattern linked. The
+  privacy policy names Cloudflare Web Analytics as a processor and says we
+  have asked Cloudflare to exclude EU visitors, not that they are excluded.
+  Owner steps, in order: add Account → Account Settings → Write to the
+  `hcp-terraform-cloudflare-dns` token; set `cloudflare_account_id` on
+  `hcw-azure` and apply; confirm the EU option on the new site's Manage page
+  in the Web Analytics dashboard
+  (`https://dash.cloudflare.com/?to=/:account/web-analytics`) and record the
+  date in the `cloudflare_account_id` row of required inputs §4.1; set
+  `CF_WEB_ANALYTICS_TOKEN` from the `web_analytics_site_token` output and
+  deploy the frontend; mint the
+  read-only token and seed `CLOUDFLARE-ANALYTICS-TOKEN` on Integrations →
+  Keys, then take `CLOUDFLARE_ANALYTICS_TOKEN` off `EXPECTED_UNRESOLVED` in
+  `scripts/check-unresolved-secrets.mjs`; add `AMBASSADOR_AUDIENCE_MONTHLY` to
+  `enabled_timers`. [Required inputs](docs/standards/required-inputs.md)
+  §4.1, §4.2, §4.5, §4.6, §4.8 and §4.10 carry the rows.
+
 - **GitKraken article series: three how-to drafts for the Q4 2026 Ambassador
   quarter (#1078).** `docs/content/blog-gitkraken-01-commit-graph.md` reads
   this repository's 1,193 commits in GitLens 19.4's Commit Graph without an

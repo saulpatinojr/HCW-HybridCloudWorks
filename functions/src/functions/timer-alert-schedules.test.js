@@ -49,6 +49,7 @@ await import('./jobs-sweeper.js');
 await import('./cosmos-export.js');
 await import('./cloud-tools-jobs.js');
 await import('./labs-jobs.js');
+await import('./ambassador-audience.js');
 
 /** `local.timer_schedules` from infra/*.tf: name -> { period, anchor }. */
 export function declaredSchedules(source) {

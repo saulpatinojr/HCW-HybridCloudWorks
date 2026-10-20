@@ -461,14 +461,17 @@ describe('programs', () => {
       updatedAt: stamp,
     });
     expect(store.patchDoc).toHaveBeenCalledTimes(1);
+    // The owner edited the requirements, so revision 2 of the MVP seed
+    // (#1302) replaces nothing — but the row takes the stamp, once, as
+    // SUPERSEDED_SEED_VALUES says every stored seed below its revision does.
     expect(store.patchDoc).toHaveBeenCalledWith(
       'ambassador',
       mvpSeed.id,
-      { applicationQuestions: mvpSeed.applicationQuestions, updatedAt: stamp },
+      { applicationQuestions: mvpSeed.applicationQuestions, seedRevision: 2, updatedAt: stamp },
       { ifMatch: '"etag-mvp"' }
     );
     expect(log.info).toHaveBeenCalledWith(
-      '[ambassador] seed backfill: applicationQuestions'
+      '[ambassador] seed backfill: applicationQuestions, seedRevision'
     );
     // Its own questions stay; the owner's program is untouched; the management seed is absent, so added whole.
     expect(body.items.find((p) => p.id === mctSeed.id).applicationQuestions).toEqual(own);
@@ -1374,7 +1377,55 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
     await h.listPrograms(makeRequest(), context);
     expect(store.data.get('ambassador').get(GITKRAKEN).seedRevision).toBe(revision);
-    expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBeUndefined();
+    // The MVP (revision 2, #1302) and Docker Captain (revision 3, #1302 on
+    // top of the 2026-10-20 rules) carry stamps of their own; a seed with
+    // no history carries none.
+    expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBe(2);
+    expect(store.data.get('ambassador').get('program-docker-captain').seedRevision).toBe(3);
+    expect(store.data.get('ambassador').get('program-microsoft-mct').seedRevision).toBeUndefined();
+  });
+
+  // #1302: a stored MVP or Docker Captain seed whose requirements are still
+  // the previous revision's takes the current list — `manual` under `reach`,
+  // and off Docker's `labs` — in one patch; the edited case is proven on the
+  // MVP earlier in this file.
+  it.each([
+    ['program-microsoft-mvp', 2],
+    ['program-docker-captain', 3],
+  ])('replaces an unedited requirements list on %s with revision %i', (id, rev) => {
+    const current = DEFAULT_PROGRAMS.find((p) => p.id === id);
+    const step = SUPERSEDED_SEED_VALUES[id].revisions.at(-1);
+    expect(step.revision).toBe(rev);
+    expect(Object.keys(step.fields)).toEqual(['requirements']);
+    const stored = { ...current, ...step.fields, seeded: true, seedRevision: rev - 1 };
+    const patch = seedBackfillFor(stored, current);
+    expect(patch).toEqual({ requirements: current.requirements, seedRevision: rev });
+    expect(patch.requirements).not.toEqual(step.fields.requirements);
+    expect(patch.requirements.find((r) => r.id === 'reach').evidenceTypes).toContain('manual');
+    expect(seedBackfillFor({ ...stored, ...patch }, current)).toBeNull();
+  });
+
+  // The audience rows are manual evidence filed under Docker's `reach`;
+  // readiness matches by sourceModule alone, so `labs` must not list
+  // `manual` or two audience months would read as hands-on material met.
+  it('counts Docker Captain’s audience rows under reach and never as hands-on material, with revision 2’s labs list kept for the compare', () => {
+    const docker = DEFAULT_PROGRAMS.find((p) => p.id === 'program-docker-captain');
+    const types = Object.fromEntries(docker.requirements.map((r) => [r.id, r.evidenceTypes]));
+    expect(types.labs).toEqual(['labs']);
+    expect(types.reach).toEqual(['manual']);
+    const v2 = SUPERSEDED_SEED_VALUES['program-docker-captain'].revisions.at(-1).fields.requirements;
+    expect(v2.find((r) => r.id === 'labs').evidenceTypes).toEqual(['labs', 'manual']);
+    const audience = {
+      id: 'e-audience',
+      title: 'Audience, September 2026',
+      date: '2026-09-30',
+      sourceModule: 'manual',
+      programIds: ['program-docker-captain'],
+    };
+    const readiness = computeReadiness(docker, [audience, { ...audience, id: 'e-audience-2', date: '2026-08-31' }]);
+    const byId = Object.fromEntries(readiness.requirements.map((r) => [r.id, r]));
+    expect(byId.reach.count).toBe(2);
+    expect(byId.labs).toMatchObject({ count: 0, met: false });
   });
 
   it('cleans upkeep and the tracker link, and refuses what is not one', () => {

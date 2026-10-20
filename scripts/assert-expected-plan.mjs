@@ -283,6 +283,42 @@ export const SSH_LOGIN_ALERT_DESCRIPTION =
   "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (and, while lab_ssh_loopback_only is set, through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953.";
 
 /**
+ * `local.timer_schedules` as applied: the 26 rows the live alert-timer-overdue
+ * carried when #964 read it back on 2026-10-15, unchanged since. Pinned
+ * rather than read from the tree, as #1009 did, so a timer added while the
+ * #1302 declaration below waits makes assert-expected-plan.test.mjs fail
+ * instead of moving `before` to a query Azure never held.
+ */
+const TIMER_SCHEDULES_APPLIED = [
+  ["buildWeeklyNewsletter", "7d", "2026-01-05 13:00"],
+  ["checkAgentHealth", "5m", "2026-01-01 00:00"],
+  ["checkLiveLinks", "7d", "2026-01-05 06:00"],
+  ["cleanupRejectedContent", "1d", "2026-01-01 04:00"],
+  ["cleanupSoftDeletedContent", "4h", "2026-01-01 00:00"],
+  ["cleanupTempStorage", "1d", "2026-01-01 00:00"],
+  ["cleanupUnusedCertImages", "1d", "2026-01-01 05:00"],
+  ["cosmosExportScheduler", "1d", "2026-01-01 03:00"],
+  ["fetchBlogListings", "6h", "2026-01-01 00:15"],
+  ["fetchPodcastFeeds", "2h", "2026-01-01 00:30"],
+  ["forgeScheduled", "1d", "2026-01-01 03:30"],
+  ["generateReviewerDigest", "1d", "2026-01-01 07:00"],
+  ["healthPulse", "5m", "2026-01-01 00:02"],
+  ["labCanary", "1h", "2026-01-01 00:20"],
+  ["labsWeeklyRollup", "1d", "2026-01-01 23:55"],
+  ["monitorPublishingPipeline", "6h", "2026-01-01 00:00"],
+  ["platformJobSweeper", "15m", "2026-01-01 00:00"],
+  ["probeAiProviders", "7d", "2026-01-05 06:15"],
+  ["publishScheduledContent", "15m", "2026-01-01 00:00"],
+  ["reVerifyCertifications", "7d", "2026-01-04 00:00"],
+  ["refreshPlaudToken", "12h", "2026-01-01 00:00"],
+  ["refreshToolServiceCache", "1d", "2026-01-01 02:00"],
+  ["scrapeSkillsHubRss", "7d", "2026-01-02 09:00"],
+  ["sendReminders", "1d", "2026-01-01 13:00"],
+  ["syncRssFeeds", "2h", "2026-01-01 00:00"],
+  ["syncSocialCalendarScheduled", "5m", "2026-01-01 00:00"],
+];
+
+/**
  * Intended one-off changes, each declared by the pull request that makes it
  * (#719).
  *
@@ -405,6 +441,89 @@ export const DECLARED = [
       "sshd on the lab host accepted a login that is not the admin user by public key with a pinned key (or, once lab_ssh_loopback_only is set, not through Arc SSH). Stateless and unmuted: one alert per evaluation that sees the line, and now and then two for one login. #953.",
     after: SSH_LOGIN_ALERT_DESCRIPTION,
     reason: "#953 stage 3: the description says the loopback rule is in force",
+  },
+  // #1302: the monthly audience read, in two runs. The first is the plan
+  // after the merge, with cloudflare_account_id unset in the workspace: the
+  // Function App gains the analytics token's Key Vault reference, the site
+  // tag and the account id as "", and the timer's flag disarmed, and
+  // alert-timer-overdue watches ambassadorAudienceMonthly, one row more in
+  // its datatable. The second is the owner's, once cloudflare_account_id is
+  // set: the site is created, CF_ACCOUNT_ID goes "" -> the id and
+  // CF_WEB_ANALYTICS_SITE_TAG goes "" -> known after apply. That run is read
+  // by hand: the header says an unknown difference cannot be declared, and
+  // the account id is the owner's value, not this file's to write. The
+  // create matches by address alone, so it is declared now and reads as
+  // "declared, not in this plan" until that run, like PROBE_AI_PROVIDERS
+  // above; delete it once the site exists. Should the owner set the variable
+  // before the first apply, the two runs are one, the undefined -> ""
+  // entries match nothing, and the plan is read by hand the same way.
+  {
+    address: "cloudflare_web_analytics_site.hcw[0]",
+    action: "create",
+    reason:
+      "#1302: the Web Analytics site, created once cloudflare_account_id is set",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.CLOUDFLARE_ANALYTICS_TOKEN",
+    before: undefined,
+    after:
+      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CLOUDFLARE-ANALYTICS-TOKEN)",
+    reason:
+      "#1302: Key Vault reference for CLOUDFLARE-ANALYTICS-TOKEN, the read-only analytics token",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.CF_WEB_ANALYTICS_SITE_TAG",
+    before: undefined,
+    after: "",
+    reason:
+      "#1302: the site tag, empty until cloudflare_account_id is set and the site exists",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.CF_ACCOUNT_ID",
+    before: undefined,
+    after: "",
+    reason:
+      "#1302: the Cloudflare account id, empty until cloudflare_account_id is set",
+  },
+  // The timer's flag, in its two runs or taken as one, the same three
+  // shapes as SEND_REMINDERS had (#910).
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY",
+    before: undefined,
+    after: "false",
+    reason:
+      "#1302: the ambassadorAudienceMonthly timer catalogued, disarmed until enabled_timers names it",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY",
+    before: "false",
+    after: "true",
+    reason:
+      "#1302: AMBASSADOR_AUDIENCE_MONTHLY added to enabled_timers, arming the daily read",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY",
+    before: undefined,
+    after: "true",
+    reason:
+      "#1302: the ambassadorAudienceMonthly timer catalogued and armed in one apply",
+  },
+  {
+    address: "azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue",
+    path: "criteria[0].query",
+    before: overdueQuery(TIMER_SCHEDULES_APPLIED),
+    after: overdueQuery([
+      ...TIMER_SCHEDULES_APPLIED,
+      ["ambassadorAudienceMonthly", "1d", "2026-01-01 06:45"],
+    ]),
+    reason:
+      "#1302: alert-timer-overdue watches ambassadorAudienceMonthly too, one row more in its datatable",
   },
 ];
 

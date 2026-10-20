@@ -278,7 +278,10 @@ moved {
 #   2. It needs `account_id` and an account-level Turnstile permission.
 #      cloudflare_api_token is scoped to this zone (DNS, Transform Rules and
 #      Rulesets:Read); widening the one production-DNS credential to account
-#      scope for a resource created once is the wrong trade.
+#      scope for a resource created once is the wrong trade. (#1302 added
+#      Account Settings:Write to that token for the Web Analytics site at
+#      the end of this file, which holds no secret; reason 1 is what keeps
+#      the widget out, and it is unchanged.)
 #   3. The widget is created once and then left alone. The dashboard is one
 #      form, and its site key is public.
 #
@@ -402,4 +405,70 @@ resource "cloudflare_ruleset" "origin_secret" {
       }
     }
   ]
+}
+
+# =============================================================================
+# Cloudflare Web Analytics — the monthly audience figure (#1302)
+#
+# Owner decision 2026-10-20: the site must be able to state a monthly audience
+# figure, for the Docker Captain Thought Leader track and the Microsoft MVP
+# metrics. Nothing from this resource is shown to visitors. The beacon reports
+# page views to Cloudflare; the ambassadorAudienceMonthly timer reads the
+# month's totals back through the Cloudflare API (functionapp.tf, the
+# CLOUDFLARE_ANALYTICS_TOKEN reference) and records one number.
+#
+# `host` AND THE SNIPPET, NOT AUTOMATIC INJECTION. Automatic injection
+# rewrites HTML as it passes through the proxy, so it only works on an
+# orange-clouded hostname. The apex and www are DNS-only (gray-clouded)
+# records that resolve straight to the Static Web App — the "Nothing caches
+# in front of that 100 GB" note above — and the only proxied hostname in
+# this zone is the API origin, which serves JSON. So `auto_install = false`,
+# written out rather than left unset: the schema has no default for it, the
+# API echoes the value back on every read, and an attribute that is null in
+# the configuration against false in state would plan `false -> null` on
+# every run, which tfc-plan-check would report as UNEXPECTED on every main
+# plan. The beacon is served by the page itself: the frontend builds the
+# snippet in from `site_token`, which is the reason that value is an output
+# below rather than a dashboard copy.
+#
+# `lite = true` asks Cloudflare not to measure visitors in the EU. Cloudflare
+# documents it for the proxy-injected snippet ("the JavaScript snippet will
+# not be injected for visitors from the EU"), and whether it applies to a
+# hand-placed one is unverified until the owner confirms the option on the
+# site's Manage page in the Web Analytics dashboard. The figure this exists
+# for is a count, not a profile, and a count that leaves EU visitors out is
+# still a count; the alternative is a consent prompt on a site that has none.
+#
+# NOT MARKED SENSITIVE, ON PURPOSE. `site_token` is the value the beacon
+# carries in every page it is loaded from (`data-cf-beacon='{"token": "…"}'`
+# in the snippet), so anyone with a browser reads it; `site_tag` is the
+# site's identifier in the API path. Neither grants anything: the Cloudflare
+# API authenticates with an API token, and these are not one. Marking them
+# sensitive would hide a public value from the plan and the Outputs tab and
+# protect nothing — the no-key-outputs rule in outputs.tf is about
+# credentials, and this is not one.
+#
+# COUNTED ON THE ACCOUNT ID. This is the one account-level resource in the
+# configuration, and cloudflare_account_id is null until the owner sets it
+# (variables.tf says why it is not required). With count 0 the outputs read
+# null and CF_WEB_ANALYTICS_SITE_TAG is written empty, which the timer reads
+# as "not configured" and skips. The same guard shape as
+# cloudflare_ruleset.origin_secret above: a value that is not there yet is
+# an absent resource, never a resource created wrong.
+#
+# THE TOKEN NEEDS Account → Account Settings → Write for the create (the
+# permission Cloudflare's API reference lists for POST
+# /accounts/{account_id}/rum/site_info). The permission paragraph beside
+# cloudflare_origin_secret in variables.tf carries the full list.
+#
+# `enabled` is left unset: the schema says it can be used only when
+# auto_install is true, and it is false.
+# =============================================================================
+resource "cloudflare_web_analytics_site" "hcw" {
+  count = var.cloudflare_account_id == null ? 0 : 1
+
+  account_id   = var.cloudflare_account_id
+  host         = var.domain
+  auto_install = false
+  lite         = true
 }

@@ -430,6 +430,23 @@ export const SECRET_CATALOG = Object.freeze([
       "every preview link already shared stop working.",
     probe: null,
   },
+  // The read-only Cloudflare API token the monthly audience timer reads page
+  // views with (#1302, lib/timers/ambassador-audience.js): Account →
+  // Account Analytics → Read, and nothing else. The site tag and the account
+  // id beside it are plain settings written by Terraform, not secrets. No
+  // probe: nothing reports this credential's health between the monthly
+  // runs, and a probe here would promise a light that nothing switches.
+  {
+    setting: "CLOUDFLARE_ANALYTICS_TOKEN",
+    secret: "CLOUDFLARE-ANALYTICS-TOKEN",
+    section: "platform",
+    label: "Cloudflare analytics token",
+    help:
+      "Read-only API token, from the Cloudflare dashboard (My Profile, API Tokens, with the " +
+      "Account Analytics Read permission only). Lets the site read its own monthly page-view " +
+      "count for the Ambassador hub. Until it is set, no monthly audience figure is recorded.",
+    probe: null,
+  },
 
   // ── Hybrid Lab ───────────────────────────────────────────────────
   // An address rather than a credential, kept in the vault so the pair is

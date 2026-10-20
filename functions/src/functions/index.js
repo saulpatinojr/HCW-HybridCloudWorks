@@ -3,6 +3,7 @@ import { unresolvedSecretCount } from "../lib/secrets-health.js";
 
 // Import all triggers so they are registered with the Azure Functions framework
 import "./admin-crud-http.js";
+import "./ambassador-audience.js";
 import "./ambassador-http.js";
 import "./calendar-http.js";
 import "./admin-identity-http.js";

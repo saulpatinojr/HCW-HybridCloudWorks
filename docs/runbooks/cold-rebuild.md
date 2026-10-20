@@ -137,8 +137,9 @@ Set category `Terraform`:
 - `subscription_conn` = `<SUBSCRIPTION_CONN_ID>` (sensitive)
 - `entra_tenant_id` = `<ENTRA_TENANT_ID>` (sensitive)
 - `entra_api_audience` = `api://<HCWSite-Client-ID>`
-- `cloudflare_api_token` = `<CLOUDFLARE_API_TOKEN>` (sensitive; DNS + Transform Rules edit)
+- `cloudflare_api_token` = `<CLOUDFLARE_API_TOKEN>` (sensitive; Zone:Read, DNS:Edit, Transform Rules:Edit, Account Rulesets:Read and, for the Web Analytics site, Account → Account Settings → Write)
 - `cloudflare_zone_id` = `<CLOUDFLARE_ZONE_ID>`
+- `cloudflare_account_id` = `<CLOUDFLARE_ACCOUNT_ID>` (optional, #1302, the same value as the repository variable of that name; while unset the Web Analytics site is not created and its outputs read null)
 - `cloudflare_origin_secret` = `<CF_ORIGIN_SECRET>` (sensitive; from Bitwarden)
 - `budget_alert_email` = `admin@hybridcloudworks.com`
 
@@ -156,6 +157,7 @@ Set category `Terraform`:
    - Static Web App: `swa-site-prod-cus-01`.
    - Observability: `log-plat-prod-cus-01`, Application Insights `appi-site-prod-cus-01`, alerting fabric.
    - Cloudflare Ruleset: `cloudflare_ruleset.origin_secret` stamping `x-hcw-origin-secret`.
+   - Cloudflare Web Analytics site: `cloudflare_web_analytics_site.hcw[0]` for `hybridcloudworks.com` with the lite option, only when `cloudflare_account_id` is set (#1302).
 3. Confirm and apply the run.
 4. Record all Terraform outputs.
 
@@ -167,6 +169,18 @@ From a workstation with `gh` authenticated to the repository, seed variables fro
 
 ```powershell
 pwsh scripts/set-github-variables.ps1
+```
+
+The script does not seed `CF_WEB_ANALYTICS_TOKEN` (#1302). Set it by hand from the `web_analytics_site_token` output recorded in Phase 4; the value is public (it ships in every page), so it is read at the prompt in the clear:
+
+```powershell
+$t = Read-Host 'web_analytics_site_token from the hcw-azure outputs'; gh variable set CF_WEB_ANALYTICS_TOKEN --body $t
+```
+
+Nothing clears or refreshes this variable later: if the site is destroyed (`cloudflare_account_id` unset again) or replaced (the account id changed, which forces a new site with a new token), every page keeps shipping a beacon with a dead or wrong token until the value is re-copied from the new output, or cleared, and the frontend deployed again; after a clear the next deploy ships no tag:
+
+```powershell
+gh variable delete CF_WEB_ANALYTICS_TOKEN -R saulpatinojr/HCW-HybridCloudWorks
 ```
 
 Set the required repository secrets:
@@ -181,7 +195,7 @@ Ensure GitHub Environment `production` is configured:
 
 ## Phase 6: Key Vault secret escrow seeding
 
-Using the authoritative **Where to Re-obtain** paths documented in [Required inputs §4.6](../standards/required-inputs.md#46-key-vault-secrets-kv-site-prod-cus-01), seed all 30 Key Vault secrets into `kv-site-prod-cus-01`:
+Using the authoritative **Where to Re-obtain** paths documented in [Required inputs §4.6](../standards/required-inputs.md#46-key-vault-secrets-kv-site-prod-cus-01), seed all 31 Key Vault secrets into `kv-site-prod-cus-01`:
 
 ```powershell
 # Generated high-entropy secrets (retrieve from Bitwarden escrow, or generate fresh with `openssl rand -hex 32` and immediately escrow in Bitwarden):
@@ -215,6 +229,7 @@ az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "AWS-SECRET-ACC
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "GCP-BILLING-API-KEY" --value "<KEY>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "QLTY-API-TOKEN" --value "<TOKEN>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "TURNSTILE-SECRET-KEY" --value "<KEY>"
+az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CLOUDFLARE-ANALYTICS-TOKEN" --value "<TOKEN>"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CODER-URL" --value "https://coder.lab.hybridcloudworks.com"
 az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CODER-STATUS-TOKEN" --value "<TOKEN>"
 ```
@@ -235,6 +250,11 @@ az keyvault secret set --vault-name "kv-site-prod-cus-01" --name "CODER-STATUS-T
 4. **Availability Probe & Security**:
    - Enable Bot Fight Mode.
    - Deploy Edge Availability Probe Worker per [Availability probe runbook](availability-probe.md).
+5. **Web Analytics** (#1302):
+   - No dashboard step to create the site: the Phase 4 apply creates `cloudflare_web_analytics_site.hcw[0]` once `cloudflare_account_id` is set (Phase 3.2), and the beacon is built into the pages from `CF_WEB_ANALYTICS_TOKEN` (Phase 5).
+   - One dashboard step to confirm it: the site is created with Cloudflare's lite option, which asks Cloudflare not to measure visitors in the EU. That is documented for the snippet Cloudflare's proxy injects and unverified for the hand-placed one this site carries, so open the site's Manage page in the Web Analytics dashboard at `https://dash.cloudflare.com/?to=/:account/web-analytics`, check that the EU option shows as applied, and record the date in the `cloudflare_account_id` row of [Required inputs §4.1](../standards/required-inputs.md#41-hcp-terraform-workspace-hcwhcw-azure-project-site). Until that date is recorded, the privacy policy says only that we have asked Cloudflare to exclude EU visitors.
+   - Mint the read-only token for `CLOUDFLARE-ANALYTICS-TOKEN` (Phase 6) at `https://dash.cloudflare.com/profile/api-tokens`: Custom token, Account → Account Analytics → Read only, the HybridCloudWorks account only, an end date at most a year out, named `azure-functions-cloudflare-analytics-account`.
+   - Arm the read by adding `AMBASSADOR_AUDIENCE_MONTHLY` to `enabled_timers` ([Required inputs §4.1](../standards/required-inputs.md#41-hcp-terraform-workspace-hcwhcw-azure-project-site)).
 
 ---
 
