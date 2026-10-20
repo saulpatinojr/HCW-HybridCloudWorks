@@ -87,8 +87,9 @@ ignored and the run fails claiming no credentials were supplied.
 | `ARM_TENANT_ID` | **SET** (sensitive) | Same value as the `entra_tenant_id` Terraform variable — see the exceptions table in [Variables and secrets](variables-and-secrets.md) |
 | `ARM_SUBSCRIPTION_ID` | **SET** (sensitive) | Provider fallback only; every provider pins `subscription_id` in HCL, so it never decides where resources land |
 
-**Terraform variables — required.** Eight of the configuration's 66 variables
-have no default, so an unset one fails the plan rather than picking something.
+**Terraform variables — required.** Eight of the configuration's 74 variables
+(counted 2026-10-20 with `grep -c '^variable "' infra/variables.tf`; this said
+66 until #1302 recounted) have no default, so an unset one fails the plan rather than picking something.
 That is deliberate for the subscriptions in particular: a wrong guess would
 silently deploy the workload into a platform landing zone.
 
@@ -99,25 +100,26 @@ silently deploy the workload into a platform landing zone.
 | `subscription_conn` | yes | Platform Connectivity — hub network |
 | `entra_tenant_id` | yes | Entra tenant for admin sign-in and API audience |
 | `entra_api_audience` | no | API scope the SPA requests |
-| `cloudflare_api_token` | yes | Cloudflare provider — DNS and the origin transform rule |
+| `cloudflare_api_token` | yes | Cloudflare provider — DNS, the origin transform rule and ruleset, and since #1302 the Web Analytics site, the configuration's one account-level resource. The dashboard token (`hcp-terraform-cloudflare-dns`) therefore carries Zone:Read, DNS:Edit, Transform Rules:Edit, Account Rulesets:Read and **Account → Account Settings → Write**, the permission Cloudflare's API reference lists for `POST /accounts/{account_id}/rum/site_info`. Add the last before the apply that sets `cloudflare_account_id` (below): without it every record and the ruleset apply and `cloudflare_web_analytics_site.hcw[0]` alone fails — by the ruleset's documented pattern with `Authentication error (10000)`, inferred from that case rather than observed on this endpoint (`infra/variables.tf`, the permission paragraph beside `cloudflare_origin_secret`) |
 | `cloudflare_zone_id` | no | Cloudflare zone the rules attach to |
 | `budget_alert_email` | no | Budget alert action group |
 
-**Terraform variables — defaulted.** The other 58 carry defaults and need no
+**Terraform variables — defaulted.** The other 66 carry defaults and need no
 workspace entry. The table below lists the eleven that are posture switches
 rather than settings — every one but `labs_public_submission_enabled` defaults
 to the estate as it stands or to the safer value, so an apply never changes
 behaviour without a workspace edit first; that one defaults to the posture the
 owner chose on 2026-09-28, stays closed until its Key Vault secret resolves, and
-is closed again by a workspace edit — plus two defaulted inputs that are not
+is closed again by a workspace edit — plus three defaulted inputs that are not
 switches: `cloudflare_origin_secret`, which must match a Key Vault secret
-exactly, and `arc_onboarding_principal_id`, which names an owner-created
-principal:
+exactly, `arc_onboarding_principal_id`, which names an owner-created
+principal, and `cloudflare_account_id`, which names the Cloudflare account and
+gates the one resource that needs it:
 
 | Name | Default | What arming it does |
 | --- | --- | --- |
 | `schedulers_master_enabled` | `false` | Master switch for every catalogued timer. Both this and a name in `enabled_timers` are required — T-518 |
-| `enabled_timers` | `[]` | Per-timer allow-list, armed one name at a time |
+| `enabled_timers` | `[]` | Per-timer allow-list, armed one name at a time, by flag suffix from `local.timer_catalogue` in `infra/functionapp.tf`. `AMBASSADOR_AUDIENCE_MONTHLY` (#1302) arms `ambassadorAudienceMonthly`, daily at 06:45 UTC, which records the previous month's audience figure once per month (daily rather than on the first because `alert-timer-overdue` cannot compute a calendar-month period); armed, it still reads nothing until `CLOUDFLARE-ANALYTICS-TOKEN` (§4.6) resolves and `cloudflare_account_id` (below) is set |
 | `newsletter_sending_enabled` | `false` | Lets a publisher's approval send the weekly newsletter through Resend. Set it only after the postal address and reply-to are saved in Newsletter settings |
 | `labs_public_submission_enabled` | `true` (owner decision 2026-09-28, [ADR 0032](../decisions/0032-learner-labs-platform.md) decision 6 revised) | Sets `LABS_PUBLIC_SUBMISSION_ENABLED`, which lets the Landing Zone Builder's "Validate on the lab" queue a public `terraform-validate` job, only from the site's pane (its origin and a Cloudflare Turnstile token) and within decision 6's bounds. Stays closed until `TURNSTILE-SECRET-KEY` (§4.6) resolves and an agent is online. **`false` in the workspace is the kill switch**: every public lab route then answers `PUBLIC_SUBMISSION_CLOSED` before reading anything |
 | `availability_test_enabled` | `false` | Standard web test and its alert. Stays `false`: Bot Fight Mode still 403s Azure's availability agents, and the reachability signal is served by the ADR 0024 Worker probe instead |
@@ -129,6 +131,7 @@ principal:
 | `lab_hybrid_policy_enabled` | `false` | Creates the audit-only Linux security baseline policy assignment on `rg-lab-hybrid-prod-cus` (#663). **MISSING.** Set `true` (HCL on): ADR 0032 decision 3 makes machine configuration audit only, and #663's acceptance is a compliance state. The first run of `scripts/lab/Register-LabArc.ps1` grants the run identity Resource Policy Contributor on that group and then prints this variable; true before that grant fails the apply with `AuthorizationFailed`. [Labs host runbook](../runbooks/labs-host.md), "Arc onboarding", steps 2 and 3 |
 | `cloudflare_origin_secret` | — (sensitive) | Must match Key Vault `CF-ORIGIN-SECRET` exactly; a mismatch throws on every anonymous request |
 | `arc_onboarding_principal_id` | `null` | **MISSING.** Object id (not the appId) of `sp-arc-onboarding-lab-hybrid-prod-cus`, which the first run of `scripts/lab/Register-LabArc.ps1` creates and prints this value for; set, it plans the principal's only grant, Azure Connected Machine Onboarding on `rg-lab-hybrid-prod-cus` (#663). Not sensitive, HCL off, lower case. [Labs host runbook](../runbooks/labs-host.md), "Arc onboarding", steps 2 and 3 |
+| `cloudflare_account_id` | `null` | **MISSING** (2026-10-20, #1302). The Cloudflare account that owns the zone: 32 lowercase hex characters, an identifier and not a credential, the same value the `CLOUDFLARE_ACCOUNT_ID` repository variable holds (§4.2) and the dashboard shows under API on the zone's Overview page. Set, it creates `cloudflare_web_analytics_site.hcw[0]` for `hybridcloudworks.com` in lite mode, fills the `web_analytics_site_token` and `web_analytics_site_tag` outputs (§4.10) and the `CF_WEB_ANALYTICS_SITE_TAG` and `CF_ACCOUNT_ID` app settings (§4.5). Null on purpose rather than required: the site serves no visitor-facing path, and a required variable would fail every plan — the merge's queued run, the speculative plans, `tfc-plan-check` — until the owner had typed the value in. Not sensitive, HCL off. Add Account → Account Settings → Write to `cloudflare_api_token` (above) before the apply that follows; a value of the wrong shape fails the plan on the variable's validation rather than the apply as a 404 |
 
 ## 4.2 GitHub repository variables
 
@@ -138,8 +141,8 @@ day (T-525). `READER_CLIENT_ID` was added to the table on 2026-08-29 (T-728) and
 is **not yet set**, so a reader comparing this against `gh variable list` should
 find exactly that one difference until the split is applied. Seeded from
 Terraform outputs by `scripts/set-github-variables.ps1` — never written by
-hand, with these exceptions, each for a value Terraform does not manage:
-`COPILOT_REVIEW_APP_ID` identifies a GitHub App, so it is set by hand from the
+hand, with these exceptions, each but the last for a value Terraform does not
+manage: `COPILOT_REVIEW_APP_ID` identifies a GitHub App, so it is set by hand from the
 App page (runbook step 4), `VITE_TURNSTILE_SITE_KEY` is the site key of a
 Turnstile widget created in the Cloudflare dashboard, `DOCKERHUB_CONNECTION`
 and `DOCKERHUB_ENABLED` belong to a Docker OIDC connection created in Docker
@@ -147,7 +150,10 @@ Home (§4.11), and the five Cloudflare audit inputs (`CLOUDFLARE_ACCOUNT_ID`,
 `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL`,
 `CLOUDFLARE_CADDY_TOKEN_NAME`, `CLOUDFLARE_CADDY_HOST_IP`) are read from the
 Cloudflare dashboard and the Caddy token's own settings (#948), so a rebuild
-sets them by hand too. Each row says so.
+sets them by hand too. `CF_WEB_ANALYTICS_TOKEN` (#1302) is the one that *is* a
+Terraform output: the script does not seed it yet, so the owner copies
+`web_analytics_site_token` from the `hcw-azure` workspace by hand. Each row
+says so.
 
 | Name | Status | Consumer |
 | --- | --- | --- |
@@ -182,6 +188,7 @@ sets them by hand too. Each row says so.
 | `VITE_SOCIAL_LINKEDIN_URL` | **SET** | Frontend build |
 | `VITE_SOCIAL_X_URL` | **SET** | Frontend build |
 | `VITE_TURNSTILE_SITE_KEY` | **SET 2026-09-28** ([ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of 2026-09-28) | Frontend build: the **site key** of the Cloudflare Turnstile widget for the Landing Zone Builder's "Validate on the lab". Public by construction, since Cloudflare puts it in the page, so a variable and never a secret. Set by hand, not by `scripts/set-github-variables.ps1`: the widget is created in the Cloudflare dashboard at `https://dash.cloudflare.com/?to=/:account/turnstile` (hostname `hybridcloudworks.com`, Managed mode), not by Terraform, whose `cloudflare_turnstile_widget` would hold the secret key in state. Unset, the build succeeds and the button stays disabled saying the build has no site key; a change needs a frontend deploy to reach the site |
+| `CF_WEB_ANALYTICS_TOKEN` | unset (2026-10-20, #1302) until the owner's `hcw-azure` apply creates the site | Frontend build: `deploy-azure-frontend.yml` passes it as `VITE_CF_WEB_ANALYTICS_TOKEN` (§4.8), and `frontend/scripts/cf-web-analytics.mjs` builds the Cloudflare Web Analytics beacon into every page from it. Public by nature — it is the token the beacon carries in every page, readable in view-source, and it grants nothing, since the Cloudflare API authenticates with an API token and this is not one — so a variable and never a secret, like the Turnstile site key above. **Set by hand** from the `web_analytics_site_token` output (§4.10) on the Outputs tab of `https://app.terraform.io/app/hcw/workspaces/hcw-azure`, after the apply that follows `cloudflare_account_id` (§4.1); `scripts/set-github-variables.ps1` does not seed it. Unset, the build serves no beacon tag at all, byte for byte the committed `index.html`; a value that is not token-shaped fails the build naming the variable; a change needs a frontend deploy to reach the site |
 | `CLOUDFLARE_ACCOUNT_ID` | **SET 2026-10-18** (owner, #948) | `cloudflare-dns-audit.yml`: the account whose audit log `scripts/cloudflare-dns-audit.mjs` reads daily. An identifier (the dashboard shows it on the zone's Overview page, under API), so a variable. Set by hand; without it the daily run fails, on purpose |
 | `CLOUDFLARE_ZONE_ID` | **SET 2026-10-18** (owner, #948; optional) | `cloudflare-dns-audit.yml`: the production zone's id, matched beside the zone name `hybridcloudworks.com` for an audit entry whose zone name is absent. The same value as the `cloudflare_zone_id` workspace variable in §4.1 |
 | `CLOUDFLARE_DNS_AUDIT_OWNER_EMAIL` | **SET 2026-10-18** (owner, #948; optional) | `cloudflare-dns-audit.yml`: the owner's Cloudflare dashboard sign-in, which arms the `owner-dashboard` and `terraform-owner-token` allowlist entries so the owner's own edits read EXPECTED. Unset, they read UNEXPECTED and open an issue. Compared, never printed: the report masks every e-mail |
@@ -250,18 +257,22 @@ listing every key:
 (T-511) and `deploy-functions.yml` asserts its absence rather than repairing
 it, because a repair would hide a regression in that fix.
 
-One plain setting is worth a row of its own, because it is the one address the
-status proxy reads that is **not** a vault reference:
+Three plain settings are worth rows of their own: the one address the status
+proxy reads that is **not** a vault reference, and the two identifiers the
+monthly audience read is scoped by (#1302), which Terraform writes from its own
+resources so that no copied value can drift:
 
 | Name | Store | Status | Notes |
 | --- | --- | --- | --- |
 | `ADDON_MIGRATION_URL` | `infra/functionapp.tf`, a plain app setting (`https://migration.lab.hybridcloudworks.com`) | **SET** in Terraform by the ADR 0035 pull request; live on the next `hcw-azure` apply | The migration add-on's origin, read by `functions/src/lib/addons/status.js` for `GET /api/public/addons/migration/status`, which decides whether `/tools/migration` opens its pane ([ADR 0035](../decisions/0035-addon-pane-model.md) decision 4; [AddOn integration standard](addon-integration-standard.md) §10, §12). A public value, not a credential: it is already in the site's CSP `frame-src` and is the frame's `src`, so it is a Terraform literal with no vault seeding and no unresolved-reference monitor. **Unsetting it is the site-side kill switch**: the proxy answers `{ configured: false }` and the page shows its one sentence. `ADDON_NETWORK_ASSESSMENT_URL` and `ADDON_CLOUD_ASSESSMENT_URL` are declared in the pull request that makes each row `available`; until then those rows are `coming` and the proxy reads nothing for them |
+| `CF_WEB_ANALYTICS_SITE_TAG` | `infra/functionapp.tf`, a plain app setting read from `cloudflare_web_analytics_site.hcw[0].site_tag` | **SET** in Terraform by #1302: `""` while `cloudflare_account_id` (§4.1) is unset, the site's tag once the apply creates it | The Web Analytics site the `ambassadorAudienceMonthly` timer scopes its read to, taken from the resource and never typed, so a recreated site cannot leave a stale tag behind. An identifier in the API path, not a credential; the credential is `CLOUDFLARE-ANALYTICS-TOKEN` (§4.6). Empty, the timer logs one line naming the setting and writes nothing. Unknown at plan time on the apply that creates the site, which `tfc-plan-check` reports once as an unknown `app_settings` difference it cannot declare; that one plan is read by hand, and later plans are clean |
+| `CF_ACCOUNT_ID` | `infra/functionapp.tf`, a plain app setting from `cloudflare_account_id` | **SET** in Terraform by #1302: `""` until `cloudflare_account_id` is set | The Cloudflare account the read is scoped to. The GraphQL dataset (`rumPageloadEventsAdaptiveGroups`) is account-scoped, and an unfiltered `viewer { accounts }` is refused for any account the token cannot read, so the timer needs the id as well as the site tag. The same identifier as the `CLOUDFLARE_ACCOUNT_ID` repository variable (§4.2). Empty, the timer logs one line and writes nothing |
 
 ## 4.6 Key Vault secrets — `kv-site-prod-cus-01`
 
 **Not observed in this pass.** `az keyvault secret list` returned
 `ForbiddenByRbac` — the caller holds no data-plane role, which is itself the
-correct posture. The names below are the thirty (setting lines, not comments; `secret-catalog.test.js` holds the catalogue to the same number) the Terraform root module
+correct posture. The names below are the thirty-one (setting lines, not comments; `secret-catalog.test.js` holds the catalogue to the same number; thirty until `CLOUDFLARE-ANALYTICS-TOKEN` arrived with #1302) the Terraform root module
 in `infra/` references (including the Hybrid Lab's `CODER-URL` and `CODER-STATUS-TOKEN`, and `functions/src/lib/secret-catalog.js` lists every one) — the
 app-settings map that holds them is in
 `infra/functionapp.tf`, and `functions/src/lib/secret-catalog.test.js` reads
@@ -313,6 +324,7 @@ problem. The two cost very different amounts to diagnose. Generated secrets (`CL
 | `GCP-BILLING-API-KEY` | Google Cloud Billing Catalog | Google Cloud Console (`https://console.cloud.google.com/apis/credentials`) scoped to Cloud Billing Catalog API. Auto-renewal via `scripts/roll-cloud-credentials.mjs --service gcp-billing` | Restricted API key for Cloud Billing Catalog API. Rotated via Google Cloud API Keys v2 API |
 | `QLTY-API-TOKEN` | Health Hub Code and Security tab | Qlty Settings (`https://qlty.sh/user/settings/tokens`), personal access token with read permissions | #569. A personal access token from `https://qlty.sh/user/settings/tokens`, read-only use: the project's open issues and metrics. Seed it on the Integrations Keys tab before the Terraform run that adds its reference, so `monitor-unresolved-secrets.yml` never sees it unresolved. Unseeded, the tab says Qlty is not configured |
 | `TURNSTILE-SECRET-KEY` | Landing Zone Builder's "Validate on the lab" | Cloudflare Dashboard (`https://dash.cloudflare.com/?to=/:account/turnstile`) → Turnstile widget for `hybridcloudworks.com` → Settings → Secret Key | **SET 2026-09-28**, and resolving: the owner seeded it that day and ran Validate on the lab end to end from `https://hybridcloudworks.com/tools/landing-zone` ([ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of 2026-09-28). The **secret key** of the Cloudflare Turnstile widget whose site key is `VITE_TURNSTILE_SITE_KEY` (§4.2); the Function App setting `TURNSTILE_SECRET_KEY` is a Key Vault reference to it, and `functions/src/lib/labs/public-lock.js` sends it to Cloudflare's siteverify and nowhere else. The widget is created in the Cloudflare dashboard at `https://dash.cloudflare.com/?to=/:account/turnstile`, not by Terraform, because `cloudflare_turnstile_widget` would hold this secret in state. **Seed it** at `https://hybridcloudworks.com/admin/integrations?tab=keys` (Hybrid Lab section, *Cloudflare Turnstile — secret key*) once the functions deploy that lists it has run. It cannot go first, as `RESEND-API-KEY` did: that page offers only what the deployed catalogue lists, and `deploy-functions.yml` will not start until the Terraform run adding the reference has applied. So between that run and the seed it was an expected unresolved reference (`EXPECTED_UNRESOLVED` in `scripts/check-unresolved-secrets.mjs`), reported every run but not as a failure; it came off that list once seeded, so an unresolved one now fails `monitor-unresolved-secrets.yml` like any other. Unresolved, the status read answers `TURNSTILE_NOT_CONFIGURED`, the builder says validation on the lab isn't available right now, and the lab takes no public job. Rotate by rotating it in the widget's settings and pasting the new value here |
+| `CLOUDFLARE-ANALYTICS-TOKEN` | Ambassador hub — the monthly audience figure (#1302) | Cloudflare Dashboard (`https://dash.cloudflare.com/profile/api-tokens`) → Create Token → Custom token: permission **Account → Account Analytics → Read** and nothing else; Account Resources limited to the HybridCloudWorks account; TTL an end date at most a year out | **MISSING** (2026-10-20): an expected unresolved reference (`EXPECTED_UNRESOLVED` in `scripts/check-unresolved-secrets.mjs`) until seeded, and taken off that list when it is, so an unresolved one then fails `monitor-unresolved-secrets.yml` like any other. The read-only token `ambassadorAudienceMonthly` (`functions/src/lib/timers/ambassador-audience.js`) sends as a Bearer header to `https://api.cloudflare.com/client/v4/graphql` and nowhere else, to read the previous month's page views for the site in `CF_WEB_ANALYTICS_SITE_TAG` (§4.5). A **second** Cloudflare token, deliberately: the workspace's `cloudflare_api_token` (§4.1) writes DNS and account settings, and the Function App has no business holding it; this one reads page-view totals and changes nothing, so a leak reads a number. Name it where it lives / what uses it / what it reaches, the owner's convention of 2026-10-18: `azure-functions-cloudflare-analytics-account`. **Seed it** at `https://hybridcloudworks.com/admin/integrations?tab=keys` (*Cloudflare analytics token*) once the functions deploy that lists it has run; that page offers only what the deployed catalogue lists. Unresolved, the timer logs one line naming the setting and records nothing — no monthly figure, and not a failed run. Rotate by minting a new token at the same dashboard page, pasting it on Integrations → Keys, then revoking the old one |
 | `CODER-URL` | Hybrid Lab status proxy | Host configuration: `https://coder.lab.hybridcloudworks.com` (public HTTPS endpoint on VPS host) | Base URL of the Coder deployment the Function App's status proxy reads; an address, not a credential, kept in the vault so its reference follows the same path as the token beside it. Its value is known before the host exists: `https://coder.lab.hybridcloudworks.com`, so seed it as soon as the reference is applied. Since 2026-09-28 it is the one setting the lab panes on the site need: with it resolved and Coder answering (`/api/v2/buildinfo`, no token), each lab's page opens its pane. Vault names are hyphenated and app settings underscored, per the naming table in [Variables and secrets](variables-and-secrets.md) |
 | `CODER-STATUS-TOKEN` | Hybrid Lab status proxy | Lab Host Coder container CLI: `ssh hcw-lab` → `coder tokens create --user hcw-status` (permissions: `template:read`, `workspace:read`) | Read-only Coder API token for the status proxy. Coder issues it, so it can only be seeded after Coder runs on the lab host (#661) and the owner creates it (#682). The least-privileged form on Coder Community v2.37.3, measured 2026-09-28: a token scoped `template:read` and `workspace:read`, minted by the owner with `coder tokens create --user` for a Coder user of its own, `hcw-status`, that holds Template Admin, the only role below Owner whose token counts other users' running workspaces. The owner's steps, through `ssh hcw-lab` and the `coder` container's CLI with a token the owner makes in a pane, are in `lab-host/README.md`, "The status token for the site". It expires after a year and nothing renews it. It adds only the labs card's templates and running count: since 2026-09-28 the panes open without it, and without it (or with one Coder refuses) the card says only that Coder is reachable and the Function App logs a warning naming `CODER-STATUS-TOKEN`. It was an expected unresolved reference (`EXPECTED_UNRESOLVED` in `scripts/check-unresolved-secrets.mjs`) until it was seeded, and #765 removed it from that list |
 
@@ -451,11 +463,13 @@ Static Web App is built is baked into the bundle, so nothing sensitive may ever
 be one. All are non-sensitive by construction — client IDs, public URLs, and
 the Turnstile site key, which Cloudflare itself puts in the page.
 
-Seven of the eight are repository variables (§4.2). The exception:
+Seven of the nine are repository variables of the same name (§4.2). The two
+exceptions:
 
 | Name | Status | Notes |
 | --- | --- | --- |
 | `VITE_AZURE_FUNCTIONS_URL` | **SET** at build time from the `FUNCTIONS_URL` repository variable (§4.2) | `deploy-azure-frontend.yml` passes `vars.FUNCTIONS_URL` in with `REQUIRE_API_BASE: 'true'`, so a production build without it fails rather than shipping an SPA with no API base. The value is the cross-origin `api-azure` hostname with its `/api` prefix (`frontend/src/lib/functionsBase.js`). Also in `frontend/.env.example` for local development |
+| `VITE_CF_WEB_ANALYTICS_TOKEN` | unset at build time until the `CF_WEB_ANALYTICS_TOKEN` repository variable (§4.2) is set (#1302) | `deploy-azure-frontend.yml` passes `vars.CF_WEB_ANALYTICS_TOKEN` in under this name, and `frontend/scripts/cf-web-analytics.mjs` builds the Cloudflare Web Analytics beacon into every page from it, before `</head>`, where the pre-render keeps it. Public by nature: it is the token the beacon carries in every page. Unset, the build emits no tag at all; a value that is not token-shaped fails the build naming this variable |
 
 ## 4.9 Local development
 
@@ -475,9 +489,11 @@ one.
 
 Their role in this inventory is that they are the *source* of §4.2 rather than
 a thing to be provisioned. `scripts/set-github-variables.ps1` reads them and
-writes the repository variables; nothing there is set by hand.
+writes the repository variables; nothing there is set by hand, except
+`CF_WEB_ANALYTICS_TOKEN`, which the script does not seed yet (#1302) and the
+owner copies from the `web_analytics_site_token` output.
 
-**Twenty-six, and they live in two files.** Nineteen in `infra/outputs.tf`
+**Twenty-nine, and they live in two files.** Twenty-two in `infra/outputs.tf`
 and seven in `infra/oidc.tf`.
 
 **This count has now been wrong four times, each in the same way**, so the
@@ -493,7 +509,10 @@ looking plausible. Found in review on 2026-09-01, alongside the
 sweep of 2026-09-29 (#819) counted the files: the same failure, one output
 the other way. And `oidc.tf` read five from 2026-10-11, when
 `alert_reader_client_id` arrived (#1053) without its line here, until #1098
-ran the command below and found six before adding a seventh.
+ran the command below and found six before adding a seventh. And
+`outputs.tf` read nineteen from 2026-10-14, when
+`lab_hybrid_backups_storage_account` arrived with LAB-9 (#1147) without its
+line here, until #1302 ran the command and found twenty before adding two.
 
 **Count by reading the files, never by adjusting the previous number:**
 
@@ -505,7 +524,7 @@ It prints one line per file, not a total — which is what this section needs,
 because it quotes both numbers:
 
 ```
-infra/outputs.tf:19
+infra/outputs.tf:22
 infra/oidc.tf:7
 ```
 
@@ -514,12 +533,25 @@ count" implied a single number, and a command whose output does not look like
 the thing it was described as producing is how a reader concludes they ran it
 wrong.
 
-From `infra/outputs.tf` (19): `api_base_url` · `app_principal_id` ·
+From `infra/outputs.tf` (22): `api_base_url` · `app_principal_id` ·
 `blob_endpoint` · `cosmos_database` · `cosmos_endpoint` ·
 `cosmos_resource_group` · `function_app_name` · `function_hostname` ·
 `function_url` · `functions_storage_account` · `insights_connection` ·
-`storage_account` · `storage_resource_group` · `subnet_id` · `swa_hostname` ·
-`vault_name` · `vault_uri` · `web_resource_group` · `workspace_id`
+`lab_hybrid_backups_storage_account` · `storage_account` ·
+`storage_resource_group` · `subnet_id` · `swa_hostname` · `vault_name` ·
+`vault_uri` · `web_analytics_site_tag` · `web_analytics_site_token` ·
+`web_resource_group` · `workspace_id`
+
+**`web_analytics_site_token` and `web_analytics_site_tag` (#1302) are not
+sensitive**, and not an exception to `outputs.tf`'s no-key rule, because
+neither is a key: the token is the value the page's beacon carries, readable
+in any browser's view-source, and the tag is the site's identifier in the
+Cloudflare API path; the API authenticates with an API token, which these are
+not. Both read `null` until `cloudflare_account_id` (§4.1) is set, through
+`one()` over the counted resource, so a consumer gets "not created yet"
+rather than an index error. The first is what `CF_WEB_ANALYTICS_TOKEN` (§4.2)
+is copied from; the second is written into `CF_WEB_ANALYTICS_SITE_TAG` (§4.5)
+by Terraform itself.
 
 **`swa_token` is not among them.** It was retired in #296 (T-727): the Static
 Web Apps deployment token is now read from ARM under the federated identity on

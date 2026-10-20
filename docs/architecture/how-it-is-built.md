@@ -40,6 +40,18 @@ The same picture in words:
   behind Caddy that the site frames at `/tools/<id>`.
 - A Cloudflare Worker checks the API's health every five minutes and reports
   each result to Application Insights, where an alert watches it.
+- Every page carries a Cloudflare Web Analytics beacon, built in at deploy
+  time when the `CF_WEB_ANALYTICS_TOKEN` repository variable is set, so that
+  the site can state a monthly audience figure (owner decision 2026-10-20,
+  #1302: the Docker Captain application goes in on the Thought Leader track,
+  and the Microsoft MVP form asks for impact metrics). It counts page views
+  with no cookies, no client-side state and no fingerprinting, and the site is
+  registered in Cloudflare's lite mode, which keeps visitors from the EU out
+  of the count, so the figure is a floor. Nothing is shown to visitors: once
+  a day the `ambassadorAudienceMonthly` timer reads the previous month's
+  total back from Cloudflare's GraphQL Analytics API with a read-only token,
+  adds the show's downloads from Podbean, and records one evidence row per
+  programme in the Ambassador hub, once per month.
 
 | Layer | Technology |
 | --- | --- |
