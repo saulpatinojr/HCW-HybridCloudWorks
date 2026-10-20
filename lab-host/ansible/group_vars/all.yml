@@ -168,7 +168,7 @@ caddy_version: v2.11.7
 caddy_cloudflare_module_version: v0.2.4
 caddy_builder_image: caddy
 caddy_builder_image_tag: 2.11.7-builder
-caddy_builder_image_digest: sha256:d842facfd63b960922e57444ff76fd8f0793a66dfdcf481af8026e1f4e6a39b4
+caddy_builder_image_digest: sha256:a2535ba3f1878ec781a58cf2d6edfecc47633d22e2a92447fa8ca14b3a6bfaff
 caddy_site_domain: "{{ lab_host_domain }}"
 # The three names ADR 0032 puts on the certificate. DNS-01 for each is answered
 # through the CNAME delegation of _acme-challenge.lab and _acme-challenge.coder.lab
