@@ -51,7 +51,7 @@ module "management" {
 
 module "alz" {
   source  = "Azure/avm-ptn-alz/azurerm"
-  version = "0.21.0"
+  version = "0.22.0"
 
   architecture_name  = "alz"
   location           = "centralus"
