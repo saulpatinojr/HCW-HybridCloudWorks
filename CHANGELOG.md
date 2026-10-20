@@ -593,6 +593,19 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Foundry's first month is recorded on an estimate, and #849 closes on it**.
+  `docs/architecture/cost-analysis.md` gains *Foundry — first measured month
+  (October 2026, read 2026-10-20)*: USD 5.36 spent on the `Foundry Models`
+  meter in `rg-ai-site-prod-cus` by day 20 of 31, a straight-line USD 8.31 and
+  Azure's own USD 10.60 forecast against the USD 75 budget, so an October
+  estimate of USD 8–11. Owner decision 2026-10-20: with spend at a seventh of
+  the budget, the invoice closing in November is not worth holding the issue
+  open for; the closed figure lands in the monthly re-read (Measurement plan,
+  item 1). The budgets table also takes the live names
+  `site-monthly-budget` and `site-foundry-monthly-budget` in place of the
+  `hcw-` names it carried; the live name follows `var.workload_name`, which
+  is `site`, and `az consumption budget list` on 2026-10-20 returned only
+  the two `site-` names.
 - **`alert-lab-ssh-login` is live and has fired; its plan declaration and
   StreamYard's are pruned (#953)**. The owner applied
   `run-6uJYNGWLDxkdv5ZB`, whose plan `tfc-plan-check.yml` read as the
