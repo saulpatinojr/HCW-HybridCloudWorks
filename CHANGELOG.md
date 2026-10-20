@@ -19,6 +19,21 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **GitKraken article series: three how-to drafts for the Q4 2026 Ambassador
+  quarter (#1078).** `docs/content/blog-gitkraken-01-commit-graph.md` reads
+  this repository's 1,193 commits in GitLens 19.4's Commit Graph without an
+  account; `blog-gitkraken-02-mcp-server.md` explains what the GitKraken MCP
+  server's Git and pull-request tools do inside an AI coding session on a
+  platform that ships every change through a pull request; and
+  `blog-gitkraken-03-stacked-prs.md` sets the working agreements' one-conflict-
+  at-a-time rule and the `CHANGELOG.md` collision beside GitLens 19.3's Rebase
+  Stack and Desktop 12.6's stacked pull requests. Every repository figure was
+  read on 2026-10-20 and every product claim is quoted from the release notes
+  of that day, with the unverified items listed in each file's trailing
+  Sources comment. Listed in `mkdocs.yml` as drafts like the lab and Docker
+  series. The owner imports them once from Admin → Drafts, reviews, publishes,
+  and logs each on the programme's quarterly check-in by 2026-12-31; the
+  programme asks for two pieces a quarter.
 - **Portainer read-only check on the lab host, reported into the Health Hub
   (#1282)**. The `portainer` role installs `hcw-portainer-check`: every 15
   minutes, and once on each `bootstrap.sh` run, it reads Portainer on the
