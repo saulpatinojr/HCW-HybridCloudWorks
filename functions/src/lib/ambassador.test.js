@@ -23,6 +23,7 @@ import {
   programGate,
   seedBackfillFor,
   SUPERSEDED_SEED_VALUES,
+  currentSeedRevision,
   toCalendarDate,
   validateApplication,
   validateEvidence,
@@ -250,6 +251,9 @@ describe('programs', () => {
     'Microsoft Management Community',
     'MCT Regional Lead',
     'AWS Community Builders',
+    'Docker-Sponsored Open Source',
+    'HashiCorp Ambassador',
+    'Coder Champion',
   ];
 
   it('seeds every default on the first read of an empty container, each editable and enabled', async () => {
@@ -300,9 +304,9 @@ describe('programs', () => {
     expect(grid.rows).toHaveLength(15);
     expect(grid.options).toEqual(['Daily', 'Weekly', 'Monthly', 'Rarely', 'Never']);
     expect(miee.applicationWindow).toEqual({
-      opens: '2026-05-01',
-      closes: '2026-07-31',
-      note: 'Applications May to 31 July 2026; announcements September 2026.',
+      opens: '2027-05-01',
+      closes: '2027-07-31',
+      note: expect.stringMatching(/^Applications May to 31 July 2027/),
     });
   });
 
@@ -335,15 +339,18 @@ describe('programs', () => {
       'Microsoft Management Community',
       'MCT Regional Lead',
       'AWS Community Builders',
+      'Docker-Sponsored Open Source',
+      'HashiCorp Ambassador',
+      'Coder Champion',
     ]);
     // Appended after the highest stored order (7), in seed order.
-    expect(body.items.slice(7).map((p) => p.order)).toEqual([8, 9, 10, 11]);
+    expect(body.items.slice(7).map((p) => p.order)).toEqual([8, 9, 10, 11, 12, 13, 14]);
     expect(body.items.find((p) => p.id === 'program-github-star').enabled).toBe(false);
-    expect(store.createDoc).toHaveBeenCalledTimes(4);
+    expect(store.createDoc).toHaveBeenCalledTimes(7);
     expect(store.data.get('ambassador').get(gone.id).softDeletedAt).toBe(stamp);
     // Nothing more on the next read.
     await h.listPrograms(makeRequest(), context);
-    expect(store.createDoc).toHaveBeenCalledTimes(4);
+    expect(store.createDoc).toHaveBeenCalledTimes(7);
   });
 
   it('two overlapping reads that both miss a seed leave the first insert, edits included, and never surface a soft-deleted one', async () => {
@@ -388,6 +395,9 @@ describe('programs', () => {
       'program-microsoft-management-community',
       'program-microsoft-mct-regional-lead',
       'program-aws-community-builders',
+      'program-docker-sponsored-oss',
+      'program-hashicorp-ambassador',
+      'program-coder-champion',
     ]);
   });
 
@@ -432,7 +442,7 @@ describe('programs', () => {
       ...base,
       seeded: true,
       order: 10 + i,
-      ...(SUPERSEDED_SEED_VALUES[p.id] ? { seedRevision: SUPERSEDED_SEED_VALUES[p.id].revision } : {}),
+      ...(SUPERSEDED_SEED_VALUES[p.id] ? { seedRevision: currentSeedRevision(p.id) } : {}),
     }));
     const store = memStore({ ambassador: [storedMvp, storedMct, ownManagement, ...otherSeeds] });
     const log = { error: vi.fn(), info: vi.fn() };
@@ -1260,7 +1270,9 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
 describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)', () => {
   const GITKRAKEN = 'program-gitkraken-ambassador';
   const seed = DEFAULT_PROGRAMS.find((p) => p.id === GITKRAKEN);
-  const { revision, fields: old } = SUPERSEDED_SEED_VALUES[GITKRAKEN];
+  // The first step of the history records what #873 seeded; the stamp is the last.
+  const old = SUPERSEDED_SEED_VALUES[GITKRAKEN].revisions[0].fields;
+  const revision = currentSeedRevision(GITKRAKEN);
   /** A GitKraken row as #873 stored it: the first seed, before upkeep existed. */
   const storedFirstSeed = () => {
     const row = { ...seed, ...old, seeded: true, membershipStatus: 'active' };
@@ -1276,10 +1288,18 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
       note: expect.stringMatching(/contribution tracker, on that quarter’s tab/),
     });
     expect(seed.renewalCadence).toBe('quarterly');
+    // The criteria are the page's tiers since 2026-10-20; the check-in's
+    // focus stays as the recommended activities.
     expect(seed.criteria).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/G2, Capterra and TrustRadius/),
-        expect.stringMatching(/Merge Conflicts, Dev AI Use, Commit Graph/),
+        expect.stringMatching(/^Content Creator: 2\+ pieces of content per quarter/),
+        expect.stringMatching(/^Community Ambassador: 2\+ reviews or helpful posts a quarter/),
+      ])
+    );
+    expect(seed.recommendedActivities).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/G2, Capterra or TrustRadius/),
+        expect.stringMatching(/Merge Conflicts, Dev AI Use or Commit Graph/),
       ])
     );
     expect(seed.requirements).toEqual([
@@ -1294,7 +1314,7 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
       provider: 'AWS',
       applicationUrl: 'https://builder.aws.com/community/community-builders',
     });
-    expect(builders.applicationWindow.note).toMatch(/Waitlist open/);
+    expect(builders.applicationWindow.note).toMatch(/waitlist on builder\.aws\.com/);
     expect(builders.applicationQuestions).toBeUndefined();
   });
 

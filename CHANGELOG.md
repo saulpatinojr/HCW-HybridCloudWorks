@@ -608,6 +608,55 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Ambassador hub: the seeded programmes carry the published rules (read
+  2026-10-20) (#1304).** The Evidence tab counts against what each programme
+  publishes, not against a first seed's guess.
+  - **Docker Captain** takes its rules from docker.com/community/captains and
+    the Advocu join form: open internationally at 18+, the three tracks
+    (Advisor on a Docker member's recommendation, Thought Leader at 5,000
+    monthly views, Community Contributor at five years), the "sail the extra
+    mile" exceptions, a one-year term renewed on continuous contribution with
+    no numeric content quota, rolling applications with interviews a month or
+    more out, and the perks as listed (discounts, not free seats or a
+    pull-rate exemption). Its requirements become a measured audience figure,
+    Docker content, community leadership and hands-on material, and the
+    application link is the join form. A stored row still holding the guess
+    updates itself on the next read, field by field
+    (`SUPERSEDED_SEED_VALUES`, revision 2); a field the owner edited stays.
+  - **Docker-Sponsored Open Source**, **HashiCorp Ambassador** and **Coder
+    Champion** join the seeded catalogue, from their pages. DSOS: public Hub
+    repositories under an OSI licence, updates within six months, no
+    pathway to commercialization (donations allowed), the grants listed, a
+    yearly renewal, and a paid subscription and DSOS mutually exclusive.
+    HashiCorp: the three pillars, the three contribution categories, the
+    Principles, specific examples from the preceding twelve months,
+    self-nomination, the award expiring each year, and the 1 December to
+    5 January window with its notification form. Coder: five community
+    chats, two people helped in `#help`, the starred repository and public
+    templates, year-long then audited quarterly, self-nominated through
+    the programme page.
+  - **GitKraken Ambassador** (revision 3) words its rule as the page's tiers
+    (Content Creator at 2+ pieces a quarter, Influencer, Community
+    Ambassador, Feature Tester, Event Host at 30+ developers), the
+    programme-wide asks (brand guidelines, the logo on the site and
+    profiles, the quarterly check-in form) and the perks. The quarterly
+    upkeep and the one counted requirement are unchanged; the logo and the
+    check-in form are recommended activities, because the model counts
+    evidence and neither is a count of evidence. A seed's superseded record
+    now keeps its whole history (`revisions`, each step the values it
+    replaced), and the backfill matches a stored row against every step
+    above its own revision, so a row from the first seed that never saw
+    revision 2 is corrected rather than stamped current with the guess kept
+    (CodeRabbit on #1304).
+  - **Windows for the coming year**: MIEE moves to 1 May to 31 July 2027 on
+    the 2026 pattern, its description and its "apply before" line rolled
+    with it so the seed does not contradict its own window, and AWS
+    Community Builders' note records the 2026 close (2026-01-21) and the
+    January 2027 cycle. Each moves through `SUPERSEDED_SEED_VALUES`, so a
+    stored value the owner never edited follows the seed, and one they
+    edited stays. MCT Regional Lead is not moved: its October 2026 window is
+    open until 2026-10-31, and a stored row would show it a year away while
+    it is live; it rolls to October 2027 in November.
 - **CodeRabbit spends its one included review an hour on the head someone
   will read**. The Advanced trial's ten reviews an hour became the
   open-source tier's one on 2026-10-20 (#1301 and #1304 sat on `Review rate
