@@ -259,6 +259,8 @@ describe("EXPECTED_UNRESOLVED", () => {
   });
 
   it("is deliberately small", () => {
-    expect(EXPECTED_UNRESOLVED.size).toBeLessThanOrEqual(4);
+    // Five since #1302 (the Cloudflare analytics token, owner-seeded); the
+    // cap moves only with an entry that names the owner step that retires it.
+    expect(EXPECTED_UNRESOLVED.size).toBeLessThanOrEqual(5);
   });
 });

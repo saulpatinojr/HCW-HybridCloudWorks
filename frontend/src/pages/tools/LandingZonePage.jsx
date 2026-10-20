@@ -28,8 +28,10 @@ const PAGE_TITLE = 'Landing Zone Builder';
 const CANONICAL_URL = 'https://hybridcloudworks.com/tools/landing-zone';
 const PATTERN_URL =
   'https://developer.hashicorp.com/validated-patterns/terraform/build-azure-lz-with-terraform';
+// "Based on", the wording HashiCorp's trademark policy allows for work derived
+// from its material (#1302); the page body links the pattern by its title.
 const DESCRIPTION =
-  'Assemble an Azure landing zone component by component, read what each part is for, watch the diagram redraw, and download the Terraform it becomes, built on the Azure Verified Modules HashiCorp’s validated pattern uses.';
+  'Assemble an Azure landing zone component by component, read what each part is for, watch the diagram redraw, and download the Terraform it becomes, based on HashiCorp’s validated pattern “Use Terraform to build an Azure landing zone” and the Azure Verified Modules it uses.';
 
 /** Where the teaches panel starts: the component every other one hangs from. */
 const INITIAL_FOCUS = 'management-groups';
@@ -171,14 +173,15 @@ export default function LandingZonePage() {
                   Assemble an Azure landing zone one component at a time. Tick a component to add it
                   and its dependencies come with it; untick one and everything that needs it leaves
                   too. Each component explains what it is for and what breaks without it, the
-                  diagram redraws as you build, and the Terraform beneath mirrors HashiCorp&rsquo;s{' '}
+                  diagram redraws as you build, and the Terraform beneath is based on
+                  HashiCorp&rsquo;s validated pattern{' '}
                   <a
                     href={PATTERN_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary underline decoration-dotted underline-offset-2"
                   >
-                    validated pattern for an Azure landing zone
+                    &ldquo;Use Terraform to build an Azure landing zone&rdquo;
                   </a>{' '}
                   using the current Azure Verified Modules, pinned on {AVM_VERIFIED_ON}. The whole
                   build is in this page&rsquo;s address, so a landing zone is a link you can send.

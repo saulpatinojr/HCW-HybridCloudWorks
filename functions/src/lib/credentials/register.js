@@ -280,6 +280,15 @@ const KEY_VAULT_METADATA = Object.freeze({
     rotate:
       "Rotate it in the widget’s settings in the Cloudflare dashboard and paste it on Integrations → Keys.",
   },
+  // Hand-rotated like the other vendor keys without a rule: the issue's list
+  // of rule-bearing hand credentials (#1026) is held to eight by
+  // register.test.js, and a read-only analytics token is not one of them.
+  "CLOUDFLARE-ANALYTICS-TOKEN": {
+    issuer: "Cloudflare API Tokens",
+    consumer: "Ambassador hub monthly audience figure (page views)",
+    rotate:
+      "Mint a new read-only token (Account Analytics: Read) under My Profile → API Tokens in the Cloudflare dashboard, paste it on Integrations → Keys, then revoke the old one.",
+  },
 });
 
 /** The Key Vault metadata's names, for register.test.js. */

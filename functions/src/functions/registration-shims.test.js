@@ -64,6 +64,7 @@ const EXPECTED_SHIM_FILES = [
   "admin-uploads-http.js",
   "ai-model-catalog-http.js",
   "ai-proxy-http.js",
+  "ambassador-audience.js",
   "ambassador-http.js",
   "calendar-http.js",
   "change-feed.js",

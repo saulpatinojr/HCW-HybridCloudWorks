@@ -451,14 +451,17 @@ describe('programs', () => {
       updatedAt: stamp,
     });
     expect(store.patchDoc).toHaveBeenCalledTimes(1);
+    // The owner edited the requirements, so revision 2 of the MVP seed
+    // (#1302) replaces nothing — but the row takes the stamp, once, as
+    // SUPERSEDED_SEED_VALUES says every stored seed below its revision does.
     expect(store.patchDoc).toHaveBeenCalledWith(
       'ambassador',
       mvpSeed.id,
-      { applicationQuestions: mvpSeed.applicationQuestions, updatedAt: stamp },
+      { applicationQuestions: mvpSeed.applicationQuestions, seedRevision: 2, updatedAt: stamp },
       { ifMatch: '"etag-mvp"' }
     );
     expect(log.info).toHaveBeenCalledWith(
-      '[ambassador] seed backfill: applicationQuestions'
+      '[ambassador] seed backfill: applicationQuestions, seedRevision'
     );
     // Its own questions stay; the owner's program is untouched; the management seed is absent, so added whole.
     expect(body.items.find((p) => p.id === mctSeed.id).applicationQuestions).toEqual(own);
@@ -1354,7 +1357,12 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
     await h.listPrograms(makeRequest(), context);
     expect(store.data.get('ambassador').get(GITKRAKEN).seedRevision).toBe(revision);
-    expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBeUndefined();
+    // MVP and Docker Captain have revisions of their own since #1302 (a
+    // `reach` requirement that counts manual rows); a seed with no history
+    // carries no stamp.
+    expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBe(2);
+    expect(store.data.get('ambassador').get('program-docker-captain').seedRevision).toBe(2);
+    expect(store.data.get('ambassador').get('program-aws-community-builders').seedRevision).toBeUndefined();
   });
 
   it('cleans upkeep and the tracker link, and refuses what is not one', () => {

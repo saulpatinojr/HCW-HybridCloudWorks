@@ -654,8 +654,11 @@ describe("non-HTTP triggers", () => {
     // FEATURE_FLAG_SEND_REMINDERS; the twenty-fifth is healthPulse
     // (schedulers.js, #1010), behind FEATURE_FLAG_HEALTH_PULSE; the
     // twenty-sixth is labCanary (schedulers.js, #1009), behind
-    // FEATURE_FLAG_LAB_CANARY.
-    expect(timerRegistrations.size).toBe(26);
+    // FEATURE_FLAG_LAB_CANARY; the twenty-seventh is
+    // ambassadorAudienceMonthly (ambassador-audience.js, #1302), behind
+    // FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY.
+    expect(timerRegistrations.size).toBe(27);
+    expect(timerRegistrations.has("ambassadorAudienceMonthly")).toBe(true);
     expect(timerRegistrations.has("healthPulse")).toBe(true);
     expect(timerRegistrations.has("labCanary")).toBe(true);
     expect(timerRegistrations.has("platformJobSweeper")).toBe(true);

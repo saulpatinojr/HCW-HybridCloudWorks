@@ -58,6 +58,16 @@ export default function Footer() {
             >
               Terms
             </a>
+            {/* Programme credit (#1302, #1078). Text for now: the official badge
+                asset replaces it once the owner drops the file in. */}
+            <a
+              href="https://www.gitkraken.com/ambassador"
+              className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GitKraken Ambassador
+            </a>
             <Link
               to="/admin"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"

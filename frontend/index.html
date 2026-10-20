@@ -47,6 +47,17 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
     />
+
+    <!--
+      NO ANALYTICS TAG HERE. The Cloudflare Web Analytics beacon — the
+      page-view count behind the monthly audience figure the Ambassador hub
+      records — is added at build time by scripts/cf-web-analytics.mjs, just
+      before </head>, and only when VITE_CF_WEB_ANALYTICS_TOKEN is set. The
+      token it carries is public by nature (it ships in every page), the
+      beacon sets no cookie, and the site is registered in lite mode, which
+      keeps EU visitors out of the beacon. A build without the variable
+      serves exactly this file, with nothing added.
+    -->
   </head>
   <body>
     <div id="root"></div>

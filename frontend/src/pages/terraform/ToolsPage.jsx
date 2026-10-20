@@ -11,8 +11,9 @@ export default function TerraformToolsPage() {
     // this site rather than describing a product (#668).
     {
       title: 'Landing Zone Builder',
+      // "Based on": the wording HashiCorp's trademark policy allows (#1302).
       description:
-        'Assemble an Azure landing zone component by component on this site, read what each part is for, and download the Terraform it becomes, built on the Azure Verified Modules HashiCorp’s validated pattern uses.',
+        'Assemble an Azure landing zone component by component on this site, read what each part is for, and download the Terraform it becomes, based on HashiCorp’s validated pattern “Use Terraform to build an Azure landing zone” and the Azure Verified Modules it uses.',
       category: 'Learn',
       complexity: 'Beginner',
       tags: ['Azure', 'AVM', 'Interactive'],

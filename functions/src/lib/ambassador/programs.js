@@ -479,8 +479,68 @@ const GITKRAKEN_FOCUS = [
  * GitKraken Ambassador's first seed (#873) guessed its rules ("As published
  * 2026; edit to match"). The program's quarterly check-in of 2026-10-08 gave
  * the real one: two or more content pieces a quarter, logged on its tracker.
+ *
+ * Docker Captain and Microsoft MVP each gained a `reach` requirement that
+ * counts `manual` evidence on 2026-10-20 (#1302): the monthly audience timer
+ * files one manual row a month, and a stored seed whose requirements are
+ * still the first seed's takes the new list so those rows count. A list the
+ * owner edited is left as it is.
  */
 export const SUPERSEDED_SEED_VALUES = Object.freeze({
+  'program-microsoft-mvp': Object.freeze({
+    revision: 2,
+    fields: Object.freeze({
+      requirements: [
+        requirement(
+          'talks',
+          'Speaking engagements',
+          `Sessions delivered at conferences, user groups or online events. ${EDIT_NOTE}`,
+          { evidenceTypes: ['speaking'], minCount: 4, weight: 3 }
+        ),
+        requirement(
+          'articles',
+          'Published content',
+          `Articles, tutorials or documentation published publicly. ${EDIT_NOTE}`,
+          { evidenceTypes: ['content', 'newsletter'], minCount: 6, weight: 3 }
+        ),
+        requirement(
+          'depth',
+          'Technical depth',
+          `Certifications or labs that evidence depth in the award category. ${EDIT_NOTE}`,
+          { evidenceTypes: ['certifications', 'labs'], minCount: 1, weight: 1 }
+        ),
+        requirement(
+          'reach',
+          'Audio and video',
+          `Podcast episodes, recordings or Listen & Learn chapters. ${EDIT_NOTE}`,
+          { evidenceTypes: ['listen-and-learn'], minCount: 2, weight: 1 }
+        ),
+      ],
+    }),
+  }),
+  'program-docker-captain': Object.freeze({
+    revision: 2,
+    fields: Object.freeze({
+      requirements: [
+        requirement('content', 'Docker content', `Articles and guides on Docker. ${EDIT_NOTE}`, {
+          evidenceTypes: ['content', 'newsletter'],
+          minCount: 4,
+          weight: 3,
+        }),
+        requirement('talks', 'Docker talks', `Sessions on containers and Docker. ${EDIT_NOTE}`, {
+          evidenceTypes: ['speaking'],
+          minCount: 2,
+          weight: 2,
+        }),
+        requirement(
+          'labs',
+          'Hands-on material',
+          `Labs, repositories, Compose examples. ${EDIT_NOTE}`,
+          { evidenceTypes: ['labs', 'manual'], minCount: 2, weight: 1 }
+        ),
+      ],
+    }),
+  }),
   'program-gitkraken-ambassador': Object.freeze({
     revision: 2,
     fields: Object.freeze({
@@ -558,9 +618,9 @@ export const DEFAULT_PROGRAMS = Object.freeze([
       ),
       requirement(
         'reach',
-        'Audio and video',
-        `Podcast episodes, recordings or Listen & Learn chapters. ${EDIT_NOTE}`,
-        { evidenceTypes: ['listen-and-learn'], minCount: 2, weight: 1 }
+        'Audience and reach',
+        `Podcast episodes, recordings or Listen & Learn chapters, and the monthly audience figure the site records (page views and podcast downloads). ${EDIT_NOTE}`,
+        { evidenceTypes: ['listen-and-learn', 'manual'], minCount: 2, weight: 1 }
       ),
     ],
     recommendedActivities: [
@@ -789,6 +849,16 @@ export const DEFAULT_PROGRAMS = Object.freeze([
         'Hands-on material',
         `Labs, repositories, Compose examples. ${EDIT_NOTE}`,
         { evidenceTypes: ['labs', 'manual'], minCount: 2, weight: 1 }
+      ),
+      // The Thought Leader track (owner decision 2026-10-20, #1302): "at
+      // least 5,000 monthly views across blogs, social media, or other
+      // online avenues". The monthly audience timer files one manual row a
+      // month with the figure; three months is what an application cites.
+      requirement(
+        'reach',
+        'Monthly audience',
+        `Thought Leader track: at least 5,000 monthly views across blogs, social media or other online avenues. The site records one audience row a month. ${EDIT_NOTE}`,
+        { evidenceTypes: ['manual'], minCount: 3, weight: 2 }
       ),
     ],
     recommendedActivities: [
