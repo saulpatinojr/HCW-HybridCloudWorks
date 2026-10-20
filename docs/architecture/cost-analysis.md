@@ -286,8 +286,10 @@ meter category, taken on day 20 of 31, plus the budget's own forecast.
 | Budget | USD 75.00 | `infra/foundry.tf` |
 
 **Estimate for October 2026: USD 8–11, about 11–14 % of the budget.** The
-two deployments, `gpt-5-nano` and `gpt-5-mini`, are the only meters in the
-resource group; the account itself bills nothing. The 50 % alert sits at
+resource group holds the account and two deployments, `gpt-5-nano` and
+`gpt-5-mini`; everything they consumed is billed under the one meter
+category `Foundry Models`, which is the only category Cost Management
+returned for the group, and the account itself bills nothing. The 50 % alert sits at
 USD 37.50, more than three times the forecast, so no notification is expected
 this month. The figure is the whole of the Foundry resource group, so it is an
 upper bound on what the site's calls cost: it includes the owner's Test calls
