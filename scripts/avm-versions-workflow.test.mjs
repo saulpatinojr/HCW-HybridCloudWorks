@@ -94,8 +94,8 @@ describe('the AVM versions workflow', () => {
    * a plain run before the -u one would fail by construction on every bump.
    */
   it('refreshes the HCL snapshots and then runs the landing zone suites plainly, gated on a change', () => {
-    const refreshAt = updateJob.indexOf('npx vitest run -u src/lib/landingZone');
-    const checkAt = updateJob.indexOf('npx vitest run src/lib/landingZone');
+    const refreshAt = updateJob.indexOf('npx vitest run src/lib/landingZone -u');
+    const checkAt = updateJob.indexOf('npx vitest run src/lib/landingZone src/pages/tools/landingZone');
     expect(refreshAt, 'the -u refresh step is gone').toBeGreaterThan(-1);
     expect(checkAt, 'the plain check step is gone').toBeGreaterThan(-1);
     expect(refreshAt).toBeLessThan(checkAt);
@@ -141,7 +141,7 @@ describe('the AVM versions workflow', () => {
     // The task's one hard requirement of the body: the exact command, and
     // the order — release notes first, then -u.
     const body = commitJob.slice(commitJob.indexOf('"## Summary"'));
-    expect(body).toContain('npx vitest run -u src/lib/landingZone');
+    expect(body).toContain('npx vitest run src/lib/landingZone -u');
     expect(body).toContain('after reviewing the module');
     expect(body).toContain('HAND EDIT NEEDED');
   });
