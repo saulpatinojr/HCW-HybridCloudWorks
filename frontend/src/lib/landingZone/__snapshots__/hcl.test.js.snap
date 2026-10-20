@@ -14,14 +14,14 @@ have read.
 
 ## What is in this build
 
-- **Management groups**: The tree of management groups every subscription is placed in. — \`Azure/avm-ptn-alz/azurerm\` 0.21.0
+- **Management groups**: The tree of management groups every subscription is placed in. — \`Azure/avm-ptn-alz/azurerm\` 0.22.0
 - **Policy baseline**: The Azure Policy assignments the alz architecture makes on each management group.
 - **Management**: The Log Analytics workspace and Automation account that collect every subscription’s telemetry. — \`Azure/avm-ptn-alz-management/azurerm\` 0.9.0
-- **Connectivity hub**: The hub virtual network, Bastion and DNS that every landing zone peers into. — \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.17.5
+- **Connectivity hub**: The hub virtual network, Bastion and DNS that every landing zone peers into. — \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.17.7
 - **Azure Firewall**: The firewall in the hub that every private spoke’s traffic is routed through.
-- **Identity**: The identity subscription, placed under the Identity group, with its own spoke. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.2
-- **Corp landing zone (1)**: An application subscription for internal workloads, reached only through the hub. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.2
-- **Online landing zone (1)**: An application subscription that may face the internet and still uses the hub. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.2
+- **Identity**: The identity subscription, placed under the Identity group, with its own spoke. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
+- **Corp landing zone (1)**: An application subscription for internal workloads, reached only through the hub. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
+- **Online landing zone (1)**: An application subscription that may face the internet and still uses the hub. — \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
 
 ## Files
 
@@ -61,12 +61,12 @@ selected; online spokes egress directly.
 
 ## Module versions
 
-Pinned to the versions the Terraform Registry listed on 2026-09-25:
+Pinned to the versions the Terraform Registry listed on 2026-10-20:
 
-- \`Azure/avm-ptn-alz/azurerm\` 0.21.0
+- \`Azure/avm-ptn-alz/azurerm\` 0.22.0
 - \`Azure/avm-ptn-alz-management/azurerm\` 0.9.0
-- \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.17.5
-- \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.2
+- \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.17.7
+- \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
 
 ## Running it
 
@@ -94,7 +94,7 @@ data "azapi_client_config" "current" {}
 
 module "alz" {
   source  = "Azure/avm-ptn-alz/azurerm"
-  version = "0.21.0"
+  version = "0.22.0"
 
   # parent_resource_id is the parent management group NAME, not its resource id: the
   # module rejects a value containing "/" and prepends
@@ -229,7 +229,7 @@ resource "azurerm_route_table" "spoke_corp_1" {
 
 module "spoke_corp_1" {
   source  = "Azure/avm-res-network-virtualnetwork/azurerm"
-  version = "0.22.2"
+  version = "0.22.3"
 
   location         = var.location
   name             = "vnet-alz-corp-1-\${var.location}"
@@ -274,7 +274,7 @@ resource "azurerm_resource_group" "spoke_online_1" {
 
 module "spoke_online_1" {
   source  = "Azure/avm-res-network-virtualnetwork/azurerm"
-  version = "0.22.2"
+  version = "0.22.3"
 
   location         = var.location
   name             = "vnet-alz-online-1-\${var.location}"
@@ -323,7 +323,7 @@ resource "azurerm_resource_group" "connectivity" {
 
 module "connectivity" {
   source  = "Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm"
-  version = "0.17.5"
+  version = "0.17.7"
 
   enable_telemetry = var.enable_telemetry
 
@@ -402,7 +402,7 @@ resource "azurerm_route_table" "spoke_identity" {
 
 module "spoke_identity" {
   source  = "Azure/avm-res-network-virtualnetwork/azurerm"
-  version = "0.22.2"
+  version = "0.22.3"
 
   location         = var.location
   name             = "vnet-alz-identity-\${var.location}"
@@ -786,7 +786,7 @@ have read.
 
 ## What is in this build
 
-- **Management groups**: The tree of management groups every subscription is placed in. — \`Azure/avm-ptn-alz/azurerm\` 0.21.0
+- **Management groups**: The tree of management groups every subscription is placed in. — \`Azure/avm-ptn-alz/azurerm\` 0.22.0
 
 ## Files
 
@@ -821,12 +821,12 @@ selected; online spokes egress directly.
 
 ## Module versions
 
-Pinned to the versions the Terraform Registry listed on 2026-09-25:
+Pinned to the versions the Terraform Registry listed on 2026-10-20:
 
-- \`Azure/avm-ptn-alz/azurerm\` 0.21.0
+- \`Azure/avm-ptn-alz/azurerm\` 0.22.0
 - \`Azure/avm-ptn-alz-management/azurerm\` 0.9.0
-- \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.17.5
-- \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.2
+- \`Azure/avm-ptn-alz-connectivity-hub-and-spoke-vnet/azurerm\` 0.17.7
+- \`Azure/avm-res-network-virtualnetwork/azurerm\` 0.22.3
 
 ## Running it
 
@@ -854,7 +854,7 @@ data "azapi_client_config" "current" {}
 
 module "alz" {
   source  = "Azure/avm-ptn-alz/azurerm"
-  version = "0.21.0"
+  version = "0.22.0"
 
   # parent_resource_id is the parent management group NAME, not its resource id: the
   # module rejects a value containing "/" and prepends
