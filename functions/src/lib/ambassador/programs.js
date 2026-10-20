@@ -8,6 +8,10 @@
  * The facts below are the program rules as published in 2026, read from the
  * program pages and the official application question lists (owner request
  * 2026-10-05). The questions are the programs' own; no answer is seeded.
+ * Docker Captain, Docker-Sponsored Open Source, HashiCorp Ambassador, Coder
+ * Champion and GitKraken Ambassador carry the rules their pages published on
+ * 2026-10-20, each with its source named in the description; the Evidence
+ * tab counts against those, not against a guess.
  *
  * NO PRIVATE LINK IS SEEDED. A program's contribution tracker
  * (`contributionTrackerUrl`) is often a document shared only with its
@@ -457,7 +461,20 @@ const MCT_REGIONAL_LEAD_QUESTIONS = [
   ),
 ];
 
-// ── GitKraken Ambassador: the quarterly check-in's focus (October 2026) ────
+// ── GitKraken Ambassador: the published tiers and the check-in's focus ──────
+//
+// The tiers are the programme page's (https://www.gitkraken.com/ambassador,
+// read 2026-10-20); the focus is what the quarterly check-in of 2026-10-08
+// asked for, and stays as the recommended activities.
+
+const GITKRAKEN_TIERS = [
+  'Content Creator: 2+ pieces of content per quarter featuring or mentioning GitKraken (tutorials, videos, blog posts)',
+  'Influencer: 2+ posts a quarter on X, LinkedIn, YouTube or Twitch',
+  'Community Ambassador: 2+ reviews or helpful posts a quarter on Reddit, G2 or Quora',
+  'Feature Tester',
+  'Event Host: events for 30+ developers',
+  'Programme-wide: follow the brand guidelines, show the GitKraken logo on your site and profiles, complete the quarterly check-in form',
+];
 
 const GITKRAKEN_FOCUS = [
   'Reviews of GitKraken on G2, Capterra and TrustRadius',
@@ -465,6 +482,23 @@ const GITKRAKEN_FOCUS = [
   'LinkedIn and Medium articles that use data: how much time was saved, how many commits',
   'Sharing GitKraken content, dropped weekly in the ambassadors’ Slack',
   'YouTube videos on the themed focus: Merge Conflicts, Dev AI Use, Commit Graph',
+];
+
+/** The one GitKraken requirement, worded for the revision that reads it. */
+const gitkrakenQuarterly = (description) =>
+  requirement('quarterly-content', 'Content pieces in a quarter', description, {
+    evidenceTypes: [],
+    minCount: 2,
+    weight: 1,
+  });
+
+// ── Docker Captain: the three tracks (https://www.docker.com/community/captains/) ──
+
+const DOCKER_CAPTAIN_TRACKS = [
+  'Docker Advisor: a recommendation from a Docker engineering or product member',
+  'Docker Thought Leader: 5,000 or more monthly views across blogs, social media or other online avenues',
+  'Docker Community Contributor: five or more years of community leadership or aiding individuals online',
+  'Sail the extra mile: several tracks, a Docker member or Captain who vouches, an underrepresented group, a region of interest, an innovative application',
 ];
 
 /**
@@ -476,41 +510,112 @@ const GITKRAKEN_FOCUS = [
  * stamp so is one the owner later sets back to the old value on purpose
  * (CodeRabbit on #1077). A program seeded fresh is stamped at creation.
  *
+ * One revision per program, holding the values the revision before it
+ * seeded: a row two revisions behind is stamped but keeps the older value,
+ * since it no longer equals anything recorded here. The backfill runs on
+ * every read of the catalogue, so a row that far behind is one never read
+ * between the two seeds landing.
+ *
  * GitKraken Ambassador's first seed (#873) guessed its rules ("As published
- * 2026; edit to match"). The program's quarterly check-in of 2026-10-08 gave
- * the real one: two or more content pieces a quarter, logged on its tracker.
+ * 2026; edit to match"); revision 2 (#1077) took the quarterly check-in of
+ * 2026-10-08 (two or more content pieces a quarter, logged on its tracker);
+ * revision 3 (2026-10-20) words the same rule as the programme page's tiers.
+ * Docker Captain's first seed guessed too; revision 2 (2026-10-20) carries
+ * the tracks and the term from docker.com and the join form. The three
+ * window revisions (MIEE, MCT Regional Lead, AWS Community Builders) move a
+ * fixed-date window the year has passed into the coming cycle.
  */
 export const SUPERSEDED_SEED_VALUES = Object.freeze({
   'program-gitkraken-ambassador': Object.freeze({
+    revision: 3,
+    fields: Object.freeze({
+      description:
+        'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Two or more content pieces a quarter keep a membership active, each logged on the program’s contribution tracker on that quarter’s tab (the program’s quarterly check-in, October 2026).',
+      criteria: GITKRAKEN_FOCUS,
+      requirements: [
+        gitkrakenQuarterly(
+          `At least 2 a quarter keep the membership active: a review, a Reddit thread, an article, a shared GitKraken post or a video, each logged on the contribution tracker. Readiness over one quarter’s dates is that quarter’s count. ${EDIT_NOTE}`
+        ),
+      ],
+      recommendedActivities: [
+        'Log each piece on the contribution tracker, on the quarter’s tab, when it is published',
+        'In articles, use data: the time saved, the commits, the conflicts resolved',
+        'Re-share the GitKraken content dropped weekly in the ambassadors’ Slack',
+        'A YouTube video on one theme: Merge Conflicts, Dev AI Use or Commit Graph',
+        'A review on G2, Capterra or TrustRadius',
+      ],
+    }),
+  }),
+  'program-docker-captain': Object.freeze({
     revision: 2,
     fields: Object.freeze({
       description:
-        'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Applications through the form on the programme page. As published 2026; edit to match.',
-      criteria: ['Content', 'Speaking', 'Supporting users'],
-      renewalCadence: 'annual',
-      expirationRule: 'Reviewed annually. As published 2026; edit to match.',
+        'Docker Captains: technology experts and leaders in the Docker community who share their knowledge. Selected by Docker.',
+      applicationUrl: 'https://www.docker.com/community/captains/',
+      eligibility: [
+        'Demonstrated Docker expertise',
+        'Regular public Docker content or speaking',
+        'Not a Docker employee',
+      ],
+      criteria: ['Expertise', 'Community sharing', 'Consistency'],
+      applicationWindow: {
+        opens: null,
+        closes: null,
+        note: 'Selection by Docker; express interest through the program page.',
+      },
+      expirationRule: 'Reviewed annually.',
       requirements: [
-        requirement(
-          'content',
-          'Git and tooling content',
-          `Articles, videos or posts on Git and developer tooling. ${EDIT_NOTE}`,
-          { evidenceTypes: ['content'], minCount: 3, weight: 3 }
-        ),
-        requirement('talks', 'Speaking', `Sessions on Git workflows and tooling. ${EDIT_NOTE}`, {
+        requirement('content', 'Docker content', `Articles and guides on Docker. ${EDIT_NOTE}`, {
+          evidenceTypes: ['content', 'newsletter'],
+          minCount: 4,
+          weight: 3,
+        }),
+        requirement('talks', 'Docker talks', `Sessions on containers and Docker. ${EDIT_NOTE}`, {
           evidenceTypes: ['speaking'],
-          minCount: 1,
+          minCount: 2,
           weight: 2,
         }),
-        requirement('tutorials', 'Tutorials and labs', `Hands-on tutorials and labs. ${EDIT_NOTE}`, {
-          evidenceTypes: ['labs', 'content'],
-          minCount: 1,
-          weight: 1,
-        }),
+        requirement(
+          'labs',
+          'Hands-on material',
+          `Labs, repositories, Compose examples. ${EDIT_NOTE}`,
+          { evidenceTypes: ['labs', 'manual'], minCount: 2, weight: 1 }
+        ),
       ],
       recommendedActivities: [
-        'Publish Git workflow tutorials',
-        'Answer questions in the GitKraken community',
+        'Publish Docker Desktop and image-building guides',
+        'Speak at a Docker community event',
       ],
+    }),
+  }),
+  'program-microsoft-elevate-educator-expert': Object.freeze({
+    revision: 2,
+    fields: Object.freeze({
+      applicationWindow: {
+        opens: '2026-05-01',
+        closes: '2026-07-31',
+        note: 'Applications May to 31 July 2026; announcements September 2026.',
+      },
+    }),
+  }),
+  'program-microsoft-mct-regional-lead': Object.freeze({
+    revision: 2,
+    fields: Object.freeze({
+      applicationWindow: {
+        opens: '2026-10-01',
+        closes: '2026-10-31',
+        note: 'Nominations in September; application form in October; team announced 1 December.',
+      },
+    }),
+  }),
+  'program-aws-community-builders': Object.freeze({
+    revision: 2,
+    fields: Object.freeze({
+      applicationWindow: {
+        opens: null,
+        closes: null,
+        note: 'Waitlist open now; the application cycle has opened once a year, in January. Edit to match.',
+      },
     }),
   }),
 });
@@ -758,32 +863,44 @@ export const DEFAULT_PROGRAMS = Object.freeze([
     provider: 'Docker',
     category: 'community-expert',
     description:
-      'Docker Captains: technology experts and leaders in the Docker community who share their knowledge. Selected by Docker.',
-    applicationUrl: 'https://www.docker.com/community/captains/',
+      'Docker Captains: technical experts and community leaders who share Docker knowledge, give product feedback and hold a strong online presence with a significant audience. Applicants join through at least one track — Docker Advisor (a recommendation from a Docker engineering or product member), Docker Thought Leader (5,000 or more monthly views across blogs, social media or other online avenues) or Docker Community Contributor (five or more years of community leadership or aiding individuals online) — and may "sail the extra mile" through several tracks, a Docker member or Captain who vouches, an underrepresented group, a region of interest or an innovative application. A one-year term, renewed when the joining criteria are kept up with continuous contribution, evaluated by Docker at term end; no numeric content quota is published. Rolling applications through the Advocu join form; interviews have been reported a month or more after applying. Perks: beta access, a private Slack with Docker staff, an annual offsite, an education budget for Docker training and discounts on Docker Pro and partner products (not free seats or a pull-rate exemption). Program rules as published at docker.com/community/captains and the join form, read 2026-10-20.',
+    applicationUrl: 'https://app.advocu.com/dockercaptains/join',
     eligibility: [
-      'Demonstrated Docker expertise',
-      'Regular public Docker content or speaking',
-      'Not a Docker employee',
+      '18 or older; open internationally',
+      'Technical expertise in Docker and containers',
+      'Active community involvement and thought leadership',
+      'Product feedback to Docker',
+      'A strong online presence with a significant audience',
+      'Abide by Docker’s code of conduct',
+      'At least one track: Docker Advisor, Docker Thought Leader or Docker Community Contributor (the criteria below)',
     ],
-    criteria: ['Expertise', 'Community sharing', 'Consistency'],
+    criteria: DOCKER_CAPTAIN_TRACKS,
     applicationWindow: {
       opens: null,
       closes: null,
-      note: 'Selection by Docker; express interest through the program page.',
+      note: 'Rolling applications through the Advocu join form; interviews reported a month or more after applying.',
     },
     renewalCadence: 'annual',
-    expirationRule: 'Reviewed annually.',
+    expirationRule:
+      'One-year term; renewal needs the joining criteria kept up and continuous contribution, evaluated by Docker at term end.',
     requirements: [
-      requirement('content', 'Docker content', `Articles and guides on Docker. ${EDIT_NOTE}`, {
+      requirement(
+        'reach',
+        'Monthly audience',
+        `The Thought Leader track’s line: 5,000 or more monthly views across blogs, social media or other online avenues. One measured audience figure — the site’s monthly views, recorded as evidence with the number — meets it; the figure, not the row count, is what Docker reads. ${EDIT_NOTE}`,
+        { evidenceTypes: ['content', 'manual'], minCount: 1, weight: 3 }
+      ),
+      requirement('content', 'Docker content', `Articles, guides and videos on Docker. ${EDIT_NOTE}`, {
         evidenceTypes: ['content', 'newsletter'],
         minCount: 4,
-        weight: 3,
-      }),
-      requirement('talks', 'Docker talks', `Sessions on containers and Docker. ${EDIT_NOTE}`, {
-        evidenceTypes: ['speaking'],
-        minCount: 2,
         weight: 2,
       }),
+      requirement(
+        'community',
+        'Community leadership',
+        `Helping people with Docker and leading in its community: questions answered, talks given, groups run. ${EDIT_NOTE}`,
+        { evidenceTypes: ['manual', 'speaking'], minCount: 2, weight: 2 }
+      ),
       requirement(
         'labs',
         'Hands-on material',
@@ -792,8 +909,9 @@ export const DEFAULT_PROGRAMS = Object.freeze([
       ),
     ],
     recommendedActivities: [
-      'Publish Docker Desktop and image-building guides',
-      'Speak at a Docker community event',
+      'Publish a monthly view figure for the site and record it as evidence',
+      'Docker tutorials built from the lab images',
+      'Answer questions in the Docker community Slack',
     ],
   },
   {
@@ -860,9 +978,9 @@ export const DEFAULT_PROGRAMS = Object.freeze([
       'Sharing teaching and learning knowledge with colleagues',
     ],
     applicationWindow: {
-      opens: '2026-05-01',
-      closes: '2026-07-31',
-      note: 'Applications May to 31 July 2026; announcements September 2026.',
+      opens: '2027-05-01',
+      closes: '2027-07-31',
+      note: 'Applications May to 31 July 2027, on the 2026 cycle’s pattern; announcements September 2027. Edit to match when the FAQ publishes the 2027-2028 dates.',
     },
     renewalCadence: 'annual',
     expirationRule: 'One school year; returning Experts apply again each cycle.',
@@ -899,27 +1017,26 @@ export const DEFAULT_PROGRAMS = Object.freeze([
     provider: 'GitKraken',
     category: 'developer-advocacy',
     description:
-      'GitKraken Ambassadors: community advocates for GitKraken’s tools who create content, speak and support users around Git and developer tooling; benefits include licences and early access. Two or more content pieces a quarter keep a membership active, each logged on the program’s contribution tracker on that quarter’s tab (the program’s quarterly check-in, October 2026).',
+      'GitKraken Ambassadors: community advocates for GitKraken’s tools, in the tiers the programme page publishes — Content Creator (2+ pieces of content per quarter featuring or mentioning GitKraken: tutorials, videos, blog posts), Influencer (2+ posts a quarter on X, LinkedIn, YouTube or Twitch), Community Ambassador (2+ reviews or helpful posts a quarter on Reddit, G2 or Quora), Feature Tester and Event Host (30+ developers). Programme-wide asks: follow the brand guidelines, show the GitKraken logo on your site and profiles, complete the quarterly check-in form. Perks: GitKraken Advanced, swag, a feature on the site, Slack access, monthly Git Togethers and early access. Each quarter’s pieces are logged on the program’s contribution tracker on that quarter’s tab (the quarterly check-in, October 2026). Program rules as published at gitkraken.com/ambassador, read 2026-10-20.',
     applicationUrl: 'https://www.gitkraken.com/ambassador',
     eligibility: [
       'Active content creation or community activity around Git and developer tooling',
       'An application through the form on the programme page',
     ],
-    criteria: GITKRAKEN_FOCUS,
+    criteria: GITKRAKEN_TIERS,
     applicationWindow: { opens: null, closes: null, note: 'Rolling applications.' },
     renewalCadence: 'quarterly',
     expirationRule:
       'Active while 2 or more content pieces are logged on the contribution tracker each quarter; the program checks the tracker when the quarter ends.',
     requirements: [
-      requirement(
-        'quarterly-content',
-        'Content pieces in a quarter',
-        `At least 2 a quarter keep the membership active: a review, a Reddit thread, an article, a shared GitKraken post or a video, each logged on the contribution tracker. Readiness over one quarter’s dates is that quarter’s count. ${EDIT_NOTE}`,
-        { evidenceTypes: [], minCount: 2, weight: 1 }
+      gitkrakenQuarterly(
+        `The Content Creator tier: at least 2 pieces of content a quarter featuring or mentioning GitKraken — a tutorial, a video, a blog post, a review, a Reddit thread or a shared GitKraken post — each logged on the contribution tracker. Readiness over one quarter’s dates is that quarter’s count. The logo on the site and the quarterly check-in form are asked of every tier and are not counted here; the model counts evidence only. ${EDIT_NOTE}`
       ),
     ],
     recommendedActivities: [
       'Log each piece on the contribution tracker, on the quarter’s tab, when it is published',
+      'Show the GitKraken logo on the site and on profiles, as the brand guidelines say',
+      'Complete the quarterly check-in form when the quarter ends',
       'In articles, use data: the time saved, the commits, the conflicts resolved',
       'Re-share the GitKraken content dropped weekly in the ambassadors’ Slack',
       'A YouTube video on one theme: Merge Conflicts, Dev AI Use or Commit Graph',
@@ -998,8 +1115,8 @@ export const DEFAULT_PROGRAMS = Object.freeze([
       'Weekly Regional Lead Teams channels and monthly meetings',
     ],
     applicationWindow: {
-      opens: '2026-10-01',
-      closes: '2026-10-31',
+      opens: '2027-10-01',
+      closes: '2027-10-31',
       note: 'Nominations in September; application form in October; team announced 1 December.',
     },
     renewalCadence: 'annual',
@@ -1052,7 +1169,7 @@ export const DEFAULT_PROGRAMS = Object.freeze([
     applicationWindow: {
       opens: null,
       closes: null,
-      note: 'Waitlist open now; the application cycle has opened once a year, in January. Edit to match.',
+      note: 'Annual cycle; the 2026 applications closed 2026-01-21; the next cycle opens in January 2027 (waitlist on builder.aws.com)',
     },
     renewalCadence: 'annual',
     expirationRule: `A one-year membership; renewal looks at continued community engagement. ${EDIT_NOTE}`,
@@ -1078,6 +1195,171 @@ export const DEFAULT_PROGRAMS = Object.freeze([
       'Join the waitlist now, from the program page',
       'Pick the category to apply in; the member list shows Containers, Serverless, AI Engineering, Security, Dev Tools, Data, Machine Learning, Networking and Content Delivery, and Cloud Operations',
       'Publish AWS content on public platforms in the months before the January cycle',
+    ],
+  },
+  {
+    id: 'program-docker-sponsored-oss',
+    name: 'Docker-Sponsored Open Source',
+    provider: 'Docker',
+    // A sponsorship of a project, not a recognition of a person: the nearest
+    // of the categories in use is the partner one AWS Ambassador carries.
+    category: 'partner',
+    description:
+      'Docker-Sponsored Open Source (DSOS): Docker’s sponsorship for non-commercial open source projects published on Docker Hub. A sponsored project gets the verified badge, pull-rate-limit removal on its public images, a free one-year Docker Team subscription for its core contributors, Docker Scout on up to 100 repositories and pull analytics; it is renewable yearly, and a paid Docker subscription and DSOS are mutually exclusive. Rolling applications through the form linked from the application page. Program rules as published at docker.com/community/open-source/application and docs.docker.com (the dsos-program page), read 2026-10-20.',
+    applicationUrl: 'https://www.docker.com/community/open-source/application/',
+    eligibility: [
+      'Shared in public repositories on Docker Hub',
+      'Meets the Open Source Initiative definition of open source',
+      'In active development on Docker Hub: updates within the past 6 months',
+      'No pathway to commercialization: the organization must not seek to make a profit through services or by charging for higher tiers; accepting donations to sustain the effort is permissible',
+    ],
+    criteria: [
+      'Public Docker Hub repositories under an OSI-approved licence',
+      'Updates within the past six months',
+      'Non-commercial: no paid tiers or services; donations allowed',
+      'A paid Docker subscription and DSOS are mutually exclusive',
+    ],
+    applicationWindow: {
+      opens: null,
+      closes: null,
+      note: 'Rolling; the application form is linked from the application page.',
+    },
+    renewalCadence: 'annual',
+    expirationRule: 'Sponsorship for one year, renewable yearly against the same eligibility.',
+    requirements: [
+      requirement(
+        'images',
+        'Public Hub images under a licence',
+        `Public Docker Hub images of the project, each with an OSI-approved licence. ${EDIT_NOTE}`,
+        { evidenceTypes: ['labs', 'manual'], minCount: 1, weight: 3 }
+      ),
+      requirement(
+        'activity',
+        'Active development',
+        `An update to the project on Docker Hub within the past six months, recorded by hand with its date. ${EDIT_NOTE}`,
+        { evidenceTypes: ['manual'], minCount: 1, weight: 2 }
+      ),
+    ],
+    recommendedActivities: [
+      'Publish the lab images to a public Docker Hub namespace with the licence in the README',
+      'Push an update at least every six months and record each as evidence',
+      'Apply through the form on the application page',
+    ],
+  },
+  {
+    id: 'program-hashicorp-ambassador',
+    name: 'HashiCorp Ambassador',
+    provider: 'HashiCorp',
+    category: 'community-expert',
+    description:
+      'HashiCorp Ambassadors: community members recognised each year for knowledge sharing, mentorship and kindness, through content creation, local events and productive, thoughtful feedback, with adherence to the HashiCorp Principles and community guidelines. Nominations come from community members and employees, and self-nomination is allowed; a submission must give specific examples from the preceding twelve months. The award expires each year and ambassadors reapply. Perks on the page: a care package, product release briefings, roadmap reviews, feedback sessions, and collaboration on blogs, videos, certification development and talks. Program rules as published at hashicorp.com/ambassador, read 2026-10-20.',
+    applicationUrl: 'https://www.hashicorp.com/en/ambassador',
+    eligibility: [
+      'The three pillars: knowledge sharing, mentorship and kindness',
+      'Contributions in content creation, local events or productive, thoughtful feedback',
+      'Adherence to the HashiCorp Principles and community guidelines',
+      'Specific examples from the preceding twelve months in the submission',
+      'Self-nomination allowed; nominations also come from community members and employees',
+    ],
+    criteria: [
+      'Knowledge sharing',
+      'Mentorship',
+      'Kindness',
+      'Content creation',
+      'Local events',
+      'Productive, thoughtful feedback',
+    ],
+    applicationWindow: {
+      opens: '2026-12-01',
+      closes: '2027-01-05',
+      note: 'Submissions open annually 1 December to 5 January; the submission form is only live inside the window; sign up for the notification form on the programme page.',
+    },
+    renewalCadence: 'annual',
+    expirationRule: 'The award expires each year; ambassadors reapply in the next window.',
+    requirements: [
+      requirement(
+        'content',
+        'Terraform and HashiCorp content',
+        `Articles, videos, newsletter issues or episodes on Terraform and the HashiCorp tools, from the preceding twelve months. ${EDIT_NOTE}`,
+        { evidenceTypes: ['content', 'newsletter', 'listen-and-learn'], minCount: 3, weight: 3 }
+      ),
+      requirement(
+        'mentorship',
+        'Mentorship',
+        `People mentored, workshops run or labs built for others, recorded by hand where no module holds them. ${EDIT_NOTE}`,
+        { evidenceTypes: ['manual', 'speaking', 'labs'], minCount: 1, weight: 2 }
+      ),
+      requirement(
+        'events',
+        'Local events and talks',
+        `A HashiCorp User Group, meetup or conference session. ${EDIT_NOTE}`,
+        { evidenceTypes: ['speaking'], minCount: 1, weight: 1 }
+      ),
+      requirement(
+        'feedback',
+        'Product feedback',
+        `Productive, thoughtful feedback to HashiCorp — issues, RFC comments, feedback sessions — recorded by hand. ${EDIT_NOTE}`,
+        { evidenceTypes: ['manual'], minCount: 1, weight: 1 }
+      ),
+    ],
+    recommendedActivities: [
+      'File every Terraform contribution of the last twelve months with its URL and date',
+      'One talk before December',
+      'Sign the notification form on the programme page',
+    ],
+  },
+  {
+    id: 'program-coder-champion',
+    name: 'Coder Champion',
+    provider: 'Coder',
+    category: 'developer-advocacy',
+    description:
+      'Coder Champions: Coder’s community advocates, self-nominated through the form linked from the programme page. The published criteria: take part in five community chats, star the Coder GitHub repository and help at least two people in #help on the Coder Discord. A year-long programme followed by quarterly activity audits, after which members advance, stay or move to an Alumni circle. Perks: a Discord badge, a swag box, a private kickoff with the Coder team and early roadmap access, plus a premium licence and Champions-only office hours (Coder’s community post of 2026-02-09). Program rules as published at coder.com/coder-champions and coder.com/community, read 2026-10-20.',
+    applicationUrl: 'https://coder.com/coder-champions',
+    eligibility: [
+      'Participation in five community chats',
+      'The Coder GitHub repository starred',
+      'At least two people helped in #help on the Coder Discord',
+      'Self-nomination through the form on the programme page',
+    ],
+    criteria: [
+      'Five community chats',
+      'Star the Coder GitHub repository',
+      'Help two people in #help on the Coder Discord',
+    ],
+    applicationWindow: { opens: null, closes: null, note: 'Rolling; no cohort dates.' },
+    renewalCadence: 'annual',
+    expirationRule: 'Year-long programme; quarterly activity audits after the first year.',
+    requirements: [
+      requirement(
+        'chats',
+        'Community chats',
+        `Coder community chats taken part in, one row each, recorded by hand with the date. ${EDIT_NOTE}`,
+        { evidenceTypes: ['manual'], minCount: 5, weight: 2 }
+      ),
+      requirement(
+        'help',
+        'People helped in #help',
+        `Questions answered in #help on the Coder Discord, one row per person helped. ${EDIT_NOTE}`,
+        { evidenceTypes: ['manual'], minCount: 2, weight: 3 }
+      ),
+      requirement(
+        'star',
+        'Repository starred',
+        `The Coder GitHub repository starred, recorded once by hand. ${EDIT_NOTE}`,
+        { evidenceTypes: ['manual'], minCount: 1, weight: 1 }
+      ),
+      requirement(
+        'templates',
+        'Public Coder templates and labs',
+        `Public Coder templates and the labs built on them. ${EDIT_NOTE}`,
+        { evidenceTypes: ['labs'], minCount: 1, weight: 2 }
+      ),
+    ],
+    recommendedActivities: [
+      'Record each community chat as manual evidence on the day',
+      'Answer two questions in #help on the Coder Discord and log each',
+      'Publish the lab host’s Coder templates and file them as labs evidence',
     ],
   },
 ]);

@@ -593,6 +593,47 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Ambassador hub: the seeded programmes carry the published rules (read
+  2026-10-20) (#TBD).** The Evidence tab counts against what each programme
+  publishes, not against a first seed's guess.
+  - **Docker Captain** takes its rules from docker.com/community/captains and
+    the Advocu join form: open internationally at 18+, the three tracks
+    (Advisor on a Docker member's recommendation, Thought Leader at 5,000
+    monthly views, Community Contributor at five years), the "sail the extra
+    mile" exceptions, a one-year term renewed on continuous contribution with
+    no numeric content quota, rolling applications with interviews a month or
+    more out, and the perks as listed (discounts, not free seats or a
+    pull-rate exemption). Its requirements become a measured audience figure,
+    Docker content, community leadership and hands-on material, and the
+    application link is the join form. A stored row still holding the guess
+    updates itself on the next read, field by field
+    (`SUPERSEDED_SEED_VALUES`, revision 2); a field the owner edited stays.
+  - **Docker-Sponsored Open Source**, **HashiCorp Ambassador** and **Coder
+    Champion** join the seeded catalogue, from their pages. DSOS: public Hub
+    repositories under an OSI licence, updates within six months, no
+    pathway to commercialization (donations allowed), the grants listed, a
+    yearly renewal, and a paid subscription and DSOS mutually exclusive.
+    HashiCorp: the three pillars, the three contribution categories, the
+    Principles, specific examples from the preceding twelve months,
+    self-nomination, the award expiring each year, and the 1 December to
+    5 January window with its notification form. Coder: five community
+    chats, two people helped in `#help`, the starred repository and public
+    templates, year-long then audited quarterly, self-nominated through
+    the programme page.
+  - **GitKraken Ambassador** (revision 3) words its rule as the page's tiers
+    (Content Creator at 2+ pieces a quarter, Influencer, Community
+    Ambassador, Feature Tester, Event Host at 30+ developers), the
+    programme-wide asks (brand guidelines, the logo on the site and
+    profiles, the quarterly check-in form) and the perks. The quarterly
+    upkeep and the one counted requirement are unchanged; the logo and the
+    check-in form are recommended activities, because the model counts
+    evidence and neither is a count of evidence.
+  - **Windows for the coming year**: MIEE moves to 1 May to 31 July 2027 on
+    the 2026 pattern, MCT Regional Lead to October 2027, and AWS Community
+    Builders' note records the 2026 close (2026-01-21) and the January 2027
+    cycle. Each moves through `SUPERSEDED_SEED_VALUES`, so a stored window
+    the owner never edited follows the seed, and one they edited stays.
+
 - **Foundry's first month is recorded on an estimate, and #849 closes on it**.
   `docs/architecture/cost-analysis.md` gains *Foundry — first measured month
   (October 2026, read 2026-10-20)*: USD 5.36 spent on the `Foundry Models`

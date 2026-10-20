@@ -250,6 +250,9 @@ describe('programs', () => {
     'Microsoft Management Community',
     'MCT Regional Lead',
     'AWS Community Builders',
+    'Docker-Sponsored Open Source',
+    'HashiCorp Ambassador',
+    'Coder Champion',
   ];
 
   it('seeds every default on the first read of an empty container, each editable and enabled', async () => {
@@ -300,9 +303,9 @@ describe('programs', () => {
     expect(grid.rows).toHaveLength(15);
     expect(grid.options).toEqual(['Daily', 'Weekly', 'Monthly', 'Rarely', 'Never']);
     expect(miee.applicationWindow).toEqual({
-      opens: '2026-05-01',
-      closes: '2026-07-31',
-      note: 'Applications May to 31 July 2026; announcements September 2026.',
+      opens: '2027-05-01',
+      closes: '2027-07-31',
+      note: expect.stringMatching(/^Applications May to 31 July 2027/),
     });
   });
 
@@ -335,15 +338,18 @@ describe('programs', () => {
       'Microsoft Management Community',
       'MCT Regional Lead',
       'AWS Community Builders',
+      'Docker-Sponsored Open Source',
+      'HashiCorp Ambassador',
+      'Coder Champion',
     ]);
     // Appended after the highest stored order (7), in seed order.
-    expect(body.items.slice(7).map((p) => p.order)).toEqual([8, 9, 10, 11]);
+    expect(body.items.slice(7).map((p) => p.order)).toEqual([8, 9, 10, 11, 12, 13, 14]);
     expect(body.items.find((p) => p.id === 'program-github-star').enabled).toBe(false);
-    expect(store.createDoc).toHaveBeenCalledTimes(4);
+    expect(store.createDoc).toHaveBeenCalledTimes(7);
     expect(store.data.get('ambassador').get(gone.id).softDeletedAt).toBe(stamp);
     // Nothing more on the next read.
     await h.listPrograms(makeRequest(), context);
-    expect(store.createDoc).toHaveBeenCalledTimes(4);
+    expect(store.createDoc).toHaveBeenCalledTimes(7);
   });
 
   it('two overlapping reads that both miss a seed leave the first insert, edits included, and never surface a soft-deleted one', async () => {
@@ -388,6 +394,9 @@ describe('programs', () => {
       'program-microsoft-management-community',
       'program-microsoft-mct-regional-lead',
       'program-aws-community-builders',
+      'program-docker-sponsored-oss',
+      'program-hashicorp-ambassador',
+      'program-coder-champion',
     ]);
   });
 
@@ -1214,10 +1223,13 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
 
   it('backfills parentProgramId onto a stored Regional Lead from before it was additional', () => {
     const seed = DEFAULT_PROGRAMS.find((p) => p.id === RL);
-    const stored = { ...seed, seeded: true };
+    // At the seed's current revision, as seededDoc stamps a fresh one: the
+    // window revision (2026-10-20) is not what this test is about.
+    const current = { ...seed, seeded: true, seedRevision: SUPERSEDED_SEED_VALUES[RL].revision };
+    const stored = { ...current };
     delete stored.parentProgramId;
     expect(seedBackfillFor(stored, seed)).toEqual({ parentProgramId: MCT });
-    expect(seedBackfillFor({ ...seed, seeded: true }, seed)).toBeNull();
+    expect(seedBackfillFor(current, seed)).toBeNull();
     expect(seedBackfillFor({ ...stored, parentProgramId: 'program-other' }, seed)).toBeNull();
     // An explicit clear (null) is the owner's edit, not a gap: never refilled.
     expect(seedBackfillFor({ ...stored, parentProgramId: null }, seed)).toBeNull();
@@ -1276,10 +1288,18 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
       note: expect.stringMatching(/contribution tracker, on that quarter’s tab/),
     });
     expect(seed.renewalCadence).toBe('quarterly');
+    // The criteria are the page's tiers since 2026-10-20; the check-in's
+    // focus stays as the recommended activities.
     expect(seed.criteria).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/G2, Capterra and TrustRadius/),
-        expect.stringMatching(/Merge Conflicts, Dev AI Use, Commit Graph/),
+        expect.stringMatching(/^Content Creator: 2\+ pieces of content per quarter/),
+        expect.stringMatching(/^Community Ambassador: 2\+ reviews or helpful posts a quarter/),
+      ])
+    );
+    expect(seed.recommendedActivities).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/G2, Capterra or TrustRadius/),
+        expect.stringMatching(/Merge Conflicts, Dev AI Use or Commit Graph/),
       ])
     );
     expect(seed.requirements).toEqual([
@@ -1294,7 +1314,7 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
       provider: 'AWS',
       applicationUrl: 'https://builder.aws.com/community/community-builders',
     });
-    expect(builders.applicationWindow.note).toMatch(/Waitlist open/);
+    expect(builders.applicationWindow.note).toMatch(/waitlist on builder\.aws\.com/);
     expect(builders.applicationQuestions).toBeUndefined();
   });
 

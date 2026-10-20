@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { DEFAULT_PROGRAMS, SUPERSEDED_SEED_VALUES } from './programs.js';
+import { EVIDENCE_SOURCES, toCalendarDate } from './model.js';
+import { seedBackfillFor } from './steps.js';
+
+const byId = (id) => DEFAULT_PROGRAMS.find((p) => p.id === id);
+const rule = (req) => [req.id, req.minCount, req.weight, req.evidenceTypes];
 
 describe('ambassador seed programs (ADR 0033 §4)', () => {
   it('exports a frozen list of default programs', () => {
@@ -63,10 +69,235 @@ describe('ambassador seed programs (ADR 0033 §4)', () => {
 
     const gk = SUPERSEDED_SEED_VALUES['program-gitkraken-ambassador'];
     expect(gk).toBeDefined();
-    expect(gk.revision).toBe(2);
+    expect(gk.revision).toBe(3);
     expect(typeof gk.fields).toBe('object');
-    expect(gk.fields.criteria).toContain('Content');
+    expect(gk.fields.criteria).toContain('Reviews of GitKraken on G2, Capterra and TrustRadius');
     expect(Array.isArray(gk.fields.requirements)).toBe(true);
     expect(gk.fields.requirements.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the published rules read on 2026-10-20', () => {
+  it('seeds the three new programmes with unique ids, and every evidence type is a known source', () => {
+    const ids = DEFAULT_PROGRAMS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        'program-docker-sponsored-oss',
+        'program-hashicorp-ambassador',
+        'program-coder-champion',
+      ])
+    );
+    for (const program of DEFAULT_PROGRAMS) {
+      for (const req of program.requirements) {
+        for (const type of req.evidenceTypes) expect(EVIDENCE_SOURCES, req.id).toContain(type);
+      }
+      for (const type of program.upkeep?.evidenceTypes || []) {
+        expect(EVIDENCE_SOURCES, program.id).toContain(type);
+      }
+    }
+  });
+
+  it('counts Docker Captain against its tracks: the audience figure, content, community, labs', () => {
+    const captain = byId('program-docker-captain');
+    expect(captain.applicationUrl).toBe('https://app.advocu.com/dockercaptains/join');
+    expect(captain.requirements.map(rule)).toEqual([
+      ['reach', 1, 3, ['content', 'manual']],
+      ['content', 4, 2, ['content', 'newsletter']],
+      ['community', 2, 2, ['manual', 'speaking']],
+      ['labs', 2, 1, ['labs', 'manual']],
+    ]);
+    expect(captain.requirements[0].description).toMatch(/5,000 or more monthly views/);
+    expect(captain.criteria).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^Docker Thought Leader: 5,000/),
+        expect.stringMatching(/^Sail the extra mile/),
+      ])
+    );
+    expect(captain.eligibility).toContain('18 or older; open internationally');
+    expect(captain.expirationRule).toMatch(/^One-year term/);
+    expect(captain.applicationWindow).toEqual({
+      opens: null,
+      closes: null,
+      note: expect.stringMatching(/Rolling applications through the Advocu join form/),
+    });
+  });
+
+  it('seeds Docker-Sponsored Open Source as a yearly sponsorship with two counted asks', () => {
+    const dsos = byId('program-docker-sponsored-oss');
+    expect(dsos).toMatchObject({
+      provider: 'Docker',
+      category: 'partner',
+      applicationUrl: 'https://www.docker.com/community/open-source/application/',
+      renewalCadence: 'annual',
+    });
+    expect(dsos.requirements.map(rule)).toEqual([
+      ['images', 1, 3, ['labs', 'manual']],
+      ['activity', 1, 2, ['manual']],
+    ]);
+    expect(dsos.eligibility).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Open Source Initiative definition/),
+        expect.stringMatching(/updates within the past 6 months/),
+        expect.stringMatching(/Accepting donations to sustain the effort is permissible/i),
+      ])
+    );
+    expect(dsos.description).toMatch(/paid Docker subscription and DSOS are mutually exclusive/);
+  });
+
+  it('seeds HashiCorp Ambassador with the December window and its four contribution asks', () => {
+    const hashi = byId('program-hashicorp-ambassador');
+    expect(hashi).toMatchObject({
+      provider: 'HashiCorp',
+      applicationUrl: 'https://www.hashicorp.com/en/ambassador',
+      renewalCadence: 'annual',
+    });
+    expect(hashi.applicationWindow).toEqual({
+      opens: '2026-12-01',
+      closes: '2027-01-05',
+      note: expect.stringMatching(/^Submissions open annually 1 December to 5 January/),
+    });
+    expect(hashi.requirements.map(rule)).toEqual([
+      ['content', 3, 3, ['content', 'newsletter', 'listen-and-learn']],
+      ['mentorship', 1, 2, ['manual', 'speaking', 'labs']],
+      ['events', 1, 1, ['speaking']],
+      ['feedback', 1, 1, ['manual']],
+    ]);
+    expect(hashi.criteria).toEqual(
+      expect.arrayContaining(['Knowledge sharing', 'Mentorship', 'Kindness'])
+    );
+    expect(hashi.eligibility).toEqual(
+      expect.arrayContaining([expect.stringMatching(/preceding twelve months/)])
+    );
+  });
+
+  it('models Coder Champion as the chats and the people helped, counted apart, plus the star and the templates', () => {
+    const coder = byId('program-coder-champion');
+    expect(coder).toMatchObject({
+      provider: 'Coder',
+      applicationUrl: 'https://coder.com/coder-champions',
+      renewalCadence: 'annual',
+      expirationRule: 'Year-long programme; quarterly activity audits after the first year.',
+    });
+    expect(coder.requirements.map(rule)).toEqual([
+      ['chats', 5, 2, ['manual']],
+      ['help', 2, 3, ['manual']],
+      ['star', 1, 1, ['manual']],
+      ['templates', 1, 2, ['labs']],
+    ]);
+    expect(coder.applicationWindow).toEqual({ opens: null, closes: null, note: 'Rolling; no cohort dates.' });
+  });
+
+  it('words GitKraken as the published tiers, keeping the quarterly upkeep and its one counted rule', () => {
+    const gk = byId('program-gitkraken-ambassador');
+    expect(gk.criteria).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^Content Creator: 2\+ pieces of content per quarter/),
+        expect.stringMatching(/^Event Host: events for 30\+ developers/),
+        expect.stringMatching(/^Programme-wide: follow the brand guidelines, show the GitKraken logo/),
+      ])
+    );
+    expect(gk.upkeep).toMatchObject({ period: 'quarter', minCount: 2, evidenceTypes: [] });
+    expect(gk.requirements.map(rule)).toEqual([['quarterly-content', 2, 1, []]]);
+    expect(gk.recommendedActivities).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/logo on the site/),
+        expect.stringMatching(/quarterly check-in form/),
+      ])
+    );
+  });
+
+  it('records, for each superseded revision, exactly what the current seed replaced', () => {
+    for (const [id, { revision, fields }] of Object.entries(SUPERSEDED_SEED_VALUES)) {
+      const seed = byId(id);
+      expect(seed, id).toBeDefined();
+      expect(revision, id).toBeGreaterThanOrEqual(2);
+      expect(Object.keys(fields).length, id).toBeGreaterThan(0);
+      for (const [field, old] of Object.entries(fields)) {
+        expect(field in seed, `${id}.${field}`).toBe(true);
+        expect(JSON.stringify(seed[field]), `${id}.${field}`).not.toBe(JSON.stringify(old));
+      }
+    }
+    const gk = SUPERSEDED_SEED_VALUES['program-gitkraken-ambassador'];
+    expect(gk.revision).toBe(3);
+    expect(gk.fields.description).toMatch(/quarterly check-in, October 2026\)\.$/);
+    expect(gk.fields.criteria).toContain('Reviews of GitKraken on G2, Capterra and TrustRadius');
+    expect(gk.fields.requirements.map(rule)).toEqual([['quarterly-content', 2, 1, []]]);
+
+    const captain = SUPERSEDED_SEED_VALUES['program-docker-captain'];
+    expect(captain.revision).toBe(2);
+    expect(captain.fields.description).toBe(
+      'Docker Captains: technology experts and leaders in the Docker community who share their knowledge. Selected by Docker.'
+    );
+    expect(captain.fields.applicationUrl).toBe('https://www.docker.com/community/captains/');
+    expect(captain.fields.requirements.map(rule)).toEqual([
+      ['content', 4, 3, ['content', 'newsletter']],
+      ['talks', 2, 2, ['speaking']],
+      ['labs', 2, 1, ['labs', 'manual']],
+    ]);
+
+    expect(SUPERSEDED_SEED_VALUES['program-microsoft-elevate-educator-expert']).toEqual({
+      revision: 2,
+      fields: {
+        applicationWindow: {
+          opens: '2026-05-01',
+          closes: '2026-07-31',
+          note: 'Applications May to 31 July 2026; announcements September 2026.',
+        },
+      },
+    });
+    expect(SUPERSEDED_SEED_VALUES['program-microsoft-mct-regional-lead'].fields).toEqual({
+      applicationWindow: {
+        opens: '2026-10-01',
+        closes: '2026-10-31',
+        note: 'Nominations in September; application form in October; team announced 1 December.',
+      },
+    });
+    expect(
+      SUPERSEDED_SEED_VALUES['program-aws-community-builders'].fields.applicationWindow.note
+    ).toMatch(/^Waitlist open now/);
+  });
+
+  it('brings a stored row still holding each replaced value up to the current seed, once', () => {
+    for (const [id, { revision, fields }] of Object.entries(SUPERSEDED_SEED_VALUES)) {
+      const seed = byId(id);
+      const stored = { ...seed, ...fields, seeded: true };
+      const patch = seedBackfillFor(stored, seed);
+      expect(Object.keys(patch).sort(), id).toEqual([...Object.keys(fields), 'seedRevision'].sort());
+      expect(patch.seedRevision, id).toBe(revision);
+      for (const field of Object.keys(fields)) expect(patch[field], `${id}.${field}`).toEqual(seed[field]);
+      expect(seedBackfillFor({ ...stored, ...patch }, seed), id).toBeNull();
+    }
+  });
+
+  it('gives every fixed-date window real days in order, and the coming cycle its dates', () => {
+    for (const program of DEFAULT_PROGRAMS) {
+      const { opens, closes } = program.applicationWindow;
+      for (const day of [opens, closes]) {
+        if (day !== null) expect(toCalendarDate(day), program.id).toBe(day);
+      }
+      if (opens && closes) expect(opens <= closes, program.id).toBe(true);
+    }
+    expect(byId('program-microsoft-elevate-educator-expert').applicationWindow).toMatchObject({
+      opens: '2027-05-01',
+      closes: '2027-07-31',
+    });
+    expect(byId('program-microsoft-mct-regional-lead').applicationWindow).toEqual({
+      opens: '2027-10-01',
+      closes: '2027-10-31',
+      note: 'Nominations in September; application form in October; team announced 1 December.',
+    });
+    expect(byId('program-aws-community-builders').applicationWindow).toEqual({
+      opens: null,
+      closes: null,
+      note: 'Annual cycle; the 2026 applications closed 2026-01-21; the next cycle opens in January 2027 (waitlist on builder.aws.com)',
+    });
+  });
+
+  // The repository is public; a program's tracker is often private to its members.
+  it('names no shared-document link in the seed file, and seeds no tracker', () => {
+    for (const program of DEFAULT_PROGRAMS) expect(program.contributionTrackerUrl).toBeUndefined();
+    const source = readFileSync(new URL('./programs.js', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/docs\.google\.com|spreadsheets|sharepoint\.com/i);
   });
 });
