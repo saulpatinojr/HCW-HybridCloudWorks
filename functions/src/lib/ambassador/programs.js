@@ -889,7 +889,7 @@ export const DEFAULT_PROGRAMS = Object.freeze([
         'reach',
         'Monthly audience',
         `The Thought Leader track’s line: 5,000 or more monthly views across blogs, social media or other online avenues. One measured audience figure — the site’s monthly views, recorded as evidence with the number — meets it; the figure, not the row count, is what Docker reads. ${EDIT_NOTE}`,
-        { evidenceTypes: ['content', 'manual'], minCount: 1, weight: 3 }
+        { evidenceTypes: ['manual'], minCount: 1, weight: 3 }
       ),
       requirement('content', 'Docker content', `Articles, guides and videos on Docker. ${EDIT_NOTE}`, {
         evidenceTypes: ['content', 'newsletter'],

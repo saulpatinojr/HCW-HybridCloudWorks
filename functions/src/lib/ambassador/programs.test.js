@@ -102,7 +102,7 @@ describe('the published rules read on 2026-10-20', () => {
     const captain = byId('program-docker-captain');
     expect(captain.applicationUrl).toBe('https://app.advocu.com/dockercaptains/join');
     expect(captain.requirements.map(rule)).toEqual([
-      ['reach', 1, 3, ['content', 'manual']],
+      ['reach', 1, 3, ['manual']],
       ['content', 4, 2, ['content', 'newsletter']],
       ['community', 2, 2, ['manual', 'speaking']],
       ['labs', 2, 1, ['labs', 'manual']],
