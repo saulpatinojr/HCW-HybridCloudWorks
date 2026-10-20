@@ -237,17 +237,20 @@ git for the newest commit the branch and `main` share.
 PowerShell:
 
 ```powershell
-$b = (git branch -r --no-merged origin/main | Select-Object -First 1).Trim(); git log --oneline -1 (git merge-base origin/main $b)
+$b = (git branch -r --no-merged origin/main | Select-Object -First 1); if ($b) { git log --oneline -1 (git merge-base origin/main $b.Trim()) } else { "no unmerged remote branch right now" }
 ```
 
 bash:
 
 ```bash
-b=$(git branch -r --no-merged origin/main | head -1 | tr -d ' '); git log --oneline -1 "$(git merge-base origin/main "$b")"
+b=$(git branch -r --no-merged origin/main | head -1 | tr -d ' '); if [ -n "$b" ]; then git log --oneline -1 "$(git merge-base origin/main "$b")"; else echo "no unmerged remote branch right now"; fi
 ```
 
 The one line it prints is the row on `main` where that branch's lane leaves
 it. Find the same subject in the graph; the lane starts on the row above it.
+On a quiet day every remote branch may already be merged or deleted; then
+the first command prints nothing and the second says so instead of handing
+`git merge-base` an empty name. Push any branch and run it again.
 
 <!-- screenshot: the graph with one dependabot/ branch selected, its single commit on its own lane and the main row it forked from -->
 

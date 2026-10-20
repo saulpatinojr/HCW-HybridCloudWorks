@@ -133,8 +133,11 @@ host registers the server as a standard-input process:
 claude mcp add -t stdio gitkraken gk mcp
 ```
 
-**Verify:** restart the host, and its MCP server list shows one named
-`gitkraken`. Then use the documentation's own prompt for the status app,
+**Verify:** restart the host, and its MCP server list shows the GitKraken
+server under the name the install step gave it: `GitKraken` in VS Code,
+`gitkraken` where you registered it by hand as above. The name is whatever
+you or the installer wrote; what matters is that it is listed and answers.
+Then use the documentation's own prompt for the status app,
 "What changes are pending in the repo"; a host that can render apps shows the
 Git Status panel, and one that cannot shows the same answer as text.
 
@@ -158,9 +161,12 @@ the existing ones". As read on 2026-10-20:
   comments, and create a review.
 - **GitKraken**: list your workspaces.
 
-Now mark what writes. On the repository side: commit, push, stash, and
-checkout, which changes the working tree. On the platform side: the issue
-comment and the pull request review. Everything else reads. And mark what is
+Now mark what writes. On the repository side: creating a branch, adding a
+worktree, staging (`add`), commit, push, stash, and checkout, which changes
+the working tree. Several tools carry both a read and a write action (branch
+lists or creates, worktree lists or adds, add-or-commit), so mark the action,
+not the tool. On the platform side: the issue comment and the pull request
+review. Everything else reads. And mark what is
 not on the list at all: creating a pull request, replying on or resolving a
 review thread, reading a check's status, and merging. This repository's
 sessions do those with the GitHub CLI, which is why the steps below name
@@ -250,10 +256,14 @@ approves.
 - `git worktree list` shows the main checkout still on `main`.
 - The pull request has the template's sections and is not a draft.
 - Every review thread is resolved and the head's checks are green.
+- Code scanning has no open alert on the head. A resolved thread does not
+  close an alert, and the repository's rule is that nothing merges while one
+  is open; read them with the GitHub CLI against the pull request's merge
+  ref, and expect zero.
 
 Then the merge, which is the step this part does not have a tool for. The
 session merges with the GitHub CLI, when the current head carries an
-approving review and green checks. The server made the worktree, the commits
+approving review, green checks and no open code-scanning alert. The server made the worktree, the commits
 and the push, and read the reviews; the GitHub CLI opened the pull request
 and will merge it; the rules decided when it was done. Those are different
 jobs, and keeping them in different hands is what makes a one-person
