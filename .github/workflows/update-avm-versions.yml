@@ -16,7 +16,7 @@ name: Update AVM Versions
 # THE SNAPSHOT TESTS ARE THE GATE, AND THIS RUN REFRESHES THEM. AVM input
 # names drift between versions. hcl.test.js snapshots every emitted file, and
 # the versions are in the snapshots, so a bump fails them by construction.
-# The `update` job runs `npx vitest run -u src/lib/landingZone` after a bump
+# The `update` job runs `npx vitest run src/lib/landingZone -u` after a bump
 # and stages the refreshed .snap beside the pins, then runs the same suites
 # WITHOUT -u so the non-snapshot assertions (every module source pinned, the
 # providers map of every block, no archived module emitted) gate the pull
@@ -24,6 +24,18 @@ name: Update AVM Versions
 # Terraform diff a learner would download, and the reviewer reads it against
 # the module's release notes. A snapshot the bot refreshed is a diff to
 # review, not an approval; the body says so.
+#
+# THE OTHER ASSERTIONS READ THE PINS (#1287). The run went red on 2026-10-06
+# and 2026-10-13 in its own check step: seven expectations in labImage.test.js,
+# hcl.test.js and LzLabValidate.test.jsx carried the pinned versions as
+# literals, which `-u` cannot refresh (it rewrites snapshots, not `toEqual`).
+# They now read the pin from avmVersions.js and what the image carries from
+# LAB_IMAGE_AVM, so a bump moves them with it. The same fix found that
+# `vitest run -u <path>` takes the path as the flag's value and runs the
+# WHOLE suite, refreshing every snapshot in the tree; the filter goes before
+# the flag. The plain run also covers src/pages/tools/landingZone, the pane
+# that renders what the lab carries, which the whole-suite accident was
+# gating by luck.
 #
 # THREE PATHS, ONE PULL REQUEST. The pins, the image's versions file and the
 # snapshot are staged by name — never `-A`, never `.` — because the branch
@@ -132,18 +144,19 @@ jobs:
       - name: Refresh the HCL snapshots against the bumped pins
         if: steps.changed.outputs.changed == 'true'
         working-directory: frontend
-        run: npx vitest run -u src/lib/landingZone
+        run: npx vitest run src/lib/landingZone -u
 
-      # The same suites WITHOUT -u. This is the gate: every emitted module
-      # source is pinned with a version line, every block's providers map
-      # names every provider the module requires, the archived module never
-      # reaches the output, and the refreshed snapshot is stable. A drifted
-      # input name or a provider the emitter does not know about fails here,
-      # in this log, rather than on the pull request.
+      # The same suites WITHOUT -u, plus the lab pane's. This is the gate:
+      # every emitted module source is pinned with a version line, every
+      # block's providers map names every provider the module requires, the
+      # archived module never reaches the output, the refreshed snapshot is
+      # stable, and the pane lists what the lab carries of each module. A
+      # drifted input name or a provider the emitter does not know about
+      # fails here, in this log, rather than on the pull request.
       - name: Check the landing zone suites
         if: steps.changed.outputs.changed == 'true'
         working-directory: frontend
-        run: npx vitest run src/lib/landingZone
+        run: npx vitest run src/lib/landingZone src/pages/tools/landingZone
 
       - name: Upload the bumped pins, versions file and snapshot
         if: steps.changed.outputs.changed == 'true'
@@ -297,7 +310,7 @@ jobs:
             echo "## Before merging"
             echo
             echo "1. **Read each module's release notes** (linked above) for renamed, removed or newly required inputs. AVM input names drift between versions, and the builder's emitters name inputs by hand; the snapshot suites passing means the emitter still produces what it produced, not that the module still accepts it."
-            echo "2. **Review the snapshot diff as Terraform, not as a test file.** The versions are in \`frontend/src/lib/landingZone/__snapshots__/hcl.test.js.snap\`, so this run refreshed it with \`npx vitest run -u src/lib/landingZone\` and then ran \`npx vitest run src/lib/landingZone\` without \`-u\`, which passed. The workflow runs \`-u\` itself, rather than leaving it to the reviewer, so the pull request carries the refreshed snapshot and the human reviews a diff instead of producing one; a bot-refreshed snapshot is evidence to read, not approval. If the release notes change what the emitter should say, fix the emitter on this branch and run the same two commands again (bash, from \`frontend/\`): \`npx vitest run -u src/lib/landingZone\` after reviewing the module's changelog, then \`npx vitest run src/lib/landingZone\`."
+            echo "2. **Review the snapshot diff as Terraform, not as a test file.** The versions are in \`frontend/src/lib/landingZone/__snapshots__/hcl.test.js.snap\`, so this run refreshed it with \`npx vitest run src/lib/landingZone -u\` and then ran \`npx vitest run src/lib/landingZone src/pages/tools/landingZone\` without \`-u\`, which passed. The workflow runs \`-u\` itself, rather than leaving it to the reviewer, so the pull request carries the refreshed snapshot and the human reviews a diff instead of producing one; a bot-refreshed snapshot is evidence to read, not approval. If the release notes change what the emitter should say, fix the emitter on this branch and run the same two commands again (bash, from \`frontend/\`): \`npx vitest run src/lib/landingZone -u\` after reviewing the module's changelog, then \`npx vitest run src/lib/landingZone src/pages/tools/landingZone\`."
             echo "3. **A HAND EDIT NEEDED line above is a blocker.** The script moves version strings and a checksum only; \`requiredProviders\`, \`PROVIDER_PINS\`, \`TERRAFORM_REQUIRED_VERSION\` and the docblocks that quote each module's constraints are edited by hand against the linked \`terraform.tf\`, in this pull request."
             echo "4. **\`lab-image/versions.env\` moved with the pins**, because the image vendors every module the builder emits (ADR 0032 decision 5), so \`publish-lab-image.yml\` builds both targets on this pull request and \`smoke.sh\` inits the vendored module offline; a wrong sum fails at the download. The \`# The sums were resolved on\` prose in that file is not rewritten."
             echo "5. **The \`scripts (operations)\` check fails on this pull request until the children are re-recorded**, by design: \`AVM_CHILD_CALLS\` in \`lab-image/versions.env\` is keyed by each builder module's version, and what a new release calls is only known once the image's vendor stage resolves it. On this branch, in bash from the repository root, run \`docker build --target vendor --build-arg AVM_PRINT_PINS=1 --progress=plain lab-image\` and paste the \`AVM_CHILD_MODULES\` and \`AVM_CHILD_CALLS\` blocks it prints over the two in \`versions.env\` (\`lab-image/README.md\`, \"Updating a version\", has the one-line form); the check then passes and the image build verifies both blocks. If the child list changed, \`LAB_IMAGE_CHILD_AVM\` in \`frontend/src/lib/landingZone/labImage.js\` follows it, and \`labImage.test.js\` fails until it does."
@@ -308,7 +321,7 @@ jobs:
             echo
             echo "## Verification"
             echo
-            echo "- Checks run: \`node scripts/update-avm-versions.mjs\` against registry.terraform.io and the GitHub release tarball; then on the result, \`npx vitest run -u src/lib/landingZone\` and \`npx vitest run src/lib/landingZone\` (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
+            echo "- Checks run: \`node scripts/update-avm-versions.mjs\` against registry.terraform.io and the GitHub release tarball; then on the result, \`npx vitest run src/lib/landingZone -u\` and \`npx vitest run src/lib/landingZone src/pages/tools/landingZone\` (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
             echo "- Evidence level: [x] CI"
           } > "${RUNNER_TEMP}/pr-body.md"
           gh pr create \
