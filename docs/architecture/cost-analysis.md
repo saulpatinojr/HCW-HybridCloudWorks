@@ -12,9 +12,11 @@ to carry described resources that were never created; see *Corrected
 
 **Budgets:** three. Two are **subscription**-scoped — USD 150 on the
 application subscription (live) and USD 25 on Platform Management — and
-since #849 (declared 2026-10-04, applied with the owner's next TFC run) one
-sits on the `rg-ai-site-prod-cus` resource group at USD 75 for the Microsoft
-Foundry account. A budget alerts at its thresholds; none of them stops spend.
+since #849 one sits on the `rg-ai-site-prod-cus` resource group at USD 75 for
+the Microsoft Foundry account (declared 2026-10-04; read live on 2026-10-20 as
+`site-foundry-monthly-budget`, with its first month estimated below under
+*Foundry — first measured month*). A budget alerts at its thresholds; none of
+them stops spend.
 
 > **The branch this page kept citing is gone.** Several lines here described a
 > control as "declared in `fix/go-live-remediation`, **not applied**" — the
@@ -41,7 +43,7 @@ about:
 | What this page said | What is actually built |
 | --- | --- |
 | "Selective Private Link and network — $25–35, four endpoints" | **No private endpoint exists.** `grep private_endpoint infra/*.tf` returns nothing. The network posture that was built is service endpoints on the Functions integration subnet, VNet rules on Cosmos, Key Vault and both storage accounts, and default-`Deny` firewalls. That line is USD 0 |
-| "Azure OpenAI — $0–40" | **No Azure OpenAI account existed until #849.** `oai-site-prod-cus` and its resource group were retired on 2026-08-19 ([Naming-Convention](../standards/naming-convention.md)); the subscription holds zero model quota. From 2026-10-04 a Microsoft Foundry account, `ais-site-prod-cus-01` (gpt-5-nano and gpt-5-mini, Global Standard), is declared in `infra/foundry.tf` under a USD 75 resource-group budget, with the first measured month pending. Every other model call still goes to an external provider API keyed from Key Vault, on the provider's bill, where no Azure budget sees it |
+| "Azure OpenAI — $0–40" | **No Azure OpenAI account existed until #849.** `oai-site-prod-cus` and its resource group were retired on 2026-08-19 ([Naming-Convention](../standards/naming-convention.md)); the subscription holds zero model quota. From 2026-10-04 a Microsoft Foundry account, `ais-site-prod-cus-01` (gpt-5-nano and gpt-5-mini, Global Standard), is declared in `infra/foundry.tf` under a USD 75 resource-group budget; its first month, October 2026, is estimated at USD 8–11 from the 2026-10-20 reading under *Foundry — first measured month* below. Every other model call still goes to an external provider API keyed from Key Vault, on the provider's bill, where no Azure budget sees it |
 | "Resource-group monthly budget: USD 150" | The budget is **subscription**-scoped and has been since the workload split into six resource groups. A resource-group budget would have watched one of the six and ignored the other five (`infra/main.tf`, the `azurerm_consumption_budget_subscription.hcw` header) |
 | "`enable_ai = false` until model/capacity approval" | There is no `enable_ai` variable. Provider availability is decided at runtime by key presence in Key Vault (`functions/src/lib/ai/router.js`), not by a Terraform switch |
 | "Service-specific alerts for Function execution, Cosmos RU/429, Storage, Log Analytics ingestion, AI tokens" | **Zero alert rules of any kind existed** in either subscription when the review ran on 2026-08-24. Five were added and are now declared on `main` in `infra/observability.tf` — see [Alerting and support](../runbooks/alerting-and-support.md) |
@@ -263,9 +265,38 @@ same API before arming the web test.
 
 | Budget | Scope | Amount | What it watches |
 | --- | --- | ---: | --- |
-| `hcw-monthly-budget` | Subscription `sub-app-site-prod-cus` | USD 150 | The workload — Static Web Apps, Functions, Cosmos, storage, Key Vault |
+| `site-monthly-budget` | Subscription `sub-app-site-prod-cus` | USD 150 | The workload — Static Web Apps, Functions, Cosmos, storage, Key Vault. (This row read `hcw-monthly-budget` until 2026-10-20; the live name follows `var.workload_name`, which is `site`) |
 | `plat-mgmt-monthly-budget` | Subscription `sub-plat-mgmt-prod-cus` | USD 25 | Log Analytics ingestion and retention. Applied: `az consumption budget list` on the Management subscription read it on 2026-10-14 at USD 25 with the month's spend under USD 1 (PLAT-9, #969; this cell said "declared, not applied" after the apply had landed) |
-| `hcw-foundry-monthly-budget` | Resource group `rg-ai-site-prod-cus` | USD 75 | The Microsoft Foundry account and its deployments (#849). **Declared 2026-10-04, applied with the owner's next TFC run**; first measured month pending |
+| `site-foundry-monthly-budget` | Resource group `rg-ai-site-prod-cus` | USD 75 | The Microsoft Foundry account and its deployments (#849). Declared 2026-10-04 and applied; read live on 2026-10-20 at USD 75 monthly with the month's spend at USD 5.36 and Azure's forecast at USD 10.60. First month estimated below |
+
+### Foundry — first measured month (October 2026, read 2026-10-20)
+
+Owner decision 2026-10-20: the first month is closed on an estimate rather
+than on the bill, because the spend is nowhere near the budget and waiting for
+the invoice to close in November buys nothing. The reading is Cost Management's
+actual cost for the application subscription, grouped by resource group and
+meter category, taken on day 20 of 31, plus the budget's own forecast.
+
+| Reading | Value | Source |
+| --- | ---: | --- |
+| October spend to 2026-10-20, meter `Foundry Models`, resource group `rg-ai-site-prod-cus` | USD 5.36 | Cost Management query, `ActualCost`, 2026-10-01 to 2026-10-31 |
+| The same figure as the budget sees it | USD 5.36 | `site-foundry-monthly-budget`, `currentSpend` |
+| Straight-line estimate to month end (20 of 31 days) | USD 8.31 | arithmetic on the row above |
+| Azure's own forecast for the month | USD 10.60 | `site-foundry-monthly-budget`, `forecastSpend` |
+| Budget | USD 75.00 | `infra/foundry.tf` |
+
+**Estimate for October 2026: USD 8–11, about 11–14 % of the budget.** The
+two deployments, `gpt-5-nano` and `gpt-5-mini`, are the only meters in the
+resource group; the account itself bills nothing. The 50 % alert sits at
+USD 37.50, more than three times the forecast, so no notification is expected
+this month. The figure is the whole of the Foundry resource group, so it is an
+upper bound on what the site's calls cost: it includes the owner's Test calls
+from the AI Services card as well as feature traffic.
+
+What this does not settle: the first month shown here is a forecast, not a
+closed invoice. Item 1 of the *Measurement plan* below re-reads every
+resource group monthly, and October's closed figure lands in that re-read in
+early November, as a line under this table, without reopening #849.
 
 The two subscription budgets carry the same ladder: actual-cost notifications
 at 50/75/90/100% and a forecast notification at 100%, which is the one that
