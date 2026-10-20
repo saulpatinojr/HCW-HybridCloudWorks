@@ -465,6 +465,18 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # cannot be declared and is read by hand on that run.
     "CF_WEB_ANALYTICS_SITE_TAG" = var.cloudflare_account_id == null ? "" : cloudflare_web_analytics_site.hcw[0].site_tag
 
+    # The account the site belongs to, the same value the workspace variable
+    # carries, because the read is account-scoped: Cloudflare's
+    # rumPageloadEventsAdaptiveGroups dataset hangs off
+    # viewer.accounts(filter: {accountTag}), and an unfiltered accounts query
+    # is documented to fail for a token that can reach any account outside
+    # the scope. An identifier, not a secret: it is in every API path for the
+    # account and opens nothing on its own, so it is a plain setting and not a
+    # Key Vault reference. Empty, not absent, while cloudflare_account_id is
+    # unset, which the timer reads as "not configured" (one log line, nothing
+    # written) rather than as a missing setting.
+    "CF_ACCOUNT_ID" = var.cloudflare_account_id == null ? "" : var.cloudflare_account_id
+
     # -------------------------------------------------------------------------
     # Runtime Key Vault bindings.
     #
