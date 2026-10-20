@@ -236,23 +236,22 @@ describe('the published rules read on 2026-10-20', () => {
       ['labs', 2, 1, ['labs', 'manual']],
     ]);
 
-    expect(SUPERSEDED_SEED_VALUES['program-microsoft-elevate-educator-expert']).toEqual({
-      revision: 2,
-      fields: {
-        applicationWindow: {
-          opens: '2026-05-01',
-          closes: '2026-07-31',
-          note: 'Applications May to 31 July 2026; announcements September 2026.',
-        },
-      },
+    const miee = SUPERSEDED_SEED_VALUES['program-microsoft-elevate-educator-expert'];
+    expect(miee.revision).toBe(2);
+    expect(Object.keys(miee.fields).sort()).toEqual([
+      'applicationWindow',
+      'description',
+      'recommendedActivities',
+    ]);
+    expect(miee.fields.applicationWindow).toEqual({
+      opens: '2026-05-01',
+      closes: '2026-07-31',
+      note: 'Applications May to 31 July 2026; announcements September 2026.',
     });
-    expect(SUPERSEDED_SEED_VALUES['program-microsoft-mct-regional-lead'].fields).toEqual({
-      applicationWindow: {
-        opens: '2026-10-01',
-        closes: '2026-10-31',
-        note: 'Nominations in September; application form in October; team announced 1 December.',
-      },
-    });
+    expect(miee.fields.description).toMatch(/opens in May 2026 and closes 31 July 2026/);
+    expect(miee.fields.recommendedActivities).toContain('Apply before 31 July 2026');
+    // The October 2026 window is open until 2026-10-31; it moves in November.
+    expect(SUPERSEDED_SEED_VALUES['program-microsoft-mct-regional-lead']).toBeUndefined();
     expect(
       SUPERSEDED_SEED_VALUES['program-aws-community-builders'].fields.applicationWindow.note
     ).toMatch(/^Waitlist open now/);
@@ -278,13 +277,16 @@ describe('the published rules read on 2026-10-20', () => {
       }
       if (opens && closes) expect(opens <= closes, program.id).toBe(true);
     }
-    expect(byId('program-microsoft-elevate-educator-expert').applicationWindow).toMatchObject({
-      opens: '2027-05-01',
-      closes: '2027-07-31',
-    });
+    const miee = byId('program-microsoft-elevate-educator-expert');
+    expect(miee.applicationWindow).toMatchObject({ opens: '2027-05-01', closes: '2027-07-31' });
+    // Rolled with the window, so the seed does not contradict itself.
+    expect(miee.description).toMatch(/open in May 2027 and close 31 July 2027/);
+    expect(miee.description).not.toMatch(/July 2026/);
+    expect(miee.recommendedActivities).toContain('Apply before 31 July 2027');
+    // Open until 2026-10-31, so left as it is; it rolls to October 2027 in November.
     expect(byId('program-microsoft-mct-regional-lead').applicationWindow).toEqual({
-      opens: '2027-10-01',
-      closes: '2027-10-31',
+      opens: '2026-10-01',
+      closes: '2026-10-31',
       note: 'Nominations in September; application form in October; team announced 1 December.',
     });
     expect(byId('program-aws-community-builders').applicationWindow).toEqual({

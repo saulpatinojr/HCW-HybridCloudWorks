@@ -629,10 +629,14 @@ This project has not cut a tagged release; entries are grouped under
     check-in form are recommended activities, because the model counts
     evidence and neither is a count of evidence.
   - **Windows for the coming year**: MIEE moves to 1 May to 31 July 2027 on
-    the 2026 pattern, MCT Regional Lead to October 2027, and AWS Community
-    Builders' note records the 2026 close (2026-01-21) and the January 2027
-    cycle. Each moves through `SUPERSEDED_SEED_VALUES`, so a stored window
-    the owner never edited follows the seed, and one they edited stays.
+    the 2026 pattern, its description and its "apply before" line rolled
+    with it so the seed does not contradict its own window, and AWS
+    Community Builders' note records the 2026 close (2026-01-21) and the
+    January 2027 cycle. Each moves through `SUPERSEDED_SEED_VALUES`, so a
+    stored value the owner never edited follows the seed, and one they
+    edited stays. MCT Regional Lead is not moved: its October 2026 window is
+    open until 2026-10-31, and a stored row would show it a year away while
+    it is live; it rolls to October 2027 in November.
 
 - **Foundry's first month is recorded on an estimate, and #849 closes on it**.
   `docs/architecture/cost-analysis.md` gains *Foundry — first measured month

@@ -1223,13 +1223,10 @@ describe('additional programs (owner request 2026-10-05): MCT Regional Lead unde
 
   it('backfills parentProgramId onto a stored Regional Lead from before it was additional', () => {
     const seed = DEFAULT_PROGRAMS.find((p) => p.id === RL);
-    // At the seed's current revision, as seededDoc stamps a fresh one: the
-    // window revision (2026-10-20) is not what this test is about.
-    const current = { ...seed, seeded: true, seedRevision: SUPERSEDED_SEED_VALUES[RL].revision };
-    const stored = { ...current };
+    const stored = { ...seed, seeded: true };
     delete stored.parentProgramId;
     expect(seedBackfillFor(stored, seed)).toEqual({ parentProgramId: MCT });
-    expect(seedBackfillFor(current, seed)).toBeNull();
+    expect(seedBackfillFor({ ...seed, seeded: true }, seed)).toBeNull();
     expect(seedBackfillFor({ ...stored, parentProgramId: 'program-other' }, seed)).toBeNull();
     // An explicit clear (null) is the owner's edit, not a gap: never refilled.
     expect(seedBackfillFor({ ...stored, parentProgramId: null }, seed)).toBeNull();

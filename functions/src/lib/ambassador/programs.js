@@ -521,9 +521,13 @@ const DOCKER_CAPTAIN_TRACKS = [
  * 2026-10-08 (two or more content pieces a quarter, logged on its tracker);
  * revision 3 (2026-10-20) words the same rule as the programme page's tiers.
  * Docker Captain's first seed guessed too; revision 2 (2026-10-20) carries
- * the tracks and the term from docker.com and the join form. The three
- * window revisions (MIEE, MCT Regional Lead, AWS Community Builders) move a
- * fixed-date window the year has passed into the coming cycle.
+ * the tracks and the term from docker.com and the join form. The two window
+ * revisions (MIEE, AWS Community Builders) move a window the year has passed
+ * into the coming cycle; MIEE's description and its "apply before" line roll
+ * with it, so the seed does not contradict its own window. MCT Regional
+ * Lead's October 2026 window is open until 2026-10-31 and is not moved: a
+ * stored row would show it a year away while it is live. It rolls to
+ * October 2027 in November.
  */
 export const SUPERSEDED_SEED_VALUES = Object.freeze({
   'program-gitkraken-ambassador': Object.freeze({
@@ -591,21 +595,18 @@ export const SUPERSEDED_SEED_VALUES = Object.freeze({
   'program-microsoft-elevate-educator-expert': Object.freeze({
     revision: 2,
     fields: Object.freeze({
+      description:
+        'Microsoft Elevate Educator – Expert, the programme formerly called Microsoft Innovative Educator Expert (MIEE): educators who use Microsoft tools and AI to change learning, selected each year through an application. The 2026-2027 application opens in May 2026 and closes 31 July 2026, with announcements in September 2026 (FAQ: aka.ms/EducatorFAQ). The questions below are the official 2026-2027 list; program rules as published 2026.',
       applicationWindow: {
         opens: '2026-05-01',
         closes: '2026-07-31',
         note: 'Applications May to 31 July 2026; announcements September 2026.',
       },
-    }),
-  }),
-  'program-microsoft-mct-regional-lead': Object.freeze({
-    revision: 2,
-    fields: Object.freeze({
-      applicationWindow: {
-        opens: '2026-10-01',
-        closes: '2026-10-31',
-        note: 'Nominations in September; application form in October; team announced 1 December.',
-      },
+      recommendedActivities: [
+        'Finish both Expert learning paths before the window opens',
+        'Keep one worked AI example with what was created or improved',
+        'Apply before 31 July 2026',
+      ],
     }),
   }),
   'program-aws-community-builders': Object.freeze({
@@ -964,7 +965,7 @@ export const DEFAULT_PROGRAMS = Object.freeze([
     provider: 'Microsoft',
     category: 'education',
     description:
-      'Microsoft Elevate Educator – Expert, the programme formerly called Microsoft Innovative Educator Expert (MIEE): educators who use Microsoft tools and AI to change learning, selected each year through an application. The 2026-2027 application opens in May 2026 and closes 31 July 2026, with announcements in September 2026 (FAQ: aka.ms/EducatorFAQ). The questions below are the official 2026-2027 list; program rules as published 2026.',
+      'Microsoft Elevate Educator – Expert, the programme formerly called Microsoft Innovative Educator Expert (MIEE): educators who use Microsoft tools and AI to change learning, selected each year through an application. The 2027-2028 application is expected to open in May 2027 and close 31 July 2027, with announcements in September 2027, on the 2026 cycle’s pattern (FAQ: aka.ms/EducatorFAQ). The questions below are the official 2026-2027 list; program rules as published 2026.',
     applicationUrl: 'https://aka.ms/EducatorFAQ',
     eligibility: [
       'A Microsoft Elevate Educator – Explorer, or a returning Expert',
@@ -1007,7 +1008,7 @@ export const DEFAULT_PROGRAMS = Object.freeze([
     recommendedActivities: [
       'Finish both Expert learning paths before the window opens',
       'Keep one worked AI example with what was created or improved',
-      'Apply before 31 July 2026',
+      'Apply before 31 July 2027',
     ],
     applicationQuestions: MIEE_APPLICATION_QUESTIONS,
   },
@@ -1115,8 +1116,8 @@ export const DEFAULT_PROGRAMS = Object.freeze([
       'Weekly Regional Lead Teams channels and monthly meetings',
     ],
     applicationWindow: {
-      opens: '2027-10-01',
-      closes: '2027-10-31',
+      opens: '2026-10-01',
+      closes: '2026-10-31',
       note: 'Nominations in September; application form in October; team announced 1 December.',
     },
     renewalCadence: 'annual',
