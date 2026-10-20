@@ -12,8 +12,13 @@
 # thread resolved before a merge (.claude/CLAUDE.md), so each is answered on
 # its thread and resolved like any other reviewer's.
 #
-# Reviews arrive on their own on every push (since #1034, 2026-10-08), so
-# auto_review below is live; "@coderabbitai review" still asks for one by hand.
+# Reviews arrived on their own on every push while the Advanced trial ran
+# (since #1034, 2026-10-08). The trial ended on 2026-10-20: #1293 still showed
+# "10 included reviews per hour", #1301 and #1304 "1", and #1301's commit
+# status reads "Review skipped: manual review required for this OSS
+# repository". A review is now asked for by hand with "@coderabbitai review",
+# one included review an hour, and auto_review below says what that review
+# is spent on.
 # .claude/CLAUDE.md says how a session handles them, in two separate tasks:
 # each review finding is fixed or answered on its thread and the thread
 # resolved; and the summary comment's checklist is worked by hand and recorded
@@ -45,7 +50,27 @@ reviews:
   collapse_walkthrough: true
   auto_review:
     enabled: true
-    drafts: true
+    # The included allowance is one review an hour, and every push to an
+    # open pull request, every "Update branch" and every "@coderabbitai
+    # review" spends one (docs.coderabbit.ai/management/rate-limits). #1304
+    # asked eleven times on 2026-10-20 and was refused ten. The three
+    # settings below keep the review for a head someone will read.
+    #
+    # Drafts are not reviewed: pull requests open ready for review here
+    # (.claude/CLAUDE.md, owner decision 2026-09-05), so a draft is work in
+    # progress by definition, and a review of it is spent on a head that
+    # will change.
+    drafts: false
+    # One incremental review after the first, then pause; ask with
+    # "@coderabbitai review" when the branch is ready for the next one.
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 2
+    # Dependabot pull requests are approved by the owner (#1299), so a
+    # CodeRabbit review of them is the review spent twice. hcw-site-app[bot]
+    # is not listed on purpose: CodeRabbit's approval is the required review
+    # on its pull requests (#1293).
+    ignore_usernames:
+      - "dependabot[bot]"
   # Generated, vendored or dated files, which a review cannot improve.
   path_filters:
     - "!**/package-lock.json"
@@ -53,6 +78,13 @@ reviews:
     - "!**/node_modules/**"
     - "!CHANGELOG.md"
     - "!docs/history/**"
+  # Docstring coverage is scoped to the functions a diff touches, and this
+  # repository's diffs keep reporting "Analyzed 0 functions" (#1293, #1301,
+  # #1304): a row that can only pass is noise in the checklist. The title,
+  # description and linked-issue checks keep their defaults.
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
   path_instructions:
     - path: "functions/**"
       instructions: >-

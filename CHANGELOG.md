@@ -593,6 +593,18 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **CodeRabbit spends its one included review an hour on the head someone
+  will read**. The Advanced trial's ten reviews an hour became the
+  open-source tier's one on 2026-10-20 (#1301 and #1304 sat on `Review rate
+  limited`; #1304 asked eleven times and was refused ten), and
+  `.coderabbit.yaml` now reviews no draft, pauses incremental reviews after
+  two reviewed commits, skips Dependabot's pull requests (the owner approves
+  those, #1299) and turns off the docstring pre-merge check, which has only
+  ever reported zero functions. Pull requests from `hcw-site-app[bot]` stay
+  reviewed, because CodeRabbit's approval is their required review (#1293).
+  A review on this repository is asked for by hand with
+  `@coderabbitai review`.
+
 - **Foundry's first month is recorded on an estimate, and #849 closes on it**.
   `docs/architecture/cost-analysis.md` gains *Foundry — first measured month
   (October 2026, read 2026-10-20)*: USD 5.36 spent on the `Foundry Models`
