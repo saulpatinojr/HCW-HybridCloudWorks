@@ -219,6 +219,201 @@ export function rewriteEnv(envSource, name, fromVersion, toVersion, sha256) {
   return source.replace(versionPattern, `$1${toVersion}`).replace(shaPattern, `$1${sha256}`);
 }
 
+/**
+ * Move the exact pin on one module's block in the smoke payload
+ * (lab-image/smoke/terraform-validate-payload/main.tf), where the version
+ * line directly under `source = "Azure/<name>/azurerm"` reads `fromVersion`
+ * and nothing else: the payload holds one block per builder module with a
+ * different constraint operator each, and an exact pin is the one a bump
+ * breaks by construction (`"0.21.0"` cannot resolve to 0.22.0). A block
+ * whose version is a constraint (`~> 0.9`, `>= 0.15.0`) is left alone; the
+ * static vendoring test says when a bump has outgrown it. Returns the text
+ * and whether a pin moved; two exact pins on one module is a reshaped file
+ * and is refused.
+ */
+export function rewriteSmokePin(payloadSource, name, fromVersion, toVersion) {
+  assertRelease(toVersion);
+  const source = String(payloadSource);
+  const pattern = new RegExp(
+    `(source\\s*=\\s*"Azure/${escapeRegExp(name)}/azurerm"\\s*\\n\\s*version\\s*=\\s*")(\\d+\\.\\d+\\.\\d+)(")`,
+    'g'
+  );
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length === 0) return { source, moved: false };
+  if (matches.length > 1) {
+    throw new EditRefused(
+      `the smoke payload holds ${matches.length} exact pins for ${name}, not one, so it was not written.`
+    );
+  }
+  const [, , current] = matches[0];
+  if (current !== fromVersion) {
+    throw new EditRefused(
+      `the smoke payload pins ${name} at ${current}, not the ${fromVersion} avmVersions.js pins, so it was not written.`
+    );
+  }
+  return { source: source.replace(pattern, `$1${toVersion}$3`), moved: true };
+}
+
+// --- the child record -------------------------------------------------------
+//
+// AVM_CHILD_CALLS in versions.env is keyed by each builder module's version,
+// so a bump leaves the new version with no line and the static vendoring test
+// red (#1306), and what a new release calls is only known once the image's
+// vendor stage resolves it. The build prints both blocks with
+// AVM_PRINT_PINS=1; these functions read that print-out and put the blocks
+// where the old ones were, touching no other line.
+
+/**
+ * A vendor-stage build that failed, or a capture of one that says nothing
+ * this script can splice: no block, two of them, a line that is not the
+ * shape the build prints, or a record of builder modules that are not the
+ * ones versions.env now pins. Nothing is written. Not a bug, so no stack.
+ */
+export class VendorError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'VendorError';
+  }
+}
+
+export const CHILD_BLOCKS = Object.freeze(['AVM_CHILD_MODULES', 'AVM_CHILD_CALLS']);
+
+/** `#15 12.97 ` — what `docker build --progress=plain` puts before each line a step prints. */
+const BUILDKIT_PREFIX = /^#\d+ \d+\.\d+ /;
+const MODULE_ID = '[^@\\s]+@\\d+\\.\\d+\\.\\d+';
+const CHILD_PIN_LINE = new RegExp(`^(${MODULE_ID}) ([0-9a-f]{64})$`);
+const CHILD_CALL_LINE = new RegExp(`^(${MODULE_ID})(?: (${MODULE_ID}))?$`);
+const LINE_SHAPE = {
+  AVM_CHILD_MODULES: { pattern: CHILD_PIN_LINE, shape: '<name>@<version> <tree hash>' },
+  AVM_CHILD_CALLS: { pattern: CHILD_CALL_LINE, shape: '<builder>@<version> [<child>@<version>]' },
+};
+
+/** `PTN_ALZ` -> `avm-ptn-alz`, the Dockerfile's `tr 'A-Z_' 'a-z-'`; the inverse of envKeyFor. */
+export const nameForKey = (key) => `avm-${String(key).toLowerCase().replace(/_/g, '-')}`;
+
+/** The builder modules versions.env vendors, as `<name>@<version>`, sorted. */
+export function envBuilders(envSource) {
+  return [...String(envSource).matchAll(/^AVM_([A-Z0-9_]+)_VERSION=(\S+)$/gm)]
+    .map(([, key, version]) => `${nameForKey(key)}@${version}`)
+    .sort();
+}
+
+/** The non-blank lines of one quoted block, from a print-out or from versions.env. */
+function blockOf(lines, name, describe) {
+  const starts = lines.flatMap((line, at) => (line === `${name}='` ? [at] : []));
+  if (starts.length !== 1) {
+    throw new VendorError(
+      starts.length === 0
+        ? `${describe} has no ${name} block; a cached vendor stage prints nothing, and a failed one says why above, so nothing was written.`
+        : `${describe} has ${starts.length} ${name} blocks, not one, so nothing was written.`
+    );
+  }
+  const end = lines.indexOf("'", starts[0] + 1);
+  if (end === -1) {
+    throw new VendorError(
+      `${describe}'s ${name} block has no closing quote, so nothing was written.`
+    );
+  }
+  const body = lines
+    .slice(starts[0] + 1, end)
+    .filter((line) => line !== '' && !line.startsWith('#'));
+  const { pattern, shape } = LINE_SHAPE[name];
+  for (const line of body) {
+    if (!pattern.test(line)) {
+      throw new VendorError(
+        `${describe}'s ${name} block has the line ${JSON.stringify(line)}, which is not ${shape}, so nothing was written.`
+      );
+    }
+  }
+  if (body.length === 0) {
+    throw new VendorError(`${describe}'s ${name} block is empty, so nothing was written.`);
+  }
+  return body;
+}
+
+/**
+ * The two blocks out of what `docker build --target vendor --build-arg
+ * AVM_PRINT_PINS=1 --progress=plain lab-image` printed, BuildKit's `#N t.t `
+ * prefix stripped from every line, as `{ AVM_CHILD_MODULES: [...lines],
+ * AVM_CHILD_CALLS: [...lines] }` in the order the build printed them. A
+ * block that is missing, doubled, unterminated, empty, or holds a line that
+ * is not the shape vendor-avm.sh prints is refused with VendorError.
+ */
+export function parsePrintedPins(log) {
+  const lines = String(log)
+    .split(/\r?\n/)
+    .map((line) => line.replace(BUILDKIT_PREFIX, ''));
+  return Object.fromEntries(
+    CHILD_BLOCKS.map((name) => [name, blockOf(lines, name, 'the vendor stage print-out')])
+  );
+}
+
+/** The current lines of one block in versions.env, for the before/after in the summary. */
+export function envChildBlock(envSource, name) {
+  return blockOf(String(envSource).split(/\r?\n/), name, 'versions.env');
+}
+
+/**
+ * Put the printed blocks where versions.env's old ones are and change no
+ * other line: each `NAME='` … `'` block must appear exactly once, and the
+ * builder modules the capture's AVM_CHILD_CALLS is keyed by must be exactly
+ * the `AVM_<KEY>_VERSION` pairs the file now holds, or the capture is of
+ * some other state of the file (a stale log, a build of another branch)
+ * and is refused. Splicing the same blocks twice yields the same text.
+ */
+export function rewriteChildBlocks(envSource, blocks) {
+  const source = String(envSource);
+  const recorded = [...new Set(blocks.AVM_CHILD_CALLS.map((line) => line.split(' ')[0]))].sort();
+  const pinned = envBuilders(source);
+  if (recorded.join(' ') !== pinned.join(' ')) {
+    throw new VendorError(
+      `the vendor stage's AVM_CHILD_CALLS is keyed by ${recorded.join(', ')}, and versions.env now pins ${pinned.join(', ')}, so the capture is not of this file and it was not written.`
+    );
+  }
+  let next = source;
+  for (const name of CHILD_BLOCKS) {
+    const pattern = new RegExp(`^${name}='[^']*'$`, 'gm');
+    onlyMatch(next, pattern, 'versions.env', `${name} blocks`);
+    const block = `${name}='\n${blocks[name].join('\n')}\n'`;
+    next = next.replace(pattern, () => block);
+  }
+  return next;
+}
+
+/**
+ * What the regenerated AVM_CHILD_MODULES says against the file's old block:
+ * the children added and dropped (as `<name>@<version>`), and the counts.
+ * The list is what LAB_IMAGE_CHILD_AVM in labImage.js carries, so a change
+ * here is a change there.
+ */
+export function childRecordReport(envSource, blocks) {
+  const pinOf = (line) => line.split(' ')[0];
+  const before = new Set(envChildBlock(envSource, 'AVM_CHILD_MODULES').map(pinOf));
+  const after = blocks.AVM_CHILD_MODULES.map(pinOf);
+  return {
+    modules: after.length,
+    calls: blocks.AVM_CHILD_CALLS.length,
+    added: after.filter((pin) => !before.has(pin)),
+    removed: [...before].filter((pin) => !after.includes(pin)),
+  };
+}
+
+/**
+ * Rewrite LAB_IMAGE_CHILD_AVM in labImage.js to the regenerated child list,
+ * one `'<name>@<version>',` per line in the order the build printed them
+ * (the entry point formats the file with Prettier afterwards). Exactly one
+ * array must be there, or the file is refused.
+ */
+export function rewriteChildList(labImageSource, blocks) {
+  const pattern = /^(export const LAB_IMAGE_CHILD_AVM = Object\.freeze\(\[)\n[\s\S]*?^(\]\);)$/gm;
+  onlyMatch(labImageSource, pattern, 'labImage.js', 'LAB_IMAGE_CHILD_AVM arrays');
+  const entries = blocks.AVM_CHILD_MODULES.map((line) => `  '${line.split(' ')[0]}',`).join('\n');
+  return String(labImageSource).replace(
+    pattern,
+    (_, open, close) => `${open}\n${entries}\n${close}`
+  );
+}
+
 // --- summary ---------------------------------------------------------------
 
 const code = (text) => `\`${text}\``;
@@ -255,6 +450,14 @@ function envLine(result) {
   return byState[String(result.vendored)] ?? null;
 }
 
+const PAYLOAD_PATH = 'lab-image/smoke/terraform-validate-payload/main.tf';
+
+/** One line when the smoke payload's exact pin on this module moved with it. */
+function payloadLine(result) {
+  if (!result.smokePinMoved) return null;
+  return `- ${code(PAYLOAD_PATH)}: the exact ${code(`version = "${result.from}"`)} on its block for this module now reads ${code(result.to)}, so smoke.sh still rewrites one block per builder module.`;
+}
+
 const driftParts = (drift) =>
   [
     drift.added.length ? `adds ${drift.added.join(', ')}` : null,
@@ -282,12 +485,63 @@ function bumpSection(result) {
     '',
     releaseNotesLine(result),
     envLine(result),
+    payloadLine(result),
     providersLine(result),
   ].filter((line) => line !== null);
 }
 
-/** The Markdown the workflow puts in the pull request body. */
-export function summarize({ results, today }) {
+const LAB_IMAGE_PATH = 'frontend/src/lib/landingZone/labImage.js';
+const PRINT_COMMAND = code(
+  'docker build --target vendor --build-arg AVM_PRINT_PINS=1 --progress=plain lab-image'
+);
+
+/** What happened to the child list, after the blocks line. */
+function childListLine(children) {
+  const list = code('LAB_IMAGE_CHILD_AVM');
+  if (children.added.length === 0 && children.removed.length === 0) {
+    return `- The child list is unchanged, so ${list} in ${code(LAB_IMAGE_PATH)} stands.`;
+  }
+  const parts = [
+    children.added.length ? `adds ${children.added.join(', ')}` : null,
+    children.removed.length ? `drops ${children.removed.join(', ')}` : null,
+  ].filter(Boolean);
+  return `- The child list ${parts.join(' and ')}, so ${list} in ${code(LAB_IMAGE_PATH)} was rewritten to match; the pull request carries that diff too.`;
+}
+
+/**
+ * The child record section, after the bumps: what the vendor stage printed
+ * and what changed, or that the run did not regenerate it (a dry run, or no
+ * builder module moved).
+ */
+function childrenSection(children) {
+  const blocks = `${code('AVM_CHILD_MODULES')} and ${code('AVM_CHILD_CALLS')}`;
+  const lines = ['', '#### Child modules', ''];
+  if (!children) {
+    return [
+      ...lines,
+      `- ${blocks} in ${code(ENV_PATH)} were not regenerated: no builder module the image vendors moved, so the vendor stage would print what the file already holds.`,
+    ];
+  }
+  if (children.dryRun) {
+    return [
+      ...lines,
+      `- Dry run: ${blocks} in ${code(ENV_PATH)} would be regenerated from ${PRINT_COMMAND}; nothing was written.`,
+    ];
+  }
+  return [
+    ...lines,
+    `- ${blocks} in ${code(ENV_PATH)} regenerated from ${PRINT_COMMAND}: ${children.modules} children pinned, ${children.calls} call lines, keyed by the bumped versions. The image build on this pull request verifies both blocks against what it resolves.`,
+    childListLine(children),
+  ];
+}
+
+/**
+ * The Markdown the workflow puts in the pull request body. `children` is
+ * the childRecordReport of a regenerated record, `{ dryRun: true }` when the
+ * run would have regenerated it, or null when it did not need to; the
+ * section is only written when a pin moved.
+ */
+export function summarize({ results, today, children = null }) {
   const moved = results.filter((result) => result.moved);
   return [
     `### Azure Verified Module pins, checked ${today}`,
@@ -298,6 +552,7 @@ export function summarize({ results, today }) {
     '| --- | --- | --- | --- |',
     ...results.map(tableRow),
     ...moved.flatMap(bumpSection),
+    ...(moved.length > 0 ? childrenSection(children) : []),
     '',
   ].join('\n');
 }

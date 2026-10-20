@@ -12,8 +12,11 @@
 # differ on purpose, to exercise the operators hcw-terraform-validate
 # evaluates; the spoke's is `>= 0.15.0` so that both vendored versions of
 # avm-res-network-virtualnetwork (0.15.0, a child of the connectivity
-# module, and 0.22.2) satisfy it and the highest must be chosen.
-# sandbox-check.mjs validates the builder's real default build as well.
+# module, and the builder's pin) satisfy it and the highest must be chosen.
+# The alz block's exact pin is the builder's own, and update-avm-versions.yml
+# moves it with the pin (the other three are constraints a bump may outgrow,
+# which the static test says). sandbox-check.mjs validates the builder's
+# real default build as well.
 terraform {
   required_version = ">= 1.12"
 
