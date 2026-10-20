@@ -828,10 +828,10 @@ describe("the docs/content directory as it stands", () => {
     .map((name) => `docs/content/${name}`)
     .filter((path) => checkRepoDraftPath(path).ok);
 
-  it("holds fourteen articles once the two contract docs are set aside", () => {
+  it("holds seventeen articles once the two contract docs are set aside", () => {
     expect(names).toContain("blog-template.md");
     expect(names).toContain("blog-machine.md");
-    expect(importable).toHaveLength(14);
+    expect(importable).toHaveLength(17);
     expect(importable).not.toContain("docs/content/blog-template.md");
     expect(importable).not.toContain("docs/content/blog-machine.md");
   });
