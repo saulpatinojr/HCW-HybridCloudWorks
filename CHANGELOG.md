@@ -594,7 +594,7 @@ This project has not cut a tagged release; entries are grouped under
 ### Changed
 
 - **Ambassador hub: the seeded programmes carry the published rules (read
-  2026-10-20) (#TBD).** The Evidence tab counts against what each programme
+  2026-10-20) (#1304).** The Evidence tab counts against what each programme
   publishes, not against a first seed's guess.
   - **Docker Captain** takes its rules from docker.com/community/captains and
     the Advocu join form: open internationally at 18+, the three tracks
