@@ -542,6 +542,24 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The weekly supply-chain check no longer skips the image scan and the
+  weekly issue in a week when a pin is behind (#1308)**. The check job's
+  first step runs `lab-pins-upstream.mjs --summary`, which exits 1 when a pin
+  is behind and 2 when a source could not be read, and records that code for
+  the steps after it: the scan of the published lab images, and the issue
+  that names what is due. A `run:` step with no `shell:` is `bash -e`, which
+  the step's own `set -uo pipefail` does not turn off, so
+  `node ...; code=$?` ended the step at the first non-zero exit, before the
+  code was recorded, and every later step was skipped. Two earlier runs
+  (13 and 14 October) failed this way, and so did the manual run after
+  #1320; the step can only fail like that when the checker exits non-zero,
+  and the 20 October run, which passed, found every pin current. Since the
+  weekly run now moves pins through pull requests that wait to be merged, a
+  pin is routinely behind when the check runs. The step is now `node ... || code=$?`. The test file that runs the
+  workflow's steps now runs them with `bash -e`, as the runner does; the
+  three new cases (exit 0, 1 and 2) fail on the old step, pass on the new
+  one, and the old step put back is caught by the same mutation check as the
+  others.
 - **The weekly lab supply-chain run now proposes tool and provider releases
   for the lab images, and no longer fails the whole week when cosign moves
   (#1308)**. Two gaps, both found by running the workflow's own steps
