@@ -296,16 +296,19 @@ jobs:
             exit 1
           fi
           # lab-host/bootstrap.sh is the script the owner runs as root on the
-          # lab host, so a patch may change it only on the two cosign pin lines:
-          # no other line, and no mode change, rename or binary hunk. The header
-          # of a file's diff is what comes before its first @@; its body is the
-          # rest, so a changed line that merely starts with dashes is still a
-          # changed line.
+          # lab host, so a patch may change it only on the two cosign pin lines,
+          # and only to the shapes the bumper writes (lab-pin-bumps.mjs): digits
+          # and dots after COSIGN_VERSION=, exactly 64 lowercase hex characters
+          # after COSIGN_SHA256=, and nothing after either, so a value cannot
+          # carry a command. No other line, and no mode change, rename or
+          # binary hunk. The header of a file's diff is what comes before its
+          # first @@; its body is the rest, so a changed line that merely starts
+          # with dashes is still a changed line.
           if grep -qx 'lab-host/bootstrap.sh' "${RUNNER_TEMP}/lab-pins/patched.txt"; then
             awk '/^diff --git a\/lab-host\/bootstrap\.sh /{keep=1; hunk=0; next} /^diff --git /{keep=0} keep && /^@@/{hunk=1} keep && !hunk' "${patch}" > "${RUNNER_TEMP}/lab-pins/bootstrap-header.txt"
             awk '/^diff --git a\/lab-host\/bootstrap\.sh /{keep=1; hunk=0; next} /^diff --git /{keep=0} keep && /^@@/{hunk=1} keep && hunk' "${patch}" > "${RUNNER_TEMP}/lab-pins/bootstrap-body.txt"
             odd="$(grep -E '^(old mode|new mode|deleted file mode|new file mode|rename |copy |similarity |GIT binary patch|Binary files )' "${RUNNER_TEMP}/lab-pins/bootstrap-header.txt" || true)"
-            extra="$(grep -E '^[-+]' "${RUNNER_TEMP}/lab-pins/bootstrap-body.txt" | grep -vE '^[-+]COSIGN_(VERSION|SHA256)=' || true)"
+            extra="$(grep -E '^[-+]' "${RUNNER_TEMP}/lab-pins/bootstrap-body.txt" | grep -vE '^[-+](COSIGN_VERSION=[0-9.]+|COSIGN_SHA256=[0-9a-f]{64})$' || true)"
             if [ -n "${odd}${extra}" ]; then
               echo "::error::The ${SET} patch changes lab-host/bootstrap.sh other than its COSIGN_VERSION and COSIGN_SHA256 lines; refused."
               exit 1

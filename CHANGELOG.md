@@ -565,8 +565,12 @@ This project has not cut a tagged release; entries are grouped under
   have failed with no pull request for any set. The host set lists
   `lab-host/bootstrap.sh`, and its pull-request text says so. Because that
   is the script the owner runs as root on the lab host, the job that holds
-  the App token now lets a patch change it only on its two cosign lines: no
-  other line, and no mode change, rename or binary hunk. An independent
+  the App token now lets a patch change it only on its two cosign lines, and
+  only to the shapes the bumper writes (digits and dots after
+  `COSIGN_VERSION=`, exactly 64 lowercase hex characters after
+  `COSIGN_SHA256=`, nothing after either, so a value cannot carry a
+  command; CodeRabbit caught a first version that checked only how the line
+  started): no other line, and no mode change, rename or binary hunk. An independent
   review of this change found the new per-set guard failed open if
   `git status` itself failed; it now writes to files with plain commands, as
   the existing guard does. Tests keep this from coming back.
