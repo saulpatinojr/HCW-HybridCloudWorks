@@ -503,13 +503,15 @@ const DOCKER_CAPTAIN_TRACKS = [
 
 /**
  * Docker Captain's counted rows since revision 2, with the evidence types
- * its hands-on row lists. Revision 3 (#1302) took `manual` off `labs`:
- * readiness (readiness.js) matches a row to a requirement by sourceModule
- * alone, and the monthly audience rows (lib/timers/ambassador-audience.js)
- * are manual, filed under `reach`, so with `manual` here two audience months
- * would read as "Hands-on material" met with no lab on file. Revision 2's
- * list keeps `manual` in SUPERSEDED_SEED_VALUES, so a stored, unedited
- * revision-2 seed is recognised and brought up.
+ * its hands-on row lists. Revision 3 (#1302) took `manual` off `labs`: while
+ * readiness (readiness.js) matched a row to a requirement by sourceModule
+ * alone, the monthly audience rows (lib/timers/ambassador-audience.js) are
+ * manual, so with `manual` here two audience months would read as "Hands-on
+ * material" met with no lab on file. Revision 4 (#1313) puts it back: those
+ * rows now name `reach` (`requirementId`) and count toward it only, and the
+ * owner may file hands-on material by hand as `manual`. Every earlier list
+ * stays in SUPERSEDED_SEED_VALUES, so a stored, unedited revision-2 or -3
+ * seed is recognised and brought up.
  */
 const dockerCaptainRequirements = (labsEvidenceTypes) => [
   requirement(
@@ -560,7 +562,8 @@ const dockerCaptainRequirements = (labsEvidenceTypes) => [
  * the tracks and the term from docker.com and the join form, with a `reach`
  * requirement that counts `manual` evidence; revision 3 (#1302) takes
  * `manual` off its `labs` requirement, so the monthly audience rows the
- * timer files under `reach` do not read as hands-on material
+ * timer files under `reach` do not read as hands-on material, and revision 4
+ * (#1313) puts it back once those rows name their requirement
  * (`dockerCaptainRequirements` above says why). Microsoft MVP's revision 2
  * (#1302) adds `manual` to its `reach` requirement for the same rows. A
  * requirements list the owner edited is left as it is. The two window
@@ -574,8 +577,10 @@ const dockerCaptainRequirements = (labsEvidenceTypes) => [
  * FOR THE OWNER, BEHAVIOUR AND NOT A BUG: readiness (readiness.js) counts a
  * row that names no program (`programIds: []`) toward EVERY program, so a
  * general manual row the owner files by hand counts toward both `reach`
- * requirements as well. The audience timer's rows name their program and
- * count for that one only.
+ * requirements as well, and a manual row that names no requirement counts
+ * toward every requirement that lists `manual`. The audience timer's rows
+ * name their program and their requirement (`reach`) and count for that one
+ * only.
  */
 /** One step of a seed's history: the revision that landed and the values it replaced. */
 const revised = (revision, fields) => Object.freeze({ revision, fields: Object.freeze(fields) });
@@ -709,6 +714,8 @@ export const SUPERSEDED_SEED_VALUES = Object.freeze({
       }),
       // Revision 3 (#1302) took `manual` off `labs`; the other rows are unchanged.
       revised(3, { requirements: dockerCaptainRequirements(['labs', 'manual']) }),
+      // Revision 4 (#1313) put `manual` back on `labs`, now that the audience rows name `reach`.
+      revised(4, { requirements: dockerCaptainRequirements(['labs']) }),
     ]),
   }),
   'program-microsoft-elevate-educator-expert': Object.freeze({
@@ -1009,7 +1016,7 @@ export const DEFAULT_PROGRAMS = Object.freeze([
     renewalCadence: 'annual',
     expirationRule:
       'One-year term; renewal needs the joining criteria kept up and continuous contribution, evaluated by Docker at term end.',
-    requirements: dockerCaptainRequirements(['labs']),
+    requirements: dockerCaptainRequirements(['labs', 'manual']),
     recommendedActivities: [
       'Publish a monthly view figure for the site and record it as evidence',
       'Docker tutorials built from the lab images',

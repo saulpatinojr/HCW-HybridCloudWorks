@@ -54,6 +54,7 @@ export {
 export { validateApplication, validateEvidence, validateProgram } from './ambassador/validate.js';
 export {
   computeReadiness,
+  evidenceCountsToward,
   evidenceRelevant,
   parsePeriod,
   readinessUnit,

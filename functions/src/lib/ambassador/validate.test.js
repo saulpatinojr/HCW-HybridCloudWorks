@@ -200,4 +200,20 @@ describe('field rules', () => {
       }).value.snapshot
     ).toEqual({ title: 'S', date: '2026-01-02', url: null, capturedAt: null });
   });
+
+  // #1313: the requirement a row is filed under; null or blank means none.
+  it('evidence: requirementId is trimmed text, blank is none, a patch may clear it, and it is capped', () => {
+    const base = { title: 'T', date: '2026-01-02' };
+    expect(validateEvidence({ ...base, requirementId: '  reach ' }).value.requirementId).toBe('reach');
+    expect(validateEvidence({ ...base, requirementId: '' }).value.requirementId).toBeNull();
+    expect(validateEvidence({ ...base, requirementId: null }).value.requirementId).toBeNull();
+    expect(validateEvidence({ ...base }).value).not.toHaveProperty('requirementId');
+    expect(validateEvidence({ requirementId: 'reach' }, { partial: true })).toEqual({
+      value: { requirementId: 'reach' },
+    });
+    expect(validateEvidence({ requirementId: null }, { partial: true })).toEqual({
+      value: { requirementId: null },
+    });
+    expect(validateEvidence({ ...base, requirementId: 'x'.repeat(300) }).value.requirementId).toHaveLength(100);
+  });
 });

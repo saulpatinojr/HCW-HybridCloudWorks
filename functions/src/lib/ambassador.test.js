@@ -17,6 +17,7 @@ import {
   canTransition,
   computeReadiness,
   createAmbassadorHandlers,
+  evidenceCountsToward,
   importedEvidenceId,
   isNotProvisioned,
   parsePeriod,
@@ -1377,21 +1378,21 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     const h = createAmbassadorHandlers({ guard: guardAs('editor'), store, ...fixed });
     await h.listPrograms(makeRequest(), context);
     expect(store.data.get('ambassador').get(GITKRAKEN).seedRevision).toBe(revision);
-    // The MVP (revision 2, #1302) and Docker Captain (revision 3, #1302 on
-    // top of the 2026-10-20 rules) carry stamps of their own; a seed with
-    // no history carries none.
+    // The MVP (revision 2, #1302) and Docker Captain (revision 4, #1313 on
+    // top of #1302 and the 2026-10-20 rules) carry stamps of their own; a
+    // seed with no history carries none.
     expect(store.data.get('ambassador').get('program-microsoft-mvp').seedRevision).toBe(2);
-    expect(store.data.get('ambassador').get('program-docker-captain').seedRevision).toBe(3);
+    expect(store.data.get('ambassador').get('program-docker-captain').seedRevision).toBe(4);
     expect(store.data.get('ambassador').get('program-microsoft-mct').seedRevision).toBeUndefined();
   });
 
-  // #1302: a stored MVP or Docker Captain seed whose requirements are still
-  // the previous revision's takes the current list — `manual` under `reach`,
-  // and off Docker's `labs` — in one patch; the edited case is proven on the
-  // MVP earlier in this file.
+  // #1302, #1313: a stored MVP or Docker Captain seed whose requirements are
+  // still the previous revision's takes the current list — `manual` under
+  // `reach`, and `manual` back on Docker's `labs` — in one patch; the edited
+  // case is proven on the MVP earlier in this file.
   it.each([
     ['program-microsoft-mvp', 2],
-    ['program-docker-captain', 3],
+    ['program-docker-captain', 4],
   ])('replaces an unedited requirements list on %s with revision %i', (id, rev) => {
     const current = DEFAULT_PROGRAMS.find((p) => p.id === id);
     const step = SUPERSEDED_SEED_VALUES[id].revisions.at(-1);
@@ -1405,27 +1406,86 @@ describe('membership upkeep, GitKraken and AWS Community Builders (2026-10-11)',
     expect(seedBackfillFor({ ...stored, ...patch }, current)).toBeNull();
   });
 
-  // The audience rows are manual evidence filed under Docker's `reach`;
-  // readiness matches by sourceModule alone, so `labs` must not list
-  // `manual` or two audience months would read as hands-on material met.
-  it('counts Docker Captain’s audience rows under reach and never as hands-on material, with revision 2’s labs list kept for the compare', () => {
+  // #1313: the audience rows are manual evidence that name Docker's `reach`.
+  // `community` and `labs` also accept `manual` (the owner files hands-on
+  // material and Discord help by hand), and two audience months must meet
+  // neither; a hand-filed manual row that names no requirement counts where it
+  // always did.
+  describe('a row that names a requirement', () => {
     const docker = DEFAULT_PROGRAMS.find((p) => p.id === 'program-docker-captain');
-    const types = Object.fromEntries(docker.requirements.map((r) => [r.id, r.evidenceTypes]));
-    expect(types.labs).toEqual(['labs']);
-    expect(types.reach).toEqual(['manual']);
-    const v2 = SUPERSEDED_SEED_VALUES['program-docker-captain'].revisions.at(-1).fields.requirements;
-    expect(v2.find((r) => r.id === 'labs').evidenceTypes).toEqual(['labs', 'manual']);
     const audience = {
       id: 'e-audience',
       title: 'Audience, September 2026',
       date: '2026-09-30',
       sourceModule: 'manual',
       programIds: ['program-docker-captain'],
+      requirementId: 'reach',
     };
-    const readiness = computeReadiness(docker, [audience, { ...audience, id: 'e-audience-2', date: '2026-08-31' }]);
-    const byId = Object.fromEntries(readiness.requirements.map((r) => [r.id, r]));
-    expect(byId.reach.count).toBe(2);
-    expect(byId.labs).toMatchObject({ count: 0, met: false });
+    const countsOf = (rows) =>
+      Object.fromEntries(computeReadiness(docker, rows).requirements.map((r) => [r.id, r]));
+
+    it('restores manual on Docker Captain’s labs through revision 4, keeping revision 3’s list for the compare', () => {
+      const types = Object.fromEntries(docker.requirements.map((r) => [r.id, r.evidenceTypes]));
+      expect(types.labs).toEqual(['labs', 'manual']);
+      expect(types.community).toEqual(['manual', 'speaking']);
+      expect(types.reach).toEqual(['manual']);
+      const step = SUPERSEDED_SEED_VALUES['program-docker-captain'].revisions.at(-1);
+      expect(step.revision).toBe(4);
+      expect(step.fields.requirements.find((r) => r.id === 'labs').evidenceTypes).toEqual(['labs']);
+    });
+
+    it('counts toward that requirement only: two audience months meet reach and neither community nor labs', () => {
+      const byId = countsOf([audience, { ...audience, id: 'e-audience-2', date: '2026-08-31' }]);
+      expect(byId.reach).toMatchObject({ count: 2, met: true });
+      expect(byId.community).toMatchObject({ count: 0, met: false });
+      expect(byId.labs).toMatchObject({ count: 0, met: false });
+    });
+
+    it('is not needed for a hand-filed manual row: with no requirement named it counts under every requirement that lists manual, as before', () => {
+      const { requirementId: _named, ...hand } = audience;
+      const byId = countsOf([hand, { ...hand, id: 'e-hand-2' }]);
+      expect(byId.reach.count).toBe(2);
+      expect(byId.community.count).toBe(2);
+      expect(byId.labs.count).toBe(2);
+      expect(byId.content.count).toBe(0);
+    });
+
+    it('can narrow where a row counts and never widen it', () => {
+      // A content row naming `reach`: reach does not accept content, and
+      // naming does not make it, so it counts nowhere (not under `content`
+      // either, since it names a different requirement).
+      const contentNamingReach = { ...audience, id: 'e-content', sourceModule: 'content' };
+      // A manual row naming a requirement the programme does not have.
+      const namingNothingReal = { ...audience, id: 'e-nowhere', requirementId: 'no-such-requirement' };
+      const byId = countsOf([contentNamingReach, namingNothingReal]);
+      for (const row of Object.values(byId)) expect(row.count, row.id).toBe(0);
+    });
+
+    // The same cases as the frontend's ambassadorModel.test.js
+    // (`evidenceCountsToward`), which mirrors this rule for the checklist.
+    const reach = { id: 'reach', evidenceTypes: ['manual'] };
+    const community = { id: 'community', evidenceTypes: ['manual', 'speaking'] };
+    const anything = { id: 'any', evidenceTypes: [] };
+    it.each([
+      ['a manual row naming nothing counts under every requirement that lists manual', { sourceModule: 'manual' }, reach, true],
+      ['…and under the others that list it', { sourceModule: 'manual' }, community, true],
+      ['a row of a source the requirement does not list does not count', { sourceModule: 'content' }, community, false],
+      ['a requirement listing no types accepts any source', { sourceModule: 'content' }, anything, true],
+      ['a manual row naming reach counts toward reach', { sourceModule: 'manual', requirementId: 'reach' }, reach, true],
+      ['…and toward no other requirement that lists manual', { sourceModule: 'manual', requirementId: 'reach' }, community, false],
+      ['naming never widens: a source the requirement does not list still does not count', { sourceModule: 'content', requirementId: 'reach' }, reach, false],
+      ['a name that matches nothing counts nowhere', { sourceModule: 'manual', requirementId: 'nope' }, reach, false],
+      ['an empty or non-text name means none', { sourceModule: 'manual', requirementId: '' }, community, true],
+      ['…including null', { sourceModule: 'manual', requirementId: null }, community, true],
+    ])('evidenceCountsToward: %s', (_label, item, requirement, expected) => {
+      expect(evidenceCountsToward(item, requirement)).toBe(expected);
+    });
+
+    it('is explained in the readiness sentence', () => {
+      expect(computeReadiness(docker, [audience]).explanation).toContain(
+        'an item filed under a requirement counts toward that requirement only'
+      );
+    });
   });
 
   it('cleans upkeep and the tracker link, and refuses what is not one', () => {

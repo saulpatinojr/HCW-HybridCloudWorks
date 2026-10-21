@@ -110,6 +110,14 @@ export const AUDIENCE_PROGRAMS = Object.freeze([
   Object.freeze({ programId: 'program-microsoft-mvp', requirementId: 'reach' }),
 ]);
 
+/**
+ * The requirement a programme's row is filed under. The row stores it as
+ * `requirementId`, which readiness (lib/ambassador/readiness.js) reads, so the
+ * row counts toward that requirement and no other that accepts `manual`.
+ */
+export const requirementFor = (programId) =>
+  AUDIENCE_PROGRAMS.find((entry) => entry.programId === programId)?.requirementId ?? null;
+
 /** Who the rows say created them; the hub shows it beside the row. */
 export const CREATED_BY = 'ambassadorAudienceMonthly';
 
@@ -230,6 +238,7 @@ export function audienceRow({ programId, month, pageViews, podcast, readAt }) {
     },
     technology: [],
     programIds: [programId],
+    requirementId: requirementFor(programId),
     qualificationPeriod: null,
     verificationStatus: 'unverified',
     notes: '',
@@ -241,7 +250,15 @@ export function audienceRow({ programId, month, pageViews, podcast, readAt }) {
 }
 
 /** The fields a re-run may change on a stored row; everything else is the owner's. */
-const OWNED_FIELDS = ['title', 'description', 'date', 'snapshot', 'metrics', 'programIds'];
+const OWNED_FIELDS = [
+  'title',
+  'description',
+  'date',
+  'snapshot',
+  'metrics',
+  'programIds',
+  'requirementId',
+];
 
 /** A failed Cloudflare read: the status code and nothing of the body. */
 export class AudienceReadError extends Error {
@@ -353,11 +370,19 @@ export function missingSettings(env = process.env) {
  * Whether the month has a row under every programme already — present or
  * soft-deleted, since a row the owner removed is still a month that was
  * recorded. The daily run reads nothing when this is true.
+ *
+ * A live row stored before rows carried their requirement (#1313) counts as
+ * not yet recorded, so the next run reads the month once more and its update
+ * files the row under `reach`; until then the row would still read as
+ * evidence for every requirement that accepts `manual`. A removed row is left
+ * alone, so a month the owner deleted is not read again every day.
  */
 export async function monthRecorded(store, monthKey) {
-  for (const { programId } of AUDIENCE_PROGRAMS) {
+  for (const { programId, requirementId } of AUDIENCE_PROGRAMS) {
     const id = audienceEvidenceId(monthKey, programId);
-    if (!(await store.readDoc(CONTAINER, id, id))) return false;
+    const row = await store.readDoc(CONTAINER, id, id);
+    if (!row) return false;
+    if (!row.softDeletedAt && row.requirementId !== requirementId) return false;
   }
   return true;
 }
