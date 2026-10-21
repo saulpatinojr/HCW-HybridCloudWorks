@@ -14,7 +14,7 @@
     "deploy": "echo \"Use the deploy-functions workflow, or: func azure functionapp publish $(terraform -chdir=../infra output -raw function_app_name)\" && exit 1"
   },
   "engines": {
-    "node": "^24.19.0"
+    "node": "^24.20.0"
   },
   "dependencies": {
     "@aws-sdk/client-pricing": "^3.1152.0",
