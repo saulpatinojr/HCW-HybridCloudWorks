@@ -54,6 +54,7 @@ function runBlock(job, name) {
 
 const PROPOSE = jobText('propose', 'pull-request');
 const PULL_REQUEST = jobText('pull-request', 'check');
+const CHECK = jobText('check');
 
 /** The files each set may touch, as open-lab-pin-pr.mjs records them before anything runs. */
 const PATHS = {
@@ -67,6 +68,12 @@ const PATHS = {
 const STUB_UPSTREAM = `
 import { readFileSync, writeFileSync } from 'node:fs';
 const argv = process.argv.slice(2);
+// The check job's call: write a summary and exit with the code the check gives
+// (0 every pin current, 1 at least one behind, 2 a source could not be read).
+if (argv.includes('--summary')) {
+  writeFileSync(argv[argv.indexOf('--summary') + 1], '| Component | Status |\\n| x | BEHIND |\\n');
+  process.exit(Number(process.env.STUB_PINS_EXIT || 0));
+}
 const set = argv[argv.indexOf('--bump') + 1];
 const skip = (process.env.STUB_SKIP || '').split(',');
 const edit = (file, from, to) => {
@@ -126,9 +133,14 @@ afterEach(() => {
   rmSync(temp, { recursive: true, force: true });
 });
 
+/**
+ * Run a step's script the way the runner does: a `run:` step with no `shell:`
+ * is `bash -e {0}`, so a command that fails ends the step unless the script
+ * handles the failure itself. Running it without -e would hide exactly that.
+ */
 function sh(script, { cwd, env = {} }) {
   const path = `${forward(dirname(process.execPath))}:${process.env.PATH}`;
-  return spawnSync('bash', ['-c', script], {
+  return spawnSync('bash', ['-e', '-c', script], {
     cwd,
     encoding: 'utf8',
     env: { ...process.env, PATH: path, GITHUB_STEP_SUMMARY: '/dev/null', ...env },
@@ -373,5 +385,42 @@ describe.skipIf(!runnable)('lab-supply-chain.yml, pull-request: the patch is jud
   it('does not look at bootstrap.sh when the patch does not touch it', () => {
     const r = judge(realPatch(() => edit('lab-host/ansible/group_vars/all.yml', 'engine: 1', 'engine: 2')));
     expect(r.status, output(r)).toBe(0);
+  });
+});
+
+// The check job reads the exit code of `lab-pins-upstream.mjs --summary` (0 every
+// pin current, 1 at least one behind, 2 a source could not be read) and acts on
+// it in later steps. The runner starts a `run:` step with `bash -e`, so a step
+// that does not handle the code itself ends at the first non-zero exit, before
+// it records it: every later step is then skipped, including the scan of the
+// published images and the weekly issue. Three runs failed that way (#1308),
+// each one on a week with a pin behind.
+describe.skipIf(!runnable)('lab-supply-chain.yml, check: the pin check step records its exit code', () => {
+  beforeEach(seed);
+
+  function pinsStep(code) {
+    const output = join(temp, 'github-output.txt');
+    const r = sh(runBlock(CHECK, 'Pins against upstream'), {
+      cwd: work,
+      env: { RUNNER_TEMP: temp, GITHUB_OUTPUT: output, STUB_PINS_EXIT: String(code) },
+    });
+    const recorded = existsSync(output) ? readFileSync(output, 'utf8').match(/^exit=(.*)$/m)?.[1] : undefined;
+    return { r, recorded };
+  }
+
+  it.each([
+    [0, 'every pin is current'],
+    [1, 'at least one pin is behind'],
+    [2, 'a source could not be read'],
+  ])('finishes and records exit=%i when %s, so the later steps run and decide what to do', (code) => {
+    const { r, recorded } = pinsStep(code);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(recorded).toBe(String(code));
+  });
+
+  it('still hands the summary to the run page when a pin is behind', () => {
+    const { r } = pinsStep(1);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(existsSync(join(temp, 'pins.md'))).toBe(true);
   });
 });
