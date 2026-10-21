@@ -563,6 +563,15 @@ This project has not cut a tagged release; entries are grouped under
   role's own container name; putting each of eight breaks back in turn turned
   it red. CI runs it in the `ansible-lint (lab-host)` job. It does not prove a
   live restart, which shows on the first bootstrap that upgrades Docker.
+  A Portainer that has only just started may still read its environment as
+  down for a moment, and the role runs the check straight after the restart,
+  so `hcw-portainer-check` now asks again every 2 seconds for up to
+  `portainer_check_environment_wait_seconds` (30) while the environment reads
+  down. A refused token, a missing environment or an odd answer still fails at
+  once, so a real outage is reported about half a minute later at most. Three
+  new checks in `hcw-portainer-check.test.py` cover reading up inside the
+  wait, still reading down when it ends, and a missing environment not being
+  waited for; breaking each of those three ways turned the tests red.
 - **The weekly supply-chain check no longer skips the image scan and the
   weekly issue in a week when a pin is behind (#1308)**. The check job's
   first step runs `lab-pins-upstream.mjs --summary`, which exits 1 when a pin

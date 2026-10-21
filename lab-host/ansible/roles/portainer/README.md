@@ -104,7 +104,7 @@ standard library only, `files/hcw-portainer-check`) makes six kinds of
 | `/system/status` | `Version` |
 | `/system/version` | `ServerEdition` (EE or BE as `EE`, CE as `CE`; anything else leaves the field out) and `UpdateAvailable`, said in the journal line |
 | `/licenses` | `valid` and `expiresAt` (epoch seconds). Valid when one licence says so; not valid when one says so and none is; unknown when Portainer says neither, which a fresh instance does |
-| `/endpoints` | The environment whose `Name` is `portainer_check_environment_name` (`local`), found by name because its `Id` is 3 on this host, not 1; `Status` 1 is up |
+| `/endpoints` | The environment whose `Name` is `portainer_check_environment_name` (`local`), found by name because its `Id` is 3 on this host, not 1; `Status` 1 is up. While it reads down the check asks again every 2 seconds, for up to `portainer_check_environment_wait_seconds`, because a Portainer that has only just started can read down for a moment |
 | `/endpoints/<id>/docker/containers/json?all=true` | Docker's own list: `State` counted as running, restarting and exited; `(unhealthy)` in `Status` counted as unhealthy |
 | `/docker/<id>/containers/<container>/image_status` | One per running container: `updated` or `outdated` is a verdict and is counted as checked; `processing`, `skipped` and `error` are not. The reads share a 90 s budget, so a slow registry leaves containers unchecked rather than failing the run |
 
@@ -238,6 +238,7 @@ systemctl list-timers hcw-portainer-check.timer --no-pager
 | `portainer_check_script`, `portainer_check_unit` | `/usr/local/libexec/hcw-portainer-check`, `hcw-portainer-check` | Where the check is installed, and its unit and journal name |
 | `portainer_check_token_file`, `portainer_check_config_file` | `/etc/hcw/portainer/api-token`, `/etc/hcw/portainer/check.json` | The token (root `0600`) and the configuration beside it; the directory is derived in `vars/main.yml` |
 | `portainer_check_report_timeout_seconds` | `60` | How long the site's CLI may take |
+| `portainer_check_environment_wait_seconds` | `30` | How long the check keeps asking while the environment reads down (a Portainer that has only just started); `0` asks once |
 | `portainer_check_agent_user`, `_group`, `_env_file`, `_app_dir`, `_node`, `portainer_check_systemd_run`, `portainer_check_report_cli` | the coder role's values | The lab agent's user and paths, `systemd-run`, and the CLI |
 
 `meta/argument_specs.yml` is the contract.

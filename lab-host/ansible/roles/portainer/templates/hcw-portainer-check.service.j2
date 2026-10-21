@@ -31,8 +31,9 @@ ExecStart={{ portainer_check_script }} --config {{ portainer_check_config_file }
 # Its own name in the journal, so `journalctl -t {{ portainer_check_unit }}` reads
 # the check's lines without systemd's around them.
 SyslogIdentifier={{ portainer_check_unit }}
-# Five short reads, one image read per running container within the script's
-# own 90 s budget, and the CLI's {{ portainer_check_report_timeout_seconds }} s with 30 s of grace.
+# Five short reads, up to {{ portainer_check_environment_wait_seconds }} s of waiting for the environment to read up,
+# one image read per running container within the script's own 90 s budget, and
+# the CLI's {{ portainer_check_report_timeout_seconds }} s with 30 s of grace.
 TimeoutStartSec=6min
 Nice=10
 UMask=0077

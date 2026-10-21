@@ -39,6 +39,9 @@ portainer_check_token_file: /etc/hcw/portainer/api-token
 portainer_check_config_file: /etc/hcw/portainer/check.json
 # How long the site's CLI may take before systemd stops it and the run fails.
 portainer_check_report_timeout_seconds: 60
+# How long the check keeps asking while the environment reads down, for a
+# Portainer that has only just started (#1328). Zero asks once.
+portainer_check_environment_wait_seconds: 30
 # The lab agent, whose CLI hands the site the report. The same values as the
 # coder role's coder_automation_agent_* (roles do not read each other's
 # variables), which repeat labs_agent_user (group_vars/all.yml),
