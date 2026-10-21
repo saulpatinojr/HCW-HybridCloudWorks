@@ -38,7 +38,7 @@
 #
 # See README.md beside this file for the load-and-run commands.
 
-FROM docker/sandbox-templates:claude-code@sha256:868e3f5ef10579e06903d42e86448851ed59319ab8b9fba6dea2772c449bb2a6
+FROM docker/sandbox-templates:claude-code@sha256:5df8839d9d0346319ddae72e1eb7690044b2f0142e34f32711f2d9c6cb1f727d
 
 # System packages as root (base-images guidance). The base image, Ubuntu,
 # already carries curl, unzip and ca-certificates; terraform is one verified
