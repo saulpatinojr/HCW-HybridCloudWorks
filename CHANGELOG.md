@@ -696,6 +696,21 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Azure Architecture MCP Appliance on Azure MCP Server 3.0: the architecture
+  analysis and design proposal is on the docs site (#1314).**
+  `docs/architecture/azure-architecture-mcp-appliance.md` is the analysis the
+  owner asked for on 2026-10-21 before deciding whether to open a new App
+  repository and a new AddOn repository for the appliance. It pins Azure MCP
+  Server 3.0.0 (tag `Azure.Mcp.Server-3.0.0`, branch `release/azure/3.x`),
+  verifies each capability the brief listed against the pinned source and
+  Microsoft Learn, corrects four assumptions (no Resource Graph query tool, no
+  Cost Management tool, local-only Terraform, aztfexport, conftest and azqr
+  tools, elicitation-gated sensitive tools), recommends on-behalf-of
+  authentication for labs and production, and lays out the evidence and ADR
+  models, the detector and MCP tool catalogues, the promotion matrix,
+  deployment, security, threat model, testing, roadmap, risks and probability
+  estimates. The page is a proposal: nothing is provisioned and no repository
+  was changed by it.
 - **Ambassador hub: the seeded programmes carry the published rules (read
   2026-10-20) (#1304).** The Evidence tab counts against what each programme
   publishes, not against a first seed's guess.
