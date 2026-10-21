@@ -163,6 +163,7 @@ nav:
       - Resource validation report: architecture/resource-validation-report.md
       - Published pages audit 2026-09-06: architecture/published-pages-audit-2026-09-06.md
       - Labs host: architecture/labs-host.md
+      - Azure Architecture MCP Appliance (proposal): architecture/azure-architecture-mcp-appliance.md
       - App-to-AddOn program:
           - architecture/app-to-addon/README.md
           - Migration: architecture/app-to-addon/migration.md
