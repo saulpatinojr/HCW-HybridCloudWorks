@@ -877,13 +877,15 @@ describe('the lab image tools and providers plan (image-tools)', () => {
   const readmeText = real(README_PATH);
   const files = { [VERSIONS_ENV_PATH]: envText, [README_PATH]: readmeText };
   const env = readEnv(envText);
-  // A release newer than the pin, in the same major line, worked out from the
-  // pin in the real file. These cases start from the real versions.env, so a
-  // version typed in here stops being "newer" the day the pin reaches it
-  // (azurerm 5.10.0 did, and failed this file on the bump that moved it).
+  // The next minor release after the pin, in the same major line, worked out
+  // from the pin in the real file. These cases start from the real
+  // versions.env, so a version typed in here stops being "newer" the day the
+  // pin reaches it (azurerm 5.10.0 did, and failed this file on the bump that
+  // moved it). The routes below are the only answers the planner gets, so
+  // whether upstream has really published this release does not matter.
   const nextMinor = (version) => {
     const [major, minor] = version.split('.').map(Number);
-    return `${major}.${minor + 100}.0`;
+    return `${major}.${minor + 1}.0`;
   };
 
   it('moves terraform when a newer release exists and its sha256sums matches', async () => {
