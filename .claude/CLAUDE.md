@@ -35,9 +35,12 @@ next one is about how *commands* are written. Both apply at once.
   information. Exact names, identifiers, command output and the line between
   "checked" and "not checked" all still go in, after the plain explanation or
   in a code block.
-- **Where this applies:** replies, and the prose of PR descriptions and issues
-  written for the owner to read. Code comments, commit messages and one-line
-  replies on review threads keep the repository's existing style.
+- **Where this applies:** everywhere in this repository. Replies, PR
+  descriptions and issues, documentation, code comments, commit messages and
+  replies on review threads all get the same plain wording. Length is not
+  changed by this: a commit subject stays short and a code comment stays brief,
+  but the words in them are ordinary ones, and a term that needs explaining is
+  explained or linked.
 
 ## Owner-facing instructions must be runnable, not descriptive
 
