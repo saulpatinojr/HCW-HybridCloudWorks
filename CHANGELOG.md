@@ -542,6 +542,28 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The lab image's Terraform, Helm and azurerm pins move to their newest
+  releases, and the tool bump's tests stop depending on today's pins
+  (#1308)**. The weekly scan reports vulnerabilities in the Go code inside
+  the tools and providers baked into the lab images. Terraform 1.16.5 to
+  1.16.6 and Helm 4.3.0 to 4.3.1 are routine moves (Terraform's repository
+  still pins Go 1.26.8 at that tag, which the scan lists as vulnerable, so
+  they should not be expected to clear findings). The azurerm provider 5.9.0
+  to 5.10.0 matters more: its repository pins Go 1.26.9 at that tag, the
+  version the scan names as the fix for the standard-library findings in
+  5.9.0. Each pin moved with the checksum read from its publisher by
+  `node scripts/lab-pins-upstream.mjs --bump image-tools`, the set the
+  weekly workflow does not run, so these releases would not have arrived on
+  their own. Merging publishes the images; the next weekly scan, not this
+  change, shows how many findings are gone. What the scan still lists for
+  the alz, modtm and azapi providers, kubeconform, kubectl and the Azure
+  CLI's bundled Python packages is already at the newest release of each,
+  so it waits on those publishers. Two cases in `lab-pin-bumps.test.mjs`
+  also invented a "newer" release (azurerm 5.10.0, Terraform 1.17.0) on top
+  of the real `versions.env`, so each stops being newer the day the pin
+  reaches it, and azurerm 5.10.0 failed them on this very bump. They now
+  work the newer version out from the pin, and pass with the old pins and
+  the new ones.
 - **An evidence row can name the one requirement it counts toward, and the
   monthly audience rows do, so two audience months no longer read as
   community work or hands-on material (#1313)**. Readiness matched a row to
