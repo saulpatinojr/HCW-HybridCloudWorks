@@ -10,7 +10,7 @@
 ## 1. Executive summary
 
 - **Azure MCP Server 3.0 is a real, pinnable, GA baseline.** It shipped on 2026-10-12 as tag `Azure.Mcp.Server-3.0.0` (commit `61715e6a9054d7922809b01e08a2efa85e032a6d`); the `release/azure/3.x` branch carries five commits past it (changelog edits, an Advisor remediation deserialisation backport and SSRF updates) with no 3.0.1 tag. `main` is already at `4.0.0-beta.2` (2026-10-20). Pin **3.0.0** by package version and the container by **digest**; treat the 3.x branch head as the source of truth for docs, not as a runtime version.
-- **Most of what the owner listed exists in 3.0, but three assumptions need correcting.** There is **no generic Azure Resource Graph query tool** (Resource Graph is used internally by `advisor`, `insights` and `optimization`, and `aztfexport query` only generates a command). There is **no Cost Management tool** (`pricing` reads retail prices and `optimization` reads Advisor cost recommendations). The **Terraform, aztfexport, conftest and azqr tools are local-only**: they are marked `LocalRequired`, they generate commands rather than execute them (except `extension azqr`, which runs a locally installed azqr 3.x), and the server hides them in HTTP mode. A remotely hosted Azure MCP cannot export Terraform or run azqr for you.
+- **Most of what the owner listed exists in 3.0, but four assumptions need correcting.** There is **no generic Azure Resource Graph query tool** (Resource Graph is used internally by `advisor`, `insights` and `optimization`, and `aztfexport query` only generates a command). There is **no Cost Management tool** (`pricing` reads retail prices and `optimization` reads Advisor cost recommendations). The **aztfexport, conftest and azqr tools are local-only**: they are marked `LocalRequired`, they generate commands rather than execute them (except `extension azqr`, which runs a locally installed azqr 3.x), and the server hides them in HTTP mode; the Azure Terraform documentation and Verified Modules lookups, by contrast, work remotely (section 5.3). A remotely hosted Azure MCP cannot export Terraform or run azqr for you. And **sensitive tools are gated by MCP elicitation**: a tool marked `Secret` or `Destructive` is refused when the client cannot ask a human, which this design relies on rather than works around.
 - **Identity: OBO is first-class and is the production and lab answer.** `--transport http` plus `--outgoing-auth-strategy UseOnBehalfOf` validates an inbound Entra bearer token (scope `Mcp.Tools.ReadWrite` on the server app registration), then exchanges it with a federated identity credential backed by a user-assigned managed identity. No client secret, no stored user token, per-user RBAC and audit. The exchange is **bound to the inbound token's tenant**, so "select tenant" means "sign in to that tenant"; multi-tenant consent for the server app is a validation spike, not a given.
 - **Recommended shape:** Azure MCP stays the source of truth for Azure observations. The **Full Appliance** (new App repository) is the MCP host that calls Azure MCP directly, runs on Container Apps beside a pinned Azure MCP container, and owns the decision, claim, evidence, contradiction, review and governance records. The **AddOn** (new AddOn repository) is a derived, upload-and-ingest edition that never holds an Azure credential and never calls Azure: it normalises evidence handed to it, runs deterministic detectors, and exposes the same MCP tool contract. The **website** owns sign-in, the chat loop, the tenant and subscription pickers, and the views; in the lab path it is the only component that forwards the user's delegated token to Azure MCP, request-scoped and never persisted.
 - **Why the website integrates only with the AddOn:** the AddOn's edition boundary (no cloud SDK, refuses to start under identity variables, content-free logs, two-hour expiry) is the strongest tested property the program has. Keeping Azure calls out of the AddOn keeps that property intact and keeps the lab host free of Azure egress. The Full Appliance is the proving ground and the enterprise deployment, not a site dependency.
@@ -207,8 +207,8 @@ Legend: **Exists** (verified in source and docs at the pin), **Partial** (exists
                                                                ▼                   ▼
                                      ┌────────────────────────────────┐   ┌──────────────────────────────┐
                                      │ Azure MCP Server 3.0.0 (ACA)   │   │ AddOn (lab host, no Azure)   │
-                                     │ --transport http --read-only   │   │ MCP server: evidence.*,      │
-                                     │ --outgoing-auth-strategy       │   │ drift.*, adr.*, review.*     │
+                                     │ --transport http --read-only   │   │ MCP server: evidence_*,      │
+                                     │ --outgoing-auth-strategy       │   │ drift_*, adr_*, review_*     │
                                      │   UseOnBehalfOf                │   │ ingest: ARG/azqr/tf uploads  │
                                      │ FIC ← user-assigned MI         │   │ ledger: in-memory, 2 h TTL   │
                                      └───────────────┬────────────────┘   └──────────────────────────────┘
@@ -268,16 +268,19 @@ Legend: **Exists** (verified in source and docs at the pin), **Partial** (exists
 browser ──(1) MSAL: token A for the site API──────────────────────▶ Function App
 browser ──(2) MSAL: token B, scope <server-app-id>/Mcp.Tools.ReadWrite ──┐
                                                                           │ header X-Azure-Mcp-Token, per request
-Function App ──(3) validates A; opens AddOn session with trusted-caller key and {tid, oid} from A
+Function App ──(3) validates A and B (same tid and oid); opens AddOn session with the trusted-caller key,
+                   {tid, oid} from A and the selected subscriptionIds
 Function App ──(4) MCP call to Azure MCP, Authorization: Bearer B ─────▶ Azure MCP (OBO → ARM, user's RBAC)
-Function App ──(5) evidence.ingest(result, provenance) ───────────────▶ AddOn (never sees B)
-Function App ──(6) drift.evaluate / adr.* / review.* ─────────────────▶ AddOn
+Function App ──(5) evidence_ingest(result, provenance) ───────────────▶ AddOn (never sees B)
+Function App ──(6) drift_evaluate / adr_* / review_* (model-callable set) ▶ AddOn
 browser ◀──(7) streamed chat, tool activity, evidence, drift, proposals
 ```
 
 Rules:
 
+- **Token B is validated before it is forwarded, and it must belong to the same person as token A.** The Function App checks B's signature and issuer against Entra, its audience (the Azure MCP server app) and its scope (`Mcp.Tools.ReadWrite`), and then requires B's `tid` and `oid` claims to equal A's. A mismatch is refused with 403 and logged as a count, never with the claim values; the authorization tests in section 21 include this case. Without this check a valid B for a different user or tenant would read Azure under that identity while the ledger attributed the evidence to A.
 - Token B is never written to a store, a log, a queue or a Cosmos DB document. The Function App's chat session record holds message text, tool activity (tool name, parameter names, result hash, duration, status) and evidence identifiers.
+- **The session carries a scope allow-list.** The subscriptions the user selected in step 3 of section 12.2 are stored server-side in the Function App's session and in the AddOn session. Every Azure MCP call's `subscription` argument and every evidence record's subject is checked against that list before the call or the ingest proceeds; the model's tool arguments never widen it.
 - Token B is acquired silently by MSAL for the chosen tenant authority. Changing tenant re-acquires B. The Azure MCP OBO provider rejects a mismatch between the requested tenant and the token's `tid`, which the orchestrator relies on as a second guard.
 - The AddOn's trusted-caller path requires a key the lab host vault holds (same pattern as the human-verification secret) and accepts `{tenantId, userId, sessionId}` as asserted claims. It never validates Entra tokens and never calls `login.microsoftonline.com`, so the edition boundary test keeps passing.
 
@@ -285,7 +288,7 @@ Rules:
 
 | Registration | Purpose | Key settings |
 | --- | --- | --- |
-| **Azure MCP server app** (one per environment) | Audience of token B; performs OBO | Expose API scope `Mcp.Tools.ReadWrite`; delegated permission Azure Resource Manager `user_impersonation` (the first-party application id `797f4846-ba00-4fd7-ba43-dac1f8f63013`); federated identity credential issued to the deployment's user-assigned managed identity (audience `api://AzureADTokenExchange`); pre-authorise the site SPA client id; `signInAudience` single-tenant for the MVP, multi-tenant after the 8.5 spike |
+| **Azure MCP server app** (one per environment) | Audience of token B; performs OBO | Expose API scope `Mcp.Tools.ReadWrite`; delegated permission Azure Resource Manager `user_impersonation` (the first-party application id `797f4846-ba00-4fd7-ba43-dac1f8f63013`); federated identity credential issued to the deployment's user-assigned managed identity (audience `api://AzureADTokenExchange`); pre-authorise the site SPA client id; define the application role `Mcp.Tools.ReadWrite.All` (the role Azure MCP requires on application tokens, section 5.3) and assign it to the App edition's user-assigned managed identity for the hosting-identity variant of section 10.2; `signInAudience` single-tenant for the MVP, multi-tenant after the 8.5 spike |
 | **Site SPA** (existing) | Acquires A and B | Add `api://<server-app-id>/Mcp.Tools.ReadWrite` as a requested delegated permission; redirect URIs unchanged |
 | **Site API** (existing) | Audience of A | Unchanged |
 | **Full Appliance server app** (enterprise OBO variant) | Audience for a customer's own clients | Same shape as the Azure MCP server app, owned by the customer tenant |
@@ -346,9 +349,10 @@ docs/adr/                             ADRs 0001.. (this document's decisions bec
 
 ### 10.2 Runtime
 
-- Two containers in one Container Apps environment: `azure-mcp` (derived image from `mcr.microsoft.com/azure-sdk/azure-mcp:3.0.0` by digest, internal ingress only, flags baked in: `--transport http --read-only --mode all --namespace ... --structured-output-mode compact --disable-proxy-tools --outgoing-auth-strategy UseHostingEnvironmentIdentity` or `UseOnBehalfOf`) and `appliance` (external ingress through Front Door or API Management in production, internal in the lab subscription).
-- The appliance's MCP host talks to `azure-mcp` over the environment's internal DNS. With hosting identity, the appliance authenticates to `azure-mcp` with an application token (`Mcp.Tools.ReadWrite.All` role) from its own managed identity. With OBO, it forwards the customer client's delegated token.
-- Scheduled collection runs (timer): `subscription list` → `group list` → `advisor recommendation list` and `summary` → `policy assignment list` → `resourcehealth availability-status get` → own Resource Graph query → own Cost Management read → `evidence.ingest` for each result → `drift.evaluate` against open decisions → `review.propose` for every new contradiction or retirement.
+- Two containers in one Container Apps environment: `azure-mcp` (derived image from `mcr.microsoft.com/azure-sdk/azure-mcp:3.0.0` by digest, internal ingress only, flags baked in: `--transport http --read-only --mode all --namespace ... --structured-output-mode compact --disable-proxy-tools --outgoing-auth-strategy UseHostingEnvironmentIdentity` or `UseOnBehalfOf`) and `appliance` (external ingress through Front Door or API Management in production, internal in the lab subscription). This internal `azure-mcp` is the **App edition's companion**, reachable only from the appliance in the same environment.
+- **The lab path uses a separate Azure MCP deployment**, the one section 8.2 describes under "Labs": the same derived image with `UseOnBehalfOf`, deployed with **external HTTPS ingress** and Azure MCP's own Entra inbound authentication (optionally behind Front Door), so the website's Function App reaches it over HTTPS with the user's delegated token. The Function App is attached to the site's own virtual network, not to this Container Apps environment, so an internal-only endpoint would be unreachable from it; a private path (VNet integration of the Function App into the environment's network, or private endpoints) is a later hardening step, recorded in section 19 under private networking.
+- The appliance's MCP host talks to its companion `azure-mcp` over the environment's internal DNS. With hosting identity, the appliance authenticates to `azure-mcp` with an application token carrying the `Mcp.Tools.ReadWrite.All` role (defined on the server app and assigned to the appliance's managed identity, section 8.4) from its own managed identity. With OBO, it forwards the customer client's delegated token.
+- Scheduled collection runs (timer): `subscription list` → `group list` → `advisor recommendation list` and `summary` → `policy assignment list` → `resourcehealth availability-status get` → own Resource Graph query → own Cost Management read → `evidence_ingest` for each result → `drift_evaluate` against open decisions → `review_propose` for every new contradiction or retirement.
 - Persistent ledger with append-only evidence and immutable decision versions; Cosmos DB (the site already runs one under managed identity) or PostgreSQL Flexible Server. Partition key `tenantId`, then `workspaceId`.
 
 ### 10.3 What stays Full-Appliance-only
@@ -365,7 +369,7 @@ The same engine in a lab edition: an MCP server plus an HTTP API, framed by the 
 
 | Area | Today | New AddOn |
 | --- | --- | --- |
-| Inputs | Resource Graph JSON or CSV upload | Resource Graph JSON or CSV, azqr JSON, Terraform state and plan JSON, aztfexport mapping, Advisor and Pricing results **handed in by the site** (`evidence.ingest`) |
+| Inputs | Resource Graph JSON or CSV upload | Resource Graph JSON or CSV, azqr JSON, Terraform state and plan JSON, aztfexport mapping, Advisor and Pricing results **handed in by the site** (`evidence_ingest`) |
 | Outputs | Assessment bundle | Evidence list, drift findings, draft ADRs, review proposals, bundle with `NOT-AN-AUDIT.md` |
 | Interface | REST plus pane | REST plus pane plus MCP server (`/mcp`, streamable HTTP, stateless) |
 | Callers | Visitor's browser (pane) | Visitor's browser (pane, upload path) and the site's Function App (trusted caller, chat path) |
@@ -384,9 +388,9 @@ Routing the user's delegated token through the lab host would (a) put a bearer f
 
 ### 12.1 The boundary and why it exists
 
-The website integrates only with the AddOn because:
+Stated precisely, the boundary has two halves. For **appliance state** (evidence, decisions, drift, proposals, approvals) the website integrates only with the AddOn, never with the Full Appliance. For **Azure observations in the lab path** the website calls Azure MCP itself, directly, with the signed-in user's delegated token, and hands the results to the AddOn. An implementation therefore needs both integrations: the AddOn as the only appliance it talks to, and Azure MCP as a separate, read-only observation source. The website integrates only with the AddOn, and not with the Full Appliance, because:
 
-- **The site must not become an Azure caller on behalf of an unbounded public.** The lab path forwards a user's token to Azure MCP for the duration of a request, and that is the full extent of the site's Azure involvement. The Full Appliance's collectors, ledgers and pipelines are enterprise concerns.
+- **The site must not become a general Azure caller on behalf of an unbounded public.** The lab path forwards a signed-in user's token to Azure MCP for the duration of a request, within a session's subscription allow-list, and that is the full extent of the site's Azure involvement. The Full Appliance's collectors, ledgers and pipelines are enterprise concerns.
 - **The AddOn has the release cadence, limits and labels built for anonymous and lightly authenticated visitors.** The Full Appliance is built for a tenant that owns it.
 - **One integration contract.** The site already derives everything from one catalogue row and one standard. Adding a second appliance kind would double the contract surface for no visitor benefit.
 
@@ -399,12 +403,12 @@ Route `/tools/architecture-lab` (new catalogue row `architecture-lab`, status `c
 1. **Sign in** with the existing MSAL flow; the page requests token A and, after tenant choice, token B.
 2. **Select tenant**: a list of tenants from the user's profile (MSAL account `tenantProfiles`) or a typed tenant id; selection re-acquires B against that authority (section 8.5).
 3. **Select subscription**: `subscription list` through Azure MCP with B; the page shows `subscriptionId`, `displayName`, `state`.
-4. **Connect to the AddOn**: the Function App opens an AddOn session (`POST /api/sessions` with the trusted-caller key and `{tenantId, userId}`), receives a session id and an expiry (two hours).
-5. **Ask architecture questions**: the chat orchestrator runs the LLM with two tool sets, Azure MCP (read-only allow-list) and the AddOn's `evidence.*`, `drift.*`, `adr.*`, `review.*`.
+4. **Connect to the AddOn**: the Function App opens an AddOn session (`POST /api/sessions` with the trusted-caller key and `{tenantId, userId, subscriptionIds}`, the subscriptions chosen in step 3), receives a session id and an expiry (two hours). The subscription allow-list is kept server-side on both sides and bounds every later call (section 8.3 rules); changing the selection re-opens the session.
+5. **Ask architecture questions**: the chat orchestrator runs the LLM with two tool sets: Azure MCP (read-only allow-list, every `subscription` argument checked against the session's list) and the AddOn's **model-callable** tools only: `evidence_ingest`, `evidence_list`, `evidence_get`, `drift_evaluate`, `drift_list`, `contradiction_list`, `adr_create` (drafts only), `adr_get`, `adr_list`, `claim_list`, `review_propose`, `review_list`, `review_get`, `cost_estimate_attach`. The human-only tools (`adr_update`, `adr_supersede`, `review_decide`, and any status change to `accepted`) are not in the model's tool set at all; the site's approval route calls them with the user's own token A (section 16, caller classes).
 6. **View tool activity**: every tool call is streamed as `{tool, server, parameterNames, status, durationMs, resultHash, evidenceId}`; no parameter values and no raw results.
-7. **View evidence**: a table from `evidence.list` with class, source, retrieved time, expiry, confidence and a redacted summary.
-8. **View drift**: `drift.list` grouped by decision, with verdict, the claim, the observed value, and the evidence ids.
-9. **Approve review proposals**: `review.approve` or `review.reject` with a comment; the approval record carries the user's object id from token A, not a name.
+7. **View evidence**: a table from `evidence_list` with class, source, retrieved time, expiry, confidence and a redacted summary.
+8. **View drift**: `drift_list` grouped by decision, with verdict, the claim, the observed value, and the evidence ids.
+9. **Approve review proposals**: the page's approve and reject buttons call the site's `POST /api/lab/reviews/{id}/decision` route, which calls `review_decide` with `approve` or `reject` and a comment; the approval record carries the user's object id from token A, not a name. The model cannot reach this step.
 10. **Disconnect**: `DELETE /api/sessions/{id}` on the AddOn, MSAL cache cleared for B, the chat transcript kept only if the user chooses to download it.
 
 ### 12.3 Contracts added to the site
@@ -412,7 +416,7 @@ Route `/tools/architecture-lab` (new catalogue row `architecture-lab`, status `c
 | Contract | Shape |
 | --- | --- |
 | Catalogue row | `{ id: 'architecture-lab', origin, panePath: null, healthPath: '/api/health', status, capabilities: ['chat'] }`; `chat` renders the lab page instead of a pane |
-| Function App routes | `POST /api/lab/sessions`, `POST /api/lab/chat` (streamed), `GET /api/lab/evidence`, `GET /api/lab/drift`, `POST /api/lab/reviews/{id}/decision`, `DELETE /api/lab/sessions/{id}`; all require token A; chat and evidence routes require header `X-Azure-Mcp-Token` carrying B |
+| Function App routes | `POST /api/lab/sessions` (body `{tenantId, subscriptionIds}`), `POST /api/lab/chat` (streamed), `GET /api/lab/evidence`, `GET /api/lab/drift`, `POST /api/lab/reviews/{id}/decision` (the only path to `review_decide`), `DELETE /api/lab/sessions/{id}`; all require token A; chat and evidence routes require header `X-Azure-Mcp-Token` carrying B, validated and bound to A as section 8.3 says |
 | Status proxy | unchanged, six fields |
 | MCP client changes | per-request bearer passthrough; tool allow-list per server from configuration; elicitation declared as unsupported (so `Secret` and `Destructive` tools are rejected by Azure MCP, which is the intended outcome) |
 | App settings | `ADDON_ARCHITECTURE_LAB_URL`, `AZMCP_LAB_URL`, `AZMCP_LAB_SERVER_APP_ID`, `LAB_ADDON_TRUSTED_CALLER_KEY` (Key Vault reference) |
@@ -442,8 +446,8 @@ Rules: a verdict of `contradicted` or `supported` requires at least one **Observ
   "kind": "azure-mcp-result",                  // azure-mcp-result | arg-export | azqr-report | tf-state | tf-plan | aztfexport-mapping | cost-export | waf-guide | cloud-architect-state | custom
   "schemaVersion": "1.0",
   "subject": { "scope": "subscription", "subscriptionId": "00000000-0000-0000-0000-000000000001", "resourceIds": ["/subscriptions/.../hcw-sample-sql-01"] },
-  "payload": { "...": "redacted, normalised content; raw payload kept only in the Full Appliance ledger" },
-  "payloadHash": "sha256:...",                 // of the canonical JSON of the raw payload before redaction
+  "payload": { "...": "redacted, normalised content; the raw input is hashed in memory and discarded, never stored" },
+  "payloadHash": "sha256:...",                 // of the canonical JSON of the raw payload, taken in memory before redaction
   "redaction": { "rules": ["secrets", "connection-strings", "guid-placeholders"], "removedCount": 3 },
   "provenance": { "...": "SourceProvenance, section 14.1" },
   "confidence": 0.95,
@@ -456,8 +460,8 @@ Rules: a verdict of `contradicted` or `supported` requires at least one **Observ
 
 ### 13.3 Ingestion pipeline (deterministic, same in both editions)
 
-1. **Validate**: size and row limits; content type; a schema check per `kind` (Resource Graph export must be a JSON array or CSV with `id`, `type`, `location`, `properties`; azqr JSON must carry its `version` and `recommendations`; Terraform plan must be `format_version` 1.x with `resource_changes`; state must have `version` 4).
-2. **Hash**: canonical JSON (sorted keys, no whitespace) → SHA-256 → `payloadHash`; duplicates within a session are linked, not stored twice.
+1. **Validate**: size and row limits; content type; a schema check per `kind` (a Resource Graph export is a JSON array of rows, the `az graph query` envelope the AddOn's frozen upload contract already accepts (`{"count": n, "data": [...]}` or `{"data": [...]}`, see the program's final package, section "AddOn-side HTTP contract"), or CSV, with `id`, `type`, `location`, `properties` per row; azqr JSON must carry its `version` and `recommendations`; Terraform plan must be `format_version` 1.x with `resource_changes`; state must have `version` 4). No existing upload format is dropped.
+2. **Hash**: canonical JSON (sorted keys, no whitespace) → SHA-256 → `payloadHash`, computed in memory over the raw input, which is then discarded; only the redacted form of step 3 is ever stored, in either edition. Duplicates within a session are linked, not stored twice.
 3. **Redact**: remove values matching secret patterns (keys, connection strings, SAS tokens), replace GUIDs in public outputs with placeholders, drop tag values on an allow-list-fail (tags are user text; see prompt injection in section 19).
 4. **Parse and normalise** into the common resource shape `{ id, type, name, location, zones, sku, identity, tags, properties, derived: { zoneRedundant, publicNetworkAccess, privateEndpointCount, cmk, ... } }` using one normaliser per `kind`. Terraform resources map through a provider-type table (`azurerm_mssql_database` → `microsoft.sql/servers/databases`).
 5. **Correlate**: by ARM resource id (case-folded), by recommendation type id, by Service Health tracking id, by Terraform address, by tag `owner`/`costCenter`.
@@ -543,7 +547,7 @@ The draft is `status: draft`, provenance `cloud-architect`, confidence capped at
 
 1. `advisor recommendation list --sub-category ServiceUpgradeAndRetirement --retirement-date le:<today+180d>` and `advisor metadata list --sub-category ServiceUpgradeAndRetirement` are ingested as Observed evidence; the metadata gives the recommendation type, the Service Health tracking id and the retirement date.
 2. Each record is correlated to resources (`properties.resourceMetadata.resourceId` or `impactedField`) and to decisions whose scope or claims cover those resources or resource types.
-3. For each correlated decision, or for each impacted resource with no decision, `review.propose(kind=retirement)` creates a proposal with: impacted resources, the retirement date, the Advisor description, `advisor remediation get` output as recommended actions (marked `destructive` as Advisor reports), and migration considerations assembled by rule (same-SKU replacement available in `optimization recommendation alternatives`, region pairs, data migration needed).
+3. For each correlated decision, or for each impacted resource with no decision, `review_propose(kind=retirement)` creates a proposal with: impacted resources, the retirement date, the Advisor description, `advisor remediation get` output as recommended actions (marked `destructive` as Advisor reports), and migration considerations assembled by rule (same-SKU replacement available in `optimization recommendation alternatives`, region pairs, data migration needed).
 4. The LLM may phrase the rationale; the proposal's facts come from evidence ids only.
 
 ### 14.4 Advisor contradiction
@@ -579,7 +583,7 @@ Every detector is a pure function `detect(claim, evidence[]) → DriftFinding[]`
 
 | Detector id | Claim example | Resource types (first wave) | Property and logic | Evidence source | Determinism |
 | --- | --- | --- | --- | --- | --- |
-| `zone-redundancy` | "Production data platform must be zone redundant" | `microsoft.sql/servers/databases` (`properties.zoneRedundant == true`), `microsoft.storage/storageaccounts` (`sku.name` ends with `ZRS`, `GZRS`, `RAGZRS`), `microsoft.documentdb/databaseaccounts` (`properties.locations[].isZoneRedundant` all true), `microsoft.dbforpostgresql/flexibleservers` (`properties.highAvailability.mode == ZoneRedundant`), `microsoft.web/serverfarms` (`properties.zoneRedundant`), `microsoft.containerservice/managedclusters` (every `agentPoolProfiles[].availabilityZones` has ≥ 2), `microsoft.compute/virtualmachines` (`zones` non-empty), `microsoft.network/publicipaddresses` (`zones` length ≥ 2) | ARG export, `group resource list` | Full |
+| `zone-redundancy` | "Production data platform must be zone redundant" | `microsoft.sql/servers/databases` (`properties.zoneRedundant == true`), `microsoft.storage/storageaccounts` (`sku.name` ends with `ZRS`, `GZRS`, `RAGZRS`), `microsoft.documentdb/databaseaccounts` (`properties.locations[].isZoneRedundant` all true), `microsoft.dbforpostgresql/flexibleservers` (`properties.highAvailability.mode == ZoneRedundant`), `microsoft.web/serverfarms` (`properties.zoneRedundant`), `microsoft.containerservice/managedclusters` (every `agentPoolProfiles[].availabilityZones` has ≥ 2), `microsoft.compute/virtualmachinescalesets` (`zones` length ≥ 2), `microsoft.network/publicipaddresses` (`zones` length ≥ 2). `microsoft.compute/virtualmachines`: a single VM row can show that the VM is zonal (`zones` non-empty) but never that anything is zone *redundant*, because redundancy is a property of the instance set; the detector answers `unknown` with that reason unless the claim's `instanceSet` parameter names a tag key, in which case the VMs sharing that tag value form the set and the set is supported only when its members span ≥ 2 distinct zones (Derived evidence). A set in one zone is contradicted. | ARG export, `group resource list` | Full |
 | `region-allowed` | "Only `centralus` and `eastus2`" | all | `location in allowedRegions` | ARG export | Full |
 | `paired-region-dr` | "Secondary in the paired region" | storage (`properties.secondaryLocation`), SQL failover groups, Cosmos DB `locations` | secondary location equals the pair of primary; the region-pair table is Declared evidence shipped with the catalogue, dated | ARG export | Full |
 | `public-access-disabled` | "No public network access on data services" | storage, SQL servers, Key Vault, Cosmos DB, PostgreSQL, Container Registry, Service Bus, Event Hubs | `properties.publicNetworkAccess == Disabled` (type-specific aliases normalised) | ARG export | Full |
@@ -590,7 +594,7 @@ Every detector is a pure function `detect(claim, evidence[]) → DriftFinding[]`
 | `backup-protected` | "Production VMs and file shares are backed up" | VMs, file shares, SQL | `azurebackup protecteditem get` results or `recoveryservicesresources` rows in an ARG export that includes that table | Azure MCP (Full), ARG export with the table | Full |
 | `retention-minimum` | "Logs retained ≥ 90 days" | Log Analytics workspaces (`properties.retentionInDays`), backup policies (`azurebackup policy get` retention) | `gte` | ARG export, Azure MCP | Full |
 | `lock-present` | "Production resource groups carry a CanNotDelete lock" | resource groups | `Microsoft.Authorization/locks` rows | Full Appliance ARM collector; AddOn `unknown` | Full where collected |
-| `managed-identity` | "Compute uses managed identities, no secrets" | VMs, web apps, function apps, Container Apps | `identity.type in (SystemAssigned, UserAssigned, SystemAssigned,UserAssigned)` | ARG export | Full |
+| `managed-identity` | "Compute resources carry a managed identity" | VMs, web apps, function apps, Container Apps | `identity.type in (SystemAssigned, UserAssigned, SystemAssigned,UserAssigned)`. Presence only: a resource can carry a managed identity and still hold a connection string in its settings, so this detector never asserts "no secrets". A "no secrets in configuration" claim needs a separate, source-specific detector over application settings, which a Resource Graph export does not carry (wave two, Full Appliance collector) | ARG export | Full |
 | `availability-set-or-zones` | "VMs in zones or availability sets" | VMs | `zones` non-empty or `properties.availabilitySet.id` exists | ARG export | Full |
 | `sku-allowed` | "App Service plans Premium v3 or above" | any with `sku` | `sku.tier in allowed` or `sku.name in allowed` | ARG export | Full |
 | `cost-ceiling` | "Estimated retail cost ≤ 1,500 USD per month" | decision level | sum of `CostEstimate(basis=estimated-retail)` of the selected alternative `lte` ceiling; `actual` basis when present | `pricing get`, cost export | Full for estimates |
@@ -617,7 +621,7 @@ Names use the `namespace_action` style Azure MCP uses in `all` mode so the websi
 | `evidence_verify` | readOnly: true | Both | Recompute a hash and report tampering or expiry |
 | `evidence_expire_review` | readOnly: true | Both | List evidence past or near expiry per decision |
 | `collection_run_start`, `collection_run_finish` | readOnly: false | Both | Bracket an ingestion batch |
-| `collection_run_azure` | readOnly: true toward Azure; `callsAzure: true` | **Full only** | Drive the Azure MCP host through the standard tool sequence and ingest each result |
+| `collection_run_azure` | readOnly: false (it writes evidence, findings and proposals to the ledger); destructive: false; `callsAzure: true`, and every Azure call it makes is read-only | **Full only** | Drive the Azure MCP host through the standard tool sequence and ingest each result |
 | `adr_create`, `adr_get`, `adr_list`, `adr_update` (new version) | readOnly per verb | Both | Decision records |
 | `adr_draft_from_cloud_architect` | readOnly: false | Both (input is the Cloud Architect state the site passes in) | Section 14.2 |
 | `adr_supersede` | readOnly: false | Both | Link a new decision to the old one and flip statuses |
@@ -632,6 +636,11 @@ Names use the `namespace_action` style Azure MCP uses in `all` mode so the websi
 | `inventory_cross_subscription` | readOnly: true; `callsAzure: true` | **Full only** | Scheduled multi-subscription inventory through the collector |
 
 Every tool returns `structuredContent` with a versioned schema and a concise `content` text, mirroring Azure MCP's `compact` mode so the website renders both servers the same way.
+
+**Caller classes.** Each tool also carries `meta.caller`, with two values, and the website's orchestrator enforces it:
+
+- `model`: tools the chat model may call. Reads, drafts and proposals: `evidence_ingest`, `evidence_list`, `evidence_get`, `evidence_verify`, `evidence_expire_review`, `collection_run_start`, `collection_run_finish`, `adr_create` (which always creates a `draft`), `adr_draft_from_cloud_architect`, `adr_get`, `adr_list`, `claim_add` (on drafts only), `claim_list`, `drift_evaluate`, `drift_list`, `contradiction_list`, `review_propose`, `review_list`, `review_get`, `cost_estimate_attach`, `report_bundle`.
+- `human`: tools that change an authoritative record and need a person's explicit action: `adr_update`, `adr_supersede`, any status change to `accepted`, `review_decide`, `session_open`, `session_close`, and the Full-only `collection_run_azure`, `governance_export_policy` and `inventory_cross_subscription` (operator or scheduler, never the model). The website exposes them only through its own authenticated routes (section 12.3), with the user's token A; they are absent from the model's tool list, so an injected instruction cannot reach them.
 
 ## 17. Capability classification and promotion matrix
 
@@ -777,7 +786,7 @@ A root under `infrastructure/terraform/` mirroring the Bicep modules with `azure
 
 ### 18.6 App registrations and OBO configuration
 
-Done once per environment by the azd hook or Terraform: server app with scope `Mcp.Tools.ReadWrite`, delegated ARM `user_impersonation`, federated identity credential to the managed identity, pre-authorised site SPA; admin consent granted in the HCW tenant. Federated identity means no secret exists to rotate; the identity's token exchange is bound to the subject the credential names.
+Done once per environment by the azd hook or Terraform: server app with the delegated scope `Mcp.Tools.ReadWrite` and the application role `Mcp.Tools.ReadWrite.All`, delegated ARM `user_impersonation`, federated identity credential to the managed identity, pre-authorised site SPA, and the application role assigned to the App edition's managed identity; admin consent granted in the HCW tenant. Federated identity means no secret exists to rotate; the identity's token exchange is bound to the subject the credential names.
 
 ### 18.7 Logging and telemetry
 
@@ -832,10 +841,10 @@ Content-free structured logs (counts, flags, durations, hashed identifiers), as 
 | Unit | Normalisers, hashing, redaction, every detector, scoring, ADR transforms | `packages/architecture-core/tests` | pytest, hypothesis for operators |
 | Golden-file | Sample exports, azqr reports, Terraform plans, recorded Azure MCP `structuredContent`, Cloud Architect states → expected evidence, findings, proposals, bundle | `tests/golden` in the engine | pinned fixtures; a `--update-golden` flag that CI forbids |
 | MCP contract | `tools/list` of Azure MCP 3.0.0 (names, `inputSchema`, `outputSchema`, annotations) pinned as a snapshot; the appliance's own `tools/list` snapshot; `initialize` result records `serverInfo.version == 3.0.0` | Full Appliance `tests/contract` | a real `azmcp` 3.0.0 binary in CI (npm `@azure/mcp@3.0.0`), stdio, `AZURE_TOKEN_CREDENTIALS` unset so no Azure call happens for listing |
-| Integration | The Azure MCP host against the Docker image in HTTP mode with `--dangerously-disable-http-incoming-auth` **only inside CI**, against a lab subscription with workload identity federation; Cost Management and Resource Graph collectors | Full Appliance `tests/integration`, nightly | GitHub Actions OIDC, recorded on first run and replayed on PRs |
+| Integration | The Azure MCP host against the Docker image in HTTP mode with inbound authentication **enabled**: the container binds to the runner's loopback only, and the test obtains an application token for the server app through GitHub's workload identity federation (a CI client app registration holding the `Mcp.Tools.ReadWrite.All` role, no secret). The target is an isolated lab subscription that holds only the fictional sample estate. `--dangerously-disable-http-incoming-auth` is never used, in CI or anywhere else. Cost Management and Resource Graph collectors run the same way | Full Appliance `tests/integration`, nightly | GitHub Actions OIDC, recorded on first run and replayed on PRs |
 | Security | Edition boundary (both editions), no secrets, content-free logs, image boundary proof, startup refusal under identity variables | `tests/security` | existing suites extended with the MCP tool-list assertion |
 | Isolation | Two sessions, two tenants: evidence, findings and proposals never cross; foreign ids 404; expiry sweeps | `tests/isolation` | pytest against the ASGI app |
-| Authorization | Site routes: missing, expired, wrong-audience and wrong-tenant token A; missing B on chat; AddOn trusted-caller key missing or wrong | website `functions` tests, AddOn tests | existing verify-token tests extended |
+| Authorization | Site routes: missing, expired, wrong-audience and wrong-tenant token A; missing B on chat; B whose `tid` or `oid` differs from A's (refused 403, no claim value logged); an Azure MCP call or an evidence subject outside the session's subscription allow-list (refused); a model tool call naming a `human` caller-class tool (refused); AddOn trusted-caller key missing or wrong | website `functions` tests, AddOn tests | existing verify-token tests extended |
 | Prompt injection | Fixtures with instructions hidden in tag values, resource names and Advisor descriptions; assert no tool call outside the allow-list and no verdict change | website orchestrator tests, engine tests | scripted model stub |
 | Acceptance | The five scenarios below, end to end in the Full Appliance with recorded Azure MCP results, then in the AddOn with handed-in results | `tests/acceptance` | Playwright for the lab page in the website |
 
