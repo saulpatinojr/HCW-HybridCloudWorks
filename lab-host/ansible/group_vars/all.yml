@@ -121,15 +121,15 @@ arc_tags:
 # get_url refuses a key that does not match.
 docker_release_pins:
   resolute:
-    engine: "5:29.9.1-1~ubuntu.26.04~resolute"
-    containerd: "2.4.2-2~ubuntu.26.04~resolute"
-    buildx: "0.38.0-1~ubuntu.26.04~resolute"
-    compose: "5.6.0-1~ubuntu.26.04~resolute"
+    engine: "5:29.9.2-1~ubuntu.26.04~resolute"
+    containerd: "2.4.2-3~ubuntu.26.04~resolute"
+    buildx: "0.38.1-1~ubuntu.26.04~resolute"
+    compose: "5.6.1-1~ubuntu.26.04~resolute"
   noble:
-    engine: "5:29.9.1-1~ubuntu.24.04~noble"
-    containerd: "2.4.2-2~ubuntu.24.04~noble"
-    buildx: "0.38.0-1~ubuntu.24.04~noble"
-    compose: "5.6.0-1~ubuntu.24.04~noble"
+    engine: "5:29.9.2-1~ubuntu.24.04~noble"
+    containerd: "2.4.2-3~ubuntu.24.04~noble"
+    buildx: "0.38.1-1~ubuntu.24.04~noble"
+    compose: "5.6.1-1~ubuntu.24.04~noble"
 docker_version: "{{ docker_release_pins[ansible_facts['distribution_release']].engine }}"
 docker_containerd_version: "{{ docker_release_pins[ansible_facts['distribution_release']].containerd }}"
 docker_buildx_version: "{{ docker_release_pins[ansible_facts['distribution_release']].buildx }}"
@@ -168,7 +168,7 @@ caddy_version: v2.11.7
 caddy_cloudflare_module_version: v0.2.4
 caddy_builder_image: caddy
 caddy_builder_image_tag: 2.11.7-builder
-caddy_builder_image_digest: sha256:a2535ba3f1878ec781a58cf2d6edfecc47633d22e2a92447fa8ca14b3a6bfaff
+caddy_builder_image_digest: sha256:8910fe662f448b860e8d16ef1c9a4f8946d3193bdc3e971bf0c55c9a2cf246f6
 caddy_site_domain: "{{ lab_host_domain }}"
 # The three names ADR 0032 puts on the certificate. DNS-01 for each is answered
 # through the CNAME delegation of _acme-challenge.lab and _acme-challenge.coder.lab
@@ -257,11 +257,11 @@ coder_max_workspaces: 5
 # keeps its data under /var/lib/postgresql/18/docker, which is why the Compose
 # volume is mounted at /var/lib/postgresql.
 coder_image: ghcr.io/coder/coder
-coder_image_tag: v2.38.0
-coder_image_digest: sha256:38a4cfc548b096484d6d1743e5f1a5af18301ed9a7ffde5150663822f9887026
+coder_image_tag: v2.38.1
+coder_image_digest: sha256:fcddd64d5f08d6aa8806508d1459d36f3e9e9098554440acd6dc2526a95252cc
 coder_postgres_image: postgres
 coder_postgres_image_tag: "18.6"
-coder_postgres_image_digest: sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+coder_postgres_image_digest: sha256:1267c7e692de235fda2a50dbcdbcbca4672ea6a0298576a6bd9d07cafc319b32
 # The Docker socket proxy the coder server reaches the daemon through
 # (LAB-5, 2026-10-06): HAProxy with one allow rule per API section. Image
 # index digest read 2026-10-06 from the registry's Docker-Content-Digest for
@@ -389,8 +389,8 @@ portainer_image_digest: sha256:64593d0645eec314e84b93c03aba51db67c72ec12c7609273
 # Sigstore cosign (LAB-X, #1069): verifies SLSA build provenance attestations
 # on add-on images before docker_image_pull. Pinned release from
 # https://github.com/sigstore/cosign/releases.
-cosign_version: 3.1.3
-cosign_checksum: sha256:4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71
+cosign_version: 3.1.4
+cosign_checksum: sha256:424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
 
 addons_enabled: true
 addons:

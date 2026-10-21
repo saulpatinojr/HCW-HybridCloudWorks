@@ -398,8 +398,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          node scripts/lab-pins-upstream.mjs --summary "${RUNNER_TEMP}/pins.md"
-          code=$?
+          # A run: step with no shell: is `bash -e {0}`, which `set -uo` does not
+          # turn off, so a plain `node ...; code=$?` ends the step at the first
+          # non-zero exit (1 is "a pin is behind") before the code is recorded,
+          # and every later step, the scan and the issue included, is skipped.
+          # `|| code=$?` handles the failure here, where the code is wanted.
+          code=0
+          node scripts/lab-pins-upstream.mjs --summary "${RUNNER_TEMP}/pins.md" || code=$?
           echo "exit=${code}" >> "$GITHUB_OUTPUT"
           cat "${RUNNER_TEMP}/pins.md" >> "$GITHUB_STEP_SUMMARY"
           exit 0

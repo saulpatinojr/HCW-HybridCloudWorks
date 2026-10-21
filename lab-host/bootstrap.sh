@@ -50,8 +50,8 @@ PYTHON_VERSION=3.14.7
 # images before pull (#1069). COSIGN_SHA256 is the sha256sum of cosign-linux-amd64
 # from https://github.com/sigstore/cosign/releases/tag/v3.1.3, equal to the
 # release's cosign_checksums.txt entry.
-COSIGN_VERSION=3.1.3
-COSIGN_SHA256=4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71
+COSIGN_VERSION=3.1.4
+COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
 # ansible-core is not pinned here. Its release, the SHA256 of its wheel and
 # the hash of every wheel it depends on are the ANSIBLE_CORE_VERSION,
 # ANSIBLE_CORE_SHA256 and ANSIBLE_CORE_DEPS lines of lab-image/versions.env,

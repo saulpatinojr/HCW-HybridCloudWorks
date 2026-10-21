@@ -381,13 +381,18 @@ describe('the host plan', () => {
 
   it('proposes nothing for a current pin whose re-read matches, and never re-reads a released checksum file', async () => {
     let vaultCalls = 0;
+    // The Coder tag the real group_vars pins now, not a version typed here: a
+    // typed one stops matching the day the weekly host pull request moves Coder,
+    // and that pull request then fails this test (v2.38.1 did, 2026-10-21).
+    const pinnedTag = setYamlScalar(text, ['coder_image_tag'], 'x').from;
+    const pinnedRelease = pinnedTag.replace(/^v/, '');
     const same = async () => ({
-      edits: [{ file: GROUP_VARS_PATH, where: 'coder_image_tag', to: 'v2.38.0', apply: (t) => setYamlScalar(t, ['coder_image_tag'], 'v2.38.0') }],
+      edits: [{ file: GROUP_VARS_PATH, where: 'coder_image_tag', to: pinnedTag, apply: (t) => setYamlScalar(t, ['coder_image_tag'], pinnedTag) }],
       evidence: [],
     });
     const plan = await planHost({
       text,
-      rows: [row('coder', '2.38.0', '2.38.0', 'current'), row('vault', '2.1.1', '2.1.1', 'current')],
+      rows: [row('coder', pinnedRelease, pinnedRelease, 'current'), row('vault', '2.1.1', '2.1.1', 'current')],
       http: null,
       bumpers: {
         coder: Object.assign(same, { refresh: true }),
