@@ -89,10 +89,10 @@
 - name: Say that Portainer was restarted onto the daemon's new socket
   ansible.builtin.debug:
     msg: >-
-      Portainer started before Docker's current start, so it still held the old Docker
-      socket and its local environment would have read down. It was restarted onto the new
-      socket (#1328). If no administrator exists yet, the five minutes to create one start
-      again now.
+      Portainer was restarted onto the daemon's new socket (#1328). It had started before
+      Docker's current start, so it still held the old Docker socket and its local
+      environment would have read down. If no administrator exists yet, the five minutes
+      to create one start again now.
   when: portainer_stale | bool
 
 # Until an administrator exists, Portainer stops serving five minutes after it
