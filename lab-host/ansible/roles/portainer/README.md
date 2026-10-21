@@ -26,7 +26,18 @@ is no Caddy route and nothing public. Off until `portainer_enabled` is true.
    is Portainer's whole purpose. Its volume was carried into the remapped
    data root as it was, on the run that turned the remap on. Portainer shows
    the host daemon only; Coder's workspaces run on the `coder_sandbox`
-   daemon, which it does not see.
+   daemon, which it does not see. **A Docker restart no longer strands it**
+   (#1328): the container holds the daemon's socket as a bind-mounted file,
+   so a daemon restart (any docker-ce upgrade) leaves a running Portainer on
+   the old, unlinked socket. It still answers, but its `local` environment
+   reads down and the check below raises the lab alert; the 2026-10-21
+   bootstrap (Docker 29.9.1 to 29.9.2) left it so until `sudo docker restart
+   portainer`. Before the container task the role installs the
+   `labs_agent` role's `hcw-docker-proxy-stale` helper (the same file, to the
+   same path, the agent's socket proxy needed in #1135) and asks it about
+   Portainer; a Portainer that started before the daemon's current start is
+   restarted onto the new socket, one that did not is left alone, and the
+   run says which.
 3. With it false: removes the container and keeps the volume, so turning it
    back on brings back the same administrator, settings and licence.
 
@@ -288,3 +299,17 @@ not-configured sentence, where PyYAML and Jinja2 are importable (CI's are;
 under `python -I` on a workstation that has them as user-site installs,
 those checks are skipped and say so). CI runs it in the
 `ansible-lint (lab-host)` job. Needs neither root nor Docker.
+
+`tests/portainer-stale-socket.test.sh` holds the restart above to its wiring:
+the role installs the helper from the `labs_agent` role's files to the path
+that role uses, asks it about this role's container before the container task,
+records `portainer_stale` only for the exact answer `stale`, ties the
+container task's `restart:` to it (and not to every run), skips the question in
+check mode, and says so when it restarts. It also runs the helper against
+stand-ins for `systemctl` and `docker`, with the real GNU date and this role's
+own container name: a Portainer older than the daemon is `stale`, a newer one
+`fresh`, one not running or not there `absent`. Breaking each of those in turn
+turned it red. CI runs it in the same job. Needs neither root, Docker nor
+Ansible, and so it does not prove a live restart: that shows on the first
+bootstrap that upgrades Docker, as the line `Portainer was restarted onto the
+daemon's new socket` in the run and `environment local up` in the check.

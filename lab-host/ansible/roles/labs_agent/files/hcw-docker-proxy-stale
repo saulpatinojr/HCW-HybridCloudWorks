@@ -12,6 +12,12 @@
 # privilege check exactly so. The labs_agent role asks this before it
 # decides whether to restart the proxy.
 #
+# Portainer mounts the socket the same way (/var/run/docker.sock as a file),
+# and the 2026-10-21 bootstrap (Docker 29.9.1 to 29.9.2) left its `local`
+# environment down until it was restarted (#1328). The portainer role installs
+# this same file to the same path and asks it about Portainer. Anything else
+# that bind-mounts the socket as a file wants the same question.
+#
 # Usage: hcw-docker-proxy-stale <container>
 #
 # Prints one word and exits 0:

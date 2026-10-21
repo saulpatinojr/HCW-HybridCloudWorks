@@ -17,6 +17,42 @@
     state: present
   when: portainer_enabled | bool
 
+# Portainer holds the daemon's socket as a bind-mounted FILE (the volume
+# below), so a daemon restart, which a docker-ce upgrade causes earlier in this
+# play, unlinks and recreates that file and leaves a Portainer that was already
+# running on the old inode: it still answers, but its `local` environment (this
+# host's Docker) reads down and the check below raises the lab alert. The
+# 2026-10-21 bootstrap (Docker 29.9.1 -> 29.9.2, #1324) left it so for three
+# runs of the 15-minute check, until `sudo docker restart portainer` (#1328).
+# The agent's socket proxy had the same fault (#1135), so the same helper is
+# asked: a Portainer that started before the daemon's current start is
+# restarted below, and one that did not is left alone.
+- name: Install the container staleness check
+  ansible.builtin.copy:
+    src: "{{ portainer_stale_helper_source }}"
+    dest: "{{ portainer_stale_helper_dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: portainer_enabled | bool
+
+- name: Ask whether a running Portainer predates the daemon's current start
+  ansible.builtin.command:
+    argv:
+      - "{{ portainer_stale_helper_dest }}"
+      - "{{ portainer_container_name }}"
+  register: portainer_age
+  changed_when: false
+  when:
+    - portainer_enabled | bool
+    - not ansible_check_mode
+
+- name: Record whether Portainer must be restarted onto the daemon's new socket
+  ansible.builtin.set_fact:
+    portainer_stale: >-
+      {{ portainer_enabled | bool and not ansible_check_mode
+         and (portainer_age.stdout | default('') | trim) == 'stale' }}
+
 # --http-disabled: Portainer serves its UI on 9443 (HTTPS, a certificate it
 # generates itself) and, unless told not to, on 9000 over plain HTTP too.
 # Nothing publishes 9000 or the Edge tunnel's 8000, and the flag means 9000
@@ -34,6 +70,7 @@
     image: "{{ portainer_image_ref }}"
     pull: missing
     state: started
+    restart: "{{ portainer_stale | bool }}"
     restart_policy: unless-stopped
     userns_mode: host
     command:
@@ -48,6 +85,15 @@
       - no-new-privileges:true
   register: portainer_container
   when: portainer_enabled | bool
+
+- name: Say that Portainer was restarted onto the daemon's new socket
+  ansible.builtin.debug:
+    msg: >-
+      Portainer started before Docker's current start, so it still held the old Docker
+      socket and its local environment would have read down. It was restarted onto the new
+      socket (#1328). If no administrator exists yet, the five minutes to create one start
+      again now.
+  when: portainer_stale | bool
 
 # Until an administrator exists, Portainer stops serving five minutes after it
 # starts (measured 2026-09-26 on 2.45.1: the container stays running, so no

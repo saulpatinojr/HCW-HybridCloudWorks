@@ -8,6 +8,14 @@ portainer_image_ref: "{{ portainer_image }}@{{ portainer_image_digest }}"
 # 0.0.0.0: the address here is the only thing between the internet and a UI
 # that holds the Docker socket. tasks/main.yml asserts it.
 portainer_published_port: "127.0.0.1:{{ portainer_https_port }}:9443"
+# The helper that says whether a container started before the Docker daemon's
+# current start (#1328). It lives in the labs_agent role, which first needed it
+# for the agent's socket proxy (#1135); this role installs that same file to the
+# same path rather than carry a copy that could drift, and
+# tests/portainer-stale-socket.test.sh fails if the source moves or the two
+# paths part.
+portainer_stale_helper_source: "{{ role_path }}/../labs_agent/files/hcw-docker-proxy-stale"
+portainer_stale_helper_dest: /usr/local/libexec/hcw-docker-proxy-stale
 # What the run says about the first-administrator window, by state.
 portainer_advice_timed_out: >-
   Its first-administrator window has closed (Administrator initialization timeout): if no

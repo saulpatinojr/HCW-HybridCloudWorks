@@ -2573,6 +2573,25 @@ Good ends with a line beginning `hcw-portainer-check: checked:`. The token
 and the paste line that seeds it are in `lab-host/README.md`, "The Portainer
 check"; until it is seeded the card reads `Portainer has not reported`.
 
+**A Docker upgrade used to leave the card critical (#1328).** Portainer holds
+the daemon's socket as a bind-mounted file, so when Docker restarts a
+Portainer that was already running keeps the old socket: it answers, but its
+`local` environment reads down, the check says `environment local down or not
+found`, and the lab alert fires. The 2026-10-21 bootstrap (Docker 29.9.1 to
+29.9.2) did exactly that, three runs of the check in a row, until the
+container was restarted. The `portainer` role now restarts a Portainer that
+started before the daemon's current start, and the run says `Portainer was
+restarted onto the daemon's new socket`. If a card still reads critical with
+that message after a Docker move, the by-hand cure is, bash, on the host:
+
+```bash
+sudo docker restart portainer
+sudo systemctl start hcw-portainer-check.service
+sudo journalctl -t hcw-portainer-check -n 3 --no-pager --output=cat
+```
+
+Good ends with `hcw-portainer-check: checked:` and `environment local up`.
+
 Success is Portainer's **Home** page listing `local`, **Docker Standalone**,
 **Up**, whose containers include `portainer`. If the page says the instance
 timed out, the five minutes passed first: run the restart line and the token
