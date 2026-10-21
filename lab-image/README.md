@@ -371,6 +371,13 @@ the job's output and exits 1.
 
 ## Updating a version
 
+The weekly `lab-supply-chain.yml` run does this for the tools (Terraform,
+kubeconform, Helm, kubectl), the Azure CLI and the Terraform providers in the
+mirror: `node scripts/lab-pins-upstream.mjs --bump image-tools` reads each sum
+from the publisher and the run keeps one pull request open on
+`chore/lab-pins-image-tools`. A pin it could not verify becomes a note in the
+weekly issue, and the rest of this section is the hand procedure for it.
+
 Edit the `_VERSION` line and the `_SHA256` beside it in `versions.env`, open a
 pull request, and the workflow rebuilds both targets and runs the smoke test
 against them; a wrong sum fails the build at the download, a wrong version

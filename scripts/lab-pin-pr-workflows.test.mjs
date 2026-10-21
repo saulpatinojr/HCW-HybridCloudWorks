@@ -11,6 +11,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BOT, SETS, bodyTexts, changedPaths, decide, foreignIdentities, prBody } from './open-lab-pin-pr.mjs';
 import {
+  BOOTSTRAP_PATH,
   CADDY_TEST_PATH,
   CAPABILITIES_PATH,
   CODER_TEMPLATE_PATH,
@@ -55,14 +56,35 @@ describe('the pin sets', () => {
   });
 
   it('may touch exactly the files their planners edit, and each exists', () => {
-    // The dependents ride their set: the caddy test's SHA512 and the Docker CLI
-    // fixture with the host pins, the guide page with the image base.
-    expect(SETS.host.paths).toEqual([GROUP_VARS_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH]);
+    // The dependents ride their set: the cosign pin in bootstrap.sh, the caddy
+    // test's SHA512 and the Docker CLI fixture with the host pins, the guide
+    // page with the image base.
+    expect(SETS.host.paths).toEqual([GROUP_VARS_PATH, BOOTSTRAP_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH]);
     expect(SETS['image-base'].paths).toEqual([VERSIONS_ENV_PATH, DOCKERFILE_PATH, SANDBOX_DOCKERFILE_PATH, DOCKER_GUIDE_PAGE_PATH]);
     expect(SETS['image-tools'].paths).toEqual([VERSIONS_ENV_PATH, README_PATH]);
     expect(SETS['image-digests'].paths).toEqual([CAPABILITIES_PATH, CODER_TEMPLATE_PATH]);
     expect(SETS[CLOUDFLARE_SET].paths).toEqual([VARIABLES_PATH]);
     for (const s of Object.values(SETS)) for (const p of s.paths) expect(existsSync(join(REPO, p)), p).toBe(true);
+  });
+
+  // The workflow refuses a run whose checkout changed outside every set's
+  // paths, so a planner that edits a file its set does not list fails the week
+  // for every set at once. The cosign pin in bootstrap.sh did that from #1240
+  // until the host set listed the file: nothing noticed, because cosign had not
+  // released since. The files the host planners edit are read from their source.
+  it('list every file the host planners edit', () => {
+    const source = readFileSync(join(REPO, 'scripts', 'lib', 'lab-pin-bumps.mjs'), 'utf8');
+    const start = source.indexOf('export const HOST_BUMPERS');
+    const end = source.indexOf('/** What a check row asks of its bumper');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const named = new Set([...source.slice(start, end).matchAll(/\bfile:\s*([A-Z][A-Z0-9_]*_PATH)\b/g)].map((m) => m[1]));
+    expect(named.size).toBeGreaterThan(0);
+    const known = { BOOTSTRAP_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH, GROUP_VARS_PATH };
+    for (const name of named) {
+      expect(known[name], `${name} is edited by a host planner; add it to this test and to SETS.host.paths`).toBeDefined();
+      expect(SETS.host.paths, name).toContain(known[name]);
+    }
   });
 
   it('writes the Cloudflare ranges body in its own terms, with no lab-pin claim in it, and leaves the lab sets theirs', () => {
@@ -280,11 +302,51 @@ describe('lab-supply-chain.yml', () => {
     expect(lines.some((l) => /^\s*workflow_dispatch:/.test(l))).toBe(true);
   });
 
-  it('plans both sets in a job that can read and nothing more', () => {
+  it('plans every set in a job that can read and nothing more', () => {
     expect(propose).toContain('contents: read');
     expect(propose).not.toMatch(/secrets\./);
-    expect(propose).toContain('for set in host image-base; do');
     expect(propose).toContain('node scripts/lab-pins-upstream.mjs --bump "$set"');
+    expect(propose).toContain('node scripts/lab-pins-upstream.mjs --bump host');
+  });
+
+  // image-tools was built (#1145, #1213) with its tests and its pull-request
+  // text, and the weekly workflow never named it, so tool and provider
+  // releases arrived only when someone ran the bumper by hand. Every set the
+  // bumper can plan is run here except image-digests, which
+  // publish-lab-image.yml opens after each publish.
+  it('names every set the bumper plans, except the one the publish workflow opens, wherever it loops over sets', () => {
+    const named = new Set();
+    for (const [, list] of source.matchAll(/for set in ([a-z -]+); do/g)) {
+      for (const name of list.trim().split(/\s+/)) named.add(name);
+    }
+    expect([...named].sort()).toEqual(BUMP_SETS.filter((name) => name !== 'image-digests').sort());
+    expect(source).toContain('for set in host image-base image-tools; do');
+    // The notes of a pin that could not be verified reach the weekly issue for each of them.
+    expect(check).toContain('for set in host image-base image-tools; do');
+  });
+
+  // image-base and image-tools both edit lab-image/versions.env, and the
+  // pull-request job applies one set's patch to a pristine checkout. Cut after
+  // all the bumps, each of the two patches would also carry the other's lines.
+  it('cuts each image set’s patch from the pristine tree before putting its files back, and plans host last', () => {
+    expect(SETS['image-base'].paths).toContain(VERSIONS_ENV_PATH);
+    expect(SETS['image-tools'].paths).toContain(VERSIONS_ENV_PATH);
+    const bumps = propose.slice(
+      propose.indexOf('- name: Plan and make the bumps'),
+      propose.indexOf('- name: Re-record the Docker CLI fixture when the engine pin moved')
+    );
+    expect(bumps).toContain('for set in image-base image-tools; do');
+    const own = bumps.indexOf('The ${set} bump changed paths outside its own set');
+    const cut = bumps.indexOf('git diff --binary -- "${paths[@]}" > "${RUNNER_TEMP}/lab-pins/${set}.patch"');
+    const restore = bumps.indexOf('git checkout -- "${paths[@]}"');
+    const pristine = bumps.indexOf('The checkout is not pristine after the ${set} patch');
+    const host = bumps.indexOf('--bump host');
+    for (const at of [own, cut, restore, pristine, host]) expect(at).toBeGreaterThan(-1);
+    expect([own, cut, restore, pristine, host]).toEqual([own, cut, restore, pristine, host].sort((a, b) => a - b));
+    // Only the host patch is cut in the last step; the image patches already exist.
+    const patchStep = propose.slice(propose.indexOf('- name: One patch per set'));
+    expect(patchStep).toContain('if [ "$set" = host ]; then');
+    expect(patchStep).toContain('for set in host image-base image-tools; do');
   });
 
   it('opens the pull requests from the automation environment with the App token, masked first and revoked after', () => {

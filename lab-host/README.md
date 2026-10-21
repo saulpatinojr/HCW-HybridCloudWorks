@@ -1908,7 +1908,9 @@ index. It opens or updates one pull request on the branch
 checksum it could not verify is not moved; it is listed in the weekly issue,
 and this section is how a person moves it. The same run proposes the lab
 image's newest base digest and ansible-core's newest release in its line,
-which this host installs too (`chore/lab-pins-image-base`), and each publish of
+which this host installs too (`chore/lab-pins-image-base`), and the newest
+release of each tool and Terraform provider in the lab images, each with its
+publisher's checksum (`chore/lab-pins-image-tools`). Each publish of
 the lab images proposes their new digests to the two places that pin them
 (`chore/lab-pins-image-digests`). Merging changes nothing on the host until
 `bootstrap.sh` runs. The prose dates beside each pin in `group_vars/all.yml`

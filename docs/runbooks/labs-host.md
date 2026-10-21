@@ -3251,7 +3251,11 @@ fix is installed.
   request with each behind pin moved and its checksum or digest beside it,
   proposes the newest lab image base digest and ansible-core's newest
   release in its line (every wheel's hash read from PyPI) as
-  `chore/lab-pins-image-base`, scans the two published lab images with
+  `chore/lab-pins-image-base`, proposes the newest release of each tool and
+  Terraform provider baked into the lab images (Terraform, kubeconform,
+  Helm, kubectl, the Azure CLI; azurerm, azapi, alz, random, modtm, time),
+  each with the publisher's checksum, as `chore/lab-pins-image-tools`,
+  scans the two published lab images with
   Trivy, and opens or comments on one issue when anything is due,
   including any pin it could not move because the publisher served no
   checksum to verify it against. `bootstrap.sh` installs the host's own
