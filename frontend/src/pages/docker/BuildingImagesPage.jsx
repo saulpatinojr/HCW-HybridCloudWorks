@@ -40,7 +40,7 @@ export const BUILDING_IMAGES_PATH = routes.buildingImages('docker');
 const CANONICAL = `https://hybridcloudworks.com${BUILDING_IMAGES_PATH}`;
 
 /** When the commands were last read against the files they describe. */
-export const CHECKED_ON = Object.freeze({ iso: '2026-10-14', label: '14 October 2026' });
+export const CHECKED_ON = Object.freeze({ iso: '2026-10-21', label: '21 October 2026' });
 
 const REPO = 'https://github.com/saulpatinojr/HCW-HybridCloudWorks';
 
