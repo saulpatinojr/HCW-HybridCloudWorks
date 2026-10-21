@@ -116,6 +116,13 @@ argument_specs:
         required: false
         default: 60
         description: How long the site's CLI may take before systemd stops it and the run fails.
+      portainer_check_environment_wait_seconds:
+        type: int
+        required: false
+        default: 30
+        description: >-
+          How long the check keeps asking while the environment reads down, for a Portainer
+          that has only just started. Zero asks once. Keep it well inside the unit's six minutes.
       portainer_check_agent_user:
         type: str
         required: false

@@ -15,5 +15,6 @@
   "agent_env_file": {{ portainer_check_agent_env_file | to_json }},
   "agent_app_dir": {{ portainer_check_agent_app_dir | to_json }},
   "report_cli": {{ portainer_check_report_cli | to_json }},
-  "report_timeout_seconds": {{ portainer_check_report_timeout_seconds | int }}
+  "report_timeout_seconds": {{ portainer_check_report_timeout_seconds | int }},
+  "environment_wait_seconds": {{ portainer_check_environment_wait_seconds | int }}
 }

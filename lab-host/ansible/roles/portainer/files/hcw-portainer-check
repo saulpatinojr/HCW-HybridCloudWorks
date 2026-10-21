@@ -77,6 +77,13 @@ HTTP_TIMEOUT_SECONDS = 20
 # whole run fits the unit's TimeoutStartSec of six minutes with margin.
 IMAGE_STATUS_TIMEOUT_SECONDS = 15
 IMAGE_STATUS_BUDGET_SECONDS = 90
+# A Portainer that has just started may not have looked at its environments
+# yet, so a working one can read down for a moment: after a host reboot, and
+# after the role restarts Portainer onto a new Docker socket (#1328). The
+# environment read is repeated at this interval for up to the configured
+# environment_wait_seconds while the environment reads down; a refusal, a
+# missing environment or a malformed answer is not waited for.
+ENVIRONMENT_POLL_SECONDS = 2
 # The site's limits for the report's strings (functions/src/lib/labs/host-checks.js).
 VERSION_MAX = 32
 ENVIRONMENT_NAME_MAX = 64
@@ -99,6 +106,7 @@ CONFIG_KEYS = {
     "agent_app_dir": str,
     "report_cli": str,
     "report_timeout_seconds": int,
+    "environment_wait_seconds": int,
 }
 # The environment every program this helper starts gets, and nothing more: the
 # token never travels in one, $CREDENTIALS_DIRECTORY does not reach the CLI,
@@ -418,19 +426,24 @@ def inspect(portainer, token, config, report):
     else:
         notes.append(f"GET /licenses answered HTTP {status}; the licence is reported as unknown")
 
-    status, body = portainer.get("/endpoints", token)
-    if status == 401:
-        raise refused(status)
-    if status != 200 or not isinstance(body, list):
-        raise Failure(f"GET /endpoints answered HTTP {status}")
     name = config["environment_name"]
-    environment = next((item for item in body if isinstance(item, dict) and item.get("Name") == name), None)
-    if environment is None:
-        raise Failure(f"Portainer lists no environment named {name} among its {len(body)}")
-    identifier = environment.get("Id")
-    if type(identifier) is not int:
-        raise Failure(f"the environment {name} has no numeric Id")
-    report["environmentUp"] = environment.get("Status") == 1
+    deadline = time.monotonic() + config["environment_wait_seconds"]
+    while True:
+        status, body = portainer.get("/endpoints", token)
+        if status == 401:
+            raise refused(status)
+        if status != 200 or not isinstance(body, list):
+            raise Failure(f"GET /endpoints answered HTTP {status}")
+        environment = next((item for item in body if isinstance(item, dict) and item.get("Name") == name), None)
+        if environment is None:
+            raise Failure(f"Portainer lists no environment named {name} among its {len(body)}")
+        identifier = environment.get("Id")
+        if type(identifier) is not int:
+            raise Failure(f"the environment {name} has no numeric Id")
+        report["environmentUp"] = environment.get("Status") == 1
+        if report["environmentUp"] or time.monotonic() + ENVIRONMENT_POLL_SECONDS > deadline:
+            break
+        time.sleep(ENVIRONMENT_POLL_SECONDS)
     if not report["environmentUp"]:
         raise Failure(f"the environment {name} is down (Portainer Status {environment.get('Status')})")
 

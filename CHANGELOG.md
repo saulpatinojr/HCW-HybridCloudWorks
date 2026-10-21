@@ -542,6 +542,36 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **A Docker upgrade no longer leaves Portainer's `local` environment down
+  until someone restarts the container (#1328)**. Portainer holds the Docker
+  socket as a bind-mounted file, so when Docker restarts (any docker-ce
+  upgrade does) a Portainer that was already running keeps the old, deleted
+  socket: it still answers, but it can no longer see this host's Docker. The
+  2026-10-21 bootstrap (Docker 29.9.1 to 29.9.2, #1324) left it so, the
+  15-minute check failed three times in a row and raised the lab alert, and
+  `sudo docker restart portainer` was the cure. The agent's socket proxy had
+  the same fault in #1135. The `portainer` role now installs the `labs_agent`
+  role's `hcw-docker-proxy-stale` helper (the same file, to the same path, so
+  there is one copy to keep right) and asks it whether Portainer started
+  before the daemon's current start. If it did, the container task restarts
+  it onto the new socket and the run says so; if it did not, nothing is
+  restarted. The weekly run proposes Docker upgrades, so without this it
+  would have come back each time. `portainer-stale-socket.test.sh` holds the
+  wiring (the restart tied to the answer and not to every run, asked before
+  the container task, skipped in check mode, one helper file for both roles)
+  and runs the helper against stand-ins for `systemctl` and `docker` with this
+  role's own container name; putting each of eight breaks back in turn turned
+  it red. CI runs it in the `ansible-lint (lab-host)` job. It does not prove a
+  live restart, which shows on the first bootstrap that upgrades Docker.
+  A Portainer that has only just started may still read its environment as
+  down for a moment, and the role runs the check straight after the restart,
+  so `hcw-portainer-check` now asks again every 2 seconds for up to
+  `portainer_check_environment_wait_seconds` (30) while the environment reads
+  down. A refused token, a missing environment or an odd answer still fails at
+  once, so a real outage is reported about half a minute later at most. Three
+  new checks in `hcw-portainer-check.test.py` cover reading up inside the
+  wait, still reading down when it ends, and a missing environment not being
+  waited for; breaking each of those three ways turned the tests red.
 - **The weekly supply-chain check no longer skips the image scan and the
   weekly issue in a week when a pin is behind (#1308)**. The check job's
   first step runs `lab-pins-upstream.mjs --summary`, which exits 1 when a pin

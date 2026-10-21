@@ -1473,7 +1473,12 @@ refuses a key the playbook defines.
   images checked, 0 outdated; licence valid to 2027-09-26; reported to the
   site`. A line beginning `The Portainer check failed, which also raised the
   lab alert` means the run went on without it, and the rest of the line
-  says why.
+  says why. `environment local down or not found` straight after a Docker
+  upgrade was a Portainer left on the old Docker socket (#1328); the role now
+  restarts one that started before the daemon's current start and says
+  `Portainer was restarted onto the daemon's new socket`, and
+  `docs/runbooks/labs-host.md`, "Portainer", has the by-hand cure if a card
+  still reads critical.
 - On the host, bash; the check's own lines without systemd's around them:
 
   ```bash

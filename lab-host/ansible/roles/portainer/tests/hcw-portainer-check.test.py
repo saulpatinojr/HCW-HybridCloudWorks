@@ -97,6 +97,7 @@ DOCUMENTED_CONFIG = {
     "agent_app_dir": "/opt/hcw-labs-agent/vps-agent",
     "report_cli": "bin/report-host-check.js",
     "report_timeout_seconds": 60,
+    "environment_wait_seconds": 30,
 }
 
 passed = 0
@@ -290,6 +291,9 @@ def check_rendered_files():
     check("the CLI is vps-agent/bin/report-host-check.js, through /usr/bin/systemd-run, with the role's timeout",
           config["report_cli"] == "bin/report-host-check.js" and config["systemd_run"] == "/usr/bin/systemd-run"
           and config["report_timeout_seconds"] == defaults["portainer_check_report_timeout_seconds"] == 60)
+    check("the check waits up to the role's 30 s for the environment to read up, well inside the unit's six minutes",
+          config["environment_wait_seconds"] == defaults["portainer_check_environment_wait_seconds"] == 30
+          and "\nTimeoutStartSec=6min\n" in service, str(config["environment_wait_seconds"]))
     check("the service is a oneshot that runs the helper with the rendered configuration",
           "\nType=oneshot\n" in service
           and f"\nExecStart={defaults['portainer_check_script']} --config {defaults['portainer_check_config_file']}\n" in service)
@@ -409,6 +413,10 @@ class FakePortainer:
         self.other_methods = []
         # Paths that answer a given status instead of their body.
         self.fail = {}
+        # How many more reads of /endpoints still answer the local environment
+        # as down (Status 2) before it reads up, as a Portainer that has only
+        # just started does for a moment.
+        self.down_reads = 0
 
     def fixture_names(self):
         """Every name and image that must appear in no output and no report."""
@@ -470,7 +478,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if parts == ["api", "licenses"]:
                 return self.send(200, fake.licenses)
             if parts == ["api", "endpoints"]:
-                return self.send(200, fake.endpoints)
+                endpoints = fake.endpoints
+                if fake.down_reads > 0:
+                    fake.down_reads -= 1
+                    endpoints = [dict(item, Status=2) if item.get("Name") == "local" else item for item in endpoints]
+                return self.send(200, endpoints)
             if len(parts) == 6 and parts[:2] == ["api", "endpoints"] and parts[3:] == ["docker", "containers", "json"]:
                 if query.get("all") != ["true"]:
                     return self.send(400, {"message": "the helper must ask for every container"})
@@ -620,6 +632,7 @@ class World:
             agent_env_file=str(self.env_file),
             agent_app_dir=str(self.app),
             report_timeout_seconds=20,
+            environment_wait_seconds=0,
         )
         self.config_file = self.root / "check.json"
         self.write_config()
@@ -900,6 +913,32 @@ check("the local environment down (Status 2): exit 1, environmentUp false, the r
       result.returncode == 1 and report.get("environmentUp") is False and "is down (Portainer Status 2)" in str(report.get("error"))
       and not any("/containers/json" in path for path in world.paths()), json.dumps(report))
 world.fake.endpoints[1]["Status"] = 1
+# A Portainer that has only just started can read its environment down for a
+# moment (#1328): the helper asks again, up to environment_wait_seconds, and
+# waits for nothing else.
+world.write_config(environment_wait_seconds=8)
+world.fake.down_reads = 2
+result = world.helper()
+report = world.last_report()
+check("the local environment reads down twice and then up inside the wait: exit 0, environmentUp true, three reads of /endpoints",
+      result.returncode == 0 and report.get("environmentUp") is True and world.paths().count("/api/endpoints") == 3
+      and any("/containers/json" in path for path in world.paths()), json.dumps(report) + result.stderr)
+world.write_config(environment_wait_seconds=3)
+world.fake.endpoints[1]["Status"] = 2
+result = world.helper()
+report = world.last_report()
+check("the local environment still down when the wait ends: exit 1, environmentUp false, the reason in error, asked more than once",
+      result.returncode == 1 and report.get("environmentUp") is False and "is down (Portainer Status 2)" in str(report.get("error"))
+      and world.paths().count("/api/endpoints") > 1 and not any("/containers/json" in path for path in world.paths()),
+      json.dumps(report) + str(world.paths()))
+world.fake.endpoints[1]["Status"] = 1
+world.write_config(environment_wait_seconds=6)
+world.fake.endpoints[1]["Name"] = "renamed-fixture"
+result = world.helper()
+check("no environment named local is not waited for: exit 1 after one read of /endpoints",
+      result.returncode == 1 and world.paths().count("/api/endpoints") == 1, str(world.paths()))
+world.fake.endpoints[1]["Name"] = "local"
+world.write_config(environment_wait_seconds=0)
 world.fake.fail["/api/endpoints"] = 500
 result = world.helper()
 report = world.last_report()

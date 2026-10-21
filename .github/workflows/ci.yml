@@ -498,6 +498,19 @@ jobs:
         if: steps.changes.outputs.relevant == 'true'
         run: python roles/portainer/tests/hcw-portainer-check.test.py
 
+      # Portainer holds the daemon's socket as a bind-mounted file, so a Docker
+      # restart (any docker-ce upgrade) leaves a running Portainer on the old
+      # socket: it answers, but its `local` environment reads down (#1328). The
+      # portainer role asks the labs_agent role's staleness helper and
+      # restarts Portainer only when it started before the daemon's current
+      # start. This reads the role's wiring (the restart tied to the answer,
+      # asked before the container task, one helper file for both roles) and
+      # runs the helper against stand-ins for systemctl and docker. Needs
+      # neither root, Docker nor Ansible.
+      - name: portainer stale-socket test
+        if: steps.changes.outputs.relevant == 'true'
+        run: bash roles/portainer/tests/portainer-stale-socket.test.sh
+
       # Who may sign in to Coder (#954): coder.env rendered by this job's
       # ansible-core from group_vars carries the organisation, the
       # lab-learners team and sign-ups off, and the role's sign-in checks

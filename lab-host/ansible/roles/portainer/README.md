@@ -26,7 +26,18 @@ is no Caddy route and nothing public. Off until `portainer_enabled` is true.
    is Portainer's whole purpose. Its volume was carried into the remapped
    data root as it was, on the run that turned the remap on. Portainer shows
    the host daemon only; Coder's workspaces run on the `coder_sandbox`
-   daemon, which it does not see.
+   daemon, which it does not see. **A Docker restart no longer strands it**
+   (#1328): the container holds the daemon's socket as a bind-mounted file,
+   so a daemon restart (any docker-ce upgrade) leaves a running Portainer on
+   the old, unlinked socket. It still answers, but its `local` environment
+   reads down and the check below raises the lab alert; the 2026-10-21
+   bootstrap (Docker 29.9.1 to 29.9.2) left it so until `sudo docker restart
+   portainer`. Before the container task the role installs the
+   `labs_agent` role's `hcw-docker-proxy-stale` helper (the same file, to the
+   same path, the agent's socket proxy needed in #1135) and asks it about
+   Portainer; a Portainer that started before the daemon's current start is
+   restarted onto the new socket, one that did not is left alone, and the
+   run says which.
 3. With it false: removes the container and keeps the volume, so turning it
    back on brings back the same administrator, settings and licence.
 
@@ -93,7 +104,7 @@ standard library only, `files/hcw-portainer-check`) makes six kinds of
 | `/system/status` | `Version` |
 | `/system/version` | `ServerEdition` (EE or BE as `EE`, CE as `CE`; anything else leaves the field out) and `UpdateAvailable`, said in the journal line |
 | `/licenses` | `valid` and `expiresAt` (epoch seconds). Valid when one licence says so; not valid when one says so and none is; unknown when Portainer says neither, which a fresh instance does |
-| `/endpoints` | The environment whose `Name` is `portainer_check_environment_name` (`local`), found by name because its `Id` is 3 on this host, not 1; `Status` 1 is up |
+| `/endpoints` | The environment whose `Name` is `portainer_check_environment_name` (`local`), found by name because its `Id` is 3 on this host, not 1; `Status` 1 is up. While it reads down the check asks again every 2 seconds, for up to `portainer_check_environment_wait_seconds`, because a Portainer that has only just started can read down for a moment |
 | `/endpoints/<id>/docker/containers/json?all=true` | Docker's own list: `State` counted as running, restarting and exited; `(unhealthy)` in `Status` counted as unhealthy |
 | `/docker/<id>/containers/<container>/image_status` | One per running container: `updated` or `outdated` is a verdict and is counted as checked; `processing`, `skipped` and `error` are not. The reads share a 90 s budget, so a slow registry leaves containers unchecked rather than failing the run |
 
@@ -227,6 +238,7 @@ systemctl list-timers hcw-portainer-check.timer --no-pager
 | `portainer_check_script`, `portainer_check_unit` | `/usr/local/libexec/hcw-portainer-check`, `hcw-portainer-check` | Where the check is installed, and its unit and journal name |
 | `portainer_check_token_file`, `portainer_check_config_file` | `/etc/hcw/portainer/api-token`, `/etc/hcw/portainer/check.json` | The token (root `0600`) and the configuration beside it; the directory is derived in `vars/main.yml` |
 | `portainer_check_report_timeout_seconds` | `60` | How long the site's CLI may take |
+| `portainer_check_environment_wait_seconds` | `30` | How long the check keeps asking while the environment reads down (a Portainer that has only just started); `0` asks once |
 | `portainer_check_agent_user`, `_group`, `_env_file`, `_app_dir`, `_node`, `portainer_check_systemd_run`, `portainer_check_report_cli` | the coder role's values | The lab agent's user and paths, `systemd-run`, and the CLI |
 
 `meta/argument_specs.yml` is the contract.
@@ -288,3 +300,17 @@ not-configured sentence, where PyYAML and Jinja2 are importable (CI's are;
 under `python -I` on a workstation that has them as user-site installs,
 those checks are skipped and say so). CI runs it in the
 `ansible-lint (lab-host)` job. Needs neither root nor Docker.
+
+`tests/portainer-stale-socket.test.sh` holds the restart above to its wiring:
+the role installs the helper from the `labs_agent` role's files to the path
+that role uses, asks it about this role's container before the container task,
+records `portainer_stale` only for the exact answer `stale`, ties the
+container task's `restart:` to it (and not to every run), skips the question in
+check mode, and says so when it restarts. It also runs the helper against
+stand-ins for `systemctl` and `docker`, with the real GNU date and this role's
+own container name: a Portainer older than the daemon is `stale`, a newer one
+`fresh`, one not running or not there `absent`. Breaking each of those in turn
+turned it red. CI runs it in the same job. Needs neither root, Docker nor
+Ansible, and so it does not prove a live restart: that shows on the first
+bootstrap that upgrades Docker, as the line `Portainer was restarted onto the
+daemon's new socket` in the run and `environment local up` in the check.
