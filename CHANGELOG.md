@@ -542,6 +542,28 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **An evidence row can name the one requirement it counts toward, and the
+  monthly audience rows do, so two audience months no longer read as
+  community work or hands-on material (#1313)**. Readiness matched a row to
+  a requirement by its source type alone, and the audience timer's rows are
+  `manual`, which Docker Captain's `community` and `labs` requirements and
+  Microsoft MVP's `reach` also accept. The timer's list named `reach` as the
+  requirement each row is filed under, but the stored row never carried it,
+  and the evidence validator refuses a key it does not know. Now an evidence
+  row has an optional `requirementId`: `computeReadiness` counts a row that
+  names one toward that requirement only (the requirement must still accept
+  the row's source, so naming can narrow where a row counts and never widen
+  it), and a row that names none counts as it always did. The timer stores
+  `requirementId: 'reach'` on every row and may update it on a re-run; a
+  month already stored without it is read once more so the rows get it, and
+  a row the owner removed is left alone. The checklist on an application
+  offers the same rows readiness counts (`evidenceCountsToward` in
+  `ambassadorModel.js` mirrors the API's, with the same test cases). Docker
+  Captain's `labs` accepts `manual` again, as revision 4 of its seed (the
+  owner files hands-on material by hand); a stored seed that was never
+  edited is brought up on the next read, and one the owner edited is left
+  alone. Nothing to run: it takes effect with the next Functions and
+  frontend deploys.
 - **The AVM versions bot regenerates the image's record of what each pinned
   version calls, so its pull request arrives green (#1306, #1309)**.
   `AVM_CHILD_CALLS` in `lab-image/versions.env` is keyed by each builder

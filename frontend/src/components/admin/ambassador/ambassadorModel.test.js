@@ -10,6 +10,7 @@ import {
   allowedTransitions,
   applicationExport,
   daysUntil,
+  evidenceCountsToward,
   evidenceRelevant,
   expiringEvidence,
   programForm,
@@ -139,6 +140,73 @@ describe('export and relevance', () => {
     expect(evidenceRelevant({ programIds: ['mct'] }, 'rl', 'mct')).toBe(true);
     expect(evidenceRelevant({ programIds: ['mvp'] }, 'rl', 'mct')).toBe(false);
     expect(evidenceRelevant({ programIds: ['mct'] }, 'rl')).toBe(false);
+  });
+});
+
+// The API's `evidenceCountsToward` (functions/src/lib/ambassador/readiness.js)
+// is the rule; these are its cases, so the checklist offers what readiness counts (#1313).
+describe('evidenceCountsToward', () => {
+  const reach = { id: 'reach', evidenceTypes: ['manual'] };
+  const community = { id: 'community', evidenceTypes: ['manual', 'speaking'] };
+  const anything = { id: 'any', evidenceTypes: [] };
+
+  it.each([
+    [
+      'a manual row naming nothing counts under every requirement that lists manual',
+      { sourceModule: 'manual' },
+      reach,
+      true,
+    ],
+    ['…and under the others that list it', { sourceModule: 'manual' }, community, true],
+    [
+      'a row of a source the requirement does not list does not count',
+      { sourceModule: 'content' },
+      community,
+      false,
+    ],
+    [
+      'a requirement listing no types accepts any source',
+      { sourceModule: 'content' },
+      anything,
+      true,
+    ],
+    [
+      'a manual row naming reach counts toward reach',
+      { sourceModule: 'manual', requirementId: 'reach' },
+      reach,
+      true,
+    ],
+    [
+      '…and toward no other requirement that lists manual',
+      { sourceModule: 'manual', requirementId: 'reach' },
+      community,
+      false,
+    ],
+    [
+      'naming never widens: a source the requirement does not list still does not count',
+      { sourceModule: 'content', requirementId: 'reach' },
+      reach,
+      false,
+    ],
+    [
+      'a name that matches nothing counts nowhere',
+      { sourceModule: 'manual', requirementId: 'nope' },
+      reach,
+      false,
+    ],
+    [
+      'an empty or non-text name means none',
+      { sourceModule: 'manual', requirementId: '' },
+      community,
+      true,
+    ],
+    ['…including null', { sourceModule: 'manual', requirementId: null }, community, true],
+  ])('%s', (_label, item, requirement, expected) => {
+    expect(evidenceCountsToward(item, requirement)).toBe(expected);
+  });
+
+  it('tolerates a requirement without a type list', () => {
+    expect(evidenceCountsToward({ sourceModule: 'manual' }, { id: 'x' })).toBe(true);
   });
 });
 

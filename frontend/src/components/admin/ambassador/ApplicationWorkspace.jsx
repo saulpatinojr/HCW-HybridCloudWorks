@@ -27,6 +27,7 @@ import {
   ambassadorStatusInfo,
   applicationExport,
   downloadJson,
+  evidenceCountsToward,
   evidenceForApplication,
   evidenceRelevant,
   sourceLabel,
@@ -152,9 +153,7 @@ function RequirementChecklist({ program, application, evidence, readiness, onTog
     <div className="space-y-4">
       {(program.requirements || []).map((req) => {
         const row = readiness?.requirements?.find((r) => r.id === req.id);
-        const candidates = relevant.filter(
-          (e) => req.evidenceTypes.length === 0 || req.evidenceTypes.includes(e.sourceModule)
-        );
+        const candidates = relevant.filter((e) => evidenceCountsToward(e, req));
         return (
           <div key={req.id} className="rounded-md border border-border p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">

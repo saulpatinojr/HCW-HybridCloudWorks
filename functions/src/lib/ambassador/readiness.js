@@ -41,6 +41,24 @@ export function evidenceRelevant(item, programId, parentProgramId = null) {
   );
 }
 
+/**
+ * Does one evidence row count toward one requirement of a program it is
+ * already relevant to? The requirement must accept the row's source (a
+ * requirement that lists no types accepts any). A row that also names a
+ * requirement (`requirementId`) counts toward that one only, so a naming row
+ * can narrow where it counts and never widen it: the monthly audience rows are
+ * `manual` and filed under `reach`, and must not also read as community
+ * leadership or hands-on material because those accept `manual` too (#1313).
+ * A row that names none counts toward every requirement that accepts its
+ * source, as every row did before the field existed.
+ */
+export function evidenceCountsToward(item, req) {
+  const types = Array.isArray(req.evidenceTypes) ? req.evidenceTypes : [];
+  if (types.length > 0 && !types.includes(item.sourceModule)) return false;
+  const named = typeof item.requirementId === 'string' ? item.requirementId : '';
+  return !named || named === req.id;
+}
+
 /** The unit a program's requirements count in: evidence items, or their `metrics.credits` summed. */
 export const readinessUnit = (program) =>
   program?.scoring?.unit === 'credits' ? 'credits' : 'items';
@@ -54,9 +72,8 @@ const creditsOf = (item) => Math.max(0, Number(item.metrics?.credits) || 0);
  * `metrics.credits`.
  */
 function scoreRequirement(req, relevant, unit) {
-  const types = Array.isArray(req.evidenceTypes) ? req.evidenceTypes : [];
   const items = relevant
-    .filter((item) => types.length === 0 || types.includes(item.sourceModule))
+    .filter((item) => evidenceCountsToward(item, req))
     .map((item) => ({
       id: item.id,
       title: item.title,
@@ -82,9 +99,9 @@ function scoreRequirement(req, relevant, unit) {
 
 const MET_RULE = {
   items:
-    'A requirement is met when the number of relevant evidence items of its types reaches its minimum count; evidence that names no program counts for every program.',
+    'A requirement is met when the number of relevant evidence items of its types reaches its minimum count; evidence that names no program counts for every program, and an item filed under a requirement counts toward that requirement only.',
   credits:
-    'This program is scored in credits: a requirement is met when the credits recorded on relevant evidence of its types add up to its threshold; evidence that names no program counts for every program.',
+    'This program is scored in credits: a requirement is met when the credits recorded on relevant evidence of its types add up to its threshold; evidence that names no program counts for every program, and an item filed under a requirement counts toward that requirement only.',
 };
 
 /**

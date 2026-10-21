@@ -46,6 +46,7 @@ const evidenceDefaults = () => ({
   metrics: { reach: null, attendees: null, views: null, credits: null },
   technology: [],
   programIds: [],
+  requirementId: null,
   qualificationPeriod: null,
   verificationStatus: 'unverified',
   notes: '',

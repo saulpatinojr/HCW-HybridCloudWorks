@@ -367,6 +367,9 @@ const EVIDENCE = {
     metrics: field(cleanMetrics),
     technology: field(listOf(50)),
     programIds: field(listOf(50)),
+    // The one requirement this row counts toward (readiness.js); null counts
+    // toward every requirement whose evidence types include the row's source.
+    requirementId: field((value) => optionalStr(value, 100)),
     tags: field(listOf(50)),
     qualificationPeriod: field(cleanPeriod),
     verificationStatus: field(oneOf(VERIFICATION_STATUSES, 'verificationStatus')),

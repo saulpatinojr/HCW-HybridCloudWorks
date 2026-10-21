@@ -36,6 +36,7 @@ const {
 } = await import('../lib/timers/ambassador-audience.js');
 const { importedEvidenceId } = await import('../lib/ambassador/evidence.js');
 const { DEFAULT_PROGRAMS } = await import('../lib/ambassador/programs.js');
+const { computeReadiness } = await import('../lib/ambassador/readiness.js');
 const { validateEvidence } = await import('../lib/ambassador/validate.js');
 const { PodbeanError } = await import('../lib/podcast/podbean.js');
 
@@ -266,6 +267,7 @@ describe('the rows', () => {
         sourceId: `audience-2026-09-${programId}`,
         url: null,
         programIds: [programId],
+        requirementId: 'reach',
         metrics: { reach: 210, attendees: null, views: 5100, credits: null },
         verificationStatus: 'unverified',
         createdBy: 'ambassadorAudienceMonthly',
@@ -306,7 +308,10 @@ describe('the rows', () => {
     for (const { programId } of AUDIENCE_PROGRAMS) {
       const row = audienceRow({ programId, month, pageViews: 5100, podcast, readAt: OCTOBER_FIRST.toISOString() });
       const { id, docType, createdAt, createdBy, updatedAt, ...body } = row;
-      expect(validateEvidence(body).error, programId).toBeUndefined();
+      const checked = validateEvidence(body);
+      expect(checked.error, programId).toBeUndefined();
+      // The validator keeps the requirement the row is filed under (#1313).
+      expect(checked.value.requirementId, programId).toBe('reach');
       expect(id).toBe(audienceEvidenceId(month.key, programId));
       expect([docType, createdBy, createdAt, updatedAt]).toEqual([
         'evidence',
@@ -323,6 +328,28 @@ describe('the rows', () => {
       const requirement = program.requirements.find((r) => r.id === requirementId);
       expect(requirement, `${programId} has no ${requirementId} requirement`).toBeDefined();
       expect(requirement.evidenceTypes, `${programId}.${requirementId}`).toContain('manual');
+    }
+  });
+
+  // #1313: two audience months must meet `reach` and nothing else that also
+  // accepts `manual` (Docker's community and hands-on rows, MVP's reach).
+  it('counts each programme’s rows toward its reach requirement and no other, however many months are on file', () => {
+    const podcast = { available: true, downloads: 210 };
+    for (const { programId, requirementId } of AUDIENCE_PROGRAMS) {
+      const program = DEFAULT_PROGRAMS.find((p) => p.id === programId);
+      const rows = ['2026-10-01', '2026-09-01'].map((first) =>
+        audienceRow({
+          programId,
+          month: previousMonth(new Date(`${first}T06:00:00.000Z`)),
+          pageViews: 5100,
+          podcast,
+          readAt: `${first}T06:00:00.000Z`,
+        })
+      );
+      const readiness = computeReadiness(program, rows);
+      for (const row of readiness.requirements) {
+        expect(row.count, `${programId}.${row.id}`).toBe(row.id === requirementId ? 2 : 0);
+      }
     }
   });
 
@@ -369,9 +396,60 @@ describe('the rows', () => {
     const [, id, patch, options] = store.patchDoc.mock.calls[0];
     expect(id).toBe(mvpId);
     expect(Object.keys(patch).sort()).toEqual(
-      ['date', 'description', 'metrics', 'programIds', 'snapshot', 'title', 'updatedAt'].sort()
+      [
+        'date',
+        'description',
+        'metrics',
+        'programIds',
+        'requirementId',
+        'snapshot',
+        'title',
+        'updatedAt',
+      ].sort()
     );
     expect(options).toEqual({ ifMatch: was._etag });
+  });
+
+  // #1313: rows the timer stored before they named a requirement would keep
+  // counting toward everything that accepts `manual`, and a recorded month is
+  // never read again, so the next run reads such a month once to repair them.
+  describe('rows stored before they named a requirement', () => {
+    const storedWithout = async () => {
+      const store = memStore();
+      await reader({ store }).read.run();
+      for (const { programId } of AUDIENCE_PROGRAMS) {
+        const id = audienceEvidenceId('2026-09', programId);
+        const { requirementId: _dropped, ...older } = store.rows.get(id);
+        store.rows.set(id, older);
+      }
+      return store;
+    };
+
+    it('reads the month once more and files both rows under reach, creating no third row', async () => {
+      const store = await storedWithout();
+      const second = reader({ store, cf: cloudflare({ count: 5250 }), now: new Date('2026-10-02T06:45:00.000Z') });
+      const result = await second.read.run();
+      expect(result.rows).toEqual({ created: 0, updated: 2, skipped: 0 });
+      expect(store.rows.size).toBe(2);
+      for (const { programId, requirementId } of AUDIENCE_PROGRAMS) {
+        expect(store.rows.get(audienceEvidenceId('2026-09', programId)).requirementId).toBe(requirementId);
+      }
+      // Repaired, so the month is recorded again and the next day reads nothing.
+      const third = reader({ store, now: new Date('2026-10-03T06:45:00.000Z') });
+      expect(await third.read.run()).toEqual({ skipped: 'recorded', month: '2026-09' });
+      expect(third.cf.fetch).not.toHaveBeenCalled();
+    });
+
+    it('leaves a row the owner removed alone, so the month is not read again every day', async () => {
+      const store = await storedWithout();
+      const [dockerId, mvpId] = AUDIENCE_PROGRAMS.map((p) => audienceEvidenceId('2026-09', p.programId));
+      store.rows.set(dockerId, { ...store.rows.get(dockerId), softDeletedAt: '2026-10-02T00:00:00.000Z' });
+      store.rows.set(mvpId, { ...store.rows.get(mvpId), requirementId: 'reach' });
+      const next = reader({ store, now: new Date('2026-10-03T06:45:00.000Z') });
+      expect(await next.read.run()).toEqual({ skipped: 'recorded', month: '2026-09' });
+      expect(next.cf.fetch).not.toHaveBeenCalled();
+      expect(store.rows.get(dockerId).requirementId).toBeUndefined();
+    });
   });
 
   it('leaves the owner’s notes, tags and verification alone on an update, and a soft-deleted row deleted', async () => {

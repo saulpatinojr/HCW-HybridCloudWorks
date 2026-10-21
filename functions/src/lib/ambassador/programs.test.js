@@ -72,7 +72,7 @@ describe('ambassador seed programs (ADR 0033 §4)', () => {
     const gk = SUPERSEDED_SEED_VALUES['program-gitkraken-ambassador'];
     expect(gk).toBeDefined();
     expect(currentSeedRevision('program-gitkraken-ambassador')).toBe(3);
-    expect(currentSeedRevision('program-docker-captain')).toBe(3);
+    expect(currentSeedRevision('program-docker-captain')).toBe(4);
     expect(currentSeedRevision('program-microsoft-mvp')).toBe(2);
     expect(currentSeedRevision('program-microsoft-mct')).toBeNull();
     // Each program's history: ascending revisions from 2, each step a
@@ -121,7 +121,7 @@ describe('the published rules read on 2026-10-20', () => {
       ['reach', 1, 3, ['manual']],
       ['content', 4, 2, ['content', 'newsletter']],
       ['community', 2, 2, ['manual', 'speaking']],
-      ['labs', 2, 1, ['labs']],
+      ['labs', 2, 1, ['labs', 'manual']],
     ]);
     expect(captain.requirements[0].description).toMatch(/5,000 or more monthly views/);
     expect(captain.criteria).toEqual(
@@ -252,7 +252,8 @@ describe('the published rules read on 2026-10-20', () => {
     expect(second.criteria).toContain('Reviews of GitKraken on G2, Capterra and TrustRadius');
     expect(second.requirements.map(rule)).toEqual([['quarterly-content', 2, 1, []]]);
 
-    const [[captainRevision, captain], [captainLabsRevision, captainLabs]] = stepsOf('program-docker-captain');
+    const [[captainRevision, captain], [captainLabsRevision, captainLabs], [captainBackRevision, captainBack]] =
+      stepsOf('program-docker-captain');
     expect(captainRevision).toBe(2);
     expect(captain.description).toBe(
       'Docker Captains: technology experts and leaders in the Docker community who share their knowledge. Selected by Docker.'
@@ -275,6 +276,22 @@ describe('the published rules read on 2026-10-20', () => {
     expect(captainLabs.requirements.map((r) => [r.label, r.description])).toEqual(
       byId('program-docker-captain').requirements.map((r) => [r.label, r.description])
     );
+    // Revision 4 (#1313) put `manual` back on `labs` once the audience rows name
+    // `reach`, and records the list it replaced: revision 3's, without it.
+    expect(captainBackRevision).toBe(4);
+    expect(Object.keys(captainBack)).toEqual(['requirements']);
+    expect(captainBack.requirements.map(rule)).toEqual([
+      ['reach', 1, 3, ['manual']],
+      ['content', 4, 2, ['content', 'newsletter']],
+      ['community', 2, 2, ['manual', 'speaking']],
+      ['labs', 2, 1, ['labs']],
+    ]);
+    expect(byId('program-docker-captain').requirements.map(rule)).toEqual([
+      ['reach', 1, 3, ['manual']],
+      ['content', 4, 2, ['content', 'newsletter']],
+      ['community', 2, 2, ['manual', 'speaking']],
+      ['labs', 2, 1, ['labs', 'manual']],
+    ]);
 
     // The MVP's revision 2 (#1302) added `manual` to `reach`, for the monthly audience rows.
     const [[mvpRevision, mvp]] = stepsOf('program-microsoft-mvp');

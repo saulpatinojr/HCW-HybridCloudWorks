@@ -322,6 +322,20 @@ export function evidenceRelevant(item, programId, parentProgramId = null) {
 }
 
 /**
+ * Does one evidence row count toward one requirement? Mirrors the API's
+ * `evidenceCountsToward` (functions/src/lib/ambassador/readiness.js): the
+ * requirement must accept the row's source (none listed accepts any), and a
+ * row that names a requirement (`requirementId`) counts toward that one only,
+ * so naming can narrow where a row counts and never widen it (#1313).
+ */
+export function evidenceCountsToward(item, requirement) {
+  const types = Array.isArray(requirement?.evidenceTypes) ? requirement.evidenceTypes : [];
+  if (types.length > 0 && !types.includes(item?.sourceModule)) return false;
+  const named = typeof item?.requirementId === 'string' ? item.requirementId : '';
+  return !named || named === requirement?.id;
+}
+
+/**
  * A program additional to another (`parentProgramId`; MCT Regional Lead to
  * MCT, owner request 2026-10-05) is shown, and may start an application,
  * only while the parent's membership is this status. The API refuses the
