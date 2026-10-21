@@ -472,8 +472,11 @@ and attests. Where each sum comes from:
   match; its test fails until you do.
 - Kubernetes schemas: `KUBERNETES_JSON_SCHEMA_COMMIT` is the commit of
   `yannh/kubernetes-json-schema` to take the directory from,
-  `KUBERNETES_JSON_SCHEMA_DIR` the directory (bump it with
-  `KUBECTL_VERSION`), and the SHA256 the same tree hash over that directory.
+  `KUBERNETES_JSON_SCHEMA_DIR` the directory, on the same Kubernetes line as
+  `KUBECTL_VERSION` (a kubectl patch release leaves it where it is; a new
+  line moves both, by hand, in one pull request, which the weekly run reports
+  instead of doing; a test fails when the two sit on different lines), and the
+  SHA256 the same tree hash over that directory.
 - Base image: the image index digest from the registry's
   `Docker-Content-Digest` header, by the method documented at the top of
   [`vps-agent/lib/capabilities.js`](../vps-agent/lib/capabilities.js)
