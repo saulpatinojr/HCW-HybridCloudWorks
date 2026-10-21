@@ -148,24 +148,29 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          changed_paths() {
-            git status --porcelain=v1 --untracked-files=all \
-              | sed -E 's/^.. //; s/.* -> //; s/^"(.*)"$/\1/' | sort -u
+          # Plain commands writing to files, not <(...) or $(...): a failure
+          # inside those is swallowed, and a guard must fail closed.
+          record_changed() {
+            git status --porcelain=v1 --untracked-files=all > "${RUNNER_TEMP}/status.txt"
+            sed -E 's/^.. //; s/.* -> //; s/^"(.*)"$/\1/' "${RUNNER_TEMP}/status.txt" | sort -u > "$1"
           }
           for set in image-base image-tools; do
             node scripts/lab-pins-upstream.mjs --bump "$set" \
               --evidence "${RUNNER_TEMP}/lab-pins/evidence-${set}.md" \
               --notes "${RUNNER_TEMP}/lab-pins/notes-${set}.md" | tee -a "$GITHUB_STEP_SUMMARY"
             mapfile -t paths < "${RUNNER_TEMP}/lab-pins/paths-${set}.txt"
-            outside="$(comm -13 <(printf '%s\n' "${paths[@]}" | sort -u) <(changed_paths))"
+            printf '%s\n' "${paths[@]}" | sort -u > "${RUNNER_TEMP}/allowed-${set}.txt"
+            record_changed "${RUNNER_TEMP}/changed-${set}.txt"
+            outside="$(comm -13 "${RUNNER_TEMP}/allowed-${set}.txt" "${RUNNER_TEMP}/changed-${set}.txt")"
             if [ -n "${outside}" ]; then
               echo "::error::The ${set} bump changed paths outside its own set: $(echo "${outside}" | tr '\n' ' ')"
               exit 1
             fi
             git diff --binary -- "${paths[@]}" > "${RUNNER_TEMP}/lab-pins/${set}.patch"
             git checkout -- "${paths[@]}"
-            if [ -n "$(changed_paths)" ]; then
-              echo "::error::The checkout is not pristine after the ${set} patch: $(changed_paths | tr '\n' ' ')"
+            record_changed "${RUNNER_TEMP}/changed-${set}.txt"
+            if [ -s "${RUNNER_TEMP}/changed-${set}.txt" ]; then
+              echo "::error::The checkout is not pristine after the ${set} patch: $(tr '\n' ' ' < "${RUNNER_TEMP}/changed-${set}.txt")"
               exit 1
             fi
           done
@@ -289,6 +294,22 @@ jobs:
           if grep -E '^(\.github/|scripts/)' "${RUNNER_TEMP}/lab-pins/patched.txt" | grep -vE '^scripts/fixtures/'; then
             echo "::error::The ${SET} patch touches a workflow or a script this job could run; refused."
             exit 1
+          fi
+          # lab-host/bootstrap.sh is the script the owner runs as root on the
+          # lab host, so a patch may change it only on the two cosign pin lines:
+          # no other line, and no mode change, rename or binary hunk. The header
+          # of a file's diff is what comes before its first @@; its body is the
+          # rest, so a changed line that merely starts with dashes is still a
+          # changed line.
+          if grep -qx 'lab-host/bootstrap.sh' "${RUNNER_TEMP}/lab-pins/patched.txt"; then
+            awk '/^diff --git a\/lab-host\/bootstrap\.sh /{keep=1; hunk=0; next} /^diff --git /{keep=0} keep && /^@@/{hunk=1} keep && !hunk' "${patch}" > "${RUNNER_TEMP}/lab-pins/bootstrap-header.txt"
+            awk '/^diff --git a\/lab-host\/bootstrap\.sh /{keep=1; hunk=0; next} /^diff --git /{keep=0} keep && /^@@/{hunk=1} keep && hunk' "${patch}" > "${RUNNER_TEMP}/lab-pins/bootstrap-body.txt"
+            odd="$(grep -E '^(old mode|new mode|deleted file mode|new file mode|rename |copy |similarity |GIT binary patch|Binary files )' "${RUNNER_TEMP}/lab-pins/bootstrap-header.txt" || true)"
+            extra="$(grep -E '^[-+]' "${RUNNER_TEMP}/lab-pins/bootstrap-body.txt" | grep -vE '^[-+]COSIGN_(VERSION|SHA256)=' || true)"
+            if [ -n "${odd}${extra}" ]; then
+              echo "::error::The ${SET} patch changes lab-host/bootstrap.sh other than its COSIGN_VERSION and COSIGN_SHA256 lines; refused."
+              exit 1
+            fi
           fi
           echo "Patched: $(tr '\n' ' ' < "${RUNNER_TEMP}/lab-pins/patched.txt")"
 
@@ -505,7 +526,7 @@ jobs:
             echo
             case "${PINS_EXIT}" in
               0) echo "**Pins:** every lab host pin is current." ;;
-              1) echo "**Pins:** at least one lab host pin is behind upstream (table below). The \`propose\` job moved every one whose checksum or digest the publisher served, in one pull request per pin set (sets with a bump this week: \`${BUMP_SETS}\`; the branches are \`chore/lab-pins-host\` and \`chore/lab-pins-image-base\`). containerd carries runc: docs/runbooks/labs-host.md, \"Runtime advisories\", has the response times." ;;
+              1) echo "**Pins:** at least one lab host pin is behind upstream (table below). The \`propose\` job moved every one whose checksum or digest the publisher served, in one pull request per pin set (sets with a bump this week: \`${BUMP_SETS}\`; the branches are \`chore/lab-pins-host\`, \`chore/lab-pins-image-base\` and \`chore/lab-pins-image-tools\`). containerd carries runc: docs/runbooks/labs-host.md, \"Runtime advisories\", has the response times." ;;
               *) echo "**Pins:** at least one source could not be read, so the pin check did not evaluate (table below)." ;;
             esac
             echo
@@ -518,7 +539,7 @@ jobs:
               echo
             fi
             if [ "${SCAN_FAILED}" = "1" ]; then
-              echo "**Images:** a published lab image carries a HIGH or CRITICAL vulnerability with a fix available. A newer base digest arrives as the \`chore/lab-pins-image-base\` pull request, and publish-lab-image.yml's weekly rebuild refreshes the full image's Debian packages; a fix in a tool is a bump in lab-image/versions.env. Each publish from main opens the \`chore/lab-pins-image-digests\` pull request that pins the new digests where they run."
+              echo "**Images:** a published lab image carries a HIGH or CRITICAL vulnerability with a fix available. A newer base digest arrives as the \`chore/lab-pins-image-base\` pull request, and publish-lab-image.yml's weekly rebuild refreshes the full image's Debian packages; a fix that a tool or a Terraform provider carries arrives as the \`chore/lab-pins-image-tools\` pull request once its publisher has released it, and a finding in one already at its newest release waits on that publisher. Each publish from main opens the \`chore/lab-pins-image-digests\` pull request that pins the new digests where they run."
             else
               echo "**Images:** no HIGH or CRITICAL vulnerability with a fix available."
             fi

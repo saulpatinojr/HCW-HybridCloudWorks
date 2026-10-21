@@ -31,6 +31,11 @@
  *                         newest digest of the base image's release line,
  *                         and its ANSIBLE_CORE_* lines to ansible-core's
  *                         newest release in its line (PyPI's wheel hashes)
+ *   --bump image-tools    lab-image/versions.env and lab-image/README.md, to
+ *                         the newest release of each tool (Terraform,
+ *                         kubeconform, Helm, kubectl, Azure CLI) and of each
+ *                         Terraform provider in the mirror, with the sum the
+ *                         publisher serves where it serves one
  *   --bump image-digests  vps-agent/lib/capabilities.js and the Coder
  *                         template, to the two digests named by --runner and
  *                         --full (publish-lab-image.yml passes what it pushed)

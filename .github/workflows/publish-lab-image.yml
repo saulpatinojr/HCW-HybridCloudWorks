@@ -92,8 +92,9 @@
 #   provenance attestation naming a commit that did not produce it; and every
 #   tool in lab-image/versions.env, each pinned with its checksum. Those move
 #   by pull request: lab-supply-chain.yml proposes the newest base digest
-#   weekly (`chore/lab-pins-image-base`), and merging that is a push here,
-#   which rebuilds on it. The runner target installs nothing with apt, so a
+#   weekly (`chore/lab-pins-image-base`) and the newest release of each tool
+#   and Terraform provider (`chore/lab-pins-image-tools`), and merging either
+#   is a push here, which rebuilds on it. The runner target installs nothing with apt, so a
 #   rebuild of it alone changes nothing a scan would see.
 #
 # Path-filtered on purpose, unlike ci.yml: this workflow is not a required

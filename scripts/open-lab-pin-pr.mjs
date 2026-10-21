@@ -95,7 +95,7 @@ export const SETS = {
     paths: ['lab-image/versions.env', 'lab-image/README.md'],
     title: 'Lab image: move tools, providers and Azure CLI pins, each with its publisher checksum',
     intro:
-      "The weekly lab supply-chain run found newer upstream versions for the lab image's tools, Terraform providers, or the Azure CLI. It edits `lab-image/versions.env` and `lab-image/README.md` (which documents the provider mirror and tools), each with its publisher checksum or apt index hash. Nothing else.",
+      "The weekly lab supply-chain run found newer upstream versions for the lab image's tools, Terraform providers, or the Azure CLI. It edits `lab-image/versions.env` and `lab-image/README.md` (which documents the provider mirror and tools). Terraform, Helm, kubeconform, kubectl and each provider move with the checksum their publisher serves; the Azure CLI is installed from a signed apt index, so it moves with its version only, checked to be published in both suites. Nothing else.",
     after: [
       "**This pull request's `Build and smoke` check tests the new tools and providers:** the image builds with them, validates the provider mirror, and runs the smoke tests. Merge only on green.",
       "**Merging publishes, it does not deploy.** The push to `main` runs publish-lab-image.yml, which builds, smoke-tests, attests and pushes both images, then opens the `chore/lab-pins-image-digests` pull request that pins the new digests where they are consumed.",
@@ -105,6 +105,12 @@ export const SETS = {
       "**Rollback:** revert this pull request; the consumers keep the digests they pin until a later `chore/lab-pins-image-digests` pull request moves them.",
     ],
     infrastructure: false,
+    // The shared line says every value carries a checksum. The Azure CLI does
+    // not: it comes from a signed apt index and its pin holds a version only.
+    body: () => ({
+      pinnedNote:
+        "Each Terraform, Helm, kubeconform, kubectl and provider value carries the checksum its publisher serves, read as the evidence tables say. The Azure CLI is installed from a signed apt index and carries a version only, checked to be published in both suites.",
+    }),
   },
   'image-digests': {
     branch: 'chore/lab-pins-image-digests',
