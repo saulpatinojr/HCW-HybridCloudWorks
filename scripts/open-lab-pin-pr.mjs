@@ -45,19 +45,20 @@ export const SETS = {
     workflow: '.github/workflows/lab-supply-chain.yml',
     paths: [
       'lab-host/ansible/group_vars/all.yml',
+      'lab-host/bootstrap.sh',
       'lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh',
       'scripts/fixtures/docker-cli-agent-requests.json',
     ],
     title: 'Lab host: move the pins that are behind upstream, each with its publisher checksum',
     intro:
-      'The weekly lab supply-chain run found lab host pins behind their publishers and moved each one whose checksum or digest the publisher served. It edits `lab-host/ansible/group_vars/all.yml`, and with it the two files held to those pins when they moved: `CADDY_SHA512` in the caddy test (the release tarball\'s SHA512 from the publisher\'s checksums file) and the Docker CLI request fixture, re-recorded with the pinned docker-ce-cli installed from Docker\'s signed apt index. Nothing else.',
+      'The weekly lab supply-chain run found lab host pins behind their publishers and moved each one whose checksum or digest the publisher served. It edits `lab-host/ansible/group_vars/all.yml`, and with it the files held to those pins when they moved: `COSIGN_VERSION` and `COSIGN_SHA256` in `lab-host/bootstrap.sh` (the checksum from cosign\'s own checksums file), `CADDY_SHA512` in the caddy test (the release tarball\'s SHA512 from the publisher\'s checksums file) and the Docker CLI request fixture, re-recorded with the pinned docker-ce-cli installed from Docker\'s signed apt index. Nothing else.',
     after: [
       '**Read the release notes** of every component above before merging; a Coder, PostgreSQL or Vault move can carry a breaking change the version number does not show.',
       '**containerd carries runc.** A containerd.io or Docker Engine move is the runtime the learners\' containers run under; docs/runbooks/labs-host.md, "Runtime advisories", has the response times.',
       `**Nothing changes on the host until bootstrap.sh runs.** After the merge, PowerShell: \`${BOOTSTRAP}\`. ${BOOTSTRAP_OK} A Docker Engine or containerd move restarts the Docker daemon as the package upgrades, which stops running workspaces and jobs, so run it outside lab hours.`,
     ],
     scope: [
-      '**Components:** `lab-host/ansible/group_vars/all.yml`, the pins the Ansible roles install on the lab host; with a Caddy move, `CADDY_SHA512` in `lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh`; with a Docker Engine move, `scripts/fixtures/docker-cli-agent-requests.json`, re-recorded with the pinned docker-ce-cli verified through Docker\'s signed apt index (`recordedFrom` names the .deb).',
+      '**Components:** `lab-host/ansible/group_vars/all.yml`, the pins the Ansible roles install on the lab host; with a cosign move, `COSIGN_VERSION` and `COSIGN_SHA256` in `lab-host/bootstrap.sh`; with a Caddy move, `CADDY_SHA512` in `lab-host/ansible/roles/caddy/tests/caddy-adapt.test.sh`; with a Docker Engine move, `scripts/fixtures/docker-cli-agent-requests.json`, re-recorded with the pinned docker-ce-cli verified through Docker\'s signed apt index (`recordedFrom` names the .deb).',
       '**Data:** a Vault or PostgreSQL move within its release line keeps its storage format; read the release notes for anything else. `sudo /usr/local/sbin/coder-postgres-backup` before the host run is the restore point for the Coder database (docs/runbooks/labs-host.md).',
       '**Rollback:** revert this pull request and run `bootstrap.sh` again; the roles install the pinned versions and apt\'s held packages move back with them.',
     ],

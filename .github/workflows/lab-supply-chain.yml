@@ -11,7 +11,7 @@
 # Ansible group_vars or a digest in a JS module.
 #
 # Weekly, this workflow:
-#   1. `propose` runs scripts/lab-pins-upstream.mjs --bump for two pin sets
+#   1. `propose` runs scripts/lab-pins-upstream.mjs --bump for three pin sets
 #      and makes the edits in its own checkout:
 #        host        lab-host/ansible/group_vars/all.yml, every pin behind
 #                    its publisher;
@@ -23,7 +23,20 @@
 #                    change on its own), and ansible-core's ANSIBLE_CORE_*
 #                    lines to its newest release in its line, with every
 #                    wheel's hash read from PyPI (lab-host/bootstrap.sh
-#                    installs the host's ansible-core from the same lines).
+#                    installs the host's ansible-core from the same lines);
+#        image-tools lab-image/versions.env and lab-image/README.md, for the
+#                    tools baked into the lab images (Terraform, kubeconform,
+#                    Helm, kubectl, the Azure CLI) and the Terraform providers
+#                    in their mirror, each moved to its newest release with the
+#                    publisher's checksum. Merging it publishes new images, and
+#                    its pull request's Build and smoke check tests the new
+#                    tools and providers. This is how a fix that only a
+#                    publisher's new release carries reaches the images the
+#                    vulnerability scan below lists.
+#      The sets are planned one at a time from the pristine checkout, and each
+#      set's patch is cut before the next set starts, because image-base and
+#      image-tools both edit lab-image/versions.env and a set's patch must
+#      hold that set's edits only.
 #      Each edit carries the checksum or digest read from the publisher
 #      beside the version (scripts/lib/lab-pin-bumps.mjs says which, from
 #      where). A pin whose checksum could not be verified is not edited: it is
@@ -113,7 +126,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/lab-pins"
-          for set in host image-base; do
+          for set in host image-base image-tools; do
             node scripts/open-lab-pin-pr.mjs --paths "$set" > "${RUNNER_TEMP}/lab-pins/paths-${set}.txt"
           done
           sort -u "${RUNNER_TEMP}"/lab-pins/paths-*.txt > "${RUNNER_TEMP}/lab-pins/paths-all.txt"
@@ -121,16 +134,44 @@ jobs:
       # Each set writes its edits into this checkout, its evidence (the pull
       # request body) and its notes (the pins it could not verify). Exit 2 is
       # a plan that could not be made at all; that fails the run.
+      #
+      # The pull-request job applies one set's patch to a pristine checkout,
+      # so a set's patch must hold that set's edits and nobody else's, and
+      # image-base and image-tools both edit lab-image/versions.env. The two
+      # image sets are therefore planned one at a time from the pristine
+      # tree: each is held to its own paths, its patch is cut at once, and its
+      # files are put back before the next set starts. The host set goes last
+      # and stays in the tree, because the Docker CLI fixture below is
+      # recorded from its edits.
       - name: Plan and make the bumps
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for set in host image-base; do
+          changed_paths() {
+            git status --porcelain=v1 --untracked-files=all \
+              | sed -E 's/^.. //; s/.* -> //; s/^"(.*)"$/\1/' | sort -u
+          }
+          for set in image-base image-tools; do
             node scripts/lab-pins-upstream.mjs --bump "$set" \
               --evidence "${RUNNER_TEMP}/lab-pins/evidence-${set}.md" \
               --notes "${RUNNER_TEMP}/lab-pins/notes-${set}.md" | tee -a "$GITHUB_STEP_SUMMARY"
+            mapfile -t paths < "${RUNNER_TEMP}/lab-pins/paths-${set}.txt"
+            outside="$(comm -13 <(printf '%s\n' "${paths[@]}" | sort -u) <(changed_paths))"
+            if [ -n "${outside}" ]; then
+              echo "::error::The ${set} bump changed paths outside its own set: $(echo "${outside}" | tr '\n' ' ')"
+              exit 1
+            fi
+            git diff --binary -- "${paths[@]}" > "${RUNNER_TEMP}/lab-pins/${set}.patch"
+            git checkout -- "${paths[@]}"
+            if [ -n "$(changed_paths)" ]; then
+              echo "::error::The checkout is not pristine after the ${set} patch: $(changed_paths | tr '\n' ' ')"
+              exit 1
+            fi
           done
+          node scripts/lab-pins-upstream.mjs --bump host \
+            --evidence "${RUNNER_TEMP}/lab-pins/evidence-host.md" \
+            --notes "${RUNNER_TEMP}/lab-pins/notes-host.md" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # A Docker Engine move changes the CLI the lab agent's socket proxy is
       # held to (LAB-5): scripts/lab-host-docker-proxy.test.mjs fails the
@@ -161,16 +202,20 @@ jobs:
           echo "Changed, all inside the sets' paths: $(tr '\n' ' ' < "${RUNNER_TEMP}/lab-pins/changed.txt")"
 
       # One patch per set, over that set's paths only (the lists recorded
-      # before anything downloaded ran); the sets whose patch is not empty are
-      # the matrix of the next job.
+      # before anything downloaded ran). The image sets' patches were cut above,
+      # one at a time; the host set's is cut here, after the Docker CLI fixture
+      # and the guard. The sets whose patch is not empty are the matrix of the
+      # next job.
       - name: One patch per set
         id: patches
         run: |
           set -euo pipefail
           sets=()
-          for set in host image-base; do
-            mapfile -t paths < "${RUNNER_TEMP}/lab-pins/paths-${set}.txt"
-            git diff --binary -- "${paths[@]}" > "${RUNNER_TEMP}/lab-pins/${set}.patch"
+          for set in host image-base image-tools; do
+            if [ "$set" = host ]; then
+              mapfile -t paths < "${RUNNER_TEMP}/lab-pins/paths-${set}.txt"
+              git diff --binary -- "${paths[@]}" > "${RUNNER_TEMP}/lab-pins/${set}.patch"
+            fi
             if [ -s "${RUNNER_TEMP}/lab-pins/${set}.patch" ]; then sets+=("\"${set}\""); fi
           done
           json="[$(IFS=,; echo "${sets[*]}")]"
@@ -356,7 +401,7 @@ jobs:
           if [ "${PROPOSE_RESULT}" != "success" ]; then
             echo "The \`propose\` job did not succeed (${PROPOSE_RESULT}), so no pin was bumped this week; its log says why." >> "$out"
           else
-            for set in host image-base; do
+            for set in host image-base image-tools; do
               if [ -s "${RUNNER_TEMP}/lab-pins/notes-${set}.md" ]; then
                 echo "**${set}:** $(cat "${RUNNER_TEMP}/lab-pins/notes-${set}.md")" >> "$out"
                 echo >> "$out"

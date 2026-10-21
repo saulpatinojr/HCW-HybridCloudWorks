@@ -542,6 +542,34 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The weekly lab supply-chain run now proposes tool and provider releases
+  for the lab images, and no longer fails the whole week when cosign moves
+  (#1308)**. Two gaps, both found by running the workflow's own steps
+  against the live publishers. First, `lab-supply-chain.yml` ran only the
+  `host` and `image-base` pin sets. The `image-tools` set (Terraform,
+  kubeconform, Helm, kubectl, the Azure CLI and the Terraform providers in
+  the mirror) was built in #1213 with its tests and its pull-request text,
+  which says the weekly run found the newer versions, but no loop in the
+  workflow named it, so those releases arrived only when someone ran the
+  bumper by hand (azurerm 5.10.0 and Terraform 1.16.6 were waiting this
+  week). It now runs. `image-base` and `image-tools` both edit
+  `lab-image/versions.env` and the pull-request job applies one set's patch
+  to a pristine checkout, so each of the two is planned from the pristine
+  tree, held to its own paths, cut into its patch, and put back before the
+  next one starts; the host set goes last because the Docker CLI fixture is
+  recorded from its edits. Second, the cosign pin that #1240 added to
+  `lab-host/bootstrap.sh` is edited by the host planner, but the host set
+  did not list that file, and the workflow fails the run when the checkout
+  changes outside every set's paths. Cosign had not released since, so
+  nothing showed; cosign 3.1.4 is out now, and the next Tuesday run would
+  have failed with no pull request for any set. The host set lists
+  `lab-host/bootstrap.sh`, and its pull-request text says so. Two tests
+  keep this from coming back: one reads the files the host planners edit
+  from their source and requires each to be in the host set's paths, and one
+  requires every loop over sets in the workflow to cover every set the
+  bumper plans, except `image-digests`, which `publish-lab-image.yml` opens.
+  The runbook, the lab host README and the lab image README now say the
+  weekly run covers the tools.
 - **The lab image's Terraform, Helm and azurerm pins move to their newest
   releases, and the tool bump's tests stop depending on today's pins
   (#1308)**. The weekly scan reports vulnerabilities in the Go code inside
