@@ -1,5 +1,44 @@
 # Working agreements
 
+## Explanations are written for a junior administrator
+
+Owner instruction 2026-10-21, a standing requirement for every session. The
+person reading an explanation is a junior administrator: new to this estate,
+without the history behind a decision, and possibly meeting the term for the
+first time. An explanation that is correct but cannot be followed costs the same
+round trip as a wrong one. This section is about how things are *explained*; the
+next one is about how *commands* are written. Both apply at once.
+
+- **Write the way you would talk a colleague through it at the next desk.**
+  Plain, conversational sentences and short paragraphs. Say what happened and
+  why it matters before the detail of how.
+- **Assume no background.** Do not lean on earlier sessions, issue numbers or
+  file names the reader has not met. Say in a few words what a thing is before
+  relying on it: "the ruleset (the repository's merge rules)", not "the
+  ruleset".
+- **Avoid jargon. When a technical term cannot be avoided, explain it once,
+  in a short clause, where it first appears.** "A junction (a folder that is
+  really a shortcut to another folder)." Where two words are both accurate,
+  use the plainer one.
+- **When the owner has to act, give numbered steps.** One action per step, in
+  the order they happen. Each step says what to do, gives the command from the
+  next section or the exact URL, says what they should see when it worked, and
+  says what to do if they see something else. A step that deletes, spends or
+  cannot be undone is flagged *before* the step, not after.
+- **Link the source.** Where official documentation explains the thing
+  (Microsoft Learn, GitHub Docs, HashiCorp, the vendor's own page), link it,
+  and link the repository's own `docs/` page, issue or PR for the history
+  instead of retelling it. Use a link opened or found in search during the
+  session, never one rebuilt from memory; when none can be found, say so
+  rather than guess.
+- **Keep the rigour; change the voice.** Plain language is not less
+  information. Exact names, identifiers, command output and the line between
+  "checked" and "not checked" all still go in, after the plain explanation or
+  in a code block.
+- **Where this applies:** replies, and the prose of PR descriptions and issues
+  written for the owner to read. Code comments, commit messages and one-line
+  replies on review threads keep the repository's existing style.
+
 ## Owner-facing instructions must be runnable, not descriptive
 
 When telling the owner what to do next, give **commands they can paste**, not a
