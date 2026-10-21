@@ -559,7 +559,12 @@ This project has not cut a tagged release; entries are grouped under
   workflow's steps now runs them with `bash -e`, as the runner does; the
   three new cases (exit 0, 1 and 2) fail on the old step, pass on the new
   one, and the old step put back is caught by the same mutation check as the
-  others.
+  others. The same run showed a second thing that would have kept the weekly
+  output unusable: the host pull request it opened (#1324, which moves Coder
+  to v2.38.1) failed `lab-pin-bumps.test.mjs`, because one test typed
+  `v2.38.0` as the Coder pin it expected to find and so passed only while
+  Coder stayed there. It now reads the pin from the real file, and passes
+  with both the old pin and the new one.
 - **The weekly lab supply-chain run now proposes tool and provider releases
   for the lab images, and no longer fails the whole week when cosign moves
   (#1308)**. Two gaps, both found by running the workflow's own steps
