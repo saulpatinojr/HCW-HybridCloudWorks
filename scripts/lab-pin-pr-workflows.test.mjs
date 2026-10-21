@@ -314,13 +314,15 @@ describe('lab-supply-chain.yml', () => {
   // releases arrived only when someone ran the bumper by hand. Every set the
   // bumper can plan is run here except image-digests, which
   // publish-lab-image.yml opens after each publish.
-  it('names every set the bumper plans, except the one the publish workflow opens, wherever it loops over sets', () => {
-    const named = new Set();
-    for (const [, list] of source.matchAll(/for set in ([a-z -]+); do/g)) {
-      for (const name of list.trim().split(/\s+/)) named.add(name);
-    }
-    expect([...named].sort()).toEqual(BUMP_SETS.filter((name) => name !== 'image-digests').sort());
-    expect(source).toContain('for set in host image-base image-tools; do');
+  it('names every set the bumper plans, except the one the publish workflow opens, in every loop over sets', () => {
+    const loops = [...source.matchAll(/for set in ([a-z -]+); do/g)].map(([, list]) => list.trim().split(/\s+/));
+    const all = ['host', 'image-base', 'image-tools'];
+    // In order of appearance: record the paths, plan the image sets (host is
+    // planned by name after them), cut the patches, collect the notes. Each
+    // loop is held to its own list, so one that drops a set is caught here,
+    // and the behavioural tests in lab-supply-chain-steps.test.mjs run them.
+    expect(loops).toEqual([all, ['image-base', 'image-tools'], all, all]);
+    expect([...new Set(loops.flat())].sort()).toEqual(BUMP_SETS.filter((name) => name !== 'image-digests').sort());
     // The notes of a pin that could not be verified reach the weekly issue for each of them.
     expect(check).toContain('for set in host image-base image-tools; do');
   });

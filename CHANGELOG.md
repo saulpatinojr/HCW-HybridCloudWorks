@@ -563,13 +563,31 @@ This project has not cut a tagged release; entries are grouped under
   changes outside every set's paths. Cosign had not released since, so
   nothing showed; cosign 3.1.4 is out now, and the next Tuesday run would
   have failed with no pull request for any set. The host set lists
-  `lab-host/bootstrap.sh`, and its pull-request text says so. Two tests
-  keep this from coming back: one reads the files the host planners edit
-  from their source and requires each to be in the host set's paths, and one
-  requires every loop over sets in the workflow to cover every set the
-  bumper plans, except `image-digests`, which `publish-lab-image.yml` opens.
-  The runbook, the lab host README and the lab image README now say the
-  weekly run covers the tools.
+  `lab-host/bootstrap.sh`, and its pull-request text says so. Because that
+  is the script the owner runs as root on the lab host, the job that holds
+  the App token now lets a patch change it only on its two cosign lines, and
+  only to the shapes the bumper writes (digits and dots after
+  `COSIGN_VERSION=`, exactly 64 lowercase hex characters after
+  `COSIGN_SHA256=`, nothing after either, so a value cannot carry a
+  command; CodeRabbit caught a first version that checked only how the line
+  started): no other line, and no mode change, rename or binary hunk. An independent
+  review of this change found the new per-set guard failed open if
+  `git status` itself failed; it now writes to files with plain commands, as
+  the existing guard does. Tests keep this from coming back.
+  `lab-supply-chain-steps.test.mjs` takes the `run:` blocks out of the
+  workflow and runs them in a temporary git repository, with stand-ins for
+  the bump scripts, then checks the patches, the guards and the refusals
+  (breaking the workflow eight different ways turned it red each time). The
+  text test requires each loop over sets to list the sets it should, and
+  every set the bumper plans except `image-digests`, which
+  `publish-lab-image.yml` opens, to appear. A third reads the files the host
+  planners edit from their source and requires each in the host set's paths;
+  it is a text match, so it can miss an edit written another way. The weekly
+  issue, the `--bump` documentation, the publish workflow's note and the
+  tools set's pull-request text no longer describe the old two-set run, and
+  that text no longer claims a checksum for the Azure CLI, whose pin holds a
+  version only. The runbook, the lab host README and the lab image README
+  now say the weekly run covers the tools.
 - **The lab image's Terraform, Helm and azurerm pins move to their newest
   releases, and the tool bump's tests stop depending on today's pins
   (#1308)**. The weekly scan reports vulnerabilities in the Go code inside
