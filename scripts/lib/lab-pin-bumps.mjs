@@ -1191,11 +1191,29 @@ export async function planImageTools({ files, http }) {
     notes.push({ label: 'Helm', from: env.HELM_VERSION ?? '—', to: '—', reason: error?.message || String(error) });
   }
 
-  // 4. kubectl
+  // 4. kubectl. A patch release of the pinned Kubernetes line is a bump. A
+  // newer line is a note: the schemas kubeconform checks against
+  // (KUBERNETES_JSON_SCHEMA_*) are a commit and a tree hash that no publisher
+  // serves a checksum for, so a bot cannot move them with kubectl, and the
+  // line is moved by hand with a test holding the two on one line (#1323). The
+  // patch comes from the pinned line's own pointer, so a newer line does not
+  // hide a patch release of the line in use.
   try {
-    const stableUrl = 'https://dl.k8s.io/release/stable.txt';
-    const target = coreVersion((await http.text(stableUrl)).trim());
     const pinned = env.KUBECTL_VERSION;
+    if (!STABLE_VERSION.test(pinned ?? '')) throw new Error('versions.env has no KUBECTL_VERSION to move from');
+    const line = lineOf(pinned);
+    const newest = coreVersion((await http.text('https://dl.k8s.io/release/stable.txt')).trim());
+    if (newest && compareVersions(lineOf(newest), line) > 0) {
+      notes.push({
+        label: 'Kubernetes release line',
+        from: pinned,
+        to: newest,
+        reason: `Kubernetes ${newest} starts the ${lineOf(newest)} line, so kubectl stays on ${line} until the line is moved by hand. Move KUBECTL_VERSION, KUBECTL_SHA256 and the three KUBERNETES_JSON_SCHEMA_ lines in one pull request (lab-image/README.md, "Kubernetes schemas"); a test fails when they sit on different lines`,
+      });
+    }
+    const lineUrl = `https://dl.k8s.io/release/stable-${line}.txt`;
+    const target = coreVersion((await http.text(lineUrl)).trim());
+    if (target && lineOf(target) !== line) throw new Error(`${lineUrl} names ${target}, which is not on the ${line} line`);
     if (target && compareVersions(target, pinned) > 0) {
       const sumsUrl = `https://dl.k8s.io/release/v${target}/bin/linux/amd64/kubectl.sha256`;
       const hex = (await http.text(sumsUrl)).trim();

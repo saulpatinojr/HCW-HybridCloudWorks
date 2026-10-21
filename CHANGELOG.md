@@ -542,6 +542,23 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The weekly bump no longer lets kubectl run ahead of the Kubernetes
+  schemas kubeconform checks against (#1323)**. The lab image pins kubectl
+  (`KUBECTL_VERSION`) and a copy of the Kubernetes JSON schemas
+  (`KUBERNETES_JSON_SCHEMA_*`) that are meant to sit on the same Kubernetes
+  line, but the weekly bump only ever edited kubectl, so the first new line
+  would have left kubeconform validating against the old API with a green
+  build. The schema pins are a commit and a tree hash that no publisher
+  serves a checksum for, so a bot cannot move them with kubectl. The bump now
+  takes kubectl's patch releases from the pinned line's own pointer
+  (`stable-1.37.txt`) and, when `stable.txt` names a newer line, adds a
+  "Kubernetes release line" note to the weekly issue instead of moving
+  kubectl: the line is moved by hand, kubectl and the schemas in one pull
+  request. A test fails when `KUBERNETES_JSON_SCHEMA_DIR` and
+  `KUBECTL_VERSION` are on different lines, so a hand bump that moves one
+  fails in CI. Patch releases stay green because the check is on the line, not
+  the patch number. Six new cases in `lab-pin-bumps.test.mjs`; breaking the
+  planner or the pins five ways turned them red.
 - **A Docker upgrade no longer leaves Portainer's `local` environment down
   until someone restarts the container (#1328)**. Portainer holds the Docker
   socket as a bind-mounted file, so when Docker restarts (any docker-ce

@@ -943,6 +943,80 @@ describe('the lab image tools and providers plan (image-tools)', () => {
     expect(plan.files[VERSIONS_ENV_PATH]).toBe(envText);
     expect(plan.files[README_PATH]).toBe(readmeText);
   });
+
+  // kubectl and the schemas kubeconform checks against are meant to sit on one
+  // Kubernetes line (#1323). The schema pins are a commit and a tree hash no
+  // publisher serves a checksum for, so the bump moves kubectl within its line
+  // and only reports a new line, which is moved by hand.
+  describe('kubectl and the Kubernetes schemas kubeconform checks against', () => {
+    const lineOf = (version) => version.split('.').slice(0, 2).join('.');
+    const [kubeMajor, kubeMinor, kubePatch] = env.KUBECTL_VERSION.split('.').map(Number);
+    const nextPatch = `${kubeMajor}.${kubeMinor}.${kubePatch + 1}`;
+    const nextLine = `${kubeMajor}.${kubeMinor + 1}.0`;
+    const kubectlSha = hex('c');
+    const SCHEMA_KEYS = ['KUBERNETES_JSON_SCHEMA_COMMIT', 'KUBERNETES_JSON_SCHEMA_DIR', 'KUBERNETES_JSON_SCHEMA_SHA256'];
+    const routesFor = ({ newest, inLine }) => ({
+      'https://dl.k8s.io/release/stable.txt': `v${newest}\n`,
+      [`https://dl.k8s.io/release/stable-${lineOf(env.KUBECTL_VERSION)}.txt`]: `v${inLine}\n`,
+      [`https://dl.k8s.io/release/v${inLine}/bin/linux/amd64/kubectl.sha256`]: `${kubectlSha}\n`,
+    });
+    const plan = (routes) => planImageTools({ files, http: makeHttp(fakeFetch(routes)) });
+    const kubectlBump = (result) => result.applied.find((b) => b.key === 'kubectl');
+    const lineNotes = (result) => result.notes.filter((n) => n.label === 'Kubernetes release line');
+
+    it('has a schema directory on the same line as kubectl in the real versions.env', () => {
+      const dir = /^v(\d+\.\d+)\.\d+-standalone-strict$/.exec(env.KUBERNETES_JSON_SCHEMA_DIR ?? '');
+      expect(dir, `KUBERNETES_JSON_SCHEMA_DIR is ${env.KUBERNETES_JSON_SCHEMA_DIR}`).not.toBeNull();
+      expect(dir[1], `KUBERNETES_JSON_SCHEMA_DIR ${env.KUBERNETES_JSON_SCHEMA_DIR} against KUBECTL_VERSION ${env.KUBECTL_VERSION}`).toBe(
+        lineOf(env.KUBECTL_VERSION)
+      );
+    });
+
+    it('moves a patch release of the pinned line and leaves the schema pins where they are', async () => {
+      const result = await plan(routesFor({ newest: nextPatch, inLine: nextPatch }));
+      expect(kubectlBump(result)).toMatchObject({ from: env.KUBECTL_VERSION, to: nextPatch });
+      const after = readEnv(result.files[VERSIONS_ENV_PATH]);
+      expect(after.KUBECTL_VERSION).toBe(nextPatch);
+      expect(after.KUBECTL_SHA256).toBe(kubectlSha);
+      for (const key of SCHEMA_KEYS) expect(after[key]).toBe(env[key]);
+      expect(/^v(\d+\.\d+)\./.exec(after.KUBERNETES_JSON_SCHEMA_DIR)[1]).toBe(lineOf(after.KUBECTL_VERSION));
+      expect(lineNotes(result)).toEqual([]);
+    });
+
+    it('does not move kubectl onto a new line; it says so in a note and edits nothing', async () => {
+      const result = await plan(routesFor({ newest: nextLine, inLine: env.KUBECTL_VERSION }));
+      expect(kubectlBump(result)).toBeUndefined();
+      expect(lineNotes(result)).toHaveLength(1);
+      expect(lineNotes(result)[0]).toMatchObject({ from: env.KUBECTL_VERSION, to: nextLine });
+      expect(lineNotes(result)[0].reason).toMatch(new RegExp(`starts the ${lineOf(nextLine).replace('.', '\\.')} line`));
+      expect(lineNotes(result)[0].reason).toContain('KUBERNETES_JSON_SCHEMA_');
+      expect(result.files[VERSIONS_ENV_PATH]).toBe(envText);
+    });
+
+    it('still moves a patch release of the pinned line when a newer line exists', async () => {
+      const result = await plan(routesFor({ newest: nextLine, inLine: nextPatch }));
+      expect(kubectlBump(result)).toMatchObject({ from: env.KUBECTL_VERSION, to: nextPatch });
+      expect(lineNotes(result)).toHaveLength(1);
+      for (const key of SCHEMA_KEYS) expect(readEnv(result.files[VERSIONS_ENV_PATH])[key]).toBe(env[key]);
+    });
+
+    it('is a note when the pinned line\'s own pointer names another line', async () => {
+      const result = await plan(routesFor({ newest: nextLine, inLine: nextLine }));
+      expect(kubectlBump(result)).toBeUndefined();
+      const note = result.notes.find((n) => n.label === 'kubectl');
+      expect(note.reason).toMatch(/which is not on the \d+\.\d+ line/);
+      expect(result.files[VERSIONS_ENV_PATH]).toBe(envText);
+    });
+
+    it('is a note, not a bump, when the pinned line has no pointer', async () => {
+      const routes = routesFor({ newest: env.KUBECTL_VERSION, inLine: env.KUBECTL_VERSION });
+      delete routes[`https://dl.k8s.io/release/stable-${lineOf(env.KUBECTL_VERSION)}.txt`];
+      const result = await plan(routes);
+      expect(kubectlBump(result)).toBeUndefined();
+      expect(result.notes.some((n) => n.label === 'kubectl' && n.reason.includes('404'))).toBe(true);
+      expect(result.files[VERSIONS_ENV_PATH]).toBe(envText);
+    });
+  });
 });
 
 describe('the consumers\' digest plan', () => {
