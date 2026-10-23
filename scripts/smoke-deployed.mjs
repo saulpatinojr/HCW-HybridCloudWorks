@@ -18,6 +18,17 @@
  *      origin is restricted to Cloudflare IP ranges, so a direct call answers
  *      403 and every tier below reads as a broken deployment.
  *
+ *      The deploy workflow does call the origin, from a runner that has a
+ *      temporary allow rule, and that rule reaches the App Service front ends
+ *      one at a time. A request that lands on a front end without it is
+ *      refused with the platform's own 403 (the `x-ms-forbidden-ip` header),
+ *      and until 2026-10-23 that failed a healthy deploy on one request (run
+ *      39997538990: health 200, content list 403, detail read 200). Every
+ *      request therefore goes through `originFetch`, which waits and retries
+ *      that one refusal, within a budget shared by the whole run. An app
+ *      answer of 403 (the guards, the CORS refusal) is never retried: those
+ *      checks expect it.
+ *
  *   2. COSMOS CONDITIONAL PATCH (--cosmos) — THE flagged assumption from
  *      T-204: that a failed patch predicate surfaces through the JS SDK as
  *      code 412 and a missing document as 404. Documented REST behaviour, but
@@ -125,11 +136,81 @@ const expectStatus = (res, wanted) => {
   }
 };
 
+// ── the origin's own firewall ────────────────────────────────────────────────
+
+/** How long to wait between tries when the origin's firewall refuses a request. */
+export const FIREWALL_RETRY_INTERVAL_MS = 5_000;
+
+/**
+ * The most waiting the whole run will do for the firewall, across every
+ * request: a rule that never arrives costs this once, not once per check.
+ */
+export const FIREWALL_RETRY_BUDGET_MS = 90_000;
+
+/**
+ * Is this the App Service access restriction's own refusal? It answers 403
+ * "Ip Forbidden" and names the refused address in `x-ms-forbidden-ip`; the
+ * app never sets that header, so an app-level 403 (a guard, the CORS
+ * refusal) is not mistaken for it.
+ */
+export function isOriginFirewallRefusal(res) {
+  return res?.status === 403 && Boolean(res.headers?.has?.('x-ms-forbidden-ip'));
+}
+
+const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * `fetch` that waits out the origin firewall's refusal. Only that refusal is
+ * retried; any other status, and any thrown error, is returned or thrown as
+ * it came. When the shared budget is spent the last refusal is returned, so
+ * the check fails with its 403 rather than waiting forever.
+ *
+ * @param {object} [options]
+ * @param {typeof fetch} [options.fetchImpl]
+ * @param {(ms: number) => Promise<void>} [options.sleep]
+ * @param {number} [options.budgetMs]
+ * @param {number} [options.intervalMs]
+ */
+export function createOriginFetch({
+  fetchImpl = globalThis.fetch,
+  sleep = sleepMs,
+  budgetMs = FIREWALL_RETRY_BUDGET_MS,
+  intervalMs = FIREWALL_RETRY_INTERVAL_MS,
+} = {}) {
+  let remainingMs = budgetMs;
+  const stats = { retries: 0, waitedMs: 0 };
+  async function originFetch(url, init) {
+    for (;;) {
+      const res = await fetchImpl(url, init);
+      if (!isOriginFirewallRefusal(res) || remainingMs < intervalMs) return res;
+      // Drain the refusal's body so its connection is released before the retry.
+      await res.arrayBuffer?.().catch(() => {});
+      remainingMs -= intervalMs;
+      stats.retries += 1;
+      stats.waitedMs += intervalMs;
+      await sleep(intervalMs);
+    }
+  }
+  return Object.assign(originFetch, { stats });
+}
+
+const originFetch = createOriginFetch();
+
+/** One line saying the firewall made the run wait, so a slow green run explains itself. */
+function noteFirewallWaits() {
+  const { retries, waitedMs } = originFetch.stats;
+  if (retries > 0) {
+    console.log(
+      `  (the origin firewall refused ${retries} request(s) before this runner's rule reached the front end; waited ${waitedMs / 1000} s in all)`
+    );
+  }
+}
+
 // ── tier 1: anonymous surface ────────────────────────────────────────────────
 
 async function tierAnonymous(base) {
   console.log(`\nTier 1 — anonymous surface against ${base}`);
-  const get = (path, headers = {}) => fetch(`${base}/${path}`, { headers });
+  const get = (path, headers = {}) => originFetch(`${base}/${path}`, { headers });
 
   await check(1, 'health answers and discloses no runtime', async () => {
     const res = await get('health');
@@ -198,7 +279,7 @@ async function tierAnonymous(base) {
       ['GET', 'cms/content?limit=1'],
       ['POST', 'aiProxy'],
     ]) {
-      const res = await fetch(`${base}/${path}`, { method });
+      const res = await originFetch(`${base}/${path}`, { method });
       if (![401, 403].includes(res.status)) {
         throw new Error(`${method} ${path} answered ${res.status} anonymously`);
       }
@@ -208,7 +289,7 @@ async function tierAnonymous(base) {
   await check(1, 'CORS: disallowed origin refused, allowed origin preflights', async () => {
     const evil = await get('public/content', { Origin: 'https://evil.example' });
     expectStatus(evil, 403);
-    const pre = await fetch(`${base}/public/content`, {
+    const pre = await originFetch(`${base}/public/content`, {
       method: 'OPTIONS',
       headers: { Origin: 'https://hybridcloudworks.com' },
     });
@@ -220,7 +301,7 @@ async function tierAnonymous(base) {
     // api-contract.test.js enforces that all historical notImplemented RPCs
     // are now implemented and registered; this proves the host fails closed on
     // unmapped RPC endpoints.
-    const res = await fetch(`${base}/notImplementedRpcCheck`, { method: 'POST' });
+    const res = await originFetch(`${base}/notImplementedRpcCheck`, { method: 'POST' });
     expectStatus(res, 404);
   });
 
@@ -325,7 +406,7 @@ async function tierAuthed(base) {
     return;
   }
   await check(3, 'admin status with a real token', async () => {
-    const res = await fetch(`${base}/getCurrentAdminStatus`, {
+    const res = await originFetch(`${base}/getCurrentAdminStatus`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     expectStatus(res, 200);
@@ -364,6 +445,7 @@ async function main() {
   }
   if (args.cosmos && shouldRunTier(2)) await tierCosmos();
 
+  noteFirewallWaits();
   const failed = results.filter((r) => r.ok === false);
   const skipped = results.filter((r) => r.ok === 'skip');
   console.log(
