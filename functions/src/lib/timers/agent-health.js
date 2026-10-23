@@ -65,6 +65,11 @@
  * old (labs/coder-status.js checkTokenIfDue), so the health pulse's
  * `coder-token` probe has evidence whatever visitors do and without the lab
  * canary armed. Never fatal, like the read of main.
+ *
+ * AND THE DELIVERY MONITOR, ONCE AN HOUR. After that, `deliveryWatch` reads
+ * the runs of the repository's "Monitor delivery health" check from GitHub's
+ * public API and tells the owner on Telegram when it goes red, and when it is
+ * green again (delivery-monitor-watch.js). Never fatal, like the others.
  */
 import { AGENT_DOWN_STATUSES, AGENT_STALE_AFTER_MS } from '../labs.js';
 import { refreshDriftRecord } from '../labs/drift.js';
@@ -228,6 +233,8 @@ export async function tellOwnerAgentBack({ notifier, agent, backAtMs, log = {}, 
  * @param {(() => Promise<{ checked: boolean, refusedStatus?: number|null, reason?: string }>)|null}
  *   [deps.coderTokenCheck] the hourly status-token check (coder-status.js
  *   checkTokenIfDue); null skips it
+ * @param {{ checkIfDue: Function }|null} [deps.deliveryWatch] the hourly read
+ *   of the delivery monitor's runs (delivery-monitor-watch.js); null skips it
  */
 export function createAgentHealthCheck({
   store,
@@ -236,6 +243,7 @@ export function createAgentHealthCheck({
   log = {},
   driftReader = null,
   coderTokenCheck = null,
+  deliveryWatch = null,
 }) {
   const patchAgent = (agent, updates, options = {}) =>
     store.patchDoc('lab_agents', agentIdOf(agent), updates, { partitionKey: agentIdOf(agent), ...options });
@@ -316,7 +324,23 @@ export function createAgentHealthCheck({
     const summary = { markedOffline: marked, heartbeatWon: lost.size, notifiedOffline, notifiedBack };
     if (driftReader) summary.mainRead = await readMain(agents, atMs);
     if (coderTokenCheck) summary.tokenCheck = await checkToken();
+    if (deliveryWatch) summary.deliveryWatch = await watchDelivery();
     return summary;
+  }
+
+  /**
+   * The hourly read of the delivery monitor's runs: 'green', 'red', 'none',
+   * 'unread', 'not due' or 'failed'. Never throws; the run's own work is done.
+   */
+  async function watchDelivery() {
+    try {
+      const outcome = await deliveryWatch.checkIfDue();
+      if (!outcome?.checked) return 'not due';
+      return outcome.verdict || 'none';
+    } catch (error) {
+      log.warn?.(`[checkAgentHealth] the delivery monitor watch failed (${error?.code ?? 'error'})`);
+      return 'failed';
+    }
   }
 
   /**

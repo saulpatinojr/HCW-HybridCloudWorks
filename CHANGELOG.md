@@ -19,6 +19,24 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **A Telegram message when the delivery monitor goes red, and the monitor
+  fires at 8 hours instead of 24**. Owner decision 2026-10-23. The
+  "Monitor delivery health" check went red on 2026-10-22 because one line on
+  a frontend page had waited more than a day for its by-hand deploy, and the
+  only notice was GitHub's failure email. Now `checkAgentHealth` (the
+  five-minute timer that is already running) reads that workflow's runs from
+  GitHub's public API once an hour and sends one Telegram message titled
+  "DELIVERY MONITOR RED", naming the job that failed and linking the run. A
+  reminder goes again if it is still red a day later, and one "back to green"
+  message follows when a run passes. The repository is public, so this reads
+  with no token: no GitHub secret was added, and the bot token stays in Key
+  Vault. The cost is that it cannot speak while Azure is down; GitHub's own
+  failure email still does. The threshold now lives only in
+  `scripts/check-deploy-drift.mjs` (8 hours, was 24 there and again in the
+  workflow). Functions need a deploy for the message to start; the threshold
+  takes effect on merge.
+  (`functions/src/lib/timers/delivery-monitor-watch.js`)
+
 - **A monthly audience figure the site can state: a Cloudflare Web Analytics
   beacon at the edge and a monthly read into the Ambassador hub (#1302)**.
   Owner decision 2026-10-20: the Docker Captain application goes in on the

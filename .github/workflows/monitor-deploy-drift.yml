@@ -33,11 +33,21 @@
 # GitHub delivers about 22% of this repository's scheduled runs, a median 36
 # minutes late, with a 12.7-hour worst case (measured 2026-08-31 over
 # monitor-functions-registered.yml's whole life). For an outage detector that is
-# a real problem. Here it is not: this watches a condition measured in DAYS
-# against a threshold measured in HOURS, so a check landing every 4.6 hours on
-# average has ample margin against a 24-hour threshold. If the threshold ever
-# drops near the delivery gap, that reasoning stops holding and this comment is
-# the thing that should stop it.
+# a real problem. Here it is not: this watches a condition that stays true until
+# someone acts, so a late check is a late alert, never a missed one. The
+# threshold was 24 hours until 2026-10-23 and is now 8 (owner decision: a
+# forgotten frontend deploy sat a day before anyone looked). A check landing
+# every 4.6 hours on average leaves under two checks of margin against 8 hours,
+# and the 12.7-hour worst case can still delay one alert past it. If the
+# threshold ever drops to the delivery gap or below, that reasoning stops
+# holding and this comment is the thing that should stop it.
+#
+# THE TELEGRAM MESSAGE. When this job goes red the owner is also told on
+# Telegram, with a title no other message uses ("DELIVERY MONITOR RED"). That
+# is not sent from here: the bot token stays in Key Vault, and checkAgentHealth
+# in the Function App reads this workflow's runs from GitHub's public API once
+# an hour (functions/src/lib/timers/delivery-monitor-watch.js). It cannot speak
+# while Azure is down; GitHub's own failure email still can.
 #
 # NO AZURE, NO OIDC. The two deploy rows are answerable from the GitHub API
 # alone: the last successful run of each deploy workflow, and the commits on
@@ -92,9 +102,8 @@ on:
     # checkov:skip=CKV_GHA_7: read-only monitor; threshold goes through env and the script refuses a non-positive number. docs/security/scanner-triage.md#checkov
     inputs:
       threshold_hours:
-        description: 'Fail when a service has been behind for at least this many hours.'
+        description: 'Fail when a service has been behind for at least this many hours. Leave blank for the script default (8).'
         required: false
-        default: '24'
 
 # Reads the commit log and the run history. Writes nothing, anywhere.
 permissions:
@@ -139,7 +148,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           TFC_TOKEN: ${{ secrets.TFC_TOKEN }}
-          DRIFT_THRESHOLD_HOURS: ${{ inputs.threshold_hours || '24' }}
+          DRIFT_THRESHOLD_HOURS: ${{ inputs.threshold_hours }}
         run: |
           set -uo pipefail
           # Captured, then written to BOTH the summary and stdout. The summary is

@@ -1656,6 +1656,7 @@ const ALLOWED = [
   { site: 'lib/telegram/bot.js › handleUpdate › send(reply)', class: 'b', why: 'the owner\'s Telegram reply: on a failure, the door\'s stored sentence with code and reference, never the error\'s words (CodeRabbit on #1200)' },
   { site: 'lib/timers/ai-provider-probe.js › refreshCatalog › error: String(error?.message || error)', class: 'c', why: 'the timer run summary, only logged' },
   { site: 'lib/timers/blog-listings.js › run › error: err?.message || String(err)', class: 'c', why: 'the timer run summary, only logged' },
+  { site: 'lib/timers/delivery-monitor-watch.js › describeReadError › return isAuthoredError(error) && error.code ? `${error.code}: ${sentence}` : sentence', class: 'b', why: 'stored at write time through the door (#945 step 2): the delivery watch read\'s lastError on its admin_config record, read by no HTTP route' },
   { site: 'lib/timers/forge-scheduled.js › run › error: err?.message || String(err)', class: 'c', why: 'the timer run summary, only logged (failures stripped from the line)' },
   { site: 'lib/timers/mcp-token-refresh.js › run › error: String(error?.message || error).slice(0, 300)', class: 'c', why: 'the timer run summary, only logged' },
   { site: 'lib/timers/newsletter-autobuild.js › buildAutoBuildMessage › message: `${result?.message || \'The builder refused to build this issue.\'}\\n\\nNothing was overwritten and nothing was sent.\\n${dr', class: 'c', why: 'the owner\'s Telegram message about the Monday build' },
