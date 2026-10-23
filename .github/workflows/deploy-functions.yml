@@ -566,6 +566,13 @@ jobs:
       # content endpoints, and health contracts before the firewall window
       # closes. The deploy fails if an admin route answers 200 anonymously
       # or if the API contract is broken.
+      #
+      # The health poll above passes once ONE front end has the runner's rule,
+      # so a later request can still land on one that does not. Run 39997538990
+      # (2026-10-23) got health 200, the content list 403 "Ip Forbidden", then a
+      # 200 again, and a healthy deploy went red. scripts/smoke-deployed.mjs now
+      # waits out that refusal (and only that one: an app 403 is never retried),
+      # for at most 90 seconds across the whole run.
       - name: Smoke tier 1 anonymous surface verification
         env:
           APP_HOSTNAME: ${{ vars.APP_HOSTNAME }}

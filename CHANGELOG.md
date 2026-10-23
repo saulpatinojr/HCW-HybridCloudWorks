@@ -563,6 +563,23 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **A healthy Functions deploy no longer goes red because the temporary
+  firewall rule reached the origin one front end at a time**. The deploy opens
+  an allow rule for the CI runner's address, and App Service applies it to its
+  front ends gradually. The workflow waits for `/api/health` to answer, but a
+  later request can still land on a front end without the rule and be refused
+  with the platform's own 403 ("Ip Forbidden"). That happened on 2026-10-23
+  (run 39997538990): health 200, the public content list 403, the detail read
+  200, and the deploy failed after everything had been deployed and
+  registered. `scripts/smoke-deployed.mjs` now sends every request through
+  `originFetch`, which waits 5 seconds and tries again when, and only when, the
+  answer is a 403 carrying the platform's `x-ms-forbidden-ip` header, for at
+  most 90 seconds across the whole run. An app-level 403 (the admin guards,
+  the CORS refusal) is never retried, because those checks expect it, and a
+  firewall refusal can no longer make them pass for the wrong reason. A run
+  that had to wait says so on one line. The script needs no redeploy to take
+  effect: the workflow runs it from the repository.
+
 - **The weekly bump no longer lets kubectl run ahead of the Kubernetes
   schemas kubeconform checks against (#1323)**. The lab image pins kubectl
   (`KUBECTL_VERSION`) and a copy of the Kubernetes JSON schemas
