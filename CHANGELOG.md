@@ -28,7 +28,10 @@ This project has not cut a tagged release; entries are grouped under
   GitHub's public API once an hour and sends one Telegram message titled
   "DELIVERY MONITOR RED", naming the job that failed and linking the run. A
   reminder goes again if it is still red a day later, and one "back to green"
-  message follows when a run passes. The repository is public, so this reads
+  message follows when a run passes. If the bot cannot read GitHub 24 times
+  in a row (about a day), it says so once, in a separate "WATCH IS BLIND"
+  message, because a watch that has stopped reading looks the same as a
+  green monitor. The repository is public, so this reads
   with no token: no GitHub secret was added, and the bot token stays in Key
   Vault. The cost is that it cannot speak while Azure is down; GitHub's own
   failure email still does. The threshold now lives only in

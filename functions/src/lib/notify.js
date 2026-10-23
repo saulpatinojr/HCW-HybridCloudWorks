@@ -55,6 +55,7 @@ export const SOURCE_DISPLAY_NAMES = Object.freeze({
   lab_agent_online: 'the lab agent watch',
   delivery_monitor_red: 'the delivery monitor watch',
   delivery_monitor_green: 'the delivery monitor watch',
+  delivery_monitor_blind: 'the delivery monitor watch',
 });
 
 export function formatTelegramText({ title, message, severity, source }) {

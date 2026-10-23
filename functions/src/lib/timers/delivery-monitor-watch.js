@@ -67,6 +67,10 @@ export const WATCHED_WORKFLOW = 'monitor-deploy-drift.yml';
 /** Their own notifier sources, so "red" never holds back the "green" that ends it. */
 export const DELIVERY_RED_SOURCE = 'delivery_monitor_red';
 export const DELIVERY_GREEN_SOURCE = 'delivery_monitor_green';
+export const DELIVERY_BLIND_SOURCE = 'delivery_monitor_blind';
+
+/** Failed reads in a row (about a day of hourly reads) before the owner is told the watch is blind. */
+export const BLIND_AFTER_READS = 24;
 
 /** A little under an hour, so a five-minute timer that starts late does not slip to sixty-five. */
 export const WATCH_INTERVAL_MS = 55 * MINUTE_MS;
@@ -137,6 +141,23 @@ export function redMessage({ run, jobs = [], reminder = false, redForHours = 0 }
       'The run page has a table with a red mark on each service that is behind.',
     severity: 'critical',
     source: DELIVERY_RED_SOURCE,
+  };
+}
+
+/**
+ * The "blind" message: the watch has not been able to read GitHub. It carries
+ * the count and an error code from this repository's own list (never GitHub's
+ * words), and says what still protects the owner meanwhile.
+ */
+export function blindMessage({ unread, code = 'error' }) {
+  return {
+    title: 'DELIVERY MONITOR WATCH IS BLIND',
+    message:
+      `The bot has failed to read the "Monitor delivery health" runs from GitHub ${unread} times in a row (error: ${code}), about ${unread} hours. ` +
+      'If that check goes red now, there will be no Telegram message about it. GitHub\'s own failure email still goes out.\n' +
+      `Check the runs yourself: ${WORKFLOW_URL}`,
+    severity: 'warning',
+    source: DELIVERY_BLIND_SOURCE,
   };
 }
 
@@ -254,6 +275,18 @@ export function createDeliveryMonitorWatch({
   }
 
   /**
+   * The watch cannot read GitHub, and has not for BLIND_AFTER_READS reads in a
+   * row: say so once, because a watch that has stopped reading looks exactly
+   * like a monitor that is green (CodeRabbit, #1332). Returns the field to
+   * store when the message went, or null (too soon, already said, or not sent:
+   * an unsent notice is tried again on the next failed read).
+   */
+  async function tellBlind({ current, unread, code, atMs }) {
+    if (unread < BLIND_AFTER_READS || current?.blindAlertedAt) return null;
+    return (await say(blindMessage({ unread, code }))) ? { blindAlertedAt: new Date(atMs).toISOString() } : null;
+  }
+
+  /**
    * Read the monitor's runs, at most once per WATCH_INTERVAL_MS, and speak if
    * the colour changed. Never throws on a failed GitHub read.
    *
@@ -277,19 +310,24 @@ export function createDeliveryMonitorWatch({
       alertedAt: current?.alertedAt ?? null,
       lastRunId: current?.lastRunId ?? null,
       lastSuccessAt: current?.lastSuccessAt ?? null,
+      consecutiveUnread: current?.consecutiveUnread ?? 0,
+      blindAlertedAt: current?.blindAlertedAt ?? null,
       lastAttemptAt: at.toISOString(),
     };
+    // A read that got an answer, whatever the answer: the watch can see.
+    const seeing = { consecutiveUnread: 0, blindAlertedAt: null };
     let next;
     let outcome;
     try {
       const run = await latestRun();
       if (!run) {
-        next = { ...base, lastError: null, lastVerdict: 'none' };
+        next = { ...base, ...seeing, lastError: null, lastVerdict: 'none' };
         outcome = { checked: true, verdict: 'none', told: false };
       } else {
         const changes = await decide(run, current, atMs);
         next = {
           ...base,
+          ...seeing,
           ...(changes ?? {}),
           lastError: null,
           lastVerdict: run.conclusion === 'success' ? 'green' : 'red',
@@ -299,9 +337,18 @@ export function createDeliveryMonitorWatch({
         outcome = { checked: true, verdict: next.lastVerdict, told: changes !== null };
       }
     } catch (error) {
-      next = { ...base, lastError: describeReadError(error), lastVerdict: current?.lastVerdict ?? null };
-      outcome = { checked: true, verdict: 'unread', told: false };
-      log.warn?.(`[delivery-watch] the monitor's runs could not be read (${error?.code ?? 'error'}); the next hourly read tries again`);
+      const unread = (Number.isSafeInteger(current?.consecutiveUnread) ? current.consecutiveUnread : 0) + 1;
+      const code = /^[A-Z_]{2,40}$/.test(String(error?.code)) ? error.code : 'error';
+      const blind = await tellBlind({ current, unread, code, atMs });
+      next = {
+        ...base,
+        consecutiveUnread: unread,
+        ...(blind ?? {}),
+        lastError: describeReadError(error),
+        lastVerdict: current?.lastVerdict ?? null,
+      };
+      outcome = { checked: true, verdict: 'unread', told: blind !== null };
+      log.warn?.(`[delivery-watch] the monitor's runs could not be read (${code}); the next hourly read tries again`);
     }
 
     try {

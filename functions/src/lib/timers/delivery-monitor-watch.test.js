@@ -10,11 +10,14 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import {
+  BLIND_AFTER_READS,
+  DELIVERY_BLIND_SOURCE,
   DELIVERY_GREEN_SOURCE,
   DELIVERY_RED_SOURCE,
   REMINDER_AFTER_MS,
   WATCH_INTERVAL_MS,
   WATCHED_WORKFLOW,
+  WORKFLOW_URL,
   createDeliveryMonitorWatch,
   greenMessage,
   latestVerdictRun,
@@ -301,6 +304,95 @@ describe('checkIfDue', () => {
     expect(text).not.toContain('click here');
     expect(text).not.toMatch(/[`<>\u0007]/);
     expect(text).toContain('/actions/runs/1234');
+  });
+});
+
+describe('when the watch cannot read GitHub for a long time (CodeRabbit, #1332)', () => {
+  const failing = () => github({ runsStatus: 503 });
+  const record = (extra) => ({ id: 'delivery_monitor_watch', ...extra });
+
+  it('counts each failed read and says nothing before the limit', async () => {
+    const store = memoryStore(record({ consecutiveUnread: BLIND_AFTER_READS - 2 }));
+    const n = notifier();
+    const outcome = await watch({ store, gh: failing(), n }).checkIfDue();
+    expect(outcome).toMatchObject({ verdict: 'unread', told: false });
+    expect(store.doc.consecutiveUnread).toBe(BLIND_AFTER_READS - 1);
+    expect(n.notifyTelegram).not.toHaveBeenCalled();
+  });
+
+  it('starts counting from zero on the very first failure', async () => {
+    const store = memoryStore();
+    await watch({ store, gh: failing() }).checkIfDue();
+    expect(store.doc.consecutiveUnread).toBe(1);
+  });
+
+  it('says once, on the read that reaches the limit, with its own title and source', async () => {
+    const store = memoryStore(record({ consecutiveUnread: BLIND_AFTER_READS - 1 }));
+    const n = notifier();
+    const outcome = await watch({ store, gh: failing(), n }).checkIfDue();
+    expect(outcome).toMatchObject({ verdict: 'unread', told: true });
+    expect(n.notifyTelegram).toHaveBeenCalledTimes(1);
+    const message = n.notifyTelegram.mock.calls[0][0];
+    expect(message).toMatchObject({
+      title: 'DELIVERY MONITOR WATCH IS BLIND',
+      source: DELIVERY_BLIND_SOURCE,
+      severity: 'warning',
+    });
+    expect(message.title).not.toBe('DELIVERY MONITOR RED');
+    expect(message.message).toContain(`${BLIND_AFTER_READS} times in a row`);
+    expect(message.message).toContain(WORKFLOW_URL);
+    expect(message.message).toContain("GitHub's own failure email still goes out");
+    expect(store.doc.blindAlertedAt).toBe(NOW.toISOString());
+  });
+
+  it('does not say it again on the reads that follow', async () => {
+    const store = memoryStore(
+      record({ consecutiveUnread: BLIND_AFTER_READS, blindAlertedAt: iso(NOW - 3_600_000) })
+    );
+    const n = notifier();
+    await watch({ store, gh: failing(), n }).checkIfDue();
+    expect(n.notifyTelegram).not.toHaveBeenCalled();
+    expect(store.doc.consecutiveUnread).toBe(BLIND_AFTER_READS + 1);
+    expect(store.doc.blindAlertedAt).toBe(iso(NOW - 3_600_000));
+  });
+
+  it('does not record a notice that was not sent, so the next failed read tries again', async () => {
+    const store = memoryStore(record({ consecutiveUnread: BLIND_AFTER_READS - 1 }));
+    await watch({ store, gh: failing(), n: notifier({ sent: false, reason: 'cooldown' }) }).checkIfDue();
+    expect(store.doc.blindAlertedAt).toBeNull();
+    const later = new Date(NOW.getTime() + WATCH_INTERVAL_MS + 1000);
+    const working = notifier();
+    await watch({ store, gh: failing(), n: working, now: later }).checkIfDue();
+    expect(working.notifyTelegram).toHaveBeenCalledTimes(1);
+    expect(store.doc.blindAlertedAt).toBe(later.toISOString());
+  });
+
+  it('forgets the count, and the notice, as soon as a read gets an answer', async () => {
+    const store = memoryStore(
+      record({ consecutiveUnread: BLIND_AFTER_READS + 5, blindAlertedAt: iso(NOW - 3_600_000) })
+    );
+    await watch({ store, gh: github({ runs: [run(1300, 'success')] }) }).checkIfDue();
+    expect(store.doc).toMatchObject({ consecutiveUnread: 0, blindAlertedAt: null, lastVerdict: 'green' });
+  });
+
+  it('counts a read of an empty run list as seeing, too', async () => {
+    const store = memoryStore(record({ consecutiveUnread: 7 }));
+    await watch({ store, gh: github({ runs: [] }) }).checkIfDue();
+    expect(store.doc.consecutiveUnread).toBe(0);
+  });
+
+  it('names only an error code from this repository in the message, never GitHub\'s words', async () => {
+    const store = memoryStore(record({ consecutiveUnread: BLIND_AFTER_READS - 1 }));
+    const n = notifier();
+    const gh = {
+      fetch: vi.fn(async () => {
+        throw Object.assign(new Error('GitHub says: token ghp_SECRET123 <script>'), { code: 'x<script>' });
+      }),
+    };
+    await watch({ store, gh, n }).checkIfDue();
+    const text = n.notifyTelegram.mock.calls[0][0].message;
+    expect(text).toContain('(error: FETCH_FAILED)');
+    expect(text).not.toMatch(/ghp_SECRET123|<script>/);
   });
 });
 
