@@ -73,9 +73,11 @@
  * about 22% of the time, a median 36 minutes late, with a 12.7-hour worst-case
  * gap (measured 2026-08-31). That is a real problem for an outage detector and
  * is NOT one here: this watches a condition measured in days, against a
- * threshold measured in hours. A check that lands every 4.6 hours on average is
- * ample for a 24-hour threshold, and saying so is better than pretending the
- * cron is honoured.
+ * threshold measured in hours. A check that lands every 4.6 hours on average
+ * leaves under two checks of margin against the 8-hour threshold (24 until
+ * 2026-10-23), and the worst-case gap can still delay one alert past it: a
+ * late alert, never a missed one. Saying so is better than pretending the cron
+ * is honoured.
  */
 import { pathToFileURL } from 'node:url';
 
@@ -118,7 +120,7 @@ export const SERVICES = Object.freeze([
 ]);
 
 /** Hours of drift tolerated before this is called stale. */
-export const DEFAULT_THRESHOLD_HOURS = 24;
+export const DEFAULT_THRESHOLD_HOURS = 8;
 
 /** GitHub's maximum page size for the commits API. */
 export const COMMITS_PER_PAGE = 100;
@@ -298,7 +300,7 @@ export function ageHours(isoDate, nowMs) {
 /**
  * Whether a service's drift is stale.
  *
- * `>=` rather than `>`: a threshold of 24 should fire at 24 hours, not at 25.
+ * `>=` rather than `>`: a threshold of 8 should fire at 8 hours, not at 9.
  * Written out because an off-by-one here is a day of silence.
  */
 export function isStale(hours, thresholdHours) {

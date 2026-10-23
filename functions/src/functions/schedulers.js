@@ -47,6 +47,7 @@ import { createCertImageCleanup } from '../lib/timers/cert-image-cleanup.js';
 import { createSkillsHubScrape } from '../lib/timers/skills-hub.js';
 import { createMcpTokenRefresh } from '../lib/timers/mcp-token-refresh.js';
 import { createAgentHealthCheck } from '../lib/timers/agent-health.js';
+import { createDeliveryMonitorWatch } from '../lib/timers/delivery-monitor-watch.js';
 import { createMainHistoryReader } from '../lib/labs/drift.js';
 import { createCoderStatusHandlers } from '../lib/labs/coder-status.js';
 import { createTempStorageCleanup } from '../lib/timers/temp-storage.js';
@@ -266,13 +267,21 @@ timer('checkAgentHealth', 'CHECK_AGENT_HEALTH', '0 */5 * * * *', (context) =>
   // (#1009, labs/drift.js), after the marks and messages. Last, once an
   // hour, the Coder status token is checked directly, past the labs page's
   // minute cache, for the coder-token check (labs/coder-status.js
-  // checkTokenIfDue; CodeRabbit, #1056).
+  // checkTokenIfDue; CodeRabbit, #1056). Then, once an hour, the delivery
+  // monitor's own runs are read from GitHub's public API and the owner is
+  // told on Telegram when it goes red or back to green
+  // (timers/delivery-monitor-watch.js; no GitHub secret, no new timer).
   createAgentHealthCheck({
     store,
     notifier: createNotifier({ store, log: context }),
     log: context,
     driftReader: createMainHistoryReader(),
     coderTokenCheck: () => createCoderStatusHandlers({ store }).checkTokenIfDue(context),
+    deliveryWatch: createDeliveryMonitorWatch({
+      store,
+      notifier: createNotifier({ store, log: context }),
+      log: context,
+    }),
   }).run()
 );
 
