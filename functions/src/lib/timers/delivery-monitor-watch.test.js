@@ -392,7 +392,8 @@ describe('when the watch cannot read GitHub for a long time (CodeRabbit, #1332)'
     await watch({ store, gh, n }).checkIfDue();
     const text = n.notifyTelegram.mock.calls[0][0].message;
     expect(text).toContain('(error: FETCH_FAILED)');
-    expect(text).not.toMatch(/ghp_SECRET123|<script>/);
+    expect(text).not.toContain('ghp_SECRET123');
+    expect(text.toLowerCase()).not.toContain('<script');
   });
 });
 
