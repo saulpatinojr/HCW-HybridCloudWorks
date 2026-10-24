@@ -12,6 +12,7 @@ import {
   createIntegration,
   createProxyAuditWriter,
 } from '../lib/integrations/rest-proxy.js';
+import { LINKIE_ALLOWED_PATHS } from '../lib/integrations/linkie-allowlist.js';
 import { upsertDoc } from '../lib/cosmos-client.js';
 import { PUBLER_API_BASE_URL, publerSettingForStatus } from '../lib/timers/publer-sync.js';
 import { recordKeyVerdict } from '../lib/key-verdict.js';
@@ -79,20 +80,26 @@ const PUBLER = createIntegration({
 // so the endpoint may have to be corrected without a code change.
 //
 // Linkie is the one integration here with an allowlist. Its admin page calls a
-// small known set, and the key's scopes (profiles read+write, analytics read,
-// posts read+write) are broader than any single screen needs — so naming the
-// endpoints is worth more than trusting the caller.
+// small known set, and the key's scopes (pages, analytics, automated posts)
+// can be broader than any single screen needs — so naming the endpoints is
+// worth more than trusting the caller. The hub needs pages read-only,
+// automated posts read+write and analytics read-only (docs/standards/
+// required-inputs.md has the key's exact settings).
+//
+// Linkie renamed its profiles to PAGES in October 2026 (`/api/v1/profiles` is
+// now `/api/v1/pages`, the key scopes `profiles:read` and `profiles:write` are
+// now `pages:read` and `pages:write`). The allowlist names the new paths only:
+// the old ones are not allowed here, so a caller still using them is refused
+// by this proxy with the allowlist's own message rather than reaching Linkie.
+// Source: https://linkie.bio/docs/api-reference/pages
 const LINKIE = createIntegration({
   name: 'Linkie',
   baseUrl: process.env.LINKIE_API_BASE_URL || 'https://app.linkie.bio/api/v1',
   keyEnv: 'LINKIE_API_KEY',
   headers: ({ apiKey }) => ({ Authorization: `Bearer ${apiKey}` }),
-  allowedPaths: {
-    paths: ['/profiles', '/analytics/traffic-stats'],
-    // Posts are profile-scoped: Linkie has no top-level /links or /analytics
-    // endpoint, which is the detail an inferred base URL would have missed too.
-    patterns: [/^\/profiles\/[^/]+\/posts$/, /^\/profiles\/[^/]+\/posts\/[^/]+$/],
-  },
+  // In lib/integrations/linkie-allowlist.js, so the Linkie Hub's tests can run
+  // the paths the frontend builds through the real matcher.
+  allowedPaths: LINKIE_ALLOWED_PATHS,
 });
 
 for (const [name, integration] of [

@@ -42,7 +42,7 @@ function build({ env = { TEST_API_KEY: 'secret' }, fetchImpl, guard = allowGuard
 
 describe('assertSafePath — the security boundary', () => {
   it('allows ordinary API paths', () => {
-    for (const path of ['/accounts', '/api/lists/', '/profiles', '/v1/some-path_with.chars']) {
+    for (const path of ['/accounts', '/api/lists/', '/pages', '/v1/some-path_with.chars']) {
       expect(() => assertSafePath(path)).not.toThrow();
     }
   });
@@ -173,8 +173,8 @@ describe('the proxy handler', () => {
 
 describe('per-integration path allowlist', () => {
   const LINKIE_ALLOWED = {
-    paths: ['/profiles', '/analytics/traffic-stats'],
-    patterns: [/^\/profiles\/[^/]+\/posts$/, /^\/profiles\/[^/]+\/posts\/[^/]+$/],
+    paths: ['/pages', '/analytics/traffic-stats'],
+    patterns: [/^\/pages\/[^/]+\/posts$/, /^\/pages\/[^/]+\/posts\/[^/]+$/],
   };
 
   const withAllowlist = createIntegration({
@@ -194,7 +194,7 @@ describe('per-integration path allowlist', () => {
     })(withAllowlist);
 
   it('allows exactly the endpoints the admin page calls', () => {
-    for (const path of ['/profiles', '/analytics/traffic-stats', '/profiles/abc/posts', '/profiles/abc/posts/xyz']) {
+    for (const path of ['/pages', '/analytics/traffic-stats', '/pages/abc/posts', '/pages/abc/posts/xyz']) {
       expect(isAllowedPath(LINKIE_ALLOWED, path), path).toBe(true);
     }
   });
@@ -207,12 +207,12 @@ describe('per-integration path allowlist', () => {
     // surface. If a seventh appears, this test is where widening the allowlist
     // has to be argued for rather than done quietly.
     const requests = [
-      { path: '/profiles', method: 'GET' },
-      { path: '/profiles/p1/posts', method: 'GET' },
-      { path: '/profiles/p1/posts', method: 'POST', body: [{ url: 'https://a.test' }] },
-      { path: '/profiles/p1/posts/x9', method: 'PATCH', body: { url: 'https://b.test' } },
-      { path: '/profiles/p1/posts/x9', method: 'DELETE' },
-      { path: '/analytics/traffic-stats?link_in_bio_id=p1', method: 'GET' },
+      { path: '/pages', method: 'GET' },
+      { path: '/pages/p1/posts', method: 'GET' },
+      { path: '/pages/p1/posts', method: 'POST', body: [{ url: 'https://a.test' }] },
+      { path: '/pages/p1/posts/x9', method: 'PATCH', body: { url: 'https://b.test' } },
+      { path: '/pages/p1/posts/x9', method: 'DELETE' },
+      { path: '/analytics/traffic-stats?page_id=p1', method: 'GET' },
     ];
     for (const request of requests) {
       const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => '{}' }));
@@ -244,16 +244,16 @@ describe('per-integration path allowlist', () => {
   it('blocks the rest of the upstream API', () => {
     // The key's scopes are broader than any one screen needs, so an allowlist
     // is worth more than trusting whatever path the caller sends.
-    for (const path of ['/billing', '/profiles/abc', '/analytics', '/profiles/abc/posts/xyz/extra']) {
+    for (const path of ['/billing', '/pages/abc', '/analytics', '/pages/abc/posts/xyz/extra']) {
       expect(isAllowedPath(LINKIE_ALLOWED, path), path).toBe(false);
     }
   });
 
   it('checks the path without its query string, so a query cannot disguise one', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => '{}' }));
-    await handlerFor(fetchImpl)(makeRequest({ path: '/profiles?limit=10' }), context);
+    await handlerFor(fetchImpl)(makeRequest({ path: '/pages?limit=10' }), context);
     expect(fetchImpl).toHaveBeenCalledWith(
-      'https://app.linkie.bio/api/v1/profiles?limit=10',
+      'https://app.linkie.bio/api/v1/pages?limit=10',
       expect.anything()
     );
   });
@@ -575,12 +575,12 @@ describe('the Publer allowlist (AP-B3, #938)', () => {
   });
 
   it('judges a bare string or RegExp entry by path alone, which is what Linkie declares', () => {
-    const bare = { paths: ['/profiles'], patterns: [/^\/profiles\/[^/]+\/posts$/] };
+    const bare = { paths: ['/pages'], patterns: [/^\/pages\/[^/]+\/posts$/] };
     for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) {
-      expect(isAllowedPath(bare, '/profiles', method)).toBe(true);
-      expect(isAllowedPath(bare, '/profiles/p1/posts', method)).toBe(true);
+      expect(isAllowedPath(bare, '/pages', method)).toBe(true);
+      expect(isAllowedPath(bare, '/pages/p1/posts', method)).toBe(true);
     }
-    expect(isAllowedPath(bare, '/profiles')).toBe(true);
+    expect(isAllowedPath(bare, '/pages')).toBe(true);
   });
 
   it('refuses PUT and PATCH even on an allowed path, because the Social Hub never sends them', async () => {

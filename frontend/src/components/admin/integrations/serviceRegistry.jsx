@@ -104,13 +104,13 @@ async function testSessionize(speakerId) {
 }
 
 async function testLinkie() {
-  const res = await postJSON('linkieProxy', { path: '/profiles', method: 'GET' });
+  const res = await postJSON('linkieProxy', { path: '/pages', method: 'GET' });
   // `unwrapProxy` for the verdict, `extractProfiles` for the count. Linkie
-  // answers `{ data: { profiles: [...] } }` and `lib/linkie.js` already knows
+  // answers `{ data: { pages: [...] } }` and `lib/linkie.js` already knows
   // that - counting it again here would be the second copy that drifts.
   unwrapProxy(res, 'Linkie');
-  const profiles = extractProfiles(res);
-  return `Connected — ${profiles.length} profile(s).`;
+  const pages = extractProfiles(res);
+  return `Connected — ${pages.length} page(s).`;
 }
 
 // The services whose credentials never reach a browser (#483). Each posts a NAME
@@ -507,7 +507,7 @@ export const SERVICES = Object.freeze([
     url: 'https://app.linkie.bio',
     test: testLinkie,
     secrets: ['LINKIE-API-KEY'],
-    capabilities: ['List profiles', 'Add, reorder and remove links'],
+    capabilities: ['List pages', 'Add, reorder and remove links'],
     usedIn: ['Linkie Hub'],
     dataDirection: 'Outbound: live page titles and URLs go to Linkie.',
     securityNote: 'Read on the server only, through the Linkie proxy.',
