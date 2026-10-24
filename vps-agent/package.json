@@ -14,5 +14,8 @@
   },
   "dependencies": {
     "@azure/identity": "^4.14.0"
+  },
+  "overrides": {
+    "@azure/msal-node": "7.1.1"
   }
 }

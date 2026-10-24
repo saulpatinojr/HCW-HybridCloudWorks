@@ -25,6 +25,7 @@
     "vitest": "^5.0.5"
   },
   "overrides": {
+    "@azure/msal-node": "7.1.1",
     "gaxios": "^7.1.5",
     "retry-request": "^8.0.3",
     "teeny-request": "^10.1.3",

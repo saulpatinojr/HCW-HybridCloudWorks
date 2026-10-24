@@ -39,6 +39,7 @@
   },
   "private": true,
   "overrides": {
+    "@azure/msal-node": "7.1.1",
     "nanoid": "^3.3.18"
   }
 }

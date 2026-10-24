@@ -228,6 +228,24 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Sign-in library `@azure/msal-node` forced to 7.1.1 in `functions`,
+  `scripts` and `vps-agent`, closing three High Dependabot alerts (#163, #164,
+  #165)**. Owner decision 2026-10-24. The alerts are for
+  [GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5)
+  (CVSS 7.5): in msal-node's authorization-code flow, parameters can be sent to
+  an attacker-controlled endpoint; fixed in 7.1.0. `@azure/identity` 4.14.0,
+  which pulls the library in, still asks for `^6.0.0`, so Dependabot could not
+  fix it by itself; an npm `overrides` entry in each `package.json` now makes
+  every copy 7.1.1. Before opening this, the managed-identity path (the one the
+  Function App uses for Cosmos, Blob and Key Vault) was run against a stand-in
+  for the App Service identity endpoint on 6.0.1 and again on 7.1.1, in all
+  three packages: the same six checks passed both times (system-assigned and
+  client-id tokens, the token cache, concurrent calls, `DefaultAzureCredential`,
+  and a refused request). All three test suites pass. **Not tested:** the real
+  Azure endpoint, Azure Arc on the lab host, and the workload-identity login in
+  CI; the owner deploys the functions and watches the delivery monitor. The
+  override is recorded as an accepted risk in `TODO.md` with its removal
+  trigger.
 - **Coder rotation credential: measured, and kept unscoped with the reason (#1037)**.
   On the live Coder 2.38.0 on 2026-10-19, with throwaway tokens of
   `hcw-status`: a token with `coder:templates.author`, `organization:read`
