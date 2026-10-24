@@ -325,11 +325,13 @@ resource "cloudflare_dns_record" "linkie_go_verification" {
 #
 # The zone's SSL/TLS mode is NOT managed in Terraform and is read by the whole
 # zone, not by this record. Obsidian needs "Full"; "Flexible" gives a redirect
-# loop (its help page says so) and "Full (strict)" may refuse Obsidian's
-# certificate for this name. Never change it zone-wide to suit this record:
-# api-azure is proxied too. If the first request after the apply fails with
-# 525, 526 or a loop, read the mode first (dashboard -> SSL/TLS -> Overview)
-# and prefer a Configuration Rule scoped to this one hostname.
+# loop (its help page says so) and "Full (strict)" may fail to validate
+# Obsidian's certificate for this name (HTTP 526). Never change it zone-wide to
+# suit this record: api-azure is proxied too. If the first request after the
+# apply gives a loop or a 526, read the mode first (dashboard -> SSL/TLS ->
+# Overview) and prefer a Configuration Rule scoped to this one hostname. A 525
+# is a failed handshake under either Full mode and does not name the mode (see
+# the notes row in docs/runbooks/edge-dns-verification.md).
 resource "cloudflare_dns_record" "notes_obsidian_publish" {
   zone_id = var.cloudflare_zone_id
   name    = "notes.${var.domain}"

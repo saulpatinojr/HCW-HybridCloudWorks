@@ -86,10 +86,17 @@ Four things about that table are deliberate rather than oversight:
   to **Full**, so Cloudflare terminates the visitor's connection. A `notes`
   answer carrying a `CF-RAY` header is therefore the design, and an answer
   without one is the finding. The zone's SSL/TLS mode is not in Terraform:
-  a redirect loop means it reads Flexible, and 525 or 526 means it reads Full
-  (strict) and Obsidian's certificate was refused for this name. Fix it with a
-  rule scoped to `notes`, never by lowering the mode for the whole zone, which
-  `api-azure` also sits behind.
+  a redirect loop means it reads Flexible (Obsidian's page says so), and a
+  **526** means it reads Full (strict) and Cloudflare could not validate
+  Obsidian's certificate for this name
+  ([Error 526](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-526/)).
+  A **525** is a different fault: the TLS handshake with Obsidian failed under
+  Full *or* Full (strict)
+  ([Error 525](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-525/)),
+  so it does not say which of the two is set; read the mode before choosing
+  anything, and expect the cause to be on Obsidian's side. Fix a loop or a 526
+  with a rule scoped to `notes`, never by lowering the mode for the whole zone,
+  which `api-azure` also sits behind.
 
 So the apex resolving to Azure, answering with **no** `CF-RAY` header, and
 presenting a **DigiCert**-issued certificate is the design. **An apex behind
