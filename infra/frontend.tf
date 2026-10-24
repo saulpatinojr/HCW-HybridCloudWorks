@@ -251,12 +251,15 @@ resource "cloudflare_dns_record" "podcast_podbean" {
 # lists after the name is saved there (read 2026-10-24, and its help article
 # "How to connect a custom domain").
 #
-# A SUBDOMAIN, NEVER www OR THE APEX. That page lists the main-domain template
-# for any name, including `@` and `www` CNAMEs to app.linkie.bio. For a
-# subdomain Linkie's own article says to add only the CNAME named for the
-# subdomain and the TXT. The apex and www are the site, on the Static Web App
-# (docs/runbooks/edge-dns-verification.md): a CNAME there would hand it to
-# Linkie, the same trap the podcast record above names.
+# A SUBDOMAIN, NEVER www OR THE APEX. That page lists rows named `@` and `www`
+# (CNAMEs to app.linkie.bio) beside the TXT. Nothing on the page says whether
+# those names are relative to the host entered (`go`) or to the zone, and read
+# as the zone they are the site, on the Static Web App (docs/runbooks/
+# edge-dns-verification.md): a CNAME there would hand it to Linkie, the same
+# trap the podcast record above names. So only what Linkie's own article asks
+# of a subdomain is declared: the CNAME named for the subdomain, and the TXT.
+# If Linkie ever needs a `www` row for go, it is www.go.${var.domain}, never
+# the zone's own www.
 #
 # DNS-only, as the article says ("if your DNS provider has a proxy option, set
 # it to DNS only"): Linkie issues the certificate for the name itself and

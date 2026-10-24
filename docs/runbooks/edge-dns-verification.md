@@ -71,10 +71,12 @@ about that table are deliberate rather than oversight:
   The podcast takes `podcast.hybridcloudworks.com`, never `www` or the apex.
 - **`go` is DNS-only, and a subdomain.** Linkie issues the certificate for a
   custom domain itself, so the name has to resolve to `app.linkie.bio`. Its
-  Domain settings page lists the main-domain template for any name, including
-  `@` and `www` CNAMEs. Those are not added: for a subdomain Linkie's own help
-  article says the `go` CNAME and the TXT are all it needs, and a CNAME at `@`
-  or `www` would hand the site to Linkie.
+  Domain settings page lists rows named `@` and `www` beside the TXT. Nothing
+  there says whether those names are relative to `go` or to the zone, and read
+  as the zone a CNAME at either would hand the site to Linkie. So only what
+  Linkie's own help article asks of a subdomain is declared: the `go` CNAME
+  and the TXT. If Linkie ever needs a `www` row for `go`, it is
+  `www.go.hybridcloudworks.com`, never the zone's own `www`.
 
 So the apex resolving to Azure, answering with **no** `CF-RAY` header, and
 presenting a **DigiCert**-issued certificate is the design. **An apex behind
@@ -136,7 +138,13 @@ answers with no `CF-RAY` either; until Linkie's Domain settings read **Live**
 same way. The TXT query returns one `TXT` record whose `Strings` is Linkie's
 ownership value for `go`; a CNAME that resolves with no TXT behind it is an
 unfinished setup that will not turn Live, so check the TXT before reading a
-failed HTTPS request as the documented wait. Key on the ranges and the headers, never on a
+failed HTTPS request as the documented wait. While Linkie has not yet
+registered the hostname, a browser gets **Cloudflare error 1014, "CNAME
+Cross-User Banned"** instead of the page (seen 2026-10-24, four minutes after
+the records applied). Cloudflare's page for that error says a CNAME between
+accounts works only when the owner of the target uses Cloudflare for SaaS, so
+this reads as Linkie's side not yet activating `go`, not as a fault in the
+records; it clears when Linkie's Domain settings read **Live**. Key on the ranges and the headers, never on a
 literal address: the Static Web App's address is Azure's to change.
 
 If the headers are ambiguous, confirm the certificate in a browser at
