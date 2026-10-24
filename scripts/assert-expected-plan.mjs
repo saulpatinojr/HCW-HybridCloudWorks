@@ -525,16 +525,10 @@ export const DECLARED = [
     reason:
       "#1302: alert-timer-overdue watches ambassadorAudienceMonthly too, one row more in its datatable",
   },
-  {
-    address: "cloudflare_dns_record.linkie_go",
-    action: "create",
-    reason: "go.hybridcloudworks.com -> Linkie (app.linkie.bio), DNS-only",
-  },
-  {
-    address: "cloudflare_dns_record.linkie_go_verification",
-    action: "create",
-    reason: "Linkie's TXT ownership proof for go.hybridcloudworks.com",
-  },
+  // #1335's two creates, linkie_go and linkie_go_verification, applied on
+  // 2026-10-24 (HCP Terraform commit status Success on fb73b30e) and were
+  // deleted here. Both records then answered on 1.1.1.1 and 8.8.8.8, the CNAME
+  // with app.linkie.bio and the TXT with Linkie's ownership value.
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

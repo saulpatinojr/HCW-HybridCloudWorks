@@ -27,13 +27,22 @@ This project has not cut a tagged release; entries are grouped under
   `_cf-custom-hostname.go` with the value Linkie generated. Declared as
   Terraform records, and not added by hand or through Cloudflare's API, so the
   daily Cloudflare DNS audit sees them as the workspace's own and the next
-  plan shows no drift. Linkie's page also lists `@` and `www` CNAMEs, which are
-  the template for a main domain; they are deliberately not added, because a
-  CNAME at either would hand the site to Linkie (its own help article asks a
-  subdomain for only the CNAME and the TXT). The plan checker declares the two
-  creates and the edge DNS runbook gains both rows and the `go` checks. Takes
-  effect when the owner confirms the HCP Terraform apply; Linkie's status then
-  moves from Failed to Live, which its article says can take up to 48 hours.
+  plan shows no drift. Linkie's page also lists rows named `@` and `www`; it
+  does not say whether those names are relative to `go` or to the zone, and
+  read as the zone a CNAME at either would hand the site to Linkie, so only
+  what its help article asks of a subdomain is declared: the CNAME and the TXT
+  (an early draft of this entry, the runbook and the Terraform comment stated
+  the zone reading as fact; it is unverified, and the wording now says so).
+  The plan checker declared the two creates and the edge DNS runbook gains
+  both rows and the `go` checks. Applied by the owner on 2026-10-24 (HCP
+  Terraform status Success), after which both records answered on 1.1.1.1 and
+  8.8.8.8 and the site's own apex and `www` were unchanged. The first browser
+  request got Cloudflare error 1014 "CNAME Cross-User Banned", which
+  Cloudflare's page says is how a cross-account CNAME answers until the target's
+  owner (here Linkie) has registered the hostname with Cloudflare for SaaS. The
+  declared creates are deleted from the plan checker. Linkie's status moves
+  from Failed to Live when it has registered `go`, which its article says can
+  take up to 48 hours.
 
 - **A Telegram message when the delivery monitor goes red, and the monitor
   fires at 8 hours instead of 24**. Owner decision 2026-10-23. The
