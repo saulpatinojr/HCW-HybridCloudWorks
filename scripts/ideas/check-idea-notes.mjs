@@ -13,13 +13,13 @@
  * Exit 0 when every note is fine, 1 when any note has a problem, 2 when it
  * cannot run (no folder given, not a folder, no notes in it).
  */
-import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { IDEA_STATUSES, IDEA_TYPES, checkNote } from './idea-notes.mjs';
+import { readNoteFile } from './read-note-file.mjs';
 
 const MAX_NOTES = 5000;
-const MAX_NOTE_BYTES = 1024 * 1024;
 
 const USAGE = `Usage: node scripts/ideas/check-idea-notes.mjs <folder>
 
@@ -62,14 +62,21 @@ export function checkFolder(root) {
   const paths = findNotes(root);
   let bad = 0;
   for (const path of paths) {
-    const full = join(root, path);
     const name = path.split(sep).at(-1);
-    if (lstatSync(full).size > MAX_NOTE_BYTES) {
+    let read;
+    try {
+      read = readNoteFile(join(root, path));
+    } catch (error) {
+      bad += 1;
+      lines.push(path.split(sep).join('/'), `  cannot read this file: ${error.message}`);
+      continue;
+    }
+    if (read.tooBig) {
       bad += 1;
       lines.push(path.split(sep).join('/'), '  the file is over 1 MB, which is not an idea note');
       continue;
     }
-    const { issues, note } = checkNote(name, readFileSync(full, 'utf8'));
+    const { issues, note } = checkNote(name, read.text);
     if (note) {
       byStatus[note.status] += 1;
       byType[note.type] += 1;
@@ -97,7 +104,6 @@ function main(argv) {
   }
   let stats;
   try {
-    if (!lstatSync(folder).isDirectory()) throw new Error('not a folder');
     stats = checkFolder(folder);
   } catch (error) {
     console.error(`Cannot read "${folder}": ${error.message}`);

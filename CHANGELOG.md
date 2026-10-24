@@ -34,7 +34,7 @@ This project has not cut a tagged release; entries are grouped under
   are read by a small reader of our own, with no new dependency, because
   Obsidian writes lists in the block form and the import's reader takes only the
   inline form. Runbook: `docs/runbooks/obsidian-idea-notes.md`, written for
-  someone who has never used Obsidian. Checked: 31 scripts tests on temporary
+  someone who has never used Obsidian. Checked: 33 scripts tests on temporary
   vaults (never a real one); `functions/src/lib/cms/idea-promotion.test.js`
   reads each promoted draft back with the import's own parser (`parseRepoDraft`)
   and holds the format's limits and content types to the import's and the

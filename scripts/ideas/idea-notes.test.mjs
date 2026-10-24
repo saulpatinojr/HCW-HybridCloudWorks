@@ -400,6 +400,24 @@ describe('the two scripts, run for real', () => {
     expect(readdirSync(out)).toEqual([]);
   });
 
+  it('a file over 1 MB is not an idea note: the check says so, and promote will not read it', () => {
+    const huge = join(vault, 'Huge.md');
+    writeFileSync(huge, note(GOOD, 'x'.repeat(1024 * 1024 + 10)));
+    writeFileSync(join(vault, 'Good.md'), note(GOOD));
+    const checked = run('check-idea-notes.mjs', [vault]);
+    expect(checked.code).toBe(1);
+    expect(checked.stdout).toContain('Huge.md\n  the file is over 1 MB, which is not an idea note');
+    expect(checked.stdout).toContain('2 notes checked: 1 fine, 1 with problems.');
+    const promoted = run('promote-idea.mjs', [huge, '--out-dir', out]);
+    expect(promoted.code).toBe(2);
+    expect(promoted.stderr).toContain('the file is over 1 MB');
+    expect(readdirSync(out)).toEqual([]);
+  });
+
+  it('a folder where a note belongs is refused, not read', () => {
+    expect(run('promote-idea.mjs', [vault, '--out-dir', out]).code).toBe(2);
+  });
+
   it('promote: exit 2 for a missing note, an unknown option or no note at all', () => {
     expect(run('promote-idea.mjs', [join(vault, 'none.md')]).code).toBe(2);
     expect(run('promote-idea.mjs', ['--bogus']).code).toBe(2);

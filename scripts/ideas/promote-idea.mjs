@@ -18,12 +18,12 @@
  * Exit 0: written (or shown, with --dry-run). 1: the note cannot be promoted,
  * or the file exists. 2: could not run (usage, unreadable note).
  */
-import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkNote, planPromotion } from './idea-notes.mjs';
+import { readNoteFile } from './read-note-file.mjs';
 
-const MAX_NOTE_BYTES = 1024 * 1024;
 const DEFAULT_OUT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'content');
 
 const USAGE = `Usage: node scripts/ideas/promote-idea.mjs <note.md> [--name <words-with-hyphens>] [--out-dir <folder>] [--dry-run]
@@ -68,8 +68,9 @@ function main(argv, { now = () => new Date() } = {}) {
 
   let text;
   try {
-    if (lstatSync(options.note).size > MAX_NOTE_BYTES) throw new Error('the file is over 1 MB');
-    text = readFileSync(options.note, 'utf8');
+    const read = readNoteFile(options.note);
+    if (read.tooBig) throw new Error('the file is over 1 MB');
+    text = read.text;
   } catch (readError) {
     console.error(`Cannot read "${options.note}": ${readError.message}`);
     return 2;
