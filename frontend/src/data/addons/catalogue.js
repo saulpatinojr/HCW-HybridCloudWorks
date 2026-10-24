@@ -152,6 +152,26 @@ export const addons = Object.freeze([
     docsUrl: 'https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn#readme',
     articleSlugs: Object.freeze([]),
   }),
+  Object.freeze({
+    id: 'cloud-crawler',
+    title: 'Cloud architecture drift check',
+    summary:
+      'Upload an export of your Azure resources or your Terraform and see where what is built has drifted from your architecture decisions, with draft decision records and review notes. Nothing you upload is kept beyond two hours.',
+    origin: 'https://cloud-crawler.lab.hybridcloudworks.com',
+    panePath: '/',
+    healthPath: '/api/health',
+    providers: Object.freeze(['azure']),
+    technology: Object.freeze(['resource-graph', 'terraform', 'architecture-decisions']),
+    status: 'coming',
+    // The App has not tagged a release and the AddOn is a skeleton (its README, 2026-10-24), so there is no
+    // image to run. The row opens when the first image is published and the owner pins its digest.
+    comingSince: '2026-10-24',
+    comingReason:
+      'The tool is being built. It opens here as soon as its first release is published.',
+    capabilities: Object.freeze(['navigate', 'downloads']),
+    docsUrl: 'https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn#readme',
+    articleSlugs: Object.freeze([]),
+  }),
 ]);
 
 /** The rows the site frames and lists in the Tools menu: `available` ones, in catalogue order. */

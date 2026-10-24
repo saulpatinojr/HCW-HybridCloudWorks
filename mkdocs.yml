@@ -171,6 +171,7 @@ nav:
           - Migration: architecture/app-to-addon/migration.md
           - Network assessment: architecture/app-to-addon/network-assessment.md
           - Cloud assessment: architecture/app-to-addon/cloud-assessment.md
+          - Cloud Crawler: architecture/app-to-addon/cloud-crawler.md
           - Final architecture package: architecture/app-to-addon/final-package.md
           - Validation report: architecture/app-to-addon/validation-report.md
   - Content:

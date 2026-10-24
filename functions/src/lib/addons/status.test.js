@@ -111,8 +111,13 @@ afterEach(() => {
 });
 
 describe('the registry', () => {
-  it('names the three program AddOns, each with its setting and health path', () => {
-    expect(ADDON_IDS).toEqual(['migration', 'network-assessment', 'cloud-assessment']);
+  it('names the four program AddOns, each with its setting and health path', () => {
+    expect(ADDON_IDS).toEqual([
+      'migration',
+      'network-assessment',
+      'cloud-assessment',
+      'cloud-crawler',
+    ]);
     for (const id of ADDON_IDS) {
       expect(ADDONS[id].setting).toBe(`ADDON_${id.replace(/-/g, '_').toUpperCase()}_URL`);
       expect(ADDONS[id].healthPath).toBe('/api/health');
@@ -210,6 +215,23 @@ describe('getAddonStatus', () => {
     expect(res.status).toBe(200);
     expect(body(res)).toEqual({ configured: false });
     expect(res.headers['Cache-Control']).toBeUndefined();
+    expect(store.readDoc).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('keeps Cloud Crawler closed while it is coming: a known id, no setting, so no store read and no network', async () => {
+    const store = makeStore();
+    const fetchImpl = addonFetch({ '/api/health': HEALTH });
+    // Every setting the site declares today is present; ADDON_CLOUD_CRAWLER_URL is not.
+    const env = {
+      ...ENV,
+      ADDON_MIGRATION_URL: 'https://migration.lab.example',
+      ADDON_NETWORK_ASSESSMENT_URL: 'https://network-assessment.lab.example',
+      ADDON_CLOUD_ASSESSMENT_URL: 'https://cloud-assessment.lab.example',
+    };
+    const res = await handlers({ store, fetchImpl, env }).getAddonStatus(request('cloud-crawler'), context);
+    expect(res.status).toBe(200);
+    expect(body(res)).toEqual({ configured: false });
     expect(store.readDoc).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
