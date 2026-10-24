@@ -68,8 +68,21 @@ function serverRegistry() {
 }
 
 describe('addon catalogue', () => {
-  it('has the three program AddOns', () => {
+  it('has the four program AddOns', () => {
     expect(addons.map((addon) => addon.id)).toEqual([
+      'migration',
+      'network-assessment',
+      'cloud-assessment',
+      'cloud-crawler',
+    ]);
+  });
+
+  it('keeps Cloud Crawler closed until it has a release: coming, not in the Tools menu, no pane opened', () => {
+    const crawler = addons.find((addon) => addon.id === 'cloud-crawler');
+    expect(crawler.status).toBe('coming');
+    expect(crawler.comingSince).toBe('2026-10-24');
+    expect(availableAddons.map((addon) => addon.id)).not.toContain('cloud-crawler');
+    expect(availableAddons.map((addon) => addon.id)).toEqual([
       'migration',
       'network-assessment',
       'cloud-assessment',

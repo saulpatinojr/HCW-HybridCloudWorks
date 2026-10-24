@@ -35,10 +35,16 @@ can see how the site works, report a problem or suggest an improvement.
   [Landing Zone Builder](https://hybridcloudworks.com/tools/landing-zone),
   which explains each part, redraws the diagram as you go, and lets you
   download the Terraform it becomes.
-- **Assess.** Upload an inventory export of your Azure estate to the
-  [migration assessment](https://hybridcloudworks.com/tools/migration) and get
-  a staged plan with example automation and runbooks. Nothing you upload is
-  kept beyond two hours. Network and cloud assessments are on the way.
+- **Assess.** Upload an export of your Azure estate and get an assessment back:
+  a staged plan with example automation and runbooks from the
+  [migration assessment](https://hybridcloudworks.com/tools/migration), the
+  topology, segmentation and exposure of your network from the
+  [network assessment](https://hybridcloudworks.com/tools/network-assessment),
+  or a scored review against reliability, security, cost and operations
+  criteria from the
+  [cloud assessment](https://hybridcloudworks.com/tools/cloud-assessment).
+  Nothing you upload is kept beyond two hours. A check of what is built against
+  your architecture decisions is on the way.
 - **Practise.** Run [hands-on labs](https://hybridcloudworks.com/education/labs)
   in your browser, or on your own machine with one `docker run` line.
 
@@ -51,6 +57,7 @@ can see how the site works, report a problem or suggest an improvement.
 | Try a lab | [Labs](https://hybridcloudworks.com/education/labs) |
 | Plan an Azure landing zone | [Landing Zone Builder](https://hybridcloudworks.com/tools/landing-zone) |
 | Assess an Azure estate for migration | [Migration assessment](https://hybridcloudworks.com/tools/migration) |
+| Assess your Azure network or your whole estate | [Network assessment](https://hybridcloudworks.com/tools/network-assessment), [Cloud assessment](https://hybridcloudworks.com/tools/cloud-assessment) |
 | Report a problem or suggest something | [Open an issue](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/new/choose) |
 | See what is being worked on | [HCW Work Board](https://github.com/users/saulpatinojr/projects/6) |
 | Ask a question or get help | [SUPPORT](.github/SUPPORT.md) |

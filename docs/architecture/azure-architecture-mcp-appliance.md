@@ -67,7 +67,7 @@ The three attached repositories are the pattern, not the target. This review rec
 **Where it falls short of the brief.**
 
 - The site never sends a message to an AddOn and the pane has no sign-in. A chat experience with tenant and subscription pickers cannot live inside the current pane contract; it needs a site page that talks to the Function App, which talks to the AddOn (section 12).
-- `docs/architecture/app-to-addon/cloud-assessment.md` and `TODO.md` still describe the cloud-assessment row as `coming`, while the code has it `available` with a pinned digest. Not a blocker; recorded as drift the next PR in that area should fix.
+- `docs/architecture/app-to-addon/cloud-assessment.md` and `TODO.md` still described the cloud-assessment row as `coming`, while the code has it `available` with a pinned digest. Not a blocker; recorded as drift the next PR in that area should fix. **Fixed on 2026-10-24** with the pull request that introduced Cloud Crawler as the fourth pair.
 - The MCP client is admin-only and single-tenant. For the lab it needs a per-request bearer passthrough mode and a tool allow-list per server (section 12).
 
 ### 4.2 Example App (`HCW-CloudAssessor_App`)

@@ -19,6 +19,36 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **Cloud Crawler joins the add-on suite as a `coming` row, and the suite's
+  documents are brought in line with the live site**. Owner request 2026-10-24
+  ("introduce the rest of the add-ons … the site needs to know what backend
+  integrations"). The fourth pair, `HCW-CloudCrawler_App` and
+  `HCW-CloudCrawler_AddOn`, gets a catalogue row (`cloud-crawler`, `coming`
+  since 2026-10-24), a server registry entry (`ADDON_CLOUD_CRAWLER_URL`, unset,
+  so the status route answers `{ configured: false }` with no read and no
+  network, proven by a new test), the route `/tools/cloud-crawler` and its
+  explainer page, and a pair page, `docs/architecture/app-to-addon/cloud-crawler.md`.
+  It is not in the Tools menu, has no CSP entry, no app setting, no `group_vars`
+  row and no port: the App has not tagged a release and the AddOn is a skeleton
+  with no image (read 2026-10-24). Public copy names nothing behind the site.
+  Checked on a production build in real Chromium, dark and light: the page shows
+  the title, a "Coming soon" badge, the summary and the reason, frames nothing, has
+  no accessibility violation (axe, whole document), and no link to it appears on
+  `/azure`.
+  The documents that had drifted since the network and cloud assessments went
+  `available` on 2026-10-12 (#1089) are corrected: the program's index now lists
+  four pairs with their real status and adds a table of the backend each
+  add-on is configured to use (Coder for the network assessment; human
+  verification for all; nothing else), read from `group_vars`; the network and
+  cloud pair pages are rewritten as `available`; `migration.md` no longer
+  quotes an image digest, which had gone stale (digests are written down only in
+  `group_vars`); `labs-host.md` no longer calls ports 18082 and 18083 reserved;
+  the `README.md` no longer says the network and cloud assessments are "on the
+  way"; and the `TODO.md` accepted-risk row about `coming` rows and `[VERIFY]`
+  values is replaced by one about Cloud Crawler. **Not changed, and unverified:**
+  `labs-host.md`'s "Applied state" table still says the add-on role is not yet on
+  the host, while the live status route shows all three add-ons reachable; only
+  the host's own record (`/etc/hcw/applied-commit.json`) settles it.
 - **Idea notes: an Obsidian second brain for content, with a format, a check and
   a promote-to-draft script (#1343)**. Owner request 2026-10-24. The vault lives
   on the owner's computer, outside this public repository; the scripts take its

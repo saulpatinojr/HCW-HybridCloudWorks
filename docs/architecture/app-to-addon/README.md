@@ -9,13 +9,33 @@ shows each AddOn on hybridcloudworks.com as a sandboxed pane at `/tools/<id>`.
 The model is [ADR 0035](../../decisions/0035-addon-pane-model.md); the
 contracts are the [AddOn integration standard](../../standards/addon-integration-standard.md).
 
-## The three pairs
+## The four pairs
 
 | Pair | App (upstream) | AddOn (downstream) | Site route | Row status |
 | --- | --- | --- | --- | --- |
 | [Migration](migration.md) | `HCW-AzMigrateOrchestrator_App` | `HCW-AzMigrateOrchestrator_Addon`, `migration.lab.hybridcloudworks.com` | `/tools/migration` (Tools menu: Migration Hub) | `available` |
-| [Network assessment](network-assessment.md) | `HCW-NetworkEyes_App` | `HCW-NetworkEyes_AddOn`, `network-assessment.lab.hybridcloudworks.com` | `/tools/network-assessment` | `coming` since 2026-10-10 |
-| [Cloud assessment](cloud-assessment.md) | `HCW-CloudAssessor_App` | `HCW-CloudAssessor_AddOn`, `cloud-assessment.lab.hybridcloudworks.com` | `/tools/cloud-assessment` | `coming` since 2026-10-10 |
+| [Network assessment](network-assessment.md) | `HCW-NetworkEyes_App` | `HCW-NetworkEyes_AddOn`, `network-assessment.lab.hybridcloudworks.com` | `/tools/network-assessment` | `available` since 2026-10-12 (#1089) |
+| [Cloud assessment](cloud-assessment.md) | `HCW-CloudAssessor_App` | `HCW-CloudAssessor_AddOn`, `cloud-assessment.lab.hybridcloudworks.com` | `/tools/cloud-assessment` | `available` since 2026-10-12 (#1089) |
+| [Cloud Crawler](cloud-crawler.md) | `HCW-CloudCrawler_App` | `HCW-CloudCrawler_AddOn`, `cloud-crawler.lab.hybridcloudworks.com` (reserved) | `/tools/cloud-crawler` | `coming` since 2026-10-24: the AddOn is a skeleton and the App has not tagged a release |
+
+The first three were read from the live site on 2026-10-24: the status route
+answered `configured: true, reachable: true` for each, with `version` 0.3.1
+(migration) and 0.1.0 (the other two). Cloud Crawler answers `Unknown add-on`
+until its row ships; with the row it answers `configured: false`.
+
+### What each AddOn needs from the site's backend
+
+The site is the integration layer, so this is the list of backend things each
+pair uses. "Human verification" is the AddOn's own widget and vault key, never
+the site's. Read from `lab-host/ansible/group_vars/all.yml`, the catalogue and
+each pair's page on 2026-10-24.
+
+| Pair | Human verification | Site backend the AddOn is configured to call | The site calls the AddOn |
+| --- | --- | --- | --- |
+| Migration | yes (`vault_addon_migration_turnstile_secret`) | none (`AMO_WORKSPACE_PROVIDER` is `disabled`) | status route reading `ADDON_MIGRATION_URL` |
+| Network assessment | yes (`vault_addon_network_assessment_turnstile_secret`) | the lab host's Coder, to start a guided lab workspace (`CODER_URL`, template `na-guided-lab`) | status route reading `ADDON_NETWORK_ASSESSMENT_URL` |
+| Cloud assessment | yes (`vault_addon_cloud_assessment_turnstile_secret`) | none in its `group_vars` row | status route reading `ADDON_CLOUD_ASSESSMENT_URL` |
+| Cloud Crawler | planned (`vault_addon_cloud_crawler_turnstile_secret`, per the AddOn's ADR 0003) | none; it is built never to reach Azure (its README) | status route reading `ADDON_CLOUD_CRAWLER_URL` once the row is `available`; a trusted-caller path for lab chat evidence is planned and not built |
 
 Each pair's page records what the App keeps, what the AddOn is, its origin,
 port, image and status on the site, and links the refactoring pull requests

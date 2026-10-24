@@ -253,6 +253,7 @@ export const staticRoutes = {
   migration: '/tools/migration',
   networkAssessment: '/tools/network-assessment',
   cloudAssessment: '/tools/cloud-assessment',
+  cloudCrawler: '/tools/cloud-crawler',
   resources: '/tools/resources',
   decisions: '/tools/decisions',
   landingZone: '/tools/landing-zone',

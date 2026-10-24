@@ -26,6 +26,10 @@ export const ADDONS = Object.freeze({
     setting: 'ADDON_CLOUD_ASSESSMENT_URL',
     healthPath: '/api/health',
   }),
+  'cloud-crawler': Object.freeze({
+    setting: 'ADDON_CLOUD_CRAWLER_URL',
+    healthPath: '/api/health',
+  }),
 });
 
 export const ADDON_IDS = Object.freeze(Object.keys(ADDONS));
