@@ -13,7 +13,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { HelmetProvider } from 'react-helmet-async';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { addonById, addonPaneUrl, addons, availableAddons } from '@/data/addons/catalogue';
+import { addonById, addonFrameUrl, addons, availableAddons } from '@/data/addons/catalogue';
 import { staticRoutes } from '@/lib/routeFactory';
 
 const fetchAddonStatus = vi.fn();
@@ -34,6 +34,7 @@ import AddOnPanePage, {
   addonService,
   allowFor,
   sandboxFor,
+  siteTheme,
 } from './AddOnPanePage';
 
 const MIGRATION = addonById('migration');
@@ -158,6 +159,26 @@ describe('sandboxFor and allowFor', () => {
       `clipboard-read ${MIGRATION.origin}; clipboard-write ${MIGRATION.origin}; fullscreen ${MIGRATION.origin}`
     );
   });
+
+  it('grants clipboard-write alone when a row names only that, and never read with it', () => {
+    const row = (capabilities) => ({ ...MIGRATION, capabilities });
+    expect(allowFor(row(['clipboard-write']))).toBe(`clipboard-write ${MIGRATION.origin}`);
+    expect(allowFor(row(['clipboard-write', 'fullscreen']))).toBe(
+      `clipboard-write ${MIGRATION.origin}; fullscreen ${MIGRATION.origin}`
+    );
+    // both named: read and write once each, never doubled
+    expect(allowFor(row(['clipboard', 'clipboard-write']))).toBe(
+      `clipboard-read ${MIGRATION.origin}; clipboard-write ${MIGRATION.origin}`
+    );
+    for (const id of ['network-assessment', 'cloud-assessment']) {
+      const addon = addonById(id);
+      expect(allowFor(addon), id).toBe(`clipboard-write ${addon.origin}`);
+      expect(allowFor(addon), id).not.toMatch(/clipboard-read/);
+      expect(sandboxFor(addon), id).toBe(
+        'allow-scripts allow-same-origin allow-forms allow-downloads'
+      );
+    }
+  });
 });
 
 describe('AddOnPanePage before the pane', () => {
@@ -211,9 +232,44 @@ describe('AddOnPanePage, the pane', () => {
     await screen.findByTestId('addon-pane');
     const frame = screen.getByTitle(MIGRATION.title);
     expect(frame.tagName).toBe('IFRAME');
-    expect(frame.getAttribute('src')).toBe(addonPaneUrl(MIGRATION));
-    expect(frame.getAttribute('src')).toBe('https://migration.lab.hybridcloudworks.com/');
+    // jsdom's document has no `dark` class, so the site's theme here is light.
+    expect(frame.getAttribute('src')).toBe(addonFrameUrl(MIGRATION, 'light'));
+    expect(frame.getAttribute('src')).toBe(
+      'https://migration.lab.hybridcloudworks.com/?theme=light'
+    );
     expect(screen.getByTestId('addon-status')).toHaveTextContent('Available');
+  });
+
+  it('passes the dark theme when the site is dark, and keeps the frame address when the theme changes later', async () => {
+    document.documentElement.classList.add('dark');
+    try {
+      renderPane();
+      await screen.findByTestId('addon-pane');
+      const frame = screen.getByTitle(MIGRATION.title);
+      expect(frame.getAttribute('src')).toBe(
+        'https://migration.lab.hybridcloudworks.com/?theme=dark'
+      );
+
+      // Changing a frame's src reloads it and would drop the visitor's open report, so a toggle must not touch it.
+      document.documentElement.classList.remove('dark');
+      await flushEffects();
+      expect(screen.getByTitle(MIGRATION.title)).toBe(frame);
+      expect(frame.getAttribute('src')).toBe(
+        'https://migration.lab.hybridcloudworks.com/?theme=dark'
+      );
+    } finally {
+      document.documentElement.classList.remove('dark');
+    }
+  });
+
+  it('reads the site theme from the document and nothing else', () => {
+    expect(siteTheme()).toBe('light');
+    document.documentElement.classList.add('dark');
+    try {
+      expect(siteTheme()).toBe('dark');
+    } finally {
+      document.documentElement.classList.remove('dark');
+    }
   });
 
   it.each(availableAddons.map((addon) => [addon.id]))(

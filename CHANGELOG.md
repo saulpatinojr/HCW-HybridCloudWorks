@@ -19,6 +19,27 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **Add-on panes get the site's theme, and the network and cloud assessments are
+  granted what they asked for (#1353, #1354)**. Owner decisions 2026-10-24, from
+  the owner's phone. *Theme:* the frame now loads `<origin>/?theme=dark` or
+  `?theme=light` (`addonFrameUrl`), read from the `dark` class on the document
+  when the page first renders. It is read once and never updated, because
+  changing a frame's address reloads it and would drop the report open in the
+  pane; a toggle reaches an open pane at the next page load. Checked in a real
+  browser, framed by the live site on 2026-10-24: the network assessment and the
+  cloud assessment follow the parameter (dark turns the page dark, light keeps it
+  light, with the browser itself set to light); **the migration add-on ignores it
+  and stays white**, which is an AddOn-side gap. *Capabilities:* the owner said
+  yes to the guides' request. The rows now hold `downloads` and a new
+  `clipboard-write` capability, replacing `navigate` and `downloads`. The site's
+  `clipboard` capability grants **read and write** (`allowFor`), which the issue
+  text had understated, and the AddOns only need write for "Copy report", so a
+  write-only capability was added instead of granting `clipboard`; `navigate`
+  goes because neither add-on sends one. The standard (sections 8 and the helper
+  list), the two pair pages and the accepted-risk row in `TODO.md` say so. Seven
+  tests were written or changed; with the old code put back they fail, with the
+  new code all 76 pass. Not checked: the live panes after the next deploy, and
+  whether "Copy report" works inside the sandboxed frame.
 - **Cloud Crawler joins the add-on suite as a `coming` row, and the suite's
   documents are brought in line with the live site**. Owner request 2026-10-24
   ("introduce the rest of the add-ons … the site needs to know what backend
