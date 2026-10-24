@@ -156,12 +156,16 @@ function FrameworkCards() {
 // Azure's interviews, linked from here and not from the header: the header's
 // toolbar is a fixed grid of nine slots and a tenth link overflowed it.
 // Carries no interview text, so this page's bundle stays as it was.
+//
+// The book view is promised only where it is offered: a wide screen, and a
+// visitor who has not asked for less motion (pages/azure/InterviewsPage.jsx).
+// Saying it to everyone would promise a phone something it does not get.
 function InterviewsCard() {
   return (
     <div className="glass rounded-xl p-5 max-w-2xl">
       <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-        Conversations with people building and running Microsoft Azure, written up in full. Read
-        them as an article, or turn the pages of a book.
+        Conversations with people building and running Microsoft Azure, written up in full to read
+        as an article. On a wide screen there is also a book view that turns the pages.
       </p>
     </div>
   );
