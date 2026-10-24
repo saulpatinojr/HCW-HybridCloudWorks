@@ -56,6 +56,7 @@ const AzureBlogPage = lazyPage(() => import('@/pages/azure/BlogPage'));
 const AzureEducationPage = lazyPage(() => import('@/pages/azure/EducationPage'));
 const AzureCertDetailPage = lazyPage(() => import('@/pages/azure/education/CertDetailPage'));
 const AzureRssPage = lazyPage(() => import('@/pages/azure/RssPage'));
+const AzureInterviewsPage = lazyPage(() => import('@/pages/azure/InterviewsPage'));
 
 // GCP
 const GCPLandingPage = lazyPage(() => import('@/pages/gcp/LandingPage'));
@@ -424,6 +425,12 @@ function App() {
                 <Route path="audio" element={<ProviderAudioDispatcher />} />
                 <Route path="news" element={<ProviderRssDispatcher />} />
                 <Route path="rss" element={<ProviderRssDispatcher />} />
+                {/* Azure's interviews: the list and one interview. Azure only
+                    for now; the dispatcher answers any other provider with the
+                    not-found page. Pre-rendered per interview in
+                    scripts/prerender-entry.jsx once there is one. */}
+                <Route path="interviews" element={<ProviderInterviewsDispatcher />} />
+                <Route path="interviews/:interviewId" element={<ProviderInterviewsDispatcher />} />
                 {/* Fallback for provider sub-routes */}
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
@@ -816,6 +823,14 @@ function ProviderAudioDispatcher() {
   const { provider } = useParams();
   if (!VALID_PROVIDERS.includes(provider)) return <NotFoundPage />;
   return <SharedPodcastPage />;
+}
+
+// Interviews are Azure's alone for now. Any other provider is a 404, not an
+// empty page: `/aws/interviews` has never existed and must not start to.
+function ProviderInterviewsDispatcher() {
+  const { provider } = useParams();
+  if (provider === 'azure') return <AzureInterviewsPage />;
+  return <NotFoundPage />;
 }
 
 function ProviderRssDispatcher() {

@@ -5,6 +5,8 @@ import { useProvider } from '@/context/ProviderContext';
 import { routes, staticRoutes, parseRoute } from '@/lib/routeFactory';
 import { SkipToMainContent } from '@/components/accessibility/SkipToMainContent';
 import CommandPalette from '@/components/shared/CommandPalette';
+import { hasInterviews } from '@/data/interviews/available';
+import { INTERVIEWS_PATH } from '@/lib/interviews';
 
 /**
  * Cross-provider Learn links retained as a named export for compatibility and
@@ -76,6 +78,11 @@ export function getPrimaryNavItems(currentProvider) {
         section: 'architecture',
       },
       { label: 'Podcast', path: routes.audioArchitecture(currentProvider), section: 'podcast' },
+      // Azure's interviews, once there is one (data/interviews/available.js reads
+      // file names only, so this costs the header nothing).
+      ...(currentProvider === 'azure' && hasInterviews
+        ? [{ label: 'Interviews', path: INTERVIEWS_PATH, section: 'interviews' }]
+        : []),
       { label: 'Frameworks', path: routes.frameworks(currentProvider), section: 'frameworks' },
       ...tailLinks,
     ];
