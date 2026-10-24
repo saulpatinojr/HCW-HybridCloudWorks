@@ -82,6 +82,7 @@ jobs:
             filter: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile)$|vps-agent/lib/docker-runner\.js$|functions/src/lib/(labs/(visitor-report\.js|fixtures/[^/]+\.log)|rss/feeds\.js|decision-center/(links|items)\.js|cms/(content-status|content-update-validation)\.js|addons/registry\.js|ai/(router|model-catalog|usage|mcp-policy)\.js|health/(status-model|probe-catalogue|pulse-checks)\.js|integrations/(linkie-allowlist|rest-proxy)\.js)$|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
             lint: npm run lint
             format: npm run format:check
+            validate: npm run validate:routes
             build: npm run build
             test: npm test
           # Node.js 24, not 26: Azure Functions Flex Consumption runs 22 and
@@ -257,6 +258,17 @@ jobs:
         if: steps.changes.outputs.relevant == 'true' && matrix.format != ''
         env:
           COMMAND: ${{ matrix.format }}
+        run: bash -eo pipefail -c "$COMMAND"
+
+      # A page that spells a provider path out by hand (`href="/azure/..."`)
+      # instead of building it from the route factory keeps working until a
+      # route is renamed, then breaks that one page with nothing to say so.
+      # `npm run validate:routes` is cheap (no build) and was not run by CI at
+      # all until #1345; #1337 merged two such paths and a hand run found them.
+      - name: Route validation
+        if: steps.changes.outputs.relevant == 'true' && matrix.validate != ''
+        env:
+          COMMAND: ${{ matrix.validate }}
         run: bash -eo pipefail -c "$COMMAND"
 
       - name: Build

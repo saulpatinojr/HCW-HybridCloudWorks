@@ -224,6 +224,18 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Quality & Verification
 
+- **CI now runs `npm run validate:routes` on every pull request that touches
+  the frontend (#1345)**. The validator fails when a page spells a provider
+  path by hand (`href="/azure/..."`) instead of building it from the route
+  factory, which stays correct until a route is renamed and then breaks that
+  page silently. It was not run by CI, so #1337 merged two such paths and only
+  a hand run found them (fixed in #1338). It is a new *Route validation* step
+  in the frontend row of `.github/workflows/ci.yml`, after *Format check*,
+  switched on by a `validate` key on that row so no other package runs it.
+  Seen both ways locally: exit 0 on the current tree, and exit 1 with the file
+  and the path named when a component with a hard-coded `href="/azure/..."`
+  was planted, then removed. Not yet seen in a CI run; this pull request's own
+  frontend job is the first.
 - **The AVM versions bot's check step reads the pins instead of remembering
   them (#1287)**. `update-avm-versions.yml` failed on 2026-10-06 and
   2026-10-13 in its own `vitest` step after a bump: seven expectations in
