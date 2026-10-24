@@ -21,7 +21,10 @@
  * are refused, because the text of these files is shown to visitors as links.
  */
 
-export const INTERVIEWS_PATH = '/azure/interviews';
+import { routes } from '@/lib/routeFactory';
+
+/** `/azure/interviews`, from the route factory so there is one place a provider path is spelled. */
+export const INTERVIEWS_PATH = routes.interviews('azure');
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;

@@ -4,6 +4,7 @@ import { routes } from '@/lib/routeFactory';
 import ProviderLandingTemplate from '@/components/shared/ProviderLandingTemplate';
 import HeroImageCarousel from '@/components/landing/HeroImageCarousel';
 import useAudioEpisodes from '@/hooks/useAudioEpisodes';
+import { hasInterviews } from '@/data/interviews/available';
 
 const AZURE_HERO_IMAGES = [
   '/images/azure-hero/1.png',
@@ -152,6 +153,20 @@ function FrameworkCards() {
   );
 }
 
+// Azure's interviews, linked from here and not from the header: the header's
+// toolbar is a fixed grid of nine slots and a tenth link overflowed it.
+// Carries no interview text, so this page's bundle stays as it was.
+function InterviewsCard() {
+  return (
+    <div className="glass rounded-xl p-5 max-w-2xl">
+      <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+        Conversations with people building and running Microsoft Azure, written up in full. Read
+        them as an article, or turn the pages of a book.
+      </p>
+    </div>
+  );
+}
+
 function PodcastList() {
   // Both audio sources, newest first (#349); the card shows the latest three.
   const { episodes } = useAudioEpisodes('azure');
@@ -285,6 +300,17 @@ export default function LandingPage() {
           action: { label: 'All episodes', to: routes.audio('azure') },
           content: <PodcastList />,
         },
+        // Only once there is an interview file (data/interviews/available.js).
+        ...(hasInterviews
+          ? [
+              {
+                eyebrow: 'IN CONVERSATION',
+                title: 'Interviews',
+                action: { label: 'All interviews', to: routes.interviews('azure') },
+                content: <InterviewsCard />,
+              },
+            ]
+          : []),
         {
           eyebrow: 'LEARNING CENTER',
           title: 'Certification Tracks',

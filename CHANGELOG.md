@@ -36,8 +36,10 @@ This project has not cut a tagged release; entries are grouped under
   two on show unreachable and hidden from screen readers. **No flip-book
   library**: the one the owner's plan named was last released in April 2021, and
   the owner chose to build the turn here instead. **Nothing is published yet**:
-  no interview exists, so there is no Interviews link in the menu, no list page
-  in the sitemap and no pre-rendered route until the first file is added. The
+  no interview exists, so there is no Interviews card on the Azure landing
+  page, no list page in the sitemap and no pre-rendered route until the first
+  file is added (a first version put the link in the top menu; see the Fixed
+  entry below for why it moved). The
   build and its tests stop on a bad file with a sentence naming the file and the
   field. Checked in a real browser, dark and light, wide and phone width, with
   axe including colour contrast, which found and fixed four things the unit
@@ -614,6 +616,27 @@ This project has not cut a tagged release; entries are grouped under
   via `scripts/lab-pins-upstream.mjs`.
 
 ### Fixed
+
+- **Interviews: the header link moved to the Azure landing page, interview
+  pages keep the Azure menu, and a route check that failed now passes
+  (follow-up to #1337)**. CodeRabbit's two findings on #1337 were real, and
+  a browser run found a third problem beside them. (1) The top menu is a
+  fixed row of nine 100-pixel slots whose divider must sit in the same place on
+  every provider; the tenth link #1337 added for Azure overflowed it at normal
+  laptop widths and moved the divider. It was invisible on the live site
+  because no interview exists yet, so it would have appeared the day the first
+  one was added. The link is now an **Interviews** section on the Azure landing
+  page (`/azure`), shown only once an interview exists, and the menu stays at
+  nine links. (2) The header finds the provider from the URL alone, and
+  `interviews` was not a known page type, so on `/azure/interviews` the Azure
+  menu was replaced by the generic provider list. It is now a page type in
+  `routeFactory.ts`, as `sandboxes` is for Docker, and the Azure menu stays on
+  every interview page. (3) `npm run validate:routes` failed on two hard-coded
+  `/azure/interviews/...` paths in a test; they now come from `interviewPath`.
+  That validator is not run by CI, which is why nothing flagged it. Checked in a
+  real browser at 1280 and 1100 pixels: nine links on every Azure page,
+  interview pages included, the divider at the same position on all of them, no
+  overflow, no errors.
 
 - **The Linkie Hub follows Linkie's rename of profiles to pages**. An
   October 2026 notice from Linkie to API users says `GET /api/v1/profiles` is

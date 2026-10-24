@@ -157,8 +157,8 @@ const ADDON_ROUTES = addons.map(addonPanePath);
  * NONE WHILE THERE ARE NONE. With no interview file the list would be a page
  * that says "no interviews yet" in the sitemap, which is thin content and a
  * soft 404 to a crawler, so neither it nor any detail route is listed until
- * the first interview is added. The header link is held back the same way
- * (`data/interviews/available.js`).
+ * the first interview is added. The Azure landing page's Interviews card is
+ * held back the same way (`data/interviews/available.js`).
  */
 const AZURE_INTERVIEW_ROUTES =
   interviews.length > 0

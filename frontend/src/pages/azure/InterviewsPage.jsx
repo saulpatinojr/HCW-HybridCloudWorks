@@ -12,8 +12,8 @@
  * effect afterwards. The book's code is loaded when the button is first used.
  *
  * Interviews are files in `src/data/interviews/` (docs/runbooks/add-an-interview.md).
- * With none, this page says there are none yet; the header link and the
- * pre-rendered routes only exist once there is one.
+ * With none, this page says there are none yet; the Azure landing page's
+ * Interviews card and the pre-rendered routes only exist once there is one.
  *
  * NO `<main>` HERE. The site's layout already wraps every page in
  * `<main id="main-content">`, and a second one made axe report a nested and a

@@ -4,11 +4,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  INTERVIEWS_PATH,
   InterviewError,
   buildBookPages,
   formatInterviewDate,
   interviewPath,
   interviewSummary,
+  interviewsPath,
   isExternalLink,
   lastSpread,
   leafCount,
@@ -18,10 +20,31 @@ import {
   spreadStatus,
   visiblePageIndexes,
 } from './interviews';
+import { getAllRoutes, parseRoute, routes } from '@/lib/routeFactory';
 import { makeInterview, rawInterview } from '@/test-utils/interviews';
 
 const reject = (overrides, slug = 'a-test-interview') =>
   expect(() => normalizeInterview(rawInterview(overrides), slug));
+
+describe('the interview routes in the route factory', () => {
+  it('spells the Azure list once, in the route factory', () => {
+    expect(routes.interviews('azure')).toBe('/azure/interviews');
+    expect(INTERVIEWS_PATH).toBe(routes.interviews('azure'));
+    expect(interviewsPath()).toBe(INTERVIEWS_PATH);
+    expect(getAllRoutes('azure').interviews).toBe('/azure/interviews');
+  });
+
+  // The header finds the provider from the URL alone. A segment it does not know
+  // made it show the generic provider list on the interview pages, so a reader
+  // lost the Azure menu (seen in a browser, 2026-10-24).
+  it('lets the header recognise the list and each interview as Azure pages', () => {
+    expect(parseRoute('/azure/interviews')).toEqual({ provider: 'azure', page: 'interviews' });
+    expect(parseRoute('/azure/interviews/a-conversation')).toEqual({
+      provider: 'azure',
+      page: 'interviews',
+    });
+  });
+});
 
 describe('normalizeInterview', () => {
   it('accepts a complete file and returns one shape', () => {

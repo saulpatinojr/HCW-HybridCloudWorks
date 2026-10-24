@@ -2,8 +2,8 @@
 
 > **Status: in use.** The Interviews pages went in on 2026-10-24 (the
 > changelog has the entry). **No interview is published yet.** Until the
-> first file below is added, the site has no Interviews link and no Interviews
-> page in its sitemap, on purpose.
+> first file below is added, the Azure landing page has no Interviews card and
+> the sitemap has no Interviews page, on purpose.
 
 **Scope:** how to publish one interview on the Azure section, at
 `/azure/interviews/<name>`. An interview is one text file. You do not edit any
@@ -120,15 +120,20 @@ else is formatted.
    clock on the delivery monitor, which goes red if the deploy has not run
    within about 8 hours.
 5. **Look at it.** Open `https://hybridcloudworks.com/azure/interviews`. You
-   should see your interview's card, an **Interviews** link in the Azure menu,
-   and, on its page, the article. On a wide screen a **Book view** button
-   appears above it.
+   should see your interview's card and, on its page, the article. On a wide
+   screen a **Book view** button appears above it. The Azure landing page,
+   `https://hybridcloudworks.com/azure`, now has an **Interviews** section with
+   an **All interviews** link.
 
 ## What to expect, and what to check if it is wrong
 
-- **The first interview adds three things at once:** the Interviews link in the
-  Azure menu, the list page, and the interview's own page. All three appear on
-  the next deploy. With no interview file none of them exist.
+- **The first interview adds three things at once:** the Interviews section on
+  the Azure landing page, the list page, and the interview's own page. All three
+  appear on the next deploy. With no interview file none of them exist.
+- **There is no Interviews link in the top menu, on purpose.** The menu is a
+  fixed row of nine slots with a divider whose position must be the same on
+  every provider, and a tenth link overflowed it on a normal laptop screen. The
+  pages still keep the Azure menu while you read them.
 - **The Book view button is missing on your laptop.** That is by design if the
   window is narrower than 768 pixels, or if the device is set to reduce motion.
   The article is the page either way.
@@ -144,9 +149,9 @@ else is formatted.
   interview becomes the book's pages. `normalizeInterview` is what both the
   build and the tests call, so they cannot disagree about what is valid.
 - `frontend/src/data/interviews/index.js` reads the files at build time.
-  `available.js` reads only the file *names*, so the header can decide whether to
-  show the link without putting every interview's text in the bundle every
-  visitor downloads.
+  `available.js` reads only the file *names*, so the Azure landing page can decide
+  whether to show its Interviews card without putting every interview's text in
+  its bundle.
 - `frontend/src/pages/azure/InterviewsPage.jsx` is the page. The article is
   rendered first and is what is pre-rendered; the book is chosen by the visitor
   after the page has loaded, and its code is fetched only then.
