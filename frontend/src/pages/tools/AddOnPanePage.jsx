@@ -58,7 +58,7 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, Navigate, useNavigate } from 'react-router';
-import { addonById, addonPanePath, addonPaneUrl } from '@/data/addons/catalogue';
+import { addonById, addonFrameUrl, addonPanePath } from '@/data/addons/catalogue';
 import { usePublicData } from '@/hooks/usePublicData';
 import { fetchAddonStatus } from '@/lib/publicApi';
 import { staticRoutes } from '@/lib/routeFactory';
@@ -111,16 +111,30 @@ export function sandboxFor(addon) {
 
 /**
  * The pane's `allow` list: the clipboard and fullscreen, each to the AddOn's
- * origin and only when the row names it; '' when it names neither.
+ * origin and only when the row names it; '' when it names none. `clipboard`
+ * grants read and write; `clipboard-write` grants write only, which is all a
+ * "Copy report" button needs (website issue #1354).
  */
 export function allowFor(addon) {
   const granted = addon?.capabilities ?? [];
   const entries = [];
   if (granted.includes('clipboard')) {
     entries.push(`clipboard-read ${addon.origin}`, `clipboard-write ${addon.origin}`);
+  } else if (granted.includes('clipboard-write')) {
+    entries.push(`clipboard-write ${addon.origin}`);
   }
   if (granted.includes('fullscreen')) entries.push(`fullscreen ${addon.origin}`);
   return entries.join('; ');
+}
+
+/**
+ * The site's theme as the visitor sees it: the `dark` class the theme provider
+ * puts on the document, read directly so this page needs no provider. `null`
+ * when there is no document (a pre-render), which leaves the pane URL bare.
+ */
+export function siteTheme() {
+  if (typeof document === 'undefined') return null;
+  return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
 }
 
 /**
@@ -330,6 +344,11 @@ function useAddonState(frameRef, addon) {
 function Pane({ addon }) {
   const paneRef = useRef(null);
   const frameRef = useRef(null);
+  // The theme the frame is given, read once when the page first renders. Fixed
+  // on purpose: changing a frame's `src` reloads it, and a reload would throw
+  // away the report the visitor has open in the pane. A theme toggle therefore
+  // takes effect in an open pane the next time the page loads.
+  const [frameTheme] = useState(siteTheme);
   const [loaded, setLoaded] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const paneState = useAddonState(frameRef, addon);
@@ -362,7 +381,7 @@ function Pane({ addon }) {
 
   if (timedOut || paneState === 'unavailable') return <Unavailable />;
 
-  const src = safeUrl(addonPaneUrl(addon));
+  const src = safeUrl(addonFrameUrl(addon, frameTheme));
   return (
     <div className="flex flex-col gap-2">
       <section

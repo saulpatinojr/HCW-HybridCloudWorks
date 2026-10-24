@@ -79,14 +79,16 @@ export const ADDON_PROVIDERS = Object.freeze(['azure']);
  * What a row may grant its pane (standard, section 8). `navigate` lets the
  * page act on a `navigate` message; `downloads` adds `allow-downloads` to
  * the sandbox; `popups` adds `allow-popups` (discouraged: a popup inherits
- * the sandbox); `clipboard` and `fullscreen` are Permissions Policy grants
- * to the AddOn's origin. Never `allow-top-navigation`.
+ * the sandbox); `clipboard` (read and write), `clipboard-write` (write only,
+ * the narrower grant a "Copy report" button needs) and `fullscreen` are
+ * Permissions Policy grants to the AddOn's origin. Never `allow-top-navigation`.
  */
 export const ADDON_CAPABILITIES = Object.freeze([
   'navigate',
   'downloads',
   'popups',
   'clipboard',
+  'clipboard-write',
   'fullscreen',
 ]);
 
@@ -133,7 +135,7 @@ export const addons = Object.freeze([
     providers: Object.freeze(['azure']),
     technology: Object.freeze(['azure-networking', 'resource-graph']),
     status: 'available',
-    capabilities: Object.freeze(['navigate', 'downloads']),
+    capabilities: Object.freeze(['downloads', 'clipboard-write']),
     docsUrl: 'https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn#readme',
     articleSlugs: Object.freeze([]),
   }),
@@ -148,7 +150,7 @@ export const addons = Object.freeze([
     providers: Object.freeze(['azure']),
     technology: Object.freeze(['well-architected', 'resource-graph']),
     status: 'available',
-    capabilities: Object.freeze(['navigate', 'downloads']),
+    capabilities: Object.freeze(['downloads', 'clipboard-write']),
     docsUrl: 'https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn#readme',
     articleSlugs: Object.freeze([]),
   }),
@@ -192,6 +194,19 @@ export function addonPanePath(addon) {
 /** What the pane loads: the AddOn's own origin and its pane path. */
 export function addonPaneUrl(addon) {
   return `${addon.origin}${addon.panePath}`;
+}
+
+/**
+ * The address the frame is given: the pane URL with the site's theme as
+ * `?theme=dark|light`, because a pane on another origin cannot read the
+ * site's `dark` class and would otherwise follow the visitor's device setting
+ * (website issue #1353). Any other value, or none, leaves the URL as it is.
+ * An AddOn that does not read the parameter ignores it.
+ */
+export function addonFrameUrl(addon, theme) {
+  const url = new URL(addonPaneUrl(addon));
+  if (theme === 'dark' || theme === 'light') url.searchParams.set('theme', theme);
+  return url.toString();
 }
 
 /** The origins of the available rows, exactly as the CSP's `frame-src` must list them. */

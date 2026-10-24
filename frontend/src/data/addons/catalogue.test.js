@@ -24,6 +24,7 @@ import {
   SITE_ORIGINS,
   TOOLS_PATH,
   addonById,
+  addonFrameUrl,
   addonOrigins,
   addonPanePath,
   addonPaneUrl,
@@ -144,6 +145,7 @@ describe('addon catalogue', () => {
       'downloads',
       'popups',
       'clipboard',
+      'clipboard-write',
       'fullscreen',
     ]);
     expect(ADDON_ORIGIN_SUFFIX).toBe('.lab.hybridcloudworks.com');
@@ -152,6 +154,35 @@ describe('addon catalogue', () => {
       'https://www.hybridcloudworks.com',
     ]);
     expect(TOOLS_PATH).toBe('/tools');
+  });
+
+  it('grants the network and cloud assessments what their guides ask for: downloads and clipboard-write, no more', () => {
+    // Owner decision 2026-10-24 (website issue #1354). `clipboard` would also grant clipboard-read, which neither asked for,
+    // and neither add-on sends a `navigate` message, so neither is granted it.
+    for (const id of ['network-assessment', 'cloud-assessment']) {
+      expect(addonById(id).capabilities, id).toEqual(['downloads', 'clipboard-write']);
+    }
+    expect(addonById('migration').capabilities).toEqual(['navigate', 'downloads']);
+  });
+
+  it('adds the site theme to the frame address, for dark and light only, and keeps the origin', () => {
+    const migration = addonById('migration');
+    expect(addonFrameUrl(migration, 'dark')).toBe(
+      'https://migration.lab.hybridcloudworks.com/?theme=dark'
+    );
+    expect(addonFrameUrl(migration, 'light')).toBe(
+      'https://migration.lab.hybridcloudworks.com/?theme=light'
+    );
+    for (const theme of [undefined, null, '', 'system', 'DARK', 'dark&x=1', 42]) {
+      expect(addonFrameUrl(migration, theme)).toBe(addonPaneUrl(migration));
+    }
+    for (const addon of addons) {
+      expect(new URL(addonFrameUrl(addon, 'dark')).origin).toBe(addon.origin);
+    }
+    // a pane path that already carries a query keeps it
+    expect(addonFrameUrl({ ...migration, panePath: '/?lang=en' }, 'dark')).toBe(
+      'https://migration.lab.hybridcloudworks.com/?lang=en&theme=dark'
+    );
   });
 
   it('gives no two AddOns the same id or origin', () => {

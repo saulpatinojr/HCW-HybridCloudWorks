@@ -92,10 +92,12 @@ Row shape:
 | `articleSlugs` | Same `{ provider, slug, title }` shape as the labs catalogue; may be empty. |
 
 Fixed lists exported beside the rows: `ADDON_FIELDS`, `ADDON_STATUSES`,
-`ADDON_PROVIDERS`, `ADDON_CAPABILITIES = ['navigate', 'downloads', 'popups', 'clipboard', 'fullscreen']`,
+`ADDON_PROVIDERS`, `ADDON_CAPABILITIES = ['navigate', 'downloads', 'popups', 'clipboard', 'clipboard-write', 'fullscreen']`,
 `ADDON_ORIGIN_SUFFIX = '.lab.hybridcloudworks.com'`, `SITE_ORIGINS`.
 Helpers: `addonById`, `availableAddons`, `addonPanePath(addon)` (returns
 `/tools/<id>`), `addonPaneUrl(addon)` (returns `origin + panePath`),
+`addonFrameUrl(addon, theme)` (the same with `?theme=dark` or `?theme=light`, the
+address the frame is given),
 `addonOrigins()` (origins of available rows, for the CSP), `addonsForProvider`.
 
 Complete example row:
@@ -171,7 +173,16 @@ menu expectations hold.
 
 **Mandatory.**
 
-Frame: `<iframe src={addonPaneUrl(addon)} title={addon.title} sandbox={sandboxFor(addon)} allow={allowFor(addon)}>`.
+Frame: `<iframe src={addonFrameUrl(addon, theme)} title={addon.title} sandbox={sandboxFor(addon)} allow={allowFor(addon)}>`.
+
+**The theme.** A pane on another origin cannot read the site's `dark` class, so the
+site gives the frame `?theme=dark` or `?theme=light`, read from the document when the
+page first renders (owner decision 2026-10-24, website issue #1353). It is read once and
+not updated: changing a frame's `src` reloads it, which would drop the report the visitor
+has open, so a theme toggle reaches an open pane at the next page load. An AddOn that
+does not read the parameter ignores it and follows `prefers-color-scheme`. Observed in a
+real browser on 2026-10-24, framed by the site: the network assessment and the cloud
+assessment follow the parameter; the migration AddOn does not.
 
 | Sandbox | When |
 | --- | --- |
@@ -180,9 +191,12 @@ Frame: `<iframe src={addonPaneUrl(addon)} title={addon.title} sandbox={sandboxFo
 | `allow-popups` | Row has `popups`. Discouraged; popups inherit the sandbox. |
 | `allow-top-navigation` | Never. |
 
-`allow` (Permissions Policy): `clipboard-read`, `clipboard-write` and `fullscreen`
-are granted to the AddOn's origin only when the row names `clipboard` or
-`fullscreen`; otherwise the attribute is empty.
+`allow` (Permissions Policy), each granted to the AddOn's origin only when the row
+names it, otherwise the attribute is empty: `clipboard` grants `clipboard-read` and
+`clipboard-write`; `clipboard-write` grants write only, which is all a "Copy report"
+button needs and what a row should ask for; `fullscreen` grants `fullscreen`. The
+network and cloud assessment rows hold `downloads` and `clipboard-write` (owner
+decision 2026-10-24, website issue #1354).
 
 Messages, AddOn to site, one shape:
 
