@@ -19,6 +19,30 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **Idea notes: an Obsidian second brain for content, with a format, a check and
+  a promote-to-draft script (#1343)**. Owner request 2026-10-24. The vault lives
+  on the owner's computer, outside this public repository; the scripts take its
+  folder as an argument and only ever read it. An idea note is a note whose
+  properties are `type`, `theme`, `format` and `status` (and optionally title,
+  subtitle, tags, reading, part, date). `scripts/ideas/check-idea-notes.mjs
+  <folder>` reports what is wrong with each note and a count by status and type.
+  `scripts/ideas/promote-idea.mjs <note>` turns an `outlined` blog idea whose
+  format is how-to or build-log into `docs/content/blog-<name>.md`, in the shape
+  the admin's *Import from docs/content* takes; it never overwrites, never edits
+  the note, and refuses what can only be private notes or only work in Obsidian
+  (`[[wikilinks]]`, `%% comments %%`, Dataview and Tasks blocks). The properties
+  are read by a small reader of our own, with no new dependency, because
+  Obsidian writes lists in the block form and the import's reader takes only the
+  inline form. Runbook: `docs/runbooks/obsidian-idea-notes.md`, written for
+  someone who has never used Obsidian. Checked: 31 scripts tests on temporary
+  vaults (never a real one); `functions/src/lib/cms/idea-promotion.test.js`
+  reads each promoted draft back with the import's own parser (`parseRepoDraft`)
+  and holds the format's limits and content types to the import's and the
+  publisher's, seen failing when either was changed; the runbook's steps run
+  once in PowerShell against a temporary vault, with the outputs it shows.
+  `ci.yml`'s `functions` filter now names `scripts/ideas/idea-notes.mjs`. Not
+  done: an admin screen for the backlog; promoting types other than blog; any
+  look at the owner's real vault.
 - **A sample interview, so the Interviews pages show up and there is a file to
   copy**. Owner request 2026-10-24. `frontend/src/data/interviews/example-interview.json`
   is a made-up guest ("Sample Guest") whose page, bio and subtitle all say it

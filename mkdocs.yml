@@ -134,6 +134,7 @@ nav:
       - Cosmos restore: runbooks/cosmos-restore.md
       - Edge and DNS verification: runbooks/edge-dns-verification.md
       - Add an interview: runbooks/add-an-interview.md
+      - Idea notes in Obsidian: runbooks/obsidian-idea-notes.md
       - Labs host access and Arc onboarding: runbooks/labs-host.md
       - Docker Hub publishing (OIDC connection): runbooks/docker-hub-publishing.md
       - Copilot code review MCP servers: runbooks/copilot-code-review-mcp.md

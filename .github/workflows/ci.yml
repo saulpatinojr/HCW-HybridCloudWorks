@@ -107,10 +107,12 @@ jobs:
           # source's list lives: decision-center.test.js holds every source to it.
           # sourceUrl.js is what source-episode.test.js imports, and onboard.yml
           # is what estate.test.js reads for the guest configuration toggle.
+          # scripts/ideas/idea-notes.mjs is what idea-promotion.test.js
+          # imports, to hold the drafts it writes to the import's own parser.
           - name: functions (azure)
             dir: functions
             node-version: '24'
-            filter: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/blog-[a-z0-9-]+\.md$|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
+            filter: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/blog-[a-z0-9-]+\.md$|scripts/ideas/idea-notes\.mjs$|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
             lint: npm run lint
             test: npm test
           # The out-of-tree entries after infra/ are what
