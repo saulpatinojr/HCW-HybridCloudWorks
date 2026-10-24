@@ -49,12 +49,14 @@ here, and an operator holding it will raise a finding on every single run.
 | `docs.hybridcloudworks.com` | GitHub Pages | no | `infra/frontend.tf`, `cloudflare_dns_record.docs_pages` |
 | `podcast.hybridcloudworks.com` | Podbean, CNAME to `pbcdn2.podbean.com` | no | `infra/frontend.tf`, `cloudflare_dns_record.podcast_podbean` |
 | `go.hybridcloudworks.com` | Linkie, CNAME to `app.linkie.bio` | no | `infra/frontend.tf`, `cloudflare_dns_record.linkie_go` |
+| `notes.hybridcloudworks.com` | Cloudflare, in front of Obsidian Publish (CNAME to `publish-main.obsidian.md`) | **yes** | `infra/frontend.tf`, `cloudflare_dns_record.notes_obsidian_publish` |
 | `asuid.api-azure.hybridcloudworks.com` | nothing — a TXT record holding Azure's ownership proof | n/a | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions_domain_verification` |
 | `_cf-custom-hostname.go.hybridcloudworks.com` | nothing — a TXT record holding Linkie's ownership proof for `go` | n/a | `infra/frontend.tf`, `cloudflare_dns_record.linkie_go_verification` |
 
-`infra/frontend.tf` declares exactly six Cloudflare records, and ADR 0024
-names `api-azure` in as many words as *the one proxied hostname*. Three things
-about that table are deliberate rather than oversight:
+`infra/frontend.tf` declares exactly seven Cloudflare records. ADR 0024
+(written when there was one) names `api-azure` in as many words as *the one
+proxied hostname*; `notes` is the second, added for Obsidian Publish (#1350).
+Four things about that table are deliberate rather than oversight:
 
 - **The apex and `www` are not in Terraform.** A Static Web App root domain
   validates against a token Azure generates when the validation starts, so
@@ -77,6 +79,17 @@ about that table are deliberate rather than oversight:
   Linkie's own help article asks of a subdomain is declared: the `go` CNAME
   and the TXT. If Linkie ever needs a `www` row for `go`, it is
   `www.go.hybridcloudworks.com`, never the zone's own `www`.
+- **`notes` is the exception: it is proxied.** Obsidian does not issue a
+  certificate for a custom name. Its help page
+  ([Custom domains](https://obsidian.md/help/publish/domains)) asks for a
+  proxied CNAME to `publish-main.obsidian.md` and the zone's SSL/TLS mode set
+  to **Full**, so Cloudflare terminates the visitor's connection. A `notes`
+  answer carrying a `CF-RAY` header is therefore the design, and an answer
+  without one is the finding. The zone's SSL/TLS mode is not in Terraform:
+  a redirect loop means it reads Flexible, and 525 or 526 means it reads Full
+  (strict) and Obsidian's certificate was refused for this name. Fix it with a
+  rule scoped to `notes`, never by lowering the mode for the whole zone, which
+  `api-azure` also sits behind.
 
 So the apex resolving to Azure, answering with **no** `CF-RAY` header, and
 presenting a **DigiCert**-issued certificate is the design. **An apex behind

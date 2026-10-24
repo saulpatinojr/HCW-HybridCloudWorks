@@ -525,6 +525,12 @@ export const DECLARED = [
     reason:
       "#1302: alert-timer-overdue watches ambassadorAudienceMonthly too, one row more in its datatable",
   },
+  {
+    address: "cloudflare_dns_record.notes_obsidian_publish",
+    action: "create",
+    reason:
+      "#1350: notes.hybridcloudworks.com -> Obsidian Publish (publish-main.obsidian.md), proxied",
+  },
   // #1335's two creates, linkie_go and linkie_go_verification, applied on
   // 2026-10-24 (HCP Terraform commit status Success on fb73b30e) and were
   // deleted here. Both records then answered on 1.1.1.1 and 8.8.8.8, the CNAME
