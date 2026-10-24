@@ -525,12 +525,11 @@ export const DECLARED = [
     reason:
       "#1302: alert-timer-overdue watches ambassadorAudienceMonthly too, one row more in its datatable",
   },
-  {
-    address: "cloudflare_dns_record.notes_obsidian_publish",
-    action: "create",
-    reason:
-      "#1350: notes.hybridcloudworks.com -> Obsidian Publish (publish-main.obsidian.md), proxied",
-  },
+  // #1360's create, notes_obsidian_publish, applied on 2026-10-24 (run-bb1XtRGJEbuK1Cec,
+  // read as applied by tfc-plan-check with only the known permanent diff besides it) and was
+  // deleted here. notes.hybridcloudworks.com then resolved to Cloudflare addresses on 1.1.1.1
+  // and answered HTTPS with Server: cloudflare and a CF-RAY (404 until the name is claimed in
+  // Obsidian).
   // #1335's two creates, linkie_go and linkie_go_verification, applied on
   // 2026-10-24 (HCP Terraform commit status Success on fb73b30e) and were
   // deleted here. Both records then answered on 1.1.1.1 and 8.8.8.8, the CNAME
