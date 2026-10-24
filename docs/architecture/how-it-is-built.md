@@ -197,7 +197,9 @@ applied only after someone reviews the plan. This site deploys to GitHub
 Pages when a merge to `main` changes `docs/`, `mkdocs.yml`, `scripts/docs/`,
 the README, the changelog, the TODO file or the workflow itself. Scheduled
 workflows watch delivery health, unresolved secrets, published pages, alert
-rules and pinned versions.
+rules and pinned versions. When the delivery-health check goes red, the
+Functions app also sends a Telegram message, so a deploy left waiting is not
+missed ([how it works](../runbooks/alerting-and-support.md#the-delivery-monitor-speaks-on-telegram)).
 
 ### The site's security policy is finished at build time
 

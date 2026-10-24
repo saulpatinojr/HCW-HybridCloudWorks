@@ -202,6 +202,35 @@ all, and the rules that count successes (reachability, the two export rules,
 the lab heartbeat) fire on silence rather than being silenced by it: a capped
 workspace makes them page, not sleep.
 
+### The delivery monitor speaks on Telegram
+
+Merging to `main` ships nothing here: the frontend and Functions deploys are
+started by hand, and Terraform is confirmed in HCP Terraform. So a merge can
+leave production behind `main` without anything being broken. The GitHub check
+[Monitor delivery health](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/monitor-deploy-drift.yml)
+(`monitor-deploy-drift.yml`) is what notices. It runs every four hours and goes
+red when a deploy has waited more than **8 hours** behind `main` (it was 24
+until 2026-10-23), or when a workflow keeps failing.
+
+Red used to reach the owner only as GitHub's failure email. On 2026-10-22 it
+sat red for a day among other mail. Now the Functions app also sends a
+Telegram message, from the hourly `checkAgentHealth` timer
+(`functions/src/lib/timers/delivery-monitor-watch.js`). It reads the check's
+run history from GitHub's public API, so no bot token is stored in GitHub; the
+token stays in Key Vault with the other notifier settings.
+
+| Message title | What it means | What to do |
+| --- | --- | --- |
+| **DELIVERY MONITOR RED** | The newest finished run of the check failed. The message names the failed jobs and links the run. Sent once per red stretch | Open the linked run and read its table: each service that is behind has a red mark. Start the matching deploy, or confirm the Terraform run, then wait for the next run |
+| **DELIVERY MONITOR STILL RED** | Still red 24 hours after the first message. Sent again so one missed notification does not mean silence | Same as above; nothing has fixed it yet |
+| **DELIVERY MONITOR back to green** | A run succeeded after the owner was told. Sent once, then the record is cleared | Nothing |
+| **DELIVERY MONITOR WATCH IS BLIND** | The watcher has failed to read GitHub for about a day of hourly attempts, so it cannot tell red from green | Check GitHub's status page and the Functions logs; the GitHub failure email still goes out while this lasts |
+
+Two limits. The Telegram message depends on the Functions app being up, so if
+Azure is down only GitHub's email arrives; nothing here replaces that email.
+And the watcher only exists once the Functions app has been deployed with it,
+which is itself a manual deploy.
+
 ## The rules
 
 | Rule | Sev | Fires when | What it usually means | Look at first |

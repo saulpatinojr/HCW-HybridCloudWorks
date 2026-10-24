@@ -1014,6 +1014,18 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Docs: the delivery monitor's Telegram messages are explained, and the
+  Linkie key's permission label is corrected**. Owner request 2026-10-24
+  ("update Pages and readme"). `docs/runbooks/alerting-and-support.md` gains
+  *The delivery monitor speaks on Telegram*: the four message titles
+  (`DELIVERY MONITOR RED`, `STILL RED`, `back to green`, `WATCH IS BLIND`),
+  what each means and what to do, the 8-hour threshold and the two limits;
+  `how-it-is-built.md` links to it. The two pages that list the Linkie key's
+  permissions now say the key screen labels **Automated posts** as **Posts**
+  (seen 2026-10-24). The README was read and needed no change: it describes
+  only what a visitor can use today, and the Interviews page has no interview
+  yet. The Pages site itself was already current: its build succeeded on the
+  merge of #1339.
 - **Azure Architecture MCP Appliance on Azure MCP Server 3.0: the architecture
   analysis and design proposal is on the docs site (#1314).**
   `docs/architecture/azure-architecture-mcp-appliance.md` is the analysis the
