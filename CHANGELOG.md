@@ -727,7 +727,13 @@ This project has not cut a tagged release; entries are grouped under
   for ADR 0035 now records the merge dates (#1043 on 2026-10-09, #1089 on
   2026-10-12) instead of "not merged yet". **No host run date or commit is
   written**, because the repository does not hold them; the host's own record is
-  still to be read (#1355).
+  still to be read (#1355). CodeRabbit's review of this pull request added two
+  more corrections to the same page: a stale `[REVIEW REQUIRED]` marker on the
+  ADR 0035 amendment is replaced by the owner's confirmation of 2026-10-10
+  (#1044, ADR 0035 decision 8), and two statements that said more than the
+  evidence are reworded: the status route showing an add-on answering is not the
+  host having applied the commit, and Cloud Crawler having no `group_vars` row
+  is not a check of the host.
 - **Interviews: the header link moved to the Azure landing page, interview
   pages keep the Azure menu, and a route check that failed now passes
   (follow-up to #1337)**. CodeRabbit's two findings on #1337 were real, and
