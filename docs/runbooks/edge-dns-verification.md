@@ -103,6 +103,10 @@ reads ARM rather than asking `/api/health`.
 ```
 
 ```powershell
+Resolve-DnsName -Name '_cf-custom-hostname.go.hybridcloudworks.com' -Type TXT | Select-Object Name, Type, Strings
+```
+
+```powershell
 'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health','https://podcast.hybridcloudworks.com/','https://go.hybridcloudworks.com/' | ForEach-Object { $r = Invoke-WebRequest -Uri $_ -UseBasicParsing; [pscustomobject]@{ Url = $_; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } }
 ```
 
@@ -129,7 +133,10 @@ entered in Podbean and its certificate is issued, that HTTPS request fails: an
 unfinished setup, not an outage. `go` returns a `CNAME` to `app.linkie.bio` and
 answers with no `CF-RAY` either; until Linkie's Domain settings read **Live**
 (up to 48 hours after the records applied), its HTTPS request can fail the
-same way. Key on the ranges and the headers, never on a
+same way. The TXT query returns one `TXT` record whose `Strings` is Linkie's
+ownership value for `go`; a CNAME that resolves with no TXT behind it is an
+unfinished setup that will not turn Live, so check the TXT before reading a
+failed HTTPS request as the documented wait. Key on the ranges and the headers, never on a
 literal address: the Static Web App's address is Azure's to change.
 
 If the headers are ambiguous, confirm the certificate in a browser at
