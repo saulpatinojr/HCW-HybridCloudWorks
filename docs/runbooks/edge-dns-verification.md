@@ -114,7 +114,7 @@ reads ARM rather than asking `/api/health`.
 ### 1. DNS resolves the way the split says it should
 
 ```powershell
-'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com','podcast.hybridcloudworks.com','go.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
+'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com','podcast.hybridcloudworks.com','go.hybridcloudworks.com','notes.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
 ```
 
 ```powershell
@@ -122,8 +122,10 @@ Resolve-DnsName -Name '_cf-custom-hostname.go.hybridcloudworks.com' -Type TXT | 
 ```
 
 ```powershell
-'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health','https://podcast.hybridcloudworks.com/','https://go.hybridcloudworks.com/' | ForEach-Object { $r = Invoke-WebRequest -Uri $_ -UseBasicParsing; [pscustomobject]@{ Url = $_; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } }
+'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health','https://podcast.hybridcloudworks.com/','https://go.hybridcloudworks.com/','https://notes.hybridcloudworks.com/' | ForEach-Object { $u = $_; $r = $null; try { $r = Invoke-WebRequest -Uri $u -UseBasicParsing -ErrorAction Stop } catch { $r = $_.Exception.Response }; if ($r) { [pscustomobject]@{ Url = $u; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } } else { [pscustomobject]@{ Url = $u; Status = 'no response'; Server = ''; CfRay = '' } } }
 ```
+
+The HTTPS line catches a non-2xx answer and reports its status and headers instead of stopping, because `notes` answers with an error page until the name is claimed in Obsidian, and that error page's `CF-RAY` is exactly what the check is after. It reads the headers of the caught response the way Windows PowerShell 5.1 exposes them; in PowerShell 7 the caught response is a different type, so run it in `powershell.exe`.
 
 `-UseBasicParsing` is deliberate and is not there for PowerShell 7, where it
 does nothing at all — measured on 7.6.5, it is accepted silently, with no
@@ -142,7 +144,7 @@ the other one, it stays.
 `CF-RAY` header or `Server: cloudflare`. `api-azure` returns two `A` records
 inside `104.16.0.0/13` and `172.64.0.0/13` — both published Cloudflare ranges —
 plus `AAAA` records, and it answers with `Server: cloudflare` and a `CF-RAY`.
-`podcast` returns a `CNAME` to `pbcdn2.podbean.com` and answers with no
+`notes` returns two `A` records inside Cloudflare's ranges, as `api-azure` does, and its HTTPS answer carries `Server: cloudflare` and a `CF-RAY`; the status is not part of the check, since an unclaimed name answers with an error page (an answer with no `CF-RAY` would be the finding). `podcast` returns a `CNAME` to `pbcdn2.podbean.com` and answers with no
 `CF-RAY`, because it is DNS-only and Podbean serves it. Until the domain is
 entered in Podbean and its certificate is issued, that HTTPS request fails: an
 unfinished setup, not an outage. `go` returns a `CNAME` to `app.linkie.bio` and
