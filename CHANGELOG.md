@@ -19,6 +19,33 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **Interviews on the Azure section: a readable article page per interview,
+  with a book view that turns its pages**. Owner request 2026-10-24. An
+  interview is one JSON file in `frontend/src/data/interviews/`; adding a file
+  adds the interview, with no list to edit, and a file whose name starts with
+  an underscore is a draft the site ignores. `docs/runbooks/add-an-interview.md`
+  has the format, an example and the steps. Each interview gets
+  `/azure/interviews/<name>` and a card on `/azure/interviews`. The page is the
+  whole transcript as plain text, with a title, a description, an *Article*
+  record and a link in the sitemap, and that is what the build pre-renders for
+  search engines, so no separate transcript generator was needed. **Book view**
+  is an extra the visitor chooses on a wide screen when their device is not set
+  to reduce motion; it is a stack of CSS leaves that turn, with the two buttons
+  beneath it as the way in (the arrow keys, Home and End work when a button has
+  focus), a spoken position ("Pages 3 and 4 of 6"), and every page except the
+  two on show unreachable and hidden from screen readers. **No flip-book
+  library**: the one the owner's plan named was last released in April 2021, and
+  the owner chose to build the turn here instead. **Nothing is published yet**:
+  no interview exists, so there is no Interviews link in the menu, no list page
+  in the sitemap and no pre-rendered route until the first file is added. The
+  build and its tests stop on a bad file with a sentence naming the file and the
+  field. Checked in a real browser, dark and light, wide and phone width, with
+  axe including colour contrast, which found and fixed four things the unit
+  tests could not see: the site theme repainting the book's white pages and its
+  links, a second `<main>` landmark, and the site's global `<header>` styling
+  leaking onto the article heading. Obsidian as a second brain for the content
+  creator is a separate piece of work and is not in this change.
+
 - **`go.hybridcloudworks.com` for the Linkie link-in-bio page**. Owner request
   2026-10-24. Linkie serves a custom hostname that CNAMEs to `app.linkie.bio`
   and proves ownership with a TXT record, both of which its Domain settings
