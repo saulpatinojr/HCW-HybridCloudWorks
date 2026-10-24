@@ -151,7 +151,10 @@ export function parseNote(text) {
       continue;
     }
 
-    const entry = /^([A-Za-z_][\w-]*):(?:[ \t]+(.*))?$/.exec(raw);
+    // Obsidian allows any text as a property name ("date created", "année"), so
+    // take everything up to the first colon that is followed by a space or the
+    // end of the line. Keys the format does not name are ignored, whatever they say.
+    const entry = /^([^\s:#'"[-][^:]*?):(?:[ \t]+(.*))?$/.exec(raw);
     if (!entry) {
       if (/^\s/.test(raw) && current) {
         if (KNOWN_KEYS.includes(current.key)) {
@@ -172,7 +175,7 @@ export function parseNote(text) {
       continue;
     }
 
-    const key = entry[1];
+    const key = entry[1].trim();
     const rest = (entry[2] ?? '').trim();
     const field = { key, line, kind: 'empty', value: '', items: [] };
     if (rest.startsWith('[') && rest.endsWith(']')) {

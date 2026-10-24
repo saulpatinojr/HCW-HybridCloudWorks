@@ -63,6 +63,32 @@ describe('parseNote', () => {
     expect(parseNote('---\ntype: blog\nno end').unclosed).toBe(true);
   });
 
+  it('leaves alone any property name Obsidian allows: spaces, accents, a space before the colon', () => {
+    const parsed = parseNote(
+      note([
+        'type: blog',
+        'date created: 2026-01-01',
+        'année: 2026',
+        'related notes:',
+        '- one',
+        '- two',
+        'status : outlined',
+        'title: Landing zones: why not',
+      ])
+    );
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.fields.get('date created').value).toBe('2026-01-01');
+    expect(parsed.fields.get('année').value).toBe('2026');
+    expect(parsed.fields.get('related notes').items).toEqual(['one', 'two']);
+    expect(parsed.fields.get('status').value).toBe('outlined');
+    expect(parsed.fields.get('title').value).toBe('Landing zones: why not');
+  });
+
+  it('still refuses a line that is not name: value', () => {
+    const parsed = parseNote(note(['type:blog', 'just some words']));
+    expect(parsed.problems.map((problem) => problem.line)).toEqual([2, 3]);
+  });
+
   it('does not stumble on nested keys it does not need', () => {
     const parsed = parseNote(note(['type: blog', 'cssclasses:', '  nested: thing', '  more: stuff']));
     expect(parsed.problems).toEqual([]);
@@ -416,6 +442,22 @@ describe('the two scripts, run for real', () => {
 
   it('a folder where a note belongs is refused, not read', () => {
     expect(run('promote-idea.mjs', [vault, '--out-dir', out]).code).toBe(2);
+  });
+
+  it('promote: an option missing its value is an error, never a guess at the current folder', () => {
+    const ready = join(vault, 'Ready.md');
+    writeFileSync(ready, note(GOOD));
+    for (const args of [
+      [ready, '--out-dir'],
+      [ready, '--out-dir', '--dry-run'],
+      [ready, '--name'],
+      [ready, '--name', '--dry-run'],
+    ]) {
+      const got = run('promote-idea.mjs', args);
+      expect(got.code, args.join(' ')).toBe(2);
+      expect(got.stderr).toMatch(/--(out-dir needs a folder|name needs a value)/);
+    }
+    expect(readdirSync(out)).toEqual([]);
   });
 
   it('promote: exit 2 for a missing note, an unknown option or no note at all', () => {

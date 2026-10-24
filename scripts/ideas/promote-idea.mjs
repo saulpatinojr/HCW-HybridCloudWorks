@@ -39,14 +39,19 @@ function readArgs(argv) {
     const arg = argv[index];
     if (arg === '--help' || arg === '-h') options.help = true;
     else if (arg === '--dry-run') options.dryRun = true;
-    else if (arg === '--name') options.name = argv[++index];
-    else if (arg === '--out-dir') options.outDir = resolve(argv[++index] ?? '');
-    else if (arg.startsWith('-')) return { error: `unknown option ${arg}` };
+    else if (arg === '--name' || arg === '--out-dir') {
+      // The next argument is this option's value. A missing one, or another
+      // option standing where the value should be, is a mistake to report, not
+      // a path to guess (an empty folder name would resolve to the current folder).
+      const value = argv[++index];
+      if (!value || value.startsWith('-')) {
+        return { error: `${arg} needs ${arg === '--name' ? 'a value' : 'a folder'}` };
+      }
+      if (arg === '--name') options.name = value;
+      else options.outDir = resolve(value);
+    } else if (arg.startsWith('-')) return { error: `unknown option ${arg}` };
     else if (options.note === null) options.note = arg;
     else return { error: 'give one note at a time' };
-  }
-  if (options.name === '' || (argv.includes('--name') && options.name === undefined)) {
-    return { error: '--name needs a value' };
   }
   return { options };
 }

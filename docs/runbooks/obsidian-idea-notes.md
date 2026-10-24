@@ -30,8 +30,9 @@ committed except the one draft you choose to promote, and you read it first.
    Inside it, make a folder called `Ideas`. Only this folder is checked, so the
    rest of the vault can hold anything.
 3. **Make a template note** so every idea starts with the right properties.
-   Create a note called `_Idea template` in `Ideas` (a name starting with `_` is
-   skipped by the check) with exactly this at the top:
+   Inside `Ideas`, make a folder called `_Templates` (a folder or file name
+   starting with `_` is skipped by the check), and in it a note called
+   `Idea template` with exactly this at the top:
 
    ```yaml
    ---
@@ -47,6 +48,26 @@ committed except the one draft you choose to promote, and you read it first.
    [Properties](https://obsidian.md/help/properties) explains the table, and
    says they are stored as YAML (plain text between two `---` lines) at the top
    of the file, which is what these scripts read.
+4. **Tell Obsidian where the template is**, so you can use it. A template note
+   does nothing by itself: a new note stays empty until you put the template in
+   it. In Obsidian, open **Settings → Core plugins**, switch **Templates** on,
+   then under **Templates** set **Template folder location** to
+   `Ideas/_Templates`
+   ([Templates, Obsidian Help](https://obsidian.md/help/plugins/templates)).
+
+## Start a new idea
+
+1. Make a new note in `Ideas` and give it the idea's working title as its name.
+2. In the new note, use the **Insert template** button in the left ribbon, or
+   open the command palette and run **Templates: Insert template**, and pick
+   `Idea template`. The four properties appear at the top, ready to fill in.
+   (Without the Templates plugin you can instead copy the template file in your
+   file manager and rename the copy.)
+3. Fill in `theme`, set `format` and `type` if they differ, and write the idea
+   underneath. Leave `status: idea` until you have an outline.
+
+If you skip the template, the checker will tell you which properties are
+missing.
 
 ## The format of an idea note
 
