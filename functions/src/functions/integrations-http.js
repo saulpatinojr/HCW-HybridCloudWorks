@@ -80,9 +80,11 @@ const PUBLER = createIntegration({
 // so the endpoint may have to be corrected without a code change.
 //
 // Linkie is the one integration here with an allowlist. Its admin page calls a
-// small known set, and the key's scopes (pages read+write, analytics read,
-// posts read+write) are broader than any single screen needs — so naming the
-// endpoints is worth more than trusting the caller.
+// small known set, and the key's scopes (pages, analytics, automated posts)
+// can be broader than any single screen needs — so naming the endpoints is
+// worth more than trusting the caller. The hub needs pages read-only,
+// automated posts read+write and analytics read-only (docs/standards/
+// required-inputs.md has the key's exact settings).
 //
 // Linkie renamed its profiles to PAGES in October 2026 (`/api/v1/profiles` is
 // now `/api/v1/pages`, the key scopes `profiles:read` and `profiles:write` are

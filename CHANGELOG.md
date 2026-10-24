@@ -580,10 +580,14 @@ This project has not cut a tagged release; entries are grouped under
   run every path the hub builds through the real matcher, and a rename that
   moves one side and not the other fails there (`ci.yml`'s frontend filter
   lists the two functions files that test reads, as the repository's CI-filter
-  test requires). **The API key may need
-  creating again**: a key that only has the old scopes answers 403
-  "Insufficient scope". `docs/standards/required-inputs.md` and the credential
-  rotation schedule say how. Function names in the hub still say "profile"; a
+  test requires). **The API key may need creating again**: a key that only has
+  the old scopes answers 403 "Insufficient scope". Linkie's key form has three
+  separate permissions, and the hub needs **Linkie pages** Read Only,
+  **Automated posts** Read & Write and **Analytics** Read Only (a first draft
+  of these docs asked for pages Read & Write alone, which would have passed the
+  connection test and still refused posts and traffic; CodeRabbit caught it).
+  `docs/standards/required-inputs.md` and the credential rotation schedule
+  say how, with the exact Playground URL. Function names in the hub still say "profile"; a
   profile there is what Linkie now calls a page.
 
 - **A healthy Functions deploy no longer goes red because the temporary
