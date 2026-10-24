@@ -578,7 +578,9 @@ This project has not cut a tagged release; entries are grouped under
   names; the old paths are no longer allowed. The allow-list moved into
   `functions/src/lib/integrations/linkie-allowlist.js` so a frontend test can
   run every path the hub builds through the real matcher, and a rename that
-  moves one side and not the other fails there. **The API key may need
+  moves one side and not the other fails there (`ci.yml`'s frontend filter
+  lists the two functions files that test reads, as the repository's CI-filter
+  test requires). **The API key may need
   creating again**: a key that only has the old scopes answers 403
   "Insufficient scope". `docs/standards/required-inputs.md` and the credential
   rotation schedule say how. Function names in the hub still say "profile"; a
