@@ -1,0 +1,36 @@
+{
+  "title": "Example interview: how a conversation reads here",
+  "subtitle": "A sample, with a made-up guest, so you can see the page before the real ones arrive",
+  "date": "2026-10-24",
+  "guest": { "name": "Sample Guest", "role": "A made-up guest for this demonstration" },
+  "bio": "Sample Guest does not exist. Every word on this page was written to show how an interview looks on HybridCloudWorks, and no real person said any of it. Real interviews will replace this one.",
+  "tags": ["example", "interviews"],
+  "qa": [
+    {
+      "q": "What is this page?",
+      "a": "It is a demonstration. The guest is made up, and so are the answers. It is here so you can see how an interview is laid out: the questions, the answers, a larger line pulled out of an answer, and the links at the end.\n\nWhen real interviews are published, this page will be taken down.",
+      "pullQuote": "Every word here was written to show the layout, and no real person said any of it."
+    },
+    {
+      "q": "How do I read an interview?",
+      "a": "Scroll. Each question is a heading and the answer sits under it, so you can jump to the one you care about, and a screen reader can list the questions as headings.\n\nOn a wide screen you will also see a Book view button above the interview. It lays the same words out as pages that turn, one spread at a time. It is an extra: the page you are reading now has everything in it."
+    },
+    {
+      "q": "What does a long answer look like?",
+      "a": "A long answer is split into paragraphs wherever the guest took a breath. This one has three, so you can see how they stack.\n\nThe second paragraph is here only to make the answer longer than a line or two. It says nothing, on purpose, because a sample should not teach you anything you might mistake for advice.\n\nThe third closes the answer. In the Book view each question gets a page to itself."
+    },
+    {
+      "q": "Where do I go next?",
+      "a": "The links below point to a hands-on lab on this site and to Microsoft's own guidance for the Cloud Adoption Framework. A real interview ends the same way: a few places to try the ideas it talked about."
+    }
+  ],
+  "related": {
+    "labs": [{ "title": "Azure hands-on labs", "url": "/azure/education/labs" }],
+    "learn": [
+      {
+        "title": "Microsoft Cloud Adoption Framework for Azure",
+        "url": "https://learn.microsoft.com/azure/cloud-adoption-framework/"
+      }
+    ]
+  }
+}

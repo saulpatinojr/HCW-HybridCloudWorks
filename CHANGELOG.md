@@ -19,6 +19,20 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **A sample interview, so the Interviews pages show up and there is a file to
+  copy**. Owner request 2026-10-24. `frontend/src/data/interviews/example-interview.json`
+  is a made-up guest ("Sample Guest") whose page, bio and subtitle all say it
+  is a demonstration and that no real person said any of it. It adds the
+  Interviews section to the Azure landing page, the list page and
+  `/azure/interviews/example-interview`, and puts the first two in the sitemap.
+  Delete it when the first real interview is published
+  (`docs/runbooks/add-an-interview.md`). Checked on a production build served
+  locally: the page is prerendered with an *Article* record and appears in
+  `sitemap.xml`; in real Chromium at 1280 px in dark and light, axe found no
+  violations on the article, every book spread and the list page, with no
+  console errors; the book offers no button on a 390 px phone or with reduced
+  motion; `/aws/interviews` and an unknown interview are not-found pages. Not
+  checked: the live site (not deployed), and a screen reader.
 - **Interviews on the Azure section: a readable article page per interview,
   with a book view that turns its pages**. Owner request 2026-10-24. An
   interview is one JSON file in `frontend/src/data/interviews/`; adding a file

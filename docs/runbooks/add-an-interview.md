@@ -1,9 +1,13 @@
 # Add an interview
 
 > **Status: in use.** The Interviews pages went in on 2026-10-24 (the
-> changelog has the entry). **No interview is published yet.** Until the
-> first file below is added, the Azure landing page has no Interviews card and
-> the sitemap has no Interviews page, on purpose.
+> changelog has the entry). **The only interview is a sample.**
+> `frontend/src/data/interviews/example-interview.json` has a made-up guest and
+> says so on the page; it is there so the pages show up and so you have a real
+> file to copy. Copy it to a new name, write the real interview, and **delete
+> the sample** when the first real one goes live. With no interview file at all,
+> the Azure landing page has no Interviews card and the sitemap has no
+> Interviews page, on purpose.
 
 **Scope:** how to publish one interview on the Azure section, at
 `/azure/interviews/<name>`. An interview is one text file. You do not edit any
