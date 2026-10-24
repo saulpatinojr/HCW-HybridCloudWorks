@@ -525,6 +525,16 @@ export const DECLARED = [
     reason:
       "#1302: alert-timer-overdue watches ambassadorAudienceMonthly too, one row more in its datatable",
   },
+  {
+    address: "cloudflare_dns_record.linkie_go",
+    action: "create",
+    reason: "go.hybridcloudworks.com -> Linkie (app.linkie.bio), DNS-only",
+  },
+  {
+    address: "cloudflare_dns_record.linkie_go_verification",
+    action: "create",
+    reason: "Linkie's TXT ownership proof for go.hybridcloudworks.com",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

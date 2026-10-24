@@ -245,6 +245,62 @@ resource "cloudflare_dns_record" "podcast_podbean" {
   }
 }
 
+# go.hybridcloudworks.com: the Linkie link-in-bio page on the owner's domain
+# (2026-10-24). Linkie serves any hostname that CNAMEs to app.linkie.bio and
+# proves ownership with a TXT record; both are what its Domain settings page
+# lists after the name is saved there (read 2026-10-24, and its help article
+# "How to connect a custom domain").
+#
+# A SUBDOMAIN, NEVER www OR THE APEX. That page lists the main-domain template
+# for any name, including `@` and `www` CNAMEs to app.linkie.bio. For a
+# subdomain Linkie's own article says to add only the CNAME named for the
+# subdomain and the TXT. The apex and www are the site, on the Static Web App
+# (docs/runbooks/edge-dns-verification.md): a CNAME there would hand it to
+# Linkie, the same trap the podcast record above names.
+#
+# DNS-only, as the article says ("if your DNS provider has a proxy option, set
+# it to DNS only"): Linkie issues the certificate for the name itself and
+# needs it to resolve to app.linkie.bio, and a proxied record answers with
+# Cloudflare's addresses instead.
+#
+# The TXT is named _cf-custom-hostname.go and its value is a UUID Linkie
+# generated for this hostname on 2026-10-24. It is an ownership token in public
+# DNS, not a secret; if Linkie reissues one (after the domain is removed and
+# added again), the new value replaces this one.
+#
+# Order of operations: the name was entered under Linkie's Settings -> Domain
+# first (status Failed until these records exist), because that is what shows
+# the TXT value. Apply this, then wait for the status to read Live; DNS can
+# take up to 48 hours.
+resource "cloudflare_dns_record" "linkie_go" {
+  zone_id = var.cloudflare_zone_id
+  name    = "go.${var.domain}"
+  content = "app.linkie.bio"
+  type    = "CNAME"
+  proxied = false
+  ttl     = 300
+  comment = "Linkie link-in-bio page (custom subdomain)"
+
+  # Same provider workaround as docs_pages above.
+  lifecycle {
+    ignore_changes = [include_shadow_metadata]
+  }
+}
+
+resource "cloudflare_dns_record" "linkie_go_verification" {
+  zone_id = var.cloudflare_zone_id
+  name    = "_cf-custom-hostname.go.${var.domain}"
+  content = "dfee1d68-95f7-4a8f-9c0e-7ebe61112472"
+  type    = "TXT"
+  ttl     = 300
+  comment = "Linkie custom-domain ownership proof for go"
+
+  # Same provider workaround as docs_pages above.
+  lifecycle {
+    ignore_changes = [include_shadow_metadata]
+  }
+}
+
 # The rename is a change of resource ADDRESS, so without these Terraform would
 # destroy and recreate both records — and these two are the API's hostname and
 # the ownership proof Azure reads at bind time. A destroy/create on them is a
