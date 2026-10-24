@@ -5,8 +5,6 @@ import { useProvider } from '@/context/ProviderContext';
 import { routes, staticRoutes, parseRoute } from '@/lib/routeFactory';
 import { SkipToMainContent } from '@/components/accessibility/SkipToMainContent';
 import CommandPalette from '@/components/shared/CommandPalette';
-import { hasInterviews } from '@/data/interviews/available';
-import { INTERVIEWS_PATH } from '@/lib/interviews';
 
 /**
  * Cross-provider Learn links retained as a named export for compatibility and
@@ -78,11 +76,10 @@ export function getPrimaryNavItems(currentProvider) {
         section: 'architecture',
       },
       { label: 'Podcast', path: routes.audioArchitecture(currentProvider), section: 'podcast' },
-      // Azure's interviews, once there is one (data/interviews/available.js reads
-      // file names only, so this costs the header nothing).
-      ...(currentProvider === 'azure' && hasInterviews
-        ? [{ label: 'Interviews', path: INTERVIEWS_PATH, section: 'interviews' }]
-        : []),
+      // Exactly nine links on every hub, Azure included: the toolbar is a fixed grid
+      // of nine 100 px slots and its divider must sit in the same place everywhere.
+      // Azure's interviews are linked from its landing page, not from here: a tenth
+      // link overflowed the toolbar at desktop widths (CodeRabbit, #1337).
       { label: 'Frameworks', path: routes.frameworks(currentProvider), section: 'frameworks' },
       ...tailLinks,
     ];

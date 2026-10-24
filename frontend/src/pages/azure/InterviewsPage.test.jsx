@@ -8,6 +8,7 @@ import { renderToString } from 'react-dom/server';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, StaticRouter } from 'react-router';
+import { interviewPath } from '@/lib/interviews';
 import { makeInterview } from '@/test-utils/interviews';
 import { runAxe } from '@/test-utils/axe';
 
@@ -241,7 +242,7 @@ describe('the pre-rendered page (no effects run, no browser)', () => {
         </Routes>
       </StaticRouter>
     );
-    expect(html).toContain('href="/azure/interviews/newest-one"');
-    expect(html).toContain('href="/azure/interviews/older-one"');
+    expect(html).toContain(`href="${interviewPath('newest-one')}"`);
+    expect(html).toContain(`href="${interviewPath('older-one')}"`);
   });
 });

@@ -2,11 +2,12 @@
  * Whether there is at least one interview to show, without loading any.
  *
  * `import.meta.glob` WITHOUT `eager` yields a loader per file, and only the
- * loaders' keys are read here, so the header's bundle holds a function per
- * file and none of their text: measured with a probe file on 2026-10-24, the
- * text appeared in one chunk of its own and not in the main entry. That is the
- * whole reason this is not `interviews.length` from `./index.js`, which would
- * carry every interview's text into the bundle every visitor downloads.
+ * loaders' keys are read here, so a page that asks holds a function per file and
+ * none of their text: measured with a probe file on 2026-10-24, the text
+ * appeared in one chunk of its own and not in the main entry. That is the whole
+ * reason this is not `interviews.length` from `./index.js`, which would carry
+ * every interview's text into the bundle of whoever asked. The Azure landing
+ * page asks, to show its Interviews card only once there is one.
  *
  * Once an interview exists the pre-render step's own server build prints
  * Vite's `INEFFECTIVE_DYNAMIC_IMPORT` for each file here, because `./index.js`

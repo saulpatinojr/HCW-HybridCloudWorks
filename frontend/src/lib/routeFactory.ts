@@ -42,7 +42,8 @@ export type PageType =
   | 'rss'
   | 'news'
   | 'architectures'
-  | 'labs';
+  | 'labs'
+  | 'interviews';
 
 /**
  * Centralized route definitions
@@ -79,6 +80,12 @@ const ROUTE_MAP: Record<PageType, string> = {
   news: 'news',
   architectures: 'architectures',
   labs: 'labs',
+  // Azure's interviews (`/azure/interviews` and `/azure/interviews/:id`). Here so
+  // the header recognises them as Azure pages and keeps the Azure menu, as
+  // `sandboxes` does for Docker: the header finds the provider from the URL
+  // alone, and a segment not in this map made it fall back to the generic
+  // provider list on the interview pages (seen in a browser, 2026-10-24).
+  interviews: 'interviews',
 };
 
 const ROUTE_REVERSE_MAP = Object.entries(ROUTE_MAP).reduce(
@@ -213,6 +220,8 @@ export const routes = {
   buildingImages: (provider: ProviderType) => getRoute(provider, 'buildingImages'),
   desktop: (provider: ProviderType) => getRoute(provider, 'desktop'),
   rss: (provider: ProviderType) => getRoute(provider, 'rss'),
+  /** The interview list. Only Azure routes it; App.jsx answers any other provider with the not-found page. */
+  interviews: (provider: ProviderType) => getRoute(provider, 'interviews'),
   /**
    * A provider's labs under its Learn section (ADR 0033 §3): the list at
    * `/:provider/education/labs` and one lab's pane at
@@ -281,6 +290,7 @@ export function getAllRoutes(provider: ProviderType) {
     buildingImages: routes.buildingImages(provider),
     desktop: routes.desktop(provider),
     rss: routes.rss(provider),
+    interviews: routes.interviews(provider),
   };
 }
 
