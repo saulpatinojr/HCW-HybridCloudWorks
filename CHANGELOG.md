@@ -19,6 +19,22 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **`go.hybridcloudworks.com` for the Linkie link-in-bio page**. Owner request
+  2026-10-24. Linkie serves a custom hostname that CNAMEs to `app.linkie.bio`
+  and proves ownership with a TXT record, both of which its Domain settings
+  page lists once the name is saved there. `infra/frontend.tf` now declares the
+  two records the way the podcast one is: a DNS-only CNAME `go`, and the TXT
+  `_cf-custom-hostname.go` with the value Linkie generated. Declared as
+  Terraform records, and not added by hand or through Cloudflare's API, so the
+  daily Cloudflare DNS audit sees them as the workspace's own and the next
+  plan shows no drift. Linkie's page also lists `@` and `www` CNAMEs, which are
+  the template for a main domain; they are deliberately not added, because a
+  CNAME at either would hand the site to Linkie (its own help article asks a
+  subdomain for only the CNAME and the TXT). The plan checker declares the two
+  creates and the edge DNS runbook gains both rows and the `go` checks. Takes
+  effect when the owner confirms the HCP Terraform apply; Linkie's status then
+  moves from Failed to Live, which its article says can take up to 48 hours.
+
 - **A Telegram message when the delivery monitor goes red, and the monitor
   fires at 8 hours instead of 24**. Owner decision 2026-10-23. The
   "Monitor delivery health" check went red on 2026-10-22 because one line on

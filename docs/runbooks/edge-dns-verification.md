@@ -48,9 +48,11 @@ here, and an operator holding it will raise a finding on every single run.
 | `api-azure.hybridcloudworks.com` | Cloudflare | **yes** | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions` |
 | `docs.hybridcloudworks.com` | GitHub Pages | no | `infra/frontend.tf`, `cloudflare_dns_record.docs_pages` |
 | `podcast.hybridcloudworks.com` | Podbean, CNAME to `pbcdn2.podbean.com` | no | `infra/frontend.tf`, `cloudflare_dns_record.podcast_podbean` |
+| `go.hybridcloudworks.com` | Linkie, CNAME to `app.linkie.bio` | no | `infra/frontend.tf`, `cloudflare_dns_record.linkie_go` |
 | `asuid.api-azure.hybridcloudworks.com` | nothing — a TXT record holding Azure's ownership proof | n/a | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions_domain_verification` |
+| `_cf-custom-hostname.go.hybridcloudworks.com` | nothing — a TXT record holding Linkie's ownership proof for `go` | n/a | `infra/frontend.tf`, `cloudflare_dns_record.linkie_go_verification` |
 
-`infra/frontend.tf` declares exactly four Cloudflare records, and ADR 0024
+`infra/frontend.tf` declares exactly six Cloudflare records, and ADR 0024
 names `api-azure` in as many words as *the one proxied hostname*. Three things
 about that table are deliberate rather than oversight:
 
@@ -67,6 +69,12 @@ about that table are deliberate rather than oversight:
   certificate for the show's website the same way. Its "Use a domain I own"
   page prefills `www`. A CNAME there would hand the site to the podcast host.
   The podcast takes `podcast.hybridcloudworks.com`, never `www` or the apex.
+- **`go` is DNS-only, and a subdomain.** Linkie issues the certificate for a
+  custom domain itself, so the name has to resolve to `app.linkie.bio`. Its
+  Domain settings page lists the main-domain template for any name, including
+  `@` and `www` CNAMEs. Those are not added: for a subdomain Linkie's own help
+  article says the `go` CNAME and the TXT are all it needs, and a CNAME at `@`
+  or `www` would hand the site to Linkie.
 
 So the apex resolving to Azure, answering with **no** `CF-RAY` header, and
 presenting a **DigiCert**-issued certificate is the design. **An apex behind
@@ -91,11 +99,11 @@ reads ARM rather than asking `/api/health`.
 ### 1. DNS resolves the way the split says it should
 
 ```powershell
-'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com','podcast.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
+'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com','podcast.hybridcloudworks.com','go.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
 ```
 
 ```powershell
-'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health','https://podcast.hybridcloudworks.com/' | ForEach-Object { $r = Invoke-WebRequest -Uri $_ -UseBasicParsing; [pscustomobject]@{ Url = $_; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } }
+'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health','https://podcast.hybridcloudworks.com/','https://go.hybridcloudworks.com/' | ForEach-Object { $r = Invoke-WebRequest -Uri $_ -UseBasicParsing; [pscustomobject]@{ Url = $_; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } }
 ```
 
 `-UseBasicParsing` is deliberate and is not there for PowerShell 7, where it
@@ -118,7 +126,10 @@ plus `AAAA` records, and it answers with `Server: cloudflare` and a `CF-RAY`.
 `podcast` returns a `CNAME` to `pbcdn2.podbean.com` and answers with no
 `CF-RAY`, because it is DNS-only and Podbean serves it. Until the domain is
 entered in Podbean and its certificate is issued, that HTTPS request fails: an
-unfinished setup, not an outage. Key on the ranges and the headers, never on a
+unfinished setup, not an outage. `go` returns a `CNAME` to `app.linkie.bio` and
+answers with no `CF-RAY` either; until Linkie's Domain settings read **Live**
+(up to 48 hours after the records applied), its HTTPS request can fail the
+same way. Key on the ranges and the headers, never on a
 literal address: the Static Web App's address is Azure's to change.
 
 If the headers are ambiguous, confirm the certificate in a browser at
