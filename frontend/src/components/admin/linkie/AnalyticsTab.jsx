@@ -40,10 +40,11 @@ export function readStats(response) {
 }
 
 /**
- * Linkie's analytics endpoint takes a `link_in_bio_id`. The profile's own `_id`
- * is what Site-Main sends for it, and is the closest identifier this API
- * exposes — see the note on #626: it is the one shape here that repository
- * evidence does not fully settle.
+ * Linkie's analytics endpoint takes a `page_id` (it was `link_in_bio_id` until
+ * October 2026, when Linkie renamed profiles to pages). The page's own `_id`
+ * is what Site-Main sent for the old name, and the current docs name `page_id`
+ * as a required parameter of every analytics endpoint — see the note on #626
+ * for why the old shape was never fully settled by repository evidence.
  */
 const TRAFFIC_READ = Object.freeze({
   fetch: ltGetTrafficStats,

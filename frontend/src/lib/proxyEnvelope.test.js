@@ -90,7 +90,7 @@ describe('unwrapProxy', () => {
       // would have waved through: an already-unwrapped JSON:API body, which
       // would then be unwrapped a second time.
       { data: [] },
-      { data: { profiles: [] } },
+      { data: { pages: [] } },
       // `ok` present but not the boolean the proxy sets.
       { ok: 'true', data: [] },
     ]) {

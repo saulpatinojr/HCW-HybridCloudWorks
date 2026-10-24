@@ -11,20 +11,31 @@
  * which answered `/links is not an allowed Linkie endpoint`.
  *
  * The allowlist was right. Linkie has no top-level link or analytics
- * resource — links are profile-scoped POSTS and analytics is traffic-stats:
+ * resource — links are page-scoped POSTS and analytics is traffic-stats:
  *
- *   GET    /profiles                                  the profiles this key owns
- *   GET    /profiles/:profileId/posts                 the links on one profile
- *   POST   /profiles/:profileId/posts                 body is an ARRAY of posts
- *   PATCH  /profiles/:profileId/posts/:postId         `url` is the only field
- *   DELETE /profiles/:profileId/posts/:postId
- *   GET    /analytics/traffic-stats?link_in_bio_id=…
+ *   GET    /pages                                     the pages this key owns
+ *   GET    /pages/:pageId/posts                       the links on one page
+ *   POST   /pages/:pageId/posts                       body is an ARRAY of posts
+ *   PATCH  /pages/:pageId/posts/:postId               `url` is the only field
+ *   DELETE /pages/:pageId/posts/:postId
+ *   GET    /analytics/traffic-stats?page_id=…
  *
- * That set is not inferred. It is what Site-Main — the system this repository
- * was migrated from, which has been calling this API in production since
- * before the migration — sends from `src/pages/admin/LinkiePage.jsx` through
- * `functions/cms/proxies.js`. The same source is what commit 21d1424c took
- * this repository's base URL and allowlist from, after an earlier version
+ * LINKIE RENAMED PROFILES TO PAGES IN OCTOBER 2026. Until then these were
+ * `/profiles`, `/profiles/:profileId/posts` and `?link_in_bio_id=`, and the
+ * key scopes were `profiles:read` and `profiles:write` (now `pages:read` and
+ * `pages:write`; a key with only the old scopes answers 403 "Insufficient
+ * scope" and has to be created again). The list answers `data.pages`, and a
+ * page's picture is `avatar_url`, not `profile_image_url` (nothing here reads
+ * either). Source, read 2026-10-23: https://linkie.bio/docs/api-reference/pages
+ * and its posts and analytics pages. This module still says "profile" in its
+ * function and variable names, as it always has: a profile here is what Linkie
+ * now calls a page.
+ *
+ * The set above was first taken from Site-Main — the system this repository
+ * was migrated from, which had been calling this API in production since
+ * before the migration — and sent from `src/pages/admin/LinkiePage.jsx`
+ * through `functions/cms/proxies.js`. The same source is what commit 21d1424c
+ * took this repository's base URL and allowlist from, after an earlier version
  * guessed `https://api.linkie.bio` from an env-var name and was wrong.
  *
  * ===========================================================================
@@ -135,15 +146,14 @@ export const EMPTY_POST_FORM = Object.freeze({
  * @type {Readonly<Record<string, (...args: string[]) => string>>}
  */
 export const linkiePaths = Object.freeze({
-  profiles: () => '/profiles',
-  posts: (profileId) => `/profiles/${encodeURIComponent(profileId)}/posts`,
-  post: (profileId, postId) =>
-    `/profiles/${encodeURIComponent(profileId)}/posts/${encodeURIComponent(postId)}`,
+  pages: () => '/pages',
+  posts: (pageId) => `/pages/${encodeURIComponent(pageId)}/posts`,
+  post: (pageId, postId) =>
+    `/pages/${encodeURIComponent(pageId)}/posts/${encodeURIComponent(postId)}`,
   // The allowlist is checked against the path WITHOUT its query string, so the
   // parameter is free — but it is required by Linkie, and omitting it is how
   // this endpoint returns nothing useful rather than an error.
-  trafficStats: (linkInBioId) =>
-    `/analytics/traffic-stats?link_in_bio_id=${encodeURIComponent(linkInBioId)}`,
+  trafficStats: (pageId) => `/analytics/traffic-stats?page_id=${encodeURIComponent(pageId)}`,
 });
 
 /**
@@ -200,23 +210,26 @@ export function readLinkieBody(response) {
 }
 
 /**
- * The profiles this API key owns.
+ * The pages this API key owns (Linkie's own word since October 2026; this
+ * module's functions still call them profiles).
  *
- * Linkie nests them as `{ data: { profiles: [...] } }` — Site-Main reads
- * `res.data.profiles[0]._id` off the raw body — so through this repository's
- * envelope the full path is `response.data.data.profiles`. The other depths
- * are tolerated so a caller that already unwrapped, or a Linkie release that
- * flattens the wrapper, still reads.
+ * Linkie nests them as `{ data: { pages: [...] } }`, so through this
+ * repository's envelope the full path is `response.data.data.pages`. The other
+ * depths are tolerated so a caller that already unwrapped, or a Linkie release
+ * that flattens the wrapper, still reads. The old `profiles` key is not read:
+ * the old endpoint is not called any more, and a body that still carries it
+ * would be an answer from the wrong endpoint, which should read as empty and
+ * say so, not as a list.
  *
  * `_id` is the only field this module depends on; it is what every
- * profile-scoped path is built from.
+ * page-scoped path is built from.
  *
  * @param {unknown} response
  * @returns {Array<{ _id: string }>}
  */
 export function extractProfiles(response) {
   const { body } = unwrapLinkie(response);
-  const list = [body?.data?.profiles, body?.profiles, body?.data, body].find(Array.isArray) ?? [];
+  const list = [body?.data?.pages, body?.pages, body?.data, body].find(Array.isArray) ?? [];
   return list.filter((profile) => profile && typeof profile === 'object' && profile._id);
 }
 

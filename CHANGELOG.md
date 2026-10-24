@@ -563,6 +563,27 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Fixed
 
+- **The Linkie Hub follows Linkie's rename of profiles to pages**. An
+  October 2026 notice from Linkie to API users says `GET /api/v1/profiles` is
+  now `GET /api/v1/pages`, `/profiles/{id}/posts` is `/pages/{id}/posts`, the
+  analytics parameter `link_in_bio_id` is `page_id`, and the key scopes
+  `profiles:read` and `profiles:write` are `pages:read` and `pages:write`.
+  Linkie's own API reference, read on 2026-10-23, shows the new endpoints, the
+  `data.pages` list and the `page_id` parameter; the scope names come from the
+  notice alone, because the reference does not list them. The hub's Links, Analytics and Settings
+  tabs and the Connections test used the old names, and `linkieProxy`'s
+  allow-list only let the old paths through, so they would have stopped
+  working as soon as Linkie retired them. The allow-list, the frontend paths,
+  the list reader (`data.pages`) and the analytics parameter now use the new
+  names; the old paths are no longer allowed. The allow-list moved into
+  `functions/src/lib/integrations/linkie-allowlist.js` so a frontend test can
+  run every path the hub builds through the real matcher, and a rename that
+  moves one side and not the other fails there. **The API key may need
+  creating again**: a key that only has the old scopes answers 403
+  "Insufficient scope". `docs/standards/required-inputs.md` and the credential
+  rotation schedule say how. Function names in the hub still say "profile"; a
+  profile there is what Linkie now calls a page.
+
 - **A healthy Functions deploy no longer goes red because the temporary
   firewall rule reached the origin one front end at a time**. The deploy opens
   an allow rule for the CI runner's address, and App Service applies it to its

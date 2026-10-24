@@ -24,14 +24,15 @@ export default function SettingsTab({ onStatusChange }) {
     setResult(null);
     try {
       const response = await ltGetProfiles();
-      // `/profiles` was already the right endpoint, so this test has always
-      // worked — but it read a resolved not-ok envelope as success. A refused
-      // key now says so.
+      // `/pages` (`/profiles` until October 2026) was already the right
+      // endpoint, so this test has always worked — but it read a resolved
+      // not-ok envelope as success. A refused key now says so, and a key
+      // without the pages scopes answers 403 "Insufficient scope" here.
       const profile = readLinkieBody(response);
       const profiles = extractProfiles(response);
       setResult({
         ok: true,
-        message: `Connected to the Linkie API — ${profiles.length} profile${profiles.length === 1 ? '' : 's'}.`,
+        message: `Connected to the Linkie API — ${profiles.length} page${profiles.length === 1 ? '' : 's'}.`,
         profile,
       });
       onStatusChange?.(true);

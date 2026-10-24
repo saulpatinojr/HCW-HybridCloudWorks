@@ -4,10 +4,10 @@
  * The fixtures below are the two shapes that actually meet here, and the whole
  * point is that they are two:
  *
- *   - Linkie's own body, as Site-Main reads it — `{ data: { profiles: [...] } }`
- *     for profiles, a bare array or `{ data: [...] }` for posts. Site-Main is
- *     the system this repository was migrated from and has been calling this
- *     API in production since before the migration.
+ *   - Linkie's own body — `{ data: { pages: [...] } }` for pages (it was
+ *     `profiles` until October 2026), a bare array or `{ data: [...] }` for
+ *     posts. Site-Main, the system this repository was migrated from, read the
+ *     old shape in production since before the migration.
  *   - this repository's proxy envelope around it — `{ ok, status, data }` at
  *     HTTP 200 for every outcome (functions/src/lib/integrations/rest-proxy.js).
  *
@@ -17,6 +17,8 @@
  */
 import { describe, it, expect } from 'vitest';
 
+import { LINKIE_ALLOWED_PATHS } from '../../../functions/src/lib/integrations/linkie-allowlist.js';
+import { isAllowedPath } from '../../../functions/src/lib/integrations/rest-proxy.js';
 import {
   EMPTY_POST_FORM,
   LINKIE_IMAGE_CONTAINER,
@@ -43,7 +45,11 @@ import {
 } from './linkie';
 
 /** One profile, as Linkie nests them, wrapped in the proxy envelope. */
-const profilesEnvelope = (profiles) => ({ ok: true, status: 200, data: { data: { profiles } } });
+const profilesEnvelope = (profiles) => ({
+  ok: true,
+  status: 200,
+  data: { data: { pages: profiles } },
+});
 /** Posts come back under `data` on the raw body, so twice down through the envelope. */
 const postsEnvelope = (posts) => ({ ok: true, status: 200, data: { data: posts } });
 
@@ -129,10 +135,19 @@ describe('extractProfiles', () => {
     expect(extractProfiles(profilesEnvelope(profiles))).toEqual(profiles);
   });
 
+  it('reads an answer from the retired profiles endpoint as no pages, not as a list', () => {
+    // Until October 2026 the list came back as `data.profiles`. Nothing here
+    // calls that endpoint any more, so a body still shaped that way is an
+    // answer from the wrong place and must not be taken for the key's pages.
+    expect(
+      extractProfiles({ ok: true, status: 200, data: { data: { profiles: [{ _id: 'p1' }] } } })
+    ).toEqual([]);
+  });
+
   it('tolerates a flatter body and an already-unwrapped caller', () => {
     const profiles = [{ _id: 'p1' }];
-    expect(extractProfiles({ ok: true, status: 200, data: { profiles } })).toEqual(profiles);
-    expect(extractProfiles({ data: { profiles } })).toEqual(profiles);
+    expect(extractProfiles({ ok: true, status: 200, data: { pages: profiles } })).toEqual(profiles);
+    expect(extractProfiles({ data: { pages: profiles } })).toEqual(profiles);
     expect(extractProfiles(profiles)).toEqual(profiles);
   });
 
@@ -337,7 +352,7 @@ describe('linkieImagePath', () => {
 
 describe('createPostsBody', () => {
   it('wraps the post in the array the endpoint takes', () => {
-    // POST /profiles/:id/posts is plural: the bare object is a 400 whose
+    // POST /pages/:id/posts is plural: the bare object is a 400 whose
     // message talks about a field rather than the shape.
     const post = buildPostPayload({ url: 'https://a.test', provider: 'wordpress' });
     expect(createPostsBody(post)).toEqual([post]);
@@ -398,26 +413,63 @@ describe('validatePostForm', () => {
   });
 });
 
+describe('linkiePaths against the REAL proxy allowlist', () => {
+  // Not a copy of the allowlist: the one `linkieProxy` is built with
+  // (functions/src/lib/integrations/linkie-allowlist.js), through the matcher
+  // it uses (rest-proxy.js isAllowedPath). Linkie renamed profiles to pages in
+  // October 2026; a rename that moved this file and not the proxy, or the
+  // proxy and not this file, fails here instead of as "not an allowed Linkie
+  // endpoint" in the admin hub.
+  const withoutQuery = (path) => path.split('?')[0];
+  const calls = [
+    ['GET', linkiePaths.pages()],
+    ['GET', linkiePaths.posts('p1')],
+    ['POST', linkiePaths.posts('p1')],
+    ['PATCH', linkiePaths.post('p1', 'x9')],
+    ['DELETE', linkiePaths.post('p1', 'x9')],
+    ['GET', linkiePaths.trafficStats('p1')],
+  ];
+
+  it.each(calls)('lets %s %s through', (method, path) => {
+    expect(isAllowedPath(LINKIE_ALLOWED_PATHS, withoutQuery(path), method)).toBe(true);
+  });
+
+  it.each([
+    '/profiles',
+    '/profiles/p1/posts',
+    '/profiles/p1/posts/x9',
+    '/links',
+    '/analytics',
+    '/pages/p1',
+    '/pages/p1/posts/x9/extra',
+  ])('does not let %s through', (path) => {
+    expect(isAllowedPath(LINKIE_ALLOWED_PATHS, path, 'GET')).toBe(false);
+  });
+
+  it('sends the analytics page under Linkie’s current name, page_id', () => {
+    expect(linkiePaths.trafficStats('p1')).toContain('page_id=p1');
+    expect(linkiePaths.trafficStats('p1')).not.toContain('link_in_bio_id');
+  });
+});
+
 describe('linkiePaths', () => {
-  it('builds the profile-scoped shapes the proxy allowlist matches', () => {
-    // The allowlist patterns are /^\/profiles\/[^/]+\/posts$/ and
-    // /^\/profiles\/[^/]+\/posts\/[^/]+$/ — see
-    // functions/src/functions/integrations-http.js. There is no /links.
-    expect(linkiePaths.profiles()).toBe('/profiles');
-    expect(linkiePaths.posts('p1')).toBe('/profiles/p1/posts');
-    expect(linkiePaths.post('p1', 'x9')).toBe('/profiles/p1/posts/x9');
-    expect(linkiePaths.trafficStats('p1')).toBe('/analytics/traffic-stats?link_in_bio_id=p1');
+  it('builds the page-scoped shapes the proxy allowlist matches', () => {
+    // The allowlist patterns are /^\/pages\/[^/]+\/posts$/ and
+    // /^\/pages\/[^/]+\/posts\/[^/]+$/ — see
+    // functions/src/lib/integrations/linkie-allowlist.js. There is no /links.
+    expect(linkiePaths.pages()).toBe('/pages');
+    expect(linkiePaths.posts('p1')).toBe('/pages/p1/posts');
+    expect(linkiePaths.post('p1', 'x9')).toBe('/pages/p1/posts/x9');
+    expect(linkiePaths.trafficStats('p1')).toBe('/analytics/traffic-stats?page_id=p1');
   });
 
   it('encodes ids so a stray separator cannot widen the match', () => {
     // `[^/]+` is one segment. An unencoded slash would make
-    // /profiles/a/b/posts, which the allowlist rejects — loudly, but for the
+    // /pages/a/b/posts, which the allowlist rejects — loudly, but for the
     // wrong reason, and only after the id has already been mangled.
-    expect(linkiePaths.posts('a/b')).toBe('/profiles/a%2Fb/posts');
-    expect(linkiePaths.post('p1', 'x/9')).toBe('/profiles/p1/posts/x%2F9');
-    expect(linkiePaths.trafficStats('a b&c')).toBe(
-      '/analytics/traffic-stats?link_in_bio_id=a%20b%26c'
-    );
+    expect(linkiePaths.posts('a/b')).toBe('/pages/a%2Fb/posts');
+    expect(linkiePaths.post('p1', 'x/9')).toBe('/pages/p1/posts/x%2F9');
+    expect(linkiePaths.trafficStats('a b&c')).toBe('/analytics/traffic-stats?page_id=a%20b%26c');
   });
 });
 

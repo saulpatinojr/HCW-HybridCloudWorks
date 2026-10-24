@@ -70,7 +70,7 @@ const envelope = (ok, status, data) => ({ ok, status, data });
 
 const REFUSED = envelope(false, 401, { message: 'Unauthorized' });
 const ONE_PROFILE = envelope(true, 200, {
-  data: { profiles: [{ _id: 'p1', username: 'hcw' }] },
+  data: { pages: [{ _id: 'p1', username: 'hcw' }] },
 });
 
 beforeEach(() => {
@@ -142,7 +142,7 @@ describe('Push waits until it knows what is already linked', () => {
     searchParams = 'tab=links';
     getJSON.mockResolvedValue({ items: [ARTICLE] });
 
-    // /profiles resolves; the posts fetch never settles, so the page stays in
+    // /pages resolves; the posts fetch never settles, so the page stays in
     // the loading window this test is about.
     postJSON.mockImplementation((_fn, body) => {
       if (String(body?.path || '').includes('/posts')) return new Promise(() => {});
@@ -160,7 +160,7 @@ describe('Push waits until it knows what is already linked', () => {
 describe('a post image, from the computer or the gallery (#501)', () => {
   const UPLOADED_PATH = '/api/public/media/covers/linkie/1-abc.png';
 
-  /** /profiles and the posts list answer; every other call is recorded. */
+  /** /pages and the posts list answer; every other call is recorded. */
   const routeProxy = ({ uploadUrl = UPLOADED_PATH } = {}) =>
     postJSON.mockImplementation((fn, body) => {
       if (fn.startsWith('cms/uploads/')) return Promise.resolve({ success: true, url: uploadUrl });
