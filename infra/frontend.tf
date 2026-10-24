@@ -304,6 +304,49 @@ resource "cloudflare_dns_record" "linkie_go_verification" {
   }
 }
 
+# Obsidian Publish custom domain: notes.hybridcloudworks.com (#1350).
+#
+# The owner bought Obsidian Publish (2026-10-24) to serve the notes vault as a
+# site. Obsidian's help page "Custom domains" (https://obsidian.md/help/publish/domains,
+# read 2026-10-24) asks for exactly one DNS record for a subdomain: a CNAME to
+# publish-main.obsidian.md, with the proxy status ENABLED, and the zone's
+# SSL/TLS mode set to "Full". Obsidian does not issue a certificate for the
+# name; Cloudflare does, which is why this one is proxied where `go`, `docs`
+# and `podcast` are not. The page names Cloudflare as the only officially
+# supported DNS provider for this.
+#
+# Unlike the other external records, nothing is proved by a TXT: the name is
+# claimed in Obsidian (Publish -> Change site options -> Custom domain) once
+# this resolves. Until then the name answers with whatever Obsidian returns for
+# an unclaimed host, which is not a fault in the record.
+#
+# ttl = 1 is "automatic", the only value a proxied record accepts (see
+# azure_functions above).
+#
+# The zone's SSL/TLS mode is NOT managed in Terraform and is read by the whole
+# zone, not by this record. Obsidian needs "Full"; "Flexible" gives a redirect
+# loop (its help page says so) and "Full (strict)" may fail to validate
+# Obsidian's certificate for this name (HTTP 526). Never change it zone-wide to
+# suit this record: api-azure is proxied too. If the first request after the
+# apply gives a loop or a 526, read the mode first (dashboard -> SSL/TLS ->
+# Overview) and prefer a Configuration Rule scoped to this one hostname. A 525
+# is a failed handshake under either Full mode and does not name the mode (see
+# the notes row in docs/runbooks/edge-dns-verification.md).
+resource "cloudflare_dns_record" "notes_obsidian_publish" {
+  zone_id = var.cloudflare_zone_id
+  name    = "notes.${var.domain}"
+  content = "publish-main.obsidian.md"
+  type    = "CNAME"
+  proxied = true
+  ttl     = 1
+  comment = "Obsidian Publish custom domain (notes vault)"
+
+  # Same provider workaround as azure_functions above.
+  lifecycle {
+    ignore_changes = [include_shadow_metadata]
+  }
+}
+
 # The rename is a change of resource ADDRESS, so without these Terraform would
 # destroy and recreate both records — and these two are the API's hostname and
 # the ownership proof Azure reads at bind time. A destroy/create on them is a
@@ -480,8 +523,9 @@ resource "cloudflare_ruleset" "origin_secret" {
 # rewrites HTML as it passes through the proxy, so it only works on an
 # orange-clouded hostname. The apex and www are DNS-only (gray-clouded)
 # records that resolve straight to the Static Web App — the "Nothing caches
-# in front of that 100 GB" note above — and the only proxied hostname in
-# this zone is the API origin, which serves JSON. So `auto_install = false`,
+# in front of that 100 GB" note above — and the proxied hostnames in this zone
+# are the API origin, which serves JSON, and `notes`, which is Obsidian's page
+# and not ours to inject into. So `auto_install = false`,
 # written out rather than left unset: the schema has no default for it, the
 # API echoes the value back on every read, and an attribute that is null in
 # the configuration against false in state would plan `false -> null` on

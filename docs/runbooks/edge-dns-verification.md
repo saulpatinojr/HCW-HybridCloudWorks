@@ -49,12 +49,14 @@ here, and an operator holding it will raise a finding on every single run.
 | `docs.hybridcloudworks.com` | GitHub Pages | no | `infra/frontend.tf`, `cloudflare_dns_record.docs_pages` |
 | `podcast.hybridcloudworks.com` | Podbean, CNAME to `pbcdn2.podbean.com` | no | `infra/frontend.tf`, `cloudflare_dns_record.podcast_podbean` |
 | `go.hybridcloudworks.com` | Linkie, CNAME to `app.linkie.bio` | no | `infra/frontend.tf`, `cloudflare_dns_record.linkie_go` |
+| `notes.hybridcloudworks.com` | Cloudflare, in front of Obsidian Publish (CNAME to `publish-main.obsidian.md`) | **yes** | `infra/frontend.tf`, `cloudflare_dns_record.notes_obsidian_publish` |
 | `asuid.api-azure.hybridcloudworks.com` | nothing — a TXT record holding Azure's ownership proof | n/a | `infra/frontend.tf`, `cloudflare_dns_record.azure_functions_domain_verification` |
 | `_cf-custom-hostname.go.hybridcloudworks.com` | nothing — a TXT record holding Linkie's ownership proof for `go` | n/a | `infra/frontend.tf`, `cloudflare_dns_record.linkie_go_verification` |
 
-`infra/frontend.tf` declares exactly six Cloudflare records, and ADR 0024
-names `api-azure` in as many words as *the one proxied hostname*. Three things
-about that table are deliberate rather than oversight:
+`infra/frontend.tf` declares exactly seven Cloudflare records. ADR 0024
+(written when there was one) names `api-azure` in as many words as *the one
+proxied hostname*; `notes` is the second, added for Obsidian Publish (#1350).
+Four things about that table are deliberate rather than oversight:
 
 - **The apex and `www` are not in Terraform.** A Static Web App root domain
   validates against a token Azure generates when the validation starts, so
@@ -77,6 +79,24 @@ about that table are deliberate rather than oversight:
   Linkie's own help article asks of a subdomain is declared: the `go` CNAME
   and the TXT. If Linkie ever needs a `www` row for `go`, it is
   `www.go.hybridcloudworks.com`, never the zone's own `www`.
+- **`notes` is the exception: it is proxied.** Obsidian does not issue a
+  certificate for a custom name. Its help page
+  ([Custom domains](https://obsidian.md/help/publish/domains)) asks for a
+  proxied CNAME to `publish-main.obsidian.md` and the zone's SSL/TLS mode set
+  to **Full**, so Cloudflare terminates the visitor's connection. A `notes`
+  answer carrying a `CF-RAY` header is therefore the design, and an answer
+  without one is the finding. The zone's SSL/TLS mode is not in Terraform:
+  a redirect loop means it reads Flexible (Obsidian's page says so), and a
+  **526** means it reads Full (strict) and Cloudflare could not validate
+  Obsidian's certificate for this name
+  ([Error 526](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-526/)).
+  A **525** is a different fault: the TLS handshake with Obsidian failed under
+  Full *or* Full (strict)
+  ([Error 525](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-525/)),
+  so it does not say which of the two is set; read the mode before choosing
+  anything, and expect the cause to be on Obsidian's side. Fix a loop or a 526
+  with a rule scoped to `notes`, never by lowering the mode for the whole zone,
+  which `api-azure` also sits behind.
 
 So the apex resolving to Azure, answering with **no** `CF-RAY` header, and
 presenting a **DigiCert**-issued certificate is the design. **An apex behind
@@ -101,7 +121,7 @@ reads ARM rather than asking `/api/health`.
 ### 1. DNS resolves the way the split says it should
 
 ```powershell
-'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com','podcast.hybridcloudworks.com','go.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
+'hybridcloudworks.com','www.hybridcloudworks.com','api-azure.hybridcloudworks.com','podcast.hybridcloudworks.com','go.hybridcloudworks.com','notes.hybridcloudworks.com' | ForEach-Object { Resolve-DnsName -Name $_ } | Select-Object Name, Type, IPAddress, NameHost
 ```
 
 ```powershell
@@ -109,8 +129,10 @@ Resolve-DnsName -Name '_cf-custom-hostname.go.hybridcloudworks.com' -Type TXT | 
 ```
 
 ```powershell
-'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health','https://podcast.hybridcloudworks.com/','https://go.hybridcloudworks.com/' | ForEach-Object { $r = Invoke-WebRequest -Uri $_ -UseBasicParsing; [pscustomobject]@{ Url = $_; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } }
+'https://hybridcloudworks.com/','https://api-azure.hybridcloudworks.com/api/health','https://podcast.hybridcloudworks.com/','https://go.hybridcloudworks.com/','https://notes.hybridcloudworks.com/' | ForEach-Object { $u = $_; $r = $null; try { $r = Invoke-WebRequest -Uri $u -UseBasicParsing -ErrorAction Stop } catch { $r = $_.Exception.Response }; if ($r) { [pscustomobject]@{ Url = $u; Status = [int]$r.StatusCode; Server = ($r.Headers['Server'] -join ','); CfRay = ($r.Headers['CF-RAY'] -join ',') } } else { [pscustomobject]@{ Url = $u; Status = 'no response'; Server = ''; CfRay = '' } } }
 ```
+
+The HTTPS line catches a non-2xx answer and reports its status and headers instead of stopping, because `notes` answers with an error page until the name is claimed in Obsidian, and that error page's `CF-RAY` is exactly what the check is after. It reads the headers of the caught response the way Windows PowerShell 5.1 exposes them; in PowerShell 7 the caught response is a different type, so run it in `powershell.exe`.
 
 `-UseBasicParsing` is deliberate and is not there for PowerShell 7, where it
 does nothing at all — measured on 7.6.5, it is accepted silently, with no
@@ -129,7 +151,7 @@ the other one, it stays.
 `CF-RAY` header or `Server: cloudflare`. `api-azure` returns two `A` records
 inside `104.16.0.0/13` and `172.64.0.0/13` — both published Cloudflare ranges —
 plus `AAAA` records, and it answers with `Server: cloudflare` and a `CF-RAY`.
-`podcast` returns a `CNAME` to `pbcdn2.podbean.com` and answers with no
+`notes` returns two `A` records inside Cloudflare's ranges, as `api-azure` does, and its HTTPS answer carries `Server: cloudflare` and a `CF-RAY`; the status is not part of the check, since an unclaimed name answers with an error page (an answer with no `CF-RAY` would be the finding). `podcast` returns a `CNAME` to `pbcdn2.podbean.com` and answers with no
 `CF-RAY`, because it is DNS-only and Podbean serves it. Until the domain is
 entered in Podbean and its certificate is issued, that HTTPS request fails: an
 unfinished setup, not an outage. `go` returns a `CNAME` to `app.linkie.bio` and

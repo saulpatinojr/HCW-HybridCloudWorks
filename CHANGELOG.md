@@ -19,6 +19,7 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Features
 
+- **notes.hybridcloudworks.com, prepared for Obsidian Publish (#1350).** `infra/frontend.tf` declares `cloudflare_dns_record.notes_obsidian_publish`: a proxied CNAME from `notes` to `publish-main.obsidian.md`, which is what Obsidian's [Custom domains](https://obsidian.md/help/publish/domains) page asks for (read 2026-10-24): proxy on, and the zone's SSL/TLS mode "Full". It is the zone's second proxied hostname after `api-azure`, because Cloudflare, not Obsidian, presents the certificate for the name. The plan checker declares the one create, and `docs/runbooks/edge-dns-verification.md` gains the row, the count (seven records) and what a redirect loop or a 525/526 means. `terraform fmt -check` and `terraform validate` pass and the checker's 66 tests pass; nothing is applied. The owner confirms the HCP Terraform run of `hcw-azure` (expected plan: 1 to add, 0 to change, 0 to destroy), then claims the name in Obsidian.
 - **Add-on panes get the site's theme, and the network and cloud assessments are
   granted what they asked for (#1353, #1354)**. Owner decisions 2026-10-24, from
   the owner's phone. *Theme:* the frame now loads `<origin>/?theme=dark` or
