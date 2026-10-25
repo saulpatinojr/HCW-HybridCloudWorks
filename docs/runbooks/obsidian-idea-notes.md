@@ -211,6 +211,60 @@ An idea can be promoted when all of these are true:
    skips any file it has already imported. From then on the Drafts page is the
    source of truth for the article.
 
+   If the draft should not go through the public repository, skip steps 4 to 6
+   and send the file straight to the admin instead: see
+   [Send a draft straight to Admin Drafts](#send-a-draft-straight-to-admin-drafts-no-repository-needed).
+
+## Send a draft straight to Admin Drafts (no repository needed)
+
+*Added 2026-10-25.* The repository is public, so a draft that is not ready to
+be seen should not be committed to it. **Admin → Drafts** can take a markdown
+file straight from your vault instead. This is a second way in, next to the
+promote-and-import route above: that route still works, and nothing about it
+has changed.
+
+A file can be sent this way when it starts with a front-matter block, a few
+`key: value` lines between two `---` lines, the same block a `docs/content`
+article has (see "Front matter" in the
+[blog template](../content/blog-template.md)). It needs a `title`, and there
+must be an article under the block. `subtitle`, `date`, `track`, `part`,
+`tags` and `reading` are used if present. Other properties, such as `type`,
+`theme`, `format` or `status` from an idea note, are left alone and are not
+saved.
+
+1. Open the admin Drafts page and sign in if it asks:
+   <https://hybridcloudworks.com/admin/drafts>. You should see a box called
+   **Paste or upload a markdown draft** near the top.
+2. Under **Markdown files from my vault**, click **Choose files** (the button
+   may say *Browse*) and pick your `.md` files. You can pick many at once: in
+   the file window open your vault's `Drafts` folder, press `Ctrl` and `A` to
+   select every file, then click **Open**. The button below the picker changes
+   to **Upload 17 files** (or however many you chose).
+3. Click that button. The files go up one at a time, and you should see a line
+   appear for each, in this order: the file name, then one of:
+   - `Created as a draft`: it is now in the list on this page, marked
+     *From my vault*.
+   - `Already present — Draft` (or `In Review`): an article with the same
+     title is already on this page, so nothing was added. Sending a file twice
+     is safe.
+   - `Already present — an article with this title is already published`:
+     nothing was added.
+   - `Not added: ...` followed by the reason, for example that the file does
+     not open with a `---` block. Fix that file and send it again; the other
+     files are not affected.
+4. When the last file is done, a line under the list gives the totals, for
+   example `17 files: 15 created, 2 already present, 0 not added. Nothing was
+   published.`
+
+To send one draft that you have copied instead of saved as a file, paste the
+whole text, front matter first, into **Or paste one draft** and click
+**Add pasted draft**. It is saved as *Pasted in*. The box empties when the
+draft went in, and keeps your text when it did not, so you can fix it.
+
+From here a draft behaves like any other on the Drafts page: open it, edit it,
+**Send to In Review** when it is ready. Nothing is published by uploading.
+A file can be at most 272 KB (the article itself at most 256 KB).
+
 ## What the scripts refuse, and what to do
 
 | Message | What it means | Fix |

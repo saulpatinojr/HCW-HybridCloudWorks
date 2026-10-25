@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import TaxonomyChips from '@/components/admin/shared/TaxonomyChips';
-import { STAGE_LABELS, reviewPath } from './draftForm';
+import { ORIGIN_LABELS, STAGE_LABELS, reviewPath } from './draftForm';
 
 const STAGE_CLASS = {
   draft: 'border-border',
@@ -55,7 +55,7 @@ function DraftRow({ draft, selected, busy, onSelect, onBackToDrafts }) {
           <StageBadge stage={draft.stage} />
         </span>
         <span className="mt-0.5 block text-xs text-muted-foreground">
-          {draft.origin === 'repo-import' ? 'From docs/content' : 'Written here'}
+          {ORIGIN_LABELS[draft.origin] || 'Written here'}
           {draft.updatedAt ? ` · ${formatUpdated(draft.updatedAt)}` : ''}
         </span>
         <TaxonomyChips item={draft} className="mt-1" />

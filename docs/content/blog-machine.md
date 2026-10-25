@@ -41,9 +41,21 @@ and feeds never select it.
 - **Back to Drafts** returns an article that came from Drafts and is still In
   Review (not approved, not live). **Delete** removes a draft, or one still In
   Review — one document, so both go — and refuses anything live.
+- **Paste or upload a markdown draft** (2026-10-25) brings whole `.md` files
+  straight in from the owner's private Obsidian vault, several at a time, one
+  request each, or one pasted draft: `POST cms/drafts/from-markdown`
+  (`{ markdown, origin: 'vault' | 'paste' }`). It reads the file with the same
+  parser the import uses, checks it with the same rules as a typed draft, and
+  writes a `drafting` document under an id derived from the title, so sending
+  the same article twice reports "already present" rather than duplicating it.
+  Pre-publish drafts therefore no longer need to be committed to the public
+  repository. Code: `functions/src/lib/cms/drafts-markdown.js`,
+  `frontend/src/pages/admin/drafts/MarkdownDraftPanel.jsx`. How to use it:
+  [Idea notes](../runbooks/obsidian-idea-notes.md).
 - **Import from docs/content** brings the `blog-*.md` articles in once, as
   drafts (`blog-template.md` and this file are skipped as contracts). After
-  that the Drafts page, not the file, is the article's source of truth.
+  that the Drafts page, not the file, is the article's source of truth. It is
+  kept for now and is due to be retired in a later change.
 
 `drafting` is deliberately not the forge's `draft`: `forgeScheduled` picks up
 `draft` documents to rewrite, and a hand-written article must never be one.

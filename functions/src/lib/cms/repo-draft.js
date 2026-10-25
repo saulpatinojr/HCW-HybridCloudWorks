@@ -163,8 +163,29 @@ export function repoDraftContentId(path) {
 
 /** `\A---\s*\n(.*?)\n---\s*\n` from workflow.py, on LF-normalised text. */
 const FRONT_MATTER_BLOCK = /^---[^\S\n]*\n([\s\S]*?)\n---[^\S\n]*(?:\n|$)/;
-/** `^([A-Za-z_][\w-]*):\s*(.+?)\s*$` from workflow.py. */
-const FRONT_MATTER_LINE = /^([A-Za-z_][\w-]*):\s*(.+?)\s*$/;
+/**
+ * `^([A-Za-z_][\w-]*):\s*(.+?)\s*$` from workflow.py, with the value trimmed
+ * in code instead of by `\s*(.+?)\s*$`: that pattern backtracks quadratically
+ * on a long run of spaces inside a value, and a front-matter block can now
+ * arrive in a request body (drafts-markdown.js), not only from the
+ * repository. An empty value is skipped, as the original's `.+?` did.
+ */
+const FRONT_MATTER_LINE = /^([A-Za-z_][\w-]*):(.*)$/;
+
+const isQuote = (char) => char === '"' || char === "'";
+
+/**
+ * `value.replace(/^["']+|["']+$/g, '')` without the regex: the second
+ * alternative rescans a long run of quotes from every position, which is
+ * quadratic on a value such as `x''''…'x`.
+ */
+function stripQuotes(value) {
+  let start = 0;
+  let end = value.length;
+  while (start < end && isQuote(value[start])) start += 1;
+  while (end > start && isQuote(value[end - 1])) end -= 1;
+  return value.slice(start, end);
+}
 
 function readScalar(raw) {
   const quote = raw[0];
@@ -173,10 +194,7 @@ function readScalar(raw) {
     if (close > 0) return raw.slice(1, close);
   }
   // workflow.py: `value.split(" #", 1)[0].strip().strip("\"'")`
-  return raw
-    .split(' #')[0]
-    .trim()
-    .replace(/^["']+|["']+$/g, '');
+  return stripQuotes(raw.split(' #')[0].trim());
 }
 
 /**
@@ -195,7 +213,8 @@ export function parseFrontMatter(text) {
   const fields = {};
   for (const line of match[1].split('\n')) {
     const entry = FRONT_MATTER_LINE.exec(line);
-    if (entry && !entry[2].startsWith('#')) fields[entry[1]] = readScalar(entry[2]);
+    const value = entry ? entry[2].trim() : '';
+    if (value && !value.startsWith('#')) fields[entry[1]] = readScalar(value);
   }
   return { fields, body: source.slice(match[0].length) };
 }
@@ -206,12 +225,7 @@ export function parseInlineList(value) {
   const inner = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
   return inner
     .split(',')
-    .map((item) =>
-      item
-        .trim()
-        .replace(/^["']+|["']+$/g, '')
-        .slice(0, MAX_TAG_CHARS)
-    )
+    .map((item) => stripQuotes(item.trim()).slice(0, MAX_TAG_CHARS))
     .filter(Boolean)
     .slice(0, MAX_TAGS);
 }
@@ -223,15 +237,65 @@ export function isCalendarDate(value) {
 }
 
 /**
+ * The longest link target looked at. A real relative link to a draft is a
+ * file name; the cap is what keeps the scan below linear in the body.
+ */
+const MAX_LINK_TARGET_CHARS = 200;
+
+const isSpace = (char) => {
+  const code = char.charCodeAt(0);
+  return code === 32 || (code >= 9 && code <= 13) || (code > 127 && /\s/.test(char));
+};
+
+/** The target after `](` up to its `)`, or null when it has no `)` within the cap or holds a space. */
+function linkTargetAt(text, start) {
+  const limit = Math.min(text.length, start + MAX_LINK_TARGET_CHARS + 1);
+  for (let end = start; end < limit; end += 1) {
+    const char = text[end];
+    if (char === ')') return text.slice(start, end);
+    if (isSpace(char)) return null;
+  }
+  return null;
+}
+
+/** `x.md` or `x.md#fragment` with a non-empty `x`: the first `.md` that ends the target or opens a fragment. */
+function markdownFileOf(target) {
+  for (let at = target.indexOf('.md', 1); at !== -1; at = target.indexOf('.md', at + 1)) {
+    const next = target[at + 3];
+    if (next === undefined || next === '#') return target.slice(0, at + 3);
+  }
+  return null;
+}
+
+/**
  * Links written relative to the repository (`[Part 2](blog-lab-02-x.md)`).
  * They work on GitHub and resolve to nothing on the site, so the import says
  * so rather than rewriting prose it does not own.
+ *
+ * A scan, not a pattern: the pattern this replaced
+ * (`/\]\(((?!https?:\/\/|mailto:|#|\/)[^)\s]+?\.md)(?:#[^)\s]*)?\)/g`) took
+ * cubic time on a body of repeated `](a.md#`, and 18 s on 130 000 bare `](`
+ * (a 256 KB body, which a request can now carry). Each `](` here costs at
+ * most MAX_LINK_TARGET_CHARS characters.
  */
 export function findRepoRelativeLinks(body) {
+  const text = String(body || '');
   const targets = new Set();
-  const pattern = /\]\(((?!https?:\/\/|mailto:|#|\/)[^)\s]+?\.md)(?:#[^)\s]*)?\)/g;
-  let match;
-  while ((match = pattern.exec(String(body || ''))) !== null) targets.add(match[1]);
+  let at = text.indexOf('](');
+  while (at !== -1) {
+    // Past the `](` normally; past the whole link when one matched, as the
+    // pattern's global match did.
+    let next = at + 2;
+    const target = linkTargetAt(text, next);
+    if (target !== null && !/^(?:https?:\/\/|mailto:|#|\/)/.test(target)) {
+      const file = markdownFileOf(target);
+      if (file) {
+        targets.add(file);
+        next += target.length + 1;
+      }
+    }
+    at = text.indexOf('](', next);
+  }
   return [...targets];
 }
 

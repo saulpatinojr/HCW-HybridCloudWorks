@@ -48,6 +48,7 @@
     "cmsDraftItem",
     "cmsDraftSendToReview",
     "cmsDrafts",
+    "cmsDraftsFromMarkdown",
     "cmsDraftsImportRepo",
     "cmsForgeAssist",
     "cmsForgeBrief",

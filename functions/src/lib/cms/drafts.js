@@ -271,6 +271,7 @@ export function buildNewDraftDocument({
   id,
   fields,
   editor,
+  origin = DRAFT_ORIGINS.site,
   now = () => new Date(),
 }) {
   const stamp = now().toISOString();
@@ -288,7 +289,7 @@ export function buildNewDraftDocument({
     trustedSource: true,
     kind: fields.kind || DRAFT_TAXONOMY_DEFAULTS.kind,
     ideaOrigin: fields.ideaOrigin || DRAFT_TAXONOMY_DEFAULTS.ideaOrigin,
-    draftOrigin: DRAFT_ORIGINS.site,
+    draftOrigin: origin,
     storageCollection: "content",
     createdBy: editor,
     "Created At": stamp,

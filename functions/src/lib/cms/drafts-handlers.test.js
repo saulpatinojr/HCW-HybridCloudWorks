@@ -16,6 +16,11 @@ import { join } from "node:path";
 import { LIST_QUERY, createDraftsHandlers } from "./drafts-handlers.js";
 import { DRAFTS_STAGE_STATUS } from "./drafts.js";
 import {
+  MAX_MARKDOWN_BYTES,
+  MAX_REQUEST_BYTES,
+  markdownDraftContentId,
+} from "./drafts-markdown.js";
+import {
   checkRepoDraftPath,
   parseRepoDraft,
   repoDraftContentId,
@@ -217,6 +222,7 @@ describe("the role", () => {
     "list",
     "get",
     "create",
+    "createFromMarkdown",
     "update",
     "remove",
     "sendToReview",
@@ -696,6 +702,453 @@ describe("delete", () => {
 });
 
 // ── the import ─────────────────────────────────────────────────────────────
+
+// ── a whole markdown file → a draft ───────────────────────────────────────
+
+const MARKDOWN = [
+  "---",
+  "title: A draft from my vault",
+  "subtitle: Written in Obsidian.",
+  "date: 2026-10-20",
+  "track: how-to",
+  "part: 1 of 2",
+  "tags: [azure, terraform]",
+  "reading: 7",
+  "status: outlined",
+  "---",
+  "",
+  "## First step",
+  "",
+  "Body text.",
+  "",
+].join("\n");
+
+const fromMarkdown = async (handlers, markdown, origin = "vault") =>
+  parse(
+    await handlers.createFromMarkdown(
+      request({ body: { markdown, origin } }),
+      context,
+    ),
+  );
+
+describe("from-markdown — a whole file becomes a draft", () => {
+  it("creates a draft from the file, never Live and never public, and reports the warnings", async () => {
+    const { handlers, store } = setup();
+    const res = await fromMarkdown(
+      handlers,
+      `${MARKDOWN}\nSee [part two](blog-lab-02-x.md).\n`,
+    );
+    const id = markdownDraftContentId("A draft from my vault");
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      ok: true,
+      outcome: "created",
+      contentId: id,
+      title: "A draft from my vault",
+      draft: { id, stage: "draft", origin: "vault" },
+    });
+    expect(res.body.warnings).toEqual([
+      expect.stringContaining("blog-lab-02-x.md"),
+    ]);
+    const stored = store.docs.get(id);
+    expect(stored).toMatchObject({
+      Title: "A draft from my vault",
+      Summary: "Written in Obsidian.",
+      Tags: ["azure", "terraform"],
+      readTime: "7 min",
+      draftOrigin: "vault",
+      contentStatus: "drafting",
+      Live: false,
+      Status: "Draft",
+      createdBy: "owner@hcw.dev",
+      frontMatter: {
+        date: "2026-10-20",
+        track: "how-to",
+        part: "1 of 2",
+        reading: 7,
+      },
+    });
+    expect(stored.postContent).toContain("## First step");
+    expect(stored.postContent).not.toContain("status: outlined");
+    expect(isPublicDocument(stored)).toBe(false);
+    expect(matchesQueueStatus(stored, "in_review")).toBe(false);
+  });
+
+  it("stores a pasted file under the paste origin", async () => {
+    const { handlers, store } = setup();
+    const res = await fromMarkdown(handlers, MARKDOWN, "paste");
+    expect(res.status).toBe(201);
+    expect(store.docs.get(res.body.contentId).draftOrigin).toBe("paste");
+    expect(res.body.draft.origin).toBe("paste");
+  });
+
+  it("reports a second upload of the same article as already present, and writes nothing", async () => {
+    const { handlers, store } = setup();
+    const first = await fromMarkdown(handlers, MARKDOWN);
+    store.createDoc.mockClear();
+    // Same article, different case and punctuation in the title, other origin.
+    const again = await fromMarkdown(
+      handlers,
+      MARKDOWN.replace("A draft from my vault", "a DRAFT from my vault!"),
+      "paste",
+    );
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({
+      ok: true,
+      outcome: "skipped",
+      code: "ALREADY_IMPORTED",
+      contentId: first.body.contentId,
+      stage: "draft",
+    });
+    expect(store.createDoc).not.toHaveBeenCalled();
+    expect(store.docs.size).toBe(1);
+  });
+
+  it("recognises an article already imported from docs/content or written on the page", async () => {
+    const { handlers, store } = setup({ seed: [DOCKER_IN_REVIEW] });
+    const imported = await fromMarkdown(
+      handlers,
+      MARKDOWN.replace(
+        "A draft from my vault",
+        "The Docker draft already In Review",
+      ),
+    );
+    expect(imported.body).toMatchObject({
+      outcome: "skipped",
+      code: "ALREADY_IMPORTED",
+      contentId: DOCKER_IN_REVIEW.id,
+      stage: "in_review",
+    });
+    const typed = await created(handlers);
+    const again = await fromMarkdown(
+      handlers,
+      MARKDOWN.replace("A draft from my vault", FIELDS.title),
+    );
+    expect(again.body).toMatchObject({
+      code: "ALREADY_IMPORTED",
+      contentId: typed.id,
+    });
+    expect(store.docs.size).toBe(2);
+  });
+
+  it("never duplicates when two uploads race (a double click)", async () => {
+    const { handlers, store } = setup();
+    const [a, b] = await Promise.all([
+      fromMarkdown(handlers, MARKDOWN),
+      fromMarkdown(handlers, MARKDOWN),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    expect(store.docs.size).toBe(1);
+    const skipped = a.status === 200 ? a : b;
+    expect(skipped.body).toMatchObject({
+      outcome: "skipped",
+      code: "ALREADY_IMPORTED",
+    });
+  });
+
+  it("skips a title a published article already carries", async () => {
+    const { handlers, store } = setup({ seed: [LIVE_FROM_DRAFTS] });
+    const res = await fromMarkdown(
+      handlers,
+      MARKDOWN.replace("A draft from my vault", "Published from Drafts"),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      outcome: "skipped",
+      code: "PUBLISHED_ELSEWHERE",
+      existingId: "live-1",
+    });
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no front matter", "Just text, no block.\n", "NO_FRONT_MATTER"],
+    ["no title", "---\nsubtitle: x\n---\n\nBody\n", "NO_TITLE"],
+    ["no article", "---\ntitle: Only a title\n---\n", "EMPTY_BODY"],
+  ])(
+    "refuses a file with %s (422) and writes nothing",
+    async (_name, text, code) => {
+      const { handlers, store } = setup();
+      const res = await fromMarkdown(handlers, text);
+      expect(res).toMatchObject({ status: 422, body: { ok: false, code } });
+      expect(res.body.error).toEqual(expect.any(String));
+      expect(store.createDoc).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a field the draft rules refuse, in the owner's words (400)", async () => {
+    const { handlers, store } = setup();
+    const res = await fromMarkdown(
+      handlers,
+      MARKDOWN.replace("track: how-to", `track: ${"t".repeat(41)}`),
+    );
+    expect(res).toMatchObject({ status: 400, body: { ok: false } });
+    expect(res.body.error).toMatch(/track/);
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no origin", { markdown: MARKDOWN }],
+    ["an unknown origin", { markdown: MARKDOWN, origin: "drafts" }],
+    ["an inherited key as origin", { markdown: MARKDOWN, origin: "toString" }],
+    ["no markdown", { origin: "paste" }],
+    ["blank markdown", { markdown: "  \n", origin: "paste" }],
+    ["markdown that is not text", { markdown: { a: 1 }, origin: "paste" }],
+  ])("refuses %s (400)", async (_name, body) => {
+    const { handlers, store } = setup();
+    const res = parse(
+      await handlers.createFromMarkdown(request({ body }), context),
+    );
+    expect(res).toMatchObject({
+      status: 400,
+      body: { ok: false, code: "INVALID" },
+    });
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  it("refuses a file over the size cap (413), by bytes not characters", async () => {
+    const { handlers, store } = setup();
+    const body = "é".repeat(MAX_MARKDOWN_BYTES / 2 + 1);
+    const res = await fromMarkdown(
+      handlers,
+      `---\ntitle: Big\n---\n\n${body}`,
+    );
+    expect(res).toMatchObject({ status: 413, body: { code: "TOO_LARGE" } });
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body over the 256 KB cap that fits under the file cap (400)", async () => {
+    const { handlers, store } = setup();
+    const body = "a".repeat(256 * 1024 + 1);
+    const res = await fromMarkdown(
+      handlers,
+      `---\ntitle: Big\n---\n\n${body}`,
+    );
+    expect(res).toMatchObject({ status: 400, body: { code: "INVALID" } });
+    expect(res.body.error).toMatch(/at most 262144/);
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  it("refuses an oversized request by its declared length without reading it", async () => {
+    const { handlers, store } = setup();
+    const json = vi.fn(async () => ({ markdown: MARKDOWN, origin: "paste" }));
+    const res = parse(
+      await handlers.createFromMarkdown(
+        {
+          params: {},
+          headers: {
+            get: (name) => (name === "content-length" ? "9999999" : null),
+          },
+          json,
+        },
+        context,
+      ),
+    );
+    expect(res.status).toBe(413);
+    expect(json).not.toHaveBeenCalled();
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  it("audits who sent in what, without the file's text", async () => {
+    const { handlers, store } = setup();
+    await fromMarkdown(handlers, MARKDOWN);
+    await fromMarkdown(handlers, MARKDOWN);
+    const rows = store.audits.filter(
+      (row) => row.action === "content_draft_from_markdown",
+    );
+    expect(rows.map((row) => row.details)).toEqual([
+      { origin: "vault", outcome: "created" },
+      { origin: "vault", outcome: "skipped", code: "ALREADY_IMPORTED" },
+    ]);
+    expect(JSON.stringify(store.audits)).not.toContain("Body text.");
+  });
+
+  it("does not log or answer with the markdown when the store fails", async () => {
+    const { handlers, store } = setup();
+    store.createDoc.mockRejectedValueOnce(new Error("Body text. boom"));
+    const logged = [];
+    const spy = (...args) => logged.push(JSON.stringify(args));
+    const res = parse(
+      await handlers.createFromMarkdown(
+        request({ body: { markdown: MARKDOWN, origin: "paste" } }),
+        { log: spy, warn: spy, error: spy },
+      ),
+    );
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toContain("Body text.");
+    expect(logged.join("")).not.toContain("Body text.");
+  });
+
+  it("ignores every front-matter key that is not one of the seven, so a file cannot set a workflow or identity field", async () => {
+    const { handlers, store } = setup();
+    const injected = [
+      "contentStatus: published",
+      "Live: true",
+      "Status: Published",
+      "id: attacker-chosen-id",
+      "slug: attacker-slug",
+      "Slug: attacker-slug",
+      "partitionKey: other",
+      "ownerId: someone-else",
+      "createdBy: someone-else",
+      "draftOrigin: repo-import",
+      "kind: framework",
+      "ideaOrigin: forge",
+      "approvedForBlog: true",
+      "publishedAt: 2020-01-01",
+      "__proto__: polluted",
+      "constructor: polluted",
+    ].join("\n");
+    const res = await fromMarkdown(
+      handlers,
+      MARKDOWN.replace("status: outlined", injected),
+    );
+    expect(res.status).toBe(201);
+    const id = markdownDraftContentId("A draft from my vault");
+    expect(res.body.contentId).toBe(id);
+    expect([...store.docs.keys()]).toEqual([id]);
+    const stored = store.docs.get(id);
+    expect(stored).toMatchObject({
+      id,
+      Live: false,
+      contentStatus: "drafting",
+      Status: "Draft",
+      approvedForBlog: false,
+      draftOrigin: "vault",
+      kind: "article",
+      ideaOrigin: "manual",
+      createdBy: "owner@hcw.dev",
+    });
+    for (const key of [
+      "slug",
+      "Slug",
+      "partitionKey",
+      "ownerId",
+      "publishedAt",
+      "polluted",
+    ]) {
+      expect(stored, key).not.toHaveProperty(key);
+    }
+    expect(JSON.stringify(stored)).not.toContain("attacker");
+    expect(Object.getPrototypeOf(stored)).toBe(Object.prototype);
+    expect({}.polluted).toBeUndefined();
+    expect(isPublicDocument(stored)).toBe(false);
+  });
+
+  describe("the request is counted as it is read", () => {
+    const streamOf = (chunks, { onPull } = {}) => {
+      let index = 0;
+      let cancelled = false;
+      const body = new ReadableStream({
+        pull(controller) {
+          onPull?.(index);
+          if (index < chunks.length) controller.enqueue(chunks[index++]);
+          else controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return { body, wasCancelled: () => cancelled, pulled: () => index };
+    };
+    const streamed = (stream, headers = {}) => ({
+      params: {},
+      headers: {
+        get: (name) => headers[String(name).toLowerCase()] ?? null,
+      },
+      body: stream.body,
+      json: vi.fn(async () => {
+        throw new Error("json() must not be used when there is a stream");
+      }),
+    });
+    const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
+
+    it("refuses an oversize body with no Content-Length (chunked), stops reading, and writes nothing", async () => {
+      const { handlers, store } = setup();
+      const chunk = new Uint8Array(64 * 1024).fill(32);
+      const chunks = Array.from({ length: 200 }, () => chunk); // ~12.5 MB
+      const stream = streamOf(chunks);
+      const res = parse(
+        await handlers.createFromMarkdown(streamed(stream), context),
+      );
+      expect(res).toMatchObject({ status: 413, body: { code: "TOO_LARGE" } });
+      // Abandoned as soon as the limit was passed, not read to the end.
+      expect(stream.wasCancelled()).toBe(true);
+      expect(stream.pulled()).toBeLessThan(20);
+      expect(store.createDoc).not.toHaveBeenCalled();
+      expect(store.queryDocs).not.toHaveBeenCalled();
+    });
+
+    it("refuses a body bigger than the Content-Length it declares", async () => {
+      const { handlers, store } = setup();
+      const big = new Uint8Array(MAX_REQUEST_BYTES + 1).fill(32);
+      const res = parse(
+        await handlers.createFromMarkdown(
+          streamed(streamOf([big]), { "content-length": "100" }),
+          context,
+        ),
+      );
+      expect(res.status).toBe(413);
+      expect(store.createDoc).not.toHaveBeenCalled();
+    });
+
+    it("reads a body that arrives in pieces, and creates the draft", async () => {
+      const { handlers, store } = setup();
+      const bytes = encode({ markdown: MARKDOWN, origin: "vault" });
+      const half = Math.floor(bytes.length / 2);
+      const res = parse(
+        await handlers.createFromMarkdown(
+          streamed(streamOf([bytes.slice(0, half), bytes.slice(half)])),
+          context,
+        ),
+      );
+      expect(res.status).toBe(201);
+      expect(store.docs.size).toBe(1);
+    });
+
+    it("reads a body that is exactly at the limit", async () => {
+      const { handlers } = setup();
+      const base = encode({ markdown: MARKDOWN, origin: "vault", pad: "" });
+      const pad = " ".repeat(MAX_REQUEST_BYTES - base.length);
+      const bytes = encode({ markdown: MARKDOWN, origin: "vault", pad });
+      expect(bytes.length).toBe(MAX_REQUEST_BYTES);
+      const res = parse(
+        await handlers.createFromMarkdown(streamed(streamOf([bytes])), context),
+      );
+      expect(res.status).toBe(201);
+    });
+
+    it("answers a stream that is not JSON as a missing field (400), not a crash", async () => {
+      const { handlers, store } = setup();
+      const res = parse(
+        await handlers.createFromMarkdown(
+          streamed(streamOf([new TextEncoder().encode("{not json")])),
+          context,
+        ),
+      );
+      expect(res).toMatchObject({ status: 400, body: { code: "INVALID" } });
+      expect(store.createDoc).not.toHaveBeenCalled();
+    });
+  });
+
+  it("takes every docs/content article through the route, once", async () => {
+    const dir = join(process.cwd(), "..", "docs", "content");
+    const files = readdirSync(dir)
+      .filter((name) => checkRepoDraftPath(`docs/content/${name}`).ok)
+      .map((name) => readFileSync(join(dir, name), "utf8"));
+    expect(files.length).toBeGreaterThan(0);
+    const { handlers, store } = setup();
+    for (const text of files) {
+      const res = await fromMarkdown(handlers, text);
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+    }
+    expect(store.docs.size).toBe(files.length);
+    for (const text of files) {
+      expect((await fromMarkdown(handlers, text)).body.outcome).toBe("skipped");
+    }
+    expect(store.docs.size).toBe(files.length);
+  });
+});
 
 describe("Import from docs/content", () => {
   it("imports every article file as a draft, never the contract docs or a README", async () => {

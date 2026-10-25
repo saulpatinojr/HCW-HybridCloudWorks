@@ -44,6 +44,11 @@ const FUNCTION_TIMEOUT_MS = {
   // an 8 s deadline apiece, in parallel — then the writes. Not retried: the
   // import is idempotent, but a retry would audit every path twice.
   'cms/drafts/import-repo': 60000,
+  // Paste or upload a markdown draft: one file of at most ~272 KB parsed and
+  // written once, plus a title lookup and a published-title lookup. Above the
+  // default so a slow store answers instead of timing out; not retried, as the
+  // title-derived id makes a repeat harmless but an extra audit row.
+  'cms/drafts/from-markdown': 45000,
   // The ElevenLabs live check: an account read, one Text to Dialogue request
   // with its own retries, an upload and a second read. Deliberately absent
   // from SAFE_RETRY_FUNCTIONS: a client retry would render, and bill, twice.

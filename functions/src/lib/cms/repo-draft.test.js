@@ -380,3 +380,156 @@ describe('sha256Hex', () => {
     expect(sha256Hex('abc')).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+// ── a body or front matter that arrives in a request must not stall the host ──
+//
+// POST cms/drafts/from-markdown hands this parser text from the network
+// (drafts-markdown.js), up to 272 KB. Three patterns here took quadratic or
+// cubic time on such text: measured on the old code, `](` repeated 130 000
+// times kept the event loop busy for 18 s, `](a.md#` repeated 4 000 times for
+// 110 s, and a front-matter value with 50 000 spaces or quotes for 0.7 s
+// (quadratic: 270 000 is about 20 s). They are scans now.
+//
+// HOW IT IS TESTED. Not by an absolute time: CI also runs this file under V8
+// coverage (`npm run test:coverage`, the "coverage (qlty)" job), which makes
+// the same code about 30 times slower, and a shared runner's speed varies, so
+// a fixed budget either fails on a healthy parser or passes a slow one. The
+// assertion is the growth rate, which neither changes: run the parser on an
+// input of size N and again on one 4N long (best of three each, after a
+// warm-up) and look at time(4N) / max(time(N), 1 ms). Linear code gives about
+// 4; quadratic gives about 16; cubic about 64. The sizes are chosen so the OLD
+// code took long enough at N to be measured. Measured here (ratio, 4N over N):
+//
+//   input (N, 4N)                    old parser   new parser, plain   new parser, coverage
+//   bare `](`          10k, 40k      16           4.1                 4.1
+//   `](a`              10k, 40k      19           4.1                 4.1
+//   `](a.md#` (cubic)  250, 1k       69           0.5 (under 1 ms)    4.4
+//   spaces in a value  12.5k, 50k    20           0.3 (under 1 ms)    0.3
+//   quotes in a value  12.5k, 50k    16           0.1 (under 1 ms)    0.1
+//   quotes around tag  12.5k, 50k    18           0.3 (under 1 ms)    2.1
+//
+// The old parser is repo-draft.js at commit 742e0232. Where the new parser's
+// time is under the 1 ms floor the ratio only says "not growing". Coverage
+// instrumentation makes the same code 10-30 times slower in absolute terms
+// (the bare `](` case: 21 ms plain, 249 ms under coverage) and leaves the
+// ratio where it was.
+// MAX_GROWTH sits between linear (about 4) and quadratic (about 16). One
+// generous absolute ceiling at the real request size is kept as a backstop only.
+
+describe('the parser stays linear on hostile text', () => {
+  const MAX_GROWTH = 8;
+  // The slowest of these took 2.4 s under coverage on a CI runner; the old
+  // parser needed 18 s to hours.
+  const BACKSTOP_MS = 15_000;
+
+  const bestOfThree = (fn) => {
+    let best = Infinity;
+    for (let run = 0; run < 3; run += 1) {
+      const started = performance.now();
+      fn();
+      best = Math.min(best, performance.now() - started);
+    }
+    return best;
+  };
+
+  /** time(4N) / max(time(N), 1 ms) for `run` over inputs `make(n)` and `make(4n)`. */
+  const growth = (make, run, n) => {
+    const small = make(n);
+    const large = make(4 * n);
+    run(small); // warm-up: compile, and let coverage instrumentation settle
+    const tSmall = bestOfThree(() => run(small));
+    const tLarge = bestOfThree(() => run(large));
+    return { ratio: tLarge / Math.max(tSmall, 1), tSmall, tLarge };
+  };
+
+  it.each([
+    ['bare ](', (n) => ']('.repeat(n), 10_000],
+    ['](a', (n) => '](a'.repeat(n), 10_000],
+    ['](a.md# (the cubic case)', (n) => '](a.md#'.repeat(n), 250],
+  ])('finds links in a body of repeated %s in time linear in its length', (_name, make, n) => {
+    const { ratio, tSmall, tLarge } = growth(make, findRepoRelativeLinks, n);
+    expect(
+      ratio,
+      `4x the input took ${(tLarge / Math.max(tSmall, 1)).toFixed(1)}x the time (${tSmall.toFixed(2)} ms -> ${tLarge.toFixed(2)} ms)`
+    ).toBeLessThan(MAX_GROWTH);
+  });
+
+  it.each([
+    ['a long run of spaces inside a value', (n) => `x${' '.repeat(n)}y`],
+    ['a long run of quotes inside a value', (n) => `x${"'".repeat(n)}x`],
+    ['a long run of quotes around a tag', (n) => `[${'"'.repeat(n)}x${"'".repeat(n)}]`],
+  ])('reads front matter with %s in time linear in its length', (_name, value) => {
+    const make = (n) => `---\ntitle: T\nsubtitle: ${value(n)}\ntags: ${value(n)}\n---\n\nBody\n`;
+    const { ratio, tSmall, tLarge } = growth(make, parseRepoDraft, 12_500);
+    expect(
+      ratio,
+      `4x the input took ${(tLarge / Math.max(tSmall, 1)).toFixed(1)}x the time (${tSmall.toFixed(2)} ms -> ${tLarge.toFixed(2)} ms)`
+    ).toBeLessThan(MAX_GROWTH);
+  });
+
+  it('still finishes a request-sized hostile body well inside a generous ceiling', () => {
+    // 256 KB bodies and 260 000-character values: the old parser needed from
+    // 18 s to several minutes for these. A backstop only; the ratios above
+    // are the test.
+    const started = performance.now();
+    const body = parseRepoDraft(`---\ntitle: T\n---\n\n${']('.repeat(130_000)}\n`);
+    const links = findRepoRelativeLinks('](a.md#'.repeat(37_000));
+    const front = parseRepoDraft(
+      `---\ntitle: T\nsubtitle: x${' '.repeat(130_000)}y\ntags: [${'"'.repeat(65_000)}x${"'".repeat(65_000)}]\n---\n\nBody\n`
+    );
+    expect(performance.now() - started).toBeLessThan(BACKSTOP_MS);
+    expect([body.ok, front.ok]).toEqual([true, true]);
+    expect(links).toEqual([]);
+  });
+});
+
+describe('the scans read what the patterns they replaced read', () => {
+  // The pattern findRepoRelativeLinks used before, kept here as the reference.
+  const OLD_LINKS = /\]\(((?!https?:\/\/|mailto:|#|\/)[^)\s]+?\.md)(?:#[^)\s]*)?\)/g;
+  const oldLinks = (body) => [...new Set([...body.matchAll(OLD_LINKS)].map((m) => m[1]))];
+
+  it.each([
+    '[Part 2](blog-lab-02-x.md)',
+    '[a](a.md#top) and [b](b.md)',
+    '[x](https://example.com/a.md) [y](mailto:a.md) [z](#a.md) [w](/a.md)',
+    '[a](docs/other.md#one#two)',
+    '[a](.md) [b](x.md.md) [c](x.mdx) [d](x.mdx.md)',
+    '[a](a b.md) [b](a.md ) [c]( a.md)',
+    '[a](x](y.md)',
+    '![img](pic.png) [no end](a.md',
+    '[a](a.md)[b](b.md)[a](a.md)',
+    '',
+  ])('finds the same links in %j', (body) => {
+    expect(findRepoRelativeLinks(body)).toEqual(oldLinks(body));
+  });
+
+  it('skips a link target longer than the cap, which no draft file name is', () => {
+    expect(findRepoRelativeLinks(`[a](${'a'.repeat(300)}.md)`)).toEqual([]);
+    expect(findRepoRelativeLinks(`[a](${'a'.repeat(150)}.md)`)).toHaveLength(1);
+  });
+
+  it('reads quoted and padded front-matter values as before', () => {
+    const { fields } = parseFrontMatter(
+      [
+        '---',
+        'title:    "Quoted # not a comment"   ',
+        "subtitle: x''twice''",
+        'track: how-to # a comment',
+        'empty:    ',
+        'part: ',
+        '# comment: line',
+        'tags: ["a", \'b\', ""]',
+        '---',
+        'x',
+      ].join('\n')
+    );
+    expect(fields).toMatchObject({
+      title: 'Quoted # not a comment',
+      subtitle: "x''twice",
+      track: 'how-to',
+      tags: '["a", \'b\', ""]',
+    });
+    expect(fields.empty ?? '').toBe('');
+    expect(parseInlineList('["a", \'b\', "", \'\'\'c\'\'\']')).toEqual(['a', 'b', 'c']);
+  });
+});

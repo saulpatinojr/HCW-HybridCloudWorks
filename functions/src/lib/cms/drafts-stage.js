@@ -24,8 +24,17 @@ export { DRAFTS_STAGE_STATUS };
 /** The status a draft is sent to, and the only one Back to Drafts leaves. */
 export const REVIEW_STATUS = 'in_review';
 
-/** `draftOrigin` values: written on this page, or imported from docs/content. */
-export const DRAFT_ORIGINS = Object.freeze({ site: 'drafts', repo: 'repo-import' });
+/**
+ * `draftOrigin` values: written on this page, imported from docs/content, or
+ * sent in as a whole markdown file from the owner's private vault (`vault`) or
+ * pasted into the page (`paste`) — POST cms/drafts/from-markdown.
+ */
+export const DRAFT_ORIGINS = Object.freeze({
+  site: 'drafts',
+  repo: 'repo-import',
+  vault: 'vault',
+  paste: 'paste',
+});
 
 export const statusOf = (doc = {}) => String(doc.contentStatus || 'ingested');
 
