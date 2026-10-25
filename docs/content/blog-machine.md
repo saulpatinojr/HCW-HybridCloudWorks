@@ -56,12 +56,14 @@ and feeds never select it.
   `functions/src/lib/cms/drafts-markdown.js`,
   `frontend/src/pages/admin/drafts/MarkdownDraftPanel.jsx`. How to use it:
   [Idea notes](../runbooks/obsidian-idea-notes.md).
-- **Import from docs/content** is the old way in, and it is being retired: a
-  pre-publish draft must not be committed to the public repository or shown on
-  the public docs site (owner rule 2026-10-25), so do not use it for a new
-  article. It brought the `blog-*.md` articles in once, as drafts
-  (`blog-template.md` and this file are skipped as contracts), and the button
-  and route stay only until the existing files are removed in a later change.
+- **There is no import from the repository any more.** A pre-publish draft
+  must not be committed to the public repository or shown on the public docs
+  site (owner rule 2026-10-25), so the old *Import from docs/content* button
+  and its route (`POST cms/drafts/import-repo`) were removed together with the
+  `blog-*.md` draft files they read. A draft that was imported earlier keeps
+  its **From docs/content** label on the Drafts page; that is only a note of
+  where it came from. `docs/content` now holds just this file and
+  `blog-template.md`.
 
 `drafting` is deliberately not the forge's `draft`: `forgeScheduled` picks up
 `draft` documents to rewrite, and a hand-written article must never be one.

@@ -213,7 +213,7 @@ const resource = (label, url) => Object.freeze({ label, url });
 
 /**
  * A published article on this site, `/<provider>/blog/<slug>`: the three
- * parts of the landing-zone series (docs/content/blog-lab-0*.md).
+ * parts of the landing-zone series, published from the CMS.
  */
 const article = (provider, slug, title) => Object.freeze({ provider, slug, title });
 

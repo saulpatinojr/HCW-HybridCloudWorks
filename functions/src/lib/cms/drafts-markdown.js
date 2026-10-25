@@ -4,14 +4,14 @@
  * the private Obsidian vault and in this admin, not in the public repository).
  *
  * The request carries a whole markdown file, front matter and all, in the
- * format docs/content/blog-template.md describes. It is read by the same
- * parser the docs/content import uses (repo-draft.js parseRepoDraft, which
+ * format docs/content/blog-template.md describes. It is read by the parser
+ * the removed docs/content import used (repo-draft.js parseRepoDraft, which
  * takes text and needs no repository path), then checked by the same field
  * validator a draft typed on the page goes through (drafts.js
  * validateDraftFields), so a file cannot carry anything a typed draft could
- * not. The repository-path checks the importer uses (checkRepoDraftPath and
- * the raw-URL builders) guard a fetch from GitHub; nothing here fetches, and
- * they are untouched.
+ * not. The repository-path checks (checkRepoDraftPath and the raw-URL
+ * builders) belonged to the removed fetch from GitHub; nothing here fetches,
+ * and they are untouched.
  *
  * Nothing here does I/O, and nothing here logs the markdown.
  *

@@ -12,21 +12,21 @@
  *
  * "Paste or upload a markdown draft" brings whole `.md` files in (the owner's
  * private vault; several at once, one request each) or one pasted draft, as
- * drafts. "Import from docs/content" brings the repository's `blog-*.md`
- * articles in once, as drafts, and is kept until a later change retires it.
- * After either, this page is the article's source of truth.
+ * drafts. There is no import from the repository: pre-publish drafts do not
+ * live in the public repository (owner rule 2026-10-25). After the upload,
+ * this page is the article's source of truth.
  *
  * TWO TABS. Every write carries the etag of the version on screen, and the
  * API refuses it (412, code CONFLICT) when the stored version has moved on.
  * The page keeps the owner's text and offers to reload the latest; it never
  * retries a save over someone else's.
  *
- * The state is in four hooks beside this file — the list, the open article,
- * the writes and the import — and this component lays them out. Server side:
+ * The state is in hooks beside this file — the list, the open article, the
+ * writes and the markdown upload — and this component lays them out. Server side:
  * functions/src/lib/cms/drafts-handlers.js, drafts.js and drafts-stage.js.
  */
 import React, { useState } from 'react';
-import { FileInput, FilePen, Loader2, Plus, RefreshCw } from 'lucide-react';
+import { FilePen, Loader2, Plus, RefreshCw } from 'lucide-react';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import SharedPageHeader from '@/components/admin/shared/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -35,52 +35,12 @@ import { useAuthReady } from '@/hooks/useAuthReady';
 import DraftList from './drafts/DraftList';
 import DraftEditor from './drafts/DraftEditor';
 import MarkdownDraftPanel from './drafts/MarkdownDraftPanel';
-import { deleteConfirmCopy, describeImportResult, describeSaveState } from './drafts/draftForm';
+import { deleteConfirmCopy, describeSaveState } from './drafts/draftForm';
 import { useDraftList } from './drafts/useDraftList';
 import { useOpenDraft } from './drafts/useOpenDraft';
 import { useDraftWrites } from './drafts/useDraftWrites';
-import { useDraftImport } from './drafts/useDraftImport';
 import { useMarkdownDrafts } from './drafts/useMarkdownDrafts';
 import { LEAVE_CONFIRM, useUnsavedGuard } from './drafts/useUnsavedGuard';
-
-const IMPORT_TONE_CLASS = {
-  ok: 'text-green-700 dark:text-green-300',
-  skip: 'text-muted-foreground',
-  bad: 'text-destructive',
-};
-
-function ImportResults({ results, onDismiss }) {
-  if (!results) return null;
-  return (
-    <section
-      aria-label="Import results"
-      className="rounded-md border bg-card px-4 py-3 text-sm shadow-sm"
-    >
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="font-medium">Import from docs/content</p>
-        <Button variant="ghost" size="sm" onClick={onDismiss}>
-          Dismiss
-        </Button>
-      </div>
-      <ul className="space-y-1">
-        {results.map((result) => {
-          const line = describeImportResult(result);
-          return (
-            <li key={result.path}>
-              <span className="font-medium">{line.title}</span>{' '}
-              <span className={IMPORT_TONE_CLASS[line.tone]}>{line.text}</span>
-              {(result.warnings || []).map((warning) => (
-                <span key={warning} className="block text-xs text-muted-foreground">
-                  {warning}
-                </span>
-              ))}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
 
 function Alert({ tone = 'error', children }) {
   const toneClass =
@@ -99,12 +59,12 @@ function Alert({ tone = 'error', children }) {
 
 const DRAFTS_HELP = [
   'What this page is: the writing desk before the pipeline. Articles written here are saved in the site from any device; nothing is published from this page.',
-  'New draft starts one; Paste or upload a markdown draft brings in whole files from your vault (or one pasted draft); Import from docs/content brings the repository articles in once, as drafts. Save keeps your text; two tabs cannot overwrite each other.',
+  'New draft starts one; Paste or upload a markdown draft brings in whole files from your vault (or one pasted draft). Save keeps your text; two tabs cannot overwrite each other.',
   'Kind and idea origin classify the draft (what it becomes, how it started); set them before sending it on so downstream tools pick it up correctly.',
   'Where it goes next: Send to In Review puts the draft on the Review Queue under In Review. Back to Drafts brings it here again until it is approved.',
 ];
 
-function PageHeader({ onNew, onImport, importing, onRefresh, refreshing }) {
+function PageHeader({ onNew, onRefresh, refreshing }) {
   return (
     <SharedPageHeader
       icon={FilePen}
@@ -114,20 +74,6 @@ function PageHeader({ onNew, onImport, importing, onRefresh, refreshing }) {
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" onClick={onNew} className="gap-1">
             <Plus className="h-4 w-4" /> New draft
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onImport}
-            disabled={importing}
-            className="gap-1"
-          >
-            {importing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <FileInput className="h-4 w-4" />
-            )}
-            Import from docs/content
           </Button>
           <Button
             size="sm"
@@ -151,7 +97,6 @@ export default function DraftsPage() {
   const list = useDraftList(authReady);
   const editor = useOpenDraft(list.upsert);
   const writes = useDraftWrites({ editor, list, toast });
-  const repoImport = useDraftImport({ list, toast });
   const markdownDrafts = useMarkdownDrafts({ list, toast });
   // A pending switch away from unsaved changes: () => void, run on confirm.
   const [pendingSwitch, setPendingSwitch] = useState(null);
@@ -200,15 +145,11 @@ export default function DraftsPage() {
     <div className="max-w-7xl space-y-6">
       <PageHeader
         onNew={() => guardSwitch(editor.startNew)}
-        onImport={repoImport.run}
-        importing={repoImport.importing}
         onRefresh={list.reload}
         refreshing={list.loading}
       />
 
       <MarkdownDraftPanel uploads={markdownDrafts} />
-
-      <ImportResults results={repoImport.results} onDismiss={repoImport.dismiss} />
 
       {list.error && <Alert>{list.error}</Alert>}
       {writes.conflict && (

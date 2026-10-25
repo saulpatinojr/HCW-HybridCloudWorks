@@ -10,7 +10,6 @@
  */
 
 export const DRAFTS_ROUTE = 'cms/drafts';
-export const IMPORT_ROUTE = 'cms/drafts/import-repo';
 export const draftRoute = (id) => `${DRAFTS_ROUTE}/${encodeURIComponent(id)}`;
 /** Where an article in review opens: its page on the Review Queue. */
 export const reviewPath = (id) => `/admin/review-queue/${encodeURIComponent(id)}`;
@@ -127,52 +126,6 @@ export function describeSaveState({ saving, error, dirty, isNew }) {
   if (dirty) return { key: 'unsaved', label: 'Unsaved changes' };
   if (isNew) return { key: 'new', label: 'Not saved yet' };
   return { key: 'saved', label: 'Saved' };
-}
-
-/** One line per file from the import's `results`. */
-export function describeImportResult(result = {}) {
-  const name = String(result.path || '')
-    .split('/')
-    .at(-1);
-  const title = result.title || name;
-  if (result.outcome === 'imported') return { title, text: 'Imported as a draft', tone: 'ok' };
-  if (result.code === 'ALREADY_IMPORTED') {
-    const where = STAGE_LABELS[result.stage] || 'Drafts';
-    return { title, text: `Already imported — ${where}`, tone: 'skip' };
-  }
-  if (result.code === 'PUBLISHED_ELSEWHERE') {
-    return {
-      title,
-      text: 'Skipped — an article with this title is already published',
-      tone: 'skip',
-    };
-  }
-  const verb = result.outcome === 'failed' ? 'Failed' : 'Skipped';
-  return {
-    title,
-    text: `${verb}: ${result.error || result.code || 'no reason given'}`,
-    tone: 'bad',
-  };
-}
-
-/** The toast for a finished import. */
-export function summarizeImport(counts = {}) {
-  const imported = counts.imported || 0;
-  const other = Object.entries(counts)
-    .filter(([outcome]) => outcome !== 'imported')
-    .reduce((sum, [, n]) => sum + n, 0);
-  if (imported === 0) {
-    return {
-      title: 'Nothing new to import',
-      description: `${other} ${other === 1 ? 'file was' : 'files were'} already here or skipped; see the list.`,
-    };
-  }
-  return {
-    title: `${imported} ${imported === 1 ? 'draft' : 'drafts'} imported`,
-    description: other
-      ? `${other} already here or skipped; see the list.`
-      : 'Nothing was published.',
-  };
 }
 
 export const LIVE_DELETE_MESSAGE =
