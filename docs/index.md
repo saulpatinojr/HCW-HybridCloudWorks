@@ -16,9 +16,9 @@ reviewed through pull requests like the code and published on every merge.
   [How HybridCloudWorks is built](architecture/how-it-is-built.md): one
   diagram, every component, a map of the repository and how a change reaches
   the live site.
-- **To learn from it**, start with the four articles under
-  [Start here if you are not the owner](#start-here-if-you-are-not-the-owner),
-  written for someone who has never seen this estate.
+- **To learn from it**, start with the
+  [Naming convention](standards/naming-convention.md) page, written for someone
+  who has never seen this estate.
 - **To contribute or report a problem**, the repository's
   [README](repo/readme.md) has a short start, and open work is on the
   [HCW Work Board](https://github.com/users/saulpatinojr/projects/6).
