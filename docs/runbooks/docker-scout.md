@@ -26,24 +26,27 @@ repository, and storing a Docker token anywhere, are the owner's decisions.
   ([Docker Scout](https://docs.docker.com/scout/),
   [policies](https://docs.docker.com/scout/policy/)).
 
-## Four checks, and which one is for what
+## Five checks, and which one is for what
 
 | Check | Where it runs | When | What it does |
 | --- | --- | --- | --- |
 | Trivy before publishing | each add-on repository's `publish-images.yml` | on a release tag | stops the push when the image has a HIGH or CRITICAL vulnerability with a fix |
 | **Lab supply chain** (`lab-supply-chain.yml`, the scan step) | this repository | every Tuesday | looks again at the digests the host actually runs, the two lab images **and the three add-on images**, with Trivy; opens one issue, or comments on the open one, when something fixable turns up |
+| **Add-on images against Docker Scout** (`addon-image-scout.yml`) | this repository | when a pull request changes the pins, and every Wednesday | Scout's policy table for the same digests, then fails on a fixable CRITICAL or HIGH; needs the one Docker token below |
 | Scout's own analysis of a Docker Hub repository | Docker | continuously, once the owner enables it | shows every tag's findings and policy results in the Scout dashboard and in Docker Hub |
 | `docker scout` on your desktop | your machine | when you run it | the same Scout analysis on demand, for a published image or one you just built |
 
 The first runs only when an image is built. The advisory database moves after
-that, which is why the second exists: an add-on digest nobody touches is never
-rebuilt. There is no scan when a pull request changes a pin; the image was
-scanned at publish, and the next Tuesday run looks again.
+that, which is why the others exist: an add-on digest nobody touches is never
+rebuilt. Trivy (the second row) and Scout (the third) read the same digests and
+are deliberately both there: Trivy needs no credential and opens the issue;
+Scout adds its policies (non-root user, attestations, outdated base image) and
+needs the token.
 
-## Why Scout is not in CI
+## Scout in CI, and the one Docker token it needs
 
 Scout only answers a signed-in Docker user. Both ways of running it in GitHub
-Actions were tried on 2026-10-25 and both stopped:
+Actions without one were tried on 2026-10-25 and both stopped:
 
 - `docker/scout-action` v1.27.0: `could not authenticate: user githubactions not
   entitled to use Docker Scout` (run 40166549204);
@@ -55,18 +58,73 @@ Actions were tried on 2026-10-25 and both stopped:
 desktop test that seemed to show it ran on a machine where Docker Desktop is
 signed in, which an empty Docker config folder does not undo.)
 
-So Scout in CI needs a Docker access token for an entitled user stored as a
-GitHub secret. The OIDC connections the publish workflows use cannot stand in:
-they carry only image pull and push, reading public repositories and Build Cloud
-connection
+The OIDC connections the publish workflows use cannot stand in: they carry only
+image pull and push, reading public repositories and Build Cloud connection
 ([rulesets and scopes](https://docs.docker.com/security/authentication/oidc-connections/rulesets-claims/)).
-The repository avoids a second home for a credential, and Trivy already gives
-the vulnerability gate, so this page recommends **not** storing a token for it.
-If the owner wants Scout's policy table in CI after all, that is a decision for
-issue [#1367](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1367):
-create a read-only personal access token in Docker
-([Access tokens](https://docs.docker.com/security/access-tokens/)), store it as
-one repository secret, and run the action with it. Nothing here does that.
+So the owner decided on 2026-10-25 (issue
+[#1367](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1367)) to
+store **one** Docker credential, in this repository only, used by one workflow
+(`addon-image-scout.yml`), which Docker's own
+[GitHub Action template](https://github.com/docker/scout-cli#github-action)
+also does (a Docker user name and a personal access token).
+
+**What the workflow does with it.** It reads the token in two places only (the
+step that checks it is set, and the action's password input), holds
+`contents: read` and nothing else, is skipped for a pull request from a fork
+(GitHub gives those no secrets), and does not post pull request comments. A
+test, `scripts/addon-image-scout-workflow.test.mjs`, pins each of those.
+
+**What a missing token looks like.** On a pull request it is a warning and the
+Scout steps are skipped. On the Wednesday run and a manual run it is an error
+and the run is red, so a check that never ran cannot look green.
+
+### Create the token (once)
+
+1. Open <https://app.docker.com/> and sign in as the Docker user that holds the
+   Team seat (the Docker ID shown as the creator of your connections,
+   `saulpatinojr`).
+2. Open your avatar menu, then **Account settings**, then **Personal access
+   tokens**, then **Generate new token**
+   ([Docker's steps](https://docs.docker.com/security/access-tokens/personal-access-tokens/)).
+3. Description: `hcw-github-scout`. Expiration: one year, and put the date in
+   your calendar (an expired token turns the Wednesday run red, which is how you
+   would find out).
+4. Permission: **Repo Public Read-only**, the lowest, which is enough for the
+   three public add-on images. Docker says a token applies to every repository
+   the account can reach and cannot be limited to one, which is why it is read
+   only.
+5. Click **Generate** and keep the page open: Docker shows the token once.
+
+### Store it (once), in PowerShell
+
+The Docker ID is not secret, so it is a variable. The second command asks for
+the token and hides what you paste, so it never appears on a command line:
+
+```powershell
+gh variable set DOCKER_SCOUT_USER --repo saulpatinojr/HCW-HybridCloudWorks --body saulpatinojr
+```
+
+```powershell
+gh secret set DOCKER_SCOUT_PAT --repo saulpatinojr/HCW-HybridCloudWorks
+```
+
+Expected: the second command prints a prompt, accepts the pasted token, and
+ends with a line saying the secret was set. Then run the check once, from
+**Actions**, **Add-on images against Docker Scout**, **Run workflow**, and read
+the three **Scout** jobs: a green job with a policy table in its summary means
+it works.
+
+If a job says `not entitled to use Docker Scout` even with the token, the
+token's permission is too low for Scout on this account: generate a new one with
+**Repo Read-only** instead, store it the same way, and say so on #1367.
+
+### Rotate or remove it
+
+Generate a new token the same way, run the second command again to replace the
+secret, then delete the old token in Docker. To remove Scout from CI, delete the
+secret and the variable (`gh secret delete DOCKER_SCOUT_PAT --repo
+saulpatinojr/HCW-HybridCloudWorks`) and the workflow file; nothing else depends
+on them.
 
 ## Turn Scout on (the owner's step)
 
@@ -169,9 +227,13 @@ means *the image in this desktop's own store, no registry lookup*;
 
 - **Scout environments** (Scout's record of which image runs where, the
   **Configure an environment** guide in the Scout dashboard). Recording an image
-  into one from CI needs the same stored Docker token, so it is not set up. The
-  weekly scan already names the digests the host runs.
-- **A required status check.** The weekly scan opens an issue; it blocks no merge.
+  into one is a write to the owner's Scout organisation, and the token above is
+  read-only, so it is not set up. The weekly checks already name the digests the
+  host runs.
+- **A required status check.** Neither the Scout check nor the weekly scan is one
+  of the ruleset's required checks; the weekly scan opens an issue and the Scout
+  check shows red, and neither blocks a merge. Making one required is the owner's
+  decision.
 
 ## Docker Hub housekeeping
 
