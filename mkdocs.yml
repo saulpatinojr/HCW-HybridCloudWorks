@@ -194,7 +194,6 @@ nav:
       - GitKraken 01 Commit Graph (draft): content/blog-gitkraken-01-commit-graph.md
       - GitKraken 02 MCP server (draft): content/blog-gitkraken-02-mcp-server.md
       - GitKraken 03 stacked PRs (draft): content/blog-gitkraken-03-stacked-prs.md
-      - GitKraken 04 quarter of history (draft): content/blog-gitkraken-04-quarter-of-history.md
   - Repository:
       - README: repo/readme.md
       - CHANGELOG: repo/changelog.md
