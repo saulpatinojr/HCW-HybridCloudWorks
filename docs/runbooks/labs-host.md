@@ -3013,12 +3013,12 @@ appears on a command line or in output. The `addons` role refuses to start
 the container while this key is unset, naming the key and this line.
 
 **2. Write the digest in.** The add-on's `v0.3.1` release prints
-`docker.io/hybridcloudworks/hcw-addon-migration@sha256:…` in its
+`docker.io/hybridcloudworks/img-mo-lab-addon@sha256:…` in its
 `publish-images` run summary; the same value, read from the registry.
 PowerShell, anywhere with Docker:
 
 ```powershell
-docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.1
+docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.1
 ```
 
 The `Digest:` line is the value for `image_digest` of the `migration` row in

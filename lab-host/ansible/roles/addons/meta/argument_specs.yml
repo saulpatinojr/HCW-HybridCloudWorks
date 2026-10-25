@@ -41,7 +41,7 @@ argument_specs:
           image:
             type: str
             required: true
-            description: Image repository, for example docker.io/hybridcloudworks/hcw-addon-migration.
+            description: Image repository, for example docker.io/hybridcloudworks/img-mo-lab-addon.
           image_tag:
             type: str
             required: true

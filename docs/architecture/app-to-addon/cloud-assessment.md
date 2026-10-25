@@ -9,7 +9,7 @@ AddOn and the Tools menu lists it. Until then the row was `coming`.
 | Catalogue id | `cloud-assessment` |
 | Site route | `/tools/cloud-assessment` (in the Tools menu) |
 | AddOn origin | `https://cloud-assessment.lab.hybridcloudworks.com` (`panePath` `/`, `healthPath` `/api/health`) |
-| Image | `docker.io/hybridcloudworks/hcw-addon-cloud-assessment`; the tag, the digest and the attestation identity are pinned in the `cloud-assessment` row of `lab-host/ansible/group_vars/all.yml`, which is the one place they are written down |
+| Image | `docker.io/hybridcloudworks/img-ca-lab-addon`; the tag, the digest and the attestation identity are pinned in the `cloud-assessment` row of `lab-host/ansible/group_vars/all.yml`, which is the one place they are written down |
 | Lab host port | `127.0.0.1:18083` → container `8080` |
 | Row status | `available`; capabilities granted to the pane `downloads` and `clipboard-write` (owner decision 2026-10-24, [#1354](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1354); the row held `navigate` and `downloads` before, copied from the migration row, although this AddOn never sends a `navigate` message) |
 | Status proxy | `GET /api/public/addons/cloud-assessment/status`, reading `ADDON_CLOUD_ASSESSMENT_URL` (a plain app setting in `infra/functionapp.tf`) |

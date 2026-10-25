@@ -145,7 +145,7 @@ Rollback is the previous digest in the same row and another run. The digest
 can also be read from the registry; PowerShell or bash, anywhere with Docker:
 
 ```powershell
-docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.0
+docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.0
 ```
 
 The `Digest:` line is the value for `addons[].image_digest` of the
