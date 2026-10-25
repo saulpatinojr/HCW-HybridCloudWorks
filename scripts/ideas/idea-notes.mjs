@@ -6,10 +6,12 @@
  * repository: ideas for content, grouped by theme, each with a type, a format
  * and a status. The repository is public, so the notes never come here. What
  * does come here is this code, which reads a note that someone hands it and
- * never writes to the vault. The one thing it produces is a draft article in
- * `docs/content/blog-<name>.md`, in the shape the admin's "Import from
- * docs/content" already takes (functions/src/lib/cms/repo-draft.js), so a
- * promoted idea is a copy of the same words rather than a translation.
+ * never writes to the vault's notes. The one thing it produces is a draft
+ * article, `blog-<name>.md`, which promote-idea.mjs saves in the vault's own
+ * Drafts folder (never in this repository) to be uploaded on Admin > Drafts. It
+ * is in the shape the server's markdown reader takes
+ * (functions/src/lib/cms/repo-draft.js, parseRepoDraft), so a promoted idea is
+ * a copy of the same words rather than a translation.
  *
  * THE FORMAT, in an Obsidian note's Properties (YAML between two `---` lines):
  *
@@ -29,12 +31,12 @@
  * it does not know (`aliases`, `cssclasses`, whatever a plugin adds) are left
  * alone.
  *
- * WHAT PROMOTING REFUSES, and why. A note body becomes a file in a public
- * repository. The check cannot know what is private, but it can refuse what
+ * WHAT PROMOTING REFUSES, and why. A note body becomes an article that will be
+ * published. The check cannot know what is private, but it can refuse what
  * can only be private notes or only work in Obsidian: [[wikilinks]] and
  * ![[embeds]] to other notes, %% comments %%, and Dataview or Tasks query
  * blocks. Anything else in the body is carried over as written, so the draft
- * has to be read before it is committed; the runbook says so.
+ * has to be read before it is uploaded; the runbook says so.
  *
  * Dependency-free on purpose (node: only): a functions test imports this file
  * to prove that what it writes passes the real import.
@@ -83,7 +85,11 @@ const KNOWN_KEYS = Object.freeze([
 /** Lower-case words joined by hyphens: the shape of a theme, a tag and a draft's file name. */
 const WORDS = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** The drafts the admin import will take (repo-draft.js REPO_DRAFT_PATH_PATTERN, MAX_REPO_PATH_LENGTH). */
+/**
+ * The file name a draft gets is held to the shape the markdown reader's path rule takes
+ * (repo-draft.js REPO_DRAFT_PATH_PATTERN, MAX_REPO_PATH_LENGTH), so the same file
+ * name also works if the old import-from-repo route is ever used.
+ */
 const DRAFT_PATH = /^docs\/content\/blog-[a-z0-9-]+\.md$/;
 const MAX_DRAFT_PATH = 120;
 const MAX_NAME_CHARS = 80;
@@ -464,7 +470,7 @@ export function planPromotion(note, { name, now = () => new Date() } = {}) {
   }
   if (note.type !== 'blog') {
     reasons.push(
-      `type is "${note.type}"; the repository import takes blog articles only (docs/content/blog-*.md)`
+      `type is "${note.type}"; only blog articles become drafts`
     );
   }
   const track = FORMAT_TO_TRACK[note.format];
@@ -491,7 +497,7 @@ export function planPromotion(note, { name, now = () => new Date() } = {}) {
   const fileName = `blog-${chosen}.md`;
   const path = `docs/content/${fileName}`;
   if (chosen && WORDS.test(chosen) && (!DRAFT_PATH.test(path) || path.length > MAX_DRAFT_PATH)) {
-    reasons.push(`${path} is not a path the import accepts (at most ${MAX_DRAFT_PATH} characters)`);
+    reasons.push(`${path} is not a file name the draft reader accepts (at most ${MAX_DRAFT_PATH} characters)`);
   }
   if (reasons.length > 0) return { ok: false, reasons };
 

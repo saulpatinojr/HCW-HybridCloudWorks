@@ -48,14 +48,20 @@ and feeds never select it.
   parser the import uses, checks it with the same rules as a typed draft, and
   writes a `drafting` document under an id derived from the title, so sending
   the same article twice reports "already present" rather than duplicating it.
-  Pre-publish drafts therefore no longer need to be committed to the public
-  repository. Code: `functions/src/lib/cms/drafts-markdown.js`,
+  This is the way in. The Drafts page is the source of truth for a
+  pre-publish article, and the promote script
+  (`scripts/ideas/promote-idea.mjs`) now saves a promoted idea into the
+  owner's private vault (`<vault>/Drafts`) to be uploaded here, and refuses to
+  write anywhere inside the repository. Code:
+  `functions/src/lib/cms/drafts-markdown.js`,
   `frontend/src/pages/admin/drafts/MarkdownDraftPanel.jsx`. How to use it:
   [Idea notes](../runbooks/obsidian-idea-notes.md).
-- **Import from docs/content** brings the `blog-*.md` articles in once, as
-  drafts (`blog-template.md` and this file are skipped as contracts). After
-  that the Drafts page, not the file, is the article's source of truth. It is
-  kept for now and is due to be retired in a later change.
+- **Import from docs/content** is the old way in, and it is being retired: a
+  pre-publish draft must not be committed to the public repository or shown on
+  the public docs site (owner rule 2026-10-25), so do not use it for a new
+  article. It brought the `blog-*.md` articles in once, as drafts
+  (`blog-template.md` and this file are skipped as contracts), and the button
+  and route stay only until the existing files are removed in a later change.
 
 `drafting` is deliberately not the forge's `draft`: `forgeScheduled` picks up
 `draft` documents to rewrite, and a hand-written article must never be one.
