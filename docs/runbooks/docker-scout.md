@@ -83,8 +83,8 @@ automatically: run the command again after adding one. The command is
 documented at
 [docker scout repo enable](https://docs.docker.com/reference/cli/docker/scout/repo/enable/).
 
-To do one repository by clicking: Docker Hub, **My Hub**, **Repositories**,
-the repository, **Settings**, then under **Image security insight settings**
+To do one repository by clicking: open <https://hub.docker.com/> and sign in,
+then **My Hub**, **Repositories**, the repository, **Settings**, then under **Image security insight settings**
 choose **Docker Scout image analysis** and **Save**
 ([Docker's steps](https://docs.docker.com/docker-hub/repos/manage/vulnerability-scanning/)).
 Docker publishes no deeper link than those pages.
@@ -92,9 +92,19 @@ Docker publishes no deeper link than those pages.
 ## Check an image on your desktop
 
 Docker Desktop's command line already has Scout (`docker scout version` prints
-it), and it works while Docker Desktop is signed in to your Docker account. The
-commands only read. If one answers `Log in with your Docker ID`, sign in to
-Docker Desktop and run it again.
+it), and it works while Docker Desktop is signed in to your Docker account. If
+one answers `Log in with your Docker ID`, sign in to Docker Desktop and run it
+again.
+
+**What "read-only" does and does not mean.** These commands change nothing in
+the image or the registry. They do send data to Docker. For an image built on
+your own machine (`local://`), Scout transmits only package URLs and layer
+digests, and Docker says it does not keep them. For a published image, Docker
+describes its analysis as collecting the image's metadata and package list
+(SBOM) and storing them on its platform, in the US; its page does not say
+whether a one-off `registry://` command from a desktop does the same
+([Docker Scout data handling](https://docs.docker.com/scout/deep-dive/data-handling/)).
+The three add-on images are public, so what could be stored is already public.
 
 A published image, by tag:
 
@@ -124,8 +134,12 @@ An image you just built on this desktop, before you push it (run it from the
 add-on repository's folder; the tag is yours to choose):
 
 ```powershell
-docker build -t addon-try -f infrastructure/docker/Dockerfile.lab . ; docker scout quickview local://addon-try
+docker build -t addon-try -f infrastructure/docker/Dockerfile.lab . ; if ($LASTEXITCODE -eq 0) { docker scout quickview local://addon-try }
 ```
+
+The `if` is there because PowerShell runs what follows a `;` even when the build
+failed, and an `addon-try` left from an earlier build would then be inspected
+instead of the one you meant.
 
 That is the migration add-on's Dockerfile; in the network assessment and cloud
 assessment repositories it is `infrastructure/docker/Dockerfile`. `local://`

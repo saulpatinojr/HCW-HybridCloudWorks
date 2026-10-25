@@ -31,7 +31,10 @@ export function readAddonPins(text) {
     if (!id) throw new Error('an addons row has no id');
     const enabled = row.match(/^ {4}enabled:[ \t]*(\w+)/m)?.[1];
     const image = row.match(/^ {4}image:[ \t]*(\S+)/m)?.[1];
-    const digest = row.match(/^ {4}image_digest:[ \t]*"([^"]*)"/m)?.[1] ?? '';
+    // YAML reads `"sha256:…"`, `'sha256:…'` and a bare sha256:… as the same string, and so does the addons role,
+    // so all three are pins here; skipping a bare one would drop the image from the check without a word.
+    const m = row.match(/^ {4}image_digest:[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s#"']+))/m);
+    const digest = m?.[1] ?? m?.[2] ?? m?.[3] ?? '';
     if (enabled === 'false' || digest === '') continue;
     if (!image || !IMAGE.test(image)) throw new Error(`add-on ${id}: image ${JSON.stringify(image)} is not docker.io/hybridcloudworks/<name>`);
     if (!DIGEST.test(digest)) throw new Error(`add-on ${id}: image_digest ${JSON.stringify(digest)} is not sha256:<64 hex>`);

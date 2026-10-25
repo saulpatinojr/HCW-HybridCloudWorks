@@ -35,6 +35,20 @@ describe('read-addon-pins: the add-on images the lab host runs', () => {
     expect(pins.map((p) => p.id)).toEqual(['mo']);
   });
 
+  it('reads a bare or single-quoted digest as the same pin the addons role reads, not as an empty one', () => {
+    const bare = row('mo').replace(`image_digest: "${D1}"`, `image_digest: ${D1}`);
+    const single = row('ne').replace(`image_digest: "${D1}"`, `image_digest: '${D2}'`);
+    const commented = row('ca').replace(`image_digest: "${D1}"`, `image_digest: ${D1} # pinned 2026-10-25`);
+    expect(bare).toContain(`image_digest: ${D1}\n`);
+    expect(readAddonPins(fixture(bare + single + commented)).map((p) => [p.id, p.digest])).toEqual([
+      ['mo', D1],
+      ['ne', D2],
+      ['ca', D1],
+    ]);
+    // A bare value that is not a digest still stops the run.
+    expect(() => readAddonPins(fixture(row('mo').replace(`image_digest: "${D1}"`, 'image_digest: latest')))).toThrow(/image_digest/);
+  });
+
   it('stops on a malformed pin instead of skipping it', () => {
     expect(() => readAddonPins(fixture(row('mo', { digest: 'sha256:abc' })))).toThrow(/image_digest/);
     expect(() => readAddonPins(fixture(row('mo', { image: 'ghcr.io/someone/else' })))).toThrow(/is not docker\.io\/hybridcloudworks/);
