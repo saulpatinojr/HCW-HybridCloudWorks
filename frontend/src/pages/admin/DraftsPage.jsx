@@ -10,9 +10,11 @@
  * Queue. An article In Review that came from here can come back with Back to
  * Drafts; one that is live is never touched from this page.
  *
- * "Import from docs/content" brings the repository's `blog-*.md` articles in
- * once, as drafts. After that, this page is their source of truth and
- * docs/content is an archive.
+ * "Paste or upload a markdown draft" brings whole `.md` files in (the owner's
+ * private vault; several at once, one request each) or one pasted draft, as
+ * drafts. "Import from docs/content" brings the repository's `blog-*.md`
+ * articles in once, as drafts, and is kept until a later change retires it.
+ * After either, this page is the article's source of truth.
  *
  * TWO TABS. Every write carries the etag of the version on screen, and the
  * API refuses it (412, code CONFLICT) when the stored version has moved on.
@@ -32,11 +34,13 @@ import { useToast } from '@/components/ui/use-toast';
 import { useAuthReady } from '@/hooks/useAuthReady';
 import DraftList from './drafts/DraftList';
 import DraftEditor from './drafts/DraftEditor';
+import MarkdownDraftPanel from './drafts/MarkdownDraftPanel';
 import { deleteConfirmCopy, describeImportResult, describeSaveState } from './drafts/draftForm';
 import { useDraftList } from './drafts/useDraftList';
 import { useOpenDraft } from './drafts/useOpenDraft';
 import { useDraftWrites } from './drafts/useDraftWrites';
 import { useDraftImport } from './drafts/useDraftImport';
+import { useMarkdownDrafts } from './drafts/useMarkdownDrafts';
 import { LEAVE_CONFIRM, useUnsavedGuard } from './drafts/useUnsavedGuard';
 
 const IMPORT_TONE_CLASS = {
@@ -95,7 +99,7 @@ function Alert({ tone = 'error', children }) {
 
 const DRAFTS_HELP = [
   'What this page is: the writing desk before the pipeline. Articles written here are saved in the site from any device; nothing is published from this page.',
-  'New draft starts one; Import from docs/content brings the repository articles in once, as drafts. Save keeps your text; two tabs cannot overwrite each other.',
+  'New draft starts one; Paste or upload a markdown draft brings in whole files from your vault (or one pasted draft); Import from docs/content brings the repository articles in once, as drafts. Save keeps your text; two tabs cannot overwrite each other.',
   'Kind and idea origin classify the draft (what it becomes, how it started); set them before sending it on so downstream tools pick it up correctly.',
   'Where it goes next: Send to In Review puts the draft on the Review Queue under In Review. Back to Drafts brings it here again until it is approved.',
 ];
@@ -148,6 +152,7 @@ export default function DraftsPage() {
   const editor = useOpenDraft(list.upsert);
   const writes = useDraftWrites({ editor, list, toast });
   const repoImport = useDraftImport({ list, toast });
+  const markdownDrafts = useMarkdownDrafts({ list, toast });
   // A pending switch away from unsaved changes: () => void, run on confirm.
   const [pendingSwitch, setPendingSwitch] = useState(null);
 
@@ -200,6 +205,8 @@ export default function DraftsPage() {
         onRefresh={list.reload}
         refreshing={list.loading}
       />
+
+      <MarkdownDraftPanel uploads={markdownDrafts} />
 
       <ImportResults results={repoImport.results} onDismiss={repoImport.dismiss} />
 

@@ -2,7 +2,7 @@
  * drafts-http.js — the Drafts stage, /admin/drafts (owner request
  * 2026-10-03). Semantics in lib/cms/drafts-handlers.js and lib/cms/drafts.js.
  *
- * Five templates, so five registrations, each through httpRouteByMethod so a
+ * Six templates, so six registrations, each through httpRouteByMethod so a
  * later verb on any of them is a new key in `handlers`, never a second
  * function on the same template (T-510, route-inventory property 4).
  * `cms/drafts/import-repo` is a literal segment beside the `cms/drafts/{id}`
@@ -50,6 +50,14 @@ httpRouteByMethod('cmsDrafts', {
   handlers: {
     GET: (request, context) => handlers(context).list(request, context),
     POST: (request, context) => handlers(context).create(request, context),
+  },
+});
+
+httpRouteByMethod('cmsDraftsFromMarkdown', {
+  authLevel: 'anonymous',
+  route: 'cms/drafts/from-markdown',
+  handlers: {
+    POST: (request, context) => handlers(context).createFromMarkdown(request, context),
   },
 });
 

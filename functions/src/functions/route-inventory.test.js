@@ -489,6 +489,7 @@ describe("the Drafts stage routes", () => {
     "cms/drafts/{id}/send-to-review": ["POST"],
     "cms/drafts/{id}/back-to-drafts": ["POST"],
     "cms/drafts/import-repo": ["POST"],
+    "cms/drafts/from-markdown": ["POST"],
   };
 
   it.each(Object.entries(VERBS))(

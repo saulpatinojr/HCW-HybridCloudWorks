@@ -44,6 +44,17 @@ export const STAGE_LABELS = Object.freeze({
   new: 'New',
 });
 
+/**
+ * Where a draft came from, as the list says it (`draftOrigin` on the document,
+ * functions/src/lib/cms/drafts-stage.js DRAFT_ORIGINS). Anything else, the
+ * page's own 'drafts', reads "Written here".
+ */
+export const ORIGIN_LABELS = Object.freeze({
+  'repo-import': 'From docs/content',
+  vault: 'From my vault',
+  paste: 'Pasted in',
+});
+
 /** What a stage lets the owner do, for a draft not saved yet. */
 export const NEW_DRAFT_ACTIONS = Object.freeze({
   edit: true,
@@ -194,4 +205,83 @@ export function deleteConfirmCopy(draft) {
       ? 'The draft is removed from the site. This cannot be undone.'
       : 'This draft has never been saved; its text will be discarded.',
   };
+}
+
+// ── Paste or upload a markdown draft (POST cms/drafts/from-markdown) ───────
+
+export const FROM_MARKDOWN_ROUTE = 'cms/drafts/from-markdown';
+
+/**
+ * The most a draft file can be: the 256 KB body plus 16 KB of front matter
+ * (functions/src/lib/cms/drafts-markdown.js MAX_MARKDOWN_BYTES). Checked here
+ * only to spare sending a file the API would refuse; the API is the rule.
+ */
+export const MAX_MARKDOWN_FILE_BYTES = 272 * 1024;
+
+/**
+ * One line of the result list for one file (or the pasted text): `answer` is
+ * what the API said, or `error` is what went wrong. Plain words, no codes.
+ *
+ * @param {string} name - the file name, or 'Pasted text'
+ * @param {{ answer?: object, error?: Error }} outcome
+ * @returns {{ name: string, kind: 'created'|'present'|'published'|'failed',
+ *   tone: 'ok'|'skip'|'bad', text: string, warnings: string[] }}
+ */
+export function describeMarkdownResult(name, { answer, error } = {}) {
+  if (error) {
+    return {
+      name,
+      kind: 'failed',
+      tone: 'bad',
+      text: `Not added: ${error.message || 'something went wrong; nothing was saved.'}`,
+      warnings: [],
+    };
+  }
+  if (answer?.outcome === 'created') {
+    return {
+      name,
+      kind: 'created',
+      tone: 'ok',
+      text: 'Created as a draft',
+      warnings: answer.warnings || [],
+    };
+  }
+  if (answer?.code === 'PUBLISHED_ELSEWHERE') {
+    return {
+      name,
+      kind: 'published',
+      tone: 'skip',
+      text: 'Already present — an article with this title is already published',
+      warnings: [],
+    };
+  }
+  if (answer?.code === 'ALREADY_IMPORTED') {
+    const where = STAGE_LABELS[answer.stage] || 'Drafts';
+    return {
+      name,
+      kind: 'present',
+      tone: 'skip',
+      text: `Already present — ${where}`,
+      warnings: [],
+    };
+  }
+  return {
+    name,
+    kind: 'failed',
+    tone: 'bad',
+    text: 'Not added: the answer was not one this page understands; nothing was changed.',
+    warnings: [],
+  };
+}
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+/** The one line under a finished batch: "3 files: 1 created, 1 already present, 1 not added." */
+export function summarizeMarkdownBatch(lines, noun = 'file') {
+  const count = (kind) => lines.filter((line) => line.kind === kind).length;
+  const created = count('created');
+  const present = count('present') + count('published');
+  const failed = count('failed');
+  const parts = [`${created} created`, `${present} already present`, `${failed} not added`];
+  return `${plural(lines.length, noun, `${noun}s`)}: ${parts.join(', ')}. Nothing was published.`;
 }
