@@ -6,10 +6,10 @@
 
 **Scope:** how the three tool add-on images (migration, network assessment,
 cloud assessment) are checked for known vulnerabilities and policy problems,
-where each check runs, and how to run the same check on your own desktop.
+where each check runs, and how to run Scout on your own desktop.
 
 **Authority:** this page does not authorize a change. Turning Scout on for a
-repository is the owner's step in Docker; nothing in the repository does it.
+repository, and storing a Docker token anywhere, are the owner's decisions.
 
 ## What you have
 
@@ -31,12 +31,42 @@ repository is the owner's step in Docker; nothing in the repository does it.
 | Check | Where it runs | When | What it does |
 | --- | --- | --- | --- |
 | Trivy before publishing | each add-on repository's `publish-images.yml` | on a release tag | stops the push when the image has a HIGH or CRITICAL vulnerability with a fix |
-| **Add-on images against Docker Scout** | this repository, `.github/workflows/addon-image-scout.yml` | when a pull request changes the pins, and every Wednesday | looks again at the digests the host actually runs: policy table, then fails on a fixable CRITICAL or HIGH |
-| Lab supply chain | this repository, `lab-supply-chain.yml` | every Tuesday | the same idea with Trivy, for the two lab images (`hcw-lab`, `hcw-lab-runner`); opens an issue when something is due |
-| Scout's own analysis of a Docker Hub repository | Docker | continuously, once enabled | shows every tag's findings in the Scout dashboard and Docker Hub |
+| **Lab supply chain** (`lab-supply-chain.yml`, the scan step) | this repository | every Tuesday | looks again at the digests the host actually runs, the two lab images **and the three add-on images**, with Trivy; opens one issue, or comments on the open one, when something fixable turns up |
+| Scout's own analysis of a Docker Hub repository | Docker | continuously, once the owner enables it | shows every tag's findings and policy results in the Scout dashboard and in Docker Hub |
+| `docker scout` on your desktop | your machine | when you run it | the same Scout analysis on demand, for a published image or one you just built |
 
 The first runs only when an image is built. The advisory database moves after
-that, which is why the second and fourth exist.
+that, which is why the second exists: an add-on digest nobody touches is never
+rebuilt. There is no scan when a pull request changes a pin; the image was
+scanned at publish, and the next Tuesday run looks again.
+
+## Why Scout is not in CI
+
+Scout only answers a signed-in Docker user. Both ways of running it in GitHub
+Actions were tried on 2026-10-25 and both stopped:
+
+- `docker/scout-action` v1.27.0: `could not authenticate: user githubactions not
+  entitled to use Docker Scout` (run 40166549204);
+- the Scout command line, installed as a pinned binary on a clean runner:
+  `Log in with your Docker ID or email address to use docker scout` (run
+  40166753167).
+
+(An earlier version of this page said Scout needed no login. That was wrong: the
+desktop test that seemed to show it ran on a machine where Docker Desktop is
+signed in, which an empty Docker config folder does not undo.)
+
+So Scout in CI needs a Docker access token for an entitled user stored as a
+GitHub secret. The OIDC connections the publish workflows use cannot stand in:
+they carry only image pull and push, reading public repositories and Build Cloud
+connection
+([rulesets and scopes](https://docs.docker.com/security/authentication/oidc-connections/rulesets-claims/)).
+The repository avoids a second home for a credential, and Trivy already gives
+the vulnerability gate, so this page recommends **not** storing a token for it.
+If the owner wants Scout's policy table in CI after all, that is a decision for
+issue [#1367](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1367):
+create a read-only personal access token in Docker
+([Access tokens](https://docs.docker.com/security/access-tokens/)), store it as
+one repository secret, and run the action with it. Nothing here does that.
 
 ## Turn Scout on (the owner's step)
 
@@ -62,7 +92,9 @@ Docker publishes no deeper link than those pages.
 ## Check an image on your desktop
 
 Docker Desktop's command line already has Scout (`docker scout version` prints
-it). These read only, and the images are public, so no sign-in is needed.
+it), and it works while Docker Desktop is signed in to your Docker account. The
+commands only read. If one answers `Log in with your Docker ID`, sign in to
+Docker Desktop and run it again.
 
 A published image, by tag:
 
@@ -95,10 +127,10 @@ add-on repository's folder; the tag is yours to choose):
 docker build -t addon-try -f infrastructure/docker/Dockerfile.lab . ; docker scout quickview local://addon-try
 ```
 
-`local://` means *the image in this desktop's own store, no registry lookup*;
-`registry://` the opposite (`docker scout quickview --help` lists the others).
 That is the migration add-on's Dockerfile; in the network assessment and cloud
-assessment repositories it is `infrastructure/docker/Dockerfile`.
+assessment repositories it is `infrastructure/docker/Dockerfile`. `local://`
+means *the image in this desktop's own store, no registry lookup*;
+`registry://` the opposite (`docker scout quickview --help` lists the others).
 
 ## Reading the result
 
@@ -107,14 +139,13 @@ assessment repositories it is `infrastructure/docker/Dockerfile`.
 - **"Copyleft licensed packages found"** is the one that fails, on every
   Debian-based image: it counts the licences of the base operating system's own
   packages (243 on the migration image, 273 on the other two). It is a licence
-  flag, not a vulnerability, so the workflow shows it and does not fail on it.
-  Whether to loosen it is open on issue
-  [#1367](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1367).
-- **"No fixable critical or high vulnerabilities"** is the one the workflow
-  fails on. A finding with no fix available yet (the migration image has eight
+  flag, not a vulnerability. Whether to loosen it is open on #1367.
+- **"No fixable critical or high vulnerabilities"** is the one that matters for
+  safety. A finding with no fix available yet (the migration image has eight
   high ones in the Debian base) is shown but does not fail it: nothing can be
   done until Debian ships a fix, and a newer base digest arrives with the next
-  release.
+  release. Checked by hand: `docker scout cves --only-fixed … --exit-code`
+  exits 0 on the three published images and 2 on `node:18-bullseye-slim`.
 - **"Supply chain attestations"** and **"No outdated base images"** need the
   image's SBOM and provenance, which the publish workflows attach. Scout
   suggests building with maximum provenance for exact base-image detection; that
@@ -122,24 +153,11 @@ assessment repositories it is `infrastructure/docker/Dockerfile`.
 
 ## What is deliberately not set up
 
-- **Environments** (Scout's record of which image runs where, the **Configure an
-  environment** guide in the Scout dashboard). Recording an image into one from
-  CI needs a stored Docker access token, and the OIDC connections used for
-  publishing carry only image pull and push, reading public repositories and
-  Build Cloud connection, so they cannot do it
-  ([rulesets and scopes](https://docs.docker.com/security/authentication/oidc-connections/rulesets-claims/)).
-  A token in GitHub would be a second home for a credential, which this
-  repository avoids. The weekly check already names the digests the host runs.
-- **`docker/scout-action`.** The first version of the workflow used it and every
-  run failed with "could not authenticate: user githubactions not entitled to use
-  Docker Scout" (run 40166549204, 2026-10-25): the action signs in to Scout as a
-  Docker user, which would mean a Docker token stored in GitHub. The workflow
-  runs the Scout command line instead, as a pinned release binary whose checksum
-  is held in the workflow, and that needs no login for public images.
-- **Pull request comments**, for the same reason the job holds `contents: read`
-  only: a comment would need `pull-requests: write`, and the job summary carries the same table.
-- **Blocking merges.** The check is not one of the ruleset's required checks;
-  making it required is the owner's call.
+- **Scout environments** (Scout's record of which image runs where, the
+  **Configure an environment** guide in the Scout dashboard). Recording an image
+  into one from CI needs the same stored Docker token, so it is not set up. The
+  weekly scan already names the digests the host runs.
+- **A required status check.** The weekly scan opens an issue; it blocks no merge.
 
 ## Docker Hub housekeeping
 

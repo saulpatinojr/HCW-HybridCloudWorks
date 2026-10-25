@@ -61,9 +61,11 @@
 #      opened with GITHUB_TOKEN never gets its required checks. That is also
 #      why this file holds no `contents: write` or `pull-requests: write`
 #      grant (scripts/workflow-write-permissions.test.mjs).
-#   3. `check` compares every pin with upstream, scans the two published lab
-#      image digests the host actually runs — read from
-#      vps-agent/lib/capabilities.js and the Coder template, not from a tag —
+#   3. `check` compares every pin with upstream, scans the published image
+#      digests the host actually runs — the two lab images, read from
+#      vps-agent/lib/capabilities.js and the Coder template, and the tool
+#      add-on images, read from `addons[]` in group_vars/all.yml by
+#      scripts/lab/read-addon-pins.mjs, not from a tag —
 #      with Trivy for HIGH and CRITICAL vulnerabilities with a fix available,
 #      and opens one issue (or comments on the open one) when a pin is
 #      behind, an image needs a fix, or a pin could not be bumped. A clean
@@ -470,13 +472,17 @@ jobs:
           full_digest=$(grep -oE 'image_digest\s*=\s*"sha256:[0-9a-f]{64}"' lab-host/coder/templates/hcw-lab/main.tf | grep -oE 'sha256:[0-9a-f]{64}')
           full="docker.io/hybridcloudworks/hcw-lab@${full_digest}"
           test -n "$runner" && test -n "$full_digest"
+          # The tool add-ons the host runs, as <repository>@<digest>. The reader
+          # stops, and so does this step's `test`, on a pin it cannot read.
+          addon_images="$(node scripts/lab/read-addon-pins.mjs | jq -r '.include[].image')"
+          test -n "$addon_images"
           table="${RUNNER_TEMP}/scan.md"
           compact="${RUNNER_TEMP}/scan-summary.md"
-          echo "## Lab images against the vulnerability database" | tee "$table" > "$compact"
+          echo "## Lab and add-on images against the vulnerability database" | tee "$table" > "$compact"
           echo | tee -a "$table" >> "$compact"
           failed=0
           n=0
-          for image in "$runner" "$full"; do
+          for image in "$runner" "$full" $addon_images; do
             n=$((n+1))
             report="${RUNNER_TEMP}/scan-${n}.json"
             echo "### \`${image}\`" | tee -a "$table" >> "$compact"
@@ -547,7 +553,7 @@ jobs:
               echo
             fi
             if [ "${SCAN_FAILED}" = "1" ]; then
-              echo "**Images:** a published lab image carries a HIGH or CRITICAL vulnerability with a fix available. A newer base digest arrives as the \`chore/lab-pins-image-base\` pull request, and publish-lab-image.yml's weekly rebuild refreshes the full image's Debian packages; a fix that a tool or a Terraform provider carries arrives as the \`chore/lab-pins-image-tools\` pull request once its publisher has released it, and a finding in one already at its newest release waits on that publisher. Each publish from main opens the \`chore/lab-pins-image-digests\` pull request that pins the new digests where they run."
+              echo "**Images:** a published lab or add-on image carries a HIGH or CRITICAL vulnerability with a fix available. For an add-on image the fix is a new release of that add-on, pinned in group_vars/all.yml; for a lab image, a newer base digest arrives as the \`chore/lab-pins-image-base\` pull request, and publish-lab-image.yml's weekly rebuild refreshes the full image's Debian packages; a fix that a tool or a Terraform provider carries arrives as the \`chore/lab-pins-image-tools\` pull request once its publisher has released it, and a finding in one already at its newest release waits on that publisher. Each publish from main opens the \`chore/lab-pins-image-digests\` pull request that pins the new digests where they run."
             else
               echo "**Images:** no HIGH or CRITICAL vulnerability with a fix available."
             fi
