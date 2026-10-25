@@ -399,7 +399,12 @@ addons:
     image: docker.io/hybridcloudworks/hcw-addon-migration
     image_tag: "0.3.1"
     image_digest: "sha256:7c317b26ed680eb65dd472d5b4767486758a9c56e71e0b6703a92045f0b29d7b"
-    attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-AzMigrateOrchestrator_Addon/\.github/workflows/publish-images\.yml@refs/tags/'
+    # TWO REPOSITORY NAMES, ON PURPOSE (rename of 2026-10-24): the owner is renaming the add-on's repository from
+    # HCW-AzMigrateOrchestrator_Addon to HCW-MigrateOrchestrator_AddOn. A build attestation names the repository that
+    # built the image, and it cannot be edited afterwards, so the image pinned above (built under the old name) keeps
+    # needing the old name, while the first image built after the rename needs the new one. Delete the old name from this
+    # pattern once the pin has moved to an image attested under the new name (the cosign step passes on that pin).
+    attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-(AzMigrateOrchestrator_Addon|MigrateOrchestrator_AddOn)/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18081
     memory: 512m
     pids_limit: 256
