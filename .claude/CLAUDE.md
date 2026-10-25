@@ -70,9 +70,10 @@ something to remember.
   page that was found in the session, and give the clicks from there. The rule
   about links found rather than rebuilt from memory, in "Link the source",
   still applies.
-- **Check before sending.** Read the whole message once. For every issue, pull
-  request, decision, setting or file it names, check that its link is in the
-  same sentence, and add any that are missing. Do this for the closing
+- **Check before sending.** Read the whole message once. For every item it
+  names (an issue, pull request, workflow run, alert, review thread, settings
+  page, dashboard, document, file or open decision), check that its link is in
+  the same sentence, and add any that are missing. Do this for the closing
   summary (completed, my next steps, your next steps) first, because that is
   where the owner acts.
 
@@ -97,16 +98,28 @@ much as they should be.
     for Terraform, workflow and deployment-script changes; `cloud-prepress-reviewer`
     for an application or Azure change that needs an evidence check before a
     pull request or deployment.
+  - **When two agents match, the one whose area most of the change is in takes
+    the lead; add a second only when the change really spans two areas.** A
+    Dockerfile change goes to `docker-senior-engineer`; a change to the
+    workflow that builds it also goes to `github-expert-engineer` for the
+    workflow's security. The agent that reviews a branch before the pull request
+    is opened is the one for its main area, plus `infrastructure-pr-reviewer`
+    when the change is workflow or deployment code.
 - **For Microsoft and Azure facts, look them up with the Microsoft Learn
   documentation tools (`microsoft_docs_search`, `microsoft_docs_fetch`) before
-  answering from memory, and link the page used.**
+  answering from memory, and link the page used.** If those tools are not
+  available in the session, search and fetch the page on learn.microsoft.com
+  with the web tools instead, link what was opened, and say that the Learn
+  tools were not available.
 - **Brief an agent as you would brief a colleague who has just walked in.** It
   starts with no context: give the goal, what has been ruled out, the files and
   links that matter, and ask for findings with a file and line for each, the
   commands it ran, and anything it could not check. Never put a token, key or
   password in the briefing; say where it is kept instead.
-- **In the closing summary, say which agent was used and what it found.** If
-  the job was small enough to do directly, say so in one line.
+- **In the closing summary, say which agent was used and what it found.**
+  The only work done without an agent is a change that touches none of the
+  areas above, or a purely cosmetic edit with no change in behaviour (a typo, a
+  wording tweak, a corrected link); say so in one line.
 
 ## Owner-facing instructions must be runnable, not descriptive
 
