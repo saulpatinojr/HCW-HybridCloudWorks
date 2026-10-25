@@ -15,20 +15,27 @@
 # scan with Trivy before they push; this looks again at what is actually pinned.
 # lab-supply-chain.yml does the same weekly for the two lab images, with Trivy.
 #
-# NO CREDENTIALS. The add-on images are public, and Scout reads a public
-# image's SBOM and provenance attestations without a Docker login (read on
-# 2026-10-25 with an empty Docker config). So no Docker token is stored in this
-# repository for it: every job holds `contents: read` and nothing else, and the
-# pull request comment is off (`write-comment: false`); the result is the job
-# summary and the job's pass or fail. The Scout service's own per-repository
-# analysis, which shows in the Scout dashboard, is a separate setting the owner
-# turns on in Docker (docs/runbooks/docker-scout.md).
+# THE CLI, NOT docker/scout-action, AND NO CREDENTIALS. The first version of
+# this workflow used docker/scout-action v1.27.0 and failed on every image with
+# "could not authenticate: user githubactions not entitled to use Docker Scout"
+# (run 40166549204, 2026-10-25): the action signs in to the Scout service as a
+# Docker user, and the only way to give it one is a Docker access token stored
+# in this repository, a second home for a credential, which the publish
+# workflows avoid by using short-lived OIDC logins. The Scout command line, run
+# by hand with an empty Docker config on the same day, read the public images'
+# SBOM and provenance attestations and answered without any login. So this
+# installs that binary the way iac-validate.yml installs Trivy: a pinned release
+# whose checksum is held HERE, not fetched from the release that serves it.
+# Every job holds `contents: read` and nothing else. The Scout service's own
+# per-repository analysis, which shows in the Scout dashboard, is a separate
+# setting the owner turns on in Docker (docs/runbooks/docker-scout.md).
 #
 # WHAT IT DOES NOT DO. It does not block a merge: the check is not one of the
 # ruleset's required checks, which is the owner's decision to make. A weekly
-# failure shows as a red run in Actions. The copyleft policy, which fails on every Debian-based
-# image because of the base's own package licences, is shown in the table and
-# does not fail the job: only the vulnerability check does.
+# failure shows as a red run in Actions. The copyleft policy, which fails on
+# every Debian-based image because of the base's own package licences, is shown
+# in the table and does not fail the job (`quickview` exits 0 whatever the
+# policies say, read 2026-10-25): only the vulnerability check does.
 name: Add-on images against Docker Scout
 
 on:
@@ -48,6 +55,14 @@ permissions: {}
 concurrency:
   group: addon-image-scout-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # Pinned release binary with its checksum held HERE, as TRIVY_* are in
+  # lab-supply-chain.yml (T-755). The checksum is the one GitHub lists for the
+  # asset and the release's own docker-scout_1.27.0_checksums.txt lists the
+  # same value (both read 2026-10-25). Update both values in one commit.
+  SCOUT_VERSION: 1.27.0
+  SCOUT_SHA256: 815207e27559fd3d7dddfe778e86f0aeb823eeb24b3cd79d00bc5cd8dfd0724d
 
 jobs:
   pins:
@@ -91,19 +106,38 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.pins.outputs.matrix) }}
+    env:
+      IMAGE: ${{ matrix.image }}
     steps:
-      # docker/scout-action v1.27.0 (released 2026-10-21), pinned to its commit
-      # like every other action here. `command` takes a comma-separated list and
-      # stops at the first command that exits non-zero, so the policy table
-      # (quickview) is written to the summary before the vulnerability check
-      # (cves) can fail the job.
-      - name: Policies, then fixable critical and high vulnerabilities
-        uses: docker/scout-action@a4119c5a8c5076236a54e4ce99531f7e4dd2ef84 # v1.27.0
-        with:
-          command: quickview,cves
-          image: registry://${{ matrix.image }}
-          only-fixed: true
-          only-severities: critical,high
-          exit-code: true
-          summary: true
-          write-comment: false
+      - name: Install Docker Scout CLI (pinned release binary)
+        run: |
+          set -euo pipefail
+          tarball="docker-scout_${SCOUT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "/tmp/${tarball}" "https://github.com/docker/scout-cli/releases/download/v${SCOUT_VERSION}/${tarball}"
+          # The name sha256sum -c looks for is the tarball's own, so write it that way.
+          echo "${SCOUT_SHA256}  ${tarball}" > /tmp/scout_expected.txt
+          (cd /tmp && sha256sum -c scout_expected.txt)
+          tar -xzf "/tmp/${tarball}" -C /tmp docker-scout
+          mkdir -p "${HOME}/.docker/cli-plugins"
+          install -m 0755 /tmp/docker-scout "${HOME}/.docker/cli-plugins/docker-scout"
+          docker scout version
+
+      # Policies first, as information: quickview exits 0 whatever they say.
+      - name: Policies and base image
+        run: |
+          set -uo pipefail
+          out="${RUNNER_TEMP}/quickview.txt"
+          docker scout quickview "registry://${IMAGE}" 2>&1 | tee "$out"
+          { echo "### \`${IMAGE}\` — policies"; echo; echo '```'; cat "$out"; echo '```'; echo; } >> "$GITHUB_STEP_SUMMARY"
+
+      # The gate: exits 2 when the image has a CRITICAL or HIGH vulnerability
+      # with a fix available (read 2026-10-25: 0 on the three published images,
+      # 2 on node:18-bullseye-slim). A finding with no fix yet does not count.
+      - name: Fixable critical and high vulnerabilities
+        run: |
+          set -uo pipefail
+          out="${RUNNER_TEMP}/cves.txt"
+          docker scout cves --only-fixed --only-severity critical,high --exit-code "registry://${IMAGE}" 2>&1 | tee "$out"
+          code="${PIPESTATUS[0]}"
+          { echo "### \`${IMAGE}\` — fixable critical and high vulnerabilities (exit ${code})"; echo; echo '```'; cat "$out"; echo '```'; echo; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"

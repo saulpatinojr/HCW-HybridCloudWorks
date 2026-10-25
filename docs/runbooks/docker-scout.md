@@ -130,8 +130,14 @@ assessment repositories it is `infrastructure/docker/Dockerfile`.
   ([rulesets and scopes](https://docs.docker.com/security/authentication/oidc-connections/rulesets-claims/)).
   A token in GitHub would be a second home for a credential, which this
   repository avoids. The weekly check already names the digests the host runs.
-- **Pull request comments** from the Scout action (`write-comment: false`): it
-  would need `pull-requests: write`, and the job summary carries the same table.
+- **`docker/scout-action`.** The first version of the workflow used it and every
+  run failed with "could not authenticate: user githubactions not entitled to use
+  Docker Scout" (run 40166549204, 2026-10-25): the action signs in to Scout as a
+  Docker user, which would mean a Docker token stored in GitHub. The workflow
+  runs the Scout command line instead, as a pinned release binary whose checksum
+  is held in the workflow, and that needs no login for public images.
+- **Pull request comments**, for the same reason the job holds `contents: read`
+  only: a comment would need `pull-requests: write`, and the job summary carries the same table.
 - **Blocking merges.** The check is not one of the ruleset's required checks;
   making it required is the owner's call.
 
