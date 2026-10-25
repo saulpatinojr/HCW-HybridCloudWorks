@@ -154,6 +154,7 @@ nav:
       - Variables and secrets: standards/variables-and-secrets.md
       - Required inputs: standards/required-inputs.md
       - AddOn integration standard: standards/addon-integration-standard.md
+      - HCW field application standard: standards/hcw-field-application-standard.md
   - Security:
       - Scanner triage: security/scanner-triage.md
       - Credential rotation schedule: security/credential-rotation-schedule.md
