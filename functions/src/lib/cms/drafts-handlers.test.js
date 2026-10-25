@@ -28,7 +28,7 @@ import { matchesQueueStatus } from "../admin-snapshots.js";
  */
 const FIXTURES = new URL("./__fixtures__/", import.meta.url);
 const FIXTURE_NAMES = readdirSync(FIXTURES).filter((name) =>
-  name.endsWith(".md"),
+  name.endsWith(".txt"),
 );
 const fixtureText = (name) => readFileSync(new URL(name, FIXTURES), "utf8");
 const SAMPLE_02 = "docs/content/blog-sample-02-second-part.md";

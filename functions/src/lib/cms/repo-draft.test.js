@@ -4,7 +4,8 @@
  * page's markdown upload (drafts-markdown.js) uses the same parser.
  *
  * The three sample drafts are synthetic fixtures in ./__fixtures__, written
- * to the contract in docs/content/blog-template.md. They hold no real article
+ * to the contract in docs/content/blog-template.md. They are .txt files because
+ * the repository structure check allows Markdown only under docs/. They hold no real article
  * text: pre-publish drafts do not live in this public repository (owner rule
  * 2026-10-25), so the real files are not here to be read.
  */
@@ -42,7 +43,10 @@ const SAMPLE_DRAFTS = Object.freeze([
 
 /** A sample draft's text, from the fixture with the same file name. */
 const readRepoFile = (path) =>
-  readFileSync(new URL(`./__fixtures__/${path.split('/').at(-1)}`, import.meta.url), 'utf8');
+  readFileSync(
+    new URL(`./__fixtures__/${path.split('/').at(-1).replace(/\.md$/, '.txt')}`, import.meta.url),
+    'utf8'
+  );
 
 /** The fence every sample draft embeds, as written in the files. */
 const EMBED_FENCE = '```landing-zone\nlz=mg,policy,mgmt,hub&corp=0&online=0\n```';

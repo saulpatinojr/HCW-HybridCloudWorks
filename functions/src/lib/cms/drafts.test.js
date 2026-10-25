@@ -57,7 +57,10 @@ const EDITOR = "owner@hcw.dev";
 const SAMPLE_01 = "docs/content/blog-sample-01-first-part.md";
 const readRepoFile = (path) =>
   readFileSync(
-    new URL(`./__fixtures__/${path.split("/").at(-1)}`, import.meta.url),
+    new URL(
+      `./__fixtures__/${path.split("/").at(-1).replace(/\.md$/, ".txt")}`,
+      import.meta.url,
+    ),
     "utf8",
   );
 

@@ -175,7 +175,7 @@ describe("markdownDraftContentId", () => {
 
 describe("every sample draft", () => {
   const dir = new URL("./__fixtures__/", import.meta.url);
-  const files = readdirSync(dir).filter((name) => name.endsWith(".md"));
+  const files = readdirSync(dir).filter((name) => name.endsWith(".txt"));
 
   it("finds the fixtures", () => {
     expect(files.length).toBeGreaterThan(0);
