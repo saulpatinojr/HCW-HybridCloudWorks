@@ -1,6 +1,6 @@
 ---
 title: What 636 pull requests left behind
-subtitle: In 71 days one repository merged 636 pull requests. What its git history says about who opened them, which file collided, what squash merging hides, and the one-conflict-at-a-time rule that came out of it.
+subtitle: In 71 days one repository merged 636 pull requests, and its git history shows who opened them, which file collided, what squash merging hid, and where the one-conflict-at-a-time rule came from.
 date: 2026-10-25
 track: build-log
 tags: [git, github, merge-conflicts, commit-graph, ai-assisted-development]
@@ -56,31 +56,38 @@ authorship.
 
 The nearest signal is the `Co-Authored-By` line a commit can carry
 ([GitHub explains these trailers](https://docs.github.com/en/pull-requests/committing-changes-to-your-project/creating-and-editing-commits/creating-a-commit-with-multiple-authors)).
-653 of the 868 commits, 75%, have at least one, and the names on them are,
-almost all, an AI coding assistant's. Read that as "a session was involved",
-not as "the assistant wrote 75% of the code". A squash commit (a pull request
+653 of the 868 commits (75%) carry at least one. 603 of the 868 (69%) carry one
+from an AI coding assistant; the other 50 name bots, the owner, or GitHub's own
+assistant. Read that as "a session was involved", not as "the assistant wrote
+69% of the code". A squash commit (a pull request
 folded into one commit, [GitHub's page on merge methods](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/about-pull-request-merges))
 keeps the trailers of every commit inside it, so one involved session marks the
 whole thing.
 
 The pace is the part to notice. The median pull request took about 13
 minutes from opening to merge. 519 of the 636, 82%, merged within the hour,
-and 16 stayed open longer than a day. At the busiest moment 10 pull requests
-were open at once.
+and 16 stayed open longer than a day. Among the pull requests that later
+merged, at most 10 were open at once. Pull requests closed without merging are
+not in that count, so the true peak may be higher.
 
 ## The history changed shape in the middle
 
 The first thing that did not add up was that 868 commits and 636 pull
-requests do not line up. Before 2026-08-25 there were 414 commits for 177 pull requests, 2.3 commits
-each. From 2026-08-25 to the end of the quarter there were 454 commits for 459
+requests do not line up. Before 2026-08-25 there were 414 commits for 177 pull requests, about 2.3
+commits per pull request, counting both methods. From 2026-08-25 to the end of the quarter there were 454 commits for 459
 pull requests: about one each.
 
-The cause is how the pull requests were merged. The first month used **merge
-commits**, which keep every commit of the branch and add one more commit that
-joins it to `main`. There are 124 of them, and the last is dated 2026-08-24.
-Every pull request after that was **squashed**, folded into a single commit.
-Here is a stretch from 2026-08-05, as `git log --graph` printed it, with
-the commit subjects left off and one branch's eight commits collapsed to a
+The cause is how the pull requests were merged. A **merge commit** keeps every
+commit of the branch and adds one more commit that joins it to `main`. There
+are 124 in the quarter. The first is dated 2026-08-05 and the last 2026-08-24;
+119 of them merge a pull request and 5 bring `main` into a branch. **Squash
+merging** folds a whole pull request into one commit whose subject ends in the
+pull request number, like `(#151)`. The first such commit is dated 2026-08-21,
+so for four days, 2026-08-21 to 2026-08-24, both methods were in use. From
+2026-08-25 every pull request was squashed.
+
+Here is a stretch from 2026-08-05, redrawn from `git log --graph` with the
+commit subjects left off and the eight commits of one branch collapsed to a
 single line ([the `git log` manual](https://git-scm.com/docs/git-log)):
 
 ```text
@@ -140,14 +147,15 @@ a resolution that keeps both. It is also nearly unique. Of the 124 merge
 commits, `git diff-tree --cc` finds a hand-made change in only 3
 (a merge's result that differs from both of its parents, which is how a
 hand-made resolution shows up; [git's explanation of the combined diff](https://git-scm.com/docs/git-diff#_combined_diff_format)):
-this one, a second that reconciled a `package.json` and its lockfile (the file
-that pins exact dependency versions), and a third, a Dependabot merge that
-changed two lines of another workflow file. All three involve dependency
-updates, the kind of change that touches many files lightly.
+this one; a second, a merge of `main` into a long-lived branch that changed 47
+files (workflows, front-end files and lockfiles), with hand-made lines in a
+`package.json` and its lockfile (the file that pins exact dependency
+versions); and a third, a Dependabot merge that changed two lines of another
+workflow file.
 
 ## What the squash merges hid
 
-Here is what I could not measure. After 2026-08-24 every pull request was
+Here is what I could not measure. From 2026-08-25 every pull request was
 squashed, and I found no way to count its conflicts. The mechanism, as I read
 it: a conflict is resolved on the branch, before the merge, in the branch's
 own commits. The squash then folds them into one commit that shows the
@@ -160,14 +168,14 @@ what the history does show: the file they happen in.
 
 Of the 868 commits, 373 touched `CHANGELOG.md`, 43%. It is the project's list
 of finished work, kept in the
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format, and every
-pull request adds its entry near the top, under the same `[Unreleased]`
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format, and nearly
+every pull request from the owner's account adds its entry near the top, under the same `[Unreleased]`
 heading. Two pull requests open together will often insert lines at the same
-spot, and when they do, whichever merges second conflicts. No code needs to
+spot, and when they do, the one that merges second tends to conflict. No code needs to
 be shared.
 
-On 2026-09-29, the busiest day, 25 of the 31 commits edited it. All 25 came
-from the owner's account. The six that did not, five from Dependabot and one
+On 2026-09-29, the busiest day, 25 of the 31 commits edited it. All 25 carry
+the owner's commit author name. The six that did not, five from Dependabot and one
 from the GitHub App, touched other files. That day came 19 days after I wrote
 a rule about exactly this file.
 
@@ -200,7 +208,7 @@ These are opinions. I have not tried the first two.
   at release time, so two pull requests never edit the same line. The cost is
   the script, and I would weigh it against 373 commits.
 - **Choose the merge method before the first pull request.** Every figure that
-  crosses 2026-08-24 compares two different histories. The mismatch
+  spans 2026-08-05 to 2026-08-24 mixes two merge methods. The mismatch
   between 868 and 636 is how it shows.
 
 ## Where it stands
@@ -226,9 +234,13 @@ under `/github/blog/` and its title's slug.
 Run these in a full clone of the
 [repository](https://github.com/saulpatinojr/HCW-HybridCloudWorks) (not
 `--depth 1`), after `git fetch origin main`. They were run on 2026-10-25 at
-`origin/main` `b7928763`. In bash, or Git Bash on Windows. Dates in `git log`
-use each commit's own time zone, and `gh` search uses UTC, so a count at a
-window's edge can differ by a commit or two. The GitHub CLI's
+`origin/main` `b7928763`, in bash (Git Bash on Windows), on a US Central
+(UTC-5) machine. The quarter is calendar Q3, and the repository's first commit
+is 2026-07-22, so nothing is cut at the start. `git log --since` and `--until`
+read dates in your machine's time zone and `gh` searches use UTC. At the end of
+the quarter that matters for one commit, `46db4972`, made on the evening of
+2026-09-30 Central time and so already 2026-10-01 in UTC: a machine in UTC
+counts 867 commits, not 868. The GitHub CLI's
 [`gh pr list`](https://cli.github.com/manual/gh_pr_list) manual covers
 `--search` and `--json`.
 
@@ -264,7 +276,14 @@ gh pr list --state merged --search "merged:2026-07-01..2026-09-30" --limit 1000 
 git log origin/main --since=2026-07-01 --until=2026-10-01 -i --grep='^Co-Authored-By:' --oneline | wc -l
 ```
 
-**The names on those trailers.** One count per name, per trailer line.
+**The trailers from an AI coding assistant.** It prints `603`, which is 69.5%
+of 868. The other 50 commits name bots, the owner, or GitHub's own assistant.
+
+```bash
+git log origin/main --since=2026-07-01 --until=2026-10-01 -i --grep='^Co-Authored-By: Claude' --oneline | wc -l
+```
+
+**The names on all the trailers.** One count per name, per trailer line.
 
 ```bash
 git log origin/main --since=2026-07-01 --until=2026-10-01 --format=%b | grep -i '^co-authored-by:' | sed 's/ *<.*//' | sort | uniq -c | sort -rn | head
@@ -287,7 +306,8 @@ git log origin/main --since=2026-09-29T00:00:00Z --until=2026-09-30T00:00:00Z --
 git log origin/main --since=2026-09-29T00:00:00Z --until=2026-09-30T00:00:00Z --oneline -- CHANGELOG.md | wc -l
 ```
 
-**Who wrote those 25.** It prints `25` beside the owner's account name.
+**Who wrote those 25.** It prints `25` beside the owner's commit author name
+(the name in the commit, not a check of the GitHub account).
 
 ```bash
 git log origin/main --since=2026-09-29T00:00:00Z --until=2026-09-30T00:00:00Z --format=%an -- CHANGELOG.md | sort | uniq -c
@@ -300,19 +320,41 @@ which is 43.0% of 868.
 git log origin/main --since=2026-07-01 --until=2026-10-01 --oneline -- CHANGELOG.md | wc -l
 ```
 
-**The merge commits and the last one's date.** They print `124` and
-`2026-08-24`.
+**The merge commits, the last one's date and the first one's.** They print
+`124`, `2026-08-24` and `2026-08-05`.
 
 ```bash
-git log origin/main --merges --oneline | wc -l
+git log origin/main --since=2026-07-01 --until=2026-10-01 --merges --oneline | wc -l
 ```
 
 ```bash
-git log origin/main --merges -1 --format=%ad --date=short
+git log origin/main --since=2026-07-01 --until=2026-10-01 --merges -1 --format=%ad --date=short
+```
+
+```bash
+git log origin/main --since=2026-07-01 --until=2026-10-01 --merges --reverse --format=%ad --date=short | head -1
+```
+
+**Which merge commits merge a pull request.** They print `119` and `5`.
+
+```bash
+git log origin/main --since=2026-07-01 --until=2026-10-01 --merges --grep='^Merge pull request' --oneline | wc -l
+```
+
+```bash
+git log origin/main --since=2026-07-01 --until=2026-10-01 --merges --invert-grep --grep='^Merge pull request' --oneline | wc -l
+```
+
+**The first squash commit.** The subject ends in a pull request number. The
+first line printed is dated `2026-08-21`.
+
+```bash
+git log origin/main --no-merges -E --grep='\(#[0-9]+\)$' --reverse --format='%h %ad %s' --date=short | head -3
 ```
 
 **The merge commits with a hand-made change.** It prints three hashes:
-`e1ff5b19`, `6127bb77` and `1b5c0974`.
+`e1ff5b19`, `6127bb77` and `1b5c0974`. For the second, `git diff --stat
+6127bb77^1 6127bb77` ends `47 files changed`.
 
 ```bash
 for c in $(git log origin/main --merges --format=%h); do [ -n "$(git diff-tree --cc --no-commit-id -r $c)" ] && echo $c; done
@@ -389,14 +431,15 @@ for _, step in events:
 print(most)
 ```
 
-It prints `12.7`, then `519 16`, then `10`. The last counts only pull requests
-that merged, so the true number open at once may be higher.
+It prints `12.7`, then `519 16`, then `10`. The last is the most open at once
+among pull requests that merged; ones closed without merging are not in the
+list, so the true peak may be higher.
 
 <!-- Sources and checks, 2026-10-25 (the CMS strips this comment):
   all repository figures: the commands in "How these numbers were counted", run in a worktree of origin/main b7928763
-  .claude/CLAUDE.md: "authors as the owner's account" (section on the CodeRabbit approval) and "Several PRs at once, but conflicts are resolved one at a time" (quoted lines)
+  .claude/CLAUDE.md: "authors as the owner's account" and "Several PRs at once, but conflicts are resolved one at a time" (quoted lines)
   pull request 486 / commit 9e28c8a1: the rule's origin, "Two owner instructions from 2026-09-10"
-  frontend/src/components/shared/Footer.jsx: the GitKraken Ambassador text link (https://www.gitkraken.com/ambassador, HTTP 200 on 2026-10-25)
+  the site footer links the GitKraken Ambassador programme page (https://www.gitkraken.com/ambassador, HTTP 200 on 2026-10-25)
   documentation links opened with curl on 2026-10-25, all HTTP 200: docs.github.com (merge conflicts, pull request merges, Dependabot, multiple authors), git-scm.com (git-log, git-diff combined diff format), keepachangelog.com, cli.github.com/manual/gh_pr_list
   not verified: that conflicts fell after the 2026-09-10 rule (the history cannot show it); that the mechanism in "What the squash merges hid" is what happened on any given pull request (it is a reading of how squash merges work); whether the third hand-made merge commit (e1ff5b19) was a conflict (it changed two lines of one workflow file); how many of the 566 pull requests from the owner's account were written in assistant sessions
   not verified: the two "would do" suggestions (a changelog file per pull request; a conflict line in the description) were not tried
