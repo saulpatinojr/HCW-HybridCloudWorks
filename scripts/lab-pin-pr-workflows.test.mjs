@@ -264,6 +264,17 @@ describe('lab-supply-chain.yml', () => {
     expect(issue).toContain('head -c 60000');
   });
 
+  it('scans the tool add-on images the host runs too, read from the pins and not from a tag (#1367)', () => {
+    const check = source.slice(source.indexOf('  check:'));
+    const scan = check.slice(check.indexOf('- name: Scan the published lab images the host runs'), check.indexOf('- name: Open or update the issue'));
+    // The reader stops on a pin it cannot read and the step refuses an empty list, so a broken read is a failure and not a quiet pass.
+    expect(scan).toContain('addon_images="$(node scripts/lab/read-addon-pins.mjs | jq -r \'.include[].image\')"');
+    expect(scan).toContain('test -n "$addon_images"');
+    expect(scan).toContain('for image in "$runner" "$full" $addon_images; do');
+    // The issue says what an add-on finding needs, because the lab images' fix path does not apply to it.
+    expect(check).toContain('For an add-on image the fix is a new release of that add-on');
+  });
+
   it('records the sets\' paths before the downloaded CLI runs, refuses any change outside them, and judges the patch before the token job applies it', () => {
     const propose = source.slice(source.indexOf('  propose:'), source.indexOf('  pull-request:'));
     const order = [

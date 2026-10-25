@@ -133,6 +133,7 @@ nav:
       - Availability probe: runbooks/availability-probe.md
       - Cosmos restore: runbooks/cosmos-restore.md
       - Edge and DNS verification: runbooks/edge-dns-verification.md
+      - Docker Scout and the add-on images: runbooks/docker-scout.md
       - Add an interview: runbooks/add-an-interview.md
       - Idea notes in Obsidian: runbooks/obsidian-idea-notes.md
       - Labs host access and Arc onboarding: runbooks/labs-host.md
