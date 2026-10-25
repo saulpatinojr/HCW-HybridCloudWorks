@@ -216,7 +216,8 @@ means *the image in this desktop's own store, no registry lookup*;
 - **"Copyleft licensed packages found"** is the one that fails, on every
   Debian-based image: it counts the licences of the base operating system's own
   packages (243 on the migration image, 273 on the other two). It is a licence
-  flag, not a vulnerability. Whether to loosen it is open on #1367.
+  flag, not a vulnerability. The owner decided on 2026-10-25 to leave it as it
+  is ([#1367](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1367#issuecomment-6398552231)).
 - **"No fixable critical or high vulnerabilities"** is the one that matters for
   safety. A finding with no fix available yet (the migration image has eight
   high ones in the Debian base) is shown but does not fail it: nothing can be
