@@ -3013,18 +3013,18 @@ appears on a command line or in output. The `addons` role refuses to start
 the container while this key is unset, naming the key and this line.
 
 **2. Write the digest in.** The add-on's `v0.3.1` release prints
-`docker.io/hybridcloudworks/hcw-addon-migration@sha256:…` in its
+`docker.io/hybridcloudworks/img-mo-lab-addon@sha256:…` in its
 `publish-images` run summary; the same value, read from the registry.
 PowerShell, anywhere with Docker:
 
 ```powershell
-docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.1
+docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.1
 ```
 
 The `Digest:` line is the value for `image_digest` of the `migration` row in
 `lab-host/ansible/group_vars/all.yml`: for `v0.3.1`,
-`sha256:88b8d08892860f753c02f405d1b3b99146aed5e460b04a1c426670d9e5e5dd61`,
-written in on 2026-10-11. A row whose digest is empty deploys nothing and
+`sha256:7c317b26ed680eb65dd472d5b4767486758a9c56e71e0b6703a92045f0b29d7b`,
+read from the registry on 2026-10-25. A row whose digest is empty deploys nothing and
 says so.
 Merge, then run the playbook as after any merge. PowerShell:
 
@@ -3042,7 +3042,7 @@ ssh hcw-lab "curl -s http://127.0.0.1:18081/api/health"
 ```
 
 Success looks like a JSON body with `"ok":true`, `"id":"migration"` and a
-`"version"` matching the pinned tag (`0.3.1`). From outside, the name answers
+`"version"` matching the pinned tag without its `v` (`0.3.1`). From outside, the name answers
 with the site-only `frame-ancestors` and the add-on's own headers. PowerShell:
 
 ```powershell

@@ -364,7 +364,7 @@ portainer_image_digest: sha256:64593d0645eec314e84b93c03aba51db67c72ec12c7609273
 # status proxy reads the add-on as unreachable), and asserts a non-empty
 # digest before deploying. The migration row's digest is v0.3.1's image
 # index, read on 2026-10-11 with
-# `docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-migration:0.3.1`
+# `docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.1`
 # and equal to what the add-on's publish-images run recorded for pinning and
 # attested (`gh attestation verify` against the add-on's repository passed).
 # Run read-only, with every capability dropped and this row's environment,
@@ -396,8 +396,8 @@ addons_enabled: true
 addons:
   - id: migration
     enabled: true
-    image: docker.io/hybridcloudworks/hcw-addon-migration
-    image_tag: "0.3.1"
+    image: docker.io/hybridcloudworks/img-mo-lab-addon
+    image_tag: "v0.3.1"
     image_digest: "sha256:7c317b26ed680eb65dd472d5b4767486758a9c56e71e0b6703a92045f0b29d7b"
     # TWO REPOSITORY NAMES, ON PURPOSE (rename of 2026-10-24): the owner is renaming the add-on's repository from
     # HCW-AzMigrateOrchestrator_Addon to HCW-MigrateOrchestrator_AddOn. A build attestation names the repository that
@@ -427,8 +427,8 @@ addons:
       TURNSTILE_SECRET: vault_addon_migration_turnstile_secret
   - id: network-assessment
     enabled: true
-    image: docker.io/hybridcloudworks/hcw-addon-network-assessment
-    image_tag: "0.1.0"
+    image: docker.io/hybridcloudworks/img-ne-lab-addon
+    image_tag: "v0.1.0"
     image_digest: "sha256:202bc43bba9b8842bc9594c1dbe203ff636fddf3514d4255b8a60aabcb60aa77"
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-NetworkEyes_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18082
@@ -455,8 +455,8 @@ addons:
       TURNSTILE_SECRET: vault_addon_network_assessment_turnstile_secret
   - id: cloud-assessment
     enabled: true
-    image: docker.io/hybridcloudworks/hcw-addon-cloud-assessment
-    image_tag: "0.1.0"
+    image: docker.io/hybridcloudworks/img-ca-lab-addon
+    image_tag: "v0.1.0"
     image_digest: "sha256:d51be5be6496588d84bc56f843aa45971fab576bf4ee0d14968fd496888d551b"
     attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-CloudAssessor_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18083

@@ -152,7 +152,7 @@ LICENSE, NOTICE, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, CHANGELOG, VALIDATION,
 
 ## 10. Deployment standard
 
-- Image: `docker.io/hybridcloudworks/hcw-addon-<id>`, tags `<semver>` and digest; published by `publish-images.yml` on `v*`
+- Image: `docker.io/hybridcloudworks/img-<short name>-lab-addon`, tags `v<semver>` and digest; published by `publish-images.yml` on `v*`
   tags through the Docker OIDC connection (`vars.DOCKERHUB_ENABLED`, `vars.DOCKERHUB_CONNECTION`).
 - Host: website `lab-host/ansible/roles/addons` pulls by digest, runs one hardened `docker_container` per AddOn
   (`hcw-addon-<id>`, port 18081/18082/18083 on 127.0.0.1), waits on `/api/health`, writes the Caddy route, reloads Caddy.
@@ -182,7 +182,7 @@ on the lab host because it needs no Azure identity and the panes-only edge alrea
 1. App releases `vX.Y.Z` (core package + appliance image).
 2. AddOn `core-update.yml` sees the tag, runs the AddOn suite against it, opens a PR bumping the pin.
 3. AddOn releases `vA.B.C`; `publish-images.yml` pushes the image and prints the digest.
-4. Owner reads the digest (`docker buildx imagetools inspect docker.io/hybridcloudworks/hcw-addon-<id>:A.B.C`), pastes it into
+4. Owner reads the digest (`docker buildx imagetools inspect docker.io/hybridcloudworks/img-<short name>-lab-addon:vA.B.C`), pastes it into
    the website `group_vars`, opens the website PR; Ansible run deploys; status proxy shows the new version within a minute.
 5. Neither step requires a change in the other two repositories unless the contract changed (section 12).
 
