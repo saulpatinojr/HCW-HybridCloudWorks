@@ -121,7 +121,7 @@ export const addons = Object.freeze([
     // `downloads` (allow-downloads on the sandbox) confirmed by the owner on 2026-10-10, ADR 0035 decision 9, #1044;
     // the accepted-risk row in TODO.md applies. The pane keeps its "Copy report" control as the fallback.
     capabilities: Object.freeze(['navigate', 'downloads']),
-    docsUrl: 'https://github.com/saulpatinojr/HCW-AzMigrateOrchestrator_Addon#readme',
+    docsUrl: 'https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn#readme',
     articleSlugs: Object.freeze([]),
   }),
   Object.freeze({

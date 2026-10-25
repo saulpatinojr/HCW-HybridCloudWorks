@@ -34,7 +34,7 @@ with `status: 'coming'` and shows no frame.
 
 | Term | Meaning |
 | --- | --- |
-| App | The upstream product repository (for example `HCW-AzMigrateOrchestrator_App`). It owns the engine, rules and UI components and publishes them as packages or images. The site never integrates an App directly. |
+| App | The upstream product repository (for example `HCW-MigrateOrchestrator_App`). It owns the engine, rules and UI components and publishes them as packages or images. The site never integrates an App directly. |
 | AddOn | The downstream, web-front edition of an App: a container image whose lab edition takes an uploaded export, holds nothing beyond a TTL and can reach no cloud. It is what the site frames. |
 | Website | `HCW-HybridCloudWorks`: the React site on Static Web Apps, the Function App, the Terraform roots and the lab host's Ansible. It is the integration layer. |
 | Pane | A sandboxed `<iframe>` on a site page that loads the AddOn's own origin. The site sees nothing inside it except the messages the AddOn posts. |
@@ -116,7 +116,7 @@ Complete example row:
   technology: ['azure-resource-mover', 'terraform'],
   status: 'available',
   capabilities: ['navigate', 'downloads'], // ADR 0035 decision 9, confirmed 2026-10-10
-  docsUrl: 'https://github.com/saulpatinojr/HCW-AzMigrateOrchestrator_Addon#readme',
+  docsUrl: 'https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn#readme',
   articleSlugs: [],
 }
 ```

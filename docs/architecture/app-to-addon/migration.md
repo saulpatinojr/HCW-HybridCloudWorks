@@ -1,4 +1,4 @@
-# Migration: `HCW-AzMigrateOrchestrator_App` and `HCW-AzMigrateOrchestrator_Addon`
+# Migration: `HCW-MigrateOrchestrator_App` and `HCW-MigrateOrchestrator_AddOn`
 
 The first pair of the [App-to-AddOn program](README.md), and the first row the
 site framed. Network and cloud assessment joined it on 2026-10-12.
@@ -14,7 +14,7 @@ site framed. Network and cloud assessment joined it on 2026-10-12.
 | Status proxy | `GET /api/public/addons/migration/status`, reading `ADDON_MIGRATION_URL` |
 | Health `edition` | `demo` (an upstream constant; the site treats it as opaque) |
 | Vault key | `vault_addon_migration_turnstile_secret` (the AddOn's own human-verification widget `hcw-addon-migration`, separate from the site's, created by the owner on 2026-10-11) |
-| Pull requests | App: <https://github.com/saulpatinojr/HCW-AzMigrateOrchestrator_App/pull/15> (the `REFACTOR_APP.md` refactoring). AddOn: <https://github.com/saulpatinojr/HCW-AzMigrateOrchestrator_Addon/pull/4> (the pane app, the standard health shape, configurable `frame-ancestors`, rate limiting, `v0.3.0`) |
+| Pull requests | App: <https://github.com/saulpatinojr/HCW-MigrateOrchestrator_App/pull/15> (the `REFACTOR_APP.md` refactoring). AddOn: <https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn/pull/4> (the pane app, the standard health shape, configurable `frame-ancestors`, rate limiting, `v0.3.0`) |
 
 ## What the App keeps
 

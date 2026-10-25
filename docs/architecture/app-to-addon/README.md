@@ -13,7 +13,7 @@ contracts are the [AddOn integration standard](../../standards/addon-integration
 
 | Pair | App (upstream) | AddOn (downstream) | Site route | Row status |
 | --- | --- | --- | --- | --- |
-| [Migration](migration.md) | `HCW-AzMigrateOrchestrator_App` | `HCW-AzMigrateOrchestrator_Addon`, `migration.lab.hybridcloudworks.com` | `/tools/migration` (Tools menu: Migration Hub) | `available` |
+| [Migration](migration.md) | `HCW-MigrateOrchestrator_App` | `HCW-MigrateOrchestrator_AddOn`, `migration.lab.hybridcloudworks.com` | `/tools/migration` (Tools menu: Migration Hub) | `available` |
 | [Network assessment](network-assessment.md) | `HCW-NetworkEyes_App` | `HCW-NetworkEyes_AddOn`, `network-assessment.lab.hybridcloudworks.com` | `/tools/network-assessment` | `available` since 2026-10-12 (#1089) |
 | [Cloud assessment](cloud-assessment.md) | `HCW-CloudAssessor_App` | `HCW-CloudAssessor_AddOn`, `cloud-assessment.lab.hybridcloudworks.com` | `/tools/cloud-assessment` | `available` since 2026-10-12 (#1089) |
 | [Cloud Crawler](cloud-crawler.md) | `HCW-CloudCrawler_App` | `HCW-CloudCrawler_AddOn`, `cloud-crawler.lab.hybridcloudworks.com` (reserved) | `/tools/cloud-crawler` | `coming` since 2026-10-24: the AddOn is a skeleton and the App has not tagged a release |

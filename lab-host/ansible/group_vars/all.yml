@@ -372,7 +372,7 @@ portainer_image_digest: sha256:64593d0645eec314e84b93c03aba51db67c72ec12c7609273
 # (attested the same way, 2026-10-11) is asserted by the role's health wait
 # on deploy; the add-on's own CI ran its e2e suite on the same build.
 #
-# env is the add-on's own contract (HCW-AzMigrateOrchestrator_Addon
+# env is the add-on's own contract (HCW-MigrateOrchestrator_AddOn
 # docs/deployment/lab-host.md): the frame-ancestors and site origins are
 # derived from caddy_frame_ancestors so the CSP the add-on sends and the one
 # Caddy sends agree; AMO_TRUST_PROXY because Caddy sets X-Forwarded-For and

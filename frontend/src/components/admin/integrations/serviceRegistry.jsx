@@ -893,7 +893,7 @@ export const SERVICES = Object.freeze([
     name: 'Migration add-on',
     description:
       'The Azure migration assessment shown in a pane on the Migration Hub: its own container on the lab host, read through the status proxy.',
-    url: 'https://github.com/saulpatinojr/HCW-AzMigrateOrchestrator_Addon/releases',
+    url: 'https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn/releases',
     // The pane page's own read, cached server-side.
     test: testMigrationAddon,
     // No site secret: the add-on's human-verification secret lives in the

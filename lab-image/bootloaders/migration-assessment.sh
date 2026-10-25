@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootloader for migration-assessment (HCW-AzMigrateOrchestrator_Addon / amo-guided-lab)
+# Bootloader for migration-assessment (HCW-MigrateOrchestrator_AddOn / amo-guided-lab)
 # Downloads and extracts the user's one-time assessment bundle via python3 zipfile
 # (no unzip binary required) and writes the guided walkthrough README/START-HERE.
 set -euo pipefail
