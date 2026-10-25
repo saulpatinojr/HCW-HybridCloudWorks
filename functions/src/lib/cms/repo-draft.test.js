@@ -380,3 +380,104 @@ describe('sha256Hex', () => {
     expect(sha256Hex('abc')).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+// ── a body or front matter that arrives in a request must not stall the host ──
+//
+// POST cms/drafts/from-markdown hands this parser text from the network
+// (drafts-markdown.js), up to 272 KB. Three patterns here took quadratic or
+// cubic time on such text: measured on the old code, `](` repeated 130 000
+// times kept the event loop busy for 18 s, `](a.md#` repeated 4 000 times for
+// 110 s, and a front-matter value with 50 000 spaces or quotes for 0.7 s
+// (quadratic: 270 000 is about 20 s). They are scans now.
+
+describe('the parser stays linear on hostile text', () => {
+  // Generous for a shared CI runner; the old code needed seconds to minutes.
+  const BUDGET_MS = 250;
+  const timed = (fn) => {
+    const started = performance.now();
+    const result = fn();
+    return { ms: performance.now() - started, result };
+  };
+
+  it.each([
+    ['bare ](', '](', 130_000],
+    ['](a', '](a', 85_000],
+    ['](a.md# (the cubic case)', '](a.md#', 37_000],
+    ['](a.md) links', '](a.md)', 37_000],
+    ['](x(y.md(', '](x(y.md(', 37_000],
+  ])('finds links in a 256 KB body of repeated %s without stalling', (_name, unit, times) => {
+    const { ms, result } = timed(() => findRepoRelativeLinks(unit.repeat(times)));
+    expect(ms).toBeLessThan(BUDGET_MS);
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it('parses a whole draft whose body is 130 000 repeated ](', () => {
+    const text = `---\ntitle: T\n---\n\n${']('.repeat(130_000)}\n`;
+    const { ms, result } = timed(() => parseRepoDraft(text));
+    expect(ms).toBeLessThan(BUDGET_MS);
+    expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    ['a long run of spaces inside a value', `x${' '.repeat(260_000)}y`],
+    ['a long run of quotes inside a value', `x${"'".repeat(260_000)}x`],
+    ['a long run of quotes around a tag', `[${'"'.repeat(130_000)}x${"'".repeat(130_000)}]`],
+  ])('reads front matter with %s', (_name, value) => {
+    const { ms, result } = timed(() =>
+      parseRepoDraft(`---\ntitle: T\nsubtitle: ${value}\ntags: ${value}\n---\n\nBody\n`)
+    );
+    expect(ms).toBeLessThan(BUDGET_MS);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('the scans read what the patterns they replaced read', () => {
+  // The pattern findRepoRelativeLinks used before, kept here as the reference.
+  const OLD_LINKS = /\]\(((?!https?:\/\/|mailto:|#|\/)[^)\s]+?\.md)(?:#[^)\s]*)?\)/g;
+  const oldLinks = (body) => [...new Set([...body.matchAll(OLD_LINKS)].map((m) => m[1]))];
+
+  it.each([
+    '[Part 2](blog-lab-02-x.md)',
+    '[a](a.md#top) and [b](b.md)',
+    '[x](https://example.com/a.md) [y](mailto:a.md) [z](#a.md) [w](/a.md)',
+    '[a](docs/other.md#one#two)',
+    '[a](.md) [b](x.md.md) [c](x.mdx) [d](x.mdx.md)',
+    '[a](a b.md) [b](a.md ) [c]( a.md)',
+    '[a](x](y.md)',
+    '![img](pic.png) [no end](a.md',
+    '[a](a.md)[b](b.md)[a](a.md)',
+    '',
+  ])('finds the same links in %j', (body) => {
+    expect(findRepoRelativeLinks(body)).toEqual(oldLinks(body));
+  });
+
+  it('skips a link target longer than the cap, which no draft file name is', () => {
+    expect(findRepoRelativeLinks(`[a](${'a'.repeat(300)}.md)`)).toEqual([]);
+    expect(findRepoRelativeLinks(`[a](${'a'.repeat(150)}.md)`)).toHaveLength(1);
+  });
+
+  it('reads quoted and padded front-matter values as before', () => {
+    const { fields } = parseFrontMatter(
+      [
+        '---',
+        'title:    "Quoted # not a comment"   ',
+        "subtitle: x''twice''",
+        'track: how-to # a comment',
+        'empty:    ',
+        'part: ',
+        '# comment: line',
+        'tags: ["a", \'b\', ""]',
+        '---',
+        'x',
+      ].join('\n')
+    );
+    expect(fields).toMatchObject({
+      title: 'Quoted # not a comment',
+      subtitle: "x''twice",
+      track: 'how-to',
+      tags: '["a", \'b\', ""]',
+    });
+    expect(fields.empty ?? '').toBe('');
+    expect(parseInlineList('["a", \'b\', "", \'\'\'c\'\'\']')).toEqual(['a', 'b', 'c']);
+  });
+});

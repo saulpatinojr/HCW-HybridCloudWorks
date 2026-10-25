@@ -115,6 +115,12 @@ export const LIST_QUERY =
   `SELECT TOP ${MAX_LISTED_DRAFTS} ${LIST_PROJECTION} FROM c ` +
   "WHERE c.contentStatus = @drafting OR IS_DEFINED(c.draftOrigin) OR IS_DEFINED(c.repoPath)";
 
+const TOO_LARGE = {
+  status: 413,
+  code: "TOO_LARGE",
+  error:
+    "That file is too large to be a draft (at most about 272 KB: a 256 KB article and its front matter). Nothing was saved.",
+};
 const NOT_FOUND = { status: 404, code: "NOT_FOUND", error: "No such draft." };
 const BAD_ID = {
   status: 400,
@@ -146,6 +152,42 @@ const refuseIf = (refusal, extra) => {
 async function readBody(request) {
   const body = await request.json().catch(() => null);
   return body && typeof body === "object" && !Array.isArray(body) ? body : {};
+}
+
+/**
+ * The JSON body, read with a byte limit: the bytes are counted as they arrive
+ * and the read is abandoned the moment the total passes `maxBytes`, so an
+ * oversize body is never buffered whole or parsed. A declared Content-Length
+ * over the limit is refused first, without reading anything; a missing or
+ * false one changes nothing, because the count is of the bytes received.
+ * A request with no readable stream (the test doubles) falls back to
+ * request.json(). Unparseable JSON reads as {}, as readBody does.
+ */
+async function readBodyWithin(request, maxBytes) {
+  const declared = Number(request.headers?.get?.("content-length"));
+  refuseIf(Number.isFinite(declared) && declared > maxBytes && TOO_LARGE);
+  const reader = request.body?.getReader?.();
+  if (!reader) return readBody(request);
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Refusal(TOO_LARGE);
+    }
+    chunks.push(value);
+  }
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function readId(request) {
@@ -390,13 +432,6 @@ async function createDraft(deps, { request, user }) {
   return json(201, { ok: true, draft: toDraftView(created) });
 }
 
-const TOO_LARGE = {
-  status: 413,
-  code: "TOO_LARGE",
-  error:
-    "That file is too large to be a draft (at most about 272 KB: a 256 KB article and its front matter). Nothing was saved.",
-};
-
 /** A draft already on the desk (or put forward from it) under this title, or null. */
 async function draftWithTitle(deps, title) {
   const wanted = normalizeTitleForDedup(title);
@@ -430,15 +465,14 @@ const alreadyPresent = (row, title) =>
  * validator a typed draft goes through, then written create-only as a draft
  * (never Live, never public) under an id derived from its title. 201 created;
  * 200 skipped when the article is already here or already published; 400 for
- * a request or field the owner can correct; 413 too large; 422 for a file
+ * a request or field the owner can correct; 413 too large (counted as the
+ * body is read, so a missing or false Content-Length does not get past it); 422 for a file
  * that is not a draft (no front matter, no title, no body). The markdown is
  * never logged and never put in an audit row.
  */
 async function createFromMarkdown(deps, { request, user }) {
-  const declared = Number(request.headers?.get?.("content-length"));
-  refuseIf(Number.isFinite(declared) && declared > MAX_REQUEST_BYTES && TOO_LARGE);
   const { markdown, draftOrigin } = readMarkdownRequest(
-    await readBody(request),
+    await readBodyWithin(request, MAX_REQUEST_BYTES),
   );
   refuseIf(isMarkdownTooLarge(markdown) && TOO_LARGE);
 

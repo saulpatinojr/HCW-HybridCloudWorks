@@ -17,6 +17,7 @@ import { LIST_QUERY, createDraftsHandlers } from "./drafts-handlers.js";
 import { DRAFTS_STAGE_STATUS } from "./drafts.js";
 import {
   MAX_MARKDOWN_BYTES,
+  MAX_REQUEST_BYTES,
   markdownDraftContentId,
 } from "./drafts-markdown.js";
 import {
@@ -976,6 +977,158 @@ describe("from-markdown — a whole file becomes a draft", () => {
     expect(res.status).toBe(500);
     expect(JSON.stringify(res.body)).not.toContain("Body text.");
     expect(logged.join("")).not.toContain("Body text.");
+  });
+
+  it("ignores every front-matter key that is not one of the seven, so a file cannot set a workflow or identity field", async () => {
+    const { handlers, store } = setup();
+    const injected = [
+      "contentStatus: published",
+      "Live: true",
+      "Status: Published",
+      "id: attacker-chosen-id",
+      "slug: attacker-slug",
+      "Slug: attacker-slug",
+      "partitionKey: other",
+      "ownerId: someone-else",
+      "createdBy: someone-else",
+      "draftOrigin: repo-import",
+      "kind: framework",
+      "ideaOrigin: forge",
+      "approvedForBlog: true",
+      "publishedAt: 2020-01-01",
+      "__proto__: polluted",
+      "constructor: polluted",
+    ].join("\n");
+    const res = await fromMarkdown(
+      handlers,
+      MARKDOWN.replace("status: outlined", injected),
+    );
+    expect(res.status).toBe(201);
+    const id = markdownDraftContentId("A draft from my vault");
+    expect(res.body.contentId).toBe(id);
+    expect([...store.docs.keys()]).toEqual([id]);
+    const stored = store.docs.get(id);
+    expect(stored).toMatchObject({
+      id,
+      Live: false,
+      contentStatus: "drafting",
+      Status: "Draft",
+      approvedForBlog: false,
+      draftOrigin: "vault",
+      kind: "article",
+      ideaOrigin: "manual",
+      createdBy: "owner@hcw.dev",
+    });
+    for (const key of [
+      "slug",
+      "Slug",
+      "partitionKey",
+      "ownerId",
+      "publishedAt",
+      "polluted",
+    ]) {
+      expect(stored, key).not.toHaveProperty(key);
+    }
+    expect(JSON.stringify(stored)).not.toContain("attacker");
+    expect(Object.getPrototypeOf(stored)).toBe(Object.prototype);
+    expect({}.polluted).toBeUndefined();
+    expect(isPublicDocument(stored)).toBe(false);
+  });
+
+  describe("the request is counted as it is read", () => {
+    const streamOf = (chunks, { onPull } = {}) => {
+      let index = 0;
+      let cancelled = false;
+      const body = new ReadableStream({
+        pull(controller) {
+          onPull?.(index);
+          if (index < chunks.length) controller.enqueue(chunks[index++]);
+          else controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      return { body, wasCancelled: () => cancelled, pulled: () => index };
+    };
+    const streamed = (stream, headers = {}) => ({
+      params: {},
+      headers: {
+        get: (name) => headers[String(name).toLowerCase()] ?? null,
+      },
+      body: stream.body,
+      json: vi.fn(async () => {
+        throw new Error("json() must not be used when there is a stream");
+      }),
+    });
+    const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
+
+    it("refuses an oversize body with no Content-Length (chunked), stops reading, and writes nothing", async () => {
+      const { handlers, store } = setup();
+      const chunk = new Uint8Array(64 * 1024).fill(32);
+      const chunks = Array.from({ length: 200 }, () => chunk); // ~12.5 MB
+      const stream = streamOf(chunks);
+      const res = parse(
+        await handlers.createFromMarkdown(streamed(stream), context),
+      );
+      expect(res).toMatchObject({ status: 413, body: { code: "TOO_LARGE" } });
+      // Abandoned as soon as the limit was passed, not read to the end.
+      expect(stream.wasCancelled()).toBe(true);
+      expect(stream.pulled()).toBeLessThan(20);
+      expect(store.createDoc).not.toHaveBeenCalled();
+      expect(store.queryDocs).not.toHaveBeenCalled();
+    });
+
+    it("refuses a body bigger than the Content-Length it declares", async () => {
+      const { handlers, store } = setup();
+      const big = new Uint8Array(MAX_REQUEST_BYTES + 1).fill(32);
+      const res = parse(
+        await handlers.createFromMarkdown(
+          streamed(streamOf([big]), { "content-length": "100" }),
+          context,
+        ),
+      );
+      expect(res.status).toBe(413);
+      expect(store.createDoc).not.toHaveBeenCalled();
+    });
+
+    it("reads a body that arrives in pieces, and creates the draft", async () => {
+      const { handlers, store } = setup();
+      const bytes = encode({ markdown: MARKDOWN, origin: "vault" });
+      const half = Math.floor(bytes.length / 2);
+      const res = parse(
+        await handlers.createFromMarkdown(
+          streamed(streamOf([bytes.slice(0, half), bytes.slice(half)])),
+          context,
+        ),
+      );
+      expect(res.status).toBe(201);
+      expect(store.docs.size).toBe(1);
+    });
+
+    it("reads a body that is exactly at the limit", async () => {
+      const { handlers } = setup();
+      const base = encode({ markdown: MARKDOWN, origin: "vault", pad: "" });
+      const pad = " ".repeat(MAX_REQUEST_BYTES - base.length);
+      const bytes = encode({ markdown: MARKDOWN, origin: "vault", pad });
+      expect(bytes.length).toBe(MAX_REQUEST_BYTES);
+      const res = parse(
+        await handlers.createFromMarkdown(streamed(streamOf([bytes])), context),
+      );
+      expect(res.status).toBe(201);
+    });
+
+    it("answers a stream that is not JSON as a missing field (400), not a crash", async () => {
+      const { handlers, store } = setup();
+      const res = parse(
+        await handlers.createFromMarkdown(
+          streamed(streamOf([new TextEncoder().encode("{not json")])),
+          context,
+        ),
+      );
+      expect(res).toMatchObject({ status: 400, body: { code: "INVALID" } });
+      expect(store.createDoc).not.toHaveBeenCalled();
+    });
   });
 
   it("takes every docs/content article through the route, once", async () => {
