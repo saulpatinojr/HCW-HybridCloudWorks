@@ -57,6 +57,8 @@ describe('group_vars/all.yml add-on attestation configuration', () => {
     const expected = {
       migration: {
         repo: 'saulpatinojr/HCW-AzMigrateOrchestrator_Addon',
+        // The repository is being renamed; images built before and after carry different names in their attestation.
+        alsoAccepts: ['saulpatinojr/HCW-MigrateOrchestrator_AddOn'],
         tag: 'v0.3.1',
       },
       'network-assessment': {
@@ -78,6 +80,16 @@ describe('group_vars/all.yml add-on attestation configuration', () => {
 
       const legitimateIdentity = `https://github.com/${spec.repo}/.github/workflows/publish-images.yml@refs/tags/${spec.tag}`;
       expect(regex.test(legitimateIdentity), `regex for ${id} must match ${legitimateIdentity}`).toBe(true);
+
+      // A renamed repository is accepted only under the names listed for it, and only for the same workflow and tag refs.
+      for (const other of spec.alsoAccepts ?? []) {
+        const renamed = `https://github.com/${other}/.github/workflows/publish-images.yml@refs/tags/${spec.tag}`;
+        expect(regex.test(renamed), `regex for ${id} must match ${renamed}`).toBe(true);
+        const renamedBranch = `https://github.com/${other}/.github/workflows/publish-images.yml@refs/heads/main`;
+        expect(regex.test(renamedBranch), `regex for ${id} must reject branch refs under ${other}`).toBe(false);
+        const lookalike = `https://github.com/${other}-fork/.github/workflows/publish-images.yml@refs/tags/${spec.tag}`;
+        expect(regex.test(lookalike), `regex for ${id} must reject a lookalike of ${other}`).toBe(false);
+      }
 
       // Rejects non-tag refs (e.g. branch push)
       const branchIdentity = `https://github.com/${spec.repo}/.github/workflows/publish-images.yml@refs/heads/main`;
