@@ -1,0 +1,162 @@
+# Add-on guide against the website — does an add-on's integration guide still
+# say what the website's catalogue says? (#1356)
+#
+# THIS IS A REUSABLE WORKFLOW. It does not run here on its own. Each add-on
+# repository calls it from a small workflow of its own (docs/runbooks/addon-guide-drift.md
+# has the exact caller), so the comparison is written once, here, and the four
+# add-on repositories cannot each drift from it.
+#
+# WHAT IT CHECKS. The add-on's docs/website-integration/integration-guide.md
+# pastes a copy of its row from frontend/src/data/addons/catalogue.js. The script
+# scripts/addons/check-guide-drift.mjs compares that pasted row with the real
+# one, plus the loopback port with lab-host/ansible/group_vars/all.yml, and fails
+# naming each field that differs with both values. It also fails when the site no
+# longer lists the add-on, or when the guide has no readable row.
+#
+# TWO CHECKOUTS OF THE WEBSITE, ON PURPOSE.
+#   * The SCRIPT comes from the commit this workflow file itself was called at.
+#     The documented way to get that commit is the `job` context:
+#     `job.workflow_sha` and `job.workflow_repository` ("Example usage of `job`
+#     context workflow identity", a reusable workflow checking out its own source),
+#     https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+#     The caller pins this workflow by commit, so the script it runs is the one
+#     that commit holds. (`github.job_workflow_sha` is not on that page, so it is
+#     not used.) The sha is checked to be 40 hex characters before it is used,
+#     because an empty `ref` would quietly check out the default branch instead.
+#   * The DATA (the catalogue and the lab host's group_vars) comes from `main`,
+#     because the point is to compare the guide with the website as it is now.
+#     Sparse checkout of the two files; the repository is public, so no token of
+#     ours is involved. (actions/checkout insists on some token and defaults to the
+#     caller's own read-only one; persist-credentials false stops it being written
+#     to disk, and it can only read, in the caller's repository.)
+#
+# NO SECRET, NO WRITE. `permissions: {}` at the top and `contents: read` on the
+# job. No `pull_request_target`, no secrets, no inputs inside `run:` except
+# through environment variables (a value that is in an env var is data; one
+# pasted into the script text could be code). scripts/addon-guide-check-workflow.test.mjs
+# holds the file to all of that.
+name: Add-on guide against the website
+
+on:
+  workflow_call:
+    inputs:
+      addon-id:
+        description: The add-on's id in the website catalogue, for example network-assessment.
+        required: true
+        type: string
+      guide-path:
+        description: Where the add-on's integration guide is in the calling repository.
+        required: false
+        type: string
+        default: docs/website-integration/integration-guide.md
+
+permissions: {}
+
+jobs:
+  check:
+    name: Guide matches the website
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the calling repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: The inputs and this workflow's own commit are usable
+        env:
+          ADDON_ID: ${{ inputs.addon-id }}
+          GUIDE_PATH: ${{ inputs.guide-path }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "${ADDON_ID}" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$'; then
+            echo "::error::addon-id is not an add-on id (lowercase words joined by hyphens)."
+            exit 2
+          fi
+          case "${GUIDE_PATH}" in
+            /* | *..* | "")
+              echo "::error::guide-path must be a path inside the calling repository."
+              exit 2
+              ;;
+          esac
+          if [ ! -f "${GUIDE_PATH}" ]; then
+            echo "::error::No integration guide at ${GUIDE_PATH} in the calling repository."
+            exit 2
+          fi
+          if ! printf '%s' "${WORKFLOW_SHA}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::GitHub did not give this workflow's own commit (job.workflow_sha), so the comparison script cannot be fetched at a known version."
+            exit 2
+          fi
+
+      # The comparison script, at the commit this workflow was called at.
+      - name: Checkout the comparison script from the website
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: saulpatinojr/HCW-HybridCloudWorks
+          ref: ${{ job.workflow_sha }}
+          path: .hcw-site-tools
+          sparse-checkout: scripts/addons/check-guide-drift.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # The two files that hold the facts, as they are on main now.
+      - name: Checkout the website's catalogue and lab host settings from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: saulpatinojr/HCW-HybridCloudWorks
+          ref: main
+          path: .hcw-site-data
+          sparse-checkout: |
+            frontend/src/data/addons/catalogue.js
+            lab-host/ansible/group_vars/all.yml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # The script imports node: built-ins only, so there is no npm install.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      - name: Compare the guide with the website
+        env:
+          ADDON_ID: ${{ inputs.addon-id }}
+          GUIDE_PATH: ${{ inputs.guide-path }}
+        run: |
+          set -uo pipefail
+          out="${RUNNER_TEMP}/guide-drift.out"
+          err="${RUNNER_TEMP}/guide-drift.err"
+          status=0
+          node .hcw-site-tools/scripts/addons/check-guide-drift.mjs \
+            --catalogue .hcw-site-data/frontend/src/data/addons/catalogue.js \
+            --group-vars .hcw-site-data/lab-host/ansible/group_vars/all.yml \
+            --guide "${GUIDE_PATH}" \
+            --id "${ADDON_ID}" > "${out}" 2> "${err}" || status=$?
+
+          site_sha="$(git -C .hcw-site-data rev-parse HEAD)"
+          {
+            echo "### Integration guide against the website: \`${ADDON_ID}\`"
+            echo
+            echo "Guide: \`${GUIDE_PATH}\`. Website \`main\` at \`${site_sha}\`."
+            echo
+            if [ "${status}" -eq 0 ]; then
+              echo "**In step.** $(cat "${out}")"
+            else
+              echo "**Not in step** (exit ${status}):"
+              echo
+              echo '```text'
+              cat "${err}"
+              echo '```'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          cat "${out}"
+          cat "${err}" >&2
+          if [ "${status}" -ne 0 ]; then
+            echo "::error::The integration guide for ${ADDON_ID} does not match the website. The job summary lists each field."
+          fi
+          exit "${status}"
