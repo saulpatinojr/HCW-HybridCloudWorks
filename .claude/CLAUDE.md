@@ -42,6 +42,58 @@ next one is about how *commands* are written. Both apply at once.
   but the words in them are ordinary ones, and a term that needs explaining is
   explained or linked.
 
+## You run the work; the owner is the last gate, not the first
+
+Owner instructions of 2026-10-25, repeated several times in one day, so they
+are written down here instead of being asked for again. The owner is a
+single person who does no GitHub administration and does not want round
+trips. The session is the orchestrator of a team of agents and does the work.
+
+- **Do every ticket you can, in order, without asking.** The owner is needed
+  only for a decision that is truly theirs (money, a licence, what to say in
+  their name, an outward message from them) or for an action only their own
+  account can take. When a decision already has a recommendation and no one
+  objects, record it on the ticket and act on it; do not ask the owner to
+  "approve" something that is yours to decide.
+- **A missing permission is never the reason to hand work back.** The owner
+  can grant any permission. Say exactly which one is missing (the setting and
+  its link), keep working on everything that does not need it, and carry on as
+  soon as it is granted. The one thing you do not do is work around a refusal
+  from the safety check; you ask the owner for an explicit "allow" and give
+  the exact action.
+- **GitHub administration is yours.** Rulesets, board fields and views,
+  labels, issue and pull request housekeeping, variables, closing and
+  reopening, merging a pull request whose checks and reviews are in order: do
+  them through `gh` and the GraphQL API. Test before you ever say something
+  cannot be done through the API, and show the evidence for a real limit
+  (known one: GitHub has no API to create or edit a project's built-in
+  workflows, so the App repositories are added to the work board by
+  `C:\Users\saulp\.hcw\Sync-AppTicketsToBoard.ps1`, run hourly by the
+  `HCW-board-sync` scheduled task).
+- **Use the team.** Hand each ticket, review, build and test run to the
+  matching agent (see "Use the specialist agents"), brief it fully, run
+  independent ones in parallel, and check what comes back yourself before you
+  call it done. Agents work in their own worktrees. Other Claude sessions
+  work the App repositories: message them before touching the same files,
+  never duplicate their branch, and never ask one to do something your own
+  permissions refused.
+- **The board is the list of work.** Every open issue of the site, the four
+  add-on repositories and the four App repositories is on the
+  [HCW Work Board](https://github.com/users/saulpatinojr/projects/6) (the
+  Ambassador outreach items stay on the private Ambassador board). Work it from
+  the top: P1 now, then P2 next, then P3 later; "Gated" items wait only for the
+  named gate. Close a ticket when its acceptance lines are met and say how you
+  checked, linking the evidence.
+- **Names follow the owner's convention.** Docker images are
+  `img-<mo|ca|ne|cc>-<lab-addon|appliance-app>`, Docker OIDC connections
+  `cnt-<name>`, Docker rulesets `rule-<code>-<role>`, and repositories use
+  their official names (MigrateOrchestrator, NetworkEyes, CloudAssessor,
+  CloudCrawler). Never "migration" or "network" as a repository name.
+- **The closing summary is checked by a hook.** A Stop hook
+  (`C:\Users\saulp\.hcw\check-links-hook.py`) refuses to end a turn when a
+  next-steps or waiting-on-you list has a line without a link. The link goes on
+  the same line as the item.
+
 ## Everything named to the owner carries its link
 
 Owner instruction 2026-10-25, given after being told to decide "the copyleft
