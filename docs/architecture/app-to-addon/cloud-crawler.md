@@ -12,7 +12,7 @@ rows were.
 | Catalogue id | `cloud-crawler` |
 | Site route | `/tools/cloud-crawler` (not in the Tools menu while `coming`) |
 | AddOn origin (reserved) | `https://cloud-crawler.lab.hybridcloudworks.com` |
-| Image (reserved) | `docker.io/hybridcloudworks/hcw-addon-cloud-crawler` (the AddOn's `publish-images.yml` publishes it on `v*` tags) |
+| Image (reserved) | `docker.io/hybridcloudworks/img-cc-lab-addon` (the AddOn's `publish-images.yml` publishes it on `v*` tags) |
 | Lab host port | not assigned; "the next free port is the website's call" (the AddOn's ADR 0003). The Cloud Assessor uses 18083. |
 | Row status | `coming`; capabilities to be granted `navigate`, `downloads` |
 | Status proxy | `GET /api/public/addons/cloud-crawler/status`, reading `ADDON_CLOUD_CRAWLER_URL` (not declared until the row is `available`; the proxy answers `{ configured: false }`) |
