@@ -220,7 +220,7 @@ export const DIRECTORY = Object.freeze([
     category: 'cloud',
     summary: 'An Azure migration assessment tool shown in a pane.',
     powers: 'The Migration Hub under Tools.',
-    docsUrl: 'https://github.com/saulpatinojr/HCW-AzMigrateOrchestrator_Addon#readme',
+    docsUrl: 'https://github.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn#readme',
   },
 ]);
 

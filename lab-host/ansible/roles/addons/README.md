@@ -105,7 +105,7 @@ rendered configuration and checks the `vars` ordering the redirect relies on.
 ## The environment contract
 
 `env` is the add-on's own documented contract (for the migration add-on,
-`HCW-AzMigrateOrchestrator_Addon/docs/deployment/lab-host.md`), rendered as
+`HCW-MigrateOrchestrator_AddOn/docs/deployment/lab-host.md`), rendered as
 strings. Two values are derived rather than typed so the policy the add-on
 sends and the one Caddy sends agree: `<PREFIX>_FRAME_ANCESTORS` is
 `caddy_frame_ancestors` joined, and `<PREFIX>_SITE_ORIGINS` is the same list
