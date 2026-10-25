@@ -114,9 +114,14 @@ ends with a line saying the secret was set. Then run the check once, from
 the three **Scout** jobs: a green job with a policy table in its summary means
 it works.
 
-If a job says `not entitled to use Docker Scout` even with the token, the
-token's permission is too low for Scout on this account: generate a new one with
-**Repo Read-only** instead, store it the same way, and say so on #1367.
+If a job says `not entitled to use Docker Scout` even with the token, that is
+about the Docker *user*, not about how much the token may read, so do not widen
+the token. Check, in this order: that `DOCKER_SCOUT_USER` is the Docker ID that
+holds the Team seat; that the token was generated while signed in as that ID and
+has not expired or been deleted in Docker; and that the same ID can run
+`docker scout quickview` on your desktop. **Repo Read-only** would also reach the
+account's private repositories, so it is only worth trying if Docker's message
+names a repository-permission failure, and then say so on #1367.
 
 ### Rotate or remove it
 
