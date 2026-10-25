@@ -45,7 +45,7 @@ argument_specs:
           image_tag:
             type: str
             required: true
-            description: The release the digest was read from, for example 0.3.0. Recorded, not pulled.
+            description: The release the digest was read from, for example v0.3.0. Recorded, not pulled.
           image_digest:
             type: str
             required: true

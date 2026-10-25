@@ -1367,7 +1367,7 @@ the registry; PowerShell or bash, anywhere with Docker:
 docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.0
 ```
 
-The `Digest:` line is `image_digest`, and `0.3.0` is `image_tag`, of the
+The `Digest:` line is `image_digest`, and `v0.3.0` is `image_tag`, of the
 `migration` row in `ansible/group_vars/all.yml`. Merge and re-run
 `bootstrap.sh`; the role pulls by digest and recreates the container. A row
 with an **empty** digest is not deployed: the run says
