@@ -67,15 +67,17 @@ Three things in that table are deliberate, not gaps:
 ## The five-minute look, once a week
 
 Run this in PowerShell, signed in to GitHub with `gh` (it only reads). It prints
-the number of open alerts for each repository:
+the number of open alerts for each repository. A query that fails (for example
+because code scanning is switched off there, or your login cannot see the
+repository) prints `unavailable`, never `0`:
 
 ```powershell
-foreach ($r in 'HCW-HybridCloudWorks','HCW-MigrateOrchestrator_AddOn','HCW-NetworkEyes_AddOn','HCW-CloudAssessor_AddOn','HCW-CloudCrawler_AddOn','HCW-MigrateOrchestrator_App','HCW-NetworkEyes_App','HCW-CloudAssessor_App','HCW-CloudCrawler_App') { $d = (gh api "repos/saulpatinojr/$r/dependabot/alerts?state=open&per_page=100" --paginate --jq '.[].number' | Measure-Object).Count; $c = (gh api "repos/saulpatinojr/$r/code-scanning/alerts?state=open&per_page=100" --paginate --jq '.[].number' | Measure-Object).Count; "$r  dependabot=$d  code-scanning=$c" }
+foreach ($r in 'HCW-HybridCloudWorks','HCW-MigrateOrchestrator_AddOn','HCW-NetworkEyes_AddOn','HCW-CloudAssessor_AddOn','HCW-CloudCrawler_AddOn','HCW-MigrateOrchestrator_App','HCW-NetworkEyes_App','HCW-CloudAssessor_App','HCW-CloudCrawler_App') { $dn = gh api "repos/saulpatinojr/$r/dependabot/alerts?state=open&per_page=100" --paginate --jq '.[].number'; $d = if ($LASTEXITCODE -eq 0) { ($dn | Measure-Object).Count } else { 'unavailable' }; $cn = gh api "repos/saulpatinojr/$r/code-scanning/alerts?state=open&per_page=100" --paginate --jq '.[].number'; $c = if ($LASTEXITCODE -eq 0) { ($cn | Measure-Object).Count } else { 'unavailable' }; "$r  dependabot=$d  code-scanning=$c" }
 ```
 
 Expected: nine lines. On 2026-10-25 the nonzero ones were
 `HCW-NetworkEyes_App dependabot=3` and `HCW-MigrateOrchestrator_App
-code-scanning=17`; everything else read 0. To see what the alerts are in one
+code-scanning=17` (16 on a re-run later the same day, so expect the number to move); everything else read 0. To see what the alerts are in one
 repository, these two commands print one line per alert (the first for
 Dependabot, the second for code scanning; they read different fields, so each
 has its own filter):
@@ -85,7 +87,7 @@ gh api "repos/saulpatinojr/HCW-NetworkEyes_App/dependabot/alerts?state=open&per_
 ```
 
 ```powershell
-gh api "repos/saulpatinojr/HCW-MigrateOrchestrator_App/code-scanning/alerts?state=open&per_page=100" --paginate --jq '.[] | "\(.rule.severity) \(.rule.id) \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"'
+gh api "repos/saulpatinojr/HCW-MigrateOrchestrator_App/code-scanning/alerts?state=open&per_page=100" --paginate --jq '.[] | "\(.rule.security_severity_level // .rule.severity) \(.rule.id) \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"'
 ```
 
 Also look at the open issue titled *Lab supply chain: pins behind upstream or
@@ -120,7 +122,7 @@ the lockfile diff, then test.
 | HCW-NetworkEyes_App | no dependency review, no CodeQL, no Gitleaks; GitHub secret scanning and push protection are **off** (turn them on at <https://github.com/saulpatinojr/HCW-NetworkEyes_App/settings/security_analysis>); 3 open Dependabot alerts, all medium (`postcss-selector-parser`, `brace-expansion` twice, in `apps/cna-web/package-lock.json`) | the apps' workstream; the settings are the owner's |
 | HCW-NetworkEyes_App | its image workflow runs `docker/scout-action` after an OIDC login with no Docker user or token, the combination that was refused on 2026-10-25; it has never run, because publishing is not enabled in that repository | the apps' workstream |
 | HCW-NetworkEyes_App | three Docker credentials stored as secrets (`DOCKERHUB_TOKEN`, `DOCKERHUB_PERSONAL_TOKEN`, `DOCKERHUB_PERSONAL_USERNAME`; names only were read); the registry-cleanup workflow uses the personal token because deleting a tag is beyond what the OIDC connections grant | the owner decides whether they are still needed |
-| HCW-MigrateOrchestrator_App | 17 open code-scanning alerts: four CodeQL rules in JavaScript (`js/incomplete-sanitization`, `js/incomplete-url-substring-sanitization`, `js/polynomial-redos`, `js/identity-replacement`) and the OpenSSF Scorecard checks (branch protection, code review, token permissions, pinned dependencies, fuzzing and others) | the apps' workstream |
+| HCW-MigrateOrchestrator_App | 17 open code-scanning alerts when first read, 16 later on 2026-10-25: four CodeQL rules in JavaScript (`js/incomplete-sanitization`, `js/incomplete-url-substring-sanitization`, `js/polynomial-redos`, `js/identity-replacement`) and the OpenSSF Scorecard checks (branch protection, code review, token permissions, pinned dependencies, fuzzing and others) | the apps' workstream |
 
 Fixed on 2026-10-25: the migration add-on's five `vite` alerts (release 0.3.2
 preparation, `HCW-MigrateOrchestrator_AddOn` pull request 40).
