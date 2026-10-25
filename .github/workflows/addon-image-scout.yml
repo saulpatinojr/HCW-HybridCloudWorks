@@ -1,0 +1,109 @@
+# Add-on images against Docker Scout — do the three add-on images the lab host
+# runs carry a vulnerability that has a fix, and do they meet Scout's policies?
+#
+# WHAT IT CHECKS. The lab host runs each tool add-on by digest
+# (lab-host/ansible/group_vars/all.yml, addons[].image and image_digest), so the
+# digest is the thing to check. scripts/lab/read-addon-pins.mjs reads those two
+# lines into a matrix; for each image Scout prints its policy table and base
+# image recommendation (quickview) and then fails the job when the image has a
+# CRITICAL or HIGH vulnerability with a fix available (cves).
+#
+# WHEN. On a pull request that changes the pins (or this check), which is the
+# moment an image is about to reach production; and weekly, because the
+# advisory database moves after an image is pinned and a digest nobody touches
+# is never rebuilt. The publish workflows in the add-on repositories already
+# scan with Trivy before they push; this looks again at what is actually pinned.
+# lab-supply-chain.yml does the same weekly for the two lab images, with Trivy.
+#
+# NO CREDENTIALS. The add-on images are public, and Scout reads a public
+# image's SBOM and provenance attestations without a Docker login (read on
+# 2026-10-25 with an empty Docker config). So no Docker token is stored in this
+# repository for it: every job holds `contents: read` and nothing else, and the
+# pull request comment is off (`write-comment: false`); the result is the job
+# summary and the job's pass or fail. The Scout service's own per-repository
+# analysis, which shows in the Scout dashboard, is a separate setting the owner
+# turns on in Docker (docs/runbooks/docker-scout.md).
+#
+# WHAT IT DOES NOT DO. It does not block a merge: the check is not one of the
+# ruleset's required checks, which is the owner's decision to make. A weekly
+# failure shows as a red run in Actions. The copyleft policy, which fails on every Debian-based
+# image because of the base's own package licences, is shown in the table and
+# does not fail the job: only the vulnerability check does.
+name: Add-on images against Docker Scout
+
+on:
+  pull_request:
+    paths:
+      - lab-host/ansible/group_vars/all.yml
+      - scripts/lab/read-addon-pins.mjs
+      - .github/workflows/addon-image-scout.yml
+  schedule:
+    # Wednesdays 07:20 UTC: a day after lab-supply-chain.yml (Tuesdays 06:45),
+    # off the top of the hour.
+    - cron: '20 7 * * 3'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: addon-image-scout-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pins:
+    name: Read the add-on pins
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # No npm ci: the script imports node: built-ins only.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+
+      # Stops, instead of passing, on a pin it cannot read: a check that skipped
+      # a malformed digest would be green for the wrong reason.
+      - name: Read the add-on images the lab host runs
+        id: read
+        run: |
+          set -euo pipefail
+          matrix="$(node scripts/lab/read-addon-pins.mjs)"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "${matrix}" | node -e 'for (const e of JSON.parse(require("fs").readFileSync(0, "utf8")).include) console.log(e.id + " -> " + e.image)'
+
+  scout:
+    name: Scout ${{ matrix.id }}
+    needs: pins
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.pins.outputs.matrix) }}
+    steps:
+      # docker/scout-action v1.27.0 (released 2026-10-21), pinned to its commit
+      # like every other action here. `command` takes a comma-separated list and
+      # stops at the first command that exits non-zero, so the policy table
+      # (quickview) is written to the summary before the vulnerability check
+      # (cves) can fail the job.
+      - name: Policies, then fixable critical and high vulnerabilities
+        uses: docker/scout-action@a4119c5a8c5076236a54e4ce99531f7e4dd2ef84 # v1.27.0
+        with:
+          command: quickview,cves
+          image: registry://${{ matrix.image }}
+          only-fixed: true
+          only-severities: critical,high
+          exit-code: true
+          summary: true
+          write-comment: false
