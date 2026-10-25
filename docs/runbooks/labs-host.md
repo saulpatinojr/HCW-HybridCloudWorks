@@ -3012,18 +3012,18 @@ Success looks like: the command prints nothing and exits 0. The value never
 appears on a command line or in output. The `addons` role refuses to start
 the container while this key is unset, naming the key and this line.
 
-**2. Write the digest in.** The add-on's `v0.3.1` release prints
+**2. Write the digest in.** The add-on's `v0.3.2` release prints
 `docker.io/hybridcloudworks/img-mo-lab-addon@sha256:…` in its
 `publish-images` run summary; the same value, read from the registry.
 PowerShell, anywhere with Docker:
 
 ```powershell
-docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.1
+docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.2
 ```
 
 The `Digest:` line is the value for `image_digest` of the `migration` row in
-`lab-host/ansible/group_vars/all.yml`: for `v0.3.1`,
-`sha256:7c317b26ed680eb65dd472d5b4767486758a9c56e71e0b6703a92045f0b29d7b`,
+`lab-host/ansible/group_vars/all.yml`: for `v0.3.2`,
+`sha256:bd3e0a164429984d50382368f9789d47ffa1af48061221041326a0bd0ed35ade`,
 read from the registry on 2026-10-25. A row whose digest is empty deploys nothing and
 says so.
 Merge, then run the playbook as after any merge. PowerShell:

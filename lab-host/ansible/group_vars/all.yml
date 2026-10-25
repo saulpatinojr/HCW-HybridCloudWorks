@@ -362,11 +362,13 @@ portainer_image_digest: sha256:64593d0645eec314e84b93c03aba51db67c72ec12c7609273
 # pulls and runs nothing for that row and says so, renders the route all the
 # same (the name then answers 503 with the site's sentence, and the site's
 # status proxy reads the add-on as unreachable), and asserts a non-empty
-# digest before deploying. The migration row's digest is v0.3.1's image
-# index, read on 2026-10-11 with
-# `docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.1`
+# digest before deploying. The migration row's digest is v0.3.2's image
+# index, read on 2026-10-25 with
+# `docker buildx imagetools inspect docker.io/hybridcloudworks/img-mo-lab-addon:v0.3.2`
 # and equal to what the add-on's publish-images run recorded for pinning and
-# attested (`gh attestation verify` against the add-on's repository passed).
+# attested (`gh attestation verify` against the add-on's repository passed on
+# 2026-10-25; the signer is the publish-images workflow at refs/tags/v0.3.2 of
+# HCW-MigrateOrchestrator_AddOn).
 # Run read-only, with every capability dropped and this row's environment,
 # the 0.3.0 image answered /api/health 200 with "ok": true. The 0.3.1 image
 # (attested the same way, 2026-10-11) is asserted by the role's health wait
@@ -397,15 +399,13 @@ addons:
   - id: migration
     enabled: true
     image: docker.io/hybridcloudworks/img-mo-lab-addon
-    image_tag: "v0.3.1"
-    image_digest: "sha256:7c317b26ed680eb65dd472d5b4767486758a9c56e71e0b6703a92045f0b29d7b"
-    # TWO REPOSITORY NAMES, ON PURPOSE (rename of 2026-10-24): the owner is renaming the add-on's repository from
-    # HCW-AzMigrateOrchestrator_Addon to HCW-MigrateOrchestrator_AddOn. A build attestation names the repository that
-    # built the image, and it cannot be edited afterwards, so the image pinned above (built under the old name) keeps
-    # needing the old name, while the first image built after the rename needs the new one. Delete the old name from this
-    # pattern once the pin has moved to an image attested under the new name (the cosign step passes on that pin).
-    # yamllint disable-line rule:line-length
-    attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-(AzMigrateOrchestrator_Addon|MigrateOrchestrator_AddOn)/\.github/workflows/publish-images\.yml@refs/tags/'
+    image_tag: "v0.3.2"
+    image_digest: "sha256:bd3e0a164429984d50382368f9789d47ffa1af48061221041326a0bd0ed35ade"
+    # ONE REPOSITORY NAME. The add-on's repository was renamed from HCW-AzMigrateOrchestrator_Addon on 2026-10-24, and a
+    # build attestation names the repository that built the image. The image pinned above (v0.3.2) was built after the
+    # rename and verified against the new name, so the old name is no longer accepted: an image attested under it is
+    # refused. Rolling back to v0.3.1 or earlier therefore means putting the old name back here as well.
+    attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-MigrateOrchestrator_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
     port: 18081
     memory: 512m
     pids_limit: 256
