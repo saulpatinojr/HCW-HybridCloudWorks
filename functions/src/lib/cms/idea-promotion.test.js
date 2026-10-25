@@ -1,7 +1,11 @@
 /**
- * The draft that scripts/ideas/promote-idea.mjs writes is read by the real
- * import (repo-draft.js), and the limits the idea-note format states are the
- * import's own.
+ * The draft that scripts/ideas/promote-idea.mjs writes (into the owner's private
+ * vault, then uploaded on Admin > Drafts) is read by the server's markdown
+ * reader (repo-draft.js, and drafts-markdown.js, which the upload route uses),
+ * and the limits the idea-note format states are the reader's own.
+ *
+ * Nothing here writes a file, and in particular nothing writes into
+ * docs/content: the draft stays text in memory.
  *
  * WHY THIS LIVES IN functions/. The promote script is dependency-free and
  * lives in scripts/; the import pulls in the Cosmos client, which only this
@@ -26,6 +30,7 @@ import {
   checkRepoDraftPath,
   parseRepoDraft,
 } from './repo-draft.js';
+import { parseMarkdownDraft } from './drafts-markdown.js';
 import { SUPPORTED_PUBLISH_TARGETS } from './publish-targets.js';
 
 const WHEN = () => new Date('2026-10-24T12:00:00Z');
@@ -70,6 +75,25 @@ describe('what promote-idea writes is a draft the import accepts', () => {
       reading: 12,
     });
     expect(parsed.warnings ?? parsed.draft.warnings ?? []).toEqual([]);
+  });
+
+  it('is accepted by the Admin Drafts upload reader, with the same fields the repository reader gives', () => {
+    const plan = promote(
+      [...BASE, 'title: Landing zones for small teams', 'tags: [azure, terraform]', 'reading: 12', 'part: 1 of 2'],
+      'Intro paragraph.\n\n## First step\n\nDo it.\n'
+    );
+    const uploaded = parseMarkdownDraft(plan.text);
+    expect(uploaded.ok).toBe(true);
+    expect(uploaded.fields).toMatchObject({
+      title: 'Landing zones for small teams',
+      track: 'how-to',
+      part: '1 of 2',
+      tags: ['azure', 'terraform'],
+      reading: 12,
+    });
+    expect(uploaded.warnings).toEqual([]);
+    const { draft } = parseRepoDraft(plan.text);
+    expect(uploaded.fields.body).toBe(draft.body);
   });
 
   it('reads back a title the reader could misread: a colon, a hash, a leading quote', () => {

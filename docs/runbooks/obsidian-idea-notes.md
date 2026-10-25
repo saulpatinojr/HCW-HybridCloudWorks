@@ -1,25 +1,41 @@
 # Idea notes: keep ideas in Obsidian, promote the ready ones to drafts
 
-> **Status: in use from 2026-10-24** (#1343). This is the first step only: a
+> **Status: in use from 2026-10-24** (#1343), **changed on 2026-10-25** (the
+> move of drafts out of the public repository, [PR 1](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1379)
+> added the upload box; this page and the promote script are the second step). This is the first step only: a
 > format for an idea note, a check for a folder of them, and a script that turns
-> one ready idea into a draft article. There is no admin screen for the idea
-> backlog.
+> one ready idea into a draft article **in your vault's `Drafts` folder**. From
+> there you upload it on [Admin → Drafts](https://hybridcloudworks.com/admin/drafts).
+> The script no longer writes into this repository, and the old route (commit
+> the draft, then *Import from docs/content*) is being retired. There is no
+> admin screen for the idea backlog.
 
 **Scope:** how to keep content ideas in [Obsidian](https://obsidian.md/download)
 (a notes app that stores plain files on your computer), hold them to one
-format, and turn an outlined idea into `docs/content/blog-<name>.md`, the file
-the admin's *Import from docs/content* button reads.
+format, turn an outlined idea into a draft file in your vault's `Drafts`
+folder, and upload it on Admin → Drafts.
 
 **Authority:** nothing here changes the site by itself. The scripts only read
-your notes and write one new file. Putting that file into the repository,
-merging it and importing it are separate steps, and they are yours.
+your notes and write one new file, inside your own vault. Uploading it on
+Admin → Drafts is a separate step, and it is yours. Uploading creates a draft;
+it publishes nothing.
 
-## Why the notes stay outside this repository
+## Why the notes, and the drafts, stay outside this repository
 
-This repository is public. A vault inside it would publish every private
-thought in it. So the vault lives somewhere else on your computer, and the
-scripts are given the folder as an argument. Nothing from the vault is ever
-committed except the one draft you choose to promote, and you read it first.
+This repository is public, and so is the documentation site built from it. A
+vault inside it would publish every private thought in it. And an article that
+is not finished must not be public either: anything committed under
+`docs/content` is visible to everyone the moment it is merged, long before you
+decide to publish it. (Owner rule 2026-10-25: pre-publish drafts live in your
+private vault and on the Admin → Drafts page, never in the repository or the
+docs site.)
+
+So the vault lives somewhere else on your computer, and the scripts are given
+the folder as an argument. Nothing from the vault is committed. The promote
+script goes one step further: it **refuses** to write a draft anywhere inside
+this repository, however the folder is spelt (a relative path, `..`, a
+different upper or lower case, or a shortcut folder that really points into the
+repository), so a slip cannot publish a draft by accident.
 
 ## Set it up once
 
@@ -54,6 +70,36 @@ committed except the one draft you choose to promote, and you read it first.
    then under **Templates** set **Template folder location** to
    `Ideas/_Templates`
    ([Templates, Obsidian Help](https://obsidian.md/help/plugins/templates)).
+5. **Tell the promote script where your vault is, once.** Promoted drafts are
+   saved in the vault's `Drafts` folder (the script makes the folder if it is
+   not there yet), so the script has to know which folder is your vault. Give it
+   the vault's full path in an *environment variable* (a named setting that
+   Windows keeps for your account and hands to every program you start), called
+   `HCW_VAULT`. In PowerShell, the first line asks for the path and the second
+   saves it
+   ([about_Environment_Variables, Microsoft Learn](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_environment_variables?view=powershell-7.6#set-environment-variables-with-setenvironmentvariable)):
+
+   ```powershell
+   $vault = Read-Host 'Full path of your Obsidian vault folder'
+   ```
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable('HCW_VAULT', $vault, 'User')
+   ```
+
+   Close PowerShell and open a new window: a setting saved this way only reaches
+   windows opened afterwards. To check it, run this in the new window. You
+   should see your vault's path; a blank line means it did not save, so repeat
+   the two lines above:
+
+   ```powershell
+   $env:HCW_VAULT
+   ```
+
+   If you would rather not save it, skip this step and add `--vault "$vault"`
+   to the promote commands below (after running the first line above in the same
+   window). The vault must be **outside** the repository: the script refuses a
+   folder inside it (see the table at the end of this page).
 
 ## Start a new idea
 
@@ -157,7 +203,7 @@ wrong. The check never changes a file.
 An idea can be promoted when all of these are true:
 
 - `status` is `outlined`, and there is an outline under the properties;
-- `type` is `blog` (the import takes blog articles only);
+- `type` is `blog` (only blog articles become drafts);
 - `format` is `how-to` or `build-log` (the two tracks in the
   [blog template](../content/blog-template.md));
 - the outline holds nothing that only works in Obsidian (see the table below).
@@ -185,8 +231,13 @@ An idea can be promoted when all of these are true:
    node scripts/ideas/promote-idea.mjs "$note" --dry-run
    ```
 
-   You should see `Would write ...\docs\content\blog-<name>.md` followed by the
-   draft. If it lists reasons instead, fix them in the note (the table below).
+   You should see `Would write ...\Drafts\blog-<name>.md`, with the path of
+   your own vault in front of `Drafts`, followed by the draft. Nothing is
+   written yet. If it lists reasons instead, fix them in the note (the table
+   below). If it says `No vault was given`, step 5 of "Set it up once" is not
+   done in this window: add `--vault "$vault"` to the command, as that step
+   explains. If it says `Refused`, the folder is inside the repository: use
+   your private vault.
 
 3. Write it for real:
 
@@ -194,34 +245,33 @@ An idea can be promoted when all of these are true:
    node scripts/ideas/promote-idea.mjs "$note"
    ```
 
-   You should see `Wrote ...\docs\content\blog-<name>.md` and two reminders.
+   You should see `Wrote ...\Drafts\blog-<name>.md` and three reminders. The
+   file is now in your vault's `Drafts` folder, and nowhere in the repository.
    The file name comes from the title. To choose another, add
    `--name some-other-words`. The script never overwrites: if the file exists
    it stops and says so.
 
-4. **Read the new file through.** What is committed under `docs/content` is
-   public, and the script cannot know what in your outline you would not want
-   published.
+4. **Read the new file through.** It will be published one day, and the script
+   cannot know what in your outline you would not want published.
 5. In your note, change `status` to `drafted`. The script never edits your
-   vault, so this is yours to do.
-6. Put the file into the repository with a pull request, like any other change.
-   Once it is merged to `main`, open **Admin → Drafts** on the site
-   (<https://hybridcloudworks.com/admin/drafts>) and use **Import from
-   docs/content**. Importing reads the file from `main`, creates a draft, and
-   skips any file it has already imported. From then on the Drafts page is the
-   source of truth for the article.
+   notes, so this is yours to do.
+6. **Upload the file on Admin → Drafts.** Open
+   <https://hybridcloudworks.com/admin/drafts>, find the box called **Paste or
+   upload a markdown draft**, and follow
+   [Send a draft to Admin Drafts](#send-a-draft-to-admin-drafts) below. From
+   then on the Drafts page, not the file, is the source of truth for the
+   article. Nothing is published by uploading.
 
-   If the draft should not go through the public repository, skip steps 4 to 6
-   and send the file straight to the admin instead: see
-   [Send a draft straight to Admin Drafts](#send-a-draft-straight-to-admin-drafts-no-repository-needed).
+There is no step that puts the draft into the repository, on purpose. Do not
+commit it, and do not open a pull request for it.
 
-## Send a draft straight to Admin Drafts (no repository needed)
+## Send a draft to Admin Drafts
 
-*Added 2026-10-25.* The repository is public, so a draft that is not ready to
-be seen should not be committed to it. **Admin → Drafts** can take a markdown
-file straight from your vault instead. This is a second way in, next to the
-promote-and-import route above: that route still works, and nothing about it
-has changed.
+*Added 2026-10-25; it is now the only way in.* The repository is public, so a
+draft that is not ready to be seen must not be committed to it.
+**Admin → Drafts** takes a markdown file straight from your vault instead. The
+older route, committing the draft under `docs/content` and using **Import from
+docs/content**, is being retired and should not be used for a new draft.
 
 A file can be sent this way when it starts with a front-matter block, a few
 `key: value` lines between two `---` lines, the same block a `docs/content`
@@ -275,25 +325,32 @@ A file can be at most 272 KB (the article itself at most 256 KB).
 | `write "Status" in lower case` | Property names are lower case. | Rename the property. |
 | `status is "outlined" but nothing is written` | An outlined idea needs its outline. | Write the outline, or set the status back to `idea`. |
 | `only an outlined idea is promoted` | The status is not `outlined`. | Finish the outline and set it. |
-| `the repository import takes blog articles only` | `type` is not `blog`. | Only blog ideas become drafts this way. |
+| `only blog articles become drafts` | `type` is not `blog`. | Only blog ideas become drafts this way. |
 | `a blog draft is a how-to or a build-log` | `format` is something else. | Pick the track the article follows. |
 | `a [[wikilink]] or ![[embed]] ...` | A link to another note in your vault. It would show as plain brackets on the site, and it names a private note. | Rewrite it as plain text or a normal link. |
 | `an Obsidian %% comment %%` | A private note to yourself inside the text. | Delete it. |
 | `a dataview block` (or `tasks`, `query`) | Only Obsidian can run it. | Remove it. |
-| `... already exists, and this script never overwrites` | A draft with that name is already there. | Choose another with `--name`. |
+| `... already exists, and this script never overwrites` | A draft with that name is already in your vault's `Drafts` folder. | Choose another with `--name`. |
+| `No vault was given` | Neither `--vault` nor the `HCW_VAULT` setting names your vault. | Do step 5 of "Set it up once", or add `--vault "$vault"`. |
+| `The vault folder ... does not exist` | The path is wrong, or the vault has moved. | Check the path; the script never makes the vault itself. |
+| `Refused: ... is inside the repository` | The folder you gave (or a shortcut it follows) is inside `HCW-HybridCloudWorks`, which is public. Nothing was written. | Use your private vault, which must be outside the repository. |
+| `--out-dir no longer exists` | An old command still has `--out-dir`. | Drop it; the folder is always `<vault>/Drafts`. |
 
 Code blocks and inline code are not searched, so a shell example such as
 `if [[ -f x ]]` is fine.
 
 ## What this does not do
 
-- It does not edit your vault, sync it, or back it up.
+- It does not edit your notes, sync the vault, or back it up. It only adds one
+  file to `Drafts`.
 - It does not read JSON-style properties (Obsidian can save those); use the
   normal property table.
 - Only blog ideas become drafts. Other types and formats are tracked in the
   notes but are written by hand.
 - It does not decide what is private. The refusals above catch what is
   obviously Obsidian-only; reading the draft is the check on everything else.
+- It does not upload. Uploading is a step in the admin, by you, and the script
+  never signs in to the site.
 - There is no admin screen for the idea backlog. Add one only if the notes turn
   out not to be enough.
 
@@ -305,10 +362,17 @@ Code blocks and inline code are not searched, so a shell example such as
 - The properties are read by hand rather than by a YAML library, because
   Obsidian writes lists in the block form and the import's own reader takes only
   the inline form. The reader takes both and nothing else it does not need.
+- `promote-idea.mjs` works out `<vault>/Drafts`, resolves it through any
+  symlink or junction (a folder that is really a shortcut to another folder),
+  and refuses it, exit code 1, if it is the repository or anywhere inside it.
+  The comparison ignores upper and lower case on Windows and macOS. It checks
+  once before reading the note and again after making the folder.
 - `functions/src/lib/cms/idea-promotion.test.js` holds the two sides to each
-  other: every draft the script writes is read back by the import's own parser
-  (`parseRepoDraft`), and the format's limits and content types equal the
-  import's and the publisher's. CI's `functions` row watches
-  `scripts/ideas/idea-notes.mjs` for that reason.
-- The tests build their notes in temporary folders. They never read a real
-  vault.
+  other: every draft the script writes is read back by the server's own
+  parsers (`parseRepoDraft`, and `parseMarkdownDraft`, which the upload route
+  uses), and the format's limits and content types equal the reader's and the
+  publisher's. CI's `functions` row watches `scripts/ideas/idea-notes.mjs` for
+  that reason.
+- The tests build their notes and vaults in temporary folders. They never read
+  a real vault, and a test must never write under `docs/content`: the refusal
+  tests compare that folder before and after each run.

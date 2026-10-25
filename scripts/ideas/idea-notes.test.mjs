@@ -1,8 +1,18 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -15,8 +25,12 @@ import {
   parseNote,
   planPromotion,
 } from './idea-notes.mjs';
+import { isInside } from './promote-idea.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+/** The repository these tests run in. promote-idea.mjs must never write anywhere below it. */
+const REPO_ROOT = resolve(HERE, '..', '..');
+const DOCS_CONTENT = join(REPO_ROOT, 'docs', 'content');
 
 const note = (properties, body = 'An outline.\n') =>
   `---\n${properties.join('\n')}\n---\n${body}`;
@@ -325,13 +339,19 @@ describe('the two scripts, run for real', () => {
   let dir;
   let vault;
   let out;
+  let obsidian;
 
-  const run = (script, args) => {
+  // The environment is the real one with HCW_VAULT taken out, so a developer who
+  // has the variable set for real use still gets the "no vault given" tests.
+  const run = (script, args, { env = {}, cwd } = {}) => {
+    const { HCW_VAULT: _ignored, ...inherited } = process.env;
     try {
       const stdout = execFileSync(process.execPath, [join(HERE, script), ...args], {
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe'],
         timeout: 30_000,
+        env: { ...inherited, ...env },
+        cwd,
       });
       return { code: 0, stdout, stderr: '' };
     } catch (error) {
@@ -343,10 +363,13 @@ describe('the two scripts, run for real', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'hcw-ideas-'));
     vault = join(dir, 'vault');
-    out = join(dir, 'out');
+    // The private Obsidian vault the drafts go to: <obsidian>/Drafts. Not the same
+    // folder as `vault`, which stands for a folder of idea notes being read.
+    obsidian = join(dir, 'obsidian');
+    out = join(obsidian, 'Drafts');
     mkdirSync(join(vault, 'sub'), { recursive: true });
     mkdirSync(join(vault, '.obsidian'));
-    mkdirSync(out);
+    mkdirSync(out, { recursive: true });
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -385,7 +408,7 @@ describe('the two scripts, run for real', () => {
     const source = join(vault, 'Landing zones for small teams.md');
     writeFileSync(source, note([...GOOD, 'tags: [azure]'], 'Intro.\r\n'));
     const before = sha(source);
-    const got = run('promote-idea.mjs', [source, '--out-dir', out]);
+    const got = run('promote-idea.mjs', [source, '--vault', obsidian]);
     expect(got.code).toBe(0);
     expect(got.stdout).toContain('Read the draft through');
     const written = join(out, 'blog-landing-zones-for-small-teams.md');
@@ -394,12 +417,12 @@ describe('the two scripts, run for real', () => {
     expect(text).not.toContain('\r');
     expect(sha(source)).toBe(before);
 
-    const again = run('promote-idea.mjs', [source, '--out-dir', out]);
+    const again = run('promote-idea.mjs', [source, '--vault', obsidian]);
     expect(again.code).toBe(1);
     expect(again.stderr).toContain('never overwrites');
     expect(readFileSync(written, 'utf8')).toBe(text);
 
-    const renamed = run('promote-idea.mjs', [source, '--out-dir', out, '--name', 'second-try']);
+    const renamed = run('promote-idea.mjs', [source, '--vault', obsidian, '--name', 'second-try']);
     expect(renamed.code).toBe(0);
     expect(existsSync(join(out, 'blog-second-try.md'))).toBe(true);
   });
@@ -407,20 +430,20 @@ describe('the two scripts, run for real', () => {
   it('promote: --dry-run writes nothing, and a note that is not ready is refused with the reasons', () => {
     const ready = join(vault, 'Ready.md');
     writeFileSync(ready, note(GOOD));
-    const dry = run('promote-idea.mjs', [ready, '--out-dir', out, '--dry-run']);
+    const dry = run('promote-idea.mjs', [ready, '--vault', obsidian, '--dry-run']);
     expect(dry.code).toBe(0);
     expect(dry.stdout).toContain('Would write');
     expect(readdirSync(out)).toEqual([]);
 
     const early = join(vault, 'Early.md');
     writeFileSync(early, note(['type: blog', 'theme: t', 'format: how-to', 'status: idea']));
-    const refused = run('promote-idea.mjs', [early, '--out-dir', out]);
+    const refused = run('promote-idea.mjs', [early, '--vault', obsidian]);
     expect(refused.code).toBe(1);
     expect(refused.stderr).toContain('only an outlined idea is promoted');
 
     const broken = join(vault, 'Broken.md');
     writeFileSync(broken, '# no properties');
-    const bad = run('promote-idea.mjs', [broken, '--out-dir', out]);
+    const bad = run('promote-idea.mjs', [broken, '--vault', obsidian]);
     expect(bad.code).toBe(1);
     expect(bad.stderr).toContain('does not follow the idea-note format');
     expect(readdirSync(out)).toEqual([]);
@@ -434,35 +457,231 @@ describe('the two scripts, run for real', () => {
     expect(checked.code).toBe(1);
     expect(checked.stdout).toContain('Huge.md\n  the file is over 1 MB, which is not an idea note');
     expect(checked.stdout).toContain('2 notes checked: 1 fine, 1 with problems.');
-    const promoted = run('promote-idea.mjs', [huge, '--out-dir', out]);
+    const promoted = run('promote-idea.mjs', [huge, '--vault', obsidian]);
     expect(promoted.code).toBe(2);
     expect(promoted.stderr).toContain('the file is over 1 MB');
     expect(readdirSync(out)).toEqual([]);
   });
 
   it('a folder where a note belongs is refused, not read', () => {
-    expect(run('promote-idea.mjs', [vault, '--out-dir', out]).code).toBe(2);
+    expect(run('promote-idea.mjs', [vault, '--vault', obsidian]).code).toBe(2);
   });
 
   it('promote: an option missing its value is an error, never a guess at the current folder', () => {
     const ready = join(vault, 'Ready.md');
     writeFileSync(ready, note(GOOD));
     for (const args of [
-      [ready, '--out-dir'],
-      [ready, '--out-dir', '--dry-run'],
+      [ready, '--vault'],
+      [ready, '--vault', '--dry-run'],
       [ready, '--name'],
       [ready, '--name', '--dry-run'],
     ]) {
       const got = run('promote-idea.mjs', args);
       expect(got.code, args.join(' ')).toBe(2);
-      expect(got.stderr).toMatch(/--(out-dir needs a folder|name needs a value)/);
+      expect(got.stderr).toMatch(/--(vault needs a folder|name needs a value)/);
     }
     expect(readdirSync(out)).toEqual([]);
   });
 
   it('promote: exit 2 for a missing note, an unknown option or no note at all', () => {
-    expect(run('promote-idea.mjs', [join(vault, 'none.md')]).code).toBe(2);
+    expect(run('promote-idea.mjs', [join(vault, 'none.md'), '--vault', obsidian]).code).toBe(2);
     expect(run('promote-idea.mjs', ['--bogus']).code).toBe(2);
     expect(run('promote-idea.mjs', []).code).toBe(2);
+  });
+});
+
+describe('promote-idea.mjs: drafts go to the private vault, never into the repository', () => {
+  let dir;
+  let obsidian;
+  let ready;
+
+  const run = (args, { env = {}, cwd } = {}) => {
+    // HCW_VAULT is taken out of the real environment so the result does not
+    // depend on whether the person running the tests has it set.
+    const { HCW_VAULT: _ignored, ...inherited } = process.env;
+    try {
+      const stdout = execFileSync(process.execPath, [join(HERE, 'promote-idea.mjs'), ...args], {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 30_000,
+        env: { ...inherited, ...env },
+        cwd,
+      });
+      return { code: 0, stdout, stderr: '' };
+    } catch (error) {
+      return { code: error.status, stdout: error.stdout ?? '', stderr: error.stderr ?? '' };
+    }
+  };
+  const listing = (folder) => (existsSync(folder) ? readdirSync(folder).sort() : null);
+  // A link from `from` to `to`. A junction is a Windows folder link that needs no
+  // special rights; elsewhere this makes an ordinary symlink. Returns false when
+  // the platform will not make one, so the test can say it was skipped.
+  const link = (to, from) => {
+    try {
+      symlinkSync(to, from, 'junction');
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** Run, and prove the refusal: exit 1, plain words, and nothing new in the repository. */
+  const expectRefused = (args, options) => {
+    const before = listing(DOCS_CONTENT);
+    const got = run(args, options);
+    expect(got.code, `${args.join(' ')}\n${got.stdout}${got.stderr}`).toBe(1);
+    expect(got.stderr).toContain('is inside the repository');
+    expect(got.stderr).toContain('public');
+    expect(listing(DOCS_CONTENT)).toEqual(before);
+    expect(existsSync(join(REPO_ROOT, 'Drafts'))).toBe(false);
+    expect(existsSync(join(REPO_ROOT, 'docs', 'Drafts'))).toBe(false);
+    return got;
+  };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hcw-vault-'));
+    obsidian = join(dir, 'obsidian');
+    mkdirSync(obsidian);
+    ready = join(dir, 'Ready.md');
+    writeFileSync(ready, note(GOOD));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('writes <vault>/Drafts/blog-<name>.md, creating Drafts, and leaves the vault otherwise alone', () => {
+    const got = run([ready, '--vault', obsidian]);
+    expect(got.code, got.stderr).toBe(0);
+    expect(got.stdout).toContain('Admin > Drafts');
+    const written = join(obsidian, 'Drafts', 'blog-ready.md');
+    expect(readFileSync(written, 'utf8')).toMatch(/^---\ntitle: Ready\n/);
+    expect(listing(obsidian)).toEqual(['Drafts']);
+  });
+
+  it('takes the vault from HCW_VAULT, and --vault wins over it', () => {
+    const other = join(dir, 'other');
+    mkdirSync(other);
+    expect(run([ready], { env: { HCW_VAULT: obsidian } }).code).toBe(0);
+    expect(existsSync(join(obsidian, 'Drafts', 'blog-ready.md'))).toBe(true);
+    expect(run([ready, '--vault', other], { env: { HCW_VAULT: obsidian } }).code).toBe(0);
+    expect(existsSync(join(other, 'Drafts', 'blog-ready.md'))).toBe(true);
+  });
+
+  it('with no vault from --vault or HCW_VAULT it stops with a plain explanation and writes nothing', () => {
+    for (const env of [{}, { HCW_VAULT: '' }, { HCW_VAULT: '   ' }]) {
+      const before = listing(DOCS_CONTENT);
+      const got = run([ready], { env });
+      expect(got.code).toBe(2);
+      expect(got.stderr).toContain('No vault was given');
+      expect(got.stderr).toContain('--vault <folder>');
+      expect(got.stderr).toContain('HCW_VAULT');
+      expect(listing(DOCS_CONTENT)).toEqual(before);
+    }
+  });
+
+  it('a vault folder that does not exist is a mistake to report, not a folder to make', () => {
+    const missing = join(dir, 'no-such-vault');
+    const got = run([ready, '--vault', missing]);
+    expect(got.code).toBe(2);
+    expect(got.stderr).toContain('does not exist');
+    expect(existsSync(missing)).toBe(false);
+  });
+
+  it('--out-dir is gone, and says where drafts go instead', () => {
+    const got = run([ready, '--out-dir', obsidian, '--vault', obsidian]);
+    expect(got.code).toBe(2);
+    expect(got.stderr).toContain('--out-dir no longer exists');
+    expect(listing(obsidian)).toEqual([]);
+  });
+
+  it('refuses the repository root, a folder in it, and the folder the script lives in', () => {
+    expectRefused([ready, '--vault', REPO_ROOT]);
+    expectRefused([ready, '--vault', join(REPO_ROOT, 'docs')]);
+    expectRefused([ready, '--vault', join(REPO_ROOT, 'docs', 'content')]);
+    expectRefused([ready, '--vault', HERE]);
+    expectRefused([ready, '--vault', join(REPO_ROOT, 'not-made-yet', 'deeper')]);
+    expectRefused([ready, '--vault', REPO_ROOT, '--dry-run']);
+  });
+
+  it('refuses the repository however the path is spelt: relative, with .., or with a trailing slash', () => {
+    expectRefused([ready, '--vault', '..'], { cwd: HERE });
+    expectRefused([ready, '--vault', '../..'], { cwd: HERE });
+    expectRefused([ready, '--vault', '.'], { cwd: join(REPO_ROOT, 'docs') });
+    expectRefused([ready, '--vault', '../content'], { cwd: join(REPO_ROOT, 'docs', 'runbooks') });
+    expectRefused([ready, '--vault', `${REPO_ROOT}${sep}scripts${sep}..${sep}docs`]);
+    expectRefused([ready, '--vault', `${REPO_ROOT}${sep}docs${sep}content${sep}${sep}`]);
+    // Leaves the repository and comes back in through the parent folder.
+    const name = REPO_ROOT.split(sep).pop();
+    expectRefused([ready, '--vault', `${REPO_ROOT}${sep}..${sep}${name}${sep}docs`]);
+    // A .. path that starts outside and walks into the repository.
+    expectRefused([ready, '--vault', `${REPO_ROOT}${sep}..${sep}${name}`], { cwd: dir });
+  });
+
+  it('refuses the repository through HCW_VAULT too', () => {
+    expectRefused([ready], { env: { HCW_VAULT: join(REPO_ROOT, 'docs') } });
+  });
+
+  it('on Windows and macOS, where upper and lower case are the same folder, the other case is still refused', () => {
+    if (process.platform !== 'win32' && process.platform !== 'darwin') return;
+    expectRefused([ready, '--vault', REPO_ROOT.toUpperCase()]);
+    expectRefused([ready, '--vault', join(REPO_ROOT, 'DOCS', 'Content').toLowerCase()]);
+  });
+
+  it('refuses a vault or a Drafts folder that is a link (symlink or junction) leading into the repository', () => {
+    // The vault itself is a link to the repository root.
+    const linkedVault = join(dir, 'linked-vault');
+    // The vault is fine, but its Drafts folder is a link to docs/content.
+    const trickyVault = join(dir, 'tricky-vault');
+    mkdirSync(trickyVault);
+    // Two links in a row: a link to a link to the repository.
+    const hop = join(dir, 'hop');
+    const hopHop = join(dir, 'hop-hop');
+    if (!link(REPO_ROOT, linkedVault) || !link(DOCS_CONTENT, join(trickyVault, 'Drafts'))) {
+      console.warn('promote-idea link tests skipped: this platform would not make a link');
+      return;
+    }
+    expect(realpathSync(linkedVault)).toBe(realpathSync(REPO_ROOT));
+    expectRefused([ready, '--vault', linkedVault]);
+    expectRefused([ready, '--vault', linkedVault, '--dry-run']);
+    expectRefused([ready, '--vault', trickyVault]);
+    expectRefused([ready, '--vault', join(linkedVault, 'docs')]);
+    if (link(REPO_ROOT, hop) && link(hop, hopHop)) {
+      expectRefused([ready, '--vault', hopHop]);
+    }
+  });
+
+  it('accepts a link that leads somewhere else, a relative vault, and a folder named like the repository', () => {
+    const away = join(dir, 'away');
+    mkdirSync(away);
+    const aLink = join(dir, 'a-link');
+    if (link(away, aLink)) {
+      expect(run([ready, '--vault', aLink]).code).toBe(0);
+      expect(existsSync(join(away, 'Drafts', 'blog-ready.md'))).toBe(true);
+    }
+    expect(run([ready, '--vault', 'obsidian'], { cwd: dir }).code).toBe(0);
+    expect(existsSync(join(obsidian, 'Drafts', 'blog-ready.md'))).toBe(true);
+    // The folder that holds the repository is outside it (dry run: nothing is made there).
+    const dry = run([ready, '--vault', dirname(REPO_ROOT), '--dry-run']);
+    expect(dry.code, dry.stderr).toBe(0);
+    expect(dry.stdout).toContain('Would write');
+  });
+
+  it('isInside: the root, below it, case, and look-alikes', () => {
+    const root = join(dir, 'Repo');
+    expect(isInside(root, root, false)).toBe(true);
+    expect(isInside(join(root, 'docs', 'content'), root, false)).toBe(true);
+    expect(isInside(dirname(root), root, false)).toBe(false);
+    expect(isInside(join(dir, 'Repo-copy'), root, false)).toBe(false);
+    expect(isInside(join(dir, 'Repo2', 'docs'), root, false)).toBe(false);
+    // Node's own path functions already ignore case on Windows, so case-sensitive
+    // matching can only be shown elsewhere.
+    if (process.platform !== 'win32') expect(isInside(join(dir, 'repo', 'docs'), root, false)).toBe(false);
+    expect(isInside(join(dir, 'repo', 'docs'), root, true)).toBe(true);
+    expect(isInside(join(dir, 'REPO'), root, true)).toBe(true);
+    expect(isInside(join(dir, 'REPO-copy'), root, true)).toBe(false);
+  });
+
+  it('a successful run and a dry run leave nothing under docs/content', () => {
+    const before = listing(DOCS_CONTENT);
+    expect(run([ready, '--vault', obsidian]).code).toBe(0);
+    expect(run([ready, '--vault', obsidian, '--name', 'again', '--dry-run']).code).toBe(0);
+    expect(listing(DOCS_CONTENT)).toEqual(before);
   });
 });
