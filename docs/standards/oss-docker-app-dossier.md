@@ -11,15 +11,21 @@ Nothing on this page applies to Docker, sends anything to Docker or changes any
 image. It is a checklist and a record. The related ticket is
 [#678](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/678).
 
-The reader is an administrator who may be new to this estate. Every term is
-explained where it first appears, and every command says what a good result
-looks like.
+The reader is an administrator who may be new to this estate. The terms are
+explained in the list below, and every command says what a good result looks
+like.
 
 Words used on this page:
 
 - **DSOS** is the Docker-Sponsored Open Source programme: Docker gives
-  qualifying open-source projects extra features on Docker Hub, free for a year
-  at a time ([Docker's programme page](https://docs.docker.com/docker-hub/repos/manage/trusted-content/dsos-program/)).
+  qualifying open-source projects extra features on Docker Hub for a year at a
+  time, renewable ([Docker's programme page](https://docs.docker.com/docker-hub/repos/manage/trusted-content/dsos-program/)).
+- **Docker Hub** is [Docker's public website](https://hub.docker.com/) for
+  sharing container images; the server behind it that stores the images is a
+  **registry**. An **image** is a packaged application that Docker can run, a
+  **tag** is the name after the colon that picks one version of it (`latest`,
+  `v0.1.0`), and a **Dockerfile** is the recipe file an image is built from
+  ([Dockerfile reference](https://docs.docker.com/reference/dockerfile/)).
 - **Namespace** is the name in front of the slash in an image name. In
   `hybridcloudworks/img-ne-appliance-app` the namespace is `hybridcloudworks`,
   which is also the name of HCW's Docker organisation (a shared account on
@@ -32,12 +38,18 @@ Words used on this page:
 - **Image label** is a line of text stored inside a container image. The label
   `org.opencontainers.image.licenses` is the standard place for the licence
   ([OCI image annotations](https://github.com/opencontainers/image-spec/blob/main/annotations.md)).
-- **OIDC** is a short-lived login that a GitHub Actions workflow exchanges for a
-  temporary credential, so no password or token is stored in the repository
-  ([GitHub's explanation](https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect),
+- A **workflow** is one of a repository's automated jobs, a file in
+  `.github/workflows/` that GitHub runs
+  ([GitHub Actions](https://docs.github.com/en/actions)). **OIDC** is a
+  short-lived login that a workflow exchanges for a temporary credential, so no
+  password or token is stored in the repository
+  ([GitHub's explanation](https://docs.github.com/en/actions/concepts/security/openid-connect),
   [Docker's OIDC connections](https://docs.docker.com/security/authentication/oidc-connections/create-manage/)).
-- **Provenance** is a signed statement of which workflow built an image
-  ([Docker's provenance attestations](https://docs.docker.com/build/metadata/attestations/slsa-provenance/)).
+- **Provenance** is a record of how an image was built: which workflow, from
+  which source, with which settings
+  ([Docker's provenance attestations](https://docs.docker.com/build/metadata/attestations/slsa-provenance/)),
+  written in the [SLSA](https://slsa.dev/spec/v1.0/provenance) format. It is not
+  the same thing as a signature on the image.
   An **SBOM** (software bill of materials) lists what is inside it
   ([Docker's SBOM attestations](https://docs.docker.com/build/metadata/attestations/sbom/)).
   Both travel with the image as attachments called attestations.
@@ -47,12 +59,13 @@ Words used on this page:
 - A **ruleset** is a repository's merge rules
   ([GitHub's rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)).
   **Dependabot** opens pull requests for outdated dependencies
-  ([options](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference)),
+  ([options](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)),
   **CodeQL** is GitHub's code scanner
-  ([CodeQL](https://docs.github.com/en/code-security/code-scanning/introduction-to-code-scanning/about-code-scanning-with-codeql)),
-  and **dependency review** blocks a pull request that adds a known-bad
-  dependency
-  ([dependency review](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-dependency-review)).
+  ([CodeQL](https://docs.github.com/en/code-security/concepts/code-scanning/codeql/codeql-code-scanning));
+  its **default setup** is the version GitHub switches on from the repository's
+  settings, with no workflow file. **Dependency review** blocks a pull request
+  that adds a known-bad dependency
+  ([dependency review](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependency-review)).
 
 ## 1. How to use this page
 
@@ -79,7 +92,8 @@ Read on 2026-10-25 from Docker's two pages: the
 [programme page](https://docs.docker.com/docker-hub/repos/manage/trusted-content/dsos-program/)
 and the [application page](https://www.docker.com/community/open-source/application/).
 
-Docker's wording of the four rules:
+Docker's wording of the four rules (the numbers are this page's own; Docker's
+page lists the rules without numbers):
 
 | # | Rule | Docker's words | Page |
 | --- | --- | --- | --- |
@@ -107,16 +121,18 @@ Terms that matter after approval, from the application page:
 **The paid-plan caveat.** Neither page says whether an organisation that
 already pays for a Docker plan can be accepted, or what happens to that plan if
 it is. The pages are silent, so do not assume either answer. Ask Docker in
-writing when you apply, keep the reply, and put its date and summary in the
-dossier (the "Docker's reply" field in section 4). What to do with a plan
-afterwards is an owner decision, recorded in the dossier and not on this page.
+writing when you apply and keep the reply in the owner's private notes. The
+public dossier records only that the question was asked and on what date; it
+never records plan or billing details. What to do with a plan afterwards is an
+owner decision, made and kept privately.
 
 **Two more things to ask.** First, Docker's fourth rule says "through
 services". Keep paid support, consulting and training out of the product's
 README, documentation and image descriptions (rule OSS-8 below). Whether HCW's
 separate teaching work counts as a pathway is Docker's decision, so ask it in
 the same message. Second, Docker's first rule talks about "the project
-namespace", which is the whole Docker organisation and not one image. A new
+namespace", which this page reads as the whole Docker organisation and not one
+image. A new
 product that publishes into an organisation already in the programme may
 therefore not need an application of its own. That is a reading of Docker's
 words, not something Docker states, so ask before applying a second time.
@@ -159,12 +175,15 @@ If the prompt shows an error instead, you pasted only part of the line.
     ```
 
     You should see `false` and then `False`. A repository that is private or does
-    not exist fails the second call with `404 (Not Found)`, because a call that is
-    not signed in cannot see it. That also means this check cannot find a private
-    repository you did not name: compare the count the next command prints with
-    the count on the organisation's repository list on
+    not exist fails the second call with a "not found" (404) error, because a
+    call that is not signed in cannot see it. That also means this check cannot
+    find a private repository you did not name. Docker Hub shows private
+    repositories only to signed-in members of the organisation, so compare the
+    count the next command prints with the count on the organisation's
+    repository list on
     [Docker Hub](https://hub.docker.com/orgs/hybridcloudworks/repositories)
-    (signed in). They must be equal.
+    (signed in). They must be equal: if the signed-in list is longer, the extra
+    repositories are private and this rule fails.
 
     ```powershell
     (Invoke-RestMethod 'https://hub.docker.com/v2/repositories/hybridcloudworks/?page_size=100').count
@@ -215,12 +234,13 @@ If the prompt shows an error instead, you pasted only part of the line.
     holder is always one of two names (owner instruction, 2026-10-25): **Saul
     Patino** for personal work, or **Hybrid Cloud Works** for the website, the
     apps and every other HCW project. A line in the form
-    `Copyright 2026 Hybrid Cloud Works` in `NOTICE` is enough. The year is the
+    `Copyright 2026 Hybrid Cloud Works` (or the usual MIT form, `Copyright (c) 2026
+    Hybrid Cloud Works`) in `NOTICE` or `LICENSE` is enough. The year is the
     year of the repository's first commit. This rule says who the holder is; it
     is not legal advice.
 
     ```powershell
-    'LICENSE','NOTICE' | ForEach-Object { $f = $_; gh api "repos/$repo/contents/$f" -H 'Accept: application/vnd.github.raw+json' | Select-String -Pattern 'Copyright (19|20)[0-9]{2} (Saul Patino|Hybrid Cloud Works)' | ForEach-Object { "$f -> $($_.Line)" } }
+    'LICENSE','NOTICE' | ForEach-Object { $f = $_; gh api "repos/$repo/contents/$f" -H 'Accept: application/vnd.github.raw+json' | Select-String -Pattern 'Copyright (\(c\) )?(19|20)[0-9]{2} (Saul Patino|Hybrid Cloud Works)' | ForEach-Object { "$f -> $($_.Line)" } }
     ```
 
     You should see one matching line, starting with the file's name. Nothing
@@ -260,16 +280,34 @@ If the prompt shows an error instead, you pasted only part of the line.
 
     You should see `SPDX` from the first and `SLSA` from the second. An image
     with no attachments prints `{}` from the raw command and nothing from these.
-    The Scout check is a step in the publishing workflow: open the workflow file
-    in `.github/workflows/`, find the step that runs `docker/scout-action`, and
-    open the latest run to confirm that step succeeded. Save the run's link as the
-    evidence.
+    These two lines were run only on images built for one platform, as Network
+    Eyes's are. For an image built for several platforms the names printed are
+    platform names such as `linux/amd64`, and these lines do not tell you
+    whether each platform has its attachments: say in the dossier how you
+    checked, using [Docker's SBOM attestations](https://docs.docker.com/build/metadata/attestations/sbom/)
+    as the guide. The same limit applies to the label check in OSS-3.
+
+    The checks above prove that the attachments exist. They do not prove that
+    the image is signed; a signature is a separate step that the publishing
+    workflow may add.
+
+    The Scout check is a step in the publishing workflow that runs
+    [`docker/scout-action`](https://github.com/docker/scout-action). Open the
+    repository's Actions page, pick the publishing workflow, open its latest run
+    and confirm that step succeeded. Save the run's link as the evidence.
+
+    ```powershell
+    Start-Process "https://github.com/$repo/actions"
+    ```
+
+    You should see the repository's list of workflow runs in your browser.
 
 - [ ] **OSS-7 The image repository is named
     `img-<code>-<lab-addon|appliance-app>`.** `<code>` is the product's two-letter
-    code (`mo`, `ca`, `ne`, `cc`, and any later one), `lab-addon` is the free
-    upload-only build the website frames, and `appliance-app` is the upstream app
-    image. This is the same convention as [IMG-1](hcw-field-application-standard.md#211-container-images)
+    code (`mo`, `ca`, `ne`, `cc`, and any later one). `appliance-app` is the
+    image of the main application (the "upstream app"), and `lab-addon` is the
+    small free build, with no cloud access, that the website shows inside a frame
+    (an embedded window) on one of its pages. This is the same convention as [IMG-1](hcw-field-application-standard.md#211-container-images)
     in the field standard. The tag is the release tag, such as `v0.1.0`.
 
     ```powershell
@@ -292,10 +330,14 @@ If the prompt shows an error instead, you pasted only part of the line.
 
 - [ ] **OSS-9 Public text says "user", not "customer", "client", "pricing" or
     "edition".** In `README.md`, `CLAUDE.md` and the documentation. Those words
-    make a reader (and a Docker reviewer) think of a paid product. Say "user" for
+    make a reader think of a paid product, and Docker's fourth rule is about
+    exactly that. Say "user" for
     the people, and say what a free build is ("the lab build") instead of
     "edition". Technical terms that happen to contain a word are fine
-    (`APP_CLIENT_ID`, "client secret"): the rule is about people and prices.
+    (`APP_CLIENT_ID`, "client secret"), and so is saying there is no paid
+    edition: the rule is about people and prices. A product name that has to
+    contain a listed word is recorded in the dossier as an exception, with the
+    reason and who decided.
 
     ```powershell
     'README.md','CLAUDE.md' | ForEach-Object { $f = $_; gh api "repos/$repo/contents/$f" -H 'Accept: application/vnd.github.raw+json' | Select-String -Pattern 'customer|client|pricing|edition' | ForEach-Object { "$f line $($_.LineNumber)" } }
@@ -305,15 +347,19 @@ If the prompt shows an error instead, you pasted only part of the line.
     read, and either change or record as a technical term. A product with a
     `docs/` folder runs the same search over it.
 
-- [ ] **OSS-10 The product is in active development.** Docker's rule 3: an image
-    pushed in the last six months. The date of the newest tag is the proof.
+- [ ] **OSS-10 The product is in active development.** Docker's rule 3 asks for
+    image updates "pushed regularly within the past 6 months" (or dependencies
+    updated regularly). HCW's check is stricter and simpler: the newest tag is
+    less than six months old. The date of the newest tag is the proof.
 
     ```powershell
     (Invoke-RestMethod "https://hub.docker.com/v2/repositories/$image/tags?page_size=3").results | Select-Object name, last_updated | Format-Table
     ```
 
-    You should see up to three tags and their push dates, the newest first. Every
-    date older than six months fails the rule.
+    You should see up to three tags and their push dates, the newest first. If
+    even the newest date is older than six months, the product is a gap to
+    explain to Docker, because Docker's other test (dependencies updated
+    regularly) may still be met.
 
 ### Repository health
 
@@ -331,17 +377,26 @@ If the prompt shows an error instead, you pasted only part of the line.
     ```
 
     You should see the three files and an `ISSUE_TEMPLATE` folder in the first
-    list, form files ending in `.yml` in the second, and `true` last.
+    list, form files ending in `.yml` in the second, and `true` last. The first
+    command lists only `.github/`: if a file is not there, look at the
+    repository root and `docs/`, where GitHub also finds it.
 
 - [ ] **OSS-12 The rulesets "Protect main" and "Protect release tags" are
     active.** The field standard's rule is [PRO-1](hcw-field-application-standard.md#25-branch-and-tag-protection).
 
     ```powershell
-    gh api repos/$repo/rulesets | ConvertFrom-Json | Select-Object name, enforcement, target | Format-Table
+    (gh api repos/$repo/rulesets | ConvertFrom-Json) | Select-Object name, enforcement, target | Format-Table
     ```
 
-    You should see two rows, `Protect main` (target `branch`) and
-    `Protect release tags` (target `tag`), both with enforcement `active`.
+    (The brackets matter: Windows PowerShell 5.1 prints an empty row without
+    them.) You should see two rows, `Protect main` (target `branch`) and
+    `Protect release tags` (target `tag`), both with enforcement `active`. To
+    read what each rule does, open the repository's rules page (signed in or
+    not) and pick the ruleset:
+
+    ```powershell
+    Start-Process "https://github.com/$repo/rules"
+    ```
 
 - [ ] **OSS-13 Dependabot, CodeQL and dependency review are on.** A
     `.github/dependabot.yml` that covers every package type in the repository
@@ -355,10 +410,15 @@ If the prompt shows an error instead, you pasted only part of the line.
 
     You should see `.github/dependabot.yml` and then `configured`. A product that
     runs CodeQL from its own workflow file instead of GitHub's default setup
-    prints `not-configured` for the second line; then open the repository's
-    Security tab, Code scanning, and confirm a recent CodeQL run. The dependency
-    review job is found by reading the workflow file for
-    `actions/dependency-review-action`.
+    prints `not-configured` for the second line; then open the repository's code
+    scanning page (signed in) and confirm a recent CodeQL run:
+
+    ```powershell
+    Start-Process "https://github.com/$repo/security/code-scanning"
+    ```
+
+    The dependency review job is found by reading the workflow files for
+    [`actions/dependency-review-action`](https://github.com/actions/dependency-review-action).
 
 ## 4. The dossier to fill in
 
@@ -414,17 +474,21 @@ Open gaps (rule, what is missing, who closes it, ticket):
 DSOS application:
   Status:                 <not submitted | submitted | approved | refused | renewed>
   Date:                   <YYYY-MM-DD>
-  Docker's reply:         <date, one-line summary, link to where the reply is kept>
-  Answer to the paid-plan question: <Docker's answer, or "not asked yet">
+  Docker's reply:         <date and a one-line summary of the application decision; the full reply stays in the owner's private notes>
+  Paid-plan question:     <asked on YYYY-MM-DD | not asked yet> (the answer and any plan details stay in the owner's private notes)
   Renewal date:           <one year after approval, YYYY-MM-DD>
 ```
 
 ## 5. Worked example: Network Eyes
 
-Network Eyes is the first product written up. All values were read on
+Network Eyes is the first product written up. The values were read on
 2026-10-25 (times in UTC) from the repository's default branch, Docker Hub and
-the registry. Re-read before relying on any of them: the repository changes
-every day.
+the registry; the files that changed in the meantime (`LICENSE`, `NOTICE`, the
+README and `CLAUDE.md`, after
+[pull request #316](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/316)
+merged at 04:35 UTC on 2026-10-26) were read again on `main` at commit
+`fe6c3b41`. Re-read before relying on any of them: the repository changes every
+day.
 
 | Field | Value |
 | --- | --- |
@@ -434,9 +498,9 @@ every day.
 | Docker organisation | [hybridcloudworks](https://hub.docker.com/u/hybridcloudworks) |
 | Image repositories | [img-ne-appliance-app](https://hub.docker.com/r/hybridcloudworks/img-ne-appliance-app), [img-ne-lab-addon](https://hub.docker.com/r/hybridcloudworks/img-ne-lab-addon) |
 | Licence | Apache-2.0 for the app and its image, MIT for the add-on repository |
-| Copyright holder | Hybrid Cloud Works (owner rule). Not yet written into `LICENSE` or `NOTICE` on `main`; see OSS-4 below |
+| Copyright holder | Hybrid Cloud Works (owner rule), written into `LICENSE` and `NOTICE` by pull request #316 |
 | One-sentence goal | Point it at an Azure or AWS environment and it checks the network against security and migration-readiness rules and writes a report. |
-| Who benefits | Cloud and network engineers who follow Hybrid Cloud Works, and students learning how a network assessment works. |
+| Who benefits | Cloud and network engineers who follow Hybrid Cloud Works, and students learning how a network assessment works (the owner's wording for the application form). |
 | First image published | 2026-10-25 (Docker Hub lists both repositories as created that day) |
 | Related ticket | [#678](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/678) |
 | DSOS application | Not submitted. The answers are prepared in the owner's private notes. |
@@ -448,18 +512,24 @@ Status of each rule on 2026-10-25:
 | Rule | Status | Evidence |
 | --- | --- | --- |
 | OSS-1 | Met, one part not checked | The repository reports `private: false`; both image repositories answer a signed-out call. Nine repositories are listed to a signed-out visitor under `hybridcloudworks`. Whether the organisation also holds a private one was not checked (a signed-out call cannot see it). |
-| OSS-2 | Met | GitHub reports `Apache-2.0`; `LICENSE` is the Apache License 2.0 text, which is on the [OSI list](https://opensource.org/license/apache-2-0). |
+| OSS-2 | Met, one caveat | GitHub reports `Apache-2.0`; `LICENSE` is the Apache License 2.0 text, which is on the [OSI list](https://opensource.org/license/apache-2-0). Caveat: [`NOTICE`](https://github.com/saulpatinojr/HCW-NetworkEyes_App/blob/main/NOTICE) lists the Aeonik typeface (two font files in the repository) as not covered by the Apache licence. It records the owner's statement of 2026-10-25 that no separate licence is required, and says the repository has not verified that. The code is Apache-2.0; whether the font bears on Docker's "Open Source Initiative definition" rule is the owner's call. |
 | OSS-3 | Met for the app, **not met for the add-on image** | App: the root [`Dockerfile`](https://github.com/saulpatinojr/HCW-NetworkEyes_App/blob/main/Dockerfile) label, [`NOTICE`](https://github.com/saulpatinojr/HCW-NetworkEyes_App/blob/main/NOTICE) and the README's Licence section all say `Apache-2.0`, and the registry shows `Apache-2.0` on the tags `latest`, `web-latest`, `api-latest`, `worker-latest` and `migrator-latest`. The add-on's tags `0.1.0` and `v0.1.1-rc.1` carry no licence label although its repository is MIT. |
-| OSS-4 | **Not met on `main`** | `LICENSE` still carries the Apache text's unfilled `Copyright [yyyy] [name of copyright owner]` line and `NOTICE` has no copyright line. The open [pull request #316](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/316) adds `Copyright 2026 Hybrid Cloud Works`; it was not merged when this was read. The add-on's `LICENSE` already names Hybrid Cloud Works. |
-| OSS-5 | Part: publishing is OIDC, stored Docker secrets remain | The [publishing workflow](https://github.com/saulpatinojr/HCW-NetworkEyes_App/blob/main/.github/workflows/200-build-images.yml) logs in to Docker Hub through OIDC. The separate clean-up workflow [`370-registry-cleanup.yml`](https://github.com/saulpatinojr/HCW-NetworkEyes_App/blob/main/.github/workflows/370-registry-cleanup.yml) still reads the stored secret `DOCKERHUB_PERSONAL_TOKEN`; the field standard tracks it as G-11. The repository's secret list (names only) also holds `DOCKERHUB_TOKEN`, which no workflow in `.github/workflows` references; whether it is still needed is an owner question. |
-| OSS-6 | Met | Both `latest` (app) and `0.1.0` (add-on) carry an SPDX SBOM and SLSA provenance attestation. Docker Scout steps ran and succeeded in [run 40245507222](https://github.com/saulpatinojr/HCW-NetworkEyes_App/actions/runs/40245507222) of the publishing workflow (2026-10-25). |
+| OSS-4 | Met since pull request #316 | On the morning of 2026-10-25 `LICENSE` still carried the Apache text's unfilled `Copyright [yyyy] [name of copyright owner]` line and `NOTICE` had no copyright line. [Pull request #316](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/316) fixed both while this page was being written: on `main` (`fe6c3b41`) `LICENSE` line 189 and `NOTICE` read `Copyright 2026 Hybrid Cloud Works`. The add-on's `LICENSE` says `Copyright (c) 2026 Hybrid Cloud Works`. |
+| OSS-5 | Part: publishing is OIDC, stored Docker secrets remain | The [publishing workflow](https://github.com/saulpatinojr/HCW-NetworkEyes_App/blob/main/.github/workflows/200-build-images.yml) logs in to Docker Hub through OIDC. The separate clean-up workflow [`370-registry-cleanup.yml`](https://github.com/saulpatinojr/HCW-NetworkEyes_App/blob/main/.github/workflows/370-registry-cleanup.yml) still reads the stored secret `DOCKERHUB_PERSONAL_TOKEN`; the field standard tracks it as G-11. The repository's secret list (names only) also holds `DOCKERHUB_TOKEN`, which no workflow in `.github/workflows` references; whether it is still needed is an owner question. (The list also holds `DOCKERHUB_PERSONAL_USERNAME`, which workflow 370 reads as a variable and not as a secret.) |
+| OSS-6 | Met | Both `latest` (app) and `0.1.0` (add-on), each built for one platform, carry an SPDX SBOM and SLSA provenance attestation. Whether the images are also signed was not checked here (the publishing workflow has signing steps and they succeeded in the run below). Docker Scout steps ran and succeeded in [run 40245507222](https://github.com/saulpatinojr/HCW-NetworkEyes_App/actions/runs/40245507222) of the publishing workflow (2026-10-25). |
 | OSS-7 | Met | `img-ne-appliance-app` and `img-ne-lab-addon`. The organisation also holds `hcw-lab` and `hcw-lab-runner`, older names for the website's lab images, which do not follow the convention. |
 | OSS-8 | Owner statement | Owner statement, 2026-10-25: a free tool for followers of Hybrid Cloud Works, shared through GitHub, with no paid edition. A repository search for payment code is not proof and was not relied on. |
-| OSS-9 | **Not met on `main`** | `README.md` says "client" on lines 12, 28 and 74 and "edition" on lines 9, 13 and 22; `CLAUDE.md` says "Customers" on line 14 and "edition" on lines 20, 22, 29 and 179. The other hits (`APP_CLIENT_ID`, "client secret") are technical terms. [Pull request #316](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/316) rewrites the README and `CLAUDE.md` wording; open when read. |
-| OSS-10 | Met | Newest tag pushed 2026-10-25 23:42 UTC (`img-ne-appliance-app`); the repository was last pushed 2026-10-26 04:01 UTC. |
+| OSS-9 | **Part** | Before pull request #316 the README said "client" on lines 12, 28 and 74 and `CLAUDE.md` said "Customers" on line 14; those are gone on `main` (`fe6c3b41`), and the README now says "NetworkEyes is a free tool for followers of Hybrid Cloud Works". The remaining hits for "client" (`APP_CLIENT_ID`, "client secret") are technical terms. "Edition" remains: README lines 9, 13, 17 and 23 and `CLAUDE.md` lines 20, 22, 29 and 179. Line 17 denies a paid edition, which is fine; the rest are "lab edition", the name of the free add-on. Whether that name stays (recorded as an exception) or becomes "lab build" is an owner decision. |
+| OSS-10 | Met | Newest tag pushed 2026-10-25 23:42 UTC (`img-ne-appliance-app`); the repository was last pushed on 2026-10-26 UTC (a time-sensitive value, and not a Docker criterion). |
 | OSS-11 | Met | `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` in [`.github/`](https://github.com/saulpatinojr/HCW-NetworkEyes_App/tree/main/.github); forms `bug_report.yml`, `feature_request.yml`, `work_item.yml` and `config.yml`; private vulnerability reporting is `true`. |
-| OSS-12 | Met, one difference | Both rulesets are `active`. "Protect main" has the rules `deletion`, `non_fast_forward`, `pull_request` and `required_status_checks` (11 checks). "Protect release tags" protects `refs/tags/v*` but lists the repository-administrator role as a bypass actor (`always`), the same in all four App repositories; the field standard's PRO-1 says "no bypass". Left for the owner to reconcile. |
+| OSS-12 | Met, one difference | Both rulesets are `active`. "Protect main" has the rules `deletion`, `non_fast_forward` (no force push), `pull_request` and `required_status_checks` (11 checks). "Protect release tags" protects `refs/tags/v*` but lists the repository-administrator role as a bypass actor (a role allowed to skip the rules, here `always`), the same in all four App repositories; the field standard's PRO-1 says "no bypass". Left for the owner to reconcile. |
 | OSS-13 | Met | `dependabot.yml` covers `uv`, `github-actions`, `docker` and `npm`; CodeQL default setup is `configured` for `actions`, `javascript-typescript` and `python`; the job `Dependency Review` is in workflow `300-test-codebase.yml` and is a required check. (The field standard's gap G-16, CodeQL scanning only `actions`, was true when it was written and is no longer.) |
+
+Two rows of the field application standard have moved since it was written on
+the morning of 2026-10-25: [IMG-1](hcw-field-application-standard.md#211-container-images)
+says Docker Hub shows no tags for the `img-*-appliance-app` repositories (Network
+Eyes now has 21), and PRO-3 counts 10 required checks (the ruleset now has 11).
+Refresh them at the standard's next review.
 
 What the example shows: a product can have every rule met for its main image and
 still fail on its second image or on the words in its README. Fill the dossier
@@ -473,8 +543,9 @@ checklist on it as its own pair of names.
 
 A product stops being eligible the moment it gets a paid edition or features
 only paying users can have. Docker's rule 4 looks at a "pathway to
-commercialization", and the namespace is shared: one product that fails the rule
-puts every other image in the same Docker organisation at risk. So move that
+commercialization", and the namespace is shared. Docker's pages do not say how a
+breach is handled, so treat it as a risk to every image in the same Docker
+organisation, as a precaution. Move that
 product's image repositories to a separate Docker organisation before the paid
 edition is released, point its README and website page at the new names, and
 record the move in the dossier of every product that stays. The free products
@@ -494,8 +565,12 @@ documentation at the time, and ask.
   its own values and links back to the rules above; it does not copy them.
 - **No guard script:** this repository has no test or script that checks
   standards pages for content, so none was added. The page is covered by the
-  documentation build and the two documentation scans that run on every pull
-  request.
+  documentation build (`mkdocs build --strict`) and the two documentation scans,
+  [`check_redaction.py`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/docs/check_redaction.py)
+  and
+  [`check_stale_state.py`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/docs/check_stale_state.py),
+  which run on every documentation pull request in
+  [`docs-pages.yml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.github/workflows/docs-pages.yml).
 
 ## 8. How this was checked, and what was not
 
@@ -503,9 +578,14 @@ Read on 2026-10-25: Docker's two pages (raw HTML, to confirm the quoted words),
 the Network Eyes repository through the GitHub API (licence, files, rulesets,
 code scanning setting, workflows, secret names, a recent run), Docker Hub's
 public API (repositories and tags), and the registry (image labels and
-attestations). Every command in section 3 was run against Network Eyes and
-printed what the page says it should. The other documentation links were opened
-and their titles read.
+attestations). Every command in section 3 except the three `Start-Process` lines (which
+open a browser) was run against Network Eyes, in PowerShell 7 and in Windows
+PowerShell 5.1, and printed what the page says it
+should (on the morning of 2026-10-25 the copyright check printed nothing for the
+app, because `main` named no holder yet; after pull request #316 it prints a
+line for each of `LICENSE` and `NOTICE`). A separate reviewer re-checked the quotes against Docker's pages and
+the Network Eyes values against GitHub and Docker Hub, and its corrections are
+in this version. The documentation links were opened and their titles read.
 
 Not checked:
 
