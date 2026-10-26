@@ -104,10 +104,19 @@ export function referenceOf(container, doc) {
     container === 'content'
       ? `/admin/editor/${encodeURIComponent(doc.id)}`
       : sourceMap.get(container);
+  const recordingId =
+    container === 'recordings'
+      ? doc.id
+      : container === 'podcast_transcripts'
+        ? text(
+            doc.recordingId || doc.sourceRecordingId || doc.storedRecordingId,
+            128,
+          )
+        : null;
   return {
     id: sourceKey(container, doc.id),
     type: 'reference',
-    source: { container, id: doc.id },
+    source: { container, id: doc.id, ...(recordingId && { recordingId }) },
     title,
     body: body.slice(0, 128 * 1024),
     truncated: body.length > 128 * 1024,

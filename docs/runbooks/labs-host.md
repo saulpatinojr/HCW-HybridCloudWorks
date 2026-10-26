@@ -1223,6 +1223,15 @@ Coder Community edition lacks per-user quotas, forced dormancy, and auto-stop en
    - Hard auto-reap: expired sessions are reaped opportunistically on status/start checks, and users can end their session via `DELETE /public/labs/visitor-session?sessionId=...`.
 5. **Emergency Switch:** Set `LABS_VISITOR_SESSIONS_ENABLED="false"` in app settings to instantly close visitor sessions.
 
+### Who counts as one visitor (#1387)
+The three routes (`GET`, `POST` and `DELETE` on `/api/public/labs/visitor-session`) know a caller the way the other anonymous routes do: by a hash (a scrambled, one-way fingerprint) of the address Cloudflare reports. `functions/src/lib/auth/client-identity.js` only trusts that address on a request that carries the origin secret (`CF_ORIGIN_SECRET`, a password Cloudflare adds to every request it passes to the API, so a request sent straight to the Function App cannot pretend to be someone else).
+
+- **Each visitor has their own daily limit and their own session.** The status route describes only the caller's own session, and the stop route ends a session only for the caller it belongs to. Any other caller, even one who holds the session's id, is told `404 Session not found`, the same answer as for an id that never existed.
+- **People behind one shared network address count as one visitor** (an office, a school, a mobile carrier's shared address). They share the daily limit and the session, as they share every other anonymous limit on the site, and each of them can see the running lab's address and end it.
+- **A visitor whose address changes during a session** (Wi-Fi to mobile data, or a VPN switched on) is a different visitor from then on. They can no longer see or end the old session, which keeps running until its hour is up and counts against the concurrent limit; starting again spends another of their two sessions for the day.
+- **A request is refused** with `403 FORBIDDEN`, before anything is read, written or sent to Turnstile (Cloudflare's bot check) or Coder, when it does not come through our Cloudflare (no origin secret) or when it carries the secret but no usable client address (`CF-Connecting-IP`). The log says only `visitor-session: refused a request whose caller could not be verified`. If visitors who should get through are being refused, check that `CF_ORIGIN_SECRET` resolves on the Function App and that Cloudflare still adds the origin-secret header and the client address, as for the `FORBIDDEN` row in the lab submission table above.
+- **A session saved before this change** (if the switch was ever on) was filed under the text `unidentified`. Nobody can read or end one of those now; each is expired by the sweep (the clean-up that runs whenever a visitor asks for the status or starts a session, while the switch is on) once its hour is up.
+
 ### Counting lab starts
 
 The site counts every lab session it starts for a visitor, so that anyone quoting

@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { Brain, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import { useBrainAccess } from '@/hooks/useBrainAccess';
 import { brainApi } from '@/lib/brainApi';
+import { reauthenticateForApi } from '@/lib/entraAuth';
 import BrainMap from './brain/BrainMap';
 import AskPanel from './brain/AskPanel';
 import WorkspaceHome from './brain/WorkspaceHome';
@@ -65,8 +66,10 @@ function ItemList({
   );
 }
 
-const workspaceClass = (selection) =>
-  selection ? 'grid items-start gap-6 xl:grid-cols-[minmax(20rem,1fr)_minmax(28rem,1fr)]' : '';
+const workspaceClass = (selection, view) =>
+  selection && view !== 'Map'
+    ? 'grid items-start gap-6 xl:grid-cols-[minmax(20rem,1fr)_minmax(28rem,1fr)]'
+    : '';
 
 function ReferencePreview({ item, backlinks, onSelect, onClose, onCapture }) {
   return (
@@ -95,6 +98,45 @@ function ReferencePreview({ item, backlinks, onSelect, onClose, onCapture }) {
       <h3 className="font-semibold">Linked research</h3>
       <ItemList items={backlinks} onSelect={onSelect} empty="No linked notes yet." />
     </section>
+  );
+}
+
+function WorkspaceUnavailable({ access }) {
+  const [error, setError] = useState('');
+  const needsRenewal =
+    access.errorStatus === 401 && access.wwwAuthenticate?.error === 'invalid_token';
+  async function renew() {
+    try {
+      await reauthenticateForApi();
+    } catch (err) {
+      setError(err.message || 'Could not renew your session.');
+    }
+  }
+  return (
+    <div className="rounded-xl border p-8">
+      <h1 className="text-2xl font-semibold">Second Brain</h1>
+      <p className="mt-3">
+        This private workspace is unavailable for this account or has not been enabled.
+      </p>
+      {access.accountLabel && (
+        <p className="mt-2 text-sm text-muted-foreground">Signed in as {access.accountLabel}</p>
+      )}
+      {needsRenewal && (
+        <p className="mt-2 text-sm">Your HCW website session needs to be renewed.</p>
+      )}
+      {error && <p role="alert">{error}</p>}
+      {needsRenewal && (
+        <Button className="mt-4 mr-4" onClick={renew}>
+          Renew website session
+        </Button>
+      )}
+      <Button className="mt-4 mr-4" variant="outline" onClick={access.refresh}>
+        Check access again
+      </Button>
+      <Link className="mt-4 inline-block underline" to="/admin">
+        Return to admin
+      </Link>
+    </div>
   );
 }
 
@@ -127,6 +169,9 @@ export default function SecondBrainPage() {
   const openSequence = useRef(0);
   const initialLink = useRef(false);
   const dirtyRef = useRef(false);
+  // Private in-memory recovery survives a failed capability refresh. The
+  // identity-keyed provider unmounts this page when accounts change.
+  const [editorSnapshot, setEditorSnapshot] = useState(null);
   const reportDirty = useCallback((value) => {
     dirtyRef.current = value;
   }, []);
@@ -191,6 +236,7 @@ export default function SecondBrainPage() {
       try {
         const data = await brainApi.get(id);
         if (seq === openSequence.current) {
+          setEditorSnapshot(null);
           setSelection(data.item);
           setEditorEpoch((value) => value + 1);
           dirtyRef.current = false;
@@ -253,38 +299,38 @@ export default function SecondBrainPage() {
   };
   const newItem = async (type = 'note', fields = {}) => {
     if (!(await canLeave())) return;
+    setEditorSnapshot(null);
     dirtyRef.current = false;
     setSelection(blank(type, fields));
     setBacklinks([]);
+    return true;
   };
   const saved = (item) => {
+    setEditorSnapshot(null);
     setSelection(item);
     dirtyRef.current = false;
     loadNotes().catch((err) => setError(err.message));
   };
   const close = async () => {
     if (!(await canLeave())) return;
+    setEditorSnapshot(null);
     setSelection(null);
     setBacklinks([]);
     setParams({}, { replace: true });
   };
   const statusData = status || access;
   const collections = notes.filter((n) => ['topic', 'project'].includes(n.type));
-  const mapNodes = graph.nodes.filter((n) => !mapFilter || n.type === mapFilter);
+  const mapNodes = useMemo(
+    () => graph.nodes.filter((n) => !mapFilter || n.type === mapFilter),
+    [graph.nodes, mapFilter]
+  );
+  const mapEdges = useMemo(() => {
+    const ids = new Set(mapNodes.map((n) => n.id));
+    return graph.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
+  }, [graph.edges, mapNodes]);
 
   if (access.loading) return <p role="status">Checking workspace access…</p>;
-  if (!access.enabled)
-    return (
-      <div className="rounded-xl border p-8">
-        <h1 className="text-2xl font-semibold">Second Brain</h1>
-        <p className="mt-3">
-          This private workspace is unavailable for this account or has not been enabled.
-        </p>
-        <Link className="mt-4 inline-block underline" to="/admin">
-          Return to admin
-        </Link>
-      </div>
-    );
+  if (!access.enabled) return <WorkspaceUnavailable access={access} />;
   return (
     <div className="max-w-[100rem] space-y-6">
       <header className="rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-muted/40 p-6">
@@ -342,7 +388,7 @@ export default function SecondBrainPage() {
           Loading workspace…
         </p>
       )}
-      <div className={workspaceClass(selection)}>
+      <div className={workspaceClass(selection, view)}>
         <section aria-label="Workspace view" className="min-w-0 space-y-5">
           {view === 'Home' && (
             <WorkspaceHome
@@ -473,14 +519,7 @@ export default function SecondBrainPage() {
                   </select>
                 </label>
               </div>
-              <BrainMap
-                nodes={mapNodes}
-                edges={graph.edges.filter(
-                  (e) =>
-                    mapNodes.some((n) => n.id === e.from) && mapNodes.some((n) => n.id === e.to)
-                )}
-                onSelect={open}
-              />
+              <BrainMap nodes={mapNodes} edges={mapEdges} onSelect={open} />
               {graphCursor && (
                 <Button variant="outline" disabled={busy} onClick={() => loadGraph(graphCursor)}>
                   Expand map
@@ -492,7 +531,9 @@ export default function SecondBrainPage() {
             <AskPanel
               context={selection}
               enabled={statusData.aiEnabled}
-              onSaveNote={(fields) => newItem('note', fields)}
+              onSaveNote={async (fields) => {
+                if (await newItem('note', fields)) setView('Inbox');
+              }}
             />
           )}
         </section>
@@ -527,6 +568,8 @@ export default function SecondBrainPage() {
                 onSelect={open}
                 onClose={close}
                 onDirty={reportDirty}
+                snapshot={editorSnapshot}
+                onSnapshot={setEditorSnapshot}
               />
             )}
           </aside>
