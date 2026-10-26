@@ -17,10 +17,10 @@ export default {
     {
       name: 'Plan AI-powered business solutions',
       slug: 'plan-ai-powered-business-solutions',
-      anchor: 'plan-ai-powered-business-solutions-2530',
-      weightLabel: '25–30%',
-      weightLow: 25,
-      weightHigh: 30,
+      anchor: 'plan-ai-powered-business-solutions-3540',
+      weightLabel: '35–40%',
+      weightLow: 35,
+      weightHigh: 40,
       sections: [
         {
           title: 'Analyze requirements for AI-powered business solutions',
@@ -63,10 +63,10 @@ export default {
     {
       name: 'Design AI-powered business solutions',
       slug: 'design-ai-powered-business-solutions',
-      anchor: 'design-ai-powered-business-solutions-2530',
-      weightLabel: '25–30%',
-      weightLow: 25,
-      weightHigh: 30,
+      anchor: 'design-ai-powered-business-solutions-3035',
+      weightLabel: '30–35%',
+      weightLow: 30,
+      weightHigh: 35,
       sections: [
         {
           title: 'Design AI and agents for business solutions',
@@ -119,10 +119,10 @@ export default {
     {
       name: 'Deploy AI-powered business solutions',
       slug: 'deploy-ai-powered-business-solutions',
-      anchor: 'deploy-ai-powered-business-solutions-4045',
-      weightLabel: '40–45%',
-      weightLow: 40,
-      weightHigh: 45,
+      anchor: 'deploy-ai-powered-business-solutions-2025',
+      weightLabel: '20–25%',
+      weightLow: 20,
+      weightHigh: 25,
       sections: [
         {
           title: 'Analyze, monitor, and tune AI-powered business solutions',
