@@ -42,7 +42,11 @@ export function visibleGraph(model, { query, focusId, localOnly, hideIsolated })
   const needle = query.trim().toLowerCase();
   const matches = new Set(
     model.nodes
-      .filter((n) => `${n.title} ${(n.tags || []).join(' ')}`.toLowerCase().includes(needle))
+      .filter((n) =>
+        `${n.title} ${n.properties?.heading || ''} ${(n.tags || []).join(' ')}`
+          .toLowerCase()
+          .includes(needle)
+      )
       .map((n) => n.id)
   );
   const allowed = new Set(matches);

@@ -76,6 +76,13 @@ const FUNCTION_TIMEOUT_MS = {
   // again writes nothing new. Routes with an id stay on the default.
   'cms/doc-vault': 45000,
   'cms/doc-vault/upload': 45000,
+  // The Calendar Alerts list, read by the sign-in pop-up after the portal has
+  // drawn (and the page's Add, which shares the route): one document read, and
+  // at most five conditional writes. Under the default so a slow store becomes
+  // the pop-up's small "could not be loaded" notice, not a wait that outlasts
+  // the admin's patience. Edit, snooze and delete use the per-alert route
+  // and the default.
+  'cms/calendar-alerts': 10000,
 };
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const SAFE_RETRY_FUNCTIONS = new Set([

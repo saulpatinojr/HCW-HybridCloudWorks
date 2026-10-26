@@ -143,6 +143,7 @@ function CalendarScheduleDialog({ dialog, unscheduled, items, busy, onSubmit, on
  * @param {object[]} [props.unscheduled] content the Unscheduled panel offers, for the dialog's picker
  * @param {() => void} [props.onChanged] told after every write, so a sibling panel can refetch too
  * @param {boolean} [props.enabled]
+ * @param {number} [props.refreshToken] changes when something outside the grid changed what it shows
  * @param {object|null} [props.scheduleRequest] `{ content, day? }` from outside (the panel's Schedule…); cleared via onScheduleHandled
  * @param {() => void} [props.onScheduleHandled]
  * @param {Date} [props.today] injected for tests
@@ -155,6 +156,7 @@ export default function SharedCalendar({
   unscheduled = [],
   onChanged,
   enabled = true,
+  refreshToken = 0,
   scheduleRequest = null,
   onScheduleHandled,
   today,
@@ -165,7 +167,7 @@ export default function SharedCalendar({
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [selected, setSelected] = useState(null);
 
-  const read = useCalendarItems({ view, cursor, kinds, enabled });
+  const read = useCalendarItems({ view, cursor, kinds, enabled, refreshToken });
   // Every write ends here: the refetch, and the word to a sibling panel.
   const changed = () => {
     read.refresh();

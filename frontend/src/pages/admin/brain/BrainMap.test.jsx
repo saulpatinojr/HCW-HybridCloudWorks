@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { useReducedMotion } from 'framer-motion';
 import BrainMap from './BrainMap';
 vi.mock('framer-motion', () => ({ useReducedMotion: vi.fn() }));
@@ -10,8 +10,46 @@ const nodes = [
   { id: 'c', title: 'Unrelated Azure', type: 'reference', tags: [] },
 ];
 const edges = [{ from: 'a', to: 'b', kind: 'explicit' }];
-beforeEach(() => useReducedMotion.mockReturnValue(true));
+beforeEach(() => {
+  localStorage.clear();
+  useReducedMotion.mockReturnValue(true);
+});
 describe('interactive map', () => {
+  it('opens a full-screen dialog, closes with X or Escape and returns focus', async () => {
+    render(<BrainMap nodes={nodes} edges={edges} onSelect={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Knowledge map' });
+    expect(within(dialog).getByRole('region', { name: 'Knowledge canvas' })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Full screen' })).toHaveFocus());
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+    await screen.findByRole('dialog');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+  it('restores the palette and label size after remounting without storing note text', async () => {
+    const first = render(<BrainMap nodes={nodes} edges={edges} onSelect={vi.fn()} />);
+    fireEvent.click(screen.getByText('Appearance', { exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Warm', exact: true }));
+    fireEvent.change(screen.getByLabelText('Map label size'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Note color'), { target: { value: '#075985' } });
+    first.unmount();
+    render(<BrainMap nodes={nodes} edges={edges} onSelect={vi.fn()} />);
+    await screen.findByRole('button', { name: 'Explore Docker release' });
+    expect(screen.getByRole('button', { name: 'Warm', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    expect(screen.getByLabelText('Map label size')).toHaveValue('10');
+    expect(screen.getByLabelText('Note color')).toHaveValue('#075985');
+    expect(localStorage.getItem('hcw.brain.map.appearance.v1')).not.toContain('Docker release');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset appearance' }));
+    expect(screen.getByRole('button', { name: 'Cloud', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+  });
   it('explores a node with the keyboard, isolates its neighborhood and opens its real item', async () => {
     const open = vi.fn();
     render(<BrainMap nodes={nodes} edges={edges} onSelect={open} />);
