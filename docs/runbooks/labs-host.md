@@ -1300,8 +1300,8 @@ above.
 
 UTC is the world reference clock, and every day here is a UTC day: *Last 7 days*
 is today and the six days before it, *Last 30 days* is today and the
-twenty-nine before it. A UTC day runs from 19:00 to 19:00 US Central time while
-winter time applies, and from 20:00 to 20:00 while summer time applies.
+twenty-nine before it. A UTC day runs from 18:00 to 18:00 US Central time while
+winter time applies, and from 19:00 to 19:00 while summer time applies.
 
 **If a start is missing from the count.** The counter never blocks a visitor.
 If the store cannot be written, the session is still handed out and the Function
