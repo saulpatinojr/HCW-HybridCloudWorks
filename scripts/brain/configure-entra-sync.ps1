@@ -19,19 +19,23 @@ Set-StrictMode -Version Latest
 
 function Invoke-Graph {
     param([string]$Method, [string]$Url, $Body)
-    $bodyFile = $null
-    try {
-        $arguments = @('rest', '--method', $Method, '--url', "https://graph.microsoft.com/v1.0/$Url", '-o', 'json')
-        if ($null -ne $Body) {
-            $bodyFile = New-TemporaryFile
-            $Body | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $bodyFile.FullName -Encoding utf8
-            $arguments += @('--body', "@$($bodyFile.FullName)")
-        }
-        $result = & az @arguments
-        if ($LASTEXITCODE -ne 0) { throw 'Microsoft Graph operation failed. No further changes were attempted.' }
-        if ($result) { return ($result | ConvertFrom-Json) }
+    # An explicit scope uses the token just refreshed by device-code login.
+    # Send REST through PowerShell: az.cmd can misparse alternate-key URLs
+    # containing parentheses on Windows. Tokens stay in this process, never
+    # shell arguments, files, or output.
+    $tokenResponse = & az account get-access-token --tenant $TenantId.ToString() --scope 'https://graph.microsoft.com/.default' -o json
+    if ($LASTEXITCODE -ne 0) { throw 'Refresh the Microsoft Graph sign-in before continuing.' }
+    $token = $tokenResponse | ConvertFrom-Json
+    $request = @{
+        Method = $Method
+        Uri = "https://graph.microsoft.com/v1.0/$Url"
+        Headers = @{ Authorization = "Bearer $($token.accessToken)" }
     }
-    finally { if ($bodyFile) { Remove-Item -LiteralPath $bodyFile.FullName } }
+    if ($null -ne $Body) {
+        $request.ContentType = 'application/json'
+        $request.Body = $Body | ConvertTo-Json -Depth 30
+    }
+    Invoke-RestMethod @request
 }
 
 $account = & az account show -o json | ConvertFrom-Json
