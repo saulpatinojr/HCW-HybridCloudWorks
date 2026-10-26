@@ -60,17 +60,39 @@ reopening Obsidian reused its encrypted session without another sign-in.
 | Selected original-note enrollment | After owner selection and successful tests of copies, two idea notes were enrolled; body hashes and structured metadata matched their baselines |
 | Original-vault companion | Cached authentication worked; selected notes uploaded without pending changes and creator references downloaded into the managed folder |
 | Private Publish retirement | The last published page was unpublished and retained locally/in backup; the remote published-file count is zero; both hostnames' content endpoints returned empty 401 responses |
+| Hosted owner workspace | Owner confirmed the Second Brain page heading at the production route |
+| Live cited assistant | Owner opened an enrolled idea and confirmed that asking for an article outline produced an outline with source citations |
 
 Both feature flags remain disabled by default in source, and are enabled only
 for the configured production owner through private workspace variables.
 
 The following acceptance gates remain open: owner confirmation of the hosted
-capture/search/map journey; a live cited AI answer and explicit draft creation;
-and a Cosmos backup export/restore drill covering the new authored records.
+capture/map journey and explicit draft creation; and a Cosmos backup
+export/restore drill covering the new authored records.
 The restore reader now includes containers introduced by subsequent daily
 exports (#1399); its regression passed, while a live restore is still pending.
-No provider response or Cosmos restore is claimed by the checks above.
+The live AI result is owner-reported; its text was not copied into this public
+evidence record. No Cosmos restore is claimed by the checks above.
 Publish's empty site shells can return HTTP 200; the content endpoint checks,
 not the HTML shell's status, establish that no note text was returned.
 Complete the remaining gates in the
 [rollout runbook](../runbooks/second-brain.md).
+
+### Remaining restore drill
+
+The first scheduled export containing `brain_records` had not run at the time
+of rollout. The next daily export is scheduled for 03:00 UTC. Confirm that its
+complete manifest includes `brain_records` before proceeding; the schedule
+alone is not proof of a successful backup. The operator's Azure session also
+requires renewed authentication, and an isolated restore target has not been
+provisioned. Local vault backup verification does not replace this cloud drill.
+
+Follow the existing [Cosmos restore procedure](../runbooks/cosmos-restore.md)
+using its supported identity and network controls. Restore `brain_records`
+to an isolated target with `/ownerId` partitioning. Verify a selected note's
+body, version, revisions, links, and collection membership against its backup
+baseline. Rebuild `brain_search` using the restored records and isolated source
+fixtures; verify search and backlinks. Disable outbound sync, indexing timers,
+and publishing against production during the drill. Record the export manifests,
+counts, elapsed time, and checks here before declaring this gate complete, then
+perform the restore runbook's target and temporary-access cleanup.
