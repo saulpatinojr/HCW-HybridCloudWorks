@@ -344,6 +344,19 @@ describe('route', () => {
     ).toBe(400);
   });
 
+  it('keeps the guard\'s refusal out of every cache, since this answer can carry private alerts', async () => {
+    const refusal = {
+      requireRole: vi.fn(async () => ({
+        error: { status: 401, headers: { 'WWW-Authenticate': 'Bearer' }, body: '{"error":"no"}' },
+      })),
+    };
+    const h = createCalendarHandlers({ guard: refusal, store: storeOf({}) });
+    const res = await h.read(request({ from: FROM.toISOString(), to: TO.toISOString() }), context);
+    expect(res.status).toBe(401);
+    expect(res.body).toBe('{"error":"no"}');
+    expect(res.headers).toEqual({ 'WWW-Authenticate': 'Bearer', 'Cache-Control': 'private, no-store' });
+  });
+
   it('answers items and warnings for a valid window', async () => {
     const collectors = {
       content: async () => [{ id: 'content:1', start: '2026-10-09T00:00:00.000Z' }],
@@ -359,6 +372,8 @@ describe('route', () => {
     const res = await h.read(request({ from: FROM.toISOString(), to: TO.toISOString() }), context);
     const body = JSON.parse(res.body);
     expect(res.status).toBe(200);
+    // The answer can carry the owner's private alerts, so no cache may keep it.
+    expect(res.headers['Cache-Control']).toBe('private, no-store');
     expect(body.items).toHaveLength(1);
     expect(body.warnings).toEqual(['speaking: could not be read (Error)']);
     expect(body.total).toBe(1);

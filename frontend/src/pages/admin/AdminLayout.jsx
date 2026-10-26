@@ -19,6 +19,10 @@ import {
 // leaving it strands none: a toast's clock is the store's (use-toast.js), so
 // one on screen when the shell unmounts still expires on time, unseen.
 import { Toaster } from '@/components/ui/toaster';
+// The sign-in pop-up for calendar alerts. A gate, not the pop-up: it loads the
+// pop-up lazily, only for an editor or above, and a failure to load it renders
+// nothing, so it can never cost an admin the portal (components/admin/calendar-alerts).
+import CalendarAlertsGate from '@/components/admin/calendar-alerts/CalendarAlertsGate';
 
 // The menu is the navigation registry (config/adminNav.js, ADR 0033 §3):
 // groups, items, routes and the one-line description each item shows on
@@ -426,6 +430,7 @@ export default function AdminLayout() {
         </div>
       </div>
       <Toaster />
+      <CalendarAlertsGate />
     </div>
   );
 }

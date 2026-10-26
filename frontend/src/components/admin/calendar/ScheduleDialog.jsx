@@ -32,13 +32,16 @@ export function scheduleProblem({ chosen, when, now = Date.now() }) {
   return '';
 }
 
-/** The other timed items in the same quarter hour as `when`. */
+/** The other timed items in the same quarter hour as `when`. An owner's alert publishes nothing, so it never crowds a slot. */
 export function sameSlotItems(items, when, excludeId) {
   if (!when) return [];
   const slot = Math.floor(when.getTime() / SLOT_MS);
   return (items || []).filter(
     (item) =>
-      !item.allDay && item.id !== excludeId && Math.floor(Date.parse(item.start) / SLOT_MS) === slot
+      !item.allDay &&
+      item.kind !== 'alert' &&
+      item.id !== excludeId &&
+      Math.floor(Date.parse(item.start) / SLOT_MS) === slot
   );
 }
 

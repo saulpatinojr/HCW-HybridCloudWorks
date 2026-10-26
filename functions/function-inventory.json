@@ -47,6 +47,8 @@
     "cmsBrainSyncStatus",
     "cmsBulkGalleryImages",
     "cmsCalendar",
+    "cmsCalendarAlertById",
+    "cmsCalendarAlerts",
     "cmsCertificationById",
     "cmsCertificationImages",
     "cmsCertifications",
