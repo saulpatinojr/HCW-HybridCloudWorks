@@ -341,34 +341,32 @@ If the prompt shows an error instead, you pasted only part of the line.
     kept as they were. A product name that has to contain a listed word is
     recorded in the dossier as an exception, with the reason and who decided.
 
-    The command asks GitHub for the list of files on the `main` branch, keeps
-    the documents named above, reads each one and prints a line for every hit.
-    GitHub cuts the list off at 100,000 entries or 7 MB, whichever comes first
-    ([GitHub's limit](https://docs.github.com/en/rest/git/trees#get-a-tree));
-    none of our repositories is near it, and the second command below tells you
-    for yours.
+    The command asks GitHub for the newest commit on `main`, lists that commit's
+    files, keeps the documents named above, reads each one at that same commit
+    and prints a line for every hit. It stops with an error, rather than print a
+    partial list, if it cannot read the commit or a file, or if GitHub cut the
+    file list off (the limit is 100,000 entries or 7 MB, see
+    [GitHub's page](https://docs.github.com/en/rest/git/trees#get-a-tree); none of
+    our repositories is near it).
 
     ```powershell
-    (gh api "repos/$repo/git/trees/main?recursive=1" | ConvertFrom-Json).tree | Where-Object { $_.path -match '\.md$|^NOTICE$|^\.env\.example$|^\.github/ISSUE_TEMPLATE/.*\.ya?ml$' } | ForEach-Object { $f = $_.path; gh api "repos/$repo/contents/$f" -H 'Accept: application/vnd.github.raw+json' | Select-String -Pattern 'customer|client|pricing|edition' | ForEach-Object { "$f line $($_.LineNumber)" } }
+    $sha = gh api "repos/$repo/commits/main" --jq .sha; if ($LASTEXITCODE -ne 0) { throw 'Could not read main' }; "commit $sha"; $tree = gh api "repos/$repo/git/trees/${sha}?recursive=1" | ConvertFrom-Json; if ($tree.truncated) { throw 'GitHub cut the file list short' }; $tree.tree | Where-Object { $_.path -match '\.md$|^NOTICE$|^\.env\.example$|^\.github/ISSUE_TEMPLATE/.*\.ya?ml$' } | ForEach-Object { $f = $_.path; $t = gh api "repos/$repo/contents/${f}?ref=$sha" -H 'Accept: application/vnd.github.raw+json'; if ($LASTEXITCODE -ne 0) { throw "Could not read $f" }; $t | Select-String -Pattern 'customer|client|pricing|edition' | ForEach-Object { "$f line $($_.LineNumber)" } }
     ```
 
-    You should see one line per hit, for example `README.md line 17`: the file's
-    path, the word `line` and the line number (on GitHub, add `#L17` to the
-    file's address to jump to it). Expect some lines even for a clean product:
-    a technical term, the sentence that denies a paid edition, and anything in a
-    changelog (history). Open each one and decide: change it if it describes the
-    product or its users; keep it if it is a technical term, dated history or a
-    quote of another party. Then check that GitHub did not cut the list short:
+    You should see the word `commit` and a 40-character commit id first, then
+    one line per hit, for example `README.md line 17`: the file's path, the word
+    `line` and the line number (on GitHub, add `#L17` to the file's address to
+    jump to it). Expect some lines even for a clean product: a technical term,
+    the sentence that denies a paid edition, and anything in a changelog
+    (history). Open each one and decide: change it if it describes the product or
+    its users; keep it if it is a technical term, dated history or a quote of
+    another party. A red error message such as `Could not read` or `GitHub cut
+    the file list short` means the list is incomplete: do not call OSS-9 met from
+    it.
 
-    ```powershell
-    gh api "repos/$repo/git/trees/main?recursive=1" --jq '.truncated'
-    ```
-
-    You should see `false`. `true` means the first command read only part of the
-    repository, so do not call OSS-9 met from it.
-
-    OSS-9 is met when every printed line is one you decided to keep. Write in
-    the dossier how many lines there were and why they stay. A product with a
+    OSS-9 is met when the command finishes without an error and every printed
+    line is one you decided to keep. Write in the dossier the commit id it
+    printed, how many lines there were and why they stay. A product with a
     tracked test that fails when the removed wording comes back is better
     still: Network Eyes has one, `tests/unit/test_free_tool_wording.py`, added by
     [pull request #320](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/320).
@@ -550,7 +548,7 @@ Status of each rule on 2026-10-25:
 | OSS-6 | Met | Both `latest` (app) and `0.1.0` (add-on), each built for one platform, carry an SPDX SBOM and SLSA provenance attestation. Whether the images are also signed was not checked here (the publishing workflow has signing steps and they succeeded in the run below). Docker Scout steps ran and succeeded in [run 40245507222](https://github.com/saulpatinojr/HCW-NetworkEyes_App/actions/runs/40245507222) of the publishing workflow (2026-10-25). |
 | OSS-7 | Met | `img-ne-appliance-app` and `img-ne-lab-addon`. The organisation also holds `hcw-lab` and `hcw-lab-runner`, older names for the website's lab images, which do not follow the convention. |
 | OSS-8 | Owner statement | Owner statement, 2026-10-25: a free tool for followers of Hybrid Cloud Works, shared through GitHub, with no paid edition. A repository search for payment code is not proof and was not relied on. |
-| OSS-9 | **Part until [pull request #320](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/320) merges** | Read on 2026-10-26 on `main` at commit [19759c6a](https://github.com/saulpatinojr/HCW-NetworkEyes_App/commit/19759c6a67aee801afc769faa9f288e3cb81784c) with the check that now reads every Markdown file, `NOTICE`, `.env.example` and the issue forms: 233 lines in 14 files, and `truncated` was `false`. The README and `CLAUDE.md` have said "user", "free tool" and "lab build" since pull requests [#316](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/316) and [#317](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/317): their three remaining lines are the sentence that denies a paid edition (README line 17) and two technical terms (`APP_CLIENT_ID`, README line 209, and "client secret", `CLAUDE.md` line 204). The other files did not pass. `.github/SECURITY.md` said "the client delivery portal"; it, `.github/CONTRIBUTING.md`, the pull request template and the three issue forms said "customer data"; `.env.example` said "client delivery portal" and `stcna<customer>tfstate`; `REVIEW.md` said "customer" on 20 lines, `REFACTOR_APP.md` on 9 and `TODO.md` on 2. (Ticket [#318](https://github.com/saulpatinojr/HCW-NetworkEyes_App/issues/318) also found two documents that credited a company's engineering standards; the search cannot find that.) [Pull request #320](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/320) rewords them, keeps dated history, a withdrawn decision, the AWS term "customer gateway" and the startup messages the code prints, and adds the test named in the rule. After it merges the same command still prints about 195 lines in 8 files; nearly all stay on purpose (software `client` variables, the `EDITION` build argument and the `edition` JSON key, "client secret", quoted messages, the changelog's history), and you judge each against the rule, so the status becomes met when it merges. Open for the owner (ticket #318): the earlier brand's logo and colour palette (the test lists them line by line), the name of the "Client portal" feature, and the text on the two Docker Hub pages. |
+| OSS-9 | **Part until [pull request #320](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/320) merges** | Read on 2026-10-26 on `main` at commit [19759c6a](https://github.com/saulpatinojr/HCW-NetworkEyes_App/commit/19759c6a67aee801afc769faa9f288e3cb81784c) with the check that now reads every Markdown file, `NOTICE`, `.env.example` and the issue forms: it printed 233 lines in 14 files and finished without an error. The README and `CLAUDE.md` have said "user", "free tool" and "lab build" since pull requests [#316](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/316) and [#317](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/317): their three remaining lines are the sentence that denies a paid edition (README line 17) and two technical terms (`APP_CLIENT_ID`, README line 209, and "client secret", `CLAUDE.md` line 204). The other files did not pass. `.github/SECURITY.md` said "the client delivery portal"; it, `.github/CONTRIBUTING.md`, the pull request template and the three issue forms said "customer data"; `.env.example` said "client delivery portal" and `stcna<customer>tfstate`; `REVIEW.md` said "customer" on 20 lines, `REFACTOR_APP.md` on 9 and `TODO.md` on 2. (Ticket [#318](https://github.com/saulpatinojr/HCW-NetworkEyes_App/issues/318) also found two documents that credited a company's engineering standards; the search cannot find that.) [Pull request #320](https://github.com/saulpatinojr/HCW-NetworkEyes_App/pull/320) rewords them, keeps dated history, a withdrawn decision, the AWS term "customer gateway" and the startup messages the code prints, and adds the test named in the rule. After it merges the same command still prints about 195 lines in 8 files; nearly all stay on purpose (software `client` variables, the `EDITION` build argument and the `edition` JSON key, "client secret", quoted messages, the changelog's history), and you judge each against the rule, so the status becomes met when it merges. Open for the owner (ticket #318): the earlier brand's logo and colour palette (the test lists them line by line), the name of the "Client portal" feature, and the text on the two Docker Hub pages. |
 | OSS-10 | Met | Newest tag pushed 2026-10-25 23:42 UTC (`img-ne-appliance-app`); the repository was last pushed on 2026-10-26 UTC (a time-sensitive value, and not a Docker criterion). |
 | OSS-11 | Met | `SECURITY.md`, `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` in [`.github/`](https://github.com/saulpatinojr/HCW-NetworkEyes_App/tree/main/.github); forms `bug_report.yml`, `feature_request.yml`, `work_item.yml` and `config.yml`; private vulnerability reporting is `true`. |
 | OSS-12 | Met, one difference | Both rulesets are `active`. "Protect main" has the rules `deletion`, `non_fast_forward` (no force push), `pull_request` and `required_status_checks` (11 checks). "Protect release tags" protects `refs/tags/v*` but lists the repository-administrator role as a bypass actor (a role allowed to skip the rules, here `always`), the same in all four App repositories; the field standard's PRO-1 says "no bypass". Left for the owner to reconcile. |
@@ -618,8 +616,11 @@ line for each of `LICENSE` and `NOTICE`). A separate reviewer re-checked the quo
 the Network Eyes values against GitHub and Docker Hub, and its corrections are
 in this version. The documentation links were opened and their titles read.
 
-The OSS-9 command was rewritten on 2026-10-26 and run in PowerShell 7.6.7 and in Windows PowerShell 5.1
-against Network Eyes `main` at commit 19759c6a: both printed 233 lines in 14 files, and the `truncated` check printed `false`.
+The OSS-9 command was rewritten on 2026-10-26 and run, copied out of this page, in PowerShell 7.6.7 and in Windows
+PowerShell 5.1 against Network Eyes `main` at commit 19759c6a: both printed that commit id and 233 lines in 14 files and
+finished without an error. The error path for an unreadable repository was triggered (a repository that does not exist
+stops the command with `Could not read main`); the paths for a cut-off file list and for an unreadable file were not
+triggered, because no repository of ours produces them.
 
 Not checked:
 
