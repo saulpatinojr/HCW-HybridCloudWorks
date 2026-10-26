@@ -214,7 +214,8 @@ export async function main(argv = process.argv.slice(2), out = console) {
     manifests.set(`${layer.mode}/${layer.runId}`, assertManifest(manifest, layer));
   }
   const fullManifest = manifests.get(`full/${set.full}`);
-  const containers = containersToRestore(fullManifest, opts.containers);
+  const deltaManifests = layers.slice(1).map((layer) => manifests.get(`${layer.mode}/${layer.runId}`));
+  const containers = containersToRestore(fullManifest, opts.containers, deltaManifests);
 
   out.log(
     `${opts.dryRun ? 'DRY RUN — counting' : 'Restoring'} full/${set.full} + ${set.deltas.length} delta(s)` +

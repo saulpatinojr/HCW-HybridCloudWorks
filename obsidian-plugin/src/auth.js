@@ -56,10 +56,18 @@ export async function createAuth(
       throw Object.assign(new Error("Sign in to synchronize."), {
         status: 401,
       });
-    const result = await app.acquireTokenByDeviceCode({
-      scopes,
-      deviceCodeCallback: showCode,
-    });
+    let closeCodeDialog;
+    let result;
+    try {
+      result = await app.acquireTokenByDeviceCode({
+        scopes,
+        deviceCodeCallback: (code) => {
+          closeCodeDialog = showCode(code);
+        },
+      });
+    } finally {
+      if (typeof closeCodeDialog === "function") closeCodeDialog();
+    }
     settings.accountId = result.account.homeAccountId;
     return result.accessToken;
   };
