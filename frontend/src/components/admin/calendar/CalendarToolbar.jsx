@@ -10,7 +10,17 @@ import { ChevronLeft, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 import { KINDS, VIEWS, kindMeta, rangeLabel } from './calendarModel';
 
 const VIEW_LABELS = { month: 'Month', week: 'Week', agenda: 'Agenda' };
-const STATUSES = ['scheduled', 'published', 'sent', 'failed', 'deadline'];
+const STATUSES = [
+  'scheduled',
+  'published',
+  'sent',
+  'failed',
+  'deadline',
+  // The owner's alerts
+  'open',
+  'snoozed',
+  'done',
+];
 
 export default function CalendarToolbar({
   view,

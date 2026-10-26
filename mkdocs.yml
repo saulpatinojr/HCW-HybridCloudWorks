@@ -149,6 +149,7 @@ nav:
       - Data-subject requests: runbooks/data-subject-requests.md
       - Cold rebuild: runbooks/cold-rebuild.md
       - Origin secret rotation: runbooks/origin-secret-rotation.md
+      - Calendar Alerts: runbooks/calendar-alerts.md
   - Standards:
       - IaC repository standard: standards/iac-repository-standard.md
       - Naming convention: standards/naming-convention.md

@@ -8,6 +8,9 @@
  *               content) · Cancel (deletes the record and its Publer post)
  *   newsletter  Open the issue in the Newsletter Hub (cancel and reschedule
  *               live there, beside the preview)
+ *   alert       The owner's own alert: Done or Reopen · Snooze · Open link ·
+ *               Edit · Delete (calendar-alerts/AlertPreviewBody.jsx). Not
+ *               content: it is never rescheduled, published or posted.
  *   everything else  Open its hub
  *
  * Destructive actions confirm first. Every action the dialog performs is
@@ -42,6 +45,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import RoleGate from '@/components/admin/RoleGate';
+import AlertPreviewBody from '@/components/admin/calendar-alerts/AlertPreviewBody';
 import { deleteSocialPost, patchSocialPost, unscheduleContent } from './calendarApi';
 import {
   browserTimeZone,
@@ -335,19 +339,23 @@ export default function ItemPreviewDialog({ item, onClose, onDone, onReschedule 
             </p>
           )}
 
-          {editing ? (
-            <SocialEditor item={item} onDone={onDone} onClose={() => setEditing(false)} />
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              <Actions
-                item={item}
-                busy={busy}
-                onReschedule={onReschedule}
-                onEdit={() => setEditing(true)}
-                onConfirm={setConfirm}
-              />
-            </div>
+          {item.kind === 'alert' && (
+            <AlertPreviewBody item={item} onDone={onDone} onClose={onClose} />
           )}
+          {item.kind !== 'alert' &&
+            (editing ? (
+              <SocialEditor item={item} onDone={onDone} onClose={() => setEditing(false)} />
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                <Actions
+                  item={item}
+                  busy={busy}
+                  onReschedule={onReschedule}
+                  onEdit={() => setEditing(true)}
+                  onConfirm={setConfirm}
+                />
+              </div>
+            ))}
         </DialogContent>
       </Dialog>
 

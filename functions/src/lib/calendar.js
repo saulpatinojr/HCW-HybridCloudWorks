@@ -6,7 +6,7 @@
  * One read unions everything in ContentForge that has a date: content
  * schedules and publishes, newsletter sends, social posts, speaking events and
  * their CFP deadlines, certification expirations and renewals, Ambassador
- * deadlines and Listen & Learn releases. Each source is ONE collector
+ * deadlines, Listen & Learn releases and the owner's own calendar alerts. Each source is ONE collector
  * (./calendar/collectors.js) — a small function over the store that answers
  * calendar items — so adding a source is adding a collector to COLLECTORS and
  * nothing else. The item shape and the date arithmetic are
@@ -47,6 +47,7 @@ export const CALENDAR_KINDS = Object.freeze([
   'certification',
   'ambassador',
   'audio',
+  'alert',
 ]);
 
 /** The longest window one read may ask for: a quarter, with room for the grid's padding. */

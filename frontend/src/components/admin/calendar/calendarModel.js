@@ -11,6 +11,7 @@
 import {
   Award,
   BadgeCheck,
+  BellRing,
   CalendarDays,
   FileText,
   Headphones,
@@ -67,6 +68,14 @@ export const KIND_META = Object.freeze({
     Icon: Headphones,
     chip: 'border-teal-300 bg-teal-50 text-teal-900 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200',
     dot: 'bg-teal-500',
+  },
+  // The owner's own dated alerts (lib/calendar-alerts): not content, never
+  // scheduled, published or posted. Orange, with the bell and the word.
+  alert: {
+    label: 'Alert',
+    Icon: BellRing,
+    chip: 'border-orange-300 bg-orange-50 text-orange-900 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200',
+    dot: 'bg-orange-500',
   },
 });
 
@@ -127,6 +136,15 @@ export function itemStatus(item) {
     idea: { id: 'idea', label: 'Idea', tone: 'muted', help: 'Not yet proposed.' },
     draft: { id: 'draft', label: 'Draft', tone: 'muted', help: 'Not yet released.' },
     hidden: { id: 'hidden', label: 'Hidden', tone: 'off', help: 'Not shown on the public site.' },
+    // The owner's alerts (kind `alert`).
+    open: { id: 'open', label: 'Open', tone: 'warn', help: 'An alert still to be dealt with.' },
+    snoozed: {
+      id: 'snoozed',
+      label: 'Snoozed',
+      tone: 'muted',
+      help: 'Hidden from the sign-in pop-up until its snooze ends.',
+    },
+    done: { id: 'done', label: 'Done', tone: 'ok', help: 'Dealt with.' },
   };
   return (
     table[status] || {
