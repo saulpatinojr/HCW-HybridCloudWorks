@@ -16,13 +16,13 @@ contracts are the [AddOn integration standard](../../standards/addon-integration
 | [Migration](migration.md) | `HCW-MigrateOrchestrator_App` | `HCW-MigrateOrchestrator_AddOn`, `migration.lab.hybridcloudworks.com` | `/tools/migration` (Tools menu: Migration Hub) | `available` |
 | [Network assessment](network-assessment.md) | `HCW-NetworkEyes_App` | `HCW-NetworkEyes_AddOn`, `network-assessment.lab.hybridcloudworks.com` | `/tools/network-assessment` | `available` since 2026-10-12 (#1089) |
 | [Cloud assessment](cloud-assessment.md) | `HCW-CloudAssessor_App` | `HCW-CloudAssessor_AddOn`, `cloud-assessment.lab.hybridcloudworks.com` | `/tools/cloud-assessment` | `available` since 2026-10-12 (#1089) |
-| [Cloud Crawler](cloud-crawler.md) | `HCW-CloudCrawler_App` | `HCW-CloudCrawler_AddOn`, `cloud-crawler.lab.hybridcloudworks.com` | `/tools/cloud-crawler` | `coming` since 2026-10-24, until the container runs on the lab host (#1357): the App released `v0.1.0` and the AddOn published `v0.2.0` (with the upload route) on 2026-10-26, and the host row (port 18084) is prepared and not yet run |
+| [Cloud Crawler](cloud-crawler.md) | `HCW-CloudCrawler_App` | `HCW-CloudCrawler_AddOn`, `cloud-crawler.lab.hybridcloudworks.com` | `/tools/cloud-crawler` | `available` from the second pull request of [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357): the host has run the `v0.2.0` image (the first with the upload route, port 18084) since the owner's playbook run of 2026-10-26, and the row grants `downloads` and `clipboard-write`; its wording leaves Terraform out until the AddOn ships an engine that reads it |
 
 The first three were read from the live site on 2026-10-24: the status route
 answered `configured: true, reachable: true` for each, with `version` 0.3.1
 (migration) and 0.1.0 (the other two). Cloud Crawler's route answered
-`{ "configured": false }` when read on 2026-10-26: its row has shipped, and the
-Function App setting it reads is not applied yet.
+`configured: true, reachable: true`, version 0.2.0, when read on 2026-10-26,
+after its Function App setting was applied and the host ran the container.
 
 ### What each AddOn needs from the site's backend
 
@@ -36,7 +36,7 @@ each pair's page on 2026-10-24.
 | Migration | yes (`vault_addon_migration_turnstile_secret`) | none (`AMO_WORKSPACE_PROVIDER` is `disabled`) | status route reading `ADDON_MIGRATION_URL` |
 | Network assessment | yes (`vault_addon_network_assessment_turnstile_secret`) | the lab host's Coder, to start a guided lab workspace (`CODER_URL`, template `na-guided-lab`) | status route reading `ADDON_NETWORK_ASSESSMENT_URL` |
 | Cloud assessment | yes (`vault_addon_cloud_assessment_turnstile_secret`) | none in its `group_vars` row | status route reading `ADDON_CLOUD_ASSESSMENT_URL` |
-| Cloud Crawler | yes (`vault_addon_cloud_crawler_turnstile_secret`, per the AddOn's ADR 0003; the owner states it is in the host's vault, unchecked by any session) | none; it is built never to reach Azure (its README) | status route reading `ADDON_CLOUD_CRAWLER_URL`, declared in `infra/functionapp.tf` since #1357 and not applied yet (the owner's HCP Terraform run applies it after the pull request that declares it merges); a trusted-caller path for lab chat evidence is planned and not built |
+| Cloud Crawler | yes (`vault_addon_cloud_crawler_turnstile_secret`, per the AddOn's ADR 0003; the owner states it is in the host's vault, unchecked by any session) | none; it is built never to reach Azure (its README) | status route reading `ADDON_CLOUD_CRAWLER_URL` (applied by the owner's HCP Terraform run; the route answered on 2026-10-26); a trusted-caller path for lab chat evidence is planned and not built |
 
 Each pair's page records what the App keeps, what the AddOn is, its origin,
 port, image and status on the site, and links the refactoring pull requests

@@ -43,8 +43,9 @@ can see how the site works, report a problem or suggest an improvement.
   or a scored review against reliability, security, cost and operations
   criteria from the
   [cloud assessment](https://hybridcloudworks.com/tools/cloud-assessment).
-  Nothing you upload is kept beyond two hours. A check of what is built against
-  your architecture decisions is on the way.
+  Nothing you upload is kept beyond two hours. The
+  [drift check](https://hybridcloudworks.com/tools/cloud-crawler) compares an
+  export of what is built with your architecture decisions.
 - **Practise.** Run [hands-on labs](https://hybridcloudworks.com/education/labs)
   in your browser, or on your own machine with one `docker run` line.
 
@@ -58,6 +59,7 @@ can see how the site works, report a problem or suggest an improvement.
 | Plan an Azure landing zone | [Landing Zone Builder](https://hybridcloudworks.com/tools/landing-zone) |
 | Assess an Azure estate for migration | [Migration assessment](https://hybridcloudworks.com/tools/migration) |
 | Assess your Azure network or your whole estate | [Network assessment](https://hybridcloudworks.com/tools/network-assessment), [Cloud assessment](https://hybridcloudworks.com/tools/cloud-assessment) |
+| Check what is built against your architecture decisions | [Cloud Crawler drift check](https://hybridcloudworks.com/tools/cloud-crawler) |
 | Report a problem or suggest something | [Open an issue](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/new/choose) |
 | See what is being worked on | [HCW Work Board](https://github.com/users/saulpatinojr/projects/6) |
 | Ask a question or get help | [SUPPORT](.github/SUPPORT.md) |

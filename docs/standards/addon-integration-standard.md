@@ -21,11 +21,12 @@ sandboxed frame on a site page, with a catalogue row, a `frame-src` entry and a
 server-side status proxy. The npm island (installing an AddOn's UI package into
 the site bundle) is rejected.
 
-In scope: the three program AddOns (`migration`, `cloud-assessment`,
-`network-assessment`) and any later tool that follows this document. Out of
-scope: the upstream Apps (their Azure appliance editions are not reached by the
-site), Coder labs (ADR 0032, whose Coder-specific patterns section 19 keeps out
-of this standard), and the admin portal's own integrations.
+In scope: the four program AddOns (`migration`, `cloud-assessment`,
+`network-assessment`, `cloud-crawler`) and any later tool that follows this
+document. Out of scope: the upstream Apps (their Azure appliance editions are
+not reached by the site), Coder labs (ADR 0032, whose Coder-specific patterns
+section 19 keeps out of this standard), and the admin portal's own
+integrations.
 
 **Mandatory**: an AddOn that does not meet every Mandatory item is registered
 with `status: 'coming'` and shows no frame.
