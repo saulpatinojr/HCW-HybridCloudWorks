@@ -105,21 +105,26 @@ export function restoreLayers({ full, deltas }) {
 }
 
 /**
- * The containers a restore covers: those the full's manifest lists, optionally
+ * The containers a restore covers: those the selected manifests list, optionally
  * narrowed by an explicit list (unknown names are an error, not a silent skip).
  *
  * @param {{ containers?: {container: string}[] }} fullManifest
  * @param {string[]|null} [only]
+ * @param {{containers?: {container: string}[]}[]} [deltaManifests]
  */
-export function containersToRestore(fullManifest, only = null) {
-  const all = (fullManifest?.containers || []).map((c) => c.container).sort();
-  if (!all.length) throw new Error('the full manifest lists no containers');
+export function containersToRestore(fullManifest, only = null, deltaManifests = []) {
+  if (!fullManifest?.containers?.length) throw new Error('the full manifest lists no containers');
+  // A newly classified container's first delta reads its change feed from the
+  // beginning. It is a valid baseline even when the previous full predates it.
+  const all = [...new Set([fullManifest, ...deltaManifests].flatMap(
+    (manifest) => (manifest.containers || []).map((c) => c.container)
+  ))].sort();
   if (!only) return all;
   const known = new Set(all);
   const unknown = only.filter((name) => !known.has(name));
   if (unknown.length) {
     throw new Error(
-      `--containers names containers the full export does not carry: ${unknown.join(', ')}`
+      `--containers names containers the selected export set does not carry: ${unknown.join(', ')}`
     );
   }
   return [...new Set(only)].sort();

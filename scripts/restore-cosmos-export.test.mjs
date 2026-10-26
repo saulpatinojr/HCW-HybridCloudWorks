@@ -133,6 +133,22 @@ describe('containersToRestore', () => {
     );
     expect(() => containersToRestore({ containers: [] })).toThrow(/lists no containers/);
   });
+
+  it('restores new authored containers introduced after the last full', () => {
+    const layers = restoreLayers({ full: '2026-10-25', deltas: ['2026-10-26', '2026-10-27'] });
+    const full = { containers: [{ container: 'content' }] };
+    const firstDelta = { containers: [{ container: 'content' }, { container: 'brain_records' }] };
+    const nextDelta = { containers: [{ container: 'brain_records' }] };
+    const manifests = new Map([
+      ['full/2026-10-25', full],
+      ['delta/2026-10-26', firstDelta],
+      ['delta/2026-10-27', nextDelta],
+    ]);
+    expect(containersToRestore(full, null, [firstDelta, nextDelta])).toEqual(['brain_records', 'content']);
+    expect(containersToRestore(full, ['brain_records'], [firstDelta, nextDelta])).toEqual(['brain_records']);
+    expect(layersCarrying('brain_records', layers, manifests)).toEqual(layers.slice(1));
+    expect(() => containersToRestore(full, ['brain_search'], [firstDelta, nextDelta])).toThrow(/does not carry: brain_search/);
+  });
 });
 
 describe('layersCarrying', () => {
