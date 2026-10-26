@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, LogOut, Menu } from 'lucide-react
 import { signOutUser } from '@/lib/entraAuth';
 import { NAV_GROUPS, navItemFor, roleLabel, visibleNavFor } from '@/config/adminNav';
 import { useAdminRole } from '@/hooks/useAdminRole';
+import { useBrainAccess } from '@/hooks/useBrainAccess';
 import CommandPalette from '@/components/admin/CommandPalette';
 import useDashboardCounts from '@/hooks/useDashboardCounts';
 import {
@@ -261,7 +262,8 @@ export default function AdminLayout() {
   // #928): a viewer sees what a viewer can open, and the role itself is
   // printed under the brand so the cut is explained rather than mysterious.
   const role = useAdminRole();
-  const groups = useMemo(() => visibleNavFor(role), [role]);
+  const { enabled: brainEnabled } = useBrainAccess();
+  const groups = useMemo(() => visibleNavFor(role, { brain: brainEnabled }), [role, brainEnabled]);
 
   useEffect(() => {
     try {

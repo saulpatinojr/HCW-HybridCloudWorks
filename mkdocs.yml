@@ -138,6 +138,7 @@ nav:
       - Add-on guide drift check: runbooks/addon-guide-drift.md
       - Add an interview: runbooks/add-an-interview.md
       - Idea notes in Obsidian: runbooks/obsidian-idea-notes.md
+      - Private Second Brain: runbooks/second-brain.md
       - Labs host access and Arc onboarding: runbooks/labs-host.md
       - Docker Hub publishing (OIDC connection): runbooks/docker-hub-publishing.md
       - Copilot code review MCP servers: runbooks/copilot-code-review-mcp.md

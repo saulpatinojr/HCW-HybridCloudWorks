@@ -85,7 +85,9 @@ const requireAgent = vi.fn(async () => ({
 }));
 
 /** Every gate the inventory recognises. A route must reach at least one. */
-const GUARDS = [requireRole, requireUser, requireAgent];
+const syncRequireRole = vi.fn(async () => ({ error: { status: 403, headers: {}, body: "Forbidden" } }));
+const GUARDS = [requireRole, requireUser, requireAgent, syncRequireRole];
+vi.mock("../lib/brain/guard.js", async (importOriginal) => ({ ...(await importOriginal()), getBrainSyncGuard: () => ({ requireRole: syncRequireRole }) }));
 const guardCalls = () => GUARDS.reduce((n, g) => n + g.mock.calls.length, 0);
 const clearGuards = () => GUARDS.forEach((g) => g.mockClear());
 
@@ -658,7 +660,8 @@ describe("non-HTTP triggers", () => {
     // FEATURE_FLAG_LAB_CANARY; the twenty-seventh is
     // ambassadorAudienceMonthly (ambassador-audience.js, #1302), behind
     // FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY.
-    expect(timerRegistrations.size).toBe(27);
+    expect(timerRegistrations.size).toBe(28);
+    expect(timerRegistrations.has("brainIndexReconcile")).toBe(true);
     expect(timerRegistrations.has("ambassadorAudienceMonthly")).toBe(true);
     expect(timerRegistrations.has("healthPulse")).toBe(true);
     expect(timerRegistrations.has("labCanary")).toBe(true);
@@ -675,10 +678,12 @@ describe("non-HTTP triggers", () => {
     }
   });
 
-  it("the platform job worker is the only queue trigger, on the identity-based host connection", () => {
+  it("the platform and private-brain workers use the identity-based host connection", () => {
     // lib/jobs.js (T-322). A second queue trigger is a second place long work
     // can run unreviewed; make adding one a visible act.
-    expect([...queueRegistrations.keys()]).toEqual(["platformJobWorker"]);
+    expect([...queueRegistrations.keys()]).toEqual(["platformJobWorker", "brainIndexWorker"]);
+    expect(queueRegistrations.get("brainIndexWorker").queueName).toBe("brain-index");
+    expect(queueRegistrations.get("brainIndexWorker").connection).toBe("AzureWebJobsStorage");
     const worker = queueRegistrations.get("platformJobWorker");
     expect(worker.queueName).toBe("platform-jobs");
     expect(worker.connection).toBe("AzureWebJobsStorage");

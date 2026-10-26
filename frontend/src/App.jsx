@@ -171,6 +171,7 @@ const AuthCallbackPage = lazyPage(() => import('@/pages/AuthCallbackPage'));
 const AdminLayout = lazyPage(() => import('@/pages/admin/AdminLayout'));
 const AdminDashboardPage = lazyPage(() => import('@/pages/admin/DashboardPage'));
 const AdminDraftsPage = lazyPage(() => import('@/pages/admin/DraftsPage'));
+const SecondBrainPage = lazyPage(() => import('@/pages/admin/SecondBrainPage'));
 const AdminQueuePage = lazyPage(() => import('@/pages/admin/QueuePage'));
 const AdminReviewPage = lazyPage(() => import('@/pages/admin/ReviewPage'));
 const AdminEditorPage = lazyPage(() => import('@/pages/admin/EditorPage'));
@@ -516,6 +517,7 @@ function App() {
                     table to the registry. */}
                 <Route index element={<AdminDashboardPage />} />
                 <Route path="drafts" element={<AdminDraftsPage />} />
+                <Route path="second-brain" element={<SecondBrainPage />} />
                 <Route path="review-queue" element={<AdminQueuePage />} />
                 <Route path="review-queue/:blogId" element={<AdminReviewPage />} />
                 <Route path="editor" element={<AdminEditorListPage />} />

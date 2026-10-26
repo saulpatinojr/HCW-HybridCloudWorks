@@ -32,6 +32,19 @@
     "cmsAmbassadorPrograms",
     "cmsAmbassadorReadiness",
     "cmsBootstrapReset",
+    "cmsBrainAsk",
+    "cmsBrainContext",
+    "cmsBrainDraft",
+    "cmsBrainGraph",
+    "cmsBrainHistory",
+    "cmsBrainItem",
+    "cmsBrainItems",
+    "cmsBrainReindex",
+    "cmsBrainSearch",
+    "cmsBrainStatus",
+    "cmsBrainSync",
+    "cmsBrainSyncReferences",
+    "cmsBrainSyncStatus",
     "cmsBulkGalleryImages",
     "cmsCalendar",
     "cmsCertificationById",
@@ -236,6 +249,7 @@
   ],
   "timer": [
     "ambassadorAudienceMonthly",
+    "brainIndexReconcile",
     "buildWeeklyNewsletter",
     "checkAgentHealth",
     "checkLiveLinks",
@@ -271,5 +285,8 @@
     "processContentChanges",
     "syncSocialPostsToPubler"
   ],
-  "storageQueue": ["platformJobWorker"]
+  "storageQueue": [
+    "brainIndexWorker",
+    "platformJobWorker"
+  ]
 }

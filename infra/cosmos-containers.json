@@ -144,6 +144,28 @@
       ]
     },
     {
+      "name": "brain_records",
+      "partition_key_path": "/ownerId",
+      "included_paths": [
+        "/*"
+      ],
+      "excluded_paths": [],
+      "composite_indexes": [],
+      "default_ttl": null,
+      "note": "created on Azure after cutover — no Firestore source, nothing to migrate"
+    },
+    {
+      "name": "brain_search",
+      "partition_key_path": "/ownerId",
+      "included_paths": [
+        "/*"
+      ],
+      "excluded_paths": [],
+      "composite_indexes": [],
+      "default_ttl": null,
+      "note": "cache — refilled by a scheduled job, not migrated"
+    },
+    {
       "name": "certEvents",
       "partition_key_path": "/id",
       "included_paths": [

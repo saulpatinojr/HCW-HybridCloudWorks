@@ -46,6 +46,8 @@ import {
 } from '@/config/adminNav';
 import { useAdminRole } from '@/hooks/useAdminRole';
 import { listContentItems } from '@/lib/api';
+import { brainApi } from '@/lib/brainApi';
+import { useBrainAccess } from '@/hooks/useBrainAccess';
 import { cn } from '@/lib/utils';
 
 /** How many content items one search lists; every page the role is shown is always listed. */
@@ -57,8 +59,8 @@ export function canSearchContent(role) {
 }
 
 /** The registry pages `role` is shown, flat and in menu order. */
-export function pagesFor(role) {
-  return visibleNavFor(role).flatMap((group) => group.items);
+export function pagesFor(role, capabilities = {}) {
+  return visibleNavFor(role, capabilities).flatMap((group) => group.items);
 }
 /**
  * The content search is asked only for a trimmed term of
@@ -87,6 +89,11 @@ export function filterPages(query, items = NAV_ITEMS) {
 
 /** A content result's title, under either casing the list route returns, or "Untitled". */
 const contentTitle = (item) => item.Title || item.title || 'Untitled';
+const resultPath = (item) => {
+  if (!item._brain) return `/admin/editor/${encodeURIComponent(item.id)}`;
+  if (item.type === 'reference') return item.href;
+  return `/admin/second-brain?item=${encodeURIComponent(item.id)}`;
+};
 /**
  * The line under a content result: its provider and status, so two items with
  * one title can be told apart.
@@ -104,7 +111,7 @@ const contentHint = (item) =>
  * already trimmed, as the list route measures it. With `enabled` false
  * (a role the Editor is not shown to) nothing is ever asked.
  */
-function useContentSearch(query, debounceMs, enabled) {
+function useContentSearch(query, debounceMs, enabled, brainEnabled) {
   const [answer, setAnswer] = useState(null);
   const sequence = useRef(0);
   const tooLong = enabled && query.length > CONTENT_SEARCH_MAX_LENGTH;
@@ -116,7 +123,14 @@ function useContentSearch(query, debounceMs, enabled) {
     const seq = sequence.current;
     const timer = setTimeout(async () => {
       try {
-        const items = await listContentItems({ search: query, limit: CONTENT_SEARCH_LIMIT });
+        const [content, brain] = await Promise.all([
+          brainEnabled ? [] : listContentItems({ search: query, limit: CONTENT_SEARCH_LIMIT }),
+          brainEnabled ? brainApi.search({ q: query }) : { items: [] },
+        ]);
+        const items = [
+          ...content,
+          ...brain.items.slice(0, 8).map((item) => ({ ...item, _brain: true })),
+        ];
         if (seq === sequence.current) setAnswer({ query, items, error: '' });
       } catch (err) {
         if (seq === sequence.current) {
@@ -125,7 +139,7 @@ function useContentSearch(query, debounceMs, enabled) {
       }
     }, debounceMs);
     return () => clearTimeout(timer);
-  }, [searchable, query, debounceMs]);
+  }, [searchable, query, debounceMs, brainEnabled]);
 
   const current = searchable && answer?.query === query ? answer : null;
   return {
@@ -139,14 +153,15 @@ function useContentSearch(query, debounceMs, enabled) {
 
 /** Everything inside the dialog, for the signed-in `role`; mounted fresh each time it opens. */
 function PaletteBody({ debounceMs, role, onChoose }) {
+  const { enabled: brainEnabled } = useBrainAccess();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const listId = useId();
   const trimmed = query.trim();
-  const shown = useMemo(() => pagesFor(role), [role]);
+  const shown = useMemo(() => pagesFor(role, { brain: brainEnabled }), [role, brainEnabled]);
   const pages = useMemo(() => filterPages(trimmed, shown), [trimmed, shown]);
   const contentAllowed = canSearchContent(role);
-  const search = useContentSearch(trimmed, debounceMs, contentAllowed);
+  const search = useContentSearch(trimmed, debounceMs, contentAllowed, brainEnabled);
 
   const options = useMemo(
     () => [
@@ -162,9 +177,11 @@ function PaletteBody({ debounceMs, role, onChoose }) {
         id: `content-${item.id}`,
         icon: FileText,
         label: contentTitle(item),
-        hint: contentHint(item),
-        tag: 'Content',
-        to: `/admin/editor/${encodeURIComponent(item.id)}`,
+        hint: item._brain
+          ? [item.type, item.status].filter(Boolean).join(' · ')
+          : contentHint(item),
+        tag: item._brain && item.type !== 'reference' ? 'Second Brain' : 'Content',
+        to: resultPath(item),
       })),
     ],
     [pages, search.items]

@@ -4,6 +4,16 @@
 
 **Data Minimization Principle:** All prompts sent to external AI providers consist solely of public educational material, open documentation, and author-provided article drafts. **No subscriber personal data, customer passwords, or internal directory credentials are transmitted to any AI provider.** Pre-flight client scrubbers remove accidental API keys, GUIDs, and email addresses prior to network transmission.
 
+**Second Brain exception (2026-10-26):** Owner-requested questions can retrieve
+private, author-provided knowledge notes as well as creator content. The
+`brainAssistant` task sends at most eight relevant text excerpts, capped at
+5,000 characters each, through the configured Foundry provider only. It has no
+tools, automatic publishing, background analysis, or access to subscriber and
+operational containers. This private-note path does not inherit a guarantee
+that arbitrary prose has been scrubbed of sensitive text: the material is the
+owner's input. Enabling it is controlled separately by `BRAIN_AI_ENABLED`.
+See [Second Brain](../architecture/second-brain.md).
+
 ---
 
 ## 1. Anthropic (Claude)

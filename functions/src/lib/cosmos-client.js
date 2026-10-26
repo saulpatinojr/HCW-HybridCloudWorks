@@ -45,6 +45,8 @@ let database = null;
  * was added 2026-08-18 for the forge save's transactional batch.
  */
 export const PARTITION_KEY_PATHS = Object.freeze({
+  brain_records: '/ownerId',
+  brain_search: '/ownerId',
   admin_config: '/configScope',
   content_versions: '/contentId',
   image_prompt_sets_prompts: '/setName',

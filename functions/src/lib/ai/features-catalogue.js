@@ -115,8 +115,9 @@ export const PLACEMENTS = Object.freeze(['first', 'order', 'off']);
  * three locks 'off' for every per-feature provider: the anonymous public
  * explain route and the Gemini-only grounded call.
  */
-const placements = ({ content, altText }) =>
+const placements = ({ content, altText, brain = 'off' }) =>
   Object.freeze({
+    brainAssistant: brain,
     inspector: content,
     critique: content,
     forgeDrafting: content,
@@ -148,7 +149,7 @@ export const PROVIDER_PLACEMENT_DEFAULTS = Object.freeze({
   // content features, not for the public route. It is a paid provider under
   // its own budget, so 'first' is the point of it; altText is included
   // because gpt-5-mini reads images.
-  foundry: placements({ content: 'first', altText: 'first' }),
+  foundry: placements({ content: 'first', altText: 'first', brain: 'first' }),
 });
 
 /**

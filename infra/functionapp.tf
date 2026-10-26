@@ -422,7 +422,12 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # The API's OWN audience, not the SPA's client id. verify-token.js refuses to
     # start without it — an unset audience makes jsonwebtoken SKIP the audience
     # check entirely rather than fail, which accepts any token in the tenant.
-    "ENTRA_API_AUDIENCE" = var.entra_api_audience
+    "ENTRA_API_AUDIENCE"    = var.entra_api_audience
+    "BRAIN_ENABLED"         = tostring(var.brain_enabled)
+    "BRAIN_AI_ENABLED"      = tostring(var.brain_ai_enabled)
+    "BRAIN_OWNER_OID"       = var.brain_owner_oid
+    "BRAIN_OWNER_TENANT_ID" = var.brain_owner_tenant_id
+    "BRAIN_SYNC_CLIENT_ID"  = var.brain_sync_client_id
 
     # AWS pricing — Key Vault references, so process.env reads stay identical to
     # the Firebase defineSecret originals. Key Vault secret names cannot contain

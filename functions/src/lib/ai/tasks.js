@@ -108,6 +108,14 @@ const geminiLite = (why) =>
 const task = (fields) => Object.freeze(fields);
 
 export const AI_TASKS = Object.freeze({
+  brainAssistant: task({
+    label: 'Second Brain assistant',
+    description: 'Answers owner-requested questions from private creator notes with source citations.',
+    route: 'Second Brain → Ask. Off leaves search and notes available.',
+    modality: 'json', needs: ['text', 'json'], public: false,
+    only: ['foundry'], defaultMode: 'recommended',
+    recommended: foundryMini('Reads bounded private excerpts and returns cited claims. Private workspace material stays on the existing Foundry content provider.'),
+  }),
   inspector: task({
     label: 'Content Inspector',
     description: 'Generates title, summary and tags for an ingested article.',

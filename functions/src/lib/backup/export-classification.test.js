@@ -31,10 +31,11 @@ function provisioned() {
 }
 
 describe('export classification against infra/cosmos-containers.json', () => {
-  it('the spec provisions the 75 containers the ADR counted — a different number means the ADR table is stale', () => {
+  it('the spec provisions 77 classified containers including Second Brain', () => {
     // 72 at the ADR's writing; podcast_transcripts (#435) made it 73,
     // tool_price_history (#613 Phase 3) 74 and ambassador (ADR 0033 §4) 75.
-    expect(provisioned()).toHaveLength(75);
+    // Second Brain adds authored brain_records and regenerable brain_search.
+    expect(provisioned()).toHaveLength(77);
   });
 
   it('every provisioned container is classified exactly once', () => {
@@ -57,15 +58,15 @@ describe('export classification against infra/cosmos-containers.json', () => {
     expect(phantom, 'classified but not provisioned — remove it or provision it').toEqual([]);
   });
 
-  it('matches the ADR table: 45 authored, 10 configuration, 7 operational, 13 excluded', () => {
-    // 44 at the ADR's writing; ambassador (ADR 0033 §4) made it 45.
-    expect(AUTHORED).toHaveLength(45);
+  it('classifies 46 authored, 10 configuration, 7 operational, 14 excluded', () => {
+    // 44 at the ADR's writing; ambassador made it 45 and brain_records 46.
+    expect(AUTHORED).toHaveLength(46);
     expect(CONFIGURATION).toHaveLength(10);
     expect(OPERATIONAL).toHaveLength(7);
     const excluded = ['regenerable', 'seed', 'transient'].flatMap(
       (k) => EXPORT_CLASSES[k].containers
     );
-    expect(excluded).toHaveLength(13);
+    expect(excluded).toHaveLength(14);
   });
 
   it('every class states both run modes, and no excluded class exports on either', () => {
@@ -83,14 +84,14 @@ describe('export classification against infra/cosmos-containers.json', () => {
 });
 
 describe('exportPlanFor', () => {
-  it('full is A + B + C (62), delta is A + B (55), both sorted and duplicate-free', () => {
+  it('full is A + B + C (63), delta is A + B (56), both sorted and duplicate-free', () => {
     const full = exportPlanFor('full');
     const delta = exportPlanFor('delta');
-    expect(full).toHaveLength(62);
-    expect(delta).toHaveLength(55);
+    expect(full).toHaveLength(63);
+    expect(delta).toHaveLength(56);
     expect(full).toEqual([...full].sort());
     expect(delta).toEqual([...delta].sort());
-    expect(new Set(full).size).toBe(62);
+    expect(new Set(full).size).toBe(63);
     // Class C is exported on full runs only (owner decision, #231).
     for (const name of OPERATIONAL) {
       expect(full).toContain(name);

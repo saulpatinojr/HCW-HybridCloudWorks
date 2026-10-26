@@ -26,6 +26,7 @@
  * functions/src/lib/cms/drafts-handlers.js, drafts.js and drafts-stage.js.
  */
 import React, { useState } from 'react';
+import BrainContextPanel from '@/components/admin/BrainContextPanel';
 import { FilePen, Loader2, Plus, RefreshCw } from 'lucide-react';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import SharedPageHeader from '@/components/admin/shared/PageHeader';
@@ -150,6 +151,7 @@ export default function DraftsPage() {
       />
 
       <MarkdownDraftPanel uploads={markdownDrafts} />
+      <BrainContextPanel contentId={current?.id} />
 
       {list.error && <Alert>{list.error}</Alert>}
       {writes.conflict && (

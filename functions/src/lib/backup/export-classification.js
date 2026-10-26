@@ -36,6 +36,7 @@ const freeze = (list) => Object.freeze([...list].sort());
 
 /** Class A — weekly full + daily deltas. */
 export const AUTHORED = freeze([
+  'brain_records',
   'content',
   'content_versions',
   'blogs',
@@ -112,6 +113,7 @@ export const OPERATIONAL = freeze([
 
 /** Excluded — a scheduled job or a publish refills these from a class A source or the network. */
 export const REGENERABLE = freeze([
+  'brain_search',
   '_snapshots',
   'homepage_feeds',
   'rss_cache',

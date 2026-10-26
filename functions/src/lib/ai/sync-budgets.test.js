@@ -24,6 +24,7 @@ import { NEWSLETTER_AI_BUDGET_MS } from '../newsletter/admin-handlers.js';
 import { CAPTION_AI_BUDGET_MS } from '../social-caption.js';
 import { FORGE_ASSIST_AI_BUDGET_MS, FORGE_ASSIST_HTTP_BUDGET_MS } from '../content/forge-studio.js';
 import { AFTER_MODEL_MARGIN_MS, MIN_ATTEMPT_MS } from './time-budget.js';
+import { BRAIN_HTTP_BUDGET_MS, BRAIN_AI_BUDGET_MS } from '../brain/assistant.js';
 
 const API_JS = fileURLToPath(new URL('../../../../frontend/src/lib/api.js', import.meta.url));
 const REGISTRATIONS = fileURLToPath(new URL('../../functions/', import.meta.url));
@@ -68,6 +69,7 @@ const CLIENT = clientTimeouts();
  * client timeout it must answer inside.
  */
 const BUDGETED = [
+  { route: 'cms/brain/ask', clientMs: CLIENT.byRoute['cms/brain/ask'], handlerMs: BRAIN_HTTP_BUDGET_MS, aiMs: BRAIN_AI_BUDGET_MS },
   {
     route: 'generateArticleDraft',
     clientMs: CLIENT.byRoute.generateArticleDraft,
@@ -109,6 +111,7 @@ const BUDGETED = [
  * none of these three routes can reach it first.
  */
 const HTTP_ROUTES_THAT_REACH_A_MODEL = Object.freeze({
+  'brain-http.js': 'budget: 85 s total, at most 80 s for the private Foundry assistant; 95 s browser timeout.',
   'generate-article-draft-http.js': 'budget: DRAFT_HTTP_BUDGET_MS',
   'recording-content-http.js': 'budget: RECORDING_DRAFT_HTTP_BUDGET_MS',
   'newsletter-admin-http.js': 'budget: NEWSLETTER_AI_BUDGET_MS',
