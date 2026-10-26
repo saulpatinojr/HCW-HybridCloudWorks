@@ -136,8 +136,10 @@ export function indexDocument(item) {
     type: 'search-item',
     itemType: item.type,
     searchable:
-      `${item.title}\n${item.body}\n${item.tags.join(' ')}\n${item.summary || ''}`.toLowerCase(),
-    tokens: tokens(`${item.title} ${item.body} ${item.tags.join(' ')}`),
+      `${item.title}\n${item.properties?.heading || ''}\n${item.body}\n${item.tags.join(' ')}\n${item.summary || ''}`.toLowerCase(),
+    tokens: tokens(
+      `${item.title} ${item.properties?.heading || ''} ${item.body} ${item.tags.join(' ')}`,
+    ),
     indexedAt: new Date().toISOString(),
   };
 }
@@ -184,7 +186,7 @@ export function createSourceService(repo) {
         (item) =>
           !terms.length ||
           terms.some((term) =>
-            `${item.title} ${item.body} ${item.tags.join(' ')} ${item.summary || ''}`
+            `${item.title} ${item.properties?.heading || ''} ${item.body} ${item.tags.join(' ')} ${item.summary || ''}`
               .toLowerCase()
               .includes(term),
           ),
@@ -194,7 +196,11 @@ export function createSourceService(repo) {
         terms.reduce(
           (n, term) =>
             n +
-            (item.title.toLowerCase().includes(term) ? 5 : 0) +
+            (`${item.title} ${item.properties?.heading || ''}`
+              .toLowerCase()
+              .includes(term)
+              ? 5
+              : 0) +
             (item.body.toLowerCase().includes(term) ? 1 : 0),
           0,
         );

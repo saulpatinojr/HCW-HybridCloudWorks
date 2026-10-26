@@ -58,6 +58,31 @@ beforeEach(() => {
 });
 
 describe('Second Brain owner workspace', () => {
+  it('saves a short heading without replacing the full title or idea body', async () => {
+    mount('/admin/second-brain?item=note-1');
+    expect(await screen.findByLabelText('Short heading (1–4 words)')).toHaveValue(
+      'Terraform state research'
+    );
+    fireEvent.change(screen.getByLabelText('Short heading (1–4 words)'), {
+      target: { value: 'Release candidate rehearsal' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await waitFor(() =>
+      expect(brainApi.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: note.title,
+          body: note.body,
+          properties: expect.objectContaining({ heading: 'Release candidate rehearsal' }),
+        }),
+        1,
+        expect.any(String)
+      )
+    );
+    fireEvent.change(screen.getByLabelText('Short heading (1–4 words)'), {
+      target: { value: 'one two three four five' },
+    });
+    expect(screen.getByRole('button', { name: 'Save note' })).toBeDisabled();
+  });
   it('hides private text on failed access and restores the unsaved version after access returns', async () => {
     const tree = () => (
       <MemoryRouter>
