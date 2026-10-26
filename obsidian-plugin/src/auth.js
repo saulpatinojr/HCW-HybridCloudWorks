@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { encryptedCache } from "./cache.js";
 
-export async function createAuth(settings, showCode, { helperPath } = {}) {
+export async function createAuth(
+  settings,
+  showCode,
+  { helperPath, networkClient } = {},
+) {
   if (process.platform !== "win32")
     throw new Error("The initial HCW plugin release supports Windows desktop.");
   const guid =
@@ -32,6 +36,7 @@ export async function createAuth(settings, showCode, { helperPath } = {}) {
       authority: `https://login.microsoftonline.com/${settings.tenantId}`,
     },
     cache: { cachePlugin },
+    ...(networkClient && { system: { networkClient } }),
   });
   const scopes = [`api://${settings.audience}/brain_sync`];
   const token = async (interactive = false) => {

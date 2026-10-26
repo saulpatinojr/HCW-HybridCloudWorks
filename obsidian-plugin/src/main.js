@@ -12,6 +12,7 @@ import {
 } from "obsidian";
 import { SyncEngine } from "./engine.js";
 import { createAuth } from "./auth.js";
+import { createMsalNetworkClient } from "./auth-network.js";
 import { join } from "node:path";
 
 const DEFAULTS = {
@@ -60,7 +61,11 @@ class CodeModal extends Modal {
     });
     this.contentEl.createEl("a", {
       text: this.code.verificationUri,
-      attr: { href: this.code.verificationUri, target: '_blank', rel: 'noopener noreferrer' },
+      attr: {
+        href: this.code.verificationUri,
+        target: "_blank",
+        rel: "noopener noreferrer",
+      },
     });
     this.contentEl.createEl("p", {
       text: this.code.userCode,
@@ -260,6 +265,7 @@ export default class HCWSecondBrainPlugin extends Plugin {
       this.settings,
       (code) => new CodeModal(this.app, code).open(),
       {
+        networkClient: createMsalNetworkClient(requestUrl),
         helperPath: join(
           this.app.vault.adapter.getBasePath(),
           this.manifest.dir,
@@ -360,7 +366,8 @@ export default class HCWSecondBrainPlugin extends Plugin {
         hcw_inbox: item.inbox !== false,
       };
       if (item.href) p.hcw_source = `https://hybridcloudworks.com${item.href}`;
-      if (item.type === 'reference') p.hcw_reference_truncated = item.truncated === true;
+      if (item.type === "reference")
+        p.hcw_reference_truncated = item.truncated === true;
       return `---\n${stringifyYaml(p).trimEnd()}\n---\n${item.body}`;
     };
     const call = async (action, method = "GET", body) => {
