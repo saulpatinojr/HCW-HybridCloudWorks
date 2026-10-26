@@ -36,8 +36,10 @@ export const ALLOWED_CONTRACT_FILES = Object.freeze(['blog-template.md', 'blog-m
 export function strayDrafts(relativePaths) {
   return relativePaths.filter((path) => {
     const name = path.split('/').at(-1).toLowerCase();
-    // Allowed only at the top of docs/content, where the contracts live.
-    return /^blog-.+\.md$/.test(name) && !ALLOWED_CONTRACT_FILES.includes(path.toLowerCase());
+    // Draft detection ignores letter case, but the allowance is an exact match
+    // on the path: only the two contract files, spelt exactly so, at the top of
+    // docs/content. A case variant such as BLOG-TEMPLATE.MD is a draft.
+    return /^blog-.+\.md$/.test(name) && !ALLOWED_CONTRACT_FILES.includes(path);
   });
 }
 
@@ -99,6 +101,8 @@ describe('the rule itself', () => {
     ['a draft in a sub-folder', 'drafts/blog-x.md'],
     ['a different letter case', 'Blog-Test.MD'],
     ['a contract file name in a sub-folder', 'old/blog-template.md'],
+    ['a case variant of a contract file', 'BLOG-TEMPLATE.MD'],
+    ['a case variant of the other contract file', 'Blog-Machine.md'],
   ])('flags %s', (_label, path) => {
     expect(strayDrafts([path])).toEqual([path]);
   });
