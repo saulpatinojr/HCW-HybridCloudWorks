@@ -67,6 +67,7 @@ import "./schedulers.js";
 import "./social-caption-http.js";
 import "./streamyard-http.js";
 import "./telegram-http.js";
+import "./doc-vault-http.js";
 
 const BUILD_TIME = new Date().toISOString();
 
