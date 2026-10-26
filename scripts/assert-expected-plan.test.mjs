@@ -936,10 +936,10 @@ describe('DECLARED', () => {
     // is the tree's rows without ambassadorAudienceMonthly, and the only line
     // the update adds is that timer's row. Neither value carries the bin_at()
     // line Kusto refuses (#964), applied away on 2026-10-15.
-    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => name !== 'ambassadorAudienceMonthly')));
+    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => !['ambassadorAudienceMonthly', 'brainIndexReconcile'].includes(name))));
     const before = declaration.before.split('\n');
     const added = declaration.after.split('\n').filter((line) => !before.includes(line));
-    expect(added).toEqual(['  "ambassadorAudienceMonthly", 1d, datetime(2026-01-01 06:45),']);
+    expect(added).toEqual(['  "ambassadorAudienceMonthly", 1d, datetime(2026-01-01 06:45),', '  "brainIndexReconcile", 15m, datetime(2026-01-01 00:00),']);
     expect(declaration.before).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
     expect(declaration.after).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
   });
@@ -1128,5 +1128,48 @@ describe('conditional replacements and declared creates (#816)', () => {
     const result = checkPlan(plan, { declared: [declaration] });
     expect(result.unexpected).toEqual([`${COSMOS}["content"]: delete`, `${COSMOS}["blogs"]: create`]);
     expect(result.unused).toEqual([declaration]);
+  });
+});
+
+describe('a declared container create names a container the spec provisions', () => {
+  // The Doc Vault's container (owner request 2026-10-26) is declared until its
+  // run has applied. Whatever is declared in this shape must name a container
+  // that infra/cosmos-containers.json really lists, or the entry would wave
+  // through a create that Terraform will never plan, and miss the one it will.
+  it('holds for every declared azurerm_cosmosdb_sql_container create', () => {
+    const spec = JSON.parse(readFileSync(join(HERE, '..', 'infra', 'cosmos-containers.json'), 'utf8'));
+    const names = new Set(spec.containers.map((container) => container.name));
+    const declared = DECLARED.filter((entry) => entry.address.startsWith('azurerm_cosmosdb_sql_container.hcw["'));
+    for (const entry of declared) {
+      expect(entry.action, entry.address).toBe('create');
+      const name = /\["([^"]+)"\]$/.exec(entry.address)?.[1];
+      expect(names.has(name), `${entry.address} is not in infra/cosmos-containers.json`).toBe(true);
+    }
+  });
+
+  it('reads a plan whose only addition is the doc_vault container as that create beside the permanent diff', () => {
+    const plan = expectedPlan();
+    plan.resource_changes.push({
+      address: 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]',
+      change: { actions: ['create'] },
+    });
+    const declaration = DECLARED.find((entry) => entry.address === 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]');
+    // Declared now; once it has applied the entry is deleted and this case ends with it.
+    if (!declaration) return;
+    const result = checkPlan(plan, { declared: [declaration] });
+    expect(result.unexpected).toEqual([]);
+    expect(result.unused).toEqual([]);
+  });
+
+  it('does not let the declaration cover a destroy of the container', () => {
+    const plan = expectedPlan();
+    plan.resource_changes.push({
+      address: 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]',
+      change: { actions: ['delete'] },
+    });
+    const declaration = { address: 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]', action: 'create', reason: 'test' };
+    expect(checkPlan(plan, { declared: [declaration] }).unexpected).toEqual([
+      'azurerm_cosmosdb_sql_container.hcw["doc_vault"]: delete',
+    ]);
   });
 });

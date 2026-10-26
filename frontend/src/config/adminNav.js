@@ -39,6 +39,7 @@
  */
 import { ADMIN_ROLES } from '@/config/admin-v2';
 import {
+  Brain,
   Activity,
   Award,
   BadgeCheck,
@@ -64,6 +65,7 @@ import {
   Radio,
   Share2,
   SlidersHorizontal,
+  Vault,
   Zap,
 } from 'lucide-react';
 
@@ -196,8 +198,18 @@ export function roleLabel(role) {
  *                                 updateWorkflowAlert is publisher (ops-health.js), gated
  *   Integrations       editor     connectionProbe (integrations/connection-probe.js), cms/integration-status
  *                                 (integrations/integration-status.js); the Keys tab's cms/secrets is super_admin (admin-secrets.js)
+ *   Doc Vault          publisher  cms/doc-vault (doc-vault/handlers.js), every route, reads included: the vault holds
+ *                                 private letters and applications, so it is above the editor role (doc-vault/model.js)
  */
 const ITEMS = [
+  [
+    'creative',
+    '/admin/second-brain',
+    Brain,
+    'Second Brain',
+    'Your private notes, connected content, projects, and research.',
+    { minRole: 'editor', requiresBrain: true },
+  ],
   [
     'home',
     '/admin',
@@ -418,6 +430,16 @@ const ITEMS = [
     'Every external service, its keys, its connection test, where it is used, and a directory explaining each one.',
     { minRole: 'editor' },
   ],
+
+  // Spotlight, appended last (owner request 2026-10-26): private, so publisher and above.
+  [
+    'spotlight',
+    '/admin/doc-vault',
+    Vault,
+    'Doc Vault',
+    'Your own templates, pasted applications and letters, kept private with their history. Not shown on the site.',
+    { minRole: 'publisher' },
+  ],
 ];
 
 /**
@@ -503,10 +525,13 @@ export function navGroupFor(item) {
  * so navGroupFor still finds them; the arrays are fresh each call, so a
  * component memoises on the role.
  */
-export function visibleNavFor(role) {
+export function visibleNavFor(role, capabilities = {}) {
   const level = Math.max(roleLevel(role), roleLevel(ROLE_NAMES[0]));
   return NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => roleLevel(item.minRole) <= level),
+    items: group.items.filter(
+      (item) =>
+        roleLevel(item.minRole) <= level && (!item.requiresBrain || capabilities.brain === true)
+    ),
   })).filter((group) => group.items.length > 0);
 }

@@ -222,6 +222,8 @@ export const CONTAINER_TTL_SECONDS = Object.freeze({
  * }>}
  */
 export const COLLECTIONS = [
+  { name: 'brain_records', disposition: 'azure-only', partitionKey: '/ownerId', note: 'Private authored notes, relationships, revisions and sync events; atomic owner partition.' },
+  { name: 'brain_search', disposition: 'regenerate', partitionKey: '/ownerId', note: 'Rebuildable private creator-content lexical index. Never public.' },
   // --- Content -------------------------------------------------------------
   {
     name: 'content',
@@ -406,6 +408,13 @@ export const COLLECTIONS = [
     name: 'ambassador',
     disposition: 'azure-only',
     note: 'Ambassador hub (ADR 0033 §4). One container, documents told apart by `docType`: `program` (the catalogue, seeded on first read), `application` (one pursuit of one program, private), `evidence` (a talk, cert or article linked by {sourceModule, sourceId} with a snapshot). Partitioned on /id like every other small container; every list is a docType filter over one physical partition.',
+  },
+
+  // --- Doc Vault -------------------------------------------------------------
+  {
+    name: 'doc_vault',
+    disposition: 'azure-only',
+    note: 'Doc Vault (owner request 2026-10-26): the owner\'s own templates, applications, letters and notes, admin-only (publisher), never on the public site. Its own container so that no public read, and no other feature, can reach it by naming another one. Documents told apart by `docType`: `document` (the current version), `version` (an earlier one, id `<documentId>~v<n>`) and one `salt` item (`vault-id-salt`, the secret every document id is derived from). Partitioned on /id; the text (`/body/*`) is not indexed.',
   },
 
   // --- Social --------------------------------------------------------------

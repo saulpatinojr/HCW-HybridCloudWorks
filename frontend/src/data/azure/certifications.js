@@ -2,7 +2,7 @@
 // Verified by hand against the Learn credentials browse API
 // (https://learn.microsoft.com/api/contentbrowser/search/credentials) and the credential-retirement page
 // (https://learn.microsoft.com/en-us/credentials/support/credential-retirement) on the date below.
-// Last manual sync: 2026-10-19
+// Last manual sync: 2026-10-26
 //
 // THE GITHUB EXAMS ARE NOT CARRIED HERE (#496, owner decision 2026-09-11).
 // GH-100, GH-200, GH-300, GH-500, GH-600 and GH-900 used to sit in this file as
@@ -137,7 +137,7 @@
 // Only these rows were re-read, so `DATA_AS_OF` and the sync line above are
 // deliberately unchanged.
 
-export const DATA_AS_OF = '2026-10-19';
+export const DATA_AS_OF = '2026-10-26';
 
 /**
  * The page a reader can check this catalogue's freshness claim against.

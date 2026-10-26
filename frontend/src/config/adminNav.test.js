@@ -114,17 +114,19 @@ describe('minRole on every item', () => {
     }
   });
 
-  it('reads the server: the Dashboard and Health are viewer reads, Publish is the publisher write, the rest is editor', () => {
+  it('reads the server: the Dashboard and Health are viewer reads, Publish and the Doc Vault are publisher, the rest is editor', () => {
     /** An item's role by its label, so the assertions read as the table above ITEMS does. */
     const roleOf = (label) => NAV_ITEMS.find((item) => item.label === label).minRole;
     expect(roleOf('Dashboard')).toBe('viewer');
     expect(roleOf('Health')).toBe('viewer');
     expect(roleOf('Publish')).toBe('publisher');
+    // Private letters and applications: above the editor role collaborators hold (doc-vault/model.js).
+    expect(roleOf('Doc Vault')).toBe('publisher');
     for (const label of ['Review Queue', 'Live Pages', 'Integrations', 'Platform Settings']) {
       expect(roleOf(label), label).toBe('editor');
     }
     const rest = NAV_ITEMS.filter(
-      (item) => !['Dashboard', 'Health', 'Publish'].includes(item.label)
+      (item) => !['Dashboard', 'Health', 'Publish', 'Doc Vault'].includes(item.label)
     );
     expect(rest.every((item) => item.minRole === 'editor')).toBe(true);
   });
@@ -141,16 +143,25 @@ describe('visibleNavFor', () => {
     expect(groupIds('viewer')).toEqual(['home', 'platform']);
   });
 
-  it('shows an editor everything but Publish, in registry order', () => {
+  it('shows an editor everything but Publish and the Doc Vault, in registry order', () => {
     const editor = labels('editor');
     expect(editor).not.toContain('Publish');
-    expect(editor).toEqual(NAV_ITEMS.map((i) => i.label).filter((l) => l !== 'Publish'));
+    expect(editor).not.toContain('Doc Vault');
+    expect(editor).toEqual(
+      NAV_ITEMS.filter((i) => !i.requiresBrain)
+        .map((i) => i.label)
+        .filter((l) => l !== 'Publish' && l !== 'Doc Vault')
+    );
     expect(groupIds('editor')).toEqual(NAV_GROUPS.map((g) => g.id));
   });
 
   it('shows a publisher and a super_admin the whole registry', () => {
-    expect(labels('publisher')).toEqual(NAV_ITEMS.map((i) => i.label));
-    expect(labels('super_admin')).toEqual(NAV_ITEMS.map((i) => i.label));
+    expect(labels('publisher')).toEqual(
+      NAV_ITEMS.filter((i) => !i.requiresBrain).map((i) => i.label)
+    );
+    expect(labels('super_admin')).toEqual(
+      NAV_ITEMS.filter((i) => !i.requiresBrain).map((i) => i.label)
+    );
   });
 
   it('treats an unknown or missing role as a viewer, never as more', () => {
@@ -171,5 +182,25 @@ describe('visibleNavFor', () => {
       .find((item) => item.label === 'Health');
     expect(navGroupFor(health).id).toBe('platform');
     expect(Object.isFrozen(NAV_GROUPS)).toBe(true);
+  });
+});
+
+describe('owner-only Second Brain navigation', () => {
+  it('requires a server-derived capability even for a super_admin', () => {
+    expect(
+      visibleNavFor('super_admin')
+        .flatMap((g) => g.items)
+        .some((i) => i.id === 'second-brain')
+    ).toBe(false);
+    expect(
+      visibleNavFor('editor', { brain: true })
+        .flatMap((g) => g.items)
+        .some((i) => i.id === 'second-brain')
+    ).toBe(true);
+    expect(
+      visibleNavFor('viewer', { brain: true })
+        .flatMap((g) => g.items)
+        .some((i) => i.id === 'second-brain')
+    ).toBe(false);
   });
 });

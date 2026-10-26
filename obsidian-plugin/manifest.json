@@ -1,0 +1,9 @@
+{
+  "id": "hcw-second-brain",
+  "name": "HCW Second Brain",
+  "version": "1.0.3",
+  "minAppVersion": "1.8.0",
+  "description": "Connect selected research notes to your private HCW creator workspace.",
+  "author": "Hybrid Cloud Works",
+  "isDesktopOnly": true
+}

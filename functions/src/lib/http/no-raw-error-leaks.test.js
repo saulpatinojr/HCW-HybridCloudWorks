@@ -1529,6 +1529,9 @@ function realTree() {
  * classes.
  */
 const ALLOWED = [
+  { site: "lib/brain/handlers.js › route › error: authoredMessage(error, 'Could not complete the action.')", class: 'b', why: 'Owner-only authored BrainError sentence; upstream errors use errorResponse.' },
+  { site: 'lib/brain/handlers.js › route › ...authoredDetails(error)', class: 'b', why: 'Owner-only conflict projection of the current private note, constructed by the repository after authorization.' },
+  { site: "lib/brain/handlers.js › route › error: authoredMessage(error, 'Invalid input.')", class: 'b', why: 'Existing draft/taxonomy validator sentences; provider and database text is never returned.' },
   { site: 'functions/listen-and-learn-jobs.js › runSpeakChapter › error: storedFailure(err, \'The chapter could not be voiced.\', { correlationId: context?.invocationId ?? null, })', class: 'b', why: 'stored at write time through the door (#945 step 2): the chapter\'s error and lastError, with runJob\'s reference; the public Listen & Learn read has not returned it since #1201 (an allowlist of fields)' },
   { site: 'functions/public-submissions.js › handleSubmission › error: authoredMessage(err, \'Too many submissions — try again later.\')', class: 'b', why: 'PUBLIC: SubmissionRateLimitError sentence, vendor-free' },
   { site: 'lib/addons/status.js › failureReason › return error.message', class: 'c', why: 'feeds a warn line only' },
@@ -1587,6 +1590,8 @@ const ALLOWED = [
   { site: 'lib/content/inspect-job.js › run › inspectError: recordedFailure(log, \'The inspection failed.\', error)', class: 'b', why: 'stored at write time through the door (#945 step 2): the document\'s inspectError; the public content read has not returned it since #1201 (an allowlist of fields)' },
   { site: 'lib/content/scrape.js › scrapeArticle › failure(reason)', class: 'b', why: 'FetchRefusedError/ScrapeError sentence or the failure\'s code; carried to the draft routes', times: 2 },
   { site: 'lib/decision-center/sources.js › toItem › [row.message]', class: 'n', why: 'a workflow alert\'s own message field, not an error\'s: no writer stores error text there (raiseAlert in link-check and the publishing watchdog, and buildPublishFailureAlert, write none)' },
+  { site: 'lib/doc-vault/handlers.js › answerFor › error: authoredMessage(error, `Could not ${what}.`)', class: 'b', why: 'DocVaultInputError sentences on the 400: they name the rule a field broke and never repeat what was sent (model.test.js, handlers.test.js "puts none of it in a refusal either")' },
+  { site: "lib/doc-vault/markdown.js › parseVaultFile › refuse(authoredMessage(error, 'The file could not be read as a document.'))", class: 'b', why: 'DocVaultInputError sentences for an uploaded file that breaks a document rule; they name the rule, not the text' },
   { site: 'lib/gallery/import.js › fetchForImport › refuse(`Could not fetch image: ${reason}`)', class: 'b', why: 'FetchRefusedError sentence (URL masked) or the failure\'s code on the 422' },
   { site: 'lib/health/probe-results.js › putProbeResult › error: authoredMessage(error, \'The result changed while it was written.\')', class: 'b', why: 'the CONFLICT AuthoredError written in writeResult' },
   { site: 'lib/health/pulse-checks.js › cosmosFailure › result(storedFailure(error, \'The ops-health snapshot could not be read.\'))', class: 'b', why: 'stored at write time through the door (#945 step 2): the pulse result the Health view shows' },

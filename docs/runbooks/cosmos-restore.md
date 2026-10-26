@@ -32,7 +32,7 @@ account. The drill below measures both. Run it once a quarter.
 
 Say this before the drill, so nothing in it is a surprise:
 
-- **61 of the 74 containers**: the 44 authored and 10 configuration containers
+- **64 of the 78 containers**: the 47 authored and 10 configuration containers
   from every run, the 7 operational-record containers (`admin_audit_logs`,
   `audits`, `ai_usage`, `telegram_bot_activity`, `workflow_alerts`,
   `workflow_digests`, `content_stats_markers`) as of the last full only. The
@@ -60,6 +60,12 @@ Say this before the drill, so nothing in it is a surprise:
 
 ## Is the export running? Read this first
 
+Containers added after the most recent weekly full are included from the
+selected daily manifests. Their first delta reads the change feed from its
+beginning, so it provides the initial authored records. The restore selects
+the union of those manifests and applies only the layers that carry each
+container. A missing blob listed by a manifest still stops the restore.
+
 Success is silent and only absence pages (ADR 0028 §5). To see the runs
 directly, query Application Insights from PowerShell (the `application-insights`
 CLI extension installs itself on first use; the resource is
@@ -69,8 +75,9 @@ CLI extension installs itself on first use; the resource is
 az monitor app-insights query --app appi-site-prod-cus-01 -g rg-web-site-prod-cus --offset 14d --analytics-query 'customEvents | where name == "cosmosExportCompleted" | project timestamp, mode = tostring(customDimensions.mode), runId = tostring(customDimensions.runId), containers = toint(customDimensions.containers), docs = tolong(customDimensions.docs), bytes = tolong(customDimensions.bytes), durationMs = tolong(customDimensions.durationMs) | order by timestamp desc' -o table
 ```
 
-A healthy fortnight shows two `full` rows with `containers` 61 and twelve
-`delta` rows with `containers` 54, one per UTC date. A gap in `runId` is a run
+A healthy fortnight shows two `full` rows and twelve `delta` rows, one per
+UTC date. Counts follow the classification at the time of each run (currently
+64 full and 57 delta containers); earlier runs can have fewer. A gap in `runId` is a run
 that never wrote its manifest — a container job failed or timed out — and the
 missing-run alert will have fired on it. An empty table when the exporter has
 been armed for more than two days is the same finding as the alert. The

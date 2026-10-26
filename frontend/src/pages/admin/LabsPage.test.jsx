@@ -20,6 +20,7 @@ import LabsPage from './LabsPage';
 import { DIFFICULTY_LABELS, labs } from '@/data/labs/catalogue';
 
 const postJSON = vi.fn();
+const getJSON = vi.fn();
 const fetchCoderStatus = vi.fn();
 let searchParams = '';
 const setSearchParams = vi.fn();
@@ -27,6 +28,7 @@ const setSearchParams = vi.fn();
 vi.mock('@/hooks/useAuthReady', () => ({ useAuthReady: () => ({ authReady: true }) }));
 vi.mock('@/components/ui/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock('@/lib/api', () => ({
+  getJSON: (...args) => getJSON(...args),
   postJSON: (...args) => postJSON(...args),
   sendJSON: vi.fn(),
 }));
@@ -69,6 +71,12 @@ beforeEach(() => {
   searchParams = '';
   setSearchParams.mockReset();
   postJSON.mockReset().mockResolvedValue(snapshot());
+  getJSON.mockReset().mockResolvedValue({
+    since: '2026-10-26',
+    today: '2026-10-26',
+    counts: { today: 0, last7: 0, last30: 0, total: 0 },
+    perLab: [],
+  });
   fetchCoderStatus.mockReset().mockResolvedValue({
     configured: true,
     reachable: true,
@@ -92,6 +100,21 @@ describe('which panel the page shows', () => {
     searchParams = 'tab=dashboard';
     render(<LabsPage />);
     expect(await screen.findByText('Jobs queued')).toBeInTheDocument();
+  });
+
+  it('shows the lab sessions started card on the Dashboard only', async () => {
+    searchParams = 'tab=dashboard';
+    const { unmount } = render(<LabsPage />);
+    expect(await screen.findByTestId('lab-starts-card')).toBeInTheDocument();
+    expect(getJSON).toHaveBeenCalledWith('cms/labs/starts');
+    unmount();
+
+    getJSON.mockClear();
+    searchParams = 'tab=jobs';
+    render(<LabsPage />);
+    expect(await screen.findByText('Jobs')).toBeInTheDocument();
+    expect(screen.queryByTestId('lab-starts-card')).not.toBeInTheDocument();
+    expect(getJSON).not.toHaveBeenCalled();
   });
 
   it('sends the old `setup` id to Settings, where the steps went', async () => {

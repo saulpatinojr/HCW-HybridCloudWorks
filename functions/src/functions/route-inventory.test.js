@@ -85,7 +85,9 @@ const requireAgent = vi.fn(async () => ({
 }));
 
 /** Every gate the inventory recognises. A route must reach at least one. */
-const GUARDS = [requireRole, requireUser, requireAgent];
+const syncRequireRole = vi.fn(async () => ({ error: { status: 403, headers: {}, body: "Forbidden" } }));
+const GUARDS = [requireRole, requireUser, requireAgent, syncRequireRole];
+vi.mock("../lib/brain/guard.js", async (importOriginal) => ({ ...(await importOriginal()), getBrainSyncGuard: () => ({ requireRole: syncRequireRole }) }));
 const guardCalls = () => GUARDS.reduce((n, g) => n + g.mock.calls.length, 0);
 const clearGuards = () => GUARDS.forEach((g) => g.mockClear());
 
@@ -469,6 +471,40 @@ describe("the lab agent registry routes (#740)", () => {
 });
 
 /**
+ * The lab start counts (lib/labs/lab-starts.js). Property 1 proves the route
+ * reaches a guard; this pins the one route, the one verb and the role. It is
+ * a read of aggregate counts for the Labs hub Dashboard card: editor, like the
+ * Labs reads beside it, never public (the counts are for the owner's letters,
+ * not for visitors), and never reachable with an agent's credential. The write
+ * is not a route of its own: it happens inside public/labs/visitor-session.
+ */
+describe("the lab start counts route", () => {
+  const ROUTE = "cms/labs/starts";
+
+  it("is one GET registration and not public", () => {
+    const registrations = [...httpRegistrations.values()].filter(
+      (o) => o.route === ROUTE,
+    );
+    expect(registrations).toHaveLength(1);
+    expect(PUBLIC_ROUTES.has(ROUTE)).toBe(false);
+    expect(registrations[0].methods).toEqual(["GET", "OPTIONS"]);
+  });
+
+  it("answers through requireRole at editor, and a refusal reads nothing", async () => {
+    const options = [...httpRegistrations.values()].find(
+      (o) => o.route === ROUTE,
+    );
+
+    clearGuards();
+    const res = await invoke(options, makeRequest({ method: "GET" }));
+    expect(requireRole).toHaveBeenCalledTimes(1);
+    expect(requireRole.mock.calls[0][1]).toBe("editor");
+    expect(requireAgent).not.toHaveBeenCalled();
+    expect(res?.status).toBe(403);
+  });
+});
+
+/**
  * The Drafts stage, /admin/drafts (owner request 2026-10-03). Property 1
  * proves these reach a guard; this pins the role and the verbs. They create,
  * edit, move and delete content documents, so they sit behind requireRole at
@@ -658,7 +694,8 @@ describe("non-HTTP triggers", () => {
     // FEATURE_FLAG_LAB_CANARY; the twenty-seventh is
     // ambassadorAudienceMonthly (ambassador-audience.js, #1302), behind
     // FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY.
-    expect(timerRegistrations.size).toBe(27);
+    expect(timerRegistrations.size).toBe(28);
+    expect(timerRegistrations.has("brainIndexReconcile")).toBe(true);
     expect(timerRegistrations.has("ambassadorAudienceMonthly")).toBe(true);
     expect(timerRegistrations.has("healthPulse")).toBe(true);
     expect(timerRegistrations.has("labCanary")).toBe(true);
@@ -675,10 +712,12 @@ describe("non-HTTP triggers", () => {
     }
   });
 
-  it("the platform job worker is the only queue trigger, on the identity-based host connection", () => {
+  it("the platform and private-brain workers use the identity-based host connection", () => {
     // lib/jobs.js (T-322). A second queue trigger is a second place long work
     // can run unreviewed; make adding one a visible act.
-    expect([...queueRegistrations.keys()]).toEqual(["platformJobWorker"]);
+    expect([...queueRegistrations.keys()]).toEqual(["platformJobWorker", "brainIndexWorker"]);
+    expect(queueRegistrations.get("brainIndexWorker").queueName).toBe("brain-index");
+    expect(queueRegistrations.get("brainIndexWorker").connection).toBe("AzureWebJobsStorage");
     const worker = queueRegistrations.get("platformJobWorker");
     expect(worker.queueName).toBe("platform-jobs");
     expect(worker.connection).toBe("AzureWebJobsStorage");
@@ -828,5 +867,63 @@ describe("property 4 — no two registrations share a route template", () => {
         ).not.toBe(405);
       }
     }
+  });
+});
+
+/**
+ * The Doc Vault, /admin/doc-vault (owner request 2026-10-26). Property 1
+ * proves these reach a guard; this pins the role and the verbs. They hold the
+ * owner's private letters, applications and notes, so every route, reads
+ * included, sits behind requireRole at publisher (above the editor role that
+ * collaborators hold) and none is public. One registration per template
+ * (property 4).
+ */
+describe("the Doc Vault routes", () => {
+  const VERBS = {
+    "cms/doc-vault": ["GET", "POST"],
+    "cms/doc-vault/upload": ["POST"],
+    "cms/doc-vault/{id}": ["GET", "PUT", "DELETE"],
+    "cms/doc-vault/{id}/untrash": ["POST"],
+    "cms/doc-vault/{id}/versions/{version}": ["GET"],
+    "cms/doc-vault/{id}/restore-version": ["POST"],
+  };
+
+  it.each(Object.entries(VERBS))(
+    "%s is one registration answering exactly %j, and is not public",
+    (route, verbs) => {
+      const registrations = [...httpRegistrations.values()].filter(
+        (o) => o.route === route,
+      );
+      expect(registrations).toHaveLength(1);
+      expect(PUBLIC_ROUTES.has(route)).toBe(false);
+      expect(registrations[0].methods).toEqual([...verbs, "OPTIONS"]);
+    },
+  );
+
+  it.each(
+    Object.entries(VERBS).flatMap(([route, verbs]) =>
+      verbs.map((verb) => [route, verb]),
+    ),
+  )(
+    "%s answers %s through requireRole at publisher, and nothing runs behind a refusal",
+    async (route, method) => {
+      const options = [...httpRegistrations.values()].find(
+        (o) => o.route === route,
+      );
+
+      clearGuards();
+      const res = await invoke(options, makeRequest({ method }));
+      expect(requireRole).toHaveBeenCalledTimes(1);
+      expect(requireRole.mock.calls[0][1]).toBe("publisher");
+      expect(requireUser).not.toHaveBeenCalled();
+      expect(res?.status).toBe(403);
+    },
+  );
+
+  it("registers no route for the vault beyond these", () => {
+    const routes = [...httpRegistrations.values()]
+      .map((o) => o.route)
+      .filter((route) => route.startsWith("cms/doc-vault"));
+    expect(routes.sort()).toEqual(Object.keys(VERBS).sort());
   });
 });

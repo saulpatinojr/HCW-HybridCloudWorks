@@ -39,6 +39,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { ShieldAlert, ShieldQuestion, LogIn, RefreshCw } from 'lucide-react';
 import { useAdminAuth, ACCESS_STATE, UNKNOWN_REASON } from '@/hooks/useAdminAuth';
 import { AdminRoleProvider } from '@/hooks/useAdminRole';
+import { BrainAccessProvider } from '@/hooks/useBrainAccess';
 import { postJSON } from '@/lib/api';
 import { signIn, signOutUser, reauthenticateForApi } from '@/lib/entraAuth';
 
@@ -242,5 +243,11 @@ export default function AdminAuthGuard({ children }) {
   // portal (AP-F4, #928): the menu, the Explore strip and every RoleGate read
   // this one verified value rather than mounting their own status check.
   // `adminStatus` is set here by construction: `isAdmin` is its own field.
-  return <AdminRoleProvider value={adminStatus.role}>{children}</AdminRoleProvider>;
+  return (
+    <AdminRoleProvider value={adminStatus.role}>
+      <BrainAccessProvider key={user.uid} accountLabel={user.email}>
+        {children}
+      </BrainAccessProvider>
+    </AdminRoleProvider>
+  );
 }

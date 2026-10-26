@@ -48,7 +48,9 @@ $harnessDirectories = @('.agents', '.claude', 'hooks', 'tooling', '.agentic')
 # `infra-lab` is the second Terraform root module (#661, ADR 0032): the
 # Hostinger lab host and its DNS, in the hcw-lab HCP Terraform workspace. It
 # sits beside infra/ rather than inside it so the two states never meet.
-$allowedDirectories = @('.azure', '.github', '.qlty', '.ruff_cache', '.vscode', 'docs', 'edge', 'frontend', 'functions', 'infra', 'infra-lab', 'lab-host', 'lab-image', 'node_modules', 'scripts', 'site', 'vps-agent') + $harnessDirectories
+# obsidian-plugin is the desktop companion's source and tests. Its operating
+# instructions live under docs/runbooks with the rest of the application.
+$allowedDirectories = @('.azure', '.github', '.qlty', '.ruff_cache', '.vscode', 'docs', 'edge', 'frontend', 'functions', 'infra', 'infra-lab', 'lab-host', 'lab-image', 'node_modules', 'obsidian-plugin', 'scripts', 'site', 'vps-agent') + $harnessDirectories
 
 # The engineering plan documents are companions to the approved architecture and
 # are referenced from README.md and from each other; they stay at the root.

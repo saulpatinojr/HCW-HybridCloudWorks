@@ -103,7 +103,7 @@ describe('CommandPalette', () => {
     renderPalette();
     pressShortcut();
     await screen.findByRole('dialog');
-    expect(options()).toHaveLength(NAV_ITEMS.length);
+    expect(options()).toHaveLength(NAV_ITEMS.filter((i) => !i.requiresBrain).length);
 
     type('live');
     const shown = options().map((o) => o.textContent);
@@ -268,6 +268,6 @@ describe('CommandPalette', () => {
     pressShortcut();
     await screen.findByRole('dialog');
     expect(input()).toHaveValue('');
-    expect(options()).toHaveLength(NAV_ITEMS.length);
+    expect(options()).toHaveLength(NAV_ITEMS.filter((i) => !i.requiresBrain).length);
   });
 });

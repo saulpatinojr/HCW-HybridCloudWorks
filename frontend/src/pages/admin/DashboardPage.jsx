@@ -18,6 +18,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Loader2, FileText, Globe, BookOpen, Code2, AlertCircle, Layers } from 'lucide-react';
 import useDashboardCounts from '@/hooks/useDashboardCounts';
 import { useAdminRole } from '@/hooks/useAdminRole';
+import { useBrainAccess } from '@/hooks/useBrainAccess';
 import { visibleNavFor } from '@/config/adminNav';
 import DecisionCenter from '@/components/admin/dashboard/DecisionCenter';
 import StatTile from '@/components/admin/shared/StatTile';
@@ -138,7 +139,10 @@ function DashboardStats({ counts }) {
  * introduces a page the menu does not offer.
  */
 function DashboardExplore({ role }) {
-  const groups = visibleNavFor(role).filter((group) => group.id !== 'home');
+  const { enabled: brainEnabled } = useBrainAccess();
+  const groups = visibleNavFor(role, { brain: brainEnabled }).filter(
+    (group) => group.id !== 'home'
+  );
   return (
     <section aria-labelledby="explore-heading" className="space-y-3">
       <div>
