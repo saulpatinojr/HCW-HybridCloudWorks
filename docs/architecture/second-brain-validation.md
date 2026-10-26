@@ -9,7 +9,7 @@ All data used by the new tests is synthetic.
 | Frontend unit/component suite, after integrating current main | 376 files, 5,482 tests passed |
 | Repository scripts suite | 92 files passed, one skipped; 1,911 tests passed, 116 skipped |
 | Chromium and mobile Chromium admin journeys | Four passed, covering owner capture/map and other-admin denial |
-| Obsidian plugin tests | Seven passed, including Windows DPAPI round trip and offline/conflict recovery |
+| Obsidian plugin tests | Eight passed, including host module loading, Windows DPAPI round trip, and offline/conflict recovery |
 | Frontend production build and plugin build | Passed |
 | Terraform validation and formatting | Passed; backend initialization disabled |
 | Generated container manifest consistency | Passed |
