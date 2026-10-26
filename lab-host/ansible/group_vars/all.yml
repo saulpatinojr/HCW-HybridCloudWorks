@@ -476,6 +476,48 @@ addons:
       CA_MAX_ITEMS: "200"
     secret_env:
       TURNSTILE_SECRET: vault_addon_cloud_assessment_turnstile_secret
+  # Cloud Crawler (#1357). The row is here before the site's catalogue row says
+  # `available`: the host runs the container first, and the site flips the row
+  # (and its frame-src entry) once the status route answers configured and
+  # reachable. image_digest is the v0.2.0 image INDEX, read on 2026-10-26 from
+  # Docker Hub's public tag API and from `docker buildx imagetools inspect
+  # docker.io/hybridcloudworks/img-cc-lab-addon:v0.2.0`, which agreed.
+  # `gh attestation verify` against HCW-CloudCrawler_AddOn passed on it
+  # (exit 0); the signer is the publish-images workflow at refs/tags/v0.2.0
+  # (https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/actions/runs/40318349978).
+  # v0.2.0 is the first image with the upload route; v0.1.0 has none, so it is
+  # not pinned. The widget is the owner's `HCW-CloudCrawler_AddOn`, for
+  # cloud-crawler.lab.hybridcloudworks.com; its site key is public. The env is
+  # the add-on's own .env.example: the same frame-ancestors, site-origins,
+  # proxy and limit settings as the other rows, with the add-on's own prefix.
+  # CC_MAX_STORE_MB is the add-on's documented default (64), written out
+  # because it sizes what the container holds in its 512m. Never set
+  # CC_ALLOW_NO_TURNSTILE here: it switches human verification off, for local
+  # runs only, and the add-on honours it only when no secret is set.
+  - id: cloud-crawler
+    enabled: true
+    image: docker.io/hybridcloudworks/img-cc-lab-addon
+    image_tag: "v0.2.0"
+    image_digest: "sha256:5a43c90bda9bed1d3472847f492b7c05405e6a6ce2d4aa7f4d9b519bb72daf28"
+    attestation_identity_regexp: '^https://github\.com/saulpatinojr/HCW-CloudCrawler_AddOn/\.github/workflows/publish-images\.yml@refs/tags/'
+    port: 18084
+    memory: 512m
+    pids_limit: 256
+    env:
+      PORT: "8080"
+      CC_FRAME_ANCESTORS: "{{ caddy_frame_ancestors | join(' ') }}"
+      CC_SITE_ORIGINS: "{{ caddy_frame_ancestors | reject('equalto', \"'self'\") | join(' ') }}"
+      CC_ALLOWED_ORIGINS: ""
+      CC_TRUST_PROXY: "1"
+      CC_TURNSTILE_SITE_KEY: "0x4AAAAAAFmYfaPCx8djlDfP"
+      CC_RATE_LIMIT_POSTS: "10"
+      CC_RATE_LIMIT_WINDOW_MINUTES: "10"
+      CC_MAX_CONCURRENT: "2"
+      CC_TTL_MINUTES: "120"
+      CC_MAX_ITEMS: "200"
+      CC_MAX_STORE_MB: "64"
+    secret_env:
+      TURNSTILE_SECRET: vault_addon_cloud_crawler_turnstile_secret
 
 # HashiCorp Vault, host-native, for lab-host secrets only: production
 # HybridCloudWorks secrets stay in Key Vault kv-site-prod-cus-01 (ADR 0032,

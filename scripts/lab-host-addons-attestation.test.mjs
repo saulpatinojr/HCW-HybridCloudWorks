@@ -69,6 +69,10 @@ describe('group_vars/all.yml add-on attestation configuration', () => {
         repo: 'saulpatinojr/HCW-CloudAssessor_AddOn',
         tag: 'v0.1.0',
       },
+      'cloud-crawler': {
+        repo: 'saulpatinojr/HCW-CloudCrawler_AddOn',
+        tag: 'v0.2.0',
+      },
     };
 
     for (const [id, spec] of Object.entries(expected)) {
