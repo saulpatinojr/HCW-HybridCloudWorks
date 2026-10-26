@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { Brain, Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -66,8 +66,10 @@ function ItemList({
   );
 }
 
-const workspaceClass = (selection) =>
-  selection ? 'grid items-start gap-6 xl:grid-cols-[minmax(20rem,1fr)_minmax(28rem,1fr)]' : '';
+const workspaceClass = (selection, view) =>
+  selection && view !== 'Map'
+    ? 'grid items-start gap-6 xl:grid-cols-[minmax(20rem,1fr)_minmax(28rem,1fr)]'
+    : '';
 
 function ReferencePreview({ item, backlinks, onSelect, onClose, onCapture }) {
   return (
@@ -301,6 +303,7 @@ export default function SecondBrainPage() {
     dirtyRef.current = false;
     setSelection(blank(type, fields));
     setBacklinks([]);
+    return true;
   };
   const saved = (item) => {
     setEditorSnapshot(null);
@@ -317,7 +320,14 @@ export default function SecondBrainPage() {
   };
   const statusData = status || access;
   const collections = notes.filter((n) => ['topic', 'project'].includes(n.type));
-  const mapNodes = graph.nodes.filter((n) => !mapFilter || n.type === mapFilter);
+  const mapNodes = useMemo(
+    () => graph.nodes.filter((n) => !mapFilter || n.type === mapFilter),
+    [graph.nodes, mapFilter]
+  );
+  const mapEdges = useMemo(() => {
+    const ids = new Set(mapNodes.map((n) => n.id));
+    return graph.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to));
+  }, [graph.edges, mapNodes]);
 
   if (access.loading) return <p role="status">Checking workspace access…</p>;
   if (!access.enabled) return <WorkspaceUnavailable access={access} />;
@@ -378,7 +388,7 @@ export default function SecondBrainPage() {
           Loading workspace…
         </p>
       )}
-      <div className={workspaceClass(selection)}>
+      <div className={workspaceClass(selection, view)}>
         <section aria-label="Workspace view" className="min-w-0 space-y-5">
           {view === 'Home' && (
             <WorkspaceHome
@@ -509,14 +519,7 @@ export default function SecondBrainPage() {
                   </select>
                 </label>
               </div>
-              <BrainMap
-                nodes={mapNodes}
-                edges={graph.edges.filter(
-                  (e) =>
-                    mapNodes.some((n) => n.id === e.from) && mapNodes.some((n) => n.id === e.to)
-                )}
-                onSelect={open}
-              />
+              <BrainMap nodes={mapNodes} edges={mapEdges} onSelect={open} />
               {graphCursor && (
                 <Button variant="outline" disabled={busy} onClick={() => loadGraph(graphCursor)}>
                   Expand map
@@ -528,7 +531,9 @@ export default function SecondBrainPage() {
             <AskPanel
               context={selection}
               enabled={statusData.aiEnabled}
-              onSaveNote={(fields) => newItem('note', fields)}
+              onSaveNote={async (fields) => {
+                if (await newItem('note', fields)) setView('Inbox');
+              }}
             />
           )}
         </section>

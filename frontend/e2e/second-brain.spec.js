@@ -74,3 +74,58 @@ test('an admin without the owner capability sees no private workspace or note re
   await expect(page.getByText(/unavailable for this account/)).toBeVisible();
   expect(privateReads).toEqual([]);
 });
+
+test('map supports exploration, dragging, zoom and relationship filtering', async ({
+  page,
+  identity,
+}, testInfo) => {
+  const topics = ['Docker delivery', 'Azure architecture', 'Creator workflow'];
+  const nodes = Array.from({ length: 27 }, (_, index) => ({
+    ...note,
+    id: `map-${index}`,
+    title: index < 3 ? topics[index] : `${topics[index % 3]} · Research ${index}`,
+    type: index < 3 ? 'topic' : index < 6 ? 'note' : 'reference',
+    tags: [topics[index % 3].split(' ')[0].toLowerCase()],
+  }));
+  const edges = nodes.slice(3).map((node, index) => ({
+    from: node.id,
+    to: nodes[index % 3].id,
+    kind: index % 4 === 0 ? 'suggested' : 'membership',
+  }));
+  identity.answerApi('cms/brain/status', {
+    enabled: true,
+    aiEnabled: false,
+    indexing: { status: 'complete' },
+  });
+  identity.answerApi('cms/brain/items', { items: [], after: null });
+  identity.answerApi('cms/brain/graph', { nodes, edges, cursor: null });
+  await identity.signIn('/admin/second-brain');
+  const main = page.locator('#admin-main');
+  await main.getByRole('button', { name: 'Map', exact: true }).click();
+  await main.getByRole('button', { name: 'Pause layout' }).click();
+  const node = main.getByRole('button', { name: 'Explore Docker delivery', exact: true });
+  await node.click();
+  await expect(main.getByRole('heading', { name: 'Docker delivery', exact: true })).toBeVisible();
+  const before = await node.getAttribute('transform');
+  const box = await node.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 45, box.y + box.height / 2 + 35, { steps: 8 });
+  await page.mouse.up();
+  await expect(node).not.toHaveAttribute('transform', before);
+  const viewport = main.locator('.react-transform-component');
+  const initial = await viewport.getAttribute('style');
+  await main.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect(viewport).not.toHaveAttribute('style', initial);
+  await main.getByRole('button', { name: 'Reset map view' }).click();
+  await main.getByLabel('Suggested links', { exact: true }).uncheck();
+  await main.getByLabel('Selected neighborhood').check();
+  await expect(
+    main.getByRole('button', { name: 'Explore Azure architecture', exact: true })
+  ).toHaveCount(0);
+  await main.getByLabel('Selected neighborhood').uncheck();
+  await main.getByRole('button', { name: 'Clear selected node' }).click();
+  await main
+    .getByRole('group', { name: 'Interactive knowledge graph' })
+    .screenshot({ path: testInfo.outputPath('interactive-map.png') });
+});
