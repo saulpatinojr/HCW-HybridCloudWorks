@@ -159,7 +159,8 @@ export const addons = Object.freeze([
     title: 'Cloud architecture drift check',
     // Terraform is left out of the summary and the technology list on purpose: the engine the lab runs (cloud-crawler-core
     // 0.1.0) does not read Terraform yet, so the row promises only what the lab does. Restore both when the add-on ships
-    // an engine that reads it (HCW-CloudCrawler_App#54 is closed; the add-on has not taken a new engine). Website issue #1357.
+    // an engine that reads it (HCW-CloudCrawler_App#54 is closed; the add-on has not taken a new engine). Tracked in
+    // HCW-CloudCrawler_AddOn#29; website issue #1357.
     summary:
       'Upload an export of your Azure resources and see where what is built has drifted from your architecture decisions, with draft decision records and review notes. Nothing you upload is kept beyond two hours.',
     origin: 'https://cloud-crawler.lab.hybridcloudworks.com',

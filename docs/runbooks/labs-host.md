@@ -3333,19 +3333,20 @@ requests in that moment can fail for a few seconds, and nothing is lost.
       ```
 
       Open that page. A good result is a summary that begins **Expected** and
-      has no line starting `UNEXPECTED`. Among its `DECLARED` lines (other
-      unapplied changes are declared there too, so several are normal) one
-      reads `DECLARED  azurerm_function_app_flex_consumption.hcw
-      app_settings.ADDON_CLOUD_CRAWLER_URL: (absent) -> "https://cloud-crawler.lab.hybridcloudworks.com"`
-      followed by its reason in brackets. The command ending without an error
+      has no line starting `UNEXPECTED`. The command ending without an error
       is not enough on its own: the check finishes green, having read nothing,
       when its token is not set, and the summary then says so. If the `run :`
-      line is not the run waiting in sub-step 1, or that `DECLARED` line is
-      missing, the check did not read this plan; read the plan by eye (above)
-      instead. (That `DECLARED` line was there for the run of 2026-10-26. The
-      entry is deleted from `scripts/assert-expected-plan.mjs` now that the
-      setting is applied, so a later change to the setting needs a new entry
-      there first.)
+      line is not the run waiting in sub-step 1, the check did not read this
+      plan; read the plan by eye (above) instead.
+
+      For the run of 2026-10-26, one of the `DECLARED` lines read
+      `DECLARED  azurerm_function_app_flex_consumption.hcw
+      app_settings.ADDON_CLOUD_CRAWLER_URL: (absent) -> "https://cloud-crawler.lab.hybridcloudworks.com"`
+      followed by its reason in brackets. That entry is deleted from
+      `scripts/assert-expected-plan.mjs` now that the setting is applied. If you
+      repeat this step for a change to the setting, add a new entry there first:
+      without one, the summary shows an `UNEXPECTED` line for the setting, and
+      you should not confirm until the entry is in.
 
       If it says `UNEXPECTED`, do not confirm; post the line as a comment on
       [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).

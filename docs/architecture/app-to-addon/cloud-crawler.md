@@ -73,7 +73,9 @@ page's address. It sends the site only its own state (`loading`, `ready`,
   [HCW-CloudCrawler_App#60](https://github.com/saulpatinojr/HCW-CloudCrawler_App/pull/60)
   for [#54](https://github.com/saulpatinojr/HCW-CloudCrawler_App/issues/54),
   but the App has no release after `v0.1.0` and the AddOn has not taken a new
-  engine). The AddOn's integration guide holds the same row, field by field.
+  engine). The AddOn tracks this as
+  [HCW-CloudCrawler_AddOn#29](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/issues/29),
+  and its integration guide holds the same row, field by field.
 - **Not verified by any session when the row was flipped:** the pane inside the
   site's frame in a real browser (the empty state and the theme), and one real
   upload with the human check, which is the only thing that proves the
