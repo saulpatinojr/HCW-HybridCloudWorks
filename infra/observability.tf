@@ -1530,6 +1530,7 @@ locals {
     refreshToolServiceCache     = { period = "1d", anchor = "2026-01-01 02:00" }  # 0 0 2 * * *
     scrapeSkillsHubRss          = { period = "7d", anchor = "2026-01-02 09:00" }  # 0 0 9 * * 5
     sendReminders               = { period = "1d", anchor = "2026-01-01 13:00" }  # 0 0 13 * * *
+    sweepVisitorSessions        = { period = "2m", anchor = "2026-01-01 00:00" }  # 0 */2 * * * *
     syncRssFeeds                = { period = "2h", anchor = "2026-01-01 00:00" }  # 0 0 */2 * * *
     syncSocialCalendarScheduled = { period = "5m", anchor = "2026-01-01 00:00" }  # 0 */5 * * * *
   }

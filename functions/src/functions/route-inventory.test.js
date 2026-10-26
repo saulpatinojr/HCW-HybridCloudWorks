@@ -693,8 +693,11 @@ describe("non-HTTP triggers", () => {
     // twenty-sixth is labCanary (schedulers.js, #1009), behind
     // FEATURE_FLAG_LAB_CANARY; the twenty-seventh is
     // ambassadorAudienceMonthly (ambassador-audience.js, #1302), behind
-    // FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY.
-    expect(timerRegistrations.size).toBe(28);
+    // FEATURE_FLAG_AMBASSADOR_AUDIENCE_MONTHLY; the twenty-eighth (after
+    // brainIndexReconcile) is sweepVisitorSessions (visitor-session-sweep.js,
+    // #1403), behind FEATURE_FLAG_SWEEP_VISITOR_SESSIONS.
+    expect(timerRegistrations.size).toBe(29);
+    expect(timerRegistrations.has("sweepVisitorSessions")).toBe(true);
     expect(timerRegistrations.has("brainIndexReconcile")).toBe(true);
     expect(timerRegistrations.has("ambassadorAudienceMonthly")).toBe(true);
     expect(timerRegistrations.has("healthPulse")).toBe(true);

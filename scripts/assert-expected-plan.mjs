@@ -522,9 +522,10 @@ export const DECLARED = [
       ...TIMER_SCHEDULES_APPLIED,
       ["ambassadorAudienceMonthly", "1d", "2026-01-01 06:45"],
       ["brainIndexReconcile", "15m", "2026-01-01 00:00"],
+      ["sweepVisitorSessions", "2m", "2026-01-01 00:00"],
     ]),
     reason:
-      "#1302 and Second Brain: alert-timer-overdue watches the audience timer and private indexing reconciliation",
+      "#1302, Second Brain and #1403: alert-timer-overdue watches the audience timer, private indexing reconciliation and the visitor-session sweep",
   },
   // Second Brain: initial deployment is deliberately disabled. Owner IDs and
   // activation are separate, exact-value configuration reviews.
@@ -540,8 +541,52 @@ export const DECLARED = [
   {
     address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue', path: 'criteria[0].query',
     before: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45']]),
-    after: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45'], ['brainIndexReconcile', '15m', '2026-01-01 00:00']]),
-    reason: 'Second Brain: exact timer-alert update if the audience timer was already applied.',
+    after: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45'], ['brainIndexReconcile', '15m', '2026-01-01 00:00'], ['sweepVisitorSessions', '2m', '2026-01-01 00:00']]),
+    reason: 'Second Brain and #1403: exact timer-alert update if the audience timer was already applied.',
+  },
+  // #1403: the visitor-session sweep timer. Which rows alert-timer-overdue
+  // already holds depends on what has applied, and this file cannot read that,
+  // so the update is declared for each state it can be in. The two entries
+  // above carry the sweep row for the states where the audience timer and the
+  // private indexing row are still to come; this one is for the state where
+  // both have applied and the sweep row is the only difference.
+  {
+    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue', path: 'criteria[0].query',
+    before: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45'], ['brainIndexReconcile', '15m', '2026-01-01 00:00']]),
+    after: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45'], ['brainIndexReconcile', '15m', '2026-01-01 00:00'], ['sweepVisitorSessions', '2m', '2026-01-01 00:00']]),
+    reason: '#1403: alert-timer-overdue watches the visitor-session sweep, one row more.',
+  },
+  // The sweep's flag, in its two runs or taken as one, the same three shapes as
+  // the other timers' (#910, #1302). It applies disarmed; adding
+  // SWEEP_VISITOR_SESSIONS to enabled_timers arms it. Delete the first and
+  // third entries once the catalogue apply has run. Keep the middle one
+  // (false -> true) until the arming apply has run too: it is the plan the
+  // owner sees when they add the name to enabled_timers, and this file cannot
+  // read what has applied. A disarming plan (true -> false) is deliberately
+  // not declared: it shows as UNEXPECTED, which is the prompt to read it.
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS",
+    before: undefined,
+    after: "false",
+    reason:
+      "#1403: the sweepVisitorSessions timer catalogued, disarmed until enabled_timers names it",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS",
+    before: "false",
+    after: "true",
+    reason:
+      "#1403: SWEEP_VISITOR_SESSIONS added to enabled_timers, arming the visitor-session sweep",
+  },
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS",
+    before: undefined,
+    after: "true",
+    reason:
+      "#1403: the sweepVisitorSessions timer catalogued and armed in one apply",
   },
   // #1360's create, notes_obsidian_publish, applied on 2026-10-24 (run-bb1XtRGJEbuK1Cec,
   // read as applied by tfc-plan-check with only the known permanent diff besides it) and was

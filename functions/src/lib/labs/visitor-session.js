@@ -94,10 +94,18 @@ export function readVisitorMaxConcurrent(env = process.env) {
   return Number.isInteger(val) && val > 0 ? val : DEFAULT_VISITOR_MAX_CONCURRENT;
 }
 
+/**
+ * Coder's address and the BROKER token, or null when either is missing. There is
+ * no fallback to the read-only status token (`CODER_STATUS_TOKEN`): it holds
+ * only `template:read` and `workspace:read`, so a broker built on it would be
+ * refused at every create and every delete, and each refused clean-up try would
+ * be spent (five end a session as `cleanup_failed`). Without the broker token the
+ * broker is not configured, and the callers say so.
+ */
 export function readBrokerConfig(env = process.env) {
   const coderConfig = readCoderConfig(env);
   if (!coderConfig) return null;
-  const brokerToken = resolvedSetting(env?.[CODER_BROKER_TOKEN_SETTING]) || coderConfig.token;
+  const brokerToken = resolvedSetting(env?.[CODER_BROKER_TOKEN_SETTING]);
   if (!brokerToken) return null;
   return {
     base: coderConfig.base,
@@ -269,22 +277,32 @@ export const MAX_CLEANUP_ATTEMPTS = 5;
 export const CLEANUP_RETRY_BASE_MS = 2 * 60 * 1000;
 /**
  * How long a claim ('ending') holds before another request may take it over.
- * Longer than the slowest sweep: MAX_SWEEP_SESSIONS sessions, each with two
- * Coder calls that may each wait out CODER_CALL_TIMEOUT_MS.
+ * It is measured from the start of the sweep that made the claim, and the
+ * slowest sweep is MAX_SWEEP_SESSIONS sessions with up to three Coder calls each
+ * (the lookup of a start that failed, the workspace delete, the user delete),
+ * each of which may wait out CODER_CALL_TIMEOUT_MS: 10 x 3 x 10 s, which is
+ * this much exactly. A test pins that arithmetic. Only a Coder that answers
+ * slowly gets there; one that hangs outright stops each session's chain at its
+ * first call.
  */
 export const CLEANUP_LEASE_MS = 5 * 60 * 1000;
 /** The longest one Coder delete may take. A Coder that hangs must not hold a request open. */
 export const CODER_CALL_TIMEOUT_MS = 10 * 1000;
 /** The longest one Coder call that provisions a session may take (creating a user or a workspace is slower than deleting one). */
 export const CODER_PROVISION_TIMEOUT_MS = 30 * 1000;
-/** At most one sweep per handler set (per worker) in this time. */
+/**
+ * At most one in-request sweep per handler set (per worker) in this time. The
+ * timer (functions/src/functions/visitor-session-sweep.js, every two minutes)
+ * is not held to it: it is one run for the whole app.
+ */
 export const RETRY_SWEEP_EVERY_MS = 60 * 1000;
 /** The most sessions one sweep takes up, so a long list cannot hold a request open; the rest wait for the next sweep. */
 export const MAX_SWEEP_SESSIONS = 10;
 /**
  * A record waiting for a retry, or being cleaned, outlives the usual two hours
- * so the retry can still find it. The retry runs when someone visits (nothing
- * else triggers it), so this is a week, not a day: a quiet weekend must not let
+ * so the retry can still find it. The timer retries it every two minutes, but
+ * it can be off (it is armed by the owner) and then the retry runs only when
+ * someone visits, so this is a week, not a day: a quiet weekend must not let
  * the record, and with it the only note of what is still in Coder, age out.
  */
 export const VISITOR_PENDING_DOC_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -300,11 +318,26 @@ const lostRace = (error) =>
 
 /**
  * What went wrong, for a log line: the error's code or its name, never its text,
- * and only when it looks like a code (a status number, `ECONNRESET`, `TypeError`).
+ * and only when it is the shape of one: a three-digit status (`503`), a system
+ * error code (`ECONNRESET`) or an error class (`TypeError`, `TimeoutError`).
+ * Anything else, a host name or an id included, is just `error`.
  */
-function errorKind(error) {
+export function errorKind(error) {
   const kind = String(error?.code ?? error?.statusCode ?? error?.name ?? 'error');
-  return /^[A-Za-z0-9_.-]{1,40}$/.test(kind) ? kind : 'error';
+  return /^\d{3}$|^E[A-Z0-9_]{2,30}$|^[A-Z][A-Za-z]{2,30}$/.test(kind) ? kind : 'error';
+}
+
+/**
+ * Whether a stored id or name is safe to write into a Coder URL path as one
+ * segment. These come from Coder's own answers and are saved in the session
+ * record, which no visitor writes; the unattended sweep still carries an
+ * administrator-grade token, so it does not send what is not plainly an id or a
+ * name. It refuses `.` and `..` (a path climb), anything with a slash, `?`, `#`,
+ * `%` or a space, and `me`, which Coder reads as the caller's own account (a
+ * delete of "me" would delete the broker's own user).
+ */
+export function isSafeSegment(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && value.toLowerCase() !== 'me';
 }
 
 /** Let go of an answer's body without reading it; a failure to is no failure of the call. */
@@ -337,25 +370,34 @@ async function coderDelete(fetchImpl, config, url, init) {
   }
 }
 
+const INVALID_ID = Object.freeze({ confirmed: false, kind: 'invalid id' });
+
 const deleteWorkspaceCall = (fetchImpl, config, workspaceId) =>
-  coderDelete(fetchImpl, config, `${config.base}/api/v2/workspaces/${encodeURIComponent(workspaceId)}/builds`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      'Coder-Session-Token': config.token,
-    },
-    body: JSON.stringify({ transition: 'delete' }),
-  });
+  !isSafeSegment(workspaceId)
+    ? Promise.resolve(INVALID_ID)
+    : coderDelete(fetchImpl, config, `${config.base}/api/v2/workspaces/${encodeURIComponent(workspaceId)}/builds`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'Coder-Session-Token': config.token,
+        },
+        body: JSON.stringify({ transition: 'delete' }),
+      });
 
 const deleteUserCall = (fetchImpl, config, userId) =>
-  coderDelete(fetchImpl, config, `${config.base}/api/v2/users/${encodeURIComponent(userId)}`, {
-    method: 'DELETE',
-    headers: {
-      Accept: 'application/json',
-      'Coder-Session-Token': config.token,
-    },
-  });
+  !isSafeSegment(userId)
+    ? Promise.resolve(INVALID_ID)
+    : coderDelete(fetchImpl, config, `${config.base}/api/v2/users/${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+        headers: {
+          Accept: 'application/json',
+          'Coder-Session-Token': config.token,
+        },
+      });
+
+/** Both names the lookup writes into its path are plainly names (see isSafeSegment). */
+const hasSafeLookupNames = (session) => isSafeSegment(session.coderUsername) && isSafeSegment(session.workspaceName);
 
 /**
  * Look a visitor's workspace up by its owner's name and its own name, for a
@@ -376,6 +418,7 @@ const deleteUserCall = (fetchImpl, config, userId) =>
  *    `lookup network`, `lookup mismatch`). Never an id or any of Coder's text.
  */
 async function lookUpWorkspaceCall(fetchImpl, config, session) {
+  if (!hasSafeLookupNames(session)) return { kind: 'lookup invalid name' };
   const url =
     `${config.base}/api/v2/users/${encodeURIComponent(session.coderUsername)}` +
     `/workspace/${encodeURIComponent(session.workspaceName)}`;
@@ -438,9 +481,11 @@ async function claimSession(store, session, endStatus, nowMs) {
   const claimOf = (record) => ({
     ...record,
     status: SESSION_STATUS.ending,
-    endStatus: record.endStatus ?? endStatus,
+    // Only the two final statuses a session can have; a record that says anything else gets the one asked for.
+    endStatus: [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(record.endStatus) ? record.endStatus : endStatus,
     endedAt: record.endedAt ?? new Date(nowMs).toISOString(),
-    cleanupAttempts: (record.cleanupAttempts ?? 0) + 1,
+    // A count: a negative or fractional one would never reach the bound.
+    cleanupAttempts: (Number.isInteger(record.cleanupAttempts) && record.cleanupAttempts >= 0 ? record.cleanupAttempts : 0) + 1,
     retryAt: new Date(nowMs + CLEANUP_LEASE_MS).toISOString(),
     ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
   });
@@ -713,7 +758,12 @@ export async function reapExpiredVisitorSessions(
 
   const work = [
     ...expiredSessions.map((session) => ({ session, endStatus: SESSION_STATUS.expired, retry: false })),
-    ...due.map((session) => ({ session, endStatus: session.endStatus ?? SESSION_STATUS.expired, retry: true })),
+    ...due.map((session) => ({
+      session,
+      // What it was going to become, if that is one of the two final statuses; anything else is an expiry.
+      endStatus: [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(session.endStatus) ? session.endStatus : SESSION_STATUS.expired,
+      retry: true,
+    })),
   ];
   for (const { session, endStatus, retry } of work.slice(0, limit)) {
     try {
@@ -845,7 +895,11 @@ export function createVisitorSessionHandlers({
   // The sweep ends sessions past their hour and retries clean-ups Coder has not
   // yet confirmed. It lists them with queries, and any visitor can cause one
   // by asking for the status, so it runs at most once in RETRY_SWEEP_EVERY_MS
-  // per worker. It runs only when someone visits: nothing else triggers it.
+  // per worker. This one runs when someone visits. The timer
+  // (functions/src/functions/visitor-session-sweep.js) runs it on its own
+  // every two minutes once the owner arms it; this stays for the moments when
+  // visitors are about and for a timer that is off. A claim keeps the two from
+  // making a second set of Coder calls for one session.
   let nextRetrySweepMs = 0;
   const retrySweepDue = (nowMs) => nowMs >= nextRetrySweepMs;
   const sweepRan = (nowMs) => {

@@ -51,8 +51,8 @@ resource "azurerm_service_plan" "hcw" {
 # `timer(name, FLAG, ...)` registrations in
 # functions/src/functions/schedulers.js plus platformJobSweeper in
 # jobs-sweeper.js, refreshToolServiceCache in cloud-tools-jobs.js,
-# labsWeeklyRollup in labs-jobs.js and ambassadorAudienceMonthly in
-# ambassador-audience.js —
+# labsWeeklyRollup in labs-jobs.js, ambassadorAudienceMonthly in
+# ambassador-audience.js and sweepVisitorSessions in visitor-session-sweep.js —
 # route-inventory.test.js asserts the timer set, so a timer added there
 # without a flag here ships disarmed and one removed there leaves a dead
 # setting behind.
@@ -120,6 +120,14 @@ locals {
     # alert-timer-overdue in observability.tf can watch it as a 1d period
     # (a day-of-month NCRONTAB has no fixed period for that rule to compute).
     AMBASSADOR_AUDIENCE_MONTHLY = "ambassadorAudienceMonthly — daily 06:45 UTC, records the previous month's audience figure from Cloudflare Web Analytics once per month (ambassador-audience.js)"
+    # #1403 item 1: the visitor lab session sweep on its own clock. Ends the
+    # sessions past their hour and retries the Coder clean-ups Coder has not
+    # confirmed; claims a session before it calls Coder, so a second run, or
+    # the in-request sweep, cannot double-call. Reads and writes lab_jobs and
+    # calls Coder's delete and lookup endpoints; it never creates a session or
+    # a Coder user, and it runs whatever LABS_VISITOR_SESSIONS_ENABLED says.
+    # Stays off until the owner adds SWEEP_VISITOR_SESSIONS to enabled_timers.
+    SWEEP_VISITOR_SESSIONS = "sweepVisitorSessions — every 2 minutes, ends visitor lab sessions past their hour and retries Coder clean-ups Coder has not confirmed (visitor-session-sweep.js); never creates a session"
   }
 
   timer_flags = {
