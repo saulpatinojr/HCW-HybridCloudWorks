@@ -263,7 +263,11 @@ export default class HCWSecondBrainPlugin extends Plugin {
     const baseUrl = allowedBase(this.settings.baseUrl);
     this.auth ||= await createAuth(
       this.settings,
-      (code) => new CodeModal(this.app, code).open(),
+      (code) => {
+        const modal = new CodeModal(this.app, code);
+        modal.open();
+        return () => modal.close();
+      },
       {
         networkClient: createMsalNetworkClient(requestUrl),
         helperPath: join(
