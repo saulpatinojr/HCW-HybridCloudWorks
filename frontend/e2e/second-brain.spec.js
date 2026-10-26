@@ -14,6 +14,9 @@ const note = {
   archived: false,
   inbox: true,
 };
+test.beforeEach(async ({ identity }) => {
+  identity.answerApi('cms/calendar-alerts', { alerts: [], today: '2026-10-26' });
+});
 test('owner captures a note and explores its map inside the real admin shell', async ({
   page,
   identity,
@@ -128,4 +131,76 @@ test('map supports exploration, dragging, zoom and relationship filtering', asyn
   await main
     .getByRole('group', { name: 'Interactive knowledge graph' })
     .screenshot({ path: testInfo.outputPath('interactive-map.png') });
+});
+
+test('map appearance, two-line headings, double expansion and full-screen close work', async ({
+  page,
+  identity,
+}, testInfo) => {
+  const sample = {
+    ...note,
+    id: 'appearance-note',
+    title: 'A long synthetic idea about testing a safe infrastructure restore',
+    properties: { heading: 'State Recovery Practice' },
+  };
+  identity.answerApi('cms/brain/status', {
+    enabled: true,
+    aiEnabled: false,
+    indexing: { status: 'complete' },
+  });
+  identity.answerApi('cms/brain/items', { items: [sample], after: null });
+  identity.answerApi('cms/brain/graph', { nodes: [sample], edges: [], cursor: null });
+  await identity.signIn('/admin/second-brain');
+  await page.locator('#admin-main').getByRole('button', { name: 'Map', exact: true }).click();
+  await page.getByRole('button', { name: 'Pause layout' }).click();
+  const canvas = page.getByRole('region', { name: 'Knowledge canvas' });
+  const graph = page.getByRole('group', { name: 'Interactive knowledge graph' });
+  const node = graph.getByRole('button', { name: `Explore ${sample.title}` });
+  await node.click();
+  await expect(node.locator('text tspan')).toHaveCount(2);
+  await expect(node.locator('text')).toHaveText('State RecoveryPractice');
+  const before = await node.locator('text').boundingBox();
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect
+    .poll(async () => {
+      const value = await canvas.locator('.react-transform-component').getAttribute('style');
+      return Number(value.match(/scale\(([^)]+)\)/)?.[1] || 1);
+    })
+    .toBeGreaterThan(1.1);
+  await expect
+    .poll(async () => Math.abs((await node.locator('text').boundingBox()).height - before.height))
+    .toBeLessThan(2);
+  const compact = await canvas.boundingBox();
+  await page.getByRole('button', { name: 'Expand canvas', exact: true }).click();
+  await expect
+    .poll(async () => (await canvas.boundingBox()).height)
+    .toBeCloseTo(compact.height * 2, 0);
+  await page.getByRole('button', { name: 'Compact canvas', exact: true }).click();
+  await page.getByRole('button', { name: 'Full screen', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: 'Knowledge map' });
+  await expect(dialog).toBeVisible();
+  const screen = page.viewportSize();
+  await expect
+    .poll(async () => (await dialog.boundingBox()).width)
+    .toBeGreaterThan(screen.width - 32);
+  await dialog.getByText('Appearance', { exact: true }).click();
+  await dialog.getByRole('button', { name: 'Warm', exact: true }).click();
+  const size = dialog.getByLabel('Map label size');
+  await size.focus();
+  await size.press('Home');
+  await size.press('ArrowRight');
+  await expect(size).toHaveValue('10');
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Full screen', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Full screen', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Knowledge map' });
+  await dialog.getByText('Appearance', { exact: true }).click();
+  await expect(dialog.getByLabel('Map label size')).toHaveValue('10');
+  await dialog.getByRole('button', { name: 'Reset appearance', exact: true }).click();
+  await dialog.getByText('Appearance', { exact: true }).click();
+  await dialog.getByRole('button', { name: 'Fit graph', exact: true }).click();
+  await dialog.screenshot({ path: testInfo.outputPath('map-full-screen.png') });
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });

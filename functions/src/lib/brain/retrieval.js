@@ -33,7 +33,9 @@ export async function retrieveEvidence({
     fail(404, 'NOT_FOUND', 'The selected context is no longer available.');
   const anchor = context[0];
   const anchorTerms = anchor
-    ? meaningfulTerms(`${anchor.tags.join(' ')} ${anchor.title}`).slice(0, 8)
+    ? meaningfulTerms(
+        `${anchor.properties?.heading || ''} ${anchor.tags.join(' ')} ${anchor.title}`,
+      ).slice(0, 8)
     : [];
   const queryTerms = meaningfulTerms(question);
   // Generic requests without a selected item cannot identify a subject. Do

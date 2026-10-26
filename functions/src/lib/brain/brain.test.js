@@ -158,6 +158,39 @@ describe('private Second Brain boundary', () => {
 });
 
 describe('authored records and sync protocol', () => {
+  it('preserves a concise heading and the full idea, indexes the heading and replays the same save once', async () => {
+    const { handlers, withAuth, repo } = setup();
+    const item = {
+      ...note(),
+      properties: { heading: 'Release candidate rehearsal', aliases: ['RC'] },
+    };
+    const req = withAuth(
+      request({ item, version: 0, mutationId: 'heading-save-001' }),
+    );
+    const first = await handlers.save(req);
+    expect(first.status).toBe(200);
+    expect(json(first).item).toMatchObject({
+      title: note().title,
+      body: note().body,
+      properties: item.properties,
+    });
+    const repeated = await handlers.save(req);
+    expect(json(repeated).item.version).toBe(1);
+    expect(await repo.history(item.id)).toHaveLength(1);
+    const search = await handlers.search(withAuth(request({ q: 'candidate' })));
+    expect(json(search).items.map((r) => r.id)).toContain(item.id);
+    expect((await repo.changes(0)).items[0].properties.heading).toBe(
+      item.properties.heading,
+    );
+  });
+  it.each(['', 'one two three four five', 'x'.repeat(81), ['not a string']])(
+    'rejects an invalid short heading (%j)',
+    (heading) => {
+      expect(() =>
+        validateRecord({ ...note(), properties: { heading } }),
+      ).toThrow(/heading/);
+    },
+  );
   it('serializes concurrent first saves without losing a sync event', async () => {
     const { repo } = setup();
     await Promise.all([

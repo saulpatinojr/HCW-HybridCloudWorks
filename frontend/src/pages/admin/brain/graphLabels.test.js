@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { graphLabels } from './graphLabels';
+import { graphLabels, labelLines } from './graphLabels';
 const nodes = [
   { id: 'a', title: 'Docker delivery', type: 'note', x: 150, y: 180 },
   { id: 'b', title: 'Pipeline research', type: 'reference', x: 210, y: 180 },
@@ -11,6 +11,24 @@ const neighbors = new Map([
   ['c', new Set()],
 ]);
 describe('graph label readability', () => {
+  it('balances a short heading over at most two lines', () => {
+    expect(labelLines('State Recovery Practice')).toEqual(['State Recovery', 'Practice']);
+    expect(labelLines('Terraform')).toEqual(['Terraform']);
+    const headingNode = {
+      ...nodes[0],
+      properties: { heading: 'State Recovery Practice' },
+      title: 'A long synthetic title that must remain intact',
+    };
+    const label = graphLabels([headingNode], {
+      focusId: 'a',
+      neighbors,
+      showAll: true,
+      width: 550,
+      height: 400,
+    }).get('a');
+    expect(label.lines).toEqual(['State Recovery', 'Practice']);
+    expect(headingNode.title).toBe('A long synthetic title that must remain intact');
+  });
   it('keeps labels within the canvas and avoids overlapping label rectangles', () => {
     const placements = graphLabels(nodes, {
       focusId: 'a',
