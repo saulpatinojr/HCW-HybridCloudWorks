@@ -1130,3 +1130,46 @@ describe('conditional replacements and declared creates (#816)', () => {
     expect(result.unused).toEqual([declaration]);
   });
 });
+
+describe('a declared container create names a container the spec provisions', () => {
+  // The Doc Vault's container (owner request 2026-10-26) is declared until its
+  // run has applied. Whatever is declared in this shape must name a container
+  // that infra/cosmos-containers.json really lists, or the entry would wave
+  // through a create that Terraform will never plan, and miss the one it will.
+  it('holds for every declared azurerm_cosmosdb_sql_container create', () => {
+    const spec = JSON.parse(readFileSync(join(HERE, '..', 'infra', 'cosmos-containers.json'), 'utf8'));
+    const names = new Set(spec.containers.map((container) => container.name));
+    const declared = DECLARED.filter((entry) => entry.address.startsWith('azurerm_cosmosdb_sql_container.hcw["'));
+    for (const entry of declared) {
+      expect(entry.action, entry.address).toBe('create');
+      const name = /\["([^"]+)"\]$/.exec(entry.address)?.[1];
+      expect(names.has(name), `${entry.address} is not in infra/cosmos-containers.json`).toBe(true);
+    }
+  });
+
+  it('reads a plan whose only addition is the doc_vault container as that create beside the permanent diff', () => {
+    const plan = expectedPlan();
+    plan.resource_changes.push({
+      address: 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]',
+      change: { actions: ['create'] },
+    });
+    const declaration = DECLARED.find((entry) => entry.address === 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]');
+    // Declared now; once it has applied the entry is deleted and this case ends with it.
+    if (!declaration) return;
+    const result = checkPlan(plan, { declared: [declaration] });
+    expect(result.unexpected).toEqual([]);
+    expect(result.unused).toEqual([]);
+  });
+
+  it('does not let the declaration cover a destroy of the container', () => {
+    const plan = expectedPlan();
+    plan.resource_changes.push({
+      address: 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]',
+      change: { actions: ['delete'] },
+    });
+    const declaration = { address: 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]', action: 'create', reason: 'test' };
+    expect(checkPlan(plan, { declared: [declaration] }).unexpected).toEqual([
+      'azurerm_cosmosdb_sql_container.hcw["doc_vault"]: delete',
+    ]);
+  });
+});

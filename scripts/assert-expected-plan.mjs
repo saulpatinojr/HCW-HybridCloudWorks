@@ -552,6 +552,17 @@ export const DECLARED = [
   // 2026-10-24 (HCP Terraform commit status Success on fb73b30e) and were
   // deleted here. Both records then answered on 1.1.1.1 and 8.8.8.8, the CNAME
   // with app.linkie.bio and the TXT with Linkie's ownership value.
+  //
+  // The Doc Vault's container (owner request 2026-10-26): one create, from the
+  // new entry in infra/cosmos-containers.json. Nothing else in the plan
+  // changes for it. Delete this entry once that run has applied and
+  // /api/cms/doc-vault answers 200 instead of 503 NOT_PROVISIONED.
+  {
+    address: 'azurerm_cosmosdb_sql_container.hcw["doc_vault"]',
+    action: "create",
+    reason:
+      "Doc Vault (owner request 2026-10-26): the doc_vault container, the owner's private documents and their versions",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */

@@ -71,6 +71,10 @@ const INDEXING_OVERRIDES = {
   content: { included: ['/*', SORT_DATE_INDEX_PATH], excluded: LARGE_TEXT_PATHS },
   content_versions: { included: ['/*'], excluded: LARGE_TEXT_PATHS },
   blogs: { included: ['/*', SORT_DATE_INDEX_PATH], excluded: LARGE_TEXT_PATHS },
+  // A document is up to 256 KB of text that nothing queries into: the list
+  // reads titles, categories, tags and dates, so the body is left out of the
+  // index, as the article bodies above are.
+  doc_vault: { included: ['/*'], excluded: ['/body/*'] },
   audits: { included: ['/action/?', '/timestamp/?', '/userId/?'], excluded: ['/*'] },
   admin_audit_logs: { included: ['/action/?', '/timestamp/?', '/userId/?'], excluded: ['/*'] },
   lab_jobs: { included: ['/status/?', '/type/?', '/createdAt/?', '/agentId/?'], excluded: ['/*'] },

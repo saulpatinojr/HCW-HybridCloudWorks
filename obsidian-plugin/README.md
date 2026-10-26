@@ -7,6 +7,9 @@ open. Simultaneous edits produce recovery copies instead of silent overwrites.
 
 From this directory:
 
+Build and test with Node.js 26.10 or newer. The packaged plugin runs inside
+Obsidian's desktop runtime; it does not require a separate Node installation.
+
 ```powershell
 npm ci --ignore-scripts
 npm test

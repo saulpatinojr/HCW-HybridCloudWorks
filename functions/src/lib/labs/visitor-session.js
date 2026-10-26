@@ -22,6 +22,7 @@ import { isSiteOrigin, turnstileConfigured, turnstileSecret, verifyTurnstileToke
 import { utcDay } from '../cloud-tools/history.js';
 import { takeDailyCap } from '../daily-cap.js';
 import { readCoderConfig } from './coder-status.js';
+import { recordLabStart, safeLogCode } from './lab-starts.js';
 
 export const VISITOR_SESSION_SWITCH = 'LABS_VISITOR_SESSIONS_ENABLED';
 export const VISITOR_MAX_CONCURRENT_SWITCH = 'LABS_VISITOR_MAX_CONCURRENT';
@@ -544,7 +545,7 @@ export function createVisitorSessionHandlers({
       }
 
       const { labId, turnstileToken } = body || {};
-      if (!labId || !VALID_LAB_WORKSPACES[labId]) {
+      if (typeof labId !== 'string' || !Object.hasOwn(VALID_LAB_WORKSPACES, labId)) {
         return jsonResponse({
           ok: false,
           code: DOOR_CODES.invalid_lab,
@@ -686,6 +687,22 @@ export function createVisitorSessionHandlers({
       };
 
       await store.createDoc(SESSION_CONTAINER, doc);
+
+      // The start is real from here: count it, once, as plain per-lab-per-day
+      // numbers (lab-starts.js). The day is read from a fresh clock reading,
+      // not from `nowMs` above: Turnstile and the Coder calls took time, and a
+      // start that finished after UTC midnight belongs to the new day. The
+      // session's own timestamps stay as they were. A counter fault is logged
+      // by code only and never reaches the visitor, whose session already
+      // exists.
+      try {
+        const counted = await recordLabStart(store, { labId, nowMs: clock() });
+        if (!counted.counted) {
+          context?.error?.(`visitor-session: lab start not counted (${counted.reason})`);
+        }
+      } catch (err) {
+        context?.error?.(`visitor-session: lab start not counted (${safeLogCode(err)})`);
+      }
 
       return jsonResponse({
         ok: true,

@@ -47,6 +47,10 @@ export const AUTHORED = freeze([
   // Ambassador programs, applications and evidence (ADR 0033 §4): the
   // applications are hand-written and recoverable from nowhere else.
   'ambassador',
+  // The Doc Vault (owner request 2026-10-26): the owner's templates,
+  // applications and letters, with their earlier versions. The site is their
+  // primary home, so this is recoverable from nowhere else.
+  'doc_vault',
   'podcasts',
   'episodes',
   'youtubevideos',

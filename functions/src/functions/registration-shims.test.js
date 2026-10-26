@@ -77,6 +77,7 @@ const EXPECTED_SHIM_FILES = [
   "content-workflow-http.js",
   "cosmos-export.js",
   "credentials-http.js",
+  "doc-vault-http.js",
   "drafts-http.js",
   "forge-config-http.js",
   "forge-jobs.js",

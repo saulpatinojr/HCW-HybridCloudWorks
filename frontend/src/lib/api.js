@@ -45,6 +45,10 @@ const FUNCTION_TIMEOUT_MS = {
   // default so a slow store answers instead of timing out; not retried, as the
   // title-derived id makes a repeat harmless but an extra audit row.
   'cms/drafts/from-markdown': 45000,
+  // Lab start counts for the Labs hub Dashboard card: a point read and one
+  // query over a small container. Above the default so a slow store answers
+  // instead of a client-side timeout; a plain read, not retried.
+  'cms/labs/starts': 30000,
   // The ElevenLabs live check: an account read, one Text to Dialogue request
   // with its own retries, an upload and a second read. Deliberately absent
   // from SAFE_RETRY_FUNCTIONS: a client retry would render, and bill, twice.
@@ -65,6 +69,13 @@ const FUNCTION_TIMEOUT_MS = {
   // (forge-studio.js FORGE_ASSIST_HTTP_BUDGET_MS); sync-budgets.test.js in
   // functions pins this value above it.
   'cms/forge/assist': 95000,
+  // The Doc Vault's list (which first clears expired Trash) and its adds: a
+  // paste, or one uploaded file of at most ~272 KB, found by title, archived
+  // and written, so more than one store round trip. Above the default so a slow
+  // store answers instead of timing out; not retried, as adding the same text
+  // again writes nothing new. Routes with an id stay on the default.
+  'cms/doc-vault': 45000,
+  'cms/doc-vault/upload': 45000,
 };
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const SAFE_RETRY_FUNCTIONS = new Set([

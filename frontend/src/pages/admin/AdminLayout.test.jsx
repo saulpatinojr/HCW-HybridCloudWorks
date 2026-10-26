@@ -61,6 +61,7 @@ describe('the navigation registry', () => {
       'Speaking',
       'Certifications',
       'Ambassador',
+      'Doc Vault',
     ]);
   });
 
@@ -336,14 +337,15 @@ describe('the admin sidebar', () => {
       ).toBeInTheDocument();
     });
 
-    it('shows an editor everything but Publish', () => {
+    it('shows an editor everything but Publish and the Doc Vault', () => {
       renderAdmin('/admin/labs', 'editor');
       const nav = rail();
       expect(nav.queryByRole('link', { name: /^Publish/ })).not.toBeInTheDocument();
+      expect(nav.queryByRole('link', { name: /^Doc Vault/ })).not.toBeInTheDocument();
       expect(nav.getByRole('link', { name: 'Integrations' })).toBeInTheDocument();
       expect(nav.getByRole('link', { name: /^Review Queue/ })).toBeInTheDocument();
       expect(nav.getAllByRole('link')).toHaveLength(
-        NAV_GROUPS.flatMap((g) => g.items).filter((i) => !i.requiresBrain).length - 1
+        NAV_GROUPS.flatMap((g) => g.items).filter((i) => !i.requiresBrain).length - 2
       );
     });
 

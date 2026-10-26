@@ -114,17 +114,19 @@ describe('minRole on every item', () => {
     }
   });
 
-  it('reads the server: the Dashboard and Health are viewer reads, Publish is the publisher write, the rest is editor', () => {
+  it('reads the server: the Dashboard and Health are viewer reads, Publish and the Doc Vault are publisher, the rest is editor', () => {
     /** An item's role by its label, so the assertions read as the table above ITEMS does. */
     const roleOf = (label) => NAV_ITEMS.find((item) => item.label === label).minRole;
     expect(roleOf('Dashboard')).toBe('viewer');
     expect(roleOf('Health')).toBe('viewer');
     expect(roleOf('Publish')).toBe('publisher');
+    // Private letters and applications: above the editor role collaborators hold (doc-vault/model.js).
+    expect(roleOf('Doc Vault')).toBe('publisher');
     for (const label of ['Review Queue', 'Live Pages', 'Integrations', 'Platform Settings']) {
       expect(roleOf(label), label).toBe('editor');
     }
     const rest = NAV_ITEMS.filter(
-      (item) => !['Dashboard', 'Health', 'Publish'].includes(item.label)
+      (item) => !['Dashboard', 'Health', 'Publish', 'Doc Vault'].includes(item.label)
     );
     expect(rest.every((item) => item.minRole === 'editor')).toBe(true);
   });
@@ -141,13 +143,14 @@ describe('visibleNavFor', () => {
     expect(groupIds('viewer')).toEqual(['home', 'platform']);
   });
 
-  it('shows an editor everything but Publish, in registry order', () => {
+  it('shows an editor everything but Publish and the Doc Vault, in registry order', () => {
     const editor = labels('editor');
     expect(editor).not.toContain('Publish');
+    expect(editor).not.toContain('Doc Vault');
     expect(editor).toEqual(
       NAV_ITEMS.filter((i) => !i.requiresBrain)
         .map((i) => i.label)
-        .filter((l) => l !== 'Publish')
+        .filter((l) => l !== 'Publish' && l !== 'Doc Vault')
     );
     expect(groupIds('editor')).toEqual(NAV_GROUPS.map((g) => g.id));
   });
