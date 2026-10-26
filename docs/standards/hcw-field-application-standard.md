@@ -163,6 +163,13 @@ in `.github/`; a file that already sits at the root stays there.
 
 ### 2.11 Container images
 
+An image that is meant to qualify for Docker's free open-source programme
+(DSOS) also follows the
+[open-source Docker app dossier](oss-docker-app-dossier.md): thirteen
+checks (licence, copyright holder, how the image is published, wording, active
+development and more), each with how to check it, and a template that records
+the proof for a product.
+
 | ID | Level | Requirement | Evidence |
 | --- | --- | --- | --- |
 | IMG-1 | MUST | Images to be published are named `docker.io/hybridcloudworks/img-<short>-<job>-<type>`, for example `img-ne-appliance-app`, `img-ca-appliance-app`, `img-mo-appliance-app`. `<short>` is the product's two-letter code, `<job>` is what the image does (`appliance`, `lab`), `<type>` is `app` or `addon`. The tag is the full release tag (`v0.1.0`). | NE, CA and MO workflows are configured with this name, but nothing has been published: Docker Hub shows no tags for the three `img-*-appliance-app` repositories on 2026-10-25, `DOCKERHUB_ENABLED` is not set in CA or MO, and MO's changelog says the image was never published. CC publishes no image. The convention is recorded in this repository's [CHANGELOG](../repo/changelog.md) entry for the add-on images; it had no standards page until this one. |
