@@ -189,6 +189,50 @@ describe('a new visitor session', () => {
   });
 });
 
+describe('the day a start belongs to', () => {
+  const BEFORE_MIDNIGHT = Date.parse('2026-10-26T23:59:59.900Z');
+  const AFTER_MIDNIGHT = Date.parse('2026-10-27T00:00:00.100Z');
+
+  /** The clock reads before midnight until the Coder host is asked for a user, then after. */
+  function crossingMidnight() {
+    const state = { now: BEFORE_MIDNIGHT };
+    const slowCoder = vi.fn(async (url, init) => {
+      if (String(url).endsWith('/api/v2/users')) state.now = AFTER_MIDNIGHT;
+      return fetchImpl(url, init);
+    });
+    return { state, slowCoder };
+  }
+
+  it('is the day the session was saved, when provisioning crosses UTC midnight', async () => {
+    const store = brokerStore();
+    const { state, slowCoder } = crossingMidnight();
+    const handlers = createVisitorSessionHandlers({
+      store,
+      identity,
+      fetchImpl: slowCoder,
+      clock: () => state.now,
+    });
+    const res = await handlers.startSession(startRequest());
+    expect(res.status).toBe(201);
+    expect(dayDocs(store).map((doc) => [doc.day, doc.total])).toEqual([['2026-10-27', 1]]);
+  });
+
+  it('leaves the session’s own timestamps as the request began', async () => {
+    const store = brokerStore();
+    const { state, slowCoder } = crossingMidnight();
+    const handlers = createVisitorSessionHandlers({
+      store,
+      identity,
+      fetchImpl: slowCoder,
+      clock: () => state.now,
+    });
+    await handlers.startSession(startRequest());
+    const session = [...store.docs.values()].find((doc) => doc.type === 'visitor-session');
+    expect(session.createdAt).toBe('2026-10-26T23:59:59.900Z');
+    expect(session.expiresAt).toBe(new Date(BEFORE_MIDNIGHT + 60 * 60 * 1000).toISOString());
+  });
+});
+
 describe('what is not counted', () => {
   it('a repeat request that returns the live session', async () => {
     const store = brokerStore();
@@ -302,6 +346,27 @@ describe('a counter fault', () => {
     expect(res.status).toBe(201);
     expect(context.error).toHaveBeenCalledWith('visitor-session: lab start not counted (contention)');
     expect(dayDocs(store)).toEqual([]);
+  });
+
+  it.each([
+    ['a status code', 503, '(503)'],
+    ['a string with a path and an address', '/subscriptions/x/a@example.com', '(error)'],
+    ['a string with a client key', CLIENT_HASH, '(error)'],
+    ['a name such as ECONNRESET', 'ECONNRESET', '(error)'],
+    ['a number outside the status range', 99999, '(error)'],
+    ['a fraction', 503.5, '(error)'],
+    ['no code at all', undefined, '(error)'],
+  ])('logs only a safe code: %s', async (_name, code, shown) => {
+    const store = brokerStore();
+    store.fail(LAB_STARTS_CONTAINER, LAB_STARTS_META_ID, 'readDoc', {
+      code,
+      message: `detail ${CLIENT_IP}`,
+    });
+    const context = { error: vi.fn() };
+    const res = await handlersFor(store).startSession(startRequest(), context);
+    expect(res.status).toBe(201);
+    expect(context.error).toHaveBeenCalledTimes(1);
+    expect(context.error).toHaveBeenCalledWith(`visitor-session: lab start not counted ${shown}`);
   });
 
   it('is tolerated when the caller passes no logging context at all', async () => {

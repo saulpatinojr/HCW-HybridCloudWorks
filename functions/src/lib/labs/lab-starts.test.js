@@ -29,6 +29,7 @@ import {
   isDay,
   isLabId,
   readLabStarts,
+  safeLogCode,
   recordLabStart,
   summariseLabStarts,
 } from './lab-starts.js';
@@ -60,6 +61,20 @@ const storedDocs = (store) =>
 const dayDocs = (store) => storedDocs(store).filter((doc) => doc.kind === LAB_STARTS_DAY_KIND);
 
 const conflict = (code) => Object.assign(new Error(`HTTP ${code}`), { code });
+
+describe('safeLogCode', () => {
+  it('passes a status-range integer and nothing else', () => {
+    expect(safeLogCode({ code: 100 })).toBe('100');
+    expect(safeLogCode({ code: 412 })).toBe('412');
+    expect(safeLogCode({ code: 599 })).toBe('599');
+    for (const code of [99, 600, 0, -1, 503.5, '503', 'ECONNRESET', '/a/path', null, undefined, {}, NaN]) {
+      expect(safeLogCode({ code })).toBe('error');
+    }
+    expect(safeLogCode(null)).toBe('error');
+    expect(safeLogCode(undefined)).toBe('error');
+    expect(safeLogCode('text')).toBe('error');
+  });
+});
 
 describe('the lab id and day checks', () => {
   it('accepts a lab slug and refuses anything else', () => {
@@ -556,6 +571,19 @@ describe('the admin read handler', () => {
       counts: { today: 1, last7: 1, last30: 1, total: 1 },
       perLab: [{ labId: LAB_A, today: 1, last7: 1, last30: 1, total: 1 }],
     });
+  });
+
+  it('logs a fixed word, not the store’s text, when the store’s code is a string', async () => {
+    const store = newStore();
+    store.fail(
+      LAB_STARTS_CONTAINER,
+      '*',
+      'queryDocs',
+      Object.assign(new Error('x'), { code: '/accounts/a@example.com/keys' })
+    );
+    const context = { error: vi.fn() };
+    await createLabStartsReadHandler({ guard: allowGuard(), store, now: () => NOON_1 })(request, context);
+    expect(context.error).toHaveBeenCalledWith('cmsLabsStarts failed (error)');
   });
 
   it('answers 500 with a fixed sentence and logs only the error code when the store fails', async () => {

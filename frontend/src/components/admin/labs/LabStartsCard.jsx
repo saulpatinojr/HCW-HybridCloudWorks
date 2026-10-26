@@ -153,8 +153,8 @@ export default function LabStartsCard() {
       <div>
         <h2 className="text-sm font-semibold">Lab sessions started through the website</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Visitor lab sessions the site has started. Counts only; nothing about who started one is
-          kept. Only signed-in admin accounts at editor level or above see this card.
+          Visitor lab sessions the site has started. Counts only; the counter keeps nothing about
+          who started one. Only signed-in admin accounts at editor level or above see this card.
         </p>
       </div>
 
@@ -196,9 +196,9 @@ export default function LabStartsCard() {
           <ul className="list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
             <li>
               It counts sessions the site created, not people: someone who starts two sessions
-              counts twice, because nothing that identifies a person is stored. A session counts
-              even if the visitor then does nothing in it, and sessions started by the owner or a
-              tester through the public Start button count too.
+              counts twice, because the counter keeps nothing that identifies a person. A session
+              counts even if the visitor then does nothing in it, and sessions started by the owner
+              or a tester through the public Start button count too.
             </li>
             <li>
               A session is counted once, when the site starts it. A repeat visit that returns a

@@ -1241,8 +1241,8 @@ the Coder host could not create. Also not counted, because the site's server
 never sees them: a signed-in member starting a workspace inside the lab pane, and
 the public *Validate on the lab* runs (a Terraform check, not a lab session).
 
-**Sessions, not people.** Nothing that identifies a person is stored, so someone
-who starts two sessions counts twice. A letter should say "lab sessions", never
+**Sessions, not people.** The counting documents hold nothing that identifies a
+person, so someone who starts two sessions counts twice. A letter should say "lab sessions", never
 "learners" or "users". The "last 7 days" and "last 30 days" figures include
 today, which is only part of a day so far.
 
@@ -1251,10 +1251,12 @@ table-like collection in the Cosmos database; this one is small, never expires
 and is copied by the weekly export): one document per UTC day,
 `lab-starts:YYYY-MM-DD`, holding `{ day, total, byLab }` where `byLab` maps a lab
 id (for example `terraform-validate-walkthrough`) to a count, and one marker
-document, `lab-starts:meta`, holding the day counting began. The application
-stores no IP address, client key, session id, user id, token, query string or time
-of day. (Cosmos adds its own last-modified stamp to every document it stores; that
-is the database's, not a field the counter writes.)
+document, `lab-starts:meta`, holding the day counting began. The counting
+documents store no IP address, client key, session id, user id, token, query
+string or time of day. (The visitor session records, which the broker keeps for
+about two hours, are separate and do hold a hashed client key and a session id;
+the counter never copies them. Cosmos also adds its own last-modified stamp to
+every document it stores; that is the database's, not a field the counter writes.)
 `functions/src/lib/labs/lab-starts.test.js` fails if a stored document gains any
 other key. The code is `functions/src/lib/labs/lab-starts.js`. It follows the
 pattern of the legacy-blogs read counter
@@ -1294,9 +1296,20 @@ above.
    again** and wait a few seconds. If it still fails, read the message under the
    title. *Forbidden* means your account is not an editor or above, so ask the
    owner to check your role. Any other failure means the site could not read its
-   store: open the Function App's log stream in the Azure portal and look for
-   `cmsLabsStarts failed`. The code in brackets is the only detail that line
-   keeps, and it never holds personal data.
+   store: open the list of Function Apps in the Azure portal at
+   <https://portal.azure.com/#blade/HubsExtension/BrowseResource/resourceType/Microsoft.Web%2Fsites/kind/functionapp>
+   (that address is the Learn-documented way to reach the list; this page does
+   not use a link straight to the app because a link to one resource contains
+   the subscription id, and `scripts/docs/check_redaction.py` keeps real ids out
+   of the docs), click **func-site-prod-cus-01** (resource group
+   `rg-web-site-prod-cus`), open **Application Insights** from the Overview page,
+   choose **Logs**, and run `traces | where message startswith "cmsLabsStarts failed" | order by timestamp desc`.
+   You should see one row per failure, each ending in a number in brackets. That
+   number is the only detail the line keeps, and it never holds personal data. If
+   there are no rows, the failure was not on the site's side (check the sign-in
+   and the role again). The built-in *Log stream* is not offered for a Flex
+   Consumption app like this one, so the logs are read from Application Insights
+   (see [Enable streaming execution logs in Azure Functions](https://learn.microsoft.com/azure/azure-functions/streaming-logs)).
 
 UTC is the world reference clock, and every day here is a UTC day: *Last 7 days*
 is today and the six days before it, *Last 30 days* is today and the
@@ -1309,9 +1322,10 @@ App logs `visitor-session: lab start not counted (<code>)`, where the code is th
 store's error number. If five attempts in a row lose a race (two starts try to
 update the same day's number at the same moment and one has to try again), the
 start is left out and the log line ends `(contention)` instead. With at most two
-visitor sessions running at once this should be vanishingly rare. Search the
-Function App's logs for `lab start not counted` to see whether either has
-happened. Either way the count is too low, never too high.
+visitor sessions running at once this should be vanishingly rare. In the same
+Application Insights **Logs** page, run
+`traces | where message startswith "visitor-session: lab start not counted" | order by timestamp desc`
+to see whether either has happened. Either way the count is too low, never too high.
 
 **Roll it back.** The counter is two small reads and a write added to the
 broker, plus a read-only route and a card. Revert the pull request that added it

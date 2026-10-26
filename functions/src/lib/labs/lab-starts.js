@@ -40,9 +40,11 @@
  *   one marker document        { id: 'lab-starts:meta', kind: 'lab-starts-meta',
  *                                since: 'YYYY-MM-DD' }
  *
- * No IP address, client hash, user id, session id, workspace name, token,
- * query string, user agent or time of day. The day is the finest time the
- * application keeps. (Cosmos puts its own last-modified stamp, `_ts`, on every
+ * The counting documents hold no IP address, client hash, user id, session id,
+ * workspace name, token, query string, user agent or time of day. The day is
+ * the finest time they keep. (The visitor session records in `lab_jobs` are a
+ * separate store: they hold a hashed client key and a session id for about two
+ * hours, and the counter never copies either.) (Cosmos puts its own last-modified stamp, `_ts`, on every
  * document it stores; that is the database's, not a field of the counter, and
  * it is the time of the day's latest start, not of any person.) A lab id is an entry in the site's own lab list (a slug such as
  * `terraform-validate-walkthrough`), checked against a strict pattern, so a
@@ -153,6 +155,17 @@ export function applyLabStart(existing, { day, labId }) {
 }
 
 const conflict = (error, code) => error?.code === code;
+
+/**
+ * What may be written to a log about a store fault: a number from 100 to 599
+ * (an HTTP-style status, which is what the Cosmos SDK puts in `code`), else
+ * the word `error`. The `code` of an error can be a string the store chose,
+ * and a string could carry a path, an id or other content a log must not hold.
+ */
+export function safeLogCode(error) {
+  const code = error?.code;
+  return Number.isInteger(code) && code >= 100 && code <= 599 ? String(code) : 'error';
+}
 
 /**
  * Make sure the marker document exists, so `since` names the day counting
@@ -313,7 +326,7 @@ export function createLabStartsReadHandler({ guard, store, now = () => Date.now(
     try {
       return privateJson(200, await readLabStarts(store, { nowMs: now() }));
     } catch (error) {
-      context?.error?.(`cmsLabsStarts failed (${error?.code ?? 'error'})`);
+      context?.error?.(`cmsLabsStarts failed (${safeLogCode(error)})`);
       return privateJson(500, { error: 'Failed to read the lab start counts' });
     }
   };
