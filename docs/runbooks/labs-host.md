@@ -1221,7 +1221,7 @@ Coder Community edition lacks per-user quotas, forced dormancy, and auto-stop en
    - Maximum concurrent visitor sessions: `LABS_VISITOR_MAX_CONCURRENT` (default: 2, leaving remaining slots for team members).
    - Daily limit: 2 sessions per visitor client key per UTC day.
    - Session duration: 60 minutes (`VISITOR_SESSION_DURATION_MS`).
-   - Hard auto-reap: expired sessions are reaped opportunistically on status/start checks, and users can end their session via `DELETE /public/labs/visitor-session?sessionId=...`.
+   - Hard auto-reap: expired sessions are reaped opportunistically on status/start checks, and users can end their session via `DELETE /public/labs/visitor-session?sessionId=...`. A session counts as over only once Coder has confirmed that its workspace and user are deleted; one it has not confirmed is retried (see "When Coder does not confirm the clean-up" below).
 5. **Emergency Switch:** Set `LABS_VISITOR_SESSIONS_ENABLED="false"` in app settings to instantly close visitor sessions.
 
 ### Who counts as one visitor (#1387)
@@ -1232,6 +1232,63 @@ The three routes (`GET`, `POST` and `DELETE` on `/api/public/labs/visitor-sessio
 - **A visitor whose address changes during a session** (Wi-Fi to mobile data, or a VPN switched on) is a different visitor from then on. They can no longer see or end the old session, which keeps running until its hour is up and counts against the concurrent limit; starting again spends another of their two sessions for the day.
 - **A request is refused** with `403 FORBIDDEN`, before anything is read, written or sent to Turnstile (Cloudflare's bot check) or Coder, when it does not come through our Cloudflare (no origin secret) or when it carries the secret but no usable client address (`CF-Connecting-IP`). The log says only `visitor-session: refused a request whose caller could not be verified`. If visitors who should get through are being refused, check that `CF_ORIGIN_SECRET` resolves on the Function App and that Cloudflare still adds the origin-secret header and the client address, as for the `FORBIDDEN` row in the lab submission table above.
 - **A session saved before this change** (if the switch was ever on) was filed under the text `unidentified`. Nobody can read or end one of those now; each is expired by the sweep (the clean-up that runs whenever a visitor asks for the status or starts a session, while the switch is on) once its hour is up.
+
+### When Coder does not confirm the clean-up (#1388)
+Ending a visitor session means asking Coder to delete two things: the visitor's workspace (the running lab) and the temporary Coder user the broker made for them. Coder deletes a workspace with a job that finishes a little later, and it refuses to delete a user who still has a workspace (it answers HTTP 417). So the request to delete the user, made straight after the workspace one is accepted, is refused for most sessions. That is expected, not a fault.
+
+The broker therefore marks a session `ended` (the visitor pressed **End session**) or `expired` (its hour ran out) only once Coder has confirmed both deletes: it accepted them, or answered 404 or 410 because the thing was already gone. Until then the session record says where it is:
+
+| `status` | What it means | What happens next |
+| --- | --- | --- |
+| `active` | The lab is running. | The visitor ends it, or its hour runs out. |
+| `ending` | One request is cleaning it up right now (it has "claimed" the record: only one request can, so two never call Coder for the same session). | If that request dies, its claim runs out after 5 minutes and the sweep takes over. |
+| `cleanup_pending` | Coder has not confirmed yet. The record keeps which half is done (`workspaceGone`, `userGone`) so the workspace delete is not asked for twice. A start that failed after Coder made the visitor's user is kept this way too (`startFailed`). | Tried again after 2 minutes, then 4, 6 and 8, by the sweep or by the visitor pressing **End session** again once the time has come. |
+| `ended`, `expired` | Done: Coder confirmed both. | The record ages out two hours later. |
+| `cleanup_failed` | Five tries, and Coder still has not confirmed. | Nothing retries it. The record keeps its Coder ids for 7 days so a person can finish the job (below). |
+
+The sweep is the clean-up that ends sessions past their hour and retries the waiting ones. **It only runs when someone visits**: a visitor reading the lab's status, or starting a session, runs it, at most once a minute per Function App worker, and ends at most 10 sessions each time. Nothing else triggers it, so with no visitors, or while `LABS_VISITOR_SESSIONS_ENABLED` is off, a waiting session waits. A waiting record is kept for 7 days for that reason. A timer that runs the sweep on its own is the better answer and needs its own change ([#1403](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1403)).
+
+**A start that failed.** When a visitor presses start, the broker makes a Coder user and then asks Coder for a workspace. If that second call gets no answer within 30 seconds (or Coder refuses it), the visitor is told the lab is unreachable, but Coder may still have made the workspace, and nobody was told its id. The broker therefore writes a note before it answers: a `cleanup_pending` record with `startFailed`, the user's id and name (`coderUserId`, `coderUsername`), the workspace's name (`workspaceName`) and **no** `workspaceId`, whose first try comes 2 minutes later so that a create Coder is still finishing can finish. The note has no `clientHash` and was never shown to a visitor, so no visitor can read or end it; only the sweep handles it. For a record with no workspace id the sweep first asks Coder for the workspace by its owner and name ([`GET /api/v2/users/{user}/workspace/{workspacename}`](https://coder.com/docs/reference/api/workspaces), read 2026-10-26) and deletes what it finds only when the name is the expected one and the owner is that user. If Coder has no such workspace, that counts as gone for that try only; the user delete, which Coder refuses while the user still has a workspace, is the confirmation, and a workspace that turns up later is found by the next try. A user that was never made (the first call failed) leaves no note.
+
+The visitor sees no difference: **End session** answers success (also when Coder has not confirmed yet), and a waiting session is no longer shown to them and does not count against the concurrent limit. The lab itself may still exist in Coder, and use one of the host's 5 workspace slots, until Coder confirms the delete.
+
+**Finding sessions Coder has not cleaned up.** Open the list of Azure Cosmos DB accounts in the Azure portal, <https://portal.azure.com/#blade/HubsExtension/BrowseResource/resourceType/Microsoft.DocumentDB%2FdatabaseAccounts>, and click the site's account (`cosmos-site-prod-cus` in production, named in [the cold rebuild runbook](cold-rebuild.md)). Then choose **Data Explorer**, the database `hcw` (the Function App's `COSMOS_DATABASE` setting names it), the container `lab_jobs` and **New SQL Query** ([Microsoft's steps](https://learn.microsoft.com/azure/cosmos-db/quickstart-portal#add-and-query-sample-data)), and run:
+
+```sql
+SELECT c.id, c.status, c.endStatus, c.startFailed, c.endedAt, c.retryAt, c.cleanupAttempts, c.workspaceGone, c.userGone, c.workspaceId, c.coderUsername, c.workspaceName FROM c WHERE c.type = 'visitor-session' AND c.status IN ('ending', 'cleanup_pending', 'cleanup_failed')
+```
+
+This query is the dependable way to find them. The broker also logs a line when it gives up on a session (`visitor-session: a session's Coder clean-up was given up`, with Coder's answer for each half, for example `user HTTP 417`, and no session id), but only when a stop request or a session start makes that try; a try made by the status read's background sweep cannot write to the log, so do not rely on the log alone.
+
+**What needs a person.** A `cleanup_pending` row is normal while its `retryAt` is still ahead or only a few minutes behind. A `cleanup_failed` row, or a `cleanup_pending` one whose `retryAt` is more than half an hour past, means Coder is not letting go of it, or nobody has visited since. Run the tries yourself by opening a lab's page in a private browser window (so that it is not signed in to Coder), for example <https://hybridcloudworks.com/education/labs/terraform-validate-walkthrough>, once: the page asks for the visitors' status (`GET /api/public/labs/visitor-session`), and that runs the sweep (it does nothing while `LABS_VISITOR_SESSIONS_ENABLED` is off). The page asks only when Coder is reachable. For a `cleanup_failed` one, finish the clean-up by hand:
+
+1. Put the leftover user's name (the query's `coderUsername`, which starts `v-`) and its workspace's name (`workspaceName`, for example `lab-lzb`) into variables. Paste each line, then type the value at the prompt:
+
+   ```powershell
+   $visitor = Read-Host 'Leftover visitor username (starts with v-)'
+   ```
+
+   ```powershell
+   $workspace = Read-Host 'Its workspace name from the query (for example lab-lzb)'
+   ```
+
+2. Delete the workspace. This needs a Coder token of the owner's in `$t`, made as "Adding a learner" below explains. Success is Coder saying the workspace is deleted; a message that it was not found means it is already gone, so go on:
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder delete $visitor/$workspace --yes; }'"
+   ```
+
+3. Delete the user, once step 2 has finished. If Coder says the user still has workspaces, the workspace is still being deleted, so wait a minute and run this line again:
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; echo yes | coder users delete $visitor; }'"
+   ```
+
+The flags were read from Coder's reference pages for [`coder delete`](https://coder.com/docs/reference/cli/delete) and [`coder users delete`](https://coder.com/docs/reference/cli/users_delete) on 2026-10-26, and the lines follow the ones in "Adding a learner" below. They have not been run on the live host. Coder's own Users page does not cover deleting a user or the 417 answer, so there is no page to link for that. A record that is still `cleanup_pending` when you delete the user finishes on its own at its next try (Coder answers 404, which counts as done).
+
+**What the numbers are.** `MAX_CLEANUP_ATTEMPTS` (5), `CLEANUP_RETRY_BASE_MS` (2 minutes), `CLEANUP_LEASE_MS` (5 minutes), `RETRY_SWEEP_EVERY_MS` (1 minute), `MAX_SWEEP_SESSIONS` (10), `VISITOR_PENDING_DOC_TTL_SECONDS` (7 days), `CODER_CALL_TIMEOUT_MS` (10 seconds for a delete) and `CODER_PROVISION_TIMEOUT_MS` (30 seconds for creating a user or a workspace) are at the top of the clean-up section of `functions/src/lib/labs/visitor-session.js`. Every Coder call has a timeout, so a Coder that hangs cannot hold a request open.
+
+**Rollback.** Revert the pull request that closed [#1388](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1388). Code from before it only looks at `active` sessions and would never retry a waiting one, so run the query above first and clean up what it lists by hand.
 
 ### Counting lab starts
 
