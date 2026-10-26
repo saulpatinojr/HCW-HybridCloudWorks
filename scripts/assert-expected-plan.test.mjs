@@ -1080,48 +1080,13 @@ describe('DECLARED', () => {
     expect(paths).not.toContain('app_settings.ADDON_CLOUD_ASSESSMENT_URL');
   });
 
-  /** The one entry that declares Cloud Crawler's status setting (#1357). */
-  const crawlerEntry = () => DECLARED.find((entry) => entry.path === 'app_settings.ADDON_CLOUD_CRAWLER_URL');
-
-  it('declares ADDON_CLOUD_CRAWLER_URL as one added app setting, equal to the address infra/functionapp.tf sets (#1357)', () => {
-    expect(DECLARED.filter((entry) => entry.path === 'app_settings.ADDON_CLOUD_CRAWLER_URL')).toHaveLength(1);
-    const entry = crawlerEntry();
-    expect(entry.address).toBe(FUNCTION_APP);
-    // Added, not changed: `before` is spelled out as undefined, because an omitted value is refused.
-    expect(Object.hasOwn(entry, 'before')).toBe(true);
-    expect(entry.before).toBeUndefined();
+  it('prunes ADDON_CLOUD_CRAWLER_URL once applied, and keeps it set to the lab origin in infra/ (#1357)', () => {
+    expect(DECLARED.map((entry) => entry.path)).not.toContain('app_settings.ADDON_CLOUD_CRAWLER_URL');
+    // The setting itself stays in infra/: only the plan check's declaration of the change is gone.
     const tree = /"ADDON_CLOUD_CRAWLER_URL"\s*=\s*"([^"]+)"/.exec(infraSource);
     expect(tree, 'ADDON_CLOUD_CRAWLER_URL is not set in infra/').not.toBeNull();
-    expect(entry.after).toBe(tree[1]);
     // The origin the lab host serves it on: one label below the lab domain, exactly the id.
     expect(tree[1]).toBe('https://cloud-crawler.lab.hybridcloudworks.com');
-  });
-
-  it('passes a plan that adds that one setting beside the permanent diff, and names anything else added with it (#1357)', () => {
-    const entry = crawlerEntry();
-    const { plan, app } = fixture();
-    app.after.app_settings.ADDON_CLOUD_CRAWLER_URL = entry.after;
-    const added = checkPlan(plan);
-    expect(added).toMatchObject({ ok: true, unexpected: [], missing: [] });
-    expect(added.declared).toEqual([entry]);
-    // The plan check's summary prints the declaration with its values (a declared value is public), plus a
-    // NOTE for each other declaration this plan does not carry; only the DECLARED lines are held here.
-    expect(declarationLines(added).filter((line) => line.startsWith('DECLARED'))).toEqual([
-      `DECLARED    ${FUNCTION_APP} app_settings.ADDON_CLOUD_CRAWLER_URL: (absent) -> "${entry.after}" (${entry.reason})`,
-    ]);
-
-    // A second setting riding along is not covered, and is the only line reported.
-    app.after.app_settings.ADDON_SOMETHING_ELSE_URL = 'https://example.com';
-    expect(checkPlan(plan).unexpected).toEqual([
-      `${FUNCTION_APP}: update app_settings.ADDON_SOMETHING_ELSE_URL: (absent) -> (set)`,
-    ]);
-
-    // The right name with another address is a different change.
-    delete app.after.app_settings.ADDON_SOMETHING_ELSE_URL;
-    app.after.app_settings.ADDON_CLOUD_CRAWLER_URL = 'https://example.com';
-    expect(checkPlan(plan).unexpected).toEqual([
-      `${FUNCTION_APP}: update app_settings.ADDON_CLOUD_CRAWLER_URL: (absent) -> (set)`,
-    ]);
   });
 
   it('only sets ADDON_*_URL names the Function App’s add-on registry reads, so a typo cannot leave a status route unconfigured (#1357)', () => {

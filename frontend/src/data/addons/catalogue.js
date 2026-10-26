@@ -157,20 +157,21 @@ export const addons = Object.freeze([
   Object.freeze({
     id: 'cloud-crawler',
     title: 'Cloud architecture drift check',
+    // Terraform is left out of the summary and the technology list on purpose: the engine the lab runs (cloud-crawler-core
+    // 0.1.0) does not read Terraform yet, so the row promises only what the lab does. Restore both when the add-on ships
+    // an engine that reads it (HCW-CloudCrawler_App#54 is closed; the add-on has not taken a new engine). Tracked in
+    // HCW-CloudCrawler_AddOn#29; website issue #1357.
     summary:
-      'Upload an export of your Azure resources or your Terraform and see where what is built has drifted from your architecture decisions, with draft decision records and review notes. Nothing you upload is kept beyond two hours.',
+      'Upload an export of your Azure resources and see where what is built has drifted from your architecture decisions, with draft decision records and review notes. Nothing you upload is kept beyond two hours.',
     origin: 'https://cloud-crawler.lab.hybridcloudworks.com',
     panePath: '/',
     healthPath: '/api/health',
     providers: Object.freeze(['azure']),
-    technology: Object.freeze(['resource-graph', 'terraform', 'architecture-decisions']),
-    status: 'coming',
-    // The App has not tagged a release and the AddOn is a skeleton (its README, 2026-10-24), so there is no
-    // image to run. The row opens when the first image is published and the owner pins its digest.
-    comingSince: '2026-10-24',
-    comingReason:
-      'The tool is being built. It opens here as soon as its first release is published.',
-    capabilities: Object.freeze(['navigate', 'downloads']),
+    technology: Object.freeze(['resource-graph', 'architecture-decisions']),
+    status: 'available',
+    // What the pane uses, read from the add-on's web/app.js on 2026-10-26 (website issue #1354, #1357): it saves the report
+    // and the sample files (`downloads`) and copies the report (`clipboard-write`), and never posts a `navigate` message.
+    capabilities: Object.freeze(['downloads', 'clipboard-write']),
     docsUrl: 'https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn#readme',
     articleSlugs: Object.freeze([]),
   }),

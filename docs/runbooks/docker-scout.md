@@ -22,9 +22,9 @@ repository, and storing a Docker token anywhere, are the owner's decisions.
 - **The images.** `hybridcloudworks/img-mo-lab-addon`, `img-ne-lab-addon`,
   `img-ca-lab-addon` and `img-cc-lab-addon` on Docker Hub. The lab host runs
   each by digest, and the digests are in
-  `lab-host/ansible/group_vars/all.yml`. (Cloud Crawler's row is new; the host
-  runs it from the owner's next playbook run, so for a while the file names
-  four digests and the host runs three.)
+  `lab-host/ansible/group_vars/all.yml`. (Cloud Crawler's row is the newest;
+  the owner's playbook run of 2026-10-26 started it, so the file names four
+  digests and the host runs four.)
 - **What Scout is.** A service that reads an image's list of packages (its
   SBOM, which these images carry as an attestation), compares it with a
   vulnerability database, and grades it against policies
@@ -95,7 +95,7 @@ and the run is red, so a check that never ran cannot look green.
    your calendar (an expired token turns the Wednesday run red, which is how you
    would find out).
 4. Permission: **Repo Public Read-only**, the lowest, which is enough for the
-   three public add-on images. Docker says a token applies to every repository
+   four public add-on images. Docker says a token applies to every repository
    the account can reach and cannot be limited to one, which is why it is read
    only.
 5. Click **Generate** and keep the page open: Docker shows the token once.

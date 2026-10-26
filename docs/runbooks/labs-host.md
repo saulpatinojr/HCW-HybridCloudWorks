@@ -3336,12 +3336,17 @@ everything the host needs into this repository: its row in
 `lab-host/ansible/group_vars/all.yml` (the `v0.2.0` image, pinned by its
 digest, on port 18084), the vault key `vault_addon_cloud_crawler_turnstile_secret`
 in the documents, and the Function App setting `ADDON_CLOUD_CRAWLER_URL` (the
-address the site's backend reads to find the tool). **Nothing runs until you do
-the four steps below.** The public catalogue still says "coming" for this tool
-and the site frames nothing, so a visitor sees no change. A second pull request
-flips the catalogue, and it waits for step 4 to succeed, so the site never says
-"available" before the container runs. The pair's page,
-[Cloud Crawler](../architecture/app-to-addon/cloud-crawler.md), has the
+address the site's backend reads to find the tool). **Nothing ran until the
+four steps below were done.** The owner reported doing the vault check and the
+playbook on 2026-10-26 ([a session's note on #1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357#issuecomment-6420765765)
+quotes the playbook's `PLAY RECAP`), and HCP Terraform's commit status on the
+merge commit of #1411 read Success that day, so the setting is applied. The
+steps stay here for the next time this row changes (a new image digest, or a
+host that has to be rebuilt). The catalogue said "coming" until a second pull
+request flipped it, and that pull request waited for step 4 to succeed, so the
+site never said "available" before the container ran. The last check, one real
+upload, is [its own section](#cloud-crawler-the-first-real-upload). The pair's
+page, [Cloud Crawler](../architecture/app-to-addon/cloud-crawler.md), has the
 reasoning.
 
 You need `ssh hcw-lab` to work from your PowerShell prompt ("Connect from a
@@ -3354,6 +3359,10 @@ answers that the tool is not set up (read on 2026-10-26), which is the right
 ```powershell
 curl.exe -s https://api-azure.hybridcloudworks.com/api/public/addons/cloud-crawler/status
 ```
+
+If you are repeating these steps later, a new image digest needs only steps 3
+and 4, a rebuilt host needs steps 2 to 4, and step 1 (Terraform) is needed again
+only when the setting itself changes.
 
 **1. Confirm the Terraform run.** Terraform is the tool that builds Azure
 settings from the files in `infra/`, and applying is yours to confirm. This run
@@ -3391,16 +3400,20 @@ requests in that moment can fail for a few seconds, and nothing is lost.
       ```
 
       Open that page. A good result is a summary that begins **Expected** and
-      has no line starting `UNEXPECTED`. Among its `DECLARED` lines (other
-      unapplied changes are declared there too, so several are normal) one
-      reads `DECLARED  azurerm_function_app_flex_consumption.hcw
-      app_settings.ADDON_CLOUD_CRAWLER_URL: (absent) -> "https://cloud-crawler.lab.hybridcloudworks.com"`
-      followed by its reason in brackets. The command ending without an error
+      has no line starting `UNEXPECTED`. The command ending without an error
       is not enough on its own: the check finishes green, having read nothing,
       when its token is not set, and the summary then says so. If the `run :`
-      line is not the run waiting in sub-step 1, or that `DECLARED` line is
-      missing, the check did not read this plan; read the plan by eye (above)
-      instead.
+      line is not the run waiting in sub-step 1, the check did not read this
+      plan; read the plan by eye (above) instead.
+
+      For the run of 2026-10-26, one of the `DECLARED` lines read
+      `DECLARED  azurerm_function_app_flex_consumption.hcw
+      app_settings.ADDON_CLOUD_CRAWLER_URL: (absent) -> "https://cloud-crawler.lab.hybridcloudworks.com"`
+      followed by its reason in brackets. That entry is deleted from
+      `scripts/assert-expected-plan.mjs` now that the setting is applied. If you
+      repeat this step for a change to the setting, add a new entry there first:
+      without one, the summary shows an `UNEXPECTED` line for the setting, and
+      you should not confirm until the entry is in.
 
       If it says `UNEXPECTED`, do not confirm; post the line as a comment on
       [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
@@ -3521,12 +3534,17 @@ sentence.
       cloud-crawler`, a `content-security-policy` whose `frame-ancestors`
       names `https://hybridcloudworks.com`, and no `x-frame-options`. A
       browser visiting the same address at the top level is sent to
-      `https://hybridcloudworks.com/tools/cloud-crawler`, which still shows the
-      "coming" page:
+      `https://hybridcloudworks.com/tools/cloud-crawler`, which shows the
+      tool's page once the catalogue row is flipped and the site is deployed
+      (before that, the "coming" page):
 
       ```powershell
       curl.exe -sI https://cloud-crawler.lab.hybridcloudworks.com/ | findstr /i "x-addon content-security-policy x-frame-options location"
       ```
+
+      The first line of the full answer says `405 Method Not Allowed`. That is
+      expected: this command asks with HEAD, which the tool does not answer,
+      and the headers you are looking for come back anyway.
 
    3. Through the site's status address, the answer the second pull request
       waits for. The site remembers an answer, including a failed one, for a
@@ -3548,19 +3566,20 @@ sentence.
       or a container that is not running), then wait a minute before asking
       again.
 
-When the third check succeeds, say so on
-[#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357). The
-second pull request then flips the catalogue row, adds the tool's address to
-the site's frame policy and updates the add-on's integration guide; only then
-does a visitor see the tool at <https://hybridcloudworks.com/tools/cloud-crawler>.
+On 2026-10-26 the third check succeeded and was recorded on [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
+If you repeat these steps, record the result on the ticket for that change. That
+day's second pull request flipped the catalogue row, added the tool's address to
+the site's frame policy and updated the add-on's integration guide; once it is
+merged and the site is deployed, a visitor sees the tool at
+<https://hybridcloudworks.com/tools/cloud-crawler>.
 
-**Not checked by any session before this section was written:** that the vault
-key is on the host; that the container starts and the certificate answers for
-the name; and that the secret in the vault is the right one for this widget (the
-role only checks that it is not empty, and none of the checks above does a
-human-verified upload, so a wrong secret would pass all of them and fail the
-first real visitor; the second pull request's acceptance includes one real
-upload).
+**Still not checked by any session:** that the secret in the vault is the right
+one for this widget. The playbook only checks that it is not empty, so a wrong
+secret passes every check above and fails the first real visitor; [the first
+real upload](#cloud-crawler-the-first-real-upload) answers it. **Answered on
+2026-10-26:** the container starts, and the name is served with a certificate
+the site's backend accepts (the status route and the tool's address both
+answered).
 
 **Host memory (read on 2026-10-26 over a read-only connection, nothing changed).**
 The host has 15,987 MiB, of which 1,577 MiB were used and 14,409 MiB were
@@ -3574,10 +3593,163 @@ same moment (4 x 512 + 5 x 2048 + 2560 = 14,848 MiB of limits, from the capacity
 figures in [the labs host architecture](../architecture/labs-host.md) and the
 `coder` role), would leave 1,139 MiB for the system; that needs five
 workspaces at their 2 GiB limit and every add-on at its limit together and
-has not been seen. Before the playbook, run `ssh hcw-lab "free -m"` and stop
-if the `available` column is under 4,000 MiB; run it again after the playbook
-and a day later, and post the figures on
+has not been seen. The playbook has run, so run `ssh hcw-lab "free -m"` now and
+again tomorrow, and post both readings on
+[#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357); if
+the `available` column is under 4,000 MiB, say so there.
+
+### Cloud Crawler: the first real upload
+
+This is the one check that proves the human check and the secret kept on the
+host belong together. (The human check is Cloudflare Turnstile, a tick box that
+tells people from scripts. Its public Site Key is published by the tool's page;
+its private Secret key is kept in the host's vault.) Every earlier check passes
+with a wrong secret, because the add-on only tests that the secret is not
+empty, so the first visitor would be the one to find out. Do this once, after
+the second pull request of [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357) has merged. You need a normal
+browser window on your own computer. The sample export is made up (the
+subscription `00000000-0000-0000-0000-000000000001` and names that start with
+`hcw-sample` or `hcwsample`), so nothing private is uploaded.
+
+**1. Deploy the site and check the deploy reached it (PowerShell).** The website
+is deployed by hand, so merging does not publish it. If a run of the Deploy
+Frontend workflow has not finished green since the pull request merged, start
+one. You should see `Created workflow_dispatch event for deploy-azure-frontend.yml at main`:
+
+```powershell
+gh workflow run deploy-azure-frontend.yml --repo saulpatinojr/HCW-HybridCloudWorks --ref main
+```
+
+The deploy job waits until one of its reviewers approves it for the
+`production` environment. Open [the Deploy Frontend runs](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/deploy-azure-frontend.yml),
+choose the newest run and approve it. When the run is green, run this line. It
+asks whether the site's frame policy (the list of other addresses the site is
+allowed to show inside its pages) now names the tool. You should see `True`:
+
+```powershell
+(curl.exe -sI https://hybridcloudworks.com/tools/cloud-crawler | Out-String) -match 'frame-src[^;]*https://cloud-crawler\.lab\.hybridcloudworks\.com'
+```
+
+If you still see `False` a few minutes after a green run, post the output on
 [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
+
+**2. Open the page.** Go to <https://hybridcloudworks.com/tools/cloud-crawler>.
+If you use a content blocker, pause it for this site, because it can stop the
+human check. You should see the heading "Cloud architecture drift check", the
+toolbar word "Tool ready" within a few seconds, and inside the frame the heading
+"Cloud Crawler" with the badges "Lab edition · no cloud connectivity by design"
+and "Not production". The "Check for drift" button is greyed out and the note
+beside it says "Add at least one evidence file, or use the sample export."
+
+If you see "This tool isn't available right now." instead, the site's backend
+cannot read the tool. Run this line; you should see
+`"configured":true,"reachable":true` (the site remembers an answer for a
+minute, so wait a minute between tries):
+
+```powershell
+curl.exe -s https://api-azure.hybridcloudworks.com/api/public/addons/cloud-crawler/status
+```
+
+If the frame shows "Human verification could not load; reload to try again.",
+a content blocker is probably stopping the check: pause it and reload. If the
+frame is blank, press F12, open the Console tab and post the red line on
+[#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
+
+**3. Look at the theme.** Do this before the upload, because a reload throws a
+result away. Press the light and dark button in the site's header (its label
+reads "Switch to Dark Mode" or "Switch to Light Mode"), then reload the page
+(F5). The tool inside the frame should follow the site. A button press alone
+does not change an open tool, because the page does not reload the frame; the
+reload is how the theme reaches it. If the tool is in the other look after the
+reload, post which look the site and the tool were in.
+
+**4. Use the sample.** Press **Use the sample export**. A file should appear in
+the list under "1. What is built: your evidence". Leave "2. What you decided" on
+"Starter decision". Under "3. Check for drift" there is a human-check box. It
+may check by itself for a few seconds and then show a tick, or ask you to tick a
+box; do that. Until it has a tick, the note beside the button reads "Complete the
+human verification to run the check." The "Check for drift" button turns active
+once it is ticked.
+
+**5. Run the check.** Press **Check for drift**. Within a few seconds the note
+beside the button should read "Done. The result is below." and a "Result"
+section should appear, with the "not an audit" line, a summary, a table of
+claims, findings, review notes and a draft decision record, then a "Report"
+section. ("What "not an audit" means" and the draft decision record are
+collapsed lines; click one to open it.) If you see any other message instead,
+post it word for word on [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357). If it ends with `(code: ...)`, go to
+"If the human check fails" below.
+
+**6. Use the report buttons.** Press **Copy report**. The note under the buttons
+should say "Report copied to the clipboard as Markdown." Then open Notepad and
+press Ctrl+V: you should see the report text. (The tool has a second way of
+copying that can print the same sentence even when the browser refused the
+first, so Notepad is the real proof. "Select the report text below and copy it."
+means both ways failed: post it.) Then press **Download report (Markdown)**. A
+file named `cloud-crawler-report.md` should appear in your browser's downloads.
+The note then reads "If the download did not start, use Copy report: downloads
+can be blocked inside an embedded pane." That sentence shows even when it
+worked, so the file in your downloads is the proof. "The file could not be
+downloaded here; use Copy report instead." means downloads were blocked: post it.
+
+**7. Delete the result.** Press **Delete my result now**. The button then reads
+"Click again to delete it for good": press it again within six seconds. This
+deletes only the made-up result you just created. The result sections should
+disappear, and "Your result was deleted." shows beside the "Check for drift"
+button, higher up the page.
+
+**8. Say so on [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).** Steps 1 and 2 are the ticket's "Done when"
+(the status address answers and the page frames the tool). Steps 3 to 7 are the
+checks nothing earlier could make. Post which steps passed and the exact words of
+any that did not.
+
+**If the human check fails** (no tick appears, or step 5 shows a message that
+ends with `(code: ...)`), read the code first:
+
+- `(code: invalid-input-secret)` means Cloudflare did not accept the secret kept
+  on the host, so it is probably not this widget's secret: go to item 3.
+- `(code: invalid-input-response)` or `(code: timeout-or-duplicate)` means the
+  tick expired (after about five minutes) or was used twice: reload the page and
+  try again. [Cloudflare lists the codes](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/).
+- No tick at all, or "Human verification could not load; reload to try again.":
+  go to items 1 and 2.
+
+1. See what the tool publishes to visitors (PowerShell). You should see
+   `"turnstile":{"required":true,"siteKey":"0x4AAAAAAFmYfaPCx8djlDfP"}` in the
+   JSON. A different key, or `"required":false`, means the row in
+   `lab-host/ansible/group_vars/all.yml` is not what the container runs; post the
+   line on [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357):
+
+   ```powershell
+   curl.exe -s https://cloud-crawler.lab.hybridcloudworks.com/api/health
+   ```
+
+2. Open the widget's page, <https://dash.cloudflare.com/?to=/:account/turnstile>
+   (type it exactly as written; Cloudflare swaps in your account), and choose
+   the widget `HCW-CloudCrawler_AddOn`. Its **Site Key** must be
+   `0x4AAAAAAFmYfaPCx8djlDfP`, and its hostnames must include
+   `cloud-crawler.lab.hybridcloudworks.com`. If the hostname is missing, add it
+   there and repeat steps 4 and 5 above.
+3. If both match, the secret on the host is probably the wrong one; the code in
+   the message decides. On the widget's page choose **Settings** and copy the
+   **Secret key**. Then paste this line at the prompt first and press Enter only
+   afterwards: it reads your clipboard when you press Enter. You should see one
+   line, `hcw-vault-set: set vault_addon_cloud_crawler_turnstile_secret (value
+   not shown). Keys in the vault: …`:
+
+   ```powershell
+   (Get-Clipboard -Raw) | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-vault-set vault_addon_cloud_crawler_turnstile_secret"
+   ```
+
+   Copy any other text afterwards so the secret does not stay on your
+   clipboard, and never paste the secret into the ticket. Then run the playbook
+   again (step 3 of the host steps above) so the container restarts with the new
+   secret, and repeat steps 4 and 5 above.
+
+**To close the tool again.** Either unset `ADDON_CLOUD_CRAWLER_URL` in
+`infra/functionapp.tf` through a pull request and the owner's Terraform run (the
+page then shows "This tool isn't available right now."), or set the catalogue
+row back to `coming` through a pull request and deploy the site again.
 
 ## Runtime advisories
 
