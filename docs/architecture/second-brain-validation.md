@@ -5,9 +5,9 @@ All data used by the new tests is synthetic.
 
 | Check | Result |
 | --- | --- |
-| Functions unit/integration suite | 309 files, 6,793 tests passed |
-| Frontend unit/component suite | 371 files, 5,355 tests passed |
-| Repository scripts suite | 92 files passed, one skipped; 1,908 tests passed, 116 skipped |
+| Functions unit/integration suite, after integrating current main | 315 files, 7,139 tests passed |
+| Frontend unit/component suite, after integrating current main | 376 files, 5,482 tests passed |
+| Repository scripts suite | 92 files passed, one skipped; 1,911 tests passed, 116 skipped |
 | Chromium and mobile Chromium admin journeys | Four passed, covering owner capture/map and other-admin denial |
 | Obsidian plugin tests | Seven passed, including Windows DPAPI round trip and offline/conflict recovery |
 | Frontend production build and plugin build | Passed |

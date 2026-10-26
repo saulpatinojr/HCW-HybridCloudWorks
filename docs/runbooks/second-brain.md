@@ -56,10 +56,13 @@ client registration in the environment's identity inventory.
    complete. Check each source format, rename/update an article, and remove a
    sample source; search must never return removed text even before indexing
    catches up. The timer resumes an interrupted queued/running checkpoint.
-4. In `obsidian-plugin`, run `npm ci --ignore-scripts`, `npm test`, and
+4. Use Node.js 26.10 or newer to build/test. In `obsidian-plugin`, run
+   `npm ci --ignore-scripts`, `npm test`, and
    `npm run build`. Copy the contents of `dist` to
    `.obsidian/plugins/hcw-second-brain` in a separate test vault, then enable
-   the plugin in Obsidian Community plugins. Keep the test vault out of Git.
+   the plugin in Obsidian Community plugins. The packaged plugin uses
+   Obsidian's desktop runtime and needs no separate Node installation.
+   Keep the test vault out of Git.
 5. Copy connection settings from Second Brain Home, sign in, and enroll only
    sample Markdown notes. Test an offline edit, a rename, concurrent edits,
    deletion/restore, and a local edit of an `HCW/Site` reference. Confirm
