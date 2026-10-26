@@ -26,7 +26,12 @@ export function BrainAccessProvider({ children, accountLabel }) {
         setState({ ...result, enabled: result.enabled === true, loading: false });
     } catch (error) {
       if (alive.current && request === generation.current)
-        setState({ enabled: false, loading: false, errorStatus: error.status || null });
+        setState({
+          enabled: false,
+          loading: false,
+          errorStatus: error.status || null,
+          wwwAuthenticate: error.wwwAuthenticate || {},
+        });
     }
   }, []);
   useEffect(() => {

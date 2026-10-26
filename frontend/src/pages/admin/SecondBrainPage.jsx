@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import { useBrainAccess } from '@/hooks/useBrainAccess';
 import { brainApi } from '@/lib/brainApi';
+import { reauthenticateForApi } from '@/lib/entraAuth';
 import BrainMap from './brain/BrainMap';
 import AskPanel from './brain/AskPanel';
 import WorkspaceHome from './brain/WorkspaceHome';
@@ -99,6 +100,16 @@ function ReferencePreview({ item, backlinks, onSelect, onClose, onCapture }) {
 }
 
 function WorkspaceUnavailable({ access }) {
+  const [error, setError] = useState('');
+  const needsRenewal =
+    access.errorStatus === 401 && access.wwwAuthenticate?.error === 'invalid_token';
+  async function renew() {
+    try {
+      await reauthenticateForApi();
+    } catch (err) {
+      setError(err.message || 'Could not renew your session.');
+    }
+  }
   return (
     <div className="rounded-xl border p-8">
       <h1 className="text-2xl font-semibold">Second Brain</h1>
@@ -108,8 +119,14 @@ function WorkspaceUnavailable({ access }) {
       {access.accountLabel && (
         <p className="mt-2 text-sm text-muted-foreground">Signed in as {access.accountLabel}</p>
       )}
-      {access.errorStatus === 401 && (
+      {needsRenewal && (
         <p className="mt-2 text-sm">Your HCW website session needs to be renewed.</p>
+      )}
+      {error && <p role="alert">{error}</p>}
+      {needsRenewal && (
+        <Button className="mt-4 mr-4" onClick={renew}>
+          Renew website session
+        </Button>
       )}
       <Button className="mt-4 mr-4" variant="outline" onClick={access.refresh}>
         Check access again
@@ -150,6 +167,9 @@ export default function SecondBrainPage() {
   const openSequence = useRef(0);
   const initialLink = useRef(false);
   const dirtyRef = useRef(false);
+  // Private in-memory recovery survives a failed capability refresh. The
+  // identity-keyed provider unmounts this page when accounts change.
+  const [editorSnapshot, setEditorSnapshot] = useState(null);
   const reportDirty = useCallback((value) => {
     dirtyRef.current = value;
   }, []);
@@ -214,6 +234,7 @@ export default function SecondBrainPage() {
       try {
         const data = await brainApi.get(id);
         if (seq === openSequence.current) {
+          setEditorSnapshot(null);
           setSelection(data.item);
           setEditorEpoch((value) => value + 1);
           dirtyRef.current = false;
@@ -276,17 +297,20 @@ export default function SecondBrainPage() {
   };
   const newItem = async (type = 'note', fields = {}) => {
     if (!(await canLeave())) return;
+    setEditorSnapshot(null);
     dirtyRef.current = false;
     setSelection(blank(type, fields));
     setBacklinks([]);
   };
   const saved = (item) => {
+    setEditorSnapshot(null);
     setSelection(item);
     dirtyRef.current = false;
     loadNotes().catch((err) => setError(err.message));
   };
   const close = async () => {
     if (!(await canLeave())) return;
+    setEditorSnapshot(null);
     setSelection(null);
     setBacklinks([]);
     setParams({}, { replace: true });
@@ -539,6 +563,8 @@ export default function SecondBrainPage() {
                 onSelect={open}
                 onClose={close}
                 onDirty={reportDirty}
+                snapshot={editorSnapshot}
+                onSnapshot={setEditorSnapshot}
               />
             )}
           </aside>

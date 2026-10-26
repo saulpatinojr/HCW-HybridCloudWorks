@@ -60,4 +60,17 @@ describe('server-derived workspace capability', () => {
     fireEvent.focus(window);
     expect(await screen.findByText('Unavailable')).toBeInTheDocument();
   });
+  it('recovers on a later focus after an initial failed check', async () => {
+    brainApi.status.mockRejectedValueOnce(Object.assign(new Error('Not enabled'), { status: 404 }));
+    brainApi.status.mockResolvedValueOnce({ enabled: true });
+    render(
+      <BrainAccessProvider>
+        <Consumer />
+      </BrainAccessProvider>
+    );
+    expect(await screen.findByText('Unavailable')).toBeInTheDocument();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11000);
+    fireEvent.focus(window);
+    expect(await screen.findByText('Owner workspace')).toBeInTheDocument();
+  });
 });

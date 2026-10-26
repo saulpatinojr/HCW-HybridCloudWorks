@@ -40,16 +40,22 @@ export default function NoteEditor({
   onSelect,
   onClose,
   onDirty,
+  snapshot,
+  onSnapshot,
 }) {
-  const [form, setForm] = useState(() => noteFields(item));
-  const [tagText, setTagText] = useState((item.tags || []).join(', '));
-  const [version, setVersion] = useState(item.version || 0);
+  const recovery = snapshot?.id === item.id ? snapshot : null;
+  const [form, setForm] = useState(() => recovery?.form || noteFields(item));
+  const [tagText, setTagText] = useState(() => recovery?.tagText ?? (item.tags || []).join(', '));
+  const [version, setVersion] = useState(() => recovery?.version ?? item.version ?? 0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(false);
   const [history, setHistory] = useState([]);
   const [historyBefore, setHistoryBefore] = useState(null);
-  const [mutation, setMutation] = useState(() => crypto.randomUUID());
+  const [mutation, setMutation] = useState(() => recovery?.mutation || crypto.randomUUID());
+  useEffect(() => {
+    onSnapshot?.({ id: item.id, form, tagText, version, mutation });
+  }, [onSnapshot, item.id, form, tagText, version, mutation]);
   const dirty = JSON.stringify(form) !== JSON.stringify(noteFields(item));
   useEffect(() => {
     onDirty?.(dirty);
