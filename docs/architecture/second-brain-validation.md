@@ -36,7 +36,9 @@ plugin-local dependency resolution
 renderer CORS during device-code authentication
 ([#1397](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1397)).
 Companion 1.0.2 was exercised in Obsidian 1.14.5 with synthetic notes in an
-isolated vault. No original notes were enrolled during these checks.
+isolated vault. Companion 1.0.3 additionally closes completed code dialogs
+([#1399](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1399));
+reopening Obsidian reused its encrypted session without another sign-in.
 
 | Live check | Evidence |
 | --- | --- |
@@ -55,14 +57,20 @@ isolated vault. No original notes were enrolled during these checks.
 | Archive conflict and restore | An offline edit against a remote archive became a recovery note; restore retained identity |
 | Creator content and reference copies | Backfill completed; references downloaded; a local reference edit became a recoverable working note while its source copy was restored |
 | Original-vault backup | Local archive verified against every original Markdown file with SHA-256; original note files remained unchanged |
+| Selected original-note enrollment | After owner selection and successful tests of copies, two idea notes were enrolled; body hashes and structured metadata matched their baselines |
+| Original-vault companion | Cached authentication worked; selected notes uploaded without pending changes and creator references downloaded into the managed folder |
+| Private Publish retirement | The last published page was unpublished and retained locally/in backup; the remote published-file count is zero; both hostnames' content endpoints returned empty 401 responses |
 
 Both feature flags remain disabled by default in source, and are enabled only
 for the configured production owner through private workspace variables.
 
 The following acceptance gates remain open: owner confirmation of the hosted
 capture/search/map journey; a live cited AI answer and explicit draft creation;
-a Cosmos backup export/restore drill covering the new authored records;
-selection and enrollment of original notes; and private Obsidian Publish
-retirement. No provider response or original-note migration is claimed by the
-checks above. Complete those gates in the
+and a Cosmos backup export/restore drill covering the new authored records.
+The restore reader now includes containers introduced by subsequent daily
+exports (#1399); its regression passed, while a live restore is still pending.
+No provider response or Cosmos restore is claimed by the checks above.
+Publish's empty site shells can return HTTP 200; the content endpoint checks,
+not the HTML shell's status, establish that no note text was returned.
+Complete the remaining gates in the
 [rollout runbook](../runbooks/second-brain.md).
