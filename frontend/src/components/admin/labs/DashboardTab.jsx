@@ -2,10 +2,10 @@
  * Dashboard — is the fleet up, and is anything moving (#577), and what the
  * three words on this hub mean (ADR 0033 "Labs").
  *
- * The three counters, the Concepts panel and the agent cards. The job table
- * that used to sit below them is the Jobs tab now: "how many are queued" and
- * "what did run 47 print" are different questions, and the second one needs
- * room.
+ * The three counters, the lab sessions started (the count reports and
+ * letters quote), the Concepts panel and the agent cards. The job table that used to
+ * sit below them is the Jobs tab now: "how many are queued" and "what did run
+ * 47 print" are different questions, and the second one needs room.
  */
 import React from 'react';
 import { Card } from '@/components/ui/card';
@@ -13,6 +13,7 @@ import { Cpu, ListOrdered, Server } from 'lucide-react';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import { isAgentOnline } from '@/lib/labsPolling';
 import ConceptsPanel from './ConceptsPanel';
+import LabStartsCard from './LabStartsCard';
 import { AgentCard } from './shared';
 import { tabHref } from './tabs';
 
@@ -49,6 +50,8 @@ export default function DashboardTab({ hub }) {
         <Stat icon={ListOrdered} value={queueDepth} label="Jobs queued" />
         <Stat icon={Cpu} value={inFlight} label="Jobs in flight" />
       </div>
+
+      <LabStartsCard />
 
       <ConceptsPanel agents={agents} now={now} />
 
