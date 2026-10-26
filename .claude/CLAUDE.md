@@ -173,6 +173,46 @@ much as they should be.
   areas above, or a purely cosmetic edit with no change in behaviour (a typo, a
   wording tweak, a corrected link); say so in one line.
 
+## Pre-publish content never goes in this public repository
+
+Owner rule 2026-10-25. This repository is public, and the documentation site
+([docs.hybridcloudworks.com](https://docs.hybridcloudworks.com/)) is built from
+its `docs/` folder, so anything committed there is readable by everyone as soon
+as it merges, long before the owner decides to publish it. An article that is
+not finished is the owner's content, and it stays private until the owner
+publishes it.
+
+- **Drafts live in two places only: the owner's private vault, in its `Drafts`
+  folder, and the admin
+  [Drafts page](https://hybridcloudworks.com/admin/drafts)** (the editing
+  screen on the live site, behind sign-in). The vault is a folder of notes on
+  the owner's own computer, outside this repository, so there is nothing to
+  link to for it; the steps to get a draft from the vault to the Drafts page
+  are in the
+  [idea notes runbook](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/obsidian-idea-notes.md).
+- **Never commit a draft article, and never open a pull request to hold one.**
+  That means no `docs/content/blog-*.md` file other than the two contract files,
+  [`blog-template.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/content/blog-template.md)
+  and
+  [`blog-machine.md`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/content/blog-machine.md)
+  (they describe how articles are written and contain no article text). If a
+  test needs a sample article, write a made-up one into the functions tests'
+  [`__fixtures__` folder](https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/main/functions/src/lib/cms/__fixtures__)
+  instead.
+- **The promote script refuses repository paths on purpose.**
+  [`scripts/ideas/promote-idea.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/ideas/promote-idea.mjs)
+  writes a ready idea into the vault's `Drafts` folder and stops with an error
+  if that folder is inside this repository, however the path is spelled. Do
+  not work around the refusal; fix the vault path instead.
+- **A test enforces this.**
+  [`docs-content-guard.test.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/test/docs-content-guard.test.js)
+  fails the `functions (azure)` check on any pull request that adds a
+  `blog-*.md` file to `docs/content` besides the two contract files, and its
+  message says where drafts go instead. It exists because the drafts were
+  removed in [#1381](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1381)
+  and should not drift back. If it fails on your change, move the file to the
+  vault; do not add the name to the test's allowed list.
+
 ## Owner-facing instructions must be runnable, not descriptive
 
 When telling the owner what to do next, give **commands they can paste**, not a
