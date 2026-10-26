@@ -209,6 +209,7 @@ describe('Content-Security-Policy', () => {
       'https://migration.lab.hybridcloudworks.com',
       'https://network-assessment.lab.hybridcloudworks.com',
       'https://cloud-assessment.lab.hybridcloudworks.com',
+      'https://cloud-crawler.lab.hybridcloudworks.com',
     ]);
     expect(directive('frame-src')).toEqual([
       "'self'",

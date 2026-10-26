@@ -78,16 +78,21 @@ describe('addon catalogue', () => {
     ]);
   });
 
-  it('keeps Cloud Crawler closed until it has a release: coming, not in the Tools menu, no pane opened', () => {
-    const crawler = addons.find((addon) => addon.id === 'cloud-crawler');
-    expect(crawler.status).toBe('coming');
-    expect(crawler.comingSince).toBe('2026-10-24');
-    expect(availableAddons.map((addon) => addon.id)).not.toContain('cloud-crawler');
-    expect(availableAddons.map((addon) => addon.id)).toEqual([
-      'migration',
-      'network-assessment',
-      'cloud-assessment',
-    ]);
+  it('opens Cloud Crawler now that its container runs: available, in the Tools menu, no coming fields', () => {
+    const crawler = addonById('cloud-crawler');
+    expect(crawler.status).toBe('available');
+    expect(crawler).not.toHaveProperty('comingSince');
+    expect(crawler).not.toHaveProperty('comingReason');
+    expect(availableAddons.map((addon) => addon.id)).toContain('cloud-crawler');
+  });
+
+  it('promises Cloud Crawler visitors only what the lab does: Azure exports, and no Terraform until the engine reads it (#1357)', () => {
+    // The engine the lab runs (cloud-crawler-core 0.1.0) cannot read Terraform yet, so neither the summary nor the
+    // technology list may name it. Restore both when the add-on ships an engine that does.
+    const crawler = addonById('cloud-crawler');
+    expect(crawler.summary).not.toMatch(/terraform/i);
+    expect(crawler.technology).not.toContain('terraform');
+    expect(crawler.technology).toEqual(['resource-graph', 'architecture-decisions']);
   });
 
   it.each(addons.map((addon) => [addon.id, addon]))('%s carries every field', (id, addon) => {
@@ -156,10 +161,11 @@ describe('addon catalogue', () => {
     expect(TOOLS_PATH).toBe('/tools');
   });
 
-  it('grants the network and cloud assessments what their guides ask for: downloads and clipboard-write, no more', () => {
-    // Owner decision 2026-10-24 (website issue #1354). `clipboard` would also grant clipboard-read, which neither asked for,
-    // and neither add-on sends a `navigate` message, so neither is granted it.
-    for (const id of ['network-assessment', 'cloud-assessment']) {
+  it('grants the network assessment, the cloud assessment and Cloud Crawler what their panes use: downloads and clipboard-write, no more', () => {
+    // Owner decision 2026-10-24 (website issue #1354). `clipboard` would also grant clipboard-read, which none of them asked for,
+    // and none of the three sends a `navigate` message, so none is granted it. Cloud Crawler's pane saves its report and
+    // sample files and copies its report (its web/app.js, read 2026-10-26, #1357).
+    for (const id of ['network-assessment', 'cloud-assessment', 'cloud-crawler']) {
       expect(addonById(id).capabilities, id).toEqual(['downloads', 'clipboard-write']);
     }
     expect(addonById('migration').capabilities).toEqual(['navigate', 'downloads']);
@@ -240,15 +246,17 @@ describe('addon catalogue', () => {
 });
 
 describe('the lists the pages derive', () => {
-  it('frames all three available AddOn rows', () => {
+  it('frames all four available AddOn rows', () => {
     expect(availableAddons.map((addon) => addon.id)).toEqual([
       'migration',
       'network-assessment',
       'cloud-assessment',
+      'cloud-crawler',
     ]);
     expect(availableAddons.every((addon) => addon.status === 'available')).toBe(true);
     expect(addonById('network-assessment').status).toBe('available');
     expect(addonById('cloud-assessment').status).toBe('available');
+    expect(addonById('cloud-crawler').status).toBe('available');
   });
 
   it('gives every row a page at /tools/<id>, named in staticRoutes', () => {
@@ -277,6 +285,7 @@ describe('the lists the pages derive', () => {
       'https://migration.lab.hybridcloudworks.com',
       'https://network-assessment.lab.hybridcloudworks.com',
       'https://cloud-assessment.lab.hybridcloudworks.com',
+      'https://cloud-crawler.lab.hybridcloudworks.com',
     ]);
     for (const origin of addonOrigins()) {
       expect(origin).not.toContain('*');
@@ -289,6 +298,7 @@ describe('the lists the pages derive', () => {
       'migration',
       'network-assessment',
       'cloud-assessment',
+      'cloud-crawler',
     ]);
     expect(addonsForProvider('aws')).toEqual([]);
   });

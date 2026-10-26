@@ -170,7 +170,7 @@ describe('sandboxFor and allowFor', () => {
     expect(allowFor(row(['clipboard', 'clipboard-write']))).toBe(
       `clipboard-read ${MIGRATION.origin}; clipboard-write ${MIGRATION.origin}`
     );
-    for (const id of ['network-assessment', 'cloud-assessment']) {
+    for (const id of ['network-assessment', 'cloud-assessment', 'cloud-crawler']) {
       const addon = addonById(id);
       expect(allowFor(addon), id).toBe(`clipboard-write ${addon.origin}`);
       expect(allowFor(addon), id).not.toMatch(/clipboard-read/);

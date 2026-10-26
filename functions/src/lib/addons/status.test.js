@@ -219,10 +219,11 @@ describe('getAddonStatus', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('keeps Cloud Crawler closed while it is coming: a known id, no setting, so no store read and no network', async () => {
+  it('keeps Cloud Crawler closed while its own setting is unset: a known id, no setting, so no store read and no network', async () => {
     const store = makeStore();
     const fetchImpl = addonFetch({ '/api/health': HEALTH });
-    // Every setting the site declares today is present; ADDON_CLOUD_CRAWLER_URL is not.
+    // The other three settings are present; ADDON_CLOUD_CRAWLER_URL is not. This is the answer before the Terraform
+    // run that sets it is applied, and after anyone unsets it to close the pane (#1357).
     const env = {
       ...ENV,
       ADDON_MIGRATION_URL: 'https://migration.lab.example',

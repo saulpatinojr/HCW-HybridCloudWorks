@@ -392,6 +392,10 @@ export const DECLARED = [
   // run under the new identity read every rule in both groups.
   // #1089's ADDON_NETWORK_ASSESSMENT_URL and ADDON_CLOUD_ASSESSMENT_URL
   // applied in run-rK5qZUjro4G4K7rz on 2026-10-12 and were deleted here.
+  // #1357's ADDON_CLOUD_CRAWLER_URL applied in the HCP Terraform run for the
+  // merge of #1411 (the commit status on 4b32704b read Success at
+  // 2026-10-26T14:28Z) and was deleted here; the status route then answered
+  // configured: true, reachable: true.
   // #1101's STREAMYARD_API_KEY Key Vault reference was deleted here on
   // 2026-10-17. Plans had shown it as "declared, not in this plan", and the
   // live app settings that day held the declared reference.
@@ -562,22 +566,6 @@ export const DECLARED = [
     action: "create",
     reason:
       "Doc Vault (owner request 2026-10-26): the doc_vault container, the owner's private documents and their versions",
-  },
-  //
-  // Cloud Crawler's status setting (#1357, the host-side pull request): one
-  // added app setting on the Function App, the address the status proxy reads.
-  // Nothing else in the plan changes for it, and the site's catalogue row stays
-  // `coming` until the second pull request. Delete this entry once that run has
-  // applied and /api/public/addons/cloud-crawler/status stops answering
-  // { configured: false }, and replace the three Cloud Crawler tests in
-  // assert-expected-plan.test.mjs with a prune assertion like #1089's.
-  {
-    address: "azurerm_function_app_flex_consumption.hcw",
-    path: "app_settings.ADDON_CLOUD_CRAWLER_URL",
-    before: undefined,
-    after: "https://cloud-crawler.lab.hybridcloudworks.com",
-    reason:
-      "ADR 0035: the cloud-crawler AddOn status proxy reads its address (#1357)",
   },
 ];
 
