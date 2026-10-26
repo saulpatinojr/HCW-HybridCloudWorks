@@ -63,6 +63,9 @@ reopening Obsidian reused its encrypted session without another sign-in.
 | Hosted owner workspace | Owner confirmed the Second Brain page heading at the production route |
 | Hosted notes and synchronization | Owner screenshots show the two enrolled notes, a completed index, and zero reported pending changes or conflicts |
 | Access recovery update | [Deployment](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/40305251929) succeeded after [#1402](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1402); unavailable access can be retried and unsaved notes survive a failed capability refresh |
+| Interactive map and retrieval release | [Frontend](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/40309024721) and [Functions](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/40309021286) deployments succeeded for [#1406](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1406); live assets include the interactive controls |
+| Follow-up private boundary | Nine anonymous requests to the configured API origin returned JSON 401 with private/no-store and noindex headers, including sync references, reindex, and draft creation |
+| Follow-up Obsidian access | Original vault reused its cached owner sign-in against the deployed sync API, returned protocol 1, and reported zero pending operations and no error |
 | Live cited assistant | Owner confirmed a source-citing outline; subsequent review of the response found topic drift and repeated meeting evidence, so source relevance remains an open acceptance check |
 
 Both feature flags remain disabled by default in source, and are enabled only
@@ -105,7 +108,10 @@ the coverage job also passed for the merged follow-up.
 ### Remaining restore drill
 
 The first scheduled export containing `brain_records` had not run at the time
-of rollout. The next daily export is scheduled for 03:00 UTC. Confirm that its
+of rollout. The next daily export is scheduled for 03:00 UTC on 2026-10-27
+(22:00 America/Chicago on 2026-10-26). A repeated invocation on the same UTC
+date skips the existing immutable run; it does not add new containers to its
+completed manifest. Confirm that the next run's
 complete manifest includes `brain_records` before proceeding; the schedule
 alone is not proof of a successful backup. The operator's Azure session also
 requires renewed authentication, and an isolated restore target has not been
