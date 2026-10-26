@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { memoryStore } from '../../../test/memory-store.js';
+import { createClientIdentity } from '../auth/client-identity.js';
 import {
   LAB_STARTS_CONTAINER,
   LAB_STARTS_DAY_KEYS,
@@ -29,7 +30,6 @@ const SITE = 'https://hybridcloudworks.com';
 const LAB = 'terraform-validate-walkthrough';
 const OTHER_LAB = 'landing-zone-builder-output';
 // Values a leak would show up as. They are made up and appear in the request.
-const CLIENT_HASH = 'client-hash-9f8e7d6c5b4a';
 const CLIENT_IP = '203.0.113.77';
 const TURNSTILE_TOKEN = 'turnstile-token-0a1b2c3d4e5f';
 
@@ -41,14 +41,25 @@ const ENV = {
 };
 
 // The broker keeps one live session and two starts a day per client, so a test
-// that starts several sessions says which client is asking.
-let client = CLIENT_HASH;
-const identity = {
-  fromRequest: () => ({
-    anonymousKey: () => client,
-    trustedClientIp: () => CLIENT_IP,
-  }),
-};
+// that starts several sessions says which client is asking, by the address
+// Cloudflare would report for it.
+//
+// The identity is the real createClientIdentity(), built as production builds
+// it, and requests carry the origin secret and an address as Cloudflare adds
+// them. This file used to hand the broker a stand-in with a `fromRequest`
+// method the real helper has never had (#1387), so it agreed with the broker
+// and with nothing else.
+const ORIGIN_SECRET = 'test-origin-secret';
+const identity = createClientIdentity({
+  originSecret: ORIGIN_SECRET,
+  ipSalt: 'test-ip-salt',
+  allowUnverifiedOrigin: false,
+});
+const fromCaller = (ip, extra = {}) =>
+  new Headers({ 'x-hcw-origin-secret': ORIGIN_SECRET, 'cf-connecting-ip': ip, ...extra });
+let client = CLIENT_IP;
+// The hash the broker files the client's session and daily limit under.
+const CLIENT_HASH = identity.anonymousKey({ headers: fromCaller(CLIENT_IP) }).key;
 
 /**
  * The shared in-memory Cosmos plus what the broker also uses: the lab_jobs
@@ -90,7 +101,7 @@ const fetchImpl = vi.fn(async (url) => {
 });
 
 const startRequest = (labId = LAB, extra = {}) => ({
-  headers: new Headers({ origin: SITE }),
+  headers: fromCaller(client, { origin: SITE }),
   url: `${SITE}/api/public/labs/visitor-session?utm=secret-campaign&email=a@example.com`,
   json: async () => ({ labId, turnstileToken: TURNSTILE_TOKEN, ...extra }),
 });
@@ -106,7 +117,7 @@ let previousEnv;
 beforeEach(() => {
   previousEnv = process.env;
   process.env = { ...ENV, LABS_VISITOR_MAX_CONCURRENT: '9' };
-  client = CLIENT_HASH;
+  client = CLIENT_IP;
   fetchImpl.mockClear();
 });
 afterEach(() => {
@@ -132,13 +143,13 @@ describe('a new visitor session', () => {
     const store = brokerStore();
     const clockState = { now: NOW };
     const handlers = handlersFor(store, () => clockState.now);
-    client = 'client-one';
+    client = '203.0.113.1';
     expect((await handlers.startSession(startRequest(LAB))).status).toBe(201);
     clockState.now = Date.parse('2026-10-26T23:59:59.999Z');
-    client = 'client-two';
+    client = '203.0.113.2';
     expect((await handlers.startSession(startRequest(OTHER_LAB))).status).toBe(201);
     clockState.now = Date.parse('2026-10-27T00:00:00.000Z');
-    client = 'client-three';
+    client = '203.0.113.3';
     expect((await handlers.startSession(startRequest(LAB))).status).toBe(201);
 
     const days = Object.fromEntries(dayDocs(store).map((doc) => [doc.day, doc.byLab]));
@@ -315,8 +326,8 @@ describe('what is not counted', () => {
   it('a status check or a stop', async () => {
     const store = brokerStore();
     const handlers = handlersFor(store);
-    await handlers.getStatus({ headers: new Headers({ origin: SITE }) });
-    await handlers.stopSession({ url: `${SITE}/x?sessionId=nope` });
+    await handlers.getStatus({ headers: fromCaller(client, { origin: SITE }) });
+    await handlers.stopSession({ url: `${SITE}/x?sessionId=nope`, headers: fromCaller(client) });
     expect(system(store)).toEqual([]);
   });
 });
