@@ -28,7 +28,10 @@
  * DELETE IS A TRASH, THEN GONE. Deleting moves a document to Trash for 30 days
  * (it keeps its versions, and can be put back); after that it and its versions
  * are removed for good, the next time the list is loaded. "Delete forever" on a
- * document in Trash removes it at once. Hard delete alone was the other choice;
+ * document in Trash removes it at once. Both go through eraseDocument, which
+ * marks the document `purging` under its etag before it removes anything, so a
+ * put-back that races it either wins with the history intact or is refused, and
+ * an interrupted delete is finished by the next one. Hard delete alone was the other choice;
  * the vault is the PRIMARY home of this writing, so one wrong click on a letter
  * must not be the end of it. A document in Trash is excluded from the default
  * list, and nothing but the Trash view ever returns one.
@@ -45,10 +48,16 @@
  * refusal. Audit rows carry the document id, the version, the category, the
  * source and the size, written after the work and best-effort, so a failed
  * audit write cannot turn a saved document into a 500 that invites a retry.
+ * Opening a document or reading one of its versions writes such a row too
+ * (doc_vault_read), so a stolen or shared token that reads the vault leaves a
+ * trail of when and which, if never what. The list does not: it returns no text.
+ * The document id is derived from a private salt (model.js), so an id in a row
+ * confirms nothing about a title. Every answer says `Cache-Control: private,
+ * no-store`.
  * An unexpected failure answers a fixed sentence and a correlation id
  * (error-response.js), and the log line holds the error's code, not its words.
  */
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { recordMutationAudit } from '../audit.js';
 import { isNotProvisioned } from '../ambassador/steps.js';
 import { readJsonBodyWithin } from '../http/bounded-body.js';
@@ -63,6 +72,7 @@ import {
   KEPT_VERSIONS,
   MAX_BODY_BYTES,
   MAX_TAG_CHARS,
+  SALT_DOCUMENT_ID,
   SOURCES,
   adminIdOf,
   buildArchivedVersion,
@@ -123,13 +133,14 @@ export const VERSIONS_QUERY =
   'SELECT c.version, c.title, c.category, c.source, c.bodyBytes, c.restoredFromVersion, c.savedAt FROM c WHERE c.docType = @docType AND c.documentId = @id ORDER BY c.version DESC';
 export const VERSION_IDS_QUERY =
   'SELECT c.id, c.version FROM c WHERE c.docType = @docType AND c.documentId = @id';
-export const EXPIRED_TRASH_QUERY = `SELECT TOP ${PURGE_BATCH} c.id FROM c WHERE c.docType = @docType AND ${TRASHED} AND c.deletedAt < @cutoff`;
+export const EXPIRED_TRASH_QUERY = `SELECT TOP ${PURGE_BATCH} c.id, c._etag, c.purging FROM c WHERE c.docType = @docType AND ${TRASHED} AND c.deletedAt < @cutoff`;
 
 // ── answers ────────────────────────────────────────────────────────────────
 
+// Private, never stored by a browser cache or anything between: the body can be a letter.
 const json = (status, body) => ({
   status,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
   body: JSON.stringify(body),
 });
 
@@ -168,6 +179,12 @@ const NOT_IN_TRASH = {
   status: 409,
   code: 'NOT_IN_TRASH',
   error: 'This document is not in Trash. Move it to Trash first.',
+};
+const PURGING = {
+  status: 409,
+  code: 'PURGING',
+  error:
+    'This document is being deleted for good and cannot be put back or changed. Open Trash and choose Delete forever to finish it.',
 };
 const ALREADY_CURRENT = {
   status: 409,
@@ -356,6 +373,7 @@ async function refuseIfKeyTaken(deps, fields, current) {
  * @returns {Promise<{ outcome: 'versioned'|'unchanged'|'restored', doc: object }>}
  */
 async function addVersion(deps, { current, fields, source, adminId, restoredFromVersion = null }) {
+  refuseIf(current.purging && PURGING);
   if (sameContent(current, fields)) {
     if (!current.deletedAt) return { outcome: 'unchanged', doc: current };
     const doc = await patchUnderEtag(
@@ -376,22 +394,57 @@ async function addVersion(deps, { current, fields, source, adminId, restoredFrom
   });
   // The earlier text goes first, under an id that names its version, so a
   // repeat after a failure rewrites the same item rather than adding one.
-  await deps.store.upsertDoc(CONTAINER, buildArchivedVersion(current));
+  const archive = buildArchivedVersion(current);
+  await deps.store.upsertDoc(CONTAINER, archive);
   let stored;
   try {
     stored = await deps.store.replaceDocIfMatch(CONTAINER, next);
   } catch (error) {
-    if (isPreconditionFailure(error)) await conflict(deps, current.id);
+    if (isPreconditionFailure(error)) {
+      // The document may have been removed, or be mid-removal, since it was
+      // read. Then the item just written belongs to nothing and nothing would
+      // ever delete it: take it back before answering.
+      const latest = await readStored(deps, current.id, DOC_TYPES.document).catch(() => null);
+      if (!latest || latest.purging) await deleteQuietly(deps, archive.id).catch(() => {});
+      await conflict(deps, current.id);
+    }
     throw error;
   }
   await pruneVersions(deps, current.id, next.version);
   return { outcome: 'versioned', doc: stored || next };
 }
 
+/**
+ * The container's id salt (model.js SALT_DOCUMENT_ID): read, or made the first
+ * time it is needed. Made create-only, so two instances starting together agree
+ * on one: the loser of the create reads the winner's.
+ */
+async function idSalt(deps) {
+  const usable = (doc) =>
+    doc && doc.docType === DOC_TYPES.salt && typeof doc.value === 'string' && doc.value.length >= 16;
+  const stored = await deps.store.readDoc(CONTAINER, SALT_DOCUMENT_ID, SALT_DOCUMENT_ID);
+  if (usable(stored)) return stored.value;
+  const value = deps.newSalt();
+  try {
+    await deps.store.createDoc(CONTAINER, {
+      id: SALT_DOCUMENT_ID,
+      docType: DOC_TYPES.salt,
+      value,
+      createdAt: deps.now().toISOString(),
+    });
+    return value;
+  } catch (error) {
+    if (error?.code !== 409) throw error;
+  }
+  const winner = await deps.store.readDoc(CONTAINER, SALT_DOCUMENT_ID, SALT_DOCUMENT_ID);
+  if (!usable(winner)) throw new Error('the id salt item exists and cannot be read');
+  return winner.value;
+}
+
 /** Create the document under its derived id; when that id is taken, say who holds it. */
 async function createNew(deps, { key, fields, source, adminId }) {
   const build = (id) => buildNewDocument({ id, fields, source, adminId, now: deps.now() });
-  const derivedId = vaultDocumentId(key);
+  const derivedId = vaultDocumentId(key, await idSalt(deps));
   const first = build(derivedId);
   try {
     return { doc: (await deps.store.createDoc(CONTAINER, first)) || first };
@@ -463,7 +516,13 @@ const route = (deps, what, work) => async (request, context) => {
   }
 };
 
-/** Read the list filters from the query string, or refuse the ones that cannot be right. */
+/**
+ * Read the list filters from the query string, or refuse the ones that cannot
+ * be right. The page does not send `q` or `tag` (it filters the list it has,
+ * in the browser): words in a URL are recorded by request telemetry, so a
+ * client that wants a title kept out of it should do the same. They are here
+ * for a tool that reads the vault (the Obsidian export) and does not mind.
+ */
 function readFilters(request) {
   const get = (name) => String(request.query?.get?.(name) ?? '').trim();
   const view = get('view') || 'active';
@@ -496,22 +555,29 @@ const matchesSearch = (row, { category, q, tag }) => {
   return [row.title, row.category, ...row.tags].some((text) => text.toLowerCase().includes(q));
 };
 
-/** Documents that have waited in Trash past the window, removed with their versions. Best-effort. */
+/**
+ * Documents that have waited in Trash past the window, removed with their
+ * versions, each under the etag the query read: a document put back since
+ * fails its condition and is left alone. Best-effort, and one failure does not
+ * stop the others; Trash is tidied again on the next load.
+ */
 async function purgeExpiredTrash(deps) {
+  let expired = [];
   try {
-    const expired = await deps.store.queryDocs(CONTAINER, EXPIRED_TRASH_QUERY, [
+    expired = await deps.store.queryDocs(CONTAINER, EXPIRED_TRASH_QUERY, [
       { name: '@docType', value: DOC_TYPES.document },
       { name: '@cutoff', value: trashCutoff(deps.now()) },
     ]);
-    for (const row of expired) {
-      if (typeof row?.id !== 'string') continue;
-      for (const version of (await versionRows(deps, row.id)).filter(isVersionRow)) {
-        await deleteQuietly(deps, version.id);
-      }
-      await deleteQuietly(deps, row.id);
-    }
   } catch {
-    // The list is the answer; Trash is tidied again on the next load.
+    return;
+  }
+  for (const row of expired) {
+    if (typeof row?.id !== 'string' || typeof row._etag !== 'string') continue;
+    try {
+      await eraseDocument(deps, { id: row.id, _etag: row._etag, purging: row.purging === true });
+    } catch {
+      // Put back, edited elsewhere or already gone: leave it.
+    }
   }
 }
 
@@ -617,9 +683,16 @@ async function uploadDocument(deps, { request, context, user }) {
 }
 
 /** GET cms/doc-vault/{id} */
-async function getDocument(deps, { request }) {
+async function getDocument(deps, { request, context, user }) {
   const doc = await readDocument(deps, readId(request));
-  return json(200, { ok: true, document: toView(doc), versions: await listVersions(deps, doc) });
+  const answer = json(200, {
+    ok: true,
+    document: toView(doc),
+    versions: await listVersions(deps, doc),
+  });
+  // A read of a private document is recorded: who and when, never what.
+  await audit(deps, 'doc_vault_read', { user, context, doc });
+  return answer;
 }
 
 /** PUT cms/doc-vault/{id} — { fields, etag } */
@@ -641,21 +714,25 @@ async function updateDocument(deps, { request, context, user }) {
 }
 
 /** GET cms/doc-vault/{id}/versions/{version} */
-async function getVersion(deps, { request }) {
+async function getVersion(deps, { request, context, user }) {
   const id = readId(request);
   const number = readVersionNumber(request.params?.version);
   refuseIf(number === null && BAD_VERSION);
   const current = await readDocument(deps, id);
+  const read = (view, isCurrent) =>
+    audit(deps, 'doc_vault_read', {
+      user,
+      context,
+      doc: current,
+      extra: { readVersion: view.version },
+    }).then(() => json(200, { ok: true, version: { ...view, current: isCurrent } }));
   if (number === current.version) {
-    return json(200, {
-      ok: true,
-      version: { ...toVersionView({ ...current, savedAt: current.updatedAt }), current: true },
-    });
+    return read(toVersionView({ ...current, savedAt: current.updatedAt }), true);
   }
   refuseIf(!withinWindow(current, number) && VERSION_NOT_FOUND);
   const archived = await readStored(deps, versionDocId(id, number), DOC_TYPES.version);
   refuseIf(!(archived && archived.documentId === id) && VERSION_NOT_FOUND);
-  return json(200, { ok: true, version: { ...toVersionView(archived), current: false } });
+  return read(toVersionView(archived), false);
 }
 
 /** POST cms/doc-vault/{id}/restore-version — { version, etag } */
@@ -688,15 +765,34 @@ async function restoreVersion(deps, { request, context, user }) {
   return savedAnswer(saved, { id });
 }
 
-/** Remove a document that is in Trash, its versions first, so none is left behind. */
-async function deleteForever(deps, { id, etag }) {
-  for (const row of (await versionRows(deps, id)).filter(isVersionRow)) {
+/**
+ * Remove a document that is in Trash, and its versions, in an order that
+ * neither loses a document's history while the document lives, nor leaves
+ * history behind when the document goes, even if the work is interrupted or
+ * races a put-back:
+ *   1. mark it `purging` under its etag. From here a put-back, an edit and a
+ *      second delete are refused, so nothing can revive it half-deleted; and a
+ *      put-back that got in first fails this step, with the history intact.
+ *   2. delete its versions (a retry meets none, quietly).
+ *   3. delete the document under the marked etag.
+ * An interruption after step 1 leaves a trashed document marked purging, which
+ * "Delete forever" and the next list load both finish.
+ *
+ * @param {object} deps
+ * @param {{ id: string, _etag: string, purging?: boolean }} doc a document in Trash
+ */
+async function eraseDocument(deps, doc) {
+  const marked = doc.purging
+    ? doc
+    : await patchUnderEtag(deps, doc.id, { purging: true }, doc._etag);
+  for (const row of (await versionRows(deps, doc.id)).filter(isVersionRow)) {
     await deleteQuietly(deps, row.id);
   }
   try {
-    await deps.store.deleteDocIfMatch(CONTAINER, id, etag, id);
+    await deps.store.deleteDocIfMatch(CONTAINER, doc.id, marked._etag, doc.id);
   } catch (error) {
-    if (isPreconditionFailure(error)) await conflict(deps, id);
+    if (error?.code === 404) return;
+    if (error?.code === 412) await conflict(deps, doc.id);
     throw error;
   }
 }
@@ -709,7 +805,7 @@ async function removeDocument(deps, { request, context, user }) {
   const { id, body, etag, current } = await loadForWrite(deps, request);
   if (body.permanent === true) {
     refuseIf(!current.deletedAt && NOT_IN_TRASH);
-    await deleteForever(deps, { id, etag });
+    await eraseDocument(deps, current);
     await audit(deps, 'doc_vault_deleted_forever', { user, context, doc: current });
     return json(200, { ok: true, deleted: id, permanent: true });
   }
@@ -730,6 +826,7 @@ async function removeDocument(deps, { request, context, user }) {
 async function untrashDocument(deps, { request, context, user }) {
   const { id, etag, current } = await loadForWrite(deps, request);
   refuseIf(!current.deletedAt && NOT_IN_TRASH);
+  refuseIf(current.purging && PURGING);
   const key = current.dedupeKey;
   refuseIf(key && (await findByKey(deps, key, id)) && DUPLICATE);
   const written = await patchUnderEtag(deps, id, { deletedAt: null, deletedBy: null }, etag);
@@ -759,10 +856,17 @@ const ROUTES = Object.freeze({
  *   `createDoc` is create-only (409 when the id exists); `upsertDoc` writes the archived versions and the audit rows.
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
+ * @param {() => string} [deps.newSalt] a fresh secret for the id salt, the first time one is needed
  * @returns {Record<keyof typeof ROUTES, (request: object, context: object) => Promise<object>>}
  */
-export function createDocVaultHandlers({ guard, store, now = () => new Date(), uuid = randomUUID }) {
-  const deps = { guard, store, now, uuid };
+export function createDocVaultHandlers({
+  guard,
+  store,
+  now = () => new Date(),
+  uuid = randomUUID,
+  newSalt = () => randomBytes(32).toString('hex'),
+}) {
+  const deps = { guard, store, now, uuid, newSalt };
   return Object.fromEntries(
     Object.entries(ROUTES).map(([name, [what, work]]) => [name, route(deps, what, work)])
   );

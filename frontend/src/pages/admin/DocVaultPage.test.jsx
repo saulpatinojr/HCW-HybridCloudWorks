@@ -425,6 +425,8 @@ describe('paste a document', () => {
       await screen.findByText(/becomes its newest version instead of a second copy/)
     ).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add to the vault' }).disabled).toBe(true);
+    // A browser's cloud spell-checker never sees a private letter.
+    expect(screen.getByLabelText('Text').getAttribute('spellcheck')).toBe('false');
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'New letter' } });
     expect(screen.getByRole('button', { name: 'Add to the vault' }).disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('Text'), { target: { value: 'Body' } });
@@ -876,6 +878,7 @@ describe('delete, Trash, put back and delete for good', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete forever' }));
     expect(await screen.findByText('Delete this document for good?')).toBeTruthy();
     expect(screen.getByText(/cannot be undone/)).toBeTruthy();
+    expect(screen.getByText(/Backup copies are kept for up to 35 days/)).toBeTruthy();
     expect(sendJSON).not.toHaveBeenCalled();
     fireEvent.click(screen.getAllByRole('button', { name: 'Delete forever' }).at(-1));
     await waitFor(() => expect(sendJSON).toHaveBeenCalledTimes(1));
@@ -883,7 +886,12 @@ describe('delete, Trash, put back and delete for good', () => {
       etag: '"e4"',
       permanent: true,
     });
-    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Deleted for good' }));
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Deleted for good',
+        description: expect.stringContaining('Backup copies are kept for up to 35 days'),
+      })
+    );
   });
 
   it('shows an empty Trash in plain words', async () => {

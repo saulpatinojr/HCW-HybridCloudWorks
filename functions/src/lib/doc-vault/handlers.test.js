@@ -21,6 +21,8 @@ import { KEPT_VERSIONS, MAX_BODY_BYTES, TRASH_DAYS, vaultDocumentId } from './mo
 
 const USER = { oid: 'admin-oid-1', sub: 'sub-1', email: 'owner@hcw.dev', name: 'The Owner' };
 const NOW = new Date('2026-10-26T12:00:00.000Z');
+/** The id salt every setup() starts with: fixed, so ids are the same in every run. */
+const SALT = 's'.repeat(64);
 const DAY = 24 * 60 * 60 * 1000;
 
 const makeContext = () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() });
@@ -75,6 +77,7 @@ function setup({ guard = allowGuard(), seed = [] } = {}) {
     store,
     now: () => new Date(clock),
     uuid: () => `generated-${++ids}`,
+    newSalt: () => SALT,
   });
   const call = async (name, req) => parse(await handlers[name](req, context));
   return { handlers, store, guard, context, call };
@@ -136,7 +139,7 @@ describe('create (paste)', () => {
     });
     expect(store.dump()).not.toContain('owner@hcw.dev');
     expect(store.dump()).not.toContain('The Owner');
-    expect(res.body.document.id).toBe(vaultDocumentId('letter|cover letter'));
+    expect(res.body.document.id).toBe(vaultDocumentId('letter|cover letter', SALT));
   });
 
   it('touches only the vault and the audit container', async () => {
@@ -171,7 +174,7 @@ describe('create (paste)', () => {
       const res = await call('create', request({ body: { fields: { ...FIELDS, title: `Other ${key}`, [key]: 'forged' } } }));
       expect(res.status, key).toBe(400);
     }
-    expect(store.docs.size).toBe(1);
+    expect(store.documents()).toHaveLength(1);
     expect(store.dump()).not.toContain('forged');
   });
 
@@ -673,7 +676,7 @@ describe('restore a version', () => {
   it('keeps the source of the version it restores', async () => {
     const s = setup();
     await upload(s.call, 'letter.md', '---\ntitle: Cover letter\ncategory: Letter\n---\nFrom a file');
-    const doc = [...s.store.docs.values()][0];
+    const [doc] = s.store.documents();
     const edited = await s.call('update', request({ id: doc.id, body: { etag: doc._etag, fields: { ...FIELDS, body: 'Typed in' } } }));
     expect(edited.body.document.source).toBe('pasted');
     const back = await s.call('restoreVersion', restore(doc.id, 1, edited.body.document.etag));
@@ -750,7 +753,8 @@ describe('delete, Trash and put back', () => {
     ];
     expect(Math.max(...store.deleteDoc.mock.invocationCallOrder)).toBeLessThan(Math.min(...store.deleteDocIfMatch.mock.invocationCallOrder));
     expect(order.length).toBeGreaterThan(1);
-    expect(store.dump()).toBe('[]');
+    expect(store.documents()).toEqual([]);
+    expect(store.versions()).toEqual([]);
   });
 
   it('keeps a permanent delete that loses the race out of the document it did not remove', async () => {
@@ -901,7 +905,7 @@ describe('upload', () => {
     expect(res.status).toBe(201);
     const stored = store.get(res.body.document.id);
     expect(stored).toMatchObject({ title: 'Honest', version: 1, createdBy: 'admin-oid-1', deletedAt: null, docType: 'document' });
-    expect(stored.id).toBe(vaultDocumentId('other|honest'));
+    expect(stored.id).toBe(vaultDocumentId('other|honest', SALT));
     for (const key of ['contentStatus', 'Live', 'slug', 'partitionKey', 'ttl']) expect(stored).not.toHaveProperty(key);
     expect(store.dump()).not.toContain('stolen');
     expect(store.dump()).not.toContain('polluted');
@@ -920,7 +924,7 @@ describe('upload', () => {
     const results = [];
     for (const [name, text] of files) results.push(await upload(call, name, text));
     expect(results.map((r) => r.status)).toEqual([201, 400, 201, 422, 201]);
-    expect([...store.docs.values()].map((d) => d.title).sort()).toEqual(['One', 'Two', 'three']);
+    expect(store.documents().map((d) => d.title).sort()).toEqual(['One', 'Two', 'three']);
   });
 });
 
@@ -1063,6 +1067,261 @@ describe('unexpected failures', () => {
       const res = parse(await s.handlers[name](req, s.context));
       expect(res.status, name).toBe(500);
       expect(res.body.error, name).toBe(sentence);
+    }
+  });
+});
+
+// ── what the security review found (2026-10-26) ────────────────────────────
+
+describe('an id says nothing about the title (F2)', () => {
+  it('makes the salt once, as its own item, and derives every id from it', async () => {
+    const { call, store } = setup();
+    expect(store.get('vault-id-salt')).toBeNull();
+    const first = (await paste(call)).body.document;
+    expect(store.get('vault-id-salt')).toMatchObject({ docType: 'salt', value: SALT });
+    await paste(call, { ...FIELDS, title: 'A second one' });
+    expect(store.createDoc.mock.calls.filter(([, doc]) => doc.id === 'vault-id-salt')).toHaveLength(1);
+    expect(first.id).toBe(vaultDocumentId('letter|cover letter', SALT));
+  });
+
+  it('gives the same title another id under another salt, so an id cannot be checked against a guess', async () => {
+    const a = setup();
+    const b = setup();
+    b.handlers = createDocVaultHandlers({
+      guard: allowGuard(),
+      store: b.store,
+      now: () => new Date(clock),
+      uuid: () => 'x',
+      newSalt: () => 'z'.repeat(64),
+    });
+    const callB = async (name, req) => parse(await b.handlers[name](req, b.context));
+    const idA = (await paste(a.call)).body.document.id;
+    const idB = (await paste(callB)).body.document.id;
+    expect(idA).not.toBe(idB);
+  });
+
+  it('keeps the salt out of every list, every read and every purge', async () => {
+    const { call, store } = setup();
+    await paste(call);
+    const list = await call('list', request());
+    expect(list.body.documents).toHaveLength(1);
+    expect(JSON.stringify(list.body)).not.toContain(SALT);
+    expect((await call('get', request({ id: 'vault-id-salt' }))).status).toBe(404);
+    expect((await call('getVersion', request({ id: 'vault-id-salt', version: '1' }))).status).toBe(404);
+    expect((await call('remove', request({ id: 'vault-id-salt', body: { etag: store.get('vault-id-salt')._etag } }))).status).toBe(404);
+    tick(40 * DAY);
+    await call('list', request({ query: { view: 'trash' } }));
+    expect(store.get('vault-id-salt')).not.toBeNull();
+  });
+
+  it('agrees on one salt when two instances meet at the first create', async () => {
+    const store = vaultStore();
+    const context = makeContext();
+    const make = (value) =>
+      createDocVaultHandlers({
+        guard: allowGuard(),
+        store,
+        now: () => new Date(NOW),
+        uuid: () => 'u',
+        newSalt: () => value,
+      });
+    const one = make('1'.repeat(64));
+    const two = make('2'.repeat(64));
+    const [a, b] = await Promise.all([
+      one.create(request({ body: { fields: FIELDS } }), context),
+      two.create(request({ body: { fields: FIELDS } }), context),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    expect(store.documents()).toHaveLength(1);
+    expect(['1'.repeat(64), '2'.repeat(64)]).toContain(store.get('vault-id-salt').value);
+  });
+
+  it('answers a fixed 500 when the salt item exists and cannot be read', async () => {
+    const { call, store } = setup({ seed: [{ id: 'vault-id-salt', docType: 'document' }] });
+    const res = await paste(call);
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to save the document');
+    expect(store.documents().filter((d) => d.title)).toHaveLength(0);
+  });
+});
+
+describe('deleting for good, and the Trash purge, cannot lose or leave history (F3)', () => {
+  async function trashedWithHistory() {
+    const s = setup();
+    const { document } = (await paste(s.call)).body;
+    tick();
+    await paste(s.call, { ...FIELDS, body: 'second' });
+    const current = s.store.get(document.id);
+    const trashed = (await s.call('remove', request({ id: document.id, body: { etag: current._etag } }))).body.document;
+    return { ...s, id: document.id, etag: trashed.etag };
+  }
+
+  it('(a) leaves alone a document that was put back after the purge read it', async () => {
+    const { call, store, id } = await trashedWithHistory();
+    tick(40 * DAY);
+    // The expired row is read, then the owner puts the document back before the purge acts.
+    const real = store.queryDocs.getMockImplementation();
+    store.queryDocs.mockImplementationOnce(async (...args) => {
+      const rows = await real(...args);
+      const doc = store.get(id);
+      store.docs.set(id, { ...doc, deletedAt: null, deletedBy: null, _etag: '"moved-on"' });
+      return rows;
+    });
+    const res = await call('list', request());
+    expect(res.status).toBe(200);
+    expect(store.get(id)).toMatchObject({ deletedAt: null });
+    expect(store.versions()).toHaveLength(1);
+  });
+
+  it('(b) keeps the history when a put-back wins the race against Delete forever', async () => {
+    const { call, store, id, etag } = await trashedWithHistory();
+    store.fail('patchDoc', failure(412));
+    const res = await call('remove', request({ id, body: { etag, permanent: true } }));
+    expect(res.status).toBe(412);
+    expect(store.get(id)).not.toBeNull();
+    expect(store.get(id).purging).toBeUndefined();
+    expect(store.versions()).toHaveLength(1);
+  });
+
+  it('marks the document before it removes anything, and the document is the last thing to go', async () => {
+    const { call, store, id, etag } = await trashedWithHistory();
+    store.patchDoc.mockClear();
+    store.deleteDoc.mockClear();
+    store.deleteDocIfMatch.mockClear();
+    const res = await call('remove', request({ id, body: { etag, permanent: true } }));
+    expect(res.status).toBe(200);
+    expect(store.patchDoc).toHaveBeenCalledWith('doc_vault', id, { purging: true }, { ifMatch: etag });
+    expect(store.patchDoc.mock.invocationCallOrder[0]).toBeLessThan(store.deleteDoc.mock.invocationCallOrder[0]);
+    expect(Math.max(...store.deleteDoc.mock.invocationCallOrder)).toBeLessThan(
+      store.deleteDocIfMatch.mock.invocationCallOrder[0]
+    );
+    expect(store.documents()).toEqual([]);
+    expect(store.versions()).toEqual([]);
+  });
+
+  it('an interrupted delete leaves a marked document that cannot be put back or revived, and that a retry finishes', async () => {
+    const { call, store, id, etag } = await trashedWithHistory();
+    store.fail('deleteDoc', failure(500));
+    const first = await call('remove', request({ id, body: { etag, permanent: true } }));
+    expect(first.status).toBe(500);
+    const stuck = store.get(id);
+    expect(stuck).toMatchObject({ purging: true });
+
+    const putBack = await call('untrash', request({ id, body: { etag: stuck._etag } }));
+    expect(putBack.status).toBe(409);
+    expect(putBack.body.code).toBe('PURGING');
+    // Adding the same title again does not revive it half-deleted either.
+    const again = await paste(call);
+    expect(again.status).toBe(409);
+    expect(again.body.code).toBe('PURGING');
+    expect(store.get(id).deletedAt).not.toBeNull();
+
+    const retry = await call('remove', request({ id, body: { etag: stuck._etag, permanent: true } }));
+    expect(retry.status).toBe(200);
+    expect(store.documents()).toEqual([]);
+    expect(store.versions()).toEqual([]);
+  });
+
+  it('the purge on list finishes a document that was left marked', async () => {
+    const { call, store, id, etag } = await trashedWithHistory();
+    store.fail('deleteDoc', failure(500));
+    await call('remove', request({ id, body: { etag, permanent: true } }));
+    expect(store.get(id)).not.toBeNull();
+    tick(40 * DAY);
+    await call('list', request());
+    expect(store.get(id)).toBeNull();
+    expect(store.versions()).toEqual([]);
+  });
+
+  it('the purge goes on to the next document when one fails', async () => {
+    const s = setup();
+    const ids = [];
+    for (const title of ['One', 'Two']) {
+      const { document } = (await paste(s.call, { ...FIELDS, title })).body;
+      await s.call('remove', request({ id: document.id, body: { etag: document.etag } }));
+      ids.push(document.id);
+    }
+    tick(40 * DAY);
+    s.store.fail('patchDoc', failure(500));
+    await s.call('list', request());
+    expect(ids.filter((id) => s.store.get(id) === null)).toHaveLength(1);
+  });
+
+  it('(c) takes back the archived version it wrote when the document was removed meanwhile', async () => {
+    const { call, store } = setup();
+    const { document } = (await paste(call)).body;
+    store.fail('replaceDocIfMatch', failure(404));
+    store.docs.delete(document.id);
+    const res = await call('update', request({ id: document.id, body: { etag: document.etag, fields: { ...FIELDS, body: 'late' } } }));
+    expect(res.status).toBe(404);
+    expect(store.versions()).toEqual([]);
+  });
+
+  it('(c) takes it back too when the document is marked for deletion, and keeps it when the document merely moved on', async () => {
+    const marked = setup();
+    const doc = (await paste(marked.call)).body.document;
+    marked.store.fail('replaceDocIfMatch', failure(412));
+    const real = marked.store.replaceDocIfMatch.getMockImplementation();
+    marked.store.replaceDocIfMatch.mockImplementationOnce(async (...args) => {
+      marked.store.docs.set(doc.id, { ...marked.store.get(doc.id), purging: true, deletedAt: 'x', _etag: '"p"' });
+      return real(...args);
+    });
+    const res = await marked.call('update', request({ id: doc.id, body: { etag: doc.etag, fields: { ...FIELDS, body: 'late' } } }));
+    expect(res.status).toBe(412);
+    expect(marked.store.versions()).toEqual([]);
+
+    const moved = setup();
+    const doc2 = (await paste(moved.call)).body.document;
+    moved.store.fail('replaceDocIfMatch', failure(412));
+    const res2 = await moved.call('update', request({ id: doc2.id, body: { etag: doc2.etag, fields: { ...FIELDS, body: 'late' } } }));
+    expect(res2.status).toBe(412);
+    expect(moved.store.versions()).toHaveLength(1);
+  });
+});
+
+describe('a read of a private document is recorded, without saying what it held (F4)', () => {
+  it('writes one content-free row for each document opened and each version read, none for the list', async () => {
+    const { call, store } = setup();
+    const { document } = (await paste(call, { ...FIELDS, title: 'TITLE-MARK-read', body: 'BODY-MARK-read' })).body;
+    await paste(call, { ...FIELDS, title: 'TITLE-MARK-read', body: 'BODY-MARK-read v2' });
+    store.audit.length = 0;
+    await call('list', request());
+    expect(store.audit).toHaveLength(0);
+    await call('get', request({ id: document.id }));
+    await call('getVersion', request({ id: document.id, version: '1' }));
+    await call('getVersion', request({ id: document.id, version: '2' }));
+    expect(store.audit.map((row) => row.action)).toEqual(['doc_vault_read', 'doc_vault_read', 'doc_vault_read']);
+    expect(store.audit.map((row) => row.details.readVersion)).toEqual([undefined, 1, 2]);
+    for (const row of store.audit) {
+      expect(row.userId).toBe('admin-oid-1');
+      expect(row.userEmail).toBeNull();
+      expect(JSON.stringify(row)).not.toContain('MARK');
+    }
+  });
+
+  it('does not fail the read when the audit write fails', async () => {
+    const { call, store } = setup();
+    const { document } = (await paste(call)).body;
+    store.fail('upsertDoc', failure(500));
+    const res = await call('get', request({ id: document.id }));
+    expect(res.status).toBe(200);
+  });
+
+  it('records nothing for a read that found nothing', async () => {
+    const { call, store } = setup();
+    await call('get', request({ id: 'missing' }));
+    expect(store.audit).toEqual([]);
+  });
+});
+
+describe('answers are never cached (I1)', () => {
+  it('say so on a success and on a refusal', async () => {
+    const { handlers, context } = setup();
+    const ok = await handlers.list(request(), context);
+    const refusedRes = await handlers.get(request({ id: 'missing' }), context);
+    for (const res of [ok, refusedRes]) {
+      expect(res.headers['Cache-Control']).toBe('private, no-store');
+      expect(res.headers['Content-Type']).toBe('application/json');
     }
   });
 });

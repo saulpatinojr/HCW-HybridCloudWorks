@@ -412,7 +412,7 @@ export const COLLECTIONS = [
   {
     name: 'doc_vault',
     disposition: 'azure-only',
-    note: 'Doc Vault (owner request 2026-10-26): the owner\'s own templates, applications, letters and notes, admin-only (publisher), never on the public site. Its own container so that no public read, and no other feature, can reach it by naming another one. Documents told apart by `docType`: `document` (the current version) and `version` (an earlier one, id `<documentId>~v<n>`). Partitioned on /id; the text (`/body/*`) is not indexed.',
+    note: 'Doc Vault (owner request 2026-10-26): the owner\'s own templates, applications, letters and notes, admin-only (publisher), never on the public site. Its own container so that no public read, and no other feature, can reach it by naming another one. Documents told apart by `docType`: `document` (the current version), `version` (an earlier one, id `<documentId>~v<n>`) and one `salt` item (`vault-id-salt`, the secret every document id is derived from). Partitioned on /id; the text (`/body/*`) is not indexed.',
   },
 
   // --- Social --------------------------------------------------------------

@@ -81,7 +81,7 @@ export function vaultStore(seed = []) {
       return ofType
         .filter((doc) => isTrashed(doc) && doc.deletedAt < param(parameters, '@cutoff'))
         .slice(0, 20)
-        .map((doc) => ({ id: doc.id }));
+        .map((doc) => ({ id: doc.id, _etag: doc._etag, purging: doc.purging }));
     }
     throw new Error(`unexpected query ${sql}`);
   };
@@ -91,6 +91,9 @@ export function vaultStore(seed = []) {
     audit,
     touched,
     get: (id) => docs.get(id) ?? null,
+    /** The stored documents and earlier versions, without the id salt item. */
+    documents: () => [...docs.values()].filter((doc) => doc.docType === 'document'),
+    versions: () => [...docs.values()].filter((doc) => doc.docType === 'version'),
     /** Every stored document, as JSON text: for a test that looks for a string anywhere. */
     dump: () => JSON.stringify([...docs.values()]),
     fail(verb, error, { times = 1 } = {}) {

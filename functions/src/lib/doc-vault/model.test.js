@@ -2,11 +2,12 @@
  * The Doc Vault's pure half (model.js): identity, the fields a request may
  * carry, and the shapes a document is stored and shown in.
  */
+import { createHash } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import {
   CATEGORIES,
+  DOCUMENT_ID_PATTERN,
   DOC_TYPES,
-  DOC_VAULT_ID_NAMESPACE,
   EDITABLE_FIELDS,
   KEPT_VERSIONS,
   MAX_BODY_BYTES,
@@ -14,6 +15,7 @@ import {
   MAX_TAGS,
   MAX_TAG_CHARS,
   MAX_TITLE_CHARS,
+  SALT_DOCUMENT_ID,
   TRASH_DAYS,
   adminIdOf,
   buildArchivedVersion,
@@ -65,16 +67,36 @@ describe('identity', () => {
     expect(dedupeKeyOf('Letter', '--')).toBeNull();
   });
 
-  it('derives a stable, UUID-shaped, version-5 id from the key', () => {
-    const id = vaultDocumentId('letter|cover letter');
+  const SALT = 'a'.repeat(64);
+
+  it('derives a stable, UUID-shaped id from the key and the salt', () => {
+    const id = vaultDocumentId('letter|cover letter', SALT);
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(vaultDocumentId('letter|cover letter')).toBe(id);
-    expect(vaultDocumentId('letter|other')).not.toBe(id);
+    expect(vaultDocumentId('letter|cover letter', SALT)).toBe(id);
+    expect(vaultDocumentId('letter|other', SALT)).not.toBe(id);
   });
 
-  it('pins the namespace and one derived id, because changing either makes the next upload a duplicate', () => {
-    expect(DOC_VAULT_ID_NAMESPACE).toBe('3f6a1c52-8d0e-4b97-a5c1-72e4d9b0f318');
-    expect(vaultDocumentId('letter|cover letter')).toBe('0ec7eb6a-4ff5-5191-9e77-dabf5a18e13e');
+  it('gives a different id under another salt, so an id cannot be checked against a guessed title', () => {
+    const id = vaultDocumentId('letter|cover letter', SALT);
+    expect(vaultDocumentId('letter|cover letter', 'b'.repeat(64))).not.toBe(id);
+    // The old derivation, a plain hash of the key, is not what is used any more.
+    const plain = createHash('sha1').update('doc-vault:letter|cover letter').digest('hex');
+    expect(id.replace(/-/g, '')).not.toBe(plain.slice(0, 32));
+  });
+
+  it('pins one derived id, because changing the derivation makes the next upload of a document a duplicate', () => {
+    expect(vaultDocumentId('letter|cover letter', SALT)).toBe('65366fec-6676-500f-a584-aedcce98b4ad');
+  });
+
+  it('refuses to derive an id without a real salt', () => {
+    for (const salt of [undefined, null, '', 'short', 12345]) {
+      expect(() => vaultDocumentId('letter|cover letter', salt), String(salt)).toThrow(/salt/);
+    }
+  });
+
+  it('names the salt item with an id a document id pattern accepts, so the route has to refuse it by its type', () => {
+    expect(SALT_DOCUMENT_ID).toMatch(DOCUMENT_ID_PATTERN);
+    expect(DOC_TYPES.salt).toBe('salt');
   });
 
   it('names an earlier version with a character no document id can hold', () => {

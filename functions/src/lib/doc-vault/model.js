@@ -36,8 +36,13 @@
  * a document whose key is already here does not make a second copy: it becomes
  * the next version of the first (handlers.js saveDocument). The key is stored
  * (`dedupeKey`) so a document renamed on the page is found under its new name.
+ *
+ * AN ID SAYS NOTHING. A document's id is derived from its key and a private
+ * salt (vaultDocumentId), not from the key alone, because the id travels: the
+ * URL, the audit row's resource, the request telemetry. A plain hash would let
+ * anyone who can read those confirm a guessed title.
  */
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { AuthoredError } from '../http/error-response.js';
 
 export const CONTAINER = 'doc_vault';
@@ -57,6 +62,14 @@ export const CONTAINER = 'doc_vault';
  *     must never go public are kept; super_admin passes it too.
  * One role for every route, reads included: a read of a private letter is as
  * sensitive as a write of one.
+ *
+ * WHAT THIS DOES AND DOES NOT PROMISE. Every publisher and super_admin the owner
+ * has made can read, rewrite and delete every document here: a document records
+ * who made it (createdBy) but nothing compares that with who is asking. If the
+ * owner is ever the only person who should see these, set this to
+ * 'super_admin' (and the Doc Vault row of config/adminNav.js, the routes'
+ * entries in .azure/api-surface.json and the runbook with it). Reads are
+ * recorded (handlers.js doc_vault_read), so a shared role is at least visible.
  */
 export const DOC_VAULT_ROLE = 'publisher';
 
@@ -70,7 +83,15 @@ export const CATEGORIES = Object.freeze([
 ]);
 export const DEFAULT_CATEGORY = 'Other';
 
-export const DOC_TYPES = Object.freeze({ document: 'document', version: 'version' });
+export const DOC_TYPES = Object.freeze({ document: 'document', version: 'version', salt: 'salt' });
+
+/**
+ * The one item of `docType: 'salt'`: a random secret, made the first time a
+ * document is created and kept in the container beside the documents. Document
+ * ids are derived from it (vaultDocumentId), so an id seen in an audit row, a
+ * URL or a telemetry line cannot be checked against a guessed title.
+ */
+export const SALT_DOCUMENT_ID = 'vault-id-salt';
 export const SOURCES = Object.freeze({ pasted: 'pasted', uploaded: 'uploaded' });
 
 export const MAX_TITLE_CHARS = 200;
@@ -99,12 +120,6 @@ const fail = (message) => {
 // ── identity ───────────────────────────────────────────────────────────────
 
 /**
- * Fixed forever: changing it gives every document already stored a different
- * derived id, and the next upload of one would make a second copy.
- */
-export const DOC_VAULT_ID_NAMESPACE = '3f6a1c52-8d0e-4b97-a5c1-72e4d9b0f318';
-
-/**
  * A title as a key: Unicode-folded, accents on Latin letters removed, lower
  * case, every run of anything that is not a letter or digit one space. Unlike
  * the draft dedup gate's normalizeTitleForDedup this keeps letters outside
@@ -117,7 +132,7 @@ export const DOC_VAULT_ID_NAMESPACE = '3f6a1c52-8d0e-4b97-a5c1-72e4d9b0f318';
 export function normalizeVaultTitle(title) {
   return String(title ?? '')
     .normalize('NFKD')
-    .replace(/[̀-ͯ]+/g, '')
+    .replace(/[\u0300-\u036f]+/g, '')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
@@ -136,21 +151,31 @@ export function dedupeKeyOf(category, title) {
 }
 
 /**
- * A deterministic, UUID-shaped id for a key (RFC 9562 version 5: SHA-1 over
- * the namespace and the name), so two uploads of one document, even at the
- * same instant, race to the same id and the create is create-only.
+ * A deterministic, UUID-shaped id for a key: HMAC-SHA-256 of the key under the
+ * container's private salt, cut to 128 bits. The same key and salt always give
+ * the same id, so two uploads of one document, even at the same instant, race
+ * to the same id and the create is create-only. Without the salt the id cannot
+ * be recomputed from a title, so an id that turns up in an audit row or a log
+ * line confirms nothing about what the document is called. (A plain hash of the
+ * key would: the code is public, and a list of likely titles is short.)
+ *
+ * The salt is fixed for the life of the container: a different one gives every
+ * document already stored a different derived id, and the next upload of one
+ * would make a second copy.
  *
  * @param {string} dedupeKey
+ * @param {string} salt - the container's salt item (SALT_DOCUMENT_ID)
  * @returns {string}
  */
-export function vaultDocumentId(dedupeKey) {
-  const namespace = Buffer.from(DOC_VAULT_ID_NAMESPACE.replace(/-/g, ''), 'hex');
-  const bytes = createHash('sha1')
-    .update(namespace)
-    .update(Buffer.from(`doc-vault:${dedupeKey}`, 'utf8'))
+export function vaultDocumentId(dedupeKey, salt) {
+  if (typeof salt !== 'string' || salt.length < 16) {
+    throw new Error('vaultDocumentId needs the container salt');
+  }
+  const bytes = createHmac('sha256', salt)
+    .update(`doc-vault:${dedupeKey}`, 'utf8')
     .digest()
     .subarray(0, 16);
-  bytes[6] = (bytes[6] & 0x0f) | 0x50; // version 5
+  bytes[6] = (bytes[6] & 0x0f) | 0x50; // the UUID shape: version nibble
   bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC variant
   const hex = bytes.toString('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
@@ -159,7 +184,7 @@ export function vaultDocumentId(dedupeKey) {
 /** The id of an earlier version of a document. '~' is legal in a Cosmos id and in no document id. */
 export const versionDocId = (documentId, version) => `${documentId}~v${version}`;
 
-/** A document id as it arrives in a URL: a UUID, or an id this code made. */
+/** A document id as it arrives in a URL: a UUID, or an id this code made. The salt item's id also fits, and is refused by its docType. */
 export const DOCUMENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 /** Who to record: the admin's id, never their name or address. */

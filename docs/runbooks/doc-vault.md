@@ -58,6 +58,15 @@ The role applies to every request, reading included: a private letter is as
 private to read as to change. It is set in one place,
 [`DOC_VAULT_ROLE`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/doc-vault/model.js).
 
+**What that does not do.** Everyone you have made a publisher or super admin can
+read, change and delete every document here. The vault records who made each
+document, but it does not keep one publisher's documents from another's. If you
+ever make someone a publisher who should not see these, change `DOC_VAULT_ROLE`
+to `super_admin` (the file's own comment lists the other four places that move
+with it). Every time a document is opened the vault writes a short record of
+who and when (see [How "never public" is enforced](#how-never-public-is-enforced)),
+so a shared role is at least visible.
+
 ## Set it up once
 
 The vault keeps its documents in its own database container, called
@@ -156,7 +165,9 @@ Open a document from the list on the left.
   refusal, but they run in a test browser, not in Edge, Chrome and Firefox on
   Windows: if Copy does nothing on yours, the page says so, and the text stays
   in a box you can select with Ctrl+A and copy with Ctrl+C.
-- **Edit** opens the form. Saving keeps the text it replaces in History.
+- **Edit** opens the form. Saving keeps the text it replaces in History. Spell
+  check is switched off in the text box on purpose: some browsers send what you
+  type to a cloud service to check it, and these are private letters.
 - Search the list by title, tag or category, or narrow it with the category and
   tag filters.
 
@@ -179,8 +190,15 @@ while you were editing, the save is refused, your text stays in the form, and
 **Move to Trash** takes a document off the list. It waits in **Trash** for 30
 days with its history; **Put back** returns it. After 30 days it, and its
 versions, are removed for good the next time the vault list is opened.
-**Delete forever** (in Trash only, with a confirmation) removes it at once and
-cannot be undone.
+**Delete forever** (in Trash only, with a confirmation) removes it from the
+vault at once and cannot be undone. One thing it cannot reach: backups. The
+vault is backed up with the other authored work, by the database's own rolling
+30-day point-in-time backup and, when the out-of-account export is switched on
+(`cosmos_export_enabled`, see [Cosmos restore](cosmos-restore.md)), by a weekly
+full copy and daily changes kept in a locked-down storage container for 35 days.
+A deleted document can therefore still be in a backup for up to 35 days, and
+restoring a backup brings back what was in the vault when it was taken. The
+backup copies are deleted automatically when their time is up.
 
 Why Trash and not a plain delete: the vault is the primary home of this
 writing, so one wrong click on a letter should not be the end of it.
@@ -194,7 +212,10 @@ needs: an id, a title, a category, tags, the created and last-changed dates and
 the text (and the last ten versions for history). The list route
 (`GET /api/cms/doc-vault`) returns every field of that list except the text for
 each document, and `GET /api/cms/doc-vault/{id}` returns one with its text.
-Nothing is exported yet.
+Nothing is exported to Obsidian yet. (The list route also accepts `?q=` and
+`?tag=` search words, but words in a web address are recorded by the site's
+request log, so the page filters in the browser instead and a tool that reads
+the vault should do the same.)
 
 Your vault's idea notes and drafts have their own routes, described in
 [Idea notes in Obsidian](obsidian-idea-notes.md).
@@ -219,6 +240,19 @@ What the vault never writes down: the text, the title, the tags and the link of
 a document are never put in a log line, an audit row or an error message. An
 audit row (kept 90 days) holds only the document's id, its version, its
 category, how it arrived and its size, with your admin id and no name or email.
+A row is written for every change, and also every time a document, or one of its
+earlier versions, is opened (the action is `doc_vault_read`); the list does not
+write one, because it returns no text. So if a publisher's sign-in were ever
+misused to read the vault, the rows would show when and which document, never
+what it said.
+
+A document's id is not a plain hash of its title. It is made with a secret that
+the vault creates in its own container the first time you add a document, so an
+id that turns up in a row, a web address or a log cannot be checked against a
+guessed title. (The secret is backed up with the documents; losing it would not
+lose any text, but a title added again afterwards would then become a second
+document instead of a new version.) Every answer from the vault also tells
+browsers and proxies not to keep a copy.
 
 ## If something looks wrong
 
@@ -226,6 +260,7 @@ category, how it arrived and its size, with your admin id and no name or email.
 |---|---|---|
 | "The Doc Vault has no storage yet" | The `doc_vault` container has not been created | [Set it up once](#set-it-up-once) |
 | "The Doc Vault is for publishers and above" | You are signed in as a viewer or editor | Ask the owner for the publisher role |
+| "being deleted for good" (409) | A Delete forever was interrupted part-way | Open Trash, open the document and choose **Delete forever** again to finish it (opening the vault list also finishes it once 30 days have passed) |
 | "changed in another tab or on another device" | Someone (you, elsewhere) saved first | Copy your text, press **Reload latest** |
 | A file line says "Only text files are read here" | The file is not `.md`, `.markdown`, `.txt` or `.text` | Paste its text instead |
 | A file line says "Not added: the file holds binary data" | The file is not text | Open it in a text editor and paste |
@@ -242,5 +277,6 @@ category, how it arrived and its size, with your admin id and no name or email.
 | The container | `doc_vault` in [`infra/cosmos-containers.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos-containers.json), made from [`scripts/lib/migration-manifest.mjs`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/scripts/lib/migration-manifest.mjs) |
 | The "never public" test | [`functions/src/lib/doc-vault/no-leak.test.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/doc-vault/no-leak.test.js) |
 
-The container is backed up with the other authored work (weekly full copy and
-daily changes to the out-of-account export, [ADR 0028](../decisions/0028-cosmos-out-of-account-export.md)).
+The container is classed with the other authored work for the out-of-account
+export (a weekly full copy and daily changes once it is switched on,
+[ADR 0028](../decisions/0028-cosmos-out-of-account-export.md)).

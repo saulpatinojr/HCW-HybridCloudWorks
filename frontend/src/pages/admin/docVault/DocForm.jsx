@@ -152,7 +152,7 @@ export default function DocForm({
               value={form.body}
               onChange={field('body')}
               rows={16}
-              spellCheck
+              spellCheck={false}
               className="font-mono text-sm"
               aria-describedby="doc-form-body-hint doc-form-body-size"
             />

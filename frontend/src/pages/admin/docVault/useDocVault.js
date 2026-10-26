@@ -262,7 +262,11 @@ export function useDocVault({ authReady, toast }) {
       () => {
         close();
         loadList(view);
-        toast({ title: 'Deleted for good', description: 'The document and its history are gone.' });
+        toast({
+          title: 'Deleted for good',
+          description:
+            'The document and its history are gone from the vault. Backup copies are kept for up to 35 days, then deleted automatically.',
+        });
         return true;
       }
     );

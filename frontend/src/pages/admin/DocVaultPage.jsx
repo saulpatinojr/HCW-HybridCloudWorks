@@ -65,7 +65,7 @@ const QUESTIONS = {
   forever: {
     title: 'Delete this document for good?',
     description:
-      'The document and all of its earlier versions are removed now. This cannot be undone.',
+      'The document and all of its earlier versions are removed from the vault now. This cannot be undone. Backup copies are kept for up to 35 days, then deleted automatically.',
     confirmLabel: 'Delete forever',
     destructive: true,
   },
