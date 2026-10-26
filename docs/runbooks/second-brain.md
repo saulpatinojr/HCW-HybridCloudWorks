@@ -63,6 +63,9 @@ client registration in the environment's identity inventory.
    the plugin in Obsidian Community plugins. The packaged plugin uses
    Obsidian's desktop runtime and needs no separate Node installation.
    Keep the test vault out of Git.
+   Authentication uses Obsidian's native HTTPS transport for Microsoft's
+   authority; renderer `fetch` is subject to browser CORS and cannot perform
+   the desktop device-code exchange.
 5. Copy connection settings from Second Brain Home, sign in, and enroll only
    sample Markdown notes. Test an offline edit, a rename, concurrent edits,
    deletion/restore, and a local edit of an `HCW/Site` reference. Confirm
