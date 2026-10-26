@@ -61,22 +61,39 @@ reopening Obsidian reused its encrypted session without another sign-in.
 | Original-vault companion | Cached authentication worked; selected notes uploaded without pending changes and creator references downloaded into the managed folder |
 | Private Publish retirement | The last published page was unpublished and retained locally/in backup; the remote published-file count is zero; both hostnames' content endpoints returned empty 401 responses |
 | Hosted owner workspace | Owner confirmed the Second Brain page heading at the production route |
-| Live cited assistant | Owner opened an enrolled idea and confirmed that asking for an article outline produced an outline with source citations |
+| Hosted notes and synchronization | Owner screenshots show the two enrolled notes, a completed index, and zero reported pending changes or conflicts |
+| Access recovery update | [Deployment](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/40305251929) succeeded after [#1402](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1402); unavailable access can be retried and unsaved notes survive a failed capability refresh |
+| Live cited assistant | Owner confirmed a source-citing outline; subsequent review of the response found topic drift and repeated meeting evidence, so source relevance remains an open acceptance check |
 
 Both feature flags remain disabled by default in source, and are enabled only
 for the configured production owner through private workspace variables.
 
-The following acceptance gates remain open: owner confirmation of the hosted
-capture/map journey and explicit draft creation; and a Cosmos backup
-export/restore drill covering the new authored records.
+The following acceptance gates remain open: live verification of the improved
+interactive map and focused assistant retrieval, explicit draft creation, and
+a Cosmos backup export/restore drill covering the new authored records.
 The restore reader now includes containers introduced by subsequent daily
 exports (#1399); its regression passed, while a live restore is still pending.
-The live AI result is owner-reported; its text was not copied into this public
-evidence record. No Cosmos restore is claimed by the checks above.
+The live AI result was reviewed from owner-supplied text; its contents were not
+copied into this public evidence record. The owner supplied an empty unsaved-note
+screen, which does not prove draft creation. No Cosmos restore is claimed above.
 Publish's empty site shells can return HTTP 200; the content endpoint checks,
 not the HTML shell's status, establish that no note text was returned.
 Complete the remaining gates in the
 [rollout runbook](../runbooks/second-brain.md).
+
+### Map and assistant follow-up
+
+[#1406](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1406) replaces
+the static map with a force layout, dragging, pan/zoom, motion controls,
+relationship filters, neighborhood focus, and responsive label placement.
+It also anchors retrieval to the selected idea, reduces duplicate recording
+evidence, and makes citations resolve to exact protected items. Generic
+requests without an identifiable subject ask for context before using AI.
+
+Six local desktop/mobile browser journeys passed, including dragging, zoom,
+relationship filtering, capture, and other-admin denial. Source-retrieval
+regressions and the answer-to-note-to-draft component journey passed. These
+synthetic checks do not replace owner verification after deployment.
 
 ### Remaining restore drill
 
