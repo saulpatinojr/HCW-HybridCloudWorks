@@ -17,6 +17,8 @@ how the owner turns on a tool add-on, the first being the migration
 assessment the site frames at `/tools/migration` ("Tool add-ons", ADR 0035);
 how fast a runc, containerd or Docker Engine advisory is fixed on the host,
 and who does what ("Runtime advisories", #949);
+how the site counts the lab sessions it starts for visitors, what that count
+does and does not cover, and where an admin reads it ("Counting lab starts");
 and how the host becomes an Azure Arc-enabled server in
 `rg-lab-hybrid-prod-cus`, sends heartbeat and `auth`/`authpriv` syslog to the
 Management workspace, and is audited against the Linux security baseline,
@@ -1220,6 +1222,104 @@ Coder Community edition lacks per-user quotas, forced dormancy, and auto-stop en
    - Session duration: 60 minutes (`VISITOR_SESSION_DURATION_MS`).
    - Hard auto-reap: expired sessions are reaped opportunistically on status/start checks, and users can end their session via `DELETE /public/labs/visitor-session?sessionId=...`.
 5. **Emergency Switch:** Set `LABS_VISITOR_SESSIONS_ENABLED="false"` in app settings to instantly close visitor sessions.
+
+### Counting lab starts
+
+The site counts every lab session it starts for a visitor, so that anyone quoting
+a number in a report or letter can quote a real, checkable one. This section says
+exactly what the count is, so that it is not overclaimed.
+
+**What is counted.** One count each time the visitor session broker (the code
+above that creates the visitor's workspace) makes a new session: the moment the
+session record is saved (`startSession` in
+`functions/src/lib/labs/visitor-session.js`). It counts sessions the site
+*created*, whether or not the visitor then did anything in them, and it includes
+any session the owner or a tester starts with the public Start button. Not
+counted: a repeat request that returns the session already running, a page view,
+a refused request (closed door, lab full, daily limit, failed check) and a start
+the Coder host could not create. Also not counted, because the site's server
+never sees them: a signed-in member starting a workspace inside the lab pane, and
+the public *Validate on the lab* runs (a Terraform check, not a lab session).
+
+**Sessions, not people.** Nothing that identifies a person is stored, so someone
+who starts two sessions counts twice. A letter should say "lab sessions", never
+"learners" or "users". The "last 7 days" and "last 30 days" figures include
+today, which is only part of a day so far.
+
+**What is stored.** Plain numbers in the `system` container (a container is a
+table-like collection in the Cosmos database; this one is small, never expires
+and is copied by the weekly export): one document per UTC day,
+`lab-starts:YYYY-MM-DD`, holding `{ day, total, byLab }` where `byLab` maps a lab
+id (for example `terraform-validate-walkthrough`) to a count, and one marker
+document, `lab-starts:meta`, holding the day counting began. The application
+stores no IP address, client key, session id, user id, token, query string or time
+of day. (Cosmos adds its own last-modified stamp to every document it stores; that
+is the database's, not a field the counter writes.)
+`functions/src/lib/labs/lab-starts.test.js` fails if a stored document gains any
+other key. The code is `functions/src/lib/labs/lab-starts.js`. It follows the
+pattern of the legacy-blogs read counter
+(`functions/src/lib/legacy-blogs-telemetry.js`): a plain tally in the `system`
+container, kept as numbers only.
+
+**Counting since.** There is no history to count from: a visitor session's record
+is deleted about two hours after it was last updated (`VISITOR_DOC_TTL_SECONDS`),
+so nothing older than the day this shipped can be added up. The count begins on
+the day the first start is recorded or the card below is first opened, whichever
+comes first, and the card says that day. Do not backfill or estimate earlier
+sessions.
+
+**Read it.** You need to be signed in as an admin account at editor level or
+above.
+
+1. Open [the Labs hub Dashboard](https://hybridcloudworks.com/admin/labs?tab=dashboard).
+   You should see the Labs hub with the **Dashboard** tab selected and, under
+   three small boxes (agents online, jobs queued, jobs in flight), a card titled
+   **Lab sessions started through the website**. If you are signed out you are
+   sent to the sign-in page first; if your account is below editor level the card
+   says it could not be read (see step 4).
+2. Read the four boxes (Today, Last 7 days, Last 30 days, Total), the table with
+   one row per lab that has been started, and the line *Counting since* with a
+   date. A 0 in every box is normal until the first visitor starts a lab. If the
+   card is not there at all, the functions and the site have not been deployed
+   with it yet (the
+   [changelog](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/CHANGELOG.md)
+   entry says when it shipped).
+3. Press **Copy as text for a letter**. You should see a tick on the button and
+   the word *Copied.* beside it. The sentence shown above the button is what was
+   copied: it gives the date range, the real numbers, the day counting began, and
+   says the count is of sessions, not people. It names no vendor. If the clipboard
+   is blocked, the card says *The clipboard is not available here*; select the
+   sentence with the mouse and copy it by hand.
+4. If the card says *The lab session counts could not be read*, press **Try
+   again** and wait a few seconds. If it still fails, read the message under the
+   title. *Forbidden* means your account is not an editor or above, so ask the
+   owner to check your role. Any other failure means the site could not read its
+   store: open the Function App's log stream in the Azure portal and look for
+   `cmsLabsStarts failed`. The code in brackets is the only detail that line
+   keeps, and it never holds personal data.
+
+UTC is the world reference clock, and every day here is a UTC day: *Last 7 days*
+is today and the six days before it, *Last 30 days* is today and the
+twenty-nine before it. A UTC day runs from 19:00 to 19:00 US Central time while
+winter time applies, and from 20:00 to 20:00 while summer time applies.
+
+**If a start is missing from the count.** The counter never blocks a visitor.
+If the store cannot be written, the session is still handed out and the Function
+App logs `visitor-session: lab start not counted (<code>)`, where the code is the
+store's error number. If five attempts in a row lose a race (two starts try to
+update the same day's number at the same moment and one has to try again), the
+start is left out and the log line ends `(contention)` instead. With at most two
+visitor sessions running at once this should be vanishingly rare. Search the
+Function App's logs for `lab start not counted` to see whether either has
+happened. Either way the count is too low, never too high.
+
+**Roll it back.** The counter is two small reads and a write added to the
+broker, plus a read-only route and a card. Revert the pull request that added it
+(the
+[changelog](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/CHANGELOG.md)
+entry under *Unreleased*, *Features* names it). The stored documents are inert
+and can stay or be deleted (the documents whose id starts `lab-starts:` in the
+`system` container).
 
 ## After a merge: the playbook, then the template, at once
 

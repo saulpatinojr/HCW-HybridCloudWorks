@@ -469,6 +469,40 @@ describe("the lab agent registry routes (#740)", () => {
 });
 
 /**
+ * The lab start counts (lib/labs/lab-starts.js). Property 1 proves the route
+ * reaches a guard; this pins the one route, the one verb and the role. It is
+ * a read of aggregate counts for the Labs hub Dashboard card: editor, like the
+ * Labs reads beside it, never public (the counts are for the owner's letters,
+ * not for visitors), and never reachable with an agent's credential. The write
+ * is not a route of its own: it happens inside public/labs/visitor-session.
+ */
+describe("the lab start counts route", () => {
+  const ROUTE = "cms/labs/starts";
+
+  it("is one GET registration and not public", () => {
+    const registrations = [...httpRegistrations.values()].filter(
+      (o) => o.route === ROUTE,
+    );
+    expect(registrations).toHaveLength(1);
+    expect(PUBLIC_ROUTES.has(ROUTE)).toBe(false);
+    expect(registrations[0].methods).toEqual(["GET", "OPTIONS"]);
+  });
+
+  it("answers through requireRole at editor, and a refusal reads nothing", async () => {
+    const options = [...httpRegistrations.values()].find(
+      (o) => o.route === ROUTE,
+    );
+
+    clearGuards();
+    const res = await invoke(options, makeRequest({ method: "GET" }));
+    expect(requireRole).toHaveBeenCalledTimes(1);
+    expect(requireRole.mock.calls[0][1]).toBe("editor");
+    expect(requireAgent).not.toHaveBeenCalled();
+    expect(res?.status).toBe(403);
+  });
+});
+
+/**
  * The Drafts stage, /admin/drafts (owner request 2026-10-03). Property 1
  * proves these reach a guard; this pins the role and the verbs. They create,
  * edit, move and delete content documents, so they sit behind requireRole at

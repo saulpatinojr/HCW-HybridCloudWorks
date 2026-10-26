@@ -22,6 +22,7 @@ import { isSiteOrigin, turnstileConfigured, turnstileSecret, verifyTurnstileToke
 import { utcDay } from '../cloud-tools/history.js';
 import { takeDailyCap } from '../daily-cap.js';
 import { readCoderConfig } from './coder-status.js';
+import { recordLabStart } from './lab-starts.js';
 
 export const VISITOR_SESSION_SWITCH = 'LABS_VISITOR_SESSIONS_ENABLED';
 export const VISITOR_MAX_CONCURRENT_SWITCH = 'LABS_VISITOR_MAX_CONCURRENT';
@@ -438,7 +439,7 @@ export function createVisitorSessionHandlers({
       }
 
       const { labId, turnstileToken } = body || {};
-      if (!labId || !VALID_LAB_WORKSPACES[labId]) {
+      if (typeof labId !== 'string' || !Object.hasOwn(VALID_LAB_WORKSPACES, labId)) {
         return jsonResponse({
           ok: false,
           code: DOOR_CODES.invalid_lab,
@@ -577,6 +578,18 @@ export function createVisitorSessionHandlers({
       };
 
       await store.createDoc('lab_jobs', doc);
+
+      // The start is real from here: count it, once, as plain per-lab-per-day
+      // numbers (lab-starts.js). A counter fault is logged by code only and
+      // never reaches the visitor, whose session already exists.
+      try {
+        const counted = await recordLabStart(store, { labId, nowMs });
+        if (!counted.counted) {
+          context?.error?.(`visitor-session: lab start not counted (${counted.reason})`);
+        }
+      } catch (err) {
+        context?.error?.(`visitor-session: lab start not counted (${err?.code ?? 'error'})`);
+      }
 
       return jsonResponse({
         ok: true,
