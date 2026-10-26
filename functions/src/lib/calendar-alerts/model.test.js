@@ -145,6 +145,9 @@ describe('parseCreateBody', () => {
         '/admin/a b',
         '/admin/<script>',
         '/admin?next=https://evil.example',
+        '/admin/ai-engine/OAuth/callback',
+        '/admin/ai-engine/OAUTH/callback?error=x&error_description=hello',
+        '/admin/some-page/callback',
         '/admin/ai-engine/oauth/callback',
         '/admin/ai-engine/oauth/callback?code=x&state=y',
         '/admin/oauth',
@@ -357,6 +360,21 @@ describe('alertState and presentAlert', () => {
       snoozedUntil: null,
       state: 'open',
     });
+  });
+
+  it('cuts a stored title or note back to its limit on the way out', () => {
+    const presented = presentAlert(
+      {
+        id: 'a1',
+        title: 'T'.repeat(MAX_TITLE_LENGTH + 100),
+        dueDate: '2026-10-30',
+        note: 'n'.repeat(MAX_NOTE_LENGTH + 100),
+        status: 'open',
+      },
+      TODAY
+    );
+    expect(presented.title).toHaveLength(MAX_TITLE_LENGTH);
+    expect(presented.note).toHaveLength(MAX_NOTE_LENGTH);
   });
 
   it('fills a field a hand-made row lacks with its empty value', () => {

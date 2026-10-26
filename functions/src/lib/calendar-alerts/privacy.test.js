@@ -171,6 +171,29 @@ describe('nothing but the alerts module itself names the alerts', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('reaches the Calendar read only through the one editor-gated route, built with read functions only', () => {
+    // The Calendar read now carries the alerts. A new timer, feed or public
+    // route that imported it would carry them without naming them, so the set
+    // of importers is pinned, and the one production wiring is read-only.
+    const importers = sourceFiles()
+      .map((path) => relative(SRC, path))
+      .filter((file) => !file.startsWith(`lib${sep}calendar`) && !file.startsWith(`lib${sep}reminders`))
+      .filter((file) =>
+        /from '\.{1,2}\/(lib\/)?calendar(\/collectors)?\.js'/.test(readFileSync(join(SRC, file), 'utf8'))
+      );
+    // The decision centre borrows one helper (isContainerMissing), not a collector.
+    expect(importers).toEqual([`functions${sep}calendar-http.js`, `lib${sep}decision-center${sep}sources.js`]);
+    expect(readFileSync(join(SRC, 'lib', 'decision-center', 'sources.js'), 'utf8')).toMatch(
+      /import \{ isContainerMissing \} from '\.\.\/calendar\/collectors\.js'/
+    );
+
+    const wiring = readFileSync(join(SRC, 'functions', 'calendar-http.js'), 'utf8');
+    expect(wiring).toMatch(/store: \{ queryDocs, readDoc \}/);
+    for (const write of ['createDoc', 'replaceDocIfMatch', 'upsertDoc', 'patchDoc', 'deleteDoc']) {
+      expect(wiring, write).not.toContain(write);
+    }
+  });
+
   it('is not imported by a module that serves a public route', () => {
     const publicModules = [
       'lib/public-reads.js',

@@ -69,8 +69,12 @@ const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F
 const ANY_CONTROL_CHARACTER = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
 /** Anything but printable ASCII with no space: an address is percent-encoded, never raw. */
 const NOT_ADDRESS_CHARACTER = /[^!-~]/;
-/** The OAuth callback acts on its query (code, state), so an alert may not point at it. */
-const OAUTH_SEGMENT = /(^|\/)oauth(\/|$)/;
+/**
+ * The OAuth callback acts on its query (code, state), so an alert may not point
+ * at it. Matched in any case: the portal's router reads paths case-insensitively,
+ * so /OAuth/ reaches the same page as /oauth/.
+ */
+const OAUTH_SEGMENT = /(^|\/)(oauth|callback)(\/|$)/i;
 
 /** Thrown by a check here; the handler turns it into a 400 (authored, #945). */
 export class CalendarAlertValidationError extends AuthoredError {
@@ -387,11 +391,14 @@ function storedLink(value) {
 export function presentAlert(row, today) {
   return {
     id: row.id,
-    title: row.title.replace(new RegExp(ANY_CONTROL_CHARACTER, 'g'), ' '),
+    title: row.title.slice(0, MAX_TITLE_LENGTH).replace(new RegExp(ANY_CONTROL_CHARACTER, 'g'), ' '),
     dueDate: row.dueDate,
     dueTime: TIME_PATTERN.test(row.dueTime) ? row.dueTime : null,
     link: storedLink(row.link),
-    note: typeof row.note === 'string' ? row.note.replace(new RegExp(CONTROL_CHARACTERS, 'g'), ' ') : '',
+    note:
+      typeof row.note === 'string'
+        ? row.note.slice(0, MAX_NOTE_LENGTH).replace(new RegExp(CONTROL_CHARACTERS, 'g'), ' ')
+        : '',
     status: row.status,
     snoozedUntil: parseDateOnly(row.snoozedUntil) === null ? null : row.snoozedUntil,
     doneAt: typeof row.doneAt === 'string' ? row.doneAt : null,

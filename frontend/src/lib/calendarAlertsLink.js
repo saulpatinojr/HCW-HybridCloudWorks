@@ -24,8 +24,15 @@ export function safeAlertLink(link) {
       ? /^\?[A-Za-z0-9._~%=&-]*$/.test(link.slice(path.length))
       : true;
     const segments = path.split('/');
-    // The OAuth callback acts on its query (code, state): an alert may not aim at it.
-    const safe = inside && query && !segments.includes('..') && !segments.includes('oauth');
+    // The OAuth callback acts on its query (code, state): an alert may not aim at it,
+    // in any case, because the router reads paths case-insensitively.
+    const lower = segments.map((segment) => segment.toLowerCase());
+    const safe =
+      inside &&
+      query &&
+      !lower.includes('..') &&
+      !lower.includes('oauth') &&
+      !lower.includes('callback');
     return safe ? { kind: 'admin', href: link } : null;
   }
   try {

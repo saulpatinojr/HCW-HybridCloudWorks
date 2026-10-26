@@ -236,6 +236,7 @@ read.
 ## Rollback
 
 Revert the pull request that added it and deploy. The alerts document stays in
-`admin_config` and does no harm; nothing else reads it. To remove the data as
-well, delete the item `calendar_alerts` from the `admin_config` container in
-the portal's Cosmos data explorer.
+`admin_config` and does no harm: after the revert no part of the application
+reads it (the weekly backup copies it, as it copies every document in that
+container). To remove the data as well, delete the item `calendar_alerts` from
+the `admin_config` container in the portal's Cosmos data explorer.

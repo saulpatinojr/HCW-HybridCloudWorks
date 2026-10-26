@@ -10,17 +10,9 @@ import { ChevronLeft, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 import { KINDS, VIEWS, kindMeta, rangeLabel } from './calendarModel';
 
 const VIEW_LABELS = { month: 'Month', week: 'Week', agenda: 'Agenda' };
-const STATUSES = [
-  'scheduled',
-  'published',
-  'sent',
-  'failed',
-  'deadline',
-  // The owner's alerts
-  'open',
-  'snoozed',
-  'done',
-];
+const STATUSES = ['scheduled', 'published', 'sent', 'failed', 'deadline'];
+/** The owner's alerts have statuses of their own, offered where alerts can be shown. */
+const ALERT_STATUSES = ['open', 'snoozed', 'done'];
 
 export default function CalendarToolbar({
   view,
@@ -156,11 +148,13 @@ export default function CalendarToolbar({
             className="h-7 rounded-md border border-input bg-background px-1.5 text-xs"
           >
             <option value="">Any</option>
-            {STATUSES.map((status) => (
-              <option key={status} value={status} className="capitalize">
-                {status}
-              </option>
-            ))}
+            {(kinds.includes('alert') ? [...STATUSES, ...ALERT_STATUSES] : STATUSES).map(
+              (status) => (
+                <option key={status} value={status} className="capitalize">
+                  {status}
+                </option>
+              )
+            )}
           </select>
         </label>
         <label className="flex items-center gap-1">

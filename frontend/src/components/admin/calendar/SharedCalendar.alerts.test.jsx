@@ -11,6 +11,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import SharedCalendar from './SharedCalendar';
 import CalendarItemChip from './CalendarItemChip';
 import { KINDS, findConflicts, isReschedulable, itemStatus, kindMeta } from './calendarModel';
+import { sameSlotItems } from './ScheduleDialog';
 
 const getJSON = vi.fn();
 const postJSON = vi.fn();
@@ -111,6 +112,32 @@ describe('the alert kind', () => {
     expect(isReschedulable({ ...docker, status: 'scheduled' })).toBe(false);
     const timedAlert = { ...docker, allDay: false, start: content.start };
     expect(findConflicts([content, timedAlert]).size).toBe(0);
+  });
+
+  it('is not counted as sharing a slot when content is scheduled at its time', () => {
+    const when = new Date(content.start);
+    const timedAlert = { ...docker, allDay: false, start: content.start };
+    expect(sameSlotItems([timedAlert], when, null)).toEqual([]);
+    expect(
+      sameSlotItems([timedAlert, content], when, 'someone-else').map((entry) => entry.kind)
+    ).toEqual(['content']);
+  });
+
+  it('offers the alert statuses on the full calendar and not on an embed that cannot show alerts', async () => {
+    const full = renderCalendar();
+    await chip();
+    const statusOptions = () =>
+      [...screen.getByLabelText(/Status/i).querySelectorAll('option')].map(
+        (option) => option.value
+      );
+    expect(statusOptions()).toEqual(expect.arrayContaining(['open', 'snoozed', 'done']));
+    full.unmount();
+
+    getJSON.mockResolvedValue({ ok: true, items: [content], warnings: [] });
+    renderCalendar({ kinds: ['newsletter', 'content'] });
+    await screen.findByRole('button', { name: /Content: Landing zones/ });
+    expect(statusOptions()).not.toContain('open');
+    expect(statusOptions()).toContain('scheduled');
   });
 
   it('draws as a button that cannot be dragged', () => {

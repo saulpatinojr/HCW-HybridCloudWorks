@@ -593,6 +593,31 @@ describe('PATCH: edit, done, snooze', () => {
   });
 });
 
+describe('PATCH on the starting alert before any list read has saved it', () => {
+  it('saves it with the change instead of answering 404, as the Calendar can show it first', async () => {
+    const ctx = setup();
+    const response = await ctx.handlers.update(
+      makeRequest({ params: { alertId: SEED_ID }, body: { done: true } }),
+      ctx.context
+    );
+    expect(response.status).toBe(200);
+    expect(parse(response).alert).toMatchObject({ id: SEED_ID, status: 'done' });
+    expect(stored(ctx.store)).toMatchObject({ seeded: [SEED_ID] });
+    const listed = parse(await ctx.handlers.list(makeRequest(), ctx.context)).alerts;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ id: SEED_ID, status: 'done' });
+  });
+
+  it('still answers 404 for an id that is not an alert', async () => {
+    const ctx = setup();
+    const response = await ctx.handlers.update(
+      makeRequest({ params: { alertId: 'nothing-here' }, body: { done: true } }),
+      ctx.context
+    );
+    expect(response.status).toBe(404);
+  });
+});
+
 describe('DELETE', () => {
   it('removes an alert, answers its id, and then answers 404', async () => {
     const ctx = setup();
@@ -602,7 +627,8 @@ describe('DELETE', () => {
     const first = await ctx.handlers.remove(makeRequest({ params: { alertId: alert.id } }), ctx.context);
     expect(first.status).toBe(200);
     expect(parse(first)).toEqual({ ok: true, id: alert.id });
-    expect(stored(ctx.store).alerts).toEqual([]);
+    // The write also saved the starting alert, which no list read had saved yet.
+    expect(stored(ctx.store).alerts.map((row) => row.id)).toEqual([SEED_ID]);
     const second = await ctx.handlers.remove(makeRequest({ params: { alertId: alert.id } }), ctx.context);
     expect(second.status).toBe(404);
   });
@@ -613,7 +639,16 @@ describe('DELETE', () => {
       await ctx.handlers.create(makeRequest({ body: { title: 'Plain', dueDate: '2026-11-01' } }), ctx.context)
     );
     await ctx.handlers.remove(makeRequest({ params: { alertId: alert.id } }), ctx.context);
-    expect(stored(ctx.store).seeded).toEqual([]);
+    expect(stored(ctx.store).seeded).toEqual([SEED_ID]);
+    expect(stored(ctx.store).seeded).not.toContain(alert.id);
+  });
+
+  it('can delete the starting alert before any list read has saved it, and it stays gone', async () => {
+    const ctx = setup();
+    const removed = await ctx.handlers.remove(makeRequest({ params: { alertId: SEED_ID } }), ctx.context);
+    expect(removed.status).toBe(200);
+    expect(stored(ctx.store)).toMatchObject({ alerts: [], seeded: [SEED_ID] });
+    expect(parse(await ctx.handlers.list(makeRequest(), ctx.context)).alerts).toEqual([]);
   });
 
   it('answers 404 for an id that cannot be an id', async () => {

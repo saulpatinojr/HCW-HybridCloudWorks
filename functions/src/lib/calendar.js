@@ -54,9 +54,10 @@ export const CALENDAR_KINDS = Object.freeze([
 export const MAX_WINDOW_DAYS = 100;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// The answer can carry the owner's private alerts (kind alert), so no cache may keep it.
 const json = (status, body) => ({
   status,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
   body: JSON.stringify(body),
 });
 

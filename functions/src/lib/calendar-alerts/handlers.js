@@ -35,6 +35,7 @@ import {
   CalendarAlertTooLargeError,
   CalendarAlertValidationError,
   applyPatch,
+  applySeeds,
   assertListWeight,
   assertRoomFor,
   compareAlerts,
@@ -191,7 +192,10 @@ export function createCalendarAlertHandlers({
         const today = dateOnly(now());
         const { result } = await changeAlerts(
           store,
-          (state) => {
+          (stored) => {
+            // The Calendar can show a starting alert before any list read has
+            // saved it; acting on it saves it, in the same write.
+            const { state } = applySeeds(stored, { at });
             const row = state.alerts.find((entry) => entry?.id === target.id);
             if (!row || !isStoredAlert(row)) throw new CalendarAlertNotFoundError();
             const next = applyPatch(row, patch, { today, at });
@@ -223,9 +227,11 @@ export function createCalendarAlertHandlers({
       try {
         const target = alertIdOf(request);
         if (target.error) throw target.error;
+        const at = now().toISOString();
         const { result } = await changeAlerts(
           store,
-          (state) => {
+          (stored) => {
+            const { state } = applySeeds(stored, { at });
             const row = state.alerts.find((entry) => entry?.id === target.id);
             if (!row) throw new CalendarAlertNotFoundError();
             return { write: true, state: withoutAlert(state, target.id), result: row };

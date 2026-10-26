@@ -359,6 +359,8 @@ describe('route', () => {
     const res = await h.read(request({ from: FROM.toISOString(), to: TO.toISOString() }), context);
     const body = JSON.parse(res.body);
     expect(res.status).toBe(200);
+    // The answer can carry the owner's private alerts, so no cache may keep it.
+    expect(res.headers['Cache-Control']).toBe('private, no-store');
     expect(body.items).toHaveLength(1);
     expect(body.warnings).toEqual(['speaking: could not be read (Error)']);
     expect(body.total).toBe(1);
