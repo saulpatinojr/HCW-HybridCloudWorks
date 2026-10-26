@@ -95,6 +95,13 @@ relationship filtering, capture, and other-admin denial. Source-retrieval
 regressions and the answer-to-note-to-draft component journey passed. These
 synthetic checks do not replace owner verification after deployment.
 
+After integrating current main, the follow-up passed 5,495 frontend tests
+on Node 26.10 and 7,200 Functions tests on Node 24.20. Line coverage was
+77.79% and 94.61%, respectively, above the unchanged committed thresholds.
+The first concurrent local coverage attempt had Windows worker-start failures;
+sequential runs with four workers completed successfully. Required CI and
+the coverage job also passed for the merged follow-up.
+
 ### Remaining restore drill
 
 The first scheduled export containing `brain_records` had not run at the time
