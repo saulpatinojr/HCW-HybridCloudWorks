@@ -114,8 +114,18 @@ export function generateVisitorCredentials() {
   return { username, password: cred, email };
 }
 
+/**
+ * A signal that aborts a Coder call after `config.timeoutMs` (default
+ * CODER_CALL_TIMEOUT_MS for a delete, CODER_PROVISION_TIMEOUT_MS for the calls
+ * that provision a session), so a Coder that hangs cannot hold a request open.
+ * None of the Coder calls had one before (#1388).
+ */
+const coderTimeout = (config, fallbackMs = CODER_CALL_TIMEOUT_MS) =>
+  AbortSignal.timeout(config?.timeoutMs ?? fallbackMs);
+
 export async function createVisitorCoderUser(fetchImpl, config, { username, email, password }) {
   const res = await fetchImpl(`${config.base}/api/v2/users`, {
+    signal: coderTimeout(config, CODER_PROVISION_TIMEOUT_MS),
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -139,6 +149,7 @@ export async function createVisitorCoderUser(fetchImpl, config, { username, emai
 
 export async function getTemplateByName(fetchImpl, config, templateName = 'hcw-lab') {
   const res = await fetchImpl(`${config.base}/api/v2/templates`, {
+    signal: coderTimeout(config, CODER_PROVISION_TIMEOUT_MS),
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -163,6 +174,7 @@ export async function createVisitorWorkspace(
 ) {
   const template = await getTemplateByName(fetchImpl, config, templateName);
   const orgRes = await fetchImpl(`${config.base}/api/v2/organizations`, {
+    signal: coderTimeout(config, CODER_PROVISION_TIMEOUT_MS),
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -179,8 +191,9 @@ export async function createVisitorWorkspace(
   }
 
   const res = await fetchImpl(
-    `${config.base}/api/v2/organizations/${defaultOrg.id}/members/${userId}/workspaces`,
+    `${config.base}/api/v2/organizations/${encodeURIComponent(defaultOrg.id)}/members/${encodeURIComponent(userId)}/workspaces`,
     {
+      signal: coderTimeout(config, CODER_PROVISION_TIMEOUT_MS),
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -203,41 +216,82 @@ export async function createVisitorWorkspace(
   return { workspace, accessUrl };
 }
 
+/**
+ * Ask Coder to delete a workspace. True when Coder accepted it or the
+ * workspace is already gone (404 or 410); false for anything else, a timeout
+ * included. The sessions use the same call through `cleanUpCoder`, which also
+ * keeps the reason for its log line.
+ */
 export async function deleteVisitorWorkspace(fetchImpl, config, workspaceId) {
-  try {
-    const res = await fetchImpl(`${config.base}/api/v2/workspaces/${workspaceId}/builds`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'Coder-Session-Token': config.token,
-      },
-      body: JSON.stringify({ transition: 'delete' }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return (await deleteWorkspaceCall(fetchImpl, config, workspaceId)).confirmed;
 }
 
+/** Ask Coder to delete a user: true when accepted or already gone, false otherwise. */
 export async function deleteVisitorUser(fetchImpl, config, userId) {
-  try {
-    const res = await fetchImpl(`${config.base}/api/v2/users/${userId}`, {
-      method: 'DELETE',
-      headers: {
-        Accept: 'application/json',
-        'Coder-Session-Token': config.token,
-      },
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return (await deleteUserCall(fetchImpl, config, userId)).confirmed;
 }
 
 const SESSION_CONTAINER = 'lab_jobs';
 
-/** How many times a finish is tried when another writer keeps changing the record. */
+/**
+ * A session's life, in `status` (#1388).
+ *
+ *   active ──claim──▶ ending ──both Coder deletes confirmed──▶ ended | expired
+ *                       │
+ *                       └─ Coder has not confirmed yet ─▶ cleanup_pending ──retry──▶ ending ...
+ *                                                              │
+ *                                          MAX_CLEANUP_ATTEMPTS tries used ─▶ cleanup_failed
+ *
+ * `ended` (the visitor pressed End) and `expired` (the sweep found it past its
+ * hour) are saved only once Coder has confirmed that the workspace and the
+ * user are gone. Until then the record keeps the ids it needs to try again, and
+ * says which half is done (`workspaceGone`, `userGone`), so a retry does not
+ * ask Coder to delete a workspace twice.
+ *
+ * Why a session so often waits: Coder deletes a workspace by starting a build
+ * that finishes later, and refuses to delete a user who still has workspaces
+ * (HTTP 417), so the user delete straight after an accepted workspace delete
+ * is refused for most sessions. That is the normal case, not a fault, and the
+ * retry is what finishes it.
+ */
+export const SESSION_STATUS = Object.freeze({
+  active: 'active',
+  ending: 'ending',
+  cleanupPending: 'cleanup_pending',
+  ended: 'ended',
+  expired: 'expired',
+  cleanupFailed: 'cleanup_failed',
+});
+
+/** Tries at a clean-up before it is given up (and left for a person, see the runbook). */
+export const MAX_CLEANUP_ATTEMPTS = 5;
+/** After try n that Coder did not confirm, the next one waits n times this. */
+export const CLEANUP_RETRY_BASE_MS = 2 * 60 * 1000;
+/**
+ * How long a claim ('ending') holds before another request may take it over.
+ * Longer than the slowest sweep: MAX_SWEEP_SESSIONS sessions, each with two
+ * Coder calls that may each wait out CODER_CALL_TIMEOUT_MS.
+ */
+export const CLEANUP_LEASE_MS = 5 * 60 * 1000;
+/** The longest one Coder delete may take. A Coder that hangs must not hold a request open. */
+export const CODER_CALL_TIMEOUT_MS = 10 * 1000;
+/** The longest one Coder call that provisions a session may take (creating a user or a workspace is slower than deleting one). */
+export const CODER_PROVISION_TIMEOUT_MS = 30 * 1000;
+/** At most one sweep per handler set (per worker) in this time. */
+export const RETRY_SWEEP_EVERY_MS = 60 * 1000;
+/** The most sessions one sweep takes up, so a long list cannot hold a request open; the rest wait for the next sweep. */
+export const MAX_SWEEP_SESSIONS = 10;
+/**
+ * A record waiting for a retry, or being cleaned, outlives the usual two hours
+ * so the retry can still find it. The retry runs when someone visits (nothing
+ * else triggers it), so this is a week, not a day: a quiet weekend must not let
+ * the record, and with it the only note of what is still in Coder, age out.
+ */
+export const VISITOR_PENDING_DOC_TTL_SECONDS = 7 * 24 * 60 * 60;
+/** A given-up record keeps its Coder ids for a week, so a person can finish the clean-up. */
+export const VISITOR_FAILED_DOC_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/** How many times a claim is tried when another writer keeps changing the record. */
 const FINISH_ATTEMPTS = 3;
 
 /** A write that lost to another writer: the record changed (412) or is gone (404). */
@@ -253,90 +307,339 @@ function errorKind(error) {
   return /^[A-Za-z0-9_.-]{1,40}$/.test(kind) ? kind : 'error';
 }
 
+/** Let go of an answer's body without reading it; a failure to is no failure of the call. */
+async function releaseBody(res) {
+  try {
+    await res.body?.cancel();
+  } catch {
+    // The status is already read.
+  }
+}
+
 /**
- * Save that a session is over (`ended` by its visitor, `expired` by the
- * reaper), under the ETag the session was read with.
+ * One delete call to Coder, with a timeout. `confirmed` is true when Coder
+ * accepted it, or answered 404 or 410 (the thing is already gone: a delete
+ * that finds nothing to delete has done its job). `kind` says what happened
+ * in a few safe words for a log line: `ok`, `gone`, `HTTP 417`, `timeout`,
+ * `network`. Never the response text and never an id.
+ */
+async function coderDelete(fetchImpl, config, url, init) {
+  try {
+    const res = await fetchImpl(url, { ...init, signal: coderTimeout(config) });
+    // Only the status matters; let go of the body so the connection is not held for it.
+    await releaseBody(res);
+    if (res.ok) return { confirmed: true, kind: 'ok' };
+    if (res.status === 404 || res.status === 410) return { confirmed: true, kind: 'gone' };
+    return { confirmed: false, kind: Number.isInteger(res.status) ? `HTTP ${res.status}` : 'refused' };
+  } catch (error) {
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    return { confirmed: false, kind: timedOut ? 'timeout' : 'network' };
+  }
+}
+
+const deleteWorkspaceCall = (fetchImpl, config, workspaceId) =>
+  coderDelete(fetchImpl, config, `${config.base}/api/v2/workspaces/${encodeURIComponent(workspaceId)}/builds`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Coder-Session-Token': config.token,
+    },
+    body: JSON.stringify({ transition: 'delete' }),
+  });
+
+const deleteUserCall = (fetchImpl, config, userId) =>
+  coderDelete(fetchImpl, config, `${config.base}/api/v2/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    headers: {
+      Accept: 'application/json',
+      'Coder-Session-Token': config.token,
+    },
+  });
+
+/**
+ * Look a visitor's workspace up by its owner's name and its own name, for a
+ * record that has no workspace id: a start whose workspace call gave no answer
+ * (it timed out, say) after Coder may have gone on and made the workspace, so
+ * nothing tells us its id. Coder's API: `GET /api/v2/users/{user}/workspace/{workspacename}`
+ * answers the workspace, or 404 when there is none (a deleted one too, unless
+ * `include_deleted` is asked for, which it is not).
+ * https://coder.com/docs/reference/api/workspaces (read 2026-10-26)
  *
- * `replaceDocIfMatch(containerName, document, options)` takes the whole
- * document, `_etag` inside it, and the partition key in the options. This was
- * once called as `(container, id, document, etag)` in two places, which the
- * real store cannot take, so neither a stop nor a reap ever saved (#1383).
- * Both now go through here, so the call is written once.
+ * It answers one of:
+ *  - `{ id, kind: 'found' }`: the workspace, and only when it is the visitor's
+ *    own: its name is the one this record was made for and its owner is the
+ *    Coder user this record made. Anything else is `lookup mismatch` and is
+ *    never deleted.
+ *  - `{ missing: true, kind: 'not found' }`: Coder has no such workspace.
+ *  - `{ kind }`: Coder did not say (`lookup HTTP 500`, `lookup timeout`,
+ *    `lookup network`, `lookup mismatch`). Never an id or any of Coder's text.
+ */
+async function lookUpWorkspaceCall(fetchImpl, config, session) {
+  const url =
+    `${config.base}/api/v2/users/${encodeURIComponent(session.coderUsername)}` +
+    `/workspace/${encodeURIComponent(session.workspaceName)}`;
+  try {
+    const res = await fetchImpl(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json', 'Coder-Session-Token': config.token },
+      signal: coderTimeout(config),
+    });
+    if (res.status === 404 || res.status === 410) {
+      await releaseBody(res);
+      return { missing: true, kind: 'not found' };
+    }
+    if (!res.ok) {
+      await releaseBody(res);
+      return { kind: Number.isInteger(res.status) ? `lookup HTTP ${res.status}` : 'lookup refused' };
+    }
+    const workspace = await res.json();
+    const ours =
+      typeof workspace?.id === 'string' &&
+      workspace.id !== '' &&
+      workspace.name === session.workspaceName &&
+      workspace.owner_id === session.coderUserId;
+    return ours ? { id: workspace.id, kind: 'found' } : { kind: 'lookup mismatch' };
+  } catch (error) {
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    return { kind: timedOut ? 'lookup timeout' : 'lookup network' };
+  }
+}
+
+/**
+ * Can this record be taken up by a stop or the sweep now? An `active` one, or
+ * one that is cleaning up (`ending`: a claim whose lease has run out) or
+ * waiting for its next try (`cleanup_pending`) whose time has come.
+ */
+function claimable(record, nowIso) {
+  if (record.status === SESSION_STATUS.active) return true;
+  const waiting = [SESSION_STATUS.ending, SESSION_STATUS.cleanupPending].includes(record.status);
+  return waiting && typeof record.retryAt === 'string' && record.retryAt <= nowIso;
+}
+
+/**
+ * Take a session for clean-up, under the ETag it was read with, so that only
+ * one request does the Coder calls: the winner gets `ending`, with a lease, a
+ * count of tries and a longer `ttl`; the loser is refused with a 412.
  *
- * Losing the race is not a failure. A stop and a reap, or two stops, can reach
- * the same session at once; the loser's write is refused with a 412, and the
- * loser reads the record again: if it is no longer `active`, the other writer
- * finished it and the loser has nothing left to do. If it is still active,
- * something else changed it and the finish is tried again on the new version.
+ * Losing is not a failure. A stop and a sweep, or two stops, reach the same
+ * session at once. The loser reads the record again: no longer claimable means
+ * the winner has it (`taken-elsewhere`), gone means its `ttl` ran out
+ * (`gone`); still claimable means something else changed it, and the claim is
+ * tried again on the new version, up to FINISH_ATTEMPTS times, then `changed`.
  * Any other error is a real failure and is thrown.
  *
- * @param {object} store
- * @param {object} session - the stored record, with the `_etag` it was read with
- * @param {'ended' | 'expired'} status
- * @param {string} endedAt - ISO time
- * @returns {Promise<'written' | 'finished-elsewhere' | 'gone' | 'changed'>}
- *   `written`: this call saved it. `finished-elsewhere`: it was already ended
- *   or expired by another writer. `gone`: its record has aged out (its `ttl`).
- *   `changed`: it kept changing and is still active, so nothing was saved.
+ * `replaceDocIfMatch(containerName, document, options)` takes the whole
+ * document, `_etag` inside it, and the partition key in the options (#1383).
+ *
+ * @returns {Promise<{ outcome: 'claimed', session: object } | { outcome: 'taken-elsewhere' | 'gone' | 'changed' }>}
  */
-async function finishSession(store, session, status, endedAt) {
+async function claimSession(store, session, endStatus, nowMs) {
+  const claimOf = (record) => ({
+    ...record,
+    status: SESSION_STATUS.ending,
+    endStatus: record.endStatus ?? endStatus,
+    endedAt: record.endedAt ?? new Date(nowMs).toISOString(),
+    cleanupAttempts: (record.cleanupAttempts ?? 0) + 1,
+    retryAt: new Date(nowMs + CLEANUP_LEASE_MS).toISOString(),
+    ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+  });
+
   if (typeof store.replaceDocIfMatch !== 'function') {
     // A store without conditional writes, which the Functions app never has
-    // (labs-public-http.js hands it cosmos-client.js's): unconditional. One
-    // that cannot save at all must not report that it did.
+    // (labs-public-http.js hands it cosmos-client.js's): unconditional, so no
+    // protection against a second request. One that cannot save at all must
+    // not report that it did.
     if (typeof store.upsertDoc !== 'function') {
       throw new TypeError('The store given to the visitor sessions cannot save a session record.');
     }
-    await store.upsertDoc(SESSION_CONTAINER, { ...session, status, endedAt });
-    return 'written';
+    const claimed = claimOf(session);
+    await store.upsertDoc(SESSION_CONTAINER, claimed);
+    return { outcome: 'claimed', session: claimed };
   }
 
+  const nowIso = new Date(nowMs).toISOString();
   let current = session;
   for (let attempt = 0; attempt < FINISH_ATTEMPTS; attempt += 1) {
     try {
-      await store.replaceDocIfMatch(
-        SESSION_CONTAINER,
-        { ...current, status, endedAt },
-        { partitionKey: current.id }
-      );
-      return 'written';
+      const saved = await store.replaceDocIfMatch(SESSION_CONTAINER, claimOf(current), {
+        partitionKey: current.id,
+      });
+      return { outcome: 'claimed', session: saved };
     } catch (error) {
       if (!lostRace(error)) throw error;
     }
     current = await store.readDoc(SESSION_CONTAINER, session.id, session.id);
-    if (!current) return 'gone';
-    if (current.status !== 'active') return 'finished-elsewhere';
+    if (!current) return { outcome: 'gone' };
+    if (!claimable(current, nowIso)) return { outcome: 'taken-elsewhere' };
   }
-  return 'changed';
+  return { outcome: 'changed' };
 }
 
 /**
- * Delete a session's Coder workspace and user. True when Coder accepted both
- * calls, or when there was nothing to call (no broker config, or a record with
- * no workspace or user).
+ * Ask Coder to delete the session's workspace, then its user, skipping a half
+ * an earlier try already got confirmed, and say what it got. The user delete
+ * is attempted straight after an accepted workspace delete (it is sometimes
+ * quick enough) but not after a refused one, which it cannot succeed after.
  *
- * The answer is reported to the caller's log and nothing more: the record is
- * saved as over either way, so a refused delete is not tried again. That is the
- * design this module was written to, and it was hidden while the save never
- * worked (the record stayed `active`, so every later request ran the deletes
- * again). Making the final status depend on a confirmed clean-up is its own
- * change, tracked in #1388.
+ * Nothing to delete counts as done (a record with no workspace or no user). A
+ * session that has something to delete cannot be cleaned without the broker
+ * configuration, so it is not done, and is tried again when there is one.
+ *
+ * A record with no workspace id but with the visitor's Coder user and a
+ * workspace name is a start that failed after the user was made (its workspace
+ * call timed out or was refused). Coder may still have made the workspace, so
+ * it is looked up by owner and name before it is taken as gone. A workspace
+ * the lookup does not find counts as gone for this try only (`workspaceGone`
+ * is not saved): the user delete, which Coder refuses while the user has a
+ * workspace, is the confirmation, and a workspace that turns up later is found
+ * by the next try's lookup.
+ *
+ * @returns {Promise<{ workspaceGone: boolean, workspaceGoneSaved: boolean, workspaceId: string | undefined, userGone: boolean, workspace: string, user: string }>}
+ *   the two halves; `workspaceGoneSaved` is whether `workspaceGone` may be
+ *   written to the record; `workspaceId` is the one the record had or the
+ *   lookup found; and for each half a short safe word for the log (`ok`,
+ *   `gone`, `found`, `not found`, `HTTP 417`, `lookup mismatch`, `timeout`,
+ *   `network`, `skipped`, `unconfigured`, `done`, `none`)
  */
 async function cleanUpCoder(fetchImpl, config, session) {
-  if (!config) return true;
-  let accepted = true;
-  if (session.workspaceId) {
-    accepted = (await deleteVisitorWorkspace(fetchImpl, config, session.workspaceId)) && accepted;
+  const needsLookup =
+    !session.workspaceGone &&
+    !session.workspaceId &&
+    Boolean(session.workspaceName) &&
+    Boolean(session.coderUsername);
+  const nothingToDelete = !session.workspaceId && !needsLookup;
+  const result = {
+    workspaceGone: Boolean(session.workspaceGone) || nothingToDelete,
+    workspaceGoneSaved: Boolean(session.workspaceGone) || nothingToDelete,
+    workspaceId: session.workspaceId,
+    userGone: Boolean(session.userGone) || !session.coderUserId,
+    workspace: session.workspaceGone ? 'done' : 'none',
+    user: session.userGone ? 'done' : 'none',
+  };
+  if (needsLookup) {
+    if (!config) {
+      result.workspace = 'unconfigured';
+    } else {
+      const found = await lookUpWorkspaceCall(fetchImpl, config, session);
+      result.workspace = found.kind;
+      if (found.id) result.workspaceId = found.id;
+      if (found.missing) result.workspaceGone = true;
+    }
   }
-  if (session.coderUserId) {
-    accepted = (await deleteVisitorUser(fetchImpl, config, session.coderUserId)) && accepted;
+  if (!result.workspaceGone && result.workspaceId) {
+    if (!config) {
+      result.workspace = 'unconfigured';
+    } else {
+      const call = await deleteWorkspaceCall(fetchImpl, config, result.workspaceId);
+      result.workspaceGone = call.confirmed;
+      result.workspaceGoneSaved = call.confirmed;
+      result.workspace = call.kind;
+    }
   }
-  return accepted;
+  if (!result.userGone) {
+    if (!config) {
+      result.user = 'unconfigured';
+    } else if (!result.workspaceGone) {
+      result.user = 'skipped';
+    } else {
+      const call = await deleteUserCall(fetchImpl, config, session.coderUserId);
+      result.userGone = call.confirmed;
+      result.user = call.kind;
+    }
+  }
+  return result;
 }
 
 /**
- * Delete the Coder workspace and user of every session past `expiresAt`, and
- * save each as `expired`.
+ * End one session: claim it, delete its Coder workspace and user, and save it
+ * as over only when Coder has confirmed both. Used by the stop route (a
+ * visitor pressing End), by the sweep for a session past its hour, and by the
+ * sweep again for one still waiting for its clean-up to be finished.
+ *
+ * @param {object} store
+ * @param {Function} fetchImpl
+ * @param {{ base: string, token: string } | null} config - null: Coder cannot be called
+ * @param {object} session - the stored record, with the `_etag` it was read with
+ * @param {object} options
+ * @param {'ended' | 'expired'} options.endStatus - what it becomes (a retried record keeps the one it was first given)
+ * @param {number} options.nowMs
+ * @param {(line: string) => void} [options.log] - content-free lines only
+ * @returns {Promise<{ outcome: 'done' | 'pending' | 'given-up' | 'taken-elsewhere' | 'gone' | 'changed' }>}
+ *   `done`: both deletes confirmed and the record is saved as over. `pending`:
+ *   not yet, it will be tried again. `given-up`: the last try was used. The
+ *   rest: another request has it, its record has aged out, or it kept changing.
+ */
+async function endSession(store, fetchImpl, config, session, { endStatus, nowMs, log = null }) {
+  const claim = await claimSession(store, session, endStatus, nowMs);
+  if (claim.outcome !== 'claimed') return { outcome: claim.outcome };
+
+  const claimed = claim.session;
+  const steps = await cleanUpCoder(fetchImpl, config, claimed);
+  const attempts = claimed.cleanupAttempts;
+  const finished = steps.workspaceGone && steps.userGone;
+  const givenUp = !finished && attempts >= MAX_CLEANUP_ATTEMPTS;
+  const nowIso = new Date(nowMs).toISOString();
+
+  const { retryAt: _lease, ...rest } = claimed;
+  // A workspace id the lookup found is kept, so a later try deletes it without looking again.
+  const found = steps.workspaceId ? { workspaceId: steps.workspaceId } : {};
+  let next;
+  if (finished) {
+    next = { ...rest, ...found, status: claimed.endStatus, workspaceGone: true, userGone: true, ttl: VISITOR_DOC_TTL_SECONDS };
+  } else if (givenUp) {
+    next = {
+      ...rest,
+      ...found,
+      status: SESSION_STATUS.cleanupFailed,
+      workspaceGone: steps.workspaceGoneSaved,
+      userGone: steps.userGone,
+      cleanupAt: nowIso,
+      ttl: VISITOR_FAILED_DOC_TTL_SECONDS,
+    };
+  } else {
+    next = {
+      ...rest,
+      ...found,
+      status: SESSION_STATUS.cleanupPending,
+      workspaceGone: steps.workspaceGoneSaved,
+      userGone: steps.userGone,
+      cleanupAt: nowIso,
+      retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS * attempts).toISOString(),
+      ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+    };
+  }
+
+  if (typeof store.replaceDocIfMatch === 'function') {
+    try {
+      await store.replaceDocIfMatch(SESSION_CONTAINER, next, { partitionKey: next.id });
+    } catch (error) {
+      if (!lostRace(error)) throw error;
+      // The record changed while Coder was being called (the lease ran out and
+      // another request took it over, or it aged out). That request owns it now.
+      return { outcome: 'taken-elsewhere' };
+    }
+  } else {
+    await store.upsertDoc(SESSION_CONTAINER, next);
+  }
+
+  if (finished) return { outcome: 'done' };
+  const where = `workspace ${steps.workspace}, user ${steps.user}`;
+  if (givenUp) {
+    log?.(`visitor-session: a session's Coder clean-up was given up after ${attempts} tries (${where})`);
+    return { outcome: 'given-up' };
+  }
+  log?.(
+    `visitor-session: a session's Coder clean-up is not finished (${where}); try ${attempts} of ${MAX_CLEANUP_ATTEMPTS}`
+  );
+  return { outcome: 'pending' };
+}
+
+/**
+ * The sweep. Ends every session past `expiresAt` (saved as `expired` once
+ * Coder confirms its workspace and user are gone), and tries again every
+ * session whose clean-up Coder has not yet confirmed and whose next try is due
+ * (#1388).
  *
  * Never throws for one bad session: a store failure that is not a lost race
  * is counted in `failed` and, when `log` is given, reported by kind only
@@ -346,55 +649,131 @@ async function cleanUpCoder(fetchImpl, config, session) {
  *
  * @param {object} store
  * @param {Function} fetchImpl
- * @param {{ base: string, token: string } | null} config - null skips Coder
+ * @param {{ base: string, token: string } | null} config - null: Coder cannot be called, so sessions that need it stay pending
  * @param {object} [options]
  * @param {string} [options.nowIso]
  * @param {(line: string) => void} [options.log]
- * @returns {Promise<{ reaped: number, failed: number }>} `reaped` counts the
- *   sessions this call saved as expired; one a stop ended first is not counted
+ * @param {number} [options.limit] - the most sessions to take up; the rest wait for the next sweep (default MAX_SWEEP_SESSIONS)
+ * @returns {Promise<{ reaped: number, finished: number, pending: number, failed: number }>}
+ *   `reaped`: sessions past their hour that this call saved as expired.
+ *   `finished`: sessions waiting on a clean-up that this call saved as over.
+ *   `pending`: sessions Coder has not yet confirmed, to be tried again.
+ *   `failed`: given up, kept changing, or could not be saved. One that a stop
+ *   ended first is counted nowhere.
  */
 export async function reapExpiredVisitorSessions(
   store,
   fetchImpl,
   config,
-  { nowIso = new Date().toISOString(), log = null } = {}
+  { nowIso = new Date().toISOString(), log = null, limit = MAX_SWEEP_SESSIONS } = {}
 ) {
-  if (!store?.queryDocs) return { reaped: 0, failed: 0 };
-  const query =
+  const tally = { reaped: 0, finished: 0, pending: 0, failed: 0 };
+  if (!store?.queryDocs) return tally;
+  const nowMs = Date.parse(nowIso);
+
+  const expiredQuery =
     'SELECT * FROM c WHERE c.type = @type AND c.status = @status AND c.expiresAt <= @nowIso';
-  const parameters = [
+  const dueQuery =
+    'SELECT * FROM c WHERE c.type = @type AND c.status = @status AND c.retryAt <= @dueIso';
+  const parametersFor = (status, extra) => [
     { name: '@type', value: VISITOR_JOB_TYPE },
-    { name: '@status', value: 'active' },
-    { name: '@nowIso', value: nowIso },
+    { name: '@status', value: status },
+    extra,
   ];
+
   let expiredSessions = [];
   try {
-    expiredSessions = await store.queryDocs(SESSION_CONTAINER, query, parameters);
+    expiredSessions = await store.queryDocs(
+      SESSION_CONTAINER,
+      expiredQuery,
+      parametersFor(SESSION_STATUS.active, { name: '@nowIso', value: nowIso })
+    );
   } catch (error) {
     // A sweep that never ran must not look like one that found nothing.
     log?.(`visitor-session: the expired sessions could not be listed (${errorKind(error)})`);
-    return { reaped: 0, failed: 0 };
+    return tally;
   }
 
-  let reaped = 0;
-  let failed = 0;
-  for (const session of expiredSessions) {
-    if (!(await cleanUpCoder(fetchImpl, config, session))) {
-      log?.('visitor-session: Coder did not accept every clean-up call for an expired session');
+  // Waiting for a retry, and a claim whose holder never finished (its lease ran out).
+  let due = [];
+  try {
+    for (const status of [SESSION_STATUS.cleanupPending, SESSION_STATUS.ending]) {
+      due.push(
+        ...(await store.queryDocs(
+          SESSION_CONTAINER,
+          dueQuery,
+          parametersFor(status, { name: '@dueIso', value: nowIso })
+        ))
+      );
     }
+  } catch (error) {
+    log?.(`visitor-session: the sessions waiting for a clean-up could not be listed (${errorKind(error)})`);
+    due = [];
+  }
+
+  const work = [
+    ...expiredSessions.map((session) => ({ session, endStatus: SESSION_STATUS.expired, retry: false })),
+    ...due.map((session) => ({ session, endStatus: session.endStatus ?? SESSION_STATUS.expired, retry: true })),
+  ];
+  for (const { session, endStatus, retry } of work.slice(0, limit)) {
     try {
-      const outcome = await finishSession(store, session, 'expired', nowIso);
-      if (outcome === 'written') reaped += 1;
+      const { outcome } = await endSession(store, fetchImpl, config, session, { endStatus, nowMs, log });
+      if (outcome === 'done') tally[retry ? 'finished' : 'reaped'] += 1;
+      if (outcome === 'pending') tally.pending += 1;
+      if (outcome === 'given-up') tally.failed += 1;
       if (outcome === 'changed') {
-        failed += 1;
-        log?.('visitor-session: an expired session kept changing and was not saved');
+        tally.failed += 1;
+        log?.('visitor-session: a session kept changing and was not cleaned up');
       }
     } catch (error) {
-      failed += 1;
-      log?.(`visitor-session: an expired session could not be saved (${errorKind(error)})`);
+      tally.failed += 1;
+      log?.(`visitor-session: a session could not be saved (${errorKind(error)})`);
     }
   }
-  return { reaped, failed };
+  return tally;
+}
+
+/**
+ * Keep a record of a start that failed after Coder made the visitor's user, so
+ * the sweep deletes the user, and the workspace if Coder made one.
+ *
+ * It is a `cleanup_pending` record carrying what the sweep reads: the Coder
+ * user's id and name, the workspace's name (there is no workspace id: the call
+ * that would have given it timed out or was refused), and the retry fields. The
+ * first try waits CLEANUP_RETRY_BASE_MS so that a create Coder is still
+ * finishing can finish. It has no `clientHash` and was never given to a
+ * visitor, so no stop request can reach it: only the sweep does.
+ *
+ * Never throws: the visitor is being answered with a 502 whatever happens
+ * here, and a store that is down must not turn that into something else. The
+ * log says by kind that the note could not be written, and nothing more.
+ */
+async function noteUnfinishedStart(store, { user, fallbackUsername, workspaceName, labId, nowMs, context }) {
+  const nowIso = new Date(nowMs).toISOString();
+  const record = {
+    id: randomUUID(),
+    type: VISITOR_JOB_TYPE,
+    status: SESSION_STATUS.cleanupPending,
+    endStatus: SESSION_STATUS.ended,
+    startFailed: true,
+    labId,
+    coderUserId: user.id,
+    coderUsername: user.username ?? fallbackUsername,
+    workspaceName,
+    createdAt: nowIso,
+    endedAt: nowIso,
+    cleanupAttempts: 0,
+    workspaceGone: false,
+    userGone: false,
+    cleanupAt: nowIso,
+    retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS).toISOString(),
+    ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+  };
+  try {
+    await store.createDoc(SESSION_CONTAINER, record);
+  } catch (error) {
+    context?.error?.(`visitor-session: a failed start could not be noted for clean-up (${errorKind(error)})`);
+  }
 }
 
 /**
@@ -462,6 +841,16 @@ export function createVisitorSessionHandlers({
 }) {
   // Not a stand-in: see assertClientIdentity (#1387).
   assertClientIdentity(identity);
+
+  // The sweep ends sessions past their hour and retries clean-ups Coder has not
+  // yet confirmed. It lists them with queries, and any visitor can cause one
+  // by asking for the status, so it runs at most once in RETRY_SWEEP_EVERY_MS
+  // per worker. It runs only when someone visits: nothing else triggers it.
+  let nextRetrySweepMs = 0;
+  const retrySweepDue = (nowMs) => nowMs >= nextRetrySweepMs;
+  const sweepRan = (nowMs) => {
+    nextRetrySweepMs = nowMs + RETRY_SWEEP_EVERY_MS;
+  };
 
   const jsonResponse = (body, status = 200, headers = {}) => ({
     status,
@@ -531,9 +920,10 @@ export function createVisitorSessionHandlers({
         }, 503);
       }
 
-      // Proactively reap any expired sessions in background
-      const expired = activeSessions.filter((s) => s.expiresAt <= nowIso);
-      if (expired.length > 0) {
+      // Proactively reap any expired sessions, and retry any clean-up Coder has
+      // not confirmed, in background
+      if (retrySweepDue(nowMs)) {
+        sweepRan(nowMs);
         // No `log` here: this runs after the answer is sent, and a Functions
         // context must not be written to once its invocation has ended.
         reapExpiredVisitorSessions(store, fetchImpl, config, { nowIso }).catch(() => {});
@@ -694,13 +1084,21 @@ export function createVisitorSessionHandlers({
           { name: '@status', value: 'active' },
         ]
       );
-      // Reclaim capacity from expired sessions
+      // Reclaim capacity from expired sessions (and, on the way, retry any
+      // clean-up Coder has not confirmed). Waited for only when a session is
+      // past its hour, so its log lines can be written; a retry alone runs
+      // behind the answer, without a log, as the status route's does.
       const expired = activeSessions.filter((s) => s.expiresAt <= nowIso);
-      if (expired.length > 0) {
-        await reapExpiredVisitorSessions(store, fetchImpl, config, {
-          nowIso,
-          log: (line) => context?.warn?.(line),
-        }).catch(() => {});
+      if (retrySweepDue(nowMs)) {
+        sweepRan(nowMs);
+        if (expired.length > 0) {
+          await reapExpiredVisitorSessions(store, fetchImpl, config, {
+            nowIso,
+            log: (line) => context?.warn?.(line),
+          }).catch(() => {});
+        } else {
+          reapExpiredVisitorSessions(store, fetchImpl, config, { nowIso }).catch(() => {});
+        }
       }
 
       const liveSessions = activeSessions.filter((s) => s.expiresAt > nowIso);
@@ -739,6 +1137,19 @@ export function createVisitorSessionHandlers({
         });
       } catch (err) {
         context?.error?.('visitor-session: provisioning failure', err?.message);
+        // The Coder user exists, and Coder may yet make (or already have made)
+        // the workspace whose call gave no answer. No visitor was told of a
+        // session, so nothing else would ever clean either up (#1388).
+        if (user?.id) {
+          await noteUnfinishedStart(store, {
+            user,
+            fallbackUsername: creds.username,
+            workspaceName,
+            labId,
+            nowMs: clock(),
+            context,
+          });
+        }
         return jsonResponse({
           ok: false,
           code: DOOR_CODES.coder_unavailable,
@@ -815,18 +1226,23 @@ export function createVisitorSessionHandlers({
         return notFound();
       }
 
-      // Already ended, or expired by the reaper: whoever finished it did the
-      // Coder clean-up, so a second stop (a double click, a retry) has nothing to do.
-      if (doc.status !== 'active') {
+      // Already over, or another request is cleaning it up, or it is waiting for
+      // its next try: a second stop (a double click, a retry) has nothing to do,
+      // and the answer is the same. A clean-up Coder has not confirmed whose
+      // next try is due is tried again here, by whoever asks next.
+      const nowMs = clock();
+      if (!claimable(doc, new Date(nowMs).toISOString())) {
         return jsonResponse({ ok: true, status: 'ended' });
       }
 
-      if (!(await cleanUpCoder(fetchImpl, readBrokerConfig(env), doc))) {
-        context?.warn?.('visitor-session: Coder did not accept every clean-up call for an ended session');
-      }
-
-      const nowIso = new Date(clock()).toISOString();
-      const outcome = await finishSession(store, doc, 'ended', nowIso);
+      // Only the request that claims the record calls Coder; Coder's answer
+      // decides whether the record is saved as ended or left to be retried, and
+      // either way the visitor's End is answered as done.
+      const { outcome } = await endSession(store, fetchImpl, readBrokerConfig(env), doc, {
+        endStatus: SESSION_STATUS.ended,
+        nowMs,
+        log: (line) => context?.warn?.(line),
+      });
       if (outcome === 'changed') {
         return jsonResponse(
           { ok: false, error: 'The session changed while it was being ended. Please try again.' },

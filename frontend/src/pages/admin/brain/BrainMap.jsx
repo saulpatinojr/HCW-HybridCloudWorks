@@ -1,9 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useReducedMotion } from 'framer-motion';
-import { Pause, Play, Maximize2, Search, Network, ArrowUpRight, X } from 'lucide-react';
+import { Pause, Play, Maximize2, Search, Network, ArrowUpRight, X, Expand } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { graphModel, visibleGraph, NODE_TYPES, EDGE_TYPES } from './graphModel';
 import GraphCanvas from './GraphCanvas';
+import MapAppearance from './MapAppearance';
+import { PALETTES, loadAppearance, saveAppearance, nodeHeading } from './mapPreferences';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 
 function Connections({ model, focusId, onFocus }) {
   const connected = model.links.filter((e) => e.from === focusId || e.to === focusId);
@@ -37,7 +40,7 @@ function Connections({ model, focusId, onFocus }) {
     </div>
   );
 }
-function MapInspector({ model, focusId, onFocus, onSelect }) {
+function MapInspector({ model, focusId, onFocus, onSelect, colors }) {
   const item = model.byId.get(focusId);
   return (
     <aside
@@ -59,7 +62,10 @@ function MapInspector({ model, focusId, onFocus, onSelect }) {
               <X className="h-4 w-4" />
             </Button>
           </div>
-          <h3 className="text-lg font-semibold leading-snug">{item.title}</h3>
+          <h3 className="text-lg font-semibold leading-snug">{nodeHeading(item)}</h3>
+          {nodeHeading(item) !== item.title && (
+            <p className="text-xs leading-relaxed text-muted-foreground">{item.title}</p>
+          )}
           <p className="text-sm text-muted-foreground">
             {item.excerpt ||
               item.summary ||
@@ -109,7 +115,7 @@ function MapInspector({ model, focusId, onFocus, onSelect }) {
               >
                 <span
                   className="mr-2 inline-block h-2 w-2 rounded-full"
-                  style={{ background: NODE_TYPES[node.type]?.color }}
+                  style={{ background: colors[node.type] }}
                 />
                 {node.title}
               </button>
@@ -120,6 +126,15 @@ function MapInspector({ model, focusId, onFocus, onSelect }) {
     </aside>
   );
 }
+function mapGridClass(fullscreen, expanded) {
+  if (fullscreen)
+    return 'flex-1 auto-rows-max content-start overflow-auto lg:grid-cols-[minmax(0,1fr)_18rem]';
+  return expanded ? 'grid-cols-1' : 'items-start xl:grid-cols-[minmax(0,1fr)_19rem]';
+}
+function mapHeight(fullscreen, expanded) {
+  if (fullscreen) return 'calc(100dvh - 275px)';
+  return expanded ? 1120 : 560;
+}
 export default function BrainMap({ nodes, edges, onSelect }) {
   const [focusId, setFocusId] = useState(null);
   const [query, setQuery] = useState('');
@@ -129,6 +144,16 @@ export default function BrainMap({ nodes, edges, onSelect }) {
   const [labels, setLabels] = useState(true);
   const [animate, setAnimate] = useState(true);
   const [expanded, setExpanded] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [appearance, setAppearance] = useState(loadAppearance);
+  const fullScreenButton = useRef(null);
+  const theme = PALETTES[appearance.palette];
+  const colors = { ...theme.nodes, ...appearance.colors };
+  const edgeColors = { explicit: colors.note, membership: colors.topic, suggested: theme.edge };
+  const changeAppearance = (next) => {
+    setAppearance(next);
+    saveAppearance(next);
+  };
   const reducedMotion = useReducedMotion();
   const model = useMemo(() => graphModel(nodes, edges, kinds), [nodes, edges, kinds]);
   const neighborhoodId = localOnly ? focusId : null;
@@ -136,8 +161,8 @@ export default function BrainMap({ nodes, edges, onSelect }) {
     () => visibleGraph(model, { query, focusId: neighborhoodId, localOnly, hideIsolated }),
     [model, query, neighborhoodId, localOnly, hideIsolated]
   );
-  return (
-    <div className="space-y-4">
+  const workspace = (
+    <div className={fullscreen ? 'flex min-h-0 flex-1 flex-col gap-3' : 'space-y-4'}>
       <div className="flex flex-wrap items-center gap-3">
         <label className="relative min-w-48 flex-1">
           <Search
@@ -164,11 +189,20 @@ export default function BrainMap({ nodes, edges, onSelect }) {
           )}
           {animate && !reducedMotion ? 'Pause layout' : 'Animate layout'}
         </Button>
-        <Button variant="outline" onClick={() => setExpanded((v) => !v)}>
-          <Maximize2 className="mr-2 h-4 w-4" />
-          {expanded ? 'Compact canvas' : 'Expand canvas'}
-        </Button>
+        {!fullscreen && (
+          <Button variant="outline" onClick={() => setExpanded((v) => !v)}>
+            <Maximize2 className="mr-2 h-4 w-4" />
+            {expanded ? 'Compact canvas' : 'Expand canvas'}
+          </Button>
+        )}
+        {!fullscreen && (
+          <Button ref={fullScreenButton} variant="outline" onClick={() => setFullscreen(true)}>
+            <Expand className="mr-2 h-4 w-4" />
+            Full screen
+          </Button>
+        )}
       </div>
+      <MapAppearance value={appearance} onChange={changeAppearance} />
       <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs">
         {Object.entries(EDGE_TYPES).map(([kind, info]) => (
           <label key={kind} className="flex items-center gap-2">
@@ -181,7 +215,7 @@ export default function BrainMap({ nodes, edges, onSelect }) {
                 )
               }
             />
-            <span className="h-0.5 w-4" style={{ background: info.color }} />
+            <span className="h-0.5 w-4" style={{ background: edgeColors[kind] }} />
             {info.label}
           </label>
         ))}
@@ -206,10 +240,13 @@ export default function BrainMap({ nodes, edges, onSelect }) {
           Selected neighborhood
         </label>
       </div>
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_19rem]">
+      <div className={`grid min-h-0 gap-4 ${mapGridClass(fullscreen, expanded)}`}>
         <div
-          className="relative overflow-hidden rounded-2xl border border-slate-700 bg-[#0b1220] shadow-inner"
-          style={{ backgroundImage: 'radial-gradient(circle at 50% 45%, #17253b 0%, #0b1220 70%)' }}
+          className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border shadow-inner"
+          style={{
+            background: `radial-gradient(circle at 50% 45%, ${theme.glow}, ${theme.background} 85%)`,
+            borderColor: theme.border,
+          }}
         >
           <GraphCanvas
             graph={graph}
@@ -218,12 +255,20 @@ export default function BrainMap({ nodes, edges, onSelect }) {
             onFocus={setFocusId}
             labels={labels}
             animate={animate && !reducedMotion}
-            expanded={expanded}
+            height={mapHeight(fullscreen, expanded)}
+            appearance={appearance}
+            theme={theme}
           />
-          <div className="flex flex-wrap gap-x-4 gap-y-2 border-t border-white/10 px-4 py-3 text-xs text-slate-300">
+          <div
+            className="flex flex-wrap gap-x-4 gap-y-2 border-t px-4 py-3 text-xs"
+            style={{ borderColor: theme.border, color: theme.muted }}
+          >
             {Object.entries(NODE_TYPES).map(([type, info]) => (
               <span className="flex items-center gap-1.5" key={type}>
-                <span className="h-2 w-2 rounded-full" style={{ background: info.color }} />
+                <span
+                  className="h-2 w-2 rounded-full"
+                  style={{ background: appearance.colors[type] || theme.nodes[type] }}
+                />
                 {info.label}
               </span>
             ))}
@@ -232,7 +277,16 @@ export default function BrainMap({ nodes, edges, onSelect }) {
             </span>
           </div>
         </div>
-        <MapInspector model={model} focusId={focusId} onFocus={setFocusId} onSelect={onSelect} />
+        <MapInspector
+          model={model}
+          focusId={focusId}
+          onFocus={setFocusId}
+          colors={colors}
+          onSelect={(id) => {
+            setFullscreen(false);
+            onSelect(id);
+          }}
+        />
       </div>
       <p className="text-xs text-muted-foreground">
         Exploring the loaded graph; use Expand map below when more items are available. Layout
@@ -240,5 +294,24 @@ export default function BrainMap({ nodes, edges, onSelect }) {
         {reducedMotion && 'Motion is paused for your reduced-motion preference.'}
       </p>
     </div>
+  );
+  return (
+    <Dialog open={fullscreen} onOpenChange={setFullscreen}>
+      {!fullscreen && workspace}
+      <DialogContent
+        className="left-3 top-3 flex h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-none translate-x-0 translate-y-0 flex-col gap-3 overflow-hidden p-4 sm:rounded-xl"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          fullScreenButton.current?.focus();
+        }}
+      >
+        <DialogTitle>Knowledge map</DialogTitle>
+        <DialogDescription className="sr-only">
+          Explore your notes and connections. Close with the X button or Escape to return to the
+          page.
+        </DialogDescription>
+        {fullscreen && workspace}
+      </DialogContent>
+    </Dialog>
   );
 }

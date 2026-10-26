@@ -117,6 +117,18 @@ export function validateRecord(input) {
       }
   };
   checkProperties(properties);
+  if (
+    properties.heading !== undefined &&
+    (typeof properties.heading !== 'string' ||
+      !properties.heading.trim() ||
+      properties.heading.length > 80 ||
+      properties.heading.trim().split(/\s+/).length > 4)
+  )
+    fail(
+      400,
+      'INVALID',
+      'Use a short heading of 1–4 words and at most 80 characters.',
+    );
   return {
     id: input.id,
     type: input.type,

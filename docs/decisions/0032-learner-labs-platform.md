@@ -896,7 +896,7 @@ named. (3) The alert's fire test: stop the Coder backup timer for two nights
    - Global concurrency cap (`LABS_VISITOR_MAX_CONCURRENT`, default 2), reserving remaining slots for team members.
    - Per-client daily limit (2 sessions per client key).
    - Hard session duration: 60 minutes (`VISITOR_SESSION_DURATION_MS`).
-   - Hard auto-reap: sessions past `expiresAt` are automatically reaped and deleted upon subsequent queries/requests, with an emergency shutoff switch (`LABS_VISITOR_SESSIONS_ENABLED=false`).
+   - Hard auto-reap: sessions past `expiresAt` are automatically reaped and deleted upon subsequent queries/requests (a session is marked over only once Coder has confirmed the clean-up, and one it has not confirmed is retried a bounded number of times, [#1388](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1388)), with an emergency shutoff switch (`LABS_VISITOR_SESSIONS_ENABLED=false`).
 4. **Hygiene:** Visitor workspaces sparse-clone public repositories with no secrets mounted, respecting #954 egress isolation (LAB-8).
 
 ## Consequences and accepted risks

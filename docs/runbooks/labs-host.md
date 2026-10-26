@@ -679,7 +679,7 @@ ADR 0032 rebuilds the host rather than repairing it.
       cannot make itself (`lab-host/README.md`, "The vault"), rotating the
       values marked "rotate on every host rebuild" in
       [Required inputs §4.7](../standards/required-inputs.md#47-vps-agent-hostinger-env-never-committed).
-      Seven keys by hand: `vault_cloudflare_api_token` (**Roll** the Caddy
+      Eight keys by hand: `vault_cloudflare_api_token` (**Roll** the Caddy
       token at https://dash.cloudflare.com/profile/api-tokens, which keeps
       its name, scope, filter and end date, and check the client-IP filter
       holds **both** of the host's
@@ -690,17 +690,18 @@ ADR 0032 rebuilds the host rather than repairing it.
       `vault_coder_oauth2_github_client_secret` (the `HCW Labs` app at
       https://github.com/organizations/HybridCloudWorks/settings/applications:
       **Edit**, read the Client ID, **Generate a new client secret**), the
-      three add-on Turnstile secrets `vault_addon_migration_turnstile_secret`,
-      `vault_addon_network_assessment_turnstile_secret` and
-      `vault_addon_cloud_assessment_turnstile_secret` (each widget's
+      four add-on Turnstile secrets `vault_addon_migration_turnstile_secret`,
+      `vault_addon_network_assessment_turnstile_secret`,
+      `vault_addon_cloud_assessment_turnstile_secret` and
+      `vault_addon_cloud_crawler_turnstile_secret` (each widget's
       **Secret key** under **Settings** at
       https://dash.cloudflare.com/?to=/:account/turnstile, widgets
-      `hcw-addon-migration`, `HCW-NetworkEyes_AddOn` and
-      `HCW-CloudAssessor_AddOn`; the play names a missing one), and
+      `hcw-addon-migration`, `HCW-NetworkEyes_AddOn`, `HCW-CloudAssessor_AddOn`
+      and `HCW-CloudCrawler_AddOn`; the play names a missing one), and
       `vault_coder_postgres_password`, generated on the host. Each goes in
       with the `hcw-vault-set` clipboard line in "The vault". The four
       `vault_arc_*` and four `vault_labs_agent_*` keys are the scripts'
-      below, so the vault holds fifteen keys when step 7 is done.
+      below, so the vault holds sixteen keys when step 7 is done.
    2. **Arc, both runs** ("Re-onboarding a rebuilt host", below):
       `Register-LabArc.ps1`, then `Register-LabArc.ps1 -Connect`. The
       `-Connect` run's `bootstrap.sh` stops at `coder : Coder has no account
@@ -1220,7 +1221,7 @@ Coder Community edition lacks per-user quotas, forced dormancy, and auto-stop en
    - Maximum concurrent visitor sessions: `LABS_VISITOR_MAX_CONCURRENT` (default: 2, leaving remaining slots for team members).
    - Daily limit: 2 sessions per visitor client key per UTC day.
    - Session duration: 60 minutes (`VISITOR_SESSION_DURATION_MS`).
-   - Hard auto-reap: expired sessions are reaped opportunistically on status/start checks, and users can end their session via `DELETE /public/labs/visitor-session?sessionId=...`.
+   - Hard auto-reap: expired sessions are reaped opportunistically on status/start checks, and users can end their session via `DELETE /public/labs/visitor-session?sessionId=...`. A session counts as over only once Coder has confirmed that its workspace and user are deleted; one it has not confirmed is retried (see "When Coder does not confirm the clean-up" below).
 5. **Emergency Switch:** Set `LABS_VISITOR_SESSIONS_ENABLED="false"` in app settings to instantly close visitor sessions.
 
 ### Who counts as one visitor (#1387)
@@ -1231,6 +1232,63 @@ The three routes (`GET`, `POST` and `DELETE` on `/api/public/labs/visitor-sessio
 - **A visitor whose address changes during a session** (Wi-Fi to mobile data, or a VPN switched on) is a different visitor from then on. They can no longer see or end the old session, which keeps running until its hour is up and counts against the concurrent limit; starting again spends another of their two sessions for the day.
 - **A request is refused** with `403 FORBIDDEN`, before anything is read, written or sent to Turnstile (Cloudflare's bot check) or Coder, when it does not come through our Cloudflare (no origin secret) or when it carries the secret but no usable client address (`CF-Connecting-IP`). The log says only `visitor-session: refused a request whose caller could not be verified`. If visitors who should get through are being refused, check that `CF_ORIGIN_SECRET` resolves on the Function App and that Cloudflare still adds the origin-secret header and the client address, as for the `FORBIDDEN` row in the lab submission table above.
 - **A session saved before this change** (if the switch was ever on) was filed under the text `unidentified`. Nobody can read or end one of those now; each is expired by the sweep (the clean-up that runs whenever a visitor asks for the status or starts a session, while the switch is on) once its hour is up.
+
+### When Coder does not confirm the clean-up (#1388)
+Ending a visitor session means asking Coder to delete two things: the visitor's workspace (the running lab) and the temporary Coder user the broker made for them. Coder deletes a workspace with a job that finishes a little later, and it refuses to delete a user who still has a workspace (it answers HTTP 417). So the request to delete the user, made straight after the workspace one is accepted, is refused for most sessions. That is expected, not a fault.
+
+The broker therefore marks a session `ended` (the visitor pressed **End session**) or `expired` (its hour ran out) only once Coder has confirmed both deletes: it accepted them, or answered 404 or 410 because the thing was already gone. Until then the session record says where it is:
+
+| `status` | What it means | What happens next |
+| --- | --- | --- |
+| `active` | The lab is running. | The visitor ends it, or its hour runs out. |
+| `ending` | One request is cleaning it up right now (it has "claimed" the record: only one request can, so two never call Coder for the same session). | If that request dies, its claim runs out after 5 minutes and the sweep takes over. |
+| `cleanup_pending` | Coder has not confirmed yet. The record keeps which half is done (`workspaceGone`, `userGone`) so the workspace delete is not asked for twice. A start that failed after Coder made the visitor's user is kept this way too (`startFailed`). | Tried again after 2 minutes, then 4, 6 and 8, by the sweep or by the visitor pressing **End session** again once the time has come. |
+| `ended`, `expired` | Done: Coder confirmed both. | The record ages out two hours later. |
+| `cleanup_failed` | Five tries, and Coder still has not confirmed. | Nothing retries it. The record keeps its Coder ids for 7 days so a person can finish the job (below). |
+
+The sweep is the clean-up that ends sessions past their hour and retries the waiting ones. **It only runs when someone visits**: a visitor reading the lab's status, or starting a session, runs it, at most once a minute per Function App worker, and ends at most 10 sessions each time. Nothing else triggers it, so with no visitors, or while `LABS_VISITOR_SESSIONS_ENABLED` is off, a waiting session waits. A waiting record is kept for 7 days for that reason. A timer that runs the sweep on its own is the better answer and needs its own change ([#1403](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1403)).
+
+**A start that failed.** When a visitor presses start, the broker makes a Coder user and then asks Coder for a workspace. If that second call gets no answer within 30 seconds (or Coder refuses it), the visitor is told the lab is unreachable, but Coder may still have made the workspace, and nobody was told its id. The broker therefore writes a note before it answers: a `cleanup_pending` record with `startFailed`, the user's id and name (`coderUserId`, `coderUsername`), the workspace's name (`workspaceName`) and **no** `workspaceId`, whose first try comes 2 minutes later so that a create Coder is still finishing can finish. The note has no `clientHash` and was never shown to a visitor, so no visitor can read or end it; only the sweep handles it. For a record with no workspace id the sweep first asks Coder for the workspace by its owner and name ([`GET /api/v2/users/{user}/workspace/{workspacename}`](https://coder.com/docs/reference/api/workspaces), read 2026-10-26) and deletes what it finds only when the name is the expected one and the owner is that user. If Coder has no such workspace, that counts as gone for that try only; the user delete, which Coder refuses while the user still has a workspace, is the confirmation, and a workspace that turns up later is found by the next try. A user that was never made (the first call failed) leaves no note.
+
+The visitor sees no difference: **End session** answers success (also when Coder has not confirmed yet), and a waiting session is no longer shown to them and does not count against the concurrent limit. The lab itself may still exist in Coder, and use one of the host's 5 workspace slots, until Coder confirms the delete.
+
+**Finding sessions Coder has not cleaned up.** Open the list of Azure Cosmos DB accounts in the Azure portal, <https://portal.azure.com/#blade/HubsExtension/BrowseResource/resourceType/Microsoft.DocumentDB%2FdatabaseAccounts>, and click the site's account (`cosmos-site-prod-cus` in production, named in [the cold rebuild runbook](cold-rebuild.md)). Then choose **Data Explorer**, the database `hcw` (the Function App's `COSMOS_DATABASE` setting names it), the container `lab_jobs` and **New SQL Query** ([Microsoft's steps](https://learn.microsoft.com/azure/cosmos-db/quickstart-portal#add-and-query-sample-data)), and run:
+
+```sql
+SELECT c.id, c.status, c.endStatus, c.startFailed, c.endedAt, c.retryAt, c.cleanupAttempts, c.workspaceGone, c.userGone, c.workspaceId, c.coderUsername, c.workspaceName FROM c WHERE c.type = 'visitor-session' AND c.status IN ('ending', 'cleanup_pending', 'cleanup_failed')
+```
+
+This query is the dependable way to find them. The broker also logs a line when it gives up on a session (`visitor-session: a session's Coder clean-up was given up`, with Coder's answer for each half, for example `user HTTP 417`, and no session id), but only when a stop request or a session start makes that try; a try made by the status read's background sweep cannot write to the log, so do not rely on the log alone.
+
+**What needs a person.** A `cleanup_pending` row is normal while its `retryAt` is still ahead or only a few minutes behind. A `cleanup_failed` row, or a `cleanup_pending` one whose `retryAt` is more than half an hour past, means Coder is not letting go of it, or nobody has visited since. Run the tries yourself by opening a lab's page in a private browser window (so that it is not signed in to Coder), for example <https://hybridcloudworks.com/education/labs/terraform-validate-walkthrough>, once: the page asks for the visitors' status (`GET /api/public/labs/visitor-session`), and that runs the sweep (it does nothing while `LABS_VISITOR_SESSIONS_ENABLED` is off). The page asks only when Coder is reachable. For a `cleanup_failed` one, finish the clean-up by hand:
+
+1. Put the leftover user's name (the query's `coderUsername`, which starts `v-`) and its workspace's name (`workspaceName`, for example `lab-lzb`) into variables. Paste each line, then type the value at the prompt:
+
+   ```powershell
+   $visitor = Read-Host 'Leftover visitor username (starts with v-)'
+   ```
+
+   ```powershell
+   $workspace = Read-Host 'Its workspace name from the query (for example lab-lzb)'
+   ```
+
+2. Delete the workspace. This needs a Coder token of the owner's in `$t`, made as "Adding a learner" below explains. Success is Coder saying the workspace is deleted; a message that it was not found means it is already gone, so go on:
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; coder delete $visitor/$workspace --yes; }'"
+   ```
+
+3. Delete the user, once step 2 has finished. If Coder says the user still has workspaces, the workspace is still being deleted, so wait a minute and run this line again:
+
+   ```powershell
+   $t | ssh hcw-lab "sudo -n docker exec -i -e CODER_URL=http://127.0.0.1:7080 coder sh -c 'tr -d \\r | { read -r CODER_SESSION_TOKEN; export CODER_SESSION_TOKEN; echo yes | coder users delete $visitor; }'"
+   ```
+
+The flags were read from Coder's reference pages for [`coder delete`](https://coder.com/docs/reference/cli/delete) and [`coder users delete`](https://coder.com/docs/reference/cli/users_delete) on 2026-10-26, and the lines follow the ones in "Adding a learner" below. They have not been run on the live host. Coder's own Users page does not cover deleting a user or the 417 answer, so there is no page to link for that. A record that is still `cleanup_pending` when you delete the user finishes on its own at its next try (Coder answers 404, which counts as done).
+
+**What the numbers are.** `MAX_CLEANUP_ATTEMPTS` (5), `CLEANUP_RETRY_BASE_MS` (2 minutes), `CLEANUP_LEASE_MS` (5 minutes), `RETRY_SWEEP_EVERY_MS` (1 minute), `MAX_SWEEP_SESSIONS` (10), `VISITOR_PENDING_DOC_TTL_SECONDS` (7 days), `CODER_CALL_TIMEOUT_MS` (10 seconds for a delete) and `CODER_PROVISION_TIMEOUT_MS` (30 seconds for creating a user or a workspace) are at the top of the clean-up section of `functions/src/lib/labs/visitor-session.js`. Every Coder call has a timeout, so a Coder that hangs cannot hold a request open.
+
+**Rollback.** Revert the pull request that closed [#1388](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1388). Code from before it only looks at `active` sessions and would never retry a waiting one, so run the query above first and clean up what it lists by hand.
 
 ### Counting lab starts
 
@@ -3131,7 +3189,8 @@ PowerShell:
 (Get-Clipboard -Raw) | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-vault-set vault_addon_migration_turnstile_secret"
 ```
 
-Success looks like: the command prints nothing and exits 0. The value never
+Success looks like: one line, `hcw-vault-set: set vault_addon_migration_turnstile_secret
+(value not shown). Keys in the vault: …`, and exit 0. The value never
 appears on a command line or in output. The `addons` role refuses to start
 the container while this key is unset, naming the key and this line.
 
@@ -3200,6 +3259,258 @@ ssh hcw-lab "sudo docker logs --tail 100 hcw-addon-migration"
 
 Restarting or replacing the container drops every in-memory assessment by
 design.
+
+### Cloud Crawler: the host steps
+
+Cloud Crawler is the fourth tool add-on: a visitor uploads an export of their
+Azure resources and gets a drift check. The first pull request of
+[#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357) put
+everything the host needs into this repository: its row in
+`lab-host/ansible/group_vars/all.yml` (the `v0.2.0` image, pinned by its
+digest, on port 18084), the vault key `vault_addon_cloud_crawler_turnstile_secret`
+in the documents, and the Function App setting `ADDON_CLOUD_CRAWLER_URL` (the
+address the site's backend reads to find the tool). **Nothing runs until you do
+the four steps below.** The public catalogue still says "coming" for this tool
+and the site frames nothing, so a visitor sees no change. A second pull request
+flips the catalogue, and it waits for step 4 to succeed, so the site never says
+"available" before the container runs. The pair's page,
+[Cloud Crawler](../architecture/app-to-addon/cloud-crawler.md), has the
+reasoning.
+
+You need `ssh hcw-lab` to work from your PowerShell prompt ("Connect from a
+desktop", above) and `gh` signed in as yourself. Start only after the first
+pull request of #1357 has merged, because the Terraform run in the first step
+exists only after the merge. Before that run is applied, the status address
+answers that the tool is not set up (read on 2026-10-26), which is the right
+"before" picture (PowerShell; you should see `{"configured":false}`):
+
+```powershell
+curl.exe -s https://api-azure.hybridcloudworks.com/api/public/addons/cloud-crawler/status
+```
+
+**1. Confirm the Terraform run.** Terraform is the tool that builds Azure
+settings from the files in `infra/`, and applying is yours to confirm. This run
+adds one setting to the Function App. **Applying it restarts the Function App**
+(Azure restarts an app whenever one of its settings changes, [Microsoft
+Learn](https://learn.microsoft.com/azure/azure-functions/functions-app-settings#app-setting-considerations)):
+requests in that moment can fail for a few seconds, and nothing is lost.
+
+   1. Open the runs list for the `hcw-azure` workspace:
+      <https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs>. The newest
+      run for the merge of this pull request waits for confirmation.
+   2. Read the plan. Under `azurerm_function_app_flex_consumption.hcw` you
+      should see one app setting added, named `ADDON_CLOUD_CRAWLER_URL` (the
+      page may hide its value). The summary line also carries the standing
+      changes every run for this workspace shows (`3 to add, 1 to change, 3 to
+      destroy` is the known Azure workaround, not something this change did),
+      plus anything else that merged since the last apply. If the plan shows
+      anything else being destroyed or changed that you cannot name, stop and
+      do not confirm.
+   3. For a machine reading of the same plan, start the plan check. It only
+      reads, and changes nothing. It is the
+      [TFC Plan Check workflow](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/workflows/tfc-plan-check.yml),
+      and it reads the newest run of the workspace (PowerShell; you should see
+      `Created workflow_dispatch event for tfc-plan-check.yml at main`):
+
+      ```powershell
+      gh workflow run tfc-plan-check.yml --repo saulpatinojr/HCW-HybridCloudWorks --ref main
+      ```
+
+      Wait about ten seconds so the run exists, then watch it and print the
+      page that holds its summary:
+
+      ```powershell
+      $id = gh run list --repo saulpatinojr/HCW-HybridCloudWorks --workflow tfc-plan-check.yml --limit 1 --json databaseId --jq '.[0].databaseId'; gh run watch $id --repo saulpatinojr/HCW-HybridCloudWorks --exit-status; gh run view $id --repo saulpatinojr/HCW-HybridCloudWorks --json url --jq .url
+      ```
+
+      Open that page. A good result is a summary that begins **Expected** and
+      has no line starting `UNEXPECTED`. Among its `DECLARED` lines (other
+      unapplied changes are declared there too, so several are normal) one
+      reads `DECLARED  azurerm_function_app_flex_consumption.hcw
+      app_settings.ADDON_CLOUD_CRAWLER_URL: (absent) -> "https://cloud-crawler.lab.hybridcloudworks.com"`
+      followed by its reason in brackets. The command ending without an error
+      is not enough on its own: the check finishes green, having read nothing,
+      when its token is not set, and the summary then says so. If the `run :`
+      line is not the run waiting in sub-step 1, or that `DECLARED` line is
+      missing, the check did not read this plan; read the plan by eye (above)
+      instead.
+
+      If it says `UNEXPECTED`, do not confirm; post the line as a comment on
+      [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
+
+   4. Choose **Confirm & apply**. The run ends **Applied** within a minute or
+      two. If it ends **Errored**, do not start a new run: post the error on
+      #1357, and before anything else read the Function App's settings as the
+      [deployment runbook](deployment-runbook.md#4-post-apply-verification)
+      says (an apply that wrote the Function App and did not end green can
+      leave a keyless `AzureWebJobsStorage` behind). Until the run is
+      **Applied**, nothing else in this section can finish.
+
+**2. Check the vault key is there (names only).** The playbook stops at the
+add-on check if `vault_addon_cloud_crawler_turnstile_secret` is missing. It is
+the secret half of the tool's human-verification widget (the widget
+`HCW-CloudCrawler_AddOn`, created by the owner). The owner reported on
+2026-10-26 that it is already in the host's vault; no session could read the
+host's vault, so this is the check. The command
+decrypts the vault on the host and prints only the key names, never a value
+(PowerShell):
+
+```powershell
+ssh hcw-lab "set -o pipefail; sudo -n /usr/local/bin/ansible-vault view --vault-password-file /etc/hcw/ansible/vault-password /etc/hcw/ansible/vault.yml | grep -o '^vault_addon_[a-z_]*' | sort"; "exit code: $LASTEXITCODE"
+```
+
+The `set -o pipefail` makes the whole line fail if the vault cannot be read,
+and the last part prints how it ended. You should see four lines, in this order: `vault_addon_cloud_assessment_turnstile_secret`,
+`vault_addon_cloud_crawler_turnstile_secret`,
+`vault_addon_migration_turnstile_secret` and
+`vault_addon_network_assessment_turnstile_secret`, then `exit code: 0`. If you
+see an error message (for example `Decryption failed`), no lines at all, or
+any exit code other than 0, **stop**: the vault could not be read, so a line
+that is not there proves nothing. Do not set any key; post the whole output as
+a comment on [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
+Only when the command ended cleanly (`exit code: 0`) and the Cloud Crawler line
+alone is missing, put the key in:
+
+   1. Open the widget's page, <https://dash.cloudflare.com/?to=/:account/turnstile>,
+      choose the widget `HCW-CloudCrawler_AddOn`, then **Settings**, and copy
+      the **Secret key**.
+   2. Run this line (PowerShell). It reads your clipboard when you press
+      Enter, so paste the line at the prompt first, copy the secret, then press
+      Enter. You should see one line, `hcw-vault-set: set
+      vault_addon_cloud_crawler_turnstile_secret (value not shown). Keys in the
+      vault: …`; the value never appears.
+
+      ```powershell
+      (Get-Clipboard -Raw) | ssh hcw-lab "sudo -n /usr/local/sbin/hcw-vault-set vault_addon_cloud_crawler_turnstile_secret"
+      ```
+
+**3. Run the playbook on the host.** It is the same run as after any merge
+("After a merge", above), so **it applies everything under `lab-host/` and
+`vps-agent/` that has merged since the host's last run, not only this row.**
+First read which commit the host last ran from (PowerShell; the file is
+readable without `sudo`, and the output is a short piece of JSON holding a
+commit hash and a time):
+
+```powershell
+ssh hcw-lab "cat /etc/hcw/applied-commit.json"
+```
+
+Anything under `lab-host/` or `vps-agent/` that merged after that commit is
+applied by this run. A container is replaced only when its image or settings
+changed, and a visitor part-way through an assessment on a replaced add-on
+loses it, because add-ons keep nothing on disk by design. While the run
+rebuilds the add-ons' firewall rules, their human verification briefly
+cannot reach its provider, so an upload on any tool in that moment fails and
+the visitor tries again. Nothing in this change deletes data; the run's other
+work is described under "After a merge". Start it (PowerShell; it takes several
+minutes and prints as it goes):
+
+```powershell
+ssh hcw-lab "sudo /opt/hcw-src/lab-host/bootstrap.sh"
+```
+
+Success is a `PLAY RECAP` line for `localhost` with `failed=0`, and the task
+`addons : Say what runs` printing `Tool add-ons running: hcw-addon-migration,
+hcw-addon-network-assessment, hcw-addon-cloud-assessment,
+hcw-addon-cloud-crawler`. If it stops instead:
+
+- `hcw-addon-cloud-crawler needs TURNSTILE_SECRET from the vault key
+  vault_addon_cloud_crawler_turnstile_secret, which is not set`: go back to
+  the vault-key step (the second step), set the key, check the four names
+  again, and run the playbook again. The roles after `addons` (Portainer,
+  Vault, backups, the privilege checks, the record of the commit the host
+  converged from) did not run, so the second run must finish them.
+- A failure at **Verify build provenance attestation before pull** (a signed
+  record of which workflow built the image, checked before the image is
+  pulled). If the message says it could not reach the transparency log, run the
+  playbook once more. If it says the identity does not match, do not work
+  around it: post the output as a comment on
+  [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
+- A failure at the health wait: the container started and did not answer within
+  about a minute. Read its log, which holds no uploaded content (PowerShell):
+
+  ```powershell
+  ssh hcw-lab "sudo docker logs --tail 100 hcw-addon-cloud-crawler"
+  ```
+
+To take the tool off the host again, set `enabled: false` on the row in a pull
+request and run this step again (the kill switch under "Kill switches" in
+`lab-host/README.md`); the name then answers the site's "isn't available"
+sentence.
+
+**4. Check it from three places.** Each is read-only.
+
+   1. From the host (PowerShell). You should see JSON containing `"ok":true`,
+      `"id":"cloud-crawler"`, `"version":"0.2.0"`, `"edition":"lab"` and
+      `"azureConnectivity":"disabled-by-design"`:
+
+      ```powershell
+      ssh hcw-lab "curl -s http://127.0.0.1:18084/api/health"
+      ```
+
+   2. From your own computer, through the internet (PowerShell). The name
+      already resolves (the wildcard `*.lab.hybridcloudworks.com`, read from a
+      public resolver on 2026-10-26). You should see `x-addon-id:
+      cloud-crawler`, a `content-security-policy` whose `frame-ancestors`
+      names `https://hybridcloudworks.com`, and no `x-frame-options`. A
+      browser visiting the same address at the top level is sent to
+      `https://hybridcloudworks.com/tools/cloud-crawler`, which still shows the
+      "coming" page:
+
+      ```powershell
+      curl.exe -sI https://cloud-crawler.lab.hybridcloudworks.com/ | findstr /i "x-addon content-security-policy x-frame-options location"
+      ```
+
+   3. Through the site's status address, the answer the second pull request
+      waits for. The site remembers an answer, including a failed one, for a
+      minute, so run this a minute or more after the playbook has finished
+      (PowerShell):
+
+      ```powershell
+      curl.exe -s https://api-azure.hybridcloudworks.com/api/public/addons/cloud-crawler/status
+      ```
+
+      Success is `{"configured":true,"reachable":true,"version":"0.2.0",
+      "edition":"lab",…}` with a list of capabilities that includes
+      `upload-evidence`. If you still see `{"configured":false}`, the
+      Terraform run (the first step) has not applied, or the Function App has
+      not finished restarting: check that the run says **Applied**, wait two
+      minutes and run it again. If you see `"reachable":false`, the site's
+      backend cannot read the tool: repeat the first two checks above to find
+      the side that fails (a name that does not resolve, a certificate error,
+      or a container that is not running), then wait a minute before asking
+      again.
+
+When the third check succeeds, say so on
+[#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357). The
+second pull request then flips the catalogue row, adds the tool's address to
+the site's frame policy and updates the add-on's integration guide; only then
+does a visitor see the tool at <https://hybridcloudworks.com/tools/cloud-crawler>.
+
+**Not checked by any session before this section was written:** that the vault
+key is on the host; that the container starts and the certificate answers for
+the name; and that the secret in the vault is the right one for this widget (the
+role only checks that it is not empty, and none of the checks above does a
+human-verified upload, so a wrong secret would pass all of them and fail the
+first real visitor; the second pull request's acceptance includes one real
+upload).
+
+**Host memory (read on 2026-10-26 over a read-only connection, nothing changed).**
+The host has 15,987 MiB, of which 1,577 MiB were used and 14,409 MiB were
+available, with no swap. The eight running containers used about 330 MiB
+together (each add-on 26 to 55 MiB against its 512 MiB limit; Coder 60 MiB;
+its database 62 MiB). The Cloud Crawler add-on peaked at 269 MiB with three
+maximum-size uploads at once in its own test (its pull request,
+[HCW-CloudCrawler_AddOn#23](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/pull/23)),
+against its 512 MiB limit. The worst case, where every limit is reached at the
+same moment (4 x 512 + 5 x 2048 + 2560 = 14,848 MiB of limits, from the capacity
+figures in [the labs host architecture](../architecture/labs-host.md) and the
+`coder` role), would leave 1,139 MiB for the system; that needs five
+workspaces at their 2 GiB limit and every add-on at its limit together and
+has not been seen. Before the playbook, run `ssh hcw-lab "free -m"` and stop
+if the `available` column is under 4,000 MiB; run it again after the playbook
+and a day later, and post the figures on
+[#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
 
 ## Runtime advisories
 

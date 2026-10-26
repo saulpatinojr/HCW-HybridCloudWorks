@@ -10,6 +10,7 @@ import BrainMap from './brain/BrainMap';
 import AskPanel from './brain/AskPanel';
 import WorkspaceHome from './brain/WorkspaceHome';
 import NoteEditor, { Markdown } from './brain/NoteEditor';
+import { nodeHeading } from './brain/mapPreferences';
 
 const VIEWS = ['Home', 'Inbox', 'Library', 'Topics & Projects', 'Map', 'Ask'];
 const blank = (type = 'note', fields = {}) => ({
@@ -45,7 +46,12 @@ function ItemList({
             <span className="block text-[11px] uppercase tracking-widest text-muted-foreground">
               {item.type} {item.status ? `· ${item.status}` : ''}
             </span>
-            <span className="mt-1 block font-medium">{item.title}</span>
+            <span className="mt-1 block font-medium">{nodeHeading(item)}</span>
+            {nodeHeading(item) !== item.title && (
+              <span className="mt-1 line-clamp-1 block text-xs text-muted-foreground">
+                {item.title}
+              </span>
+            )}
             {item.excerpt && (
               <span className="mt-2 line-clamp-2 block text-sm text-muted-foreground">
                 {item.excerpt}

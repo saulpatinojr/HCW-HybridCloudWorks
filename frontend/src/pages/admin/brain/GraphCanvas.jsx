@@ -1,12 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
-import { ZoomIn, ZoomOut, Scan } from 'lucide-react';
+import { ZoomIn, ZoomOut, Scan, Focus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { NODE_TYPES, EDGE_TYPES } from './graphModel';
 import { useForceGraph } from './useForceGraph';
 import { graphLabels } from './graphLabels';
 
-function GraphNode({ node, active, neighbor, dim, label, onFocus, drag }) {
+function GraphNode({ node, active, neighbor, dim, label, onFocus, drag, theme, colors }) {
   const gesture = useRef(null);
   function point(event) {
     const matrix = event.currentTarget.ownerSVGElement.getScreenCTM();
@@ -20,10 +19,11 @@ function GraphNode({ node, active, neighbor, dim, label, onFocus, drag }) {
       gesture.current.moved = true;
     if (gesture.current.moved) drag(node.id, point(event));
   }
-  const color = NODE_TYPES[node.type]?.color || '#94a3b8';
+  const color = colors[node.type] || theme.nodes.reference;
   return (
     <g
-      className="brain-node cursor-grab outline-none focus-visible:[&>circle]:stroke-white active:cursor-grabbing"
+      className="brain-node cursor-grab outline-none focus-visible:[&>circle]:stroke-[var(--brain-focus)] active:cursor-grabbing"
+      style={{ '--brain-focus': theme.text }}
       role="button"
       tabIndex={0}
       aria-label={`Explore ${node.title}`}
@@ -74,7 +74,7 @@ function GraphNode({ node, active, neighbor, dim, label, onFocus, drag }) {
             : 7 + Math.min(node.degree || 0, 12) * 0.45
         }
         fill={color}
-        stroke="#0b1220"
+        stroke={theme.background}
         strokeWidth="2"
       />
       {label && (
@@ -82,20 +82,25 @@ function GraphNode({ node, active, neighbor, dim, label, onFocus, drag }) {
           x={label.dx}
           y={label.dy}
           textAnchor={label.anchor}
-          fill={active ? '#f8fafc' : '#cbd5e1'}
-          stroke="#0b1220"
-          strokeWidth="5"
+          fill={theme.text}
+          stroke={theme.background}
+          strokeWidth={label.fontSize * 0.25}
           paintOrder="stroke"
-          className="pointer-events-none text-[12px] font-medium"
+          className="pointer-events-none font-medium"
+          style={{ fontSize: label.fontSize }}
         >
-          {label.text}
+          {label.lines.map((line, i) => (
+            <tspan key={i} x={label.dx} dy={i ? label.lineHeight : 0}>
+              {line}
+            </tspan>
+          ))}
         </text>
       )}
     </g>
   );
 }
 
-function GraphLinks({ links, byId, focusId }) {
+function GraphLinks({ links, byId, focusId, theme, colors }) {
   return (
     <g>
       {links.map((edge) => {
@@ -112,7 +117,9 @@ function GraphLinks({ links, byId, focusId }) {
             y1={a.y}
             x2={b.x}
             y2={b.y}
-            stroke={EDGE_TYPES[edge.kind].color}
+            stroke={
+              { explicit: colors.note, membership: colors.topic, suggested: theme.edge }[edge.kind]
+            }
             strokeWidth={connected ? 2.5 : 1}
             strokeOpacity={opacity}
             strokeDasharray={edge.kind === 'suggested' ? '4 7' : undefined}
@@ -147,9 +154,21 @@ function useCanvasSize() {
   }, []);
   return { canvasRef, size };
 }
-export default function GraphCanvas({ graph, model, focusId, onFocus, labels, animate, expanded }) {
+export default function GraphCanvas({
+  graph,
+  model,
+  focusId,
+  onFocus,
+  labels,
+  animate,
+  height = 560,
+  appearance,
+  theme,
+}) {
   const { canvasRef, size } = useCanvasSize();
   const { positions, drag } = useForceGraph(graph, animate, size.width, size.height);
+  const [camera, setCamera] = useState({ scale: 1, positionX: 0, positionY: 0 });
+  const colors = { ...theme.nodes, ...appearance.colors };
   const byId = new Map(positions.map((n) => [n.id, n]));
   const visibleIds = new Set(graph.nodes.map((n) => n.id));
   const visible = positions.filter((node) => visibleIds.has(node.id));
@@ -158,9 +177,22 @@ export default function GraphCanvas({ graph, model, focusId, onFocus, labels, an
     neighbors: model.neighbors,
     showAll: labels,
     ...size,
+    fontSize: appearance.fontSize / camera.scale,
+    viewport: {
+      left: -camera.positionX / camera.scale,
+      top: -camera.positionY / camera.scale,
+      right: (size.width - camera.positionX) / camera.scale,
+      bottom: (size.height - camera.positionY) / camera.scale,
+    },
   });
   return (
-    <div ref={canvasRef} className="relative" style={{ height: expanded ? '78vh' : '640px' }}>
+    <div
+      ref={canvasRef}
+      className="relative shrink-0"
+      role="region"
+      aria-label="Knowledge canvas"
+      style={{ height }}
+    >
       <TransformWrapper
         minScale={0.35}
         maxScale={5}
@@ -169,20 +201,59 @@ export default function GraphCanvas({ graph, model, focusId, onFocus, labels, an
         wheel={{ activationKeys: ['Control', 'Meta'] }}
         doubleClick={{ disabled: true }}
         panning={{ excluded: ['brain-node'], velocityDisabled: true }}
+        onTransform={(_, state) =>
+          setCamera((old) =>
+            old.scale === state.scale &&
+            old.positionX === state.positionX &&
+            old.positionY === state.positionY
+              ? old
+              : state
+          )
+        }
       >
-        {({ zoomIn, zoomOut, resetTransform }) => (
+        {({ zoomIn, zoomOut, resetTransform, setTransform }) => (
           <>
-            <div className="absolute left-4 top-4 z-10 flex gap-1 rounded-lg border border-white/10 bg-slate-950/90 p-1 shadow-xl">
+            <div
+              className="absolute left-3 top-3 z-10 flex gap-1 rounded-lg border p-1 shadow-sm"
+              style={{ background: theme.glow, borderColor: theme.border, color: theme.text }}
+            >
               {[
                 ['Zoom in', ZoomIn, zoomIn],
                 ['Zoom out', ZoomOut, zoomOut],
                 ['Reset map view', Scan, resetTransform],
+                [
+                  'Fit graph',
+                  Focus,
+                  () => {
+                    if (!visible.length) return;
+                    const xs = visible.map((n) => n.x),
+                      ys = visible.map((n) => n.y);
+                    const left = Math.min(...xs),
+                      right = Math.max(...xs),
+                      top = Math.min(...ys),
+                      bottom = Math.max(...ys);
+                    const scale = Math.max(
+                      0.35,
+                      Math.min(
+                        2,
+                        (size.width - 100) / Math.max(right - left, 100),
+                        (size.height - 100) / Math.max(bottom - top, 100)
+                      )
+                    );
+                    setTransform(
+                      size.width / 2 - ((left + right) / 2) * scale,
+                      size.height / 2 - ((top + bottom) / 2) * scale,
+                      scale,
+                      0
+                    );
+                  },
+                ],
               ].map(([label, Icon, action]) => (
                 <Button
                   key={label}
                   size="icon"
                   variant="ghost"
-                  className="text-slate-200 hover:bg-white/10 hover:text-white"
+                  className="text-inherit hover:bg-black/5 hover:text-inherit"
                   aria-label={label}
                   onClick={() => action()}
                 >
@@ -200,7 +271,13 @@ export default function GraphCanvas({ graph, model, focusId, onFocus, labels, an
                 role="group"
                 aria-label="Interactive knowledge graph"
               >
-                <GraphLinks links={graph.links} byId={byId} focusId={focusId} />
+                <GraphLinks
+                  links={graph.links}
+                  byId={byId}
+                  focusId={focusId}
+                  theme={theme}
+                  colors={colors}
+                />
                 {visible.map((node) => (
                   <GraphNode
                     key={node.id}
@@ -213,12 +290,17 @@ export default function GraphCanvas({ graph, model, focusId, onFocus, labels, an
                     label={placements.get(node.id)}
                     onFocus={onFocus}
                     drag={drag}
+                    theme={theme}
+                    colors={colors}
                   />
                 ))}
               </svg>
             </TransformComponent>
             {!graph.nodes.length && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-8 text-center text-slate-300">
+              <div
+                className="pointer-events-none absolute inset-0 flex items-center justify-center p-8 text-center"
+                style={{ color: theme.muted }}
+              >
                 No items match these filters. Clear your search or show more relationships.
               </div>
             )}

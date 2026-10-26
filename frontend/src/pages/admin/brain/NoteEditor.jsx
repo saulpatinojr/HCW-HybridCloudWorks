@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
@@ -6,6 +6,7 @@ import { brainApi } from '@/lib/brainApi';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import DraftFromNote from './DraftFromNote';
 import { useUnsavedGuard } from '../drafts/useUnsavedGuard';
+import { nodeHeading } from './mapPreferences';
 
 export const noteFields = (item) => ({
   id: item.id,
@@ -31,6 +32,12 @@ export function Markdown({ children }) {
   );
 }
 const inputClass = 'w-full rounded-md border bg-background px-3 py-2 text-sm';
+function headingInfo(form) {
+  const heading =
+    typeof form.properties.heading === 'string' ? form.properties.heading : nodeHeading(form);
+  const invalidHeading = !heading.trim() || heading.trim().split(/\s+/).length > 4;
+  return { heading, invalidHeading };
+}
 export default function NoteEditor({
   item,
   collections,
@@ -57,6 +64,8 @@ export default function NoteEditor({
     onSnapshot?.({ id: item.id, form, tagText, version, mutation });
   }, [onSnapshot, item.id, form, tagText, version, mutation]);
   const dirty = JSON.stringify(form) !== JSON.stringify(noteFields(item));
+  const { heading, invalidHeading } = headingInfo(form);
+  const headingHelpId = useId();
   useEffect(() => {
     onDirty?.(dirty);
     return () => onDirty?.(false);
@@ -79,7 +88,14 @@ export default function NoteEditor({
     setBusy(true);
     setError('');
     try {
-      const saved = await brainApi.save(next, version, mutation);
+      const saved = await brainApi.save(
+        {
+          ...next,
+          properties: { ...next.properties, heading: headingInfo(next).heading },
+        },
+        version,
+        mutation
+      );
       setVersion(saved.item.version);
       setForm(noteFields(saved.item));
       setMutation(crypto.randomUUID());
@@ -142,6 +158,22 @@ export default function NoteEditor({
           {error}
         </p>
       )}
+      <label className="block space-y-1 text-sm">
+        <span>Short heading (1–4 words)</span>
+        <input
+          className={inputClass}
+          maxLength={80}
+          value={heading}
+          aria-label="Short heading (1–4 words)"
+          aria-describedby={headingHelpId}
+          aria-invalid={invalidHeading}
+          onChange={(e) => change('properties', { ...form.properties, heading: e.target.value })}
+        />
+        <span id={headingHelpId} className="block text-xs text-muted-foreground">
+          Used on the map and synced as the Markdown heading property.
+        </span>
+        {invalidHeading && <span className="block text-xs text-destructive">Use 1–4 words.</span>}
+      </label>
       <label className="block space-y-1 text-sm">
         <span>Title</span>
         <input
@@ -295,7 +327,7 @@ export default function NoteEditor({
         Keep in Inbox
       </label>
       <div className="flex flex-wrap gap-2">
-        <Button disabled={busy} onClick={() => save()}>
+        <Button disabled={busy || invalidHeading} onClick={() => save()}>
           {busy ? 'Working…' : 'Save note'}
         </Button>
         <Button

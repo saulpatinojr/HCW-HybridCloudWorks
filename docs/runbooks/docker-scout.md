@@ -4,8 +4,10 @@
 > images to the `img-…` Docker Hub repositories and asked how to use what the
 > Docker plan includes. Facts here were read on that day; each says where.
 
-**Scope:** how the three tool add-on images (migration, network assessment,
-cloud assessment) are checked for known vulnerabilities and policy problems,
+**Scope:** how the tool add-on images (migration, network assessment, cloud
+assessment and, since its row was added to `group_vars` in
+[#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357),
+Cloud Crawler) are checked for known vulnerabilities and policy problems,
 where each check runs, and how to run Scout on your own desktop.
 
 **Authority:** this page does not authorize a change. Turning Scout on for a
@@ -17,9 +19,12 @@ repository, and storing a Docker token anywhere, are the owner's decisions.
   repositories: Unlimited* (the owner's Docker billing page, 2026-10-25;
   [Docker's plan FAQ](https://www.docker.com/pricing/faq/) says the same of
   Team). So there is no cost to enabling Scout on every repository.
-- **The images.** `hybridcloudworks/img-mo-lab-addon`, `img-ne-lab-addon` and
-  `img-ca-lab-addon` on Docker Hub. The lab host runs each by digest, and the
-  digests are in `lab-host/ansible/group_vars/all.yml`.
+- **The images.** `hybridcloudworks/img-mo-lab-addon`, `img-ne-lab-addon`,
+  `img-ca-lab-addon` and `img-cc-lab-addon` on Docker Hub. The lab host runs
+  each by digest, and the digests are in
+  `lab-host/ansible/group_vars/all.yml`. (Cloud Crawler's row is new; the host
+  runs it from the owner's next playbook run, so for a while the file names
+  four digests and the host runs three.)
 - **What Scout is.** A service that reads an image's list of packages (its
   SBOM, which these images carry as an attestation), compares it with a
   vulnerability database, and grades it against policies
@@ -31,7 +36,7 @@ repository, and storing a Docker token anywhere, are the owner's decisions.
 | Check | Where it runs | When | What it does |
 | --- | --- | --- | --- |
 | Trivy before publishing | each add-on repository's `publish-images.yml` | on a release tag | stops the push when the image has a HIGH or CRITICAL vulnerability with a fix |
-| **Lab supply chain** (`lab-supply-chain.yml`, the scan step) | this repository | every Tuesday | looks again at the digests the host actually runs, the two lab images **and the three add-on images**, with Trivy; opens one issue, or comments on the open one, when something fixable turns up |
+| **Lab supply chain** (`lab-supply-chain.yml`, the scan step) | this repository | every Tuesday | looks again at the digests the host actually runs, the two lab images **and the add-on images** (four rows in `group_vars`), with Trivy; opens one issue, or comments on the open one, when something fixable turns up |
 | **Add-on images against Docker Scout** (`addon-image-scout.yml`) | this repository | when a pull request changes the pins, and every Wednesday | Scout's policy table for the same digests, then fails on a fixable CRITICAL or HIGH; needs the one Docker token below |
 | Scout's own analysis of a Docker Hub repository | Docker | continuously, once the owner enables it | shows every tag's findings and policy results in the Scout dashboard and in Docker Hub |
 | `docker scout` on your desktop | your machine | when you run it | the same Scout analysis on demand, for a published image or one you just built |
@@ -111,7 +116,7 @@ gh secret set DOCKER_SCOUT_PAT --repo saulpatinojr/HCW-HybridCloudWorks
 Expected: the second command prints a prompt, accepts the pasted token, and
 ends with a line saying the secret was set. Then run the check once, from
 **Actions**, **Add-on images against Docker Scout**, **Run workflow**, and read
-the three **Scout** jobs: a green job with a policy table in its summary means
+one **Scout** job per add-on image (four): a green job with a policy table in its summary means
 it works.
 
 If a job says `not entitled to use Docker Scout` even with the token, that is
@@ -167,7 +172,7 @@ describes its analysis as collecting the image's metadata and package list
 (SBOM) and storing them on its platform, in the US; its page does not say
 whether a one-off `registry://` command from a desktop does the same
 ([Docker Scout data handling](https://docs.docker.com/scout/deep-dive/data-handling/)).
-The three add-on images are public, so what could be stored is already public.
+The add-on images are public (all four, Cloud Crawler's included, read from Docker Hub's public tag API on 2026-10-26), so what could be stored is already public.
 
 A published image, by tag:
 
