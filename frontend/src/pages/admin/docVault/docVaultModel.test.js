@@ -268,7 +268,7 @@ describe('markdownToPlainText', () => {
     expect(plain(undefined)).toBe('');
   });
 
-  it('is linear: pathological input grows in step with its size', { timeout: 30_000 }, () => {
+  it('is linear: pathological input grows in step with its size', () => {
     const shapes = {
       brackets: (n) => '['.repeat(n),
       ticks: (n) => '`'.repeat(n),
@@ -277,19 +277,23 @@ describe('markdownToPlainText', () => {
       angle: (n) => '<'.repeat(n),
       underscores: (n) => '_a'.repeat(n / 2),
     };
-    const fastest = (text) => {
+    // Per conversion, the fastest of five batches. The small input is repeated
+    // so it is long enough to time; the large one runs once, so a converter that
+    // has gone quadratic is found in seconds (a synchronous run cannot be cut
+    // short by a test timeout).
+    const fastest = (text, reps) => {
       let best = Infinity;
-      for (let batch = 0; batch < 3; batch += 1) {
+      for (let batch = 0; batch < 5; batch += 1) {
         const start = performance.now();
-        for (let rep = 0; rep < 3; rep += 1) markdownToPlainText(text);
-        best = Math.min(best, performance.now() - start);
+        for (let rep = 0; rep < reps; rep += 1) markdownToPlainText(text);
+        best = Math.min(best, (performance.now() - start) / reps);
       }
       return best;
     };
     for (const [name, shape] of Object.entries(shapes)) {
-      const small = fastest(shape(20_000));
-      const large = fastest(shape(80_000));
-      expect(large / Math.max(small, 0.05), name).toBeLessThan(9);
+      const small = fastest(shape(8_000), 20);
+      const large = fastest(shape(32_000), 1);
+      expect(large / Math.max(small, 0.02), name).toBeLessThan(9);
     }
   });
 });

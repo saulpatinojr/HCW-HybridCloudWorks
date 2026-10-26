@@ -306,22 +306,29 @@ describe('line endings and the byte-order mark', () => {
 });
 
 describe('linear time', () => {
-  /** The fastest of a few batches: a slow neighbour on a shared runner cannot make a fast parse look slow. */
-  function fastest(make) {
+  /**
+   * The fastest of five batches, per parse: a slow neighbour on a shared runner
+   * cannot make a fast parse look slow. The small input is repeated, so it is
+   * long enough to time; the large one is run once, because a parser that has
+   * gone quadratic must be found by a test that finishes in seconds. A single
+   * synchronous parse cannot be interrupted by a test timeout, so these sizes
+   * keep a quadratic one to about a second a run, not minutes.
+   */
+  function fastest(make, reps) {
     const input = make();
     let best = Infinity;
     for (let batch = 0; batch < 5; batch += 1) {
       const start = performance.now();
-      for (let rep = 0; rep < 10; rep += 1) parse(input);
-      best = Math.min(best, performance.now() - start);
+      for (let rep = 0; rep < reps; rep += 1) parse(input);
+      best = Math.min(best, (performance.now() - start) / reps);
     }
     return best;
   }
 
   // A quadratic parser takes 16x as long for 4x the input; a linear one 4x.
   // Only the ratio is asserted, never a number of milliseconds.
-  const SMALL = 30_000;
-  const LARGE = 120_000;
+  const SMALL = 8_000;
+  const LARGE = 32_000;
   const SHAPES = {
     'a long run of spaces in a value': (n) => `---\ntitle: a${' '.repeat(n)}b\n---\nbody`,
     'a long run of quotes': (n) => `---\ntitle: x${"'".repeat(n)}x\ntags: [${'"'.repeat(n)}]\n---\nbody`,
@@ -334,8 +341,8 @@ describe('linear time', () => {
   };
 
   it.each(Object.entries(SHAPES))('grows in step with the input for %s', (_name, shape) => {
-    const small = fastest(() => shape(SMALL));
-    const large = fastest(() => shape(LARGE));
-    expect(large / Math.max(small, 0.05)).toBeLessThan(9);
+    const small = fastest(() => shape(SMALL), 20);
+    const large = fastest(() => shape(LARGE), 1);
+    expect(large / Math.max(small, 0.02)).toBeLessThan(9);
   });
 });
