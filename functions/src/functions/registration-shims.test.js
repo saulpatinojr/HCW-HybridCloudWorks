@@ -123,6 +123,7 @@ const EXPECTED_SHIM_FILES = [
   "social-caption-http.js",
   "streamyard-http.js",
   "telegram-http.js",
+  "visitor-session-sweep.js",
 ];
 
 const allFiles = fs.readdirSync(here);

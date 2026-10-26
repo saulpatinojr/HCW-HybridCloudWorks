@@ -41,6 +41,7 @@ import "./listen-and-learn-jobs.js";
 import "./labs-http.js";
 import "./labs-jobs.js";
 import "./labs-public-http.js";
+import "./visitor-session-sweep.js";
 import "./addons-public-http.js";
 import "./legacy-blogs-telemetry-http.js";
 import "./manual-images-http.js";

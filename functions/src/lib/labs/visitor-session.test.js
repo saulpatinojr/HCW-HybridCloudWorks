@@ -19,8 +19,10 @@ import {
   createVisitorWorkspace,
   deleteVisitorUser,
   deleteVisitorWorkspace,
+  errorKind,
   generateVisitorCredentials,
   getTemplateByName,
+  isSafeSegment,
   readBrokerConfig,
   readVisitorMaxConcurrent,
   reapExpiredVisitorSessions,
@@ -132,6 +134,28 @@ describe('visitorSessionsEnabled and config helpers', () => {
       max: 5,
     });
     expect(readBrokerConfig({ CODER_URL: 'https://coder.lab.example.com' })).toBeNull();
+  });
+
+  it.each([
+    ['no broker token', {}],
+    ['an empty broker token', { CODER_BROKER_TOKEN: '' }],
+    ['a broker token that is an unresolved Key Vault reference', { CODER_BROKER_TOKEN: '@Microsoft.KeyVault(SecretUri=https://kv.example/secrets/x)' }],
+  ])('does not fall back to the read-only status token: with %s the broker is not configured', (_name, broker) => {
+    // The status token holds template:read and workspace:read only. A broker built on it
+    // would be refused at every create and delete, and each refused clean-up try is spent.
+    expect(
+      readBrokerConfig({ CODER_URL: 'https://coder.lab.example.com', CODER_STATUS_TOKEN: 'status-token-value', ...broker })
+    ).toBeNull();
+  });
+
+  it('uses the broker token, and never the status token, when both are set', () => {
+    expect(
+      readBrokerConfig({
+        CODER_URL: 'https://coder.lab.example.com',
+        CODER_STATUS_TOKEN: 'status-token-value',
+        CODER_BROKER_TOKEN: 'broker-token-value',
+      })
+    ).toMatchObject({ token: 'broker-token-value' });
   });
 
   it('generates random visitor credentials with v- prefix', () => {
@@ -2389,20 +2413,113 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([CODER_PROVISION_TIMEOUT_MS, 25, CODER_CALL_TIMEOUT_MS]);
     });
 
-    it('writes an id into a Coder path as one piece of it, whatever characters it holds', async () => {
+    it.each([
+      ['a path climb', '..'],
+      ['a single dot', '.'],
+      ['a slash', 'ws/../x'],
+      ['a question mark', 'a?b'],
+      ['a hash', 'a#b'],
+      ['a percent escape', 'a%2Fb'],
+      ['a space', 'a b'],
+      ['Coder\'s name for the caller\'s own account', 'me'],
+      ['that name in capitals', 'ME'],
+      ['a number', 42],
+    ])('never sends %s as a workspace id or a user id to Coder, and leaves the session waiting', async (_name, unsafe) => {
+      const store = cosmosLikeStore([expiredSession('bad-w'), expiredSession('bad-u')]);
+      store.docs.set('lab_jobs/bad-w', { ...store.get('lab_jobs', 'bad-w'), workspaceId: unsafe });
+      store.docs.set('lab_jobs/bad-u', { ...store.get('lab_jobs', 'bad-u'), coderUserId: unsafe });
+      const fetchImpl = scriptedCoder();
+      const log = vi.fn();
+
+      const result = await sweep(store, fetchImpl, { log });
+
+      expect(result).toEqual(tally({ pending: 2 }));
+      // The only calls are the good half of the second record: its workspace delete, never its user delete.
+      expect(fetchImpl.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/api/v2/workspaces/ws-bad-u/builds']);
+      expect(store.get('lab_jobs', 'bad-w')).toMatchObject({ status: 'cleanup_pending' });
+      expect(store.get('lab_jobs', 'bad-u')).toMatchObject({ status: 'cleanup_pending', workspaceGone: true, userGone: false });
+      const lines = log.mock.calls.map(([line]) => line).join('\n');
+      expect(lines).toContain('workspace invalid id, user skipped');
+      expect(lines).toContain('workspace ok, user invalid id');
+    });
+
+    it('writes an id that is plainly an id into the path as it is, dots and underscores inside it included', async () => {
       const store = cosmosLikeStore([expiredSession('old-1')]);
       store.docs.set('lab_jobs/old-1', {
         ...store.get('lab_jobs', 'old-1'),
-        workspaceId: 'ws/../x?y#z',
-        coderUserId: 'me',
+        workspaceId: 'ws-1_a.b',
+        coderUserId: '8826ee2e-7933-4665-aef2-2393f84a0d05',
       });
       const fetchImpl = scriptedCoder();
 
       await sweep(store, fetchImpl);
 
-      const urls = fetchImpl.mock.calls.map(([url]) => String(url));
-      expect(urls[0]).toBe(`${CODER.base}/api/v2/workspaces/ws%2F..%2Fx%3Fy%23z/builds`);
-      expect(urls[1]).toBe(`${CODER.base}/api/v2/users/me`);
+      expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([
+        `${CODER.base}/api/v2/workspaces/ws-1_a.b/builds`,
+        `${CODER.base}/api/v2/users/8826ee2e-7933-4665-aef2-2393f84a0d05`,
+      ]);
+    });
+  });
+
+  describe('what a stored record is trusted to say', () => {
+    it('tells an id from something else: the same rule the Coder paths use', () => {
+      for (const ok of ['ws-1', 'u-old-1', '8826ee2e-7933-4665-aef2-2393f84a0d05', 'lab-lzb', 'v-aaaaaaaaaaaa', 'a.b_c']) {
+        expect(isSafeSegment(ok), ok).toBe(true);
+      }
+      for (const bad of ['', '.', '..', '...', '-x', 'a/b', 'a\\b', 'a b', 'a?b', 'a#b', 'a%20b', 'me', 'Me', 'x'.repeat(129), 'ws-1\n', '\uff4d\uff45', 'm\u0435', 'a\u0000b', null, undefined, 7, {}]) {
+        expect(isSafeSegment(bad), String(bad)).toBe(false);
+      }
+    });
+
+    it('takes only ended or expired for what a session becomes, whatever the record says', async () => {
+      const store = cosmosLikeStore([
+        expiredSession('weird-1'),
+        { ...expiredSession('weird-2') },
+      ]);
+      store.docs.set('lab_jobs/weird-1', { ...store.get('lab_jobs', 'weird-1'), status: 'cleanup_pending', endStatus: 'active', retryAt: iso(NOW - 1000), workspaceGone: true, userGone: true });
+      store.docs.set('lab_jobs/weird-2', { ...store.get('lab_jobs', 'weird-2'), status: 'cleanup_pending', endStatus: 'cleanup_failed', retryAt: iso(NOW - 1000), workspaceGone: true, userGone: true });
+
+      await sweep(store, scriptedCoder());
+
+      // Not `active` (which every later sweep would pick up again) and not a made-up status.
+      expect(store.get('lab_jobs', 'weird-1').status).toBe('expired');
+      expect(store.get('lab_jobs', 'weird-2').status).toBe('expired');
+    });
+
+    it('counts a try that is not a count (negative, fractional, text) as the first, so the bound is reached', async () => {
+      for (const attempts of [-50, 1.5, '3', null, Number.NaN]) {
+        const store = cosmosLikeStore([expiredSession('count-1')]);
+        store.docs.set('lab_jobs/count-1', { ...store.get('lab_jobs', 'count-1'), cleanupAttempts: attempts });
+
+        await sweep(store, vi.fn(async () => ({ ok: false, status: 500 })));
+
+        expect(store.get('lab_jobs', 'count-1').cleanupAttempts, String(attempts)).toBe(1);
+      }
+    });
+
+    it('says only the shape of an error: a status, a system code or a class, never a host name or an id', () => {
+      const kind = (code, name) => errorKind(Object.assign(new Error('text'), { code, name }));
+      expect(kind(503, 'Error')).toBe('503');
+      expect(kind('ECONNRESET', 'Error')).toBe('ECONNRESET');
+      expect(kind(undefined, 'TimeoutError')).toBe('TimeoutError');
+      expect(errorKind(new TypeError('x'))).toBe('TypeError');
+      for (const leaky of [
+        'myaccount.documents.azure.com',
+        '8826ee2e-7933-4665-aef2-2393f84a0d05',
+        'sess-secretid-1',
+        'the key is abc123 !',
+        'ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH',
+        '',
+      ]) {
+        expect(kind(leaky, 'Error'), leaky).toBe('error');
+      }
+      expect(errorKind(null)).toBe('error');
+      expect(errorKind('a string')).toBe('error');
+      expect(errorKind({})).toBe('error');
+    });
+
+    it('keeps the lease at least as long as the Coder calls of a full sweep at their timeouts (the database calls are not counted in it: the lease runs from the sweep start, a margin left to #1403)', () => {
+      expect(MAX_SWEEP_SESSIONS * 3 * CODER_CALL_TIMEOUT_MS).toBeLessThanOrEqual(CLEANUP_LEASE_MS);
     });
   });
 
@@ -2741,14 +2858,31 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(store.get('lab_jobs', 'no-name')).toMatchObject({ status: 'ended', workspaceGone: true });
     });
 
-    it('writes the visitor\'s name and the workspace\'s name into the lookup path as one piece each', async () => {
-      const store = cosmosLikeStore([unfinishedStart('odd', { coderUsername: 'v-a/../b?c', workspaceName: 'lab x' })]);
+    it.each([
+      ['a user name with a path climb in it', { coderUsername: 'v-a/../b?c' }],
+      ['a user name that is "me"', { coderUsername: 'me' }],
+      ['a workspace name with a space in it', { workspaceName: 'lab x' }],
+      ['a workspace name that is two dots', { workspaceName: '..' }],
+    ])('does not look a workspace up by %s, and does not delete anything', async (_name, overrides) => {
+      const store = cosmosLikeStore([unfinishedStart('odd', overrides)]);
+      const fetchImpl = coderWithLookup({ lookup: [foundWorkspace()] });
+      const log = vi.fn();
+      now = dueAt;
+
+      expect(await sweep(store, fetchImpl, { log })).toEqual(tally({ pending: 1 }));
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(log.mock.calls[0][0]).toContain('workspace lookup invalid name, user skipped');
+    });
+
+    it('writes the visitor\'s name and the workspace\'s name into the lookup path as they are', async () => {
+      const store = cosmosLikeStore([unfinishedStart('odd', { coderUsername: 'v-0a1b2c3d4e5f', workspaceName: 'lab-tfv' })]);
       const fetchImpl = coderWithLookup({ lookup: [404] });
       now = dueAt;
 
       await sweep(store, fetchImpl);
 
-      expect(String(fetchImpl.mock.calls[0][0])).toBe(`${CODER.base}/api/v2/users/v-a%2F..%2Fb%3Fc/workspace/lab%20x`);
+      expect(String(fetchImpl.mock.calls[0][0])).toBe(`${CODER.base}/api/v2/users/v-0a1b2c3d4e5f/workspace/lab-tfv`);
     });
   });
 });
