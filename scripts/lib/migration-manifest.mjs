@@ -408,6 +408,13 @@ export const COLLECTIONS = [
     note: 'Ambassador hub (ADR 0033 §4). One container, documents told apart by `docType`: `program` (the catalogue, seeded on first read), `application` (one pursuit of one program, private), `evidence` (a talk, cert or article linked by {sourceModule, sourceId} with a snapshot). Partitioned on /id like every other small container; every list is a docType filter over one physical partition.',
   },
 
+  // --- Doc Vault -------------------------------------------------------------
+  {
+    name: 'doc_vault',
+    disposition: 'azure-only',
+    note: 'Doc Vault (owner request 2026-10-26): the owner\'s own templates, applications, letters and notes, admin-only (publisher), never on the public site. Its own container so that no public read, and no other feature, can reach it by naming another one. Documents told apart by `docType`: `document` (the current version) and `version` (an earlier one, id `<documentId>~v<n>`). Partitioned on /id; the text (`/body/*`) is not indexed.',
+  },
+
   // --- Social --------------------------------------------------------------
   { name: 'social_posts', disposition: 'migrate', note: '~15 docs. 5 call sites — the only live one of the social_* set.' },
   // The remaining social_* collections have a firestore.rules match

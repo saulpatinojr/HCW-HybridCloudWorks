@@ -64,6 +64,13 @@ const FUNCTION_TIMEOUT_MS = {
   // (forge-studio.js FORGE_ASSIST_HTTP_BUDGET_MS); sync-budgets.test.js in
   // functions pins this value above it.
   'cms/forge/assist': 95000,
+  // The Doc Vault's list (which first clears expired Trash) and its adds: a
+  // paste, or one uploaded file of at most ~272 KB, found by title, archived
+  // and written, so more than one store round trip. Above the default so a slow
+  // store answers instead of timing out; not retried, as adding the same text
+  // again writes nothing new. Routes with an id stay on the default.
+  'cms/doc-vault': 45000,
+  'cms/doc-vault/upload': 45000,
 };
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const SAFE_RETRY_FUNCTIONS = new Set([
