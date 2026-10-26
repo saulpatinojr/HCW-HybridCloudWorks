@@ -271,6 +271,100 @@ describe('authored records and sync protocol', () => {
 });
 
 describe('source projections and retrieval', () => {
+  it('keeps graph edge meanings distinct and returns linked note revisions privately', async () => {
+    const { handlers, withAuth } = setup();
+    const save = async (item, version, mutationId) => {
+      const result = await handlers.save(
+        withAuth(request({ item, version, mutationId })),
+      );
+      expect(result.status).toBe(200);
+    };
+    await save(
+      { ...note('topic-1'), type: 'topic', title: 'Infrastructure' },
+      0,
+      'topic-create-1',
+    );
+    await save(note('note-2'), 0, 'note-create-2');
+    await save(
+      { ...note(), links: ['note-2'], collections: ['topic-1'] },
+      0,
+      'note-create-1',
+    );
+    await save(
+      {
+        ...note(),
+        body: 'Revised research',
+        links: ['note-2'],
+        collections: ['topic-1'],
+      },
+      1,
+      'note-update-1',
+    );
+    const graph = await handlers.graph(withAuth(request()));
+    expect(graph.status).toBe(200);
+    expect(graph.headers['Cache-Control']).toBe('private, no-store');
+    expect(json(graph).edges).toEqual(
+      expect.arrayContaining([
+        { from: 'note-1', to: 'note-2', kind: 'explicit' },
+        { from: 'note-1', to: 'topic-1', kind: 'membership' },
+        { from: 'note-1', to: 'note-2', kind: 'suggested' },
+      ]),
+    );
+    expect(json(graph).nodes.every((item) => !('body' in item))).toBe(true);
+    const linked = await handlers.get(withAuth(request({}, { id: 'note-2' })));
+    expect(json(linked).backlinks.map((item) => item.id)).toContain('note-1');
+    const history = await handlers.history(
+      withAuth(request({}, { id: 'note-1' })),
+    );
+    expect(json(history).items.map((item) => item.result.body)).toEqual([
+      'Revised research',
+      note().body,
+    ]);
+    const search = await handlers.search(
+      withAuth(request({ q: 'Revised research' })),
+    );
+    expect(json(search).items.map((item) => item.id)).toContain('note-1');
+  });
+  it('reports desktop sync health to the owner without allowing malformed status overwrites', async () => {
+    const { repo, handlers, withAuth } = setup({
+      user: {
+        oid: 'owner',
+        tid: 'tenant',
+        roles: ['Admin'],
+        scp: 'brain_sync access_as_admin',
+        azp: 'desktop',
+      },
+    });
+    const saved = await handlers.syncStatus(
+      withAuth(
+        request({
+          pending: 2,
+          conflicts: 1,
+          error: 'offline',
+          lastSuccessfulSync: '2026-10-26T09:00:00Z',
+        }),
+      ),
+    );
+    expect(json(saved)).toEqual({ ok: true, protocol: 1 });
+    const status = await handlers.status(withAuth(request()));
+    expect(json(status).sync).toMatchObject({
+      pending: 2,
+      conflicts: 1,
+      error: 'offline',
+      lastSuccessfulSync: '2026-10-26T09:00:00.000Z',
+    });
+    const invalid = await handlers.syncStatus(
+      withAuth(request({ pending: -1, conflicts: 0, error: 'none' })),
+    );
+    expect(invalid.status).toBe(400);
+    expect((await repo.read('sync-status')).pending).toBe(2);
+    const references = await handlers.syncReferences(withAuth(request()));
+    expect(json(references)).toMatchObject({
+      items: [],
+      protocol: 1,
+      indexComplete: false,
+    });
+  });
   it('projects caption-only social posts and structured newsletter/dialogue text without subscriber fields', () => {
     expect(
       referenceOf('social_posts', {

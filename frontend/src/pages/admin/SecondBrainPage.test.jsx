@@ -5,8 +5,10 @@ import { MemoryRouter } from 'react-router';
 import SecondBrainPage from './SecondBrainPage';
 import { brainApi } from '@/lib/brainApi';
 import { useBrainAccess } from '@/hooks/useBrainAccess';
+import { reauthenticateForApi } from '@/lib/entraAuth';
 
 vi.mock('@/hooks/useBrainAccess', () => ({ useBrainAccess: vi.fn() }));
+vi.mock('@/lib/entraAuth', () => ({ reauthenticateForApi: vi.fn() }));
 vi.mock('@/lib/brainApi', () => ({
   brainApi: {
     status: vi.fn(),
@@ -56,6 +58,54 @@ beforeEach(() => {
 });
 
 describe('Second Brain owner workspace', () => {
+  it('hides private text on failed access and restores the unsaved version after access returns', async () => {
+    const tree = () => (
+      <MemoryRouter>
+        <SecondBrainPage />
+      </MemoryRouter>
+    );
+    const { rerender } = render(tree());
+    await screen.findByText(note.title);
+    fireEvent.click(screen.getByRole('button', { name: 'Capture an idea' }));
+    fireEvent.change(await screen.findByLabelText('Markdown'), {
+      target: { value: 'Unsaved private outline' },
+    });
+    useBrainAccess.mockReturnValue({ enabled: false, loading: false });
+    rerender(tree());
+    expect(screen.queryByRole('region', { name: 'Note editor' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Unsaved private outline')).not.toBeInTheDocument();
+    useBrainAccess.mockReturnValue(status);
+    rerender(tree());
+    expect(await screen.findByLabelText('Markdown')).toHaveValue('Unsaved private outline');
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await waitFor(() =>
+      expect(brainApi.save).toHaveBeenCalledWith(
+        expect.objectContaining({ body: 'Unsaved private outline' }),
+        0,
+        expect.any(String)
+      )
+    );
+  });
+  it.each(['invalid_token', 'insufficient_scope'])(
+    'offers session renewal only for an invalid token (%s)',
+    async (error) => {
+      useBrainAccess.mockReturnValue({
+        enabled: false,
+        loading: false,
+        errorStatus: 401,
+        wwwAuthenticate: { error },
+      });
+      mount();
+      const button = screen.queryByRole('button', { name: 'Renew website session' });
+      if (error === 'invalid_token') {
+        fireEvent.click(button);
+        await waitFor(() => expect(reauthenticateForApi).toHaveBeenCalledOnce());
+      } else {
+        expect(button).not.toBeInTheDocument();
+        expect(reauthenticateForApi).not.toHaveBeenCalled();
+      }
+    }
+  );
   it('offers no data or requests when access is unavailable', () => {
     useBrainAccess.mockReturnValue({ enabled: false, loading: false });
     mount();
