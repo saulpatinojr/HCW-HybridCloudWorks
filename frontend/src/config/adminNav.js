@@ -39,6 +39,7 @@
  */
 import { ADMIN_ROLES } from '@/config/admin-v2';
 import {
+  Brain,
   Activity,
   Award,
   BadgeCheck,
@@ -201,6 +202,14 @@ export function roleLabel(role) {
  *                                 private letters and applications, so it is above the editor role (doc-vault/model.js)
  */
 const ITEMS = [
+  [
+    'creative',
+    '/admin/second-brain',
+    Brain,
+    'Second Brain',
+    'Your private notes, connected content, projects, and research.',
+    { minRole: 'editor', requiresBrain: true },
+  ],
   [
     'home',
     '/admin',
@@ -516,10 +525,13 @@ export function navGroupFor(item) {
  * so navGroupFor still finds them; the arrays are fresh each call, so a
  * component memoises on the role.
  */
-export function visibleNavFor(role) {
+export function visibleNavFor(role, capabilities = {}) {
   const level = Math.max(roleLevel(role), roleLevel(ROLE_NAMES[0]));
   return NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => roleLevel(item.minRole) <= level),
+    items: group.items.filter(
+      (item) =>
+        roleLevel(item.minRole) <= level && (!item.requiresBrain || capabilities.brain === true)
+    ),
   })).filter((group) => group.items.length > 0);
 }

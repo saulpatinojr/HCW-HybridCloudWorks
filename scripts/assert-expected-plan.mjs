@@ -521,9 +521,27 @@ export const DECLARED = [
     after: overdueQuery([
       ...TIMER_SCHEDULES_APPLIED,
       ["ambassadorAudienceMonthly", "1d", "2026-01-01 06:45"],
+      ["brainIndexReconcile", "15m", "2026-01-01 00:00"],
     ]),
     reason:
-      "#1302: alert-timer-overdue watches ambassadorAudienceMonthly too, one row more in its datatable",
+      "#1302 and Second Brain: alert-timer-overdue watches the audience timer and private indexing reconciliation",
+  },
+  // Second Brain: initial deployment is deliberately disabled. Owner IDs and
+  // activation are separate, exact-value configuration reviews.
+  ...['brain_records', 'brain_search'].map((name) => ({
+    address: `azurerm_cosmosdb_sql_container.hcw["${name}"]`, action: 'create',
+    reason: 'Second Brain: dedicated private owner-partitioned storage; search is rebuildable.',
+  })),
+  ...['BRAIN_ENABLED', 'BRAIN_AI_ENABLED', 'BRAIN_OWNER_OID', 'BRAIN_OWNER_TENANT_ID', 'BRAIN_SYNC_CLIENT_ID'].map((name) => ({
+    address: 'azurerm_function_app_flex_consumption.hcw', path: `app_settings.${name}`, before: undefined,
+    after: name.endsWith('_ENABLED') ? 'false' : '',
+    reason: 'Second Brain: disabled-by-default settings; no owner is inferred.',
+  })),
+  {
+    address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue', path: 'criteria[0].query',
+    before: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45']]),
+    after: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45'], ['brainIndexReconcile', '15m', '2026-01-01 00:00']]),
+    reason: 'Second Brain: exact timer-alert update if the audience timer was already applied.',
   },
   // #1360's create, notes_obsidian_publish, applied on 2026-10-24 (run-bb1XtRGJEbuK1Cec,
   // read as applied by tfc-plan-check with only the known permanent diff besides it) and was

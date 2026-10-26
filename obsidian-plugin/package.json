@@ -1,0 +1,20 @@
+{
+  "name": "hcw-second-brain",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=26.10.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@azure/msal-node": "7.1.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  }
+}

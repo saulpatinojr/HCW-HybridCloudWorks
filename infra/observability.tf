@@ -1500,6 +1500,7 @@ locals {
   # Thursday, so the weekly anchors are 2026-01-02 (Friday), 2026-01-04
   # (Sunday) and 2026-01-05 (Monday); the test checks each weekday too.
   timer_schedules = {
+    brainIndexReconcile = { period = "15m", anchor = "2026-01-01 00:00" } # 0 */15 * * * *
     # Daily, not monthly, by design (#1302): a day-of-month NCRONTAB has no
     # fixed period for lastDue below to compute, so the timer runs every day
     # and records the month only when it is not yet recorded. The rule then

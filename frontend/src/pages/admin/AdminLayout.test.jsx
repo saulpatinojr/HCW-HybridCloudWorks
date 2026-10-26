@@ -329,7 +329,9 @@ describe('the admin sidebar', () => {
       );
       expect(nav.getByRole('link', { name: 'Integrations' })).toBeInTheDocument();
       expect(nav.getByRole('link', { name: 'Platform Settings' })).toBeInTheDocument();
-      expect(nav.getAllByRole('link')).toHaveLength(NAV_GROUPS.flatMap((g) => g.items).length);
+      expect(nav.getAllByRole('link')).toHaveLength(
+        NAV_GROUPS.flatMap((g) => g.items).filter((i) => !i.requiresBrain).length
+      );
       expect(
         within(container.querySelector('aside')).getByText('Your role: Publisher')
       ).toBeInTheDocument();
@@ -342,7 +344,9 @@ describe('the admin sidebar', () => {
       expect(nav.queryByRole('link', { name: /^Doc Vault/ })).not.toBeInTheDocument();
       expect(nav.getByRole('link', { name: 'Integrations' })).toBeInTheDocument();
       expect(nav.getByRole('link', { name: /^Review Queue/ })).toBeInTheDocument();
-      expect(nav.getAllByRole('link')).toHaveLength(NAV_GROUPS.flatMap((g) => g.items).length - 2);
+      expect(nav.getAllByRole('link')).toHaveLength(
+        NAV_GROUPS.flatMap((g) => g.items).filter((i) => !i.requiresBrain).length - 2
+      );
     });
 
     it('shows the viewer menu, and no role line, when no role has been provided', () => {

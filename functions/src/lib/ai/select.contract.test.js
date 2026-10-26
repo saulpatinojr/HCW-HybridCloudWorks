@@ -38,9 +38,10 @@ import { enrichmentFor } from './model-enrichment.js';
 import { DEFAULT_PROVIDER_ORDER } from './provider-order.js';
 import { AI_TASKS, TASK_NAMES, isMediaTask } from './tasks.js';
 
-// The media tasks (slice 5) had no router chain before the resolver: they are
+// Second Brain is new after this historical migration fixture. Its private
+// provider lock is tested by select.test.js. The media tasks had no old chain: they are
 // held by select.test.js and migrate-selection.test.js, not by this contract.
-const CHAT_TASKS = TASK_NAMES.filter((task) => !isMediaTask(AI_TASKS[task]));
+const CHAT_TASKS = TASK_NAMES.filter((task) => !isMediaTask(AI_TASKS[task]) && task !== 'brainAssistant');
 import {
   FEATURES,
   PROVIDERS,

@@ -1529,6 +1529,9 @@ function realTree() {
  * classes.
  */
 const ALLOWED = [
+  { site: "lib/brain/handlers.js › route › error: authoredMessage(error, 'Could not complete the action.')", class: 'b', why: 'Owner-only authored BrainError sentence; upstream errors use errorResponse.' },
+  { site: 'lib/brain/handlers.js › route › ...authoredDetails(error)', class: 'b', why: 'Owner-only conflict projection of the current private note, constructed by the repository after authorization.' },
+  { site: "lib/brain/handlers.js › route › error: authoredMessage(error, 'Invalid input.')", class: 'b', why: 'Existing draft/taxonomy validator sentences; provider and database text is never returned.' },
   { site: 'functions/listen-and-learn-jobs.js › runSpeakChapter › error: storedFailure(err, \'The chapter could not be voiced.\', { correlationId: context?.invocationId ?? null, })', class: 'b', why: 'stored at write time through the door (#945 step 2): the chapter\'s error and lastError, with runJob\'s reference; the public Listen & Learn read has not returned it since #1201 (an allowlist of fields)' },
   { site: 'functions/public-submissions.js › handleSubmission › error: authoredMessage(err, \'Too many submissions — try again later.\')', class: 'b', why: 'PUBLIC: SubmissionRateLimitError sentence, vendor-free' },
   { site: 'lib/addons/status.js › failureReason › return error.message', class: 'c', why: 'feeds a warn line only' },

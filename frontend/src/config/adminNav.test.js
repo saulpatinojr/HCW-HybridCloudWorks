@@ -148,14 +148,20 @@ describe('visibleNavFor', () => {
     expect(editor).not.toContain('Publish');
     expect(editor).not.toContain('Doc Vault');
     expect(editor).toEqual(
-      NAV_ITEMS.map((i) => i.label).filter((l) => l !== 'Publish' && l !== 'Doc Vault')
+      NAV_ITEMS.filter((i) => !i.requiresBrain)
+        .map((i) => i.label)
+        .filter((l) => l !== 'Publish' && l !== 'Doc Vault')
     );
     expect(groupIds('editor')).toEqual(NAV_GROUPS.map((g) => g.id));
   });
 
   it('shows a publisher and a super_admin the whole registry', () => {
-    expect(labels('publisher')).toEqual(NAV_ITEMS.map((i) => i.label));
-    expect(labels('super_admin')).toEqual(NAV_ITEMS.map((i) => i.label));
+    expect(labels('publisher')).toEqual(
+      NAV_ITEMS.filter((i) => !i.requiresBrain).map((i) => i.label)
+    );
+    expect(labels('super_admin')).toEqual(
+      NAV_ITEMS.filter((i) => !i.requiresBrain).map((i) => i.label)
+    );
   });
 
   it('treats an unknown or missing role as a viewer, never as more', () => {
@@ -176,5 +182,25 @@ describe('visibleNavFor', () => {
       .find((item) => item.label === 'Health');
     expect(navGroupFor(health).id).toBe('platform');
     expect(Object.isFrozen(NAV_GROUPS)).toBe(true);
+  });
+});
+
+describe('owner-only Second Brain navigation', () => {
+  it('requires a server-derived capability even for a super_admin', () => {
+    expect(
+      visibleNavFor('super_admin')
+        .flatMap((g) => g.items)
+        .some((i) => i.id === 'second-brain')
+    ).toBe(false);
+    expect(
+      visibleNavFor('editor', { brain: true })
+        .flatMap((g) => g.items)
+        .some((i) => i.id === 'second-brain')
+    ).toBe(true);
+    expect(
+      visibleNavFor('viewer', { brain: true })
+        .flatMap((g) => g.items)
+        .some((i) => i.id === 'second-brain')
+    ).toBe(false);
   });
 });

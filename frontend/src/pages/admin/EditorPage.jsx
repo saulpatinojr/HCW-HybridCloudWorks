@@ -1,4 +1,5 @@
 import { useParams, useNavigate } from 'react-router';
+import BrainContextPanel from '@/components/admin/BrainContextPanel';
 import { PenTool } from 'lucide-react';
 import { EditorProvider, useEditor } from '@/features/editor/context/EditorContext';
 import { EditorLayout } from '@/features/editor/components/EditorLayout';
@@ -47,6 +48,7 @@ export default function EditorPage() {
       <div className="mb-4">
         <EditorHeader />
       </div>
+      <BrainContextPanel contentId={blogId} />
       <EditorLayout navigate={navigate} />
     </EditorProvider>
   );

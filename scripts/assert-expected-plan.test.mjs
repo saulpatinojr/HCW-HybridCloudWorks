@@ -936,10 +936,10 @@ describe('DECLARED', () => {
     // is the tree's rows without ambassadorAudienceMonthly, and the only line
     // the update adds is that timer's row. Neither value carries the bin_at()
     // line Kusto refuses (#964), applied away on 2026-10-15.
-    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => name !== 'ambassadorAudienceMonthly')));
+    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => !['ambassadorAudienceMonthly', 'brainIndexReconcile'].includes(name))));
     const before = declaration.before.split('\n');
     const added = declaration.after.split('\n').filter((line) => !before.includes(line));
-    expect(added).toEqual(['  "ambassadorAudienceMonthly", 1d, datetime(2026-01-01 06:45),']);
+    expect(added).toEqual(['  "ambassadorAudienceMonthly", 1d, datetime(2026-01-01 06:45),', '  "brainIndexReconcile", 15m, datetime(2026-01-01 00:00),']);
     expect(declaration.before).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
     expect(declaration.after).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
   });

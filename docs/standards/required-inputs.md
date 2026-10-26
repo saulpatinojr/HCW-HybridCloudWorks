@@ -609,3 +609,21 @@ No Docker password, personal access token or organisation access token is an
 input. If one ever appears in a store, it is the wrong fix for a failing
 login: the connection's **Failures** table in Docker Home says why an
 exchange was refused.
+
+## 4.12 Private Second Brain
+
+Configure these through the existing Terraform workspace and identity process;
+actual owner identifiers do not belong in this public document.
+
+| Input | Store | Default | Purpose |
+| --- | --- | --- | --- |
+| `brain_enabled` | Terraform workspace → `BRAIN_ENABLED` | false | Arms the private workspace for the configured owner only |
+| `brain_ai_enabled` | Terraform workspace → `BRAIN_AI_ENABLED` | false | Allows owner-requested Foundry retrieval/answers |
+| `brain_owner_oid` | Terraform workspace → `BRAIN_OWNER_OID` | empty | Existing human owner's Entra object ID |
+| `brain_owner_tenant_id` | Terraform workspace → `BRAIN_OWNER_TENANT_ID` | empty | Must match the API tenant when enabled |
+| `brain_sync_client_id` | Terraform workspace → `BRAIN_SYNC_CLIENT_ID` | empty | Separate public desktop client restricted to `brain_sync` |
+
+The owner also needs the existing API Admin role and an active editor-or-higher
+registry entry. The plugin requires no client secret. Its encrypted local token
+cache is separate from the vault. Identity setup, the test-vault pilot, and
+private Publish retirement are in the [Second Brain runbook](../runbooks/second-brain.md).

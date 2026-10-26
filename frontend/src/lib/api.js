@@ -31,6 +31,7 @@ import { requireFunctionsBase } from '@/lib/functionsBase';
 
 const DEFAULT_TIMEOUT_MS = 20000;
 const FUNCTION_TIMEOUT_MS = {
+  'cms/brain/ask': 95000,
   generateReviewerDigestManual: 30000,
   deleteRejectedContent: 90000,
   generateArticleDraft: 90000,

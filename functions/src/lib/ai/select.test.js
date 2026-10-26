@@ -43,6 +43,16 @@ function catalogue(overrides = {}, providerOverrides = {}) {
 const steps = (chain) => chain.map((c) => `${c.provider}:${c.model ?? '-'}`);
 const providersOf = (chain) => chain.map((c) => c.provider);
 
+describe('Second Brain private provider policy', () => {
+  it('uses Foundry alone even when a custom chain and global fallback include every provider', () => {
+    const selection = doc(ALL, { brainAssistant: { mode: 'custom', chain: ALL.map((provider) => ({ provider, model: null })), thenGlobal: true } });
+    const result = selectChain({ task: 'brainAssistant', selection, catalog: catalogue(), availability: everything });
+    expect(providersOf(result.chain)).toEqual(['foundry']);
+    const unavailable = selectChain({ task: 'brainAssistant', selection, catalog: catalogue(), availability: { keyed: ALL.filter((p) => p !== 'foundry'), enabled: ALL } });
+    expect(unavailable.chain).toEqual([]);
+  });
+});
+
 const doc = (global, tasks = {}) => ({
   version: 2,
   global: { priority: global.map((p) => (typeof p === 'string' ? { provider: p, model: null } : p)) },
@@ -320,7 +330,10 @@ describe('the policy locks, in both directions (ADR 0034 §6)', () => {
         availability: everything,
       });
       const { needs } = AI_TASKS[task];
-      if (needs.includes('grounding')) {
+      if (AI_TASKS[task].only && !AI_TASKS[task].only.includes('nvidia') && !needs.some((n) => !['text', 'json'].includes(n))) {
+        expect(providersOf(chain), task).not.toContain('nvidia');
+        expect(chain.every((step) => AI_TASKS[task].only.includes(step.provider)), task).toBe(true);
+      } else if (needs.includes('grounding')) {
         // The other lock, not the trial-tier one.
         expect(rejected.find((r) => r.provider === 'nvidia')?.why, task).toBe(
           'not eligible: grounding is Gemini-only'

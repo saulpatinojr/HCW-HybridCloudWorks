@@ -128,7 +128,7 @@ function deny(status, error, challenge) {
  * @param {() => number} [deps.now]
  * @returns {{ requireRole: Function, requireUser: Function, clearCache: Function }}
  */
-export function createRoleGuard({ verifier, lookupAdmin, auditDenial, now = Date.now }) {
+export function createRoleGuard({ verifier, lookupAdmin, auditDenial, now = Date.now, delegatedScope = ENTRA_API_DELEGATED_SCOPE }) {
   if (!verifier) throw new Error('createRoleGuard requires a verifier');
   if (!lookupAdmin) throw new Error('createRoleGuard requires lookupAdmin');
 
@@ -295,12 +295,12 @@ export function createRoleGuard({ verifier, lookupAdmin, auditDenial, now = Date
     // require-agent.js runs its own client-credentials path, which has `roles`
     // and no `scp` by construction.
     const scopes = typeof user.scp === 'string' ? user.scp.split(' ').filter(Boolean) : [];
-    if (!scopes.includes(ENTRA_API_DELEGATED_SCOPE)) {
+    if (!scopes.includes(delegatedScope)) {
       audit({
         outcome: 'denied',
         reason: 'missing-scope',
         oid: user.oid ?? user.sub,
-        required: ENTRA_API_DELEGATED_SCOPE,
+        required: delegatedScope,
       });
       // insufficient_scope, not invalid_token: the token verified. Re-acquiring
       // it returns the same scopes and the same rejection, so the client must
@@ -310,7 +310,7 @@ export function createRoleGuard({ verifier, lookupAdmin, auditDenial, now = Date
         role: null,
         error: deny(401, 'Authentication required', {
           code: 'insufficient_scope',
-          description: `The access token is missing the ${ENTRA_API_DELEGATED_SCOPE} scope.`,
+          description: `The access token is missing the ${delegatedScope} scope.`,
         }),
       };
     }

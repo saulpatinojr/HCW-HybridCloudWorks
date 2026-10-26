@@ -222,6 +222,8 @@ export const CONTAINER_TTL_SECONDS = Object.freeze({
  * }>}
  */
 export const COLLECTIONS = [
+  { name: 'brain_records', disposition: 'azure-only', partitionKey: '/ownerId', note: 'Private authored notes, relationships, revisions and sync events; atomic owner partition.' },
+  { name: 'brain_search', disposition: 'regenerate', partitionKey: '/ownerId', note: 'Rebuildable private creator-content lexical index. Never public.' },
   // --- Content -------------------------------------------------------------
   {
     name: 'content',

@@ -263,6 +263,17 @@ Revisit when:
 - Subscription loss enters the threat model.
 - A week of resurrected deletes causes a visible problem.
 
+## Second Brain implementation amendment (2026-10-26)
+
+The Second Brain implementation adds `brain_records` to authored exports and
+classifies `brain_search` as regenerable. Together with the subsequent
+`ambassador` and Doc Vault additions, the checked-in manifest now contains 78
+containers: 47 authored, 10 configuration, 7 operational, and 14 excluded.
+Full exports cover 64 containers and daily deltas cover 57. These are implementation totals;
+production totals change only after deployment. The historical figures above
+retain their original context. The owner-only workspace and rollout checks are
+documented in [the Second Brain design](../architecture/second-brain.md).
+
 ## Related decisions and references
 
 - [ADR 0003](0003-cosmos-serverless.md) — serverless Cosmos, the reason
