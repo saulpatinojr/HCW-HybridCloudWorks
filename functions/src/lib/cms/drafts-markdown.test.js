@@ -5,7 +5,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import {
   MARKDOWN_ORIGINS,
   MAX_MARKDOWN_BYTES,
@@ -174,14 +173,16 @@ describe("markdownDraftContentId", () => {
   });
 });
 
-describe("every docs/content article", () => {
-  const dir = join(process.cwd(), "..", "docs", "content");
-  const files = readdirSync(dir).filter((name) =>
-    checkRepoDraftPath(`docs/content/${name}`).ok,
-  );
+describe("every sample draft", () => {
+  const dir = new URL("./__fixtures__/", import.meta.url);
+  const files = readdirSync(dir).filter((name) => name.endsWith(".txt"));
+
+  it("finds the fixtures", () => {
+    expect(files.length).toBeGreaterThan(0);
+  });
 
   it.each(files)("%s passes the same checks a typed draft does", (name) => {
-    const parsed = parseMarkdownDraft(readFileSync(join(dir, name), "utf8"));
+    const parsed = parseMarkdownDraft(readFileSync(new URL(name, dir), "utf8"));
     expect(parsed.ok, parsed.error).toBe(true);
     expect(() => validateDraftFields(parsed.fields)).not.toThrow();
   });

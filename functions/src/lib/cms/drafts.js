@@ -3,8 +3,8 @@
  * articles the owner writes on /admin/drafts, saved in the site, and sent on
  * to In Review when they are ready.
  *
- * Nothing here does I/O. The routes and the store are ./drafts-handlers.js,
- * the GitHub import ./drafts-import.js. This module decides what a draft may
+ * Nothing here does I/O. The routes and the store are ./drafts-handlers.js
+ * and the markdown upload is ./drafts-markdown.js. This module decides what a draft may
  * contain, the documents it is written as and the views the page receives;
  * ./drafts-stage.js (re-exported from here) decides where a document is,
  * which moves are allowed from there, and what each transition writes.
@@ -60,9 +60,9 @@ import { resolveIdeaOrigin, resolveKind } from "./taxonomy.js";
 export * from "./drafts-stage.js";
 
 /**
- * The body cap. The same number the repository import caps a fetched file at
- * (repo-draft-source.js), so an article imported from docs/content is never
- * too large to save again. Measured in UTF-8 bytes, as that cap is.
+ * The body cap. It is the number the removed docs/content import capped a
+ * fetched file at (repo-draft-source.js), kept so an article imported that way
+ * earlier is never too large to save again. Measured in UTF-8 bytes.
  */
 export const MAX_DRAFT_BODY_BYTES = MAX_DRAFT_BYTES;
 export const MAX_TRACK_CHARS = 40;

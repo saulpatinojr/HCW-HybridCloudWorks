@@ -161,7 +161,7 @@ export default function QueuePage() {
             <div>
               <p className="font-medium">Drafts</p>
               <p className="text-sm text-muted-foreground">
-                Articles are written, imported from docs/content, and sent to In Review on the
+                Articles are written or uploaded from a markdown file, and sent to In Review on the
                 Drafts page.
               </p>
             </div>

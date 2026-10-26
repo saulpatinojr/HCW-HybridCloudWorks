@@ -123,8 +123,8 @@ export default function DraftList({
         )}
         {!loading && drafts.length === 0 && !unsavedNew && (
           <p className="text-sm text-muted-foreground">
-            No drafts yet. Start one with <strong>New draft</strong>, or bring in the articles in
-            docs/content with <strong>Import from docs/content</strong>.
+            No drafts yet. Start one with <strong>New draft</strong>, or bring in a markdown file
+            with <strong>Paste or upload a markdown draft</strong>.
           </p>
         )}
         <ul className="space-y-2" aria-label="Drafts">

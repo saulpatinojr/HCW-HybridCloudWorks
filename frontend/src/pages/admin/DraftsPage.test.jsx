@@ -1,7 +1,7 @@
 /**
  * /admin/drafts (owner request 2026-10-03): the list, the editor with its
  * live preview, the save state, delete with a confirm (and its refusal for a
- * live article), Send to In Review, Back to Drafts, the docs/content import,
+ * live article), Send to In Review, Back to Drafts, the markdown upload,
  * a conflict from another tab, and the warning before leaving with unsaved
  * changes.
  */
@@ -78,7 +78,7 @@ const DOCKER = view({
   title: 'Docker images, built',
   stage: 'in_review',
   origin: 'repo-import',
-  repoPath: 'docs/content/blog-docker-01-building-images.md',
+  repoPath: 'docs/content/blog-sample-04-imported-earlier.md',
   etag: '"docker"',
 });
 
@@ -324,36 +324,13 @@ describe('DraftsPage', () => {
     expect(await screen.findByLabelText('Title')).toBeEnabled();
   });
 
-  it('imports from docs/content and reports each file', async () => {
+  it('has no Import from docs/content button, and a row imported earlier keeps its label', async () => {
     respond();
-    postJSON.mockResolvedValue({
-      ok: true,
-      counts: { imported: 1, skipped: 1 },
-      results: [
-        {
-          path: 'docs/content/blog-lab-01-landing-zone.md',
-          outcome: 'imported',
-          title: 'Lab one',
-        },
-        {
-          path: 'docs/content/blog-docker-01-building-images.md',
-          outcome: 'skipped',
-          code: 'ALREADY_IMPORTED',
-          stage: 'in_review',
-          title: 'Docker images, built',
-        },
-      ],
-    });
     renderPage();
     await screen.findByRole('list', { name: 'Drafts' });
-    getJSON.mockClear();
-    fireEvent.click(screen.getByRole('button', { name: /Import from docs\/content/ }));
-
-    await waitFor(() => expect(postJSON).toHaveBeenCalledWith('cms/drafts/import-repo', {}));
-    const results = await screen.findByRole('region', { name: 'Import results' });
-    expect(within(results).getByText('Imported as a draft')).toBeInTheDocument();
-    expect(within(results).getByText('Already imported — In Review')).toBeInTheDocument();
-    await waitFor(() => expect(getJSON).toHaveBeenCalledWith('cms/drafts'));
+    expect(screen.queryByRole('button', { name: /Import from docs\/content/ })).toBeNull();
+    expect(screen.getByText(/From docs\/content/)).toBeInTheDocument();
+    expect(postJSON).not.toHaveBeenCalledWith('cms/drafts/import-repo', expect.anything());
   });
 
   describe('Paste or upload a markdown draft', () => {
@@ -382,7 +359,7 @@ describe('DraftsPage', () => {
       { status: 422 }
     );
 
-    /** The panel, with the import button's route answering nothing in case it is pressed. */
+    /** The page with its list loaded, and the panel for uploading. */
     async function renderPanel() {
       respond();
       renderPage();
@@ -396,7 +373,7 @@ describe('DraftsPage', () => {
     const markdownCalls = () =>
       postJSON.mock.calls.filter(([route]) => route === 'cms/drafts/from-markdown');
 
-    it('offers a labelled file picker for several .md files and a labelled box, and keeps the docs/content import', async () => {
+    it('offers a labelled file picker for several .md files and a labelled box', async () => {
       const panel = await renderPanel();
       const picker = within(panel).getByLabelText(/Markdown files from my vault/);
       expect(picker).toHaveAttribute('type', 'file');
@@ -406,7 +383,6 @@ describe('DraftsPage', () => {
       expect(within(panel).getByText(/Nothing is published/)).toBeInTheDocument();
       expect(within(panel).getByRole('button', { name: 'Upload files' })).toBeDisabled();
       expect(within(panel).getByRole('button', { name: 'Add pasted draft' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: /Import from docs\/content/ })).toBeInTheDocument();
     });
 
     it('sends a mixed batch one request at a time, in order, and one bad file does not stop the rest', async () => {

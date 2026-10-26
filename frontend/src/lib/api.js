@@ -39,11 +39,6 @@ const FUNCTION_TIMEOUT_MS = {
   // A batch of articles each fetching its body images (15 s per image, four
   // at a time) — sized with the Function host's 230 s cap, not the default.
   'cms/content/rehost-images': 200000,
-  // The Drafts page's "Import from docs/content": the directory listing,
-  // then each file not yet imported — a raw fetch and a commit lookup under
-  // an 8 s deadline apiece, in parallel — then the writes. Not retried: the
-  // import is idempotent, but a retry would audit every path twice.
-  'cms/drafts/import-repo': 60000,
   // Paste or upload a markdown draft: one file of at most ~272 KB parsed and
   // written once, plus a title lookup and a published-title lookup. Above the
   // default so a slow store answers instead of timing out; not retried, as the

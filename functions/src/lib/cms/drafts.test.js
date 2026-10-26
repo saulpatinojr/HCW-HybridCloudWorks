@@ -5,7 +5,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   DRAFTS_STAGE_STATUS,
   DRAFT_FIELDS,
@@ -53,9 +52,17 @@ import {
 
 const NOW = () => new Date("2026-10-03T12:00:00.000Z");
 const EDITOR = "owner@hcw.dev";
-const LAB_01 = "docs/content/blog-lab-01-landing-zone.md";
+// A synthetic fixture written to the blog template, not a real article: the
+// real drafts do not live in this public repository.
+const SAMPLE_01 = "docs/content/blog-sample-01-first-part.md";
 const readRepoFile = (path) =>
-  readFileSync(join(process.cwd(), "..", ...path.split("/")), "utf8");
+  readFileSync(
+    new URL(
+      `./__fixtures__/${path.split("/").at(-1).replace(/\.md$/, ".txt")}`,
+      import.meta.url,
+    ),
+    "utf8",
+  );
 
 const FIELDS = Object.freeze({
   title: "One container, three clouds",
@@ -298,7 +305,7 @@ describe("buildNewDraftDocument", () => {
 });
 
 describe("asImportedDraft — a docs/content file in the Drafts stage", () => {
-  const parsed = parseRepoDraft(readRepoFile(LAB_01));
+  const parsed = parseRepoDraft(readRepoFile(SAMPLE_01));
   const source = {
     commitSha: "a".repeat(40),
     rawUrl: "https://raw.githubusercontent.com/x",
@@ -306,7 +313,7 @@ describe("asImportedDraft — a docs/content file in the Drafts stage", () => {
   };
   const doc = asImportedDraft(
     buildRepoDraftData({
-      path: LAB_01,
+      path: SAMPLE_01,
       draft: parsed.draft,
       source,
       editor: EDITOR,
@@ -325,7 +332,7 @@ describe("asImportedDraft — a docs/content file in the Drafts stage", () => {
 
   it("keeps the repository provenance, which is how a second import finds it", () => {
     expect(doc).toMatchObject({
-      repoPath: LAB_01,
+      repoPath: SAMPLE_01,
       repoCommitSha: "a".repeat(40),
       source: "repo",
     });
@@ -436,7 +443,7 @@ describe("where a document is, and what may be done to it", () => {
       id: "c",
       contentStatus: "in_review",
       Live: false,
-      repoPath: LAB_01,
+      repoPath: SAMPLE_01,
     },
     reviewFromForge: { id: "d", contentStatus: "in_review", Live: false },
     approved: {
@@ -455,7 +462,7 @@ describe("where a document is, and what may be done to it", () => {
       id: "g",
       contentStatus: "in_review",
       Live: true,
-      repoPath: LAB_01,
+      repoPath: SAMPLE_01,
     },
   };
 
@@ -712,8 +719,8 @@ describe("toDraftSummary", () => {
 describe("a draft never reaches a public read", () => {
   const imported = asImportedDraft(
     buildRepoDraftData({
-      path: LAB_01,
-      draft: parseRepoDraft(readRepoFile(LAB_01)).draft,
+      path: SAMPLE_01,
+      draft: parseRepoDraft(readRepoFile(SAMPLE_01)).draft,
       source: {
         commitSha: null,
         rawUrl: "https://raw.githubusercontent.com/x",

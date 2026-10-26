@@ -1,14 +1,15 @@
 /**
- * repo-draft.js — the pure half of importing a `docs/content/blog-*.md` draft
- * from the repository into the CMS (owner request 2026-09-28). Since
- * 2026-10-03 the import lands each file in the Drafts stage (/admin/drafts,
- * ./drafts-handlers.js), once; the original straight-to-review import
- * (repo-import.js) was retired with it.
+ * repo-draft.js — the pure half of reading a `blog-*.md` draft: which paths
+ * pass the allow-list, how the front matter is read, and the content document
+ * a draft becomes. It began as the import of `docs/content/blog-*.md` files
+ * from the repository (owner request 2026-09-28). That import was removed on
+ * 2026-10-25 because pre-publish drafts do not live in the public repository;
+ * the parser stays because the markdown upload (./drafts-markdown.js) reads
+ * every draft with it, and documents imported earlier keep their ids and
+ * provenance fields.
  *
- * Nothing here does I/O. The fetch is ./repo-draft-source.js, the store and
- * the HTTP shape ./drafts-handlers.js; this module decides which paths may be
- * imported at all, reads a draft's front matter, and builds the content
- * document (./drafts.js asImportedDraft sets the Drafts stage's status on it).
+ * Nothing here does I/O. The pinned GitHub fetch is ./repo-draft-source.js and
+ * the HTTP shape ./drafts-handlers.js.
  *
  * THE ALLOW-LIST IS A PATTERN, NOT A LOOKUP. `^docs/content/blog-[a-z0-9-]+\.md$`
  * admits no `.`, `/`, `%` or `\` after the directory, so a traversal

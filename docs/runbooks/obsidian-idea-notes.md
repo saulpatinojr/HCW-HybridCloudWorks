@@ -7,7 +7,7 @@
 > one ready idea into a draft article **in your vault's `Drafts` folder**. From
 > there you upload it on [Admin → Drafts](https://hybridcloudworks.com/admin/drafts).
 > The script no longer writes into this repository, and the old route (commit
-> the draft, then *Import from docs/content*) is being retired. There is no
+> the draft, then *Import from docs/content*) has been removed. There is no
 > admin screen for the idea backlog.
 
 **Scope:** how to keep content ideas in [Obsidian](https://obsidian.md/download)
@@ -271,7 +271,7 @@ commit it, and do not open a pull request for it.
 draft that is not ready to be seen must not be committed to it.
 **Admin → Drafts** takes a markdown file straight from your vault instead. The
 older route, committing the draft under `docs/content` and using **Import from
-docs/content**, is being retired and should not be used for a new draft.
+docs/content**, has been removed.
 
 A file can be sent this way when it starts with a front-matter block, a few
 `key: value` lines between two `---` lines, the same block a `docs/content`

@@ -1,18 +1,16 @@
 /**
  * The routes behind /admin/drafts (drafts-handlers.js), against an in-memory
- * store with the real client's conditional-write semantics and a fetch double
- * that answers like GitHub.
+ * store with the real client's conditional-write semantics.
  *
  * Pinned, in the order the owner asked for it: the editor role on every
  * route; create, read, update and delete; two tabs cannot overwrite each
  * other; Send to In Review lands where the original import landed; Back to
  * Drafts only for an article from Drafts; delete takes the In Review item
- * with it and refuses anything live; the import is idempotent and recognises
- * the two Docker drafts already In Review.
+ * with it and refuses anything live; the markdown upload is idempotent and
+ * recognises an article already in Drafts or In Review.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { LIST_QUERY, createDraftsHandlers } from "./drafts-handlers.js";
 import { DRAFTS_STAGE_STATUS } from "./drafts.js";
 import {
@@ -20,24 +18,20 @@ import {
   MAX_REQUEST_BYTES,
   markdownDraftContentId,
 } from "./drafts-markdown.js";
-import {
-  checkRepoDraftPath,
-  parseRepoDraft,
-  repoDraftContentId,
-} from "./repo-draft.js";
-import { createRepoDraftSource } from "./repo-draft-source.js";
+import { parseRepoDraft, repoDraftContentId } from "./repo-draft.js";
 import { isPublicDocument } from "../public-reads.js";
 import { matchesQueueStatus } from "../admin-snapshots.js";
-import {
-  API_PREFIX,
-  LAB_01,
-  LAB_02,
-  LAB_03,
-  LAB_TEXT,
-  RAW_PREFIX,
-  githubFetch,
-  textResponse,
-} from "./repo-draft-github.test-helper.js";
+
+/**
+ * Synthetic drafts in ./__fixtures__, written to the blog template. They hold
+ * no real article text: the real drafts do not live in this public repository.
+ */
+const FIXTURES = new URL("./__fixtures__/", import.meta.url);
+const FIXTURE_NAMES = readdirSync(FIXTURES).filter((name) =>
+  name.endsWith(".txt"),
+);
+const fixtureText = (name) => readFileSync(new URL(name, FIXTURES), "utf8");
+const SAMPLE_02 = "docs/content/blog-sample-02-second-part.md";
 
 const USER = { oid: "u1", email: "owner@hcw.dev" };
 const context = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -155,23 +149,18 @@ function memoryStore(seed = []) {
   };
 }
 
-function setup({
-  seed = [],
-  fetch = githubFetch(),
-  guard = allowGuard(),
-} = {}) {
+function setup({ seed = [], guard = allowGuard() } = {}) {
   const store = memoryStore(seed);
   const onContentDeleted = vi.fn(async () => ({}));
   let n = 0;
   const handlers = createDraftsHandlers({
     guard,
     store,
-    source: createRepoDraftSource({ fetch: fetch.fetchImpl }),
     onContentDeleted,
     now: () => new Date("2026-10-03T12:00:00.000Z"),
     uuid: () => `id-${++n}`,
   });
-  return { handlers, store, fetch, guard, onContentDeleted };
+  return { handlers, store, guard, onContentDeleted };
 }
 
 /** Create a draft through the route and return what the page receives. */
@@ -184,12 +173,12 @@ async function created(handlers, fields = FIELDS) {
 }
 
 const DOCKER_IN_REVIEW = Object.freeze({
-  id: repoDraftContentId(LAB_02),
+  id: repoDraftContentId(SAMPLE_02),
   Title: "The Docker draft already In Review",
   contentStatus: "in_review",
   Live: false,
   Status: "Draft",
-  repoPath: LAB_02,
+  repoPath: SAMPLE_02,
   postContent: "Imported body.",
   updatedAt: "2026-09-30T00:00:00.000Z",
 });
@@ -227,9 +216,8 @@ describe("the role", () => {
     "remove",
     "sendToReview",
     "backToDrafts",
-    "importFromRepo",
   ])("%s asks for editor and stops at a refusal", async (name) => {
-    const { handlers, guard, store, fetch } = setup({
+    const { handlers, guard, store } = setup({
       guard: denyGuard(),
       seed: [DOCKER_IN_REVIEW],
     });
@@ -244,7 +232,6 @@ describe("the role", () => {
     expect(guard.requireRole).toHaveBeenCalledWith(expect.anything(), "editor");
     expect(store.readDoc).not.toHaveBeenCalled();
     expect(store.queryDocs).not.toHaveBeenCalled();
-    expect(fetch.fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -736,7 +723,7 @@ describe("from-markdown — a whole file becomes a draft", () => {
     const { handlers, store } = setup();
     const res = await fromMarkdown(
       handlers,
-      `${MARKDOWN}\nSee [part two](blog-lab-02-x.md).\n`,
+      `${MARKDOWN}\nSee [part two](blog-sample-02-x.md).\n`,
     );
     const id = markdownDraftContentId("A draft from my vault");
     expect(res.status).toBe(201);
@@ -748,7 +735,7 @@ describe("from-markdown — a whole file becomes a draft", () => {
       draft: { id, stage: "draft", origin: "vault" },
     });
     expect(res.body.warnings).toEqual([
-      expect.stringContaining("blog-lab-02-x.md"),
+      expect.stringContaining("blog-sample-02-x.md"),
     ]);
     const stored = store.docs.get(id);
     expect(stored).toMatchObject({
@@ -1131,11 +1118,8 @@ describe("from-markdown — a whole file becomes a draft", () => {
     });
   });
 
-  it("takes every docs/content article through the route, once", async () => {
-    const dir = join(process.cwd(), "..", "docs", "content");
-    const files = readdirSync(dir)
-      .filter((name) => checkRepoDraftPath(`docs/content/${name}`).ok)
-      .map((name) => readFileSync(join(dir, name), "utf8"));
+  it("takes every sample draft through the route, once", async () => {
+    const files = FIXTURE_NAMES.map(fixtureText);
     expect(files.length).toBeGreaterThan(0);
     const { handlers, store } = setup();
     for (const text of files) {
@@ -1150,149 +1134,9 @@ describe("from-markdown — a whole file becomes a draft", () => {
   });
 });
 
-describe("Import from docs/content", () => {
-  it("imports every article file as a draft, never the contract docs or a README", async () => {
-    const { handlers, store } = setup();
-    const res = parse(await handlers.importFromRepo(request(), context));
-    expect(res.status).toBe(200);
-    expect(res.body.counts).toEqual({ imported: 3 });
-    expect(res.body.results.map((r) => r.path)).toEqual([
-      LAB_01,
-      LAB_02,
-      LAB_03,
-    ]);
-    for (const path of [LAB_01, LAB_02, LAB_03]) {
-      const doc = store.docs.get(repoDraftContentId(path));
-      expect(doc).toMatchObject({
-        contentStatus: "drafting",
-        Live: false,
-        repoPath: path,
-        draftOrigin: "repo-import",
-      });
-      expect(isPublicDocument(doc)).toBe(false);
-    }
-  });
-
-  it("is idempotent: a second run fetches no file and writes nothing", async () => {
-    const fetch = githubFetch();
-    const { handlers, store } = setup({ fetch });
-    await handlers.importFromRepo(request(), context);
-    const before = structuredClone([...store.docs.entries()]);
-    fetch.calls.length = 0;
-    const res = parse(await handlers.importFromRepo(request(), context));
-    expect(res.body.counts).toEqual({ skipped: 3 });
-    expect(res.body.results.every((r) => r.code === "ALREADY_IMPORTED")).toBe(
-      true,
-    );
-    expect(fetch.calls.map((c) => c.url)).toEqual([
-      `${API_PREFIX}contents/docs/content?ref=main`,
-    ]);
-    expect([...store.docs.entries()]).toEqual(before);
-  });
-
-  it("never duplicates when two imports race (a double click)", async () => {
-    const { handlers, store } = setup();
-    await Promise.all([
-      handlers.importFromRepo(request(), context),
-      handlers.importFromRepo(request(), context),
-    ]);
-    expect(store.docs.size).toBe(3);
-  });
-
-  it("shows a Docker draft the original import put In Review as In Review, and leaves it alone", async () => {
-    const fetch = githubFetch();
-    const { handlers, store } = setup({ seed: [DOCKER_IN_REVIEW], fetch });
-    const res = parse(await handlers.importFromRepo(request(), context));
-    const docker = res.body.results.find((r) => r.path === LAB_02);
-    expect(docker).toMatchObject({
-      outcome: "skipped",
-      code: "ALREADY_IMPORTED",
-      stage: "in_review",
-    });
-    expect(fetch.calls.map((c) => c.url)).not.toContain(
-      `${RAW_PREFIX}blog-lab-02-one-container.md`,
-    );
-    expect(store.docs.get(DOCKER_IN_REVIEW.id).contentStatus).toBe("in_review");
-  });
-
-  it("skips a file whose title a published article already carries", async () => {
-    const title = parseRepoDraft(LAB_TEXT[LAB_01]).draft.title;
-    const live = {
-      id: "old-post",
-      Live: true,
-      contentStatus: "published",
-      normalizedTitle: title
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim(),
-    };
-    const { handlers, store } = setup({ seed: [live] });
-    const res = parse(await handlers.importFromRepo(request(), context));
-    expect(res.body.results.find((r) => r.path === LAB_01)).toMatchObject({
-      outcome: "skipped",
-      code: "PUBLISHED_ELSEWHERE",
-      existingId: "old-post",
-    });
-    expect(store.docs.has(repoDraftContentId(LAB_01))).toBe(false);
-  });
-
-  it("reports one unreadable file without stopping the rest", async () => {
-    const fetch = githubFetch({
-      files: { ...LAB_TEXT, [LAB_03]: "no front matter" },
-    });
-    const { handlers } = setup({ fetch });
-    const res = parse(await handlers.importFromRepo(request(), context));
-    expect(res.body.counts).toEqual({ imported: 2, refused: 1 });
-    expect(res.body.results.find((r) => r.path === LAB_03)).toMatchObject({
-      code: "NO_FRONT_MATTER",
-    });
-  });
-
-  it("answers 503 when GitHub’s rate limit is used up, before touching the store", async () => {
-    const limited = vi.fn(async () =>
-      textResponse("{}", {
-        status: 403,
-        headers: {
-          "x-ratelimit-remaining": "0",
-          "x-ratelimit-reset": "1790000000",
-        },
-      }),
-    );
-    const { handlers, store } = setup({
-      fetch: { fetchImpl: limited, calls: [] },
-    });
-    const res = parse(await handlers.importFromRepo(request(), context));
-    expect(res).toMatchObject({ status: 503, body: { code: "RATE_LIMITED" } });
-    expect(store.queryDocs).not.toHaveBeenCalled();
-  });
-});
-
-/**
- * The owner's migration: the files in docs/content today. Read from disk, so
- * a new file that would not import, or a contract doc that would, fails here.
- */
-describe("the docs/content directory as it stands", () => {
-  const dir = join(process.cwd(), "..", "docs", "content");
-  const names = readdirSync(dir).filter(
-    (name) => name.startsWith("blog-") && name.endsWith(".md"),
-  );
-  const importable = names
-    .map((name) => `docs/content/${name}`)
-    .filter((path) => checkRepoDraftPath(path).ok);
-
-  it("holds seventeen articles once the two contract docs are set aside", () => {
-    expect(names).toContain("blog-template.md");
-    expect(names).toContain("blog-machine.md");
-    expect(importable).toHaveLength(17);
-    expect(importable).not.toContain("docs/content/blog-template.md");
-    expect(importable).not.toContain("docs/content/blog-machine.md");
-  });
-
-  it.each(importable)("%s parses into a draft", (path) => {
-    const parsed = parseRepoDraft(
-      readFileSync(join(process.cwd(), "..", ...path.split("/")), "utf8"),
-    );
+describe("the sample drafts", () => {
+  it.each(FIXTURE_NAMES)("%s parses into a draft", (name) => {
+    const parsed = parseRepoDraft(fixtureText(name));
     expect(parsed.ok, parsed.error).toBe(true);
   });
 });

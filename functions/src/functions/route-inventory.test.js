@@ -471,16 +471,16 @@ describe("the lab agent registry routes (#740)", () => {
 /**
  * The Drafts stage, /admin/drafts (owner request 2026-10-03). Property 1
  * proves these reach a guard; this pins the role and the verbs. They create,
- * edit, move and delete content documents, and the import makes outbound
- * calls to GitHub, so they sit behind requireRole at editor — the role that
- * creates and reviews content everywhere else — and are never public: an
- * anonymous caller could otherwise write the owner's drafts, push them into
- * review, or spend the Function App's GitHub rate limit. One registration per
- * template (property 4).
+ * edit, move and delete content documents, so they sit behind requireRole at
+ * editor — the role that creates and reviews content everywhere else — and
+ * are never public: an anonymous caller could otherwise write the owner's
+ * drafts or push them into review. One registration per template
+ * (property 4).
  *
- * The routes they replace, cms/content/import-repo and its candidates list,
- * are retired, and asserted absent so they cannot quietly come back as a
- * second path into review that skips the Drafts stage.
+ * The routes that read drafts from the repository, cms/content/import-repo
+ * with its candidates list and cms/drafts/import-repo, are retired (pre-publish
+ * drafts do not live in the public repository), and asserted absent so they
+ * cannot quietly come back as a second path into review.
  */
 describe("the Drafts stage routes", () => {
   const VERBS = {
@@ -488,7 +488,6 @@ describe("the Drafts stage routes", () => {
     "cms/drafts/{id}": ["GET", "PUT", "DELETE"],
     "cms/drafts/{id}/send-to-review": ["POST"],
     "cms/drafts/{id}/back-to-drafts": ["POST"],
-    "cms/drafts/import-repo": ["POST"],
     "cms/drafts/from-markdown": ["POST"],
   };
 
@@ -525,10 +524,11 @@ describe("the Drafts stage routes", () => {
     },
   );
 
-  it("the straight-to-review import routes it replaces are gone", () => {
+  it("the routes that import drafts from the repository are gone", () => {
     const routes = new Set([...httpRegistrations.values()].map((o) => o.route));
     expect(routes.has("cms/content/import-repo")).toBe(false);
     expect(routes.has("cms/content/import-repo/candidates")).toBe(false);
+    expect(routes.has("cms/drafts/import-repo")).toBe(false);
   });
 });
 

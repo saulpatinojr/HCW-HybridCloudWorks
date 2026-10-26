@@ -1,8 +1,7 @@
 /**
  * drafts-handlers.js — the routes behind /admin/drafts (owner request
  * 2026-10-03). What a draft is and which moves are allowed is ./drafts.js
- * and ./drafts-stage.js; the docs/content import is ./drafts-import.js; this
- * is the store and the HTTP shape.
+ * and ./drafts-stage.js; this is the store and the HTTP shape.
  *
  *   GET    cms/drafts                       the list (no bodies)
  *   POST   cms/drafts                       a new draft { fields }
@@ -12,11 +11,10 @@
  *   DELETE cms/drafts/{id}                  delete { etag }
  *   POST   cms/drafts/{id}/send-to-review   drafting → in_review { etag }
  *   POST   cms/drafts/{id}/back-to-drafts   in_review → drafting { etag }
- *   POST   cms/drafts/import-repo           docs/content → Drafts, once
  *
  * Every route is behind requireRole at editor, the role that creates and
  * reviews content everywhere else (createContentItem, transitionContentStatus,
- * the repository import before this).
+ * the repository import before this, since removed).
  *
  * TWO TABS CANNOT OVERWRITE EACH OTHER. Every write that changes an existing
  * draft — save, delete, both transitions — carries the `etag` of the version
@@ -24,8 +22,7 @@
  * already newer, and is written conditioned on that etag (patchDoc's ifMatch,
  * deleteDocIfMatch) so a write landing in between turns into a refusal rather
  * than an overwrite. The refusal is a 412 with `code: 'CONFLICT'` and the
- * current version's summary, which the page uses to offer a reload. Same rule
- * the repository import followed for its in-review refresh.
+ * current version's summary, which the page uses to offer a reload.
  *
  * AUDIT. One row per action, written after the work and best-effort (as
  * set-slug.js and the original import did), so a failed audit write cannot
@@ -38,7 +35,6 @@ import {
   errorResponse,
   isAuthoredError,
 } from "../http/error-response.js";
-import { REPO_REF } from "./repo-draft.js";
 import {
   DRAFTS_STAGE_STATUS,
   REVIEW_STATUS,
@@ -57,21 +53,38 @@ import {
   validateDraftFields,
 } from "./drafts.js";
 import {
-  createDraftsImporter,
-  editorOf,
-  publishedWithTitle,
-} from "./drafts-import.js";
-import {
   MAX_REQUEST_BYTES,
   isMarkdownTooLarge,
   markdownDraftContentId,
   parseMarkdownDraft,
   readMarkdownRequest,
 } from "./drafts-markdown.js";
-import { normalizeTitleForDedup } from "./content-dedup.js";
+import { buildDedupFields, normalizeTitleForDedup } from "./content-dedup.js";
 import { validateTaxonomyFieldsWithStore } from "./taxonomy-fields.js";
 
-export { publishedWithTitle };
+/** Who to record as the editor: the first identity the sign-in carries. */
+export const editorOf = (user = {}) =>
+  [user.email, user.preferred_username, user.oid, user.sub].find(Boolean) ||
+  "admin";
+
+/**
+ * A published article already carrying this title, at any date, other than
+ * `selfId`. The dedup gate's seven-day title window does not see older
+ * hand-pasted posts, and writing or sending one of those must not queue a
+ * second copy of a live article.
+ */
+export async function publishedWithTitle(store, title, selfId = null) {
+  const { normalizedTitle } = buildDedupFields({ title });
+  if (!normalizedTitle) return null;
+  const rows = await store.queryDocs(
+    "content",
+    "SELECT TOP 5 c.id, c.contentStatus, c.Live FROM c WHERE c.normalizedTitle = @title",
+    [{ name: "@title", value: normalizedTitle }],
+  );
+  const isPublished = (row) =>
+    row.Live === true || row.contentStatus === "published";
+  return rows.find((row) => row.id !== selfId && isPublished(row)) || null;
+}
 
 /** Rows the list returns. The Drafts stage is one person's desk; this is generous. */
 export const MAX_LISTED_DRAFTS = 200;
@@ -677,37 +690,6 @@ async function backToDrafts(deps, { request, user, id, etag, current }) {
   return json(200, { ok: true, draft: toDraftView(written) });
 }
 
-/** One audit row per file the import looked at. */
-const auditImport = (deps, { user, request }, results) =>
-  Promise.all(
-    results.map((result) =>
-      audit(deps, "content_draft_repo_import", {
-        user,
-        request,
-        contentId: result.contentId || null,
-        title: result.title || "",
-        details: {
-          repoPath: result.path,
-          repoRef: REPO_REF,
-          outcome: result.outcome,
-          ...(result.code && { code: result.code }),
-        },
-      }),
-    ),
-  );
-
-/** POST cms/drafts/import-repo — every docs/content article not yet imported. */
-async function importFromRepo(deps, { request, context, user }) {
-  const { status, body } = await deps.importer.importAll(user);
-  if (status === 200) {
-    await auditImport(deps, { user, request }, body.results);
-    context?.log?.(`[drafts] import ${JSON.stringify(body.counts)}`);
-  } else {
-    context?.warn?.(`[drafts] import listing ${status} ${body.code}`);
-  }
-  return json(status, body);
-}
-
 /** Handler name → what a failure says it was doing, whether it writes an existing draft, the work. */
 const ROUTES = Object.freeze({
   list: ["list drafts", route, listDrafts],
@@ -722,7 +704,6 @@ const ROUTES = Object.freeze({
   remove: ["delete the draft", writeRoute, deleteDraft],
   sendToReview: ["send the draft to review", writeRoute, sendToReview],
   backToDrafts: ["move the article back to Drafts", writeRoute, backToDrafts],
-  importFromRepo: ["import the repository drafts", route, importFromRepo],
 });
 
 /**
@@ -731,7 +712,6 @@ const ROUTES = Object.freeze({
  * @param {{ queryDocs: Function, readDoc: Function, createDoc: Function, patchDoc: Function,
  *   deleteDocIfMatch: Function, upsertDoc: Function }} deps.store
  *   `createDoc` is create-only (409 when the id exists); `upsertDoc` writes audit rows only.
- * @param {ReturnType<import('./repo-draft-source.js').createRepoDraftSource>} deps.source
  * @param {(contentId: string) => Promise<unknown>} [deps.onContentDeleted] dashboard counters
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
@@ -741,7 +721,6 @@ const ROUTES = Object.freeze({
 export function createDraftsHandlers({
   guard,
   store,
-  source,
   onContentDeleted = null,
   now = () => new Date(),
   uuid = randomUUID,
@@ -754,7 +733,6 @@ export function createDraftsHandlers({
     now,
     uuid,
     log,
-    importer: createDraftsImporter({ store, source, now, log }),
   };
   return Object.fromEntries(
     Object.entries(ROUTES).map(([name, [what, wrap, work]]) => [

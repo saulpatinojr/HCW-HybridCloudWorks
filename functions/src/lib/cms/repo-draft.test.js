@@ -1,11 +1,13 @@
 /**
- * The pure half of the repository draft import: which paths may be imported,
- * how a draft's front matter is read, and the document it becomes.
+ * The pure half of reading a draft: which paths pass the allow-list, how a
+ * draft's front matter is read, and the document it becomes. The Drafts
+ * page's markdown upload (drafts-markdown.js) uses the same parser.
  *
- * The three lab articles (#737/#744) are read from disk rather than copied
- * into a fixture, so this fails when one of them stops being importable —
- * which is the claim the import makes about them. CI's `functions` row
- * watches docs/content/blog-*.md for exactly that reason.
+ * The three sample drafts are synthetic fixtures in ./__fixtures__, written
+ * to the contract in docs/content/blog-template.md. They are .txt files because
+ * the repository structure check allows Markdown only under docs/. They hold no real article
+ * text: pre-publish drafts do not live in this public repository (owner rule
+ * 2026-10-25), so the real files are not here to be read.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -33,27 +35,32 @@ import {
 } from './repo-draft.js';
 import { createContentDocument } from './content-create.js';
 
-const LAB_DRAFTS = Object.freeze([
-  'docs/content/blog-lab-01-landing-zone.md',
-  'docs/content/blog-lab-02-one-container.md',
-  'docs/content/blog-lab-03-agent-explains.md',
+const SAMPLE_DRAFTS = Object.freeze([
+  'docs/content/blog-sample-01-first-part.md',
+  'docs/content/blog-sample-02-second-part.md',
+  'docs/content/blog-sample-03-third-part.md',
 ]);
 
-const readRepoFile = (path) => readFileSync(join(process.cwd(), '..', ...path.split('/')), 'utf8');
+/** A sample draft's text, from the fixture with the same file name. */
+const readRepoFile = (path) =>
+  readFileSync(
+    new URL(`./__fixtures__/${path.split('/').at(-1).replace(/\.md$/, '.txt')}`, import.meta.url),
+    'utf8'
+  );
 
-/** The fence every lab article embeds, as written in the files. */
-const LAB_FENCE = '```landing-zone\nlz=mg,policy,mgmt,hub&corp=0&online=0\n```';
+/** The fence every sample draft embeds, as written in the files. */
+const EMBED_FENCE = '```landing-zone\nlz=mg,policy,mgmt,hub&corp=0&online=0\n```';
 
 const SOURCE = Object.freeze({
   commitSha: '2fb230c9ac7118c4f87d4cf8031e0571d47e74d8',
   rawUrl:
-    'https://raw.githubusercontent.com/saulpatinojr/HCW-HybridCloudWorks/main/docs/content/blog-lab-01-landing-zone.md',
+    'https://raw.githubusercontent.com/saulpatinojr/HCW-HybridCloudWorks/main/docs/content/blog-sample-01-first-part.md',
   contentSha256: 'a'.repeat(64),
 });
 const FIXED_NOW = () => new Date('2026-09-28T12:00:00.000Z');
 
 describe('checkRepoDraftPath — the allow-list', () => {
-  it.each(LAB_DRAFTS)('admits %s', (path) => {
+  it.each(SAMPLE_DRAFTS)('admits %s', (path) => {
     expect(checkRepoDraftPath(path)).toEqual({ ok: true, path });
   });
 
@@ -61,12 +68,12 @@ describe('checkRepoDraftPath — the allow-list', () => {
     ['a traversal out of the directory', 'docs/content/../../infra/main.tf'],
     [
       'a traversal that lands back on a blog name',
-      'docs/content/../content/blog-lab-01-landing-zone.md',
+      'docs/content/../content/blog-sample-01-first-part.md',
     ],
-    ['a leading traversal', '../docs/content/blog-lab-01-landing-zone.md'],
+    ['a leading traversal', '../docs/content/blog-sample-01-first-part.md'],
     ['an encoded traversal', 'docs/content/%2e%2e/blog-x.md'],
     ['a Windows separator', 'docs\\content\\blog-x.md'],
-    ['an absolute path', '/docs/content/blog-lab-01-landing-zone.md'],
+    ['an absolute path', '/docs/content/blog-sample-01-first-part.md'],
     ['a URL', 'https://raw.githubusercontent.com/x/y/main/docs/content/blog-x.md'],
     ['another directory', 'docs/architecture/blog-x.md'],
     ['a subdirectory', 'docs/content/drafts/blog-x.md'],
@@ -99,14 +106,14 @@ describe('checkRepoDraftPath — the allow-list', () => {
   });
 
   it('builds the one raw URL a checked path may come from, and the GitHub page', () => {
-    const url = new URL(rawUrlFor(LAB_DRAFTS[0]));
+    const url = new URL(rawUrlFor(SAMPLE_DRAFTS[0]));
     expect(url.origin).toBe(RAW_ORIGIN);
     expect(url.pathname.startsWith(RAW_PATH_PREFIX)).toBe(true);
     expect(url.href).toBe(
-      'https://raw.githubusercontent.com/saulpatinojr/HCW-HybridCloudWorks/main/docs/content/blog-lab-01-landing-zone.md'
+      'https://raw.githubusercontent.com/saulpatinojr/HCW-HybridCloudWorks/main/docs/content/blog-sample-01-first-part.md'
     );
-    expect(blobUrlFor(LAB_DRAFTS[0])).toBe(
-      'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/content/blog-lab-01-landing-zone.md'
+    expect(blobUrlFor(SAMPLE_DRAFTS[0])).toBe(
+      'https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/content/blog-sample-01-first-part.md'
     );
   });
 });
@@ -188,13 +195,13 @@ describe('parseRepoDraft — refusals and warnings', () => {
   it('finds repository-relative links and leaves site and external links alone', () => {
     expect(
       findRepoRelativeLinks(
-        '[a](blog-lab-02-one-container.md) [b](../content/x.md#part) [c](https://example.com/y.md) [d](/tools/landing-zone) [e](#local)'
+        '[a](blog-sample-02-second-part.md) [b](../content/x.md#part) [c](https://example.com/y.md) [d](/tools/landing-zone) [e](#local)'
       )
-    ).toEqual(['blog-lab-02-one-container.md', '../content/x.md']);
+    ).toEqual(['blog-sample-02-second-part.md', '../content/x.md']);
   });
 
   it('counts embed fences by language', () => {
-    expect(countEmbedFences(`${LAB_FENCE}\n\n\`\`\`pricing-scenario\nscenario=x\n\`\`\``)).toEqual({
+    expect(countEmbedFences(`${EMBED_FENCE}\n\n\`\`\`pricing-scenario\nscenario=x\n\`\`\``)).toEqual({
       'landing-zone': 1,
       'pricing-scenario': 1,
     });
@@ -221,10 +228,10 @@ describe('parseRepoDraft — refusals and warnings', () => {
 
 describe('repoDraftContentId', () => {
   it('is a deterministic RFC 9562 version-5 UUID per path', () => {
-    const id = repoDraftContentId(LAB_DRAFTS[0]);
+    const id = repoDraftContentId(SAMPLE_DRAFTS[0]);
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(repoDraftContentId(LAB_DRAFTS[0])).toBe(id);
-    expect(new Set(LAB_DRAFTS.map(repoDraftContentId)).size).toBe(3);
+    expect(repoDraftContentId(SAMPLE_DRAFTS[0])).toBe(id);
+    expect(new Set(SAMPLE_DRAFTS.map(repoDraftContentId)).size).toBe(3);
   });
 
   it('keeps its namespace — changing it re-keys every imported draft', () => {
@@ -233,6 +240,8 @@ describe('repoDraftContentId', () => {
 
   it('keeps every id it gave before the repository moved, while it fetches from the new owner (#1009)', () => {
     // The id this path had under HybridCloudWorks, computed before the move.
+    // The path is the input of that fixed hash, so it is kept exactly (the
+    // file itself is no longer in the repository); it is not read from disk.
     expect(repoDraftContentId('docs/content/blog-lab-01-landing-zone.md')).toBe(
       '2ccb2ae7-1eb7-5e70-9817-00d7c3a8019a'
     );
@@ -249,29 +258,29 @@ describe('repoDraftContentId', () => {
   });
 });
 
-describe('the three lab drafts, read from disk', () => {
+describe('the three sample drafts, read from disk', () => {
   const expected = {
-    'docs/content/blog-lab-01-landing-zone.md': {
-      title: 'Build a landing zone you can read',
-      slug: 'build-a-landing-zone-you-can-read',
+    'docs/content/blog-sample-01-first-part.md': {
+      title: 'Sample article, first part',
+      slug: 'sample-article-first-part',
       provider: 'Azure',
       part: '1 of 3',
     },
-    'docs/content/blog-lab-02-one-container.md': {
-      title: 'Follow along in one container',
-      slug: 'follow-along-in-one-container',
+    'docs/content/blog-sample-02-second-part.md': {
+      title: 'Sample article, second part',
+      slug: 'sample-article-second-part',
       provider: 'Terraform',
       part: '2 of 3',
     },
-    'docs/content/blog-lab-03-agent-explains.md': {
-      title: 'Let an agent explain it',
-      slug: 'let-an-agent-explain-it',
+    'docs/content/blog-sample-03-third-part.md': {
+      title: 'Sample article, third part',
+      slug: 'sample-article-third-part',
       provider: 'Terraform',
       part: '3 of 3',
     },
   };
 
-  it.each(LAB_DRAFTS)('%s parses into a titled, slugged article with its embed intact', (path) => {
+  it.each(SAMPLE_DRAFTS)('%s parses into a titled, slugged article with its embed intact', (path) => {
     const text = readRepoFile(path);
     const parsed = parseRepoDraft(text);
     expect(parsed.ok).toBe(true);
@@ -289,7 +298,7 @@ describe('the three lab drafts, read from disk', () => {
     // the embed fence byte for byte, and every fence still paired.
     expect(draft.body.startsWith('---')).toBe(false);
     expect(draft.body).not.toMatch(/^title:/m);
-    expect(draft.body).toContain(LAB_FENCE);
+    expect(draft.body).toContain(EMBED_FENCE);
     expect(text.replace(/\r\n/g, '\n')).toContain(draft.body);
     expect((draft.body.match(/^```/gm) || []).length % 2).toBe(0);
     // The sibling links point at the articles' site URLs now (2026-09-28), so
@@ -297,7 +306,7 @@ describe('the three lab drafts, read from disk', () => {
     expect(draft.warnings.join(' ')).not.toMatch(/links to repository files will not resolve/);
   });
 
-  it.each(LAB_DRAFTS)(
+  it.each(SAMPLE_DRAFTS)(
     '%s becomes an in_review, never-published document through createContentDocument',
     async (path) => {
       const parsed = parseRepoDraft(readRepoFile(path));
@@ -353,7 +362,7 @@ describe('the three lab drafts, read from disk', () => {
       });
       // Every body field the readers use carries the article, embed intact.
       for (const field of ['Content', 'content', 'postContent']) {
-        expect(doc[field]).toContain(LAB_FENCE);
+        expect(doc[field]).toContain(EMBED_FENCE);
         expect(doc[field]).toBe(parsed.draft.body);
       }
       // Never published, never dated for publishing, never holding a URL.
