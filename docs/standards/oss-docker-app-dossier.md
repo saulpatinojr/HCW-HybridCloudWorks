@@ -344,13 +344,13 @@ If the prompt shows an error instead, you pasted only part of the line.
     The command asks GitHub for the newest commit on `main`, lists that commit's
     files, keeps the documents named above, reads each one at that same commit
     and prints a line for every hit. It stops with an error, rather than print a
-    partial list, if it cannot read the commit or a file, or if GitHub cut the
-    file list off (the limit is 100,000 entries or 7 MB, see
+    partial list, if it cannot read the commit, the file list or a file, or if
+    GitHub cut the file list off (the limit is 100,000 entries or 7 MB, see
     [GitHub's page](https://docs.github.com/en/rest/git/trees#get-a-tree); none of
     our repositories is near it).
 
     ```powershell
-    $sha = gh api "repos/$repo/commits/main" --jq .sha; if ($LASTEXITCODE -ne 0) { throw 'Could not read main' }; "commit $sha"; $tree = gh api "repos/$repo/git/trees/${sha}?recursive=1" | ConvertFrom-Json; if ($tree.truncated) { throw 'GitHub cut the file list short' }; $tree.tree | Where-Object { $_.path -match '\.md$|^NOTICE$|^\.env\.example$|^\.github/ISSUE_TEMPLATE/.*\.ya?ml$' } | ForEach-Object { $f = $_.path; $t = gh api "repos/$repo/contents/${f}?ref=$sha" -H 'Accept: application/vnd.github.raw+json'; if ($LASTEXITCODE -ne 0) { throw "Could not read $f" }; $t | Select-String -Pattern 'customer|client|pricing|edition' | ForEach-Object { "$f line $($_.LineNumber)" } }
+    $sha = gh api "repos/$repo/commits/main" --jq .sha; if ($LASTEXITCODE -ne 0) { throw 'Could not read main' }; "commit $sha"; $treeJson = gh api "repos/$repo/git/trees/${sha}?recursive=1"; if ($LASTEXITCODE -ne 0) { throw 'Could not read the file list' }; $tree = $treeJson | ConvertFrom-Json; if ($null -eq $tree -or $null -eq $tree.tree) { throw 'Could not parse the file list' }; if ($tree.truncated) { throw 'GitHub cut the file list short' }; $tree.tree | Where-Object { $_.path -match '\.md$|^NOTICE$|^\.env\.example$|^\.github/ISSUE_TEMPLATE/.*\.ya?ml$' } | ForEach-Object { $f = $_.path; $t = gh api "repos/$repo/contents/${f}?ref=$sha" -H 'Accept: application/vnd.github.raw+json'; if ($LASTEXITCODE -ne 0) { throw "Could not read $f" }; $t | Select-String -Pattern 'customer|client|pricing|edition' | ForEach-Object { "$f line $($_.LineNumber)" } }
     ```
 
     You should see the word `commit` and a 40-character commit id first, then
@@ -618,9 +618,9 @@ in this version. The documentation links were opened and their titles read.
 
 The OSS-9 command was rewritten on 2026-10-26 and run, copied out of this page, in PowerShell 7.6.7 and in Windows
 PowerShell 5.1 against Network Eyes `main` at commit 19759c6a: both printed that commit id and 233 lines in 14 files and
-finished without an error. The error path for an unreadable repository was triggered (a repository that does not exist
-stops the command with `Could not read main`); the paths for a cut-off file list and for an unreadable file were not
-triggered, because no repository of ours produces them.
+finished without an error. Two error paths were triggered: a repository that does not exist stops the command with
+`Could not read main`, and a commit id that does not exist stops it with `Could not read the file list`. The paths for a
+cut-off file list and for an unreadable file were not triggered, because no repository of ours produces them.
 
 Not checked:
 
