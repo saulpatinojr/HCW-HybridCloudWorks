@@ -461,6 +461,19 @@
       "note": null
     },
     {
+      "name": "doc_vault",
+      "partition_key_path": "/id",
+      "included_paths": [
+        "/*"
+      ],
+      "excluded_paths": [
+        "/body/*"
+      ],
+      "composite_indexes": [],
+      "default_ttl": null,
+      "note": "created on Azure after cutover — no Firestore source, nothing to migrate"
+    },
+    {
       "name": "episodes",
       "partition_key_path": "/id",
       "included_paths": [

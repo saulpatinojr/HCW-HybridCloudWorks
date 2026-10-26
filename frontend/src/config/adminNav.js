@@ -64,6 +64,7 @@ import {
   Radio,
   Share2,
   SlidersHorizontal,
+  Vault,
   Zap,
 } from 'lucide-react';
 
@@ -196,6 +197,8 @@ export function roleLabel(role) {
  *                                 updateWorkflowAlert is publisher (ops-health.js), gated
  *   Integrations       editor     connectionProbe (integrations/connection-probe.js), cms/integration-status
  *                                 (integrations/integration-status.js); the Keys tab's cms/secrets is super_admin (admin-secrets.js)
+ *   Doc Vault          publisher  cms/doc-vault (doc-vault/handlers.js), every route, reads included: the vault holds
+ *                                 private letters and applications, so it is above the editor role (doc-vault/model.js)
  */
 const ITEMS = [
   [
@@ -417,6 +420,16 @@ const ITEMS = [
     'Integrations',
     'Every external service, its keys, its connection test, where it is used, and a directory explaining each one.',
     { minRole: 'editor' },
+  ],
+
+  // Spotlight, appended last (owner request 2026-10-26): private, so publisher and above.
+  [
+    'spotlight',
+    '/admin/doc-vault',
+    Vault,
+    'Doc Vault',
+    'Your own templates, pasted applications and letters, kept private with their history. Not shown on the site.',
+    { minRole: 'publisher' },
   ],
 ];
 

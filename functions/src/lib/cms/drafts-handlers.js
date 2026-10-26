@@ -30,6 +30,7 @@
  * write the `audits` status_transition row transitionContentStatus writes.
  */
 import { randomUUID } from "node:crypto";
+import { readJsonBodyWithin } from "../http/bounded-body.js";
 import {
   authoredMessage,
   errorResponse,
@@ -177,30 +178,9 @@ async function readBody(request) {
  * request.json(). Unparseable JSON reads as {}, as readBody does.
  */
 async function readBodyWithin(request, maxBytes) {
-  const declared = Number(request.headers?.get?.("content-length"));
-  refuseIf(Number.isFinite(declared) && declared > maxBytes && TOO_LARGE);
-  const reader = request.body?.getReader?.();
-  if (!reader) return readBody(request);
-  const chunks = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
-      throw new Refusal(TOO_LARGE);
-    }
-    chunks.push(value);
-  }
-  try {
-    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed
-      : {};
-  } catch {
-    return {};
-  }
+  const read = await readJsonBodyWithin(request, maxBytes);
+  refuseIf(read.tooLarge && TOO_LARGE);
+  return read.body;
 }
 
 function readId(request) {
