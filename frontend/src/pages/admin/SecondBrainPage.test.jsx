@@ -184,7 +184,35 @@ describe('Second Brain owner workspace', () => {
     expect(brainApi.draft).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Review as a new note' }));
     expect((await screen.findByLabelText('Markdown')).value).toContain('Your notes cover state.');
+    expect(screen.getByLabelText('Markdown').value).toContain('](/admin/second-brain?item=note-1)');
     expect(brainApi.save).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Create draft', exact: true })).toBeEnabled()
+    );
+    brainApi.draft.mockResolvedValue({ id: 'draft-from-outline', href: '/admin/drafts' });
+    fireEvent.click(screen.getByRole('button', { name: 'Create draft', exact: true }));
+    expect(await screen.findByRole('link', { name: 'Open Drafts' })).toHaveAttribute(
+      'href',
+      '/admin/drafts'
+    );
+    expect(brainApi.draft).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ body: expect.stringContaining('Your notes cover state.') }),
+      expect.any(String)
+    );
+  });
+  it('requires saving a new selected idea before sending it as assistant context', async () => {
+    mount();
+    await screen.findByText(note.title);
+    fireEvent.click(screen.getByRole('button', { name: 'Capture an idea' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ask', exact: true }));
+    expect(await screen.findByText(/Save this note before using it/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Your question'), {
+      target: { value: 'Outline this idea' },
+    });
+    expect(screen.getByRole('button', { name: 'Ask my brain' })).toBeDisabled();
+    expect(brainApi.ask).not.toHaveBeenCalled();
   });
   it('loads a deep-linked private note without exposing its body in the URL', async () => {
     mount('/admin/second-brain?item=note-1');

@@ -3,12 +3,31 @@ import { Link } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { brainApi } from '@/lib/brainApi';
 
+function AskContext({ context, unsaved }) {
+  return (
+    <>
+      {context && <p className="mt-2 text-sm font-medium">Starting with: {context.title}</p>}
+      {!context && (
+        <p className="mt-2 text-sm font-medium">
+          Searching across your workspace. Open an idea in Library first to develop that specific
+          idea.
+        </p>
+      )}
+      {unsaved && (
+        <p role="status" className="mt-2 text-sm">
+          Save this note before using it as the assistant&apos;s starting point.
+        </p>
+      )}
+    </>
+  );
+}
 export default function AskPanel({ enabled, onSaveNote, context }) {
   const [question, setQuestion] = useState('');
   const [mode, setMode] = useState('question');
   const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState(null);
   const [error, setError] = useState('');
+  const unsavedContext = context?.version === 0;
   async function ask(event) {
     event.preventDefault();
     setBusy(true);
@@ -30,7 +49,10 @@ export default function AskPanel({ enabled, onSaveNote, context }) {
       '## Suggestions',
       ...answer.suggestions.map((c) => c.text),
       '## Sources',
-      ...answer.sources.map((s) => `${s.citation}: ${s.title}`),
+      ...answer.sources.map(
+        (s) =>
+          `- [${s.citation}: ${s.title.replace(/[\[\]]/g, '')}](/admin/second-brain?item=${encodeURIComponent(s.id)})`
+      ),
     ].join('\n\n'),
     links: answer.sources.map((s) => s.id),
   });
@@ -38,7 +60,7 @@ export default function AskPanel({ enabled, onSaveNote, context }) {
     <div className="max-w-4xl space-y-5">
       <div>
         <h2 className="text-xl font-semibold">Ask my brain</h2>
-        {context && <p className="mt-2 text-sm font-medium">Starting with: {context.title}</p>}
+        <AskContext context={context} unsaved={unsavedContext} />
         <p className="mt-2 text-sm text-muted-foreground">
           Develop ideas using your own notes and creator content. Relevant excerpts go to your
           configured Foundry model only when you ask.
@@ -81,7 +103,7 @@ export default function AskPanel({ enabled, onSaveNote, context }) {
             placeholder="Using my existing material, outline the next article in this series and show what research is missing."
           />
         </label>
-        <Button disabled={!enabled || busy || !question.trim()} type="submit">
+        <Button disabled={!enabled || busy || !question.trim() || unsavedContext} type="submit">
           {busy ? 'Reading your sources…' : 'Ask my brain'}
         </Button>
       </form>
@@ -94,8 +116,9 @@ export default function AskPanel({ enabled, onSaveNote, context }) {
         <div aria-live="polite" className="space-y-5 rounded-xl border p-5">
           {answer.insufficientEvidence && (
             <p>
-              I could not find enough evidence in the retrieved material. Try a topic name, narrower
-              question, or index your latest content.
+              {answer.needsContext
+                ? 'Choose an idea from Library, or name the subject in your question. A generic request does not identify which material to use.'
+                : 'I could not find enough evidence in the retrieved material. Try a topic name, narrower question, or index your latest content.'}
             </p>
           )}
           {answer.partialRetrieval && (
