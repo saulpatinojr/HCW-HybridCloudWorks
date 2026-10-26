@@ -6,6 +6,7 @@
  * The `ambassador` container may not be provisioned yet (ADR 0033 §6 item
  * 4); its collector treats "container not found" as "nothing there".
  */
+import { collectAlerts } from '../calendar-alerts/collector.js';
 import {
   PER_SOURCE_LIMIT,
   dayParams,
@@ -320,4 +321,6 @@ export const COLLECTORS = Object.freeze({
   certification: collectCertifications,
   ambassador: collectAmbassadorDeadlines,
   audio: collectListenAndLearnReleases,
+  // The owner's own dated alerts (lib/calendar-alerts); read-only, like every source.
+  alert: collectAlerts,
 });

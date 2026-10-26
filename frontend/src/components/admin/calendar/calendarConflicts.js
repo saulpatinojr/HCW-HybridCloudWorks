@@ -13,8 +13,12 @@ export function slotOf(start) {
   return Number.isFinite(t) ? Math.floor(t / SLOT_MS) : null;
 }
 
-/** Only items still to go out can collide: not all-day ones, not those already published or sent. */
-const canCollide = (item) => !item.allDay && !['published', 'sent'].includes(item.status);
+/**
+ * Only items still to go out can collide: not all-day ones, not those already
+ * published or sent, and not an owner's alert, which publishes nothing.
+ */
+const canCollide = (item) =>
+  !item.allDay && item.kind !== 'alert' && !['published', 'sent'].includes(item.status);
 
 /** Ids of timed items sharing a fifteen-minute slot with another. */
 export function findConflicts(items) {

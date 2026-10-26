@@ -11,16 +11,26 @@
  * Until 2026-10-03 this page showed scheduled content only, in one month
  * view, with no reschedule or unschedule, and never refetched after a
  * change. Every write here refetches both the grid and the panel.
+ *
+ * The owner's own calendar alerts are one more kind on the grid (an "Alert"
+ * chip on its due day) and have a panel of their own under it (add, edit,
+ * done, snooze, delete, filter). A change on either side reaches the other:
+ * the panel's changes make the grid read again, and a change made from an
+ * alert chip's preview makes the panel read again.
  */
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Calendar } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import PageHeader from '@/components/admin/shared/PageHeader';
 import SharedCalendar from '@/components/admin/calendar/SharedCalendar';
 import UnscheduledPanel from '@/components/admin/calendar/UnscheduledPanel';
+import CalendarAlertsPanel from '@/components/admin/calendar-alerts/CalendarAlertsPanel';
+import useCalendarAlerts from '@/components/admin/calendar-alerts/useCalendarAlerts';
 import useUnscheduledContent from '@/components/admin/calendar/useUnscheduledContent';
 import { useAuthReady } from '@/hooks/useAuthReady';
+import { useAdminRole } from '@/hooks/useAdminRole';
+import { satisfiesRole } from '@/config/adminNav';
 
 const HELP = [
   'Every item with a date in ContentForge is here: content publishes (sky), newsletter sends (violet), social posts (pink), talks and CFP deadlines (amber), certification expirations and renewals (green), Ambassador deadlines (indigo) and audio releases (teal). The icon and the word travel with the colour.',
@@ -28,6 +38,7 @@ const HELP = [
   'Open any item for its actions: edit, open its record, reschedule, unschedule, share to social, or retry a failed publish. Newsletter issues are canceled or moved on the Newsletter Hub, beside their preview.',
   'A dashed border with a warning mark is a publish that did not happen. An amber mark means two items share the same 15-minute slot; you can still keep them there.',
   'Times are shown in your browser’s time zone, named on the toolbar. The server stores UTC.',
+  'Your own alerts (orange, with a bell and the word Alert) are notes to yourself with a day on them. Press one for Done, Snooze, Edit or Delete, or use the Calendar alerts panel under the grid to add and manage them. Any that are overdue or due within 7 days also pop up when you sign in, at most once per session and per day. They are private to signed-in editors and above, and are never scheduled, published or posted.',
 ];
 
 /**
@@ -37,8 +48,22 @@ const HELP = [
 export default function CalendarPage() {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();
+  const role = useAdminRole();
+  // The alerts routes need the editor role. A role the page was not told is left to
+  // the server to judge, as RoleGate does, and the portal always tells it.
+  const canUseAlerts = role === null || satisfiesRole(role, 'editor');
   const unscheduled = useUnscheduledContent(authReady);
   const [scheduleRequest, setScheduleRequest] = useState(null);
+  // The grid reads again when the alerts panel changes an alert.
+  const [alertsVersion, setAlertsVersion] = useState(0);
+  const bumpGrid = useCallback(() => setAlertsVersion((version) => version + 1), []);
+  const alerts = useCalendarAlerts({ enabled: authReady && canUseAlerts, onChanged: bumpGrid });
+  const { reload: reloadAlerts } = alerts;
+  // A change made from an alert chip's preview reaches the panel too.
+  const gridChanged = useCallback(() => {
+    unscheduled.refresh();
+    if (canUseAlerts) reloadAlerts();
+  }, [unscheduled, reloadAlerts, canUseAlerts]);
 
   const summary = [
     {
@@ -76,7 +101,8 @@ export default function CalendarPage() {
           <SharedCalendar
             enabled={authReady}
             unscheduled={unscheduled.data}
-            onChanged={unscheduled.refresh}
+            onChanged={gridChanged}
+            refreshToken={alertsVersion}
             scheduleRequest={scheduleRequest}
             onScheduleHandled={() => setScheduleRequest(null)}
           />
@@ -111,6 +137,8 @@ export default function CalendarPage() {
           </Card>
         </div>
       </div>
+
+      {canUseAlerts && <CalendarAlertsPanel state={alerts} />}
     </div>
   );
 }
