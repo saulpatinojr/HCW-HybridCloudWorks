@@ -936,12 +936,121 @@ describe('DECLARED', () => {
     // is the tree's rows without ambassadorAudienceMonthly, and the only line
     // the update adds is that timer's row. Neither value carries the bin_at()
     // line Kusto refuses (#964), applied away on 2026-10-15.
-    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => !['ambassadorAudienceMonthly', 'brainIndexReconcile'].includes(name))));
+    expect(declaration.before).toBe(overdueQuery(rows.filter(([name]) => !['ambassadorAudienceMonthly', 'brainIndexReconcile', 'sweepVisitorSessions'].includes(name))));
     const before = declaration.before.split('\n');
     const added = declaration.after.split('\n').filter((line) => !before.includes(line));
-    expect(added).toEqual(['  "ambassadorAudienceMonthly", 1d, datetime(2026-01-01 06:45),', '  "brainIndexReconcile", 15m, datetime(2026-01-01 00:00),']);
+    expect(added).toEqual([
+      '  "ambassadorAudienceMonthly", 1d, datetime(2026-01-01 06:45),',
+      '  "brainIndexReconcile", 15m, datetime(2026-01-01 00:00),',
+      '  "sweepVisitorSessions", 2m, datetime(2026-01-01 00:00),',
+    ]);
     expect(declaration.before).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
     expect(declaration.after).not.toContain(OVERDUE_LAST_DUE_BIN_AT);
+  });
+
+  /** Every declaration of alert-timer-overdue's query, in the file's order. */
+  const timerRuleDeclarations = () =>
+    DECLARED.filter(
+      (entry) =>
+        entry.address === 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue' &&
+        entry.path === 'criteria[0].query'
+    );
+
+  it('declares the visitor-session sweep’s row for every state the timer rule can be in, each ending at the tree’s query (#1403)', () => {
+    // This file cannot read what has applied, so the update is declared three
+    // ways: nothing of the audience timer and private indexing applied yet, the
+    // audience timer applied, or both applied. Whichever is live, the plan's
+    // `after` is the tree's query, so every declaration must end there.
+    const rows = treeTimerRows();
+    const declarations = timerRuleDeclarations();
+    expect(declarations).toHaveLength(3);
+    for (const declaration of declarations) {
+      expect(declaration.after).toBe(overdueQuery(rows));
+    }
+    const addedLines = (declaration) => {
+      const before = declaration.before.split('\n');
+      return declaration.after.split('\n').filter((line) => !before.includes(line));
+    };
+    expect(declarations.map((declaration) => addedLines(declaration).length).sort()).toEqual([1, 2, 3]);
+    const sweepRow = '  "sweepVisitorSessions", 2m, datetime(2026-01-01 00:00),';
+    for (const declaration of declarations) expect(addedLines(declaration)).toContain(sweepRow);
+    // The tree holds the row under the registration's own schedule.
+    expect(rows).toContainEqual(['sweepVisitorSessions', '2m', '2026-01-01 00:00']);
+  });
+
+  it('declares the sweep’s flag as disarmed, as armed, and as armed in one apply, naming a flag the tree catalogues (#1403)', () => {
+    const flag = 'app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS';
+    const entries = DECLARED.filter((entry) => entry.path === flag);
+    expect(entries.map((entry) => [entry.before, entry.after])).toEqual([
+      [undefined, 'false'],
+      ['false', 'true'],
+      [undefined, 'true'],
+    ]);
+    for (const entry of entries) expect(entry.address).toBe(FUNCTION_APP);
+    expect(infraSource).toMatch(/^\s*SWEEP_VISITOR_SESSIONS\s*=\s*"sweepVisitorSessions — /m);
+  });
+
+  /** An alert-timer-overdue update as a plan carries it, from one declaration. */
+  const timerRuleUpdate = (declaration) => ({
+    address: declaration.address,
+    change: {
+      actions: ['update'],
+      before: { criteria: [{ query: declaration.before }] },
+      after: { criteria: [{ query: declaration.after }] },
+      after_unknown: {},
+      before_sensitive: {},
+      after_sensitive: {},
+    },
+  });
+
+  it.each([0, 1, 2])(
+    'passes the plan that adds the sweep to the timer alert, with its flag disarmed, whichever of the three states the alert is in: state %i (#1403)',
+    (index) => {
+      // The three declarations are the three states alert-timer-overdue's query
+      // can be in before this change; a plan built from any one of them is the
+      // plan the owner sees, so each must pass end to end, not only look right.
+      const declaration = timerRuleDeclarations()[index];
+      const { plan, app } = fixture();
+      app.after.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'false';
+      plan.resource_changes.push(timerRuleUpdate(declaration));
+
+      const result = checkPlan(plan);
+
+      expect(result).toMatchObject({ ok: true, unexpected: [], missing: [] });
+      expect(result.declared.map((entry) => entry.reason)).toEqual(
+        expect.arrayContaining(['#1403: the sweepVisitorSessions timer catalogued, disarmed until enabled_timers names it'])
+      );
+    }
+  );
+
+  it('passes the plan that arms the sweep: the flag false to true, or absent to true in one apply (#1403)', () => {
+    // false -> true is the arming apply after the catalogue apply. It stays
+    // declared until that apply has run, because the file cannot read what has applied.
+    const { plan, app } = fixture();
+    app.before.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'false';
+    app.after.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'true';
+    expect(checkPlan(plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
+
+    const oneApply = fixture();
+    oneApply.app.after.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'true';
+    oneApply.plan.resource_changes.push(timerRuleUpdate(timerRuleDeclarations()[2]));
+    expect(checkPlan(oneApply.plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
+  });
+
+  it('names a second timer row, a changed schedule or any other setting riding along with the sweep’s (#1403)', () => {
+    const [, , lastState] = timerRuleDeclarations();
+    const { plan, app } = fixture();
+    app.after.app_settings.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'false';
+    app.after.app_settings.FEATURE_FLAG_SOMETHING_ELSE = 'false';
+    // The sweep's row on another period, and one extra row.
+    const wrong = { ...lastState, after: lastState.after.replace('"sweepVisitorSessions", 2m,', '"sweepVisitorSessions", 5m,') };
+    plan.resource_changes.push(timerRuleUpdate(wrong));
+
+    const result = checkPlan(plan);
+
+    expect(result.ok).toBe(false);
+    expect(result.unexpected.some((line) => line.includes('app_settings.FEATURE_FLAG_SOMETHING_ELSE'))).toBe(true);
+    expect(result.unexpected.some((line) => line.includes('timer_overdue') && line.includes('criteria[0].query'))).toBe(true);
   });
 
   it('prunes the stateful-rule and export-latency entries once applied (#1207, #964, #970)', () => {

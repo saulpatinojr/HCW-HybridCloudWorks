@@ -283,6 +283,7 @@
     "refreshToolServiceCache",
     "scrapeSkillsHubRss",
     "sendReminders",
+    "sweepVisitorSessions",
     "syncRssFeeds",
     "syncSocialCalendarScheduled"
   ],

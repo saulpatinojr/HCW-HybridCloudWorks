@@ -37,7 +37,7 @@
  *     ARE clock-dependent, and a guard that ignored them would pass while
  *     the estate moved underneath it.
  *
- * The remaining five are minute-only, every five or fifteen minutes, and
+ * The rest are minute-only, every two, five or fifteen minutes, and
  * cannot move in any zone. The classifier below decides which bucket each one
  * is in from its hour field rather than from a list, so this comment describes
  * the shape and does not produce the count — a count written here drifted the
@@ -106,6 +106,7 @@ await import('./cosmos-export.js');
 await import('./cloud-tools-jobs.js');
 await import('./labs-jobs.js');
 await import('./ambassador-audience.js');
+await import('./visitor-session-sweep.js');
 
 /**
  * Every schedule whose firing INSTANTS depend on the app clock, and the UTC
@@ -187,7 +188,7 @@ describe('timer schedules are UTC', () => {
     // Guards the guard. An empty read on either side would make every
     // assertion below pass by inspecting nothing.
     expect(terraformSource(INFRA).length).toBeGreaterThan(1000);
-    expect(timerRegistrations.size).toBe(27);
+    expect(timerRegistrations.size).toBe(28);
   });
 
   it('the app clock is UTC — no WEBSITE_TIME_ZONE or TZ app setting exists', () => {
@@ -260,6 +261,7 @@ describe('timer schedules are UTC', () => {
       ['healthPulse', '0 2-59/5 * * * *'],
       ['platformJobSweeper', '0 */15 * * * *'],
       ['publishScheduledContent', '0 */15 * * * *'],
+      ['sweepVisitorSessions', '0 */2 * * * *'],
       ['syncSocialCalendarScheduled', '0 */5 * * * *'],
     ]);
   });
