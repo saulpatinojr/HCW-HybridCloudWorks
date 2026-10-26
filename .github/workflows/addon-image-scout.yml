@@ -1,5 +1,5 @@
-# Add-on images against Docker Scout — do the three add-on images the lab host
-# runs meet Scout's policies, and do they carry a vulnerability that has a fix?
+# Add-on images against Docker Scout — do the add-on images the lab host runs
+# meet Scout's policies, and do they carry a vulnerability that has a fix?
 #
 # WHAT IT CHECKS. The lab host runs each tool add-on by digest
 # (lab-host/ansible/group_vars/all.yml, addons[].image and image_digest), so the

@@ -29,9 +29,9 @@ other agent's workstream: for them it lists findings and does not fix them.
 4. **Image scans.** Trivy before each add-on image is published (the push stops on
    a fixable HIGH or CRITICAL); every Tuesday, Trivy again on the digests the lab
    host runs, with an issue opened when something fixable turns up
-   (`lab-supply-chain.yml`, which covers the two lab images and the three
-   add-on images); and Docker Scout on the three add-on digests every
-   Wednesday, once the Docker Scout credential is stored ([the Scout
+   (`lab-supply-chain.yml`, which covers the two lab images and every
+   add-on image pinned in `group_vars`, four since #1357); and Docker Scout on
+   the same add-on digests every Wednesday, once the Docker Scout credential is stored ([the Scout
    runbook](docker-scout.md)). Until it is stored, that run fails on purpose,
    so a check that never ran cannot look green.
 5. **Secret scanning.** GitHub's own, with push protection (blocks a push that
