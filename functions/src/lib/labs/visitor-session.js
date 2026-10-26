@@ -307,6 +307,15 @@ function errorKind(error) {
   return /^[A-Za-z0-9_.-]{1,40}$/.test(kind) ? kind : 'error';
 }
 
+/** Let go of an answer's body without reading it; a failure to is no failure of the call. */
+async function releaseBody(res) {
+  try {
+    await res.body?.cancel();
+  } catch {
+    // The status is already read.
+  }
+}
+
 /**
  * One delete call to Coder, with a timeout. `confirmed` is true when Coder
  * accepted it, or answered 404 or 410 (the thing is already gone: a delete
@@ -318,11 +327,7 @@ async function coderDelete(fetchImpl, config, url, init) {
   try {
     const res = await fetchImpl(url, { ...init, signal: coderTimeout(config) });
     // Only the status matters; let go of the body so the connection is not held for it.
-    try {
-      await res.body?.cancel();
-    } catch {
-      // Nothing to do: the status is already read.
-    }
+    await releaseBody(res);
     if (res.ok) return { confirmed: true, kind: 'ok' };
     if (res.status === 404 || res.status === 410) return { confirmed: true, kind: 'gone' };
     return { confirmed: false, kind: Number.isInteger(res.status) ? `HTTP ${res.status}` : 'refused' };
@@ -351,6 +356,55 @@ const deleteUserCall = (fetchImpl, config, userId) =>
       'Coder-Session-Token': config.token,
     },
   });
+
+/**
+ * Look a visitor's workspace up by its owner's name and its own name, for a
+ * record that has no workspace id: a start whose workspace call gave no answer
+ * (it timed out, say) after Coder may have gone on and made the workspace, so
+ * nothing tells us its id. Coder's API: `GET /api/v2/users/{user}/workspace/{workspacename}`
+ * answers the workspace, or 404 when there is none (a deleted one too, unless
+ * `include_deleted` is asked for, which it is not).
+ * https://coder.com/docs/reference/api/workspaces (read 2026-10-26)
+ *
+ * It answers one of:
+ *  - `{ id, kind: 'found' }`: the workspace, and only when it is the visitor's
+ *    own: its name is the one this record was made for and its owner is the
+ *    Coder user this record made. Anything else is `lookup mismatch` and is
+ *    never deleted.
+ *  - `{ missing: true, kind: 'not found' }`: Coder has no such workspace.
+ *  - `{ kind }`: Coder did not say (`lookup HTTP 500`, `lookup timeout`,
+ *    `lookup network`, `lookup mismatch`). Never an id or any of Coder's text.
+ */
+async function lookUpWorkspaceCall(fetchImpl, config, session) {
+  const url =
+    `${config.base}/api/v2/users/${encodeURIComponent(session.coderUsername)}` +
+    `/workspace/${encodeURIComponent(session.workspaceName)}`;
+  try {
+    const res = await fetchImpl(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json', 'Coder-Session-Token': config.token },
+      signal: coderTimeout(config),
+    });
+    if (res.status === 404 || res.status === 410) {
+      await releaseBody(res);
+      return { missing: true, kind: 'not found' };
+    }
+    if (!res.ok) {
+      await releaseBody(res);
+      return { kind: Number.isInteger(res.status) ? `lookup HTTP ${res.status}` : 'lookup refused' };
+    }
+    const workspace = await res.json();
+    const ours =
+      typeof workspace?.id === 'string' &&
+      workspace.id !== '' &&
+      workspace.name === session.workspaceName &&
+      workspace.owner_id === session.coderUserId;
+    return ours ? { id: workspace.id, kind: 'found' } : { kind: 'lookup mismatch' };
+  } catch (error) {
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    return { kind: timedOut ? 'lookup timeout' : 'lookup network' };
+  }
+}
 
 /**
  * Can this record be taken up by a stop or the sweep now? An `active` one, or
@@ -432,23 +486,54 @@ async function claimSession(store, session, endStatus, nowMs) {
  * session that has something to delete cannot be cleaned without the broker
  * configuration, so it is not done, and is tried again when there is one.
  *
- * @returns {Promise<{ workspaceGone: boolean, userGone: boolean, workspace: string, user: string }>}
- *   the two halves, and for each a short safe word for the log (`ok`, `gone`,
- *   `HTTP 417`, `timeout`, `network`, `skipped`, `unconfigured`, `done`, `none`)
+ * A record with no workspace id but with the visitor's Coder user and a
+ * workspace name is a start that failed after the user was made (its workspace
+ * call timed out or was refused). Coder may still have made the workspace, so
+ * it is looked up by owner and name before it is taken as gone. A workspace
+ * the lookup does not find counts as gone for this try only (`workspaceGone`
+ * is not saved): the user delete, which Coder refuses while the user has a
+ * workspace, is the confirmation, and a workspace that turns up later is found
+ * by the next try's lookup.
+ *
+ * @returns {Promise<{ workspaceGone: boolean, workspaceGoneSaved: boolean, workspaceId: string | undefined, userGone: boolean, workspace: string, user: string }>}
+ *   the two halves; `workspaceGoneSaved` is whether `workspaceGone` may be
+ *   written to the record; `workspaceId` is the one the record had or the
+ *   lookup found; and for each half a short safe word for the log (`ok`,
+ *   `gone`, `found`, `not found`, `HTTP 417`, `lookup mismatch`, `timeout`,
+ *   `network`, `skipped`, `unconfigured`, `done`, `none`)
  */
 async function cleanUpCoder(fetchImpl, config, session) {
+  const needsLookup =
+    !session.workspaceGone &&
+    !session.workspaceId &&
+    Boolean(session.workspaceName) &&
+    Boolean(session.coderUsername);
+  const nothingToDelete = !session.workspaceId && !needsLookup;
   const result = {
-    workspaceGone: Boolean(session.workspaceGone) || !session.workspaceId,
+    workspaceGone: Boolean(session.workspaceGone) || nothingToDelete,
+    workspaceGoneSaved: Boolean(session.workspaceGone) || nothingToDelete,
+    workspaceId: session.workspaceId,
     userGone: Boolean(session.userGone) || !session.coderUserId,
     workspace: session.workspaceGone ? 'done' : 'none',
     user: session.userGone ? 'done' : 'none',
   };
-  if (!result.workspaceGone) {
+  if (needsLookup) {
     if (!config) {
       result.workspace = 'unconfigured';
     } else {
-      const call = await deleteWorkspaceCall(fetchImpl, config, session.workspaceId);
+      const found = await lookUpWorkspaceCall(fetchImpl, config, session);
+      result.workspace = found.kind;
+      if (found.id) result.workspaceId = found.id;
+      if (found.missing) result.workspaceGone = true;
+    }
+  }
+  if (!result.workspaceGone && result.workspaceId) {
+    if (!config) {
+      result.workspace = 'unconfigured';
+    } else {
+      const call = await deleteWorkspaceCall(fetchImpl, config, result.workspaceId);
       result.workspaceGone = call.confirmed;
+      result.workspaceGoneSaved = call.confirmed;
       result.workspace = call.kind;
     }
   }
@@ -497,14 +582,17 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
   const nowIso = new Date(nowMs).toISOString();
 
   const { retryAt: _lease, ...rest } = claimed;
+  // A workspace id the lookup found is kept, so a later try deletes it without looking again.
+  const found = steps.workspaceId ? { workspaceId: steps.workspaceId } : {};
   let next;
   if (finished) {
-    next = { ...rest, status: claimed.endStatus, workspaceGone: true, userGone: true, ttl: VISITOR_DOC_TTL_SECONDS };
+    next = { ...rest, ...found, status: claimed.endStatus, workspaceGone: true, userGone: true, ttl: VISITOR_DOC_TTL_SECONDS };
   } else if (givenUp) {
     next = {
       ...rest,
+      ...found,
       status: SESSION_STATUS.cleanupFailed,
-      workspaceGone: steps.workspaceGone,
+      workspaceGone: steps.workspaceGoneSaved,
       userGone: steps.userGone,
       cleanupAt: nowIso,
       ttl: VISITOR_FAILED_DOC_TTL_SECONDS,
@@ -512,8 +600,9 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
   } else {
     next = {
       ...rest,
+      ...found,
       status: SESSION_STATUS.cleanupPending,
-      workspaceGone: steps.workspaceGone,
+      workspaceGone: steps.workspaceGoneSaved,
       userGone: steps.userGone,
       cleanupAt: nowIso,
       retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS * attempts).toISOString(),
@@ -642,6 +731,49 @@ export async function reapExpiredVisitorSessions(
     }
   }
   return tally;
+}
+
+/**
+ * Keep a record of a start that failed after Coder made the visitor's user, so
+ * the sweep deletes the user, and the workspace if Coder made one.
+ *
+ * It is a `cleanup_pending` record carrying what the sweep reads: the Coder
+ * user's id and name, the workspace's name (there is no workspace id: the call
+ * that would have given it timed out or was refused), and the retry fields. The
+ * first try waits CLEANUP_RETRY_BASE_MS so that a create Coder is still
+ * finishing can finish. It has no `clientHash` and was never given to a
+ * visitor, so no stop request can reach it: only the sweep does.
+ *
+ * Never throws: the visitor is being answered with a 502 whatever happens
+ * here, and a store that is down must not turn that into something else. The
+ * log says by kind that the note could not be written, and nothing more.
+ */
+async function noteUnfinishedStart(store, { user, fallbackUsername, workspaceName, labId, nowMs, context }) {
+  const nowIso = new Date(nowMs).toISOString();
+  const record = {
+    id: randomUUID(),
+    type: VISITOR_JOB_TYPE,
+    status: SESSION_STATUS.cleanupPending,
+    endStatus: SESSION_STATUS.ended,
+    startFailed: true,
+    labId,
+    coderUserId: user.id,
+    coderUsername: user.username ?? fallbackUsername,
+    workspaceName,
+    createdAt: nowIso,
+    endedAt: nowIso,
+    cleanupAttempts: 0,
+    workspaceGone: false,
+    userGone: false,
+    cleanupAt: nowIso,
+    retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS).toISOString(),
+    ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+  };
+  try {
+    await store.createDoc(SESSION_CONTAINER, record);
+  } catch (error) {
+    context?.error?.(`visitor-session: a failed start could not be noted for clean-up (${errorKind(error)})`);
+  }
 }
 
 /**
@@ -1005,6 +1137,19 @@ export function createVisitorSessionHandlers({
         });
       } catch (err) {
         context?.error?.('visitor-session: provisioning failure', err?.message);
+        // The Coder user exists, and Coder may yet make (or already have made)
+        // the workspace whose call gave no answer. No visitor was told of a
+        // session, so nothing else would ever clean either up (#1388).
+        if (user?.id) {
+          await noteUnfinishedStart(store, {
+            user,
+            fallbackUsername: creds.username,
+            workspaceName,
+            labId,
+            nowMs: clock(),
+            context,
+          });
+        }
         return jsonResponse({
           ok: false,
           code: DOOR_CODES.coder_unavailable,

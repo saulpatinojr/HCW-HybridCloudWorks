@@ -2405,4 +2405,350 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(urls[1]).toBe(`${CODER.base}/api/v2/users/me`);
     });
   });
+
+  describe('a start that fails after Coder made the visitor\'s user', () => {
+    // Coder can finish a create the client has stopped waiting for, so a start
+    // whose workspace call timed out may have left a workspace as well as the
+    // user, and the answer that would have named it never came.
+    const NEW_USER = { id: 'u-new', username: 'v-newuser1' };
+
+    /** Turnstile, and a Coder that makes the user and then does what the test says to the workspace call. */
+    function startFetch({ workspace = 'timeout', user = 'ok' } = {}) {
+      return vi.fn(async (url) => {
+        const target = String(url);
+        if (target.startsWith('https://challenges.cloudflare.com/')) {
+          return { ok: true, json: async () => ({ success: true, hostname: 'hybridcloudworks.com', action: 'visitor-session' }) };
+        }
+        if (target.endsWith('/api/v2/templates')) return { ok: true, json: async () => [{ id: 't1', name: 'hcw-lab' }] };
+        if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
+        if (target.endsWith('/api/v2/users')) {
+          if (user === 'refused') return { ok: false, status: 500, text: async () => 'boom' };
+          return { ok: true, json: async () => NEW_USER };
+        }
+        if (/\/members\/[^/]+\/workspaces$/.test(target)) {
+          if (workspace === 'timeout') throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+          if (workspace === 'refused') return { ok: false, status: 400, text: async () => 'workspace limit reached' };
+        }
+        return { ok: true, json: async () => ({ id: 'ws-new' }) };
+      });
+    }
+
+    const startAsAlice = (handlers, context) =>
+      handlers.startSession(
+        {
+          headers: fromCaller(ALICE, { origin: SITE }),
+          json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
+        },
+        context
+      );
+    const jobDocs = (store) =>
+      [...store.docs.entries()].filter(([path]) => path.startsWith('lab_jobs/')).map(([, doc]) => doc);
+
+    it('answers 502 and keeps a note for the sweep, with the user and the workspace name and no workspace id, when the workspace call times out', async () => {
+      const store = mockStore();
+      const context = { error: vi.fn() };
+      const handlers = makeHandlers({ store, fetchImpl: startFetch({ workspace: 'timeout' }), clock });
+
+      const res = await startAsAlice(handlers, context);
+
+      expect(res.status).toBe(502);
+      expect(JSON.parse(res.body).code).toBe(DOOR_CODES.coder_unavailable);
+      const [note, ...others] = jobDocs(store);
+      expect(others).toEqual([]);
+      expect(note).toMatchObject({
+        type: 'visitor-session',
+        status: 'cleanup_pending',
+        endStatus: 'ended',
+        startFailed: true,
+        labId: 'landing-zone-builder-output',
+        coderUserId: NEW_USER.id,
+        coderUsername: NEW_USER.username,
+        workspaceName: 'lab-lzb',
+        cleanupAttempts: 0,
+        workspaceGone: false,
+        userGone: false,
+        // Not at once: a create Coder is still finishing is given time to finish.
+        retryAt: iso(NOW + CLEANUP_RETRY_BASE_MS),
+        ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+      });
+      // Nothing that would let a visitor reach it, and nothing it does not have.
+      expect(note.workspaceId).toBeUndefined();
+      expect(note.clientHash).toBeUndefined();
+      expect(note.accessUrl).toBeUndefined();
+      for (const [line, detail] of context.error.mock.calls) {
+        expect(`${line} ${detail ?? ''}`).not.toMatch(/u-new|v-newuser1|ws-new/);
+      }
+    });
+
+    it('keeps the same note when Coder refuses the workspace outright, so the user is not left behind either', async () => {
+      const store = mockStore();
+      const handlers = makeHandlers({ store, fetchImpl: startFetch({ workspace: 'refused' }), clock });
+
+      expect((await startAsAlice(handlers, { error: vi.fn() })).status).toBe(502);
+
+      expect(jobDocs(store)).toHaveLength(1);
+      expect(jobDocs(store)[0]).toMatchObject({ status: 'cleanup_pending', coderUserId: NEW_USER.id, startFailed: true });
+    });
+
+    it('keeps nothing when the user was never made: there is nothing in Coder to clean up', async () => {
+      const store = mockStore();
+      const handlers = makeHandlers({ store, fetchImpl: startFetch({ user: 'refused' }), clock });
+
+      expect((await startAsAlice(handlers, { error: vi.fn() })).status).toBe(502);
+
+      expect(jobDocs(store)).toEqual([]);
+    });
+
+    it('still answers 502, and says by kind only that the note was not written, when the store cannot take it', async () => {
+      const store = mockStore();
+      const create = store.createDoc.getMockImplementation();
+      store.createDoc.mockImplementation(async (container, doc) => {
+        if (container === 'lab_jobs') throw Object.assign(new Error('cosmos is down for u-new'), { code: 503 });
+        return create(container, doc);
+      });
+      const context = { error: vi.fn() };
+      const handlers = makeHandlers({ store, fetchImpl: startFetch({ workspace: 'timeout' }), clock });
+
+      const res = await startAsAlice(handlers, context);
+
+      expect(res.status).toBe(502);
+      const lines = context.error.mock.calls.map(([line]) => line);
+      expect(lines.at(-1)).toBe('visitor-session: a failed start could not be noted for clean-up (503)');
+      expect(lines.join(' ')).not.toMatch(/u-new|cosmos is down/);
+    });
+
+    it('is not a session anyone can see or end: the status shows none and a stop is a 404 that calls nothing', async () => {
+      const store = mockStore();
+      const fetchImpl = startFetch({ workspace: 'timeout' });
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+      await startAsAlice(handlers, { error: vi.fn() });
+      const [note] = jobDocs(store);
+      fetchImpl.mockClear();
+
+      const status = JSON.parse((await handlers.getStatus({ headers: fromCaller(ALICE) })).body);
+      const stop = await handlers.stopSession(stopRequest(note.id, ALICE));
+
+      expect(status.session).toBeNull();
+      expect(stop.status).toBe(404);
+      expect(coderCallsOf(fetchImpl)).toEqual([]);
+      expect(store.get('lab_jobs', note.id).status).toBe('cleanup_pending');
+    });
+
+    function coderCallsOf(fetchImpl) {
+      return fetchImpl.mock.calls
+        .filter(([url, init]) => String(url).startsWith(CODER.base) && init?.method !== 'GET')
+        .map(([url, init]) => `${init.method} ${new URL(url).pathname}`);
+    }
+  });
+
+  describe('the sweep finds the workspace of a start that failed, by its owner and name', () => {
+    const OWNER = { id: 'u-fail-1', name: 'v-aaaaaaaaaaaa' };
+    const LOOKUP_PATH = `GET /api/v2/users/${OWNER.name}/workspace/lab-lzb`;
+    const foundWorkspace = (overrides = {}) => ({
+      id: 'ws-found',
+      name: 'lab-lzb',
+      owner_id: OWNER.id,
+      owner_name: OWNER.name,
+      ...overrides,
+    });
+
+    /** A start that failed, as `noteUnfinishedStart` writes it, due for its first try. */
+    const unfinishedStart = (id = 'fail-1', overrides = {}) => ({
+      id,
+      type: 'visitor-session',
+      status: 'cleanup_pending',
+      endStatus: 'ended',
+      startFailed: true,
+      labId: 'landing-zone-builder-output',
+      coderUserId: OWNER.id,
+      coderUsername: OWNER.name,
+      workspaceName: 'lab-lzb',
+      createdAt: iso(NOW),
+      endedAt: iso(NOW),
+      cleanupAttempts: 0,
+      workspaceGone: false,
+      userGone: false,
+      cleanupAt: iso(NOW),
+      retryAt: iso(NOW + CLEANUP_RETRY_BASE_MS),
+      ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+      ...overrides,
+    });
+
+    /**
+     * Coder with a scripted answer to each of the three calls: the lookup (a workspace object, a status
+     * number, or 'timeout' or 'network'), the workspace delete and the user delete (statuses). The last repeats.
+     */
+    function coderWithLookup({ lookup = [foundWorkspace()], workspace = [202], user = [204] } = {}) {
+      const queues = { lookup: [...lookup], workspace: [...workspace], user: [...user] };
+      const next = (name) => (queues[name].length > 1 ? queues[name].shift() : queues[name][0]);
+      const statusAnswer = (status) => ({ ok: status >= 200 && status < 300, status });
+      return vi.fn(async (url, init) => {
+        const target = String(url);
+        if (init?.method === 'GET' && /\/api\/v2\/users\/[^/]+\/workspace\/[^/]+$/.test(target)) {
+          const answer = next('lookup');
+          if (answer === 'timeout') throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+          if (answer === 'network') throw new TypeError('fetch failed');
+          if (typeof answer === 'number') return statusAnswer(answer);
+          return { ok: true, status: 200, json: async () => answer };
+        }
+        if (target.includes('/builds')) return statusAnswer(next('workspace'));
+        if (init?.method === 'DELETE' && /\/api\/v2\/users\/[^/]+$/.test(target)) return statusAnswer(next('user'));
+        return { ok: true, status: 200 };
+      });
+    }
+
+    /** Every Coder call, reads included. */
+    const allCalls = (fetchImpl) => fetchImpl.mock.calls.map(([url, init]) => `${init?.method} ${new URL(url).pathname}`);
+
+    const dueAt = NOW + CLEANUP_RETRY_BASE_MS;
+
+    it('looks the workspace up, deletes the one it found by its id, then the user, and saves the session as over', async () => {
+      const store = cosmosLikeStore([unfinishedStart()]);
+      const fetchImpl = coderWithLookup();
+      now = dueAt;
+
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
+
+      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH, 'POST /api/v2/workspaces/ws-found/builds', `DELETE /api/v2/users/${OWNER.id}`]);
+      expect(store.get('lab_jobs', 'fail-1')).toMatchObject({
+        status: 'ended',
+        workspaceId: 'ws-found',
+        workspaceGone: true,
+        userGone: true,
+      });
+    });
+
+    it('keeps the id it found when the user delete is refused, so the next try deletes only the user', async () => {
+      const store = cosmosLikeStore([unfinishedStart()]);
+      const fetchImpl = coderWithLookup({ user: [417, 204] });
+      now = dueAt;
+
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ pending: 1 }));
+      expect(store.get('lab_jobs', 'fail-1')).toMatchObject({ status: 'cleanup_pending', workspaceId: 'ws-found', workspaceGone: true });
+      fetchImpl.mockClear();
+
+      now = dueAt + CLEANUP_RETRY_BASE_MS;
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
+      expect(allCalls(fetchImpl)).toEqual([`DELETE /api/v2/users/${OWNER.id}`]);
+      expect(store.get('lab_jobs', 'fail-1').status).toBe('ended');
+    });
+
+    it('takes the workspace as gone for this try when Coder has none, and lets the user delete confirm it', async () => {
+      const store = cosmosLikeStore([unfinishedStart()]);
+      const fetchImpl = coderWithLookup({ lookup: [404] });
+      now = dueAt;
+
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
+
+      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH, `DELETE /api/v2/users/${OWNER.id}`]);
+      expect(store.get('lab_jobs', 'fail-1')).toMatchObject({ status: 'ended', workspaceGone: true, userGone: true });
+    });
+
+    it('does not save "gone" from a lookup that found nothing: a workspace that turns up later is found by the next try', async () => {
+      const store = cosmosLikeStore([unfinishedStart()]);
+      // First try: no workspace yet, and Coder refuses the user (it has one by now). Second try: found.
+      const fetchImpl = coderWithLookup({ lookup: [404, foundWorkspace()], user: [417, 204] });
+      now = dueAt;
+
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ pending: 1 }));
+      const waitingRecord = store.get('lab_jobs', 'fail-1');
+      expect(waitingRecord).toMatchObject({ status: 'cleanup_pending', workspaceGone: false });
+      expect(waitingRecord.workspaceId).toBeUndefined();
+      fetchImpl.mockClear();
+
+      now = dueAt + CLEANUP_RETRY_BASE_MS;
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
+      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH, 'POST /api/v2/workspaces/ws-found/builds', `DELETE /api/v2/users/${OWNER.id}`]);
+      expect(store.get('lab_jobs', 'fail-1').status).toBe('ended');
+    });
+
+    it.each([
+      ['a workspace owned by someone else', { owner_id: 'u-someone-else' }],
+      ['a workspace with another name', { name: 'lab-tfv' }],
+      ['an answer with no id', { id: undefined }],
+      ['an answer whose id is not text', { id: 42 }],
+    ])('never deletes %s: nothing is deleted, the user delete is not asked for, and the session waits', async (_name, overrides) => {
+      const store = cosmosLikeStore([unfinishedStart()]);
+      const fetchImpl = coderWithLookup({ lookup: [foundWorkspace(overrides)] });
+      const log = vi.fn();
+      now = dueAt;
+
+      expect(await sweep(store, fetchImpl, { log })).toEqual(tally({ pending: 1 }));
+
+      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH]);
+      expect(store.get('lab_jobs', 'fail-1')).toMatchObject({ status: 'cleanup_pending', workspaceGone: false });
+      expect(log.mock.calls[0][0]).toContain('workspace lookup mismatch, user skipped');
+      expect(log.mock.calls[0][0]).not.toMatch(/someone-else|lab-tfv|fail-1|u-fail-1|ws-found/);
+    });
+
+    it.each([
+      ['a refusal (HTTP 500)', 500, 'workspace lookup HTTP 500, user skipped'],
+      ['a timeout', 'timeout', 'workspace lookup timeout, user skipped'],
+      ['a network failure', 'network', 'workspace lookup network, user skipped'],
+    ])('deletes nothing and waits when the lookup gets %s from Coder', async (_name, answer, logged) => {
+      const store = cosmosLikeStore([unfinishedStart()]);
+      const fetchImpl = coderWithLookup({ lookup: [answer] });
+      const log = vi.fn();
+      now = dueAt;
+
+      expect(await sweep(store, fetchImpl, { log })).toEqual(tally({ pending: 1 }));
+
+      expect(allCalls(fetchImpl)).toEqual([LOOKUP_PATH]);
+      expect(log.mock.calls[0][0]).toContain(logged);
+    });
+
+    it('waits, without calling Coder, when Coder cannot be called at all', async () => {
+      const store = cosmosLikeStore([unfinishedStart()]);
+      const fetchImpl = coderWithLookup();
+      now = dueAt;
+
+      expect(await sweep(store, fetchImpl, { config: null })).toEqual(tally({ pending: 1 }));
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'fail-1').status).toBe('cleanup_pending');
+    });
+
+    it('gives up after the last try, like any other session, when the lookup never gets an answer', async () => {
+      const store = cosmosLikeStore([unfinishedStart()]);
+      const fetchImpl = coderWithLookup({ lookup: [500] });
+      now = dueAt;
+
+      for (let attempt = 1; attempt < MAX_CLEANUP_ATTEMPTS; attempt += 1) {
+        expect(await sweep(store, fetchImpl)).toEqual(tally({ pending: 1 }));
+        now = Date.parse(store.get('lab_jobs', 'fail-1').retryAt);
+      }
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ failed: 1 }));
+
+      expect(store.get('lab_jobs', 'fail-1')).toMatchObject({ status: 'cleanup_failed', ttl: VISITOR_FAILED_DOC_TTL_SECONDS });
+      expect(allCalls(fetchImpl).every((call) => call === LOOKUP_PATH)).toBe(true);
+    });
+
+    it('looks nothing up for a session that has a workspace id, or has no workspace name to look for', async () => {
+      const store = cosmosLikeStore([
+        expiredSession('old-1'), // a running session's record: it has the id (and no name)
+        unfinishedStart('has-id', { workspaceId: 'ws-known', coderUserId: 'u-known' }),
+        unfinishedStart('no-name', { workspaceName: undefined, coderUserId: 'u-noname' }),
+      ]);
+      const fetchImpl = coderWithLookup();
+      now = dueAt;
+
+      await sweep(store, fetchImpl);
+
+      expect(allCalls(fetchImpl).filter((call) => call.startsWith('GET'))).toEqual([]);
+      expect(allCalls(fetchImpl)).toEqual(
+        expect.arrayContaining(['POST /api/v2/workspaces/ws-known/builds', 'DELETE /api/v2/users/u-noname'])
+      );
+      expect(store.get('lab_jobs', 'no-name')).toMatchObject({ status: 'ended', workspaceGone: true });
+    });
+
+    it('writes the visitor\'s name and the workspace\'s name into the lookup path as one piece each', async () => {
+      const store = cosmosLikeStore([unfinishedStart('odd', { coderUsername: 'v-a/../b?c', workspaceName: 'lab x' })]);
+      const fetchImpl = coderWithLookup({ lookup: [404] });
+      now = dueAt;
+
+      await sweep(store, fetchImpl);
+
+      expect(String(fetchImpl.mock.calls[0][0])).toBe(`${CODER.base}/api/v2/users/v-a%2F..%2Fb%3Fc/workspace/lab%20x`);
+    });
+  });
 });
