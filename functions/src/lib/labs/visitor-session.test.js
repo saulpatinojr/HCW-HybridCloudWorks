@@ -2,8 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryStore } from '../../../test/memory-store.js';
 import { createClientIdentity } from '../auth/client-identity.js';
 import {
+  CLEANUP_LEASE_MS,
+  CLEANUP_RETRY_BASE_MS,
+  CODER_CALL_TIMEOUT_MS,
+  CODER_PROVISION_TIMEOUT_MS,
   DOOR_CODES,
+  MAX_CLEANUP_ATTEMPTS,
+  MAX_SWEEP_SESSIONS,
+  RETRY_SWEEP_EVERY_MS,
   VISITOR_DOC_TTL_SECONDS,
+  VISITOR_FAILED_DOC_TTL_SECONDS,
+  VISITOR_PENDING_DOC_TTL_SECONDS,
   VISITOR_SESSION_SWITCH,
   createVisitorCoderUser,
   createVisitorSessionHandlers,
@@ -21,6 +30,9 @@ import {
 const NOW = Date.parse('2026-10-17T12:00:00Z');
 const SITE = 'https://hybridcloudworks.com';
 const TOKEN = 'turnstile-token-sample';
+
+/** What the sweep reports: sessions saved as expired, retries finished, still waiting, and failures (#1388). */
+const tally = (counts = {}) => ({ reaped: 0, finished: 0, pending: 0, failed: 0, ...counts });
 
 /**
  * WHO IS CALLING (#1387). These tests give the handlers the real
@@ -60,7 +72,8 @@ function sessionQuery({ docs, parameters }) {
     (d) =>
       (value('@type') === undefined || d.type === value('@type')) &&
       (value('@status') === undefined || d.status === value('@status')) &&
-      (value('@nowIso') === undefined || d.expiresAt <= value('@nowIso'))
+      (value('@nowIso') === undefined || d.expiresAt <= value('@nowIso')) &&
+      (value('@dueIso') === undefined || d.retryAt <= value('@dueIso'))
   );
 }
 
@@ -851,13 +864,13 @@ describe('createVisitorSessionHandlers: stopSession and reaper', () => {
   });
 
   it('handles reaper errors gracefully when store is missing or query throws', async () => {
-    expect(await reapExpiredVisitorSessions(null, vi.fn(), null)).toEqual({ reaped: 0, failed: 0 });
+    expect(await reapExpiredVisitorSessions(null, vi.fn(), null)).toEqual(tally());
     const brokenStore = {
       queryDocs: vi.fn(async () => {
         throw new Error('db failure');
       }),
     };
-    expect(await reapExpiredVisitorSessions(brokenStore, vi.fn(), null)).toEqual({ reaped: 0, failed: 0 });
+    expect(await reapExpiredVisitorSessions(brokenStore, vi.fn(), null)).toEqual(tally());
   });
 
   it('reaps using upsertDoc when replaceDocIfMatch is omitted', async () => {
@@ -868,7 +881,9 @@ describe('createVisitorSessionHandlers: stopSession and reaper', () => {
       expiresAt: new Date(NOW - 10000).toISOString(),
     };
     const upsertStore = {
-      queryDocs: vi.fn(async () => [exp]),
+      queryDocs: vi.fn(async (container, sql, parameters) =>
+        parameters.find((p) => p.name === '@status')?.value === 'active' ? [exp] : []
+      ),
       upsertDoc: vi.fn(async () => ({})),
     };
     const res = await reapExpiredVisitorSessions(upsertStore, vi.fn(), null, {
@@ -974,11 +989,17 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
 
       await handlers.stopSession(stopRequest('sess-1'));
 
-      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
-      const [container, document, options] = store.replaceDocIfMatch.mock.calls[0];
-      expect(container).toBe('lab_jobs');
-      expect(document).toMatchObject({ id: 'sess-1', status: 'ended', _etag: readWith });
-      expect(options).toEqual({ partitionKey: 'sess-1' });
+      // Two writes: the claim, under the version the stop read, then the save, under the claim's.
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(2);
+      const [claim, save] = store.replaceDocIfMatch.mock.calls;
+      expect(claim[0]).toBe('lab_jobs');
+      expect(claim[1]).toMatchObject({ id: 'sess-1', status: 'ending', _etag: readWith });
+      expect(claim[2]).toEqual({ partitionKey: 'sess-1' });
+      const claimedWith = (await store.replaceDocIfMatch.mock.results[0].value)._etag;
+      expect(claimedWith).not.toBe(readWith);
+      expect(save[0]).toBe('lab_jobs');
+      expect(save[1]).toMatchObject({ id: 'sess-1', status: 'ended', _etag: claimedWith });
+      expect(save[2]).toEqual({ partitionKey: 'sess-1' });
     });
 
     it('answers success again, without calling Coder, when the session is already over', async () => {
@@ -1009,16 +1030,39 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'expired', endedAt: reapedAt });
     });
 
-    it('saves again with the new version when something else changed the record but left it active', async () => {
+    it('claims again on the new version when something else changed the record but left it active', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      // Another writer changes the record in the gap between the stop's read and its claim.
+      const read = store.readDoc.getMockImplementation();
+      store.readDoc.mockImplementationOnce(async (container, id) => {
+        const seen = await read(container, id);
+        await store.replaceDocIfMatch(container, { ...seen, note: 'written by someone else' }, { partitionKey: id });
+        return seen;
+      });
+      const handlers = makeHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+
+      const res = await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(res.status).toBe(200);
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'ended', note: 'written by someone else' });
+      // The other writer, the lost claim, the claim on the new version, the save.
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(4);
+    });
+
+    it('leaves the record to be retried, and answers success, when it changes while Coder is being called', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
       const fetchImpl = coderThatLetsAnotherWriterIn(store, 'sess-1', { note: 'written by someone else' });
       const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
 
       const res = await handlers.stopSession(stopRequest('sess-1'));
 
+      // The save under the claim's version was refused, so the claim stands: `ending`, with a lease.
       expect(res.status).toBe(200);
-      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'ended', note: 'written by someone else' });
-      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3); // the other writer, the lost write, the retry
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({
+        status: 'ending',
+        note: 'written by someone else',
+        retryAt: new Date(NOW + CLEANUP_LEASE_MS).toISOString(),
+      });
     });
 
     it('answers 409 and leaves the record active when it keeps changing underneath the stop', async () => {
@@ -1044,7 +1088,8 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
 
     it('answers success to two stop requests made at the same moment, and ends the session once', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
-      const handlers = makeHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+      const fetchImpl = acceptingCoder();
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
 
       const [first, second] = await Promise.all([
         handlers.stopSession(stopRequest('sess-1')),
@@ -1053,8 +1098,13 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
 
       expect([first.status, second.status]).toEqual([200, 200]);
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'ended', endedAt: new Date(NOW).toISOString() });
-      // Both really tried to save, so one really lost the race and found the record ended.
-      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(2);
+      // Both really tried to claim it, so one really lost the race; the winner then saved it.
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3);
+      // One set of Coder calls, not two (#1388).
+      expect(coderCalls(fetchImpl)).toEqual([
+        'POST /api/v2/workspaces/ws-sess-1/builds',
+        'DELETE /api/v2/users/u-sess-1',
+      ]);
     });
 
     it('answers success when the record has aged out (its ttl) between the read and the write', async () => {
@@ -1073,7 +1123,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended' });
     });
 
-    it('still ends the session, and warns without content, when Coder does not accept the clean-up', async () => {
+    it('answers success but does not save the session as ended, and warns without content, when Coder does not accept the clean-up', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
       const fetchImpl = vi.fn(async () => ({ ok: false, status: 500 }));
       const context = { warn: vi.fn() };
@@ -1082,7 +1132,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       const res = await handlers.stopSession(stopRequest('sess-1'), context);
 
       expect(res.status).toBe(200);
-      expect(store.get('lab_jobs', 'sess-1').status).toBe('ended');
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'cleanup_pending', cleanupAttempts: 1 });
       expect(context.warn).toHaveBeenCalledTimes(1);
       expect(context.warn.mock.calls[0][0]).not.toMatch(/sess-1|ws-sess-1|u-sess-1/);
     });
@@ -1113,7 +1163,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
 
       const result = await reapExpiredVisitorSessions(store, fetchImpl, CODER, { nowIso });
 
-      expect(result).toEqual({ reaped: 2, failed: 0 });
+      expect(result).toEqual(tally({ reaped: 2 }));
       expect(store.get('lab_jobs', 'old-1')).toMatchObject({ status: 'expired', endedAt: nowIso });
       expect(store.get('lab_jobs', 'old-2')).toMatchObject({ status: 'expired', endedAt: nowIso });
       expect(store.get('lab_jobs', 'live-1').status).toBe('active');
@@ -1131,25 +1181,34 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
 
       await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso });
 
-      const [container, document, options] = store.replaceDocIfMatch.mock.calls[0];
-      expect(container).toBe('lab_jobs');
-      expect(document).toMatchObject({ id: 'old-1', status: 'expired', _etag: readWith });
-      expect(options).toEqual({ partitionKey: 'old-1' });
+      const [claim, save] = store.replaceDocIfMatch.mock.calls;
+      expect(claim[0]).toBe('lab_jobs');
+      expect(claim[1]).toMatchObject({ id: 'old-1', status: 'ending', endStatus: 'expired', _etag: readWith });
+      expect(claim[2]).toEqual({ partitionKey: 'old-1' });
+      const claimedWith = (await store.replaceDocIfMatch.mock.results[0].value)._etag;
+      expect(save[1]).toMatchObject({ id: 'old-1', status: 'expired', _etag: claimedWith });
+      expect(save[2]).toEqual({ partitionKey: 'old-1' });
     });
 
     it('counts a session once when two reapers meet it at the same moment', async () => {
       const store = cosmosLikeStore([expiredSession('old-1')]);
+      const fetchImpl = acceptingCoder();
 
       const [first, second] = await Promise.all([
-        reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso }),
-        reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso }),
+        reapExpiredVisitorSessions(store, fetchImpl, CODER, { nowIso }),
+        reapExpiredVisitorSessions(store, fetchImpl, CODER, { nowIso }),
       ]);
 
       expect(first.reaped + second.reaped).toBe(1);
       expect(first.failed + second.failed).toBe(0);
       expect(store.get('lab_jobs', 'old-1')).toMatchObject({ status: 'expired', endedAt: nowIso });
-      // Both really tried to save, so one really lost the race and found the record expired.
-      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(2);
+      // Both really tried to claim it, so one really lost the race; the winner then saved it.
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3);
+      // One set of Coder calls, not two (#1388).
+      expect(coderCalls(fetchImpl)).toEqual([
+        'POST /api/v2/workspaces/ws-old-1/builds',
+        'DELETE /api/v2/users/u-old-1',
+      ]);
     });
 
     it('does not count a session that a stop ended first, and leaves "ended" alone', async () => {
@@ -1159,7 +1218,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
 
       const result = await reapExpiredVisitorSessions(store, fetchImpl, CODER, { nowIso });
 
-      expect(result).toEqual({ reaped: 0, failed: 0 });
+      expect(result).toEqual(tally());
       expect(store.get('lab_jobs', 'old-1')).toMatchObject({ status: 'ended', endedAt });
     });
 
@@ -1170,7 +1229,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
 
       const result = await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso, log });
 
-      expect(result).toEqual({ reaped: 0, failed: 1 });
+      expect(result).toEqual(tally({ failed: 1 }));
       expect(store.get('lab_jobs', 'old-1').status).toBe('active');
       expect(log).toHaveBeenCalledTimes(1);
       expect(log.mock.calls[0][0]).not.toContain('old-1');
@@ -1183,7 +1242,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
 
       const result = await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso, log });
 
-      expect(result).toEqual({ reaped: 1, failed: 1 });
+      expect(result).toEqual(tally({ reaped: 1, failed: 1 }));
       expect(store.get('lab_jobs', 'old-1').status).toBe('active');
       expect(store.get('lab_jobs', 'old-2').status).toBe('expired');
       expect(log).toHaveBeenCalledTimes(1);
@@ -1191,7 +1250,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       expect(log.mock.calls[0][0]).not.toMatch(/old-1|cosmos is down/);
     });
 
-    it('saves the session and logs, without content, when Coder does not accept the clean-up', async () => {
+    it('keeps the session to retry, and logs without content, when Coder does not accept the clean-up', async () => {
       const store = cosmosLikeStore([expiredSession('old-1')]);
       const log = vi.fn();
 
@@ -1200,8 +1259,8 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
         log,
       });
 
-      expect(result).toEqual({ reaped: 1, failed: 0 });
-      expect(store.get('lab_jobs', 'old-1').status).toBe('expired');
+      expect(result).toEqual(tally({ pending: 1 }));
+      expect(store.get('lab_jobs', 'old-1')).toMatchObject({ status: 'cleanup_pending', endStatus: 'expired' });
       expect(log).toHaveBeenCalledTimes(1);
       expect(log.mock.calls[0][0]).not.toMatch(/old-1|ws-old-1|u-old-1/);
     });
@@ -1214,7 +1273,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       };
       const log = vi.fn();
 
-      expect(await reapExpiredVisitorSessions(store, vi.fn(), CODER, { nowIso, log })).toEqual({ reaped: 0, failed: 0 });
+      expect(await reapExpiredVisitorSessions(store, vi.fn(), CODER, { nowIso, log })).toEqual(tally());
       expect(log).toHaveBeenCalledTimes(1);
       expect(log.mock.calls[0][0]).toContain('503');
       expect(log.mock.calls[0][0]).not.toContain('abc123');
@@ -1232,12 +1291,15 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
     });
 
     it('counts a failure, and saves nothing, when the store has no way to save a session', async () => {
-      const store = { queryDocs: vi.fn(async () => [expiredSession('old-1')]) };
+      const store = {
+        queryDocs: vi.fn(async (container, sql, parameters) =>
+          parameters.find((p) => p.name === '@status')?.value === 'active' ? [expiredSession('old-1')] : []
+        ),
+      };
 
-      expect(await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso })).toEqual({
-        reaped: 0,
-        failed: 1,
-      });
+      expect(await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso })).toEqual(
+        tally({ failed: 1 })
+      );
     });
   });
 });
@@ -1742,6 +1804,605 @@ describe('visitor sessions know who is calling (#1387)', () => {
     it('fails on the same wrapper when the code reaches for a method the helper lacks (the old fromRequest)', () => {
       const { strict } = strictIdentity();
       expect(() => strict.fromRequest).toThrow(/has no fromRequest/);
+    });
+  });
+});
+
+/**
+ * A clean-up Coder has not confirmed is kept and retried (#1388).
+ *
+ * Before, a session was saved as `ended` or `expired` whether or not Coder
+ * accepted the two deletes, and then nothing looked at it again, so a delete
+ * Coder refused was never retried. Coder deletes a workspace with a build that
+ * finishes later and refuses (HTTP 417) to delete a user who still has
+ * workspaces, so the user delete straight after an accepted workspace delete
+ * is refused for most sessions: the retry is the normal path.
+ */
+describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () => {
+  const CODER = { base: 'https://coder.lab.hybridcloudworks.com', token: 'broker-token' };
+  const iso = (ms) => new Date(ms).toISOString();
+  let now = NOW;
+  const clock = () => now;
+  const nowIso = () => iso(now);
+
+  /**
+   * A Coder whose answers to the two deletes are scripted: a list of HTTP statuses per call,
+   * the last repeating (`'timeout'` and `'network'` make the call fail instead).
+   */
+  function scriptedCoder({ workspace = [202], user = [204] } = {}) {
+    const queues = { workspace: [...workspace], user: [...user] };
+    return vi.fn(async (url) => {
+      const target = String(url);
+      const which = target.includes('/builds') ? 'workspace' : target.includes('/api/v2/users/') ? 'user' : null;
+      if (!which) return { ok: true };
+      const answer = queues[which].length > 1 ? queues[which].shift() : queues[which][0];
+      if (answer === 'network') throw new TypeError('fetch failed');
+      if (answer === 'timeout') throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+      return { ok: answer >= 200 && answer < 300, status: answer };
+    });
+  }
+
+  /** A session record already waiting for its next try. */
+  const waiting = (id, overrides = {}) =>
+    activeSession(id, {
+      status: 'cleanup_pending',
+      endStatus: 'ended',
+      endedAt: iso(NOW),
+      cleanupAttempts: 1,
+      cleanupAt: iso(NOW),
+      workspaceGone: true,
+      userGone: false,
+      retryAt: iso(NOW + CLEANUP_RETRY_BASE_MS),
+      ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+      ...overrides,
+    });
+
+  const sweep = (store, fetchImpl, { config = CODER, log } = {}) =>
+    reapExpiredVisitorSessions(store, fetchImpl, config, { nowIso: nowIso(), log });
+
+  beforeEach(() => {
+    now = NOW;
+    vi.stubEnv(VISITOR_SESSION_SWITCH, 'true');
+    vi.stubEnv('TURNSTILE_SECRET_KEY', 'turnstile-secret');
+    vi.stubEnv('CODER_URL', CODER.base);
+    vi.stubEnv('CODER_BROKER_TOKEN', CODER.token);
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '5');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  describe('when a visitor ends a session', () => {
+    it('answers success but keeps the record as waiting, with the first half done, when Coder refuses the user delete (417)', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const fetchImpl = scriptedCoder({ workspace: [202], user: [417] });
+      const context = { warn: vi.fn() };
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      const res = await handlers.stopSession(stopRequest('sess-1'), context);
+
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended' });
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({
+        status: 'cleanup_pending',
+        endStatus: 'ended',
+        endedAt: iso(NOW),
+        cleanupAttempts: 1,
+        workspaceGone: true,
+        userGone: false,
+        retryAt: iso(NOW + CLEANUP_RETRY_BASE_MS),
+        ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+        // The ids stay: the retry needs them.
+        coderUserId: 'u-sess-1',
+        workspaceId: 'ws-sess-1',
+      });
+      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-sess-1/builds', 'DELETE /api/v2/users/u-sess-1']);
+      // Logged by kind: the status Coder answered, and nothing that names the session.
+      expect(context.warn).toHaveBeenCalledTimes(1);
+      expect(context.warn.mock.calls[0][0]).toContain('user HTTP 417');
+      expect(context.warn.mock.calls[0][0]).toContain(`try 1 of ${MAX_CLEANUP_ATTEMPTS}`);
+      expect(context.warn.mock.calls[0][0]).not.toMatch(/sess-1|ws-sess-1|u-sess-1|203\.0\.113/);
+    });
+
+    it('answers success again, without calling Coder, until the next try is due', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const fetchImpl = scriptedCoder({ user: [417] });
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+      await handlers.stopSession(stopRequest('sess-1'));
+      fetchImpl.mockClear();
+
+      now = NOW + CLEANUP_RETRY_BASE_MS - 1;
+      const again = await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(again.status).toBe(200);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'cleanup_pending', cleanupAttempts: 1 });
+    });
+
+    it('retries on a later stop, asks Coder only for the half still to do, and saves the session as ended', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const fetchImpl = scriptedCoder({ workspace: [202], user: [417, 204] });
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+      await handlers.stopSession(stopRequest('sess-1'));
+      fetchImpl.mockClear();
+
+      now = NOW + CLEANUP_RETRY_BASE_MS + 1000;
+      const later = await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(later.status).toBe(200);
+      // The workspace delete is not asked for twice: Coder already has one building.
+      expect(coderCalls(fetchImpl)).toEqual(['DELETE /api/v2/users/u-sess-1']);
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({
+        status: 'ended',
+        endedAt: iso(NOW), // when the visitor ended it, not when Coder finished
+        cleanupAttempts: 2,
+        workspaceGone: true,
+        userGone: true,
+        ttl: VISITOR_DOC_TTL_SECONDS,
+      });
+      expect(store.get('lab_jobs', 'sess-1').retryAt).toBeUndefined();
+    });
+
+    it("counts a 404 or a 410 from Coder as done: what is already gone needs no delete", async () => {
+      const store = cosmosLikeStore([activeSession('sess-1'), activeSession('sess-2')]);
+      const handlers = makeHandlers({ store, fetchImpl: scriptedCoder({ workspace: [404], user: [404] }), clock });
+      const gone = makeHandlers({ store, fetchImpl: scriptedCoder({ workspace: [410], user: [410] }), clock });
+
+      await handlers.stopSession(stopRequest('sess-1'));
+      await gone.stopSession(stopRequest('sess-2'));
+
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'ended', workspaceGone: true, userGone: true });
+      expect(store.get('lab_jobs', 'sess-2')).toMatchObject({ status: 'ended', workspaceGone: true, userGone: true });
+    });
+
+    it.each([
+      ['a refusal (HTTP 500)', 500, 'workspace HTTP 500, user skipped'],
+      ['a timeout', 'timeout', 'workspace timeout, user skipped'],
+      ['a network failure', 'network', 'workspace network, user skipped'],
+    ])('does not end the session on %s from Coder, and does not ask for the user delete that cannot work yet', async (_name, answer, logged) => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const fetchImpl = scriptedCoder({ workspace: [answer] });
+      const context = { warn: vi.fn() };
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      const res = await handlers.stopSession(stopRequest('sess-1'), context);
+
+      expect(res.status).toBe(200);
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'cleanup_pending', workspaceGone: false, userGone: false });
+      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-sess-1/builds']);
+      expect(context.warn.mock.calls[0][0]).toContain(logged);
+    });
+
+    it('leaves a session that has something to delete waiting, not ended, when Coder cannot be called at all', async () => {
+      vi.stubEnv('CODER_BROKER_TOKEN', '');
+      vi.stubEnv('CODER_URL', '');
+      const store = cosmosLikeStore([activeSession('sess-1'), activeSession('sess-bare', { workspaceId: undefined, coderUserId: undefined })]);
+      const fetchImpl = scriptedCoder();
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      await handlers.stopSession(stopRequest('sess-1'));
+      await handlers.stopSession(stopRequest('sess-bare'));
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('cleanup_pending');
+      // A record with nothing in Coder has nothing to wait for.
+      expect(store.get('lab_jobs', 'sess-bare').status).toBe('ended');
+    });
+
+    it("tells another caller nothing about a session that is waiting for its clean-up: 404", async () => {
+      const store = cosmosLikeStore([waiting('sess-1')]);
+      const handlers = makeHandlers({ store, fetchImpl: scriptedCoder(), clock });
+
+      expect((await handlers.stopSession(stopRequest('sess-1', BOB))).status).toBe(404);
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('cleanup_pending');
+    });
+
+    it('makes one set of Coder calls when two stop requests arrive at the same moment, even when Coder is slow', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const fetchImpl = scriptedCoder({ workspace: [202], user: [417] });
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      const [first, second] = await Promise.all([
+        handlers.stopSession(stopRequest('sess-1')),
+        handlers.stopSession(stopRequest('sess-1')),
+      ]);
+
+      expect([first.status, second.status]).toEqual([200, 200]);
+      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-sess-1/builds', 'DELETE /api/v2/users/u-sess-1']);
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'cleanup_pending', cleanupAttempts: 1 });
+    });
+
+    it('does not count a waiting session as active: the visitor is not shown it, and may start another', async () => {
+      const store = mockStore();
+      const siteverify = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ success: true, hostname: 'hybridcloudworks.com', action: 'visitor-session' }),
+      }));
+      let users = 0;
+      const coder = scriptedCoder({ workspace: [202], user: [417] });
+      const fetchImpl = vi.fn(async (url, init) => {
+        const target = String(url);
+        if (target.startsWith('https://challenges.cloudflare.com/')) return siteverify(url, init);
+        if (target.endsWith('/api/v2/templates')) return { ok: true, json: async () => [{ id: 't1', name: 'hcw-lab' }] };
+        if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
+        if (target.endsWith('/api/v2/users')) {
+          users += 1;
+          return { ok: true, json: async () => ({ id: `u-${users}`, username: `v-user${users}` }) };
+        }
+        if (/\/members\/[^/]+\/workspaces$/.test(target)) return { ok: true, json: async () => ({ id: `ws-${users}` }) };
+        return coder(url, init);
+      });
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+      const start = () =>
+        handlers.startSession({
+          headers: fromCaller(ALICE, { origin: SITE }),
+          json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
+        });
+      const first = JSON.parse((await start()).body);
+      await handlers.stopSession(stopRequest(first.sessionId));
+      expect(store.get('lab_jobs', first.sessionId).status).toBe('cleanup_pending');
+
+      const status = JSON.parse((await handlers.getStatus({ headers: fromCaller(ALICE) })).body);
+      const second = await start();
+
+      expect(status.session).toBeNull();
+      expect(second.status).toBe(201);
+      expect(JSON.parse(second.body).sessionId).not.toBe(first.sessionId);
+    });
+  });
+
+  describe('when the sweep finds one', () => {
+    it('retries a waiting session once its time has come, and saves it as it was going to be saved', async () => {
+      const store = cosmosLikeStore([waiting('sess-1', { endStatus: 'expired' })]);
+      const fetchImpl = scriptedCoder({ user: [204] });
+
+      now = NOW + CLEANUP_RETRY_BASE_MS - 1;
+      expect(await sweep(store, fetchImpl)).toEqual(tally());
+      expect(fetchImpl).not.toHaveBeenCalled();
+
+      now = NOW + CLEANUP_RETRY_BASE_MS;
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
+      expect(coderCalls(fetchImpl)).toEqual(['DELETE /api/v2/users/u-sess-1']);
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'expired', userGone: true });
+    });
+
+    it('keeps an expired session waiting when Coder refuses, backs off more each time, and gives up after the last try', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const fetchImpl = scriptedCoder({ workspace: [202], user: [417] });
+      const log = vi.fn();
+
+      const retryAts = [];
+      for (let attempt = 1; attempt < MAX_CLEANUP_ATTEMPTS; attempt += 1) {
+        const result = await sweep(store, fetchImpl, { log });
+        expect(result).toEqual(tally({ pending: 1 }));
+        const record = store.get('lab_jobs', 'old-1');
+        expect(record).toMatchObject({ status: 'cleanup_pending', endStatus: 'expired', cleanupAttempts: attempt });
+        // After try n, the next waits n times the base: 2, 4, 6, 8 minutes.
+        expect(record.retryAt).toBe(iso(now + CLEANUP_RETRY_BASE_MS * attempt));
+        retryAts.push(record.retryAt);
+        now = Date.parse(record.retryAt);
+      }
+
+      const last = await sweep(store, fetchImpl, { log });
+
+      expect(last).toEqual(tally({ failed: 1 }));
+      expect(store.get('lab_jobs', 'old-1')).toMatchObject({
+        status: 'cleanup_failed',
+        endStatus: 'expired',
+        cleanupAttempts: MAX_CLEANUP_ATTEMPTS,
+        workspaceGone: true,
+        userGone: false,
+        ttl: VISITOR_FAILED_DOC_TTL_SECONDS,
+        // The ids stay, so a person can finish the clean-up by hand.
+        coderUserId: 'u-old-1',
+      });
+      expect(log.mock.calls.at(-1)[0]).toContain(`given up after ${MAX_CLEANUP_ATTEMPTS} tries`);
+      for (const [line] of log.mock.calls) expect(line).not.toMatch(/old-1|ws-old-1|u-old-1/);
+      // Only the first try asked for the workspace delete.
+      expect(coderCalls(fetchImpl).filter((call) => call.startsWith('POST'))).toHaveLength(1);
+      expect(retryAts).toHaveLength(MAX_CLEANUP_ATTEMPTS - 1);
+
+      // Given up is final: nothing looks at it again, for a stop either.
+      fetchImpl.mockClear();
+      now += 24 * 60 * 60 * 1000;
+      expect(await sweep(store, fetchImpl)).toEqual(tally());
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+      expect((await handlers.stopSession(stopRequest('old-1'))).status).toBe(200);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'old-1').status).toBe('cleanup_failed');
+    });
+
+    it('takes over a claim whose holder never finished, once its lease has run out and not before', async () => {
+      const stuck = activeSession('stuck-1', {
+        status: 'ending',
+        endStatus: 'ended',
+        endedAt: iso(NOW),
+        cleanupAttempts: 1,
+        retryAt: iso(NOW + CLEANUP_LEASE_MS),
+      });
+      const store = cosmosLikeStore([stuck]);
+      const fetchImpl = scriptedCoder();
+
+      now = NOW + CLEANUP_LEASE_MS - 1;
+      expect(await sweep(store, fetchImpl)).toEqual(tally());
+      expect(fetchImpl).not.toHaveBeenCalled();
+
+      now = NOW + CLEANUP_LEASE_MS + 1;
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
+      expect(store.get('lab_jobs', 'stuck-1')).toMatchObject({ status: 'ended', cleanupAttempts: 2 });
+    });
+
+    it('makes one set of Coder calls when two sweeps meet a waiting session at the same moment', async () => {
+      const store = cosmosLikeStore([waiting('sess-1', { retryAt: iso(NOW) })]);
+      const fetchImpl = scriptedCoder({ user: [204] });
+
+      const [first, second] = await Promise.all([sweep(store, fetchImpl), sweep(store, fetchImpl)]);
+
+      expect(first.finished + second.finished).toBe(1);
+      expect(first.failed + second.failed).toBe(0);
+      expect(coderCalls(fetchImpl)).toEqual(['DELETE /api/v2/users/u-sess-1']);
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('ended');
+    });
+
+    it('finishes, once Coder can be called, a session it could not clean when Coder could not', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const fetchImpl = scriptedCoder();
+
+      expect(await sweep(store, fetchImpl, { config: null })).toEqual(tally({ pending: 1 }));
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'old-1')).toMatchObject({ status: 'cleanup_pending', workspaceGone: false });
+
+      now += CLEANUP_RETRY_BASE_MS;
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
+      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-old-1/builds', 'DELETE /api/v2/users/u-old-1']);
+      expect(store.get('lab_jobs', 'old-1').status).toBe('expired');
+    });
+
+    it('logs by kind only, and carries on, when the waiting sessions cannot be listed', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const query = store.queryDocs.getMockImplementation();
+      store.queryDocs.mockImplementation(async (container, sql, parameters) => {
+        if (parameters.some((p) => p.name === '@dueIso')) {
+          throw Object.assign(new Error('the account key is abc123'), { code: 503 });
+        }
+        return query(container, sql, parameters);
+      });
+      const log = vi.fn();
+
+      const result = await sweep(store, scriptedCoder({ user: [204] }), { log });
+
+      // The expired session was still ended; the failed listing was said once, and said no more than its kind.
+      expect(result).toEqual(tally({ reaped: 1 }));
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log.mock.calls[0][0]).toContain('503');
+      expect(log.mock.calls[0][0]).not.toContain('abc123');
+    });
+
+    it('runs from the status route, behind the answer, at most once in the retry interval', async () => {
+      const first = waiting('sess-1', { retryAt: iso(NOW - 1000) });
+      const second = waiting('sess-2', { retryAt: iso(NOW - 1000) });
+      const store = cosmosLikeStore([first]);
+      const fetchImpl = scriptedCoder({ user: [204] });
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+      const status = () => handlers.getStatus({ headers: fromCaller(BOB) });
+
+      expect((await status()).status).toBe(200);
+      await vi.waitFor(() => expect(store.get('lab_jobs', 'sess-1').status).toBe('ended'));
+
+      // Another waiting session appears; a status read inside the interval does not sweep for it.
+      store.docs.set('lab_jobs/sess-2', { ...structuredClone(second), _etag: '"seed"' });
+      now = NOW + RETRY_SWEEP_EVERY_MS - 1;
+      await status();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(store.get('lab_jobs', 'sess-2').status).toBe('cleanup_pending');
+
+      now = NOW + RETRY_SWEEP_EVERY_MS;
+      await status();
+      await vi.waitFor(() => expect(store.get('lab_jobs', 'sess-2').status).toBe('ended'));
+    });
+  });
+
+  describe('Coder calls have a timeout', () => {
+    it('gives every call the broker makes, to provision and to delete, a signal that aborts after the timeout', async () => {
+      const signals = [];
+      const recording = vi.fn(async (url, init) => {
+        signals.push(init?.signal);
+        const target = String(url);
+        if (target.endsWith('/api/v2/templates')) return { ok: true, json: async () => [{ id: 't1', name: 'hcw-lab' }] };
+        if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
+        if (target.endsWith('/api/v2/users')) return { ok: true, json: async () => ({ id: 'u-1', username: 'v-user1' }) };
+        return { ok: true, json: async () => ({ id: 'ws-1' }), status: 202 };
+      });
+      await createVisitorCoderUser(recording, CODER, { username: 'v-a', email: 'a@x', password: 'p' });
+      await createVisitorWorkspace(recording, CODER, { userId: 'u-1', username: 'v-a', workspaceName: 'lab-lzb', labId: 'x' });
+      await deleteVisitorWorkspace(recording, CODER, 'ws-1');
+      await deleteVisitorUser(recording, CODER, 'u-1');
+
+      // user, templates, organizations, workspace, workspace delete, user delete
+      expect(signals).toHaveLength(6);
+      for (const signal of signals) expect(signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('uses ten seconds unless the config says otherwise', async () => {
+      const timeout = vi.spyOn(AbortSignal, 'timeout');
+      expect(CODER_CALL_TIMEOUT_MS).toBe(10_000);
+
+      await deleteVisitorUser(acceptingCoder(), CODER, 'u-1');
+      await deleteVisitorUser(acceptingCoder(), { ...CODER, timeoutMs: 25 }, 'u-1');
+
+      expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([CODER_CALL_TIMEOUT_MS, 25]);
+    });
+
+    it('does not hold a sweep open on a Coder that never answers: the call times out and the session waits', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const hanging = vi.fn(
+        (url, init) =>
+          new Promise((resolve, reject) => {
+            init.signal.addEventListener('abort', () => reject(init.signal.reason));
+          })
+      );
+      const log = vi.fn();
+
+      const result = await sweep(store, hanging, { config: { ...CODER, timeoutMs: 25 }, log });
+
+      expect(result).toEqual(tally({ pending: 1 }));
+      expect(store.get('lab_jobs', 'old-1').status).toBe('cleanup_pending');
+      expect(log.mock.calls[0][0]).toContain('workspace timeout');
+    });
+  });
+
+  describe('what a claim writes, and who can take over', () => {
+    it('writes the claim with a lease and a longer ttl than a finished record, so a retry can still find it', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const handlers = makeHandlers({ store, fetchImpl: scriptedCoder({ user: [417] }), clock });
+
+      await handlers.stopSession(stopRequest('sess-1'));
+
+      const [claim] = store.replaceDocIfMatch.mock.calls[0].slice(1);
+      expect(claim).toMatchObject({
+        status: 'ending',
+        endStatus: 'ended',
+        cleanupAttempts: 1,
+        retryAt: iso(NOW + CLEANUP_LEASE_MS),
+        ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+      });
+      // A week, because nothing retries until someone visits.
+      expect(VISITOR_PENDING_DOC_TTL_SECONDS).toBe(7 * 24 * 60 * 60);
+      expect(VISITOR_PENDING_DOC_TTL_SECONDS).toBeGreaterThan(VISITOR_DOC_TTL_SECONDS);
+    });
+
+    it('lets a stop take over a claim whose lease has run out, and not before', async () => {
+      const stuck = activeSession('stuck-1', {
+        status: 'ending',
+        endStatus: 'ended',
+        endedAt: iso(NOW),
+        cleanupAttempts: 1,
+        retryAt: iso(NOW + CLEANUP_LEASE_MS),
+      });
+      const store = cosmosLikeStore([stuck]);
+      const fetchImpl = scriptedCoder();
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      now = NOW + CLEANUP_LEASE_MS - 1;
+      expect((await handlers.stopSession(stopRequest('stuck-1'))).status).toBe(200);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'stuck-1').status).toBe('ending');
+
+      now = NOW + CLEANUP_LEASE_MS;
+      expect((await handlers.stopSession(stopRequest('stuck-1'))).status).toBe(200);
+      expect(store.get('lab_jobs', 'stuck-1')).toMatchObject({ status: 'ended', cleanupAttempts: 2 });
+    });
+
+    it("keeps what a session was going to become when a stop retries it: an expired one finishes as expired, not ended", async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const fetchImpl = scriptedCoder({ workspace: [202], user: [417, 204] });
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ pending: 1 }));
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      now = NOW + CLEANUP_RETRY_BASE_MS;
+      await handlers.stopSession(stopRequest('old-1'));
+
+      expect(store.get('lab_jobs', 'old-1')).toMatchObject({ status: 'expired', endStatus: 'expired' });
+    });
+  });
+
+  describe('the sweep is bounded', () => {
+    it('takes up no more than its limit of sessions, and the next sweep takes the rest', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1'), expiredSession('old-2'), expiredSession('old-3')]);
+      const fetchImpl = scriptedCoder();
+
+      const first = await reapExpiredVisitorSessions(store, fetchImpl, CODER, { nowIso: nowIso(), limit: 2 });
+      expect(first).toEqual(tally({ reaped: 2 }));
+      expect(store.get('lab_jobs', 'old-3').status).toBe('active');
+
+      const second = await reapExpiredVisitorSessions(store, fetchImpl, CODER, { nowIso: nowIso(), limit: 2 });
+      expect(second).toEqual(tally({ reaped: 1 }));
+      expect(store.get('lab_jobs', 'old-3').status).toBe('expired');
+      expect(MAX_SWEEP_SESSIONS).toBe(10);
+    });
+
+    it('runs from the status route at most once in the interval even when a session is past its hour', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const handlers = makeHandlers({ store, fetchImpl: scriptedCoder(), clock });
+      const status = () => handlers.getStatus({ headers: fromCaller(BOB) });
+
+      await status();
+      await vi.waitFor(() => expect(store.get('lab_jobs', 'old-1').status).toBe('expired'));
+      // The status read's own query, then the sweep's three.
+      expect(store.queryDocs).toHaveBeenCalledTimes(4);
+
+      store.docs.set('lab_jobs/old-2', { ...structuredClone(expiredSession('old-2')), _etag: '"seed"' });
+      now = NOW + RETRY_SWEEP_EVERY_MS - 1;
+      await status();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      // Only the status read's own query: no second sweep, so old-2 waits.
+      expect(store.queryDocs).toHaveBeenCalledTimes(5);
+      expect(store.get('lab_jobs', 'old-2').status).toBe('active');
+    });
+
+    it('runs from the start route too, behind the answer, when nothing is past its hour', async () => {
+      const store = mockStore([waiting('sess-1', { retryAt: iso(NOW - 1000) })]);
+      let users = 0;
+      const coder = scriptedCoder({ user: [204] });
+      const fetchImpl = vi.fn(async (url, init) => {
+        const target = String(url);
+        if (target.startsWith('https://challenges.cloudflare.com/')) {
+          return { ok: true, json: async () => ({ success: true, hostname: 'hybridcloudworks.com', action: 'visitor-session' }) };
+        }
+        if (target.endsWith('/api/v2/templates')) return { ok: true, json: async () => [{ id: 't1', name: 'hcw-lab' }] };
+        if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
+        if (target.endsWith('/api/v2/users')) {
+          users += 1;
+          return { ok: true, json: async () => ({ id: `u-new-${users}`, username: `v-new${users}` }) };
+        }
+        if (/\/members\/[^/]+\/workspaces$/.test(target)) return { ok: true, json: async () => ({ id: `ws-new-${users}` }) };
+        return coder(url, init);
+      });
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      const res = await handlers.startSession({
+        headers: fromCaller(BOB, { origin: SITE }),
+        json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
+      });
+
+      expect(res.status).toBe(201);
+      await vi.waitFor(() => expect(store.get('lab_jobs', 'sess-1').status).toBe('ended'));
+    });
+  });
+
+  describe('Coder paths and timeouts', () => {
+    it('gives the calls that provision a session longer than the ones that delete', async () => {
+      const timeout = vi.spyOn(AbortSignal, 'timeout');
+      const answering = vi.fn(async (url) =>
+        String(url).endsWith('/api/v2/users')
+          ? { ok: true, json: async () => ({ id: 'u-1', username: 'v-a' }) }
+          : { ok: true }
+      );
+      expect(CODER_PROVISION_TIMEOUT_MS).toBe(30_000);
+
+      await createVisitorCoderUser(answering, CODER, { username: 'v-a', email: 'a@x', password: 'p' });
+      await createVisitorCoderUser(answering, { ...CODER, timeoutMs: 25 }, { username: 'v-a', email: 'a@x', password: 'p' });
+      await deleteVisitorUser(answering, CODER, 'u-1');
+
+      expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([CODER_PROVISION_TIMEOUT_MS, 25, CODER_CALL_TIMEOUT_MS]);
+    });
+
+    it('writes an id into a Coder path as one piece of it, whatever characters it holds', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      store.docs.set('lab_jobs/old-1', {
+        ...store.get('lab_jobs', 'old-1'),
+        workspaceId: 'ws/../x?y#z',
+        coderUserId: 'me',
+      });
+      const fetchImpl = scriptedCoder();
+
+      await sweep(store, fetchImpl);
+
+      const urls = fetchImpl.mock.calls.map(([url]) => String(url));
+      expect(urls[0]).toBe(`${CODER.base}/api/v2/workspaces/ws%2F..%2Fx%3Fy%23z/builds`);
+      expect(urls[1]).toBe(`${CODER.base}/api/v2/users/me`);
     });
   });
 });
