@@ -88,11 +88,12 @@ jobs:
           # Node.js 24, not 26: Azure Functions Flex Consumption runs 22 and
           # 24 only, so the tests run on the line production runs. Every other
           # row takes the step's default, the newest line. Both are held there
-          # by scripts/version-floors.json (#715). docs/content/blog-machine.md
-          # and blog-template.md are here because tests read them:
-          # content-modules.test.js reads blog-machine.md. (The draft articles
-          # that used to sit beside them were removed: pre-publish drafts do
-          # not live in this public repository.) The first three frontend
+          # by scripts/version-floors.json (#715). docs/content/ is here because
+          # tests read it: content-modules.test.js reads blog-machine.md, and
+          # test/docs-content-guard.test.js fails when a draft article
+          # (blog-*.md) is added there, which is why a pull request that only
+          # adds such a file must still run this row (pre-publish drafts do
+          # not live in this public repository). The first three frontend
           # files are the pages that word the public routes' codes themselves:
           # public-visitor-copy.test.js and public-lock.test.js read them, so a
           # code the server answers can never go unmapped on the page. The next
@@ -114,7 +115,7 @@ jobs:
           - name: functions (azure)
             dir: functions
             node-version: '24'
-            filter: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/blog-(machine|template)\.md$|scripts/ideas/idea-notes\.mjs$|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
+            filter: '^(functions/|\.azure/(api-surface|agent-protocol)\.json|infra/|docs/content/|scripts/ideas/idea-notes\.mjs$|lab-host/ansible/roles/arc/tasks/onboard\.yml$|frontend/src/(pages/tools/landingZone/labValidateRules\.js$|pages/tools/explain/ExplainControl\.jsx$|lib/(turnstile|api|providers|sourceUrl)\.js$|components/admin/(platform-settings/settingShared\.jsx$|dashboard/decisionCenterModel\.js$)|pages/admin/ImagePromptsPage\.jsx$|config/admin\.js$|pages/submissions/[A-Za-z]+SubmissionPage\.jsx$))'
             lint: npm run lint
             test: npm test
           # The out-of-tree entries after infra/ are what
