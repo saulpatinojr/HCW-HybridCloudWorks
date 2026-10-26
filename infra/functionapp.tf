@@ -699,9 +699,15 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # so there is no vault seeding and no unresolved-reference monitor for
     # it. Unset it to close the pane: the proxy then answers
     # { configured: false } and the page shows its one sentence.
+    #
+    # Cloud Crawler's is set before its catalogue row is `available` (#1357),
+    # so the status read can be checked once the lab host runs its container.
+    # Nothing is framed meanwhile: the origin joins frame-src with the row,
+    # and a `coming` row renders its explainer whatever the proxy answers.
     "ADDON_MIGRATION_URL"          = "https://migration.lab.hybridcloudworks.com"
     "ADDON_NETWORK_ASSESSMENT_URL" = "https://network-assessment.lab.hybridcloudworks.com"
     "ADDON_CLOUD_ASSESSMENT_URL"   = "https://cloud-assessment.lab.hybridcloudworks.com"
+    "ADDON_CLOUD_CRAWLER_URL"      = "https://cloud-crawler.lab.hybridcloudworks.com"
 
     # Hybrid Lab — the Landing Zone Builder's public "Validate on the lab"
     # (ADR 0032 decision 6, revised 2026-09-28: open, locked to the site's

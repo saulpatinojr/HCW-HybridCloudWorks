@@ -563,6 +563,22 @@ export const DECLARED = [
     reason:
       "Doc Vault (owner request 2026-10-26): the doc_vault container, the owner's private documents and their versions",
   },
+  //
+  // Cloud Crawler's status setting (#1357, the host-side pull request): one
+  // added app setting on the Function App, the address the status proxy reads.
+  // Nothing else in the plan changes for it, and the site's catalogue row stays
+  // `coming` until the second pull request. Delete this entry once that run has
+  // applied and /api/public/addons/cloud-crawler/status stops answering
+  // { configured: false }, and replace the three Cloud Crawler tests in
+  // assert-expected-plan.test.mjs with a prune assertion like #1089's.
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.ADDON_CLOUD_CRAWLER_URL",
+    before: undefined,
+    after: "https://cloud-crawler.lab.hybridcloudworks.com",
+    reason:
+      "ADR 0035: the cloud-crawler AddOn status proxy reads its address (#1357)",
+  },
 ];
 
 /** The keys an update must carry for its values to be printed safely. */
