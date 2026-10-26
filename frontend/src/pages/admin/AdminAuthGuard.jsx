@@ -245,7 +245,9 @@ export default function AdminAuthGuard({ children }) {
   // `adminStatus` is set here by construction: `isAdmin` is its own field.
   return (
     <AdminRoleProvider value={adminStatus.role}>
-      <BrainAccessProvider>{children}</BrainAccessProvider>
+      <BrainAccessProvider key={user.uid} accountLabel={user.email}>
+        {children}
+      </BrainAccessProvider>
     </AdminRoleProvider>
   );
 }
