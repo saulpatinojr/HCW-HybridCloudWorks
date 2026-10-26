@@ -7,7 +7,8 @@
  * Required app settings: COSMOS_ENDPOINT, COSMOS_DATABASE
  * Required RBAC role on the Function App MI: Cosmos DB Built-in Data Contributor
  *
- * Every write first calls `refuseWriteAfterJobAbort` (job-context.js): inside
+ * Every write first calls `refuseWriteAfterJobAbort` (job-context.js; after
+ * its arguments are checked, for `replaceDocIfMatch`): inside
  * a platform job whose budget has run out, a write that starts now throws a
  * refusal carrying the job's reason instead of reaching Cosmos (#942). A
  * write already dispatched is left to finish, and is never handed the job's
@@ -18,6 +19,7 @@
 
 import { CosmosClient } from '@azure/cosmos';
 import { DefaultAzureCredential, ManagedIdentityCredential } from '@azure/identity';
+import { assertReplaceDocIfMatchCall } from './cosmos-call-shape.js';
 import { refuseWriteAfterJobAbort } from './job-context.js';
 
 let client = null;
@@ -181,14 +183,20 @@ export async function upsertDoc(containerName, document) {
  * that another agent just claimed and claiming it anyway would defeat the
  * point.
  *
+ * A call that is not shaped like this is refused with a TypeError before it
+ * reaches the SDK (cosmos-call-shape.js, #1383): the visitor sessions once
+ * called it as `(container, id, document, etag)`, and nothing stopped them.
+ *
  * @param {string} containerName
  * @param {object} document - must include 'id' and the '_etag' it was read with
  * @param {object} [options]
  * @param {string} [options.partitionKey] - defaults to the document id
  * @returns {Promise<object>} the document after the write
  * @throws {{code: 412}} when the document changed since it was read
+ * @throws {TypeError} when the arguments are not (containerName, document, options)
  */
 export async function replaceDocIfMatch(containerName, document, options = {}) {
+  assertReplaceDocIfMatchCall(containerName, document, options);
   refuseWriteAfterJobAbort(containerName);
   const container = getContainer(containerName);
   const pk = resolvePartitionKey(containerName, options.partitionKey, document.id);

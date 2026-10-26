@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { memoryStore } from '../../../test/memory-store.js';
 import {
   DOOR_CODES,
   VISITOR_DOC_TTL_SECONDS,
@@ -20,59 +21,51 @@ const NOW = Date.parse('2026-10-17T12:00:00Z');
 const SITE = 'https://hybridcloudworks.com';
 const TOKEN = 'turnstile-token-sample';
 
-function mockStore(initialDocs = []) {
-  const docs = new Map(initialDocs.map((d) => [d.id, { ...d }]));
-  return {
-    docs,
-    async readDoc(container, id) {
-      return docs.get(id) || null;
-    },
-    async createDoc(container, doc) {
-      if (docs.has(doc.id)) {
-        const err = new Error('Conflict');
-        err.code = 409;
-        throw err;
-      }
-      docs.set(doc.id, { ...doc, _etag: 'etag-1' });
-      return { resource: docs.get(doc.id) };
-    },
-    async upsertDoc(container, doc) {
-      docs.set(doc.id, { ...doc, _etag: 'etag-upsert' });
-      return { resource: docs.get(doc.id) };
-    },
-    async replaceDocIfMatch(container, id, doc, etag) {
-      docs.set(id, { ...doc, _etag: 'etag-replaced' });
-      return { resource: docs.get(id) };
-    },
-    async incrementIf(container, id, options) {
-      const existing = docs.get(id);
-      if (!existing) {
-        const err = new Error('NotFound');
-        err.code = 404;
-        throw err;
-      }
-      const limit = options?.conditionValues?.limit;
-      if (typeof limit === 'number' && (existing.count || 0) >= limit) {
-        const err = new Error('PreconditionFailed');
-        err.code = 412;
-        throw err;
-      }
-      existing.count = (existing.count || 0) + 1;
-      return { resource: existing };
-    },
-    async queryDocs(container, query, params) {
-      const typeParam = params?.find((p) => p.name === '@type')?.value;
-      const statusParam = params?.find((p) => p.name === '@status')?.value;
-      const nowIsoParam = params?.find((p) => p.name === '@nowIso')?.value;
+/**
+ * Answers the three queries the module sends: by type, by status, and by expiry.
+ * An in-memory store cannot run Cosmos SQL, so the test says what Cosmos would answer.
+ */
+function sessionQuery({ docs, parameters }) {
+  const value = (name) => parameters?.find((p) => p.name === name)?.value;
+  return docs.filter(
+    (d) =>
+      (value('@type') === undefined || d.type === value('@type')) &&
+      (value('@status') === undefined || d.status === value('@status')) &&
+      (value('@nowIso') === undefined || d.expiresAt <= value('@nowIso'))
+  );
+}
 
-      return Array.from(docs.values()).filter((d) => {
-        if (typeParam && d.type !== typeParam) return false;
-        if (statusParam && d.status !== statusParam) return false;
-        if (nowIsoParam && d.expiresAt > nowIsoParam) return false;
-        return true;
-      });
-    },
-  };
+/**
+ * A store that behaves like Cosmos where it matters here (test/memory-store.js):
+ * a replace with a stale ETag is a 412, a create over an existing id a 409, and
+ * `replaceDocIfMatch` takes the real function's arguments
+ * `(containerName, document, options)` and refuses any other (#1383).
+ *
+ * This file's own store used to take `(container, id, doc, etag)` and accept
+ * any ETag, which is the shape the module was written to and the real function
+ * does not have. The module and its fake agreed with each other, so the
+ * visitor session's two saves were wrong in production and right in every test.
+ */
+function cosmosLikeStore(sessions = []) {
+  return memoryStore(Object.fromEntries(sessions.map((s) => [`lab_jobs/${s.id}`, s])), {
+    query: sessionQuery,
+  });
+}
+
+/** The store most tests use: Cosmos-like, plus the compare-and-increment the daily cap takes. */
+function mockStore(initialDocs = []) {
+  const store = cosmosLikeStore(initialDocs);
+  store.incrementIf = vi.fn(async (container, id, options) => {
+    const existing = store.docs.get(`${container}/${id}`);
+    if (!existing) throw Object.assign(new Error('NotFound'), { code: 404 });
+    const limit = options?.conditionValues?.limit;
+    if (typeof limit === 'number' && (existing.count || 0) >= limit) {
+      throw Object.assign(new Error('PreconditionFailed'), { code: 412 });
+    }
+    existing.count = (existing.count || 0) + 1;
+    return existing;
+  });
+  return store;
 }
 
 describe('visitorSessionsEnabled and config helpers', () => {
@@ -381,6 +374,8 @@ describe('createVisitorSessionHandlers: getStatus', () => {
     });
     const res = await handlers.getStatus({ headers: new Headers() });
     expect(res.status).toBe(200);
+    // The reap runs behind the answer; it must end with the record saved (#1383).
+    await vi.waitFor(() => expect(store.get('lab_jobs', 'sess-reap-check').status).toBe('expired'));
     process.env = prev;
   });
 });
@@ -692,6 +687,44 @@ describe('createVisitorSessionHandlers: startSession', () => {
       json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
     });
     expect(res.status).toBe(201);
+    expect(store.get('lab_jobs', 'sess-exp-start')).toMatchObject({
+      status: 'expired',
+      endedAt: new Date(NOW).toISOString(),
+    });
+    process.env = prev;
+  });
+
+  it('starts the session anyway, and warns without content, when an expired session cannot be saved', async () => {
+    const prev = process.env;
+    process.env = { ...env };
+    const store = mockStore([
+      {
+        id: 'sess-exp-fail',
+        type: 'visitor-session',
+        status: 'active',
+        clientHash: 'client-expired',
+        expiresAt: new Date(NOW - 5000).toISOString(),
+      },
+    ]);
+    store.fail('lab_jobs', 'sess-exp-fail', 'replaceDocIfMatch', Object.assign(new Error('cosmos is down'), { code: 503 }));
+    const fetchImpl = vi.fn(async (url, init) => {
+      if (typeof url === 'string' && url.startsWith('https://challenges.cloudflare.com/')) {
+        return passSiteverify(url, init);
+      }
+      return coderMocks(url, init);
+    });
+    const context = { warn: vi.fn(), error: vi.fn() };
+    const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+    const res = await handlers.startSession(
+      {
+        headers: new Headers({ origin: SITE }),
+        json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
+      },
+      context
+    );
+    expect(res.status).toBe(201);
+    expect(context.warn).toHaveBeenCalledTimes(1);
+    expect(context.warn.mock.calls[0][0]).not.toMatch(/sess-exp-fail|cosmos is down/);
     process.env = prev;
   });
 });
@@ -783,13 +816,13 @@ describe('createVisitorSessionHandlers: stopSession and reaper', () => {
   });
 
   it('handles reaper errors gracefully when store is missing or query throws', async () => {
-    expect(await reapExpiredVisitorSessions(null, vi.fn(), null)).toEqual({ reaped: 0 });
+    expect(await reapExpiredVisitorSessions(null, vi.fn(), null)).toEqual({ reaped: 0, failed: 0 });
     const brokenStore = {
       queryDocs: vi.fn(async () => {
         throw new Error('db failure');
       }),
     };
-    expect(await reapExpiredVisitorSessions(brokenStore, vi.fn(), null)).toEqual({ reaped: 0 });
+    expect(await reapExpiredVisitorSessions(brokenStore, vi.fn(), null)).toEqual({ reaped: 0, failed: 0 });
   });
 
   it('reaps using upsertDoc when replaceDocIfMatch is omitted', async () => {
@@ -808,5 +841,367 @@ describe('createVisitorSessionHandlers: stopSession and reaper', () => {
     });
     expect(res.reaped).toBe(1);
     expect(upsertStore.upsertDoc).toHaveBeenCalled();
+  });
+});
+
+/**
+ * The saves of a stop and of a reap, checked against the store above (#1383):
+ * what is in the record afterwards, which arguments the store was sent, and
+ * what happens when another writer gets there first.
+ */
+
+const activeSession = (id, overrides = {}) => ({
+  id,
+  type: 'visitor-session',
+  status: 'active',
+  clientHash: `client-${id}`,
+  labId: 'landing-zone-builder-output',
+  coderUserId: `u-${id}`,
+  workspaceId: `ws-${id}`,
+  expiresAt: new Date(NOW + 30 * 60 * 1000).toISOString(),
+  ttl: 7200,
+  ...overrides,
+});
+
+const expiredSession = (id) => activeSession(id, { expiresAt: new Date(NOW - 60 * 1000).toISOString() });
+
+const stopRequest = (id) => ({
+  url: `https://api.hybridcloudworks.com/api/public/labs/visitor-session?sessionId=${id}`,
+});
+
+const precondition = () => Object.assign(new Error('precondition'), { code: 412 });
+
+/** A Coder that accepts every delete. */
+function acceptingCoder() {
+  return vi.fn(async () => ({ ok: true }));
+}
+
+/** The calls a fetch mock was sent, as "METHOD path" strings. */
+const coderCalls = (fetchImpl) =>
+  fetchImpl.mock.calls.map(([url, init]) => `${init?.method} ${new URL(url).pathname}`);
+
+/**
+ * A Coder whose user delete (the last call of a clean-up) first lets another
+ * request change the session record, as a second request or the reaper does
+ * in the gap between a stop's read and its write.
+ */
+function coderThatLetsAnotherWriterIn(store, id, change) {
+  return vi.fn(async (url, init) => {
+    if (init?.method === 'DELETE') {
+      const current = await store.readDoc('lab_jobs', id);
+      await store.replaceDocIfMatch('lab_jobs', { ...current, ...change }, { partitionKey: id });
+    }
+    return { ok: true };
+  });
+}
+
+describe('visitor sessions against a store that behaves like Cosmos (#1383)', () => {
+  const CODER = { base: 'https://coder.lab.hybridcloudworks.com', token: 'broker-token' };
+
+  beforeEach(() => {
+    vi.stubEnv(VISITOR_SESSION_SWITCH, 'true');
+    vi.stubEnv('CODER_URL', CODER.base);
+    vi.stubEnv('CODER_BROKER_TOKEN', CODER.token);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  describe('stopSession', () => {
+    it('answers success, deletes the workspace and the user, and saves the record as ended', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const fetchImpl = acceptingCoder();
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+
+      const res = await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended' });
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({
+        status: 'ended',
+        endedAt: new Date(NOW).toISOString(),
+        coderUserId: 'u-sess-1',
+        workspaceId: 'ws-sess-1',
+        ttl: 7200,
+      });
+      expect(coderCalls(fetchImpl)).toEqual([
+        'POST /api/v2/workspaces/ws-sess-1/builds',
+        'DELETE /api/v2/users/u-sess-1',
+      ]);
+    });
+
+    it('saves the whole document with the version it read, as replaceDocIfMatch(container, document, options)', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const readWith = store.get('lab_jobs', 'sess-1')._etag;
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+
+      await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(1);
+      const [container, document, options] = store.replaceDocIfMatch.mock.calls[0];
+      expect(container).toBe('lab_jobs');
+      expect(document).toMatchObject({ id: 'sess-1', status: 'ended', _etag: readWith });
+      expect(options).toEqual({ partitionKey: 'sess-1' });
+    });
+
+    it('answers success again, without calling Coder, when the session is already over', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const fetchImpl = acceptingCoder();
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+      await handlers.stopSession(stopRequest('sess-1'));
+      fetchImpl.mockClear();
+
+      const again = await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(again.status).toBe(200);
+      expect(JSON.parse(again.body)).toEqual({ ok: true, status: 'ended' });
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('ended');
+    });
+
+    it('answers success and leaves "expired" alone when the reaper expired it between the read and the write', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const reapedAt = new Date(NOW - 1000).toISOString();
+      const fetchImpl = coderThatLetsAnotherWriterIn(store, 'sess-1', { status: 'expired', endedAt: reapedAt });
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+
+      const res = await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended' });
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'expired', endedAt: reapedAt });
+    });
+
+    it('saves again with the new version when something else changed the record but left it active', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const fetchImpl = coderThatLetsAnotherWriterIn(store, 'sess-1', { note: 'written by someone else' });
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+
+      const res = await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(res.status).toBe(200);
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'ended', note: 'written by someone else' });
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(3); // the other writer, the lost write, the retry
+    });
+
+    it('answers 409 and leaves the record active when it keeps changing underneath the stop', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      store.fail('lab_jobs', 'sess-1', 'replaceDocIfMatch', precondition(), 3);
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+
+      const res = await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body)).toMatchObject({ ok: false });
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('active');
+    });
+
+    it('lets a store failure that is not a lost race reach the caller', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      store.fail('lab_jobs', 'sess-1', 'replaceDocIfMatch', Object.assign(new Error('cosmos is down'), { code: 503 }));
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+
+      await expect(handlers.stopSession(stopRequest('sess-1'))).rejects.toThrow('cosmos is down');
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('active');
+    });
+
+    it('answers success to two stop requests made at the same moment, and ends the session once', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+
+      const [first, second] = await Promise.all([
+        handlers.stopSession(stopRequest('sess-1')),
+        handlers.stopSession(stopRequest('sess-1')),
+      ]);
+
+      expect([first.status, second.status]).toEqual([200, 200]);
+      expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'ended', endedAt: new Date(NOW).toISOString() });
+      // Both really tried to save, so one really lost the race and found the record ended.
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(2);
+    });
+
+    it('answers success when the record has aged out (its ttl) between the read and the write', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      // Real Cosmos answers a replace of a missing document with 404 (the test store says 412).
+      store.fail('lab_jobs', 'sess-1', 'replaceDocIfMatch', Object.assign(new Error('NotFound'), { code: 404 }));
+      const fetchImpl = vi.fn(async (url, init) => {
+        if (init?.method === 'DELETE') store.docs.delete('lab_jobs/sess-1');
+        return { ok: true };
+      });
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+
+      const res = await handlers.stopSession(stopRequest('sess-1'));
+
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended' });
+    });
+
+    it('still ends the session, and warns without content, when Coder does not accept the clean-up', async () => {
+      const store = cosmosLikeStore([activeSession('sess-1')]);
+      const fetchImpl = vi.fn(async () => ({ ok: false, status: 500 }));
+      const context = { warn: vi.fn() };
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+
+      const res = await handlers.stopSession(stopRequest('sess-1'), context);
+
+      expect(res.status).toBe(200);
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('ended');
+      expect(context.warn).toHaveBeenCalledTimes(1);
+      expect(context.warn.mock.calls[0][0]).not.toMatch(/sess-1|ws-sess-1|u-sess-1/);
+    });
+
+    it('does not claim to have ended a session when the store cannot save one', async () => {
+      const doc = activeSession('sess-1');
+      const store = { readDoc: vi.fn(async () => doc) };
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+
+      await expect(handlers.stopSession(stopRequest('sess-1'))).rejects.toThrow(TypeError);
+    });
+
+    it('still answers 404 for an id that is not a visitor session', async () => {
+      const store = cosmosLikeStore([activeSession('job-1', { type: 'terraform-validate' })]);
+      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+
+      expect((await handlers.stopSession(stopRequest('job-1'))).status).toBe(404);
+      expect(store.get('lab_jobs', 'job-1').status).toBe('active');
+    });
+  });
+
+  describe('reapExpiredVisitorSessions', () => {
+    const nowIso = new Date(NOW).toISOString();
+
+    it('saves each expired session as expired, deletes its Coder resources, and leaves live ones alone', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1'), expiredSession('old-2'), activeSession('live-1')]);
+      const fetchImpl = acceptingCoder();
+
+      const result = await reapExpiredVisitorSessions(store, fetchImpl, CODER, { nowIso });
+
+      expect(result).toEqual({ reaped: 2, failed: 0 });
+      expect(store.get('lab_jobs', 'old-1')).toMatchObject({ status: 'expired', endedAt: nowIso });
+      expect(store.get('lab_jobs', 'old-2')).toMatchObject({ status: 'expired', endedAt: nowIso });
+      expect(store.get('lab_jobs', 'live-1').status).toBe('active');
+      expect(coderCalls(fetchImpl)).toEqual([
+        'POST /api/v2/workspaces/ws-old-1/builds',
+        'DELETE /api/v2/users/u-old-1',
+        'POST /api/v2/workspaces/ws-old-2/builds',
+        'DELETE /api/v2/users/u-old-2',
+      ]);
+    });
+
+    it('saves the whole document with the version it read, as replaceDocIfMatch(container, document, options)', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const readWith = store.get('lab_jobs', 'old-1')._etag;
+
+      await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso });
+
+      const [container, document, options] = store.replaceDocIfMatch.mock.calls[0];
+      expect(container).toBe('lab_jobs');
+      expect(document).toMatchObject({ id: 'old-1', status: 'expired', _etag: readWith });
+      expect(options).toEqual({ partitionKey: 'old-1' });
+    });
+
+    it('counts a session once when two reapers meet it at the same moment', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+
+      const [first, second] = await Promise.all([
+        reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso }),
+        reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso }),
+      ]);
+
+      expect(first.reaped + second.reaped).toBe(1);
+      expect(first.failed + second.failed).toBe(0);
+      expect(store.get('lab_jobs', 'old-1')).toMatchObject({ status: 'expired', endedAt: nowIso });
+      // Both really tried to save, so one really lost the race and found the record expired.
+      expect(store.replaceDocIfMatch).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not count a session that a stop ended first, and leaves "ended" alone', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const endedAt = new Date(NOW - 5000).toISOString();
+      const fetchImpl = coderThatLetsAnotherWriterIn(store, 'old-1', { status: 'ended', endedAt });
+
+      const result = await reapExpiredVisitorSessions(store, fetchImpl, CODER, { nowIso });
+
+      expect(result).toEqual({ reaped: 0, failed: 0 });
+      expect(store.get('lab_jobs', 'old-1')).toMatchObject({ status: 'ended', endedAt });
+    });
+
+    it('counts and logs a session that keeps changing underneath the reaper, and saves nothing', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      store.fail('lab_jobs', 'old-1', 'replaceDocIfMatch', precondition(), 3);
+      const log = vi.fn();
+
+      const result = await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso, log });
+
+      expect(result).toEqual({ reaped: 0, failed: 1 });
+      expect(store.get('lab_jobs', 'old-1').status).toBe('active');
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log.mock.calls[0][0]).not.toContain('old-1');
+    });
+
+    it('counts and logs a store failure that is not a lost race, then carries on with the next session', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1'), expiredSession('old-2')]);
+      store.fail('lab_jobs', 'old-1', 'replaceDocIfMatch', Object.assign(new Error('cosmos is down'), { code: 503 }));
+      const log = vi.fn();
+
+      const result = await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso, log });
+
+      expect(result).toEqual({ reaped: 1, failed: 1 });
+      expect(store.get('lab_jobs', 'old-1').status).toBe('active');
+      expect(store.get('lab_jobs', 'old-2').status).toBe('expired');
+      expect(log).toHaveBeenCalledTimes(1);
+      // Content-free: neither the session id nor the error text is in the line.
+      expect(log.mock.calls[0][0]).not.toMatch(/old-1|cosmos is down/);
+    });
+
+    it('saves the session and logs, without content, when Coder does not accept the clean-up', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      const log = vi.fn();
+
+      const result = await reapExpiredVisitorSessions(store, vi.fn(async () => ({ ok: false, status: 500 })), CODER, {
+        nowIso,
+        log,
+      });
+
+      expect(result).toEqual({ reaped: 1, failed: 0 });
+      expect(store.get('lab_jobs', 'old-1').status).toBe('expired');
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log.mock.calls[0][0]).not.toMatch(/old-1|ws-old-1|u-old-1/);
+    });
+
+    it('logs that the sweep could not run, by kind only, when the expired sessions cannot be listed', async () => {
+      const store = {
+        queryDocs: vi.fn(async () => {
+          throw Object.assign(new Error('the account key is abc123'), { code: 503 });
+        }),
+      };
+      const log = vi.fn();
+
+      expect(await reapExpiredVisitorSessions(store, vi.fn(), CODER, { nowIso, log })).toEqual({ reaped: 0, failed: 0 });
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log.mock.calls[0][0]).toContain('503');
+      expect(log.mock.calls[0][0]).not.toContain('abc123');
+    });
+
+    it('logs only a code-like kind: an error whose "code" is free text is reported as a plain error', async () => {
+      const store = cosmosLikeStore([expiredSession('old-1')]);
+      store.fail('lab_jobs', 'old-1', 'replaceDocIfMatch', Object.assign(new Error('x'), { code: 'the key is abc123 !' }));
+      const log = vi.fn();
+
+      await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso, log });
+
+      expect(log.mock.calls[0][0]).toMatch(/\(error\)/);
+      expect(log.mock.calls[0][0]).not.toContain('abc123');
+    });
+
+    it('counts a failure, and saves nothing, when the store has no way to save a session', async () => {
+      const store = { queryDocs: vi.fn(async () => [expiredSession('old-1')]) };
+
+      expect(await reapExpiredVisitorSessions(store, acceptingCoder(), CODER, { nowIso })).toEqual({
+        reaped: 0,
+        failed: 1,
+      });
+    });
   });
 });
