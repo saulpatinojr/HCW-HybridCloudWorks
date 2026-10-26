@@ -399,6 +399,43 @@ describe('adding and editing', () => {
   });
 });
 
+describe('an alert deleted elsewhere while its form is open', () => {
+  it('leaves Add alert usable instead of disabled with no form to close', async () => {
+    const base = {
+      status: 'ready',
+      today: TODAY,
+      error: null,
+      busyIds: new Set(),
+      reload: vi.fn(),
+      create: vi.fn(),
+      edit: vi.fn(),
+      remove: vi.fn(),
+      markDone: vi.fn(),
+      reopen: vi.fn(),
+      snooze: vi.fn(),
+    };
+    const view = render(
+      <MemoryRouter>
+        <CalendarAlertsPanel state={{ ...base, alerts: [domain] }} />
+      </MemoryRouter>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Edit “Renew the domain”' }));
+    expect(screen.getByRole('form', { name: 'Edit alert' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add alert' })).toBeDisabled();
+
+    // The alert is deleted from a calendar chip; the panel is handed the list without it.
+    view.rerender(
+      <MemoryRouter>
+        <CalendarAlertsPanel state={{ ...base, alerts: [] }} />
+      </MemoryRouter>
+    );
+    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add alert' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add alert' }));
+    expect(screen.getByRole('form', { name: 'Add alert' })).toBeInTheDocument();
+  });
+});
+
 describe('deleting', () => {
   it('asks first, naming the alert, and then deletes it', async () => {
     sendJSON.mockResolvedValue({ ok: true, id: 'a1' });

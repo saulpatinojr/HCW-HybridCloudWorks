@@ -282,6 +282,12 @@ describe('applyPatch', () => {
     expect(apply(snoozed, { done: true })).toMatchObject({ status: 'done', snoozedUntil: null });
   });
 
+  it('keeps an alert done when it is finished and its snooze cleared in the same request', () => {
+    const snoozed = apply(open(), { snoozeDays: 3 });
+    const next = apply(snoozed, { done: true, snoozeDays: 0 });
+    expect(next).toMatchObject({ status: 'done', doneAt: AT, snoozedUntil: null });
+  });
+
   it('refuses to snooze a finished alert, but reopening and snoozing in one request works', () => {
     const done = apply(open(), { done: true });
     expect(refused(() => apply(done, { snoozeDays: 3 }))).toMatch(/reopen/);

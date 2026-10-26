@@ -127,6 +127,8 @@ export async function readSeededState(store, { now = () => new Date(), context, 
     return state;
   } catch (error) {
     logFailure(context, 'Calendar alerts: creating the starting alerts failed; reading the list as it stands', error, request);
-    return readAlertsState(store);
+    // The list is still answered, with the starting alerts added in memory as the
+    // Calendar read adds them (collector.js), so the panel and the grid agree.
+    return applySeeds(await readAlertsState(store), { at }).state;
   }
 }

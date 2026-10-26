@@ -70,6 +70,27 @@ export const updateCalendarAlert = async (id, changes) =>
 export const deleteCalendarAlert = (id) =>
   sendJSON(`${CALENDAR_ALERTS_ROUTE}/${encodeURIComponent(id)}`, 'DELETE');
 
+// ── Telling the other screens ────────────────────────────────────────────────
+
+const alertsChanged = new EventTarget();
+
+/**
+ * Say that an alert was changed (created, edited, finished, snoozed, deleted)
+ * by the screen `source`. The pop-up in the admin layout and the Calendar
+ * page each hold their own copy of the list; this is how a change made in one
+ * reaches the other.
+ */
+export function announceAlertsChanged(source) {
+  alertsChanged.dispatchEvent(new CustomEvent('changed', { detail: source }));
+}
+
+/** Listen for changes made by any screen; returns the function that stops listening. */
+export function onAlertsChanged(listener) {
+  const handler = (event) => listener(event.detail);
+  alertsChanged.addEventListener('changed', handler);
+  return () => alertsChanged.removeEventListener('changed', handler);
+}
+
 // ── What to show ─────────────────────────────────────────────────────────────
 
 /** Soonest day first, then time (an alert with no time first), then title. */
@@ -118,13 +139,20 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export function formatDay(day) {
   const date = new Date(`${day}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime())) return String(day ?? '');
-  return date.toLocaleDateString('en-GB', {
-    timeZone: 'UTC',
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  // Built from the parts, because the punctuation of a locale-formatted date
+  // (the comma after the weekday) is the runtime's to decide.
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'UTC',
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value])
+  );
+  return `${parts.weekday}, ${parts.day} ${parts.month} ${parts.year}`;
 }
 
 /**

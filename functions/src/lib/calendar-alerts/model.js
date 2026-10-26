@@ -330,7 +330,10 @@ export function applyPatch(row, patch, { today, at }) {
     next.doneAt = null;
     next.snoozedUntil = null;
   }
-  if (patch.snoozeDays !== undefined) {
+  if (patch.snoozeDays === 0 && patch.done === true) {
+    // "Finish it and clear any snooze": finishing already cleared it, and the
+    // alert must stay done, not be opened again by the zero.
+  } else if (patch.snoozeDays !== undefined) {
     if (next.status === 'done') fail('A finished alert cannot be snoozed; reopen it first');
     if (patch.snoozeDays === 0) {
       next.status = 'open';

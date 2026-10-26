@@ -192,6 +192,21 @@ describe('how a due date reads', () => {
     expect(formatDay('not a day')).toBe('not a day');
   });
 
+  it("writes the day the same way whatever punctuation the runtime's locale data uses", () => {
+    const original = Intl.DateTimeFormat.prototype.formatToParts;
+    // A runtime that prints "Fri 30 Oct 2026": the parts are the same, the literals differ.
+    Intl.DateTimeFormat.prototype.formatToParts = function formatToParts(value) {
+      return original
+        .call(this, value)
+        .map((part) => (part.type === 'literal' ? { ...part, value: ' ' } : part));
+    };
+    try {
+      expect(formatDay('2026-10-30')).toBe('Fri, 30 Oct 2026');
+    } finally {
+      Intl.DateTimeFormat.prototype.formatToParts = original;
+    }
+  });
+
   it('adds the UTC time when there is one', () => {
     expect(describeWhen(alert())).toBe('Fri, 30 Oct 2026');
     expect(describeWhen(alert({ dueTime: '14:30' }))).toBe('Fri, 30 Oct 2026, 14:30 UTC');

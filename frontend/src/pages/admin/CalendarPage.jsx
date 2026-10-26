@@ -29,6 +29,8 @@ import CalendarAlertsPanel from '@/components/admin/calendar-alerts/CalendarAler
 import useCalendarAlerts from '@/components/admin/calendar-alerts/useCalendarAlerts';
 import useUnscheduledContent from '@/components/admin/calendar/useUnscheduledContent';
 import { useAuthReady } from '@/hooks/useAuthReady';
+import { useAdminRole } from '@/hooks/useAdminRole';
+import { satisfiesRole } from '@/config/adminNav';
 
 const HELP = [
   'Every item with a date in ContentForge is here: content publishes (sky), newsletter sends (violet), social posts (pink), talks and CFP deadlines (amber), certification expirations and renewals (green), Ambassador deadlines (indigo) and audio releases (teal). The icon and the word travel with the colour.',
@@ -46,18 +48,22 @@ const HELP = [
 export default function CalendarPage() {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();
+  const role = useAdminRole();
+  // The alerts routes need the editor role. A role the page was not told is left to
+  // the server to judge, as RoleGate does, and the portal always tells it.
+  const canUseAlerts = role === null || satisfiesRole(role, 'editor');
   const unscheduled = useUnscheduledContent(authReady);
   const [scheduleRequest, setScheduleRequest] = useState(null);
   // The grid reads again when the alerts panel changes an alert.
   const [alertsVersion, setAlertsVersion] = useState(0);
   const bumpGrid = useCallback(() => setAlertsVersion((version) => version + 1), []);
-  const alerts = useCalendarAlerts({ enabled: authReady, onChanged: bumpGrid });
+  const alerts = useCalendarAlerts({ enabled: authReady && canUseAlerts, onChanged: bumpGrid });
   const { reload: reloadAlerts } = alerts;
   // A change made from an alert chip's preview reaches the panel too.
   const gridChanged = useCallback(() => {
     unscheduled.refresh();
-    reloadAlerts();
-  }, [unscheduled, reloadAlerts]);
+    if (canUseAlerts) reloadAlerts();
+  }, [unscheduled, reloadAlerts, canUseAlerts]);
 
   const summary = [
     {
@@ -132,7 +138,7 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <CalendarAlertsPanel state={alerts} />
+      {canUseAlerts && <CalendarAlertsPanel state={alerts} />}
     </div>
   );
 }

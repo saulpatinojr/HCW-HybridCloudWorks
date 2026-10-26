@@ -12,7 +12,10 @@
  * `onLoaded({ alerts, today })` runs after each read that lands, which is how
  * the pop-up decides whether to open without setting state inside an effect.
  * `onChanged()` runs after each create, update or delete that the server took,
- * which is how the Calendar page makes its grid read again.
+ * which is how the Calendar page makes its grid read again. A change made
+ * through ANY copy of this hook (the pop-up's, the page's) is announced, and
+ * the other copies read again and run their own `onChanged`, so the pop-up and
+ * the Calendar page never disagree about an alert.
  *
  * Every read takes a generation number and only the newest may set state, so
  * a slow older answer never paints over a newer one (the same rule as
@@ -20,10 +23,12 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  announceAlertsChanged,
   compareAlerts,
   createCalendarAlert,
   deleteCalendarAlert,
   fetchCalendarAlerts,
+  onAlertsChanged,
   updateCalendarAlert,
 } from '@/lib/calendarAlerts';
 
@@ -35,12 +40,15 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
   const [busyIds, setBusyIds] = useState(() => new Set());
   const generation = useRef(0);
   const mounted = useRef(true);
+  const self = useRef(Symbol('calendar-alerts'));
+  const isEnabled = useRef(enabled);
   const loaded = useRef(onLoaded);
   const changed = useRef(onChanged);
 
   useEffect(() => {
     loaded.current = onLoaded;
     changed.current = onChanged;
+    isEnabled.current = enabled;
   });
 
   useEffect(() => {
@@ -88,6 +96,18 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
     return read(++generation.current);
   }, [read]);
 
+  // Another copy of this hook changed an alert: read again, and let the owner of
+  // this copy (the Calendar page's grid, say) know.
+  useEffect(
+    () =>
+      onAlertsChanged((source) => {
+        if (source === self.current || !isEnabled.current || !mounted.current) return;
+        read(++generation.current);
+        changed.current?.();
+      }),
+    [read]
+  );
+
   /** Mark an id busy while `work` runs, so its buttons cannot be pressed twice. */
   const whileBusy = useCallback(async (id, work) => {
     setBusyIds((current) => new Set(current).add(id));
@@ -119,6 +139,7 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
         const saved = await updateCalendarAlert(id, changes);
         if (mounted.current) replace(saved);
         changed.current?.();
+        announceAlertsChanged(self.current);
         return saved;
       }),
     [replace, whileBusy]
@@ -129,6 +150,7 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
       const saved = await createCalendarAlert(fields);
       if (mounted.current) replace(saved);
       changed.current?.();
+      announceAlertsChanged(self.current);
       return saved;
     },
     [replace]
@@ -140,6 +162,7 @@ export default function useCalendarAlerts({ enabled = true, onLoaded, onChanged 
         await deleteCalendarAlert(id);
         if (mounted.current) setAlerts((current) => current.filter((alert) => alert.id !== id));
         changed.current?.();
+        announceAlertsChanged(self.current);
       }),
     [whileBusy]
   );

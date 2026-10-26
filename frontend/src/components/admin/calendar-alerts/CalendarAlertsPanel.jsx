@@ -287,7 +287,13 @@ export default function CalendarAlertsPanel({ state }) {
               <Download className="mr-1 h-4 w-4" aria-hidden="true" />
               Download .ics
             </Button>
-            <Button type="button" onClick={() => setEditing('new')} disabled={editing !== null}>
+            {/* Disabled only while a form is showing: `editing` can name an alert that
+                was deleted from a chip meanwhile, and then no form is there to close. */}
+            <Button
+              type="button"
+              onClick={() => setEditing('new')}
+              disabled={editing === 'new' || Boolean(editingAlert)}
+            >
               <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
               Add alert
             </Button>

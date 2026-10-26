@@ -60,7 +60,7 @@ Everything is on the Calendar page,
 
 The window opens **at most once per browser session and once per day**. If you
 close it and sign in again the same day, it stays closed; the alerts are still
-on the Calendar, and the pop-up is back tomorrow if they are still due. It
+on the Calendar, and the pop-up opens again the next time you start a new browser session on a later day, if they are still due. It
 never appears on the public site, only inside the portal.
 
 If the alerts cannot be read (the service is slow or down), the portal still
@@ -231,7 +231,7 @@ read.
 | "The alerts changed while this was being saved" | Two tabs saved at once and five tries all lost | Reload the page and make the change again. Nothing was lost. |
 | "There are already 300 alerts" or "too large to save any more" | The list is full | Delete finished alerts (**Done** filter), then add again. |
 | The pop-up did not open | It had already opened today or in this session, or nothing is open and due within 7 days | Open the Calendar. This is by design. |
-| The Docker alert is missing | The list has not been read since the deploy, or it was deleted or finished | Open the Calendar page and press **All** in the panel. A deleted one is not made again; add it by hand. |
+| The Docker alert is missing | The list has not been read since the deploy; or it was deleted or finished; or the first list read could not save it (the function app's log then has the line "Calendar alerts: creating the starting alerts failed; reading the list as it stands", with an error code and no alert text) | Open the Calendar page and press **All** in the panel. A deleted one is not made again; add it by hand. If the log line is there, fix the store problem it names (see the "could not be loaded" row), then reload the Calendar: the next list read saves it. |
 
 ## Rollback
 

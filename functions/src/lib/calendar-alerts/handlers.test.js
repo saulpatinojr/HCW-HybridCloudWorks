@@ -237,7 +237,10 @@ describe('GET: the list and the starting alert', () => {
     const { handlers, context } = setup({ store: memoryStore({ failWrites: true }) });
     const response = await handlers.list(makeRequest(), context);
     expect(response.status).toBe(200);
-    expect(parse(response)).toMatchObject({ ok: true, alerts: [], total: 0 });
+    // The starting alert is still in the answer (added in memory), as on the Calendar.
+    const body = parse(response);
+    expect(body).toMatchObject({ ok: true, total: 1 });
+    expect(body.alerts[0]).toMatchObject({ id: SEED_ID, status: 'open' });
     const logged = loggedText(context);
     expect(logged).toMatch(/starting alerts failed/);
     expect(logged).not.toMatch(/store down/);
@@ -541,6 +544,18 @@ describe('PATCH: edit, done, snooze', () => {
     const response = await patch(ctx, body);
     expect(response.status).toBe(400);
     expect(JSON.stringify(stored(ctx.store))).toBe(before);
+  });
+
+  it('finishes an alert and clears its snooze in one request, and it stays finished', async () => {
+    const ctx = await withAlert();
+    await patch(ctx, { snoozeDays: 3 });
+    const response = await patch(ctx, { done: true, snoozeDays: 0 });
+    expect(response.status).toBe(200);
+    expect(parse(response).alert).toMatchObject({ status: 'done', state: 'done', snoozedUntil: null });
+    expect(stored(ctx.store).alerts.find((row) => row.id === ctx.id)).toMatchObject({
+      status: 'done',
+      snoozedUntil: null,
+    });
   });
 
   it('refuses to snooze a finished alert', async () => {

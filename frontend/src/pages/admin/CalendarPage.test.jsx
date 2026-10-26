@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
+import { AdminRoleProvider } from '@/hooks/useAdminRole';
 import CalendarPage from './CalendarPage';
 
 const mockNavigate = vi.fn();
@@ -146,6 +147,33 @@ describe("CalendarPage and the owner's alerts", () => {
     act(() => seen.grid.onChanged());
     expect(seen.refreshUnscheduled).toHaveBeenCalledTimes(1);
     expect(seen.reloadAlerts).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['editor', 'publisher', 'super_admin'])('uses the alerts for the %s role', (role) => {
+    render(
+      <AdminRoleProvider value={role}>
+        <MemoryRouter>
+          <CalendarPage />
+        </MemoryRouter>
+      </AdminRoleProvider>
+    );
+    expect(seen.hookOptions.enabled).toBe(true);
+    expect(screen.getByTestId('alerts-panel')).toBeInTheDocument();
+  });
+
+  it('asks nothing of the alerts and shows no panel to a viewer, whose role the server would refuse', () => {
+    render(
+      <AdminRoleProvider value="viewer">
+        <MemoryRouter>
+          <CalendarPage />
+        </MemoryRouter>
+      </AdminRoleProvider>
+    );
+    expect(seen.hookOptions.enabled).toBe(false);
+    expect(screen.queryByTestId('alerts-panel')).not.toBeInTheDocument();
+    act(() => seen.grid.onChanged());
+    expect(seen.refreshUnscheduled).toHaveBeenCalledTimes(1);
+    expect(seen.reloadAlerts).not.toHaveBeenCalled();
   });
 
   it('explains alerts in the page help', () => {

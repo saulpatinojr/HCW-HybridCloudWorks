@@ -95,6 +95,12 @@ export async function collectCalendar({
   return { items, warnings };
 }
 
+/** A response with `Cache-Control: private, no-store` added, its body and other headers kept. */
+const withNoStore = (response) => ({
+  ...response,
+  headers: { ...response.headers, 'Cache-Control': 'private, no-store' },
+});
+
 const refuse = (error) => ({ error: json(400, { ok: false, error }) });
 
 /**
@@ -133,7 +139,9 @@ export function createCalendarHandlers({ guard, store, collectors = COLLECTORS }
     /** GET /api/cms/calendar?from&to[&kinds=a,b] — editor. */
     async read(request, context) {
       const auth = await guard.requireRole(request, 'editor');
-      if (auth.error) return auth.error;
+      // The guard's refusal is shared by every admin route; on this one, which can
+      // carry the owner's alerts, no cache may keep it either.
+      if (auth.error) return withNoStore(auth.error);
       const window = parseWindow(request.query);
       if (window.error) return window.error;
       const { from, to, kinds } = window;
