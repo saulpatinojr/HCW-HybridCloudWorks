@@ -206,7 +206,8 @@ publishes it.
   not work around the refusal; fix the vault path instead.
 - **A test enforces this.**
   [`docs-content-guard.test.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/test/docs-content-guard.test.js)
-  fails the `functions (azure)` check on any pull request that adds a
+  fails the `functions (azure)` check (the automated job that runs the
+  functions tests, listed on every pull request) on any pull request that adds a
   `blog-*.md` file to `docs/content` besides the two contract files, and its
   message says where drafts go instead. It exists because the drafts were
   removed in [#1381](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1381)

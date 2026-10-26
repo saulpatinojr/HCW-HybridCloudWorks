@@ -36,10 +36,14 @@ script goes one step further: it **refuses** to write a draft anywhere inside
 this repository, however the folder is spelt (a relative path, `..`, a
 different upper or lower case, or a shortcut folder that really points into the
 repository), so a slip cannot publish a draft by accident. A second guard sits
-in the test suite: `functions/test/docs-content-guard.test.js` fails the
-`functions (azure)` check on any pull request that adds a `blog-*.md` file to
-`docs/content`, other than the two contract files `blog-template.md` and
-`blog-machine.md`, and its message says where drafts go instead.
+in the test suite:
+[`functions/test/docs-content-guard.test.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/test/docs-content-guard.test.js)
+fails the `functions (azure)` check (the automated job that runs the functions
+tests, listed on every pull request) on any pull request that adds a
+`blog-*.md` file to `docs/content`, other than the two contract files
+[`blog-template.md`](../content/blog-template.md) and
+[`blog-machine.md`](../content/blog-machine.md), and its message says where
+drafts go instead.
 
 ## Set it up once
 
