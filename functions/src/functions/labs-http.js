@@ -34,6 +34,7 @@ import { createLabHandlers } from '../lib/labs.js';
 import { createAgentRegistryHandlers } from '../lib/labs/agent-registry.js';
 import { createCoderStatusHandlers } from '../lib/labs/coder-status.js';
 import { createCoderAutomationReadHandler } from '../lib/labs/coder-automation.js';
+import { createLabStartsReadHandler } from '../lib/labs/lab-starts.js';
 
 const handlers = () =>
   createLabHandlers({
@@ -118,6 +119,21 @@ httpRoute('cmsLabsCoderAutomation', {
   route: 'cms/labs/coder-automation',
   handler: (request, context) =>
     createCoderAutomationReadHandler({ guard: getDefaultGuard(), store: { readDoc } })(
+      request,
+      context
+    ),
+});
+
+// How many lab sessions the site has started for visitors, as plain counts
+// per lab per UTC day (lib/labs/lab-starts.js), for the Labs hub Dashboard
+// card. Editor, as the reads above. Aggregates only; the write is made by the
+// visitor session broker (public/labs/visitor-session), never by this route.
+httpRoute('cmsLabsStarts', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'cms/labs/starts',
+  handler: (request, context) =>
+    createLabStartsReadHandler({ guard: getDefaultGuard(), store: { readDoc, createDoc, queryDocs } })(
       request,
       context
     ),
