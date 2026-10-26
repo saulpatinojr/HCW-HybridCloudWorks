@@ -221,13 +221,131 @@ export async function deleteVisitorUser(fetchImpl, config, userId) {
   }
 }
 
+const SESSION_CONTAINER = 'lab_jobs';
+
+/** How many times a finish is tried when another writer keeps changing the record. */
+const FINISH_ATTEMPTS = 3;
+
+/** A write that lost to another writer: the record changed (412) or is gone (404). */
+const lostRace = (error) =>
+  [412, 404].some((code) => error?.code === code || error?.statusCode === code);
+
+/**
+ * What went wrong, for a log line: the error's code or its name, never its text,
+ * and only when it looks like a code (a status number, `ECONNRESET`, `TypeError`).
+ */
+function errorKind(error) {
+  const kind = String(error?.code ?? error?.statusCode ?? error?.name ?? 'error');
+  return /^[A-Za-z0-9_.-]{1,40}$/.test(kind) ? kind : 'error';
+}
+
+/**
+ * Save that a session is over (`ended` by its visitor, `expired` by the
+ * reaper), under the ETag the session was read with.
+ *
+ * `replaceDocIfMatch(containerName, document, options)` takes the whole
+ * document, `_etag` inside it, and the partition key in the options. This was
+ * once called as `(container, id, document, etag)` in two places, which the
+ * real store cannot take, so neither a stop nor a reap ever saved (#1383).
+ * Both now go through here, so the call is written once.
+ *
+ * Losing the race is not a failure. A stop and a reap, or two stops, can reach
+ * the same session at once; the loser's write is refused with a 412, and the
+ * loser reads the record again: if it is no longer `active`, the other writer
+ * finished it and the loser has nothing left to do. If it is still active,
+ * something else changed it and the finish is tried again on the new version.
+ * Any other error is a real failure and is thrown.
+ *
+ * @param {object} store
+ * @param {object} session - the stored record, with the `_etag` it was read with
+ * @param {'ended' | 'expired'} status
+ * @param {string} endedAt - ISO time
+ * @returns {Promise<'written' | 'finished-elsewhere' | 'gone' | 'changed'>}
+ *   `written`: this call saved it. `finished-elsewhere`: it was already ended
+ *   or expired by another writer. `gone`: its record has aged out (its `ttl`).
+ *   `changed`: it kept changing and is still active, so nothing was saved.
+ */
+async function finishSession(store, session, status, endedAt) {
+  if (typeof store.replaceDocIfMatch !== 'function') {
+    // A store without conditional writes, which the Functions app never has
+    // (labs-public-http.js hands it cosmos-client.js's): unconditional. One
+    // that cannot save at all must not report that it did.
+    if (typeof store.upsertDoc !== 'function') {
+      throw new TypeError('The store given to the visitor sessions cannot save a session record.');
+    }
+    await store.upsertDoc(SESSION_CONTAINER, { ...session, status, endedAt });
+    return 'written';
+  }
+
+  let current = session;
+  for (let attempt = 0; attempt < FINISH_ATTEMPTS; attempt += 1) {
+    try {
+      await store.replaceDocIfMatch(
+        SESSION_CONTAINER,
+        { ...current, status, endedAt },
+        { partitionKey: current.id }
+      );
+      return 'written';
+    } catch (error) {
+      if (!lostRace(error)) throw error;
+    }
+    current = await store.readDoc(SESSION_CONTAINER, session.id, session.id);
+    if (!current) return 'gone';
+    if (current.status !== 'active') return 'finished-elsewhere';
+  }
+  return 'changed';
+}
+
+/**
+ * Delete a session's Coder workspace and user. True when Coder accepted both
+ * calls, or when there was nothing to call (no broker config, or a record with
+ * no workspace or user).
+ *
+ * The answer is reported to the caller's log and nothing more: the record is
+ * saved as over either way, so a refused delete is not tried again. That is the
+ * design this module was written to, and it was hidden while the save never
+ * worked (the record stayed `active`, so every later request ran the deletes
+ * again). Making the final status depend on a confirmed clean-up is its own
+ * change, tracked in #1388.
+ */
+async function cleanUpCoder(fetchImpl, config, session) {
+  if (!config) return true;
+  let accepted = true;
+  if (session.workspaceId) {
+    accepted = (await deleteVisitorWorkspace(fetchImpl, config, session.workspaceId)) && accepted;
+  }
+  if (session.coderUserId) {
+    accepted = (await deleteVisitorUser(fetchImpl, config, session.coderUserId)) && accepted;
+  }
+  return accepted;
+}
+
+/**
+ * Delete the Coder workspace and user of every session past `expiresAt`, and
+ * save each as `expired`.
+ *
+ * Never throws for one bad session: a store failure that is not a lost race
+ * is counted in `failed` and, when `log` is given, reported by kind only
+ * (the code or error name, with no session id and no error text). It was once
+ * swallowed here without a trace, which is how a reaper that saved nothing ran
+ * unnoticed (#1383).
+ *
+ * @param {object} store
+ * @param {Function} fetchImpl
+ * @param {{ base: string, token: string } | null} config - null skips Coder
+ * @param {object} [options]
+ * @param {string} [options.nowIso]
+ * @param {(line: string) => void} [options.log]
+ * @returns {Promise<{ reaped: number, failed: number }>} `reaped` counts the
+ *   sessions this call saved as expired; one a stop ended first is not counted
+ */
 export async function reapExpiredVisitorSessions(
   store,
   fetchImpl,
   config,
-  { nowIso = new Date().toISOString() } = {}
+  { nowIso = new Date().toISOString(), log = null } = {}
 ) {
-  if (!store?.queryDocs) return { reaped: 0 };
+  if (!store?.queryDocs) return { reaped: 0, failed: 0 };
   const query =
     'SELECT * FROM c WHERE c.type = @type AND c.status = @status AND c.expiresAt <= @nowIso';
   const parameters = [
@@ -237,46 +355,32 @@ export async function reapExpiredVisitorSessions(
   ];
   let expiredSessions = [];
   try {
-    expiredSessions = await store.queryDocs('lab_jobs', query, parameters);
-  } catch {
-    return { reaped: 0 };
+    expiredSessions = await store.queryDocs(SESSION_CONTAINER, query, parameters);
+  } catch (error) {
+    // A sweep that never ran must not look like one that found nothing.
+    log?.(`visitor-session: the expired sessions could not be listed (${errorKind(error)})`);
+    return { reaped: 0, failed: 0 };
   }
 
   let reaped = 0;
+  let failed = 0;
   for (const session of expiredSessions) {
-    if (config) {
-      if (session.workspaceId) {
-        await deleteVisitorWorkspace(fetchImpl, config, session.workspaceId);
-      }
-      if (session.coderUserId) {
-        await deleteVisitorUser(fetchImpl, config, session.coderUserId);
-      }
+    if (!(await cleanUpCoder(fetchImpl, config, session))) {
+      log?.('visitor-session: Coder did not accept every clean-up call for an expired session');
     }
     try {
-      if (store.replaceDocIfMatch) {
-        await store.replaceDocIfMatch(
-          'lab_jobs',
-          session.id,
-          {
-            ...session,
-            status: 'expired',
-            endedAt: nowIso,
-          },
-          session._etag
-        );
-      } else if (store.upsertDoc) {
-        await store.upsertDoc('lab_jobs', {
-          ...session,
-          status: 'expired',
-          endedAt: nowIso,
-        });
+      const outcome = await finishSession(store, session, 'expired', nowIso);
+      if (outcome === 'written') reaped += 1;
+      if (outcome === 'changed') {
+        failed += 1;
+        log?.('visitor-session: an expired session kept changing and was not saved');
       }
-      reaped += 1;
-    } catch {
-      // ignore concurrent reap race
+    } catch (error) {
+      failed += 1;
+      log?.(`visitor-session: an expired session could not be saved (${errorKind(error)})`);
     }
   }
-  return { reaped };
+  return { reaped, failed };
 }
 
 export function createVisitorSessionHandlers({
@@ -334,7 +438,7 @@ export function createVisitorSessionHandlers({
       let activeSessions = [];
       try {
         activeSessions = await store.queryDocs(
-          'lab_jobs',
+          SESSION_CONTAINER,
           'SELECT * FROM c WHERE c.type = @type AND c.status = @status',
           [
             { name: '@type', value: VISITOR_JOB_TYPE },
@@ -353,6 +457,8 @@ export function createVisitorSessionHandlers({
       // Proactively reap any expired sessions in background
       const expired = activeSessions.filter((s) => s.expiresAt <= nowIso);
       if (expired.length > 0) {
+        // No `log` here: this runs after the answer is sent, and a Functions
+        // context must not be written to once its invocation has ended.
         reapExpiredVisitorSessions(store, fetchImpl, config, { nowIso }).catch(() => {});
       }
 
@@ -502,7 +608,7 @@ export function createVisitorSessionHandlers({
 
       // Check active concurrency
       const activeSessions = await store.queryDocs(
-        'lab_jobs',
+        SESSION_CONTAINER,
         'SELECT * FROM c WHERE c.type = @type AND c.status = @status',
         [
           { name: '@type', value: VISITOR_JOB_TYPE },
@@ -512,7 +618,10 @@ export function createVisitorSessionHandlers({
       // Reclaim capacity from expired sessions
       const expired = activeSessions.filter((s) => s.expiresAt <= nowIso);
       if (expired.length > 0) {
-        await reapExpiredVisitorSessions(store, fetchImpl, config, { nowIso }).catch(() => {});
+        await reapExpiredVisitorSessions(store, fetchImpl, config, {
+          nowIso,
+          log: (line) => context?.warn?.(line),
+        }).catch(() => {});
       }
 
       const liveSessions = activeSessions.filter((s) => s.expiresAt > nowIso);
@@ -577,7 +686,7 @@ export function createVisitorSessionHandlers({
         ttl: VISITOR_DOC_TTL_SECONDS,
       };
 
-      await store.createDoc('lab_jobs', doc);
+      await store.createDoc(SESSION_CONTAINER, doc);
 
       // The start is real from here: count it, once, as plain per-lab-per-day
       // numbers (lab-starts.js). A counter fault is logged by code only and
@@ -608,39 +717,28 @@ export function createVisitorSessionHandlers({
         return jsonResponse({ ok: false, error: 'sessionId parameter required' }, 400);
       }
 
-      const doc = await store.readDoc('lab_jobs', sessionId, sessionId);
+      const doc = await store.readDoc(SESSION_CONTAINER, sessionId, sessionId);
       if (!doc || doc.type !== VISITOR_JOB_TYPE) {
         return jsonResponse({ ok: false, error: 'Session not found' }, 404);
       }
 
-      const config = readBrokerConfig(env);
-      if (config) {
-        if (doc.workspaceId) {
-          await deleteVisitorWorkspace(fetchImpl, config, doc.workspaceId);
-        }
-        if (doc.coderUserId) {
-          await deleteVisitorUser(fetchImpl, config, doc.coderUserId);
-        }
+      // Already ended, or expired by the reaper: whoever finished it did the
+      // Coder clean-up, so a second stop (a double click, a retry) has nothing to do.
+      if (doc.status !== 'active') {
+        return jsonResponse({ ok: true, status: 'ended' });
+      }
+
+      if (!(await cleanUpCoder(fetchImpl, readBrokerConfig(env), doc))) {
+        context?.warn?.('visitor-session: Coder did not accept every clean-up call for an ended session');
       }
 
       const nowIso = new Date(clock()).toISOString();
-      if (store.replaceDocIfMatch) {
-        await store.replaceDocIfMatch(
-          'lab_jobs',
-          sessionId,
-          {
-            ...doc,
-            status: 'ended',
-            endedAt: nowIso,
-          },
-          doc._etag
+      const outcome = await finishSession(store, doc, 'ended', nowIso);
+      if (outcome === 'changed') {
+        return jsonResponse(
+          { ok: false, error: 'The session changed while it was being ended. Please try again.' },
+          409
         );
-      } else if (store.upsertDoc) {
-        await store.upsertDoc('lab_jobs', {
-          ...doc,
-          status: 'ended',
-          endedAt: nowIso,
-        });
       }
 
       return jsonResponse({ ok: true, status: 'ended' });

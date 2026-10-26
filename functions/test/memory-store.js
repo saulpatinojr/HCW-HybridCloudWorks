@@ -16,6 +16,7 @@
  * that queries says what Cosmos would answer (test/mcp-projection.js).
  */
 import { vi } from 'vitest';
+import { assertReplaceDocIfMatchCall } from '../src/lib/cosmos-call-shape.js';
 
 export function memoryStore(initial = {}, { query = null } = {}) {
   const docs = new Map();
@@ -53,7 +54,11 @@ export function memoryStore(initial = {}, { query = null } = {}) {
       docs.set(key(container, doc.id), stamp(doc));
       return structuredClone(docs.get(key(container, doc.id)));
     }),
-    replaceDocIfMatch: vi.fn(async (container, doc) => {
+    replaceDocIfMatch: vi.fn(async (container, doc, options) => {
+      // The real function's argument shape, from the module the real function
+      // checks with: a store that accepted `(container, id, doc, etag)` once let
+      // a call the real store cannot take pass every test (#1383).
+      assertReplaceDocIfMatchCall(container, doc, options);
       maybeFail(container, doc.id, 'replaceDocIfMatch');
       if (docs.get(key(container, doc.id))?._etag !== doc._etag) {
         throw Object.assign(new Error('precondition'), { code: 412 });
