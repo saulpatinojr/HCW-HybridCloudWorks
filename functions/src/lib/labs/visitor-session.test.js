@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryStore } from '../../../test/memory-store.js';
+import { createClientIdentity } from '../auth/client-identity.js';
 import {
   DOOR_CODES,
   VISITOR_DOC_TTL_SECONDS,
@@ -20,6 +21,34 @@ import {
 const NOW = Date.parse('2026-10-17T12:00:00Z');
 const SITE = 'https://hybridcloudworks.com';
 const TOKEN = 'turnstile-token-sample';
+
+/**
+ * WHO IS CALLING (#1387). These tests give the handlers the real
+ * `createClientIdentity()`, built as production builds it (the origin lock on,
+ * a salt), and put their callers on requests the way Cloudflare does: with the
+ * origin secret and the caller's address. They used to give the handlers a
+ * hand-written identity with a `fromRequest` method the real helper has never
+ * had, so the code and its stand-in agreed with each other and every visitor
+ * was the same person in production.
+ */
+const ORIGIN_SECRET = 'test-origin-secret';
+const IP_SALT = 'test-ip-salt';
+const realIdentity = () =>
+  createClientIdentity({ originSecret: ORIGIN_SECRET, ipSalt: IP_SALT, allowUnverifiedOrigin: false });
+
+/** Two different visitors, and the headers of a request that reached the Function through our Cloudflare from each. */
+const ALICE = '203.0.113.10';
+const BOB = '203.0.113.20';
+const fromCaller = (ip, extra = {}) =>
+  new Headers({ 'x-hcw-origin-secret': ORIGIN_SECRET, 'cf-connecting-ip': ip, ...extra });
+
+/** The key the real helper files a caller's sessions and daily quota under. */
+const keyOf = (ip) => realIdentity().anonymousKey({ headers: fromCaller(ip) }).key;
+const ALICE_KEY = keyOf(ALICE);
+const BOB_KEY = keyOf(BOB);
+
+/** The handlers, built on the real identity helper unless a test says otherwise. */
+const makeHandlers = (deps) => createVisitorSessionHandlers({ identity: realIdentity(), ...deps });
 
 /**
  * Answers the three queries the module sends: by type, by status, and by expiry.
@@ -244,8 +273,8 @@ describe('createVisitorSessionHandlers: getStatus', () => {
   it('reports closed when switch is off', async () => {
     const prev = process.env;
     process.env = { ...env, [VISITOR_SESSION_SWITCH]: 'false' };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
-    const res = await handlers.getStatus({ headers: new Headers() });
+    const handlers = makeHandlers({ store: mockStore() });
+    const res = await handlers.getStatus({ headers: fromCaller(ALICE) });
     const body = JSON.parse(res.body);
     expect(body.open).toBe(false);
     expect(body.code).toBe(DOOR_CODES.closed);
@@ -255,8 +284,8 @@ describe('createVisitorSessionHandlers: getStatus', () => {
   it('reports turnstile_unconfigured when secret missing', async () => {
     const prev = process.env;
     process.env = { ...env, TURNSTILE_SECRET_KEY: '' };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
-    const res = await handlers.getStatus({ headers: new Headers() });
+    const handlers = makeHandlers({ store: mockStore() });
+    const res = await handlers.getStatus({ headers: fromCaller(ALICE) });
     const body = JSON.parse(res.body);
     expect(body.open).toBe(false);
     expect(body.code).toBe(DOOR_CODES.turnstile_unconfigured);
@@ -266,11 +295,11 @@ describe('createVisitorSessionHandlers: getStatus', () => {
   it('reports open when available', async () => {
     const prev = process.env;
     process.env = { ...env };
-    const handlers = createVisitorSessionHandlers({
+    const handlers = makeHandlers({
       store: mockStore(),
       clock: () => NOW,
     });
-    const res = await handlers.getStatus({ headers: new Headers() });
+    const res = await handlers.getStatus({ headers: fromCaller(ALICE) });
     const body = JSON.parse(res.body);
     expect(body.open).toBe(true);
     expect(body.bounds.maxConcurrent).toBe(2);
@@ -285,17 +314,14 @@ describe('createVisitorSessionHandlers: getStatus', () => {
       id: 'sess-1',
       type: 'visitor-session',
       status: 'active',
-      clientHash: 'client-abc',
+      clientHash: ALICE_KEY,
       labId: 'landing-zone-builder-output',
       accessUrl: 'https://code-server--lab-lzb--v-test.coder.lab.hybridcloudworks.com/?folder=/tmp/home/lab',
       expiresAt: new Date(NOW + 3000000).toISOString(),
     };
     const store = mockStore([activeDoc]);
-    const identity = {
-      fromRequest: () => ({ anonymousKey: () => 'client-abc' }),
-    };
-    const handlers = createVisitorSessionHandlers({ store, identity, clock: () => NOW });
-    const res = await handlers.getStatus({ headers: new Headers() });
+    const handlers = makeHandlers({ store, clock: () => NOW });
+    const res = await handlers.getStatus({ headers: fromCaller(ALICE) });
     const body = JSON.parse(res.body);
     expect(body.open).toBe(true);
     expect(body.code).toBe(DOOR_CODES.active_session_exists);
@@ -321,8 +347,8 @@ describe('createVisitorSessionHandlers: getStatus', () => {
       expiresAt: new Date(NOW + 3000000).toISOString(),
     };
     const store = mockStore([doc1, doc2]);
-    const handlers = createVisitorSessionHandlers({ store, clock: () => NOW });
-    const res = await handlers.getStatus({ headers: new Headers() });
+    const handlers = makeHandlers({ store, clock: () => NOW });
+    const res = await handlers.getStatus({ headers: fromCaller(ALICE) });
     const body = JSON.parse(res.body);
     expect(body.open).toBe(false);
     expect(body.code).toBe(DOOR_CODES.capacity_full);
@@ -332,8 +358,8 @@ describe('createVisitorSessionHandlers: getStatus', () => {
   it('reports unconfigured when broker config is missing', async () => {
     const prev = process.env;
     process.env = { ...env, CODER_URL: '' };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
-    const res = await handlers.getStatus({ headers: new Headers() });
+    const handlers = makeHandlers({ store: mockStore() });
+    const res = await handlers.getStatus({ headers: fromCaller(ALICE) });
     const body = JSON.parse(res.body);
     expect(body.open).toBe(false);
     expect(body.code).toBe(DOOR_CODES.unconfigured);
@@ -348,8 +374,8 @@ describe('createVisitorSessionHandlers: getStatus', () => {
         throw new Error('cosmos query failure');
       }),
     };
-    const handlers = createVisitorSessionHandlers({ store: failingStore });
-    const res = await handlers.getStatus({ headers: new Headers() });
+    const handlers = makeHandlers({ store: failingStore });
+    const res = await handlers.getStatus({ headers: fromCaller(ALICE) });
     expect(res.status).toBe(503);
     const body = JSON.parse(res.body);
     expect(body.code).toBe(DOOR_CODES.coder_unavailable);
@@ -367,12 +393,12 @@ describe('createVisitorSessionHandlers: getStatus', () => {
     };
     const store = mockStore([expiredDoc]);
     const fetchImpl = vi.fn(async () => ({ ok: true }));
-    const handlers = createVisitorSessionHandlers({
+    const handlers = makeHandlers({
       store,
       fetchImpl,
       clock: () => NOW,
     });
-    const res = await handlers.getStatus({ headers: new Headers() });
+    const res = await handlers.getStatus({ headers: fromCaller(ALICE) });
     expect(res.status).toBe(200);
     // The reap runs behind the answer; it must end with the record saved (#1383).
     await vi.waitFor(() => expect(store.get('lab_jobs', 'sess-reap-check').status).toBe('expired'));
@@ -413,9 +439,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
   it('refuses non-site origins', async () => {
     const prev = process.env;
     process.env = { ...env };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
+    const handlers = makeHandlers({ store: mockStore() });
     const req = {
-      headers: new Headers({ origin: 'https://evil.com' }),
+      headers: fromCaller(ALICE, { origin: 'https://evil.com' }),
     };
     const res = await handlers.startSession(req);
     expect(res.status).toBe(403);
@@ -427,9 +453,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
   it('refuses invalid lab ID', async () => {
     const prev = process.env;
     process.env = { ...env };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
+    const handlers = makeHandlers({ store: mockStore() });
     const req = {
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => ({ labId: 'unknown-lab', turnstileToken: TOKEN }),
     };
     const res = await handlers.startSession(req);
@@ -442,9 +468,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
   it('refuses missing Turnstile token', async () => {
     const prev = process.env;
     process.env = { ...env };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
+    const handlers = makeHandlers({ store: mockStore() });
     const req = {
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => ({ labId: 'landing-zone-builder-output' }),
     };
     const res = await handlers.startSession(req);
@@ -464,13 +490,13 @@ describe('createVisitorSessionHandlers: startSession', () => {
       }
       return coderMocks(url, init);
     });
-    const handlers = createVisitorSessionHandlers({
+    const handlers = makeHandlers({
       store,
       fetchImpl,
       clock: () => NOW,
     });
     const req = {
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => ({
         labId: 'landing-zone-builder-output',
         turnstileToken: TOKEN,
@@ -494,8 +520,8 @@ describe('createVisitorSessionHandlers: startSession', () => {
   it('fails 503 when visitor sessions switch is off', async () => {
     const prev = process.env;
     process.env = { ...env, [VISITOR_SESSION_SWITCH]: 'false' };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
-    const res = await handlers.startSession({ headers: new Headers({ origin: SITE }) });
+    const handlers = makeHandlers({ store: mockStore() });
+    const res = await handlers.startSession({ headers: fromCaller(ALICE, { origin: SITE }) });
     expect(res.status).toBe(503);
     expect(JSON.parse(res.body).code).toBe(DOOR_CODES.closed);
     process.env = prev;
@@ -504,8 +530,8 @@ describe('createVisitorSessionHandlers: startSession', () => {
   it('fails 503 when Turnstile is unconfigured', async () => {
     const prev = process.env;
     process.env = { ...env, TURNSTILE_SECRET_KEY: '' };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
-    const res = await handlers.startSession({ headers: new Headers({ origin: SITE }) });
+    const handlers = makeHandlers({ store: mockStore() });
+    const res = await handlers.startSession({ headers: fromCaller(ALICE, { origin: SITE }) });
     expect(res.status).toBe(503);
     expect(JSON.parse(res.body).code).toBe(DOOR_CODES.turnstile_unconfigured);
     process.env = prev;
@@ -514,8 +540,8 @@ describe('createVisitorSessionHandlers: startSession', () => {
   it('fails 503 when broker config is unconfigured', async () => {
     const prev = process.env;
     process.env = { ...env, CODER_URL: '' };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
-    const res = await handlers.startSession({ headers: new Headers({ origin: SITE }) });
+    const handlers = makeHandlers({ store: mockStore() });
+    const res = await handlers.startSession({ headers: fromCaller(ALICE, { origin: SITE }) });
     expect(res.status).toBe(503);
     expect(JSON.parse(res.body).code).toBe(DOOR_CODES.unconfigured);
     process.env = prev;
@@ -524,9 +550,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
   it('rejects malformed json body with 400', async () => {
     const prev = process.env;
     process.env = { ...env };
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
+    const handlers = makeHandlers({ store: mockStore() });
     const res = await handlers.startSession({
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => {
         throw new Error('invalid json');
       },
@@ -551,9 +577,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
       }
       return { ok: true };
     });
-    const handlers = createVisitorSessionHandlers({ store: mockStore(), fetchImpl: failFetch });
+    const handlers = makeHandlers({ store: mockStore(), fetchImpl: failFetch });
     const res = await handlers.startSession({
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: 'bad-token' }),
     });
     expect(res.status).toBe(403);
@@ -566,7 +592,7 @@ describe('createVisitorSessionHandlers: startSession', () => {
     process.env = { ...env };
     const store = mockStore();
     await store.createDoc('submission_quota', {
-      id: 'visitor-quota:unidentified:2026-10-17',
+      id: `visitor-quota:${ALICE_KEY}:2026-10-17`,
       kind: 'visitor_session_daily',
       count: 2,
     });
@@ -576,9 +602,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
       }
       return coderMocks(url, init);
     });
-    const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+    const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
     const res = await handlers.startSession({
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
     });
     expect(res.status).toBe(429);
@@ -593,7 +619,7 @@ describe('createVisitorSessionHandlers: startSession', () => {
       id: 'sess-already-active',
       type: 'visitor-session',
       status: 'active',
-      clientHash: 'unidentified',
+      clientHash: ALICE_KEY,
       labId: 'landing-zone-builder-output',
       accessUrl: 'https://code-server--lab-lzb--v-existing.coder.lab.hybridcloudworks.com',
       expiresAt: new Date(NOW + 100000).toISOString(),
@@ -605,9 +631,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
       }
       return coderMocks(url, init);
     });
-    const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+    const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
     const res = await handlers.startSession({
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
     });
     expect(res.status).toBe(200);
@@ -633,9 +659,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
       }
       return coderMocks(url, init);
     });
-    const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+    const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
     const res = await handlers.startSession({
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
     });
     expect(res.status).toBe(503);
@@ -652,10 +678,10 @@ describe('createVisitorSessionHandlers: startSession', () => {
       }
       return { ok: false, status: 502, text: async () => 'bad gateway' };
     });
-    const handlers = createVisitorSessionHandlers({ store: mockStore(), fetchImpl, clock: () => NOW });
+    const handlers = makeHandlers({ store: mockStore(), fetchImpl, clock: () => NOW });
     const context = { error: vi.fn() };
     const res = await handlers.startSession({
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
     }, context);
     expect(res.status).toBe(502);
@@ -681,9 +707,9 @@ describe('createVisitorSessionHandlers: startSession', () => {
       }
       return coderMocks(url, init);
     });
-    const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+    const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
     const res = await handlers.startSession({
-      headers: new Headers({ origin: SITE }),
+      headers: fromCaller(ALICE, { origin: SITE }),
       json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
     });
     expect(res.status).toBe(201);
@@ -714,10 +740,10 @@ describe('createVisitorSessionHandlers: startSession', () => {
       return coderMocks(url, init);
     });
     const context = { warn: vi.fn(), error: vi.fn() };
-    const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+    const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
     const res = await handlers.startSession(
       {
-        headers: new Headers({ origin: SITE }),
+        headers: fromCaller(ALICE, { origin: SITE }),
         json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
       },
       context
@@ -743,19 +769,21 @@ describe('createVisitorSessionHandlers: stopSession and reaper', () => {
       id: 'sess-stop',
       type: 'visitor-session',
       status: 'active',
+      clientHash: ALICE_KEY,
       coderUserId: 'u-stop',
       workspaceId: 'ws-stop',
       expiresAt: new Date(NOW + 3600000).toISOString(),
     };
     const store = mockStore([doc]);
     const fetchImpl = vi.fn(async () => ({ ok: true }));
-    const handlers = createVisitorSessionHandlers({
+    const handlers = makeHandlers({
       store,
       fetchImpl,
       clock: () => NOW,
     });
     const req = {
       url: 'https://api.hybridcloudworks.com/api/public/labs/visitor-session?sessionId=sess-stop',
+      headers: fromCaller(ALICE),
     };
     const res = await handlers.stopSession(req);
     expect(res.status).toBe(200);
@@ -765,14 +793,17 @@ describe('createVisitorSessionHandlers: stopSession and reaper', () => {
   });
 
   it('refuses stopSession when sessionId parameter is missing', async () => {
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
+    const handlers = makeHandlers({ store: mockStore() });
     const res = await handlers.stopSession({ url: 'https://site.com/api/visitor-session' });
     expect(res.status).toBe(400);
   });
 
   it('returns 404 when stopping non-existent session', async () => {
-    const handlers = createVisitorSessionHandlers({ store: mockStore() });
-    const res = await handlers.stopSession({ url: 'https://site.com/api/visitor-session?sessionId=nonexistent' });
+    const handlers = makeHandlers({ store: mockStore() });
+    const res = await handlers.stopSession({
+      url: 'https://site.com/api/visitor-session?sessionId=nonexistent',
+      headers: fromCaller(ALICE),
+    });
     expect(res.status).toBe(404);
   });
 
@@ -781,14 +812,18 @@ describe('createVisitorSessionHandlers: stopSession and reaper', () => {
       id: 'sess-up',
       type: 'visitor-session',
       status: 'active',
+      clientHash: ALICE_KEY,
       expiresAt: new Date(NOW + 1000).toISOString(),
     };
     const upsertStore = {
       readDoc: vi.fn(async () => doc),
       upsertDoc: vi.fn(async () => ({})),
     };
-    const handlers = createVisitorSessionHandlers({ store: upsertStore, clock: () => NOW });
-    const res = await handlers.stopSession({ url: 'https://site.com/api/visitor-session?sessionId=sess-up' });
+    const handlers = makeHandlers({ store: upsertStore, clock: () => NOW });
+    const res = await handlers.stopSession({
+      url: 'https://site.com/api/visitor-session?sessionId=sess-up',
+      headers: fromCaller(ALICE),
+    });
     expect(res.status).toBe(200);
     expect(upsertStore.upsertDoc).toHaveBeenCalled();
   });
@@ -854,7 +889,7 @@ const activeSession = (id, overrides = {}) => ({
   id,
   type: 'visitor-session',
   status: 'active',
-  clientHash: `client-${id}`,
+  clientHash: ALICE_KEY,
   labId: 'landing-zone-builder-output',
   coderUserId: `u-${id}`,
   workspaceId: `ws-${id}`,
@@ -865,8 +900,9 @@ const activeSession = (id, overrides = {}) => ({
 
 const expiredSession = (id) => activeSession(id, { expiresAt: new Date(NOW - 60 * 1000).toISOString() });
 
-const stopRequest = (id) => ({
+const stopRequest = (id, ip = ALICE) => ({
   url: `https://api.hybridcloudworks.com/api/public/labs/visitor-session?sessionId=${id}`,
+  headers: fromCaller(ip),
 });
 
 const precondition = () => Object.assign(new Error('precondition'), { code: 412 });
@@ -912,7 +948,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
     it('answers success, deletes the workspace and the user, and saves the record as ended', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
       const fetchImpl = acceptingCoder();
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
 
       const res = await handlers.stopSession(stopRequest('sess-1'));
 
@@ -934,7 +970,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
     it('saves the whole document with the version it read, as replaceDocIfMatch(container, document, options)', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
       const readWith = store.get('lab_jobs', 'sess-1')._etag;
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
 
       await handlers.stopSession(stopRequest('sess-1'));
 
@@ -948,7 +984,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
     it('answers success again, without calling Coder, when the session is already over', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
       const fetchImpl = acceptingCoder();
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
       await handlers.stopSession(stopRequest('sess-1'));
       fetchImpl.mockClear();
 
@@ -964,7 +1000,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       const store = cosmosLikeStore([activeSession('sess-1')]);
       const reapedAt = new Date(NOW - 1000).toISOString();
       const fetchImpl = coderThatLetsAnotherWriterIn(store, 'sess-1', { status: 'expired', endedAt: reapedAt });
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
 
       const res = await handlers.stopSession(stopRequest('sess-1'));
 
@@ -976,7 +1012,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
     it('saves again with the new version when something else changed the record but left it active', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
       const fetchImpl = coderThatLetsAnotherWriterIn(store, 'sess-1', { note: 'written by someone else' });
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
 
       const res = await handlers.stopSession(stopRequest('sess-1'));
 
@@ -988,7 +1024,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
     it('answers 409 and leaves the record active when it keeps changing underneath the stop', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
       store.fail('lab_jobs', 'sess-1', 'replaceDocIfMatch', precondition(), 3);
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
 
       const res = await handlers.stopSession(stopRequest('sess-1'));
 
@@ -1000,7 +1036,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
     it('lets a store failure that is not a lost race reach the caller', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
       store.fail('lab_jobs', 'sess-1', 'replaceDocIfMatch', Object.assign(new Error('cosmos is down'), { code: 503 }));
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
 
       await expect(handlers.stopSession(stopRequest('sess-1'))).rejects.toThrow('cosmos is down');
       expect(store.get('lab_jobs', 'sess-1').status).toBe('active');
@@ -1008,7 +1044,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
 
     it('answers success to two stop requests made at the same moment, and ends the session once', async () => {
       const store = cosmosLikeStore([activeSession('sess-1')]);
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
 
       const [first, second] = await Promise.all([
         handlers.stopSession(stopRequest('sess-1')),
@@ -1029,7 +1065,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
         if (init?.method === 'DELETE') store.docs.delete('lab_jobs/sess-1');
         return { ok: true };
       });
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
 
       const res = await handlers.stopSession(stopRequest('sess-1'));
 
@@ -1041,7 +1077,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       const store = cosmosLikeStore([activeSession('sess-1')]);
       const fetchImpl = vi.fn(async () => ({ ok: false, status: 500 }));
       const context = { warn: vi.fn() };
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl, clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
 
       const res = await handlers.stopSession(stopRequest('sess-1'), context);
 
@@ -1054,14 +1090,14 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
     it('does not claim to have ended a session when the store cannot save one', async () => {
       const doc = activeSession('sess-1');
       const store = { readDoc: vi.fn(async () => doc) };
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
 
       await expect(handlers.stopSession(stopRequest('sess-1'))).rejects.toThrow(TypeError);
     });
 
     it('still answers 404 for an id that is not a visitor session', async () => {
       const store = cosmosLikeStore([activeSession('job-1', { type: 'terraform-validate' })]);
-      const handlers = createVisitorSessionHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
+      const handlers = makeHandlers({ store, fetchImpl: acceptingCoder(), clock: () => NOW });
 
       expect((await handlers.stopSession(stopRequest('job-1'))).status).toBe(404);
       expect(store.get('lab_jobs', 'job-1').status).toBe('active');
@@ -1202,6 +1238,510 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
         reaped: 0,
         failed: 1,
       });
+    });
+  });
+});
+
+/**
+ * WHO IS CALLING, against the real client identity helper (#1387).
+ *
+ * `createClientIdentity()` has `anonymousKey(request)` and
+ * `trustedClientIp(request)`; it has never had the `fromRequest` the handlers
+ * used to ask for. Every test here builds the real helper (`realIdentity`
+ * above) and sends requests the way Cloudflare does, so a call the helper
+ * cannot answer fails here instead of in production.
+ */
+describe('visitor sessions know who is calling (#1387)', () => {
+  const CODER = { base: 'https://coder.lab.hybridcloudworks.com', token: 'broker-token' };
+  const DAY = '2026-10-17';
+
+  /** Cloudflare's siteverify (recording what it was sent) and a Coder that accepts everything. */
+  function visitorFetch() {
+    const siteverify = [];
+    let users = 0;
+    const fetchImpl = vi.fn(async (url, init) => {
+      const target = String(url);
+      if (target.startsWith('https://challenges.cloudflare.com/')) {
+        siteverify.push(new URLSearchParams(init.body));
+        return {
+          ok: true,
+          json: async () => ({ success: true, hostname: 'hybridcloudworks.com', action: 'visitor-session' }),
+        };
+      }
+      if (target.endsWith('/api/v2/templates')) return { ok: true, json: async () => [{ id: 'tmpl-1', name: 'hcw-lab' }] };
+      if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
+      if (target.endsWith('/api/v2/users')) {
+        users += 1;
+        return { ok: true, json: async () => ({ id: `u-${users}`, username: `v-user${users}` }) };
+      }
+      if (/\/members\/[^/]+\/workspaces$/.test(target)) {
+        return { ok: true, json: async () => ({ id: `ws-${users}`, name: 'lab-lzb' }) };
+      }
+      return { ok: true };
+    });
+    return Object.assign(fetchImpl, { siteverify });
+  }
+
+  /** The Coder calls that change something (not the reads that start a workspace, and not Turnstile). */
+  const coderCallsOf = (fetchImpl) =>
+    fetchImpl.mock.calls
+      .filter(([url, init]) => String(url).startsWith(CODER.base) && init?.method !== 'GET')
+      .map(([url, init]) => `${init.method} ${new URL(url).pathname}`);
+
+  const startAs = (handlers, ip, context) =>
+    handlers.startSession(
+      {
+        headers: fromCaller(ip, { origin: SITE }),
+        json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
+      },
+      context
+    );
+  const statusAs = (handlers, ip, context) => handlers.getStatus({ headers: fromCaller(ip) }, context);
+
+  /** What the route sent: the status and the parsed body. */
+  const parsed = (res) => ({ status: res.status, body: JSON.parse(res.body) });
+
+  beforeEach(() => {
+    vi.stubEnv(VISITOR_SESSION_SWITCH, 'true');
+    vi.stubEnv('TURNSTILE_SECRET_KEY', 'turnstile-secret');
+    vi.stubEnv('CODER_URL', CODER.base);
+    vi.stubEnv('CODER_BROKER_TOKEN', CODER.token);
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '5');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  describe('the identity helper the handlers are given', () => {
+    it('is the real one: it answers anonymousKey and trustedClientIp, and has no fromRequest', () => {
+      const identity = realIdentity();
+      expect(typeof identity.anonymousKey).toBe('function');
+      expect(typeof identity.trustedClientIp).toBe('function');
+      // The defect, stated directly: the method the handlers used to call.
+      expect(identity.fromRequest).toBeUndefined();
+    });
+
+    it('refuses, when the handlers are built, a stand-in that has the old fromRequest and nothing else', () => {
+      const standIn = { fromRequest: () => ({ anonymousKey: () => 'client-abc' }) };
+      expect(() => createVisitorSessionHandlers({ store: mockStore(), identity: standIn })).toThrow(TypeError);
+      expect(() => createVisitorSessionHandlers({ store: mockStore(), identity: standIn })).toThrow(
+        /anonymousKey or trustedClientIp/
+      );
+    });
+
+    it('refuses to be built with no identity at all, rather than treating every visitor as one', () => {
+      expect(() => createVisitorSessionHandlers({ store: mockStore() })).toThrow(TypeError);
+    });
+
+    it('gives two callers on different addresses different keys, and one caller the same key twice', () => {
+      expect(ALICE_KEY).toMatch(/^[0-9a-f]{64}$/);
+      expect(BOB_KEY).toMatch(/^[0-9a-f]{64}$/);
+      expect(ALICE_KEY).not.toBe(BOB_KEY);
+      expect(keyOf(ALICE)).toBe(ALICE_KEY);
+      expect(ALICE_KEY).not.toBe('unidentified');
+    });
+  });
+
+  describe('startSession', () => {
+    it("files each caller's session and daily quota under that caller's own key, never under 'unidentified'", async () => {
+      const store = mockStore();
+      const handlers = makeHandlers({ store, fetchImpl: visitorFetch(), clock: () => NOW });
+
+      const alice = parsed(await startAs(handlers, ALICE));
+      const bob = parsed(await startAs(handlers, BOB));
+
+      expect([alice.status, bob.status]).toEqual([201, 201]);
+      expect(alice.body.sessionId).not.toBe(bob.body.sessionId);
+      expect(store.get('lab_jobs', alice.body.sessionId).clientHash).toBe(ALICE_KEY);
+      expect(store.get('lab_jobs', bob.body.sessionId).clientHash).toBe(BOB_KEY);
+      // One counter each, named for the hash; nothing shared.
+      expect(store.get('submission_quota', `visitor-quota:${ALICE_KEY}:${DAY}`)).toMatchObject({ count: 1 });
+      expect(store.get('submission_quota', `visitor-quota:${BOB_KEY}:${DAY}`)).toMatchObject({ count: 1 });
+      const quotaIds = [...store.docs.keys()].filter((key) => key.startsWith('submission_quota/'));
+      expect(quotaIds.some((key) => key.includes('unidentified'))).toBe(false);
+      expect(quotaIds).toHaveLength(2);
+    });
+
+    it('counts a daily quota per caller: one who has used it is refused and the other is not', async () => {
+      const store = mockStore();
+      await store.createDoc('submission_quota', {
+        id: `visitor-quota:${ALICE_KEY}:${DAY}`,
+        kind: 'visitor_session_daily',
+        count: 2,
+      });
+      const fetchImpl = visitorFetch();
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
+
+      const alice = parsed(await startAs(handlers, ALICE));
+      const bob = parsed(await startAs(handlers, BOB));
+
+      expect(alice.status).toBe(429);
+      expect(alice.body.code).toBe(DOOR_CODES.client_rate_limited);
+      expect(bob.status).toBe(201);
+      // Coder was called for Bob only: a user and a workspace, once.
+      expect(coderCallsOf(fetchImpl)).toEqual(['POST /api/v2/users', expect.stringMatching(/^POST .*workspaces$/)]);
+    });
+
+    it("uses up a caller's two sessions a day through the route, and still serves the other caller", async () => {
+      const store = mockStore();
+      const handlers = makeHandlers({ store, fetchImpl: visitorFetch(), clock: () => NOW });
+
+      const first = parsed(await startAs(handlers, ALICE));
+      const second = parsed(await startAs(handlers, ALICE));
+      const third = parsed(await startAs(handlers, ALICE));
+      const bob = parsed(await startAs(handlers, BOB));
+
+      expect([first.status, second.status, third.status, bob.status]).toEqual([201, 200, 429, 201]);
+      // The second request was Alice's own session handed back, not a new one.
+      expect(second.body.sessionId).toBe(first.body.sessionId);
+    });
+
+    it("gives Cloudflare's Turnstile the caller's own address, not nothing", async () => {
+      const fetchImpl = visitorFetch();
+      const handlers = makeHandlers({ store: mockStore(), fetchImpl, clock: () => NOW });
+
+      await startAs(handlers, ALICE);
+      await startAs(handlers, BOB);
+
+      expect(fetchImpl.siteverify.map((form) => form.get('remoteip'))).toEqual([ALICE, BOB]);
+    });
+
+    it('refuses with 403 before any other work when the request did not come through our Cloudflare', async () => {
+      const store = mockStore();
+      const fetchImpl = visitorFetch();
+      const context = { warn: vi.fn(), error: vi.fn() };
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
+      // Reaches the Function directly with an address of its choosing, and without the origin secret.
+      const forged = {
+        headers: new Headers({ origin: SITE, 'cf-connecting-ip': '198.51.100.99' }),
+        json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
+      };
+
+      const refused = parsed(await handlers.startSession(forged, context));
+
+      expect(refused.status).toBe(403);
+      expect(refused.body).toEqual({ ok: false, code: 'FORBIDDEN', error: 'Forbidden' });
+      expect(fetchImpl).not.toHaveBeenCalled(); // no Turnstile, no Coder
+      expect(store.docs.size).toBe(0); // no quota counter, no session
+      expect(store.queryDocs).not.toHaveBeenCalled();
+      expect(context.warn).toHaveBeenCalledTimes(1);
+      expect(context.warn.mock.calls[0][0]).not.toMatch(/198\.51\.100\.99|203\.0\.113/);
+    });
+
+    it('refuses a request that presents the wrong origin secret', async () => {
+      const store = mockStore();
+      const fetchImpl = visitorFetch();
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
+      const wrong = {
+        headers: fromCaller(ALICE, { origin: SITE, 'x-hcw-origin-secret': 'not-the-secret' }),
+        json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }),
+      };
+
+      expect((await handlers.startSession(wrong)).status).toBe(403);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.docs.size).toBe(0);
+    });
+
+    it('lets a TypeError from the helper through, rather than answering "Forbidden" for a call that cannot be made', async () => {
+      const broken = {
+        anonymousKey: () => {
+          throw new TypeError('x is not a function');
+        },
+        trustedClientIp: () => null,
+      };
+      const handlers = makeHandlers({ identity: broken, store: mockStore(), fetchImpl: visitorFetch(), clock: () => NOW });
+
+      await expect(startAs(handlers, ALICE)).rejects.toThrow(TypeError);
+    });
+  });
+
+  describe('getStatus', () => {
+    it("describes a caller's own session to that caller and to nobody else", async () => {
+      const store = mockStore();
+      const handlers = makeHandlers({ store, fetchImpl: visitorFetch(), clock: () => NOW });
+      const started = parsed(await startAs(handlers, ALICE)).body;
+
+      const alice = parsed(await statusAs(handlers, ALICE));
+      const bob = parsed(await statusAs(handlers, BOB));
+
+      expect(alice.body.code).toBe(DOOR_CODES.active_session_exists);
+      expect(alice.body.session).toMatchObject({ id: started.sessionId, accessUrl: started.accessUrl });
+      expect(bob.body.session).toBeNull();
+      expect(bob.body.code).toBe('OPEN');
+      // Nothing of Alice's session is anywhere in what Bob was sent.
+      const bobsAnswer = JSON.stringify(bob.body);
+      expect(bobsAnswer).not.toContain(started.sessionId);
+      expect(bobsAnswer).not.toContain(started.accessUrl);
+      // Bob can still be told the lab is busy: a count, not a session.
+      expect(bob.body.bounds.activeCount).toBe(1);
+    });
+
+    it("does not describe a session filed under 'unidentified' (made before this fix) to anyone", async () => {
+      const store = mockStore([
+        {
+          id: 'sess-legacy',
+          type: 'visitor-session',
+          status: 'active',
+          clientHash: 'unidentified',
+          labId: 'landing-zone-builder-output',
+          accessUrl: 'https://code-server--lab-lzb--v-legacy.coder.lab.hybridcloudworks.com/',
+          expiresAt: new Date(NOW + 30 * 60 * 1000).toISOString(),
+        },
+      ]);
+      const handlers = makeHandlers({ store, clock: () => NOW });
+
+      const answer = parsed(await statusAs(handlers, ALICE));
+
+      expect(answer.body.session).toBeNull();
+      expect(JSON.stringify(answer.body)).not.toContain('sess-legacy');
+    });
+
+    it('refuses with 403, reading nothing, when the request did not come through our Cloudflare', async () => {
+      const store = mockStore([activeSession('sess-1')]);
+      const context = { warn: vi.fn() };
+      const handlers = makeHandlers({ store, clock: () => NOW });
+
+      const answer = parsed(await handlers.getStatus({ headers: new Headers({ 'cf-connecting-ip': ALICE }) }, context));
+
+      expect(answer.status).toBe(403);
+      expect(answer.body).toEqual({ ok: false, code: 'FORBIDDEN', error: 'Forbidden' });
+      expect(store.queryDocs).not.toHaveBeenCalled();
+      expect(JSON.stringify(answer.body)).not.toContain('sess-1');
+    });
+  });
+
+  describe('stopSession', () => {
+    it("does not end another caller's session, even holding its id, and answers as for an id that does not exist", async () => {
+      const store = mockStore();
+      const fetchImpl = visitorFetch();
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
+      const { sessionId } = parsed(await startAs(handlers, ALICE)).body;
+      fetchImpl.mockClear();
+
+      const bobTries = await handlers.stopSession(stopRequest(sessionId, BOB));
+      const nobody = await handlers.stopSession(stopRequest('an-id-that-never-existed', BOB));
+
+      expect(bobTries.status).toBe(404);
+      // Byte for byte the answer for an id that was never a session: no hint that this one is live.
+      expect(bobTries.body).toBe(nobody.body);
+      expect(fetchImpl).not.toHaveBeenCalled(); // nothing deleted in Coder
+      expect(store.get('lab_jobs', sessionId)).toMatchObject({ status: 'active', clientHash: ALICE_KEY });
+      expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
+    });
+
+    it('ends the session for the caller it belongs to, after the other caller was turned away', async () => {
+      const store = mockStore();
+      const fetchImpl = visitorFetch();
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
+      const { sessionId } = parsed(await startAs(handlers, ALICE)).body;
+      await handlers.stopSession(stopRequest(sessionId, BOB));
+      fetchImpl.mockClear();
+
+      const alice = parsed(await handlers.stopSession(stopRequest(sessionId, ALICE)));
+
+      expect(alice).toEqual({ status: 200, body: { ok: true, status: 'ended' } });
+      expect(store.get('lab_jobs', sessionId).status).toBe('ended');
+      expect(coderCallsOf(fetchImpl)).toEqual([
+        expect.stringMatching(/^POST .*\/builds$/),
+        expect.stringMatching(/^DELETE .*\/users\//),
+      ]);
+    });
+
+    it('keeps two callers apart end to end: each starts, reads and ends only their own session', async () => {
+      const store = mockStore();
+      const handlers = makeHandlers({ store, fetchImpl: visitorFetch(), clock: () => NOW });
+      const alice = parsed(await startAs(handlers, ALICE)).body;
+      const bob = parsed(await startAs(handlers, BOB)).body;
+
+      expect(parsed(await statusAs(handlers, ALICE)).body.session.id).toBe(alice.sessionId);
+      expect(parsed(await statusAs(handlers, BOB)).body.session.id).toBe(bob.sessionId);
+      expect((await handlers.stopSession(stopRequest(alice.sessionId, BOB))).status).toBe(404);
+      expect((await handlers.stopSession(stopRequest(bob.sessionId, ALICE))).status).toBe(404);
+      expect((await handlers.stopSession(stopRequest(bob.sessionId, BOB))).status).toBe(200);
+
+      expect(store.get('lab_jobs', alice.sessionId).status).toBe('active');
+      expect(store.get('lab_jobs', bob.sessionId).status).toBe('ended');
+    });
+
+    it("cannot be used to end a session filed under 'unidentified' (made before this fix)", async () => {
+      const store = mockStore([activeSession('sess-legacy', { clientHash: 'unidentified' })]);
+      const fetchImpl = visitorFetch();
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
+
+      expect((await handlers.stopSession(stopRequest('sess-legacy', ALICE))).status).toBe(404);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'sess-legacy').status).toBe('active');
+    });
+
+    it('refuses with 403, reading nothing and deleting nothing, when the request did not come through our Cloudflare', async () => {
+      const store = mockStore([activeSession('sess-1')]);
+      const fetchImpl = visitorFetch();
+      const context = { warn: vi.fn() };
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
+      const direct = {
+        url: stopRequest('sess-1').url,
+        headers: new Headers({ 'cf-connecting-ip': ALICE }),
+      };
+
+      const answer = parsed(await handlers.stopSession(direct, context));
+
+      expect(answer.status).toBe(403);
+      expect(store.readDoc).not.toHaveBeenCalled();
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('active');
+      expect(context.warn.mock.calls[0][0]).not.toContain('sess-1');
+    });
+  });
+
+  describe('a caller that cannot be identified', () => {
+    // The request proves it came through our Cloudflare (the origin secret is there) but the client
+    // address is missing or is not an address. The helper would hash that into one shared "unknown"
+    // bucket, which is fine for a rate limit and wrong for who owns a session.
+    const noUsableAddress = [
+      ['no CF-Connecting-IP header', { 'x-hcw-origin-secret': ORIGIN_SECRET }],
+      ['a CF-Connecting-IP that is not an address', { 'x-hcw-origin-secret': ORIGIN_SECRET, 'cf-connecting-ip': 'garbage' }],
+      ['a CF-Connecting-IP that is out of range', { 'x-hcw-origin-secret': ORIGIN_SECRET, 'cf-connecting-ip': '999.1.1.1' }],
+    ];
+
+    it.each(noUsableAddress)('is refused on all three routes, reading nothing, with %s', async (_name, headers) => {
+      const store = mockStore([activeSession('sess-1')]);
+      const fetchImpl = visitorFetch();
+      const context = { warn: vi.fn() };
+      const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
+      const send = new Headers({ origin: SITE, ...headers });
+
+      const start = await handlers.startSession(
+        { headers: send, json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }) },
+        context
+      );
+      const status = await handlers.getStatus({ headers: send }, context);
+      const stop = await handlers.stopSession({ url: stopRequest('sess-1').url, headers: send }, context);
+
+      expect([start.status, status.status, stop.status]).toEqual([403, 403, 403]);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.queryDocs).not.toHaveBeenCalled();
+      expect(store.readDoc).not.toHaveBeenCalled();
+      expect(store.docs.size).toBe(1); // the session it was given, nothing added
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('active');
+      // Content-free, on every route.
+      expect(context.warn).toHaveBeenCalledTimes(3);
+      for (const [line] of context.warn.mock.calls) expect(line).not.toMatch(/sess-1|garbage|999|203\.0\.113/);
+    });
+
+    it('does not become one visitor: callers without an address cannot read or end a real caller\'s session', async () => {
+      const store = mockStore();
+      const handlers = makeHandlers({ store, fetchImpl: visitorFetch(), clock: () => NOW });
+      const { sessionId, accessUrl } = parsed(await startAs(handlers, ALICE)).body;
+      const nobody = new Headers({ 'x-hcw-origin-secret': ORIGIN_SECRET });
+
+      const status = await handlers.getStatus({ headers: nobody });
+      const stop = await handlers.stopSession({ url: stopRequest(sessionId).url, headers: nobody });
+
+      expect([status.status, stop.status]).toEqual([403, 403]);
+      expect(status.body + stop.body).not.toContain(sessionId);
+      expect(status.body + stop.body).not.toContain(accessUrl);
+      expect(store.get('lab_jobs', sessionId).status).toBe('active');
+    });
+
+    it('is let through in dev, where the helper allows an unverified origin and no address is trusted', async () => {
+      const dev = createClientIdentity({ ipSalt: IP_SALT, allowUnverifiedOrigin: true });
+      const handlers = makeHandlers({ identity: dev, store: mockStore(), fetchImpl: visitorFetch(), clock: () => NOW });
+
+      expect((await handlers.getStatus({ headers: new Headers() })).status).toBe(200);
+    });
+
+    it('lets an error that is not the helper\'s refusal through, instead of answering "Forbidden"', async () => {
+      const failing = {
+        anonymousKey: () => {
+          throw new RangeError('a bug in the helper');
+        },
+        trustedClientIp: () => null,
+      };
+      const handlers = makeHandlers({ identity: failing, store: mockStore(), fetchImpl: visitorFetch(), clock: () => NOW });
+
+      await expect(statusAs(handlers, ALICE)).rejects.toThrow(RangeError);
+    });
+  });
+
+  describe('the stored record and the id are not trusted', () => {
+    it('answers 200 with no session, not an error, for a stored hash of multibyte characters as long as a real one', async () => {
+      // Sixty-four characters but more than sixty-four bytes: timingSafeEqual throws on unequal byte lengths.
+      const odd = activeSession('sess-odd', { clientHash: 'é'.repeat(64) });
+      const store = mockStore([odd]);
+      const handlers = makeHandlers({ store, clock: () => NOW });
+
+      const status = parsed(await statusAs(handlers, ALICE));
+      const stop = await handlers.stopSession(stopRequest('sess-odd', ALICE));
+
+      expect(status.status).toBe(200);
+      expect(status.body.session).toBeNull();
+      expect(stop.status).toBe(404);
+    });
+
+    it('answers 404 to text that cannot be a session id, with the same body and without reading the store', async () => {
+      const store = mockStore([activeSession('sess-1')]);
+      const handlers = makeHandlers({ store, clock: () => NOW });
+      const unknown = await handlers.stopSession(stopRequest('an-id-that-never-existed'));
+      store.readDoc.mockClear();
+
+      for (const odd of ['a%2Fb', 'x'.repeat(65), 'a%20b', '..%2F..']) {
+        const res = await handlers.stopSession(stopRequest(odd));
+        expect(res.status).toBe(404);
+        expect(res.body).toBe(unknown.body);
+      }
+      expect(store.readDoc).not.toHaveBeenCalled();
+    });
+
+    it("tells another caller nothing about a session that is already over: 404, as for an id that never existed", async () => {
+      const store = mockStore();
+      const handlers = makeHandlers({ store, fetchImpl: visitorFetch(), clock: () => NOW });
+      const { sessionId } = parsed(await startAs(handlers, ALICE)).body;
+      await handlers.stopSession(stopRequest(sessionId, ALICE));
+      expect(store.get('lab_jobs', sessionId).status).toBe('ended');
+
+      const bob = await handlers.stopSession(stopRequest(sessionId, BOB));
+      const nobody = await handlers.stopSession(stopRequest('an-id-that-never-existed', BOB));
+      const alice = await handlers.stopSession(stopRequest(sessionId, ALICE));
+
+      expect(bob.status).toBe(404);
+      expect(bob.body).toBe(nobody.body);
+      // The owner asking again still gets the quiet success a double click needs.
+      expect(alice.status).toBe(200);
+    });
+  });
+
+  describe('whatever the code calls the identity, it only uses what the real helper has', () => {
+    /** The real helper, wrapped so that reading anything it does not have throws. */
+    function strictIdentity() {
+      const real = realIdentity();
+      const reads = [];
+      const strict = new Proxy(real, {
+        get(target, name) {
+          reads.push(String(name));
+          if (!(name in target)) throw new TypeError(`the real client identity has no ${String(name)}`);
+          return target[name];
+        },
+      });
+      return { strict, reads };
+    }
+
+    it('runs a start, a status read and a stop on it, reading only methods the real helper has', async () => {
+      const { strict, reads } = strictIdentity();
+      const handlers = makeHandlers({ identity: strict, store: mockStore(), fetchImpl: visitorFetch(), clock: () => NOW });
+
+      const started = parsed(await startAs(handlers, ALICE));
+      const status = parsed(await statusAs(handlers, ALICE));
+      const stopped = parsed(await handlers.stopSession(stopRequest(started.body.sessionId, ALICE)));
+
+      expect([started.status, status.status, stopped.status]).toEqual([201, 200, 200]);
+      expect(status.body.session.id).toBe(started.body.sessionId);
+      expect(new Set(reads)).toEqual(new Set(['anonymousKey', 'trustedClientIp']));
+    });
+
+    it('fails on the same wrapper when the code reaches for a method the helper lacks (the old fromRequest)', () => {
+      const { strict } = strictIdentity();
+      expect(() => strict.fromRequest).toThrow(/has no fromRequest/);
     });
   });
 });

@@ -32,6 +32,13 @@
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 
+/**
+ * The `code` on the error `anonymousKey` throws when it fails closed. A caller
+ * that wants to answer that refusal, and let any other error (a bug) through,
+ * checks for it (#1387).
+ */
+export const ORIGIN_NOT_VERIFIED = 'ORIGIN_NOT_VERIFIED';
+
 /** Header Cloudflare sets to the true client address. */
 const CF_CLIENT_IP_HEADER = 'cf-connecting-ip';
 
@@ -135,6 +142,33 @@ export function resolvedSetting(value) {
 }
 
 /**
+ * Refuse, when a handler set is built, an identity object that lacks a method
+ * the handlers will call (#1387).
+ *
+ * The visitor lab sessions asked this helper for a `fromRequest` method it has
+ * never had, so in production every visitor was the same person; the unit
+ * tests passed because their hand-written identity had that method. A handler
+ * that checks the object it is given when the handlers are built fails then
+ * (in the Functions app that is the first request, which builds them lazily),
+ * and on every test that gives it a fake, instead of on the first visitor's
+ * quota. It checks the names only, not what each method returns. The message
+ * names the missing methods and no value.
+ *
+ * @param {unknown} identity
+ * @param {string[]} [required] the methods the caller will use
+ * @throws {TypeError} when any is not a function
+ */
+export function assertClientIdentity(identity, required = ['anonymousKey', 'trustedClientIp']) {
+  const missing = required.filter((name) => typeof identity?.[name] !== 'function');
+  if (missing.length > 0) {
+    throw new TypeError(
+      `The client identity given has no ${missing.join(' or ')} method. ` +
+        'Pass createClientIdentity() from auth/client-identity.js, not a stand-in.'
+    );
+  }
+}
+
+/**
  * @param {object} [options]
  * @param {string} [options.originSecret] Expected shared secret. When set, a
  *   request without it is treated as bypassing Cloudflare.
@@ -172,9 +206,9 @@ export function createClientIdentity({
      * header's text, because without the secret that header is whatever the
      * caller chose to send.
      *
-     * For one consumer, the public lab submission's Turnstile check
-     * (lib/labs/public-lock.js), which passes it to Cloudflare's siteverify as
-     * `remoteip`. That field is optional, so null means "omit it", which is
+     * For two consumers, the public lab submission and the visitor lab
+     * sessions, each passing it to Turnstile's check (lib/labs/public-lock.js),
+     * which hands it to Cloudflare's siteverify as `remoteip`. That field is optional, so null means "omit it", which is
      * what the dev escape hatch below gets. Never stored and never logged: the
      * hash from `anonymousKey` is what the quotas count.
      *
@@ -206,10 +240,13 @@ export function createClientIdentity({
         // Fail closed. Rate limiting on a spoofable identifier is not rate
         // limiting, and silently degrading to one is how a limiter becomes
         // decorative.
-        throw new Error(
-          'Refusing to rate-limit on an unverified origin: the request did not present ' +
-            'the Cloudflare shared secret. Lock the origin (ip_restriction / Authenticated ' +
-            'Origin Pulls) and set CF_ORIGIN_SECRET.'
+        throw Object.assign(
+          new Error(
+            'Refusing to rate-limit on an unverified origin: the request did not present ' +
+              'the Cloudflare shared secret. Lock the origin (ip_restriction / Authenticated ' +
+              'Origin Pulls) and set CF_ORIGIN_SECRET.'
+          ),
+          { code: ORIGIN_NOT_VERIFIED }
         );
       }
 

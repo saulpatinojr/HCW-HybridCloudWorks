@@ -17,7 +17,12 @@
  * hex strings would pass just as happily with the salt dropped.
  */
 import { describe, it, expect } from 'vitest';
-import { createClientIdentity, normalizeClientIp } from './client-identity.js';
+import {
+  ORIGIN_NOT_VERIFIED,
+  assertClientIdentity,
+  createClientIdentity,
+  normalizeClientIp,
+} from './client-identity.js';
 
 const SECRET = 'origin-secret';
 
@@ -223,5 +228,53 @@ describe('trustedClientIp', () => {
   it('returns null for a header that is not an address', () => {
     expect(identity().trustedClientIp(fromCloudflare('not-an-ip'))).toBeNull();
     expect(identity().trustedClientIp(fromCloudflare(''))).toBeNull();
+  });
+});
+
+describe('the refusal anonymousKey throws (#1387)', () => {
+  it('carries a code, so a caller can answer it and let a bug through', () => {
+    let error;
+    try {
+      createClientIdentity({ originSecret: SECRET, allowUnverifiedOrigin: false }).anonymousKey(makeRequest({}));
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect(error.code).toBe(ORIGIN_NOT_VERIFIED);
+    expect(ORIGIN_NOT_VERIFIED).toBe('ORIGIN_NOT_VERIFIED');
+  });
+});
+
+describe('assertClientIdentity (#1387)', () => {
+  it('accepts the real helper', () => {
+    expect(() => assertClientIdentity(createClientIdentity({ originSecret: SECRET }))).not.toThrow();
+  });
+
+  it('refuses an object with only the method the visitor sessions used to ask for', () => {
+    const standIn = { fromRequest: () => ({ anonymousKey: () => 'k' }) };
+    expect(() => assertClientIdentity(standIn)).toThrow(TypeError);
+    expect(() => assertClientIdentity(standIn)).toThrow(/anonymousKey or trustedClientIp/);
+  });
+
+  it('names only the methods that are missing, and no value', () => {
+    expect(() => assertClientIdentity({ anonymousKey: () => ({ key: 'secret-value' }) })).toThrow(/has no trustedClientIp method/);
+    let message;
+    try {
+      assertClientIdentity({ anonymousKey: 'secret-value' });
+    } catch (error) {
+      message = error.message;
+    }
+    expect(message).toMatch(/anonymousKey or trustedClientIp/);
+    expect(message).not.toContain('secret-value');
+  });
+
+  it('refuses nothing at all, null and undefined', () => {
+    expect(() => assertClientIdentity(undefined)).toThrow(TypeError);
+    expect(() => assertClientIdentity(null)).toThrow(TypeError);
+  });
+
+  it('checks the methods it is told to', () => {
+    expect(() => assertClientIdentity({ viaCloudflare: () => true }, ['viaCloudflare'])).not.toThrow();
+    expect(() => assertClientIdentity({}, ['viaCloudflare'])).toThrow(/viaCloudflare/);
   });
 });

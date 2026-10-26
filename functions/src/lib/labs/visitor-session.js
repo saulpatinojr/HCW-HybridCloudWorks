@@ -14,10 +14,24 @@
  * The site acts as broker, creating ephemeral per-session Coder users
  * (v-<random>) and workspaces, enforcing strict concurrency caps, Turnstile/origin
  * verification, daily quotas, and automated session reaping.
+ *
+ * WHO IS CALLING (#1387). Every route here is anonymous, so a session belongs
+ * to the hashed Cloudflare-verified address the client identity helper
+ * (auth/client-identity.js) gives, the same one the other anonymous routes use.
+ * The start route files its daily quota and the new session under that hash,
+ * and gives Turnstile the trusted address. The status route answers with the
+ * caller's own session only, and the stop route ends a session only for the
+ * caller it belongs to; any other caller is told the session is not found, the
+ * same answer as an id that never existed. When the origin cannot be proved to
+ * be our Cloudflare, the helper refuses and so do these routes (403
+ * FORBIDDEN, before any read, write or call to Turnstile or Coder): a quota
+ * counted on an address the caller can choose is not a quota. People behind
+ * one shared network address count as one visitor, as they do for every other
+ * anonymous quota here.
  */
 
-import { randomBytes, randomUUID } from 'node:crypto';
-import { resolvedSetting } from '../auth/client-identity.js';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { ORIGIN_NOT_VERIFIED, assertClientIdentity, resolvedSetting } from '../auth/client-identity.js';
 import { isSiteOrigin, turnstileConfigured, turnstileSecret, verifyTurnstileToken, VISITOR_TURNSTILE_ACTION } from './public-lock.js';
 import { utcDay } from '../cloud-tools/history.js';
 import { takeDailyCap } from '../daily-cap.js';
@@ -383,6 +397,62 @@ export async function reapExpiredVisitorSessions(
   return { reaped, failed };
 }
 
+/**
+ * Who is calling: the hashed key their sessions and daily quota are filed
+ * under, and the address Cloudflare's Turnstile is given.
+ *
+ * Both come from the real client identity helper, as public-submit.js reads
+ * them. Two cases are refused, with a log line that names nothing:
+ *  - `anonymousKey` throws ORIGIN_NOT_VERIFIED when the request cannot be shown
+ *    to have come through our Cloudflare (and we are not in dev): the helper
+ *    failing closed.
+ *  - The request did present the Cloudflare secret but carries no usable
+ *    client address (`trustedClientIp` is null). The helper would hash that to
+ *    one shared "unknown" bucket, which is right for a rate limit and wrong
+ *    for who owns a session: every such caller would read and end each
+ *    other's, the old shared-"unidentified" fault under a new name.
+ * Any other error is not a refusal but a bug (a TypeError from a method the
+ * helper does not have is the very mistake in #1387), so it is thrown on,
+ * where it shows up as a server error instead of a quiet "Forbidden".
+ *
+ * @param {{ anonymousKey: Function, trustedClientIp: Function }} identity
+ * @param {object} request
+ * @param {{ warn?: Function } | undefined} context
+ * @returns {{ clientHash: string, clientIp: string | null } | null} null when refused
+ */
+function identifyCaller(identity, request, context) {
+  const refused = () => {
+    context?.warn?.('visitor-session: refused a request whose caller could not be verified');
+    return null;
+  };
+  let key;
+  try {
+    key = identity.anonymousKey(request);
+  } catch (error) {
+    if (error?.code !== ORIGIN_NOT_VERIFIED) throw error;
+    return refused();
+  }
+  const clientIp = identity.trustedClientIp(request);
+  if (key.trusted && clientIp === null) return refused();
+  return { clientHash: key.key, clientIp };
+}
+
+/**
+ * Do two client hashes name the same caller? Compared in constant time, on
+ * their bytes: a stored value with multibyte characters has as many characters
+ * as a hash and a different number of bytes, which timingSafeEqual refuses by
+ * throwing, so the lengths are compared on the bytes first.
+ */
+function sameClient(stored, presented) {
+  if (typeof stored !== 'string' || typeof presented !== 'string' || stored === '') return false;
+  const storedBytes = Buffer.from(stored);
+  const presentedBytes = Buffer.from(presented);
+  return storedBytes.length === presentedBytes.length && timingSafeEqual(storedBytes, presentedBytes);
+}
+
+/** What a session id looks like (a UUID today). Anything else cannot be one. */
+const SESSION_ID_SHAPE = /^[A-Za-z0-9_.-]{1,64}$/;
+
 export function createVisitorSessionHandlers({
   store,
   identity,
@@ -390,6 +460,9 @@ export function createVisitorSessionHandlers({
   limiter = null,
   clock = () => Date.now(),
 }) {
+  // Not a stand-in: see assertClientIdentity (#1387).
+  assertClientIdentity(identity);
+
   const jsonResponse = (body, status = 200, headers = {}) => ({
     status,
     headers: {
@@ -399,6 +472,9 @@ export function createVisitorSessionHandlers({
     },
     body: JSON.stringify(body),
   });
+
+  // The same body public-submit.js gives an origin it cannot verify.
+  const forbidden = () => jsonResponse({ ok: false, code: 'FORBIDDEN', error: 'Forbidden' }, 403);
 
   return {
     async getStatus(request, context) {
@@ -429,8 +505,9 @@ export function createVisitorSessionHandlers({
         });
       }
 
-      const client = identity?.fromRequest ? identity.fromRequest(request) : null;
-      const clientHash = client?.anonymousKey ? client.anonymousKey() : 'unidentified';
+      const caller = identifyCaller(identity, request, context);
+      if (!caller) return forbidden();
+      const { clientHash } = caller;
       const nowMs = clock();
       const nowIso = new Date(nowMs).toISOString();
 
@@ -464,7 +541,9 @@ export function createVisitorSessionHandlers({
 
       // Filter unexpired active sessions
       const liveSessions = activeSessions.filter((s) => s.expiresAt > nowIso);
-      const myActiveSession = liveSessions.find((s) => s.clientHash === clientHash);
+      // Only the caller's own session is ever described: its id and address
+      // are what ends it or opens it, so they are not handed to anyone else.
+      const myActiveSession = liveSessions.find((s) => sameClient(s.clientHash, clientHash));
 
       const maxConcurrent = readVisitorMaxConcurrent(env);
       const capacityReached = liveSessions.length >= maxConcurrent;
@@ -561,9 +640,9 @@ export function createVisitorSessionHandlers({
         }, 403);
       }
 
-      const client = identity?.fromRequest ? identity.fromRequest(request) : null;
-      const clientHash = client?.anonymousKey ? client.anonymousKey() : 'unidentified';
-      const clientIp = client?.trustedClientIp ? client.trustedClientIp() : null;
+      const caller = identifyCaller(identity, request, context);
+      if (!caller) return forbidden();
+      const { clientHash, clientIp } = caller;
       const nowMs = clock();
       const nowIso = new Date(nowMs).toISOString();
 
@@ -625,7 +704,7 @@ export function createVisitorSessionHandlers({
       }
 
       const liveSessions = activeSessions.filter((s) => s.expiresAt > nowIso);
-      const existing = liveSessions.find((s) => s.clientHash === clientHash);
+      const existing = liveSessions.find((s) => sameClient(s.clientHash, clientHash));
       if (existing) {
         return jsonResponse({
           ok: true,
@@ -721,9 +800,19 @@ export function createVisitorSessionHandlers({
         return jsonResponse({ ok: false, error: 'sessionId parameter required' }, 400);
       }
 
+      const caller = identifyCaller(identity, request, context);
+      if (!caller) return forbidden();
+
+      // Someone else's session, a record that is not a visitor session, an id
+      // that does not exist and text that cannot be an id all get the one
+      // answer, so the route does not tell a caller which ids are live.
+      // Holding the id is not enough to end it. The owner is checked before the
+      // status, so a session that is already over is not revealed either.
+      const notFound = () => jsonResponse({ ok: false, error: 'Session not found' }, 404);
+      if (!SESSION_ID_SHAPE.test(sessionId)) return notFound();
       const doc = await store.readDoc(SESSION_CONTAINER, sessionId, sessionId);
-      if (!doc || doc.type !== VISITOR_JOB_TYPE) {
-        return jsonResponse({ ok: false, error: 'Session not found' }, 404);
+      if (!doc || doc.type !== VISITOR_JOB_TYPE || !sameClient(doc.clientHash, caller.clientHash)) {
+        return notFound();
       }
 
       // Already ended, or expired by the reaper: whoever finished it did the
