@@ -10,9 +10,8 @@ export const meaningfulTerms = (value) =>
 function evidenceKey(item) {
   if (item.type !== 'reference') return item.id;
   const title = item.title.trim().toLowerCase().replace(/\s+/g, ' ');
-  if (['recordings', 'podcast_transcripts'].includes(item.source?.container))
-    return `recording/${title}`;
-  return `reference/${digest(`${title}/${item.body.trim()}`)}`;
+  if (item.source?.recordingId) return `recording/${item.source.recordingId}`;
+  return `reference/${digest(`${title}/${item.body.trim()}/${item.summary || ''}`)}`;
 }
 function unique(items) {
   const seen = new Set();

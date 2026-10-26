@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { retrieveEvidence } from './retrieval.js';
 import { askBrain } from './assistant.js';
+import { referenceOf } from './sources.js';
 const item = (id, title = 'Docker release candidate', fields = {}) => ({
   id,
   title,
@@ -83,11 +84,11 @@ describe('focused brain evidence retrieval', () => {
   it('deduplicates recording copies and exact reference copies while retaining distinct private notes', async () => {
     const a = item('recording-a', 'Docker release meeting', {
       type: 'reference',
-      source: { container: 'recordings' },
+      source: { container: 'recordings', recordingId: 'meeting-1' },
     });
     const b = item('recording-b', 'Docker release meeting', {
       type: 'reference',
-      source: { container: 'podcast_transcripts' },
+      source: { container: 'podcast_transcripts', recordingId: 'meeting-1' },
       body: 'Another transcript of the meeting',
     });
     const ref = item('content-a', 'Docker guide', { type: 'reference' });
@@ -126,6 +127,36 @@ describe('focused brain evidence retrieval', () => {
     expect(search).toHaveBeenCalledTimes(3);
     expect(result.selected).toHaveLength(8);
     expect(result.partial).toBe(true);
+  });
+  it('retains different meetings with the same title and identifies associated transcript copies by recording id', async () => {
+    const recording = referenceOf('recordings', {
+      id: 'meeting-a',
+      title: 'Docker weekly meeting',
+      transcriptText: 'Docker release validation.',
+    });
+    const transcript = referenceOf('podcast_transcripts', {
+      id: 'transcript-a',
+      recordingId: 'meeting-a',
+      title: 'Docker weekly meeting',
+      transcriptText: 'Docker release validation transcript.',
+    });
+    const laterMeeting = referenceOf('recordings', {
+      id: 'meeting-b',
+      title: 'Docker weekly meeting',
+      transcriptText: 'Docker image signing.',
+    });
+    const sources = {
+      search: async () => ({
+        items: [recording, transcript, laterMeeting],
+        cursor: null,
+      }),
+    };
+    const result = await retrieve(sources, { question: 'Docker' });
+    expect(result.selected.map((r) => r.id)).toEqual([
+      recording.id,
+      laterMeeting.id,
+    ]);
+    expect(transcript.source.recordingId).toBe(recording.source.recordingId);
   });
   it('rejects unavailable context and retrieval timeout without calling search', async () => {
     await expect(
