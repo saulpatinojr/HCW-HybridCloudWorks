@@ -98,6 +98,29 @@ function ReferencePreview({ item, backlinks, onSelect, onClose, onCapture }) {
   );
 }
 
+function WorkspaceUnavailable({ access }) {
+  return (
+    <div className="rounded-xl border p-8">
+      <h1 className="text-2xl font-semibold">Second Brain</h1>
+      <p className="mt-3">
+        This private workspace is unavailable for this account or has not been enabled.
+      </p>
+      {access.accountLabel && (
+        <p className="mt-2 text-sm text-muted-foreground">Signed in as {access.accountLabel}</p>
+      )}
+      {access.errorStatus === 401 && (
+        <p className="mt-2 text-sm">Your HCW website session needs to be renewed.</p>
+      )}
+      <Button className="mt-4 mr-4" variant="outline" onClick={access.refresh}>
+        Check access again
+      </Button>
+      <Link className="mt-4 inline-block underline" to="/admin">
+        Return to admin
+      </Link>
+    </div>
+  );
+}
+
 export default function SecondBrainPage() {
   const access = useBrainAccess();
   const [params, setParams] = useSearchParams();
@@ -273,18 +296,7 @@ export default function SecondBrainPage() {
   const mapNodes = graph.nodes.filter((n) => !mapFilter || n.type === mapFilter);
 
   if (access.loading) return <p role="status">Checking workspace access…</p>;
-  if (!access.enabled)
-    return (
-      <div className="rounded-xl border p-8">
-        <h1 className="text-2xl font-semibold">Second Brain</h1>
-        <p className="mt-3">
-          This private workspace is unavailable for this account or has not been enabled.
-        </p>
-        <Link className="mt-4 inline-block underline" to="/admin">
-          Return to admin
-        </Link>
-      </div>
-    );
+  if (!access.enabled) return <WorkspaceUnavailable access={access} />;
   return (
     <div className="max-w-[100rem] space-y-6">
       <header className="rounded-2xl border bg-gradient-to-br from-primary/10 via-background to-muted/40 p-6">
