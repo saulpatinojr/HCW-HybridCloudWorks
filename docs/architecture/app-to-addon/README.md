@@ -36,7 +36,7 @@ each pair's page on 2026-10-24.
 | Migration | yes (`vault_addon_migration_turnstile_secret`) | none (`AMO_WORKSPACE_PROVIDER` is `disabled`) | status route reading `ADDON_MIGRATION_URL` |
 | Network assessment | yes (`vault_addon_network_assessment_turnstile_secret`) | the lab host's Coder, to start a guided lab workspace (`CODER_URL`, template `na-guided-lab`) | status route reading `ADDON_NETWORK_ASSESSMENT_URL` |
 | Cloud assessment | yes (`vault_addon_cloud_assessment_turnstile_secret`) | none in its `group_vars` row | status route reading `ADDON_CLOUD_ASSESSMENT_URL` |
-| Cloud Crawler | yes (`vault_addon_cloud_crawler_turnstile_secret`, per the AddOn's ADR 0003; the owner states it is in the host's vault, unchecked by any session) | none; it is built never to reach Azure (its README) | status route reading `ADDON_CLOUD_CRAWLER_URL`, declared in `infra/functionapp.tf` since #1357 and applied by the owner's HCP Terraform run; a trusted-caller path for lab chat evidence is planned and not built |
+| Cloud Crawler | yes (`vault_addon_cloud_crawler_turnstile_secret`, per the AddOn's ADR 0003; the owner states it is in the host's vault, unchecked by any session) | none; it is built never to reach Azure (its README) | status route reading `ADDON_CLOUD_CRAWLER_URL`, declared in `infra/functionapp.tf` since #1357 and not applied yet (the owner's HCP Terraform run applies it after the pull request that declares it merges); a trusted-caller path for lab chat evidence is planned and not built |
 
 Each pair's page records what the App keeps, what the AddOn is, its origin,
 port, image and status on the site, and links the refactoring pull requests

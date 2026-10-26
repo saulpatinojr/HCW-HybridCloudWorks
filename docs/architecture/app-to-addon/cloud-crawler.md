@@ -20,7 +20,7 @@ network and cloud assessment rows were.
 | Lab host port | `18084` on `127.0.0.1` (the website's call, per the AddOn's ADR 0003; the next after the Cloud Assessor's 18083) |
 | Lab host row | in `lab-host/ansible/group_vars/all.yml` since #1357; **not run by the host yet**, so no container exists until the owner's playbook run ([the runbook's steps](../../runbooks/labs-host.md#cloud-crawler-the-host-steps)) |
 | Row status | `coming`; capabilities to be granted `downloads` and `clipboard-write`, not `navigate` (the AddOn's guide, read 2026-10-26: the pane saves and copies a report and never asks to navigate) |
-| Status proxy | `GET /api/public/addons/cloud-crawler/status`, reading `ADDON_CLOUD_CRAWLER_URL`, declared in `infra/functionapp.tf` since #1357 and applied by the owner's HCP Terraform run; until it applies the proxy answers `{ configured: false }` |
+| Status proxy | `GET /api/public/addons/cloud-crawler/status`, reading `ADDON_CLOUD_CRAWLER_URL`, declared in `infra/functionapp.tf` since #1357 and **not applied yet**: the owner's HCP Terraform run applies it after the pull request that declares it merges (the status read on 2026-10-26 answered `{ configured: false }`); until it applies the proxy answers `{ configured: false }` |
 | Settings prefix | `CC_` (the AddOn's `.env.example`) |
 | Vault key | `vault_addon_cloud_crawler_turnstile_secret` (the AddOn's ADR 0003); the owner states it is in the host's vault, which no session can check |
 | Pull requests | App: <https://github.com/saulpatinojr/HCW-CloudCrawler_App>; AddOn: <https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn> |

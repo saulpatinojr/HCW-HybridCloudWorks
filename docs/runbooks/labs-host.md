@@ -3356,14 +3356,20 @@ decrypts the vault on the host and prints only the key names, never a value
 (PowerShell):
 
 ```powershell
-ssh hcw-lab "sudo -n /usr/local/bin/ansible-vault view --vault-password-file /etc/hcw/ansible/vault-password /etc/hcw/ansible/vault.yml | grep -o '^vault_addon_[a-z_]*' | sort"
+ssh hcw-lab "set -o pipefail; sudo -n /usr/local/bin/ansible-vault view --vault-password-file /etc/hcw/ansible/vault-password /etc/hcw/ansible/vault.yml | grep -o '^vault_addon_[a-z_]*' | sort"; "exit code: $LASTEXITCODE"
 ```
 
-You should see four lines, in this order: `vault_addon_cloud_assessment_turnstile_secret`,
+The `set -o pipefail` makes the whole line fail if the vault cannot be read,
+and the last part prints how it ended. You should see four lines, in this order: `vault_addon_cloud_assessment_turnstile_secret`,
 `vault_addon_cloud_crawler_turnstile_secret`,
 `vault_addon_migration_turnstile_secret` and
-`vault_addon_network_assessment_turnstile_secret`. If the Cloud Crawler line
-is missing, put the key in:
+`vault_addon_network_assessment_turnstile_secret`, then `exit code: 0`. If you
+see an error message (for example `Decryption failed`), no lines at all, or
+any exit code other than 0, **stop**: the vault could not be read, so a line
+that is not there proves nothing. Do not set any key; post the whole output as
+a comment on [#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
+Only when the command ended cleanly (`exit code: 0`) and the Cloud Crawler line
+alone is missing, put the key in:
 
    1. Open the widget's page, <https://dash.cloudflare.com/?to=/:account/turnstile>,
       choose the widget `HCW-CloudCrawler_AddOn`, then **Settings**, and copy
@@ -3483,15 +3489,28 @@ does a visitor see the tool at <https://hybridcloudworks.com/tools/cloud-crawler
 
 **Not checked by any session before this section was written:** that the vault
 key is on the host; that the container starts and the certificate answers for
-the name; that the secret in the vault is the right one for this widget (the
+the name; and that the secret in the vault is the right one for this widget (the
 role only checks that it is not empty, and none of the checks above does a
 human-verified upload, so a wrong secret would pass all of them and fail the
 first real visitor; the second pull request's acceptance includes one real
-upload); and that the host has memory for a fourth 512 MiB container beside five
-workspaces and Coder (4 x 512 + 5 x 2048 + 2560 = 14,848 MiB against about
-15,987 MiB, from the capacity figures in
-[the labs host architecture](../architecture/labs-host.md) and the `coder`
-role; to look, before and after the playbook, run `ssh hcw-lab "free -m"`).
+upload).
+
+**Host memory (read on 2026-10-26 over a read-only connection, nothing changed).**
+The host has 15,987 MiB, of which 1,577 MiB were used and 14,409 MiB were
+available, with no swap. The eight running containers used about 330 MiB
+together (each add-on 26 to 55 MiB against its 512 MiB limit; Coder 60 MiB;
+its database 62 MiB). The Cloud Crawler add-on peaked at 269 MiB with three
+maximum-size uploads at once in its own test (its pull request,
+[HCW-CloudCrawler_AddOn#23](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/pull/23)),
+against its 512 MiB limit. The worst case, where every limit is reached at the
+same moment (4 x 512 + 5 x 2048 + 2560 = 14,848 MiB of limits, from the capacity
+figures in [the labs host architecture](../architecture/labs-host.md) and the
+`coder` role), would leave 1,139 MiB for the system; that needs five
+workspaces at their 2 GiB limit and every add-on at its limit together and
+has not been seen. Before the playbook, run `ssh hcw-lab "free -m"` and stop
+if the `available` column is under 4,000 MiB; run it again after the playbook
+and a day later, and post the figures on
+[#1357](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1357).
 
 ## Runtime advisories
 

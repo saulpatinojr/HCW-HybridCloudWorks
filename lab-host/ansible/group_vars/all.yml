@@ -494,6 +494,9 @@ addons:
   # because it sizes what the container holds in its 512m. Never set
   # CC_ALLOW_NO_TURNSTILE here: it switches human verification off, for local
   # runs only, and the add-on honours it only when no secret is set.
+  # Host memory read on 2026-10-26 (read only): 15,987 MiB, 14,409 MiB available,
+  # the running containers about 330 MiB together; this add-on peaked at 269 MiB
+  # with three maximum uploads against its 512m (runbook: Cloud Crawler, the host steps).
   - id: cloud-crawler
     enabled: true
     image: docker.io/hybridcloudworks/img-cc-lab-addon
