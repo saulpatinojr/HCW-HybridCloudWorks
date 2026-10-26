@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { cp, mkdir, copyFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, copyFile, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 const pluginRoot = dirname(fileURLToPath(import.meta.url));
@@ -19,17 +19,20 @@ await build({
   format: "cjs",
   platform: "node",
   target: "node22",
-  external: ["obsidian", "@azure/msal-node"],
+  // Obsidian's renderer require does not search a plugin's node_modules.
+  // Bundle the SDK and its dependencies; only the host API stays external.
+  external: ["obsidian"],
   sourcemap: false,
 });
 await copyFile("manifest.json", "dist/manifest.json");
 await copyFile("dpapi.ps1", "dist/dpapi.ps1");
+const manifest = JSON.parse(await readFile("manifest.json", "utf8"));
 await writeFile(
   "dist/package.json",
   JSON.stringify(
     {
       name: "hcw-second-brain",
-      version: "1.0.0",
+      version: manifest.version,
       private: true,
       type: "commonjs",
     },
@@ -37,11 +40,6 @@ await writeFile(
     2,
   ),
 );
-// Preserve the MSAL package layout. The vault never needs npm or credentials.
-await cp("node_modules", "dist/node_modules", {
-  recursive: true,
-  filter: (path) => !/[\\/](esbuild|@esbuild|\.bin)([\\/]|$)/.test(path),
-});
 console.log(
   "Built dist/. Copy its contents to .obsidian/plugins/hcw-second-brain/ in a TEST vault first.",
 );
