@@ -1706,6 +1706,19 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     }
   };
 
+  /**
+   * Whether the base of a `new URL(path, base)` is a file URL. A base too deep to evaluate is treated as an
+   * unknown base, which is not a file URL. Nothing is lost by that: a file function or an import() that
+   * receives the URL evaluates it again in addReference, which reports a value it cannot follow.
+   */
+  const baseIsFileUrl = (baseNode) => {
+    try {
+      return evalNode(baseNode, freshContext()).some((b) => b.k === 'url');
+    } catch {
+      return false;
+    }
+  };
+
   /** Records a place that reads the path `valueNode`. `where` is the node to quote. */
   const addReference = (module, where, valueNode, primitive, { standalone = false, classifier = classify } = {}) => {
     const results = [];
@@ -1817,7 +1830,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
         // new URL(path, <a file URL>) names a file next to the module (or in a folder). It may only be
         // an import, so an unknown path here is not a problem unless an fs call receives it.
         const ref = moduleRef(node.callee);
-        if (ref?.mod === 'url' && ref.name === 'URL' && runsInTests(node) && evalNode(node.arguments[1], freshContext()).some((b) => b.k === 'url')) {
+        if (ref?.mod === 'url' && ref.name === 'URL' && runsInTests(node) && baseIsFileUrl(node.arguments[1])) {
           addReference(module, node, node, 'new URL', { standalone: true });
         }
       }

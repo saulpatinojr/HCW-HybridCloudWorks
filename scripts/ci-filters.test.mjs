@@ -1113,6 +1113,13 @@ ${GUIDE}createReadStream(guide);
         expect(found.unresolved.length).toBeGreaterThan(0);
         expect(found.unresolved[0]).toMatchObject({ file: 'pkg/a.test.js', line: 3 });
       });
+      it('a new URL whose base is too deep to follow is skipped, not thrown, and still reported when a read receives it', () => {
+        const longSum = Array.from({ length: 6000 }, () => "'a'").join(' + ');
+        expect(() => guard({ ...TARGETS, 'pkg/a.test.js': `const url = new URL('../docs/guide.md', ${longSum});\nexport default url;\n` })).not.toThrow();
+        const found = guard({ ...TARGETS, 'pkg/a.test.js': src(FS, `readFileSync(new URL('../docs/guide.md', ${longSum}));`) });
+        expect(found.unresolved.length).toBeGreaterThan(0);
+        expect(found.unresolved[0]).toMatchObject({ file: 'pkg/a.test.js', line: 3 });
+      });
       it('an invalid URL does not crash the guard', () => {
         const found = guard({ ...TARGETS, 'pkg/a.test.js': src(FS, "readFileSync(new URL('file://['));") });
         expect(found.unresolved.length).toBeGreaterThan(0);
