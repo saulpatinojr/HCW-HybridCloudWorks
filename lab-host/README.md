@@ -1921,9 +1921,18 @@ release of each tool and Terraform provider in the lab images, each with its
 publisher's checksum (`chore/lab-pins-image-tools`). Each publish of
 the lab images proposes their new digests to the two places that pin them
 (`chore/lab-pins-image-digests`). Merging changes nothing on the host until
-`bootstrap.sh` runs. The prose dates beside each pin in `group_vars/all.yml`
-record the last read by hand; an automated bump's evidence is its pull
-request. How fast a runtime advisory is fixed is
+`bootstrap.sh` runs. The dates in the comments beside each pin in
+`group_vars/all.yml` record the last read by hand; an automated bump's evidence
+is its pull request. The bump moves values and never rewrites sentences, so a
+comment above a pin it moves (in `group_vars/all.yml`, `bootstrap.sh` and the
+caddy test) names no exact version or digest: it says "the pin below", or names
+a release line such as 2.38, and keeps its history as dates. A test fails when
+one does (`scripts/lab-pins-upstream.test.mjs`; the rule is explained at the top
+of `scripts/lib/lab-pin-comments.mjs`), and its message names the file, the
+line, what the comment says and what the pin holds. If it fails on your change,
+reword the comment. If it fails on a bot pull request, fix the comment on `main`
+and let the next run refresh the pull request; never edit the bot's branch. How
+fast a runtime advisory is fixed is
 [`docs/runbooks/labs-host.md`](../docs/runbooks/labs-host.md), "Runtime
 advisories".
 
@@ -1932,7 +1941,7 @@ advisories".
 | Docker, buildx, compose, rootless extras | `docker_release_pins`, one entry per Ubuntu codename (the version strings name the release); `docker-ce-rootless-extras` takes the engine string | `roles/docker/README.md` |
 | Azure Connected Machine agent | `arc_agent_version` | `roles/arc/README.md` |
 | apt signing keys | `docker_apt_key_checksum`, `labs_agent_node_apt_key_checksum`, `arc_apt_key_checksums` (per codename: Microsoft signs the 26.04 and 24.04 repositories with different keys) | The bash lines below this table; a changed key is a decision, not a refresh |
-| Caddy, Cloudflare module, builder image digest | `caddy_*` | `roles/caddy/README.md`; the digest is the index from `docker buildx imagetools inspect caddy:2.11.4-builder`, and the image is pulled by that digest, not by tag |
+| Caddy, Cloudflare module, builder image digest | `caddy_*` | `roles/caddy/README.md`; the digest is the index from `docker buildx imagetools inspect caddy:<tag>` (the tag is the value of `caddy_builder_image_tag`), and the image is pulled by that digest, not by tag |
 | Coder, PostgreSQL | `coder_image_*`, `coder_postgres_image_*` | `roles/coder/README.md`; index digests from `docker buildx imagetools inspect`, run as `image@digest` |
 | Workspace image, Terraform providers, `code-server` module | `templates/<name>/main.tf` under `../coder`, one per template: `hcw-lab` (`image`), `amo-guided-lab` and `na-guided-lab` (`default_image`) | `../coder/README.md`, "Updating"; republished with `hcw-coder-template-push` after the `bootstrap.sh` run that checks it out ("Publishing the template", above). The command publishes `hcw-lab` unless given a template's name, so a bumped guided template is published as `hcw-coder-template-push na-guided-lab` (or `amo-guided-lab`). While `coder_enabled` is true, that run also pulls the new workspace digest (`lab_images`, which plans every template's image, the guided labs' included) |
 | Job images | `IMAGES` in `vps-agent/lib/capabilities.js` | The comment above `IMAGES` there. Nothing to bump here: the next run pulls the new digest and removes the one it replaced (`roles/lab_images/README.md`) |

@@ -42,7 +42,11 @@
  *
  * Prose beside a pin ("read 2026-09-26 ...") is not rewritten: it records the
  * last hand read. The pull request body carries this run's evidence, and the
- * squash commit keeps it.
+ * squash commit keeps it. Because the prose is left alone, a comment beside a
+ * pin that moves must not name its version or digest, or the bump would leave
+ * it false (#1423): lab-pin-comments.mjs is that rule, and
+ * lab-pins-upstream.test.mjs runs every bumper over the real files and fails
+ * when a comment names one.
  */
 import { createHash } from 'node:crypto';
 import { coreVersion, compareVersions, newest, newestHashicorp, newestGitHubRelease, newestAptVersion } from '../lab-pins-upstream.mjs';
