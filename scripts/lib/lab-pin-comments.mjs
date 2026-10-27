@@ -62,7 +62,7 @@ function locate(file, text, where) {
     ? new RegExp(`^\\s*"${escapeRe(where)}"\\s*:\\s*"?([^",]*)"?,?\\s*$`)
     : new RegExp(`^${escapeRe(where)}=['"]?([^'"\\s#]*)['"]?(?:\\s+#.*)?$`);
   const hits = text
-    .split('\n')
+    .split(/\r?\n/)
     .map((l, i) => [i, l.match(pattern)])
     .filter(([, m]) => m);
   if (hits.length !== 1) throw new Error(`${file}: expected one \`${where}\` line, found ${hits.length}`);
@@ -109,9 +109,12 @@ function commentsBeside(file, lines, line) {
  */
 export function pinCommentProblems(files, pins) {
   const sites = new Map();
+  const seen = new Set();
   for (const { file, where } of pins) {
+    if (seen.has(`${file}|${where}`)) continue;
+    seen.add(`${file}|${where}`);
     if (!(file in files)) throw new Error(`${file} was not read`);
-    const lines = files[file].split('\n');
+    const lines = files[file].split(/\r?\n/);
     const { line, value } = locate(file, files[file], where);
     const comments = commentsBeside(file, lines, line);
     const key = `${file}|${comments.map((c) => c.line).join(',')}`;

@@ -253,6 +253,17 @@ describe('comments beside a pin the weekly bump moves', () => {
     expect(pinCommentProblems(caddy, [{ file: CADDY_TEST_PATH, where: 'CADDY_SHA512' }]).map((p) => [p.line, p.token])).toEqual([[2, '2.11.4']]);
   });
 
+  it('counts a pin listed twice once, and reads a shell file with Windows line ends like one with Unix ones', () => {
+    const twice = [{ file, where: 'foo_version' }, { file, where: 'foo_version' }];
+    const once = pinCommentProblems({ [file]: ['---', '# Foo 7.7.7.', foo, ''].join('\n') }, twice);
+    expect(once).toHaveLength(1);
+    expect(once[0].pins).toHaveLength(1);
+    const shell = (eol) => ({ 'run.sh': ['#!/usr/bin/env bash', '# Tool 3.1.3.', 'TOOL_VERSION=3.1.4', ''].join(eol) });
+    const pins = [{ file: 'run.sh', where: 'TOOL_VERSION' }];
+    expect(pinCommentProblems(shell('\r\n'), pins)).toEqual(pinCommentProblems(shell('\n'), pins));
+    expect(pinCommentProblems(shell('\r\n'), pins)).toHaveLength(1);
+  });
+
   it('stops with an error, not a pass, when a pin cannot be found', () => {
     expect(() => problems('---\nfoo_version: v1.2.3\n', ['missing_version'])).toThrow(/missing_version/);
     expect(() => pinCommentProblems({}, [{ file: 'absent.yml', where: 'foo' }])).toThrow(/absent\.yml was not read/);
