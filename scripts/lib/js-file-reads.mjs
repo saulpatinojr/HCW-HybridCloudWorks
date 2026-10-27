@@ -1684,6 +1684,11 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
           else addProblem(module, node, ref.name, `${ref.name} is called without a path argument the guard can read`);
         } else if (node.callee.type === 'MemberExpression' && node.callee.object.type === 'MetaProperty' && !node.callee.computed && node.callee.property.name === 'glob') {
           if (runsInTests(node)) addGlobReference(module, node);
+        } else if (ref?.mod === 'process' && ref.name === 'chdir' && runsInTests(node)) {
+          // every relative path after this is relative to a different folder
+          addProblem(module, node, 'chdir', 'process.chdir changes the folder that relative paths start from, so the guard cannot tell which files later reads touch');
+        } else if (node.callee.type === 'Identifier' && node.callee.name === 'eval' && !lookup(node.callee, 'eval') && runsInTests(node)) {
+          addProblem(module, node, 'eval', 'eval runs text as code, which the guard cannot read');
         } else if (FILE_LOOKING_NAMES.has(calledName(node.callee)) && ref?.mod !== 'fs' && !isDefinedHere(node.callee) && runsInTests(node)) {
           // readFileSync(...) from something the guard cannot trace to Node's fs: say so rather than ignore it
           addProblem(module, node, calledName(node.callee), `${calledName(node.callee)}(...) looks like a file read, but the guard cannot tell it comes from Node's fs module, so the path it reads is unknown`);

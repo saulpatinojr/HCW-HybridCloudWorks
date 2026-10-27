@@ -723,6 +723,12 @@ ${GUIDE}createReadStream(guide);
       it('an object with a readFileSync of its own', () => {
         expect(reasonOf(src(PATHS, HERE, GUIDE, 'const fake = { readFileSync: () => "" };', 'fake.readFileSync(GUIDE);'))).toContain("looks like a file read");
       });
+      it('process.chdir, after which relative paths mean something else', () => {
+        expect(reasonOf(src(FS, "process.chdir('..');", "readFileSync('docs/guide.md');"))).toContain('chdir');
+      });
+      it('eval, which runs text as code', () => {
+        expect(reasonOf(src(FS, "eval('readFileSync(\"docs/guide.md\")');"))).toContain('eval');
+      });
       it('is not raised for a function the code defines itself', () => {
         const found = guard({ ...TARGETS, 'pkg/a.test.js': src(PATHS, HERE, 'function existsSync(name) { return name.length > 0; }', "existsSync('x');") });
         expect(found.unresolved).toEqual([]);
