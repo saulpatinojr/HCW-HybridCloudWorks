@@ -40,12 +40,16 @@
  * path is worked out at run time is followed too when it names one file. What it
  * ignores: names of packages (`lodash`, `node:fs`; none of this repository's
  * packages depends on another by path, so a name never means a repository file),
- * and anything under `node_modules`, `dist`, `coverage` or `.git`, which are not
- * files of the repository. What it refuses:
- * an import whose file cannot be found in a module outside the package (the
- * guard cannot tell what that file reads), and a read it cannot work out in
- * such a module, exactly as for a test file. Both are listed in REVIEWED_READS
- * below by whoever has looked at them, as `import '<path>'` for the first.
+ * anything under `node_modules` or `.git`, and the `dist` and `coverage` folders
+ * that sit right beside a `package.json` (a package's build output and test
+ * coverage report, which git does not track). A folder with one of those two
+ * names lower down, such as `docs/coverage/`, is an ordinary folder: git may
+ * track it, so a file in it that a test reads or imports is a dependency like
+ * any other. What it refuses: an import whose file cannot be found in a module
+ * outside the package (the guard cannot tell what that file reads), and a read
+ * it cannot work out in such a module, exactly as for a test file. Both are
+ * listed in REVIEWED_READS below by whoever has looked at them, as
+ * `import '<path>'` for the first.
  *
  * Two rules keep it honest:
  *
@@ -76,13 +80,13 @@
  *    worked out).
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMPONENTS, DIRECTORY_PROBE, deriveCrossRootReads, parseCiFilters } from './lib/ci-filters.mjs';
-import { listImports } from './lib/js-file-reads.mjs';
+import { findFileReads, listImports } from './lib/js-file-reads.mjs';
 import { isPinFile, trackedFiles } from './lib/version-pins.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1447,6 +1451,7 @@ ${GUIDE}createReadStream(guide);
         const found = guard({
           ...TARGETS,
           'pkg/a.test.js': "import '../other/node_modules/pkg/index.js';\nimport '../other/dist/out.js';\nimport '../other/b.js';\n",
+          'other/package.json': '{}',
           'other/node_modules/pkg/index.js': '',
           'other/dist/out.js': '',
           ...B,
@@ -1455,9 +1460,64 @@ ${GUIDE}createReadStream(guide);
       });
 
       it('a missing file under node_modules or in built output is not reported', () => {
-        const found = guard({ ...test, 'other/a.js': "import './node_modules/gone/index.js';\nimport './dist/gone.js';\nimport './b.js';\nexport const x = 1;\n", ...B });
+        const found = guard({
+          ...test,
+          'other/package.json': '{}',
+          'other/a.js': "import './node_modules/gone/index.js';\nimport './dist/gone.js';\nimport './b.js';\nexport const x = 1;\n",
+          ...B,
+        });
         expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
         expect(found.unresolved).toEqual([]);
+      });
+
+      // dist and coverage are built output only beside a package.json; lower down they are folders like any other,
+      // and git may track them (docs/coverage), so a file there is a dependency and must not drop out unseen.
+      describe('a folder called dist or coverage', () => {
+        const TRACKED = { 'docs/coverage/report.md': '# report\n', 'docs/dist/notes.md': '# notes\n', 'other/src/coverage/data.js': 'export const d = 1;\n' };
+        const BUILT = { 'other/package.json': '{}', 'other/dist/out.js': 'export const o = 1;\n', 'other/coverage/index.html': '<html></html>\n' };
+
+        it('is built output beside a package.json, and a file in it is not a dependency (import or read)', () => {
+          const found = guard({
+            ...test,
+            ...BUILT,
+            'other/a.js': `${FS}${PATHS}${HERE}import './dist/out.js';\nexport const x = readFileSync(join(HERE, 'coverage', 'index.html'), 'utf8').length;\n`,
+          });
+          expect(names(found.files)).toEqual(['other/a.js']);
+          expect(names(found.dirs)).toEqual([]);
+        });
+
+        it('is an ordinary folder lower down, and a file in it that is imported is still listed', () => {
+          const found = guard({
+            ...test,
+            ...BUILT,
+            ...TRACKED,
+            'other/a.js': "import '../docs/coverage/report.md?raw';\nimport '../docs/dist/notes.md?raw';\nimport './src/coverage/data.js';\nexport const x = 1;\n",
+          });
+          expect(names(found.files)).toEqual(['docs/coverage/report.md', 'docs/dist/notes.md', 'other/a.js', 'other/src/coverage/data.js']);
+          expect(found.unresolved).toEqual([]);
+        });
+
+        it('is an ordinary folder lower down, and a file in it that a test reads is still listed', () => {
+          const found = guard({
+            ...BUILT,
+            ...TRACKED,
+            'pkg/a.test.js': `${FS}${PATHS}${HERE}readFileSync(join(HERE, '..', 'docs', 'coverage', 'report.md'), 'utf8');\nreadFileSync(join(HERE, '..', 'other', 'src', 'coverage', 'data.js'), 'utf8');\nreadFileSync(join(HERE, '..', 'other', 'coverage', 'index.html'), 'utf8');\n`,
+          });
+          expect(names(found.files)).toEqual(['docs/coverage/report.md', 'other/src/coverage/data.js']);
+        });
+
+        it('is an ordinary folder lower down, and a test that lists it makes it a folder the filter must match', () => {
+          const found = guard({
+            ...TRACKED,
+            'pkg/a.test.js': `import { readdirSync } from 'node:fs';\n${PATHS}${HERE}readdirSync(join(HERE, '..', 'docs', 'coverage'));\n`,
+          });
+          expect(names(found.dirs)).toEqual(['docs/coverage/']);
+        });
+
+        it('is built output when the test lists the folder itself', () => {
+          const found = guard({ ...BUILT, 'pkg/a.test.js': `import { readdirSync } from 'node:fs';\n${PATHS}${HERE}readdirSync(join(HERE, '..', 'other', 'coverage'));\n` });
+          expect(names(found.dirs)).toEqual([]);
+        });
       });
 
       it('a read of a file in node_modules is not a dependency, while the read beside it is', () => {
@@ -1683,6 +1743,44 @@ ${GUIDE}createReadStream(guide);
         const short = guard({ ...test, 'other/a.js': `${PATHS}${HERE}import(join(HERE, 'm5.js'));\nexport const x = 1;\n`, ...chain });
         expect(names(short.files)).toEqual(expect.arrayContaining(['other/m5.js', 'other/m6.js']));
         expect(short.unresolved).toEqual([]);
+      });
+    });
+
+    // An import() whose path is worked out and names one file makes the guard open that module and run the read
+    // analysis once more. The syntax trees the first run marked up must not be used for the second, or the answer
+    // for a module that has nothing to do with the new one can change (found by review).
+    describe('a second round of the analysis answers as the first round did', () => {
+      const READ = `${FS}${PATHS}${HERE}`;
+      const cases = {
+        'a test that is not the script started from the command line': `${READ}const notMain = process.argv[1] !== fileURLToPath(import.meta.url);\nif (notMain) readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');\nexport const x = 1;\n`,
+        'a path set again in a straight line': `${READ}let p = join(HERE, '..');\np = join(p, 'docs', 'guide.md');\nreadFileSync(p);\nexport const x = 1;\n`,
+        'a path built in a loop': `${READ}for (const name of ['guide.md']) readFileSync(join(HERE, '..', 'docs', name), 'utf8');\nexport const x = 1;\n`,
+        'a helper with a default value': `${READ}function load(file = join(HERE, '..', 'docs', 'guide.md')) { return readFileSync(file, 'utf8'); }\nexport const x = load();\n`,
+      };
+      const plainTest = OUTSIDE('a.js');
+      // the same imports, and one more that names a module in the package and so needs a second round
+      const withSecondRound = `${PATHS}${HERE}${OUTSIDE('a.js')}await import(join(HERE, 'b.js'));\n`;
+      for (const [label, module] of Object.entries(cases)) {
+        it(label, () => {
+          const files = { ...TARGETS, 'other/a.js': module, 'pkg/b.js': 'export const b = 1;\n' };
+          const once = guard({ ...files, 'pkg/a.test.js': plainTest });
+          const twice = guard({ ...files, 'pkg/a.test.js': withSecondRound });
+          expect(names(once.files)).toEqual(['docs/guide.md', 'other/a.js']);
+          expect(names(twice.files)).toEqual(names(once.files));
+          expect(twice.unresolved).toEqual(once.unresolved);
+        });
+      }
+
+      it('findFileReads gives the same references when it is handed the same trees twice', () => {
+        const root = makeRepo({ ...TARGETS, 'other/a.js': cases['a test that is not the script started from the command line'] });
+        const file = join(root, 'other', 'a.js');
+        const text = readFileSync(file, 'utf8');
+        const { ast } = listImports(text);
+        const run = () => findFileReads({ modules: new Map([[file, { text, ast }]]), cwd: join(root, 'pkg'), resolveImport: () => null });
+        const lines = (result) => result.references.map((r) => `${r.line} ${r.expression} ${r.results.map((x) => x.path).join(',')}`);
+        const first = lines(run());
+        expect(first).toHaveLength(1);
+        expect(lines(run())).toEqual(first);
       });
     });
   });

@@ -83,29 +83,38 @@ jobs:
           # deploy-source-maps.test.js and prerender.test.js (the mount-point
           # check); publish-lab-image.yml and lab-image/smoke.sh are read by
           # DockerGuides.test.jsx.
-          # Added with #1428. A test that imports a functions module depends on every
-          # file that module imports in turn, and on every file it reads when it
-          # loads, so the guard now follows the chain to its end. Five tests start
-          # the chains. aiEngine.test.js imports ai/router.js, ai/model-catalog.js,
-          # ai/usage.js and ai/mcp-policy.js, which load the rest of ai/, the Cosmos
-          # client (cosmos-client.js, cosmos-call-shape.js, job-context.js), the
-          # secrets code (admin-secrets.js, secret-catalog.js, secret-vault.js,
-          # secrets-health.js, key-verdict.js) and http/error-response.js.
-          # statusParity.test.js imports health/pulse-checks.js, which loads labs.js
-          # and so the lab checks in labs/, lab-agent.js, timers/agent-health.js, the
-          # publishing code in cms/, blob-paths.js, triggers/fetch-image.js,
-          # cloud-tools/history.js with its two pricing files, and the http/ helpers
-          # (error-response, fetch-with-timeout, guarded-fetch, read-setting).
-          # linkie.test.js imports integrations/rest-proxy.js, which loads
-          # connection-probe.js and upstream-error.js. useLivePageArchive.test.jsx and
-          # itemLinks.test.js import cms/content-update-validation.js and
-          # content-status.js, which load cms/publish-targets.js and public-reads.js.
-          # ambassadorModel.test.js imports ambassador/readiness.js, which loads
-          # ambassador/model.js. ai/, cms/ and labs/ are whole folders because the tests load eight or more
-          # of the files in each (20 of 25, 10 of 23 and 8 of 19), so a new import
-          # inside them needs no edit here. A folder also matches the test files in
-          # it, which nothing here loads, so cms/ runs this row a little more often
-          # than listing its ten files would; the others are listed file by file.
+          # Added with #1428. A test that imports a functions module depends on
+          # every file that module imports in turn, and on every file it reads
+          # when it loads, so the guard follows the chain to its end. Six tests
+          # start the chains:
+          # - aiEngine.test.js imports ai/router.js, ai/model-catalog.js,
+          #   ai/usage.js and ai/mcp-policy.js, which load the rest of ai/, the
+          #   Cosmos client (cosmos-client.js, cosmos-call-shape.js,
+          #   job-context.js), the secrets code (admin-secrets.js,
+          #   secret-catalog.js, secret-vault.js, secrets-health.js,
+          #   key-verdict.js) and http/error-response.js.
+          # - statusParity.test.js imports health/pulse-checks.js, which loads
+          #   labs.js and so the lab checks in labs/, lab-agent.js,
+          #   timers/agent-health.js, the publishing code in cms/,
+          #   blob-paths.js, triggers/fetch-image.js, cloud-tools/history.js
+          #   with its two pricing files, and the http/ helpers (error-response,
+          #   fetch-with-timeout, guarded-fetch, read-setting).
+          # - linkie.test.js imports integrations/rest-proxy.js, which loads
+          #   connection-probe.js and upstream-error.js.
+          # - useLivePageArchive.test.jsx and itemLinks.test.js import
+          #   cms/content-update-validation.js and content-status.js, which load
+          #   cms/publish-targets.js and public-reads.js.
+          # - ambassadorModel.test.js imports ambassador/readiness.js, which
+          #   loads ambassador/model.js.
+          # ai/, cms/ and labs/ are whole folders because the tests load eight
+          # or more of their code files: 20 of the 25 non-test code files
+          # directly in ai/, 10 of the 23 in cms/ (31 with its image-prompts/
+          # folder) and 8 of the 19 in labs/. So a new import inside them needs
+          # no edit here.
+          # A folder also matches the test files in it, which nothing here
+          # loads: the new entries match 66 test files (26 in ai/, 21 in cms/,
+          # 19 in labs/), and a pull request that changes only one of them runs
+          # this row for nothing. The other entries are listed file by file.
           - name: frontend
             dir: frontend
             filter: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile|smoke\.sh)$|vps-agent/lib/docker-runner\.js$|\.github/workflows/(deploy-azure-frontend|publish-lab-image)\.yml$|functions/src/lib/((ai|cms|labs)/|(labs|rss/feeds|addons/registry|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|key-verdict|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|decision-center/(links|items)|health/(status-model|probe-catalogue|pulse-checks)|integrations/(linkie-allowlist|rest-proxy|connection-probe|upstream-error)|cloud-tools/(history|pricing/(baseline|regions))|http/(error-response|fetch-with-timeout|guarded-fetch|read-setting)|timers/agent-health|triggers/fetch-image|ambassador/(readiness|model))\.js$)|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
@@ -211,9 +220,11 @@ jobs:
           # in lib/ (cosmos-client.js, secret-vault.js, lab-agent.js ...);
           # roll-cloud-credentials.test.mjs reaches secret-vault.js and
           # http/error-response.js through the credential rollers. cms/,
-          # labs/, http/ and cloud-tools/ are whole folders because that adds
-          # no runs here, the row already running for about nine pull requests
-          # in ten; the rest are listed file by file.
+          # labs/, http/ and cloud-tools/ are whole folders. They also match
+          # the 60 test files in them, which nothing here loads, but that adds
+          # no runs: the row already runs for about nine pull requests in
+          # ten (141 of the last 150 merged commits, before and after). The
+          # rest are listed file by file.
           - name: scripts (operations)
             dir: scripts
             filter: '^(scripts/|\.github/workflows/|\.github/(actionlint\.yaml|pull_request_template\.md)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/lib/(cms|labs|http|cloud-tools)/|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll)|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|timers/agent-health|triggers/fetch-image)\.js|functions/(schedulers|jobs-sweeper)\.js)$))'

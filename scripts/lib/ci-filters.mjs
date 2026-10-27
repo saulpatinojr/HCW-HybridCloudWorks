@@ -34,11 +34,18 @@ const LISTS_FOLDER = new Set(['readdirSync', 'readdir', 'opendirSync', 'opendir'
 const CODE_FILE = /\.[cm]?[jt]sx?$/;
 
 /**
- * Folders whose files are not part of the repository: installed packages, built output, test coverage, git's own
- * folder. A pull request cannot change a file there, so an import that lands in one is not a dependency of the
- * filter, and the guard does not open it.
+ * Folders whose files are not part of the repository, wherever they are: installed packages and git's own folder.
+ * A pull request cannot change a file there, so an import that lands in one is not a dependency of the filter,
+ * and the guard does not open it.
  */
-const NOT_REPOSITORY = /(?:^|[\\/])(?:node_modules|dist|coverage|\.git)(?:[\\/]|$)/;
+const NEVER_REPOSITORY = /(?:^|[\\/])(?:node_modules|\.git)(?:[\\/]|$)/;
+
+/**
+ * Folders that are a package's built output and test coverage, but only when they sit beside the package's
+ * package.json (frontend/dist, scripts/coverage). The same names lower down are ordinary folders that git may well
+ * track (docs/coverage), and a file there is a dependency like any other.
+ */
+const BUILD_OUTPUT_FOLDERS = new Set(['dist', 'coverage']);
 
 /** How many times the walk goes on into a module named by an import() with a computed path. */
 const MAX_COMPUTED_IMPORT_ROUNDS = 4;
@@ -104,9 +111,10 @@ const importExpression = (spec) => `import '${spec}'`;
  * too when it names one file (a few levels deep at most). A module outside the
  * package is treated like one inside it: the files it imports are dependencies
  * of the package's tests, and so are the files it reads when a test runs its
- * code (at the top of the module, or in a function the test can reach). A
- * file only reached through `node_modules` or a built folder is not a
- * repository file and is left out, and neither is a package name.
+ * code (at the top of the module, or in a function the test can reach). What
+ * is left out because a pull request cannot change it: a package name, a path
+ * through `node_modules` or `.git`, and the `dist` and `coverage` folders that
+ * sit beside a `package.json`.
  *
  * `reviewed` lists reads a person has looked at, each as
  * `{ file, expression?, reason }` (see ci-filters.test.mjs). A read matches an
@@ -146,7 +154,6 @@ export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT, { re
     if (!origins.has(path)) origins.set(path, new Set());
     origins.get(path).add(where);
   };
-  const isRepositoryFile = (abs) => isInside(repoRoot, abs) && !NOT_REPOSITORY.test(relative(repoRoot, abs));
   // The files do not change while the guard runs, and the same import is asked about many times (once by the walk
   // below and again for each name the analysis follows), so each answer from the disk is kept.
   const fileOnDisk = new Map();
@@ -155,6 +162,22 @@ export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT, { re
     return fileOnDisk.get(candidate);
   };
   const specAnswers = new Map();
+  const packageFolders = new Map(); // folder -> whether it holds a package.json
+  const hasPackageJson = (folder) => {
+    if (!packageFolders.has(folder)) packageFolders.set(folder, existsSync(join(folder, 'package.json')));
+    return packageFolders.get(folder);
+  };
+  /** Whether `abs` is in a package's own dist or coverage folder, the build output and coverage report that git does not track. */
+  const isBuildOutput = (abs) => {
+    let folder = repoRoot;
+    for (const part of relative(repoRoot, abs).split(/[\\/]/)) {
+      if (BUILD_OUTPUT_FOLDERS.has(part) && hasPackageJson(folder)) return true;
+      folder = join(folder, part);
+    }
+    return false;
+  };
+  /** Whether `abs` is a path a pull request can change: inside the repository, and not installed or built. */
+  const isRepositoryFile = (abs) => isInside(repoRoot, abs) && !NEVER_REPOSITORY.test(relative(repoRoot, abs)) && !isBuildOutput(abs);
 
   /** The shortcuts that apply to an import written in `from`: this package's (what the tests run with), and its own package's. */
   const aliasesFor = (from) => {
@@ -301,8 +324,8 @@ export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT, { re
       if (isInside(compDirAbs, path) || !isInside(repoRoot, path)) continue;
       // a path that is not there is not being read (a test that checks something is absent)
       if (!existsSync(path)) continue;
-      // node_modules and built output are not repository files
-      if (NOT_REPOSITORY.test(relative(repoRoot, path))) continue;
+      // installed packages and built output are not repository files
+      if (!isRepositoryFile(path)) continue;
       const isFolder = kind === 'dir' || isDirectory(path);
       // new URL(...) of a folder is only a base for building file paths, and a folder that is only
       // checked for, or looked at (existsSync, statSync), is not a dependency on what is in it

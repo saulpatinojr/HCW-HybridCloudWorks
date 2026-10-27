@@ -564,8 +564,18 @@ export function listImports(text) {
   return { parsed: true, ast, specs: found.sort((a, b) => a.at - b.at).map(({ spec, line }) => ({ spec, line })) };
 }
 
-/** Parses one module and records its names. Throws if the text cannot be parsed. `ast` is the text already parsed, if it was. */
-function loadModule(file, text, ast = parse(text)) {
+/**
+ * Parses one module and records its names. Throws if the text cannot be parsed. `handed` is the syntax tree of the
+ * text when the caller has parsed it already (`listImports` does).
+ *
+ * The analysis writes onto the tree it works on: the names declared in each scope, the values each name was set
+ * to, the function each parameter belongs to. A tree that has been through here once is therefore no use for a
+ * second analysis (a name set once would look as if it were set twice, and what a module reads would change), so a
+ * tree that is already marked is not used and the text is parsed again.
+ */
+function loadModule(file, text, handed) {
+  const ast = handed && !handed.$analysed ? handed : parse(text);
+  ast.$analysed = true;
   const nodes = annotate(ast, file);
   for (const node of nodes) {
     switch (node.type) {
@@ -665,7 +675,8 @@ function enclosingFunction(node) {
 /**
  * @param {object} options
  * @param {Map<string, string | {text: string, ast: object | null}>} options.modules  absolute file path -> source text,
- *        or the text with its syntax tree when the caller has parsed it already (`listImports` returns the tree)
+ *        or the text with its syntax tree when the caller has parsed it already (`listImports` returns the tree).
+ *        A tree serves one analysis; one that was used before is not used again, the text is parsed instead.
  * @param {(file: string) => boolean} [options.reportIn]  which of the modules to report reads from
  *        (default all). The others are parsed only so the values they export can be followed.
  * @param {(path: string) => (string|null)} [options.probeFile]  finds the file a path means when it is written without
