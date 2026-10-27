@@ -106,3 +106,24 @@ Two details of the implementation are the substance of the decision:
   rollup behaviour above; extend the same doctrine comment to any future
   workflow that becomes a required context, so the next reader learns the
   rule from the file they are editing.
+
+## Addendum, 2026-10-27 ([#1428](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1428))
+
+Two of the weaknesses named above were closed in `ci.yml`:
+
+- **A filter that `grep` cannot read now fails the job instead of switching
+  it off.** `grep -E` answers 0 (a changed file matches), 1 (none does) or 2
+  (it could not read the pattern). The detect steps used to test that with
+  `if grep ...`, which takes 2 as "no", so a broken filter skipped its job as
+  "no relevant change". The four detect steps in `ci.yml` now keep the answer
+  and fail on anything but 0 or 1, naming the job and the filter.
+  `scripts/ci-workflow-steps.test.mjs` runs each of them against a deliberately
+  broken filter. `codeql.yml` and `iac-validate.yml` have the same `if grep`
+  shape and have not been changed yet.
+- **The test that checks the filters now runs before the merge.** The
+  "Negative" consequence above says a missing filter entry is found at the
+  merge, after the fact. `scripts/ci-filters.test.mjs` (the check that every
+  filter lists the files its tests read) used to run only when the scripts
+  row's own filter matched, so a pull request that changed only a frontend or
+  functions test met it on `main`. It now also runs in its own step on every
+  pull request, outside the filter.
