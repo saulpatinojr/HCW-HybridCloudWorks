@@ -64,8 +64,10 @@ leave it alone. A session never switches the main checkout's branch; it works in
    flagged 12 changes on 2026-10-26 as unexpected, and its own instruction is to treat them as a possible stolen DNS token until the entries show otherwise
    ([what to do if one was stolen](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/dns-token-stolen.md)). What is known: all 12 are `_acme-challenge` TXT records
    (temporary records a certificate authority asks for to prove who owns a domain) on the main domain, six created and six deleted, by an actor the log calls "system unknown".
-   The allowlist (the list of changes the audit treats as normal) in `scripts/cloudflare-dns-audit.mjs` knows only the lab host's Caddy token for these records, and Caddy's challenges now
-   live in the lab zone. One possible explanation, not checked, is certificate validation done on Cloudflare's side. Only the owner's Cloudflare login can read the entries: the issue links the
+   The allowlist (the list of changes the audit treats as normal) in `scripts/cloudflare-dns-audit.mjs` has an entry for the lab host's Caddy token, but that entry stops matching anything
+   from 2026-10-18 20:53 UTC, when the token lost access to this zone (Caddy's challenges moved to the lab zone), so it cannot match records from 2026-10-26. The other entries (HCP Terraform
+   applies, the Terraform owner token and the owner's dashboard) match by who made the change, and none of them matched these 12. One possible explanation, not checked, is certificate
+   validation done on Cloudflare's side. Only the owner's Cloudflare login can read the entries: the issue links the
    [audit log](https://dash.cloudflare.com/?to=/:account/audit-log) and lists each entry id; the steps are in
    [the daily DNS audit](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/edge-dns-verification.md). Add no allowlist entry before that.
 2. **Run the lab host's `bootstrap.sh`** (the script that brings the lab server in line with this repository; tracked in
