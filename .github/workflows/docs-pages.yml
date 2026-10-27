@@ -20,6 +20,7 @@ on:
       - 'README.md'
       - 'CHANGELOG.md'
       - 'TODO.md'
+      - 'MEMORY.md'
       - '.github/workflows/docs-pages.yml'
   push:
     branches: [main]
@@ -30,6 +31,7 @@ on:
       - 'README.md'
       - 'CHANGELOG.md'
       - 'TODO.md'
+      - 'MEMORY.md'
       - '.github/workflows/docs-pages.yml'
   workflow_dispatch:
 

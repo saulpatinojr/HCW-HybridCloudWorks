@@ -2,6 +2,8 @@
 
 Runs in .github/workflows/docs-pages.yml before `mkdocs build`, over docs/**
 and the three root documents the site pulls in (README, CHANGELOG, TODO).
+Also scans the optional root MEMORY.md continuation handoff, which is not
+published on the docs site.
 Fails, naming file:line, on:
 
 1. A hard-coded link to the retired GitHub Wiki. The Wiki is being replaced
@@ -28,6 +30,11 @@ from pathlib import Path
 ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
 SCAN_DIRS = [ROOT / "docs"]
 SCAN_FILES = [ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "TODO.md"]
+# A handoff can contain operational context; keep its public-repository redaction
+# checks even though MkDocs does not publish it (#1450). Older fixture roots
+# without a handoff retain the three required documentation files.
+if (ROOT / "MEMORY.md").exists():
+    SCAN_FILES.append(ROOT / "MEMORY.md")
 
 WIKI_LINK = re.compile(r"github\.com/[^/\s)]+/[^/\s)]+/wiki(?:/|\b)")
 GUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
