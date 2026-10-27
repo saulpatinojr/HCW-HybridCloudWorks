@@ -179,7 +179,7 @@ caddy_version: v2.11.7
 caddy_cloudflare_module_version: v0.2.4
 caddy_builder_image: caddy
 caddy_builder_image_tag: 2.11.7-builder
-caddy_builder_image_digest: sha256:8910fe662f448b860e8d16ef1c9a4f8946d3193bdc3e971bf0c55c9a2cf246f6
+caddy_builder_image_digest: sha256:c2fc374fd352439d76e1777b28d97d9f6d9c1dd86116db9227460374d46097d5
 caddy_site_domain: "{{ lab_host_domain }}"
 # The three names ADR 0032 puts on the certificate. DNS-01 for each is answered
 # through the CNAME delegation of _acme-challenge.lab and _acme-challenge.coder.lab
@@ -263,8 +263,8 @@ coder_max_workspaces: 5
 # which this host uses). The weekly pin bump reads each digest from the
 # registry again for every move and records the read in its pull request.
 coder_image: ghcr.io/coder/coder
-coder_image_tag: v2.38.1
-coder_image_digest: sha256:fcddd64d5f08d6aa8806508d1459d36f3e9e9098554440acd6dc2526a95252cc
+coder_image_tag: v2.38.3
+coder_image_digest: sha256:e7a915b7e29db66800624093257b51698457bead4249b692de5077ae4e4adc5b
 # PostgreSQL, a digest of the same kind. Read 2026-09-26: 18 is the newest major
 # (supported to November 2030), its newest numbered tag and postgres:18
 # resolved to the same index, and the registry's Docker-Content-Digest and the
@@ -275,7 +275,7 @@ coder_image_digest: sha256:fcddd64d5f08d6aa8806508d1459d36f3e9e9098554440acd6dc2
 # /var/lib/postgresql.
 coder_postgres_image: postgres
 coder_postgres_image_tag: "18.6"
-coder_postgres_image_digest: sha256:1267c7e692de235fda2a50dbcdbcbca4672ea6a0298576a6bd9d07cafc319b32
+coder_postgres_image_digest: sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
 # The Docker socket proxy the coder server reaches the daemon through
 # (LAB-5, 2026-10-06): HAProxy with one allow rule per API section. Image
 # index digest read 2026-10-06 from the registry's Docker-Content-Digest for
@@ -329,7 +329,7 @@ labs_agent_repo_ref: "{{ lookup('ansible.builtin.pipe', 'git -C ' ~ (playbook_di
 # published that release yet, the pin stays and the weekly issue says so. The
 # line itself is labs_agent_node_apt_repository_url in the role defaults, so a
 # major bump moves both.
-labs_agent_node_version: "26.12.0-1nodesource1"
+labs_agent_node_version: "26.12.1-1nodesource1"
 # sha256sum of https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key, read
 # 2026-09-26 and checked with gpgv against node_26.x/dists/nodistro/InRelease;
 # the key that apt trusts for the pinned nodejs package.
@@ -366,8 +366,8 @@ node_exporter_checksum: sha256:b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e83
 # pin's index.
 portainer_enabled: true
 portainer_image: portainer/portainer-ee
-portainer_image_tag: "2.45.2"
-portainer_image_digest: sha256:64593d0645eec314e84b93c03aba51db67c72ec12c760927335b52b1652765d7
+portainer_image_tag: "2.45.3"
+portainer_image_digest: sha256:8166e2376756d1ad3194e336cd1707c28a5764af7acc8bb9f21a5f28d1903566
 
 # Sigstore cosign (LAB-X, #1069): verifies SLSA build provenance attestations
 # on add-on images before docker_image_pull. Pinned release from
@@ -560,8 +560,8 @@ addons:
 # 468F. The role checks all three links on the host. The vault_ prefix is the
 # role's name: none of these is an Ansible Vault key.
 vault_enabled: true
-vault_version: "2.2.0"
-vault_checksum: sha256:05d78b0ac842ca7c522fc297df91527cd43c15420c4c5c0a969d48a7b0ff7b6d
+vault_version: "2.2.1"
+vault_checksum: sha256:079435de8ff146bdec4cdbe3be71d672ef4e59e4df6af0f2dba672e71be21a68
 vault_pgp_key_checksum: sha256:c2f5bc1163bd8d15a711616b587bcede212d045a5b8b52df01c74095897cd065
 
 # Auto-unseal through Azure Key Vault and the Arc machine's identity (#726;
