@@ -17,6 +17,10 @@ This project has not cut a tagged release; entries are grouped under
 
 ## [Unreleased]
 
+### Session continuity
+
+- **Root travel handoff and completed-work cleanup ([#1450](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1450)).** Adds a dated `MEMORY.md` with merged work, verified application deployments, workflow behavior, and resume commands. Permits that exact root filename and includes it in redaction checks on future edits. Removes generated local artifacts and old task files, deletes local branches verified as merged (including squash merges), and prunes remote/worktree references while retaining installed tools and dependencies.
+
 ### Features
 
 - **Blogs hub and editable source intake ([#1443](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1443)).** Blogs now sits directly below Coder Corner with article review/edit links, source search/provider filters, editable RSS and listing sources, pause/resume, bounded intake limits, per-source manual jobs and run status, and gallery/URL fallback images. Adds Kiro’s official RSS feed to AWS. Both scheduled intake paths honor runtime settings; stable cache identities, conflict detection, audited editor-only saves, untrusted custom sources, and guarded RSS downloads preserve the existing publishing workflow. Inspection prefers article/social images over source defaults; listing links now resolve relative to their page path, and listing ingestion supplies the article-ID generator missing from production wiring. See the [blog workflow](docs/content/blog-machine.md#blog-source-controls-october-2026).

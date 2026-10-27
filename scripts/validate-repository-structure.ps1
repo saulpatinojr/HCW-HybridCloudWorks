@@ -113,7 +113,10 @@ $allowedRootFiles = @(
   # Each is REJECTED here rather than permitted, so none can quietly return.
   # The three left are the ones that are actually maintained.
   'CHANGELOG.md',
-  'TODO.md'
+  'TODO.md',
+  # Owner-requested, dated continuation handoff (#1450). It is not a second
+  # backlog or a docs-site page; refresh its snapshot when resuming work.
+  'MEMORY.md'
 )
 
 # Guard the casing explicitly: on a case-insensitive filesystem (Windows,
@@ -123,7 +126,7 @@ $allowedRootFiles = @(
 # gone but the hazard is identical for the files left.) The allowlist above is
 # compared case-sensitively by -in on Linux CI but not on Windows, so this
 # check is what actually holds the line for local runs.
-$casingSensitiveNames = @('TODO.md', 'CHANGELOG.md')
+$casingSensitiveNames = @('TODO.md', 'CHANGELOG.md', 'MEMORY.md')
 
 # Directory names never walked by the Markdown scan, at any depth.
 #
