@@ -159,6 +159,9 @@ export function trackedFiles(root) {
   }
 }
 
+/** Whether one of the pin readers owns this tracked file, whether or not it carries a pin today. */
+export const isPinFile = (file) => FILE_READERS.some((reader) => reader.owns(file, posix.basename(file)));
+
 /**
  * Every pin in the tree, and every place a pin should be but cannot be read.
  * `files` defaults to `git ls-files`, so an untracked file never counts.
