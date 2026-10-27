@@ -1782,6 +1782,16 @@ ${GUIDE}createReadStream(guide);
         expect(first).toHaveLength(1);
         expect(lines(run())).toEqual(first);
       });
+
+      it('findFileReads uses a tree it is handed once, and parses the text again for a tree it has used', () => {
+        const root = makeRepo({ ...TARGETS, 'other/a.js': cases['a path set again in a straight line'] });
+        const file = join(root, 'other', 'a.js');
+        const { ast } = listImports(readFileSync(file, 'utf8'));
+        // the text given here is empty, so only the tree can tell what the module reads
+        const run = () => findFileReads({ modules: new Map([[file, { text: '', ast }]]), cwd: join(root, 'pkg'), resolveImport: () => null });
+        expect(run().references).toHaveLength(1);
+        expect(run().references).toHaveLength(0);
+      });
     });
   });
 });
