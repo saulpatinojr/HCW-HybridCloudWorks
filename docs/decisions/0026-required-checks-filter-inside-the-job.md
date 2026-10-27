@@ -109,11 +109,13 @@ Two details of the implementation are the substance of the decision:
 
 ## Addendum, 2026-10-27 ([#1428](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1428))
 
-Two weaknesses were closed in `ci.yml`: one named above (a missing filter entry
-is found only at the merge) and one found while building
+Two weaknesses were closed, both in how a job decides whether it is needed:
+one named above (a missing filter entry is found only at the merge, closed in
+`ci.yml`) and one found while building
 [#1427](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1427) (a
-filter that `grep` cannot read). The decision itself, filtering inside the job
-so that the required check names never change, is unchanged.
+filter that `grep` cannot read, closed in `ci.yml` and then in `codeql.yml` and
+`iac-validate.yml`). The decision itself, filtering inside the job so that the
+required check names never change, is unchanged.
 
 - **A filter that `grep` cannot read now fails the job instead of switching
   it off.** `grep -E` answers 0 (a changed file matches), 1 (none does) or 2
@@ -122,8 +124,12 @@ so that the required check names never change, is unchanged.
   "no relevant change". The four detect steps in `ci.yml` now keep the answer
   and fail on anything but 0 or 1, naming the job and the filter.
   `scripts/ci-workflow-steps.test.mjs` runs each of them against a deliberately
-  broken filter. `codeql.yml` and `iac-validate.yml` have the same `if grep`
-  shape and have not been changed yet.
+  broken filter. `codeql.yml` and `iac-validate.yml` had the same `if grep`
+  shape and were fixed the same way in
+  [#1429](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1429):
+  `scripts/codeql-iac-workflow-steps.test.mjs` runs their detect steps too, and
+  fails if an `if grep` returns to any workflow (the few that remain are listed
+  there, each with its reason).
 - **The test that checks the filters now runs before the merge.** The
   "Negative" consequence above says a missing filter entry is found at the
   merge, after the fact. `scripts/ci-filters.test.mjs` (the check that every

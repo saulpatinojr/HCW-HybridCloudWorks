@@ -94,12 +94,29 @@ jobs:
             echo "could not compute the diff — analysing rather than guessing"
             exit 0
           }
-          if grep -qE "${FILTER}"'|^\.github/workflows/codeql\.yml$|^\.github/codeql/' <<<"$changed"; then
+          # grep -E answers 0 when a changed file matches the filter, 1 when
+          # none does, and 2 or more when it could not read the filter at all
+          # (an unclosed parenthesis, say). `if grep …` takes every answer
+          # other than 0 as "no", so a filter grep cannot read would skip the
+          # analysis as "no relevant change" while this required check stayed
+          # green (#1429, the same weakness as #1428 in ci.yml). The answer is
+          # kept instead, and anything other than 0 or 1 fails this step and
+          # names the filter. The filter goes in brackets so that a stray
+          # backslash at its end cannot join onto the `|` that adds this
+          # workflow and the CodeQL config, and so hide the mistake. These
+          # lines are the same as in ci.yml and iac-validate.yml; the test in
+          # scripts/codeql-iac-workflow-steps.test.mjs runs this step.
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/codeql\.yml$|^\.github/codeql/' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "${LANGUAGE} files changed — analysing"
-          else
+          elif [ "${status}" -eq 1 ]; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "no ${LANGUAGE} change — skipping analysis, still reporting this context"
+          else
+            echo "::error file=.github/workflows/codeql.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
           fi
 
       - name: Initialize CodeQL

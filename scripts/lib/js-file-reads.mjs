@@ -498,9 +498,84 @@ function collectExports(program) {
   return exports;
 }
 
-/** Parses one module and records its names. Throws if the text cannot be parsed. */
-function loadModule(file, text) {
-  const ast = parse(text);
+/** The methods of `vi` and `jest` that name a module, as `vi.mock('./x.js')` does. */
+const MODULE_NAMING_METHODS = new Set(['mock', 'doMock', 'unmock', 'doUnmock', 'importActual', 'importMock', 'requireActual']);
+
+/** A string written out in the code ('x', "x" or a template string with nothing worked out inside it), else null. */
+function plainText(node) {
+  if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) return node.quasis[0].value.cooked;
+  return null;
+}
+
+/**
+ * The import-like words in a text, for a file that cannot be parsed (TypeScript, for one). It reads the text, so a
+ * comment or a string that looks like an import is found too; for a file that parses, `listImports` uses the code.
+ */
+const TEXT_IMPORT = new RegExp(
+  '(?:(?:import|export|from|require)\\s*(?:\\(\\s*)?|(?:vi|jest)\\s*\\.\\s*(?:' + [...MODULE_NAMING_METHODS].join('|') + ')\\s*\\(\\s*)[\'"]([^\'"\\n]+)[\'"]',
+  'g'
+);
+
+/**
+ * The modules a file names: `import x from '...'`, `export ... from '...'`, `import('...')` and `require('...')` with
+ * a path written out, and the `vi.mock('...')` family (a module a test names is one it depends on, even when it
+ * replaces it). Each is `{ spec, line }`, the path as written and the line it is on, in the order they appear.
+ * Paths that are worked out at run time are not here; `findFileReads` reports those.
+ *
+ * It reads the syntax tree, so an import inside a comment or a string (a test that writes a module to a temporary
+ * folder, say) is not counted. A file that cannot be parsed is read as text instead (`parsed` is false).
+ */
+export function listImports(text) {
+  let ast;
+  try {
+    ast = parse(text);
+  } catch {
+    return {
+      parsed: false,
+      ast: null,
+      specs: [...text.matchAll(TEXT_IMPORT)].map((m) => ({ spec: m[1], line: text.slice(0, m.index).split('\n').length })),
+    };
+  }
+  const found = [];
+  const stack = [ast];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    let spec = null;
+    if (node.type === 'ImportDeclaration' || node.type === 'ExportAllDeclaration' || node.type === 'ExportNamedDeclaration') {
+      spec = plainText(node.source);
+    } else if (node.type === 'ImportExpression') {
+      spec = plainText(node.source);
+    } else if (node.type === 'CallExpression') {
+      const callee = node.callee;
+      const isRequire = callee.type === 'Identifier' && callee.name === 'require';
+      const isModuleCall =
+        callee.type === 'MemberExpression' &&
+        !callee.computed &&
+        callee.object.type === 'Identifier' &&
+        (callee.object.name === 'vi' || callee.object.name === 'jest') &&
+        MODULE_NAMING_METHODS.has(callee.property.name);
+      if (isRequire || isModuleCall) spec = plainText(node.arguments[0]);
+    }
+    if (spec !== null) found.push({ spec, line: node.loc.start.line, at: node.range[0] });
+    for (const child of childrenOf(node)) stack.push(child);
+  }
+  // `ast` is handed back so that findFileReads does not parse the same text a second time
+  return { parsed: true, ast, specs: found.sort((a, b) => a.at - b.at).map(({ spec, line }) => ({ spec, line })) };
+}
+
+/**
+ * Parses one module and records its names. Throws if the text cannot be parsed. `handed` is the syntax tree of the
+ * text when the caller has parsed it already (`listImports` does).
+ *
+ * The analysis writes onto the tree it works on: the names declared in each scope, the values each name was set
+ * to, the function each parameter belongs to. A tree that has been through here once is therefore no use for a
+ * second analysis (a name set once would look as if it were set twice, and what a module reads would change), so a
+ * tree that is already marked is not used and the text is parsed again.
+ */
+function loadModule(file, text, handed) {
+  const ast = handed && !handed.$analysed ? handed : parse(text);
+  ast.$analysed = true;
   const nodes = annotate(ast, file);
   for (const node of nodes) {
     switch (node.type) {
@@ -599,7 +674,9 @@ function enclosingFunction(node) {
 
 /**
  * @param {object} options
- * @param {Map<string, string>} options.modules  absolute file path -> source text
+ * @param {Map<string, string | {text: string, ast: object | null}>} options.modules  absolute file path -> source text,
+ *        or the text with its syntax tree when the caller has parsed it already (`listImports` returns the tree).
+ *        A tree serves one analysis; one that was used before is not used again, the text is parsed instead.
  * @param {(file: string) => boolean} [options.reportIn]  which of the modules to report reads from
  *        (default all). The others are parsed only so the values they export can be followed.
  * @param {(path: string) => (string|null)} [options.probeFile]  finds the file a path means when it is written without
@@ -617,9 +694,10 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
   const loaded = new Map();
   const references = [];
 
-  for (const [file, text] of modules) {
+  for (const [file, entry] of modules) {
+    const text = typeof entry === 'string' ? entry : entry.text;
     try {
-      loaded.set(file, loadModule(file, text));
+      loaded.set(file, loadModule(file, text, typeof entry === 'string' ? undefined : (entry.ast ?? undefined)));
     } catch (error) {
       if (reportIn(file) && MENTIONS_FILE_ACCESS.test(text)) {
         references.push({
