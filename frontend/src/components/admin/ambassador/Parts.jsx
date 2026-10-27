@@ -13,7 +13,8 @@ import { TabError, TabLoading } from '@/components/admin/integrations/TabNotice'
 import StatusBadge from '@/components/admin/shared/StatusBadge';
 import { daysUntil, MEMBERSHIP_STATUS, sourceLabel, todayIso } from './ambassadorModel';
 
-export const INPUT = 'w-full text-sm border border-border rounded-md px-3 py-1.5 bg-background';
+export const INPUT =
+  'min-w-0 w-full text-sm border border-border rounded-md px-3 py-1.5 bg-background';
 
 export function FieldError({ id, message }) {
   if (!message) return null;
@@ -26,7 +27,7 @@ export function FieldError({ id, message }) {
 
 export function Field({ id, label, hint, error, className = '', children }) {
   return (
-    <div className={className}>
+    <div className={`min-w-0 ${className}`}>
       <Label className="text-xs" htmlFor={id}>
         {label}
       </Label>
@@ -135,9 +136,13 @@ export function LinkList({ idPrefix, title, hint, rows, onChange, errors = {} })
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {rows.length === 0 && <p className="text-xs text-muted-foreground">None yet.</p>}
       {rows.map((row, index) => (
-        <div key={index} className="grid grid-cols-[1fr_2fr_auto] items-start gap-2">
+        <div
+          key={index}
+          className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"
+        >
           <TextField
             id={`${idPrefix}-${index}-label`}
+            className="col-span-2 sm:col-span-1"
             label="Label"
             value={row.label}
             onChange={(v) => update(index, 'label', v)}

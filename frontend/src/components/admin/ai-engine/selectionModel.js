@@ -232,11 +232,13 @@ export function toggleExclude(draft, provider, excluded) {
  */
 export function describeEffective(resolved, providers = []) {
   const first = resolved?.chain?.[0];
+  if (resolved?.planned) return 'Not connected yet';
   if (!first) return 'No eligible model';
   const via = providerLabel(first.provider, providers);
   if (first.model) return `${first.model} via ${via}`;
-  const judged = first.modalityModel ? ` (${first.modalityModel})` : '';
-  return `Provider default${judged} via ${via}`;
+  // modalityModel is an eligibility check, not the model used for each purpose.
+  if (resolved?.media && first.modalityModel) return `${first.modalityModel} via ${via}`;
+  return `Provider default via ${via}`;
 }
 
 /** The first turned-away candidate, as "Provider: why", or null. */
@@ -251,6 +253,7 @@ export function firstRejection(resolved, providers = []) {
  * unpriced, or nothing is eligible at all.
  */
 export function taskBadges(resolved, catalog = null) {
+  if (resolved?.planned) return ['planned'];
   const asked = resolved?.entry?.mode;
   const got = resolved?.mode;
   const first = resolved?.chain?.[0] || null;

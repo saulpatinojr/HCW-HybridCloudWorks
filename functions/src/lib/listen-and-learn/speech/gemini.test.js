@@ -690,3 +690,25 @@ describe('failures', () => {
     });
   });
 });
+
+describe('Gemini 3.8 TTS', () => {
+  for (const model of ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts']) {
+    it(`${model} sends verbatim turns with speaker annotations and encodes the WAV reply`, async () => {
+      const samples = new Int16Array(2400).fill(1000);
+      const fetchImpl = vi.fn(async () => ok(interaction([audioBlock({
+        data: wav(samples).toString('base64'), mime_type: 'audio/wav',
+      })])));
+      const result = await synthesizeWithGemini({
+        dialogue: DIALOGUE, env: { ...KEYED_ENV, LISTEN_AND_LEARN_TTS_MODEL: model }, fetchImpl,
+      });
+      const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+      expect(body.model).toBe(model);
+      expect(body.input).toEqual(DIALOGUE.map(({ speaker, text }) => ({
+        type: 'text', text, annotations: [{ type: 'speech_metadata', speaker }],
+      })));
+      expect(body.generation_config.speech_config.map((s) => s.speaker)).toEqual(['Maya', 'Elena']);
+      expect(result.audio.length).toBeGreaterThan(0);
+      expect(result.model).toBe(model);
+    });
+  }
+});

@@ -227,3 +227,20 @@ describe('one row per call (ADR 0033)', () => {
     expect(priced.unpriced).toBeUndefined();
   });
 });
+
+describe('confirmed non-token prices', () => {
+  it('preserves a caller-supplied per-image cost without a token-table entry', async () => {
+    const row = await recordAiUsage(deps({ ai: { isPriced: () => false } }), {
+      provider: 'replicate', model: 'google/imagen-4-fast', costUsd: 0.02, source: 'ai:coverArt',
+    });
+    expect(row).toMatchObject({ estimatedCostUsd: 0.02 });
+    expect(row).not.toHaveProperty('unpriced');
+  });
+});
+
+it('marks unlisted models unpriced even when a media caller provides only getCostEstimate', async () => {
+  const d = deps();
+  const row = await recordAiUsage(d, { ...CALL, model: 'gemini-unknown-tts' });
+  expect(row).toMatchObject({ estimatedCostUsd: 0, unpriced: true });
+  expect(d.ai.getCostEstimate).not.toHaveBeenCalled();
+});

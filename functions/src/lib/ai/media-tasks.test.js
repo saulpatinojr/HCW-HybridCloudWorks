@@ -81,7 +81,7 @@ describe('the resolver (select.js)', () => {
     });
     const speech = selectChain({ task: 'listenAndLearnSpeech', selection: doc, catalog: null, availability: everyone });
     expect(speech.rejected[0]).toMatchObject({ provider: 'elevenlabs', code: 'policy' });
-    expect(speech.chain[0]).toMatchObject({ provider: 'gemini', selection: 'global', modalityModel: 'gemini-2.5-flash-preview-tts' });
+    expect(speech.chain[0]).toMatchObject({ provider: 'gemini', selection: 'global', modalityModel: 'gemini-3.8-flash-tts' });
     const cover = selectChain({ task: 'coverArt', selection: doc, catalog: null, availability: everyone });
     expect(cover.rejected[0]).toMatchObject({ provider: 'gemini', code: 'capability', missing: ['image'] });
     expect(cover.chain).toEqual([]);
@@ -112,7 +112,7 @@ describe('the resolver (select.js)', () => {
     // list's Gemini step, judged on Gemini's TTS recommendation, serves.
     expect(refused.mode).toBe('global');
     expect(refused.flags[0]).toMatch(/no entry of the custom chain is eligible/);
-    expect(refused.chain[0]).toMatchObject({ provider: 'gemini', model: null, modalityModel: 'gemini-2.5-flash-preview-tts' });
+    expect(refused.chain[0]).toMatchObject({ provider: 'gemini', model: null, modalityModel: 'gemini-3.8-flash-tts' });
   });
 
   it('a custom step naming a media provider and no model is judged on its modality recommendation', () => {
@@ -208,7 +208,7 @@ describe('the migration of the model fields the settings pages carried (migrate-
 
   it('a stored model equal to the recommendation, or none, leaves the task on Recommended', () => {
     const same = migrateSelection({
-      media: { listenAndLearnSpeech: 'gemini-2.5-flash-preview-tts', podcastVoice: 'eleven_v3' },
+      media: { listenAndLearnSpeech: 'gemini-3.8-flash-tts', podcastVoice: 'eleven_v3' },
     });
     expect(same.tasks).not.toHaveProperty('listenAndLearnSpeech');
     expect(same.tasks).not.toHaveProperty('podcastVoice');
@@ -394,7 +394,7 @@ describe('the router’s one door for the media call sites (router.js modelForTa
     expect(await r.modelForTask({ task: 'coverArt' })).toMatchObject({ provider: 'replicate', model: 'google/imagen-4-fast' });
     expect(await r.modelForTask({ task: 'listenAndLearnSpeech' })).toMatchObject({
       provider: 'gemini',
-      model: 'gemini-2.5-flash-preview-tts',
+      model: 'gemini-3.8-flash-tts',
     });
   });
 

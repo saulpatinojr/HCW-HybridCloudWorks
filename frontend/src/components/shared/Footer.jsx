@@ -22,7 +22,7 @@ export default function Footer() {
         source="footer"
         className="max-w-[1400px] mx-auto px-4 md:px-6 w-full mb-6"
       />
-      <div className="max-w-[1400px] mx-auto px-4 md:px-6 w-full flex flex-col md:flex-row items-center justify-between gap-2 md:gap-0">
+      <div className="max-w-[1400px] mx-auto px-4 md:px-6 w-full flex flex-col lg:flex-row items-center justify-between gap-5 lg:gap-6">
         {/* Left: Copyright. No "All rights reserved": the site's code is
             Apache-2.0 (LICENSE, #780), and the Terms page covers content. */}
         <div className="flex-1 flex flex-col md:flex-row items-center md:items-start md:justify-start">
@@ -32,8 +32,11 @@ export default function Footer() {
         </div>
 
         {/* Center: grouped links centered (About · Contact · Privacy · Terms · Admin) */}
-        <div className="flex-1 flex items-center justify-center">
-          <nav className="flex items-center gap-4 sm:gap-6 text-xs">
+        <div className="min-w-0 flex items-center justify-center">
+          <nav
+            aria-label="Footer"
+            className="flex flex-wrap items-center justify-center gap-x-5 gap-y-3 text-xs [&>a]:whitespace-nowrap"
+          >
             <Link
               to="/about"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
@@ -58,16 +61,6 @@ export default function Footer() {
             >
               Terms
             </a>
-            {/* Programme credit (#1302, #1078). Text for now: the official badge
-                asset replaces it once the owner drops the file in. */}
-            <a
-              href="https://www.gitkraken.com/ambassador"
-              className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              GitKraken Ambassador
-            </a>
             <Link
               to="/admin"
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-300 font-mono uppercase tracking-wide transition-colors"
@@ -78,7 +71,7 @@ export default function Footer() {
         </div>
 
         {/* Right: Social Icons — shown only when profile URLs are configured */}
-        <div className="flex-1 flex flex-row items-center justify-end gap-4 mt-2 md:mt-0">
+        <div className="flex-1 flex flex-row items-center justify-end gap-4">
           {SOCIAL_X_URL && (
             <a
               className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"

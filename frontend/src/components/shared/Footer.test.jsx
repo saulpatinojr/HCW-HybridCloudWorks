@@ -1,10 +1,4 @@
-/**
- * The footer's programme credit (#1302, #1078): a plain text link to the
- * GitKraken Ambassador programme page, opened in a new tab with the same
- * rel the social links carry, and no logo until the owner drops the badge
- * asset in. The signup placement is mocked out: PlacedNewsletterSignup has
- * its own test and a request of its own.
- */
+/** Public footer links; private ambassador programmes do not belong here. */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -17,17 +11,14 @@ vi.mock('@/components/shared/PlacedNewsletterSignup', () => ({
 import Footer from '@/components/shared/Footer';
 
 describe('Footer', () => {
-  it('links the GitKraken Ambassador programme page as text, in a new tab, without a logo', () => {
+  it('does not advertise a private ambassador membership', () => {
     render(
       <MemoryRouter>
         <Footer />
       </MemoryRouter>
     );
-    const link = screen.getByRole('link', { name: 'GitKraken Ambassador' });
-    expect(link).toHaveAttribute('href', 'https://www.gitkraken.com/ambassador');
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-    expect(link.querySelector('img, svg')).toBeNull();
+    expect(screen.queryByRole('link', { name: /ambassador/i })).toBeNull();
+    expect(screen.getByRole('navigation', { name: 'Footer' })).toBeInTheDocument();
   });
 
   it('keeps the site links around it', () => {

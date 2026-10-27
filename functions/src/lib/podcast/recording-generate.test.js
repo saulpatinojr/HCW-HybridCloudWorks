@@ -102,7 +102,7 @@ const happyCallTool = () =>
 const happyDeps = (over = {}) => ({
   callTool: happyCallTool(),
   writeScript: vi.fn(async ({ usageOut }) => {
-    usageOut?.push({ provider: 'anthropic', model: 'claude', promptTokens: 10, completionTokens: 20 });
+    usageOut?.push({ provider: 'anthropic', model: 'claude-sonnet-4-6', promptTokens: 10, completionTokens: 20 });
     return script();
   }),
   synthesize: vi.fn(async () => ({

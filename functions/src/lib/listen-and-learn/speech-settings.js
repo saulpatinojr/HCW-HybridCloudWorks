@@ -48,7 +48,7 @@ export const LISTEN_AND_LEARN_SPEECH_CONFIG_ID = 'listen_and_learn_speech';
  * The two Gemini TTS models this product has offered, in the order the
  * control showed them. `label` is the owner's wording; `tier` is the stable
  * key the tests use. Economy is the module default (gemini.js) and the
- * task's recommendation (ai/tasks.js); Best is one Custom step away.
+ * legacy fallback; the current reviewed recommendation lives in ai/tasks.js.
  */
 export const LISTEN_AND_LEARN_GEMINI_MODELS = Object.freeze([
   Object.freeze({

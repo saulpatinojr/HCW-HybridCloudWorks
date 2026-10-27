@@ -408,7 +408,7 @@ export default function ServicesTab({
   onOpenCatalog,
 }) {
   const { toast } = useToast();
-  const { state, saving, reload, save } = useSelection();
+  const { state, saving, reload, save } = useSelection(catalog);
 
   const failed = (title) => (err) =>
     toast({ title, description: err?.message || 'Nothing was changed.', variant: 'destructive' });
@@ -475,6 +475,10 @@ export default function ServicesTab({
           </Button>
         </div>
       </div>
+      <p className="text-xs text-muted-foreground">
+        Refresh updates the available choices and their status. Saved model selections stay in
+        place. Speech and image models are selected on Tasks, rather than in the chat Priority list.
+      </p>
 
       <PriorityList
         providers={providers}

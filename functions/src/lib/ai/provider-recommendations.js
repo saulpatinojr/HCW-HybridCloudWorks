@@ -25,7 +25,7 @@ export const RECOMMENDED_BY_MODALITY = Object.freeze({
     json: rec('gemini-3.6-flash', 'Structured output that holds on long inputs; $1.50 / $7.50.'),
     vision: rec('gemini-3.6-flash', 'Reads images; the same model the inspector used for alt text before 2026-10-04.'),
     grounding: rec('gemini-3.6-flash', 'The only model the Interactions API grounds on pages and YouTube (router.js header).'),
-    tts: rec('gemini-2.5-flash-preview-tts', 'The Economy voice: half the price of 3.1 Flash TTS per audio token ($0.50 / $10.00 per 1M).'),
+    tts: Object.freeze({ model: 'gemini-3.8-flash-tts', asOf: '2026-10-27', reason: 'Google recommends Flash TTS for long-form multi-speaker fidelity. Introductory text/audio rates are $0.50 / $9 per 1M through 2026-12-31, then $1 / $18. Flash-Lite TTS is the lower-cost custom option ($0.50 / $6, then $1 / $12).' }),
   }),
   elevenlabs: Object.freeze({
     tts: rec('eleven_v3', 'The one model the Text to Dialogue endpoint serves; USD 0.10 per 1,000 characters.'),
@@ -36,10 +36,10 @@ export const RECOMMENDED_BY_MODALITY = Object.freeze({
   openai: Object.freeze({
     text: rec('gpt-5-nano', 'The cheapest OpenAI model: $0.05 / $0.40 per 1M tokens (published rates, owner confirmation 2026-10-05).'),
     json: rec('gpt-5-mini', 'Reads whole drafts and returns JSON; $0.25 / $2.00.'),
-    vision: rec('gpt-5-mini', 'Reads images; nano does not.'),
+    vision: rec('gpt-5-mini', 'Supports image inputs for this task.'),
   }),
   anthropic: Object.freeze({
-    text: rec('claude-haiku-4-5', 'The fast tier: $0.80 / $4.00 per 1M tokens, 1.9 s on the card\'s Test.'),
+    text: rec('claude-haiku-4-5', 'The fast tier: $1.00 / $5.00 per 1M tokens, 1.9 s on the card\'s Test.'),
     json: rec('claude-sonnet-4-6', 'The card\'s default and the quality tier for structured work; $3.00 / $15.00.'),
     vision: rec('claude-sonnet-4-6', 'Reads images at the same rate.'),
   }),
@@ -50,7 +50,7 @@ export const RECOMMENDED_BY_MODALITY = Object.freeze({
   foundry: Object.freeze({
     text: rec('gpt-5-nano', 'The cheapest model on the catalogue: $0.05 / $0.40 per 1M tokens, 2.5 s on the card\'s Test (2026-10-04).'),
     json: rec('gpt-5-mini', 'Reads whole drafts and returns JSON; $0.25 / $2.00, 2–3 s.'),
-    vision: rec('gpt-5-mini', 'Reads images; nano does not.'),
+    vision: rec('gpt-5-mini', 'Supports image inputs for this task.'),
   }),
 });
 

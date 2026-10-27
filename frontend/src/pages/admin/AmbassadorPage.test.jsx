@@ -178,6 +178,7 @@ const routes =
       ...over,
     };
     if (route in table) return table[route];
+    if (route.split('?')[0] in table) return table[route.split('?')[0]];
     throw new Error(`unexpected route ${route}`);
   };
 
@@ -470,5 +471,28 @@ describe('Settings', () => {
       programId: 'program-star',
       status: 'denied',
     });
+  });
+});
+
+describe('saved qualification dates', () => {
+  it('sends the same application period from the dashboard and workspace', async () => {
+    const application = {
+      ...APPLICATIONS[0],
+      qualificationPeriod: { start: '2026-01-01', end: '2026-03-31' },
+    };
+    const route = 'cms/ambassador/readiness/program-mvp?period=2026-01-01..2026-03-31';
+    getJSON.mockImplementation(
+      routes({
+        'cms/ambassador/applications': { items: [application] },
+        [route]: { readiness: READINESS },
+      })
+    );
+    const view = render(<AmbassadorPage />);
+    await waitFor(() => expect(getJSON).toHaveBeenCalledWith(route));
+    view.unmount();
+    getJSON.mockClear();
+    searchParams = 'tab=applications&application=application-1';
+    render(<AmbassadorPage />);
+    await waitFor(() => expect(getJSON).toHaveBeenCalledWith(route));
   });
 });

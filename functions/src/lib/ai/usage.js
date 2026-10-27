@@ -13,6 +13,8 @@
  * better than losing the work.
  */
 
+import { isPriced as modelIsPriced } from './model-tables.js';
+
 export const USAGE_CONTAINER = 'ai_usage';
 
 /**
@@ -144,8 +146,9 @@ export async function recordAiUsage(
   try {
     const inTokens = Number(promptTokens) || 0;
     const outTokens = Number(completionTokens) || 0;
-    const isUnpriced =
-      unpriced === true || (typeof ai?.isPriced === 'function' && !ai.isPriced(provider, model));
+    const explicitCost = Number.isFinite(costUsd) && costUsd >= 0;
+    const isUnpriced = unpriced === true ||
+      (!explicitCost && !(ai?.isPriced || modelIsPriced)(provider, model));
 
     const row = {
       id: typeof recordedRowId === 'string' && recordedRowId ? recordedRowId : uuid(),
@@ -156,7 +159,7 @@ export async function recordAiUsage(
       totalTokens: inTokens + outTokens,
       estimatedCostUsd: isUnpriced
         ? 0
-        : typeof costUsd === 'number'
+        : explicitCost
           ? costUsd
           : ai.getCostEstimate(provider, model, inTokens, outTokens),
       source: source || USAGE_SOURCES.admin,

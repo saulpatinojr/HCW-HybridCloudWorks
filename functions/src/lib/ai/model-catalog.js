@@ -120,14 +120,14 @@ export class CatalogListError extends AuthoredError {}
  * @param {Function} fetchImpl - fetch
  * @param {string} url - the list endpoint
  * @param {object} headers - request headers (the key)
- * @param {number} timeoutMs - the deadline
+ * @param {AbortSignal} signal - the deadline shared by all pages
  * @returns {Promise<object>}
  */
-async function getJson(fetchImpl, url, headers, timeoutMs) {
+async function getJson(fetchImpl, url, headers, signal) {
   const response = await fetchImpl(url, {
     method: 'GET',
     headers,
-    signal: AbortSignal.timeout(timeoutMs),
+    signal,
   });
   const text = await response.text();
   let data = null;
@@ -162,7 +162,7 @@ const idsOf = (rows) =>
   rows.map((row) => (typeof row?.id === 'string' ? row.id.trim() : '')).filter(Boolean);
 
 async function listOpenAiCompatible(ctx, url, headers) {
-  const data = await getJson(ctx.fetchImpl, url, headers, ctx.timeoutMs);
+  const data = await getJson(ctx.fetchImpl, url, headers, ctx.signal);
   return idsOf(collectionOf(data, 'data'));
 }
 
@@ -195,12 +195,15 @@ const LISTERS = {
       const url = new URL('https://api.anthropic.com/v1/models');
       url.searchParams.set('limit', '100');
       if (afterId) url.searchParams.set('after_id', afterId);
-      const data = await getJson(ctx.fetchImpl, url.toString(), headers, ctx.timeoutMs);
+      const data = await getJson(ctx.fetchImpl, url.toString(), headers, ctx.signal);
       ids.push(...idsOf(collectionOf(data, 'data')));
-      if (!data.has_more || !data.last_id) break;
+      if (!data.has_more) return ids;
+      if (!data.last_id || data.last_id === afterId) throw new CatalogListError(
+        'Incomplete list: invalid Anthropic pagination cursor'
+      );
       afterId = data.last_id;
     }
-    return ids;
+    throw new CatalogListError('Incomplete list: Anthropic pagination limit reached');
   },
   gemini: async (ctx) => {
     const headers = { 'x-goog-api-key': readKey(ctx.env, KEY_ENV.gemini) };
@@ -210,12 +213,15 @@ const LISTERS = {
       const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
       url.searchParams.set('pageSize', '1000');
       if (pageToken) url.searchParams.set('pageToken', pageToken);
-      const data = await getJson(ctx.fetchImpl, url.toString(), headers, ctx.timeoutMs);
+      const data = await getJson(ctx.fetchImpl, url.toString(), headers, ctx.signal);
       ids.push(...geminiChatIdsOf(collectionOf(data, 'models')));
-      if (!data.nextPageToken) break;
+      if (!data.nextPageToken) return ids;
+      if (data.nextPageToken === pageToken) throw new CatalogListError(
+        'Incomplete list: repeated Gemini pagination cursor'
+      );
       pageToken = data.nextPageToken;
     }
-    return ids;
+    throw new CatalogListError('Incomplete list: Gemini pagination limit reached');
   },
   // The media providers (ADR 0034 slice 5, #860). ElevenLabs lists its
   // models at GET /v1/models as a bare array of { model_id, name, … }
@@ -227,7 +233,7 @@ const LISTERS = {
       ctx.fetchImpl,
       'https://api.elevenlabs.io/v1/models',
       { 'xi-api-key': readKey(ctx.env, MEDIA_KEY_ENV.elevenlabs) },
-      ctx.timeoutMs
+      ctx.signal
     );
     if (!Array.isArray(data)) throw new CatalogListError('Malformed list: the answer was not an array of models');
     return data
@@ -246,14 +252,16 @@ const LISTERS = {
 const keyEnvFor = (provider) => KEY_ENV[provider] || MEDIA_KEY_ENV[provider];
 
 /**
- * One Gemini page's chat-capable ids: `models/<id>` entries whose
- * `supportedGenerationMethods` include `generateContent`; embedding and
+ * One Gemini page's callable ids: `models/<id>` entries whose
+ * `supportedGenerationMethods` include `generateContent` or `interactions`; embedding and
  * image-only models (which the list also returns) are left out.
  */
 function geminiChatIdsOf(models) {
   const chatCapable = (model) =>
     Array.isArray(model?.supportedGenerationMethods) &&
-    model.supportedGenerationMethods.includes('generateContent');
+    model.supportedGenerationMethods.some((method) =>
+      ['generateContent', 'interactions'].includes(method)
+    );
   return models
     .filter(chatCapable)
     .map((model) => (typeof model?.name === 'string' ? model.name : ''))
@@ -303,8 +311,19 @@ export async function listModels(ctx, provider) {
   const lister = LISTERS[provider];
   if (!lister) throw new Error(`Unknown AI provider: ${provider}`);
   if (!readKey(ctx.env, keyEnvFor(provider))) return null;
-  const ids = await lister(ctx);
-  return [...new Set(ids)];
+  const signal = AbortSignal.timeout(ctx.timeoutMs);
+  let onAbort;
+  const deadline = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    // Include token acquisition as well as every response body in the deadline.
+    const ids = await Promise.race([lister({ ...ctx, signal }), deadline]);
+    return [...new Set(ids)];
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
 }
 
 
@@ -415,8 +434,7 @@ function applyListing(provider, entry, ids, nowIso) {
  */
 async function listEveryProvider(providers, list) {
   const outcomes = {};
-  for (const provider of providers) {
-    if (!PROVIDERS.includes(provider)) continue;
+  await Promise.all([...new Set(providers)].filter((p) => PROVIDERS.includes(p)).map(async (provider) => {
     try {
       const ids = await list(provider);
       outcomes[provider] = ids === null ? { skipped: true } : { ids };
@@ -427,7 +445,7 @@ async function listEveryProvider(providers, list) {
         error: authoredMessage(error, `The model list could not be read (${errorCode(error)}).`),
       };
     }
-  }
+  }));
   return outcomes;
 }
 

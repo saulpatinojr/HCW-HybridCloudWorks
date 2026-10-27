@@ -147,7 +147,7 @@ describe('recommendations are claims with a date, naming a priced model', () => 
   it('the media tasks recommend the model that was their default before slice 5, so nothing changes on merge', () => {
     expect(AI_TASKS.listenAndLearnSpeech.recommended).toMatchObject({
       provider: 'gemini',
-      model: 'gemini-2.5-flash-preview-tts',
+      model: 'gemini-3.8-flash-tts',
     });
     expect(AI_TASKS.podcastVoice.recommended).toMatchObject({ provider: 'elevenlabs', model: 'eleven_v3' });
     expect(AI_TASKS.coverArt.recommended).toMatchObject({ provider: 'replicate', model: 'google/imagen-4-fast' });
@@ -184,7 +184,7 @@ describe('recommendations are claims with a date, naming a priced model', () => 
       }
       expect(recommendedModelFor(provider, 'text')).toBeUndefined();
     }
-    expect(recommendedModelFor('gemini', 'tts').model).toBe('gemini-2.5-flash-preview-tts');
+    expect(recommendedModelFor('gemini', 'tts').model).toBe('gemini-3.8-flash-tts');
     expect(recommendedModelFor('elevenlabs', 'tts').model).toBe('eleven_v3');
     expect(recommendedModelFor('replicate', 'image').model).toBe('google/imagen-4-fast');
   });
