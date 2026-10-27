@@ -371,3 +371,5 @@ describe('indexing headers', () => {
     expect(noindexed.sort()).toEqual(['/admin/*', '/auth/*', '/preview/*']);
   });
 });
+
+// Throwaway proof for #1428 (a pull request that changes only a frontend test). Do not merge.
