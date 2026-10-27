@@ -2,11 +2,12 @@
  * Derives out-of-component file dependencies (imports and file reads) from tests
  * and asserts that CI path filters in .github/workflows/ci.yml match every one.
  *
- * (QA-4, #979)
+ * (QA-4, #979; reads worked out from the parsed code, #1414)
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findFileReads } from './js-file-reads.mjs';
 
 const DEFAULT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -17,6 +18,22 @@ export const COMPONENTS = [
   { name: 'vps-agent', dir: 'vps-agent' },
   { name: 'edge (availability probe)', dir: 'edge/availability-probe' },
 ];
+
+/**
+ * Import shortcuts a package uses, by package folder: an import starting with
+ * the first value means the second, inside the package. The frontend's `@` is
+ * set in frontend/vitest.config.js and frontend/vite.config.js.
+ */
+const IMPORT_ALIASES = { frontend: [['@/', 'src/']] };
+
+/** File functions that look inside a folder. The others only ask about it (does it exist, what is its size). */
+const LISTS_FOLDER = new Set(['readdirSync', 'readdir', 'opendirSync', 'opendir', 'cpSync', 'cp']);
+
+/** Files the guard reads as code. An import of anything else (an image, JSON) is only recorded. */
+const CODE_FILE = /\.[cm]?[jt]sx?$/;
+
+/** A name no real file has, to ask "does this filter match something inside this folder". */
+export const DIRECTORY_PROBE = '__ci-filter-probe__';
 
 /** Recursively discover test files inside a component directory. */
 export function findTestFiles(dir) {
@@ -38,7 +55,7 @@ function resolveFile(candidate) {
   if (existsSync(candidate) && statSync(candidate).isFile()) {
     return candidate;
   }
-  for (const ext of ['.js', '.jsx', '.mjs', '.ts', '.tsx', '.json', '/index.js']) {
+  for (const ext of ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.json', '/index.js', '/index.jsx', '/index.mjs']) {
     const withExt = candidate + ext;
     if (existsSync(withExt) && statSync(withExt).isFile()) {
       return withExt;
@@ -47,131 +64,149 @@ function resolveFile(candidate) {
   return null;
 }
 
-/**
- * Derive out-of-component file paths that are imported or read by test files
- * or test helpers within the component.
- */
-export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT) {
-  const compDirAbs = join(repoRoot, compDir);
-  const testFiles = findTestFiles(compDirAbs);
-  const scanned = new Set(testFiles);
-  const queue = [...testFiles];
-  const crossRootReads = new Set();
+function isDirectory(path) {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
+/** Whether `file` is `dir` itself or inside it. */
+function isInside(dir, file) {
+  const rel = relative(dir, file);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/**
+ * The paths a module imports that start with a dot or with one of the aliases:
+ * static and dynamic imports, require, and the module paths vi.mock and its
+ * relatives name. Only paths written out as plain text are found here; one
+ * worked out at run time is found by lib/js-file-reads.mjs.
+ */
+function importSpecs(content, aliases) {
+  const prefixes = ['\\.', ...aliases.map(([prefix]) => prefix.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'))];
+  const opener =
+    '(?:(?:import|export|from|require)\\s*(?:\\(\\s*)?|(?:vi|jest)\\s*\\.\\s*(?:mock|doMock|unmock|doUnmock|importActual|importMock|requireActual)\\s*\\(\\s*)';
+  const pattern = new RegExp(`${opener}['"]((?:${prefixes.join('|')})[^'"]*)['"]`, 'g');
+  return [...content.matchAll(pattern)].map((m) => m[1]);
+}
+
+/**
+ * Derive the out-of-component files and folders that tests (and the modules
+ * and helpers they import) import or read.
+ *
+ * `reviewed` lists reads a person has looked at and decided the guard should
+ * not hold to the filter, each as `{ file, expression?, reason }` (see
+ * ci-filters.test.mjs). A read matches an entry when it is in `file` and, if
+ * the entry has an `expression`, is written exactly that way.
+ *
+ * Returns:
+ *  - `files`: repository paths of files read or imported from outside the
+ *    component.
+ *  - `dirs`: repository paths (ending in "/") of folders whose contents are
+ *    read, where the code builds the file name at run time. A filter must match
+ *    something inside each one.
+ *  - `unresolved`: reads whose path the guard could not work out. These are
+ *    never skipped; the test fails on them (#1414).
+ *  - `unusedReviewed`: entries of `reviewed` for this package that matched no
+ *    read, so a stale entry cannot stay behind.
+ *  - `origins`: for each path above, where it is read, to put in messages.
+ */
+export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT, { reviewed = [] } = {}) {
+  const compDirAbs = join(repoRoot, compDir);
+  const aliases = IMPORT_ALIASES[compDir] ?? [];
+  const testFiles = findTestFiles(compDirAbs);
+  const modules = new Map();
+  const queue = [...testFiles];
+  const outsideModules = new Map();
+  const files = new Set();
+  const dirs = new Set();
+  const unresolved = [];
+  const origins = new Map();
+  const toRepoPath = (abs) => relative(repoRoot, abs).replace(/\\/g, '/');
+  const remember = (path, where) => {
+    if (!origins.has(path)) origins.set(path, new Set());
+    origins.get(path).add(where);
+  };
+
+  const resolveSpec = (rawSpec, from) => {
+    const spec = rawSpec.replace(/[?#].*$/, ''); // "../guide.md?raw" names the file ../guide.md
+    if (spec.startsWith('.')) return resolveFile(resolve(dirname(from), spec));
+    for (const [prefix, target] of aliases) {
+      if (spec.startsWith(prefix)) return resolveFile(join(compDirAbs, target, spec.slice(prefix.length)));
+    }
+    return null;
+  };
+
+  // 1. Find every module the tests pull in, following imports inside the
+  //    component, and note the imports that leave it.
   while (queue.length > 0) {
     const current = queue.shift();
+    if (modules.has(current)) continue;
     const content = readFileSync(current, 'utf8');
+    modules.set(current, content);
 
-    // 1. Static and dynamic imports / requires: import ... from '...', require('...')
-    const importMatches = content.matchAll(
-      /(?:import|export|from|require)\s*(?:\(\s*)?['"](\.[^'"]+)['"]/g
-    );
-    for (const match of importMatches) {
-      const spec = match[1];
-      const targetAbs = resolve(dirname(current), spec);
-      const resolved = resolveFile(targetAbs);
-      if (resolved) {
-        if (
-          !resolved.startsWith(compDirAbs + '\\') &&
-          !resolved.startsWith(compDirAbs + '/') &&
-          resolved !== compDirAbs
-        ) {
-          const relTarget = relative(repoRoot, resolved).replace(/\\/g, '/');
-          crossRootReads.add(relTarget);
-        } else if (!scanned.has(resolved) && !resolved.includes('node_modules')) {
-          scanned.add(resolved);
-          queue.push(resolved);
-        }
-      }
-    }
-
-    // 2. new URL('...', import.meta.url)
-    const urlMatches = content.matchAll(
-      /new URL\(\s*['"](\.[^'"]+)['"]\s*,\s*import\.meta\.url\s*\)/g
-    );
-    for (const match of urlMatches) {
-      const spec = match[1];
-      const targetAbs = resolve(dirname(current), spec);
-      const resolved = resolveFile(targetAbs);
-      if (resolved) {
-        if (
-          !resolved.startsWith(compDirAbs + '\\') &&
-          !resolved.startsWith(compDirAbs + '/') &&
-          resolved !== compDirAbs
-        ) {
-          const relTarget = relative(repoRoot, resolved).replace(/\\/g, '/');
-          crossRootReads.add(relTarget);
-        }
-      }
-    }
-
-    // 3. Explicit filesystem reads: readFileSync, readFile, labHostFile, read(...)
-    const readMatches = content.matchAll(
-      /(?:readFileSync|readFile|labHostFile|read)\s*\(\s*([^,)]+)/g
-    );
-    for (const rm of readMatches) {
-      const callArg = rm[1].trim();
-      // Check for string literal inside the read call
-      const strMatch = callArg.match(/['"]([^'"]+)['"]/);
-      if (strMatch) {
-        const str = strMatch[1];
-        const candidates = [
-          resolve(dirname(current), str),
-          resolve(repoRoot, str),
-          resolve(repoRoot, 'lab-host', str),
-          resolve(repoRoot, 'lab-image', str),
-          resolve(repoRoot, 'infra', str),
-          resolve(repoRoot, 'functions', str),
-          resolve(repoRoot, 'frontend', str),
-        ];
-        for (const cand of candidates) {
-          const resolved = resolveFile(cand);
-          if (
-            resolved &&
-            !resolved.startsWith(compDirAbs + '\\') &&
-            !resolved.startsWith(compDirAbs + '/')
-          ) {
-            crossRootReads.add(relative(repoRoot, resolved).replace(/\\/g, '/'));
-            break;
-          }
-        }
-      } else {
-        // If the argument is an identifier like `read(ADDON_PANE_PAGE)`:
-        // Find const/let ADDON_PANE_PAGE = '...'
-        const id = callArg.trim();
-        if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(id)) {
-          const declMatch = content.match(
-            new RegExp(`(?:const|let|var)\\s+${id}\\s*=\\s*['"]([^'"]+)['"]`)
-          );
-          if (declMatch) {
-            const str = declMatch[1];
-            const candidates = [
-              resolve(dirname(current), str),
-              resolve(repoRoot, str),
-              resolve(repoRoot, 'lab-host', str),
-              resolve(repoRoot, 'lab-image', str),
-              resolve(repoRoot, 'infra', str),
-              resolve(repoRoot, 'functions', str),
-              resolve(repoRoot, 'frontend', str),
-            ];
-            for (const cand of candidates) {
-              const resolved = resolveFile(cand);
-              if (
-                resolved &&
-                !resolved.startsWith(compDirAbs + '\\') &&
-                !resolved.startsWith(compDirAbs + '/')
-              ) {
-                crossRootReads.add(relative(repoRoot, resolved).replace(/\\/g, '/'));
-                break;
-              }
-            }
-          }
-        }
+    for (const spec of importSpecs(content, aliases)) {
+      const resolved = resolveSpec(spec, current);
+      if (!resolved) continue;
+      if (!isInside(compDirAbs, resolved)) {
+        files.add(toRepoPath(resolved));
+        remember(toRepoPath(resolved), `${toRepoPath(current)} (import)`);
+        // kept so the values it exports (constants, helpers) can be followed; its own reads are not reported
+        if (CODE_FILE.test(resolved) && !outsideModules.has(resolved)) outsideModules.set(resolved, readFileSync(resolved, 'utf8'));
+      } else if (CODE_FILE.test(resolved) && !modules.has(resolved) && !resolved.includes('node_modules')) {
+        queue.push(resolved);
       }
     }
   }
 
-  return crossRootReads;
+  // 2. Work out every file the modules read.
+  const { references } = findFileReads({
+    modules: new Map([...modules, ...outsideModules]),
+    reportIn: (file) => modules.has(file),
+    cwd: compDirAbs,
+    resolveImport: (spec, from) => {
+      const resolved = resolveSpec(spec, from);
+      return resolved && (modules.has(resolved) || outsideModules.has(resolved)) ? resolved : null;
+    },
+  });
+
+  const reviewedHere = reviewed.filter((entry) => isInside(compDirAbs, join(repoRoot, entry.file)));
+  const usedReviewed = new Set();
+  const isReviewed = (repoFile, expression) => {
+    const entry = reviewedHere.find((e) => e.file === repoFile && (e.expression === undefined || e.expression === expression));
+    if (entry) usedReviewed.add(entry);
+    return Boolean(entry);
+  };
+
+  for (const reference of references) {
+    const readerFile = toRepoPath(reference.file);
+    const where = `${readerFile}:${reference.line}`;
+    if (isReviewed(readerFile, reference.expression)) continue;
+
+    for (const { kind, path } of reference.results) {
+      if (isInside(compDirAbs, path) || !isInside(repoRoot, path)) continue;
+      // a path that is not there is not being read (a test that checks something is absent)
+      if (!existsSync(path)) continue;
+      const isFolder = kind === 'dir' || isDirectory(path);
+      // new URL(...) of a folder is only a base for building file paths, and a folder that is only
+      // checked for, or looked at (existsSync, statSync), is not a dependency on what is in it
+      if (isFolder && (reference.primitive === 'new URL' || (kind === 'file' && !LISTS_FOLDER.has(reference.primitive)))) continue;
+      if (isFolder && relative(repoRoot, path) === '') {
+        unresolved.push({ file: readerFile, line: reference.line, expression: reference.expression, reason: 'it reads a file directly under the repository root and the guard does not know which one' });
+        continue;
+      }
+      const repoPath = isFolder ? `${toRepoPath(path)}/` : toRepoPath(path);
+      (isFolder ? dirs : files).add(repoPath);
+      remember(repoPath, where);
+    }
+    for (const reason of reference.unresolved) {
+      unresolved.push({ file: readerFile, line: reference.line, expression: reference.expression, reason });
+    }
+  }
+
+  return { files, dirs, unresolved, unusedReviewed: reviewedHere.filter((entry) => !usedReviewed.has(entry)), origins };
 }
 
 /** Parse matrix filters from .github/workflows/ci.yml */
