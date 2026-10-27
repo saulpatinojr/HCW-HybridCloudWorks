@@ -135,9 +135,9 @@ so that the required check names never change, is unchanged.
 This decision is about cost, so the cost of the second change is stated here
 too. A pull request that touches nothing a job's filter lists (a documentation-only
 one, say) used to run the scripts row as a short no-op. That row now also installs
-its packages and runs the guard, about 15 to 20 seconds more on a runner (an
-estimate from the 4 second install and the 13 to 14 second guard run measured
-on `main` and on a developer machine, not a measured CI figure). The row is not
-on the longest path, so nobody waits longer, and runner time is free on a public
-repository. If it ever matters, the guard can be skipped where the row's own
+its packages and runs the guard, about 17 seconds more on a runner (a 5-second
+install and a 12-second guard step, read from the job record of this change's own
+CI run, [run 40484003062](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/40484003062)).
+The row is not on the longest path, so nobody waits longer, and runner time is
+free on a public repository. If it ever matters, the guard can be skipped where the row's own
 `Test` step already runs it.
