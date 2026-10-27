@@ -113,7 +113,14 @@ $allowedRootFiles = @(
   # Each is REJECTED here rather than permitted, so none can quietly return.
   # The three left are the ones that are actually maintained.
   'CHANGELOG.md',
-  'TODO.md'
+  'TODO.md',
+  # The dated handoff note for continuing work away from the desk (owner request
+  # 2026-10-27, #1450). It is replaced at each handoff, not appended to, and it
+  # is NOT part of the docs site (scripts/docs/hooks.py pulls in only README,
+  # CHANGELOG and TODO). It is the one root file added on request, so it is
+  # also scanned by scripts/docs/check_redaction.py: a pasted tenant id or a
+  # local path in it fails the docs workflow like it would in docs/.
+  'MEMORY.md'
 )
 
 # Guard the casing explicitly: on a case-insensitive filesystem (Windows,
@@ -123,7 +130,7 @@ $allowedRootFiles = @(
 # gone but the hazard is identical for the files left.) The allowlist above is
 # compared case-sensitively by -in on Linux CI but not on Windows, so this
 # check is what actually holds the line for local runs.
-$casingSensitiveNames = @('TODO.md', 'CHANGELOG.md')
+$casingSensitiveNames = @('TODO.md', 'CHANGELOG.md', 'MEMORY.md')
 
 # Directory names never walked by the Markdown scan, at any depth.
 #

@@ -1,7 +1,10 @@
 """Docs publication gate: nothing that should not be public reaches the site.
 
 Runs in .github/workflows/docs-pages.yml before `mkdocs build`, over docs/**
-and the three root documents the site pulls in (README, CHANGELOG, TODO).
+and the three root documents the site pulls in (README, CHANGELOG, TODO), plus
+the root MEMORY.md handoff note (owner request 2026-10-27, #1450). MEMORY.md is
+scanned but not published: it sits in a public repository, so the same rules
+apply to it, and a change to it triggers the workflow that runs this gate.
 Fails, naming file:line, on:
 
 1. A hard-coded link to the retired GitHub Wiki. The Wiki is being replaced
@@ -28,6 +31,9 @@ from pathlib import Path
 ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[2]
 SCAN_DIRS = [ROOT / "docs"]
 SCAN_FILES = [ROOT / "README.md", ROOT / "CHANGELOG.md", ROOT / "TODO.md"]
+# Scanned when present, never required: the handoff note is replaced at each handoff, and deleting it
+# must not stop the docs site from building.
+OPTIONAL_SCAN_FILES = [ROOT / "MEMORY.md"]
 
 WIKI_LINK = re.compile(r"github\.com/[^/\s)]+/[^/\s)]+/wiki(?:/|\b)")
 GUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
@@ -61,6 +67,7 @@ def files() -> list[Path]:
             print(f"cannot evaluate: {f} missing", file=sys.stderr)
             sys.exit(2)
         out.append(f)
+    out.extend(f for f in OPTIONAL_SCAN_FILES if f.is_file())
     return out
 
 
