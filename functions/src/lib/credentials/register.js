@@ -274,6 +274,18 @@ const KEY_VAULT_METADATA = Object.freeze({
     rotate:
       'The lab host renews it daily once its rotation credential is seeded; by hand, mint one as lab-host/README.md, "The status token for the site", says and paste it on Integrations → Keys.',
   },
+  // Hand-rotated, with no rule: the lifetime of the token depends on how the
+  // owner mints it in Coder, which is not decided yet (#1403, item 4), and the
+  // issue's list of rule-bearing hand credentials (#1026) is held to eight by
+  // register.test.js. It is not `automation`: the lab host renews only the
+  // status token, and no job here renews this one.
+  "CODER-BROKER-TOKEN": {
+    issuer: "Coder on the lab host",
+    consumer:
+      "Visitor lab sessions: creates and deletes visitors’ Coder users and workspaces, and the clean-up timer",
+    rotate:
+      "Mint a new token in Coder, paste it on Integrations → Keys, wait until its light is green (or restart the app), then delete the old token in Coder.",
+  },
   "TURNSTILE-SECRET-KEY": {
     issuer: "Cloudflare Turnstile",
     consumer: "Landing Zone Builder “Validate on the lab”",

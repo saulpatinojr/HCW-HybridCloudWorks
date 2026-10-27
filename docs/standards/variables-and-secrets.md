@@ -374,13 +374,15 @@ Seeded by hand; referenced from `infra/functionapp.tf` app settings as
 | `GITHUB-APP-PRIVATE-KEY` | not inventoried | Multi-line PEM. **Not referenced by any app setting in `infra/` and read by nothing** — it has no app setting and no seeding path, deliberately. Like the two above, unconfirmed in the vault, and the owner's to delete if it is there (below) |
 | `TURNSTILE-SECRET-KEY` | not inventoried | Cloudflare Turnstile secret key for the Landing Zone Builder's "Validate on the lab" ([ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of 2026-09-28), sent only to Cloudflare's siteverify. Its site key is public and is store 3 (`VITE_TURNSTILE_SITE_KEY`). The widget is created in the Cloudflare dashboard rather than as `cloudflare_turnstile_widget`, because that resource's read-only `secret` attribute would put this value in state, the rule in the next section |
 | `CLOUDFLARE-ANALYTICS-TOKEN` | not inventoried | Read-only Cloudflare API token (Account → Account Analytics → Read, the HybridCloudWorks account only) the `ambassadorAudienceMonthly` timer reads the previous month's page views with (#1302), sent only as a Bearer header to Cloudflare's GraphQL endpoint. Store 1 and not store 2: the workspace's `cloudflare_api_token` writes DNS and account settings, and the Function App must never hold that one, so a second token that can only read is the least the read can run on. The site tag and account id beside it are identifiers Terraform writes as plain app settings, not secrets |
+| `CODER-BROKER-TOKEN` | not inventoried | The Coder API token the visitor session broker acts in Coder with (`functions/src/lib/labs/visitor-session.js`, [ADR 0032](../decisions/0032-learner-labs-platform.md), amendment of 2026-10-17), and that the `sweepVisitorSessions` timer deletes with (#1403). Store 1 by Q4: application code reads it at run time and it is sensitive; Terraform never needs it, so it is not store 2. A token of its own and not `CODER-STATUS-TOKEN`: that one can only read, the code refuses to fall back to it, and one secret serving both would put a token that can create and delete Coder users where a read-only one is expected. Unlike the status token it can change things, so it is the Coder secret that matters most if it leaks |
 
-`infra/functionapp.tf` declares **31** `@Microsoft.KeyVault` references and no
-run-time reads (2026-10-20: 29 on 2026-10-09 after #1029 removed the Perplexity
+`infra/functionapp.tf` declares **32** `@Microsoft.KeyVault` references and no
+run-time reads (2026-10-27: 29 on 2026-10-09 after #1029 removed the Perplexity
 one, thirty on `main` before #1302 once the StreamYard and Podbean names had
-arrived (#1101, #1117), thirty-one with `CLOUDFLARE-ANALYTICS-TOKEN`; setting
-lines only, since comments in the module mention the form too, and
-`secret-catalog.test.js` holds the catalogue to the same 31).
+arrived (#1101, #1117), thirty-one with `CLOUDFLARE-ANALYTICS-TOKEN`, thirty-two
+with `CODER-BROKER-TOKEN` (#1403); setting lines only, since comments in the
+module mention the form too, and `secret-catalog.test.js` holds the catalogue to
+the same set).
 CHECKLIST §1–§8 inventories a handful of them. That gap is recorded below
 rather than papered over.
 

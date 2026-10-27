@@ -243,6 +243,34 @@ describe("evaluate", () => {
     expect(got.unexpected.map((s) => s.name)).toEqual(["TURNSTILE_SECRET_KEY"]);
     expect(got.expected).toEqual([]);
   });
+
+  // The Coder broker token (#1403): the reference is applied before the owner
+  // has minted and seeded the token, so until then it is expected, once, under
+  // its plain name; the moment it resolves the list says it is stale, which is
+  // the prompt to delete the entry (and the point after which an unresolved
+  // one is a real finding).
+  it("expects the unseeded Coder broker token, once, and notices when it resolves", () => {
+    const unseeded = evaluate(
+      shapeA({
+        CODER_BROKER_TOKEN: { status: "SecretNotFound" },
+        APPSETTING_CODER_BROKER_TOKEN: { status: "SecretNotFound" },
+      }),
+    );
+    expect(unseeded.expected.map((s) => s.name)).toEqual(["CODER_BROKER_TOKEN"]);
+    expect(unseeded.unexpected).toEqual([]);
+
+    const seeded = evaluate(shapeA({ CODER_BROKER_TOKEN: { status: "Resolved" } }));
+    expect(seeded.staleAllowlist).toEqual(["CODER_BROKER_TOKEN"]);
+    expect(seeded.unexpected).toEqual([]);
+  });
+
+  // The status token beside it is seeded and must keep resolving: giving the
+  // broker an allowance must not have loosened it.
+  it("still flags an unresolved Coder status token, which is seeded and must resolve", () => {
+    const got = evaluate(shapeA({ CODER_STATUS_TOKEN: { status: "SecretNotFound" } }));
+    expect(got.unexpected.map((s) => s.name)).toEqual(["CODER_STATUS_TOKEN"]);
+    expect(got.expected).toEqual([]);
+  });
 });
 
 describe("EXPECTED_UNRESOLVED", () => {
@@ -259,8 +287,9 @@ describe("EXPECTED_UNRESOLVED", () => {
   });
 
   it("is deliberately small", () => {
-    // Five since #1302 (the Cloudflare analytics token, owner-seeded); the
+    // Five since #1302 (the Cloudflare analytics token, owner-seeded), six
+    // since #1403 (the Coder broker token, owner-minted and owner-seeded); the
     // cap moves only with an entry that names the owner step that retires it.
-    expect(EXPECTED_UNRESOLVED.size).toBeLessThanOrEqual(5);
+    expect(EXPECTED_UNRESOLVED.size).toBeLessThanOrEqual(6);
   });
 });

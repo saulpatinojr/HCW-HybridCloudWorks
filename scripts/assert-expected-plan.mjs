@@ -592,6 +592,22 @@ export const DECLARED = [
     reason:
       "#1403: the sweepVisitorSessions timer catalogued and armed in one apply",
   },
+  // The visitor session broker's Coder token (#1403): one new app setting, a
+  // Key Vault reference like CLOUDFLARE_ANALYTICS_TOKEN's above. The plan shows
+  // it as a single added key and nothing else; it does not read the vault, so
+  // the plan and the apply are the same whether or not the owner has seeded
+  // CODER-BROKER-TOKEN yet. Delete this entry once the apply has run, and its
+  // test in assert-expected-plan.test.mjs ("declares the Coder broker token's
+  // Key Vault reference") with it.
+  {
+    address: "azurerm_function_app_flex_consumption.hcw",
+    path: "app_settings.CODER_BROKER_TOKEN",
+    before: undefined,
+    after:
+      "@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CODER-BROKER-TOKEN)",
+    reason:
+      "#1403: Key Vault reference for CODER-BROKER-TOKEN, the visitor session broker's Coder token",
+  },
   // #1360's create, notes_obsidian_publish, applied on 2026-10-24 (run-bb1XtRGJEbuK1Cec,
   // read as applied by tfc-plan-check with only the known permanent diff besides it) and was
   // deleted here. notes.hybridcloudworks.com then resolved to Cloudflare addresses on 1.1.1.1

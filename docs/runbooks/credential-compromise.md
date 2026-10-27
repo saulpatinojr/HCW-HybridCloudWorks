@@ -49,7 +49,7 @@ Rotate secrets in dependency order to prevent cascade failures or lockout:
 | **Tier 2** | Edge & Origin | `CF-ORIGIN-SECRET`, `CLIENT-IP-SALT`, Cloudflare DNS Token | Protects origin shielding and rate-limiting entropy. |
 | **Tier 3** | Core Data & Messaging | `AWS-SECRET-ACCESS-KEY`, `GCP-BILLING-API-KEY`, `RESEND-API-KEY` | Essential data feeds and public transactional messaging. |
 | **Tier 4** | Third-Party APIs | `GEMINI-API-KEY`, `ANTHROPIC-API-KEY`, `OPENAI-API-KEY`, `NVIDIA-API-KEY`, `REPLICATE-API-KEY`, `ELEVENLABS-API-KEY`, `PODBEAN-CLIENT-SECRET`, `STREAMYARD-API-KEY`, `QLTY-API-TOKEN`, `PLAUD-EMBEDDED-API-KEY` | External service integration keys. |
-| **Tier 5** | Lab & Automation | `CODER-STATUS-TOKEN`, Coder OAuth Secret, `/etc/hcw/labs-agent.pem`, `TELEGRAM-BOT-TOKEN`, `PREVIEW-SIGNING-SECRET` | Internal tooling, status polling, and alerts. |
+| **Tier 5** | Lab & Automation | `CODER-STATUS-TOKEN`, `CODER-BROKER-TOKEN` (unlike the status token, it can create and delete Coder users and workspaces), Coder OAuth Secret, `/etc/hcw/labs-agent.pem`, `TELEGRAM-BOT-TOKEN`, `PREVIEW-SIGNING-SECRET` | Internal tooling, status polling, and alerts. |
 
 ---
 

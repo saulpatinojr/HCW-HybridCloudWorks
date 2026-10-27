@@ -699,6 +699,31 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     # secret. The code defaults to 5 when this is unset or unparseable.
     "CODER_MAX_WORKSPACES" = "5"
 
+    # Hybrid Lab — the visitor session broker (#1016, ADR 0032 amendment of
+    # 2026-10-17, #1403). This is the Coder token that lib/labs/visitor-session.js
+    # creates and deletes visitors' Coder users and workspaces with, and that the
+    # sweepVisitorSessions timer deletes with. It is NOT the status token above:
+    # that one can only read, and the code does not fall back to it, because a
+    # broker built on a read-only token would be refused on every create and
+    # every delete. A vault reference like every other credential here, so the
+    # value never enters Terraform or its state; a human seeds it on the
+    # Integrations Keys tab (or `az keyvault secret set`) once the owner has
+    # minted it in Coder.
+    #
+    # Applying this without the secret is safe and is meant to be done first,
+    # for the order TURNSTILE_SECRET_KEY below describes: this run, the
+    # functions deploy, then the seed. Until the secret exists the reference
+    # arrives as the literal @Microsoft.KeyVault(...) text, which
+    # resolvedSetting() in lib/auth/client-identity.js reads as "not set", so
+    # readBrokerConfig() returns null and the sweep logs one Warning ("Coder
+    # is not set up") and calls nothing. The visitor routes check the
+    # LABS_VISITOR_SESSIONS_ENABLED switch and Turnstile first (the switch is
+    # not declared here yet, so they answer "closed"), and only then answer
+    # VISITOR_NOT_CONFIGURED. It is listed in EXPECTED_UNRESOLVED in
+    # scripts/check-unresolved-secrets.mjs meanwhile, reported every run but
+    # not as a failure. Remove it from that list in the PR after it is seeded.
+    "CODER_BROKER_TOKEN" = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault.hcw.vault_uri}secrets/CODER-BROKER-TOKEN)"
+
     # Tool add-ons (ADR 0035 decision 4). The address of each AddOn the
     # status proxy (lib/addons/status.js) reads `/api/health` from, so the
     # pane at /tools/<id> opens only when the AddOn answers. A plain setting,
