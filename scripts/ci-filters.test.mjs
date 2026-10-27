@@ -742,6 +742,12 @@ ${GUIDE}createReadStream(guide);
         seen(src(BASE, "let p = join(HERE, '..', 'docs');", "p = p + '/guide.md';", 'readFileSync(p);'));
         seen(src(BASE, "let p = join(HERE, '..', 'docs');", "p = resolve(p, 'guide.md');", 'readFileSync(p);'));
       });
+      it('a string built up with +=', () => {
+        // the file is found; the guard also says the name keeps changing, because it does not follow the order of the steps
+        const { found, seen: wasSeen } = outcome(src(BASE, "let p = join(HERE, '..');", "p += '/docs';", "p += '/guide.md';", 'readFileSync(p);'));
+        expect(wasSeen).toBe(true);
+        expect(found.unresolved.map((u) => u.reason).join(' ')).toContain('keeps changing');
+      });
       it('a parameter given a new value inside the function', () => {
         seen(src(BASE, GUIDE, "function load(file = 'local.md') {", '  if (!file) file = GUIDE;', '  return readFileSync(file);', '}', 'load();'));
       });

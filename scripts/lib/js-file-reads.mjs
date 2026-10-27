@@ -683,6 +683,8 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
           if (!binding) continue;
           if (node.operator === '=' && node.left.type === 'Identifier') binding.assigns.push(node.right);
           else if (node.operator === '+=' && node.left.type === 'Identifier' && node.right.type === 'Literal' && typeof node.right.value === 'number') binding.counted = true;
+          // p += '/docs' is p = p + '/docs'
+          else if (node.operator === '+=' && node.left.type === 'Identifier') binding.assigns.push({ type: 'BinaryExpression', operator: '+', left: node.left, right: node.right });
           else binding.tainted = true;
         }
       } else if (node.type === 'UpdateExpression' && node.argument.type === 'Identifier') {
