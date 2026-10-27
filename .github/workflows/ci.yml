@@ -85,7 +85,7 @@ jobs:
           # DockerGuides.test.jsx.
           # Added with #1428. A test that imports a functions module depends on every
           # file that module imports in turn, and on every file it reads when it
-          # loads, so the guard now follows the chain to its end. Four tests start
+          # loads, so the guard now follows the chain to its end. Five tests start
           # the chains. aiEngine.test.js imports ai/router.js, ai/model-catalog.js,
           # ai/usage.js and ai/mcp-policy.js, which load the rest of ai/, the Cosmos
           # client (cosmos-client.js, cosmos-call-shape.js, job-context.js), the
@@ -100,14 +100,15 @@ jobs:
           # connection-probe.js and upstream-error.js. useLivePageArchive.test.jsx and
           # itemLinks.test.js import cms/content-update-validation.js and
           # content-status.js, which load cms/publish-targets.js and public-reads.js.
-          # ai/, cms/ and labs/ are whole folders because the tests load eight or more
+          # ambassadorModel.test.js imports ambassador/readiness.js, which loads
+          # ambassador/model.js. ai/, cms/ and labs/ are whole folders because the tests load eight or more
           # of the files in each (20 of 25, 10 of 23 and 8 of 19), so a new import
           # inside them needs no edit here. A folder also matches the test files in
           # it, which nothing here loads, so cms/ runs this row a little more often
           # than listing its ten files would; the others are listed file by file.
           - name: frontend
             dir: frontend
-            filter: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile|smoke\.sh)$|vps-agent/lib/docker-runner\.js$|\.github/workflows/(deploy-azure-frontend|publish-lab-image)\.yml$|functions/src/lib/((ai|cms|labs)/|(labs|rss/feeds|addons/registry|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|key-verdict|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|decision-center/(links|items)|health/(status-model|probe-catalogue|pulse-checks)|integrations/(linkie-allowlist|rest-proxy|connection-probe|upstream-error)|cloud-tools/(history|pricing/(baseline|regions))|http/(error-response|fetch-with-timeout|guarded-fetch|read-setting)|timers/agent-health|triggers/fetch-image|ambassador/readiness)\.js$)|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
+            filter: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile|smoke\.sh)$|vps-agent/lib/docker-runner\.js$|\.github/workflows/(deploy-azure-frontend|publish-lab-image)\.yml$|functions/src/lib/((ai|cms|labs)/|(labs|rss/feeds|addons/registry|admin-secrets|blob-paths|cosmos-call-shape|cosmos-client|job-context|key-verdict|lab-agent|public-reads|secret-catalog|secret-vault|secrets-health|decision-center/(links|items)|health/(status-model|probe-catalogue|pulse-checks)|integrations/(linkie-allowlist|rest-proxy|connection-probe|upstream-error)|cloud-tools/(history|pricing/(baseline|regions))|http/(error-response|fetch-with-timeout|guarded-fetch|read-setting)|timers/agent-health|triggers/fetch-image|ambassador/(readiness|model))\.js$)|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
             lint: npm run lint
             format: npm run format:check
             validate: npm run validate:routes

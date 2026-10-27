@@ -249,7 +249,14 @@ const KNOWN_READS = {
  * the test. They are the files the guard saw nothing of before it followed imports across packages.
  */
 const KNOWN_IMPORTS = {
-  frontend: ['functions/src/lib/ai/select.js', 'functions/src/lib/labs/lab-checks.js', 'functions/src/lib/cosmos-client.js', 'functions/src/lib/cms/publish.js'],
+  frontend: [
+    'functions/src/lib/ai/select.js',
+    'functions/src/lib/labs/lab-checks.js',
+    'functions/src/lib/cosmos-client.js',
+    'functions/src/lib/cms/publish.js',
+    // ambassadorModel.test.js imports ambassador/readiness.js (a filter entry since #1438), and readiness.js imports this
+    'functions/src/lib/ambassador/model.js',
+  ],
   scripts: ['functions/src/lib/labs/lab-checks.js', 'functions/src/lib/secret-vault.js', 'functions/src/lib/cms/publish.js'],
 };
 
