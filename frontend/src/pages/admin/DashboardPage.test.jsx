@@ -93,7 +93,7 @@ describe('DashboardPage', () => {
     renderDashboard();
     expect(await screen.findByText('6 items waiting for you')).toBeInTheDocument();
     await waitFor(() => expect(postJSON).toHaveBeenCalledWith('getAdminDashboardSnapshot', {}));
-    expect(screen.getByText('Blogs')).toBeInTheDocument();
+    expect(screen.getAllByText('Blogs').length).toBeGreaterThan(0);
     expect(screen.getByText('Rejected')).toBeInTheDocument();
     expect(screen.getAllByText('12').length).toBeGreaterThan(0);
     expect(screen.getAllByText('9').length).toBeGreaterThan(0);

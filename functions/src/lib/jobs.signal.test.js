@@ -255,6 +255,7 @@ const EXPECTED_TYPES = [
   'publish-podcast-transcript',
   'refresh-tool-pricing',
   'speak-listen-and-learn-chapter',
+  'sync-blog-source',
   'transcribe-recording-upload',
   'voice-calibration',
 ];

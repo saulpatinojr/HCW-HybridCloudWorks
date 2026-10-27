@@ -64,6 +64,7 @@ import "./brain-http.js";
 import "./recording-content-http.js";
 import "./reviewer-digest-http.js";
 import "./rss-jobs.js";
+import "./blog-sources-http.js";
 import "./public-submissions.js";
 import "./schedulers.js";
 import "./social-caption-http.js";
