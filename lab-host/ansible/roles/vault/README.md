@@ -236,7 +236,7 @@ curl -fsS 'https://api.releases.hashicorp.com/v1/releases/vault?limit=5&license_
 
 The checksum is that release's `linux_amd64.zip` line in its SHA256SUMS.
 In the command below 2.1.1 is an example: put the version you are pinning
-(`vault_version`) in both places:
+(`vault_version` in `group_vars/all.yml`) in both places:
 
 ```bash
 curl -fsS https://releases.hashicorp.com/vault/2.1.1/vault_2.1.1_SHA256SUMS | grep linux_amd64.zip

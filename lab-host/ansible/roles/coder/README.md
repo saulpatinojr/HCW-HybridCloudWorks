@@ -534,7 +534,8 @@ Paths, the port and the unit names are in `defaults/main.yml`;
 Both digests are image **indexes**, read with `docker buildx imagetools
 inspect`; the tag beside each is for humans. The tags in the two commands
 below are examples: use the ones you are pinning (`coder_image_tag` and
-`coder_postgres_image_tag`). Bash, anywhere with Docker:
+`coder_postgres_image_tag` in `group_vars/all.yml`). Bash, anywhere with
+Docker:
 
 ```bash
 docker buildx imagetools inspect ghcr.io/coder/coder:v2.38.0 | head -3

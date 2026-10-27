@@ -317,7 +317,14 @@ describe('comments beside a pin the weekly bump moves', () => {
     const found = problems(['---', '# Foo 1.2.0.', foo, ''].join('\n'));
     const message = describePinCommentProblem(found[0]);
     expect(message).toContain('lab-host/README.md, "Bumping a pin"');
-    expect(message).toContain('26.04 beside a two-part pin such as 18.6');
+    expect(message).toContain('release line (the first numbers of the version, such as 2.38)');
+    // The two-part sentence is only for a two-part pin; a three-part pin does not get it.
+    expect(message).not.toContain('two-part pin');
+    const twoPart = problems(['---', '# Bar 4.4.', 'bar_version: "4.5"', ''].join('\n'), ['bar_version']);
+    const twoPartMessage = describePinCommentProblem(twoPart[0]);
+    expect(twoPartMessage).toContain('26.04 beside a two-part pin such as 18.6 is flagged too');
+    expect(twoPartMessage).toContain('release line (the first numbers of the version, such as 2.38)');
+    expect(twoPartMessage).toContain('lab-host/README.md, "Bumping a pin"');
     const readme = readFileSync(join(REPO, 'lab-host', 'README.md'), 'utf8');
     expect(readme).toMatch(/^## Bumping a pin$/m);
     expect(readme).toContain('scripts/lib/lab-pin-comments.mjs');
