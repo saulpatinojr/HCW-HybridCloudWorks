@@ -163,7 +163,10 @@ export function describePinCommentProblem(p) {
   const shown = (v) => (v.length > 40 ? `${v.slice(0, 12)}...` : v);
   const listed = p.pins.slice(0, 4).map((x) => `${x.where} = ${shown(x.value)} (line ${x.line})`);
   const pins = p.pins.length > 4 ? `${listed.join('; ')}; and ${p.pins.length - 4} more` : listed.join('; ');
-  const advice = 'Write "the pin below" or name only the release line, and keep the date the value was read.';
+  const advice =
+    'Write "the pin below" or name only the release line, and keep the date the value was read. ' +
+    'A number with as many dotted parts as the pin counts as a version, so 26.04 beside a two-part pin such as 18.6 is flagged too. ' +
+    'The rule is explained in lab-host/README.md, "Bumping a pin".';
   return p.repeats
     ? `${p.file}:${p.line} names ${what} ${p.token}, which is what the pin holds today (${pins}). The weekly bump will move the pin and leave this comment behind. ${advice}`
     : `${p.file}:${p.line} names ${what} ${p.token}, but the pin it sits beside holds something else: ${pins}. ${advice}`;

@@ -800,7 +800,7 @@ ADR 0032 rebuilds the host rather than repairing it.
       `ConditionPathExists=/etc/hcw/coder/automation/rotation-token` until
       `hcw-coder-automation-seed` runs again ("Automatic renewal", below).
    10. **Portainer**: a new administrator and its licence key (below).
-       Portainer 2.45.2 creates the `local` environment itself during setup
+       Portainer creates the `local` environment itself during setup
        and then opens an Edge Agent wizard; close it.
    **Keep the old Vault recovery keys.** The Vault snapshot restored in step
    8 carries its own recovery authority, and after the restore those five
@@ -2778,9 +2778,9 @@ already has an SSH login, which carries `sudo`.
 It is off until a pull request sets `portainer_enabled: true` in
 `lab-host/ansible/group_vars/all.yml` and `bootstrap.sh` runs after the
 merge. Success for that run is a `PLAY RECAP` with `failed=0` and the task
-`portainer : Say how to reach Portainer` printing `Portainer 2.45.2 answers
+`portainer : Say how to reach Portainer` printing `Portainer <version> answers
 on https://127.0.0.1:9443 on this host and nowhere else` (the version is
-`portainer_image_tag` in `group_vars`, 2.45.2 since the pin moved).
+`portainer_image_tag` in `group_vars`).
 
 **The first sign-in.** Two guards stand in front of a fresh Portainer, and
 both were measured on the then-pinned 2.45.1 on 2026-09-26 and seen again

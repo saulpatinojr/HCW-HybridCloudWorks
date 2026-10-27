@@ -257,7 +257,9 @@ gh api repos/portainer/portainer/releases -X GET -f per_page=10 --jq '.[] | "\(.
 
 The digest is the image **index**, read with `docker buildx imagetools
 inspect`, and cross-checked against the registry's `Docker-Content-Digest`,
-which must print the same `sha256:`. Bash, anywhere with Docker:
+which must print the same `sha256:`. The tag in the commands below is an
+example: use the one you are pinning (`portainer_image_tag`). Bash, anywhere
+with Docker:
 
 ```bash
 docker buildx imagetools inspect portainer/portainer-ee:2.45.1 | head -3

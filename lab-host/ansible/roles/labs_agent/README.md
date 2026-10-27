@@ -32,8 +32,9 @@ that made it the right call before the ADR said so:
    configured from `templates/docker-proxy.haproxy.cfg.j2`, listening on
    `/run/hcw-labs-agent-docker/docker.sock`, `root:hcw-labs-agent` `0660`
    in a directory systemd-tmpfiles creates at boot. It passes on exactly the
-   calls `docker run --rm` and `docker rm -f` make for a job (read from
-   Docker CLI 29.8.1, `scripts/fixtures/docker-cli-agent-requests.json`)
+   calls `docker run --rm` and `docker rm -f` make for a job (read from the
+   Docker CLI the pin names, recorded in
+   `scripts/fixtures/docker-cli-agent-requests.json`)
    and refuses every other call, and every container create whose body asks
    for privilege, a host namespace, the opt-out of the daemon's user
    namespaces, an added capability, a device, a mount, or a bind other than

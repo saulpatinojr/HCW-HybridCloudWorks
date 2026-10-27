@@ -225,6 +225,24 @@ describe('comments beside a pin the weekly bump moves', () => {
     expect(repeated.map((p) => [p.repeats, p.pins.map((x) => x.where)])).toEqual([[true, ['foo_old']]]);
   });
 
+  it('reads a v-prefixed tag as a version, whether it differs from the pin or repeats it (v2.38.0 was one of the three on #1423)', () => {
+    const different = problems(['---', '# Foo v1.2.0 was read 2026-10-07.', foo, ''].join('\n'));
+    expect(different.map((p) => [p.line, p.token, p.repeats])).toEqual([[2, 'v1.2.0', false]]);
+    const same = problems(['---', '# Now v1.2.3.', foo, ''].join('\n'));
+    expect(same.map((p) => [p.line, p.token, p.repeats])).toEqual([[2, 'v1.2.3', true]]);
+  });
+
+  it('reads every line of the comment run above the pin, not only the line next to it', () => {
+    const first = ['---', '# Foo 7.7.7 is named on the first line,', '# the second line names nothing,', '# and neither does the third.', foo, ''];
+    expect(problems(first.join('\n')).map((p) => [p.line, p.token])).toEqual([[2, '7.7.7']]);
+    const each = ['---', '# Foo 7.7.7 first,', '# then 8.8.8 second,', '# then 9.9.9 third.', foo, ''];
+    expect(problems(each.join('\n')).map((p) => [p.line, p.token])).toEqual([
+      [2, '7.7.7'],
+      [3, '8.8.8'],
+      [4, '9.9.9'],
+    ]);
+  });
+
   it("finds a pin nested under other keys, and a comment at the end of the pin's own line", () => {
     const text = [
       '---',
@@ -262,6 +280,47 @@ describe('comments beside a pin the weekly bump moves', () => {
     const pins = [{ file: 'run.sh', where: 'TOOL_VERSION' }];
     expect(pinCommentProblems(shell('\r\n'), pins)).toEqual(pinCommentProblems(shell('\n'), pins));
     expect(pinCommentProblems(shell('\r\n'), pins)).toHaveLength(1);
+  });
+
+  it('reads the "$comment" of a JSON file as the comment beside its pin', () => {
+    const json = (comment) => ({ 'rec.json': `{\n  "$comment": "${comment}",\n  "dockerCli": "29.9.2",\n  "apiVersion": "1.56"\n}\n` });
+    const pins = [{ file: 'rec.json', where: 'dockerCli' }];
+    const found = pinCommentProblems(json('Recorded with docker CLI 29.8.1; ids are <id>.'), pins);
+    expect(found.map((p) => [p.file, p.line, p.token, p.repeats, p.pins[0].value])).toEqual([['rec.json', 2, '29.8.1', false, '29.9.2']]);
+    expect(pinCommentProblems(json('Written by a script; ids are <id>.'), pins)).toEqual([]);
+  });
+
+  it('counts a digest prefix of eight hex digits or more, and not seven', () => {
+    const digests = (comment) => problems(['---', comment, foo, ''].join('\n'), ['foo_digest']);
+    expect(digests('# The manifest beneath is sha256:7a05631b...').map((p) => [p.kind, p.token])).toEqual([['digest', 'sha256:7a05631b']]);
+    expect(digests('# The manifest beneath starts 7a05631b9c3d.').map((p) => [p.kind, p.token])).toEqual([['digest', '7a05631b9c3d']]);
+    expect(digests('# The manifest beneath starts 7a05631.')).toEqual([]);
+  });
+
+  it('keeps two files whose comments sit on the same lines apart', () => {
+    const a = ['---', '# Foo 7.7.7.', 'foo_version: v1.2.3', ''].join('\n');
+    const b = ['---', '# Bar 8.8.8.', 'bar_version: v4.5.6', ''].join('\n');
+    const found = pinCommentProblems(
+      { 'a.yml': a, 'b.yml': b },
+      [
+        { file: 'a.yml', where: 'foo_version' },
+        { file: 'b.yml', where: 'bar_version' },
+      ]
+    );
+    expect(found.map((p) => [p.file, p.line, p.token, p.pins.map((x) => x.where)])).toEqual([
+      ['a.yml', 2, '7.7.7', ['foo_version']],
+      ['b.yml', 2, '8.8.8', ['bar_version']],
+    ]);
+  });
+
+  it('tells the reader where the rule is explained, and that section exists', () => {
+    const found = problems(['---', '# Foo 1.2.0.', foo, ''].join('\n'));
+    const message = describePinCommentProblem(found[0]);
+    expect(message).toContain('lab-host/README.md, "Bumping a pin"');
+    expect(message).toContain('26.04 beside a two-part pin such as 18.6');
+    const readme = readFileSync(join(REPO, 'lab-host', 'README.md'), 'utf8');
+    expect(readme).toMatch(/^## Bumping a pin$/m);
+    expect(readme).toContain('scripts/lib/lab-pin-comments.mjs');
   });
 
   it('stops with an error, not a pass, when a pin cannot be found', () => {
@@ -373,10 +432,46 @@ describe('a weekly bump of the real lab host files', () => {
     return [...seen.values(), { file: DOCKER_CLI_FIXTURE_PATH, where: 'dockerCli' }];
   }
 
+  // Every line the host bump edits (plus the Docker CLI fixture's, which its own script moves).
+  // The comments beside each are held to the rule, so a bumper that stops editing one of
+  // these, or starts on another, must change this list on purpose: look at the comments
+  // beside the line that is added, and drop the ones that are no longer moved.
+  const EDITED = [
+    ...['resolute', 'noble'].flatMap((codename) =>
+      ['engine', 'containerd', 'buildx', 'compose'].map((key) => [GROUP_VARS_PATH, `docker_release_pins.${codename}.${key}`])
+    ),
+    ...[
+      'caddy_version',
+      'caddy_builder_image_tag',
+      'caddy_builder_image_digest',
+      'caddy_cloudflare_module_version',
+      'coder_image_tag',
+      'coder_image_digest',
+      'coder_postgres_image_tag',
+      'coder_postgres_image_digest',
+      'portainer_image_tag',
+      'portainer_image_digest',
+      'vault_version',
+      'vault_checksum',
+      'node_exporter_version',
+      'node_exporter_checksum',
+      'labs_agent_node_version',
+      'cosign_version',
+      'cosign_checksum',
+    ].map((key) => [GROUP_VARS_PATH, key]),
+    [CADDY_TEST_PATH, 'CADDY_SHA512'],
+    [BOOTSTRAP_PATH, 'COSIGN_VERSION'],
+    [BOOTSTRAP_PATH, 'COSIGN_SHA256'],
+    [DOCKER_CLI_FIXTURE_PATH, 'dockerCli'],
+  ]
+    .map(([file, where]) => `${file} ${where}`)
+    .sort();
+
   it("moves every watched product in every file the bump edits, so the pins checked below really are the bump's", async () => {
     const plan = await bumpEverything(repositoryFiles());
     expect(plan.notes).toEqual([]);
     expect(plan.applied.map((bump) => bump.key).sort()).toEqual(Object.keys(LABELS).sort());
+    expect(movedBy(plan).map(({ file, where }) => `${file} ${where}`).sort()).toEqual(EDITED);
     expect([...new Set(movedBy(plan).map((p) => p.file))].sort()).toEqual(
       [BOOTSTRAP_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH, GROUP_VARS_PATH].sort()
     );

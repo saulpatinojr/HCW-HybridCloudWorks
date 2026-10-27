@@ -73,7 +73,8 @@ propagated by --wait. The alternative, runuser after sourcing the file, would
 parse a systemd EnvironmentFile as shell, which is not the same syntax, and
 would make this helper the parser of the agent's configuration.
 
-Coder's API (v2.38.0, the release group_vars/all.yml pins), as used here:
+Coder's API (read on 2026-10-08 against v2.38.0; group_vars/all.yml pins the
+release in use), as used here:
 
 - GET    /api/v2/users/{user}                     the owner's view of hcw-status
 - GET    /api/v2/users/me                         who a token is

@@ -124,11 +124,11 @@ arc_tags:
 # pin bump moves every entry to the newest it reads there; the upstream versions
 # are the same for both releases. buildx and compose are pinned too rather than
 # left as recommends: Coder and its PostgreSQL (#679) are the Docker Compose
-# services ADR 0032 names. The signing
-# key is the root of trust for every one of these pins, so its SHA256 is pinned
-# as well (sha256sum of https://download.docker.com/linux/ubuntu/gpg, read
-# 2026-09-26; one key signs both releases' InRelease, checked with gpgv) and
-# get_url refuses a key that does not match.
+# services ADR 0032 names. The signing key is the root of trust for every one of
+# these pins, so its SHA256 is pinned as well (sha256sum of
+# https://download.docker.com/linux/ubuntu/gpg, read 2026-09-26; one key signs
+# both releases' InRelease, checked with gpgv) and get_url refuses a key that
+# does not match.
 docker_release_pins:
   resolute:
     engine: "5:29.9.2-1~ubuntu.26.04~resolute"
@@ -323,9 +323,12 @@ labs_agent_repo_ref: "{{ lookup('ansible.builtin.pipe', 'git -C ' ~ (playbook_di
 # LTS on 2026-10-28). NodeSource publishes one codename-independent suite,
 # nodistro, so this pin is the same on 26.04 and 24.04. The first pin was the
 # newest nodejs in node_26.x/dists/nodistro/main/binary-amd64/Packages when it
-# was read on 2026-09-26, and the weekly pin bump moves it to the newest there.
-# The line itself is labs_agent_node_apt_repository_url in the role defaults,
-# so a major bump moves both.
+# was read on 2026-09-26. The weekly pin bump takes the newest 26 release in
+# https://nodejs.org/dist/index.json and moves the pin to NodeSource's newest
+# build of that release in the same Packages index; if NodeSource has not
+# published that release yet, the pin stays and the weekly issue says so. The
+# line itself is labs_agent_node_apt_repository_url in the role defaults, so a
+# major bump moves both.
 labs_agent_node_version: "26.12.0-1nodesource1"
 # sha256sum of https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key, read
 # 2026-09-26 and checked with gpgv against node_26.x/dists/nodistro/InRelease;
@@ -355,11 +358,11 @@ node_exporter_checksum: sha256:b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e83
 # use, and this is one server managing one Docker node. The licence key is
 # entered in Portainer's UI, never here. On since 2026-09-26 (owner decision).
 # The newest release on 2026-09-26 was in the 2.45 line, a long-term support
-# (LTS) line; 2.39 is the previous LTS line (read from
-# https://github.com/portainer/portainer/releases that day). The digest is the
-# image INDEX of the tag on the portainer_image_tag line, from `docker buildx
-# imagetools inspect`, the same as the registry's Docker-Content-Digest; on
-# 2026-09-26 portainer-ee:lts, :latest and :sts all resolved to the first
+# (LTS) line, and 2.39 was the previous LTS line (both read from
+# https://github.com/portainer/portainer/releases on 2026-09-26). The digest is
+# the image INDEX of the tag on the portainer_image_tag line, from `docker
+# buildx imagetools inspect`, the same as the registry's Docker-Content-Digest;
+# on 2026-09-26 portainer-ee:lts, :latest and :sts all resolved to the first
 # pin's index.
 portainer_enabled: true
 portainer_image: portainer/portainer-ee
