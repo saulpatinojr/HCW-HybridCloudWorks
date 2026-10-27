@@ -29,9 +29,10 @@
  *
  *  - A read it recognises but cannot work out FAILS this test. It is never
  *    skipped. The same goes for the file functions being used in a way it
- *    cannot follow (stored, handed to other code, looked up by name), and for
- *    `import()`, `require()` and `import.meta.glob` given a path it cannot
- *    work out.
+ *    cannot follow (stored, handed to other code, looked up by name), for a
+ *    call named like a file read (`readFileSync(...)`) that it cannot trace to
+ *    Node's fs, for `process.chdir` and `eval`, and for `import()`,
+ *    `require()` and `import.meta.glob` given a path it cannot work out.
  *  - The only way past that is an entry in REVIEWED_READS below, written by a
  *    person with the reason. An entry that no longer matches a read fails too,
  *    so the list cannot go stale.
