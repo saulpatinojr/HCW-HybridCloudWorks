@@ -30,7 +30,10 @@ import {
   findBySecretName,
   isGeneratable,
   isSeedableSecret,
+  settingToSecret,
 } from './secret-catalog.js';
+import { CODER_BROKER_TOKEN_SETTING } from './labs/visitor-session.js';
+import { TURNSTILE_SECRET_SETTING } from './labs/public-lock.js';
 
 const INFRA = join(fileURLToPath(new URL('../../..', import.meta.url)), 'infra');
 
@@ -70,6 +73,25 @@ describe('secret catalogue ↔ Terraform', () => {
     );
     expect(mismatched).toEqual([]);
   });
+
+  it.each([
+    [CODER_BROKER_TOKEN_SETTING, 'CODER-BROKER-TOKEN'],
+    [TURNSTILE_SECRET_SETTING, 'TURNSTILE-SECRET-KEY'],
+  ])(
+    'declares %s, a credential the lab code reads by name, as a reference to %s, and the catalogue lists it (#1403)',
+    (setting, secret) => {
+      // The names come from the constants the code itself reads process.env
+      // with: visitor-session.js for the broker token (readBrokerConfig) and
+      // public-lock.js for the Turnstile secret (turnstileSecret). Until #1403
+      // the broker token's name was read by the code and declared by nothing in
+      // infra/, so Terraform would have removed a copy set by hand and the
+      // broker would have stayed "not configured" with every other test green.
+      // Reading the constant, not a string typed here, is what ties the code's
+      // name to infra/'s: rename it in the code and this fails.
+      expect(pairs).toContainEqual({ setting, secret });
+      expect(settingToSecret(setting)).toBe(secret);
+    }
+  );
 
   it('names a real section for every entry', () => {
     const sections = new Set(SECRET_SECTIONS.map((s) => s.id));

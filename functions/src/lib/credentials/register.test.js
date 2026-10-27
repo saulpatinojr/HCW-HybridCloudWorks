@@ -48,6 +48,23 @@ describe('the Key Vault part is the catalogue, whole', () => {
     expect(CREDENTIAL_REGISTER.filter((entry) => entry.issuer === 'Unknown')).toEqual([]);
   });
 
+  it('registers the Coder broker token as a hand credential with no rule, apart from the status token the lab host renews (#1403)', () => {
+    const broker = findCredential('kv-coder-broker-token');
+    const status = findCredential('kv-coder-status-token');
+    expect(broker).toMatchObject({
+      name: 'CODER-BROKER-TOKEN',
+      store: 'key-vault',
+      renewal: 'hand',
+      lifetimeDays: null,
+    });
+    // No `coder` live source: the lab host reports on the status token only, so
+    // the register must not look for the broker's expiry in that report.
+    expect(broker.source).toEqual({ secret: 'CODER-BROKER-TOKEN' });
+    expect(broker.rotate).toMatch(/Integrations/);
+    expect(status.renewal).toBe('automation');
+    expect(status.source).toMatchObject({ coder: 'statusToken' });
+  });
+
   it('points each Key Vault row at its own secret_state record', () => {
     for (const entry of CREDENTIAL_REGISTER.filter((e) => e.store === 'key-vault')) {
       expect(entry.id).toBe(keyVaultCredentialId(entry.name));
