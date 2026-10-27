@@ -148,3 +148,37 @@ it('does not fail listing ingestion when its run-status write fails', async () =
     vi.unstubAllEnvs();
   }
 });
+
+it.each(['AbortError', 'SyntaxError'])(
+  'records listing response body %s as a failure, rather than an empty success',
+  async (name) => {
+    sources = sources.map((source) => ({ ...source, enabled: source.id === listing.id }));
+    vi.stubEnv('FIRECRAWL_API_KEY', 'fc-unit-test-only');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => {
+          throw Object.assign(new Error('Body could not be read'), { name });
+        },
+      }))
+    );
+    try {
+      const result = await getJobType('sync-blog-source').worker(
+        { sourceId: listing.id },
+        { context: {} }
+      );
+      expect(result).toMatchObject({ newArticles: 0, errors: 1 });
+      expect(fakes.upsertDoc).toHaveBeenCalledWith(
+        'admin_settings',
+        expect.objectContaining({ sourceId: listing.id, status: 'failed' })
+      );
+      expect(
+        fakes.upsertDoc.mock.calls.filter(([container]) => container === 'content')
+      ).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  }
+);

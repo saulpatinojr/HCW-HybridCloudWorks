@@ -113,7 +113,7 @@ function ArticleSearch({ query, setQuery, setSearch, reload }) {
   );
 }
 
-function ListState({ loading, loadError, empty, nouns, reload }) {
+function ListState({ loading, loadError, empty, nouns, reload, search }) {
   if (loading)
     return (
       <div className="flex items-center justify-center py-12" role="status" aria-live="polite">
@@ -134,8 +134,14 @@ function ListState({ loading, loadError, empty, nouns, reload }) {
     return (
       <EmptyState
         variant="filtered"
-        title={`No ${nouns.plural} in this status`}
-        description={`${nouns.plural[0].toUpperCase()}${nouns.plural.slice(1)} arrive from Submit URLs with the matching content type and from the Review Queue. Try another status.`}
+        title={
+          search ? `No ${nouns.plural} match this search` : `No ${nouns.plural} in this status`
+        }
+        description={
+          search
+            ? 'Try another title or summary, or use Refresh / clear to see this status again.'
+            : `${nouns.plural[0].toUpperCase()}${nouns.plural.slice(1)} arrive from Submit URLs with the matching content type and from the Review Queue. Try another status.`
+        }
       />
     );
   return null;
@@ -268,6 +274,7 @@ export default function TypedReviewList({
       <ListState
         loading={loading}
         loadError={loadError}
+        search={search}
         empty={items.length === 0}
         nouns={nouns}
         reload={reload}

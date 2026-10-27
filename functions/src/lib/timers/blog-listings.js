@@ -104,7 +104,7 @@ export async function scrapeListingPage(
       extract: { schema: ARTICLE_SCHEMA },
     }),
   });
-  const result = await response.json().catch(() => ({}));
+  const result = await response.json();
   if (!response.ok || result.success === false) {
     throw new Error(
       `Firecrawl scrape failed for ${listingUrl}: ${result.error || `HTTP ${response.status}`}`
