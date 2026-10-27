@@ -36,9 +36,12 @@
  * `require('x')`, `vi.mock('x')` and `import.meta.glob`) and the files it reads
  * at the top of the module or in a function a test can reach. All of them must
  * match the package's filter, so a pull request that changes only the last file
- * in the chain still runs the package's tests. What it ignores: names of
- * packages (`lodash`, `node:fs`), and anything under `node_modules`, `dist`,
- * `coverage` or `.git`, which are not files of the repository. What it refuses:
+ * in the chain still runs the package's tests. An `import()` or `require()` whose
+ * path is worked out at run time is followed too when it names one file. What it
+ * ignores: names of packages (`lodash`, `node:fs`; none of this repository's
+ * packages depends on another by path, so a name never means a repository file),
+ * and anything under `node_modules`, `dist`, `coverage` or `.git`, which are not
+ * files of the repository. What it refuses:
  * an import whose file cannot be found in a module outside the package (the
  * guard cannot tell what that file reads), and a read it cannot work out in
  * such a module, exactly as for a test file. Both are listed in REVIEWED_READS
@@ -68,7 +71,9 @@
  *    only receives it (for example a helper that pushes onto a list it was
  *    given), or that is reached under another name;
  *  - code that is not JavaScript or JSX (a TypeScript test is only reported if
- *    it mentions the file functions and cannot be parsed).
+ *    it mentions the file functions and cannot be parsed; the imports of a
+ *    TypeScript module are found by reading its text, but what it reads is not
+ *    worked out).
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -1638,14 +1643,15 @@ ${GUIDE}createReadStream(guide);
         expect(found.unresolved).toEqual([]);
       });
 
-      it('that names a file that is not there, or one in node_modules, is left alone', () => {
+      it('that names a file that is not there, or one in node_modules, is left alone (the file beside them is followed)', () => {
         const found = guard({
           ...test,
-          'other/a.js': `${PATHS}${HERE}await import(join(HERE, 'gone.js'));\nawait import(join(HERE, 'node_modules', 'pkg', 'index.js'));\nexport const x = 1;\n`,
+          'other/a.js': `${PATHS}${HERE}await import(join(HERE, 'gone.js'));\nawait import(join(HERE, 'node_modules', 'pkg', 'index.js'));\nawait import(join(HERE, 'c.js'));\nexport const x = 1;\n`,
           'other/node_modules/pkg/index.js': "import '../../b.js';\n",
+          'other/c.js': 'export const z = 1;\n',
           ...B,
         });
-        expect(names(found.files)).toEqual(['other/a.js']);
+        expect(names(found.files)).toEqual(['other/a.js', 'other/c.js']);
         expect(found.unresolved).toEqual([]);
       });
 

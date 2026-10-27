@@ -96,15 +96,17 @@ const importExpression = (spec) => `import '${spec}'`;
  * Derive the out-of-component files and folders that tests (and the modules
  * and helpers they import, in this package and in others) import or read.
  *
- * The guard starts from the package's test files and follows every import it
- * can read as plain text (`import`, `export ... from`, `import('x')`,
- * `require('x')`, `vi.mock('x')`), through the package's own modules and through
- * the modules of other packages, to the end of the chain. A module outside the
+ * The guard starts from the package's test files and follows every import
+ * written with a plain path (`import`, `export ... from`, `import('x')`,
+ * `require('x')`, `vi.mock('x')`; see `listImports`), through the package's own
+ * modules and through the modules of other packages, to the end of the chain.
+ * An `import()` or `require()` whose path is worked out at run time is followed
+ * too when it names one file (a few levels deep at most). A module outside the
  * package is treated like one inside it: the files it imports are dependencies
  * of the package's tests, and so are the files it reads when a test runs its
  * code (at the top of the module, or in a function the test can reach). A
  * file only reached through `node_modules` or a built folder is not a
- * repository file and is left out.
+ * repository file and is left out, and neither is a package name.
  *
  * `reviewed` lists reads a person has looked at, each as
  * `{ file, expression?, reason }` (see ci-filters.test.mjs). A read matches an
