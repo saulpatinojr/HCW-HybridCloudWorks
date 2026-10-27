@@ -66,6 +66,7 @@ const EXPECTED_SHIM_FILES = [
   "ai-proxy-http.js",
   "ambassador-audience.js",
   "ambassador-http.js",
+  "blog-sources-http.js",
   "brain-http.js",
   "calendar-alerts-http.js",
   "calendar-http.js",

@@ -1,9 +1,9 @@
 /**
- * The news feeds this site reads for each provider, feed for feed.
+ * The default official RSS feeds for each provider, feed for feed.
  *
- * A COPY OF THE SERVER'S LIST, HELD TO IT BY A TEST. The list that counts is
+ * A COPY OF THE SERVER'S LIST, HELD TO IT BY A TEST. The seed list is
  * `PROVIDER_FEEDS` in functions/src/lib/rss/feeds.js: the ingest timer fetches
- * exactly those feeds, caches them, and `GET public/feed` serves that cache to
+ * those seeds plus saved source overrides; `GET public/feed` serves the cache to
  * every `/<provider>/news` and `/<provider>/rss` page. The browser cannot
  * import that module (it pulls in a server-only HTML parser), so the list is
  * repeated here, and `providerFeeds.test.js` reads the server file and fails
@@ -47,6 +47,7 @@ export const PROVIDER_FEEDS = Object.freeze({
   ]),
   aws: Object.freeze([
     { name: 'AWS Blog', url: 'https://aws.amazon.com/blogs/aws/feed/' },
+    { name: 'Kiro Blog', url: 'https://kiro.dev/blog/feed.rss' },
     { name: 'AWS Whats New', url: 'https://aws.amazon.com/about-aws/whats-new/recent/feed/' },
     { name: 'AWS APN Partner Network', url: 'https://aws.amazon.com/blogs/apn/feed/' },
   ]),

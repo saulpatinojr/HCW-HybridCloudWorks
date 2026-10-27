@@ -8,6 +8,8 @@
  * request: `formats: ['extract']` with a JSON schema). `FIRECRAWL_API_KEY`
  * is a Key Vault reference on the app; a missing key skips the run.
  */
+import { recordRun } from '../rss/source-run.js';
+import { randomUUID } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { buildRssContentDoc, truncateText } from '../rss/feeds.js';
 
@@ -78,18 +80,22 @@ const ARTICLE_SCHEMA = {
 export function resolveArticleUrl(url, listingUrl) {
   const value = String(url || '');
   if (!value) return '';
-  if (/^https?:\/\//i.test(value)) return value;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return ''; // javascript:, mailto:, data: — not an article
-  const base = new URL(listingUrl);
-  return value.startsWith('/') ? `${base.origin}${value}` : `${base.origin}/${value}`;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !/^https?:\/\//i.test(value)) return ''; // javascript:, mailto:, data: — not an article
+  try {
+    return new URL(value, listingUrl).href;
+  } catch {
+    return '';
+  }
 }
 
 /** Articles on a listing page via Firecrawl structured extraction. */
 export async function scrapeListingPage(
   { apiKey, fetch: fetchImpl = globalThis.fetch },
-  listingUrl
+  listingUrl,
+  signal
 ) {
   const response = await fetchImpl(FIRECRAWL_SCRAPE_URL, {
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000),
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -98,7 +104,13 @@ export async function scrapeListingPage(
       extract: { schema: ARTICLE_SCHEMA },
     }),
   });
-  const result = await response.json().catch(() => ({}));
+  let result;
+  try {
+    result = await response.json();
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason || error;
+    throw new Error('The blog listing response could not be read.');
+  }
   if (!response.ok || result.success === false) {
     throw new Error(
       `Firecrawl scrape failed for ${listingUrl}: ${result.error || `HTTP ${response.status}`}`
@@ -127,7 +139,7 @@ export function buildListingContentDoc({ article, source, dedupFields, now, uuid
     title: item.title,
     summary: truncateText(article.description || '', 300),
     provider: source.provider,
-    feed: { name: source.name, url: source.url },
+    feed: source,
     dedupFields,
     now,
     uuid,
@@ -147,8 +159,9 @@ export function createBlogListingsScrape({
   env = process.env,
   sources = BLOG_SCRAPE_SOURCES,
   now = () => new Date(),
-  uuid,
+  uuid = randomUUID,
   log = {},
+  signal,
 }) {
   async function ingestArticle(source, article) {
     const sourceUrl = article.url;
@@ -185,17 +198,22 @@ export function createBlogListingsScrape({
     }
     const results = { skipped: false, scraped: 0, newArticles: 0, errors: 0, failures: [] };
     for (const source of sources) {
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
       try {
         log.log?.(`[blogScraper] Scraping ${source.name} (${source.provider})`);
-        const articles = await scrapeListingPage({ apiKey, fetch: fetchImpl }, source.url);
+        const articles = await scrapeListingPage({ apiKey, fetch: fetchImpl }, source.url, signal);
         results.scraped += 1;
         let newCount = 0;
-        for (const article of articles.slice(0, MAX_ARTICLES_PER_SOURCE)) {
+        for (const article of articles.slice(0, source.maxItems || MAX_ARTICLES_PER_SOURCE)) {
+          if (signal?.aborted) throw signal.reason || new Error('aborted');
           if (await ingestArticle(source, article)) newCount += 1;
         }
         results.newArticles += newCount;
+        await recordRun(store, source, 'succeeded', { fetchedAt: now().toISOString(), itemCount: articles.length });
         log.log?.(`[blogScraper] ${source.name}: ${articles.length} found, ${newCount} new`);
       } catch (err) {
+        if (signal?.aborted) throw signal.reason || err;
+        await recordRun(store, source, 'failed', { fetchedAt: now().toISOString() });
         results.errors += 1;
         results.failures.push({ source: source.name, error: err?.message || String(err) });
         log.error?.(`[blogScraper] Failed ${source.name}: ${err?.message || err}`);

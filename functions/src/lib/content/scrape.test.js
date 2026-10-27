@@ -169,3 +169,8 @@ describe('scrapeArticle', () => {
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 });
+
+it('extracts a social cover before inline images so a source default does not replace an article hero', () => {
+  const result = extractArticle(`<html><head><meta property="og:image" content="/article-hero.png"></head><body><article><p>${'Article text '.repeat(100)}</p></article></body></html>`, 'https://example.com/blog/post');
+  expect(result.images[0]).toMatchObject({ url: 'https://example.com/article-hero.png' });
+});

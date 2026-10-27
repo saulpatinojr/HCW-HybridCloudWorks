@@ -22,6 +22,14 @@ describe('buildInspectionUpdateData', () => {
     now: NOW,
   };
 
+  it('applies source defaults only to drafts carrying a blog-source identity', () => {
+    const scraped = { ...baseArgs.scraped, images: [{ original: 'https://example.com/article.png' }] };
+    expect(buildInspectionUpdateData({ ...baseArgs, scraped })).not.toHaveProperty('coverImage');
+    expect(buildInspectionUpdateData({ ...baseArgs, scraped, newData: { type: 'framework' } })).not.toHaveProperty('coverImage');
+    expect(buildInspectionUpdateData({ ...baseArgs, scraped, newData: { blogSourceId: 'listing-source' } })).toMatchObject({ coverImage: 'https://example.com/article.png' });
+    expect(buildInspectionUpdateData({ ...baseArgs, newData: { blogSourceId: 'rss-source', blogFallbackImageUrl: 'https://example.com/default.png' } })).toMatchObject({ coverImage: 'https://example.com/default.png' });
+  });
+
   it('defaults a blog inspection: status, type, slug, capped bodies, nulled extras', () => {
     const update = buildInspectionUpdateData(baseArgs);
     expect(update).toMatchObject({

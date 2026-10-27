@@ -31,6 +31,8 @@
     "cmsAmbassadorProgramById",
     "cmsAmbassadorPrograms",
     "cmsAmbassadorReadiness",
+    "cmsBlogSource",
+    "cmsBlogSources",
     "cmsBootstrapReset",
     "cmsBrainAsk",
     "cmsBrainContext",

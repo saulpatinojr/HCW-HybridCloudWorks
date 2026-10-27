@@ -492,7 +492,7 @@ jobs:
         env:
           TEST_BASE_URL: http://127.0.0.1:4173
           CI: 'true'
-        run: npx playwright test --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js ai-engine.spec.js ambassador.spec.js
+        run: npx playwright test --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js ai-engine.spec.js ambassador.spec.js blogs.spec.js
 
       - name: Upload the report on failure
         if: failure()

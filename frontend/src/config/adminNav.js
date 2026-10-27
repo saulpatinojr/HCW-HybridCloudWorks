@@ -303,6 +303,15 @@ const ITEMS = [
     { minRole: 'editor' },
   ],
 
+  [
+    'enhanced',
+    '/admin/blogs',
+    Newspaper,
+    'Blogs',
+    'Review articles, manage blog sources, and choose fallback images for intake.',
+    { minRole: 'editor' },
+  ],
+
   // Creative
   [
     'creative',
