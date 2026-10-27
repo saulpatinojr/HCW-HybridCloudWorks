@@ -82,6 +82,11 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # What counts as a change to each root module. (The script adds
+          # this workflow's own file to both, since a change to it can break
+          # either.)
+          INFRA_FILTER: '^infra/'
+          LAB_FILTER: '^infra-lab/'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -101,19 +106,43 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
-          if grep -qE '^(infra/|\.github/workflows/iac-validate\.yml$)' <<<"$changed"; then
+          # grep -E answers 0 when a changed file matches the filter, 1 when
+          # none does, and 2 or more when it could not read the filter at all
+          # (an unclosed parenthesis, say). `if grep …` takes every answer
+          # other than 0 as "no", so a filter grep cannot read would skip the
+          # checks as "no change" while this required check stayed green
+          # (#1429, the same weakness as #1428 in ci.yml). The answer is kept
+          # instead, and anything other than 0 or 1 fails this step and names
+          # the filter. The filter goes in brackets so that a stray backslash
+          # at its end cannot join onto the `|` that adds this workflow and so
+          # hide the mistake. These lines are the same as in ci.yml and
+          # codeql.yml; the test in scripts/codeql-iac-workflow-steps.test.mjs
+          # runs this step. If the second filter is the broken one, the first
+          # answer has been written already; the step still fails, so no later
+          # step runs and nothing is skipped.
+          status=0
+          grep -qE "(${INFRA_FILTER})"'|^\.github/workflows/iac-validate\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
             echo "infra=true" >> "$GITHUB_OUTPUT"
             echo "infra/ changed — running its checks"
-          else
+          elif [ "${status}" -eq 1 ]; then
             echo "infra=false" >> "$GITHUB_OUTPUT"
             echo "no infra/ change — skipping its checks"
+          else
+            echo "::error file=.github/workflows/iac-validate.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${INFRA_FILTER}"
+            exit 1
           fi
-          if grep -qE '^(infra-lab/|\.github/workflows/iac-validate\.yml$)' <<<"$changed"; then
+          status=0
+          grep -qE "(${LAB_FILTER})"'|^\.github/workflows/iac-validate\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
             echo "lab=true" >> "$GITHUB_OUTPUT"
             echo "infra-lab/ changed — running its checks"
-          else
+          elif [ "${status}" -eq 1 ]; then
             echo "lab=false" >> "$GITHUB_OUTPUT"
             echo "no infra-lab/ change — skipping its checks"
+          else
+            echo "::error file=.github/workflows/iac-validate.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${LAB_FILTER}"
+            exit 1
           fi
           echo "this context is reported either way"
 
@@ -222,6 +251,10 @@ jobs:
         id: changes
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # The same two filters as the terraform job's detect step. (The
+          # script adds this workflow's own file to both.)
+          INFRA_FILTER: '^infra/'
+          LAB_FILTER: '^infra-lab/'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -238,19 +271,31 @@ jobs:
             echo "could not compute the diff — running the scan rather than guessing"
             exit 0
           }
-          if grep -qE '^(infra/|\.github/workflows/iac-validate\.yml$)' <<<"$changed"; then
+          # grep's answer is kept, not tested in an `if`: see the terraform
+          # job's detect step for why (#1429).
+          status=0
+          grep -qE "(${INFRA_FILTER})"'|^\.github/workflows/iac-validate\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
             echo "infra=true" >> "$GITHUB_OUTPUT"
             echo "infra/ changed — scanning it"
-          else
+          elif [ "${status}" -eq 1 ]; then
             echo "infra=false" >> "$GITHUB_OUTPUT"
             echo "no infra/ change — not scanning it"
+          else
+            echo "::error file=.github/workflows/iac-validate.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${INFRA_FILTER}"
+            exit 1
           fi
-          if grep -qE '^(infra-lab/|\.github/workflows/iac-validate\.yml$)' <<<"$changed"; then
+          status=0
+          grep -qE "(${LAB_FILTER})"'|^\.github/workflows/iac-validate\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
             echo "lab=true" >> "$GITHUB_OUTPUT"
             echo "infra-lab/ changed — scanning it"
-          else
+          elif [ "${status}" -eq 1 ]; then
             echo "lab=false" >> "$GITHUB_OUTPUT"
             echo "no infra-lab/ change — not scanning it"
+          else
+            echo "::error file=.github/workflows/iac-validate.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${LAB_FILTER}"
+            exit 1
           fi
           echo "this context is reported either way"
 
