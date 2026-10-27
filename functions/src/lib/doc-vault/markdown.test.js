@@ -307,22 +307,64 @@ describe('line endings and the byte-order mark', () => {
 
 describe('linear time', () => {
   /**
-   * The fastest of five batches, per parse: a slow neighbour on a shared runner
-   * cannot make a fast parse look slow. The small input is repeated, so it is
-   * long enough to time; the large one is run once, because a parser that has
-   * gone quadratic must be found by a test that finishes in seconds. A single
-   * synchronous parse cannot be interrupted by a test timeout, so these sizes
-   * keep a quadratic one to about a second a run, not minutes.
+   * How the time is measured (changed for #1431, after this test failed once in
+   * CI with a ratio of 11.9 on a change that touched no code).
+   *
+   * One parse of a few thousand characters takes between two microseconds and a
+   * tenth of a millisecond: too little to time alone, and shorter than the slow
+   * spells of a shared machine (a busy neighbour, another test file running
+   * beside this one). The first version timed five batches of one parse for the
+   * large input, all inside about two milliseconds. The worst readings measured
+   * for this change were not random single pauses: all five large timings were
+   * slow together (1.6 to 1.9 times their usual), which lifted a ratio of about
+   * 3.5 to between 5.8 and 6.3, and nothing in the small timings, taken earlier,
+   * could cancel that. So now:
+   *
+   *  - A batch repeats the parse until it lasts at least BATCH_MS, so every
+   *    timing is several milliseconds whatever the input. Running the batches
+   *    to find that count also warms the parser up before anything is kept.
+   *  - The small and the large input are timed in alternating rounds, so a slow
+   *    spell falls on both of them and the ratio of the two cancels it.
+   *  - Each input keeps its fastest of ROUNDS rounds: noise only ever adds time.
+   *  - No floor under the small timing: it is now measured, not rounded up.
+   *
+   * A quadratic parser must still be found by a test that finishes in seconds,
+   * so an input stops taking rounds after BUDGET_MS once it has had MIN_ROUNDS.
+   * A single synchronous parse cannot be interrupted by a test timeout, so
+   * these sizes keep a quadratic one to about a second a run, not minutes.
    */
-  function fastest(make, reps) {
-    const input = make();
-    let best = Infinity;
-    for (let batch = 0; batch < 5; batch += 1) {
-      const start = performance.now();
-      for (let rep = 0; rep < reps; rep += 1) parse(input);
-      best = Math.min(best, (performance.now() - start) / reps);
+  const BATCH_MS = 4;
+  const ROUNDS = 9;
+  const MIN_ROUNDS = 3;
+  const BUDGET_MS = 1_000;
+  const MAX_REPS = 2 ** 20;
+
+  function timeBatch(input, reps) {
+    const start = performance.now();
+    for (let rep = 0; rep < reps; rep += 1) parse(input);
+    return performance.now() - start;
+  }
+
+  /** How many parses make a batch of at least BATCH_MS. */
+  function repsFor(input) {
+    let reps = 1;
+    while (reps < MAX_REPS && timeBatch(input, reps) < BATCH_MS) reps *= 2;
+    return reps;
+  }
+
+  /** Time per parse of the large input over the small one, and each in ms. */
+  function measureGrowth(small, large) {
+    const smallReps = repsFor(small);
+    const largeReps = repsFor(large);
+    let smallMs = Infinity;
+    let largeMs = Infinity;
+    const began = performance.now();
+    for (let round = 1; round <= ROUNDS; round += 1) {
+      smallMs = Math.min(smallMs, timeBatch(small, smallReps) / smallReps);
+      largeMs = Math.min(largeMs, timeBatch(large, largeReps) / largeReps);
+      if (round >= MIN_ROUNDS && performance.now() - began > BUDGET_MS) break;
     }
-    return best;
+    return { ratio: largeMs / smallMs, smallMs, largeMs };
   }
 
   // A quadratic parser takes 16x as long for 4x the input; a linear one 4x.
@@ -340,9 +382,11 @@ describe('linear time', () => {
     'a long comma list': (n) => `---\ntags: ${'a,'.repeat(Math.floor(n / 2))}\n---\nbody`,
   };
 
-  it.each(Object.entries(SHAPES))('grows in step with the input for %s', (_name, shape) => {
-    const small = fastest(() => shape(SMALL), 20);
-    const large = fastest(() => shape(LARGE), 1);
-    expect(large / Math.max(small, 0.02)).toBeLessThan(9);
+  it.each(Object.entries(SHAPES))('grows in step with the input for %s', (name, shape) => {
+    const { ratio, smallMs, largeMs } = measureGrowth(shape(SMALL), shape(LARGE));
+    expect(
+      ratio,
+      `${name}: 4x the input took ${ratio.toFixed(1)}x the time (${smallMs.toFixed(4)} ms -> ${largeMs.toFixed(4)} ms a parse)`
+    ).toBeLessThan(9);
   });
 });
