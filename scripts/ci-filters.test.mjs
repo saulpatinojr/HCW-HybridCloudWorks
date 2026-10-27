@@ -77,6 +77,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMPONENTS, DIRECTORY_PROBE, deriveCrossRootReads, parseCiFilters } from './lib/ci-filters.mjs';
+import { listImports } from './lib/js-file-reads.mjs';
 import { isPinFile, trackedFiles } from './lib/version-pins.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1272,13 +1273,13 @@ ${GUIDE}createReadStream(guide);
         }
       });
 
-      describe('through an import written another way', () => {
+      describe('through other kinds of import', () => {
         const cases = {
           "a dynamic import('./b.js') in a function nothing calls": "export const x = 1;\nexport const load = () => import('./b.js');\n",
           'a dynamic import with a template string': 'export const x = 1;\nexport const load = () => import(`./b.js`);\n',
           "require('./b.js')": "const y = require('./b.js');\nmodule.exports = { x: y };\n",
           "vi.mock('./b.js')": "vi.mock('./b.js', () => ({}));\nexport const x = 1;\n",
-          'an import with a type-like clause': "import { y as renamed, default as other } from './b.js';\nexport const x = renamed;\n",
+          'an import with renamed names': "import { y as renamed, default as other } from './b.js';\nexport const x = renamed;\n",
           'an import without a name (it runs the file)': "import './b.js';\nexport const x = 1;\n",
           'a path without its ending': "import './b';\nexport const x = 1;\n",
         };
@@ -1287,6 +1288,20 @@ ${GUIDE}createReadStream(guide);
             const found = guard({ ...test, 'other/a.js': source, ...B });
             expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
             expect(found.unresolved).toEqual([]);
+          });
+        }
+
+        // The case above sees b.js whichever way it is listed; these go one module further, so the module has to be opened.
+        const further = {
+          "a dynamic import('./b.js')": "export const load = () => import('./b.js');\nexport const x = 1;\n",
+          "require('./b.js')": "const y = require('./b.js');\nmodule.exports = { x: y };\n",
+          "vi.mock('./b.js')": "vi.mock('./b.js', () => ({}));\nexport const x = 1;\n",
+          'export * from': "export * from './b.js';\nexport const x = 1;\n",
+        };
+        for (const [label, source] of Object.entries(further)) {
+          it(`${label} leads on into the module it names`, () => {
+            const found = guard({ ...test, 'other/a.js': source, 'other/b.js': "import './c.js';\n", 'other/c.js': 'export const z = 1;\n' });
+            expect(names(found.files)).toEqual(['other/a.js', 'other/b.js', 'other/c.js']);
           });
         }
 
@@ -1300,7 +1315,7 @@ ${GUIDE}createReadStream(guide);
           expect(names(found.dirs)).toEqual(['other/pages/']);
         });
 
-        it('a file whose name only looks like an import is not followed', () => {
+        it('text that only looks like an import (in a comment or a string) is not one', () => {
           const found = guard({
             ...test,
             'other/a.js': "// import './ghost.js';\nconst text = \"import './ghost.js'\";\nimport './b.js';\nexport const x = text;\n",
@@ -1342,6 +1357,9 @@ ${GUIDE}createReadStream(guide);
         expect(found.origins.get('other/c.js')).toEqual(new Set(['other/b.js (import, reached from pkg/a.test.js > other/a.js)']));
         // a file the test imports itself keeps the shorter wording
         expect(found.origins.get('other/a.js')).toEqual(new Set(['pkg/a.test.js (import)']));
+        // so does a file a module inside the package imports: no module outside the package is on the way
+        const inside = guard({ 'pkg/a.test.js': "import './helper.js';\n", 'pkg/helper.js': "import '../other/b.js';\n", ...B });
+        expect(inside.origins.get('other/b.js')).toEqual(new Set(['pkg/helper.js (import)']));
       });
 
       it('shortens the route when it is long', () => {
@@ -1363,9 +1381,35 @@ ${GUIDE}createReadStream(guide);
         expect(names(found.files)).toEqual(['frontend/src/lib/a.js', 'frontend/src/lib/b.js']);
         expect(found.unresolved).toEqual([]);
       });
+
+      it('an import shortcut in a module of another package means what it means in the package that runs the tests', () => {
+        // the frontend's tests run with "@/" = frontend/src, whichever file uses it, so "@/lib/y.js" in other/a.js is frontend/src/lib/y.js
+        const found = guard(
+          {
+            ...TARGETS,
+            'frontend/src/a.test.js': "import { x } from '../../other/a.js';\nconsole.log(x);\n",
+            'other/a.js': "import { y } from '@/lib/y.js';\nexport const x = y;\n",
+            'frontend/src/lib/y.js': `${FS}${PATHS}${HERE}export const y = readFileSync(join(HERE, '..', '..', '..', 'docs', 'guide.md'), 'utf8');\n`,
+          },
+          undefined,
+          'frontend'
+        );
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js']);
+        expect(found.unresolved).toEqual([]);
+      });
     });
 
     describe('what is not a file of the repository', () => {
+      it('git\'s own folder is not, although .github is (the rule is for the whole name)', () => {
+        const found = guard({
+          ...test,
+          'other/a.js': "import '../.github/workflows/x.yml?raw';\nimport '../.git/config?raw';\nexport const x = 1;\n",
+          '.github/workflows/x.yml': 'name: x\n',
+          '.git/config': '[core]\n',
+        });
+        expect(names(found.files)).toEqual(['.github/workflows/x.yml', 'other/a.js']);
+      });
+
       it('a package name is not a file, and does not hide the files beside it', () => {
         const found = guard({
           ...test,
@@ -1588,6 +1632,23 @@ ${GUIDE}createReadStream(guide);
         expect(found.unresolved).toEqual([]);
       });
 
+      it('that names a module the walk already has adds nothing, and ends', () => {
+        const found = guard({ ...test, 'other/a.js': `${PATHS}${HERE}import './b.js';\nawait import(join(HERE, 'b.js'));\nexport const x = 1;\n`, ...B });
+        expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
+        expect(found.unresolved).toEqual([]);
+      });
+
+      it('that names a file that is not there, or one in node_modules, is left alone', () => {
+        const found = guard({
+          ...test,
+          'other/a.js': `${PATHS}${HERE}await import(join(HERE, 'gone.js'));\nawait import(join(HERE, 'node_modules', 'pkg', 'index.js'));\nexport const x = 1;\n`,
+          'other/node_modules/pkg/index.js': "import '../../b.js';\n",
+          ...B,
+        });
+        expect(names(found.files)).toEqual(['other/a.js']);
+        expect(found.unresolved).toEqual([]);
+      });
+
       it('in a test inside the package is followed too', () => {
         const found = guard({
           ...TARGETS,
@@ -1611,5 +1672,42 @@ ${GUIDE}createReadStream(guide);
         expect(short.unresolved).toEqual([]);
       });
     });
+  });
+});
+
+describe('listImports (#1428)', () => {
+  it('lists every way of naming a module with a plain path, in the order written, with the line', () => {
+    const text = [
+      "import a from './a.js';",
+      "import './b.js';",
+      "export { c } from './c.js';",
+      "export * from './d.js';",
+      "export * as e from './e.js';",
+      "const f = require('./f.js');",
+      "const g = () => import('./g.js');",
+      'const h = () => import(`./h.js`);',
+      "vi.mock('./i.js');",
+      "jest.requireActual('./j.js');",
+      'export const k = 1;',
+    ].join('\n');
+    const { specs, parsed, ast } = listImports(text);
+    expect(parsed).toBe(true);
+    expect(ast).not.toBeNull();
+    expect(specs).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'].map((name, index) => ({ spec: `./${name}.js`, line: index + 1 })));
+  });
+
+  it('leaves out a path that is worked out at run time, and calls that only look alike', () => {
+    const text = ['const name = process.argv[2];', 'await import(`./${name}.js`);', 'require(name);', "other.mock('./x.js');", "vi.other('./y.js');", "vi['mock']('./z.js');", "import('./real.js');"].join('\n');
+    expect(listImports(text).specs).toEqual([{ spec: './real.js', line: 7 }]);
+  });
+
+  it('reads the text of a file it cannot parse, finds the same words, and gives no tree', () => {
+    const result = listImports("import type { Y } from './b.js';\nexport const x: number = require('./c.js').n;\n");
+    expect(result.parsed).toBe(false);
+    expect(result.ast).toBeNull();
+    expect(result.specs).toEqual([
+      { spec: './b.js', line: 1 },
+      { spec: './c.js', line: 2 },
+    ]);
   });
 });
