@@ -124,7 +124,7 @@ const byLabel = (entries) => entries.map((entry) => [entry.label, entry]);
 function expectedDecision({ file, filterVar, output }) {
   return [
     'status=0',
-    `grep -qE "(\${${filterVar}})"'|^\\.github/workflows/${file.replace(/\./g, '\\.')}$${EXTRA_ALTERNATIVES[file]}' <<<"$changed" || status=$?`,
+    `grep -qE "(\${${filterVar}})"'|^\\.github/workflows/${file.replace(/[\\.]/g, '\\$&')}$${EXTRA_ALTERNATIVES[file]}' <<<"$changed" || status=$?`,
     'if [ "${status}" -eq 0 ]; then',
     `echo "${output}=true" >> "$GITHUB_OUTPUT"`,
     '<message>',
