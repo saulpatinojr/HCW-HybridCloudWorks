@@ -22,6 +22,7 @@
 import { generateSlug } from '../rss/feeds.js';
 import { buildVoiceAndFormatBlock, pickNextFormat } from './voice.js';
 import { extractPublishedDate, referenceScrapedImages } from './scrape.js';
+import { blogImageDefaults } from '../rss/source-config.js';
 import { fetchImage as defaultFetchImage } from '../triggers/fetch-image.js';
 
 // The static system prompt — kept ≥1,024 tokens so Anthropic caches it.
@@ -147,6 +148,7 @@ export function buildInspectionUpdateData({
     inspectError: null,
     ...metadataFields(newData, metadata),
     ...scrapeFields(scraped, imageAltTexts, stamp),
+    ...blogImageDefaults(newData, scraped.images || []),
     ...(hasGeneratedPostContent && { postContent: metadata.postContent }),
     ...architectureFields(newData, metadata, targetUrl),
     analysisPrompt,

@@ -78,6 +78,9 @@ export function extractArticle(html, pageUrl) {
   }
 
   const images = [];
+  const hero = $('meta[property="og:image"]').attr('content') || $('meta[name="twitter:image"]').attr('content');
+  const heroUrl = absoluteImageUrl(hero, pageUrl);
+  if (heroUrl) images.push({ url: heroUrl, alt: '', index: 0 });
   $('img').each((i, elem) => {
     const src = absoluteImageUrl($(elem).attr('src'), pageUrl);
     if (src && src.startsWith('http'))

@@ -20,6 +20,7 @@ import { Filter, Loader2, RefreshCw } from 'lucide-react';
 import ConfirmModal from '@/components/admin/ConfirmModal';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import PageHeader from '@/components/admin/shared/PageHeader';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuthReady } from '@/hooks/useAuthReady';
@@ -61,14 +62,55 @@ export function canRejectIn(statusFilter, item) {
 
 const sortByDate = byNewest('fetchedAt', 'createdAt');
 
-export async function fetchTypedContent(type, statusFilter) {
+export async function fetchTypedContent(type, statusFilter, search = '') {
   const params = new URLSearchParams({
     type,
     status: statusParamFor(statusFilter),
     limit: '200',
   });
+  if (search) params.set('search', search);
   const res = await getJSON(`cms/content?${params.toString()}`);
   return (res.items || []).sort(sortByDate);
+}
+
+function ArticleSearch({ query, setQuery, setSearch, reload }) {
+  return (
+    <form
+      className="flex flex-wrap items-end gap-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSearch(query.trim());
+      }}
+    >
+      <label className="flex-1 min-w-0 space-y-2 text-sm">
+        Search article titles and summaries
+        <Input
+          aria-label="Search article titles and summaries"
+          minLength={2}
+          maxLength={100}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search across the selected status"
+        />
+      </label>
+      <Button type="submit">Search articles</Button>
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => {
+          setQuery('');
+          setSearch('');
+          reload();
+        }}
+      >
+        Refresh / clear
+      </Button>
+      <p className="w-full text-xs text-muted-foreground">
+        Showing up to 200 articles in this status. Search checks the full collection before limiting
+        results.
+      </p>
+    </form>
+  );
 }
 
 /**
@@ -82,11 +124,21 @@ export async function fetchTypedContent(type, statusFilter) {
  *   }) => React.ReactNode,
  * }} props
  */
-export default function TypedReviewList({ type, icon, help, nouns, renderCard }) {
+export default function TypedReviewList({
+  type,
+  icon,
+  help,
+  nouns,
+  renderCard,
+  showHeader = true,
+  enableSearch = false,
+}) {
   const navigate = useNavigate();
   const { authReady } = useAuthReady();
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState([]);
+  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -104,7 +156,7 @@ export default function TypedReviewList({ type, icon, help, nouns, renderCard })
       setLoading(true);
       setLoadError(null);
       try {
-        const data = await fetchTypedContent(type, statusFilter);
+        const data = await fetchTypedContent(type, statusFilter, search);
         if (!cancelled) setItems(data);
       } catch (err) {
         console.error(`Error loading ${nouns.plural}:`, err);
@@ -116,7 +168,7 @@ export default function TypedReviewList({ type, icon, help, nouns, renderCard })
     return () => {
       cancelled = true;
     };
-  }, [authReady, statusFilter, type, nouns.plural, reloadKey]);
+  }, [authReady, statusFilter, type, nouns.plural, reloadKey, search]);
 
   useEffect(() => {
     const next = new URLSearchParams();
@@ -146,15 +198,17 @@ export default function TypedReviewList({ type, icon, help, nouns, renderCard })
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <PageHeader
-        icon={icon}
-        help={help}
-        actions={
-          <Button variant="outline" size="sm" onClick={reload} className="gap-1">
-            <RefreshCw className="h-4 w-4" /> Refresh
-          </Button>
-        }
-      />
+      {showHeader && (
+        <PageHeader
+          icon={icon}
+          help={help}
+          actions={
+            <Button variant="outline" size="sm" onClick={reload} className="gap-1">
+              <RefreshCw className="h-4 w-4" /> Refresh
+            </Button>
+          }
+        />
+      )}
 
       <Card>
         <CardHeader>
@@ -178,6 +232,10 @@ export default function TypedReviewList({ type, icon, help, nouns, renderCard })
           </div>
         </CardContent>
       </Card>
+
+      {enableSearch && (
+        <ArticleSearch query={query} setQuery={setQuery} setSearch={setSearch} reload={reload} />
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-12" role="status" aria-live="polite">

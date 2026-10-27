@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  feedImageUrl,
   PROVIDER_FEEDS,
   PROVIDERS,
   MAX_CACHE_ITEMS_PER_FEED,
@@ -276,4 +277,12 @@ describe('buildHomepageFeedItems', () => {
   it('copes with providers that have nothing cached', () => {
     expect(buildHomepageFeedItems({})).toEqual([]);
   });
+});
+
+
+it('does not confuse feed audio or video enclosures with article images', () => {
+  expect(feedImageUrl({ enclosure: { url: 'https://example.com/audio', type: 'audio/mpeg' } })).toBe('');
+  expect(feedImageUrl({ enclosure: { url: 'https://example.com/clip.mp4?width=400' } })).toBe('');
+  expect(feedImageUrl({ enclosure: { url: 'https://example.com/picture', type: 'image/jpeg' } })).toBe('https://example.com/picture');
+  expect(feedImageUrl({ mediaContent: { $: { url: 'https://example.com/hero.png' } } })).toBe('https://example.com/hero.png');
 });

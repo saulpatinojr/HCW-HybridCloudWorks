@@ -205,3 +205,34 @@ describe('processRssFeeds', () => {
     expect(parser.parseURL).not.toHaveBeenCalled();
   });
 });
+
+describe('configured blog intake', () => {
+  it('runs only the requested source, respects its limit, records health, and retains other active homepage sources', async () => {
+    const store = makeStore();
+    store.docs.admin_settings = {};
+    const source = { id: 'blog-source-kiro', name: 'Kiro', url: 'https://kiro.dev/blog/feed.rss', maxItems: 1, fallbackImageUrl: 'https://example.com/default.png', official: true };
+    const other = { id: 'blog-source-other', name: 'Other', url: 'https://other.example/feed' };
+    store.docs.rss_cache.aws_other = { id: 'aws_other', provider: 'aws', items: [{ title: 'Previously cached', link: 'https://other.example/post', pubDate: NOW.toISOString() }] };
+    store.docs.rss_cache.aws_paused = { id: 'aws_paused', provider: 'aws', items: [{ title: 'Paused', link: 'https://paused.example/post', pubDate: NOW.toISOString() }] };
+    const parser = { parseURL: vi.fn(async () => ({ items: [item(1), item(2)] })) };
+    const result = await createRssIngest({ store, parser, dedup: dedupNone, uuid: () => 'new', now: () => NOW }).processRssFeeds({ feeds: { aws: [source, other] }, sourceId: source.id });
+    expect(result.newContent).toBe(1);
+    expect(parser.parseURL).toHaveBeenCalledTimes(1);
+    expect(store.docs.content.new).toMatchObject({ blogSourceId: source.id, blogFallbackImageUrl: source.fallbackImageUrl, Live: false, inspectTrigger: true });
+    expect(store.docs.admin_settings[`run-${source.id}`].status).toBe('succeeded');
+    const homepage = store.docs.homepage_feeds.latest.items;
+    expect(homepage.some(item => item.title === 'Previously cached')).toBe(true);
+    expect(homepage.some(item => item.title === 'Paused')).toBe(false);
+  });
+  it('records a failed source run without abandoning another source', async () => {
+    const store = makeStore(); store.docs.admin_settings = {};
+    const parser = { parseURL: vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ items: [] }) };
+    const result = await createRssIngest({ store, parser, dedup: dedupNone }).processRssFeeds({ feeds: { aws: [
+      { id: 'broken', name: 'Broken', url: 'https://broken.example' },
+      { id: 'healthy', name: 'Healthy', url: 'https://healthy.example' },
+    ] } });
+    expect(result.processed).toBe(1);
+    expect(store.docs.admin_settings['run-broken'].status).toBe('failed');
+    expect(store.docs.admin_settings['run-healthy'].status).toBe('succeeded');
+  });
+});

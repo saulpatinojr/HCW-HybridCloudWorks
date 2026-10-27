@@ -185,6 +185,7 @@ const AdminImageGalleryPage = lazyPage(() => import('@/pages/admin/ImageGalleryP
 const AdminHealthPage = lazyPage(() => import('@/pages/admin/HealthPage'));
 const AdminPlatformSettingsPage = lazyPage(() => import('@/pages/admin/PlatformSettingsPage'));
 const AdminFrameworksPage = lazyPage(() => import('@/pages/admin/FrameworksPage'));
+const AdminBlogsPage = lazyPage(() => import('@/pages/admin/BlogsPage'));
 const AdminCoderCornerPage = lazyPage(() => import('@/pages/admin/CoderCornerPage'));
 const AdminSpeakingEventsPage = lazyPage(() => import('@/pages/admin/SpeakingEventsPage'));
 const AdminCertificationsPage = lazyPage(() => import('@/pages/admin/CertificationsPage'));
@@ -528,6 +529,7 @@ function App() {
                 <Route path="live-pages" element={<AdminLivePagesPage />} />
                 <Route path="calendar" element={<AdminCalendarPage />} />
                 <Route path="frameworks" element={<AdminFrameworksPage />} />
+                <Route path="blogs" element={<AdminBlogsPage />} />
                 <Route path="coder-corner" element={<AdminCoderCornerPage />} />
                 <Route path="speaking" element={<AdminSpeakingEventsPage />} />
                 <Route path="certifications" element={<AdminCertificationsPage />} />

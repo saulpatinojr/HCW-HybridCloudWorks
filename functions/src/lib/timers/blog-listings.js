@@ -87,9 +87,11 @@ export function resolveArticleUrl(url, listingUrl) {
 /** Articles on a listing page via Firecrawl structured extraction. */
 export async function scrapeListingPage(
   { apiKey, fetch: fetchImpl = globalThis.fetch },
-  listingUrl
+  listingUrl,
+  signal
 ) {
   const response = await fetchImpl(FIRECRAWL_SCRAPE_URL, {
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000),
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -127,7 +129,7 @@ export function buildListingContentDoc({ article, source, dedupFields, now, uuid
     title: item.title,
     summary: truncateText(article.description || '', 300),
     provider: source.provider,
-    feed: { name: source.name, url: source.url },
+    feed: source,
     dedupFields,
     now,
     uuid,
@@ -149,6 +151,7 @@ export function createBlogListingsScrape({
   now = () => new Date(),
   uuid,
   log = {},
+  signal,
 }) {
   async function ingestArticle(source, article) {
     const sourceUrl = article.url;
@@ -185,17 +188,22 @@ export function createBlogListingsScrape({
     }
     const results = { skipped: false, scraped: 0, newArticles: 0, errors: 0, failures: [] };
     for (const source of sources) {
+      if (signal?.aborted) throw signal.reason || new Error('aborted');
       try {
         log.log?.(`[blogScraper] Scraping ${source.name} (${source.provider})`);
-        const articles = await scrapeListingPage({ apiKey, fetch: fetchImpl }, source.url);
+        const articles = await scrapeListingPage({ apiKey, fetch: fetchImpl }, source.url, signal);
         results.scraped += 1;
         let newCount = 0;
-        for (const article of articles.slice(0, MAX_ARTICLES_PER_SOURCE)) {
+        for (const article of articles.slice(0, source.maxItems || MAX_ARTICLES_PER_SOURCE)) {
+          if (signal?.aborted) throw signal.reason || new Error('aborted');
           if (await ingestArticle(source, article)) newCount += 1;
         }
         results.newArticles += newCount;
+        if (source.id) await store.upsertDoc('admin_settings', { id: `run-${source.id}`, settingKind: 'blog_source_run', sourceId: source.id, status: 'succeeded', fetchedAt: now().toISOString(), itemCount: articles.length });
         log.log?.(`[blogScraper] ${source.name}: ${articles.length} found, ${newCount} new`);
       } catch (err) {
+        if (signal?.aborted) throw signal.reason || err;
+        if (source.id) await store.upsertDoc('admin_settings', { id: `run-${source.id}`, settingKind: 'blog_source_run', sourceId: source.id, status: 'failed', fetchedAt: now().toISOString() }).catch(() => {});
         results.errors += 1;
         results.failures.push({ source: source.name, error: err?.message || String(err) });
         log.error?.(`[blogScraper] Failed ${source.name}: ${err?.message || err}`);

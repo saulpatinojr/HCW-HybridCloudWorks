@@ -30,6 +30,7 @@
  * this file is imported by index.js on every cold start, including for
  * anonymous GETs that never run a timer.
  */
+import { loadBlogSources } from '../lib/rss/source-config.js';
 import { app } from '@azure/functions';
 import * as store from '../lib/cosmos-client.js';
 import * as blobStorage from '../lib/blob-storage.js';
@@ -104,9 +105,10 @@ timer('fetchPodcastFeeds', 'FETCH_PODCAST_FEEDS', '0 30 */2 * * *', async (conte
   createPodcastIngest({ store, parser: await createPodcastParser(), log: context }).run()
 );
 
-timer('fetchBlogListings', 'FETCH_BLOG_LISTINGS', '0 15 */6 * * *', (context) =>
+timer('fetchBlogListings', 'FETCH_BLOG_LISTINGS', '0 15 */6 * * *', async (context) =>
   // Site-Main: `every 6 hours`. Skips itself while FIRECRAWL_API_KEY is a stub.
   createBlogListingsScrape({
+    sources: (await loadBlogSources(store)).filter(source => source.enabled && source.kind === 'listing'),
     store,
     dedup: { findDuplicateContent, buildDedupFields },
     log: context,

@@ -49,6 +49,7 @@ export const PROVIDER_FEEDS = Object.freeze({
   ],
   aws: [
     { name: 'AWS Blog', url: 'https://aws.amazon.com/blogs/aws/feed/' },
+    { name: 'Kiro Blog', url: 'https://kiro.dev/blog/feed.rss' },
     { name: 'AWS Whats New', url: 'https://aws.amazon.com/about-aws/whats-new/recent/feed/' },
     { name: 'AWS APN Partner Network', url: 'https://aws.amazon.com/blogs/apn/feed/' },
   ],
@@ -184,9 +185,22 @@ export function categorizeItem(item) {
   return matched ? matched.category : 'Update';
 }
 
+/** RSS enclosures may be audio/video; those cannot occupy an article image slot. */
+export function feedImageUrl(item) {
+  const media = item.mediaContent?.$;
+  for (const entry of [item.enclosure, media]) {
+    const url = entry?.url;
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) continue;
+    if (entry.type && !entry.type.startsWith('image/')) continue;
+    if (/\.(?:mp3|mp4|m4a|wav|ogg|webm|mov|pdf)(?:[?#]|$)/i.test(url)) continue;
+    return url;
+  }
+  return '';
+}
+
 /** rss_cache document id for a provider + feed. */
 export function cacheDocId(provider, feed) {
-  return `${provider}_${String(feed.name).toLowerCase().replace(/\s+/g, '_')}`;
+  return feed.cacheId || `${provider}_${String(feed.name).toLowerCase().replace(/\s+/g, '_')}`;
 }
 
 /**
@@ -268,10 +282,12 @@ export function buildRssContentDoc({
     Status: 'Draft',
     Tags: normalizeCategories(item.categories),
     source: 'rss',
-    sourceTrustLevel: 'trusted',
-    trustedSource: true,
+    sourceTrustLevel: feed.official === false ? 'untrusted' : 'trusted',
+    trustedSource: feed.official !== false,
     sourceUrl,
     sourceFeed: feed.url,
+    blogSourceId: feed.id || null,
+    blogFallbackImageUrl: feed.fallbackImageUrl || '',
     storageCollection: 'content',
     category: categorizeItem(item),
     approvedForNews: false,
@@ -280,7 +296,7 @@ export function buildRssContentDoc({
     aiSummary: '',
     aiTags: [],
     readTime: estimateReadTime(bodyText),
-    contentImageUrl: item.enclosure?.url || '',
+    contentImageUrl: feedImageUrl(item),
     fetchedAt: stamp,
     updatedAt: stamp,
   };

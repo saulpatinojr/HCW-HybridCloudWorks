@@ -400,3 +400,60 @@ forge_ready items with grade and an inline `/approve {id}` per row.
 9. **A/B titles** — drafter emits three candidates; owner picks via Telegram buttons (5b infrastructure).
 10. **Voice memo → draft** (`createContentFromRecording` — the Plaud path).
 11. **Cross-provider duplicate-angle advisor** — extend the title dedupe across providers as an advisory signal.
+
+## Blog source controls (October 2026)
+
+[Blogs](https://hybridcloudworks.com/admin/blogs), directly below Coder Corner,
+provides the blog article list, source settings, and a publishing workflow guide.
+Article search matches titles and summaries across the collection in the selected
+status before applying the 200-row display limit.
+Editors can open each article in its existing Review or Editor screen, filter
+sources by provider or name, add a source, edit its name and URL, pause intake,
+set a per-run article limit (1–20), and choose a fallback image from the existing
+Image Gallery or a public HTTPS image URL. A source's **Run now** action enqueues
+`sync-blog-source`; results report new article counts and source errors, and each
+source shows its latest recorded run. Pausing does not delete imported articles.
+
+The official AWS RSS list includes [Kiro](https://kiro.dev/blog/), using its
+advertised feed at <https://kiro.dev/blog/feed.rss> (verified 2026-10-27).
+
+### Intake and publication
+
+RSS ingestion (`syncRssFeeds`) runs every two hours; Firecrawl listing discovery
+(`fetchBlogListings`) runs every six hours. Both require their existing scheduler
+flags; manual runs do not require the timer flags. Listing discovery still needs
+the existing Firecrawl integration. No additional service or credential is added.
+Both paths deduplicate articles, create non-live drafts, and request inspection.
+ContentForge, editorial review, quality/image checks, and the Publish screen
+continue to control publication; a source sync never approves or publishes.
+
+Fallback choices are captured on **newly ingested** drafts and applied during
+inspection, after checking existing covers, feed images, and scraped article
+images (including Open Graph/Twitter heroes). Gallery paths resolve through the
+existing `PUBLIC_API_ORIGIN` setting when inspection applies a default, so the
+publish image gate receives a public HTTPS URL. They never replace existing or
+generated covers. For articles already imported, use **Edit article** to change
+the cover individually. A configured default is not retroactively written onto
+the existing library.
+
+### Configuration and safeguards
+
+Seeds remain in `rss/feeds.js` and `timers/blog-listings.js`; runtime overrides are
+per-source `admin_settings` documents (`settingKind: blog_source`). Seed IDs are
+stable across display-name edits, and existing RSS cache IDs are retained.
+Scheduled and manual paths resolve the same overrides. `blog_source_run` records
+in that container store intake status separately from settings. No migration or
+new Cosmos container is required. Existing sources keep their previous defaults.
+
+The editor-only `GET/POST cms/blog-sources` and `PUT cms/blog-sources/{id}` routes
+validate URLs and bounded settings, record audited saves, and reject stale edits
+with 409. Refresh sources after a conflict. Official seed provider/intake type
+are fixed. Custom sources are untrusted; moving an official seed to another
+hostname removes its official trust. RSS downloads use the shared guarded fetcher:
+public HTTPS, pinned DNS, checked redirect destinations, a 20-second deadline,
+and an 8 MiB response limit.
+
+To roll back source settings, edit the source back to its prior values. Pausing
+is the reversible alternative to deleting a source. To roll back the feature,
+revert its PR; the independent overrides do not alter the seed lists or existing
+articles. The site owner controls production environment approval.
