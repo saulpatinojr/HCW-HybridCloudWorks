@@ -1,7 +1,18 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { describePinCommentProblem, pinCommentProblems } from './lib/lab-pin-comments.mjs';
+import {
+  BOOTSTRAP_PATH,
+  CADDY_TEST_PATH,
+  DOCKER_CLI_FIXTURE_PATH,
+  GROUP_VARS_PATH,
+  makeHttp,
+  planHost,
+  setYamlScalar,
+} from './lib/lab-pin-bumps.mjs';
 import {
   LABELS,
   check,
@@ -131,5 +142,385 @@ describe('the check', () => {
     const { exitCode, rows } = await check({ pins: { ...pins, caddy: null }, readers: readers({}) });
     expect(exitCode).toBe(2);
     expect(rows.find((r) => r.key === 'caddy').status).toBe('pin not found');
+  });
+});
+
+// ── The comments beside a pin (#1444) ──────────────────────────────────────
+
+describe('comments beside a pin the weekly bump moves', () => {
+  const file = 'pins.yml';
+  const foo = `foo_version: v1.2.3\nfoo_digest: sha256:${'ab12'.repeat(16)}`;
+  const problems = (text, wheres = ['foo_version']) =>
+    pinCommentProblems({ [file]: text }, wheres.map((where) => ({ file, where })));
+
+  it('reports a comment that names a different version than its pin, with the file, the line, the version and the pin', () => {
+    const found = problems(['---', '# Foo 1.2.0 is the newest release, read 2026-09-26.', foo, ''].join('\n'));
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ file, line: 2, kind: 'version', token: '1.2.0', repeats: false });
+    expect(found[0].pins).toEqual([{ file, where: 'foo_version', line: 3, value: 'v1.2.3' }]);
+    expect(describePinCommentProblem(found[0])).toMatch(
+      /^pins\.yml:2 names the version 1\.2\.0, but the pin it sits beside holds something else: foo_version = v1\.2\.3 \(line 3\)\./
+    );
+  });
+
+  it("reports a comment that names the pin's own value too, because the next bump leaves it behind", () => {
+    const found = problems(['---', '# Foo 1.2.3, the release the pin holds.', foo, ''].join('\n'));
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ line: 2, token: '1.2.3', repeats: true });
+    expect(describePinCommentProblem(found[0])).toContain('which is what the pin holds today (foo_version = v1.2.3 (line 3))');
+  });
+
+  it('names a tag-style version in full, and a digest prefix', () => {
+    const text = [
+      '---',
+      '# The index of foo:1.2.0-builder is sha256:ab12ab12ab12... (read 2026-09-25).',
+      'foo_version: 1.2.3-builder',
+      `foo_digest: sha256:${'cd34'.repeat(16)}`,
+      '',
+    ].join('\n');
+    expect(problems(text, ['foo_version', 'foo_digest']).map((p) => [p.kind, p.token, p.repeats])).toEqual([
+      ['version', '1.2.0-builder', false],
+      ['digest', 'sha256:ab12ab12ab12', false],
+    ]);
+  });
+
+  it('lets a comment keep its dates, a release line, a number of another length and "the pin below"', () => {
+    const text = [
+      '---',
+      '# The pin below was read on 2026-09-26 and again 2026-10-07 (released 2026-10-06).',
+      '# The 1.2 line, or just 1, suits Ubuntu 26.04; HTTP/1.1 and 20260924 are other numbers.',
+      foo,
+      '',
+    ].join('\n');
+    expect(problems(text)).toEqual([]);
+  });
+
+  it("reads only the comment run directly above the pin's group of lines, so one product's comment is not held against another", () => {
+    const text = [
+      '---',
+      '# Far away 7.7.7, cut off by the blank line.',
+      '',
+      '# Foo 9.9.9.',
+      'foo_image: foo',
+      foo,
+      '# Bar line 4.4, and 8.8.8 which is the wrong length for a two-part pin.',
+      'bar_version: "4.5"',
+      '# Below the pins 6.6.6.',
+      '',
+    ].join('\n');
+    expect(problems(text, ['foo_version', 'bar_version']).map((p) => [p.line, p.token, p.pins.map((x) => x.where)])).toEqual([
+      [4, '9.9.9', ['foo_version']],
+      [8, '4.4', ['bar_version']],
+    ]);
+  });
+
+  it('shares one report between the pins that sit under the same comment', () => {
+    const text = ['---', '# Foo 7.7.7.', 'foo_version: v1.2.3', 'foo_old: 1.2.0', ''].join('\n');
+    const found = problems(text, ['foo_version', 'foo_old']);
+    expect(found).toHaveLength(1);
+    expect(found[0].pins.map((p) => p.where)).toEqual(['foo_version', 'foo_old']);
+    expect(found[0].repeats).toBe(false);
+    // Naming one pin's own value points at that pin alone.
+    const repeated = problems(['---', '# Foo 1.2.0.', 'foo_version: v1.2.3', 'foo_old: 1.2.0', ''].join('\n'), ['foo_version', 'foo_old']);
+    expect(repeated.map((p) => [p.repeats, p.pins.map((x) => x.where)])).toEqual([[true, ['foo_old']]]);
+  });
+
+  it('reads a v-prefixed tag as a version, whether it differs from the pin or repeats it (v2.38.0 was one of the three on #1423)', () => {
+    const different = problems(['---', '# Foo v1.2.0 was read 2026-10-07.', foo, ''].join('\n'));
+    expect(different.map((p) => [p.line, p.token, p.repeats])).toEqual([[2, 'v1.2.0', false]]);
+    const same = problems(['---', '# Now v1.2.3.', foo, ''].join('\n'));
+    expect(same.map((p) => [p.line, p.token, p.repeats])).toEqual([[2, 'v1.2.3', true]]);
+  });
+
+  it('reads every line of the comment run above the pin, not only the line next to it', () => {
+    const first = ['---', '# Foo 7.7.7 is named on the first line,', '# the second line names nothing,', '# and neither does the third.', foo, ''];
+    expect(problems(first.join('\n')).map((p) => [p.line, p.token])).toEqual([[2, '7.7.7']]);
+    const each = ['---', '# Foo 7.7.7 first,', '# then 8.8.8 second,', '# then 9.9.9 third.', foo, ''];
+    expect(problems(each.join('\n')).map((p) => [p.line, p.token])).toEqual([
+      [2, '7.7.7'],
+      [3, '8.8.8'],
+      [4, '9.9.9'],
+    ]);
+  });
+
+  it("finds a pin nested under other keys, and a comment at the end of the pin's own line", () => {
+    const text = [
+      '---',
+      '# Pins by codename, 5.5.5.',
+      'pins:',
+      '  resolute:',
+      '    engine: "5:29.9.2-1~ubuntu.26.04~resolute" # was 29.8.1',
+      '',
+    ].join('\n');
+    expect(problems(text, ['pins.resolute.engine']).map((p) => [p.line, p.token, p.repeats])).toEqual([
+      [2, '5.5.5', false],
+      [5, '29.8.1', false],
+    ]);
+  });
+
+  it('reads a KEY=value line of a shell script, and holds the caddy test to every comment it has', () => {
+    const shell = { 'run.sh': `#!/usr/bin/env bash\n# Tool 3.1.3.\nTOOL_VERSION=3.1.4\nTOOL_SHA256=${'a'.repeat(64)}\n` };
+    const pins = [
+      { file: 'run.sh', where: 'TOOL_VERSION' },
+      { file: 'run.sh', where: 'TOOL_SHA256' },
+    ];
+    expect(pinCommentProblems(shell, pins).map((p) => [p.line, p.token])).toEqual([[2, '3.1.3']]);
+    const caddy = {
+      [CADDY_TEST_PATH]: `#!/usr/bin/env bash\n# Caddy 2.11.4 is checked against the SHA-512 below; HTTP/1.1 is not a version.\n\nCADDY_SHA512='${'b'.repeat(128)}'\n`,
+    };
+    expect(pinCommentProblems(caddy, [{ file: CADDY_TEST_PATH, where: 'CADDY_SHA512' }]).map((p) => [p.line, p.token])).toEqual([[2, '2.11.4']]);
+  });
+
+  it('counts a pin listed twice once, and reads a shell file with Windows line ends like one with Unix ones', () => {
+    const twice = [{ file, where: 'foo_version' }, { file, where: 'foo_version' }];
+    const once = pinCommentProblems({ [file]: ['---', '# Foo 7.7.7.', foo, ''].join('\n') }, twice);
+    expect(once).toHaveLength(1);
+    expect(once[0].pins).toHaveLength(1);
+    const shell = (eol) => ({ 'run.sh': ['#!/usr/bin/env bash', '# Tool 3.1.3.', 'TOOL_VERSION=3.1.4', ''].join(eol) });
+    const pins = [{ file: 'run.sh', where: 'TOOL_VERSION' }];
+    expect(pinCommentProblems(shell('\r\n'), pins)).toEqual(pinCommentProblems(shell('\n'), pins));
+    expect(pinCommentProblems(shell('\r\n'), pins)).toHaveLength(1);
+  });
+
+  it('reads the "$comment" of a JSON file as the comment beside its pin', () => {
+    const json = (comment) => ({ 'rec.json': `{\n  "$comment": "${comment}",\n  "dockerCli": "29.9.2",\n  "apiVersion": "1.56"\n}\n` });
+    const pins = [{ file: 'rec.json', where: 'dockerCli' }];
+    const found = pinCommentProblems(json('Recorded with docker CLI 29.8.1; ids are <id>.'), pins);
+    expect(found.map((p) => [p.file, p.line, p.token, p.repeats, p.pins[0].value])).toEqual([['rec.json', 2, '29.8.1', false, '29.9.2']]);
+    expect(pinCommentProblems(json('Written by a script; ids are <id>.'), pins)).toEqual([]);
+  });
+
+  it('counts a digest prefix of eight hex digits or more, and not seven', () => {
+    const digests = (comment) => problems(['---', comment, foo, ''].join('\n'), ['foo_digest']);
+    expect(digests('# The manifest beneath is sha256:7a05631b...').map((p) => [p.kind, p.token])).toEqual([['digest', 'sha256:7a05631b']]);
+    expect(digests('# The manifest beneath starts 7a05631b9c3d.').map((p) => [p.kind, p.token])).toEqual([['digest', '7a05631b9c3d']]);
+    expect(digests('# The manifest beneath starts 7a05631.')).toEqual([]);
+  });
+
+  it('keeps two files whose comments sit on the same lines apart', () => {
+    const a = ['---', '# Foo 7.7.7.', 'foo_version: v1.2.3', ''].join('\n');
+    const b = ['---', '# Bar 8.8.8.', 'bar_version: v4.5.6', ''].join('\n');
+    const found = pinCommentProblems(
+      { 'a.yml': a, 'b.yml': b },
+      [
+        { file: 'a.yml', where: 'foo_version' },
+        { file: 'b.yml', where: 'bar_version' },
+      ]
+    );
+    expect(found.map((p) => [p.file, p.line, p.token, p.pins.map((x) => x.where)])).toEqual([
+      ['a.yml', 2, '7.7.7', ['foo_version']],
+      ['b.yml', 2, '8.8.8', ['bar_version']],
+    ]);
+  });
+
+  it('tells the reader where the rule is explained, and that section exists', () => {
+    const found = problems(['---', '# Foo 1.2.0.', foo, ''].join('\n'));
+    const message = describePinCommentProblem(found[0]);
+    expect(message).toContain('lab-host/README.md, "Bumping a pin"');
+    expect(message).toContain('release line (the first numbers of the version, such as 2.38)');
+    // The two-part sentence is only for a two-part pin; a three-part pin does not get it.
+    expect(message).not.toContain('two-part pin');
+    const twoPart = problems(['---', '# Bar 4.4.', 'bar_version: "4.5"', ''].join('\n'), ['bar_version']);
+    const twoPartMessage = describePinCommentProblem(twoPart[0]);
+    expect(twoPartMessage).toContain('26.04 beside a two-part pin such as 18.6 is flagged too');
+    expect(twoPartMessage).toContain('release line (the first numbers of the version, such as 2.38)');
+    expect(twoPartMessage).toContain('lab-host/README.md, "Bumping a pin"');
+    const readme = readFileSync(join(REPO, 'lab-host', 'README.md'), 'utf8');
+    expect(readme).toMatch(/^## Bumping a pin$/m);
+    expect(readme).toContain('scripts/lib/lab-pin-comments.mjs');
+  });
+
+  it('stops with an error, not a pass, when a pin cannot be found', () => {
+    expect(() => problems('---\nfoo_version: v1.2.3\n', ['missing_version'])).toThrow(/missing_version/);
+    expect(() => pinCommentProblems({}, [{ file: 'absent.yml', where: 'foo' }])).toThrow(/absent\.yml was not read/);
+    expect(() => pinCommentProblems({ 'run.sh': 'A=1\n' }, [{ file: 'run.sh', where: 'B' }])).toThrow(/found 0/);
+  });
+});
+
+describe('a weekly bump of the real lab host files', () => {
+  const real = (path) => readFileSync(join(REPO, path), 'utf8');
+  const sha = (s) => `sha256:${createHash('sha256').update(s).digest('hex')}`;
+  const hex = (c, n = 64) => c.repeat(n);
+  // The release every publisher below serves for its product.
+  const NEXT = '99.1.0';
+
+  /** A fetch that serves a fixed map of URL → body (string or object); anything else 404s. */
+  function fakeFetch(routes) {
+    return async (url) => {
+      const body = routes[url];
+      if (body === undefined) return new Response('not found', { status: 404 });
+      return new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 200 });
+    };
+  }
+
+  /** What each publisher the host bump reads would serve if it had released NEXT. */
+  function publishers() {
+    const routes = {};
+    const docker = 'https://download.docker.com/linux/ubuntu/dists';
+    for (const [codename, release] of [
+      ['resolute', '26.04'],
+      ['noble', '24.04'],
+    ]) {
+      const tail = `-1~ubuntu.${release}~${codename}`;
+      const stanza = (name, version, c) => `Package: ${name}\nVersion: ${version}\nSHA256: ${hex(c)}\n`;
+      const packages = [
+        stanza('docker-ce', `5:${NEXT}${tail}`, '1'),
+        stanza('docker-ce-cli', `5:${NEXT}${tail}`, '2'),
+        stanza('docker-ce-rootless-extras', `5:${NEXT}${tail}`, '3'),
+        stanza('containerd.io', `${NEXT}${tail}`, '4'),
+        stanza('docker-buildx-plugin', `${NEXT}${tail}`, '5'),
+        stanza('docker-compose-plugin', `${NEXT}${tail}`, '6'),
+      ].join('\n');
+      routes[`${docker}/${codename}/stable/binary-amd64/Packages`] = packages;
+      routes[`${docker}/${codename}/InRelease`] = `SHA256:\n ${sha(packages).slice(7)} 1 stable/binary-amd64/Packages\n`;
+    }
+    const nodesource = 'https://deb.nodesource.com/node_26.x/dists/nodistro';
+    const nodejs = `Package: nodejs\nVersion: ${NEXT}-1nodesource1\nSHA256: ${hex('7')}\n`;
+    routes[`${nodesource}/main/binary-amd64/Packages`] = nodejs;
+    routes[`${nodesource}/InRelease`] = `SHA256:\n ${sha(nodejs).slice(7)} 1 main/binary-amd64/Packages\n`;
+
+    const image = (registry, repository, tag) => {
+      const manifest = JSON.stringify({ schemaVersion: 2, manifests: [], repository, tag });
+      if (registry === 'ghcr') {
+        routes[`https://ghcr.io/token?scope=repository:${repository}:pull`] = { token: 't' };
+        routes[`https://ghcr.io/v2/${repository}/manifests/${tag}`] = manifest;
+        return;
+      }
+      routes[`https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repository}:pull`] = { token: 't' };
+      routes[`https://registry-1.docker.io/v2/${repository}/manifests/${tag}`] = manifest;
+      routes[`https://hub.docker.com/v2/repositories/${repository}/tags/${tag}`] = { digest: sha(manifest) };
+    };
+    image('hub', 'library/caddy', `${NEXT}-builder`);
+    image('ghcr', 'coder/coder', `v${NEXT}`);
+    image('hub', 'library/postgres', '99.1');
+    image('hub', 'portainer/portainer-ee', NEXT);
+
+    routes[`https://github.com/caddyserver/caddy/releases/download/v${NEXT}/caddy_${NEXT}_checksums.txt`] =
+      `${hex('c', 128)}  caddy_${NEXT}_linux_amd64.tar.gz\n`;
+    routes[`https://sum.golang.org/lookup/github.com/caddy-dns/cloudflare@v${NEXT}`] =
+      `1\ngithub.com/caddy-dns/cloudflare v${NEXT} h1:abc123=\n`;
+    routes[`https://releases.hashicorp.com/vault/${NEXT}/vault_${NEXT}_SHA256SUMS`] = `${hex('d')}  vault_${NEXT}_linux_amd64.zip\n`;
+    routes[`https://github.com/prometheus/node_exporter/releases/download/v${NEXT}/sha256sums.txt`] =
+      `${hex('e')}  node_exporter-${NEXT}.linux-amd64.tar.gz\n`;
+    routes[`https://github.com/sigstore/cosign/releases/download/v${NEXT}/cosign_checksums.txt`] = `${hex('f')}  cosign-linux-amd64\n`;
+    return routes;
+  }
+
+  /** The files the host bump reads or is held to, as the repository has them now. */
+  const repositoryFiles = () => ({
+    [GROUP_VARS_PATH]: real(GROUP_VARS_PATH),
+    [BOOTSTRAP_PATH]: real(BOOTSTRAP_PATH),
+    [CADDY_TEST_PATH]: real(CADDY_TEST_PATH),
+    [DOCKER_CLI_FIXTURE_PATH]: real(DOCKER_CLI_FIXTURE_PATH),
+  });
+
+  /** The real bumpers over `files`, with every watched product BEHIND (PostgreSQL's tag has two parts, the rest three). */
+  async function bumpEverything(files) {
+    const pins = readPins(files[GROUP_VARS_PATH]);
+    const rows = Object.keys(LABELS).map((key) => ({
+      key,
+      label: LABELS[key],
+      pinned: pins[key],
+      latest: key === 'postgres' ? '99.1' : NEXT,
+      status: 'BEHIND',
+    }));
+    return planHost({
+      text: files[GROUP_VARS_PATH],
+      files: { [CADDY_TEST_PATH]: files[CADDY_TEST_PATH], [BOOTSTRAP_PATH]: files[BOOTSTRAP_PATH] },
+      rows,
+      http: makeHttp(fakeFetch(publishers())),
+    });
+  }
+
+  /** Every (file, key) the plan edited, once. The Docker CLI fixture is moved by its own script, not by the plan, so it is added. */
+  function movedBy(plan) {
+    const seen = new Map();
+    for (const { file, where } of plan.applied.flatMap((bump) => bump.changes)) seen.set(`${file}|${where}`, { file, where });
+    return [...seen.values(), { file: DOCKER_CLI_FIXTURE_PATH, where: 'dockerCli' }];
+  }
+
+  // Every line the host bump edits (plus the Docker CLI fixture's, which its own script moves).
+  // The comments beside each are held to the rule, so a bumper that stops editing one of
+  // these, or starts on another, must change this list on purpose: look at the comments
+  // beside the line that is added, and drop the ones that are no longer moved.
+  const EDITED = [
+    ...['resolute', 'noble'].flatMap((codename) =>
+      ['engine', 'containerd', 'buildx', 'compose'].map((key) => [GROUP_VARS_PATH, `docker_release_pins.${codename}.${key}`])
+    ),
+    ...[
+      'caddy_version',
+      'caddy_builder_image_tag',
+      'caddy_builder_image_digest',
+      'caddy_cloudflare_module_version',
+      'coder_image_tag',
+      'coder_image_digest',
+      'coder_postgres_image_tag',
+      'coder_postgres_image_digest',
+      'portainer_image_tag',
+      'portainer_image_digest',
+      'vault_version',
+      'vault_checksum',
+      'node_exporter_version',
+      'node_exporter_checksum',
+      'labs_agent_node_version',
+      'cosign_version',
+      'cosign_checksum',
+    ].map((key) => [GROUP_VARS_PATH, key]),
+    [CADDY_TEST_PATH, 'CADDY_SHA512'],
+    [BOOTSTRAP_PATH, 'COSIGN_VERSION'],
+    [BOOTSTRAP_PATH, 'COSIGN_SHA256'],
+    [DOCKER_CLI_FIXTURE_PATH, 'dockerCli'],
+  ]
+    .map(([file, where]) => `${file} ${where}`)
+    .sort();
+
+  it("moves every watched product in every file the bump edits, so the pins checked below really are the bump's", async () => {
+    const plan = await bumpEverything(repositoryFiles());
+    expect(plan.notes).toEqual([]);
+    expect(plan.applied.map((bump) => bump.key).sort()).toEqual(Object.keys(LABELS).sort());
+    expect(movedBy(plan).map(({ file, where }) => `${file} ${where}`).sort()).toEqual(EDITED);
+    expect([...new Set(movedBy(plan).map((p) => p.file))].sort()).toEqual(
+      [BOOTSTRAP_PATH, CADDY_TEST_PATH, DOCKER_CLI_FIXTURE_PATH, GROUP_VARS_PATH].sort()
+    );
+    expect(plan.files[GROUP_VARS_PATH]).toContain(`caddy_version: v${NEXT}\n`);
+    expect(plan.files[GROUP_VARS_PATH]).toContain(`labs_agent_node_version: "${NEXT}-1nodesource1"\n`);
+    expect(plan.files[BOOTSTRAP_PATH]).toContain(`COSIGN_VERSION=${NEXT}\n`);
+  });
+
+  it('has no comment beside a pin that names a version or a digest today (the bot pull request #1423 had three that contradicted its pins)', async () => {
+    const files = repositoryFiles();
+    const plan = await bumpEverything(files);
+    expect(pinCommentProblems(files, movedBy(plan)).map(describePinCommentProblem)).toEqual([]);
+  });
+
+  it('leaves no comment contradicting a pin after it has moved every value', async () => {
+    const files = repositoryFiles();
+    const plan = await bumpEverything(files);
+    const after = { ...files, ...plan.files };
+    expect(after[GROUP_VARS_PATH]).not.toBe(files[GROUP_VARS_PATH]);
+    expect(pinCommentProblems(after, movedBy(plan)).map(describePinCommentProblem)).toEqual([]);
+  });
+
+  it('catches a bump that moves a value whose comment still names the old one, and says where', async () => {
+    const files = repositoryFiles();
+    const old = setYamlScalar(files[GROUP_VARS_PATH], ['labs_agent_node_version'], 'x').from;
+    const lines = files[GROUP_VARS_PATH].split('\n');
+    const at = lines.findIndex((l) => l.startsWith('labs_agent_node_version:'));
+    lines.splice(at, 0, `# The newest nodejs is ${old}, read 2026-10-27.`);
+    const stale = { ...files, [GROUP_VARS_PATH]: lines.join('\n') };
+
+    const plan = await bumpEverything(stale);
+    const moved = movedBy(plan);
+    const before = pinCommentProblems(stale, moved).filter((p) => p.token === old);
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({ line: at + 1, repeats: true });
+
+    const found = pinCommentProblems({ ...stale, ...plan.files }, moved).filter((p) => p.token === old);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ file: GROUP_VARS_PATH, line: at + 1, kind: 'version', repeats: false });
+    expect(found[0].pins[0].value).toBe(`${NEXT}-1nodesource1`);
+    const message = describePinCommentProblem(found[0]);
+    expect(message).toContain(`${GROUP_VARS_PATH}:${at + 1} names the version ${old}`);
+    expect(message).toContain(`labs_agent_node_version = ${NEXT}-1nodesource1`);
   });
 });

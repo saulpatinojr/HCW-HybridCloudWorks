@@ -2,6 +2,14 @@
 # Host-specific values and every version pin, in one place. Role defaults hold
 # behaviour knobs only; anything that names a version, digest or checksum is
 # here so a bump is one edit and one diff.
+#
+# The weekly pin bump (.github/workflows/lab-supply-chain.yml, scripts/
+# lab-pins-upstream.mjs --bump host) moves a pin's value and not the sentences
+# beside it. So a comment above a pin that the bump moves names no exact version
+# or digest: it says "the pin below", or names a release line such as 2.38, and
+# it keeps its history as dates ("read 2026-09-26"). A test fails when one does
+# (scripts/lab-pins-upstream.test.mjs, rule in scripts/lib/lab-pin-comments.mjs),
+# because a bump would leave it saying something the pin no longer does (#1444).
 
 lab_host_domain: lab.hybridcloudworks.com
 
@@ -109,16 +117,18 @@ arc_tags:
 
 # Docker Engine from download.docker.com. Docker builds every package once per
 # Ubuntu release and puts the release in the version string
-# (5:29.8.1-1~ubuntu.26.04~resolute), so the pins are a map keyed by codename
-# and the four role inputs below read the running release's entry. Each string
-# is the newest that package had in dists/<codename>/stable/binary-amd64/Packages
-# on 2026-09-26; the upstream versions are the same for both releases. buildx and
-# compose are pinned too rather than left as recommends: Coder and its
-# PostgreSQL (#679) are the Docker Compose services ADR 0032 names. The signing
-# key is the root of trust for every one of these pins, so its SHA256 is pinned
-# as well (sha256sum of https://download.docker.com/linux/ubuntu/gpg, read
-# 2026-09-26; one key signs both releases' InRelease, checked with gpgv) and
-# get_url refuses a key that does not match.
+# (for example 5:<version>-1~ubuntu.26.04~resolute), so the pins are a map keyed
+# by codename and the four role inputs below read the running release's entry.
+# The first strings were the newest each package had in
+# dists/<codename>/stable/binary-amd64/Packages on 2026-09-26, and the weekly
+# pin bump moves every entry to the newest it reads there; the upstream versions
+# are the same for both releases. buildx and compose are pinned too rather than
+# left as recommends: Coder and its PostgreSQL (#679) are the Docker Compose
+# services ADR 0032 names. The signing key is the root of trust for every one of
+# these pins, so its SHA256 is pinned as well (sha256sum of
+# https://download.docker.com/linux/ubuntu/gpg, read 2026-09-26; one key signs
+# both releases' InRelease, checked with gpgv) and get_url refuses a key that
+# does not match.
 docker_release_pins:
   resolute:
     engine: "5:29.9.2-1~ubuntu.26.04~resolute"
@@ -157,13 +167,14 @@ docker_userns_remap: true
 # builder image, because the caddyserver.com download API always builds the
 # latest release and ignores a version parameter (verified 2026-09-25). These
 # lines are the build's provenance. caddy_builder_image_digest is the image
-# INDEX of caddy:2.11.4-builder from `docker buildx imagetools inspect` (its
-# linux/amd64 manifest beneath is sha256:7a05631b...). The role pulls and runs
-# caddy@<digest>, never the tag: Docker verifies the content against the digest
-# on pull, so a bumped pin is simply a new reference that gets pulled. The tag
-# is recorded for humans reading this file. The first twelve hex characters of
-# the digest are part of the built binary's filename, so bumping the builder
-# rebuilds.
+# INDEX of the tag on the caddy_builder_image_tag line, as `docker buildx
+# imagetools inspect` prints it (the first pin was read that way on 2026-09-25;
+# the weekly pin bump reads the registry again for every move and records both
+# reads in its pull request). The role pulls and runs caddy@<digest>, never the
+# tag: Docker verifies the content against the digest on pull, so a bumped pin
+# is simply a new reference that gets pulled. The tag is recorded for humans
+# reading this file. The first twelve hex characters of the digest are part of
+# the built binary's filename, so bumping the builder rebuilds.
 caddy_version: v2.11.7
 caddy_cloudflare_module_version: v0.2.4
 caddy_builder_image: caddy
@@ -245,20 +256,23 @@ coder_domain: "coder.{{ lab_host_domain }}"
 coder_max_workspaces: 5
 # Image INDEX digests from `docker buildx imagetools inspect`; the role runs
 # image@digest and the tags are for humans. Coder read 2026-09-25, when
-# coder:latest and v2.37.3 resolved to the same digest; v2.38.0 read 2026-10-07
-# from imagetools and the registry's Docker-Content-Digest, which agreed
-# (release 2026-10-06; its breaking changes are Tasks removal, MCP private
-# CIDRs and HA pubsub, none of which this host uses). PostgreSQL read
-# 2026-09-26: 18.6 is the newest release of the newest major (18, supported to
-# November 2030), postgres:18 and postgres:18.6 resolved to the same index,
-# and the registry's Docker-Content-Digest and the Docker Hub API agreed. The
-# move from 16.15 was rehearsed that day with this Coder image: migrations,
-# pg_dump, restore into a fresh 18.6 (roles/coder/README.md). The 18 image
-# keeps its data under /var/lib/postgresql/18/docker, which is why the Compose
-# volume is mounted at /var/lib/postgresql.
+# coder:latest and the newest numbered tag (a v2.37 release) resolved to the
+# same digest; the first v2.38 release was read 2026-10-07 from imagetools and
+# the registry's Docker-Content-Digest, which agreed (released 2026-10-06; its
+# breaking changes are Tasks removal, MCP private CIDRs and HA pubsub, none of
+# which this host uses). The weekly pin bump reads each digest from the
+# registry again for every move and records the read in its pull request.
 coder_image: ghcr.io/coder/coder
 coder_image_tag: v2.38.1
 coder_image_digest: sha256:fcddd64d5f08d6aa8806508d1459d36f3e9e9098554440acd6dc2526a95252cc
+# PostgreSQL, a digest of the same kind. Read 2026-09-26: 18 is the newest major
+# (supported to November 2030), its newest numbered tag and postgres:18
+# resolved to the same index, and the registry's Docker-Content-Digest and the
+# Docker Hub API agreed. The move from the 16 line was rehearsed that day with
+# this Coder image: migrations, pg_dump, restore into a fresh database on 18
+# (roles/coder/README.md). The 18 image keeps its data under
+# /var/lib/postgresql/18/docker, which is why the Compose volume is mounted at
+# /var/lib/postgresql.
 coder_postgres_image: postgres
 coder_postgres_image_tag: "18.6"
 coder_postgres_image_digest: sha256:1267c7e692de235fda2a50dbcdbcbca4672ea6a0298576a6bd9d07cafc319b32
@@ -307,10 +321,14 @@ labs_agent_repo_url: https://github.com/saulpatinojr/HCW-HybridCloudWorks.git
 labs_agent_repo_ref: "{{ lookup('ansible.builtin.pipe', 'git -C ' ~ (playbook_dir | quote) ~ ' rev-parse --verify HEAD') }}"
 # Node.js 26, the newest release line (owner direction 2026-09-26; it becomes
 # LTS on 2026-10-28). NodeSource publishes one codename-independent suite,
-# nodistro, so this pin is the same on 26.04 and 24.04; 26.10.0-1nodesource1
-# is the newest nodejs in node_26.x/dists/nodistro/main/binary-amd64/Packages,
-# read 2026-09-26. The line itself is labs_agent_node_apt_repository_url in
-# the role defaults, so a major bump moves both.
+# nodistro, so this pin is the same on 26.04 and 24.04. The first pin was the
+# newest nodejs in node_26.x/dists/nodistro/main/binary-amd64/Packages when it
+# was read on 2026-09-26. The weekly pin bump takes the newest 26 release in
+# https://nodejs.org/dist/index.json and moves the pin to NodeSource's newest
+# build of that release in the same Packages index; if NodeSource has not
+# published that release yet, the pin stays and the weekly issue says so. The
+# line itself is labs_agent_node_apt_repository_url in the role defaults, so a
+# major bump moves both.
 labs_agent_node_version: "26.12.0-1nodesource1"
 # sha256sum of https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key, read
 # 2026-09-26 and checked with gpgv against node_26.x/dists/nodistro/InRelease;
@@ -339,15 +357,26 @@ node_exporter_checksum: sha256:b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e83
 # licence: one server instance and up to three nodes, for internal business
 # use, and this is one server managing one Docker node. The licence key is
 # entered in Portainer's UI, never here. On since 2026-09-26 (owner decision).
-# 2.45.1 is the newest release (an LTS; 2.39.8 is the previous LTS line), read
-# from https://github.com/portainer/portainer/releases on 2026-09-26. The
-# digest is the image INDEX of portainer/portainer-ee:2.45.1 from `docker
-# buildx imagetools inspect`, the same as the registry's Docker-Content-Digest,
-# and portainer-ee:lts, :latest and :sts resolved to it that day.
+# The newest release on 2026-09-26 was in the 2.45 line, a long-term support
+# (LTS) line, and 2.39 was the previous LTS line (both read from
+# https://github.com/portainer/portainer/releases on 2026-09-26). The digest is
+# the image INDEX of the tag on the portainer_image_tag line, from `docker
+# buildx imagetools inspect`, the same as the registry's Docker-Content-Digest;
+# on 2026-09-26 portainer-ee:lts, :latest and :sts all resolved to the first
+# pin's index.
 portainer_enabled: true
 portainer_image: portainer/portainer-ee
 portainer_image_tag: "2.45.2"
 portainer_image_digest: sha256:64593d0645eec314e84b93c03aba51db67c72ec12c760927335b52b1652765d7
+
+# Sigstore cosign (LAB-X, #1069): verifies SLSA build provenance attestations
+# on add-on images before docker_image_pull. Pinned release from
+# https://github.com/sigstore/cosign/releases; cosign_checksum is the
+# cosign-linux-amd64 line of that release's cosign_checksums.txt. bootstrap.sh
+# installs the same release from its own COSIGN_VERSION and COSIGN_SHA256 lines,
+# and the weekly pin bump moves all four together.
+cosign_version: 3.1.4
+cosign_checksum: sha256:424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
 
 # Tool add-ons (ADR 0035): one container per row, by digest, on the loopback,
 # behind Caddy on <id>.lab.hybridcloudworks.com, framed by the site at
@@ -388,12 +417,6 @@ portainer_image_digest: sha256:64593d0645eec314e84b93c03aba51db67c72ec12c7609273
 # key below, never this file.
 # secret_env names the vault key each secret comes from; the role refuses to
 # start the container while the key is unset.
-# Sigstore cosign (LAB-X, #1069): verifies SLSA build provenance attestations
-# on add-on images before docker_image_pull. Pinned release from
-# https://github.com/sigstore/cosign/releases.
-cosign_version: 3.1.4
-cosign_checksum: sha256:424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
-
 addons_enabled: true
 addons:
   - id: migration
@@ -525,15 +548,17 @@ addons:
 # HashiCorp Vault, host-native, for lab-host secrets only: production
 # HybridCloudWorks secrets stay in Key Vault kv-site-prod-cus-01 (ADR 0032,
 # amendment of 2026-09-26). On since 2026-09-26 (owner decision); initialising and
-# unsealing are owner steps the role never takes. 2.1.1 is the newest release
-# (api.releases.hashicorp.com and endoflife.date, 2026-09-26; 2.0 reached end
-# of life the day 2.1.0 shipped). vault_checksum is the linux_amd64.zip line
-# of vault_2.1.1_SHA256SUMS, whose signature gpgv verified that day against
-# HashiCorp's key; vault_pgp_key_checksum is the sha256sum of that key as
-# https://www.hashicorp.com/.well-known/pgp-key.txt served it, primary
-# fingerprint C874 011F 0AB4 0511 0D02 1055 3436 5D94 72D7 468F. The role
-# checks all three links on the host. The vault_ prefix is the role's name:
-# none of these is an Ansible Vault key.
+# unsealing are owner steps the role never takes. The newest release on
+# 2026-09-26 was in the 2.1 line (api.releases.hashicorp.com and
+# endoflife.date; the 2.0 line reached end of life the day the 2.1 line
+# shipped). vault_checksum is the linux_amd64.zip line of the release's
+# vault_<version>_SHA256SUMS file, whose signature gpgv verified for the first
+# pin on 2026-09-26 against HashiCorp's key; the weekly pin bump reads that
+# line from the publisher for every move. vault_pgp_key_checksum is the
+# sha256sum of that key as https://www.hashicorp.com/.well-known/pgp-key.txt
+# served it, primary fingerprint C874 011F 0AB4 0511 0D02 1055 3436 5D94 72D7
+# 468F. The role checks all three links on the host. The vault_ prefix is the
+# role's name: none of these is an Ansible Vault key.
 vault_enabled: true
 vault_version: "2.2.0"
 vault_checksum: sha256:05d78b0ac842ca7c522fc297df91527cd43c15420c4c5c0a969d48a7b0ff7b6d

@@ -477,7 +477,7 @@ runbook's "If the rotation credential may have leaked" has the lines.
 
 ### Coder's API
 
-Read 2026-10-08 against v2.38.0, the pinned release:
+Read 2026-10-08 against v2.38.0, the release pinned that day:
 <https://coder.com/docs/reference/api/users> ("Get user tokens", "Create
 token API key", "Get API key by ID", "Delete API key"),
 <https://coder.com/docs/reference/api/workspaces> ("List workspaces"), and
@@ -532,7 +532,10 @@ Paths, the port and the unit names are in `defaults/main.yml`;
 ## Bumping a pin
 
 Both digests are image **indexes**, read with `docker buildx imagetools
-inspect`; the tag beside each is for humans. Bash, anywhere with Docker:
+inspect`; the tag beside each is for humans. The tags in the two commands
+below are examples: use the ones you are pinning (`coder_image_tag` and
+`coder_postgres_image_tag` in `group_vars/all.yml`). Bash, anywhere with
+Docker:
 
 ```bash
 docker buildx imagetools inspect ghcr.io/coder/coder:v2.38.0 | head -3

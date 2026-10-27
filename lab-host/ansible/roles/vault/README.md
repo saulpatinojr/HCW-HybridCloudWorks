@@ -120,7 +120,7 @@ says. Moving an initialised Vault onto the seal is an owner step,
 ### How it authenticates
 
 As the Arc machine's system-assigned identity, with nothing stored on the
-host for it. Read against the source of the pinned release, Vault 2.1.1,
+host for it. Read against the source of the release pinned when this was written, Vault 2.1.1,
 whose binary `go version -m` shows built with exactly these modules:
 
 - The seal (`go-kms-wrapping/wrappers/azurekeyvault` v2.0.14) signs in with a
@@ -234,8 +234,9 @@ updater moves the floor. The newest community release, bash, anywhere with
 curl -fsS 'https://api.releases.hashicorp.com/v1/releases/vault?limit=5&license_class=oss' | node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{for(const r of JSON.parse(s))console.log(r.version,r.timestamp_created,r.is_prerelease)})"
 ```
 
-The checksum is that release's `linux_amd64.zip` line in its SHA256SUMS;
-2.1.1 below, change both numbers for another release:
+The checksum is that release's `linux_amd64.zip` line in its SHA256SUMS.
+In the command below 2.1.1 is an example: put the version you are pinning
+(`vault_version` in `group_vars/all.yml`) in both places:
 
 ```bash
 curl -fsS https://releases.hashicorp.com/vault/2.1.1/vault_2.1.1_SHA256SUMS | grep linux_amd64.zip

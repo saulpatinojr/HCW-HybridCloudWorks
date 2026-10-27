@@ -46,10 +46,13 @@ UV_SHA256=23bf5552d220e0842b65c862097b2ebaeba0064b74eda5e565e77fd25969d8c8
 # CPython 3.14.7, the newest release of the newest line. uv 0.12.19 pins its
 # python-build-standalone 20260924 build by SHA256.
 PYTHON_VERSION=3.14.7
-# cosign 3.1.3, for SLSA build provenance attestation verification of add-on
+# cosign, for SLSA build provenance attestation verification of add-on
 # images before pull (#1069). COSIGN_SHA256 is the sha256sum of cosign-linux-amd64
-# from https://github.com/sigstore/cosign/releases/tag/v3.1.3, equal to the
-# release's cosign_checksums.txt entry.
+# from the release page of COSIGN_VERSION, https://github.com/sigstore/cosign/releases,
+# equal to that release's cosign_checksums.txt entry. The weekly pin bump
+# (scripts/lab-pins-upstream.mjs --bump host) moves both lines, and the same
+# release in cosign_version and cosign_checksum of ansible/group_vars/all.yml,
+# together. These comments name no version, so a bump cannot leave them behind.
 COSIGN_VERSION=3.1.4
 COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
 # ansible-core is not pinned here. Its release, the SHA256 of its wheel and

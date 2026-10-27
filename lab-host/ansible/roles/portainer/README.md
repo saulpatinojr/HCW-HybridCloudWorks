@@ -123,10 +123,11 @@ refuses a report holding anything else (`functions/src/lib/labs/host-checks.js`)
 which is what lets the Health Hub show it to an admin without showing what
 runs on the host. With no container running, zero images were checked and
 zero are outdated; `null` in those two fields means the containers could not
-be read at all. The journal gets one summary line in the same terms:
+be read at all. The journal gets one summary line in the same terms
+(`<version>` is `portainer_image_tag` in `group_vars/all.yml`):
 
 ```text
-hcw-portainer-check: checked: Portainer 2.45.2 EE up; environment local up with 8 containers (7 running, 0 unhealthy, 0 restarting, 1 exited); 7 images checked, 0 outdated; licence valid to 2027-09-26; reported to the site
+hcw-portainer-check: checked: Portainer <version> EE up; environment local up with 8 containers (7 running, 0 unhealthy, 0 restarting, 1 exited); 7 images checked, 0 outdated; licence valid to 2027-09-26; reported to the site
 ```
 
 **How it reaches the site.** Through the lab agent's own CLI,
@@ -257,7 +258,9 @@ gh api repos/portainer/portainer/releases -X GET -f per_page=10 --jq '.[] | "\(.
 
 The digest is the image **index**, read with `docker buildx imagetools
 inspect`, and cross-checked against the registry's `Docker-Content-Digest`,
-which must print the same `sha256:`. Bash, anywhere with Docker:
+which must print the same `sha256:`. The tag in the commands below is an
+example: use the one you are pinning (`portainer_image_tag` in
+`group_vars/all.yml`). Bash, anywhere with Docker:
 
 ```bash
 docker buildx imagetools inspect portainer/portainer-ee:2.45.1 | head -3
