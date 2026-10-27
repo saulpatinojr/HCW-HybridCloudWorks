@@ -1686,6 +1686,8 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
           else addProblem(module, node, ref.name, `${ref.name} is called without a path argument the guard can read`);
         } else if (node.callee.type === 'MemberExpression' && node.callee.object.type === 'MetaProperty' && !node.callee.computed && node.callee.property.name === 'glob') {
           if (runsInTests(node)) addGlobReference(module, node);
+        } else if (ref?.mod === 'fs' && (ref.name === 'glob' || ref.name === 'globSync') && runsInTests(node)) {
+          addProblem(module, node, ref.name, `${ref.name} reads every file that matches a pattern, which the guard does not follow`);
         } else if (ref?.mod === 'process' && ref.name === 'chdir' && runsInTests(node)) {
           // every relative path after this is relative to a different folder
           addProblem(module, node, 'chdir', 'process.chdir changes the folder that relative paths start from, so the guard cannot tell which files later reads touch');

@@ -58,9 +58,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMPONENTS, DIRECTORY_PROBE, deriveCrossRootReads, parseCiFilters } from './lib/ci-filters.mjs';
-import { collectPins, loadFloors } from './version-floors.mjs';
+import { isPinFile, trackedFiles } from './lib/version-pins.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// every file git tracks, to compare grep with JavaScript on more than the derived paths
+const TRACKED_FILES = trackedFiles(REPO_ROOT);
 
 /**
  * Reads the guard cannot hold to the filter, each looked at by a person.
@@ -88,7 +90,7 @@ const REVIEWED_READS = [
     reason:
       'The version-floors checks read whichever tracked files they need (package.json, package-lock.json, .nvmrc, ' +
       'Dockerfiles, Terraform, workflows). They ask git for the list, so the names are not known here. The test ' +
-      '"every file with a version pin is matched by the scripts filter", below, checks the filter covers them.',
+      '"every tracked file a version pin reader owns is matched by the scripts filter", below, checks the filter covers them.',
   },
   {
     file: 'scripts/lib/version-pins.mjs',
@@ -147,7 +149,9 @@ const REVIEWED_READS = [
   {
     file: 'frontend/scripts/study-guide-files.mjs',
     expression: 'import(href)',
-    reason: 'The default way to load a stored study guide. The tests pass their own loader; the real one opens files in the package\'s own study-guides folder.',
+    reason:
+      'The default way to load a stored study guide. The tests call it on a temporary folder they make; the real caller ' +
+      '(update-study-guides.mjs) opens frontend/src/data/azure/study-guides, inside the package.',
   },
   {
     file: 'functions/src/lib/public-cert-events.test.js',
@@ -258,7 +262,8 @@ describe('CI filters change detection (QA-4, #979)', () => {
       const grepVersion = spawnSync('grep', ['--version'], { encoding: 'utf8' });
       it.skipIf(grepVersion.status !== 0)('has a ci.yml filter that grep -E reads, and reads the same way JavaScript does', () => {
         const compFilter = filters.get(comp.dir);
-        const paths = [...found.files, ...[...found.dirs].map((dir) => `${dir}${DIRECTORY_PROBE}`), 'README.md', '.github/workflows/ci.yml'];
+        const probes = [...found.dirs].map((dir) => `${dir}${DIRECTORY_PROBE}`);
+        const paths = [...new Set([...found.files, ...probes, ...TRACKED_FILES, 'README.md', '.github/workflows/ci.yml'])];
         const asInWorkflow = `${compFilter.filter}|^\\.github/workflows/ci\\.yml$`;
         const result = spawnSync('grep', ['-E', asInWorkflow], { input: `${paths.join('\n')}\n`, encoding: 'utf8' });
         expect(result.status, `grep -E could not read the filter of "${comp.name}": ${result.stderr}`).not.toBe(2);
@@ -282,17 +287,17 @@ describe('CI filters change detection (QA-4, #979)', () => {
 });
 
 describe('the files the version-floors checks read without naming them', () => {
-  it('every file with a version pin is matched by the scripts filter', () => {
-    // The checks ask git for the files, so no test names them and the guard cannot see them. This is
-    // the check that stands in for that: each file that carries a pin has to run the scripts job.
-    const collected = collectPins(REPO_ROOT, loadFloors(REPO_ROOT));
-    const files = new Set([...collected.pins, ...collected.problems].map((pin) => pin.file));
-    expect(files.size, 'collectPins found no pins; the check would pass for the wrong reason').toBeGreaterThan(20);
+  it('every tracked file a version pin reader owns is matched by the scripts filter', () => {
+    // The checks ask git for the files, so no test names them and the guard cannot see them. This is the
+    // check that stands in for that: a file the readers own has to run the scripts job, whether or not it
+    // carries a pin yet (a pin added later is exactly the change that must be checked).
+    const owned = TRACKED_FILES.filter(isPinFile);
+    expect(owned.length, 'no tracked file is owned by a pin reader; the check would pass for the wrong reason').toBeGreaterThan(40);
     const { regex, filter } = filters.get('scripts');
-    const unmatched = [...files].filter((file) => !regex.test(file));
+    const unmatched = owned.filter((file) => !regex.test(file));
     expect(
       unmatched,
-      `These files carry a version pin that version-floors.test.mjs checks, but the scripts filter in ci.yml does not match them, so a pull request that only changes one skips the check:\n  ${filter}\n  - ${unmatched.join('\n  - ')}`
+      `These files are read by the version-floors checks, but the scripts filter in ci.yml does not match them, so a pull request that only changes one skips the check:\n  ${filter}\n  - ${unmatched.join('\n  - ')}`
     ).toEqual([]);
   });
 });
@@ -736,6 +741,13 @@ ${GUIDE}createReadStream(guide);
       });
     });
 
+    describe('reads by pattern', () => {
+      it('fs.globSync and fs.promises.glob are reported', () => {
+        expect(outcome(src("import { globSync } from 'node:fs';", "globSync('../docs/*.md');")).found.unresolved.map((u) => u.reason).join(' ')).toContain('pattern');
+        expect(outcome(src("import fs from 'node:fs';", "for await (const f of fs.promises.glob('../docs/*.md')) console.log(f);")).found.unresolved.map((u) => u.reason).join(' ')).toContain('pattern');
+      });
+    });
+
     describe('a name set again later', () => {
       it('a variable rebuilt from itself', () => {
         seen(src(BASE, "let p = join(HERE, '..');", "p = join(p, 'docs', 'guide.md');", 'readFileSync(p);'));
@@ -969,6 +981,13 @@ ${GUIDE}createReadStream(guide);
       expect(guard({ ...TARGETS, 'pkg/a.test.js': source }, { reviewed: [entry] }).unresolved).toEqual([]);
       const wrongRead = { ...entry, expression: "readFileSync(process.argv[3], 'utf8')" };
       expect(guard({ ...TARGETS, 'pkg/a.test.js': source }, { reviewed: [wrongRead] }).unresolved).toHaveLength(1);
+    });
+
+    it('never hides a plain file the read names', () => {
+      const entry = { file: 'pkg/a.test.js', expression: "readFileSync(new URL('../docs/guide.md', import.meta.url))", reason: 'for the test' };
+      const found = guard({ ...TARGETS, 'pkg/a.test.js': `${FS}readFileSync(new URL('../docs/guide.md', import.meta.url));\n` }, { reviewed: [entry] });
+      expect(names(found.files)).toEqual(['docs/guide.md']);
+      expect(found.unusedReviewed).toEqual([]);
     });
 
     it('lets a whole file through when the entry has no expression', () => {

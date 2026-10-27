@@ -124,8 +124,8 @@ jobs:
           # container, so a pull request that only changes one of those files
           # runs this row. That makes the single frontend files and
           # scripts/ideas/idea-notes.mjs named above redundant; they stay so
-          # each one keeps its reason beside it. The other single files
-          # (onboard.yml, the .azure files, docs/content/) are not redundant.
+          # each one keeps its reason beside it. The other entries (onboard.yml,
+          # the .azure files and the docs/content/ folder) are not redundant.
           - name: functions (azure)
             dir: functions
             node-version: '24'
@@ -170,9 +170,12 @@ jobs:
           # (build-content-manifest.test.mjs). package-lock.json and the
           # .nvmrc, .node-version and .python-version files join package.json
           # because the version-floors tests read every tracked one (they ask
-          # git for the list, so a test cannot name them); ci-filters.test.mjs
-          # checks that every file with a version pin matches this filter. A
-          # pull request that changes only one of these now runs this row.
+          # git for the list, so a test cannot name them; only .nvmrc files
+          # exist today); ci-filters.test.mjs checks that every tracked file a
+          # version pin reader owns matches this filter. A pull request that
+          # changes only one of these now runs this row. (TODO|CHANGELOG)\.md
+          # is older than this note: the only test that reads them today is
+          # no-wiki-pointers.test.mjs, which reads every tracked text file.
           - name: scripts (operations)
             dir: scripts
             filter: '^(scripts/|\.github/workflows/|\.github/(actionlint\.yaml|pull_request_template\.md)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll))\.js|functions/(schedulers|jobs-sweeper)\.js)$))'

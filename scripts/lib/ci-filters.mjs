@@ -96,10 +96,12 @@ function importSpecs(content, aliases) {
  * Derive the out-of-component files and folders that tests (and the modules
  * and helpers they import) import or read.
  *
- * `reviewed` lists reads a person has looked at and decided the guard should
- * not hold to the filter, each as `{ file, expression?, reason }` (see
- * ci-filters.test.mjs). A read matches an entry when it is in `file` and, if
- * the entry has an `expression`, is written exactly that way.
+ * `reviewed` lists reads a person has looked at, each as
+ * `{ file, expression?, reason }` (see ci-filters.test.mjs). A read matches an
+ * entry when it is in `file` and, if the entry has an `expression`, is written
+ * exactly that way. For such a read the folders it reads, and whatever the
+ * guard could not work out, are not held to the filter; a plain file it names
+ * still is.
  *
  * Returns:
  *  - `files`: repository paths of files read or imported from outside the
@@ -183,7 +185,7 @@ export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT, { re
   for (const reference of references) {
     const readerFile = toRepoPath(reference.file);
     const where = `${readerFile}:${reference.line}`;
-    if (isReviewed(readerFile, reference.expression)) continue;
+    const reviewedRead = isReviewed(readerFile, reference.expression);
 
     for (const { kind, path } of reference.results) {
       if (isInside(compDirAbs, path) || !isInside(repoRoot, path)) continue;
@@ -193,6 +195,9 @@ export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT, { re
       // new URL(...) of a folder is only a base for building file paths, and a folder that is only
       // checked for, or looked at (existsSync, statSync), is not a dependency on what is in it
       if (isFolder && (reference.primitive === 'new URL' || (kind === 'file' && !LISTS_FOLDER.has(reference.primitive)))) continue;
+      // a read a person has looked at is not held to the filter for folders or for what the guard cannot work out;
+      // a plain file it names still is, so an exemption can never hide a file the filter should match
+      if (reviewedRead && isFolder) continue;
       if (isFolder && relative(repoRoot, path) === '') {
         unresolved.push({ file: readerFile, line: reference.line, expression: reference.expression, reason: 'it reads a file directly under the repository root and the guard does not know which one' });
         continue;
@@ -201,6 +206,7 @@ export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT, { re
       (isFolder ? dirs : files).add(repoPath);
       remember(repoPath, where);
     }
+    if (reviewedRead) continue;
     for (const reason of reference.unresolved) {
       unresolved.push({ file: readerFile, line: reference.line, expression: reference.expression, reason });
     }
