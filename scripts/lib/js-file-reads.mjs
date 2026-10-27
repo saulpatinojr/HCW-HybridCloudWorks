@@ -75,6 +75,25 @@ const ITEM_CALLBACK_METHODS = new Set(['map', 'forEach', 'flatMap', 'filter', 's
 /** String methods that turn a path into another path in the same place. */
 const STRING_METHODS = new Set(['replace', 'replaceAll', 'trim', 'trimEnd', 'trimStart', 'toString', 'normalize', 'toLowerCase', 'toUpperCase', 'slice', 'substring', 'concat']);
 
+/** Names that, on a call, almost certainly mean a file read even when the guard cannot tell where the function comes from. */
+const FILE_LOOKING_NAMES = new Set([
+  'readFileSync',
+  'readdirSync',
+  'existsSync',
+  'statSync',
+  'lstatSync',
+  'opendirSync',
+  'accessSync',
+  'openSync',
+  'readlinkSync',
+  'realpathSync',
+  'copyFileSync',
+  'cpSync',
+  'readFile',
+  'readdir',
+  'createReadStream',
+]);
+
 /** A file that mentions none of these cannot read a file, so failing to parse it is harmless. */
 const MENTIONS_FILE_ACCESS = /\bfs\b|node:fs|readFile|readdir|existsSync|statSync|createReadStream|new URL\(/;
 
@@ -1640,6 +1659,16 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     return binding?.kind === 'var' && binding.inits.some((init) => init.type === 'CallExpression' && moduleRef(init.callee)?.name === 'createRequire');
   };
 
+  /** The name a call is made under: readFileSync in readFileSync(x) and in fs.readFileSync(x). */
+  const calledName = (callee) => (callee.type === 'Identifier' ? callee.name : callee.type === 'MemberExpression' && !callee.computed ? callee.property.name : '');
+
+  /** Whether a called name is a function written in the files being scanned (not something that reads files for us). */
+  const isDefinedHere = (callee) => {
+    if (callee.type !== 'Identifier') return false;
+    const binding = lookup(callee, callee.name);
+    return Boolean(binding && (binding.kind === 'function' || binding.inits?.some((init) => FUNCTION_TYPES.has(init.type))));
+  };
+
   const isMemberOf = (parent, node) => parent.type === 'MemberExpression' && parent.object === node && (!parent.computed || (parent.property.type === 'Literal' && typeof parent.property.value === 'string'));
 
   for (const module of loaded.values()) {
@@ -1655,6 +1684,9 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
           else addProblem(module, node, ref.name, `${ref.name} is called without a path argument the guard can read`);
         } else if (node.callee.type === 'MemberExpression' && node.callee.object.type === 'MetaProperty' && !node.callee.computed && node.callee.property.name === 'glob') {
           if (runsInTests(node)) addGlobReference(module, node);
+        } else if (FILE_LOOKING_NAMES.has(calledName(node.callee)) && ref?.mod !== 'fs' && !isDefinedHere(node.callee) && runsInTests(node)) {
+          // readFileSync(...) from something the guard cannot trace to Node's fs: say so rather than ignore it
+          addProblem(module, node, calledName(node.callee), `${calledName(node.callee)}(...) looks like a file read, but the guard cannot tell it comes from Node's fs module, so the path it reads is unknown`);
         } else if (isRequireLike(node.callee) && first && first.type !== 'SpreadElement') {
           // a plain package name is not a file in the repository
           const isPackageName = first.type === 'Literal' && !String(first.value).startsWith('.');

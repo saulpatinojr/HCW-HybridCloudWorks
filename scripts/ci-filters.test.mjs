@@ -153,6 +153,33 @@ const REVIEWED_READS = [
     expression: "import('fs')",
     reason: 'Loads fs with import().then(...) to read ./timers/skills-hub.js, a file in the same package.',
   },
+  {
+    file: 'functions/src/lib/public-cert-events.test.js',
+    expression: "readFileSync(new URL('./timers/skills-hub.js', import.meta.url), 'utf8')",
+    reason: 'The read behind the import().then(...) above: ./timers/skills-hub.js, a file in the same package.',
+  },
+  {
+    file: 'scripts/update-version-floors.mjs',
+    expression: "io.readFile(path.join(root, file), 'utf8')",
+    reason:
+      'Reads each package.json and package-lock.json through `io`, the file system, which the tests replace with a fake or a temporary folder. ' +
+      'The real ones are matched by the scripts filter (see the update-version-floors.test.mjs entry).',
+  },
+  {
+    file: 'vps-agent/lib/maintenance-hold.js',
+    expression: "fsImpl.openSync(path, 'r')",
+    reason: 'Reads the maintenance hold file through `fsImpl`, which only the tests replace. The real file is on the lab host, not in the repository.',
+  },
+  {
+    file: 'vps-agent/lib/maintenance-hold.js',
+    expression: 'fsImpl.statSync(path)',
+    reason: 'Same as the openSync entry above: the hold file on the lab host, through the file system the tests replace.',
+  },
+  {
+    file: 'vps-agent/lib/maintenance-hold.js',
+    expression: "fsImpl.readFileSync(fd, 'utf8')",
+    reason: 'Same as the openSync entry above: the hold file on the lab host, through the file system the tests replace.',
+  },
 ];
 
 /** Files that tests read from outside their package and that the first version of the guard did not find. */
@@ -679,6 +706,27 @@ ${GUIDE}createReadStream(guide);
           expect(result.unresolved.length).toBeGreaterThan(0);
         });
       }
+    });
+
+    describe('a call that looks like a file read but does not come from Node fs', () => {
+      const reasonOf = (source, extra) => outcome(source, extra).found.unresolved.map((u) => u.reason).join(' | ');
+      it('a file system object handed in as a parameter', () => {
+        expect(reasonOf(src(PATHS, HERE, GUIDE, 'function load(fsImpl) { return fsImpl.readFileSync(GUIDE); }', 'load({});'))).toContain("looks like a file read");
+      });
+      it('a read function that is itself a parameter', () => {
+        expect(reasonOf(src(PATHS, HERE, GUIDE, 'function load(readFileSync) { return readFileSync(GUIDE); }', 'load(() => "");'))).toContain("looks like a file read");
+      });
+      it('fs wrapped by a CommonJS file', () => {
+        const wrapper = { 'pkg/wrapper.cjs': "module.exports = require('node:fs');\n" };
+        expect(reasonOf(src(PATHS, HERE, GUIDE, "const fs = require('./wrapper.cjs');", 'fs.readFileSync(GUIDE);'), wrapper)).toContain("looks like a file read");
+      });
+      it('an object with a readFileSync of its own', () => {
+        expect(reasonOf(src(PATHS, HERE, GUIDE, 'const fake = { readFileSync: () => "" };', 'fake.readFileSync(GUIDE);'))).toContain("looks like a file read");
+      });
+      it('is not raised for a function the code defines itself', () => {
+        const found = guard({ ...TARGETS, 'pkg/a.test.js': src(PATHS, HERE, 'function existsSync(name) { return name.length > 0; }', "existsSync('x');") });
+        expect(found.unresolved).toEqual([]);
+      });
     });
 
     describe('a name set again later', () => {
