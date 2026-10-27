@@ -61,7 +61,7 @@ jobs:
           - language: actions
             filter: '^\.github/(workflows|actions)/'
           - language: python
-            filter: '\.py$'
+            filter: '^(unclosed'
     steps:
       # fetch-depth: 0 so the change detection below can diff against the base
       # commit — a shallow clone fails the diff rather than returning "no
