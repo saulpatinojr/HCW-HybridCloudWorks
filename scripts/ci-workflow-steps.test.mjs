@@ -47,90 +47,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMPONENTS } from './lib/ci-filters.mjs';
+// Jobs, steps and matrix rows are cut out of the workflow text by their indentation (shared with codeql-iac-workflow-steps.test.mjs).
+import { findBashTools, parseJobs, parseMatrixRows } from './lib/workflow-text.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CI = readFileSync(join(REPO, '.github', 'workflows', 'ci.yml'), 'utf8').replace(/\r\n/g, '\n');
 
 const GUARD_STEP = 'CI path filters list every file the tests read';
 const SCRIPTS_ROW = 'scripts (operations)';
-
-// ---------------------------------------------------------------------------
-// Reading ci.yml. A real YAML parser is not a dependency of this package, and
-// the file's shape is regular, so jobs, steps and matrix rows are cut out by
-// their indentation, as the other workflow tests in this folder do.
-// ---------------------------------------------------------------------------
-
-/** A YAML scalar written plain or in single quotes (the only quoting ci.yml uses). */
-function scalar(raw) {
-  const text = raw.trim();
-  const quoted = text.match(/^'(.*)'$/s);
-  return quoted ? quoted[1].replace(/''/g, "'") : text;
-}
-
-/** The jobs of ci.yml: their key, their own lines and their steps. */
-function parseJobs(text) {
-  const start = text.indexOf('\njobs:\n');
-  if (start === -1) throw new Error('ci.yml has no top-level jobs: block');
-  const jobs = [];
-  for (const line of text.slice(start + '\njobs:\n'.length).split('\n')) {
-    const key = line.match(/^ {2}([A-Za-z0-9_-]+):\s*$/);
-    if (key) jobs.push({ key: key[1], lines: [] });
-    else jobs.at(-1)?.lines.push(line);
-  }
-  return jobs.map((job) => ({ ...job, steps: parseSteps(job.lines) }));
-}
-
-function parseSteps(lines) {
-  const from = lines.findIndex((line) => /^ {4}steps:\s*$/.test(line));
-  if (from === -1) return [];
-  const raw = [];
-  for (const line of lines.slice(from + 1)) {
-    if (/^ {6}- /.test(line)) raw.push([line]);
-    else if (/^ {4}\S/.test(line) && !/^ {4}#/.test(line)) break;
-    else raw.at(-1)?.push(line);
-  }
-  return raw.map(parseStep);
-}
-
-/** One step: its name, `if`, `env`, `run` (dedented) and other single-line keys. */
-function parseStep(raw) {
-  const lines = raw.map((line, i) => (i === 0 ? line.replace(/^( {6})- /, '$1  ') : line));
-  const step = { env: {}, lines };
-  for (let i = 0; i < lines.length; i++) {
-    const found = lines[i].match(/^ {8}([A-Za-z_-]+):\s*(.*)$/);
-    if (!found) continue;
-    const [, key, value] = found;
-    if (key === 'env') {
-      for (let j = i + 1; j < lines.length && (lines[j].trim() === '' || /^ {10}/.test(lines[j])); j++) {
-        const entry = lines[j].match(/^ {10}([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/);
-        if (entry) step.env[entry[1]] = scalar(entry[2]);
-      }
-    } else if (key === 'run' && value.trim() === '|') {
-      const body = [];
-      for (let j = i + 1; j < lines.length && (lines[j].trim() === '' || /^ {10}/.test(lines[j])); j++) body.push(lines[j].slice(10));
-      while (body.length && body.at(-1).trim() === '') body.pop();
-      step.run = body.join('\n');
-    } else if (key === 'run') {
-      step.run = scalar(value);
-    } else {
-      step[key] = scalar(value);
-    }
-  }
-  return step;
-}
-
-/** The matrix rows of the `verify` job, each with its single-line keys (name, dir, filter, test ...). */
-function parseMatrixRows(lines) {
-  const rows = [];
-  for (const line of lines) {
-    const first = line.match(/^ {10}- ([A-Za-z-]+):\s*(.*)$/);
-    const more = line.match(/^ {12}([A-Za-z-]+):\s*(.*)$/);
-    if (first) rows.push({ [first[1]]: scalar(first[2]) });
-    else if (more && rows.length) rows.at(-1)[more[1]] = scalar(more[2]);
-    else if (/^ {4}(defaults|steps):/.test(line)) break;
-  }
-  return rows;
-}
 
 const JOBS = parseJobs(CI);
 const VERIFY = JOBS.find((job) => job.key === 'verify');
@@ -262,16 +186,7 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
 // ---------------------------------------------------------------------------
 // 1 (continued). The same steps, run with bash.
 // ---------------------------------------------------------------------------
-function findTools() {
-  const probe = spawnSync('bash', ['-c', 'command -v git >/dev/null && command -v grep >/dev/null && echo ready; uname -r'], { encoding: 'utf8' });
-  if (probe.error || probe.status !== 0) return { ready: false, why: 'bash did not run' };
-  const [answer, kernel = ''] = probe.stdout.trim().split(/\r?\n/);
-  if (answer !== 'ready') return { ready: false, why: 'git or grep is not on the path of bash' };
-  // Windows ships a bash.exe that starts a Linux subsystem: its paths and environment are not the ones used here.
-  if (/microsoft|wsl/i.test(kernel)) return { ready: false, why: 'bash is the Windows Subsystem for Linux, not Git Bash' };
-  return { ready: true, why: '' };
-}
-const TOOLS = findTools();
+const TOOLS = findBashTools();
 const SKIPPED = TOOLS.ready ? '' : ` (SKIPPED here: ${TOOLS.why}; they run on GitHub Actions)`;
 const forward = (path) => path.replace(/\\/g, '/');
 

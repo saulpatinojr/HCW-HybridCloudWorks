@@ -122,8 +122,12 @@ so that the required check names never change, is unchanged.
   "no relevant change". The four detect steps in `ci.yml` now keep the answer
   and fail on anything but 0 or 1, naming the job and the filter.
   `scripts/ci-workflow-steps.test.mjs` runs each of them against a deliberately
-  broken filter. `codeql.yml` and `iac-validate.yml` have the same `if grep`
-  shape and have not been changed yet.
+  broken filter. `codeql.yml` and `iac-validate.yml` had the same `if grep`
+  shape and were fixed the same way in
+  [#1429](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1429):
+  `scripts/codeql-iac-workflow-steps.test.mjs` runs their detect steps too, and
+  fails if an `if grep` returns to any workflow (the few that remain are listed
+  there, each with its reason).
 - **The test that checks the filters now runs before the merge.** The
   "Negative" consequence above says a missing filter entry is found at the
   merge, after the fact. `scripts/ci-filters.test.mjs` (the check that every
