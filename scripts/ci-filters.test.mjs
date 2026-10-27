@@ -25,6 +25,25 @@
  * and works the path out, following `join`, `resolve`, `new URL(...)`,
  * variables, loops and helper functions.
  *
+ * ## What a module from another package pulls in (#1428)
+ *
+ * A frontend test that imports `functions/src/lib/a.js` depends on that file,
+ * and also on every file `a.js` imports, and on every file `a.js` and those
+ * files read: loading `a.js` runs them. The guard follows the chain to its end.
+ * Starting from a package's test files it opens every module they import, in
+ * the package and in any other, and for each module outside the package it
+ * lists the files it imports (`import`, `export ... from`, `import('x')`,
+ * `require('x')`, `vi.mock('x')` and `import.meta.glob`) and the files it reads
+ * at the top of the module or in a function a test can reach. All of them must
+ * match the package's filter, so a pull request that changes only the last file
+ * in the chain still runs the package's tests. What it ignores: names of
+ * packages (`lodash`, `node:fs`), and anything under `node_modules`, `dist`,
+ * `coverage` or `.git`, which are not files of the repository. What it refuses:
+ * an import whose file cannot be found in a module outside the package (the
+ * guard cannot tell what that file reads), and a read it cannot work out in
+ * such a module, exactly as for a test file. Both are listed in REVIEWED_READS
+ * below by whoever has looked at them, as `import '<path>'` for the first.
+ *
  * Two rules keep it honest:
  *
  *  - A read it recognises but cannot work out FAILS this test. It is never
@@ -42,9 +61,9 @@
  *  - a path handed to another program (a test that starts a script with a file
  *    name on the command line);
  *  - files made by a build step, and paths that do not exist yet;
- *  - the reads and imports made by modules outside the package (a frontend test
- *    that imports a functions module is held to that one file, not to the files
- *    that module imports in turn);
+ *  - what the modules in a folder import, when a test loads every file of the
+ *    folder by a name it gets from a listing (the folder is held to the filter,
+ *    but the guard cannot open each file in it);
  *  - an object, list or file name that is changed after it is made by code that
  *    only receives it (for example a helper that pushes onto a list it was
  *    given), or that is reached under another name;
@@ -219,7 +238,23 @@ const KNOWN_READS = {
   ],
 };
 
+/**
+ * Files that a package's tests reach only through a module of another package (#1428), several imports away from
+ * the test. They are the files the guard saw nothing of before it followed imports across packages.
+ */
+const KNOWN_IMPORTS = {
+  frontend: ['functions/src/lib/ai/select.js', 'functions/src/lib/labs/lab-checks.js', 'functions/src/lib/cosmos-client.js', 'functions/src/lib/cms/publish.js'],
+  scripts: ['functions/src/lib/labs/lab-checks.js', 'functions/src/lib/secret-vault.js', 'functions/src/lib/cms/publish.js'],
+};
+
 const filters = parseCiFilters();
+
+// What the guard finds for each package, worked out once: the rows below and the check on REVIEWED_READS use it.
+const analyses = new Map();
+const analysisOf = (dir) => {
+  if (!analyses.has(dir)) analyses.set(dir, deriveCrossRootReads(dir, undefined, { reviewed: REVIEWED_READS }));
+  return analyses.get(dir);
+};
 
 describe('CI filters change detection (QA-4, #979)', () => {
   it('declares filters for all expected matrix components in ci.yml', () => {
@@ -235,7 +270,7 @@ describe('CI filters change detection (QA-4, #979)', () => {
 
       // Parsing every test file takes a few seconds for the larger packages.
       beforeAll(() => {
-        found = deriveCrossRootReads(comp.dir, undefined, { reviewed: REVIEWED_READS });
+        found = analysisOf(comp.dir);
       }, 120_000);
 
       it('works out which file every read touches', () => {
@@ -255,13 +290,14 @@ describe('CI filters change detection (QA-4, #979)', () => {
         expect(missing, `The guard no longer finds these reads in "${comp.name}":\n  ${missing.join('\n  ')}`).toEqual([]);
       });
 
-      it('has no reviewed read that is no longer there', () => {
-        const stale = found.unusedReviewed.map((entry) => `  - ${entry.file}${entry.expression ? `  ${entry.expression}` : ''}`);
-        expect(
-          stale,
-          `These REVIEWED_READS entries in scripts/ci-filters.test.mjs match no read in "${comp.name}" any more. Remove them:\n${stale.join('\n')}`
-        ).toEqual([]);
-      });
+      // Same reason as above, for the chain of imports: a guard that stopped at the first module would pass on a short list.
+      // Only the packages whose tests import modules that import more have a list, so only they get the test.
+      if (KNOWN_IMPORTS[comp.dir]) {
+        it("still finds the files that only another package's module imports (#1428)", () => {
+          const missing = KNOWN_IMPORTS[comp.dir].filter((file) => !found.files.has(file));
+          expect(missing, `The guard no longer finds these imports in "${comp.name}":\n  ${missing.join('\n  ')}`).toEqual([]);
+        });
+      }
 
       it('has a ci.yml filter that matches every file its tests read from outside the package', () => {
         const compFilter = filters.get(comp.dir);
@@ -269,11 +305,11 @@ describe('CI filters change detection (QA-4, #979)', () => {
 
         const unmatched = [...found.files].filter((file) => !compFilter.regex.test(file));
         expect(
-          unmatched.map((f) => `${f}  (read at ${where(f)})`),
+          unmatched.map((f) => `${f}  (found in ${where(f)})`),
           `Component "${comp.name}" has tests that read files outside the package that do not match its filter in ` +
             `.github/workflows/ci.yml:\n  ${compFilter.filter}\n` +
-            'A pull request that changes only one of these files would skip the job. Add the file to the filter, or stop the test reading it:\n' +
-            unmatched.map((f) => `  - ${f}  (read at ${where(f)})`).join('\n')
+            'A pull request that changes only one of these files would skip the job. Add the file to the filter (a whole folder when many of its files are listed), or stop the test reaching it:\n' +
+            unmatched.map((f) => `  - ${f}  (found in ${where(f)})`).join('\n')
         ).toEqual([]);
       });
 
@@ -297,14 +333,36 @@ describe('CI filters change detection (QA-4, #979)', () => {
         const compFilter = filters.get(comp.dir);
         const unmatched = [...found.dirs].filter((dir) => !compFilter.regex.test(`${dir}${DIRECTORY_PROBE}`));
         expect(
-          unmatched.map((d) => `${d}  (read at ${where(d)})`),
+          unmatched.map((d) => `${d}  (found in ${where(d)})`),
           `Component "${comp.name}" has tests that read the contents of folders outside the package, but its filter in ` +
             `.github/workflows/ci.yml does not match files inside them:\n  ${compFilter.filter}\n` +
-            unmatched.map((d) => `  - ${d}  (read at ${where(d)})`).join('\n')
+            unmatched.map((d) => `  - ${d}  (found in ${where(d)})`).join('\n')
         ).toEqual([]);
       });
     });
   }
+});
+
+describe('REVIEWED_READS', () => {
+  beforeAll(() => {
+    for (const comp of COMPONENTS) analysisOf(comp.dir);
+  }, 120_000);
+
+  it('has no entry that matches no read in any package any more', () => {
+    // An entry can be for a module in one package and be needed only by another package's tests (a frontend test
+    // that imports a functions module), so an entry is stale only when no package's analysis used it.
+    const used = new Set(COMPONENTS.flatMap((comp) => [...analysisOf(comp.dir).usedReviewed]));
+    const stale = REVIEWED_READS.filter((entry) => !used.has(entry)).map((entry) => `  - ${entry.file}${entry.expression ? `  ${entry.expression}` : ''}`);
+    expect(
+      stale,
+      `These REVIEWED_READS entries in scripts/ci-filters.test.mjs match no read in any package any more. Remove them:\n${stale.join('\n')}`
+    ).toEqual([]);
+  });
+
+  it('gives every entry a reason', () => {
+    const missing = REVIEWED_READS.filter((entry) => typeof entry.reason !== 'string' || entry.reason.trim() === '').map((entry) => entry.file);
+    expect(missing, 'These REVIEWED_READS entries have no reason written down:').toEqual([]);
+  });
 });
 
 describe('the files the version-floors checks read without naming them', () => {
@@ -1158,6 +1216,378 @@ ${GUIDE}createReadStream(guide);
     it('ignores entries for files in other packages', () => {
       const entry = { file: 'other/x.test.js', reason: 'not this package' };
       expect(guard({ ...TARGETS, 'pkg/a.test.js': `${FS}readFileSync(new URL('../docs/guide.md', import.meta.url));\n` }, { reviewed: [entry] }).unusedReviewed).toEqual([]);
+    });
+
+    it('lets an entry for a module outside the package match, and says it was used', () => {
+      const entry = { file: 'other/a.js', expression: "readFileSync(process.argv[2], 'utf8')", reason: 'for the test' };
+      const files = { ...TARGETS, 'other/a.js': source, 'pkg/a.test.js': "import '../other/a.js';\n" };
+      const found = guard(files, { reviewed: [entry] });
+      expect(found.unresolved).toEqual([]);
+      expect([...found.usedReviewed]).toEqual([entry]);
+      expect(found.unusedReviewed).toEqual([]); // it is not an entry for this package, so this package cannot call it stale
+      expect(guard(files).unresolved).toHaveLength(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // A test that imports a module of another package depends on what that module
+  // imports and reads in turn (#1428). In these repositories the package is
+  // "pkg"; "other" and "docs" are outside it.
+  // -------------------------------------------------------------------------
+  describe('follows what a module outside the package imports and reads (#1428)', () => {
+    const OUTSIDE = (name) => `import { x } from '../other/${name}';\nconsole.log(x);\n`;
+    const test = { 'pkg/a.test.js': OUTSIDE('a.js') };
+    const B = { 'other/b.js': 'export const y = 1;\n' };
+
+    describe('files it imports', () => {
+      it('a module outside the package that imports another module outside the package', () => {
+        const found = guard({ ...test, 'other/a.js': "import { y } from './b.js';\nexport const x = y;\n", ...B });
+        expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
+        expect(found.unresolved).toEqual([]);
+      });
+
+      it('goes on to the end of a longer chain', () => {
+        const found = guard({
+          ...TARGETS,
+          ...test,
+          'other/a.js': "import './b.js';\nexport const x = 1;\n",
+          'other/b.js': "import './c.js';\n",
+          'other/c.js': "import '../docs/guide.md?raw';\nimport './d.json';\n",
+          'other/d.json': '{}\n',
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js', 'other/b.js', 'other/c.js', 'other/d.json']);
+      });
+
+      describe('through a re-export', () => {
+        const cases = {
+          'export { y } from': "export { y } from './b.js';\nexport const x = 1;\n",
+          'export * from': "export * from './b.js';\nexport const x = 1;\n",
+          'export * as ns from': "export * as ns from './b.js';\nexport const x = 1;\n",
+          'import then export': "import { y } from './b.js';\nexport { y };\nexport const x = 1;\n",
+        };
+        for (const [label, source] of Object.entries(cases)) {
+          it(label, () => {
+            expect(names(guard({ ...test, 'other/a.js': source, ...B }).files)).toEqual(['other/a.js', 'other/b.js']);
+          });
+        }
+      });
+
+      describe('through an import written another way', () => {
+        const cases = {
+          "a dynamic import('./b.js') in a function nothing calls": "export const x = 1;\nexport const load = () => import('./b.js');\n",
+          'a dynamic import with a template string': 'export const x = 1;\nexport const load = () => import(`./b.js`);\n',
+          "require('./b.js')": "const y = require('./b.js');\nmodule.exports = { x: y };\n",
+          "vi.mock('./b.js')": "vi.mock('./b.js', () => ({}));\nexport const x = 1;\n",
+          'an import with a type-like clause': "import { y as renamed, default as other } from './b.js';\nexport const x = renamed;\n",
+          'an import without a name (it runs the file)': "import './b.js';\nexport const x = 1;\n",
+          'a path without its ending': "import './b';\nexport const x = 1;\n",
+        };
+        for (const [label, source] of Object.entries(cases)) {
+          it(label, () => {
+            const found = guard({ ...test, 'other/a.js': source, ...B });
+            expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
+            expect(found.unresolved).toEqual([]);
+          });
+        }
+
+        it('a folder with an index file', () => {
+          const found = guard({ ...test, 'other/a.js': "import './widgets';\nexport const x = 1;\n", 'other/widgets/index.js': "import '../b.js';\n", ...B });
+          expect(names(found.files)).toEqual(['other/a.js', 'other/b.js', 'other/widgets/index.js']);
+        });
+
+        it('import.meta.glob of a folder is a folder the filter must match', () => {
+          const found = guard({ ...test, 'other/a.js': "export const x = 1;\nexport const pages = import.meta.glob('./pages/*.js');\n", 'other/pages/p.js': '' });
+          expect(names(found.dirs)).toEqual(['other/pages/']);
+        });
+
+        it('a file whose name only looks like an import is not followed', () => {
+          const found = guard({
+            ...test,
+            'other/a.js': "// import './ghost.js';\nconst text = \"import './ghost.js'\";\nimport './b.js';\nexport const x = text;\n",
+            ...B,
+          });
+          expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
+          expect(found.unresolved).toEqual([]);
+        });
+
+        it('a module that cannot be parsed (TypeScript) is read as text', () => {
+          const found = guard({ 'pkg/a.test.js': OUTSIDE('a.ts'), 'other/a.ts': "import type { Y } from './b.js';\nexport const x: number = 1;\n", ...B });
+          expect(names(found.files)).toEqual(['other/a.ts', 'other/b.js']);
+        });
+      });
+
+      it('an import cycle ends', () => {
+        const found = guard({
+          ...test,
+          'other/a.js': "import './b.js';\nimport './a.js';\nexport const x = 1;\n",
+          'other/b.js': "import './c.js';\n",
+          'other/c.js': "import './a.js';\nimport './b.js';\n",
+        });
+        expect(names(found.files)).toEqual(['other/a.js', 'other/b.js', 'other/c.js']);
+      });
+
+      it('a module outside the package that imports a module inside it', () => {
+        const found = guard({
+          ...TARGETS,
+          'pkg/a.test.js': OUTSIDE('a.js'),
+          'other/a.js': "import '../pkg/helper.js';\nexport const x = 1;\n",
+          'pkg/helper.js': `${FS}${PATHS}${HERE}export const text = readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');\n`,
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js']);
+      });
+
+      it('says how the file was reached', () => {
+        const found = guard({ ...test, 'other/a.js': "import './b.js';\nexport const x = 1;\n", 'other/b.js': "import './c.js';\n", 'other/c.js': '' });
+        expect(found.origins.get('other/b.js')).toEqual(new Set(['other/a.js (import, reached from pkg/a.test.js)']));
+        expect(found.origins.get('other/c.js')).toEqual(new Set(['other/b.js (import, reached from pkg/a.test.js > other/a.js)']));
+        // a file the test imports itself keeps the shorter wording
+        expect(found.origins.get('other/a.js')).toEqual(new Set(['pkg/a.test.js (import)']));
+      });
+
+      it('an import shortcut such as "@/lib/x" in a frontend module that a functions test imports', () => {
+        const found = guard(
+          {
+            'functions/a.test.js': "import { x } from '../frontend/src/lib/a.js';\nconsole.log(x);\n",
+            'frontend/src/lib/a.js': "import { y } from '@/lib/b.js';\nexport const x = y;\n",
+            'frontend/src/lib/b.js': 'export const y = 1;\n',
+          },
+          undefined,
+          'functions'
+        );
+        expect(names(found.files)).toEqual(['frontend/src/lib/a.js', 'frontend/src/lib/b.js']);
+        expect(found.unresolved).toEqual([]);
+      });
+    });
+
+    describe('what is not a file of the repository', () => {
+      it('a package name is not a file, and does not hide the files beside it', () => {
+        const found = guard({
+          ...test,
+          'other/a.js': "import lodash from 'lodash';\nimport { readFileSync } from 'node:fs';\nimport scoped from '@scope/pkg/sub';\nimport './b.js';\nexport const x = lodash;\n",
+          ...B,
+        });
+        expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
+        expect(found.unresolved).toEqual([]);
+      });
+
+      it('a file reached only through node_modules is ignored, and so is whatever it imports', () => {
+        const found = guard({
+          ...test,
+          'other/a.js': "import './node_modules/pkg/index.js';\nimport './b.js';\nexport const x = 1;\n",
+          'other/node_modules/pkg/index.js': "import '../../../docs/guide.md?raw';\nimport './missing.js';\n",
+          ...B,
+        });
+        expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
+        expect(found.unresolved).toEqual([]);
+      });
+
+      it('a test that imports a file in node_modules or in built output does not list it either', () => {
+        const found = guard({
+          ...TARGETS,
+          'pkg/a.test.js': "import '../other/node_modules/pkg/index.js';\nimport '../other/dist/out.js';\nimport '../other/b.js';\n",
+          'other/node_modules/pkg/index.js': '',
+          'other/dist/out.js': '',
+          ...B,
+        });
+        expect(names(found.files)).toEqual(['other/b.js']);
+      });
+
+      it('a missing file under node_modules or in built output is not reported', () => {
+        const found = guard({ ...test, 'other/a.js': "import './node_modules/gone/index.js';\nimport './dist/gone.js';\nimport './b.js';\nexport const x = 1;\n", ...B });
+        expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
+        expect(found.unresolved).toEqual([]);
+      });
+
+      it('a read of a file in node_modules is not a dependency, while the read beside it is', () => {
+        const found = guard({
+          ...TARGETS,
+          ...test,
+          'other/a.js': `${FS}${PATHS}${HERE}export const x = readFileSync(join(HERE, 'node_modules', 'pkg', 'package.json'), 'utf8').length + readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8').length;\n`,
+          'other/node_modules/pkg/package.json': '{}',
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js']);
+      });
+    });
+
+    describe('an import whose file cannot be found', () => {
+      const missing = { ...test, 'other/a.js': "import './b.js';\nimport './missing.js';\nexport const x = 1;\n", ...B };
+
+      it('is reported, with the line and the import as REVIEWED_READS spells it', () => {
+        const found = guard(missing);
+        expect(found.unresolved).toHaveLength(1);
+        expect(found.unresolved[0]).toMatchObject({ file: 'other/a.js', line: 2, expression: "import './missing.js'" });
+        expect(found.unresolved[0].reason).toContain('no file is found');
+        expect(found.unresolved[0].reason).toContain('reached from pkg/a.test.js');
+        expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']); // the rest of the chain is still followed
+      });
+
+      it('is reported however it is written', () => {
+        const spelled = ["export * from './missing.js';", "const x = require('./missing.js');", "export const load = () => import('./missing.js');", "vi.mock('./missing.js');"];
+        for (const line of spelled) {
+          const found = guard({ ...test, 'other/a.js': `${line}\nexport const x = 1;\n` });
+          expect(found.unresolved.map((u) => u.expression), line).toEqual(["import './missing.js'"]);
+        }
+      });
+
+      it('is reported two modules down too', () => {
+        const found = guard({ ...test, 'other/a.js': "import './b.js';\nexport const x = 1;\n", 'other/b.js': "import './missing.js';\n" });
+        expect(found.unresolved.map((u) => `${u.file}:${u.line}`)).toEqual(['other/b.js:1']);
+        expect(found.unresolved[0].reason).toContain('pkg/a.test.js > other/a.js');
+      });
+
+      it('is let through by an entry for the importing module, and the entry counts as used', () => {
+        const entry = { file: 'other/a.js', expression: "import './missing.js'", reason: 'made by a build step' };
+        const found = guard(missing, { reviewed: [entry] });
+        expect(found.unresolved).toEqual([]);
+        expect([...found.usedReviewed]).toEqual([entry]);
+        const wrong = { ...entry, expression: "import './other-missing.js'" };
+        expect(guard(missing, { reviewed: [wrong] }).unresolved).toHaveLength(1);
+      });
+
+      it('is not reported for a test inside the package, which is a broken test rather than an unknown module', () => {
+        const found = guard({ 'pkg/a.test.js': "import './missing.js';\nimport '../other/a.js';\n", 'other/a.js': "import './gone.js';\nimport './b.js';\n", ...B });
+        expect(found.unresolved.map((u) => `${u.file}: ${u.expression}`)).toEqual(["other/a.js: import './gone.js'"]);
+        expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']);
+      });
+    });
+
+    describe('files it reads', () => {
+      const asModule = (...lines) => ({ ...test, 'other/a.js': `${lines.join('\n')}\nexport const x = 1;\n` });
+      const READ_BASE = `${FS}${PATHS}${HERE}`;
+
+      it('with join, at the top of the module', () => {
+        const found = guard({ ...TARGETS, ...asModule(READ_BASE, "readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');") });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js']);
+        expect(found.unresolved).toEqual([]);
+      });
+
+      it('with resolve', () => {
+        const found = guard({ ...TARGETS, ...asModule(READ_BASE, "readFileSync(resolve(HERE, '../docs/guide.md'));") });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js']);
+      });
+
+      it('with new URL(..., import.meta.url)', () => {
+        const found = guard({ ...TARGETS, ...asModule(FS, "readFileSync(new URL('../docs/guide.md', import.meta.url), 'utf8');") });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js']);
+      });
+
+      it("from the package's folder, with process.cwd() (that is where the tests run)", () => {
+        const found = guard({ ...TARGETS, ...asModule(FS, PATHS, "readFileSync(join(process.cwd(), '..', 'docs', 'guide.md'));") });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js']);
+      });
+
+      it('a folder whose file names are only known at run time', () => {
+        const found = guard({ ...TARGETS, ...asModule("import { readdirSync, readFileSync } from 'node:fs';", PATHS, HERE, "const dir = join(HERE, '..', 'docs');", 'for (const name of readdirSync(dir)) readFileSync(join(dir, name));') });
+        expect(names(found.dirs)).toEqual(['docs/']);
+        expect(found.unresolved).toEqual([]);
+      });
+
+      it('in a module that the first one imports', () => {
+        const found = guard({
+          ...TARGETS,
+          ...asModule("import './b.js';"),
+          'other/b.js': `${READ_BASE}export const text = readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');\n`,
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js', 'other/b.js']);
+      });
+
+      it('in a function the test calls, with the argument the test gives', () => {
+        const found = guard({
+          ...TARGETS,
+          'pkg/a.test.js': "import { repoFile } from '../other/helper.js';\nrepoFile('docs/other.md');\n",
+          'other/helper.js': `${READ_BASE}export function repoFile(rel) {\n  return readFileSync(join(HERE, '..', rel), 'utf8');\n}\n`,
+        });
+        expect(names(found.files)).toEqual(['docs/other.md', 'other/helper.js']);
+      });
+
+      it('in a function reached through the first module', () => {
+        const found = guard({
+          ...TARGETS,
+          'pkg/a.test.js': "import { x } from '../other/a.js';\nx();\n",
+          'other/a.js': "import { load } from './b.js';\nexport const x = () => load();\n",
+          'other/b.js': `${READ_BASE}export function load() {\n  return readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');\n}\n`,
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js', 'other/b.js']);
+      });
+
+      it('in a function that nothing calls is not a read (the read at the top of the module is)', () => {
+        const found = guard({
+          ...TARGETS,
+          ...asModule(READ_BASE, "readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');", "export function never() {\n  return readFileSync(join(HERE, '..', 'docs', 'other.md'), 'utf8');\n}"),
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js']);
+      });
+
+      it('in a module that is only started from the command line is not a read (the read at the top of the module is)', () => {
+        const found = guard({
+          ...TARGETS,
+          ...asModule(
+            READ_BASE,
+            "readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');",
+            "if (process.argv[1] === fileURLToPath(import.meta.url)) {\n  readFileSync(join(HERE, '..', 'docs', 'other.md'), 'utf8');\n}"
+          ),
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js']);
+      });
+
+      it('that it cannot work out is reported, and an entry for the module lets it through', () => {
+        const files = asModule(FS, 'readFileSync(process.argv[2], "utf8");');
+        const found = guard(files);
+        expect(found.unresolved).toHaveLength(1);
+        expect(found.unresolved[0]).toMatchObject({ file: 'other/a.js', line: 3 });
+        expect(found.unresolved[0].reason).toContain('process');
+        const entry = { file: 'other/a.js', expression: 'readFileSync(process.argv[2], "utf8")', reason: 'for the test' };
+        expect(guard(files, { reviewed: [entry] }).unresolved).toEqual([]);
+      });
+
+      it('through something that looks like a file read but is not from Node (an injected file system)', () => {
+        const found = guard(asModule('export function load(fsImpl) {\n  return fsImpl.readFileSync("x");\n}', 'load({});'));
+        expect(found.unresolved.map((u) => u.reason).join(' ')).toContain('looks like a file read');
+      });
+
+      it('says where a read was found', () => {
+        const found = guard({ ...TARGETS, ...asModule(READ_BASE, "readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');") });
+        expect(found.origins.get('docs/guide.md')).toEqual(new Set(['other/a.js:6 (reached from pkg/a.test.js)']));
+      });
+    });
+
+    describe('an import() or require() whose path is worked out at run time', () => {
+      const READ_BASE = `${FS}${PATHS}${HERE}`;
+
+      it('that names one file is followed into that file', () => {
+        const found = guard({
+          ...TARGETS,
+          ...test,
+          'other/a.js': `${PATHS}${HERE}await import(join(HERE, 'b.js'));\nexport const x = 1;\n`,
+          'other/b.js': `${READ_BASE}export const text = readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');\n`,
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js', 'other/b.js']);
+        expect(found.unresolved).toEqual([]);
+        expect(found.origins.get('other/b.js')).toBeDefined();
+      });
+
+      it('in a test inside the package is followed too', () => {
+        const found = guard({
+          ...TARGETS,
+          'pkg/a.test.js': `${PATHS}${HERE}await import(join(HERE, 'helper.js'));\n`,
+          'pkg/helper.js': `${READ_BASE}readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');\n`,
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md']);
+      });
+
+      it('that leads further than a few levels is reported', () => {
+        const chain = {};
+        for (let i = 1; i <= 6; i++) {
+          chain[`other/m${i}.js`] = `${PATHS}${HERE}${i < 6 ? `await import(join(HERE, 'm${i + 1}.js'));\n` : 'export const end = 1;\n'}`;
+        }
+        const found = guard({ ...test, 'other/a.js': `${PATHS}${HERE}import(join(HERE, 'm1.js'));\nexport const x = 1;\n`, ...chain });
+        expect(found.unresolved.length).toBeGreaterThan(0);
+        expect(found.unresolved[0].reason).toContain('levels deep');
+        // a shorter chain is followed to the end without a report
+        const short = guard({ ...test, 'other/a.js': `${PATHS}${HERE}import(join(HERE, 'm5.js'));\nexport const x = 1;\n`, ...chain });
+        expect(names(short.files)).toEqual(expect.arrayContaining(['other/m5.js', 'other/m6.js']));
+        expect(short.unresolved).toEqual([]);
+      });
     });
   });
 });
