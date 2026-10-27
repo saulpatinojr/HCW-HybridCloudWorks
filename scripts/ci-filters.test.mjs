@@ -652,6 +652,19 @@ ${GUIDE}createReadStream(guide);
       };
       for (const [label, source] of Object.entries(found)) it(`is followed: ${label}`, () => seen(source));
 
+      describe('re-exported by one of our own files', () => {
+        const READ = src(PATHS, HERE, GUIDE, 'readFileSync(GUIDE);');
+        const cases = {
+          "export { readFileSync } from 'node:fs'": [src("export { readFileSync } from 'node:fs';"), src("import { readFileSync } from './h.js';", READ)],
+          'a renamed fs function': [src("import { readFileSync as rd } from 'node:fs';", 'export { rd as readFileSync };'), src("import { readFileSync } from './h.js';", READ)],
+          "export * from 'node:fs'": [src("export * from 'node:fs';"), src("import { readFileSync } from './h.js';", READ)],
+          'the fs module as a default export': [src("import fs from 'node:fs';", 'export default fs;'), src("import fs from './h.js';", PATHS, HERE, GUIDE, 'fs.readFileSync(GUIDE);')],
+        };
+        for (const [label, [helper, test]] of Object.entries(cases)) {
+          it(`is followed: ${label}`, () => seen(test, { 'pkg/h.js': helper }));
+        }
+      });
+
       const reported = {
         'taken out of fs with { }': src(FSDEFAULT, PATHS, HERE, GUIDE, 'const { readFileSync } = fs;', 'readFileSync(GUIDE);'),
         'fs.promises kept in a variable': src(FSDEFAULT, PATHS, HERE, GUIDE, 'const fsp = fs.promises;', 'await fsp.readFile(GUIDE);'),

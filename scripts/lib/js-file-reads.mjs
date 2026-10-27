@@ -814,6 +814,29 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     return { frame: null, active: new Set(), approx: new Map(), reentered: new Set(), depth: 0 };
   };
 
+  /**
+   * Where an imported name really comes from. A name imported from one of our own files may have been
+   * re-exported from a Node module there (export { readFileSync } from 'node:fs'), and the file functions
+   * must still be seen. Returns { source, imported } or null.
+   */
+  const originOf = (binding, seen = new Set()) => {
+    if (binding.kind !== 'import') return null;
+    if (!isRelative(binding.source)) return { source: binding.source, imported: binding.imported };
+    const file = resolveImport(binding.source, binding.file);
+    const key = `${file}#${binding.imported}`;
+    if (!file || seen.has(key)) return null;
+    seen.add(key);
+    const exports = loaded.get(file)?.exports;
+    const entry = exports?.get(binding.imported);
+    if (entry?.from) return originOf({ kind: 'import', source: entry.from, imported: entry.name, file }, seen);
+    if (entry) return originOf(entry, seen);
+    for (const spec of exports?.all ?? []) {
+      const found = originOf({ kind: 'import', source: spec, imported: binding.imported, file }, seen);
+      if (found) return found;
+    }
+    return null;
+  };
+
   /** The module in process.getBuiltinModule('fs'), else null. */
   const builtinModuleOf = (node) => {
     const callee = node.type === 'CallExpression' ? node.callee : null;
@@ -832,10 +855,11 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     if (node.type === 'Identifier') {
       const binding = lookup(node, node.name);
       if (!binding) return GLOBAL_REFS[node.name] ?? null;
-      if (binding.kind !== 'import' || isRelative(binding.source)) return null;
-      const mod = normalizeModule(binding.source);
-      if (['default', '*', 'promises'].includes(binding.imported) || (mod === 'path' && ['posix', 'win32'].includes(binding.imported))) return { mod, name: null };
-      return { mod, name: binding.imported };
+      const origin = originOf(binding);
+      if (!origin || isRelative(origin.source)) return null;
+      const mod = normalizeModule(origin.source);
+      if (['default', '*', 'promises'].includes(origin.imported) || (mod === 'path' && ['posix', 'win32'].includes(origin.imported))) return { mod, name: null };
+      return { mod, name: origin.imported };
     }
     if (node.type === 'MemberExpression') {
       const base = moduleRef(node.object);
@@ -1662,7 +1686,8 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
           addProblem(module, node, ref.name, `${ref.name} is handed to other code instead of being called directly, so the paths it reads cannot be followed`);
         }
       } else if (ref.name === null) {
-        const declared = parent.type === 'VariableDeclarator' && parent.init === node && requiredModule(node) !== null;
+        // export default fs is followed where the default export is imported (originOf), so it is not a problem here
+        const declared = (parent.type === 'VariableDeclarator' && parent.init === node && requiredModule(node) !== null) || parent.type === 'ExportDefaultDeclaration';
         if (!isMemberOf(parent, node) && !declared && runsInTests(node)) {
           addProblem(module, node, 'fs', 'the fs module is stored, passed on or looked up by a name worked out at run time, so the files read through it are unknown');
         }
