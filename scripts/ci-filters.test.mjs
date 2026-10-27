@@ -80,9 +80,9 @@ const REVIEWED_READS = [
     file: 'scripts/lib/ci-filters.mjs',
     reason:
       'This is the guard itself. To find the tests it lists every package folder, so it depends on all of them. ' +
-      'The scripts job already runs on most pull requests but not on one that only changes another package, and ' +
-      "listing every package folder in the scripts filter is the owner's decision. A push to main runs every job, so " +
-      'a read the filters miss is still caught there.',
+      'The scripts filter does not list every package folder, so a pull request that only changes another package would not run the ' +
+      'scripts tests. The guard does not rely on that filter: it also runs in its own step on every pull request (the step ' +
+      '"CI path filters list every file the tests read" in ci.yml, kept outside the filter by ci-workflow-steps.test.mjs).',
   },
   {
     file: 'scripts/lib/pin-text.mjs',
@@ -278,13 +278,14 @@ describe('CI filters change detection (QA-4, #979)', () => {
       });
 
       // The workflow applies the filter with `grep -E`, which reads regular expressions a little differently
-      // from JavaScript (no \d, for one), and a filter grep cannot read turns the whole row off.
+      // from JavaScript (no \d, for one). A filter grep cannot read now fails the job instead of switching it off
+      // (ci-workflow-steps.test.mjs runs the workflow's own steps on one), but it is still a mistake to catch here.
       const grepVersion = spawnSync('grep', ['--version'], { encoding: 'utf8' });
       it.skipIf(grepVersion.status !== 0)('has a ci.yml filter that grep -E reads, and reads the same way JavaScript does', () => {
         const compFilter = filters.get(comp.dir);
         const probes = [...found.dirs].map((dir) => `${dir}${DIRECTORY_PROBE}`);
         const paths = [...new Set([...found.files, ...probes, ...TRACKED_FILES, 'README.md', '.github/workflows/ci.yml'])];
-        const asInWorkflow = `${compFilter.filter}|^\\.github/workflows/ci\\.yml$`;
+        const asInWorkflow = `(${compFilter.filter})|^\\.github/workflows/ci\\.yml$`;
         const result = spawnSync('grep', ['-E', asInWorkflow], { input: `${paths.join('\n')}\n`, encoding: 'utf8' });
         expect(result.status, `grep -E could not read the filter of "${comp.name}": ${result.stderr}`).not.toBe(2);
         const byGrep = new Set(result.stdout.split('\n').filter(Boolean));

@@ -176,6 +176,10 @@ jobs:
           # changes only one of these now runs this row. (TODO|CHANGELOG)\.md
           # is older than this note: the only test that reads them today is
           # no-wiki-pointers.test.mjs, which reads every tracked text file.
+          # ci-filters.test.mjs, the test that checks every filter in this
+          # list, is not left to this filter: it also runs in its own step on
+          # every pull request (the step "CI path filters list every file the
+          # tests read", further down; #1428).
           - name: scripts (operations)
             dir: scripts
             filter: '^(scripts/|\.github/workflows/|\.github/(actionlint\.yaml|pull_request_template\.md)$|infra/|infra-lab/|lab-host/|lab-image/|(TODO|CHANGELOG)\.md$|docs/runbooks/(labs-host|alerting-and-support|admin-signin-rollback|cosmos-restore|data-subject-requests|deployment-runbook)\.md$|([^/]+/)*package(-lock)?\.json$|([^/]+/)*\.(nvmrc|node-version|python-version)$|([^/]+/)*Dockerfile|frontend/src/lib/landingZone/(avmVersions|labImage|tfConstraints)\.js$|frontend/src/(pages/shared/LabPanePage\.jsx|pages/tools/AddOnPanePage\.jsx|pages/docker/BuildingImagesPage\.jsx|data/labs/catalogue\.js|context/ProviderContext\.jsx|components/admin/labs/labsView\.js)$|vps-agent/(index\.js|\.env\.example|lib/(capabilities|docker-runner|shutdown|maintenance-hold)\.js)$|functions/(function-inventory\.json$|src/(lib/(labs|public-section-counts|rss/feeds|addons/registry|credentials/(cloudflare-roll|google-roll|aws-roll))\.js|functions/(schedulers|jobs-sweeper)\.js)$))'
@@ -237,12 +241,28 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
-          if grep -qE "${FILTER}"'|^\.github/workflows/ci\.yml$' <<<"$changed"; then
+          # grep -E answers 0 when a changed file matches the filter, 1 when
+          # none does, and 2 or more when it could not read the filter at all
+          # (an unclosed parenthesis, say). `if grep …` takes every answer
+          # other than 0 as "no", so a filter grep cannot read would switch
+          # the job off as "no relevant change" while the pull request looked
+          # green (#1428). The answer is kept instead, and anything other than
+          # 0 or 1 fails this step and names the filter. The filter goes in
+          # brackets so that a stray backslash at its end cannot join onto the
+          # `|` that adds ci.yml and so hide the mistake. The same few lines
+          # are in the other change-detection steps below; the test in
+          # scripts/ci-workflow-steps.test.mjs runs each of them.
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "component files changed — running all checks"
-          else
+          elif [ "${status}" -eq 1 ]; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "no relevant change — skipping checks, still reporting this context"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
           fi
 
       # A row's own node-version wins; a row without one gets the newest
@@ -276,10 +296,23 @@ jobs:
 
       # `npm ci` is the point of this job for packages with no tests: it fails
       # when the lockfile is out of sync with package.json, which is exactly
-      # how a bad dependency bump shows up.
+      # how a bad dependency bump shows up. The scripts row installs on every
+      # pull request, because the step after it needs the packages.
       - name: Install (lockfile-strict)
-        if: steps.changes.outputs.relevant == 'true'
+        if: steps.changes.outputs.relevant == 'true' || matrix.name == 'scripts (operations)'
         run: npm ci
+
+      # On every pull request, whatever it touches, so outside the filter. This
+      # is the guard that checks every row's filter above lists the files its
+      # tests read (#979, #1414). It lives in the scripts package, so a pull
+      # request that changed only a frontend or functions test, and so did not
+      # run this row's tests, used to meet it for the first time after the
+      # merge, on main (#1428). Only this one test file runs here; the Test
+      # step below runs it again with the rest when the row is relevant.
+      # ci-workflow-steps.test.mjs keeps this step outside the filter.
+      - name: CI path filters list every file the tests read
+        if: matrix.name == 'scripts (operations)'
+        run: npx vitest run ci-filters.test.mjs
 
 
       # Lint and format run before the build so style feedback arrives fast.
@@ -451,6 +484,13 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # docker-runner.js too: hcw-labjob-sweep.test.sh checks the
+          # sweep's label against the JOB_LABEL it exports, and a PR that
+          # renamed only the label would otherwise skip that check.
+          # docs/runbooks/labs-host.md too: coder-signin.test.sh and
+          # hcw-coder-automation.test.py check its Coder lines (#954).
+          # (The script adds ci.yml itself to every job's filter.)
+          FILTER: '^lab-host/|^docs/runbooks/labs-host\.md$|^vps-agent/lib/docker-runner\.js$|^vps-agent/bin/report-host-check\.js$'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -465,17 +505,19 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
-          # docker-runner.js too: hcw-labjob-sweep.test.sh checks the
-          # sweep's label against the JOB_LABEL it exports, and a PR that
-          # renamed only the label would otherwise skip that check.
-          # docs/runbooks/labs-host.md too: coder-signin.test.sh and
-          # hcw-coder-automation.test.py check its Coder lines (#954).
-          if grep -qE '^lab-host/|^docs/runbooks/labs-host\.md$|^\.github/workflows/ci\.yml$|^vps-agent/lib/docker-runner\.js$|^vps-agent/bin/report-host-check\.js$' <<<"$changed"; then
+          # grep's answer is kept, not tested in an `if`: see the matrix job's
+          # detect step for why (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "lab-host files changed — running all checks"
-          else
+          elif [ "${status}" -eq 1 ]; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "no relevant change — skipping checks, still reporting this context"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
           fi
 
       - name: Set up Python
@@ -880,6 +922,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^lab-host/coder/'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -892,12 +935,19 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
-          if grep -qE '^lab-host/coder/|^\.github/workflows/ci\.yml$' <<<"$changed"; then
+          # grep's answer is kept, not tested in an `if`: see the matrix job's
+          # detect step for why (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "lab-host/coder files changed — running all checks"
-          else
+          elif [ "${status}" -eq 1 ]; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "no relevant change — skipping checks, still reporting this context"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
           fi
 
       - name: Set up Node.js
@@ -956,6 +1006,7 @@ jobs:
         id: changes
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FILTER: '^(hooks/|tooling/)'
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
@@ -970,12 +1021,19 @@ jobs:
             echo "could not compute the diff — running all checks rather than guessing"
             exit 0
           }
-          if grep -qE '^(hooks/|tooling/)|^\.github/workflows/ci\.yml$' <<<"$changed"; then
+          # grep's answer is kept, not tested in an `if`: see the matrix job's
+          # detect step for why (#1428).
+          status=0
+          grep -qE "(${FILTER})"'|^\.github/workflows/ci\.yml$' <<<"$changed" || status=$?
+          if [ "${status}" -eq 0 ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "harness files changed — running all checks"
-          else
+          elif [ "${status}" -eq 1 ]; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "no relevant change — skipping checks, still reporting this context"
+          else
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            exit 1
           fi
 
       - name: Set up Python
