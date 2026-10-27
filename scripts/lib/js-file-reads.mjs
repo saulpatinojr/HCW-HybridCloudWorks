@@ -89,9 +89,16 @@ const FILE_LOOKING_NAMES = new Set([
   'realpathSync',
   'copyFileSync',
   'cpSync',
+  'statfsSync',
+  'readSync',
   'readFile',
   'readdir',
   'createReadStream',
+  'lstat',
+  'opendir',
+  'realpath',
+  'readlink',
+  'copyFile',
 ]);
 
 /** A file that mentions none of these cannot read a file, so failing to parse it is harmless. */
@@ -304,7 +311,7 @@ function bind(scopeNode, name, props) {
   scopeNode.$scope ??= new Map();
   let binding = scopeNode.$scope.get(name);
   if (!binding) {
-    binding = { name, kind: 'var', inits: [], assigns: [], calls: [], viaParams: [], callbackUses: [], pushes: [], tainted: false, counted: false, mutated: false, escapes: false, ...props };
+    binding = { name, kind: 'var', inits: [], assigns: [], calls: [], viaParams: [], callbackUses: [], pushes: [], tainted: false, counted: false, mutated: false, loopAssigned: false, escapes: false, ...props };
     scopeNode.$scope.set(name, binding);
   } else if (props.inits) {
     binding.inits.push(...props.inits);
@@ -532,6 +539,12 @@ function isValueReference(node) {
       return parent.value === node || (parent.key === node && parent.computed);
     case 'VariableDeclarator':
       return parent.init === node;
+    case 'AssignmentPattern':
+      // function load(p, read = readFileSync): the default is a use, the name on the left is a declaration
+      return parent.right === node;
+    case 'PropertyDefinition':
+      // class R { read = readFileSync }
+      return parent.value === node || (parent.key === node && parent.computed);
     case 'FunctionDeclaration':
     case 'FunctionExpression':
     case 'ArrowFunctionExpression':
@@ -544,10 +557,8 @@ function isValueReference(node) {
     case 'BreakStatement':
     case 'ContinueStatement':
     case 'MethodDefinition':
-    case 'PropertyDefinition':
     case 'CatchClause':
     case 'RestElement':
-    case 'AssignmentPattern':
     case 'ArrayPattern':
     case 'ObjectPattern':
     case 'ClassDeclaration':
@@ -561,6 +572,20 @@ function isValueReference(node) {
 function functionOf(binding) {
   if (binding.kind === 'function') return binding.fn;
   return binding.inits?.find((init) => FUNCTION_TYPES.has(init.type)) ?? null;
+}
+
+const LOOP_TYPES = new Set(['ForStatement', 'ForInStatement', 'ForOfStatement', 'WhileStatement', 'DoWhileStatement']);
+
+/** Whether code runs more than once because of a loop around it (or a list method's callback), within its own function. */
+function insideLoop(node) {
+  for (let n = node.parent; n; n = n.parent) {
+    if (LOOP_TYPES.has(n.type)) return true;
+    if (FUNCTION_TYPES.has(n.type)) {
+      const call = n.parent;
+      return call?.type === 'CallExpression' && call.arguments.includes(n) && call.callee.type === 'MemberExpression' && !call.callee.computed && [...ITEM_CALLBACK_METHODS, 'reduce', 'reduceRight'].includes(call.callee.property.name);
+    }
+  }
+  return false;
 }
 
 function enclosingFunction(node) {
@@ -577,6 +602,8 @@ function enclosingFunction(node) {
  * @param {Map<string, string>} options.modules  absolute file path -> source text
  * @param {(file: string) => boolean} [options.reportIn]  which of the modules to report reads from
  *        (default all). The others are parsed only so the values they export can be followed.
+ * @param {(path: string) => (string|null)} [options.probeFile]  finds the file a path means when it is written without
+ *        its ending (../lib means ../lib/index.js)
  * @param {string} options.cwd  the folder the tests run in (a package folder)
  * @param {(spec: string, fromFile: string) => (string|null)} options.resolveImport
  *        maps an import to the absolute path of a module in `modules` (or null)
@@ -586,7 +613,7 @@ function enclosingFunction(node) {
  *   one entry per place that reads a file: the files and directories it can
  *   touch, and the reasons (if any) the guard could not tell what it touches
  */
-export function findFileReads({ modules, reportIn = () => true, cwd, resolveImport }) {
+export function findFileReads({ modules, reportIn = () => true, cwd, resolveImport, probeFile = () => null }) {
   const loaded = new Map();
   const references = [];
 
@@ -654,6 +681,18 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     if (binding) binding.mutated = true;
   };
 
+  /** Every name a module exports, including the ones that arrive through export * from. */
+  const allExportNames = (file, seen = new Set()) => {
+    const module = loaded.get(file);
+    if (!module || seen.has(file)) return [];
+    seen.add(file);
+    const viaStar = module.exports.all.flatMap((spec) => {
+      const target = resolveImport(spec, file);
+      return target ? allExportNames(target, seen) : [];
+    });
+    return [...module.exports.keys(), ...viaStar];
+  };
+
   /** A namespace import (import * as m) used as anything but m.name(...) hides which of its functions run. */
   const markNamespaceUse = (id) => {
     const holder = lookup(id, id.name);
@@ -663,7 +702,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     const parent = id.parent;
     const isNamedMember = parent.type === 'MemberExpression' && parent.object === id && !parent.computed;
     if (isNamedMember && parent.parent.type === 'CallExpression' && parent.parent.callee === parent) return;
-    const names = isNamedMember ? [parent.property.name] : [...loaded.get(file).exports.keys()];
+    const names = isNamedMember ? [parent.property.name] : allExportNames(file);
     for (const name of names) {
       const exported = exportedBinding(file, name);
       if (exported) exported.escapes = true;
@@ -681,6 +720,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
         for (const id of targets) {
           const binding = lookup(id, id.name);
           if (!binding) continue;
+          if (insideLoop(node)) binding.loopAssigned = true;
           if (node.operator === '=' && node.left.type === 'Identifier') binding.assigns.push(node.right);
           else if (node.operator === '+=' && node.left.type === 'Identifier' && node.right.type === 'Literal' && typeof node.right.value === 'number') binding.counted = true;
           // p += '/docs' is p = p + '/docs'
@@ -754,6 +794,26 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     return false;
   };
 
+  /** Whether a test looks at one element of process.argv (process.argv[1]), or at require.main / import.meta.main. */
+  const indexesArgv = (root, depth = 0) => {
+    const stack = [root];
+    while (stack.length > 0) {
+      const n = stack.pop();
+      if (n.type === 'MemberExpression') {
+        const isArgv = (m) => m.type === 'MemberExpression' && !m.computed && m.object.type === 'Identifier' && m.object.name === 'process' && m.property.name === 'argv';
+        if (n.computed && isArgv(n.object)) return true;
+        if (!n.computed && n.object.type === 'Identifier' && n.object.name === 'require' && n.property.name === 'main') return true;
+        if (n.object.type === 'MetaProperty' && n.property.name === 'main') return true;
+      }
+      if (n.type === 'Identifier' && depth < 3) {
+        const binding = lookup(n, n.name);
+        if (binding?.kind === 'var' && binding.inits.some((init) => indexesArgv(init, depth + 1))) return true;
+      }
+      for (const child of childrenOf(n)) stack.push(child);
+    }
+    return false;
+  };
+
   const computePolarity = (test, depth = 0) => {
     // a test on the environment alone ('env') says nothing about how the script was started
     if (!mentionsArgv(test)) return mentionsEnv(test) ? 'env' : null;
@@ -761,7 +821,10 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
       const inner = startedFromCommandLine(test.argument, depth);
       return inner === 'positive' ? 'negative' : inner === 'negative' ? 'positive' : 'unclear';
     }
-    if (test.type === 'BinaryExpression') return ['===', '=='].includes(test.operator) ? 'positive' : ['!==', '!='].includes(test.operator) ? 'negative' : 'unclear';
+    if (test.type === 'BinaryExpression') {
+      if (!indexesArgv(test)) return 'unclear'; // process.argv.length === 2 says nothing about whether this is the script that was started
+      return ['===', '=='].includes(test.operator) ? 'positive' : ['!==', '!='].includes(test.operator) ? 'negative' : 'unclear';
+    }
     if (test.type === 'LogicalExpression' && test.operator === '&&') {
       const sides = [startedFromCommandLine(test.left, depth), startedFromCommandLine(test.right, depth)].filter((side) => side && side !== 'env');
       return sides.length > 0 && sides.every((side) => side === sides[0]) ? sides[0] : 'unclear';
@@ -777,7 +840,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     }
     // || and ?: can run either way; anything else that looks at the command line (process.argv[1], x.endsWith(...)) means "started from it"
     if (test.type === 'LogicalExpression' || test.type === 'ConditionalExpression') return 'unclear';
-    return 'positive';
+    return indexesArgv(test) ? 'positive' : 'unclear';
   };
 
   const polarityCache = new Map();
@@ -832,7 +895,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
   let steps = 0;
   const freshContext = () => {
     steps = 0;
-    return { frame: null, active: new Set(), approx: new Map(), reentered: new Set(), depth: 0 };
+    return { frame: null, active: new Set(), nested: new Map(), approx: new Map(), reentered: new Set(), depth: 0 };
   };
 
   /**
@@ -1030,6 +1093,16 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     );
   };
 
+  /** What later code adds to a name: assignments, counters, other changes, pushes. */
+  const withLater = (binding, values, ctx) => {
+    const out = [...values];
+    for (const rhs of binding.assigns) out.push(...evalNode(rhs, ctx));
+    if (binding.counted) out.push(NAME);
+    if (binding.tainted) out.push(unk(`\`${binding.name}\` is changed in a way the guard does not follow (+=, ++ and the like)`));
+    if (binding.mutated) out.push(unk(`\`${binding.name}\` has an item or property set after it is made`));
+    return withPushes(binding, uniq(out), ctx);
+  };
+
   /** What a name holds: where it starts, plus everything later code sets it to. */
   const bindingValues = (binding, ctx) => {
     let out;
@@ -1063,11 +1136,7 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
       default:
         return [unk(`\`${binding.name}\` is ${binding.why ?? 'not something the guard follows'}`)];
     }
-    for (const rhs of binding.assigns) out.push(...evalNode(rhs, ctx));
-    if (binding.counted) out.push(NAME);
-    if (binding.tainted) out.push(unk(`\`${binding.name}\` is changed in a way the guard does not follow (+=, ++ and the like)`));
-    if (binding.mutated) out.push(unk(`\`${binding.name}\` has an item or property set after it is made`));
-    return withPushes(binding, uniq(out), ctx);
+    return withLater(binding, out, ctx);
   };
 
   const sameOrFewer = (values, known) => {
@@ -1076,34 +1145,53 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
   };
 
   /**
+   * How many rounds a name gets. A name set again inside a loop gets three and is
+   * reported if it still changes, so a climb up the folders (d = dirname(d)) gives
+   * the same answer however deep the checkout is. A name set again in a straight
+   * line gets one round per step and is not reported.
+   */
+  const roundsFor = (binding) => {
+    if (binding.loopAssigned) return { rounds: 3, straightLine: false };
+    if (binding.assigns.length > 0) return { rounds: binding.assigns.length + 1, straightLine: true };
+    return { rounds: MAX_ROUNDS, straightLine: false };
+  };
+
+  let bindingCounter = 0;
+  const bindingId = (binding) => (binding.id ??= ++bindingCounter);
+
+  /**
    * A name that is worked out from its own earlier value (p = join(p, 'x'), or a
    * walk that passes a folder to itself) is worked out in rounds: each round
-   * starts from the best answer so far, until nothing new appears.
+   * starts from the best answer so far, until nothing new appears. A parameter
+   * whose value the caller gave (a frame) goes through the same steps, so what
+   * the function does to it afterwards is not lost.
    */
   const evalBinding = (binding, ctx) => {
-    if (ctx.frame?.has(binding)) return withPushes(binding, ctx.frame.get(binding), ctx);
-    if (ctx.approx.has(binding)) {
-      ctx.reentered.add(binding);
-      return ctx.approx.get(binding);
+    const framed = Boolean(ctx.frame?.has(binding));
+    const key = framed ? `${bindingId(binding)}#${ctx.frame.get(binding).map(keyOf).join('|')}` : String(bindingId(binding));
+    if (ctx.approx.has(key)) {
+      ctx.reentered.add(key);
+      return ctx.approx.get(key);
     }
+    const { rounds, straightLine } = roundsFor(binding);
     let guess = [];
-    for (let round = 0; round < MAX_ROUNDS; round++) {
-      ctx.approx.set(binding, guess);
-      ctx.reentered.delete(binding);
+    for (let round = 0; round < rounds; round++) {
+      ctx.approx.set(key, guess);
+      ctx.reentered.delete(key);
       let out;
       try {
-        out = bindingValues(binding, ctx);
+        out = framed ? withLater(binding, ctx.frame.get(binding), ctx) : bindingValues(binding, ctx);
       } finally {
-        ctx.approx.delete(binding);
+        ctx.approx.delete(key);
       }
-      if (!ctx.reentered.has(binding) || sameOrFewer(out, guess)) {
-        ctx.reentered.delete(binding);
+      if (!ctx.reentered.has(key) || sameOrFewer(out, guess)) {
+        ctx.reentered.delete(key);
         return uniq([...guess, ...out]);
       }
       guess = uniq([...guess, ...out]);
     }
-    ctx.reentered.delete(binding);
-    return uniq([...guess, unk(`\`${binding.name}\` keeps changing as it is rebuilt, so the guard stops following it`)]);
+    ctx.reentered.delete(key);
+    return straightLine ? guess : uniq([...guess, unk(`\`${binding.name}\` keeps changing as it is rebuilt, so the guard stops following it`)]);
   };
 
   /** The values of property `key` of an object literal value. */
@@ -1231,11 +1319,16 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
     // the same function with the same arguments, already being worked out, adds nothing new
     const key = `${fn.file}:${fn.range[0]}|${(fn.$params ?? []).map((param) => (param ? (frame.get(param) ?? []).map(keyOf).join('+') : '')).join(',')}`;
     if (ctx.active.has(key)) return [];
+    // a function that keeps calling itself with a new argument (root(dirname(d))) gets three levels, however deep the checkout is
+    const levels = ctx.nested.get(fn) ?? 0;
+    if (levels >= 3) return [unk('it calls itself with an argument that keeps changing, so the guard stops following it')];
     ctx.active.add(key);
+    ctx.nested.set(fn, levels + 1);
     try {
       return returnValues(fn, { ...ctx, frame, depth: ctx.depth + 1 });
     } finally {
       ctx.active.delete(key);
+      ctx.nested.set(fn, levels);
     }
   };
 
@@ -1595,8 +1688,11 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
           const p = fileUrlToPathSafe(spec);
           return p === null ? { unresolved: 'it is a URL that is not a file path' } : { file: p };
         }
-        if (spec.startsWith('.')) return { file: resolve(here, spec) };
-        return isAbsolute(spec) ? { file: spec } : {};
+        if (spec.startsWith('.') || isAbsolute(spec)) {
+          const written = isAbsolute(spec) ? spec : resolve(here, spec);
+          return { file: probeFile(written) ?? written };
+        }
+        return {};
       }
       case 'pre': {
         if (/^(?:data|https?|node):/.test(value.v)) return {};
@@ -1655,6 +1751,8 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
 
   /** require(...) in any spelling: the plain name, or a function made by createRequire. */
   const isRequireLike = (callee) => {
+    // createRequire(import.meta.url)('../x.json')
+    if (callee.type === 'CallExpression') return moduleRef(callee.callee)?.name === 'createRequire';
     if (callee.type !== 'Identifier') return false;
     if (callee.name === 'require') return true;
     const binding = lookup(callee, callee.name);
@@ -1662,13 +1760,21 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
   };
 
   /** The name a call is made under: readFileSync in readFileSync(x) and in fs.readFileSync(x). */
-  const calledName = (callee) => (callee.type === 'Identifier' ? callee.name : callee.type === 'MemberExpression' && !callee.computed ? callee.property.name : '');
+  const calledName = (callee) => {
+    if (callee.type === 'Identifier') return callee.name;
+    if (callee.type !== 'MemberExpression') return '';
+    if (!callee.computed) return callee.property.name;
+    return callee.property.type === 'Literal' && typeof callee.property.value === 'string' ? callee.property.value : '';
+  };
 
   /** Whether a called name is a function written in the files being scanned (not something that reads files for us). */
   const isDefinedHere = (callee) => {
     if (callee.type !== 'Identifier') return false;
     const binding = lookup(callee, callee.name);
-    return Boolean(binding && (binding.kind === 'function' || binding.inits?.some((init) => FUNCTION_TYPES.has(init.type))));
+    if (!binding) return false;
+    // an import of one of our own scanned files counts as written here
+    const target = linkImport(binding);
+    return target.kind === 'function' || Boolean(target.inits?.some((init) => FUNCTION_TYPES.has(init.type)));
   };
 
   const isMemberOf = (parent, node) => parent.type === 'MemberExpression' && parent.object === node && (!parent.computed || (parent.property.type === 'Literal' && typeof parent.property.value === 'string'));
@@ -1713,6 +1819,22 @@ export function findFileReads({ modules, reportIn = () => true, cwd, resolveImpo
         const ref = moduleRef(node.callee);
         if (ref?.mod === 'url' && ref.name === 'URL' && runsInTests(node) && evalNode(node.arguments[1], freshContext()).some((b) => b.k === 'url')) {
           addReference(module, node, node, 'new URL', { standalone: true });
+        }
+      }
+
+      // A listed name taken from something the guard cannot trace to Node's fs and not called there: const r = io.readFileSync
+      if (node.type === 'MemberExpression') {
+        const isCallee = parent.type === 'CallExpression' && parent.callee === node;
+        const isAssigned = parent.type === 'AssignmentExpression' && parent.left === node;
+        if (FILE_LOOKING_NAMES.has(calledName(node)) && !isCallee && !isAssigned && moduleRef(node)?.mod !== 'fs' && runsInTests(node)) {
+          addProblem(module, node, calledName(node), `${calledName(node)} is taken from something the guard cannot trace to Node's fs and is not called there, so the paths it reads are unknown`);
+        }
+      }
+      // const { readFileSync } = io
+      if (node.type === 'VariableDeclarator' && node.id.type === 'ObjectPattern' && node.init && requiredModule(node.init) === null && moduleRef(node.init)?.mod !== 'fs') {
+        const listed = node.id.properties.filter((p) => p.type === 'Property' && !p.computed).map((p) => p.key.name ?? p.key.value).filter((name) => FILE_LOOKING_NAMES.has(name));
+        if (listed.length > 0 && runsInTests(node)) {
+          addProblem(module, node, listed[0], `${listed.join(', ')} is taken out of something the guard cannot trace to Node's fs, so the paths it reads are unknown`);
         }
       }
 

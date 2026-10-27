@@ -167,6 +167,7 @@ export function deriveCrossRootReads(compDir, repoRoot = DEFAULT_REPO_ROOT, { re
   const { references } = findFileReads({
     modules: new Map([...modules, ...outsideModules]),
     reportIn: (file) => modules.has(file),
+    probeFile: resolveFile,
     cwd: compDirAbs,
     resolveImport: (spec, from) => {
       const resolved = resolveSpec(spec, from);

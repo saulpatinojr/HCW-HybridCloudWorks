@@ -171,6 +171,26 @@ const REVIEWED_READS = [
       'The real ones are matched by the scripts filter (see the update-version-floors.test.mjs entry).',
   },
   {
+    file: 'scripts/update-version-floors.mjs',
+    expression: 'fs',
+    reason: 'The default value of `io`, the injected file system (see the io.readFile entry above).',
+  },
+  {
+    file: 'vps-agent/lib/maintenance-hold.js',
+    expression: 'fs',
+    reason: 'The default value of `fsImpl`, the injected file system (see the openSync entry below). The hold file is on the lab host.',
+  },
+  {
+    file: 'vps-agent/lib/applied-commit.js',
+    expression: 'readFile',
+    reason: 'The default way to read /etc/hcw/applied-commit.json, a file on the lab host; the tests pass their own reader.',
+  },
+  {
+    file: 'vps-agent/lib/certificate-expiry.js',
+    expression: 'readFileSync',
+    reason: 'The default reader for the certificate file whose path the caller gives (a path on the lab host); the tests pass their own reader.',
+  },
+  {
     file: 'vps-agent/lib/maintenance-hold.js',
     expression: "fsImpl.openSync(path, 'r')",
     reason: 'Reads the maintenance hold file through `fsImpl`, which only the tests replace. The real file is on the lab host, not in the repository.',
@@ -748,6 +768,115 @@ ${GUIDE}createReadStream(guide);
       });
     });
 
+    describe('a file function that arrives as a default value', () => {
+      const cases = {
+        'a default parameter': ["import { readFileSync } from 'node:fs';", 'function load(p, read = readFileSync) { return read(p, "utf8"); }', 'load(GUIDE);'],
+        'a default in a destructured parameter': ["import { readFileSync } from 'node:fs';", 'function load(p, { read = readFileSync } = {}) { return read(p); }', 'load(GUIDE);'],
+        'a default in an arrow function': ["import { existsSync } from 'node:fs';", 'const has = (p, check = existsSync) => check(p);', 'has(GUIDE);'],
+        'a class field': ["import { readFileSync } from 'node:fs';", 'class R { read = readFileSync; }', 'new R().read(GUIDE);'],
+        'a destructuring default': ["import { readFileSync } from 'node:fs';", 'const { read = readFileSync } = {};', 'read(GUIDE);'],
+      };
+      for (const [label, [importLine, ...lines]] of Object.entries(cases)) {
+        it(`is reported: ${label}`, () => {
+          const found = outcome(src(importLine, PATHS, HERE, GUIDE, ...lines)).found;
+          expect(found.unresolved.map((u) => u.reason).join(' ')).toContain('handed to other code');
+        });
+      }
+      it('the fs module as a default value is reported too', () => {
+        const found = outcome(src("import fs from 'node:fs';", PATHS, HERE, GUIDE, 'function load(p, io = fs) { return io.readFileSync(p); }', 'load(GUIDE);')).found;
+        expect(found.unresolved.length).toBeGreaterThan(0);
+      });
+    });
+
+    describe('names that look like file reads', () => {
+      const reasonOf = (source, extra) => outcome(source, extra).found.unresolved.map((u) => u.reason).join(' | ');
+      it('rarer file function names are listed too', () => {
+        expect(reasonOf(src(PATHS, HERE, GUIDE, 'function load(io) { return io.lstat(GUIDE); }', 'load({});'))).toContain('looks like a file read');
+      });
+      it('the less common names are listed too', () => {
+        for (const name of ['statfsSync', 'readSync', 'realpath', 'readlink', 'copyFile', 'opendir']) {
+          expect(reasonOf(src(PATHS, HERE, GUIDE, `function load(io) { return io.${name}(GUIDE); }`, 'load({});')), name).toContain('looks like a file read');
+        }
+      });
+      it('a name written as a string in [ ]', () => {
+        expect(reasonOf(src(PATHS, HERE, GUIDE, 'function load(io) { return io["readFileSync"](GUIDE); }', 'load({});'))).toContain('looks like a file read');
+      });
+      it('a name taken without being called', () => {
+        expect(reasonOf(src(PATHS, HERE, GUIDE, 'function load(io) { const r = io.readFileSync; return r(GUIDE); }', 'load({});'))).toContain('taken from something');
+        expect(reasonOf(src(PATHS, HERE, GUIDE, 'function load(io) { return io.readFileSync.bind(io)(GUIDE); }', 'load({});'))).toContain('taken from something');
+      });
+      it('a name taken out with { }', () => {
+        expect(reasonOf(src(PATHS, HERE, GUIDE, 'function load(io) { const { readFileSync } = io; return readFileSync(GUIDE); }', 'load({});'))).toContain('taken out of something');
+      });
+      it('a function from one of our own files with such a name is not raised', () => {
+        const found = guard({ ...TARGETS, 'pkg/storage.js': 'export async function readFile(name) { return name; }\n', 'pkg/a.test.js': "import { readFile } from './storage.js';\nawait readFile('x');\n" });
+        expect(found.unresolved).toEqual([]);
+      });
+    });
+
+    describe('computed requires and imports', () => {
+      it('a path written without its ending', () => {
+        expect(names(guard({ ...TARGETS, 'pkg/a.test.js': src(PATHS, HERE, "require(join(HERE, '..', 'other', 'registry'));") }).files)).toEqual(['other/registry.js']);
+      });
+      it('createRequire(...) called straight away', () => {
+        const found = guard({ ...TARGETS, 'pkg/a.test.js': src("import { createRequire } from 'node:module';", "createRequire(import.meta.url)('../other/registry.js');") });
+        expect(names(found.files)).toEqual(['other/registry.js']);
+      });
+      it('an ending after ?', () => {
+        expect(names(guard({ ...TARGETS, 'pkg/a.test.js': src(PATHS, HERE, "await import(join(HERE, '..', 'docs', 'guide.md') + '?raw');") }).files)).toEqual(['docs/guide.md']);
+      });
+    });
+
+    describe('a module used through export * and a namespace', () => {
+      it('a function reached by taking names out of the namespace', () => {
+        const files = {
+          'pkg/tool.js': `${FS}${PATHS}${HERE}export function load() {\n  return readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');\n}\n`,
+          'pkg/barrel.js': "export * from './tool.js';\n",
+        };
+        seen("import * as m from './barrel.js';\nconst { load } = m;\nload();\n", files);
+      });
+    });
+
+    describe('behaviour that must not depend on the machine', () => {
+      it('process.argv.length === 2 does not mean the script was started', () => {
+        const files = {
+          'pkg/tool.js': src(FS, PATHS, HERE, GUIDE, 'export const read = () => readFileSync(GUIDE);', 'if (process.argv.length === 2) read();'),
+          'pkg/a.test.js': "import './tool.js';\n",
+        };
+        expect(names(guard({ ...TARGETS, ...files }).files)).toEqual(['docs/guide.md']);
+      });
+      it('a read of the folder the repository is in is reported', () => {
+        const found = outcome(src("import { readdirSync } from 'node:fs';", PATHS, HERE, "readdirSync(join(HERE, '..'));")).found;
+        expect(found.unresolved.map((u) => u.reason).join(' ')).toContain('repository root');
+      });
+      it('a file whose name starts with .. inside the package is not outside it', () => {
+        const found = guard({ ...TARGETS, 'pkg/..odd.txt': 'x', 'pkg/a.test.js': src(BASE, "readFileSync(join(HERE, '..odd.txt'));") });
+        expect(names(found.files)).toEqual([]);
+      });
+      it('a name from a listing used as a URL beside a folder URL', () => {
+        const found = guard({
+          ...TARGETS,
+          'pkg/a.test.js': src("import { readdirSync, readFileSync } from 'node:fs';", PATHS, HERE, "for (const name of readdirSync(join(HERE, '..', 'other'))) readFileSync(new URL(name, new URL('../docs/', import.meta.url)));"),
+        });
+        expect(names(found.dirs)).toEqual(['docs/', 'other/']);
+      });
+      it('a URL built from a name in a folder listing is a folder of its own', () => {
+        const found = guard({
+          ...TARGETS,
+          'pkg/a.test.js': src("import { readdirSync, readFileSync } from 'node:fs';", PATHS, HERE, "for (const name of readdirSync(join(HERE, '..', 'other'))) readFileSync(new URL(`../docs/${name}`, import.meta.url));"),
+        });
+        expect(names(found.dirs)).toEqual(['docs/', 'other/']);
+      });
+      it('too many combinations to follow are reported', () => {
+        const list = (prefix) => `[${Array.from({ length: 20 }, (_, i) => `'${prefix}${i}'`).join(', ')}]`;
+        const found = outcome(src(BASE, `for (const a of ${list('a')}) for (const b of ${list('b')}) for (const c of ${list('c')}) readFileSync(join(HERE, '..', 'docs', a, b, c));`)).found;
+        expect(found.unresolved.map((u) => u.reason).join(' ')).toContain('too many');
+      });
+      it('path.sep puts a path together the way join does', () => {
+        seen(src(BASE, "import { sep } from 'node:path';", "readFileSync(join(HERE, '..', 'docs') + sep + 'guide.md');"));
+      });
+    });
+
     describe('a name set again later', () => {
       it('a variable rebuilt from itself', () => {
         seen(src(BASE, "let p = join(HERE, '..');", "p = join(p, 'docs', 'guide.md');", 'readFileSync(p);'));
@@ -755,10 +884,28 @@ ${GUIDE}createReadStream(guide);
         seen(src(BASE, "let p = join(HERE, '..', 'docs');", "p = resolve(p, 'guide.md');", 'readFileSync(p);'));
       });
       it('a string built up with +=', () => {
-        // the file is found; the guard also says the name keeps changing, because it does not follow the order of the steps
         const { found, seen: wasSeen } = outcome(src(BASE, "let p = join(HERE, '..');", "p += '/docs';", "p += '/guide.md';", 'readFileSync(p);'));
         expect(wasSeen).toBe(true);
-        expect(found.unresolved.map((u) => u.reason).join(' ')).toContain('keeps changing');
+        expect(found.unresolved).toEqual([]);
+      });
+      it('steps in a straight line are not reported as a loop', () => {
+        const { found, seen: wasSeen } = outcome(src(BASE, "let p = join(HERE, '..');", "p = join(p, 'docs');", "p = join(p, 'guide.md');", 'readFileSync(p);'));
+        expect(wasSeen).toBe(true);
+        expect(found.unresolved).toEqual([]);
+      });
+      it('a climb up the folders in a loop is reported, however deep the checkout is', () => {
+        const reasons = (source) => outcome(source).found.unresolved.map((u) => u.reason).join(' ');
+        expect(reasons(src(BASE, 'let d = HERE;', "while (!existsSync(join(d, '.marker'))) d = dirname(d);", "readFileSync(join(d, 'docs', 'guide.md'));"))).toContain('keeps changing');
+        expect(reasons(src(BASE, "function root(d) { return existsSync(join(d, '.marker')) ? d : root(dirname(d)); }", "readFileSync(join(root(HERE), 'docs', 'guide.md'));"))).toContain('keeps changing');
+      });
+      it('a compound assignment other than += is reported', () => {
+        const found = outcome(src(BASE, GUIDE, "let f = 'local.md';", 'f ||= GUIDE;', 'readFileSync(f);')).found;
+        expect(found.unresolved.map((u) => u.reason).join(' ')).toContain('changed in a way');
+      });
+      it('a parameter given a new value inside a helper that is called in place', () => {
+        seen(src(BASE, "function up(d) { d = join(d, '..'); return d; }", "readFileSync(join(up(HERE), 'docs', 'guide.md'));"));
+        seen(src(BASE, GUIDE, "function pick(d) { if (!d) d = GUIDE; return d; }", 'readFileSync(pick());'));
+        seen(src(BASE, "function climb(d) { d += '/../docs/guide.md'; return d; }", 'readFileSync(climb(HERE));'));
       });
       it('a parameter given a new value inside the function', () => {
         seen(src(BASE, GUIDE, "function load(file = 'local.md') {", '  if (!file) file = GUIDE;', '  return readFileSync(file);', '}', 'load();'));
@@ -984,8 +1131,8 @@ ${GUIDE}createReadStream(guide);
     });
 
     it('never hides a plain file the read names', () => {
-      const entry = { file: 'pkg/a.test.js', expression: "readFileSync(new URL('../docs/guide.md', import.meta.url))", reason: 'for the test' };
-      const found = guard({ ...TARGETS, 'pkg/a.test.js': `${FS}readFileSync(new URL('../docs/guide.md', import.meta.url));\n` }, { reviewed: [entry] });
+      const entry = { file: 'pkg/a.test.js', expression: "readFileSync(join(HERE, '..', 'docs', 'guide.md'))", reason: 'for the test' };
+      const found = guard({ ...TARGETS, 'pkg/a.test.js': `${FS}${PATHS}${HERE}readFileSync(join(HERE, '..', 'docs', 'guide.md'));\n` }, { reviewed: [entry] });
       expect(names(found.files)).toEqual(['docs/guide.md']);
       expect(found.unusedReviewed).toEqual([]);
     });
