@@ -99,3 +99,26 @@ export function findBashTools() {
   if (/microsoft|wsl/i.test(kernel)) return { ready: false, why: 'bash is the Windows Subsystem for Linux, not Git Bash' };
   return { ready: true, why: '' };
 }
+
+/**
+ * The `-c` settings every test git command runs with, so a developer's own
+ * git configuration (signing commits or tags, converting line endings, no
+ * name or address) cannot change what the throwaway repositories do.
+ */
+export const GIT_TEST_CONFIG = [
+  '-c', 'commit.gpgsign=false',
+  '-c', 'tag.gpgsign=false',
+  '-c', 'core.autocrlf=false',
+  '-c', 'user.email=test@example.invalid',
+  '-c', 'user.name=test',
+];
+
+/**
+ * Whether one trimmed line of shell decides with `grep`: it starts `if`,
+ * `elif`, `while` or `until` and has `grep`, `egrep` or `fgrep` on it. The
+ * scan over every workflow and the check that the scan can see the shapes it
+ * is meant to find both use this one function.
+ */
+export function isIfGrepLine(line) {
+  return /^(?:if|elif|while|until)\s/.test(line) && /\b(?:grep|egrep|fgrep)\b/.test(line);
+}

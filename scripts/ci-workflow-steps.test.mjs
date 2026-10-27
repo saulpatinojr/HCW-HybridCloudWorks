@@ -48,7 +48,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMPONENTS } from './lib/ci-filters.mjs';
 // Jobs, steps and matrix rows are cut out of the workflow text by their indentation (shared with codeql-iac-workflow-steps.test.mjs).
-import { findBashTools, parseJobs, parseMatrixRows } from './lib/workflow-text.mjs';
+import { findBashTools, GIT_TEST_CONFIG, parseJobs, parseMatrixRows } from './lib/workflow-text.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CI = readFileSync(join(REPO, '.github', 'workflows', 'ci.yml'), 'utf8').replace(/\r\n/g, '\n');
@@ -213,7 +213,7 @@ describe.skipIf(!TOOLS.ready)(`ci.yml change-detection steps: run with bash${SKI
   }
 
   const git = (...args) => {
-    const result = spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', ...args], {
+    const result = spawnSync('git', [...GIT_TEST_CONFIG, ...args], {
       cwd: repo,
       encoding: 'utf8',
       env: cleanEnv({}),

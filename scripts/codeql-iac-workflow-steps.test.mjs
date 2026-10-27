@@ -44,7 +44,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { findBashTools, parseJobs, parseMatrixRows } from './lib/workflow-text.mjs';
+import { findBashTools, GIT_TEST_CONFIG, isIfGrepLine, parseJobs, parseMatrixRows } from './lib/workflow-text.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOWS = join(REPO, '.github', 'workflows');
@@ -270,7 +270,7 @@ describe.skipIf(!TOOLS.ready)(`codeql.yml and iac-validate.yml change-detection 
   }
 
   const git = (...args) => {
-    const result = spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', '-c', 'user.email=test@example.invalid', '-c', 'user.name=test', ...args], {
+    const result = spawnSync('git', [...GIT_TEST_CONFIG, ...args], {
       cwd: repo,
       encoding: 'utf8',
       env: cleanEnv({}),
@@ -442,7 +442,7 @@ function ifGrepLines(file) {
   return joined
     .map((line) => line.trim())
     .filter((line) => !line.startsWith('#'))
-    .filter((line) => /^(?:if|elif|while|until)\s/.test(line) && /\b(?:grep|egrep|fgrep)\b/.test(line));
+    .filter(isIfGrepLine);
 }
 
 /**
@@ -487,7 +487,7 @@ describe('no workflow decides with `if grep` (#1429)', () => {
 
   it('finds the `if grep` shapes it is meant to find', () => {
     // The scan is only worth anything if it sees the old shape. These two lines are the ones this change replaced.
-    const sample = (line) => /^(?:if|elif|while|until)\s/.test(line) && /\b(?:grep|egrep|fgrep)\b/.test(line);
+    const sample = isIfGrepLine;
     expect(sample(`if grep -qE "\${FILTER}"'|^\\.github/workflows/codeql\\.yml$' <<<"$changed"; then`)).toBe(true);
     expect(sample(`if grep -qE '^(infra/|\\.github/workflows/iac-validate\\.yml$)' <<<"$changed"; then`)).toBe(true);
     expect(sample('elif ! grep -q x file; then')).toBe(true);

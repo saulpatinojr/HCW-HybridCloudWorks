@@ -109,11 +109,13 @@ Two details of the implementation are the substance of the decision:
 
 ## Addendum, 2026-10-27 ([#1428](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1428))
 
-Two weaknesses were closed in `ci.yml`: one named above (a missing filter entry
-is found only at the merge) and one found while building
+Two weaknesses were closed, both in how a job decides whether it is needed:
+one named above (a missing filter entry is found only at the merge, closed in
+`ci.yml`) and one found while building
 [#1427](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1427) (a
-filter that `grep` cannot read). The decision itself, filtering inside the job
-so that the required check names never change, is unchanged.
+filter that `grep` cannot read, closed in `ci.yml` and then in `codeql.yml` and
+`iac-validate.yml`). The decision itself, filtering inside the job so that the
+required check names never change, is unchanged.
 
 - **A filter that `grep` cannot read now fails the job instead of switching
   it off.** `grep -E` answers 0 (a changed file matches), 1 (none does) or 2
