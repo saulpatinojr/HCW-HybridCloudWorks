@@ -261,7 +261,7 @@ jobs:
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "no relevant change — skipping checks, still reporting this context"
           else
-            echo "::error::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
             exit 1
           fi
 
@@ -516,7 +516,7 @@ jobs:
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "no relevant change — skipping checks, still reporting this context"
           else
-            echo "::error::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
             exit 1
           fi
 
@@ -946,7 +946,7 @@ jobs:
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "no relevant change — skipping checks, still reporting this context"
           else
-            echo "::error::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
             exit 1
           fi
 
@@ -1032,7 +1032,7 @@ jobs:
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "no relevant change — skipping checks, still reporting this context"
           else
-            echo "::error::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
+            echo "::error file=.github/workflows/ci.yml,title=Path filter could not be read::grep -E could not read the path filter of job ${GITHUB_JOB} (exit status ${status}), so the job cannot tell whether it is needed. The filter: ${FILTER}"
             exit 1
           fi
 

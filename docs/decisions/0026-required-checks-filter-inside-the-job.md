@@ -109,7 +109,11 @@ Two details of the implementation are the substance of the decision:
 
 ## Addendum, 2026-10-27 ([#1428](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1428))
 
-Two of the weaknesses named above were closed in `ci.yml`:
+Two weaknesses were closed in `ci.yml`: one named above (a missing filter entry
+is found only at the merge) and one found while building
+[#1427](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1427) (a
+filter that `grep` cannot read). The decision itself, filtering inside the job
+so that the required check names never change, is unchanged.
 
 - **A filter that `grep` cannot read now fails the job instead of switching
   it off.** `grep -E` answers 0 (a changed file matches), 1 (none does) or 2
@@ -127,3 +131,13 @@ Two of the weaknesses named above were closed in `ci.yml`:
   row's own filter matched, so a pull request that changed only a frontend or
   functions test met it on `main`. It now also runs in its own step on every
   pull request, outside the filter.
+
+This decision is about cost, so the cost of the second change is stated here
+too. A pull request that touches nothing a job's filter lists (a documentation-only
+one, say) used to run the scripts row as a short no-op. That row now also installs
+its packages and runs the guard, about 15 to 20 seconds more on a runner (an
+estimate from the 4 second install and the 13 to 14 second guard run measured
+on `main` and on a developer machine, not a measured CI figure). The row is not
+on the longest path, so nobody waits longer, and runner time is free on a public
+repository. If it ever matters, the guard can be skipped where the row's own
+`Test` step already runs it.

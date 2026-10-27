@@ -240,7 +240,7 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
     const decisive = (step) =>
       step.run
         .split('\n')
-        .filter((line) => !/^\s*#/.test(line) && /\bstatus\b|grep -qE|::error::/.test(line))
+        .filter((line) => !/^\s*#/.test(line) && /\bstatus\b|grep -qE|::error /.test(line))
         .map((line) => line.trim());
     const [first, ...others] = DETECT_STEPS.map(({ step }) => decisive(step));
     expect(first.length, 'no deciding lines found in the first step').toBeGreaterThanOrEqual(5);
@@ -249,8 +249,10 @@ describe('ci.yml change-detection steps: what they are made of (#1428)', () => {
 
   it('says in the failure message which job and which filter could not be read', () => {
     for (const { step } of DETECT_STEPS) {
-      const error = step.run.split('\n').find((line) => line.includes('::error::'));
-      expect(error, `no ::error:: line in ${step.name}`).toBeDefined();
+      const error = step.run.split('\n').find((line) => line.includes('::error '));
+      expect(error, `no ::error line in ${step.name}`).toBeDefined();
+      // The annotation points at ci.yml and has a title, so the failed check shows where to look.
+      expect(error).toContain('file=.github/workflows/ci.yml,title=Path filter could not be read::');
       expect(error).toContain('${GITHUB_JOB}');
       expect(error).toContain('${FILTER}');
     }
@@ -468,6 +470,15 @@ describe('the path-filter guard runs on every pull request (#1428)', () => {
     const at = lines.findIndex((line) => /^ {2}pull_request:\s*$/.test(line));
     expect(at, 'the workflow has no pull_request trigger written as a bare `pull_request:`').toBeGreaterThan(-1);
     expect(lines[at + 1], 'something is nested under pull_request:').toMatch(/^ {2}push:/);
+  });
+
+  it('is enforced: nothing lets the step, or the job, fail without failing the check, and no `shell:` changes how a step is run', () => {
+    // `continue-on-error` would turn a failing guard into a green check.
+    expect(guard['continue-on-error'], 'the guard step must not continue on error').toBeUndefined();
+    expect(VERIFY.lines.filter((line) => /^ {4}continue-on-error:/.test(line)), 'the verify job must not continue on error').toEqual([]);
+    // The shell tests above run each step's text with `bash -e`, which is what a step with no `shell:` gets on
+    // the runner. A `shell:` key at any level (a step, a job's defaults, the workflow's defaults) could change that.
+    expect(CI.split('\n').filter((line) => /^\s*(- )?shell:/.test(line)), 'ci.yml sets a shell').toEqual([]);
   });
 
   it('runs the guard for the scripts row whichever way change detection answered, and for no other row', () => {
