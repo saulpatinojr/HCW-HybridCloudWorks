@@ -34,20 +34,29 @@ export function aggregateBySource(records) {
   return aggregateBy(records, (r) => r.source || 'admin');
 }
 
+/** Missing and unpriced costs cannot be included in a confirmed subtotal. */
+export function hasKnownCost(record) {
+  return (
+    record?.unpriced !== true &&
+    Number.isFinite(record?.estimatedCostUsd) &&
+    record.estimatedCostUsd >= 0
+  );
+}
+
 function aggregateBy(records, keyOf) {
   const agg = {};
   for (const r of records) {
     const key = keyOf(r);
     if (!agg[key]) agg[key] = { tokens: 0, costUsd: 0, calls: 0, estimated: 0, unpriced: 0 };
     agg[key].tokens += r.totalTokens || 0;
-    agg[key].costUsd += r.estimatedCostUsd || 0;
+    if (hasKnownCost(r)) agg[key].costUsd += r.estimatedCostUsd;
     agg[key].calls += 1;
     // Rows whose token counts were derived rather than reported by the API.
     // Surfaced so a derived figure is never shown as a billed one.
     if (r.estimatedTokens) agg[key].estimated += 1;
     // Rows for a model the cost table has no rate for (ADR 0033): they cost
     // $0 here, and the page says so rather than letting zero read as free.
-    if (r.unpriced) agg[key].unpriced += 1;
+    if (!hasKnownCost(r)) agg[key].unpriced += 1;
   }
   return agg;
 }

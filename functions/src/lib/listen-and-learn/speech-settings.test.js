@@ -41,10 +41,10 @@ describe('the two choices', () => {
     expect(bestOut).toBe(economyOut * 2);
   });
 
-  it('Economy is what the task recommends, so a task that says nothing reads as before (slice 5)', () => {
+  it('recommends the reviewed multi-speaker model while retaining the legacy adapter default', () => {
     expect(AI_TASKS.listenAndLearnSpeech.recommended).toMatchObject({
       provider: 'gemini',
-      model: LISTEN_AND_LEARN_DEFAULT_MODEL,
+      model: 'gemini-3.8-flash-tts',
     });
   });
 });

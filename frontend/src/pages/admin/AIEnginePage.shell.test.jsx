@@ -265,7 +265,7 @@ describe('AIEnginePage shell', () => {
     expect(await screen.findByText('Forge drafting')).toBeInTheDocument();
     expect(getEffectiveRouting).toHaveBeenCalled();
     expect(screen.getByTestId('effective-forgeDrafting')).toHaveTextContent(
-      'Provider default (gemini-3.5-flash-lite) via Gemini'
+      'Provider default via Gemini'
     );
   });
 
@@ -311,8 +311,8 @@ describe('AIEnginePage shell', () => {
       },
       updatedAt: 'r1',
     });
-    // The resolver's answer is read again after the save.
-    await waitFor(() => expect(getEffectiveRouting).toHaveBeenCalledTimes(2));
+    // Initial catalogue load and the save both update the resolver's answer.
+    await waitFor(() => expect(getEffectiveRouting).toHaveBeenCalledTimes(3));
   });
 
   it('the cards list the catalogue’s models, not the stored array', async () => {
@@ -348,7 +348,12 @@ describe('AIEnginePage shell', () => {
     renderPage();
     const button = await screen.findByRole('button', { name: /Refresh model lists/ });
     await waitFor(() => expect(fetchModelCatalog).toHaveBeenCalledTimes(1));
+    const routingReads = getEffectiveRouting.mock.calls.length;
+    fetchModelCatalog.mockResolvedValueOnce(structuredClone(CATALOG));
     fireEvent.click(button);
+    await waitFor(() =>
+      expect(getEffectiveRouting.mock.calls.length).toBeGreaterThan(routingReads)
+    );
     await waitFor(() => expect(refreshModelCatalog).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(

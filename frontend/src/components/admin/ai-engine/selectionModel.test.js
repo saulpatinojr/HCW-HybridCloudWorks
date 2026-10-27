@@ -246,9 +246,7 @@ describe('what the resolver’s answer says', () => {
   };
 
   it('names the effective model via its provider, or the provider default it was judged on', () => {
-    expect(describeEffective(resolved, PROVIDERS)).toBe(
-      'Provider default (gemini-3.5-flash-lite) via Gemini'
-    );
+    expect(describeEffective(resolved, PROVIDERS)).toBe('Provider default via Gemini');
     expect(
       describeEffective({ chain: [{ provider: 'openai', model: 'gpt-5-mini' }] }, PROVIDERS)
     ).toBe('gpt-5-mini via OpenAI');

@@ -10,7 +10,7 @@
  * the effective answer is read again, because the resolver's answer is the
  * only thing the page shows as "what a call will use".
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '@/components/ui/use-toast';
 import { aiEngine } from '@/lib/aiEngine';
 import { normalizeSelection } from './selectionModel';
@@ -33,17 +33,20 @@ const INITIAL = {
  *   save: (next: object) => Promise<object>,
  * }}
  */
-export default function useSelection() {
+export default function useSelection(catalog = null) {
   const { toast } = useToast();
   const [state, setState] = useState(INITIAL);
   const [saving, setSaving] = useState(false);
+  const readId = useRef(0);
 
   const load = useCallback(async () => {
+    const read = ++readId.current;
     try {
       const [routing, effective] = await Promise.all([
         aiEngine.getAiRouting(),
         aiEngine.getEffectiveRouting(),
       ]);
+      if (read !== readId.current) return;
       setState({
         status: 'ready',
         selection: normalizeSelection(routing.selection),
@@ -54,6 +57,7 @@ export default function useSelection() {
         error: null,
       });
     } catch (err) {
+      if (read !== readId.current) return;
       setState((prev) => ({
         ...prev,
         status: 'error',
@@ -64,7 +68,7 @@ export default function useSelection() {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, catalog]);
 
   const reload = useCallback(() => {
     setState((prev) => ({ ...prev, status: 'loading', error: null }));

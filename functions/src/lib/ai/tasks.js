@@ -132,7 +132,7 @@ export const AI_TASKS = Object.freeze({
     modality: 'vision',
     needs: ['text', 'vision'],
     public: false,
-    recommended: foundryMini('Looks at the image itself; mini reads images, nano does not.'),
+    recommended: foundryMini('Looks at the image itself; mini supports image inputs.'),
   }),
   critique: task({
     label: 'Inspector critique',
@@ -269,10 +269,10 @@ export const AI_TASKS = Object.freeze({
     defaultMode: 'recommended',
     recommended: Object.freeze({
       provider: 'gemini',
-      model: 'gemini-2.5-flash-preview-tts',
+      model: 'gemini-3.8-flash-tts',
       reason:
-        'The Economy voice: $0.50 in / $10.00 out per 1M tokens, half the price of 3.1 Flash TTS per audio token, and the default that read when nothing was stored (ADR 0033 §4). Best (gemini-3.1-flash-tts-preview) is one Custom step away.',
-      asOf: ASOF,
+        'Google recommends 3.8 Flash TTS for long-form multi-speaker fidelity. $0.50 text input / $9 audio output per 1M through 2026-12-31; $1 / $18 thereafter. 3.8 Flash-Lite TTS is the cheaper Custom option ($0.50 / $6 through 2026-12-31, then $1 / $12). Existing explicit model choices are preserved.',
+      asOf: '2026-10-27',
     }),
   }),
   podcastVoice: task({

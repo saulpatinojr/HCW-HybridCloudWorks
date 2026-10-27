@@ -60,6 +60,8 @@ const FUNCTION_TIMEOUT_MS = {
   // Before this both ran under the 20 s default and a slow provider's
   // answer was discarded while its spinner kept turning.
   testAiProvider: 50000,
+  // Provider lists run together with a 20 s budget each; allow the catalogue write.
+  'cms/ai-model-catalog/refresh': 35000,
   aiProxy: 125000,
   // The MCP OAuth callback: the code exchange (8 s cap) and then the same
   // tool sync Sync Tools runs (30 s cap, SSE 25 s), in one request. Under

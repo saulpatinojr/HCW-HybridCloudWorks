@@ -67,6 +67,7 @@ function makeStore(over = {}) {
 }
 
 const okAi = () => ({
+  isPriced: vi.fn(() => true),
   callProvider: vi.fn(async ({ provider, model }) => ({
     text: 'ok',
     promptTokens: 10,

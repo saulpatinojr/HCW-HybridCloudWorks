@@ -31,6 +31,7 @@ import {
   evidenceForApplication,
   evidenceRelevant,
   sourceLabel,
+  readinessPeriodFor,
   todayIso,
 } from './ambassadorModel';
 import { answerText, questionSections, responsesMap } from './applicationQuestions';
@@ -136,7 +137,7 @@ function StatusChange({ application, onChange, busy }) {
         value={note}
         onChange={setNote}
         placeholder="What happened"
-        className="min-w-56 flex-1"
+        className="w-full min-w-0 sm:min-w-56 sm:flex-1"
       />
       <Button type="submit" size="sm" disabled={!next || busy}>
         {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
@@ -316,7 +317,7 @@ function Packet({ application, program, evidence, onClose }) {
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl print:max-h-none print:shadow-none">
+      <DialogContent className="w-[calc(100%-2rem)] min-w-0 [&>*]:min-w-0 max-h-[90vh] overflow-y-auto sm:max-w-3xl print:max-h-none print:shadow-none">
         <DialogHeader>
           <DialogTitle>{program?.name || 'Application'} — application packet</DialogTitle>
         </DialogHeader>
@@ -381,7 +382,9 @@ export default function ApplicationWorkspace({ application, program, evidence, h
   const [formFor, setFormFor] = useState(application.id);
   const [packet, setPacket] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const readiness = useReadiness(program?.id, '', { enabled: Boolean(program) });
+  const readiness = useReadiness(program?.id, readinessPeriodFor(program, application), {
+    enabled: Boolean(program),
+  });
   const files = useApplicationUpload(application, hub);
   const busy = hub.busyIds.has(application.id);
   const today = todayIso();

@@ -208,7 +208,7 @@ describe('models and cost', () => {
   it('prices at the Global Standard rates read on 2026-10-04', () => {
     expect(getCostEstimate('foundry', 'gpt-5-nano', 1_000_000, 1_000_000)).toBeCloseTo(0.45, 6);
     expect(getCostEstimate('foundry', 'gpt-5-mini', 1_000_000, 1_000_000)).toBeCloseTo(2.25, 6);
-    // An unknown deployment prices at the mini rate rather than free.
-    expect(getCostEstimate('foundry', 'something-new', 1_000_000, 0)).toBeCloseTo(0.25, 6);
+    // A deployment without a confirmed model rate is unpriced.
+    expect(getCostEstimate('foundry', 'something-new', 1_000_000, 0)).toBe(0);
   });
 });

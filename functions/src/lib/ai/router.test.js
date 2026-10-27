@@ -2155,9 +2155,10 @@ describe('unpriced models (ADR 0033) and the GPT-5 rates (2026-10-05)', () => {
     expect(isPriced('openai', 'gpt-5-nano')).toBe(true);
     expect(getCostEstimate('openai', 'gpt-5-mini', 1_000_000, 1_000_000)).toBeCloseTo(2.25, 6);
     expect(getCostEstimate('openai', 'gpt-5-nano', 1_000_000, 1_000_000)).toBeCloseTo(0.45, 6);
-    // A model with no row at all still prices at the provider default.
-    expect(isPriced('openai', 'gpt-4.1-something')).toBe(true);
-    expect(getCostEstimate('openai', 'gpt-4.1-something', 1_000_000, 0)).toBe(5);
+    // Unknown rates remain unknown rather than inheriting a different model's rate.
+    expect(isPriced('openai', 'gpt-4.1-something')).toBe(false);
+    expect(isPriced('unknown-provider', 'x')).toBe(false);
+    expect(getCostEstimate('openai', 'gpt-4.1-something', 1_000_000, 0)).toBe(0);
     expect(isPriced('gemini', 'gemini-3.6-flash')).toBe(true);
   });
 
