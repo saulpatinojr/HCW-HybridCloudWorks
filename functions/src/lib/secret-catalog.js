@@ -476,6 +476,25 @@ export const SECRET_CATALOG = Object.freeze([
       "for the labs page. It cannot start or change anything, and it is never shown to visitors.",
     probe: null,
   },
+  // The token the visitor session broker acts in Coder with
+  // (lib/labs/visitor-session.js, #1016; the sweepVisitorSessions timer uses it
+  // too, #1403). Unlike the status token above it can CHANGE things: it makes
+  // and deletes visitors' Coder users and workspaces. There is deliberately no
+  // fallback to the status token (readBrokerConfig), so without this one the
+  // broker is not configured. No probe: nothing reports this token's health
+  // between sessions, and a probe here would promise a light nothing switches.
+  {
+    setting: "CODER_BROKER_TOKEN",
+    secret: "CODER-BROKER-TOKEN",
+    section: "labs",
+    label: "Coder broker token",
+    help:
+      "API token the site uses to start and end visitors’ short lab sessions in Coder: it creates " +
+      "and deletes their temporary Coder users and workspaces, so unlike the status token it can " +
+      "change things. It is never shown to visitors. Until it is set, visitor lab sessions cannot " +
+      "start and the clean-up timer has nothing to call Coder with.",
+    probe: null,
+  },
   // The secret half of the Turnstile widget the owner creates in the
   // Cloudflare dashboard (ADR 0032 decision 6, revised 2026-09-28). Read by
   // lib/labs/public-lock.js, which sends it to Cloudflare's siteverify and
