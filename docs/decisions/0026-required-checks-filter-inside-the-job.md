@@ -106,3 +106,38 @@ Two details of the implementation are the substance of the decision:
   rollup behaviour above; extend the same doctrine comment to any future
   workflow that becomes a required context, so the next reader learns the
   rule from the file they are editing.
+
+## Addendum, 2026-10-27 ([#1428](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1428))
+
+Two weaknesses were closed in `ci.yml`: one named above (a missing filter entry
+is found only at the merge) and one found while building
+[#1427](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1427) (a
+filter that `grep` cannot read). The decision itself, filtering inside the job
+so that the required check names never change, is unchanged.
+
+- **A filter that `grep` cannot read now fails the job instead of switching
+  it off.** `grep -E` answers 0 (a changed file matches), 1 (none does) or 2
+  (it could not read the pattern). The detect steps used to test that with
+  `if grep ...`, which takes 2 as "no", so a broken filter skipped its job as
+  "no relevant change". The four detect steps in `ci.yml` now keep the answer
+  and fail on anything but 0 or 1, naming the job and the filter.
+  `scripts/ci-workflow-steps.test.mjs` runs each of them against a deliberately
+  broken filter. `codeql.yml` and `iac-validate.yml` have the same `if grep`
+  shape and have not been changed yet.
+- **The test that checks the filters now runs before the merge.** The
+  "Negative" consequence above says a missing filter entry is found at the
+  merge, after the fact. `scripts/ci-filters.test.mjs` (the check that every
+  filter lists the files its tests read) used to run only when the scripts
+  row's own filter matched, so a pull request that changed only a frontend or
+  functions test met it on `main`. It now also runs in its own step on every
+  pull request, outside the filter.
+
+This decision is about cost, so the cost of the second change is stated here
+too. A pull request that touches nothing a job's filter lists (a documentation-only
+one, say) used to run the scripts row as a short no-op. That row now also installs
+its packages and runs the guard, about 17 seconds more on a runner (a 5-second
+install and a 12-second guard step, read from the job record of this change's own
+CI run, [run 40484003062](https://github.com/saulpatinojr/HCW-HybridCloudWorks/actions/runs/40484003062)).
+The row is not on the longest path, so nobody waits longer, and runner time is
+free on a public repository. If it ever matters, the guard can be skipped where the row's own
+`Test` step already runs it.
