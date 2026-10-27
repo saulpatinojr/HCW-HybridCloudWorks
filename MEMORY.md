@@ -66,8 +66,10 @@ leave it alone. A session never switches the main checkout's branch; it works in
    (temporary records a certificate authority asks for to prove who owns a domain) on the main domain, six created and six deleted, by an actor the log calls "system unknown".
    The allowlist (the list of changes the audit treats as normal) in `scripts/cloudflare-dns-audit.mjs` has an entry for the lab host's Caddy token, but that entry stops matching anything
    from 2026-10-18 20:53 UTC, when the token lost access to this zone (Caddy's challenges moved to the lab zone), so it cannot match records from 2026-10-26. The other entries (HCP Terraform
-   applies, the Terraform owner token and the owner's dashboard) match by who made the change, and none of them matched these 12. One possible explanation, not checked, is certificate
-   validation done on Cloudflare's side. Only the owner's Cloudflare login can read the entries: the issue links the
+   applies, the Terraform owner token and the owner's dashboard) match by who made the change, and none of them matched these 12. Read on 2026-10-27 from public data, this is very probably Cloudflare renewing its own certificate for the zone, but it is not confirmed (the evidence is in
+   [the comment on the issue](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1421#issuecomment-6453150273)): the log shows no token, no user and no user agent; the zone's apex and wildcard certificates
+   expire on 2026-11-26 and 11-27, which is when Cloudflare starts renewing; and the zone's CAA records (the list of authorities allowed to issue) look like Cloudflare's own. Two checks in the
+   dashboard settle it (the comment lists them, two minutes). Only the owner's Cloudflare login can read the entries: the issue links the
    [audit log](https://dash.cloudflare.com/?to=/:account/audit-log) and lists each entry id; the steps are in
    [the daily DNS audit](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/edge-dns-verification.md). Add no allowlist entry before that.
 2. **Run the lab host's `bootstrap.sh`** (the script that brings the lab server in line with this repository; tracked in
@@ -85,16 +87,11 @@ leave it alone. A session never switches the main checkout's branch; it works in
 3. **Decisions already waiting for an answer:** [#1373](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1373) (the batch of owner decisions),
    [#1392](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1392) (confirm the Terraform run that creates the Doc Vault container) and
    [#1344](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1344) (publish the first interview). Issues labelled `owner-gated` wait only for the owner's decision.
-4. **Optional clean-up on the owner's PC** (nothing here is needed to continue):
-   - Two test images, about 1.4 GB, left from [Network Eyes App #248](https://github.com/saulpatinojr/HCW-NetworkEyes_App/issues/248) (closed). Run `docker rmi ne248-web:test ne248-drawio:test`.
-     You should see two `Untagged:` and two `Deleted:` lines; if Docker says an image is in use, stop the container that uses it first, or leave it.
-   - Seven small backup files of old commits (about 100 KB) in the `.hcw` folder of the owner's profile, kept because their contents could not be checked against `main`. Deleting them cannot be undone, so
-     do it only when sure. Run `Remove-Item -Recurse "$env:USERPROFILE\.hcw\leftover-commit-bundles-2026-10-26"`. You should see no output; "Cannot find path" means they are already gone.
-   - In the Network Eyes add-on clone, `git fetch --prune` drops a stale local reference to a branch that no longer exists on GitHub.
+
 
 ### What the next session does, in order
 
-1. [#1421](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1421), once the owner has read the entries: if they are Cloudflare's own certificate validation, add the allowlist entry with its reason; if not, follow the stolen-token runbook above.
+1. [#1421](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1421), once the owner has read the entries: if they are Cloudflare's own certificate validation, add the one narrow allowlist entry the issue comment describes (a `TXT` at `_acme-challenge.<the apex>` from a `system` actor that carries no token), with its reason and a test; if not, follow the stolen-token runbook above.
 2. [#1386](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1386): each Python add-on now has a daily workflow (`base-update.yml`) that opens the base-image follow-up pull request by itself. It was proved on
    throwaway branches, not on a real website change, so its "done when" lines 1 and 3 still wait for the next real bump. One may be close: [#1426](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1426)
    says `python:3.14.10-slim-trixie` is available but its tags "have not settled". Leave #1386 open until a real bump has produced the three pull requests, or write on the ticket that the throwaway proofs are accepted, and why.
@@ -145,6 +142,8 @@ reviews. The lines below come from the owner's earlier sessions and are written 
 - Cloud Assessor and Network Eyes add-on images `v0.1.1` were published and attested ([CA #47](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/issues/47),
   [NE #50](https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn/issues/50)). The three Python add-ons follow the website's base image on their own
   ([CA #46](https://github.com/saulpatinojr/HCW-CloudAssessor_AddOn/issues/46), [CC #27](https://github.com/saulpatinojr/HCW-CloudCrawler_AddOn/issues/27), [NE #49](https://github.com/saulpatinojr/HCW-NetworkEyes_AddOn/issues/49)).
+- At the owner's request, the leftovers on the owner's PC were deleted: two Docker test images from Network Eyes App #248, and the seven old backup bundles of unmerged commits
+  from yesterday's clean-up (the add-on branch whose commit one of them held no longer exists on GitHub).
 
 ## Blog workflow details worth preserving
 
