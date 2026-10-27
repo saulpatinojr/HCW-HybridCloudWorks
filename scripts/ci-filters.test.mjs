@@ -1344,6 +1344,12 @@ ${GUIDE}createReadStream(guide);
         expect(found.origins.get('other/a.js')).toEqual(new Set(['pkg/a.test.js (import)']));
       });
 
+      it('shortens the route when it is long', () => {
+        const chain = { 'other/a.js': "import './b.js';\nexport const x = 1;\n", 'other/b.js': "import './c.js';\n", 'other/c.js': "import './d.js';\n", 'other/d.js': "import './e.js';\n", 'other/e.js': "import './f.js';\n", 'other/f.js': '' };
+        const found = guard({ ...test, ...chain });
+        expect(found.origins.get('other/f.js')).toEqual(new Set(['other/e.js (import, reached from pkg/a.test.js > ... > other/c.js > other/d.js)']));
+      });
+
       it('an import shortcut such as "@/lib/x" in a frontend module that a functions test imports', () => {
         const found = guard(
           {
@@ -1419,6 +1425,11 @@ ${GUIDE}createReadStream(guide);
         expect(found.unresolved[0].reason).toContain('no file is found');
         expect(found.unresolved[0].reason).toContain('reached from pkg/a.test.js');
         expect(names(found.files)).toEqual(['other/a.js', 'other/b.js']); // the rest of the chain is still followed
+      });
+
+      it('is reported in the order the imports are written, each with its own line', () => {
+        const found = guard({ ...test, 'other/a.js': "import './m1.js';\nimport './b.js';\nimport './m2.js';\nexport const x = 1;\n", ...B });
+        expect(found.unresolved.map((u) => `${u.line}: ${u.expression}`)).toEqual(["1: import './m1.js'", "3: import './m2.js'"]);
       });
 
       it('is reported however it is written', () => {
@@ -1564,6 +1575,17 @@ ${GUIDE}createReadStream(guide);
         expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js', 'other/b.js']);
         expect(found.unresolved).toEqual([]);
         expect(found.origins.get('other/b.js')).toBeDefined();
+      });
+
+      it('a require() that names one file is followed too', () => {
+        const found = guard({
+          ...TARGETS,
+          ...test,
+          'other/a.js': `${PATHS}${HERE}const b = require(join(HERE, 'b.js'));\nexport const x = b;\n`,
+          'other/b.js': `${READ_BASE}module.exports = readFileSync(join(HERE, '..', 'docs', 'guide.md'), 'utf8');\n`,
+        });
+        expect(names(found.files)).toEqual(['docs/guide.md', 'other/a.js', 'other/b.js']);
+        expect(found.unresolved).toEqual([]);
       });
 
       it('in a test inside the package is followed too', () => {
