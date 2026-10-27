@@ -4,9 +4,11 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Loader2, Activity, Zap, DollarSign } from 'lucide-react';
 import EmptyState from '@/components/admin/shared/EmptyState';
 import { aiEngine } from '@/lib/aiEngine';
+import { hasKnownCost } from '@/lib/aiEngine/usage';
 
 function fmtCost(usd) {
-  if (!usd || usd < 0.000001) return '$0.00';
+  if (!usd) return '$0.00';
+  if (usd < 0.000001) return usd < 0.00000001 ? '<$0.00000001' : `$${usd.toFixed(8)}`;
   if (usd < 0.01) return `$${usd.toFixed(6)}`;
   return `$${usd.toFixed(4)}`;
 }
@@ -112,8 +114,9 @@ export default function AIEngineUsageTab() {
   const chartData = Object.entries(agg).map(([provider, data]) => ({
     provider,
     tokens: data.tokens,
-    cost: parseFloat(data.costUsd.toFixed(6)),
+    cost: data.costUsd,
     calls: data.calls,
+    unpriced: data.unpriced,
   }));
 
   // Grouped by what spent the money. Provider answers "which vendor"; this
@@ -124,7 +127,7 @@ export default function AIEngineUsageTab() {
     .map(([source, data]) => ({
       source,
       tokens: data.tokens,
-      cost: parseFloat(data.costUsd.toFixed(6)),
+      cost: data.costUsd,
       calls: data.calls,
       estimated: data.estimated,
       unpriced: data.unpriced,
@@ -132,9 +135,12 @@ export default function AIEngineUsageTab() {
     .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens);
 
   const totalTokens = records.reduce((sum, record) => sum + (record.totalTokens || 0), 0);
-  const totalCost = records.reduce((sum, record) => sum + (record.estimatedCostUsd || 0), 0);
+  const totalCost = records.reduce(
+    (sum, record) => sum + (hasKnownCost(record) ? record.estimatedCostUsd : 0),
+    0
+  );
   const totalCalls = records.length;
-  const unpricedCalls = records.filter((record) => record.unpriced).length;
+  const unpricedCalls = records.filter((record) => !hasKnownCost(record)).length;
 
   if (error) {
     return (
@@ -151,20 +157,23 @@ export default function AIEngineUsageTab() {
     <div className="space-y-4">
       <div>
         <h2 className="font-semibold text-lg">Usage & Cost</h2>
-        <p className="text-sm text-slate-500 mt-0.5">Last 200 AI calls logged to Cosmos DB.</p>
+        <p className="text-sm text-slate-500 mt-0.5">
+          Estimates for the last 200 recorded calls, not a provider invoice. Unknown costs are
+          excluded from subtotals.
+        </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid gap-3 sm:grid-cols-3">
         {[
           { label: 'Total Calls', value: totalCalls.toLocaleString(), icon: Activity },
           { label: 'Total Tokens', value: fmtTokens(totalTokens), icon: Zap },
           {
             label: 'Est. Cost (USD)',
-            value: `$${totalCost.toFixed(4)}`,
+            value: fmtCost(totalCost),
             icon: DollarSign,
             note:
               unpricedCalls > 0
-                ? `${unpricedCalls} call${unpricedCalls === 1 ? '' : 's'} on a model with no confirmed rate, counted at $0`
+                ? `${unpricedCalls} call${unpricedCalls === 1 ? '' : 's'} with unknown cost excluded; subtotal is incomplete`
                 : null,
           },
         ].map(({ label, value, icon: Icon, note }) => (
@@ -232,7 +241,10 @@ export default function AIEngineUsageTab() {
                       <td className="py-1.5 font-medium">{row.provider}</td>
                       <td className="py-1.5 text-right text-slate-500">{row.calls}</td>
                       <td className="py-1.5 text-right">{fmtTokens(row.tokens)}</td>
-                      <td className="py-1.5 text-right font-mono">{fmtCost(row.cost)}</td>
+                      <td className="py-1.5 text-right font-mono">
+                        {fmtCost(row.cost)}
+                        {row.unpriced > 0 && <span className="ml-1 text-amber-700">+ unknown</span>}
+                      </td>
                     </tr>
                   ))}
               </tbody>
@@ -269,7 +281,7 @@ export default function AIEngineUsageTab() {
                       {row.unpriced > 0 && (
                         <span
                           className="ml-1.5 text-amber-700 dark:text-amber-400 font-normal"
-                          title={`${row.unpriced} of ${row.calls} rows used a model with no confirmed rate and are counted at $0`}
+                          title={`${row.unpriced} of ${row.calls} rows have unknown cost and are excluded from the subtotal`}
                         >
                           {row.unpriced} unpriced
                         </span>
@@ -286,7 +298,10 @@ export default function AIEngineUsageTab() {
                     </td>
                     <td className="py-1.5 text-right text-slate-500">{row.calls}</td>
                     <td className="py-1.5 text-right">{fmtTokens(row.tokens)}</td>
-                    <td className="py-1.5 text-right font-mono">{fmtCost(row.cost)}</td>
+                    <td className="py-1.5 text-right font-mono">
+                      {fmtCost(row.cost)}
+                      {row.unpriced > 0 && <span className="ml-1 text-amber-700">+ unknown</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -328,10 +343,8 @@ export default function AIEngineUsageTab() {
                         {fmtTokens(record.totalTokens || 0)}
                       </td>
                       <td className="px-4 py-1.5 text-right font-mono">
-                        {record.unpriced ? (
-                          <span title="No confirmed rate for this model; counted at $0">
-                            unpriced
-                          </span>
+                        {!hasKnownCost(record) ? (
+                          <span title="Cost is unknown; excluded from the subtotal">unpriced</span>
                         ) : (
                           fmtCost(record.estimatedCostUsd)
                         )}

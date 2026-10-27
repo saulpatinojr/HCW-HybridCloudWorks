@@ -27,6 +27,7 @@ import {
   programGate,
   programsInPlay,
   sourceLabel,
+  readinessPeriodFor,
   todayIso,
   upkeepProgress,
   windowState,
@@ -238,7 +239,9 @@ export function ProgramDetails({
   starting,
   pursuing,
 }) {
-  const readiness = useReadiness(program?.id, '', { enabled: Boolean(program) });
+  const readiness = useReadiness(program?.id, readinessPeriodFor(program), {
+    enabled: Boolean(program),
+  });
   const byId = useMemo(() => programById(programs), [programs]);
   if (!program) return null;
   const gate = programGate(program, byId);
@@ -250,7 +253,7 @@ export function ProgramDetails({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="w-[calc(100%-2rem)] min-w-0 [&>*]:min-w-0 max-h-[90vh] overflow-y-auto break-words sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{program.name}</DialogTitle>
           <DialogDescription>
@@ -394,19 +397,21 @@ export default function ProgramsTab({ hub, nav }) {
             }
           />
         ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
             {ordered.map((program) => {
               const disabled = program.enabled === false;
               return (
                 <Card
                   key={program.id}
-                  className={disabled ? 'opacity-60' : ''}
+                  className={`min-w-0 ${disabled ? 'opacity-60' : ''}`}
                   data-testid="program-card"
                 >
                   <CardHeader className="pb-2">
-                    <CardTitle className="flex items-start justify-between gap-2 text-base">
-                      <span>{program.name}</span>
-                      <span className="flex flex-wrap justify-end gap-1">
+                    <CardTitle className="flex flex-wrap items-start justify-between gap-3 text-base">
+                      <span className="min-w-0 flex-1 basis-40 break-words leading-snug">
+                        {program.name}
+                      </span>
+                      <span className="flex flex-wrap gap-2">
                         <StatusBadge
                           size="xs"
                           status={
@@ -456,7 +461,7 @@ export default function ProgramsTab({ hub, nav }) {
                       byId={byId}
                       asLine
                     />
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" onClick={() => setDetailsId(program.id)}>
                         Details
                       </Button>

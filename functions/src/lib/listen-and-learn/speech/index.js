@@ -55,7 +55,7 @@
  * deliberate: the provider is an implementation detail of this directory and
  * must not leak into the document shape.
  */
-import { getCostEstimate } from '../../ai/router.js';
+import { getCostEstimate, isPriced } from '../../ai/router.js';
 import { AuthoredError, authoredMessage } from '../../http/error-response.js';
 import { USAGE_SOURCES, featureSource } from '../../ai/usage.js';
 import {
@@ -484,6 +484,7 @@ function modelFor(providerName, env, model) {
  * @returns {number|null} USD, or null when the model is not priced
  */
 export function estimateGeminiCostUsd(model, bytes) {
+  if (!isPriced('gemini', model)) return null;
   const seconds = Math.max(0, Number(bytes) || 0) / SPEECH_LIMITS.BYTES_PER_SECOND;
   const audioTokens = Math.ceil(seconds * GEMINI_AUDIO_TOKENS_PER_SECOND);
   return getCostEstimate('gemini', model, 0, audioTokens);
@@ -555,7 +556,7 @@ export function estimateSpeechCostUsd({
   const chosenModel = modelFor(provider.name, env, model);
 
   let estimatedCostUsd = null;
-  if (provider.name === 'elevenlabs') {
+  if (provider.name === 'elevenlabs' && isPriced('elevenlabs', chosenModel)) {
     // Characters when known; the byte ceiling otherwise, which is an upper
     // bound on characters.
     estimatedCostUsd = getCostEstimate('elevenlabs', chosenModel, 0, characters ?? bytes);

@@ -152,6 +152,7 @@ nav:
       - Origin secret rotation: runbooks/origin-secret-rotation.md
       - "Doc Vault: what goes here, what does not": runbooks/doc-vault.md
       - Calendar Alerts: runbooks/calendar-alerts.md
+      - AI Engine models and costs: runbooks/ai-engine-model-review.md
   - Standards:
       - IaC repository standard: standards/iac-repository-standard.md
       - Naming convention: standards/naming-convention.md

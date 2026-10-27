@@ -23,6 +23,7 @@ import {
   recentEvidence,
   recommendedActions,
   sourceLabel,
+  readinessPeriodFor,
   statusCounts,
   todayIso,
   upcomingDeadlines,
@@ -44,7 +45,7 @@ function Stat({ label, value, hint }) {
 
 /** One pursued program's readiness; reports the result up for the recommended actions. */
 function ProgramReadiness({ program, application, onLoaded, onOpen }) {
-  const readiness = useReadiness(program.id);
+  const readiness = useReadiness(program.id, readinessPeriodFor(program, application));
   useEffect(() => {
     if (readiness.loaded) onLoaded(program.id, readiness.data);
   }, [program.id, readiness.loaded, readiness.data, onLoaded]);
@@ -53,7 +54,7 @@ function ProgramReadiness({ program, application, onLoaded, onOpen }) {
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2 space-y-0 pb-2">
         <div>
           <CardTitle className="text-base">{program.name}</CardTitle>
-          <CardDescription className="flex items-center gap-2">
+          <CardDescription className="flex flex-wrap items-center gap-2">
             {program.provider}
             <StatusBadge size="xs" status={ambassadorStatusInfo(application.status)} />
           </CardDescription>

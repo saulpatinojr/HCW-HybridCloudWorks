@@ -219,7 +219,7 @@ describe('getStatus', () => {
     const store = makeStore({
       queryDocs: vi.fn(async () => [{ ...USAGE_ROW, source: 'ai:podcastVoice', product: 'podcast:audio' }]),
     });
-    const res = await handlers({ store }).getStatus(request(), context);
+    const res = await handlers({ store, readAccount: async () => FREE }).getStatus(request(), context);
     expect(res.status).toBe(200);
     expect(body(res).lastRender).toEqual({
       characters: 8912,

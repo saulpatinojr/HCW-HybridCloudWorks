@@ -108,3 +108,31 @@ describe('AIEngineUsageTab', () => {
     });
   });
 });
+
+describe('unknown and very small costs', () => {
+  it('excludes missing costs from subtotals and preserves small paid calls', async () => {
+    aiEngine.getUsageRecords.mockResolvedValue([
+      { id: 'unknown', provider: 'gemini', model: 'new-model', totalTokens: 10 },
+      {
+        id: 'tiny',
+        provider: 'openai',
+        model: 'gpt-5-nano',
+        totalTokens: 1,
+        estimatedCostUsd: 0.00000005,
+      },
+      { id: 'free', provider: 'nvidia', model: 'trial', totalTokens: 1, estimatedCostUsd: 0 },
+    ]);
+    aiEngine.getAiFeatures.mockResolvedValue({ catalogue: {} });
+    render(<AIEngineUsageTab />);
+    expect(
+      await screen.findByText(/1 call with unknown cost excluded; subtotal is incomplete/)
+    ).toBeInTheDocument();
+    expect(screen.getByText('unpriced')).toBeInTheDocument();
+    expect(screen.getAllByText('$0.00000005').length).toBeGreaterThan(0);
+    const totals = aiEngine.aggregateByProvider([
+      { provider: 'gemini' },
+      { provider: 'gemini', estimatedCostUsd: 0 },
+    ]);
+    expect(totals.gemini).toMatchObject({ calls: 2, costUsd: 0, unpriced: 1 });
+  });
+});

@@ -152,7 +152,7 @@ describe('TasksTab', () => {
     renderTab();
     expect(await screen.findByText('Forge drafting')).toBeInTheDocument();
     expect(screen.getByTestId('effective-forgeDrafting')).toHaveTextContent(
-      'Provider default (gpt-5-nano) via Foundry'
+      'Provider default via Foundry'
     );
     expect(screen.getByTestId('effective-altText')).toHaveTextContent('gpt-5-mini via Foundry');
     expect(screen.getByTestId('rejected-pricingExplain')).toHaveTextContent(
@@ -376,8 +376,12 @@ describe('the media tasks (ADR 0034 slice 5, #860)', () => {
     expect(screen.getByTestId('effective-podcastVoice')).toHaveTextContent(
       'eleven_v3 via ElevenLabs'
     );
-    expect(screen.getByTestId('effective-embeddings')).toHaveTextContent('No eligible model');
-    expect(screen.getByText('embedding')).toBeInTheDocument();
+    expect(screen.getByTestId('effective-embeddings')).toHaveTextContent('Not connected yet');
+    const planned = screen.getByTestId('effective-embeddings').closest('[data-task]');
+    expect(within(planned).getByText('planned')).toBeInTheDocument();
+    expect(within(planned).queryByRole('button')).toBeNull();
+    expect(within(planned).queryByRole('radio')).toBeNull();
+    expect(within(planned).queryByText('no eligible model')).toBeNull();
     const row = screen.getByText('Podcast voice').closest('[data-task]');
     expect(within(row).getByText(/makes no audio or image/)).toBeInTheDocument();
   });

@@ -16,6 +16,7 @@ import {
   programForm,
   programPayload,
   upkeepProgress,
+  readinessPeriodFor,
   upkeepWindow,
   recommendedActions,
   statusCounts,
@@ -30,6 +31,11 @@ import {
   programGate,
   programsInPlay,
 } from './ambassadorModel';
+
+import {
+  computeReadiness,
+  parsePeriod,
+} from '../../../../../functions/src/lib/ambassador/readiness.js';
 
 const TODAY = '2026-10-03';
 
@@ -417,5 +423,48 @@ describe('upkeep: what keeps a held membership active (2026-10-11)', () => {
     expect(programPayload({ ...form, upkeep: { ...form.upkeep, minCount: '0' } }).error).toMatch(
       /minimum of at least 1/
     );
+  });
+});
+
+describe('the date scope sent to readiness', () => {
+  it('keeps GitKraken quarterly counts inside the current quarter', () => {
+    const program = {
+      id: 'gitkraken',
+      upkeep: { period: 'quarter' },
+      requirements: [
+        {
+          id: 'quarterly-content',
+          label: 'Contributions',
+          minCount: 2,
+          weight: 1,
+          evidenceTypes: [],
+        },
+      ],
+    };
+    const period = readinessPeriodFor(program, null, '2026-10-27');
+    const readiness = computeReadiness(
+      program,
+      [
+        { id: 'old', date: '2026-09-30', sourceModule: 'content' },
+        { id: 'current', date: '2026-10-01', sourceModule: 'content' },
+      ],
+      { period: parsePeriod(period) }
+    );
+    expect(period).toBe('2026-10-01..2026-12-31');
+    expect(readiness.requirements[0]).toMatchObject({ count: 1, met: false });
+  });
+
+  it('uses saved application dates before the recurring program period', () => {
+    const application = { qualificationPeriod: { start: '2025-07-01', end: '2026-06-30' } };
+    expect(readinessPeriodFor({ upkeep: { period: 'quarter' } }, application, TODAY)).toBe(
+      '2025-07-01..2026-06-30'
+    );
+    expect(readinessPeriodFor({}, { qualificationPeriod: { start: '2026-01-01' } })).toBe(
+      '2026-01-01..'
+    );
+    expect(readinessPeriodFor({ upkeep: { period: 'year' } }, null, TODAY)).toBe(
+      '2026-01-01..2026-12-31'
+    );
+    expect(readinessPeriodFor({})).toBe('');
   });
 });

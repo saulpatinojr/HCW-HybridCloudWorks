@@ -85,7 +85,7 @@ jobs:
           # DockerGuides.test.jsx.
           - name: frontend
             dir: frontend
-            filter: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile|smoke\.sh)$|vps-agent/lib/docker-runner\.js$|\.github/workflows/(deploy-azure-frontend|publish-lab-image)\.yml$|functions/src/lib/(labs\.js|labs/(visitor-report\.js|fixtures/[^/]+\.log)|rss/feeds\.js|decision-center/(links|items)\.js|cms/(content-status|content-update-validation)\.js|addons/registry\.js|ai/(router|model-catalog|usage|mcp-policy)\.js|health/(status-model|probe-catalogue|pulse-checks)\.js|integrations/(linkie-allowlist|rest-proxy)\.js)$|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
+            filter: '^(frontend/|\.azure/api-surface\.json|lab-image/(versions\.env|Dockerfile|smoke\.sh)$|vps-agent/lib/docker-runner\.js$|\.github/workflows/(deploy-azure-frontend|publish-lab-image)\.yml$|functions/src/lib/(labs\.js|labs/(visitor-report\.js|fixtures/[^/]+\.log)|rss/feeds\.js|decision-center/(links|items)\.js|cms/(content-status|content-update-validation)\.js|addons/registry\.js|ai/(router|model-catalog|usage|mcp-policy)\.js|ambassador/readiness\.js|health/(status-model|probe-catalogue|pulse-checks)\.js|integrations/(linkie-allowlist|rest-proxy)\.js)$|lab-host/(coder/launcher/launcher\.js|coder/templates/hcw-lab/main\.tf|ansible/roles/coder/templates/10-coder\.caddy\.j2)$)'
             lint: npm run lint
             format: npm run format:check
             validate: npm run validate:routes
@@ -447,7 +447,7 @@ jobs:
         env:
           TEST_BASE_URL: http://127.0.0.1:4173
           CI: 'true'
-        run: npx playwright test --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js
+        run: npx playwright test --project=chromium --project=mobile-chrome hydration.spec.js contentforge.spec.js admin-authenticated.spec.js ai-engine.spec.js ambassador.spec.js
 
       - name: Upload the report on failure
         if: failure()

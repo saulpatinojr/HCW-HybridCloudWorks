@@ -80,13 +80,22 @@ export const DEFAULT_MODEL_TABLE = Object.freeze({
  */
 export const COST_TABLE = Object.freeze({
   anthropic: {
-    'claude-opus-4-6': [15.0, 75.0],
+    // Standard API rates, verified 2026-10-27: platform.claude.com/docs/en/about-claude/pricing
+    'claude-opus-5-5': [4.0, 20.0],
+    'claude-sonnet-5-5': [2.0, 10.0],
+    'claude-opus-4-6': [5.0, 25.0],
     'claude-sonnet-4-6': [3.0, 15.0],
-    'claude-haiku-4-5': [0.8, 4.0],
-    'claude-haiku-4-5-20251001': [0.8, 4.0],
+    'claude-haiku-4-5': [1.0, 5.0],
+    'claude-haiku-4-5-20251001': [1.0, 5.0],
     default: [3.0, 15.0],
   },
   openai: {
+    // Standard processing, short-context prices verified 2026-10-27:
+    // https://developers.openai.com/api/docs/pricing
+    'gpt-6-astra': [10.0, 50.0],
+    'gpt-6.1-sol': [2.0, 10.0],
+    'gpt-6.1-terra': [1.0, 5.0],
+    'gpt-6-luna': [0.1, 0.5],
     'gpt-4o': [5.0, 15.0],
     'gpt-4o-mini': [0.15, 0.6],
     o1: [15.0, 60.0],
@@ -102,6 +111,9 @@ export const COST_TABLE = Object.freeze({
     default: [5.0, 15.0],
   },
   gemini: {
+    // Standard rates after the promotional period; modelRatesFor applies the dated discount.
+    'gemini-4-argon': [4.0, 20.0],
+    'gemini-3.8-flash': [1.5, 7.5],
     'gemini-3.6-flash': [1.5, 7.5],
     'gemini-3.5-flash': [1.5, 9.0],
     'gemini-3.5-flash-lite': [0.3, 2.5],
@@ -117,6 +129,9 @@ export const COST_TABLE = Object.freeze({
     'gemini-2.5-flash-preview-tts': [0.5, 10.0],
     'gemini-2.5-pro-preview-tts': [1.0, 20.0],
     'gemini-3.1-flash-tts-preview': [1.0, 20.0],
+    // Standard rates from https://ai.google.dev/gemini-api/docs/pricing, verified 2026-10-27.
+    'gemini-3.8-flash-tts': [1.0, 18.0],
+    'gemini-3.8-flash-lite-tts': [1.0, 12.0],
     default: [0.3, 2.5],
   },
   vertex: {
@@ -191,6 +206,16 @@ export const COST_TABLE = Object.freeze({
  * (model-catalog.js); Replicate has no list endpoint the site reads, so its
  * entry IS its list — the image models this repository calls, one today.
  */
+export const ADAPTER_MODELS = Object.freeze({
+  gemini: Object.freeze([
+    'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-pro-preview-tts',
+    'gemini-3.1-flash-tts-preview',
+    'gemini-3.8-flash-tts',
+    'gemini-3.8-flash-lite-tts',
+  ]),
+});
+
 export const MEDIA_DEFAULT_MODELS = Object.freeze({
   elevenlabs: Object.freeze(['eleven_v3']),
   replicate: Object.freeze(['google/imagen-4-fast']),
@@ -222,3 +247,32 @@ export const PER_IMAGE_USD = Object.freeze({
     'google/imagen-4-fast': 0.02,
   }),
 });
+
+/** True only for a confirmed model rate, including image prices and the NVIDIA trial. */
+export function isPriced(provider, model) {
+  if (Number.isFinite(PER_IMAGE_USD[provider]?.[model])) return true;
+  const rates = COST_TABLE[provider] || {};
+  // Unknown ids must agree with catalogue pricing, never inherit a guessed rate.
+  // NVIDIA's documented trial tier is free independently of the selected model.
+  const rate = provider === 'nvidia' ? rates.default : Object.hasOwn(rates, model) ? rates[model] : null;
+  return Array.isArray(rate) && rate.length === 2 &&
+    rate.every((value) => Number.isFinite(value) && value >= 0);
+}
+
+/** Published introductory rates. Date bounds prevent a promotion becoming a permanent price. */
+export const MODEL_PRICE_PROMOTIONS = Object.freeze({
+  gemini: Object.freeze({
+    'gemini-4-argon': { until: '2026-12-01T00:00:00Z', rates: [2, 10] },
+    'gemini-3.8-flash': { until: '2027-01-01T00:00:00Z', rates: [0.75, 3.75] },
+    'gemini-3.8-flash-tts': { until: '2027-01-01T00:00:00Z', rates: [0.5, 9] },
+    'gemini-3.8-flash-lite-tts': { until: '2027-01-01T00:00:00Z', rates: [0.5, 6] },
+  }),
+});
+
+/** Current token rates, shared by catalogue display and usage recording. Never re-prices stored rows. */
+export function modelRatesFor(provider, model, at = Date.now()) {
+  const promotion = MODEL_PRICE_PROMOTIONS[provider]?.[model];
+  if (promotion && Number(new Date(at)) < Date.parse(promotion.until)) return promotion.rates;
+  const rates = COST_TABLE[provider];
+  return rates && Object.hasOwn(rates, model) ? rates[model] : null;
+}

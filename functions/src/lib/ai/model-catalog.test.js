@@ -151,7 +151,7 @@ describe('enrichment', () => {
 
   it('every model the router defaults to, and every recommendation, is priced', () => {
     for (const provider of PROVIDERS) {
-      for (const id of seedModelsFor(provider)) {
+      for (const id of new Set(Object.values(DEFAULT_MODEL_TABLE[provider] || {}).map(([, model]) => model))) {
         expect(enrichModel(provider, id).unpriced, `${provider}/${id}`).toBe(false);
       }
       for (const { model } of Object.values(RECOMMENDED_BY_MODALITY[provider] || {})) {
@@ -742,4 +742,54 @@ describe('visibleModelsFor', () => {
     expect(visibleModelsFor(catalog, 'gemini')).toEqual([]);
     expect(visibleModelsFor(null, 'openai')).toEqual([]);
   });
+});
+
+describe('refresh completeness and current models', () => {
+  it('starts independent provider listings together, so a slow list does not delay another', async () => {
+    const store = makeStore();
+    let finishFirst;
+    const list = vi.fn((provider) => provider === 'openai'
+      ? new Promise((resolve) => { finishFirst = resolve; })
+      : Promise.resolve(['gemini-3.8-flash-tts']));
+    const pending = refreshModelCatalog({ store, providers: ['openai', 'gemini'], listModels: list });
+    expect(list.mock.calls.map(([provider]) => provider)).toEqual(['openai', 'gemini']);
+    finishFirst(['gpt-5-mini']);
+    const summary = await pending;
+    expect(summary.providers.gemini.added).toBe(1);
+    expect(written(store).providers.gemini.models['gemini-3.8-flash-tts']).toMatchObject({
+      status: 'live', capabilities: ['tts'], unpriced: false,
+    });
+  });
+
+  it('lists Interactions-only Gemini models, leaving embeddings out of callable choices', async () => {
+    const ctx = createListContext({ env: ENV, fetchImpl: vi.fn(async () => jsonResponse(200, {
+      models: [
+        { name: 'models/gemini-3.8-flash-tts', supportedGenerationMethods: ['interactions'] },
+        { name: 'models/gemini-embedding-001', supportedGenerationMethods: ['embedContent'] },
+      ],
+    })) });
+    expect(await listModels(ctx, 'gemini')).toEqual(['gemini-3.8-flash-tts']);
+  });
+
+  it('rejects repeated pagination instead of treating a partial list as a retirement signal', async () => {
+    for (const provider of ['anthropic', 'gemini']) {
+      const body = provider === 'anthropic'
+        ? { data: [{ id: 'claude-sonnet-4-6' }], has_more: true, last_id: 'same' }
+        : { models: [], nextPageToken: 'same' };
+      const fetchImpl = vi.fn(async () => jsonResponse(200, body));
+      const ctx = createListContext({ env: ENV, fetchImpl });
+      await expect(listModels(ctx, provider)).rejects.toThrow(/Incomplete list/);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    }
+  });
+});
+
+it('the listing deadline includes Foundry token acquisition', async () => {
+  const fetchImpl = vi.fn();
+  const ctx = createListContext({
+    env: ENV, fetchImpl, timeoutMs: 15,
+    foundryToken: () => new Promise(() => {}),
+  });
+  await expect(listModels(ctx, 'foundry')).rejects.toMatchObject({ name: 'TimeoutError' });
+  expect(fetchImpl).not.toHaveBeenCalled();
 });

@@ -13,7 +13,7 @@
  *
  * The three rules of the catalogue are in the model-catalog.js header.
  */
-import { COST_TABLE, DEFAULT_MODEL_TABLE, MEDIA_DEFAULT_MODELS, PER_IMAGE_USD, PRICING_UNITS } from './model-tables.js';
+import { ADAPTER_MODELS, COST_TABLE, DEFAULT_MODEL_TABLE, MEDIA_DEFAULT_MODELS, PER_IMAGE_USD, PRICING_UNITS, modelRatesFor } from './model-tables.js';
 import { KNOWN_PROVIDERS as PROVIDERS } from './provider-order.js';
 import { SETTINGS_CONTAINER } from './containers.js';
 import { CAPABILITIES, MODALITIES } from './tasks.js';
@@ -46,7 +46,7 @@ export const STALE_AFTER_MS = 8 * 24 * 60 * 60 * 1000;
  * 'image' }` from PER_IMAGE_USD rather than a token rate posing as one
  * (ADR 0034 slice 5, #860).
  */
-export function pricingFor(provider, id) {
+export function pricingFor(provider, id, at = Date.now()) {
   const perUnit = PER_IMAGE_USD[provider];
   if (perUnit) {
     return typeof perUnit[id] === 'number'
@@ -55,7 +55,7 @@ export function pricingFor(provider, id) {
   }
   const rates = COST_TABLE[provider];
   if (!rates || !Object.hasOwn(rates, id) || !Array.isArray(rates[id])) return null;
-  const [inputPer1M, outputPer1M] = rates[id];
+  const [inputPer1M, outputPer1M] = modelRatesFor(provider, id, at);
   const unit = PRICING_UNITS[provider];
   return unit ? { inputPer1M, outputPer1M, unit } : { inputPer1M, outputPer1M };
 }
@@ -78,7 +78,7 @@ export function seedModelsFor(provider) {
   if (MEDIA_DEFAULT_MODELS[provider]) return [...MEDIA_DEFAULT_MODELS[provider]];
   const purposes = DEFAULT_MODEL_TABLE[provider];
   if (!purposes) return [];
-  return [...new Set(Object.values(purposes).map(([, model]) => model))];
+  return [...new Set([...Object.values(purposes).map(([, model]) => model), ...(ADAPTER_MODELS[provider] || [])])];
 }
 
 // ── the document ─────────────────────────────────────────────────────────────

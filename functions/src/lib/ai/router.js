@@ -222,7 +222,7 @@ import { defaultSelection } from './migrate-selection.js';
 import { AI_TASKS, TASK_NAMES, defaultModeFor, isMediaTask, taskFor } from './tasks.js';
 import { recommendedModelFor } from './provider-recommendations.js';
 import { featureSource, recordAiUsage } from './usage.js';
-import { COST_TABLE, DEFAULT_MODEL_TABLE } from './model-tables.js';
+import { COST_TABLE, DEFAULT_MODEL_TABLE, isPriced, modelRatesFor } from './model-tables.js';
 // Source grounding (#433): the pure half — source checks, prompt, request
 // body, response readers — is grounding.js; the call is on the router below.
 // The public names are re-exported so callers and tests are unchanged.
@@ -293,22 +293,13 @@ export const MEDIA_KEY_ENV = Object.freeze({
 // The purpose → model table and the cost table live in model-tables.js
 // (#858, so the catalogue can read them without this module); every caller
 // keeps importing them from here.
-export { COST_TABLE, DEFAULT_MODEL_TABLE } from './model-tables.js';
+export { COST_TABLE, DEFAULT_MODEL_TABLE, isPriced, modelRatesFor } from './model-tables.js';
 
-/**
- * Does the cost table price this model? False for a row deliberately set to
- * null (a model whose rate is not known), so a caller can mark the usage
- * row `unpriced` instead of letting a zero read as free.
- */
-export function isPriced(provider, model) {
-  const rates = COST_TABLE[provider] || {};
-  return !(Object.hasOwn(rates, model) && rates[model] === null);
-}
-
-export function getCostEstimate(provider, model, promptTokens = 0, completionTokens = 0) {
+export function getCostEstimate(provider, model, promptTokens = 0, completionTokens = 0, at = Date.now()) {
   const rates = COST_TABLE[provider] || {};
   if (!isPriced(provider, model)) return 0;
-  const [inRate, outRate] = rates[model] || rates.default || [0, 0];
+  // Image costs are supplied by the image caller, never inferred from token counts.
+  const [inRate, outRate] = modelRatesFor(provider, model, at) || (provider === 'nvidia' ? rates.default : null) || [0, 0];
   return parseFloat(
     ((promptTokens / 1_000_000) * inRate + (completionTokens / 1_000_000) * outRate).toFixed(8)
   );

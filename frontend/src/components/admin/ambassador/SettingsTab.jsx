@@ -220,7 +220,7 @@ export function ProgramEditor({ program, programs = [], onClose, onSave, saving 
         if (!open && !saving) onClose();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="w-[calc(100%-2rem)] min-w-0 [&>*]:min-w-0 max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <form className="space-y-4" noValidate onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>{program ? `Edit ${program.name}` : 'Add a program'}</DialogTitle>

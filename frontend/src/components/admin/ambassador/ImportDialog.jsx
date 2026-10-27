@@ -54,7 +54,7 @@ export default function ImportDialog({ sourceModule, programs, onClose, onImport
         if (!open && !importing) onClose();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="w-[calc(100%-2rem)] min-w-0 [&>*]:min-w-0 max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Import from {sourceLabel(sourceModule)}</DialogTitle>
           <DialogDescription>

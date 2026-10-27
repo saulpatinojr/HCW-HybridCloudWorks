@@ -60,7 +60,7 @@ function ModeRadios({ task, draft, resolved, disabled, onMode }) {
     },
   ];
   return (
-    <fieldset className="space-y-1" disabled={disabled}>
+    <fieldset className="min-w-0 space-y-3" disabled={disabled}>
       <legend className="sr-only">Mode for {resolved.label}</legend>
       {options.map((o) => {
         const id = `${name}-${o.value}`;
@@ -76,9 +76,11 @@ function ModeRadios({ task, draft, resolved, disabled, onMode }) {
               onChange={() => onMode(o.value)}
               className="mt-0.5"
             />
-            <label htmlFor={id} className="text-xs">
+            <label htmlFor={id} className="min-w-0 text-sm">
               <span className="font-medium">{o.label}</span>
-              <span className="ml-1 text-muted-foreground">{o.note}</span>
+              <span className="mt-1 block break-words text-xs leading-relaxed text-muted-foreground">
+                {o.note}
+              </span>
             </label>
           </div>
         );
@@ -90,8 +92,11 @@ function ModeRadios({ task, draft, resolved, disabled, onMode }) {
 /** The exclusions: one checkbox per implemented provider. */
 function ExcludeControls({ task, label, draft, providers, disabled, onToggle }) {
   return (
-    <fieldset className="flex flex-wrap items-center gap-3" disabled={disabled}>
+    <fieldset className="min-w-0 space-y-3 rounded-lg bg-muted/30 p-3" disabled={disabled}>
       <legend className="text-xs text-muted-foreground">Never use for {label}:</legend>
+      {providers.length === 0 && (
+        <p className="text-xs text-muted-foreground">No supported provider for this task.</p>
+      )}
       {providers.map((p) => {
         const id = `exclude-${task}-${p.id}`;
         return (
@@ -171,6 +176,28 @@ function TestResult({ result, providers }) {
  * document's `updatedAt`, so a save elsewhere, or a 409 reload, remounts
  * it on what is stored rather than keeping a stale draft.
  */
+function PlannedTaskRow({ task, resolved }) {
+  return (
+    <div
+      className="min-w-0 space-y-2 rounded-xl border border-dashed border-border p-4 sm:p-5"
+      data-task={task}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-medium">{resolved.label}</h3>
+        <span className={`${BADGE} border-border text-muted-foreground`}>planned</span>
+      </div>
+      <p className="text-xs text-muted-foreground">{resolved.description}</p>
+      <p className="text-sm" data-testid={`effective-${task}`}>
+        Not connected yet
+      </p>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        This task has no connected implementation. Model routing and tests become available when it
+        is connected.
+      </p>
+    </div>
+  );
+}
+
 function TaskRow({ task, resolved, selection, providers, availability, catalog, saving, onSave }) {
   const [draft, setDraft] = useState(() => draftEntry(resolved.entry));
   const [error, setError] = useState(null);
@@ -211,8 +238,11 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
   };
 
   return (
-    <div className="space-y-2 border-b border-border/60 py-3 last:border-b-0" data-task={task}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div
+      className="min-w-0 space-y-4 rounded-xl border border-border bg-background p-4 sm:p-5"
+      data-task={task}
+    >
+      <div className="grid min-w-0 gap-3 lg:grid-cols-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium">{resolved.label}</span>
@@ -228,7 +258,7 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">{resolved.description}</div>
         </div>
-        <div className="shrink-0 text-right">
+        <div className="min-w-0 space-y-1 break-words rounded-lg bg-muted/30 p-3 lg:text-right">
           <p className="text-xs font-medium" data-testid={`effective-${task}`}>
             {describeEffective(resolved, providers)}
           </p>
@@ -240,7 +270,7 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid min-w-0 gap-5 xl:grid-cols-2">
         <ModeRadios
           task={task}
           draft={draft}
@@ -326,6 +356,22 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
           </p>
         )}
       </div>
+      {(resolved.rejected?.length > 0 || resolved.flags?.length > 0) && (
+        <details className="min-w-0 text-xs text-muted-foreground">
+          <summary className="cursor-pointer font-medium">Routing details</summary>
+          <ul className="mt-2 space-y-2 break-words leading-relaxed">
+            {(resolved.flags || []).map((flag) => (
+              <li key={flag}>{flag}</li>
+            ))}
+            {(resolved.rejected || []).map((item, index) => (
+              <li key={`${item.provider}-${index}`}>
+                {providerLabel(item.provider, providers)}
+                {item.model ? ` (${item.model})` : ''}: {item.why}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <TestResult result={testResult} providers={providers} />
     </div>
   );
@@ -335,7 +381,7 @@ function TaskRow({ task, resolved, selection, providers, availability, catalog, 
  * @param {{ providers: Array<{id: string, name?: string}>, catalog: object|null, onOpenCatalog?: () => void }} props
  */
 export default function TasksTab({ providers = [], catalog = null, onOpenCatalog }) {
-  const { state, saving, reload, save } = useSelection();
+  const { state, saving, reload, save } = useSelection(catalog);
 
   if (state.status === 'error') {
     return (
@@ -368,24 +414,28 @@ export default function TasksTab({ providers = [], catalog = null, onOpenCatalog
       />
     );
   } else {
-    rows = tasks.map(([task, resolved]) => (
-      <TaskRow
-        key={`${task}:${stamp}:${JSON.stringify(resolved.entry)}`}
-        task={task}
-        resolved={resolved}
-        selection={state.selection}
-        providers={cards}
-        availability={state.effective?.availability || {}}
-        catalog={catalog}
-        saving={saving}
-        onSave={save}
-      />
-    ));
+    rows = tasks.map(([task, resolved]) =>
+      resolved.planned ? (
+        <PlannedTaskRow key={task} task={task} resolved={resolved} />
+      ) : (
+        <TaskRow
+          key={`${task}:${stamp}:${JSON.stringify(resolved.entry)}`}
+          task={task}
+          resolved={resolved}
+          selection={state.selection}
+          providers={cards}
+          availability={state.effective?.availability || {}}
+          catalog={catalog}
+          saving={saving}
+          onSave={save}
+        />
+      )
+    );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="grid min-w-0 gap-3 lg:grid-cols-2">
         <div>
           <h2 className="flex items-center gap-2 text-lg font-semibold">
             <ListChecks className="h-5 w-5 text-primary" aria-hidden="true" /> Tasks
@@ -393,7 +443,7 @@ export default function TasksTab({ providers = [], catalog = null, onOpenCatalog
           <p className="mt-0.5 text-sm text-muted-foreground">
             {state.status === 'loading'
               ? 'Reading the AI routing…'
-              : 'One row per task. The effective model is what the router will use right now; the mode decides how it is chosen.'}
+              : 'Choose a model for each task. Recommendations include their reason and review date; provider defaults can vary by operation.'}
           </p>
         </div>
         {onOpenCatalog && (
@@ -422,7 +472,7 @@ export default function TasksTab({ providers = [], catalog = null, onOpenCatalog
             switched on by their key alone — they have no card.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-1">{rows}</CardContent>
+        <CardContent className="space-y-4">{rows}</CardContent>
       </Card>
     </div>
   );

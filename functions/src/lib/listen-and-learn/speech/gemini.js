@@ -60,8 +60,8 @@
  * mp3.js encodes mono. Either way the PCM is encoded to MP3 here; see mp3.js
  * for why that is not optional.
  *
- * Every Gemini TTS model is a preview model. That is the reason the Azure
- * provider is kept alongside this one rather than deleted — see speech/index.js.
+ * Legacy preview models and newer structured-speech models coexist here.
+ * Azure remains the product's fallback — see speech/index.js.
  */
 import { encodePcmToMp3, pcmDurationSeconds } from './mp3.js';
 import { chunkTurns } from './azure.js';
@@ -87,6 +87,20 @@ const INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/inter
  */
 const DEFAULT_MODEL = 'gemini-2.5-flash-preview-tts';
 
+// Google cookbook, read 2026-10-27: 3.8 speaks text verbatim; speaker labels
+// and delivery instructions belong in speech_metadata, not the spoken text.
+// https://github.com/google-gemini/cookbook/blob/main/quickstarts/Get_started_TTS.ipynb
+const STRUCTURED_SPEECH_MODELS = new Set(['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts']);
+
+export function speechInputFor(model, turns, speakers) {
+  if (!STRUCTURED_SPEECH_MODELS.has(model)) return buildDialoguePrompt(turns, speakers);
+  return turns.map(({ speaker, text }) => ({
+    type: 'text',
+    text,
+    annotations: [{ type: 'speech_metadata', speaker }],
+  }));
+}
+
 /**
  * The most UTF-8 bytes of dialogue sent in one request. Well under the
  * 9,000-byte script cap, so every episode is at least two requests; chosen
@@ -106,14 +120,11 @@ const PCM_SAMPLE_RATE = 24000;
 /**
  * Audio tokens per second, for the case where the response reports no `usage`.
  *
- * 32/second is the rate the token-counting reference publishes for audio. It is
- * documented for audio *input*; applying it to generated audio is an estimate,
- * which is exactly why a row derived this way is flagged `estimatedTokens` and
- * the reported counts are preferred whenever the API sends them. Without the
- * flag the portal would show a derived number and a billed number as the same
- * kind of fact.
+ * Google prices generated TTS audio at 25 tokens per second (pricing guide,
+ * verified 2026-10-27). Reported counts remain preferred, and any duration-
+ * derived count remains explicitly marked estimatedTokens.
  */
-const AUDIO_TOKENS_PER_SECOND = 32;
+const AUDIO_TOKENS_PER_SECOND = 25;
 export { AUDIO_TOKENS_PER_SECOND as GEMINI_AUDIO_TOKENS_PER_SECOND };
 
 /**
@@ -583,7 +594,7 @@ export async function synthesizeWithGemini({
     const payload = await requestAudio(
       {
         model,
-        input: buildDialoguePrompt(chunk, speakers),
+        input: speechInputFor(model, chunk, speakers),
         response_format: { type: 'audio' },
         generation_config: { speech_config: speechConfig },
       },

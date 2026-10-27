@@ -424,6 +424,19 @@ export function upkeepWindow(day, period, offset = 0) {
   };
 }
 
+/** Saved qualification dates win; a recurring program otherwise uses its current period. */
+export function readinessPeriodFor(program, application = null, today = todayIso()) {
+  const qualification = application?.qualificationPeriod;
+  if (qualification?.start || qualification?.end) {
+    return `${qualification.start || ''}..${qualification.end || ''}`;
+  }
+  if (UPKEEP_PERIODS.includes(program?.upkeep?.period)) {
+    const window = upkeepWindow(today, program.upkeep.period);
+    return `${window.start}..${window.end}`;
+  }
+  return '';
+}
+
 /**
  * How a membership stands against its program's upkeep rule: the evidence
  * filed under this program by name, dated in the current period and in the

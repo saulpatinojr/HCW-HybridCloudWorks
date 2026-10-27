@@ -725,8 +725,8 @@ describe('estimateSpeechCostUsd', () => {
   });
 
   it('gives a best-effort figure for Gemini that over- rather than under-estimates', () => {
-    // 9,000 bytes ÷ 13 bytes/s ≈ 692 s × 32 tokens/s ≈ 22,154 tokens at
-    // USD 20 per 1M (the 3.1 flash rate) ≈ USD 0.44 — above twice the
+    // 9,000 bytes ÷ 13 bytes/s ≈ 692 s × 25 tokens/s ≈ 17,308 tokens at
+    // USD 20 per 1M (the 3.1 flash rate) ≈ USD 0.35 — about twice the
     // ~USD 0.17 an episode measured on 2.5 flash, which is priced at half that.
     const estimate = estimateSpeechCostUsd({
       ...LL,
@@ -748,18 +748,18 @@ describe('estimateSpeechCostUsd', () => {
   });
 
   it('rounds a fractional token count UP, so the ceiling is never below the exact value', () => {
-    // 1 byte ÷ 13 bytes/s × 32 tokens/s ≈ 2.46 tokens: Math.round gave 2,
+    // 1 byte ÷ 13 bytes/s × 25 tokens/s ≈ 1.92 tokens; rounding up avoids undercounting.
     // below the exact figure a "ceiling" must not sit under (Copilot on the
     // PR). Checked across a spread of sizes, and for the byte ceiling too.
     const exact = (model, bytes) =>
-      getCostEstimate('gemini', model, 0, (bytes / SPEECH_LIMITS.BYTES_PER_SECOND) * 32);
+      getCostEstimate('gemini', model, 0, (bytes / SPEECH_LIMITS.BYTES_PER_SECOND) * 25);
     for (const bytes of [1, 7, 13, 100, 8999, 9000]) {
       for (const model of ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts']) {
         expect(estimateGeminiCostUsd(model, bytes)).toBeGreaterThanOrEqual(exact(model, bytes));
       }
     }
     expect(estimateGeminiCostUsd('gemini-3.1-flash-tts-preview', 1)).toBe(
-      getCostEstimate('gemini', 'gemini-3.1-flash-tts-preview', 0, 3)
+      getCostEstimate('gemini', 'gemini-3.1-flash-tts-preview', 0, 2)
     );
     // A fractional byte ceiling is taken up to the next whole byte, not to nearest.
     expect(estimateSpeechCostUsd({ ...LL, ceilingBytes: 12.2, env: GEMINI })).toMatchObject({
@@ -871,7 +871,7 @@ describe('estimateSpeechCostUsd', () => {
           LISTEN_AND_LEARN_ELEVENLABS_MODEL: 'eleven_v4',
         },
       })
-    ).toMatchObject({ provider: 'elevenlabs', model: 'eleven_v4', estimatedCostUsd: 0.1 });
+    ).toMatchObject({ provider: 'elevenlabs', model: 'eleven_v4', estimatedCostUsd: null });
   });
 });
 
@@ -914,4 +914,10 @@ describe('speechUsageRows — the one audio row every pipeline writes (ADR 0034 
     expect(() => speechUsageRows('radio', audio)).toThrow(/unknown product "radio"/);
     expect(() => speechUsageRows(undefined, audio)).toThrow(/none was given/);
   });
+});
+
+it('does not show an unverified voice estimate as free', () => {
+  expect(estimateSpeechCostUsd({
+    ...LL, ceilingBytes: 9000, model: 'gemini-unknown-tts', env: GEMINI,
+  })).toMatchObject({ provider: 'gemini', model: 'gemini-unknown-tts', estimatedCostUsd: null });
 });

@@ -71,7 +71,7 @@ export default function CsvImportDialog({
         if (!open && !importing) onClose();
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="w-[calc(100%-2rem)] min-w-0 [&>*]:min-w-0 max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Import {source.label}</DialogTitle>
           <DialogDescription>{source.hint}</DialogDescription>
