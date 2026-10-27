@@ -8,6 +8,7 @@
  * request: `formats: ['extract']` with a JSON schema). `FIRECRAWL_API_KEY`
  * is a Key Vault reference on the app; a missing key skips the run.
  */
+import { recordRun } from '../rss/source-run.js';
 import { randomUUID } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { buildRssContentDoc, truncateText } from '../rss/feeds.js';
@@ -79,9 +80,12 @@ const ARTICLE_SCHEMA = {
 export function resolveArticleUrl(url, listingUrl) {
   const value = String(url || '');
   if (!value) return '';
-  if (/^https?:\/\//i.test(value)) return value;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return ''; // javascript:, mailto:, data: — not an article
-  return new URL(value, listingUrl).href;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !/^https?:\/\//i.test(value)) return ''; // javascript:, mailto:, data: — not an article
+  try {
+    return new URL(value, listingUrl).href;
+  } catch {
+    return '';
+  }
 }
 
 /** Articles on a listing page via Firecrawl structured extraction. */
@@ -199,11 +203,11 @@ export function createBlogListingsScrape({
           if (await ingestArticle(source, article)) newCount += 1;
         }
         results.newArticles += newCount;
-        if (source.id) await store.upsertDoc('admin_settings', { id: `run-${source.id}`, settingKind: 'blog_source_run', sourceId: source.id, status: 'succeeded', fetchedAt: now().toISOString(), itemCount: articles.length });
+        await recordRun(store, source, 'succeeded', { fetchedAt: now().toISOString(), itemCount: articles.length });
         log.log?.(`[blogScraper] ${source.name}: ${articles.length} found, ${newCount} new`);
       } catch (err) {
         if (signal?.aborted) throw signal.reason || err;
-        if (source.id) await store.upsertDoc('admin_settings', { id: `run-${source.id}`, settingKind: 'blog_source_run', sourceId: source.id, status: 'failed', fetchedAt: now().toISOString() }).catch(() => {});
+        await recordRun(store, source, 'failed', { fetchedAt: now().toISOString() });
         results.errors += 1;
         results.failures.push({ source: source.name, error: err?.message || String(err) });
         log.error?.(`[blogScraper] Failed ${source.name}: ${err?.message || err}`);

@@ -18,6 +18,7 @@
  * Everything with a side effect arrives through `deps`, so the test suite
  * runs the whole loop against fakes.
  */
+import { recordRun } from './source-run.js';
 import { guardedFetch } from '../http/guarded-fetch.js';
 import { randomUUID } from 'node:crypto';
 import { recordedFailure } from '../http/error-response.js';
@@ -134,10 +135,11 @@ export function createRssIngest({
     try {
       parsed = await parser.parseURL(feed.url, { signal });
     } catch (err) {
-      if (TLS_CODES.has(err?.code)) {
+      const tlsCode = err?.code || err?.cause?.code;
+      if (TLS_CODES.has(tlsCode)) {
         // Refuse to silently bypass TLS validation: skip and say why.
-        results.errors.push(`${provider}/${feed.name}: TLS validation failed (${err.code})`);
-        if (feed.id) await store.upsertDoc('admin_settings', { id: `run-${feed.id}`, settingKind: 'blog_source_run', sourceId: feed.id, status: 'failed', fetchedAt: now().toISOString() }).catch(() => {});
+        results.errors.push(`${provider}/${feed.name}: TLS validation failed (${tlsCode})`);
+        await recordRun(store, feed, 'failed', { fetchedAt: now().toISOString() });
         results.skipped += 1;
         return;
       }
@@ -152,7 +154,7 @@ export function createRssIngest({
     results.cached += 1;
     await draftNewContent(provider, feed, items, results, signal);
     results.processed += 1;
-    if (feed.id) await store.upsertDoc('admin_settings', { id: `run-${feed.id}`, settingKind: 'blog_source_run', sourceId: feed.id, status: 'succeeded', fetchedAt: now().toISOString(), itemCount: items.length });
+    await recordRun(store, feed, 'succeeded', { fetchedAt: now().toISOString(), itemCount: items.length });
     info(`[rssFetcher] ${feed.name}: cached ${cached} items`);
   }
 
@@ -207,7 +209,7 @@ export function createRssIngest({
             await processSingleFeed(provider, feed, results, signal);
           } catch (err) {
             if (signal?.aborted || err?.name === 'AbortError' || err?.message === 'aborted') throw err;
-            if (feed.id) await store.upsertDoc('admin_settings', { id: `run-${feed.id}`, settingKind: 'blog_source_run', sourceId: feed.id, status: 'failed', fetchedAt: now().toISOString() }).catch(() => {});
+            await recordRun(store, feed, 'failed', { fetchedAt: now().toISOString() });
             // One feed failing must not abandon the sweep. The job result is
             // served by getJob, so it names the feed and a sentence with the
             // code and the log line's reference (#945).

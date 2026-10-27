@@ -76,7 +76,14 @@ it('manual listing intake preserves source settings and resolves article links r
       ok: true,
       json: async () => ({
         success: true,
-        data: { extract: { articles: [{ title: 'Listing article', url: 'relative-post' }] } },
+        data: {
+          extract: {
+            articles: [
+              { title: 'Listing article', url: 'relative-post' },
+              { title: 'Malformed', url: 'https://[' },
+            ],
+          },
+        },
       }),
     }))
   );
@@ -110,4 +117,34 @@ it('does not begin an already cancelled RSS sweep', async () => {
     runRssIngest({}, { signal: AbortSignal.abort(new Error('cancelled')) })
   ).rejects.toThrow('cancelled');
   expect(fakes.queryDocs).not.toHaveBeenCalled();
+});
+
+it('does not fail listing ingestion when its run-status write fails', async () => {
+  sources = sources.map((source) => ({ ...source, enabled: source.id === listing.id }));
+  const original = fakes.upsertDoc.getMockImplementation();
+  fakes.upsertDoc.mockImplementation((container, doc) => {
+    if (container === 'admin_settings') throw new Error('Status write unavailable');
+    return original(container, doc);
+  });
+  vi.stubEnv('FIRECRAWL_API_KEY', 'fc-unit-test-only');
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { extract: { articles: [{ title: 'Article', url: 'relative-post' }] } },
+      }),
+    }))
+  );
+  try {
+    const result = await getJobType('sync-blog-source').worker(
+      { sourceId: listing.id },
+      { context: {} }
+    );
+    expect(result).toMatchObject({ newArticles: 1, errors: 0 });
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
 });

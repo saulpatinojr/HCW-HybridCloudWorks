@@ -113,6 +113,34 @@ function ArticleSearch({ query, setQuery, setSearch, reload }) {
   );
 }
 
+function ListState({ loading, loadError, empty, nouns, reload }) {
+  if (loading)
+    return (
+      <div className="flex items-center justify-center py-12" role="status" aria-live="polite">
+        <Loader2 className="h-8 w-8 animate-spin text-slate-blue" />
+        <span className="sr-only">Loading {nouns.plural}…</span>
+      </div>
+    );
+  if (loadError)
+    return (
+      <EmptyState
+        variant="error"
+        title={`Could not load ${nouns.plural}`}
+        description={loadError}
+        onRetry={reload}
+      />
+    );
+  if (empty)
+    return (
+      <EmptyState
+        variant="filtered"
+        title={`No ${nouns.plural} in this status`}
+        description={`${nouns.plural[0].toUpperCase()}${nouns.plural.slice(1)} arrive from Submit URLs with the matching content type and from the Review Queue. Try another status.`}
+      />
+    );
+  return null;
+}
+
 /**
  * @param {{
  *   type: 'framework' | 'coder_corner',
@@ -237,27 +265,13 @@ export default function TypedReviewList({
         <ArticleSearch query={query} setQuery={setQuery} setSearch={setSearch} reload={reload} />
       )}
 
-      {loading && (
-        <div className="flex items-center justify-center py-12" role="status" aria-live="polite">
-          <Loader2 className="h-8 w-8 animate-spin text-slate-blue" />
-          <span className="sr-only">Loading {nouns.plural}…</span>
-        </div>
-      )}
-      {!loading && loadError && (
-        <EmptyState
-          variant="error"
-          title={`Could not load ${nouns.plural}`}
-          description={loadError}
-          onRetry={reload}
-        />
-      )}
-      {!loading && !loadError && items.length === 0 && (
-        <EmptyState
-          variant="filtered"
-          title={`No ${nouns.plural} in this status`}
-          description={`${nouns.plural[0].toUpperCase()}${nouns.plural.slice(1)} arrive from Submit URLs with the matching content type and from the Review Queue. Try another status.`}
-        />
-      )}
+      <ListState
+        loading={loading}
+        loadError={loadError}
+        empty={items.length === 0}
+        nouns={nouns}
+        reload={reload}
+      />
       {!loading && !loadError && items.length > 0 && (
         <div className="space-y-4">
           {items.map((item) =>

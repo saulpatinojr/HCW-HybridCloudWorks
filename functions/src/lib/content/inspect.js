@@ -148,7 +148,7 @@ export function buildInspectionUpdateData({
     inspectError: null,
     ...metadataFields(newData, metadata),
     ...scrapeFields(scraped, imageAltTexts, stamp),
-    ...blogImageDefaults(newData, scraped.images || []),
+    ...(newData.blogSourceId ? blogImageDefaults(newData, scraped.images || []) : {}),
     ...(hasGeneratedPostContent && { postContent: metadata.postContent }),
     ...architectureFields(newData, metadata, targetUrl),
     analysisPrompt,

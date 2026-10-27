@@ -236,3 +236,23 @@ describe('configured blog intake', () => {
     expect(store.docs.admin_settings['run-healthy'].status).toBe('succeeded');
   });
 });
+
+
+it('keeps successful intake successful when diagnostic status storage fails', async () => {
+  const store = makeStore();
+  const original = store.upsertDoc.getMockImplementation();
+  store.upsertDoc.mockImplementation((container, doc) => {
+    if (container === 'admin_settings') throw new Error('Status storage unavailable');
+    return original(container, doc);
+  });
+  const result = await createRssIngest({ store, parser: { parseURL: async () => ({ items: [item(1)] }) }, dedup: dedupNone }).processRssFeeds({ feeds: { aws: [{ id: 'source', name: 'Source', url: 'https://example.com/feed' }] } });
+  expect(result).toMatchObject({ processed: 1, newContent: 1, errors: [] });
+});
+it('recognizes TLS failures wrapped by the guarded fetch transport', async () => {
+  const store = makeStore(); store.docs.admin_settings = {};
+  const parser = { parseURL: async () => { throw Object.assign(new Error('fetch failed'), { cause: { code: 'CERT_HAS_EXPIRED' } }); } };
+  const result = await createRssIngest({ store, parser, dedup: dedupNone }).processRssFeeds({ feeds: { aws: [{ id: 'source', name: 'Source', url: 'https://example.com/feed' }] } });
+  expect(result.skipped).toBe(1);
+  expect(result.errors[0]).toContain('TLS validation failed (CERT_HAS_EXPIRED)');
+  expect(store.docs.admin_settings['run-source'].status).toBe('failed');
+});

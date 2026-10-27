@@ -520,6 +520,7 @@ describe('blog listings (Firecrawl)', () => {
       url: 'https://aws.amazon.com/blogs/',
       formats: ['extract'],
     });
+    expect(resolveArticleUrl('https://[', 'https://h.test/blog/')).toBe('');
     expect(resolveArticleUrl('x/y', 'https://h.test/l/')).toBe('https://h.test/l/x/y');
     expect(resolveArticleUrl('../post', 'https://h.test/blog/category/')).toBe('https://h.test/blog/post');
     expect(resolveArticleUrl('//cdn.test/post', 'https://h.test/blog/')).toBe('https://cdn.test/post');
