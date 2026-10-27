@@ -104,7 +104,13 @@ export async function scrapeListingPage(
       extract: { schema: ARTICLE_SCHEMA },
     }),
   });
-  const result = await response.json();
+  let result;
+  try {
+    result = await response.json();
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason || error;
+    throw new Error('The blog listing response could not be read.');
+  }
   if (!response.ok || result.success === false) {
     throw new Error(
       `Firecrawl scrape failed for ${listingUrl}: ${result.error || `HTTP ${response.status}`}`

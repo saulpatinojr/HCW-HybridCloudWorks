@@ -159,16 +159,23 @@ it.each(['AbortError', 'SyntaxError'])(
       vi.fn(async () => ({
         ok: true,
         json: async () => {
-          throw Object.assign(new Error('Body could not be read'), { name });
+          throw Object.assign(new Error('private-upstream-response-marker'), { name });
         },
       }))
     );
+    const context = { error: vi.fn() };
     try {
       const result = await getJobType('sync-blog-source').worker(
         { sourceId: listing.id },
-        { context: {} }
+        { context }
       );
       expect(result).toMatchObject({ newArticles: 0, errors: 1 });
+      expect(result.failures[0].error).toBe('The blog listing response could not be read.');
+      expect(JSON.stringify(result)).not.toContain('private-upstream-response-marker');
+      expect(context.error).toHaveBeenCalled();
+      expect(JSON.stringify(context.error.mock.calls)).not.toContain(
+        'private-upstream-response-marker'
+      );
       expect(fakes.upsertDoc).toHaveBeenCalledWith(
         'admin_settings',
         expect.objectContaining({ sourceId: listing.id, status: 'failed' })
@@ -182,3 +189,33 @@ it.each(['AbortError', 'SyntaxError'])(
     }
   }
 );
+
+it('preserves caller cancellation while the listing body is being read', async () => {
+  sources = sources.map((source) => ({ ...source, enabled: source.id === listing.id }));
+  const controller = new AbortController();
+  const context = { error: vi.fn() };
+  vi.stubEnv('FIRECRAWL_API_KEY', 'fc-unit-test-only');
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => {
+        controller.abort(new Error('cancelled by caller'));
+        throw new Error('private-upstream-response-marker');
+      },
+    }))
+  );
+  try {
+    await expect(
+      getJobType('sync-blog-source').worker(
+        { sourceId: listing.id },
+        { context, signal: controller.signal }
+      )
+    ).rejects.toThrow('cancelled by caller');
+    expect(context.error).not.toHaveBeenCalled();
+    expect(fakes.upsertDoc).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
