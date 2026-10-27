@@ -990,6 +990,38 @@ describe('DECLARED', () => {
     expect(infraSource).toMatch(/^\s*SWEEP_VISITOR_SESSIONS\s*=\s*"sweepVisitorSessions — /m);
   });
 
+  it('declares the Coder broker token’s Key Vault reference exactly as infra/ writes it, and passes the plan that adds only that (#1403)', () => {
+    const entry = DECLARED.find((candidate) => candidate.path === 'app_settings.CODER_BROKER_TOKEN');
+    expect(entry, 'no declaration for the broker token’s app setting').toBeDefined();
+    expect(entry.address).toBe(FUNCTION_APP);
+    expect(entry.before).toBeUndefined();
+
+    // The declared value is the tree's reference with the vault's address filled in:
+    // the same setting, pointing at the secret that carries its name in Key Vault's spelling.
+    const tree =
+      /^\s*"CODER_BROKER_TOKEN"\s*=\s*"@Microsoft\.KeyVault\(SecretUri=\$\{azurerm_key_vault\.hcw\.vault_uri\}secrets\/([A-Z0-9-]+)\)"\s*$/m.exec(
+        infraSource
+      );
+    expect(tree, 'CODER_BROKER_TOKEN is not a Key Vault reference in infra/').not.toBeNull();
+    expect(tree[1]).toBe('CODER-BROKER-TOKEN');
+    expect(variableDefault('key_vault_name')).toBe('"kv-site-prod-cus-01"');
+    expect(entry.after).toBe(
+      '@Microsoft.KeyVault(SecretUri=https://kv-site-prod-cus-01.vault.azure.net/secrets/CODER-BROKER-TOKEN)'
+    );
+
+    // The plan this pull request queues: the Function App gains that one key.
+    const added = fixture();
+    added.app.after.app_settings.CODER_BROKER_TOKEN = entry.after;
+    expect(checkPlan(added.plan)).toMatchObject({ ok: true, unexpected: [], missing: [] });
+
+    // The same key pointing at another secret (the status token's, say) is not what was declared.
+    const wrong = fixture();
+    wrong.app.after.app_settings.CODER_BROKER_TOKEN = entry.after.replace('CODER-BROKER-TOKEN', 'CODER-STATUS-TOKEN');
+    const result = checkPlan(wrong.plan);
+    expect(result.ok).toBe(false);
+    expect(result.unexpected.some((line) => line.includes('app_settings.CODER_BROKER_TOKEN'))).toBe(true);
+  });
+
   /** An alert-timer-overdue update as a plan carries it, from one declaration. */
   const timerRuleUpdate = (declaration) => ({
     address: declaration.address,
