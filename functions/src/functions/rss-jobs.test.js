@@ -1,0 +1,113 @@
+import { beforeEach, expect, it, vi } from 'vitest';
+const fakes = vi.hoisted(() => ({
+  queryDocs: vi.fn(),
+  upsertDoc: vi.fn(),
+  readDoc: vi.fn(),
+  parseURL: vi.fn(),
+}));
+vi.mock('../lib/cosmos-client.js', () => fakes);
+vi.mock('../lib/cms/content-dedup.js', () => ({
+  findDuplicateContent: vi.fn(async () => ({ duplicate: false })),
+  buildDedupFields: () => ({}),
+}));
+vi.mock('../lib/rss/ingest.js', async (load) => ({
+  ...(await load()),
+  createRssParser: async () => ({ parseURL: fakes.parseURL }),
+}));
+import { DEFAULT_BLOG_SOURCES } from '../lib/rss/source-config.js';
+import { getJobType } from '../lib/jobs.js';
+import { runRssIngest } from './rss-jobs.js';
+
+const kiro = DEFAULT_BLOG_SOURCES.find((source) => source.name === 'Kiro Blog');
+const listing = DEFAULT_BLOG_SOURCES.find((source) => source.kind === 'listing');
+let sources;
+beforeEach(() => {
+  vi.clearAllMocks();
+  sources = DEFAULT_BLOG_SOURCES.map((source) => ({
+    ...source,
+    enabled: source.id === kiro.id,
+    settingKind: 'blog_source',
+    maxItems: 1,
+    fallbackImageUrl: 'https://example.com/default.png',
+  }));
+  fakes.queryDocs.mockImplementation(async (container) =>
+    container === 'admin_settings' ? sources : []
+  );
+  fakes.upsertDoc.mockImplementation(async (_, doc) => doc);
+  fakes.parseURL.mockResolvedValue({
+    items: [
+      {
+        title: 'New Kiro feature',
+        link: 'https://kiro.dev/blog/new-feature',
+        contentSnippet: 'A feature.',
+      },
+      { title: 'Another feature', link: 'https://kiro.dev/blog/another-feature' },
+    ],
+  });
+});
+
+it('scheduled RSS intake uses saved source enablement, limits, and image settings', async () => {
+  const result = await runRssIngest({});
+  expect(result.newContent).toBe(1);
+  expect(fakes.parseURL).toHaveBeenCalledTimes(1);
+  expect(fakes.upsertDoc).toHaveBeenCalledWith(
+    'content',
+    expect.objectContaining({
+      blogSourceId: kiro.id,
+      blogFallbackImageUrl: 'https://example.com/default.png',
+      Live: false,
+      inspectTrigger: true,
+    })
+  );
+});
+it('manual source jobs run the selected enabled source and refuse paused or missing sources', async () => {
+  const worker = getJobType('sync-blog-source').worker;
+  expect((await worker({ sourceId: kiro.id }, { context: {} })).newContent).toBe(1);
+  sources = sources.map((source) => ({ ...source, enabled: false }));
+  await expect(worker({ sourceId: kiro.id })).rejects.toThrow('Choose an enabled blog source');
+  await expect(worker({ sourceId: 'unknown' })).rejects.toThrow('Choose an enabled blog source');
+});
+it('manual listing intake preserves source settings and resolves article links relative to the listing', async () => {
+  sources = sources.map((source) => ({ ...source, enabled: source.id === listing.id }));
+  vi.stubEnv('FIRECRAWL_API_KEY', 'fc-unit-test-only');
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        data: { extract: { articles: [{ title: 'Listing article', url: 'relative-post' }] } },
+      }),
+    }))
+  );
+  try {
+    const result = await getJobType('sync-blog-source').worker(
+      { sourceId: listing.id },
+      { context: {} }
+    );
+    expect(result.newArticles).toBe(1);
+    expect(fakes.upsertDoc).toHaveBeenCalledWith(
+      'content',
+      expect.objectContaining({
+        blogSourceId: listing.id,
+        blogFallbackImageUrl: 'https://example.com/default.png',
+        sourceUrl: new URL('relative-post', listing.url).href,
+        Live: false,
+        inspectTrigger: true,
+      })
+    );
+    expect(fakes.upsertDoc).toHaveBeenCalledWith(
+      'admin_settings',
+      expect.objectContaining({ sourceId: listing.id, status: 'succeeded' })
+    );
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
+it('does not begin an already cancelled RSS sweep', async () => {
+  await expect(
+    runRssIngest({}, { signal: AbortSignal.abort(new Error('cancelled')) })
+  ).rejects.toThrow('cancelled');
+  expect(fakes.queryDocs).not.toHaveBeenCalled();
+});

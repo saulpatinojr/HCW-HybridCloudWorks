@@ -8,6 +8,7 @@
  * request: `formats: ['extract']` with a JSON schema). `FIRECRAWL_API_KEY`
  * is a Key Vault reference on the app; a missing key skips the run.
  */
+import { randomUUID } from 'node:crypto';
 import { readKey } from '../ai/router.js';
 import { buildRssContentDoc, truncateText } from '../rss/feeds.js';
 
@@ -80,8 +81,7 @@ export function resolveArticleUrl(url, listingUrl) {
   if (!value) return '';
   if (/^https?:\/\//i.test(value)) return value;
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return ''; // javascript:, mailto:, data: — not an article
-  const base = new URL(listingUrl);
-  return value.startsWith('/') ? `${base.origin}${value}` : `${base.origin}/${value}`;
+  return new URL(value, listingUrl).href;
 }
 
 /** Articles on a listing page via Firecrawl structured extraction. */
@@ -149,7 +149,7 @@ export function createBlogListingsScrape({
   env = process.env,
   sources = BLOG_SCRAPE_SOURCES,
   now = () => new Date(),
-  uuid,
+  uuid = randomUUID,
   log = {},
   signal,
 }) {

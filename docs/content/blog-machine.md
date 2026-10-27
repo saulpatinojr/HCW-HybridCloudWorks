@@ -424,6 +424,11 @@ RSS ingestion (`syncRssFeeds`) runs every two hours; Firecrawl listing discovery
 flags; manual runs do not require the timer flags. Listing discovery still needs
 the existing Firecrawl integration. No additional service or credential is added.
 Both paths deduplicate articles, create non-live drafts, and request inspection.
+Blog listing links resolve relative to their actual page path, including parent
+paths and protocol-relative links. Listing intake now supplies a default UUID
+generator: production wiring previously omitted it, which could prevent newly
+discovered articles from being saved. Registered-worker regression tests cover
+both intake paths through draft creation.
 ContentForge, editorial review, quality/image checks, and the Publish screen
 continue to control publication; a source sync never approves or publishes.
 
