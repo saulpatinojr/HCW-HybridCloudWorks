@@ -68,7 +68,8 @@ leave it alone. A session never switches the main checkout's branch; it works in
    live in the lab zone. One possible explanation, not checked, is certificate validation done on Cloudflare's side. Only the owner's Cloudflare login can read the entries: the issue links the
    [audit log](https://dash.cloudflare.com/?to=/:account/audit-log) and lists each entry id; the steps are in
    [the daily DNS audit](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/docs/runbooks/edge-dns-verification.md). Add no allowlist entry before that.
-2. **Run the lab host's `bootstrap.sh`** (the script that brings the lab server in line with this repository) when convenient, to apply
+2. **Run the lab host's `bootstrap.sh`** (the script that brings the lab server in line with this repository; tracked in
+   [#1454](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1454)) when convenient, to apply
    [#1449](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1449) (the new versions; [#1448](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1448) changed only comments and a test).
    **Read this first.** The run restarts things on the lab server, so pick a quiet time: Coder, its PostgreSQL database and Portainer are recreated because their images changed, and Vault
    (the secrets service) restarts because its program file changed, then unseals itself. This is a reading of the roles
@@ -121,6 +122,8 @@ reviews. The lines below come from the owner's earlier sessions and are written 
 - No admin bypass (merging past the repository's rules) and no force-push to `main`. Sessions never run `terraform apply` or delete Azure resources unless told to.
 - A safety-check refusal is not worked around: say exactly what is blocked and why, and carry on with everything else.
 - Sessions merge their own pull requests once the required checks are green, every review conversation is resolved and CodeRabbit has approved the last push; never hand the owner a merge.
+  The ruleset itself requires the checks and resolved conversations but no approving review (`required_approving_review_count` is 0, read from the API on 2026-10-27), so CodeRabbit's
+  approval is this repository's practice, not a gate. `.claude/CLAUDE.md` still says otherwise; fixing that is [#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455).
 - Review bots (CodeRabbit, Copilot and GitHub's code scanning, the automated reviewers on every pull request): at most three rounds each. Answer every finding on its thread, naming the commit,
   before resolving it. Ask CodeRabbit with a comment containing `@coderabbitai review`, and never tick the boxes in its summary (Commit to this branch, Create a new PR, Fix all pre-merge checks with AI,
   Autopilot): they make it write code. Copilot is out of credits until 2026-10-31; do not wait for its review.
@@ -161,7 +164,9 @@ reviews. The lines below come from the owner's earlier sessions and are written 
 
 ## Cleanup and local environment
 
-The audit found no uncommitted work or open PRs, and only `main` on GitHub.
+The audit found no uncommitted work or open PRs, and only `main` on GitHub. (That is the earlier
+snapshot of 2026-10-27. In the later one, about 19:30 UTC, "Infrastructure, CI and add-on work" above names the Network Eyes
+App pull request that belongs to another session. Check `gh pr list --state open` again before relying on either.)
 Old local branches `feat/blog-source-workflow` and `fix/ai-engine-model-routing-costs`
 were verified against their merged PRs before deletion; `work` was already an
 ancestor of `main`. Remote references and stale worktree records were pruned.
