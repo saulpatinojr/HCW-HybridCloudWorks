@@ -36,12 +36,14 @@ tone_instructions: >-
 
 reviews:
   profile: "chill"
-  # Owner decision 2026-10-18 (#972, option F): CodeRabbit's approval is the
-  # one approving review the Default ruleset now requires, so its review is a
-  # request for changes while a finding is open and an approval once every
-  # thread is resolved and the pre-merge checks pass. Author approval is off:
-  # sessions author as the owner's account, and "@coderabbitai approve" from
-  # the author would make the gate approve itself.
+  # CodeRabbit's review is a request for changes while a finding is open and
+  # an approval once every thread is resolved and the pre-merge checks pass.
+  # That approval is the signal sessions merge on (.claude/CLAUDE.md). It was
+  # the Default ruleset's required review from 2026-10-18 (#972, option F);
+  # read on 2026-10-31, the ruleset requires no approving review (count 0,
+  # unchanged since 2026-10-20), so it is practice, not a gate (#1455).
+  # Author approval is off: sessions author as the owner's account, and
+  # "@coderabbitai approve" from the author would approve its own work.
   request_changes_workflow: true
   allow_author_approval: false
   high_level_summary: true
@@ -67,7 +69,7 @@ reviews:
     auto_pause_after_reviewed_commits: 2
     # Dependabot pull requests are approved by the owner (#1299), so a
     # CodeRabbit review of them is the review spent twice. hcw-site-app[bot]
-    # is not listed on purpose: CodeRabbit's approval is the required review
+    # is not listed on purpose: CodeRabbit's approval is the merge signal
     # on its pull requests (#1293).
     ignore_usernames:
       - "dependabot[bot]"
