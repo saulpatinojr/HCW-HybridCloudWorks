@@ -363,6 +363,19 @@ describe('the host plan', () => {
     expect(renderNotes(plan.notes)).toContain('**Coder** 2.38.0 → 2.39.0: ghcr.io/coder/coder:v2.39.0: HTTP 404');
   });
 
+  it('heads the notes with a line that is true of every kind of note, not only an unverified checksum', () => {
+    const notes = renderNotes([
+      { label: 'Vault', from: '2.2.1', to: 'unknown', reason: 'its publisher could not be read in this run' },
+      { label: 'ansible-core release line', from: '2.20.1', to: '2.21.0', reason: 'starts the 2.21 line, which is moved by hand' },
+    ]);
+    const [heading] = notes.split('\n');
+    expect(heading).toMatch(/^Not bumped: nothing was edited for these\. The reason is beside each one:/);
+    for (const kind of ['could not be read', 'could not be verified', 'could not be made exactly', 'a new release line', 'no automated bump']) {
+      expect(heading).toContain(kind);
+    }
+    expect(notes).toContain('- **Vault** 2.2.1 → unknown: its publisher could not be read in this run');
+  });
+
   it('re-reads a current image pin and moves its digest when the publisher re-pushed the same tag', async () => {
     const pinned = setYamlScalar(text, ['coder_postgres_image_digest'], 'x').from;
     const rebuilt = JSON.stringify({ rebuilt: true });
