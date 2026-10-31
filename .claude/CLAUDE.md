@@ -522,8 +522,14 @@ so it is recorded here, where every session reads it.
   on 2026-10-31: CodeRabbit's request for changes on `baf10df` was still
   standing three pushes later, and the merge API refused with `1 review
   requesting changes by reviewers with write access` (HTTP 405). When that
-  happens, comment `@coderabbitai review` so it reviews the current head;
-  do not dismiss its review to get past it.
+  happens, comment `@coderabbitai review` so it reviews the current head.
+  A fresh review does not always replace the old one: on #1460 CodeRabbit
+  withdrew its request on the thread and its next review found nothing, yet
+  it posted no approval, and it refuses `@coderabbitai resolve` and
+  `@coderabbitai approve` from the pull request's author. Then the owner
+  dismisses the old review (its **⋯** menu, **Dismiss review**), with a link
+  to where CodeRabbit withdrew it. A session does not dismiss a review to get
+  past it.
   [`.coderabbit.yaml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.coderabbit.yaml)
   still has `request_changes_workflow: true` and `allow_author_approval:
   false`: CodeRabbit posts a review asking for changes while any of its
@@ -537,10 +543,12 @@ so it is recorded here, where every session reads it.
   approval will arrive, and its comment says the owner approves them (no
   runbook describes that step further). Do not wait for CodeRabbit on one,
   and do not merge one on a session's own judgement; tell the owner it is
-  ready, with its link. A session cannot approve its own pull
-  request: it authors as the owner's account, and GitHub does not let an
-  author approve, which is also why `@coderabbitai approve` from the author is
-  off.
+  ready, with its link. Two separate controls stop a session approving its
+  own work. GitHub does not let the author of a pull request approve it, and
+  a session authors as the owner's account. Separately, `.coderabbit.yaml`'s
+  `allow_author_approval: false` makes CodeRabbit ignore `@coderabbitai
+  approve` from the author, so the author cannot have the bot approve
+  instead.
 
   History, briefly: on 2026-10-18 the owner chose option F on
   [#972](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/972),
