@@ -286,6 +286,20 @@ if [ "$schemas" -eq 1 ]; then ok "/opt/kubeconform/schemas/${KUBERNETES_JSON_SCH
 if [ "$target" = full ]; then
   step "full tools"
   expect_version az      "\"azure-cli\": \"${AZURE_CLI_VERSION}\""     az version --output json
+  # The packages versions.env replaces inside the Azure CLI's own Python
+  # (AZURE_CLI_PYTHON_OVERRIDES): each must be the version listed, and the
+  # libraries the CLI signs in and talks HTTP with must still import on them.
+  while read -r spec _; do
+    [ -n "$spec" ] || continue
+    name="${spec%%==*}"; want="${spec#*==}"
+    have="$(/opt/az/bin/python3 -I -c 'import importlib.metadata,sys; print(importlib.metadata.version(sys.argv[1]))' "$name" 2>&1 || true)"
+    if [ "$have" = "$want" ]; then ok "Azure CLI's Python has $name $have"; else bad "Azure CLI's Python has $name '$have', expected $want"; fi
+  done <<<"$AZURE_CLI_PYTHON_OVERRIDES"
+  if out="$(/opt/az/bin/python3 -I -c 'import certifi, jwt, msal, requests, urllib3, azure.core, azure.cli.core' 2>&1)"; then
+    ok "Azure CLI's Python imports certifi, jwt, msal, requests, urllib3, azure.core and azure.cli.core"
+  else
+    bad "Azure CLI's Python failed an import:"; printf '%s\n' "$out" | indent
+  fi
   expect_version kubectl "Client Version: v${KUBECTL_VERSION}"          kubectl version --client
   expect_version git     "git version"                                   git --version
   expect_version jq      "jq-"                                           jq --version
