@@ -179,7 +179,9 @@ export function roleLabel(role) {
  *                                 cms/forge/assist (…/workspace.js)
  *   AI Engine          editor     cms/config/{collection} (admin-integrations/config-collections.js), cms/ai-features,
  *                                 cms/ai-routing (admin-integrations/ai-features.js, ai-routing.js); the MCP OAuth
- *                                 routes are super_admin (ai/mcp-oauth-handlers.js)
+ *                                 routes are super_admin (ai/mcp-oauth-handlers.js); the Koda tab reads
+ *                                 cms/agent-content/key at editor and its writes (generate, switch, revoke) are
+ *                                 super_admin (agent-content/admin-handlers.js, ADR 0037)
  *   Image Prompts      editor     cms/image-prompts (cms/image-prompts/handlers.js)
  *   Image Gallery      editor     cms/images (admin-integrations.js), cms/images/bulk (gallery-images.js)
  *   Calendar           editor     cms/calendar (calendar.js); saveContentSchedule and unscheduleContent are publisher

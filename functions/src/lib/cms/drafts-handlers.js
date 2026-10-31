@@ -61,7 +61,10 @@ import {
   readMarkdownRequest,
 } from "./drafts-markdown.js";
 import { buildDedupFields, normalizeTitleForDedup } from "./content-dedup.js";
-import { validateTaxonomyFieldsWithStore } from "./taxonomy-fields.js";
+import {
+  TaxonomyFieldError,
+  validateTaxonomyFieldsWithStore,
+} from "./taxonomy-fields.js";
 
 /** Who to record as the editor: the first identity the sign-in carries. */
 export const editorOf = (user = {}) =>
@@ -365,6 +368,27 @@ async function checkedTaxonomy(deps, fields, current = null) {
   return { ...fields, ...checked };
 }
 
+/**
+ * A new draft's taxonomy, with the factory's default ideaOrigin when the
+ * caller names none (the Agent Content API's `ai-recommendation`, ADR 0037).
+ * The default goes through the same stored-list check as a caller's own
+ * value, so an id the owner has disabled is not written; if the default is
+ * refused, the draft is checked again without it and keeps the stage's
+ * `manual`, because a classification is not a reason to refuse a draft.
+ */
+async function checkedTaxonomyWithDefault(deps, fields) {
+  if (!deps.defaultIdeaOrigin || fields.ideaOrigin) {
+    return checkedTaxonomy(deps, fields);
+  }
+  const defaulted = { ...fields, ideaOrigin: deps.defaultIdeaOrigin };
+  try {
+    return await checkedTaxonomy(deps, defaulted);
+  } catch (error) {
+    if (!(error instanceof TaxonomyFieldError)) throw error;
+    return checkedTaxonomy(deps, fields);
+  }
+}
+
 /** Every route: the guard, then the work. */
 const route = (deps, what, work) => async (request, context) => {
   const auth = await deps.guard.requireRole(request, "editor");
@@ -405,7 +429,7 @@ async function getDraft(deps, { request }) {
 
 /** POST cms/drafts — { fields } */
 async function createDraft(deps, { request, user }) {
-  const fields = await checkedTaxonomy(
+  const fields = await checkedTaxonomyWithDefault(
     deps,
     validateDraftFields((await readBody(request)).fields),
   );
@@ -413,6 +437,7 @@ async function createDraft(deps, { request, user }) {
     id: deps.uuid(),
     fields,
     editor: editorOf(user),
+    ...(deps.origin ? { origin: deps.origin } : {}),
     now: deps.now,
   });
   const created = (await deps.store.createDoc("content", doc)) || doc;
@@ -464,8 +489,11 @@ const alreadyPresent = (row, title) =>
  * never logged and never put in an audit row.
  */
 async function createFromMarkdown(deps, { request, user }) {
+  // A caller whose origin is fixed (the Agent Content API) cannot name
+  // another: with `origin` set, the body's `origin` is not read at all.
   const { markdown, draftOrigin } = readMarkdownRequest(
     await readBodyWithin(request, MAX_REQUEST_BYTES),
+    { origin: deps.origin },
   );
   refuseIf(isMarkdownTooLarge(markdown) && TOO_LARGE);
 
@@ -473,7 +501,7 @@ async function createFromMarkdown(deps, { request, user }) {
   refuseIf(
     !parsed.ok && { status: 422, code: parsed.code, error: parsed.error },
   );
-  const fields = await checkedTaxonomy(
+  const fields = await checkedTaxonomyWithDefault(
     deps,
     validateDraftFields(parsed.fields),
   );
@@ -696,6 +724,11 @@ const ROUTES = Object.freeze({
  * @param {() => Date} [deps.now]
  * @param {() => string} [deps.uuid]
  * @param {{ error?: Function }} [deps.log]
+ * @param {string|null} [deps.origin] a fixed `draftOrigin` for every draft created here
+ *   (DRAFT_ORIGINS.agent for the Agent Content API, ADR 0037); null keeps the page's
+ *   behaviour: `drafts` for a typed draft, the body's `origin` for a markdown file
+ * @param {string|null} [deps.defaultIdeaOrigin] the ideaOrigin a new draft gets when the
+ *   caller names none; null keeps buildNewDraftDocument's `manual`
  * @returns {Record<keyof typeof ROUTES, (request: object, context: object) => Promise<object>>}
  */
 export function createDraftsHandlers({
@@ -705,6 +738,8 @@ export function createDraftsHandlers({
   now = () => new Date(),
   uuid = randomUUID,
   log = {},
+  origin = null,
+  defaultIdeaOrigin = null,
 }) {
   const deps = {
     guard,
@@ -713,6 +748,8 @@ export function createDraftsHandlers({
     now,
     uuid,
     log,
+    origin,
+    defaultIdeaOrigin,
   };
   return Object.fromEntries(
     Object.entries(ROUTES).map(([name, [what, wrap, work]]) => [

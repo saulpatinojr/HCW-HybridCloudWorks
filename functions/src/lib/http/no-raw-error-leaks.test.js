@@ -1569,6 +1569,7 @@ const ALLOWED = [
   { site: 'lib/cms/content-update.js › settleLinkedBlogs › .error = error', class: 'c', why: 'hands the error to the update handler, which re-throws it into errorResponse' },
   { site: 'lib/cms/content-update.js › taxonomyRefusal › error: authoredMessage(error, "The kind or idea origin was refused.")', class: 'b', why: 'TaxonomyFieldError sentence (field, id sent, allowed ids)' },
   { site: 'lib/cms/drafts-handlers.js › answerFor › error: authoredMessage(error, `Could not ${what}.`)', class: 'b', why: 'DraftInputError, ContentValidationError and TaxonomyFieldError sentences on the 400' },
+  { site: 'lib/agent-content/admin-handlers.js › route › error: authoredMessage(error, `Could not ${what}.`)', class: 'b', why: 'AgentContentInputError sentences (an unknown capability id, a non-boolean switch) on the 400; anything else goes to errorResponse' },
   { site: 'lib/cms/image-prompts/actions.js › promptFieldsOf › error: authoredMessage(error, \'The prompt was refused.\')', class: 'b', why: 'ContentValidationError sentences; other errors go to the route 500' },
   { site: 'lib/cms/image-prompts/actions.js › savePageAssignment › error: authoredMessage(error, \'That page cannot take a prompt set.\')', class: 'b', why: 'ContentValidationError page-allowlist sentence; other errors go to the route 500' },
   { site: 'lib/cms/image-prompts/actions.js › saveSetFields › error: authoredMessage(error, \'The prompt set was refused.\')', class: 'b', why: 'ContentValidationError sentences; a failed read goes to the route 500' },
