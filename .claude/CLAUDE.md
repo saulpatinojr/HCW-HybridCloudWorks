@@ -84,8 +84,10 @@ trips. The session is the orchestrator of a team of agents and does the work.
   of the same clone), and those worktrees share one `git stash` list: on
   2026-10-31 two agents stashed and popped within seconds of each other and
   each got the other's changes. So an agent never uses `git stash`; to set
-  work aside it makes a temporary commit on its own branch, and every briefing
-  says so. Other Claude sessions
+  work aside it makes a temporary commit on its own branch. The session's
+  scratchpad folder is shared the same way (that day one agent's pull request
+  body overwrote another's `body.md`), so every file an agent writes there
+  carries a name unique to its task. Every briefing says both. Other Claude sessions
   work the App repositories: message them before touching the same files,
   never duplicate their branch, and never ask one to do something your own
   permissions refused.
