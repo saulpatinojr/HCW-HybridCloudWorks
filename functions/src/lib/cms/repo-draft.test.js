@@ -457,10 +457,19 @@ describe('the parser stays linear on hostile text', () => {
     return performance.now() - started;
   };
 
-  /** How many runs make a batch of at least BATCH_MS. Finding it also warms the parser up. */
+  /**
+   * How many runs make a batch of at least BATCH_MS, taking the faster of two
+   * timings at each count, so one slow first batch (the parser not yet
+   * compiled, coverage settling, or a pause) cannot settle on too few. Finding
+   * it also warms the parser up.
+   */
   const repsFor = (run, input) => {
     let reps = 1;
-    while (reps < MAX_REPS && timeBatch(run, input, reps) < BATCH_MS) reps *= 2;
+    while (
+      reps < MAX_REPS &&
+      Math.min(timeBatch(run, input, reps), timeBatch(run, input, reps)) < BATCH_MS
+    )
+      reps *= 2;
     return reps;
   };
 

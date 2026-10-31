@@ -310,10 +310,15 @@ describe('markdownToPlainText', () => {
       return performance.now() - start;
     }
 
-    /** How many conversions make a batch of at least BATCH_MS. */
+    /**
+     * How many conversions make a batch of at least BATCH_MS, taking the faster
+     * of two timings at each count, so one slow first batch (the converter not
+     * yet compiled, or a pause) cannot settle on too few.
+     */
     function repsFor(input) {
       let reps = 1;
-      while (reps < MAX_REPS && timeBatch(input, reps) < BATCH_MS) reps *= 2;
+      while (reps < MAX_REPS && Math.min(timeBatch(input, reps), timeBatch(input, reps)) < BATCH_MS)
+        reps *= 2;
       return reps;
     }
 
