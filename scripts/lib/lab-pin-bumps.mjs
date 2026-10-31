@@ -57,6 +57,7 @@ import {
   newestHashicorp,
   newestGitHubRelease,
   newestAptVersion,
+  parseJsonFrom,
 } from '../lab-pins-upstream.mjs';
 
 export const USER_AGENT =
@@ -110,8 +111,12 @@ export function makeHttp(fetchImpl = fetch, { githubToken, retry } = {}) {
       cache.set(
         key,
         (async () => {
-          const response = await fetchRetrying(fetchImpl, url, { headers: all }, retry);
-          return { body: Buffer.from(await response.arrayBuffer()), headers: response.headers };
+          // The body is read inside the retry, so a connection dropped half
+          // way through is tried again and its error names the address.
+          return fetchRetrying(fetchImpl, url, { headers: all }, {
+            ...retry,
+            read: async (response) => ({ body: Buffer.from(await response.arrayBuffer()), headers: response.headers }),
+          });
         })()
       );
     }
@@ -120,7 +125,7 @@ export function makeHttp(fetchImpl = fetch, { githubToken, retry } = {}) {
   return {
     raw,
     text: async (url, headers) => (await raw(url, headers)).body.toString('utf8'),
-    json: async (url, headers) => JSON.parse((await raw(url, { Accept: 'application/json', ...headers })).body.toString('utf8')),
+    json: async (url, headers) => parseJsonFrom(url, (await raw(url, { Accept: 'application/json', ...headers })).body.toString('utf8')),
   };
 }
 
@@ -677,7 +682,9 @@ function hostTarget(row, bumper) {
  * the pin is no bump. A row whose publisher could not be read is not edited
  * either, but it becomes a note naming the address and the status it got, so
  * the pull request and the weekly issue tell "no newer release" apart from
- * "could not read" (#1447; it used to be dropped without a word). `files`
+ * "could not read" (#1447; it used to be dropped without a word). When it is
+ * the only thing the plan holds there is no edit, so no pull request, and the
+ * weekly issue alone carries it. `files`
  * carries the other files a bumper edits (CADDY_TEST_PATH); a bumper whose
  * file was not read becomes a note, as applyBumps says.
  */

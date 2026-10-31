@@ -70,8 +70,11 @@
 #      scripts/lab/read-addon-pins.mjs, not from a tag —
 #      with Trivy for HIGH and CRITICAL vulnerabilities with a fix available,
 #      and opens one issue (or comments on the open one) when a pin is
-#      behind, an image needs a fix, or a pin could not be bumped. A clean
-#      week is a green run and nothing else.
+#      behind, an image needs a fix, or a pin could not be bumped. That
+#      includes a publisher `propose` could not read even when this job's own
+#      read of it succeeded (#1447): the issue is then the only trace, since
+#      a set whose only content is a note has no edit and so no pull
+#      request. A clean week is a green run and nothing else.
 #
 # The response times for a runtime advisory (runc, containerd, Docker
 # Engine), and who does what, are in docs/runbooks/labs-host.md, "Runtime
@@ -136,7 +139,8 @@ jobs:
           sort -u "${RUNNER_TEMP}"/lab-pins/paths-*.txt > "${RUNNER_TEMP}/lab-pins/paths-all.txt"
 
       # Each set writes its edits into this checkout, its evidence (the pull
-      # request body) and its notes (the pins it could not verify). Exit 2 is
+      # request body) and its notes (the pins it could not verify, and the
+      # products whose publisher it could not read). Exit 2 is
       # a plan that could not be made at all; that fails the run.
       #
       # The pull-request job applies one set's patch to a pristine checkout,
@@ -413,8 +417,10 @@ jobs:
           cat "${RUNNER_TEMP}/pins.md" >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-      # The pins `propose` could not verify, for the issue. Absent when
-      # `propose` failed; the issue then says so.
+      # The pins `propose` could not verify or read, for the issue. A note
+      # alone opens it, because a set with notes and no edit gets no pull
+      # request to carry them. Absent when `propose` failed; the issue then
+      # says so.
       - name: Download the bump notes
         if: needs.propose.result == 'success'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

@@ -15,7 +15,9 @@ import {
 } from './lib/lab-pin-bumps.mjs';
 import {
   LABELS,
+  READ_BUDGET_MS,
   RETRY_DELAYS_MS,
+  TRY_TIMEOUT_MS,
   check,
   compareVersions,
   coreVersion,
@@ -151,23 +153,44 @@ describe('the check', () => {
 // ── Trying a failed read again (#1447) ─────────────────────────────────────
 
 /**
- * A fetch that answers each URL in `failures` with its listed statuses first
- * (a number is that status, `'reset'` a request that never got an answer),
- * then hands over to `fetchImpl`. Every call is recorded, so a test can show
- * the request was the same each time.
+ * A fetch that answers each URL in `failures` with its listed outcomes first,
+ * then hands over to `fetchImpl`. A number is that status; `'reset'` is a
+ * request that never got an answer; `'hang'` is a publisher that never
+ * replies, so only the try's timeout signal ends it; `'drop'` is a 200 whose
+ * connection closes half way through the body. Every call is recorded with
+ * its address, headers and signal, so a test can show the request was the
+ * same each time.
  */
 function flaky(fetchImpl, failures) {
-  const left = Object.fromEntries(Object.entries(failures).map(([url, statuses]) => [url, [...statuses]]));
+  const left = Object.fromEntries(Object.entries(failures).map(([url, outcomes]) => [url, [...outcomes]]));
   const calls = [];
-  const impl = async (url, init) => {
-    calls.push({ url, init: structuredClone(init) });
+  const impl = async (url, init = {}) => {
+    calls.push({ url, headers: structuredClone(init.headers), signal: init.signal });
     const next = left[url]?.shift();
-    if (next === 'reset') throw new TypeError('fetch failed');
+    if (next === 'reset') throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
+    if (next === 'hang') {
+      return new Promise((resolve, reject) => {
+        if (init.signal?.aborted) reject(init.signal.reason);
+        init.signal?.addEventListener('abort', () => reject(init.signal.reason));
+      });
+    }
+    if (next === 'drop') {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"versi'));
+          controller.error(new TypeError('terminated', { cause: { code: 'UND_ERR_SOCKET' } }));
+        },
+      });
+      return new Response(body, { status: 200 });
+    }
     if (next !== undefined) return new Response('edge says no', { status: next });
     return fetchImpl(url, init);
   };
   return { impl, calls };
 }
+
+/** A timeout signal that has already fired, as AbortSignal.timeout's would after its wait. */
+const timedOut = () => AbortSignal.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
 
 /** A retry policy that records each pause instead of sleeping, so no test waits. */
 function noWait() {
@@ -177,26 +200,33 @@ function noWait() {
 
 describe('trying a failed read again', () => {
   const url = 'https://releases.hashicorp.com/vault/index.json';
-  const ok = async () => new Response('{"versions":{}}', { status: 200 });
+  const ok = async () => new Response('{"versions":{"2.2.1":{},"2.3.0-rc1":{}}}', { status: 200 });
 
   it('tries a 406, a server error and a request that got no answer again, with the same request, after the short pauses', async () => {
     for (const first of [406, 500, 503, 'reset']) {
       const { impl, calls } = flaky(ok, { [url]: [first] });
       const { slept, retry } = noWait();
-      const init = { headers: { 'User-Agent': 'ua', Accept: 'application/json' } };
-      const response = await fetchRetrying(impl, url, init, retry);
+      const headers = { 'User-Agent': 'ua', Accept: 'application/json' };
+      const response = await fetchRetrying(impl, url, { headers }, retry);
       expect(response.status, String(first)).toBe(200);
       expect(calls).toHaveLength(2);
-      expect(calls[1]).toEqual(calls[0]);
-      expect(calls[0]).toEqual({ url, init });
+      expect(calls.map((c) => [c.url, c.headers])).toEqual([
+        [url, headers],
+        [url, headers],
+      ]);
+      // Each try has its own timeout, so the second is not cut short by the first's.
+      expect(calls[0].signal).toBeInstanceOf(AbortSignal);
+      expect(calls[1].signal).not.toBe(calls[0].signal);
       expect(slept).toEqual([RETRY_DELAYS_MS[0]]);
     }
   });
 
-  it('pauses for a few seconds at most, and tries twice more at most', () => {
+  it('pauses for a few seconds at most, tries twice more at most, and bounds each try and each read', () => {
     expect(RETRY_DELAYS_MS).toHaveLength(2);
     for (const ms of RETRY_DELAYS_MS) expect(ms).toBeGreaterThan(0);
     expect(RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(10000);
+    expect(TRY_TIMEOUT_MS).toBeLessThanOrEqual(30000);
+    expect(READ_BUDGET_MS).toBeLessThanOrEqual(60000);
   });
 
   it('gives up after the last try and names the address, the last status and the tries', async () => {
@@ -217,11 +247,97 @@ describe('trying a failed read again', () => {
     }
   });
 
+  it('ends a try that never gets an answer at its timeout, and tries again', async () => {
+    const { impl, calls } = flaky(ok, { [url]: ['hang'] });
+    const { slept, retry } = noWait();
+    const limits = [];
+    const deadline = (ms) => {
+      limits.push(ms);
+      return limits.length === 1 ? timedOut() : new AbortController().signal;
+    };
+    const response = await fetchRetrying(impl, url, {}, { ...retry, deadline });
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(limits).toEqual([TRY_TIMEOUT_MS, TRY_TIMEOUT_MS]);
+    expect(slept).toEqual([RETRY_DELAYS_MS[0]]);
+  });
+
+  it('names the timeout when a publisher never answers at all', async () => {
+    const { impl, calls } = flaky(ok, { [url]: ['hang', 'hang', 'hang'] });
+    const { retry } = noWait();
+    await expect(fetchRetrying(impl, url, {}, { ...retry, deadline: timedOut })).rejects.toHaveProperty(
+      'message',
+      `${url}: no answer within ${TRY_TIMEOUT_MS / 1000} s (tried 3 times)`
+    );
+    expect(calls).toHaveLength(3);
+  });
+
+  it('starts no try once the read has used up its time, and cuts the last try down to what is left', async () => {
+    let clock = 0;
+    const limits = [];
+    const slow = async () => {
+      clock += 40_000;
+      return new Response('edge says no', { status: 503 });
+    };
+    const { slept, retry } = noWait();
+    const options = { ...retry, now: () => clock, deadline: (ms) => (limits.push(ms), new AbortController().signal) };
+    await expect(fetchRetrying(slow, url, {}, options)).rejects.toHaveProperty('message', `${url}: HTTP 503 (tried 2 times)`);
+    expect(limits).toEqual([TRY_TIMEOUT_MS, READ_BUDGET_MS - 40_000]);
+    expect(slept).toEqual([RETRY_DELAYS_MS[0]]);
+  });
+
+  it("leaves a cancellation by the caller alone: it is the caller's, not the publisher's", async () => {
+    const caller = new AbortController();
+    caller.abort(new Error('the job is stopping'));
+    const { impl, calls } = flaky(ok, { [url]: ['hang'] });
+    const { slept, retry } = noWait();
+    await expect(fetchRetrying(impl, url, { signal: caller.signal }, retry)).rejects.toThrow('the job is stopping');
+    expect(calls).toHaveLength(1);
+    expect(slept).toEqual([]);
+  });
+
   it('the readers the check uses go through it', async () => {
-    const { impl, calls } = flaky(async () => new Response('{"versions":{"2.2.1":{},"2.3.0-rc1":{}}}', { status: 200 }), { [url]: [406] });
+    const { impl, calls } = flaky(ok, { [url]: [406] });
     const { retry } = noWait();
     expect(await sources({}, { fetchImpl: impl, retry }).vault()).toBe('2.2.1');
     expect(calls.map((c) => c.url)).toEqual([url, url]);
+  });
+
+  it('tries a connection dropped half way through the body again, in the check and in the bump reads', async () => {
+    const { retry } = noWait();
+    const check = flaky(ok, { [url]: ['drop'] });
+    expect(await sources({}, { fetchImpl: check.impl, retry }).vault()).toBe('2.2.1');
+    expect(check.calls).toHaveLength(2);
+    const bump = flaky(ok, { [url]: ['drop'] });
+    expect(await makeHttp(bump.impl, { retry }).json(url)).toEqual({ versions: { '2.2.1': {}, '2.3.0-rc1': {} } });
+    expect(bump.calls).toHaveLength(2);
+  });
+
+  it('names the address, and the network error, when the body keeps being cut off', async () => {
+    const { impl } = flaky(ok, { [url]: ['drop', 'drop', 'drop'] });
+    const { retry } = noWait();
+    await expect(sources({}, { fetchImpl: impl, retry }).vault()).rejects.toHaveProperty(
+      'message',
+      `${url}: terminated (UND_ERR_SOCKET) (tried 3 times)`
+    );
+    const reset = flaky(ok, { [url]: ['reset', 'reset', 'reset'] });
+    await expect(makeHttp(reset.impl, { retry }).text(url)).rejects.toHaveProperty('message', `${url}: fetch failed (ECONNRESET) (tried 3 times)`);
+  });
+
+  it('names the address when a reply is not JSON, or holds no stable version, so the note can say where', async () => {
+    const { retry } = noWait();
+    const answer = (body) => async () => new Response(body, { status: 200 });
+    await expect(sources({}, { fetchImpl: answer('<html>edge error</html>'), retry }).vault()).rejects.toThrow(`${url}: the answer is not JSON (`);
+    await expect(sources({}, { fetchImpl: answer('{"versions":{"2.3.0-rc1":{}}}'), retry }).vault()).rejects.toHaveProperty(
+      'message',
+      `${url}: no stable version found`
+    );
+    await expect(makeHttp(answer('not json'), { retry }).json(url)).rejects.toThrow(`${url}: the answer is not JSON (`);
+    const pins = Object.fromEntries(Object.keys(LABELS).map((k) => [k, '1.0.0']));
+    const readers = Object.fromEntries(Object.keys(LABELS).map((k) => [k, async () => '1.0.0']));
+    readers.vault = sources({}, { fetchImpl: answer('{"versions":{}}'), retry }).vault;
+    const { rows } = await check({ pins, readers });
+    expect(rows.find((r) => r.key === 'vault').status).toBe(`unreadable: ${url}: no stable version found`);
   });
 });
 
@@ -596,7 +712,9 @@ describe('a weekly bump of the real lab host files', () => {
     const { files, pins, exitCode, plan } = await vaultWeek(impl);
     expect(exitCode).toBe(2);
     expect(plan.applied).toEqual([]);
-    expect(plan.files[GROUP_VARS_PATH]).toBe(files[GROUP_VARS_PATH]);
+    // Every file as it was, so the host patch is empty and no pull request is
+    // opened for it; the weekly issue carries the note (lab-supply-chain-steps.test.mjs).
+    for (const [path, after] of Object.entries(plan.files)) expect(after, path).toBe(files[path]);
     expect(plan.notes).toHaveLength(1);
     expect(plan.notes[0]).toMatchObject({ label: LABELS.vault, from: pins.vault, to: 'unknown' });
     const notes = renderNotes(plan.notes);
