@@ -220,32 +220,50 @@ jobs:
       # The assertion is the point of this step, not the removal. A window that
       # silently failed to close leaves the origin admitting a dead runner's
       # address, and the job stays green while it does.
+      #
+      # `set +e` and window_retry (scripts/lib/window-retry.sh) because GitHub
+      # runs this with `bash -e`: one failed read or one refused update would
+      # otherwise stop the step before the removal. A read that keeps failing
+      # does not skip the removal either; the rule is removed anyway and the
+      # read at the end decides whether the window is closed (#1441).
       - name: Close origin window
         if: ${{ always() && steps.appfw.outputs.rule_name != '' }}
-        timeout-minutes: 3 # slowest 11 s
+        timeout-minutes: 3 # slowest 11 s; every Azure call is retried, about 2 min at most
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
           RULE: ${{ steps.appfw.outputs.rule_name }}
         run: |
-          set -euo pipefail
-          # The open step writes the rule's name before it adds the rule, so the
-          # rule may not exist (the add failed, or the step was stopped first).
-          present=$(az functionapp config access-restriction show -n "$APP" -g "$RG" \
-            --query "length(ipSecurityRestrictions[?name=='${RULE}'])" -o tsv)
-          if [ "$present" = "0" ]; then
-            echo "rule ${RULE} is not on the origin (the open step stopped before adding it); nothing to remove"
-          else
+          set +e
+          set -uo pipefail
+          . scripts/lib/window-retry.sh
+          rule_count() {
+            az functionapp config access-restriction show -n "$APP" -g "$RG" \
+              --query "length(ipSecurityRestrictions[?name=='${RULE}'])" -o tsv
+          }
+          remove_rule() {
             az functionapp config access-restriction remove \
               --resource-group "$RG" --name "$APP" \
               --rule-name "$RULE" --output none
-            echo "rule ${RULE} removed from the origin"
+          }
+          leftover_count() {
+            az functionapp config access-restriction show -n "$APP" -g "$RG" \
+              --query "length(ipSecurityRestrictions[?starts_with(name, 'ci-manifest-')])" -o tsv
+          }
+
+          # The open step writes the rule's name before it adds the rule, so the
+          # rule may not exist (the add failed, or the step was stopped first).
+          present=$(window_retry "5 10" rule_count) || present=""
+          if [ "$present" = "0" ]; then
+            echo "rule ${RULE} is not on the origin (the open step stopped before adding it); nothing to remove"
+          else
+            [ -n "$present" ] || echo "could not read whether ${RULE} is on the origin; removing it anyway"
+            window_retry "5 10 20" remove_rule && echo "rule ${RULE} removed from the origin"
           fi
 
-          left=$(az functionapp config access-restriction show -n "$APP" -g "$RG" \
-            --query "length(ipSecurityRestrictions[?starts_with(name, 'ci-manifest-')])" -o tsv)
+          left=$(window_retry "5 10" leftover_count) || left=""
           if [ "$left" != "0" ]; then
-            echo "::error::${left} ci-manifest-* rule(s) still on the origin after the window closed"
+            echo "::error::${left:-an unknown number of} ci-manifest-* rule(s) still on the origin after the window closed (or the list could not be read)"
             exit 1
           fi
           echo "origin window closed — no temporary rules left"

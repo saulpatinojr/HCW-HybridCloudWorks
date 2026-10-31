@@ -640,3 +640,297 @@ describe('a job that opens a firewall window closes it before its own limit can 
     ).toBeLessThanOrEqual(jobLimit - WINDOW_MARGIN);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 3c. A close step does not give up at the first error (#1441, PR #1462).
+// ---------------------------------------------------------------------------
+/**
+ * GitHub runs a `run:` step with `bash -e`, which stops the step at the first
+ * command that fails. In a close step that meant one failed read, or one
+ * Deny that Azure refused with 409 Conflict because the open step's update was
+ * still running when the step's time limit stopped it, skipped the removal
+ * below it and left the window open.
+ *
+ * So each close step turns `-e` off, sources scripts/lib/window-retry.sh and
+ * runs every Azure call through `window_retry`; removes the rule when it cannot
+ * read whether it is there; and reads the result back at the end, failing with
+ * an error when the window is not closed. The tests below hold that shape as
+ * text, and then run each close step's own shell against a stand-in `az` (a
+ * small script that keeps the rules in files and fails when told to), with
+ * `sleep` replaced so the retries do not wait.
+ */
+const RETRY_HELPER = join(REPO, 'scripts', 'lib', 'window-retry.sh');
+const CLOSE_STEPS = [
+  ['deploy-functions.yml', 'deploy', 'Close SCM firewall window'],
+  ['deploy-functions.yml', 'deploy', 'Close storage firewall window'],
+  ['deploy-functions.yml', 'deploy', 'Close origin firewall window'],
+  ['publish-content-manifest.yml', 'build', 'Close origin window'],
+];
+/** Every workflow's jobs, by file name, read once. */
+const JOBS_OF = new Map(
+  readdirSync(WORKFLOWS)
+    .filter((name) => /\.ya?ml$/.test(name))
+    .map((name) => [name, parseJobs(readFileSync(join(WORKFLOWS, name), 'utf8').replace(/\r\n/g, '\n'))])
+);
+const closeStep = (file, jobKey, name) =>
+  JOBS_OF.get(file)
+    ?.find((job) => job.key === jobKey)
+    ?.steps.find((step) => step.name === name);
+
+/** The shell functions a step defines (`name() {` on its own line), and every line inside them. */
+export function shellFunctions(run) {
+  const names = [];
+  const inside = new Set();
+  let open = -1;
+  run.split('\n').forEach((line, i) => {
+    const start = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\(\)\s*\{\s*$/);
+    if (start && open === -1) {
+      names.push(start[1]);
+      open = i;
+    } else if (open !== -1 && /^\s*\}\s*$/.test(line)) {
+      for (let j = open; j <= i; j++) inside.add(j);
+      open = -1;
+    }
+  });
+  return { names, inside };
+}
+
+/** The pauses of every `window_retry "<pauses>"` call in a step, added up: the longest the step can spend waiting between tries. */
+export function retryPauseSeconds(run) {
+  return [...run.matchAll(/\bwindow_retry\s+"([\d\s]*)"/g)].reduce((total, [, pauses]) => total + pauses.trim().split(/\s+/).filter(Boolean).reduce((sum, n) => sum + Number(n), 0), 0);
+}
+
+describe('a close step does not give up at the first error (#1441): its shape', () => {
+  it('finds the close steps, and every window-close step in the workflows is one of them (a new one is noticed)', () => {
+    const found = [...JOBS_OF]
+      .flatMap(([name, jobs]) => jobs.flatMap((job) => job.steps.filter(isWindowClose).map((step) => `${name} / ${job.key} / ${step.name}`)))
+      .sort();
+    expect(found).toEqual(CLOSE_STEPS.map((parts) => parts.join(' / ')).sort());
+    expect(existsSync(RETRY_HELPER), 'scripts/lib/window-retry.sh is missing').toBe(true);
+  });
+
+  it.each(CLOSE_STEPS)('%s / %s / %s turns -e off, sources the retry helper, and calls Azure only through window_retry', (file, jobKey, name) => {
+    const step = closeStep(file, jobKey, name);
+    expect(step?.run, `${file}: no step named "${name}" in job ${jobKey}`).toBeDefined();
+    const lines = step.run.split('\n');
+    const code = lines.map((line, i) => ({ line, i })).filter(({ line }) => line.trim() !== '' && !/^\s*#/.test(line));
+    expect(code[0]?.line, `${name}: the first line must be \`set +e\` (GitHub runs the step with bash -e)`).toBe('set +e');
+    expect(code.some(({ line }) => /^set\s+-[a-z]*e/.test(line.trim())), `${name} turns -e back on`).toBe(false);
+    expect(lines, `${name} must source the retry helper`).toContain('. scripts/lib/window-retry.sh');
+    expect(step.run.includes('${{'), `${name}: an expression in the shell text would not be expanded by this test`).toBe(false);
+
+    const { names, inside } = shellFunctions(step.run);
+    expect(names.length, `${name} defines no Azure functions`).toBeGreaterThan(1);
+    // Every `az` call is in a function, and every function is called only through window_retry.
+    const bareAz = code.filter(({ line, i }) => !inside.has(i) && /(^|[\s($])az\s/.test(line)).map(({ line }) => line.trim());
+    expect(bareAz, `${name}: these lines call az outside a function, so nothing retries them`).toEqual([]);
+    for (const fn of names) {
+      const uses = code.filter(({ line, i }) => !inside.has(i) && new RegExp(`(^|[\\s($])${fn}(\\s|\\)|$)`).test(line));
+      expect(uses.length, `${name}: ${fn} is defined but never called`).toBeGreaterThan(0);
+      for (const { line } of uses) expect(line, `${name}: ${fn} is called without window_retry`).toMatch(new RegExp(`window_retry\\s+"[\\d\\s]*"\\s+${fn}\\b`));
+    }
+  });
+
+  it.each(CLOSE_STEPS)('%s / %s / %s can finish its retries well inside its own time limit', (file, jobKey, name) => {
+    const step = closeStep(file, jobKey, name);
+    const pauses = retryPauseSeconds(step.run);
+    expect(pauses, `${name}: no window_retry pauses found`).toBeGreaterThan(0);
+    // Two thirds for pauses leaves the rest for the Azure calls themselves (about 5 to 10 s each).
+    expect(pauses, `${name}: ${pauses} s of pauses do not fit two thirds of its ${stepTimeoutMinutes(step)}-minute limit`).toBeLessThanOrEqual((stepTimeoutMinutes(step) * 60 * 2) / 3);
+  });
+
+  it('the storage close retries the Deny for longer than the other calls, as that is the one a running update refuses', () => {
+    const run = closeStep('deploy-functions.yml', 'deploy', 'Close storage firewall window').run;
+    const deny = run.match(/window_retry\s+"([\d\s]*)"\s+deny\b/);
+    expect(deny, 'no window_retry … deny line').not.toBeNull();
+    expect(retryPauseSeconds(deny[0])).toBeGreaterThanOrEqual(90);
+    expect(run.indexOf('window_retry "5 10 20 30 30" deny')).toBeLessThan(run.indexOf('remove_rule && echo'));
+  });
+
+  it('reads the helper the way it is written', () => {
+    expect(retryPauseSeconds('window_retry "5 10" a\nx=$(window_retry "5 10 20" b)')).toBe(50);
+    const { names, inside } = shellFunctions(['f() {', '  az x', '}', 'window_retry "5" f'].join('\n'));
+    expect(names).toEqual(['f']);
+    expect([...inside]).toEqual([0, 1, 2]);
+  });
+});
+
+/** The stand-in `az` (scripts/fixtures/fake-az.sh): rules kept in files under $AZ_STATE, every call logged, a kind of call failed while $AZ_STATE/fail-<kind> holds a number above zero. */
+const FAKE_AZ = readFileSync(join(REPO, 'scripts', 'fixtures', 'fake-az.sh'), 'utf8');
+
+describe('a close step does not give up at the first error (#1441): run with bash', () => {
+  it.skipIf(process.env.GITHUB_ACTIONS !== 'true')('on GitHub Actions bash is present, so the tests below run', () => {
+    expect(TOOLS.ready, TOOLS.why).toBe(true);
+  });
+});
+
+describe.skipIf(!TOOLS.ready)(`a close step does not give up at the first error (#1441): run with bash${SKIPPED}`, () => {
+  let work;
+  let bin;
+  let runs = 0;
+  const IP = '203.0.113.7';
+
+  beforeAll(() => {
+    work = forward(mkdtempSync(join(tmpdir(), 'ci-close-')));
+    bin = `${work}/bin`;
+    mkdirSync(bin);
+    writeFileSync(`${bin}/az`, FAKE_AZ, { mode: 0o755 });
+    // No waiting between retries; each pause is written down instead.
+    writeFileSync(`${bin}/sleep`, '#!/usr/bin/env bash\nprintf "%s\\n" "$1" >> "$AZ_STATE/sleeps"\n', { mode: 0o755 });
+  });
+  afterAll(() => rmSync(work, { recursive: true, force: true }));
+
+  /**
+   * Runs one close step with the window open as `state` says (rules on each list, default actions) and the
+   * stand-in told to fail some calls first (`fail`: kind → how many times). Returns the exit code, the
+   * output, the az calls in order and the rules left.
+   */
+  function close(name, { state = {}, fail = {} } = {}) {
+    const [file, jobKey] = CLOSE_STEPS.find((parts) => parts[2] === name);
+    const step = closeStep(file, jobKey, name);
+    const dir = `${work}/run-${++runs}`;
+    mkdirSync(dir);
+    const files = { 'sa-default': 'Allow', 'sa-rules': '', 'scm-default': 'Deny', 'scm-rules': '', 'site-rules': '', calls: '', sleeps: '', ...state };
+    for (const [key, value] of Object.entries(files)) writeFileSync(`${dir}/${key}`, value ? `${value}\n` : '');
+    for (const [kind, times] of Object.entries(fail)) writeFileSync(`${dir}/fail-${kind}`, `${times}\n`);
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      AZ_STATE: dir,
+      APP: 'func-hcw-sample',
+      RG: 'rg-hcw-sample',
+      SA: 'sthcwsample',
+      RUNNER_IP: IP,
+      RULE: step.env.RULE ? (file === 'deploy-functions.yml' ? 'ci-deploy-scm-4242' : 'ci-manifest-4242') : '',
+      BASELINE: 'Deny',
+      GITHUB_RUN_ID: '4242',
+    };
+    const result = spawnSync('bash', ['-e', '-c', step.run], { cwd: REPO, env, encoding: 'utf8' });
+    const read = (key) => readFileSync(`${dir}/${key}`, 'utf8').split('\n').filter(Boolean);
+    return {
+      status: result.status,
+      output: `${result.stdout}${result.stderr}`,
+      calls: read('calls'),
+      sleeps: read('sleeps').map(Number),
+      left: { sa: read('sa-rules'), scm: read('scm-rules'), site: read('site-rules') },
+      saDefault: read('sa-default')[0],
+    };
+  }
+
+  const removes = (calls) => calls.filter((call) => / remove /.test(call)).length;
+
+  // [step, the state of an open window, where its rule lives, how to read what is left]
+  const WINDOWS = [
+    ['Close SCM firewall window', { 'scm-rules': 'ci-deploy-scm-4242' }, (r) => r.left.scm],
+    ['Close storage firewall window', { 'sa-rules': IP, 'sa-default': 'Allow' }, (r) => r.left.sa],
+    ['Close origin firewall window', { 'site-rules': 'cloudflare-0\nci-smoke-4242' }, (r) => r.left.site.filter((n) => n.startsWith('ci-'))],
+    ['Close origin window', { 'site-rules': 'cloudflare-0\nci-manifest-4242' }, (r) => r.left.site.filter((n) => n.startsWith('ci-'))],
+  ];
+  const READ_KIND = { 'Close storage firewall window': 'sa-list' };
+  const REMOVE_KIND = { 'Close storage firewall window': 'sa-remove' };
+
+  it.each(WINDOWS)('%s: an open window is closed, and the step says so', (name, state, leftOf) => {
+    const result = close(name, { state });
+    expect(result.status, result.output).toBe(0);
+    expect(leftOf(result)).toEqual([]);
+    expect(result.output).toMatch(/window closed/);
+    expect(result.sleeps).toEqual([]);
+  });
+
+  it.each(WINDOWS)('%s: a rule that was never added is not an error, and nothing is removed', (name) => {
+    const result = close(name, { state: name.includes('storage') ? { 'sa-default': 'Allow' } : {} });
+    expect(result.status, result.output).toBe(0);
+    expect(removes(result.calls)).toBe(0);
+    expect(result.output).toMatch(/nothing to remove/);
+  });
+
+  // CodeRabbit's second finding on PR #1462: a failed read of whether the rule is there used to stop the step.
+  it.each(WINDOWS)('%s: when every read of whether the rule is there fails, it removes the rule anyway', (name, state, leftOf) => {
+    const kind = READ_KIND[name] ?? 'ar-show';
+    const result = close(name, { state, fail: { [kind]: 3 } });
+    expect(result.output).toMatch(/removing it anyway/);
+    expect(removes(result.calls)).toBe(1);
+    expect(leftOf(result)).toEqual([]);
+    expect(result.status, result.output).toBe(0);
+  });
+
+  it.each(WINDOWS)('%s: a read that fails once is retried, and the step carries on', (name, state, leftOf) => {
+    const kind = READ_KIND[name] ?? 'ar-show';
+    const result = close(name, { state, fail: { [kind]: 1 } });
+    expect(result.status, result.output).toBe(0);
+    expect(result.sleeps[0]).toBe(5);
+    expect(leftOf(result)).toEqual([]);
+  });
+
+  it.each(WINDOWS)('%s: a removal that keeps failing fails the step loudly, after its retries', (name, state, leftOf) => {
+    const kind = REMOVE_KIND[name] ?? 'ar-remove';
+    const result = close(name, { state, fail: { [kind]: 99 } });
+    expect(result.status).toBe(1);
+    expect(result.output).toMatch(/::error::/);
+    expect(removes(result.calls)).toBe(4);
+    expect(leftOf(result).length).toBe(1);
+  });
+
+  // CodeRabbit's first finding on PR #1462: a Deny refused while the open step's update was still running.
+  it('storage: a Deny refused with 409 while an update is still running is retried, then the rule is removed and both are checked', () => {
+    const result = close('Close storage firewall window', { state: { 'sa-rules': IP, 'sa-default': 'Allow' }, fail: { 'sa-update': 3 } });
+    expect(result.status, result.output).toBe(0);
+    expect(result.saDefault).toBe('Deny');
+    expect(result.left.sa).toEqual([]);
+    expect(result.sleeps).toEqual([5, 10, 20]);
+    expect(result.output).toMatch(/storage account provisioning state: Succeeded/);
+    const updates = result.calls.map((call, i) => [call, i]).filter(([call]) => call.startsWith('storage account update'));
+    expect(updates).toHaveLength(4);
+    const firstRemove = result.calls.findIndex((call) => call.startsWith('storage account network-rule remove'));
+    expect(updates.at(-1)[1], 'the Deny must come before the rule is removed').toBeLessThan(firstRemove);
+  });
+
+  it('storage: a Deny that never succeeds still removes the rule, and fails the step naming the default action', () => {
+    const result = close('Close storage firewall window', { state: { 'sa-rules': IP, 'sa-default': 'Allow' }, fail: { 'sa-update': 99 } });
+    expect(result.status).toBe(1);
+    expect(result.left.sa).toEqual([]);
+    expect(result.output).toMatch(/::error::default action is 'Allow' after the window closed, expected Deny/);
+    expect(result.calls.filter((call) => call.startsWith('storage account update'))).toHaveLength(6);
+  });
+
+  it('storage: a default action that cannot be read at the end fails the step rather than passing it', () => {
+    const result = close('Close storage firewall window', { state: { 'sa-rules': IP, 'sa-default': 'Allow' }, fail: { 'sa-read': 99 } });
+    expect(result.status).toBe(1);
+    expect(result.output).toMatch(/default action is 'unreadable'/);
+    expect(result.left.sa).toEqual([]);
+  });
+
+  it('SCM: a default action that differs from the one read before the window still fails the step', () => {
+    const result = close('Close SCM firewall window', { state: { 'scm-rules': 'ci-deploy-scm-4242', 'scm-default': 'Allow' } });
+    expect(result.status).toBe(1);
+    expect(result.output).toMatch(/::error::scm default action is 'Allow' after the window closed, expected 'Deny'/);
+    expect(result.left.scm).toEqual([]);
+  });
+
+  it('SCM and manifest: a temporary rule from another run left behind still fails the step', () => {
+    const scm = close('Close SCM firewall window', { state: { 'scm-rules': 'ci-deploy-scm-4242\nci-deploy-scm-1111' } });
+    expect(scm.status).toBe(1);
+    expect(scm.output).toMatch(/::error::1 ci-deploy-scm-\* rule\(s\) still present/);
+    const manifest = close('Close origin window', { state: { 'site-rules': 'ci-manifest-4242\nci-manifest-1111' } });
+    expect(manifest.status).toBe(1);
+    expect(manifest.output).toMatch(/::error::1 ci-manifest-\* rule\(s\) still on the origin/);
+  });
+
+  it('window_retry: one try more than there are pauses, the command output untouched, the last exit code returned', () => {
+    const script = [
+      `. '${forward(RETRY_HELPER)}'`,
+      'n=0; flaky() { n=$((n + 1)); [ "$n" -ge 3 ] && echo "ok after $n"; [ "$n" -ge 3 ]; }',
+      'out=$(window_retry "1 2 3" flaky) && echo "got: $out"',
+      'never() { return 7; }',
+      'window_retry "1 1" never; echo "status $?"',
+    ].join('\n');
+    const dir = `${work}/helper`;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${dir}/sleeps`, '');
+    const result = spawnSync('bash', ['-c', script], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, AZ_STATE: dir }, encoding: 'utf8' });
+    expect(result.stdout).toBe('got: ok after 3\nstatus 7\n');
+    expect(result.stderr).toMatch(/'flaky' failed \(exit code 1\) on try 1 of 4; trying again in 1 s/);
+    expect(result.stderr).toMatch(/::warning::'never' failed 3 times \(last exit code 7\)/);
+    expect(readFileSync(`${dir}/sleeps`, 'utf8')).toBe('1\n2\n1\n1\n');
+  });
+});

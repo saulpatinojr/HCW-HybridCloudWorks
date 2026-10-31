@@ -108,7 +108,7 @@ jobs:
         run: node scripts/tfc-workspace-busy.mjs
 
       - name: Install dependencies
-        timeout-minutes: 3 # slowest 12 s
+        timeout-minutes: 2 # slowest 12 s
         working-directory: functions
         run: npm ci
 
@@ -123,7 +123,7 @@ jobs:
       # output — the usual cause is a ref or repository name that has moved.
       - name: Azure Login
         id: login
-        timeout-minutes: 3 # slowest 17 s
+        timeout-minutes: 2 # slowest 17 s
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
           client-id: ${{ vars.CLIENT_ID }}
@@ -344,73 +344,145 @@ jobs:
       # that silently failed to close is worse than one that never opened: the
       # deploy stays green while the endpoint stays admitted, and the next
       # reader sees a workflow that claims to close it.
+      #
+      # `set +e` and window_retry (scripts/lib/window-retry.sh) because GitHub
+      # runs this with `bash -e`: one failed read or one refused update would
+      # otherwise stop the step before the removal. A read that keeps failing
+      # does not skip the removal either; the rule is removed anyway and the
+      # reads at the end decide whether the window is closed (#1441).
       - name: Close SCM firewall window
         if: ${{ always() && steps.scmfw.outputs.rule_name != '' }}
-        timeout-minutes: 3 # slowest 22 s
+        timeout-minutes: 4 # slowest 22 s; every Azure call is retried, about 2.5 min at most
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
           RULE: ${{ steps.scmfw.outputs.rule_name }}
           BASELINE: ${{ steps.scmfw.outputs.baseline }}
         run: |
-          set -euo pipefail
+          set +e
+          set -uo pipefail
+          . scripts/lib/window-retry.sh
+          rule_count() {
+            az functionapp config access-restriction show -n "$APP" -g "$RG" \
+              --query "length(scmIpSecurityRestrictions[?name=='${RULE}'])" -o tsv
+          }
+          remove_rule() {
+            az functionapp config access-restriction remove \
+              --resource-group "$RG" --name "$APP" \
+              --rule-name "$RULE" --scm-site true --output none
+          }
+          default_action() {
+            az functionapp config access-restriction show -n "$APP" -g "$RG" \
+              --query "scmIpSecurityRestrictionsDefaultAction" -o tsv
+          }
+          leftover_count() {
+            az functionapp config access-restriction show -n "$APP" -g "$RG" \
+              --query "length(scmIpSecurityRestrictions[?starts_with(name, 'ci-deploy-scm-')])" -o tsv
+          }
+
           # The open step writes the rule's name before it adds the rule, so the
           # rule may not exist: the add failed, or the step was stopped first.
-          present=$(az functionapp config access-restriction show -n "$APP" -g "$RG" \
-            --query "length(scmIpSecurityRestrictions[?name=='${RULE}'])" -o tsv)
+          present=$(window_retry "5 10" rule_count) || present=""
           if [ "$present" = "0" ]; then
             echo "rule ${RULE} is not on the SCM site (the open step stopped before adding it); nothing to remove"
           else
-            az functionapp config access-restriction remove             --resource-group "$RG"             --name "$APP"             --rule-name "$RULE"             --scm-site true             --output none
-            echo "rule ${RULE} removed from the SCM site"
+            [ -n "$present" ] || echo "could not read whether ${RULE} is on the SCM site; removing it anyway"
+            window_retry "5 10 20" remove_rule && echo "rule ${RULE} removed from the SCM site"
           fi
 
-          after=$(az functionapp config access-restriction show -n "$APP" -g "$RG"             --query "scmIpSecurityRestrictionsDefaultAction" -o tsv)
-          if [ -z "$BASELINE" ]; then
+          failed=0
+          after=$(window_retry "5 10" default_action) || after=""
+          if [ -z "$after" ]; then
+            echo "::error::could not read the SCM default action after the window closed"
+            failed=1
+          elif [ -z "$BASELINE" ]; then
             echo "no baseline was read (the open step stopped before reading it), so the default action '$after' is not compared"
           elif [ "$after" != "$BASELINE" ]; then
             echo "::error::scm default action is '$after' after the window closed, expected '$BASELINE'"
-            exit 1
+            failed=1
           fi
 
-          left=$(az functionapp config access-restriction show -n "$APP" -g "$RG"             --query "length(scmIpSecurityRestrictions[?starts_with(name, 'ci-deploy-scm-')])" -o tsv)
+          left=$(window_retry "5 10" leftover_count) || left=""
           if [ "$left" != "0" ]; then
-            echo "::error::${left} ci-deploy-scm-* rule(s) still present on SCM after the window closed"
-            exit 1
+            echo "::error::${left:-an unknown number of} ci-deploy-scm-* rule(s) still present on SCM after the window closed (or the list could not be read)"
+            failed=1
           fi
+          [ "$failed" = 0 ] || exit 1
           echo "scm window closed — default action '$after', no temporary rules left"
+      # The storage account takes the same care, and one more: when the open
+      # step was stopped by its time limit in the middle of `az storage account
+      # update`, Azure is still working on that update. Resource Manager runs
+      # one update to a resource at a time and answers the next with 409
+      # Conflict (StorageAccountOperationInProgress) until the first is done,
+      # so the Deny below can be refused for a short while and is retried for
+      # up to about two and a half minutes. Because Azure serialises the two,
+      # the earlier Allow cannot land after this Deny and undo it.
+      # https://learn.microsoft.com/azure/azure-resource-manager/management/overview#resolve-concurrent-operations
+      # https://learn.microsoft.com/rest/api/storagerp/srp_error_codes_update_storage_account
       - name: Close storage firewall window
         if: ${{ always() && steps.fw.outputs.runner_ip != '' }}
-        timeout-minutes: 3 # slowest 7 s
+        timeout-minutes: 5 # slowest 7 s; every Azure call is retried, the Deny for up to 150 s, about 4.5 min at most
         env:
           RG: ${{ vars.RESOURCE_GROUP }}
           SA: ${{ vars.FUNCTIONS_STORAGE_ACCOUNT }}
           RUNNER_IP: ${{ steps.fw.outputs.runner_ip }}
         run: |
-          # Deny first — this is the part that matters if anything below fails.
-          az storage account update \
-            --resource-group "${RG}" \
-            --name "${SA}" \
-            --default-action Deny --output none
-          # The open step writes runner_ip before it adds the rule, so the rule
-          # may not exist (the add failed, or the step was stopped first).
-          present=$(az storage account network-rule list \
-            --resource-group "${RG}" --account-name "${SA}" \
-            --query "length(ipRules[?ipAddressOrRange=='${RUNNER_IP}'])" -o tsv)
-          if [ "${present}" = "0" ]; then
-            echo "no storage firewall rule for ${RUNNER_IP} (the open step stopped before adding it); nothing to remove"
-          else
+          set +e
+          set -uo pipefail
+          . scripts/lib/window-retry.sh
+          deny() {
+            # Logged on each try, so a refused Deny shows what Azure reported
+            # for the account at the time (anything but Succeeded is still busy).
+            echo "storage account provisioning state: $(az storage account show --resource-group "${RG}" --name "${SA}" --query provisioningState -o tsv)"
+            az storage account update \
+              --resource-group "${RG}" \
+              --name "${SA}" \
+              --default-action Deny --output none
+          }
+          rule_count() {
+            az storage account network-rule list \
+              --resource-group "${RG}" --account-name "${SA}" \
+              --query "length(ipRules[?ipAddressOrRange=='${RUNNER_IP}'])" -o tsv
+          }
+          remove_rule() {
             az storage account network-rule remove \
               --resource-group "${RG}" \
               --account-name "${SA}" \
               --ip-address "${RUNNER_IP}" \
               --output none
-            echo "storage firewall rule for ${RUNNER_IP} removed"
+          }
+          default_action() {
+            az storage account show --resource-group "${RG}" \
+              --name "${SA}" \
+              --query "networkRuleSet.defaultAction" -o tsv
+          }
+
+          # Deny first — this is the part that matters if anything below fails.
+          window_retry "5 10 20 30 30" deny || echo "::warning::could not set the default action to Deny; the check at the end decides"
+
+          # The open step writes runner_ip before it adds the rule, so the rule
+          # may not exist (the add failed, or the step was stopped first).
+          present=$(window_retry "5 10" rule_count) || present=""
+          if [ "${present}" = "0" ]; then
+            echo "no storage firewall rule for ${RUNNER_IP} (the open step stopped before adding it); nothing to remove"
+          else
+            [ -n "${present}" ] || echo "could not read whether the rule for ${RUNNER_IP} exists; removing it anyway"
+            window_retry "5 10 20" remove_rule && echo "storage firewall rule for ${RUNNER_IP} removed"
           fi
-          az storage account show --resource-group "${RG}" \
-            --name "${SA}" \
-            --query "networkRuleSet.defaultAction" -o tsv | grep -qx Deny \
-            || { echo "::error::default action is not Deny after the window closed"; exit 1; }
+
+          failed=0
+          action=$(window_retry "5 10" default_action) || action=""
+          if [ "${action}" != "Deny" ]; then
+            echo "::error::default action is '${action:-unreadable}' after the window closed, expected Deny"
+            failed=1
+          fi
+          left=$(window_retry "5 10" rule_count) || left=""
+          if [ "${left}" != "0" ]; then
+            echo "::error::the storage firewall rule for ${RUNNER_IP} is still there after the window closed (or the list could not be read: '${left}')"
+            failed=1
+          fi
+          [ "${failed}" = 0 ] || exit 1
+          echo "storage window closed — default action Deny, no rule for ${RUNNER_IP}"
 
       # Every function this commit registers, by name (PLAT-2, #962).
       #
@@ -420,7 +492,7 @@ jobs:
       # for up to three minutes inside them would hold the host storage
       # account at default-Allow for that long.
       - name: Assert every expected function is registered
-        timeout-minutes: 6 # slowest 44 s; polls for up to 180 s
+        timeout-minutes: 5 # slowest 44 s; polls for up to 180 s
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
@@ -623,29 +695,48 @@ jobs:
           node scripts/smoke-deployed.mjs --base "https://${APP_HOSTNAME}/api" --tier 1
           echo "✅ Smoke tier 1 (anonymous surface & security guards): **PASSED**" >> "$GITHUB_STEP_SUMMARY"
 
+      # Retried and checked the same way as the two closes above, for the same
+      # reason: GitHub runs this with `bash -e`, so one failed read or one
+      # refused update would otherwise stop it before the removal (#1441).
       - name: Close origin firewall window
         if: ${{ always() && steps.appfw.outputs.runner_ip != '' }}
-        timeout-minutes: 3 # slowest 18 s
+        timeout-minutes: 3 # slowest 18 s; every Azure call is retried, about 2 min at most
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
         run: |
-          set -euo pipefail
+          set +e
+          set -uo pipefail
+          . scripts/lib/window-retry.sh
           RULE="ci-smoke-${GITHUB_RUN_ID}"
-          # The open step writes runner_ip before it adds the rule, so the rule
-          # may not exist (the add failed, or the step was stopped first).
-          present=$(az functionapp config access-restriction show -n "${APP}" -g "${RG}" \
-            --query "length(ipSecurityRestrictions[?name=='${RULE}'])" -o tsv)
-          if [ "${present}" = "0" ]; then
-            echo "rule ${RULE} is not on the site (the open step stopped before adding it); nothing to remove"
-          else
+          rule_count() {
+            az functionapp config access-restriction show -n "${APP}" -g "${RG}" \
+              --query "length(ipSecurityRestrictions[?name=='${RULE}'])" -o tsv
+          }
+          remove_rule() {
             az functionapp config access-restriction remove \
               --resource-group "${RG}" \
               --name "${APP}" \
               --rule-name "${RULE}" \
               --output none
-            echo "rule ${RULE} removed from the site"
+          }
+
+          # The open step writes runner_ip before it adds the rule, so the rule
+          # may not exist (the add failed, or the step was stopped first).
+          present=$(window_retry "5 10" rule_count) || present=""
+          if [ "${present}" = "0" ]; then
+            echo "rule ${RULE} is not on the site (the open step stopped before adding it); nothing to remove"
+          else
+            [ -n "${present}" ] || echo "could not read whether ${RULE} is on the site; removing it anyway"
+            window_retry "5 10 20" remove_rule && echo "rule ${RULE} removed from the site"
           fi
+
+          left=$(window_retry "5 10" rule_count) || left=""
+          if [ "${left}" != "0" ]; then
+            echo "::error::rule ${RULE} is still on the site after the window closed (or the list could not be read: '${left}')"
+            exit 1
+          fi
+          echo "origin window closed — ${RULE} is gone"
 
       # The origin lock, read where Azure enforces it (PLAT-2, #962).
       #
