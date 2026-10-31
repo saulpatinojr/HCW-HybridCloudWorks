@@ -34,15 +34,18 @@
  *   --allow-production-target   write to an account whose name has -prod- in it
  *   --help
  */
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { createGunzip } from 'node:zlib';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parseArgs, splitList } from './lib/cli.mjs';
 import {
   selectRestoreSet,
   restoreLayers,
   containersToRestore,
+  splitBySpec,
   assertManifest,
   layersCarrying,
   verifyTargetCount,
@@ -58,6 +61,15 @@ import {
 } from './lib/cosmos-export-restore.mjs';
 
 export const EXPORT_CONTAINER = 'cosmos-export';
+
+/** The container spec the target was provisioned from; its names are the containers a restore can land in. */
+const SPEC_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'infra', 'cosmos-containers.json');
+
+/** The container names infra/cosmos-containers.json provisions. */
+export function provisionedContainerNames(specPath = SPEC_PATH) {
+  const spec = JSON.parse(readFileSync(specPath, 'utf8'));
+  return spec.containers.map((container) => container.name);
+}
 
 const HELP = `Usage: node scripts/restore-cosmos-export.mjs --storage-account <name> [--target-endpoint <url>] [options]
 
@@ -215,7 +227,13 @@ export async function main(argv = process.argv.slice(2), out = console) {
   }
   const fullManifest = manifests.get(`full/${set.full}`);
   const deltaManifests = layers.slice(1).map((layer) => manifests.get(`${layer.mode}/${layer.runId}`));
-  const containers = containersToRestore(fullManifest, opts.containers, deltaManifests);
+  // An older set can list a container retired since (#1479); the target has no
+  // such container, so it is skipped and named, never routed into --database.
+  const { restore: containers, legacy } = splitBySpec(
+    containersToRestore(fullManifest, opts.containers, deltaManifests),
+    provisionedContainerNames(),
+    opts.containers
+  );
 
   out.log(
     `${opts.dryRun ? 'DRY RUN — counting' : 'Restoring'} full/${set.full} + ${set.deltas.length} delta(s)` +
@@ -225,6 +243,12 @@ export async function main(argv = process.argv.slice(2), out = console) {
   );
   if (set.incompleteSkipped.length) {
     out.log(`Skipped incomplete runs (no manifest): ${set.incompleteSkipped.join(', ')}`);
+  }
+  if (legacy.length) {
+    out.log(
+      `Skipped containers the export set lists but infra/cosmos-containers.json no longer provisions, so the ` +
+        `target has no container for them (restore one by hand if it is wanted): ${legacy.join(', ')}`
+    );
   }
 
   const db = opts.dryRun ? null : await targetDatabase(opts.targetEndpoint, opts.database);

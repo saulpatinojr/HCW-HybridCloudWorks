@@ -9,6 +9,7 @@ import {
   selectRestoreSet,
   restoreLayers,
   containersToRestore,
+  splitBySpec,
   assertManifest,
   layersCarrying,
   verifyTargetCount,
@@ -24,7 +25,7 @@ import {
   parseConcurrency,
   forEachConcurrent,
 } from './lib/cosmos-export-restore.mjs';
-import { parseOptions } from './restore-cosmos-export.mjs';
+import { parseOptions, provisionedContainerNames } from './restore-cosmos-export.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 
@@ -148,6 +149,36 @@ describe('containersToRestore', () => {
     expect(containersToRestore(full, ['brain_records'], [firstDelta, nextDelta])).toEqual(['brain_records']);
     expect(layersCarrying('brain_records', layers, manifests)).toEqual(layers.slice(1));
     expect(() => containersToRestore(full, ['brain_search'], [firstDelta, nextDelta])).toThrow(/does not carry: brain_search/);
+  });
+});
+
+describe('splitBySpec (a retired container in an older export set, #1479)', () => {
+  const spec = ['admins', 'blogs', 'content'];
+
+  it('keeps the containers the spec provisions and names the ones it no longer knows', () => {
+    expect(splitBySpec(['admins', 'blogs', 'code_brain_records', 'content'], spec)).toEqual({
+      restore: ['admins', 'blogs', 'content'],
+      legacy: ['code_brain_records'],
+    });
+    expect(splitBySpec(['admins', 'content'], spec)).toEqual({ restore: ['admins', 'content'], legacy: [] });
+  });
+
+  it('refuses a legacy container that --containers asked for by name', () => {
+    expect(() => splitBySpec(['code_brain_records', 'content'], spec, ['code_brain_records', 'content'])).toThrow(
+      /no longer provisions.*code_brain_records/
+    );
+    // Asking only for provisioned containers is fine even when the set carries a legacy one.
+    expect(splitBySpec(['code_brain_records', 'content'], spec, ['content'])).toEqual({
+      restore: ['content'],
+      legacy: ['code_brain_records'],
+    });
+  });
+
+  it('reads the names from infra/cosmos-containers.json, which no longer lists the retired container', () => {
+    const names = provisionedContainerNames();
+    expect(names).toContain('content');
+    expect(names).toContain('brain_records');
+    expect(names).not.toContain('code_brain_records');
   });
 });
 

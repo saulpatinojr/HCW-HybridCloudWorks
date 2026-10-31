@@ -131,6 +131,35 @@ export function containersToRestore(fullManifest, only = null, deltaManifests = 
 }
 
 /**
+ * Split the containers an export set carries into the ones the current
+ * container spec (infra/cosmos-containers.json) provisions and the ones it
+ * no longer knows. An export written before a container was retired still
+ * lists it (the Code Conductor brain's `code_brain_records`, #1479), but the
+ * target was provisioned from the current spec and has no such container, so
+ * restoring it into `--database` would plant a retired workspace in the
+ * creator database or fail at the first write. Legacy names are reported and
+ * skipped; one that `--containers` asked for by name is refused instead,
+ * because the operator is then expecting it to land somewhere.
+ *
+ * @param {string[]} containers - what containersToRestore chose
+ * @param {Iterable<string>} specNames - the container names the spec provisions
+ * @param {string[]|null} only - the --containers selection, if any
+ * @returns {{restore: string[], legacy: string[]}}
+ */
+export function splitBySpec(containers, specNames, only = null) {
+  const known = new Set(specNames);
+  const legacy = containers.filter((name) => !known.has(name));
+  const asked = (only || []).filter((name) => legacy.includes(name));
+  if (asked.length) {
+    throw new Error(
+      '--containers names containers infra/cosmos-containers.json no longer provisions, so the target has ' +
+        `no container for them: ${asked.join(', ')}`
+    );
+  }
+  return { restore: containers.filter((name) => known.has(name)), legacy };
+}
+
+/**
  * A layer's manifest, checked before anything is restored from it: it names
  * the run it sits in (mode and runId), and lists its containers as
  * `{container: string}` entries. layersCarrying treats a container a manifest

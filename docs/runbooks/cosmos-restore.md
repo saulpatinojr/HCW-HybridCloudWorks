@@ -45,6 +45,13 @@ Say this before the drill, so nothing in it is a surprise:
   `azure_landing_content` and `tool_service_catalog` (re-seeded by a script),
   and the six TTL-bounded job and quota containers. A restored site republishes
   its snapshots and refills its caches on the first scheduled runs.
+- **A retired container in an older set is skipped, not restored.** The
+  script restores only into containers that `infra/cosmos-containers.json`
+  provisions today. A full export written before a container was retired still
+  lists it (the Code Conductor brain's `code_brain_records`, removed on
+  [#1479](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1479));
+  the script prints its name under "Skipped containers" and goes on, and
+  refuses outright if `--containers` asked for it by name.
 - **Up to a week of resurrected deletes.** The change feed does not carry
   deletes; only the weekly full reconciles them. A document deleted on a
   Tuesday and restored from Sunday's full plus Monday-to-Saturday's deltas is
