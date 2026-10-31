@@ -18,8 +18,8 @@ setup and the checks.
 | `runner` | `docker.io/hybridcloudworks/hcw-lab-runner` | terraform, kubeconform, helm, ansible-core; a Terraform provider filesystem mirror at `/opt/terraform/mirror`; every Azure Verified Module the Landing Zone Builder emits, at the version it emits, and every registry module those call, at `/opt/avm/<name>@<version>`; one release of the Kubernetes JSON schemas at `/opt/kubeconform/schemas`; the three capability commands in [`bin/`](bin/). Runs as uid 65534 (`nobody`) with `/workspace` mounted read-only. This is what `vps-agent` runs jobs in. |
 | `full`   | `docker.io/hybridcloudworks/hcw-lab`        | Everything in `runner`, plus Azure CLI, kubectl, git, curl, jq and the three packages code-server needs (`ca-certificates`, `libatomic1`, `procps`); uid 65534's shell is `bash` and its home `/tmp/home`, because Coder runs everything through the passwd shell (#693). `CMD` is `bash`. This is what a lab page tells a learner to pull, and the base of the Coder template.                                                            |
 
-Both targets are built on the official `python:3.14.7-slim-trixie` image,
-pinned by index digest: CPython 3.14.7 on Debian 13 (trixie). ansible-core,
+Both targets are built on the official `python:3.14.10-slim-trixie` image,
+pinned by index digest: CPython 3.14.10 on Debian 13 (trixie). ansible-core,
 `hcw-terraform-validate` and the build-time vendoring all run on that
 Python; no Debian `python3` package is installed, and the image carries no
 `pip` command. [`versions.env`](versions.env) says why every stage, the
@@ -132,7 +132,7 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
 - **Providers: yes, and symlinked.** `TF_CLI_CONFIG_FILE` points at a
   `provider_installation { filesystem_mirror { ... } }` block with no
   `direct` fallback, so Terraform installs from `/opt/terraform/mirror` and
-  nowhere else. The mirror holds azurerm 5.11.0 and 4.81.0, azapi 2.13.0, alz
+  nowhere else. The mirror holds azurerm 5.12.0 and 4.81.0, azapi 2.13.0, alz
   0.22.0, random 3.9.1, modtm 0.4.0 and time 0.14.2, each zip verified after
   mirroring against the SHA256 the registry publishes for it and then
   unpacked into the directory layout. Unpacked matters: from a packed mirror
