@@ -124,6 +124,7 @@ jobs:
   build:
     name: Build and verify the site
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 1.8 min, Oct 2026 (#1441)
     defaults:
       run:
         working-directory: frontend
@@ -412,6 +413,7 @@ jobs:
     name: Deploy to Azure Static Web Apps
     needs: build
     runs-on: ubuntu-26.04
+    timeout-minutes: 15 # slowest 1.6 min; waiting for approval does not count (#1441)
     # Binding the job to an environment gives production deploys a deployment
     # history and an approval gate. The gate lives in the environment, not
     # here: read live on 2026-10-03, `production` has two required reviewers

@@ -50,6 +50,7 @@ jobs:
     # update-version-floors.yml moves that ceiling when GitHub makes the next
     # LTS generally available.
     runs-on: ubuntu-26.04
+    timeout-minutes: 20 # slowest row 3.4 min (frontend), Oct 2026 (#1441)
     strategy:
       # One package failing should not mask the state of the others.
       fail-fast: false
@@ -425,7 +426,7 @@ jobs:
   e2e:
     name: e2e (playwright)
     runs-on: ubuntu-26.04
-    timeout-minutes: 25
+    timeout-minutes: 60 # slowest 19 min, 16 of them installing Chromium, Oct 2026 (#1441)
     permissions:
       contents: read
     steps:
@@ -514,6 +515,7 @@ jobs:
   ansible-lint:
     name: ansible-lint (lab-host)
     runs-on: ubuntu-26.04
+    timeout-minutes: 35 # slowest 10.8 min, Oct 2026 (#1441)
     defaults:
       run:
         working-directory: lab-host/ansible
@@ -952,6 +954,7 @@ jobs:
   coder-template:
     name: coder (lab-host)
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 2.1 min, Oct 2026 (#1441)
     defaults:
       run:
         working-directory: lab-host/coder
@@ -1037,6 +1040,7 @@ jobs:
   harness:
     name: harness (python)
     runs-on: ubuntu-26.04
+    timeout-minutes: 15 # slowest 0.9 min, Oct 2026 (#1441)
     defaults:
       run:
         working-directory: .

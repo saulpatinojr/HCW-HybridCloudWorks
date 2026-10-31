@@ -168,6 +168,7 @@ jobs:
       actions: read # deploy-functions.yml's run history: which commit is live
       id-token: write # exchanged by azure/login for an Azure access token
     runs-on: ubuntu-26.04
+    timeout-minutes: 40 # slowest 0.8 min, but it may wait 20 min for a deploy (#1441)
     steps:
       # For scripts/check-registered-functions.mjs. The inventory it compares
       # against is fetched at the deployed commit, not read from this checkout.

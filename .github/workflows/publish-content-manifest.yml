@@ -128,16 +128,19 @@ jobs:
     # last committed version.
     if: ${{ vars.MANIFEST_WINDOW_CLIENT_ID != '' }}
     runs-on: ubuntu-26.04
+    timeout-minutes: 25 # slowest 1.5 min; each step up to the window close has its own limit, 19 min in all (#1441)
     permissions:
       contents: read # checkout only — this job must never be able to push
       id-token: write # federated credential exchange for azure/login
     steps:
       - name: Checkout
+        timeout-minutes: 2 # slowest 4 s
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Setup Node.js
+        timeout-minutes: 2 # slowest 7 s
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '26'
@@ -145,6 +148,7 @@ jobs:
           cache-dependency-path: scripts/package-lock.json
 
       - name: Azure login
+        timeout-minutes: 2 # slowest 17 s
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
           client-id: ${{ vars.MANIFEST_WINDOW_CLIENT_ID }}
@@ -155,6 +159,7 @@ jobs:
       # this job holds an Azure credential. Defence in depth behind the job
       # split — the split is what makes a compromised package unable to push.
       - name: Install script dependencies
+        timeout-minutes: 2 # slowest 6 s
         working-directory: scripts
         run: npm ci --ignore-scripts
 
@@ -182,6 +187,7 @@ jobs:
       # window and cannot read app settings back (#1098).
       - name: Open origin window for this runner
         id: appfw
+        timeout-minutes: 3 # slowest 37 s, 20 of them a sleep
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
@@ -193,15 +199,19 @@ jobs:
             exit 1
           fi
           RULE="ci-manifest-${GITHUB_RUN_ID}"
+          # Written before the add, so the close step knows the rule's name even
+          # if the add succeeds in Azure and this step is then stopped by its
+          # time limit (#1441). The close removes it only if it exists.
+          echo "rule_name=${RULE}" >> "$GITHUB_OUTPUT"
           az functionapp config access-restriction add \
             --resource-group "$RG" --name "$APP" \
             --rule-name "$RULE" --action Allow \
             --ip-address "${RUNNER_IP}/32" --priority 300 \
             --output none
-          echo "rule_name=${RULE}" >> "$GITHUB_OUTPUT"
           sleep 20
 
       - name: Build the manifest
+        timeout-minutes: 5 # slowest 22 s
         working-directory: scripts
         env:
           FUNCTION_ORIGIN: https://${{ vars.APP_HOSTNAME }}
@@ -210,22 +220,50 @@ jobs:
       # The assertion is the point of this step, not the removal. A window that
       # silently failed to close leaves the origin admitting a dead runner's
       # address, and the job stays green while it does.
+      #
+      # `set +e` and window_retry (scripts/lib/window-retry.sh) because GitHub
+      # runs this with `bash -e`: one failed read or one refused update would
+      # otherwise stop the step before the removal. A read that keeps failing
+      # does not skip the removal either; the rule is removed anyway and the
+      # read at the end decides whether the window is closed (#1441).
       - name: Close origin window
         if: ${{ always() && steps.appfw.outputs.rule_name != '' }}
+        timeout-minutes: 3 # slowest 11 s; every Azure call is retried, about 2 min at most
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
           RULE: ${{ steps.appfw.outputs.rule_name }}
         run: |
-          set -euo pipefail
-          az functionapp config access-restriction remove \
-            --resource-group "$RG" --name "$APP" \
-            --rule-name "$RULE" --output none
+          set +e
+          set -uo pipefail
+          . scripts/lib/window-retry.sh
+          rule_count() {
+            az functionapp config access-restriction show -n "$APP" -g "$RG" \
+              --query "length(ipSecurityRestrictions[?name=='${RULE}'])" -o tsv
+          }
+          remove_rule() {
+            az functionapp config access-restriction remove \
+              --resource-group "$RG" --name "$APP" \
+              --rule-name "$RULE" --output none
+          }
+          leftover_count() {
+            az functionapp config access-restriction show -n "$APP" -g "$RG" \
+              --query "length(ipSecurityRestrictions[?starts_with(name, 'ci-manifest-')])" -o tsv
+          }
 
-          left=$(az functionapp config access-restriction show -n "$APP" -g "$RG" \
-            --query "length(ipSecurityRestrictions[?starts_with(name, 'ci-manifest-')])" -o tsv)
+          # The open step writes the rule's name before it adds the rule, so the
+          # rule may not exist (the add failed, or the step was stopped first).
+          present=$(window_retry "5 10" rule_count) || present=""
+          if [ "$present" = "0" ]; then
+            echo "rule ${RULE} is not on the origin (the open step stopped before adding it); nothing to remove"
+          else
+            [ -n "$present" ] || echo "could not read whether ${RULE} is on the origin; removing it anyway"
+            window_retry "5 10 20" remove_rule && echo "rule ${RULE} removed from the origin"
+          fi
+
+          left=$(window_retry "5 10" leftover_count) || left=""
           if [ "$left" != "0" ]; then
-            echo "::error::${left} ci-manifest-* rule(s) still on the origin after the window closed"
+            echo "::error::${left:-an unknown number of} ci-manifest-* rule(s) still on the origin after the window closed (or the list could not be read)"
             exit 1
           fi
           echo "origin window closed — no temporary rules left"
@@ -242,6 +280,7 @@ jobs:
     name: Open a pull request if the manifest changed
     needs: build
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.3 min, Oct 2026 (#1441)
     # Scoped to the `automation` environment so this job's secret is reachable
     # only from a run GitHub has admitted into it (zizmor secrets-outside-env,
     # #567). The estate already does this — `production` on the two deploys,
