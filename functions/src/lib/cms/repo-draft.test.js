@@ -404,10 +404,10 @@ describe('sha256Hex', () => {
 // the same code about 30 times slower, and a shared runner's speed varies, so
 // a fixed budget either fails on a healthy parser or passes a slow one. The
 // assertion is the growth rate, which neither changes: run the parser on an
-// input of size N and again on one 4N long (best of three each, after a
-// warm-up) and look at time(4N) / max(time(N), 1 ms). Linear code gives about
-// 4; quadratic gives about 16; cubic about 64. The sizes are chosen so the OLD
-// code took long enough at N to be measured. Measured here (ratio, 4N over N):
+// input of size N and again on one 4N long and look at time(4N) / time(N).
+// Linear code gives about 4; quadratic gives about 16; cubic about 64. The
+// sizes are chosen so the OLD code took long enough at N to be measured.
+// Measured when the parser was fixed (ratio, 4N over N):
 //
 //   input (N, 4N)                    old parser   new parser, plain   new parser, coverage
 //   bare `](`          10k, 40k      16           4.1                 4.1
@@ -417,11 +417,23 @@ describe('sha256Hex', () => {
 //   quotes in a value  12.5k, 50k    16           0.1 (under 1 ms)    0.1
 //   quotes around tag  12.5k, 50k    18           0.3 (under 1 ms)    2.1
 //
-// The old parser is repo-draft.js at commit 742e0232. Where the new parser's
-// time is under the 1 ms floor the ratio only says "not growing". Coverage
+// The old parser is repo-draft.js at commit 742e0232. Those readings took the
+// best of three single runs after a warm-up, with a 1 ms floor under time(N),
+// so a new-parser time under 1 ms only said "not growing". Coverage
 // instrumentation makes the same code 10-30 times slower in absolute terms
 // (the bare `](` case: 21 ms plain, 249 ms under coverage) and leaves the
 // ratio where it was.
+//
+// The measurement changed with the frontend's twin of #1431 (#1433) after
+// `](a` failed once with 11.0x on a loaded machine: a single run of a few
+// milliseconds is shorter than a pause on a busy machine, and three of them,
+// taken one size after the other, cannot cancel one. It is now the method of
+// the Doc Vault "linear time" test (doc-vault/markdown.test.js, #1431): each
+// batch repeats the run until it lasts at least 4 ms, the two sizes are timed
+// in alternating rounds, each keeps its fastest of nine, and there is no
+// floor. One addition, also in the frontend's copy: the small batch reads at
+// least as much text as the large one. Measured that way every case,
+// including the three that sat under the floor, reads about 4.
 // MAX_GROWTH sits between linear (about 4) and quadratic (about 16). One
 // generous absolute ceiling at the real request size is kept as a backstop only.
 
@@ -431,25 +443,50 @@ describe('the parser stays linear on hostile text', () => {
   // parser needed 18 s to hours.
   const BACKSTOP_MS = 15_000;
 
-  const bestOfThree = (fn) => {
-    let best = Infinity;
-    for (let run = 0; run < 3; run += 1) {
-      const started = performance.now();
-      fn();
-      best = Math.min(best, performance.now() - started);
-    }
-    return best;
+  // The same measurement as the Doc Vault "linear time" tests
+  // (doc-vault/markdown.test.js, #1431): see "HOW IT IS TESTED" above.
+  const BATCH_MS = 4;
+  const ROUNDS = 9;
+  const MIN_ROUNDS = 3;
+  const BUDGET_MS = 1_000;
+  const MAX_REPS = 2 ** 20;
+
+  const timeBatch = (run, input, reps) => {
+    const started = performance.now();
+    for (let rep = 0; rep < reps; rep += 1) run(input);
+    return performance.now() - started;
   };
 
-  /** time(4N) / max(time(N), 1 ms) for `run` over inputs `make(n)` and `make(4n)`. */
+  /** How many runs make a batch of at least BATCH_MS. Finding it also warms the parser up. */
+  const repsFor = (run, input) => {
+    let reps = 1;
+    while (reps < MAX_REPS && timeBatch(run, input, reps) < BATCH_MS) reps *= 2;
+    return reps;
+  };
+
+  /** time(4N) / time(N) for `run` over inputs `make(n)` and `make(4n)`, and each time in ms a run. */
   const growth = (make, run, n) => {
     const small = make(n);
     const large = make(4 * n);
-    run(small); // warm-up: compile, and let coverage instrumentation settle
-    const tSmall = bestOfThree(() => run(small));
-    const tLarge = bestOfThree(() => run(large));
-    return { ratio: tLarge / Math.max(tSmall, 1), tSmall, tLarge };
+    const largeReps = repsFor(run, large);
+    // The small batch reads at least as much text as the large one, so for a
+    // linear parser both last about as long and a pause on a busy machine is
+    // as likely to fall in either (bare `](` can take 10 ms and 40 ms a run on
+    // a busy machine, so without this each batch would be one run of each).
+    const smallReps = Math.max(repsFor(run, small), largeReps * 4);
+    let tSmall = Infinity;
+    let tLarge = Infinity;
+    const began = performance.now();
+    for (let round = 1; round <= ROUNDS; round += 1) {
+      tSmall = Math.min(tSmall, timeBatch(run, small, smallReps) / smallReps);
+      tLarge = Math.min(tLarge, timeBatch(run, large, largeReps) / largeReps);
+      if (round >= MIN_ROUNDS && performance.now() - began > BUDGET_MS) break;
+    }
+    return { ratio: tLarge / tSmall, tSmall, tLarge };
   };
+
+  const message = (ratio, tSmall, tLarge) =>
+    `4x the input took ${ratio.toFixed(1)}x the time (${tSmall.toFixed(4)} ms -> ${tLarge.toFixed(4)} ms a run)`;
 
   it.each([
     ['bare ](', (n) => ']('.repeat(n), 10_000],
@@ -457,10 +494,7 @@ describe('the parser stays linear on hostile text', () => {
     ['](a.md# (the cubic case)', (n) => '](a.md#'.repeat(n), 250],
   ])('finds links in a body of repeated %s in time linear in its length', (_name, make, n) => {
     const { ratio, tSmall, tLarge } = growth(make, findRepoRelativeLinks, n);
-    expect(
-      ratio,
-      `4x the input took ${(tLarge / Math.max(tSmall, 1)).toFixed(1)}x the time (${tSmall.toFixed(2)} ms -> ${tLarge.toFixed(2)} ms)`
-    ).toBeLessThan(MAX_GROWTH);
+    expect(ratio, message(ratio, tSmall, tLarge)).toBeLessThan(MAX_GROWTH);
   });
 
   it.each([
@@ -470,10 +504,7 @@ describe('the parser stays linear on hostile text', () => {
   ])('reads front matter with %s in time linear in its length', (_name, value) => {
     const make = (n) => `---\ntitle: T\nsubtitle: ${value(n)}\ntags: ${value(n)}\n---\n\nBody\n`;
     const { ratio, tSmall, tLarge } = growth(make, parseRepoDraft, 12_500);
-    expect(
-      ratio,
-      `4x the input took ${(tLarge / Math.max(tSmall, 1)).toFixed(1)}x the time (${tSmall.toFixed(2)} ms -> ${tLarge.toFixed(2)} ms)`
-    ).toBeLessThan(MAX_GROWTH);
+    expect(ratio, message(ratio, tSmall, tLarge)).toBeLessThan(MAX_GROWTH);
   });
 
   it('still finishes a request-sized hostile body well inside a generous ceiling', () => {
