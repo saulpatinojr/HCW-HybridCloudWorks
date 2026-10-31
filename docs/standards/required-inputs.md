@@ -632,23 +632,3 @@ The owner also needs the existing API Admin role and an active editor-or-higher
 registry entry. The plugin requires no client secret. Its encrypted local token
 cache is separate from the vault. Identity setup, the test-vault pilot, and
 private Publish retirement are in the [Second Brain runbook](../runbooks/second-brain.md).
-
-### Code Conductor brain
-
-A second private notes workspace for engineering notes, separate from the
-creator Second Brain in every setting below
-([ADR 0036](../decisions/0036-code-conductor-brain.md), runbook
-[Code Conductor brain](../runbooks/code-conductor-brain.md)). Its database,
-`hcw_code_brain`, is not an input: Terraform creates it from
-`infra/cosmos-code-brain-containers.json` and sets `CODE_BRAIN_COSMOS_DATABASE`
-itself.
-
-| Input | Store | Default | Purpose |
-| --- | --- | --- | --- |
-| `code_brain_enabled` | Terraform workspace → `CODE_BRAIN_ENABLED` | false | Arms the Code Conductor brain for the configured owner and desktop client only |
-| `code_brain_owner_oid` | Terraform workspace → `CODE_BRAIN_OWNER_OID` | empty | Existing human owner's Entra object ID |
-| `code_brain_owner_tenant_id` | Terraform workspace → `CODE_BRAIN_OWNER_TENANT_ID` | empty | Must match the API tenant when enabled |
-| `code_brain_sync_client_id` | Terraform workspace → `CODE_BRAIN_SYNC_CLIENT_ID` | empty | Separate public desktop client restricted to `code_brain_sync`; must not be `brain_sync_client_id` |
-
-The Code Conductor owner needs the same API Admin role and registry entry. Its
-desktop client is a second registration, never the creator brain's.

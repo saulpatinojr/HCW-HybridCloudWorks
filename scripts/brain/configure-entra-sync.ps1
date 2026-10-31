@@ -2,44 +2,20 @@
 .SYNOPSIS
 Review or apply the dedicated, delegated-only Obsidian sync registration.
 .DESCRIPTION
-Read-only by default. -Apply adds the workspace's scope to the existing API and
-creates or verifies a separate public desktop client for that scope only.
-Existing admin scopes, roles, clients and permission assignments are preserved.
-Run only after local checks.
-
--Workspace creator (the default) is the creator Second Brain: scope brain_sync,
-client 'HCW Second Brain Obsidian'. -Workspace code is the Code Conductor brain
-(#1457): scope code_brain_sync, client 'HCW Code Conductor Brain Obsidian'. The
-two clients are separate registrations; this script refuses to reuse one for
-the other's scope.
+Read-only by default. -Apply adds brain_sync to the existing API and creates
+or verifies a separate public desktop client. Existing admin scopes, roles,
+clients and permission assignments are preserved. Run only after local checks.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][guid]$ApiAppId,
     [Parameter(Mandatory)][guid]$TenantId,
     [Parameter(Mandatory)][guid]$OwnerOid,
-    [ValidateSet('creator', 'code')][string]$Workspace = 'creator',
-    [string]$DisplayName,
+    [string]$DisplayName = 'HCW Second Brain Obsidian',
     [switch]$Apply
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-
-$workspaceProfiles = @{
-    creator = @{
-        Scope = 'brain_sync'; Client = 'HCW Second Brain Obsidian'; Variable = 'brain_sync_client_id'
-        ConsentName = 'Synchronize the owner Second Brain'
-        ConsentDescription = 'Read creator references and synchronize private notes for the configured HCW owner only.'
-    }
-    code = @{
-        Scope = 'code_brain_sync'; Client = 'HCW Code Conductor Brain Obsidian'; Variable = 'code_brain_sync_client_id'
-        ConsentName = 'Synchronize the owner Code Conductor brain'
-        ConsentDescription = 'Synchronize private engineering notes for the configured HCW owner only. No creator content.'
-    }
-}
-$workspaceProfile = $workspaceProfiles[$Workspace]
-$scopeValue = $workspaceProfile.Scope
-if (-not $DisplayName) { $DisplayName = $workspaceProfile.Client }
 
 function Invoke-Graph {
     param([string]$Method, [string]$Url, $Body)
@@ -70,13 +46,13 @@ $assignments = Invoke-Graph GET "users/$OwnerOid/appRoleAssignments" $null
 $adminRole = @($api.appRoles | Where-Object { $_.value -eq 'Admin' -and $_.isEnabled })
 if ($adminRole.Count -ne 1 -or -not @($assignments.value | Where-Object { $_.resourceId -eq $resourceSp.id -and $_.appRoleId -eq $adminRole[0].id })) { throw 'The owner must already hold the API Admin role. This script does not promote users.' }
 $scopes = @($api.api.oauth2PermissionScopes)
-$scope = @($scopes | Where-Object value -eq $scopeValue)
-if ($scope.Count -gt 1) { throw "Duplicate $scopeValue scopes require investigation." }
+$scope = @($scopes | Where-Object value -eq 'brain_sync')
+if ($scope.Count -gt 1) { throw 'Duplicate brain_sync scopes require investigation.' }
 if ($scope.Count -eq 0) {
-    $scope = @([pscustomobject]@{ id = [guid]::NewGuid().ToString(); value = $scopeValue; type = 'Admin'; isEnabled = $true; adminConsentDisplayName = $workspaceProfile.ConsentName; adminConsentDescription = $workspaceProfile.ConsentDescription })
+    $scope = @([pscustomobject]@{ id = [guid]::NewGuid().ToString(); value = 'brain_sync'; type = 'Admin'; isEnabled = $true; adminConsentDisplayName = 'Synchronize the owner Second Brain'; adminConsentDescription = 'Read creator references and synchronize private notes for the configured HCW owner only.' })
     $scopes += $scope
 }
-if (-not $scope[0].isEnabled) { throw "$scopeValue exists but is disabled. Resolve its status explicitly." }
+if (-not $scope[0].isEnabled) { throw 'brain_sync exists but is disabled. Resolve its status explicitly.' }
 $escapedName = $DisplayName.Replace("'", "''")
 $encodedFilter = [uri]::EscapeDataString("displayName eq '$escapedName'")
 $clients = Invoke-Graph GET "applications?`$filter=$encodedFilter" $null
@@ -88,9 +64,9 @@ $manifest = @{
 }
 if ($client) {
     $permissions = @($client.requiredResourceAccess)
-    if (@($client.passwordCredentials).Count -or @($client.keyCredentials).Count -or -not $client.isFallbackPublicClient -or $permissions.Count -ne 1 -or $permissions[0].resourceAppId -ne $ApiAppId.ToString() -or @($permissions[0].resourceAccess).Count -ne 1 -or $permissions[0].resourceAccess[0].id -ne $scope[0].id) { throw "Existing client is not dedicated to $scopeValue. Refusing to broaden or repurpose it." }
+    if (@($client.passwordCredentials).Count -or @($client.keyCredentials).Count -or -not $client.isFallbackPublicClient -or $permissions.Count -ne 1 -or $permissions[0].resourceAppId -ne $ApiAppId.ToString() -or @($permissions[0].resourceAccess).Count -ne 1 -or $permissions[0].resourceAccess[0].id -ne $scope[0].id) { throw 'Existing client is not dedicated to brain_sync. Refusing to broaden or repurpose it.' }
 }
-Write-Host "Review: preserve the API; expose $scopeValue; authorize a separate public desktop client ($DisplayName) for that scope only."
+Write-Host 'Review: preserve the API; expose brain_sync; authorize a separate public desktop client for that scope only.'
 if (-not $Apply) {
     $manifest | ConvertTo-Json -Depth 12
     Write-Host 'No changes made. Re-run with -Apply after reviewing this plan.'
@@ -112,4 +88,4 @@ $apiSettings.oauth2PermissionScopes = $scopes
 $apiSettings.preAuthorizedApplications = $preauthorized
 Invoke-Graph PATCH "applications/$($api.id)" @{ api = $apiSettings } | Out-Null
 Write-Host "Desktop client created/verified: $($client.appId)"
-Write-Host "Set $($workspaceProfile.Variable) to that client ID; configure owner/tenant variables and enable the feature only after the runbook checks."
+Write-Host 'Set brain_sync_client_id to that client ID; configure owner/tenant variables and enable the feature only after the runbook checks.'

@@ -12,10 +12,10 @@
  * probe alive and surfaces the misconfiguration as a clear 500 on the first
  * guarded call instead.
  */
+import { randomUUID } from 'node:crypto';
 import { createTokenVerifier } from './verify-token.js';
 import { createRoleGuard } from './require-role.js';
-import { readDoc } from '../cosmos-client.js';
-import { writeDenialAudit } from './denial-audit.js';
+import { readDoc, upsertDoc } from '../cosmos-client.js';
 
 let guard = null;
 
@@ -31,7 +31,13 @@ export function getDefaultGuard() {
     // Site-Main writes every denial to admin_audit_logs
     // (admin-auth.js:405-411); the container exists here and now has its
     // writer. Failures inside the sink are swallowed by the guard itself.
-    auditDenial: writeDenialAudit,
+    auditDenial: (entry) =>
+      upsertDoc('admin_audit_logs', {
+        id: randomUUID(),
+        kind: 'auth-denial',
+        at: new Date().toISOString(),
+        ...entry,
+      }),
   });
   return guard;
 }

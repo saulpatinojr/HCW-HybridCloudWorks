@@ -3,10 +3,10 @@ import { upsertDoc } from '../cosmos-client.js';
 import { errorCode } from '../http/error-response.js';
 
 /**
- * The guard's denial sink: one `admin_audit_logs` row per refused request
- * (an invalid token, a missing scope, a missing role). Shared by the default
- * admin guard and the private workspaces' sync guards, so a refusal on any of
- * them is recorded the same way.
+ * A guard's denial sink: one `admin_audit_logs` row per refused request
+ * (an invalid token, a missing scope, a missing role, a wrong agent key).
+ * The Agent Content API's key guard (lib/agent-content/guard.js) records its
+ * refusals through it; the admin guard writes its own rows the same way.
  *
  * It never rejects. The guard calls it without awaiting it (require-role.js),
  * so its try/catch only sees a synchronous throw; a failed Cosmos write here

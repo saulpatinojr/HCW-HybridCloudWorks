@@ -1,6 +1,6 @@
 # ADR 0036: The Code Conductor brain is a second private workspace with its own Cosmos database in the existing account, its own switches, owner, desktop client and `code_brain_sync` scope
 
-**Status:** Accepted 2026-10-31 by the owner as architecture owner, on [#1465](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1465) (implemented disabled by default; activation is the owner's, in the [runbook](../runbooks/code-conductor-brain.md))
+**Status:** Withdrawn 2026-10-31 by the owner, on [#1479](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1479): the engineering brain belongs to Code Conductor ([Proj-Code_Conductor](https://github.com/saulpatinojr/Proj-Code_Conductor)), its own product, and the site's Second Brain is for content, ideas and publications only. The code this record describes was merged switched off in [#1465](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1465), never deployed, and removed again by the pull request for #1479; the Terraform it added is decided separately there (Phase 2). Kept for the record; nothing below is current.
 **Decision date:** 2026-10-31
 **Owners:** Workload owner and architecture owner
 
@@ -168,7 +168,7 @@ switches.
 
 - [ADR 0028](0028-cosmos-out-of-account-export.md), the export and restore.
 - [Second Brain architecture](../architecture/second-brain.md).
-- [Code Conductor brain runbook](../runbooks/code-conductor-brain.md).
+- The Code Conductor brain runbook was removed with the code ([#1479](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1479)); its text is in the history of [#1465](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1465).
 - [Microsoft Learn: transactional batch operations](https://learn.microsoft.com/azure/cosmos-db/transactional-batch)
   (all operations in one batch share one partition key value).
 - [Microsoft Learn: expose a web API and add a scope](https://learn.microsoft.com/entra/identity-platform/quickstart-configure-app-expose-web-apis#add-a-scope).

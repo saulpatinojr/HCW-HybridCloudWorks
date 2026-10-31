@@ -9,7 +9,6 @@ import {
   planPatch,
   toJsonPointer,
   validateWhereClause,
-  getDatabaseContainer,
 } from './cosmos-client.js';
 
 /**
@@ -297,25 +296,5 @@ describe('validateWhereClause (countDocs SQL injection defense)', () => {
   it('refuses UNION attempts', () => {
     expect(() => validateWhereClause('1=1 UNION SELECT * FROM secret')).toThrow(/illegal or unsafe/);
     expect(() => validateWhereClause('1=1 UNION ALL SELECT * FROM secret')).toThrow(/illegal or unsafe/);
-  });
-});
-
-describe('getDatabaseContainer (#1457)', () => {
-  it('refuses COSMOS_DATABASE and a blank name before any client is made', () => {
-    const saved = process.env.COSMOS_DATABASE;
-    try {
-      delete process.env.COSMOS_DATABASE;
-      for (const spelling of ['hcw', 'HCW', ' hcw', 'Hcw ']) {
-        expect(() => getDatabaseContainer(spelling, 'code_brain_records'), spelling).toThrow(/separate database/);
-      }
-      process.env.COSMOS_DATABASE = 'drill';
-      expect(() => getDatabaseContainer('drill', 'code_brain_records')).toThrow(/separate database/);
-      expect(() => getDatabaseContainer(' DRILL', 'code_brain_records')).toThrow(/separate database/);
-      expect(() => getDatabaseContainer('  ', 'code_brain_records')).toThrow(/database id is required/);
-      expect(() => getDatabaseContainer(undefined, 'code_brain_records')).toThrow(/database id is required/);
-    } finally {
-      if (saved === undefined) delete process.env.COSMOS_DATABASE;
-      else process.env.COSMOS_DATABASE = saved;
-    }
   });
 });

@@ -1,10 +1,6 @@
 // Test-only transactional store: verifies preconditions before applying ANY
 // operation, so failure injection exercises the same atomicity as Cosmos.
-// `records` names the container the batch writes: the creator brain's by
-// default, `code_brain_records` for the Code Conductor brain (#1457).
-const ownerPartitioned = (container) =>
-  container.startsWith('brain_') || container.startsWith('code_brain_');
-export function memoryStore({ records = 'brain_records' } = {}) {
+export function memoryStore() {
   const docs = new Map();
   let etag = 0;
   const key = (container, id, owner) => `${container}/${owner || ''}/${id}`;
@@ -17,7 +13,7 @@ export function memoryStore({ records = 'brain_records' } = {}) {
   const readDoc = async (container, id, owner) =>
     clone(
       docs.get(
-        key(container, id, ownerPartitioned(container) ? owner : undefined),
+        key(container, id, container.startsWith('brain_') ? owner : undefined),
       ),
     );
   const queryDocs = async (container, sql, params = [], options = {}) => {
@@ -27,7 +23,7 @@ export function memoryStore({ records = 'brain_records' } = {}) {
       .map(([, v]) => clone(v));
     if (p['@owner'])
       rows = rows.filter(
-        (r) => !ownerPartitioned(container) || r.ownerId === p['@owner'],
+        (r) => !container.startsWith('brain_') || r.ownerId === p['@owner'],
       );
     if (p['@types']) rows = rows.filter((r) => p['@types'].includes(r.type));
     if (p['@before'] !== undefined)
@@ -99,7 +95,7 @@ export function memoryStore({ records = 'brain_records' } = {}) {
   const batch = async (owner, ops) => {
     for (const op of ops) {
       const current = docs.get(
-        key(records, op.id || op.resourceBody.id, owner),
+        key('brain_records', op.id || op.resourceBody.id, owner),
       );
       if (op.operationType === 'Create' && current)
         throw Object.assign(new Error('exists'), { code: 409 });
@@ -107,7 +103,7 @@ export function memoryStore({ records = 'brain_records' } = {}) {
         throw Object.assign(new Error('conflict'), { code: 412 });
     }
     // No awaits between validation and commit in this test adapter.
-    for (const op of ops) put(records, op.resourceBody);
+    for (const op of ops) put('brain_records', op.resourceBody);
   };
   return { store, batch };
 }

@@ -46,22 +46,15 @@ export const tokens = (value) =>
     ),
   ].slice(0, 3000);
 
-/** True only for the one configured owner of an enabled workspace. */
-export function ownerMatches(user, { enabled, ownerOid, ownerTenantId }) {
-  return (
-    enabled === true &&
-    Boolean(ownerOid && ownerTenantId) &&
-    String(user?.oid || '').toLowerCase() === ownerOid.toLowerCase() &&
-    String(user?.tid || '').toLowerCase() === ownerTenantId.toLowerCase()
-  );
-}
-
 export function ownerEnabled(user, env = process.env) {
-  return ownerMatches(user, {
-    enabled: env.BRAIN_ENABLED === 'true',
-    ownerOid: env.BRAIN_OWNER_OID,
-    ownerTenantId: env.BRAIN_OWNER_TENANT_ID,
-  });
+  return (
+    env.BRAIN_ENABLED === 'true' &&
+    Boolean(env.BRAIN_OWNER_OID && env.BRAIN_OWNER_TENANT_ID) &&
+    String(user?.oid || '').toLowerCase() ===
+      env.BRAIN_OWNER_OID.toLowerCase() &&
+    String(user?.tid || '').toLowerCase() ===
+      env.BRAIN_OWNER_TENANT_ID.toLowerCase()
+  );
 }
 
 export function validateRecord(input) {
