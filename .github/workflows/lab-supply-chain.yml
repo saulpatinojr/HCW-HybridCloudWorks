@@ -40,7 +40,9 @@
 #      Each edit carries the checksum or digest read from the publisher
 #      beside the version (scripts/lib/lab-pin-bumps.mjs says which, from
 #      where). A pin whose checksum could not be verified is not edited: it is
-#      a note, and the notes go into the issue below. When the Docker Engine
+#      a note, and the notes go into the pull request and the issue below. So
+#      is a product whose publisher could not be read, after the reader tried
+#      a server error or a 406 again (#1447). When the Docker Engine
 #      pin moved, scripts/lab/record-docker-cli-fixture.mjs re-records the
 #      agent's Docker CLI request fixture with the pinned docker-ce-cli,
 #      verified through the host's own trust chain (the signing key by
@@ -547,7 +549,7 @@ jobs:
             cat "${RUNNER_TEMP}/pins.md"
             echo
             if [ -s "${RUNNER_TEMP}/bump-notes.md" ]; then
-              echo "**Not bumped automatically:** a bump without a verifiable checksum is not a bump. Each of these needs a person (lab-host/README.md, \"Bumping a pin\")."
+              echo "**Not bumped automatically:** a bump without a verifiable checksum is not a bump, and a publisher that could not be read was not evaluated (next week's run reads it again). Each of the others needs a person (lab-host/README.md, \"Bumping a pin\")."
               echo
               cat "${RUNNER_TEMP}/bump-notes.md"
               echo

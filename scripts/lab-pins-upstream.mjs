@@ -42,7 +42,10 @@
  *
  * Each edit carries the checksum or digest read from the publisher beside the
  * version (scripts/lib/lab-pin-bumps.mjs says what is read from where); a pin
- * whose checksum cannot be verified is not edited and becomes a note.
+ * whose checksum cannot be verified is not edited and becomes a note, and so
+ * does a product whose publisher could not be read, with the address and the
+ * status it got. Every read that fails with a server error or a 406 is tried
+ * again after a short pause first (fetchRetrying, #1447).
  * --evidence and --notes write the two Markdown sections the pull request
  * body and the weekly issue are made of. --dry-run prints the planned edits
  * and writes no repository file. Exit 0 when the plan was made (with or
@@ -122,13 +125,54 @@ export function readPins(text) {
 
 // ── Upstream readers ───────────────────────────────────────────────────────
 
-async function fetchText(url, headers = {}) {
-  const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT, ...headers } });
-  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-  return response.text();
+/**
+ * The pauses before each second and third try of a read that failed in a way
+ * a moment's wait can cure (#1447). A publisher behind a CDN can answer one
+ * request with a 5xx or a 406 and the next with the file: on 2026-10-27 a
+ * local run read Vault's index as HTTP 406 while the same address answered
+ * 200 to every later request, and the product dropped out of that run.
+ */
+export const RETRY_DELAYS_MS = [2000, 5000];
+
+/** A status worth asking again for, unchanged: a server error, or a 406 a different edge may not give. */
+export const retryableStatus = (status) => status >= 500 || status === 406;
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * One read, tried again after each pause in `delays` when it fails with a
+ * retryable status or never gets an answer (a reset connection, a DNS
+ * failure). The request is the same every time, address and headers alike:
+ * a retry that changed it would read something other than what the pin rests
+ * on. Any other status fails at once, and the last failure names the address,
+ * the status and how many tries it had. `sleep` is injectable so the tests do
+ * not wait.
+ */
+export async function fetchRetrying(fetchImpl, url, init, { delays = RETRY_DELAYS_MS, sleep = pause } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    let response = null;
+    let failure;
+    try {
+      response = await fetchImpl(url, init);
+      if (response.ok) return response;
+      failure = `${url}: HTTP ${response.status}`;
+    } catch (error) {
+      failure = `${url}: ${error?.message || String(error)}`;
+    }
+    if (response && !retryableStatus(response.status)) throw new Error(failure);
+    if (attempt > delays.length) throw new Error(attempt > 1 ? `${failure} (tried ${attempt} times)` : failure);
+    // The failed answer's body is not read; release it so its connection is.
+    await Promise.resolve(response?.body?.cancel?.()).catch(() => {});
+    await sleep(delays[attempt - 1]);
+  }
 }
-async function fetchJson(url, headers = {}) {
-  return JSON.parse(await fetchText(url, { Accept: 'application/json', ...headers }));
+
+/** The plain readers behind `sources`: text and JSON, each through fetchRetrying. */
+function makeFetchers({ fetchImpl = fetch, retry } = {}) {
+  const fetchText = async (url, headers = {}) =>
+    (await fetchRetrying(fetchImpl, url, { headers: { 'User-Agent': USER_AGENT, ...headers } }, retry)).text();
+  const fetchJson = async (url, headers = {}) => JSON.parse(await fetchText(url, { Accept: 'application/json', ...headers }));
+  return { fetchText, fetchJson };
 }
 
 /** A string as a regular-expression literal: every metacharacter escaped. */
@@ -189,8 +233,12 @@ function githubHeaders(env) {
   return env.GITHUB_TOKEN ? { Authorization: `Bearer ${env.GITHUB_TOKEN}` } : {};
 }
 
-/** Every source, each returning the newest stable version or throwing. */
-export function sources(env = process.env) {
+/**
+ * Every source, each returning the newest stable version or throwing. `http`
+ * is for the tests: a fake `fetchImpl` and a `retry` that does not sleep.
+ */
+export function sources(env = process.env, http = {}) {
+  const { fetchText, fetchJson } = makeFetchers(http);
   const gh = (repo) => async () =>
     newestGitHubRelease(await fetchJson(`https://api.github.com/repos/${repo}/releases?per_page=30`, githubHeaders(env)));
   // caddy-dns/cloudflare tags its versions and publishes no releases.

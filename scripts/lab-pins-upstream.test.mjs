@@ -15,9 +15,11 @@ import {
 } from './lib/lab-pin-bumps.mjs';
 import {
   LABELS,
+  RETRY_DELAYS_MS,
   check,
   compareVersions,
   coreVersion,
+  fetchRetrying,
   newest,
   newestAptVersion,
   newestDockerHubTag,
@@ -30,6 +32,7 @@ import {
   scalar,
   sources,
 } from './lab-pins-upstream.mjs';
+import { renderNotes } from './lib/lab-pin-bumps.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -142,6 +145,83 @@ describe('the check', () => {
     const { exitCode, rows } = await check({ pins: { ...pins, caddy: null }, readers: readers({}) });
     expect(exitCode).toBe(2);
     expect(rows.find((r) => r.key === 'caddy').status).toBe('pin not found');
+  });
+});
+
+// ── Trying a failed read again (#1447) ─────────────────────────────────────
+
+/**
+ * A fetch that answers each URL in `failures` with its listed statuses first
+ * (a number is that status, `'reset'` a request that never got an answer),
+ * then hands over to `fetchImpl`. Every call is recorded, so a test can show
+ * the request was the same each time.
+ */
+function flaky(fetchImpl, failures) {
+  const left = Object.fromEntries(Object.entries(failures).map(([url, statuses]) => [url, [...statuses]]));
+  const calls = [];
+  const impl = async (url, init) => {
+    calls.push({ url, init: structuredClone(init) });
+    const next = left[url]?.shift();
+    if (next === 'reset') throw new TypeError('fetch failed');
+    if (next !== undefined) return new Response('edge says no', { status: next });
+    return fetchImpl(url, init);
+  };
+  return { impl, calls };
+}
+
+/** A retry policy that records each pause instead of sleeping, so no test waits. */
+function noWait() {
+  const slept = [];
+  return { slept, retry: { sleep: async (ms) => slept.push(ms) } };
+}
+
+describe('trying a failed read again', () => {
+  const url = 'https://releases.hashicorp.com/vault/index.json';
+  const ok = async () => new Response('{"versions":{}}', { status: 200 });
+
+  it('tries a 406, a server error and a request that got no answer again, with the same request, after the short pauses', async () => {
+    for (const first of [406, 500, 503, 'reset']) {
+      const { impl, calls } = flaky(ok, { [url]: [first] });
+      const { slept, retry } = noWait();
+      const init = { headers: { 'User-Agent': 'ua', Accept: 'application/json' } };
+      const response = await fetchRetrying(impl, url, init, retry);
+      expect(response.status, String(first)).toBe(200);
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(calls[0]);
+      expect(calls[0]).toEqual({ url, init });
+      expect(slept).toEqual([RETRY_DELAYS_MS[0]]);
+    }
+  });
+
+  it('pauses for a few seconds at most, and tries twice more at most', () => {
+    expect(RETRY_DELAYS_MS).toHaveLength(2);
+    for (const ms of RETRY_DELAYS_MS) expect(ms).toBeGreaterThan(0);
+    expect(RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(10000);
+  });
+
+  it('gives up after the last try and names the address, the last status and the tries', async () => {
+    const { impl, calls } = flaky(ok, { [url]: [503, 406, 406] });
+    const { slept, retry } = noWait();
+    await expect(fetchRetrying(impl, url, {}, retry)).rejects.toThrow(`${url}: HTTP 406 (tried 3 times)`);
+    expect(calls).toHaveLength(3);
+    expect(slept).toEqual(RETRY_DELAYS_MS);
+  });
+
+  it('does not try a 404 or a 403 again: waiting does not change the answer', async () => {
+    for (const status of [404, 403]) {
+      const { impl, calls } = flaky(ok, { [url]: [status] });
+      const { slept, retry } = noWait();
+      await expect(fetchRetrying(impl, url, {}, retry)).rejects.toThrow(new RegExp(`^${url.replace(/[.]/g, '\\.')}: HTTP ${status}$`));
+      expect(calls).toHaveLength(1);
+      expect(slept).toEqual([]);
+    }
+  });
+
+  it('the readers the check uses go through it', async () => {
+    const { impl, calls } = flaky(async () => new Response('{"versions":{"2.2.1":{},"2.3.0-rc1":{}}}', { status: 200 }), { [url]: [406] });
+    const { retry } = noWait();
+    expect(await sources({}, { fetchImpl: impl, retry }).vault()).toBe('2.2.1');
+    expect(calls.map((c) => c.url)).toEqual([url, url]);
   });
 });
 
@@ -473,6 +553,57 @@ describe('a weekly bump of the real lab host files', () => {
   ]
     .map(([file, where]) => `${file} ${where}`)
     .sort();
+
+  /**
+   * The check and the host plan over the real files for Vault alone, read
+   * through `fetchImpl`: Vault's index says NEXT is out, and its SHA256SUMS
+   * is in publishers(). Only the Vault row is planned, so the other products'
+   * current rows do not send their re-reads to this fake.
+   */
+  async function vaultWeek(fetchImpl) {
+    const files = repositoryFiles();
+    const pins = readPins(files[GROUP_VARS_PATH]);
+    const { retry } = noWait();
+    const readers = Object.fromEntries(Object.keys(LABELS).map((key) => [key, async () => pins[key]]));
+    readers.vault = sources({}, { fetchImpl, retry }).vault;
+    const { rows, exitCode } = await check({ pins, readers });
+    const plan = await planHost({
+      text: files[GROUP_VARS_PATH],
+      files: { [CADDY_TEST_PATH]: files[CADDY_TEST_PATH], [BOOTSTRAP_PATH]: files[BOOTSTRAP_PATH] },
+      rows: rows.filter((row) => row.key === 'vault'),
+      http: makeHttp(fetchImpl, { retry }),
+    });
+    return { files, pins, exitCode, plan };
+  }
+  const vaultIndex = 'https://releases.hashicorp.com/vault/index.json';
+  const vaultSums = `https://releases.hashicorp.com/vault/${NEXT}/vault_${NEXT}_SHA256SUMS`;
+  const withVaultIndex = () => ({ ...publishers(), [vaultIndex]: { versions: { [NEXT]: {} } } });
+
+  it('bumps a publisher that failed once and then answered (#1447)', async () => {
+    const { impl, calls } = flaky(fakeFetch(withVaultIndex()), { [vaultIndex]: [406], [vaultSums]: [503] });
+    const { exitCode, plan } = await vaultWeek(impl);
+    expect(exitCode).toBe(1);
+    expect(plan.notes).toEqual([]);
+    expect(plan.applied.map((bump) => bump.key)).toEqual(['vault']);
+    expect(plan.files[GROUP_VARS_PATH]).toContain(`vault_version: "${NEXT}"\n`);
+    expect(plan.files[GROUP_VARS_PATH]).toContain(`vault_checksum: sha256:${hex('d')}`);
+    expect(calls.filter((c) => c.url === vaultIndex)).toHaveLength(2);
+    expect(calls.filter((c) => c.url === vaultSums)).toHaveLength(2);
+  });
+
+  it('keeps a publisher that never answers out of the edits, and says so in the notes with the address and the status (#1447)', async () => {
+    const { impl } = flaky(fakeFetch(withVaultIndex()), { [vaultIndex]: [406, 406, 406] });
+    const { files, pins, exitCode, plan } = await vaultWeek(impl);
+    expect(exitCode).toBe(2);
+    expect(plan.applied).toEqual([]);
+    expect(plan.files[GROUP_VARS_PATH]).toBe(files[GROUP_VARS_PATH]);
+    expect(plan.notes).toHaveLength(1);
+    expect(plan.notes[0]).toMatchObject({ label: LABELS.vault, from: pins.vault, to: 'unknown' });
+    const notes = renderNotes(plan.notes);
+    expect(notes).toContain(`**${LABELS.vault}** ${pins.vault} → unknown: its publisher could not be read`);
+    expect(notes).toContain(`${vaultIndex}: HTTP 406 (tried 3 times)`);
+    expect(notes).toContain('whether a newer release exists is not known');
+  });
 
   it("moves every watched product in every file the bump edits, so the pins checked below really are the bump's", async () => {
     const plan = await bumpEverything(repositoryFiles());
