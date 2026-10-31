@@ -49,7 +49,16 @@
  * when a comment names one.
  */
 import { createHash } from 'node:crypto';
-import { coreVersion, compareVersions, newest, newestHashicorp, newestGitHubRelease, newestAptVersion } from '../lab-pins-upstream.mjs';
+import {
+  coreVersion,
+  compareVersions,
+  fetchRetrying,
+  newest,
+  newestHashicorp,
+  newestGitHubRelease,
+  newestAptVersion,
+  parseJsonFrom,
+} from '../lab-pins-upstream.mjs';
 
 export const USER_AGENT =
   'HCW-HybridCloudWorks lab-pins-upstream (+https://github.com/saulpatinojr/HCW-HybridCloudWorks)';
@@ -88,9 +97,11 @@ const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /**
  * One fetcher per run. Each URL is read once even when two bumps need it (the
  * Docker Packages index serves four), so every bump in one pull request rests
- * on the same reading.
+ * on the same reading. A read that fails with a server error or a 406 is
+ * tried again, unchanged, before it counts as failed (fetchRetrying in
+ * lab-pins-upstream.mjs); `retry` is for the tests, which do not sleep.
  */
-export function makeHttp(fetchImpl = fetch, { githubToken } = {}) {
+export function makeHttp(fetchImpl = fetch, { githubToken, retry } = {}) {
   const cache = new Map();
   function raw(url, headers = {}) {
     const auth = githubToken && url.startsWith('https://api.github.com/') ? { Authorization: `Bearer ${githubToken}` } : {};
@@ -100,9 +111,12 @@ export function makeHttp(fetchImpl = fetch, { githubToken } = {}) {
       cache.set(
         key,
         (async () => {
-          const response = await fetchImpl(url, { headers: all });
-          if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-          return { body: Buffer.from(await response.arrayBuffer()), headers: response.headers };
+          // The body is read inside the retry, so a connection dropped half
+          // way through is tried again and its error names the address.
+          return fetchRetrying(fetchImpl, url, { headers: all }, {
+            ...retry,
+            read: async (response) => ({ body: Buffer.from(await response.arrayBuffer()), headers: response.headers }),
+          });
         })()
       );
     }
@@ -111,7 +125,7 @@ export function makeHttp(fetchImpl = fetch, { githubToken } = {}) {
   return {
     raw,
     text: async (url, headers) => (await raw(url, headers)).body.toString('utf8'),
-    json: async (url, headers) => JSON.parse((await raw(url, { Accept: 'application/json', ...headers })).body.toString('utf8')),
+    json: async (url, headers) => parseJsonFrom(url, (await raw(url, { Accept: 'application/json', ...headers })).body.toString('utf8')),
   };
 }
 
@@ -647,6 +661,13 @@ export const HOST_BUMPERS = {
   },
 };
 
+/** The prefix lab-pins-upstream.mjs's check puts before the error of a row it could not read. */
+const UNREADABLE = 'unreadable: ';
+
+/** A note's reason for a row the check could not read; `error` names the address and the status. */
+const unreadableReason = (error) =>
+  `its publisher could not be read in this run, so whether a newer release exists is not known (${error}); nothing was edited for it, and next week's run reads it again`;
+
 /** What a check row asks of its bumper: a new release, the same release rebuilt, or nothing. */
 function hostTarget(row, bumper) {
   if (row.status === 'BEHIND') return { release: row.latest, to: row.latest };
@@ -658,16 +679,24 @@ function hostTarget(row, bumper) {
  * Plan the host bumps for the rows lab-pins-upstream.mjs's check marked
  * BEHIND, and re-read the rows it marked current whose publisher can rebuild
  * a release under the same name (see `refreshable`); a re-read that matches
- * the pin is no bump. Unreadable rows are not touched here: the check already
- * reports them, and the weekly issue carries it. `files` carries the other
- * files a bumper edits (CADDY_TEST_PATH); a bumper whose file was not read
- * becomes a note, as applyBumps says.
+ * the pin is no bump. A row whose publisher could not be read is not edited
+ * either, but it becomes a note naming the address and the status it got, so
+ * the pull request and the weekly issue tell "no newer release" apart from
+ * "could not read" (#1447; it used to be dropped without a word). When it is
+ * the only thing the plan holds there is no edit, so no pull request, and the
+ * weekly issue alone carries it. `files`
+ * carries the other files a bumper edits (CADDY_TEST_PATH); a bumper whose
+ * file was not read becomes a note, as applyBumps says.
  */
 export async function planHost({ text, files = {}, rows, http, bumpers = HOST_BUMPERS }) {
   const bumps = [];
   const notes = [];
   for (const row of rows) {
     const bumper = bumpers[row.key];
+    if (row.status.startsWith(UNREADABLE)) {
+      notes.push({ label: row.label, from: row.pinned, to: 'unknown', reason: unreadableReason(row.status.slice(UNREADABLE.length)) });
+      continue;
+    }
     if (row.status === 'BEHIND' && !bumper) {
       notes.push({ label: row.label, from: row.pinned, to: row.latest, reason: 'no bump procedure is automated for this pin' });
       continue;
@@ -1412,10 +1441,17 @@ export function renderEvidence(applied, { set, date }) {
   return out.join('\n');
 }
 
-/** The pins that are behind but were not moved, and why. */
+/**
+ * The pins that were not moved, and why. The heading covers every kind of
+ * note the planners write (the reason beside each says which), so it must
+ * not name one kind as the only one.
+ */
 export function renderNotes(notes) {
   if (notes.length === 0) return '';
-  const out = ['Not bumped: no checksum or digest could be verified for these, so each is a note rather than an edit.', ''];
+  const out = [
+    'Not bumped: nothing was edited for these. The reason is beside each one: its publisher could not be read, a checksum or digest could not be verified, the edit could not be made exactly, or the move is one a person makes (a new release line, or a pin with no automated bump).',
+    '',
+  ];
   for (const n of notes) out.push(`- **${n.label}** ${n.from ?? '—'} → ${n.to ?? '—'}: ${n.reason}`);
   return `${out.join('\n')}\n`;
 }
