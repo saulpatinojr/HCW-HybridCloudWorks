@@ -94,10 +94,16 @@ export function resolvePartitionKey(containerName, explicit, id) {
  */
 export function getCosmosDb() {
   if (database) return database;
+  const databaseId = process.env.COSMOS_DATABASE || 'hcw';
+  database = getCosmosClient().database(databaseId);
+  return database;
+}
+
+/** The one account client every database reference shares. */
+function getCosmosClient() {
+  if (client) return client;
 
   const endpoint = process.env.COSMOS_ENDPOINT;
-  const databaseId = process.env.COSMOS_DATABASE || 'hcw';
-
   if (!endpoint) {
     throw new Error('Missing COSMOS_ENDPOINT environment variable');
   }
@@ -111,9 +117,34 @@ export function getCosmosDb() {
     endpoint,
     aadCredentials: credential,
   });
-  database = client.database(databaseId);
+  return client;
+}
 
-  return database;
+/**
+ * A container in a database OTHER than COSMOS_DATABASE, in the same account
+ * and through the same client and identity (#1457).
+ *
+ * Every function above this one works on COSMOS_DATABASE only, and that is
+ * deliberate: the creator site and its Second Brain read and write there. A
+ * workspace with its own database (the Code Conductor brain) asks for its
+ * containers by database name here instead, so nothing that already exists
+ * can be pointed at the other database by accident, and the other database's
+ * code cannot reach COSMOS_DATABASE through this door either: naming it is
+ * refused.
+ *
+ * @param {string} databaseId
+ * @param {string} containerName
+ */
+export function getDatabaseContainer(databaseId, containerName) {
+  if (typeof databaseId !== 'string' || !databaseId.trim()) {
+    throw new Error('getDatabaseContainer: a database id is required');
+  }
+  if (databaseId === (process.env.COSMOS_DATABASE || 'hcw')) {
+    throw new Error(
+      'getDatabaseContainer is for a separate database; COSMOS_DATABASE is reached through getContainer'
+    );
+  }
+  return getCosmosClient().database(databaseId).container(containerName);
 }
 
 /**
