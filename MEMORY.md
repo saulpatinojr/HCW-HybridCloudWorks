@@ -103,8 +103,7 @@ leave it alone. A session never switches the main checkout's branch; it works in
 5. [#1431](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1431): stays open until 2026-11-10; close it if the Doc Vault "linear time" test is not seen failing in CI. Then
    [#1433](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1433), the same weakness in the frontend twin.
 6. Visitor-session follow-ups from reviews: [#1403](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1403) and [#1400](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1400).
-7. Later (P3): [#1346](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1346) (remove the forced version of a sign-in library, msal-node, once it is safe),
-   [#1447](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1447) (the lab pin bot silently drops a publisher it cannot read) and
+7. Later (P3): [#1447](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1447) (the lab pin bot silently drops a publisher it cannot read) and
    [#1441](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1441) (CI jobs that run repository code have no time limit).
 8. [#1426](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1426) is the weekly lab supply-chain issue (next refresh Tuesday 2026-11-03). Its pin table was written before #1449 merged, so it still shows four pins as
    behind; the next run shows them current whether or not `bootstrap.sh` has run, because it compares this repository's pins with the publishers, not the host. It also lists 1 critical and 164 high findings with
