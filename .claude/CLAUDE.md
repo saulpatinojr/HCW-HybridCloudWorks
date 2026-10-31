@@ -103,9 +103,10 @@ trips. The session is the orchestrator of a team of agents and does the work.
 
 ## Lines a session does not cross
 
-Standing owner rules from earlier sessions. Until 2026-10-31 they were written
-only in those sessions' private notes, so a session started somewhere else (a
-cloud session, another computer) could not know them; they are here since
+Standing owner rules from earlier sessions. Until 2026-10-31 they were
+scattered across those sessions' private notes and the root `MEMORY.md` handoff
+file, and none of them was in this file, which is the one every session reads
+first; they are collected here since
 [#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455). The
 section above says the session does the work; this one says the few things it
 never does on its own.
@@ -149,7 +150,8 @@ never does on its own.
 - **Rules already written elsewhere in this file, listed here so this section
   is complete:** a refusal from the safety check is never worked around ("A
   missing permission is never the reason to hand work back", above); sessions
-  merge their own pull requests and never hand the owner a merge ("A Copilot
+  merge the pull requests they open and never hand the owner a merge, with
+  Dependabot's as the exception ("A Copilot
   review that recommends approval" and "CodeRabbit's approval is the merge
   signal, not a gate", below); CodeRabbit's code-writing boxes are never ticked
   ("CodeRabbit's summary is a checklist to work, not to tick", below); and two
@@ -512,8 +514,14 @@ so it is recorded here, where every session reads it.
   findings is open, and approves the head once every thread is resolved and
   its pre-merge checks pass. That approval of the **current head** is the
   signal to merge, read the same way as Copilot's verdict above, and the round
-  cap in the next bullet still applies. Sessions merge their own pull requests
-  on it; never hand the owner a merge. A session cannot approve its own pull
+  cap in the next bullet still applies. Sessions merge the pull requests they
+  open on it; never hand the owner a merge. **Dependabot's pull requests are
+  the exception:** `.coderabbit.yaml` lists `dependabot[bot]` under
+  `ignore_usernames`, so CodeRabbit never reviews them and no CodeRabbit
+  approval will arrive, and its comment says the owner approves them (no
+  runbook describes that step further). Do not wait for CodeRabbit on one,
+  and do not merge one on a session's own judgement; tell the owner it is
+  ready, with its link. A session cannot approve its own pull
   request: it authors as the owner's account, and GitHub does not let an
   author approve, which is also why `@coderabbitai approve` from the author is
   off.
