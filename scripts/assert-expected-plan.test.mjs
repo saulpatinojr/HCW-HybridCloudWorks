@@ -1289,54 +1289,6 @@ describe('conditional replacements and declared creates (#816)', () => {
   });
 });
 
-describe('the Code Conductor brain declarations match its spec (#1457)', () => {
-  const spec = () =>
-    JSON.parse(readFileSync(join(HERE, '..', 'infra', 'cosmos-code-brain-containers.json'), 'utf8'));
-
-  it('declares the database, each container in the spec, and the database setting by the spec name', () => {
-    const { database, containers } = spec();
-    const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
-    expect(creates).toContain('azurerm_cosmosdb_sql_database.code_brain');
-    for (const container of containers) {
-      expect(creates).toContain(`azurerm_cosmosdb_sql_container.code_brain["${container.name}"]`);
-    }
-    const setting = DECLARED.find((entry) => entry.path === 'app_settings.CODE_BRAIN_COSMOS_DATABASE');
-    expect(setting?.after).toBe(database);
-  });
-
-  it('declares the switches off and the identities empty, never a value to pre-approve', () => {
-    const settings = Object.fromEntries(
-      DECLARED.filter((entry) => entry.path?.startsWith('app_settings.CODE_BRAIN_')).map((entry) => [
-        entry.path.slice('app_settings.'.length),
-        entry,
-      ])
-    );
-    expect(Object.keys(settings).sort()).toEqual([
-      'CODE_BRAIN_COSMOS_DATABASE',
-      'CODE_BRAIN_ENABLED',
-      'CODE_BRAIN_OWNER_OID',
-      'CODE_BRAIN_OWNER_TENANT_ID',
-      'CODE_BRAIN_SYNC_CLIENT_ID',
-    ]);
-    for (const entry of Object.values(settings)) expect(entry.before).toBeUndefined();
-    expect(settings.CODE_BRAIN_ENABLED.after).toBe('false');
-    for (const name of ['CODE_BRAIN_OWNER_OID', 'CODE_BRAIN_OWNER_TENANT_ID', 'CODE_BRAIN_SYNC_CLIENT_ID']) {
-      expect(settings[name].after, name).toBe('');
-    }
-  });
-
-  it('reads a plan adding the database, its container and the settings as expected', () => {
-    const plan = expectedPlan();
-    plan.resource_changes.push(
-      { address: 'azurerm_cosmosdb_sql_database.code_brain', change: { actions: ['create'] } },
-      { address: 'azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]', change: { actions: ['create'] } }
-    );
-    const declared = DECLARED.filter((entry) => entry.address.includes('code_brain'));
-    const result = checkPlan(plan, { declared });
-    expect(result.unexpected).toEqual([]);
-  });
-});
-
 describe('a declared container create names a container the spec provisions', () => {
   // The Doc Vault's container (owner request 2026-10-26) is declared until its
   // run has applied. Whatever is declared in this shape must name a container

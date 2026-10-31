@@ -542,29 +542,6 @@ export const DECLARED = [
     after: name.endsWith('_ENABLED') ? 'false' : '',
     reason: 'Second Brain: disabled-by-default settings; no owner is inferred.',
   })),
-  // The Code Conductor brain (#1457, ADR 0036): its own database in the
-  // existing account, one owner-partitioned container, and five app settings,
-  // all off. The database name is not secret and is declared exactly; the
-  // owner, tenant and client stay empty here, and setting them later is its
-  // own exact-value review, which this list deliberately does not pre-approve.
-  {
-    address: 'azurerm_cosmosdb_sql_database.code_brain', action: 'create',
-    reason: '#1457: the Code Conductor brain gets its own database in the existing Cosmos account.',
-  },
-  {
-    address: 'azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]', action: 'create',
-    reason: '#1457: private owner-partitioned engineering records, revisions, events and receipts.',
-  },
-  ...[
-    ['CODE_BRAIN_ENABLED', 'false'],
-    ['CODE_BRAIN_OWNER_OID', ''],
-    ['CODE_BRAIN_OWNER_TENANT_ID', ''],
-    ['CODE_BRAIN_SYNC_CLIENT_ID', ''],
-    ['CODE_BRAIN_COSMOS_DATABASE', 'hcw_code_brain'],
-  ].map(([name, after]) => ({
-    address: 'azurerm_function_app_flex_consumption.hcw', path: `app_settings.${name}`, before: undefined, after,
-    reason: '#1457: Code Conductor brain settings, disabled by default; no owner or client is inferred.',
-  })),
   {
     address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue', path: 'criteria[0].query',
     before: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45']]),
