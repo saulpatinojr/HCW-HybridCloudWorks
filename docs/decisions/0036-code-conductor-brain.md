@@ -1,6 +1,6 @@
 # ADR 0036: The Code Conductor brain is a second private workspace with its own Cosmos database in the existing account, its own switches, owner, desktop client and `code_brain_sync` scope
 
-**Status:** Proposed 2026-10-31 (implemented disabled by default; activation is the owner's, in the [runbook](../runbooks/code-conductor-brain.md))
+**Status:** Accepted 2026-10-31 by the owner as architecture owner, on [#1465](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1465) (implemented disabled by default; activation is the owner's, in the [runbook](../runbooks/code-conductor-brain.md))
 **Decision date:** 2026-10-31
 **Owners:** Workload owner and architecture owner
 
