@@ -407,8 +407,9 @@ This project has not cut a tagged release; entries are grouped under
   libraries still import. `lab-image/versions.env`
   (`AZURE_CLI_PYTHON_OVERRIDES`) records what waits on a publisher:
   cryptography 48.0.1, which pyOpenSSL in the same bundle caps below 49,
-  and the copies of msgpack, setuptools and urllib3 that pip keeps inside
-  itself. The base is `python:3.14.10-slim-trixie` by its own index digest
+  oauthlib 3.2.2, whose fix is a new major version Microsoft has not
+  adopted, and the copies of msgpack, setuptools and urllib3 that pip keeps
+  inside itself. The base is `python:3.14.10-slim-trixie` by its own index digest
   (the line tag differed only by a riscv64 image still on 3.14.9), and
   terraform 1.17.1, kubectl 1.37.2 and azurerm 5.12.0 move to their newest
   releases, each sum read from the publisher.
