@@ -21,18 +21,30 @@ after the pull request has merged.
 
 1. Open the `hcw-azure` workspace's runs at
    <https://app.terraform.io/app/hcw/workspaces/hcw-azure/runs> and open the
-   run for the merge commit. Wait for its plan to finish.
-2. Check the plan against what this change declared:
+   run for the merge commit. Wait for its plan to finish. Note the run's ID: it
+   starts with `run-` and is the last part of the run page's address.
+2. Check that run, and not just the workspace's newest one, against what this
+   change declared. The first line asks you for the run ID from step 1; paste
+   it and press Enter:
 
    ```powershell
-   gh workflow run tfc-plan-check.yml --repo saulpatinojr/HCW-HybridCloudWorks --ref main
+   $runId = (Read-Host 'HCP Terraform run ID from step 1 (starts with run-)').Trim()
    ```
+
+   ```powershell
+   gh workflow run tfc-plan-check.yml --repo saulpatinojr/HCW-HybridCloudWorks --ref main -f run_id=$runId
+   ```
+
+   Wait about ten seconds for GitHub to start it, then list it:
 
    ```powershell
    gh run list --workflow tfc-plan-check.yml --repo saulpatinojr/HCW-HybridCloudWorks --limit 1
    ```
 
-   Open the run it lists. Success is a summary whose `DECLARED` lines include
+   Open the run it lists (its start time should be a few seconds ago; if it is
+   older, wait and list again). The summary names the same `run-` ID you
+   pasted; if it names a different one, the wrong run was checked, so do not
+   apply. Success is a summary whose `DECLARED` lines include
    `azurerm_cosmosdb_sql_database.code_brain` create,
    `azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]` create and
    the five `app_settings.CODE_BRAIN_*` additions, with no `UNEXPECTED` line.
@@ -184,19 +196,42 @@ steps 1 to 4 whenever convenient; leave step 5 until #1467 is closed.
    (#1457)`), plan and apply. Terraform refuses this if the owner, tenant or
    client is missing, or if the client is the creator brain's. Then repeat
    part 1 step 7: an anonymous caller still gets `401`. Sign in from the
-   plugin and save one synthetic note; check it comes back on a second device
-   or after a fresh pull, and that a stale edit becomes a conflict copy rather
-   than overwriting.
+   plugin and save one synthetic note, and write down the time you saved it.
+   Check it comes back on a second device or after a fresh pull, and that a
+   stale edit becomes a conflict copy rather than overwriting.
 
 ## 4. Restore drill before real notes
 
-Before real notes go in, prove a note comes back. Follow the
-[Cosmos restore](cosmos-restore.md) drill; its step 3 now creates
-`hcw_code_brain` in the scratch account, and the restore script writes
-`code_brain_records` back into it. Check one synthetic note's body, version,
-revisions and links in the restored copy, record the run on
-[#1457](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1457), and
-tear the scratch account down as that runbook says.
+Before real notes go in, prove a note comes back.
+
+1. Wait for a daily export that started after you saved the synthetic note
+   (the export runs at 03:00 UTC). A drill against an older export proves
+   nothing about the note, because the note is not in it. Check that one has
+   completed:
+
+   ```powershell
+   az monitor app-insights query --app appi-site-prod-cus-01 -g rg-web-site-prod-cus --offset 3d --analytics-query 'customEvents | where name == "cosmosExportCompleted" | project timestamp, mode = tostring(customDimensions.mode), runId = tostring(customDimensions.runId), containers = toint(customDimensions.containers), docs = tolong(customDimensions.docs) | order by timestamp desc' -o table
+   ```
+
+   Success is a row whose `runId` (the UTC date the run started, at 03:00 UTC)
+   is after the time you saved the note, with `58` containers (`delta`) or `65`
+   (`full`). Then confirm that run carried the note:
+
+   ```powershell
+   az monitor app-insights query --app appi-site-prod-cus-01 -g rg-web-site-prod-cus --offset 3d --analytics-query 'traces | where message startswith "[cosmosExport] code_brain_records" | project timestamp, message | order by timestamp desc' -o table
+   ```
+
+   Success is a line from that same run (the same date in its `delta/` or
+   `full/` name) showing at least one document. `0 docs` there means the run
+   began before the note was saved: wait for the next one.
+2. Follow the [Cosmos restore](cosmos-restore.md) drill; its step 3 now
+   creates `hcw_code_brain` in the scratch account, and the restore script
+   writes `code_brain_records` back into it. Use `--as-of` with the `runId`
+   from step 1 or later, or leave it out to take the newest complete export.
+3. Check the synthetic note's body, version, revisions and links in the
+   restored copy, record the run on
+   [#1457](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1457),
+   and tear the scratch account down as that runbook says.
 
 ## Switching off and rollback
 
@@ -204,8 +239,11 @@ tear the scratch account down as that runbook says.
   <https://app.terraform.io/app/hcw/workspaces/hcw-azure/variables> and apply.
   The routes return 404 again; nothing is deleted and the creator brain is not
   touched.
-- To revoke the desktop client alone, clear `code_brain_sync_client_id` and
-  apply; remove the registration through the normal identity process when it
-  is retired.
+- To revoke the desktop client, either replace `code_brain_sync_client_id`
+  with a new client's ID, or clear it **and** set `code_brain_enabled` to
+  `false` in the same apply. While the workspace is switched on, Terraform
+  refuses an empty client ID (the check in `infra/code-brain-variables.tf`),
+  so clearing it on its own fails the plan and revokes nothing. Remove the old
+  registration through the normal identity process when it is retired.
 - The records stay in `hcw_code_brain` and in the export. Deleting the
   database takes a reviewed pull request that lifts `prevent_destroy` first.
