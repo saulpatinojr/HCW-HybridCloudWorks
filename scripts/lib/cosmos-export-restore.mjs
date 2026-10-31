@@ -89,6 +89,28 @@ export function selectRestoreSet(names, { asOf } = {}) {
   return { full, deltas, incompleteSkipped };
 }
 
+/**
+ * Containers that were exported from a database of their own, not the main
+ * one (#1457, ADR 0036): the Code Conductor brain's. Mirrors
+ * SEPARATE_DATABASE_CONTAINERS in functions/src/lib/backup/export-classification.js,
+ * and the names come from infra/cosmos-code-brain-containers.json, which the
+ * tests hold this to.
+ */
+export const CODE_BRAIN_CONTAINERS = Object.freeze(['code_brain_records']);
+export const CODE_BRAIN_DATABASE = 'hcw_code_brain';
+
+/**
+ * The target database one container restores into. A Code Conductor brain
+ * container goes back into its own database, never into the main one, so a
+ * restore cannot mix the two workspaces.
+ *
+ * @param {string} container
+ * @param {{ database: string, codeBrainDatabase: string }} targets
+ */
+export function targetDatabaseFor(container, { database, codeBrainDatabase }) {
+  return CODE_BRAIN_CONTAINERS.includes(container) ? codeBrainDatabase : database;
+}
+
 /** `mode/runId/container.ndjson.gz` */
 export function dataBlobName(mode, runId, container) {
   return `${mode}/${runId}/${container}.ndjson.gz`;

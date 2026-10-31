@@ -15,9 +15,40 @@
  */
 import { ChangeFeedMode, ChangeFeedStartFrom, StatusCodes } from '@azure/cosmos';
 
-import { getContainer as defaultGetContainer } from '../cosmos-client.js';
+import {
+  getContainer as defaultGetContainer,
+  getDatabaseContainer as defaultGetDatabaseContainer,
+} from '../cosmos-client.js';
 import * as defaultStorage from '../blob-storage.js';
 import { EXPORT_CONTAINER, EXPORT_STATE_CONTAINER } from './cosmos-export.js';
+import { SEPARATE_DATABASE_CONTAINERS, separateDatabaseFor } from './export-classification.js';
+
+/**
+ * The container one export job reads: COSMOS_DATABASE's, or for a container
+ * in a separate database (the Code Conductor brain's, #1457) that database's.
+ * A separate container whose setting is unset is refused, not read from
+ * COSMOS_DATABASE: a same-named container there would be the wrong data.
+ *
+ * @param {string} name
+ * @param {object} [deps]
+ */
+export function exportSourceContainer(
+  name,
+  {
+    env = process.env,
+    getContainer = defaultGetContainer,
+    getDatabaseContainer = defaultGetDatabaseContainer,
+  } = {}
+) {
+  const database = separateDatabaseFor(name, env);
+  if (database === null) return getContainer(name);
+  if (database === undefined) {
+    throw new Error(
+      `${name} lives in its own database and ${SEPARATE_DATABASE_CONTAINERS[name]} is not set`
+    );
+  }
+  return getDatabaseContainer(database, name);
+}
 
 /** 4 MiB blocks: the SDK's `uploadStream` buffer size for the gzip body. */
 export const UPLOAD_BUFFER_BYTES = 4 * 1024 * 1024;
@@ -27,7 +58,7 @@ export const UPLOAD_BUFFER_BYTES = 4 * 1024 * 1024;
  * @param {(name: string) => import('@azure/cosmos').Container} [deps.getContainer]
  * @returns {import('./cosmos-export.js').CosmosReader}
  */
-export function createCosmosReader({ getContainer = defaultGetContainer } = {}) {
+export function createCosmosReader({ getContainer = (name) => exportSourceContainer(name) } = {}) {
   return {
     async *queryPages(container, sql, { maxItemCount }) {
       const iterator = getContainer(container).items.query(sql, { maxItemCount });
