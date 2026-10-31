@@ -77,7 +77,8 @@ az monitor app-insights query --app appi-site-prod-cus-01 -g rg-web-site-prod-cu
 
 A healthy fortnight shows two `full` rows and twelve `delta` rows, one per
 UTC date. Counts follow the classification at the time of each run (currently
-64 full and 57 delta containers); earlier runs can have fewer. A gap in `runId` is a run
+64 full and 57 delta containers, and 65 and 58 once the Code Conductor brain's
+database exists, [ADR 0036](../decisions/0036-code-conductor-brain.md)); earlier runs can have fewer. A gap in `runId` is a run
 that never wrote its manifest — a container job failed or timed out — and the
 missing-run alert will have fired on it. An empty table when the exporter has
 been armed for more than two days is the same finding as the alert. The
@@ -233,6 +234,27 @@ constant in every tenant):
 ```powershell
 az cosmosdb sql role assignment create -a cosmos-site-sbx-cus -g rg-db-site-sbx-cus --role-definition-id 00000000-0000-0000-0000-000000000002 --principal-id $me --scope "/" -o none
 ```
+
+The Code Conductor brain (a second private notes workspace, for engineering
+notes) keeps its records in a database of its own in the same account,
+`hcw_code_brain`, so the drill needs that database too. Its one container is
+partitioned on `/ownerId`, like the creator brain's. The names come from
+[`infra/cosmos-code-brain-containers.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos-code-brain-containers.json)
+([ADR 0036](../decisions/0036-code-conductor-brain.md)):
+
+```powershell
+$codeSpec = Get-Content infra/cosmos-code-brain-containers.json -Raw | ConvertFrom-Json; az cosmosdb sql database create -a cosmos-site-sbx-cus -g rg-db-site-sbx-cus -n $codeSpec.database -o none; foreach ($c in $codeSpec.containers) { az cosmosdb sql container create -a cosmos-site-sbx-cus -g rg-db-site-sbx-cus -d $codeSpec.database -n $c.name --partition-key-path $c.partition_key_path -o none }
+```
+
+```powershell
+az cosmosdb sql container list -a cosmos-site-sbx-cus -g rg-db-site-sbx-cus -d hcw_code_brain -o json | ConvertFrom-Json | Select-Object name
+```
+
+Success is one row, `code_brain_records`. The restore script puts that
+container back into `hcw_code_brain` on its own (its `--code-brain-database`
+option, default `hcw_code_brain`, must differ from `--database`), so the two
+workspaces never mix in the target. An export from before the Code Conductor
+database existed simply does not list it, and the restore skips it.
 
 ### 4. Restore and verify
 
