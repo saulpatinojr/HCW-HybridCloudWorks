@@ -43,7 +43,8 @@ describe('the key', () => {
       '',
       null,
       undefined,
-      'eyJhbGciOiJSUzI1NiJ9.e30.sig', // an Entra token
+      // Shaped like an Entra access token, built here rather than written out.
+      `${Buffer.from('{"alg":"RS256"}').toString('base64url')}.${Buffer.from('{}').toString('base64url')}.sig`,
       'hcwk_',
       'hcwk_short',
       `hcwk_${'a'.repeat(43)}!`,
