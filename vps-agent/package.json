@@ -13,9 +13,6 @@
     "test": "node --test \"lib/*.test.js\""
   },
   "dependencies": {
-    "@azure/identity": "^4.14.0"
-  },
-  "overrides": {
-    "@azure/msal-node": "7.1.1"
+    "@azure/identity": "^4.14.1"
   }
 }
