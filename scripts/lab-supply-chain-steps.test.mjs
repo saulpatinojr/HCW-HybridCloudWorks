@@ -96,6 +96,9 @@ if (!skip.includes(set)) {
     edit('lab-host/bootstrap.sh', 'COSIGN_VERSION=3.1.3', 'COSIGN_VERSION=3.1.4');
   }
 }
+// A note the set could not act on (a publisher it could not read, #1447),
+// written where the workflow asks for the set's notes.
+if (process.env.STUB_NOTE_SET === set) writeFileSync(argv[argv.indexOf('--notes') + 1], process.env.STUB_NOTE + '\\n');
 console.log('stub bumped ' + set);
 `;
 
@@ -218,6 +221,23 @@ describe.skipIf(!runnable)('lab-supply-chain.yml, propose: the steps run for rea
     expect(patch('image-tools')).toBe('');
     // ... and the others are unchanged by its silence.
     expect(changed(patch('image-base'))).toHaveLength(4);
+  });
+
+  // A pull request cannot be opened without a diff, so a host set whose only
+  // content is a note gets none; the weekly issue is where that note goes.
+  it('leaves a set that holds only a note out of the pull requests, and the weekly issue still carries the note (#1447)', () => {
+    const note = '- **HashiCorp Vault** 2.2.1 → unknown: its publisher could not be read in this run (https://releases.hashicorp.com/vault/index.json: HTTP 406 (tried 3 times))';
+    const { sets } = propose({ STUB_SKIP: 'host', STUB_NOTE_SET: 'host', STUB_NOTE: note });
+    expect(sets).toEqual(['image-base', 'image-tools']);
+    expect(patch('host')).toBe('');
+    const output = join(temp, 'collect-output.txt');
+    const collect = sh(runBlock(CHECK, 'Collect the bump notes'), {
+      cwd: work,
+      env: { RUNNER_TEMP: temp, GITHUB_OUTPUT: output, PROPOSE_RESULT: 'success', SETS: JSON.stringify(sets) },
+    });
+    expect(collect.status, collect.stderr).toBe(0);
+    expect(readFileSync(output, 'utf8')).toMatch(/^present=true$/m);
+    expect(readFileSync(join(temp, 'bump-notes.md'), 'utf8')).toContain(`**host:** ${note}`);
   });
 
   it('lists no set at all on a quiet week', () => {
