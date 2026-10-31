@@ -160,7 +160,8 @@ never does on its own.
   merge the pull requests they open and never hand the owner a merge, with
   Dependabot's as the exception ("A Copilot
   review that recommends approval" and "CodeRabbit's approval is the merge
-  signal, not a gate", below); CodeRabbit's code-writing boxes are never ticked
+  signal; its request for changes is a gate", below); CodeRabbit's code-writing
+  boxes are never ticked
   ("CodeRabbit's summary is a checklist to work, not to tick", below); and two
   pull requests that touch the same lines, above all `CHANGELOG.md`, go one at a
   time ("Several PRs at once, but conflicts are resolved one at a time", at the
@@ -497,7 +498,8 @@ so it is recorded here, where every session reads it.
   recommends changes, or any review thread still unresolved on the head, is
   not that: fix, push, and wait for the next review of the new head. Ready
   for review on its own is still not permission to merge.
-- **CodeRabbit's approval is the merge signal, not a gate.** The ruleset (the
+- **CodeRabbit's approval is the merge signal; its request for changes is a
+  gate.** The ruleset (the
   repository's merge rules for `main`, the `Default` ruleset, id 20680114,
   [settings page](https://github.com/saulpatinojr/HCW-HybridCloudWorks/rules/20680114))
   does not require any approving review. Read from the API on 2026-10-31 with
@@ -513,8 +515,15 @@ so it is recorded here, where every session reads it.
   settings on
   [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
 
-  So GitHub will enable the merge button without CodeRabbit, and waiting for it
-  is this repository's practice, not something GitHub enforces.
+  So no approval is needed, but **a review that asks for changes still blocks
+  the merge** until a newer review from the same reviewer replaces it, even
+  after every thread is resolved and the commit it judged is long gone. Seen
+  on [#1460](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1460)
+  on 2026-10-31: CodeRabbit's request for changes on `baf10df` was still
+  standing three pushes later, and the merge API refused with `1 review
+  requesting changes by reviewers with write access` (HTTP 405). When that
+  happens, comment `@coderabbitai review` so it reviews the current head;
+  do not dismiss its review to get past it.
   [`.coderabbit.yaml`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/.coderabbit.yaml)
   still has `request_changes_workflow: true` and `allow_author_approval:
   false`: CodeRabbit posts a review asking for changes while any of its

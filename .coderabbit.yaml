@@ -41,7 +41,9 @@ reviews:
   # That approval is the signal sessions merge on (.claude/CLAUDE.md). It was
   # the Default ruleset's required review from 2026-10-18 (#972, option F);
   # read on 2026-10-31, the ruleset requires no approving review (count 0,
-  # unchanged since 2026-10-20), so it is practice, not a gate (#1455).
+  # unchanged since 2026-10-20), so the approval is practice, not a gate
+  # (#1455). Its request for changes does block the merge until a newer
+  # review replaces it (#1460, 2026-10-31).
   # Author approval is off: sessions author as the owner's account, and
   # "@coderabbitai approve" from the author would approve its own work.
   request_changes_workflow: true
