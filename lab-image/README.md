@@ -18,8 +18,8 @@ setup and the checks.
 | `runner` | `docker.io/hybridcloudworks/hcw-lab-runner` | terraform, kubeconform, helm, ansible-core; a Terraform provider filesystem mirror at `/opt/terraform/mirror`; every Azure Verified Module the Landing Zone Builder emits, at the version it emits, and every registry module those call, at `/opt/avm/<name>@<version>`; one release of the Kubernetes JSON schemas at `/opt/kubeconform/schemas`; the three capability commands in [`bin/`](bin/). Runs as uid 65534 (`nobody`) with `/workspace` mounted read-only. This is what `vps-agent` runs jobs in. |
 | `full`   | `docker.io/hybridcloudworks/hcw-lab`        | Everything in `runner`, plus Azure CLI, kubectl, git, curl, jq and the three packages code-server needs (`ca-certificates`, `libatomic1`, `procps`); uid 65534's shell is `bash` and its home `/tmp/home`, because Coder runs everything through the passwd shell (#693). `CMD` is `bash`. This is what a lab page tells a learner to pull, and the base of the Coder template.                                                            |
 
-Both targets are built on the official `python:3.14.7-slim-trixie` image,
-pinned by index digest: CPython 3.14.7 on Debian 13 (trixie). ansible-core,
+Both targets are built on the official `python:3.15.2-slim-trixie` image,
+pinned by index digest: CPython 3.15.2 on Debian 13 (trixie). ansible-core,
 `hcw-terraform-validate` and the build-time vendoring all run on that
 Python; no Debian `python3` package is installed, and the image carries no
 `pip` command. [`versions.env`](versions.env) says why every stage, the
@@ -132,7 +132,7 @@ one 64 MB tmpfs at `/tmp/run`. Precisely:
 - **Providers: yes, and symlinked.** `TF_CLI_CONFIG_FILE` points at a
   `provider_installation { filesystem_mirror { ... } }` block with no
   `direct` fallback, so Terraform installs from `/opt/terraform/mirror` and
-  nowhere else. The mirror holds azurerm 5.11.0 and 4.81.0, azapi 2.13.0, alz
+  nowhere else. The mirror holds azurerm 5.12.0 and 4.81.0, azapi 2.13.0, alz
   0.22.0, random 3.9.1, modtm 0.4.0 and time 0.14.2, each zip verified after
   mirroring against the SHA256 the registry publishes for it and then
   unpacked into the directory layout. Unpacked matters: from a packed mirror
@@ -393,10 +393,10 @@ and attests. Where each sum comes from:
   (`https://pypi.org/pypi/ansible-core/<version>/json`). Check the new
   line's controller Python range in the
   [ansible-core support matrix](https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html)
-  covers `BASE_PYTHON_VERSION` (2.21 is 3.12 to 3.14).
+  covers `BASE_PYTHON_VERSION` (2.21 is 3.12 to 3.14; 2.22 adds 3.15).
 - ansible-core's dependencies (`ANSIBLE_CORE_DEPS`): one
   `name==version --hash=sha256:<sum>` line each, the sum of the wheel pip
-  selects for CPython 3.14 on linux x86_64 from the same PyPI JSON API
+  selects for CPython 3.15 on linux x86_64 from the same PyPI JSON API
   (`https://pypi.org/pypi/<name>/<version>/json`). The build runs pip in
   hash-checking mode, so a dependency a new ansible-core adds fails the
   fetch stage with `In --require-hashes mode, all requirements must have
@@ -480,8 +480,8 @@ and attests. Where each sum comes from:
 - Base image: the image index digest from the registry's
   `Docker-Content-Digest` header, by the method documented at the top of
   [`vps-agent/lib/capabilities.js`](../vps-agent/lib/capabilities.js)
-  (repository `library/python`, tag `3.14-slim-trixie`), cross-checked with
-  `docker buildx imagetools inspect python:3.14-slim-trixie`, whose
+  (repository `library/python`, tag `3.15-slim-trixie`), cross-checked with
+  `docker buildx imagetools inspect python:3.15-slim-trixie`, whose
   `org.opencontainers.image.version` annotation names the patch release.
   Update `BASE_IMAGE`, `BASE_DIGEST`, `BASE_PYTHON_VERSION` and every
   external `FROM` line in the Dockerfile together; the sandbox template's
@@ -495,7 +495,7 @@ and attests. Where each sum comes from:
   `chore/lab-pins-image-base` pull request with all four edits, the base tag
   and CPython release the Docker guide page names
   (`frontend/src/pages/docker/BuildingImagesPage.jsx`, which
-  `DockerGuides.test.jsx` holds to this file), and that evidence. A new minor line (3.15) stays a hand bump, governed by
+  `DockerGuides.test.jsx` holds to this file), and that evidence. A new minor line (3.16) stays a hand bump, governed by
   `scripts/version-floors.json`. Merging it publishes from `main`, and the
   publish opens the `chore/lab-pins-image-digests` pull request for the
   consumers.

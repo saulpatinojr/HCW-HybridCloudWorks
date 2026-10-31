@@ -15,8 +15,9 @@
 #
 # Every version and checksum comes from versions.env, sourced at the top of
 # each RUN; nothing is downloaded without a SHA256 check. The base image is
-# the official python:3.14.7-slim-trixie (CPython 3.14.7 on Debian 13
-# trixie), pinned by index digest on every FROM below; versions.env says why
+# the official python slim-trixie image versions.env names in BASE_IMAGE
+# (CPython BASE_PYTHON_VERSION on Debian 13 trixie), pinned by index digest
+# on every FROM below; versions.env says why
 # every stage uses it. The tag beside the digest is documentation (Docker
 # resolves the digest and ignores the tag); the publish workflow checks that
 # every FROM that is not an earlier stage is exactly BASE_IMAGE@BASE_DIGEST
@@ -31,7 +32,7 @@
 # except what later stages COPY out of /out. The base already carries
 # ca-certificates and python3 with pip.
 # ---------------------------------------------------------------------------
-FROM python:3.14.8-slim-trixie@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a AS fetch
+FROM python:3.15.2-slim-trixie@sha256:c4158543ecb725b99e57d129dfd43d761d4c43e4577b5e23326aabb223cf7f4e AS fetch
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl unzip git \
@@ -95,6 +96,18 @@ RUN set -eu; . /build/versions.env; \
     python3 -m pip download --disable-pip-version-check --no-cache-dir \
       --only-binary=:all: --require-hashes --dest /out/wheels -r /out/wheels/requirements.txt; \
     test "$(find /out/wheels -name '*.whl' | wc -l)" -eq "$(wc -l < /out/wheels/requirements.txt)"
+
+# The Python packages the full target replaces inside the Azure CLI's own
+# Python (AZURE_CLI_PYTHON_OVERRIDES; versions.env says which and why), the
+# same way: hash-checked, wheels only. --no-deps because each of them depends
+# on nothing the CLI does not already carry, and the install in the full
+# target, which does resolve, proves it.
+RUN set -eu; . /build/versions.env; \
+    mkdir -p /out/az-wheels; \
+    printf '%s\n' "${AZURE_CLI_PYTHON_OVERRIDES}" | sed '/^[[:space:]]*$/d' > /out/az-wheels/requirements.txt; \
+    python3 -m pip download --disable-pip-version-check --no-cache-dir --no-deps \
+      --only-binary=:all: --require-hashes --dest /out/az-wheels -r /out/az-wheels/requirements.txt; \
+    test "$(find /out/az-wheels -name '*.whl' | wc -l)" -eq "$(wc -l < /out/az-wheels/requirements.txt)"
 
 # The builder modules: every Azure Verified Module the Landing Zone Builder
 # emits (ADR 0032 decision 5), vendored from the release source tarball of
@@ -226,9 +239,9 @@ RUN set -eu; . /build/versions.env; \
 # ---------------------------------------------------------------------------
 # runner
 # ---------------------------------------------------------------------------
-FROM python:3.14.8-slim-trixie@sha256:fbecd461fc72d21b2143c6eaba25143738079154a6d0ea3da3aec724f50eed4a AS runner
+FROM python:3.15.2-slim-trixie@sha256:c4158543ecb725b99e57d129dfd43d761d4c43e4577b5e23326aabb223cf7f4e AS runner
 
-# No apt layer: the base already carries python3 (3.14.7, at /usr/local/bin,
+# No apt layer: the base already carries python3 (BASE_PYTHON_VERSION, at /usr/local/bin,
 # with ensurepip for the venv below), ca-certificates, bash and coreutils,
 # which is everything the runner needs. ansible-core's dependencies come from
 # the hash-pinned wheels the fetch stage verified, not from Debian packages,
@@ -354,6 +367,18 @@ RUN set -eu; . /tmp/versions.env; \
     echo "${KUBECTL_SHA256}  /usr/local/bin/kubectl" | sha256sum -c -; \
     chmod 0755 /usr/local/bin/kubectl; \
     rm -rf /var/lib/apt/lists/* /tmp/versions.env
+
+# Replace the Azure CLI's outdated Python packages in its own Python under
+# /opt/az (AZURE_CLI_PYTHON_OVERRIDES in versions.env lists them and says
+# why). `--no-index --find-links` so pip cannot reach an index, the fetch
+# stage's hash-checked wheels only, and `pip check` afterwards so a package
+# whose declared range the new version breaks fails the build here. The
+# wheels are bind-mounted for this one RUN, as for ansible-core above.
+RUN --mount=type=bind,from=fetch,source=/out/az-wheels,target=/tmp/az-wheels \
+    /opt/az/bin/python3 -Im pip install --disable-pip-version-check --no-cache-dir \
+      --root-user-action=ignore --no-index --find-links /tmp/az-wheels \
+      --require-hashes -r /tmp/az-wheels/requirements.txt \
+ && /opt/az/bin/python3 -Im pip check
 
 # Per-lab bootloaders invoked by the Coder workspace startup script (or
 # directly via `hcw-boot <lab-id>` in a local container).
