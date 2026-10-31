@@ -44,7 +44,10 @@
  * stop it, and the pull request sits on "pending" for hours instead of going
  * red. The last part of this file reads every workflow in
  * `.github/workflows/` and fails when a job that checks out this repository
- * and then runs a shell step has no limit of its own.
+ * and then runs a shell step has no limit of its own. A job that opens a
+ * firewall window in Azure and closes it in an `always()` step also needs a
+ * limit on each step up to the close, adding up to less than the job's limit,
+ * so the job's limit can never cancel it while a window is open (3b).
  *
  * Needs bash, git and grep on the path. Where one is missing the tests that
  * run the shell are skipped, and their names say so; on GitHub Actions a test
@@ -508,5 +511,84 @@ describe('every job that runs repository code has a time limit (#1441)', () => {
     const outside = ALL.filter(({ job }) => !runsRepositoryCode(job)).map(({ label }) => label).sort();
     expect(outside).toEqual([...LEFT_OUT.keys()].sort());
     for (const [label, why] of LEFT_OUT) expect(why.length, `${label} needs a reason`).toBeGreaterThan(40);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3b. A job that opens a firewall window reaches its close steps before its own limit (#1441).
+// ---------------------------------------------------------------------------
+/**
+ * Some jobs add a temporary allow rule for the runner in Azure (a "window":
+ * the storage firewall, the SCM site, the site itself) and remove it in a
+ * later step that runs with `always()`. If the job's own `timeout-minutes`
+ * ran out while a window was open, GitHub would cancel the job, and its
+ * documentation does not promise the close step gets to finish then (see the
+ * pull request for #1441). A step's own `timeout-minutes` is different: it
+ * fails that one step and the job carries on, so the `always()` steps run as
+ * after any failure.
+ *
+ * So in such a job, every step up to and including the last close step has a
+ * limit of its own, and those limits add up to less than the job's limit with
+ * WINDOW_MARGIN minutes to spare (for setting up the job and the steps GitHub
+ * adds). Then a stuck step is stopped by its own limit, never by the job's,
+ * and the windows are closed before the job's clock can run out.
+ */
+const WINDOW_MARGIN = 5;
+const isWindowClose = (step) => /\bclose\b.*\bwindow\b/i.test(step.name ?? '') && /\balways\(\)/.test(step.if ?? '');
+/** A shell line that adds an allow rule in Azure: the thing a window-close step must undo. */
+const OPENS_A_RULE = /\baz\s+(?:functionapp\s+config\s+access-restriction|storage\s+account\s+network-rule)\s+add\b/;
+
+/** A step's own `timeout-minutes` as a number, or undefined; NaN when it is not a plain whole number. */
+export function stepTimeoutMinutes(step) {
+  const raw = step['timeout-minutes'];
+  if (raw === undefined) return undefined;
+  const value = raw.replace(/\s+#.*$/, '').trim();
+  return /^\d+$/.test(value) ? Number(value) : Number.NaN;
+}
+
+describe('a job that opens a firewall window closes it before its own limit can run out (#1441)', () => {
+  const FILES = readdirSync(WORKFLOWS)
+    .filter((name) => /\.ya?ml$/.test(name))
+    .sort();
+  const ALL = FILES.flatMap((name) =>
+    parseJobs(readFileSync(join(WORKFLOWS, name), 'utf8').replace(/\r\n/g, '\n')).map((job) => ({ label: `${name} / ${job.key}`, job }))
+  );
+  const WINDOWED = ALL.filter(({ job }) => job.steps.some(isWindowClose));
+
+  it('finds the jobs that open windows (a quiet read would make the checks below pass for nothing)', () => {
+    const labels = WINDOWED.map(({ label }) => label);
+    expect(labels).toContain('deploy-functions.yml / deploy');
+    expect(labels).toContain('publish-content-manifest.yml / build');
+    expect(stepTimeoutMinutes({ 'timeout-minutes': '3 # slowest 48 s' })).toBe(3);
+    expect(stepTimeoutMinutes({})).toBeUndefined();
+    expect(stepTimeoutMinutes({ 'timeout-minutes': '${{ env.LIMIT }}' })).toBeNaN();
+  });
+
+  it('every step that adds an allow rule in Azure is in a job with an always() close step', () => {
+    const openers = ALL.flatMap(({ label, job }) => job.steps.filter((step) => OPENS_A_RULE.test(step.run ?? '')).map((step) => ({ label, job, step })));
+    expect(openers.length, 'no step that adds an allow rule was found, so this check would pass for nothing').toBeGreaterThan(3);
+    for (const { label, job, step } of openers) {
+      const after = job.steps.slice(job.steps.indexOf(step) + 1);
+      expect(after.some(isWindowClose), `${label}: "${step.name}" adds an allow rule, but no later step named "Close … window" runs with always()`).toBe(true);
+    }
+  });
+
+  it.each(WINDOWED.map(({ label, job }) => [label, job]))('%s: every step up to the last close has a limit, and they fit inside the job limit', (label, job) => {
+    const jobLimit = timeoutMinutes(job);
+    expect(Number.isInteger(jobLimit), `${label} needs a plain job timeout-minutes`).toBe(true);
+    const lastClose = job.steps.findLastIndex(isWindowClose);
+    const bounded = job.steps.slice(0, lastClose + 1);
+    const missing = bounded.filter((step) => !Number.isInteger(stepTimeoutMinutes(step)) || stepTimeoutMinutes(step) < 1).map((step) => step.name);
+    expect(
+      missing,
+      `${label}: these steps run before the last window is closed but have no timeout-minutes of their own (a plain whole number). ` +
+        'Without one, a stuck step runs until the job limit cancels the job, while a window may still be open.'
+    ).toEqual([]);
+    const sum = bounded.reduce((total, step) => total + stepTimeoutMinutes(step), 0);
+    expect(
+      sum,
+      `${label}: the step limits up to the last window close add up to ${sum} minutes, which leaves less than ${WINDOW_MARGIN} of the job's ${jobLimit}. ` +
+        'Lower a step limit or raise the job limit, so a stuck step is always stopped by its own limit before the job is cancelled.'
+    ).toBeLessThanOrEqual(jobLimit - WINDOW_MARGIN);
   });
 });

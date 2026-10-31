@@ -128,17 +128,19 @@ jobs:
     # last committed version.
     if: ${{ vars.MANIFEST_WINDOW_CLIENT_ID != '' }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 10 # slowest 1.5 min, Oct 2026 (#1441)
+    timeout-minutes: 25 # slowest 1.5 min; each step up to the window close has its own limit, 19 min in all (#1441)
     permissions:
       contents: read # checkout only — this job must never be able to push
       id-token: write # federated credential exchange for azure/login
     steps:
       - name: Checkout
+        timeout-minutes: 2 # slowest 4 s
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Setup Node.js
+        timeout-minutes: 2 # slowest 7 s
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '26'
@@ -146,6 +148,7 @@ jobs:
           cache-dependency-path: scripts/package-lock.json
 
       - name: Azure login
+        timeout-minutes: 2 # slowest 17 s
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
           client-id: ${{ vars.MANIFEST_WINDOW_CLIENT_ID }}
@@ -156,6 +159,7 @@ jobs:
       # this job holds an Azure credential. Defence in depth behind the job
       # split — the split is what makes a compromised package unable to push.
       - name: Install script dependencies
+        timeout-minutes: 2 # slowest 6 s
         working-directory: scripts
         run: npm ci --ignore-scripts
 
@@ -183,6 +187,7 @@ jobs:
       # window and cannot read app settings back (#1098).
       - name: Open origin window for this runner
         id: appfw
+        timeout-minutes: 3 # slowest 37 s, 20 of them a sleep
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
@@ -203,6 +208,7 @@ jobs:
           sleep 20
 
       - name: Build the manifest
+        timeout-minutes: 5 # slowest 22 s
         working-directory: scripts
         env:
           FUNCTION_ORIGIN: https://${{ vars.APP_HOSTNAME }}
@@ -213,6 +219,7 @@ jobs:
       # address, and the job stays green while it does.
       - name: Close origin window
         if: ${{ always() && steps.appfw.outputs.rule_name != '' }}
+        timeout-minutes: 3 # slowest 11 s
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}

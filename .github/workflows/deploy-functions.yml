@@ -36,7 +36,7 @@ jobs:
       contents: read # the checkout, nothing more
       id-token: write # exchanged by azure/login for an Azure access token
     runs-on: ubuntu-26.04
-    timeout-minutes: 30 # slowest 5 min; waiting for approval does not count (#1441)
+    timeout-minutes: 60 # slowest 5 min; each step up to the last window close has its own limit, 55 min in all (#1441)
     # Binding the job to an environment gives production deploys a deployment
     # history and an approval gate. The gate lives in the environment, not
     # here: read live on 2026-10-03, `production` has two required reviewers
@@ -58,6 +58,7 @@ jobs:
         # outside the repository that nothing in a checkout can prove are
         # still set, so this step stays as the repository-side backstop.
         if: github.ref != 'refs/heads/main'
+        timeout-minutes: 1 # an echo and exit
         run: |
           # Workflow-command data must percent-encode %, CR and LF, and a branch
           # name may legally contain %; unescaped, it could misparse the annotation.
@@ -68,6 +69,7 @@ jobs:
           exit 1
 
       - name: Checkout
+        timeout-minutes: 2 # slowest 6 s
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
@@ -77,6 +79,7 @@ jobs:
       # package is built and its dependencies installed here, so the two
       # must agree; scripts/version-floors.json holds both at 24 (#715).
       - name: Setup Node.js
+        timeout-minutes: 2 # slowest 8 s
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
@@ -99,11 +102,13 @@ jobs:
       # 2026-10-08, so its absence is a configuration fault to fix, not a
       # reason to deploy unguarded; the log says "armed" when it can check.
       - name: Refuse to deploy while a Terraform apply is running
+        timeout-minutes: 2 # slowest 3 s
         env:
           TFC_TOKEN: ${{ secrets.TFC_TOKEN }}
         run: node scripts/tfc-workspace-busy.mjs
 
       - name: Install dependencies
+        timeout-minutes: 3 # slowest 12 s
         working-directory: functions
         run: npm ci
 
@@ -118,6 +123,7 @@ jobs:
       # output — the usual cause is a ref or repository name that has moved.
       - name: Azure Login
         id: login
+        timeout-minutes: 3 # slowest 17 s
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
           client-id: ${{ vars.CLIENT_ID }}
@@ -158,6 +164,7 @@ jobs:
       # behaviour.
       - name: Open storage firewall window for this runner
         id: fw
+        timeout-minutes: 3 # slowest 48 s, 30 of them a sleep
         env:
           RG: ${{ vars.RESOURCE_GROUP }}
           SA: ${{ vars.FUNCTIONS_STORAGE_ACCOUNT }}
@@ -203,6 +210,7 @@ jobs:
       # deploy of a workspace that has the lock off.
       - name: Open SCM firewall window for this runner
         id: scmfw
+        timeout-minutes: 3 # slowest 48 s, 20 of them a sleep
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
@@ -240,6 +248,7 @@ jobs:
       # permissions or wrong-subscription problem long before it reads as a
       # name that was renamed out from under a hardcoded string.
       - name: Deploy to Azure Functions
+        timeout-minutes: 7 # slowest 98 s
         uses: Azure/functions-action@c5060b3b8bb1ebbcb531abd00c822ecbaa8ea656 # v1.5.7
         with:
           app-name: ${{ vars.FUNCTION_APP_NAME }}
@@ -277,6 +286,7 @@ jobs:
       # monitor-functions-registered.yml has always asserted both; this step
       # asserted only the first.
       - name: Assert AzureWebJobsStorage is absent, then sync triggers
+        timeout-minutes: 5 # slowest 64 s; up to 4 tries 20 s apart
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
@@ -333,6 +343,7 @@ jobs:
       # reader sees a workflow that claims to close it.
       - name: Close SCM firewall window
         if: ${{ always() && steps.scmfw.outputs.rule_name != '' }}
+        timeout-minutes: 3 # slowest 22 s
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
@@ -356,6 +367,7 @@ jobs:
           echo "scm window closed — default action '$after', no temporary rules left"
       - name: Close storage firewall window
         if: ${{ always() && steps.fw.outputs.runner_ip != '' }}
+        timeout-minutes: 3 # slowest 7 s
         env:
           RG: ${{ vars.RESOURCE_GROUP }}
           SA: ${{ vars.FUNCTIONS_STORAGE_ACCOUNT }}
@@ -384,6 +396,7 @@ jobs:
       # for up to three minutes inside them would hold the host storage
       # account at default-Allow for that long.
       - name: Assert every expected function is registered
+        timeout-minutes: 6 # slowest 44 s; polls for up to 180 s
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
@@ -489,6 +502,7 @@ jobs:
       # App's own restriction rather than asking Cloudflare (PLAT-2, #962).
       - name: Open origin firewall window for this runner
         id: appfw
+        timeout-minutes: 2 # slowest 27 s
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
@@ -514,6 +528,7 @@ jobs:
       # with the last body in the summary — so an app that is really down
       # still fails, about two and a half minutes later than it used to.
       - name: Post-deploy smoke test
+        timeout-minutes: 5 # slowest 69 s; polls for up to 150 s
         env:
           APP_HOSTNAME: ${{ vars.APP_HOSTNAME }}
           POLL_INTERVAL_S: '10'
@@ -575,6 +590,7 @@ jobs:
       # waits out that refusal (and only that one: an app 403 is never retried),
       # for at most 90 seconds across the whole run.
       - name: Smoke tier 1 anonymous surface verification
+        timeout-minutes: 2 # slowest 23 s
         env:
           APP_HOSTNAME: ${{ vars.APP_HOSTNAME }}
         run: |
@@ -585,6 +601,7 @@ jobs:
 
       - name: Close origin firewall window
         if: ${{ always() && steps.appfw.outputs.runner_ip != '' }}
+        timeout-minutes: 3 # slowest 18 s
         env:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
