@@ -512,15 +512,19 @@ describe('the image base plan', () => {
    *                  (python:3.14-slim-trixie on 2026-10-31, #1426)
    *   amd64-differs  the patch tag's linux/amd64 image is a different one
    *   no-amd64       the patch tag lists no linux/amd64 image at all
+   * `lineAmd64: false` takes the linux/amd64 image out of the line tag's index.
    */
-  function registry({ pythonVersion = next, patch = 'same' } = {}) {
+  function registry({ pythonVersion = next, patch = 'same', lineAmd64 = true } = {}) {
     const config = JSON.stringify({ config: { Env: ['PATH=/usr/local/bin', `PYTHON_VERSION=${pythonVersion}`] } });
     const amd64 = JSON.stringify({ schemaVersion: 2, config: { digest: sha(config) } });
     const amd64Entry = { digest: sha(amd64), platform: { os: 'linux', architecture: 'amd64' } };
     // riscv64 manifests are only listed, never read: nothing here pulls them.
     const riscvEntry = (build) => ({ digest: sha(`riscv64 ${build}`), platform: { os: 'linux', architecture: 'riscv64' } });
     const otherAmd64Entry = { digest: sha('another amd64 build'), platform: { os: 'linux', architecture: 'amd64' } };
-    const lineManifests = patch === 'riscv-lag' ? [amd64Entry, riscvEntry('previous CPython')] : [amd64Entry];
+    const lineManifests = [
+      ...(lineAmd64 ? [amd64Entry] : []),
+      ...(patch === 'riscv-lag' || !lineAmd64 ? [riscvEntry('previous CPython')] : []),
+    ];
     const index = JSON.stringify({ schemaVersion: 2, manifests: lineManifests });
     const patchManifests = {
       same: lineManifests,
@@ -649,6 +653,22 @@ describe('the image base plan', () => {
     expect(readEnv(plan.files[VERSIONS_ENV_PATH]).BASE_DIGEST).toBe(env.BASE_DIGEST);
     expect(plan.files[DOCKERFILE_PATH]).toBe(files[DOCKERFILE_PATH]);
     expect(plan.notes.map((n) => n.reason).join(' ')).toContain(`no linux/amd64 image in python:${next}${variant}`);
+  });
+
+  it('fails closed, as a note, when the line tag lists no linux/amd64 image, whether its index is new or the pin', async () => {
+    const routes = registry({ lineAmd64: false });
+    for (const given of [files, pinnedAt(sha(routes._index))]) {
+      const plan = await planImageBase({ files: given, http: makeHttp(fakeFetch(routes)) });
+      expect(plan.applied.filter((b) => b.key === 'base')).toEqual([]);
+      // The python base's three lines and the Dockerfile stay put (the fake
+      // sandbox base moves on its own, as in every case here).
+      const pick = (e) => [e.BASE_IMAGE, e.BASE_DIGEST, e.BASE_PYTHON_VERSION];
+      expect(pick(readEnv(plan.files[VERSIONS_ENV_PATH]))).toEqual(pick(readEnv(given[VERSIONS_ENV_PATH])));
+      expect(plan.files[DOCKERFILE_PATH]).toBe(given[DOCKERFILE_PATH]);
+      // The new note, not imageEnv's older one, and never silently "current".
+      const reasons = plan.notes.filter((n) => n.label.startsWith('Lab image base')).map((n) => n.reason);
+      expect(reasons).toEqual([expect.stringContaining(`no linux/amd64 image in python:${lineTag}`)]);
+    }
   });
 
   it('moves the sandbox template base and its one FROM, independently of the python base', async () => {

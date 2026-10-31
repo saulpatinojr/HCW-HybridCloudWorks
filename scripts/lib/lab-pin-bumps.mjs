@@ -741,6 +741,8 @@ export async function planHost({ text, files = {}, rows, http, bumpers = HOST_BU
  * (scripts/version-floors.json), not a rebuild, so the line stays put.
  * lab-image/README.md, "Updating a version", is this procedure by hand.
  */
+const noAmd64 = (ref) => `no linux/amd64 image in ${ref}, the only platform the lab image is built for; nothing moves until there is one`;
+
 /** The python base: the line tag's newest digest, its CPython, and the patch tag that must agree on linux/amd64. */
 async function planPythonBase(env, http, today) {
   const base = parseImageRef(env.BASE_IMAGE);
@@ -749,6 +751,10 @@ async function planPythonBase(env, http, today) {
   const [, major, minor, , variant] = tagParts;
   const lineTag = `${major}.${minor}${variant}`;
   const line = await resolveTag(http, base.name, lineTag);
+  // Checked before anything else, the "already pinned" return included: a
+  // line tag with no linux/amd64 image is a note, never "current".
+  const lineAmd64 = amd64EntryOf(line.manifest);
+  if (!lineAmd64) throw new Error(noAmd64(`${base.name}:${lineTag}`));
   if (line.digest === env.BASE_DIGEST) return null;
   const pythonVersion = (await imageEnv(http, base.name, line.manifest))
     .find((e) => e.startsWith('PYTHON_VERSION='))
@@ -761,13 +767,9 @@ async function planPythonBase(env, http, today) {
   const patch = await resolveTag(http, base.name, patchTag);
   // Settled means both tags carry the same linux/amd64 image, the only one
   // the build pulls. Comparing the whole index would wait on platforms the
-  // lab never runs. No amd64 entry on either side is a note, not a guess.
-  const lineAmd64 = amd64EntryOf(line.manifest);
+  // lab never runs. No amd64 entry is a note, not a guess.
   const patchAmd64 = amd64EntryOf(patch.manifest);
-  if (!lineAmd64 || !patchAmd64) {
-    const missing = [!lineAmd64 && `${base.name}:${lineTag}`, !patchAmd64 && `${base.name}:${patchTag}`].filter(Boolean).join(' and ');
-    throw new Error(`no linux/amd64 image in ${missing}, the only platform the lab image is built for; nothing moves until there is one`);
-  }
+  if (!patchAmd64) throw new Error(noAmd64(`${base.name}:${patchTag}`));
   if (patchAmd64.digest !== lineAmd64.digest) {
     throw new Error(
       `${base.name}:${patchTag} is ${patch.digest} (linux/amd64 ${patchAmd64.digest}) but ${base.name}:${lineTag} is ${line.digest} (linux/amd64 ${lineAmd64.digest}); the two have not settled`
