@@ -549,6 +549,15 @@ export const DECLARED = [
   // resources and drops the five settings from the Function App. Both were
   // empty: the brain never held a record. Delete these entries once that run
   // has applied and the plan reads clean without them.
+  //
+  // The five `before` values are the defaults dfac635 applied and declared,
+  // and nothing else is declared on purpose. Had the workspace since set the
+  // brain on or given it an owner, tenant or client, the removal would carry
+  // that value instead, and the plan would read UNEXPECTED: an owner id is a
+  // GUID this public file must not hold, and a change the owner made by hand
+  // is not pre-approved here, the same rule the sweep's disarming plan
+  // follows above. UNEXPECTED is then the prompt to read the plan, not a
+  // reason to widen the match.
   {
     address: 'azurerm_cosmosdb_sql_database.code_brain', action: 'delete',
     reason: '#1479: the Code Conductor brain leaves the site; its empty database goes with it.',
