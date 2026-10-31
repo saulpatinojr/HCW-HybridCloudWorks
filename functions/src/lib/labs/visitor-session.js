@@ -53,7 +53,7 @@ import {
   verifyTurnstileToken,
 } from './public-lock.js';
 import { utcDay } from '../cloud-tools/history.js';
-import { giveBackDailyCap, takeDailyCap } from '../daily-cap.js';
+import { takeDailyCap } from '../daily-cap.js';
 import { readCoderConfig } from './coder-status.js';
 import { recordLabStart, safeLogCode } from './lab-starts.js';
 
@@ -596,10 +596,6 @@ async function lookUpUserCall(fetchImpl, config, username) {
   }
 }
 
-/** Whether a claim turned a record's daily-start marker from `pending` to `given`. */
-const refundTaken = (before, after) =>
-  before?.dailyCapRefund === DAILY_CAP_REFUND.pending && after?.dailyCapRefund === DAILY_CAP_REFUND.given;
-
 /** A count stored in a record: a negative, fractional or text one counts as none. */
 const countOf = (value) => (Number.isInteger(value) && value >= 0 ? value : 0);
 
@@ -646,20 +642,10 @@ function claimable(record, nowIso) {
  *   `status` is what the record that another request holds says now
  */
 async function claimSession(store, session, endStatus, nowMs) {
-  // A start whose process died before it gave its daily start back: the claim
-  // that turns its marker to `given` is the one that gives it back (#1464
-  // review, finding C). Only on a store that can, so the marker never says
-  // `given` for a start nobody gave back.
-  const canGiveBack = typeof store.incrementIf === 'function';
   const claimOf = ({ accessUrl: _address, ...record }) => {
     const newRound = record.status === SESSION_STATUS.cleanupFailed;
-    const refund =
-      canGiveBack && record.status === SESSION_STATUS.provisioning && record.dailyCapRefund === DAILY_CAP_REFUND.pending
-        ? { dailyCapRefund: DAILY_CAP_REFUND.given }
-        : {};
     return {
       ...record,
-      ...refund,
       status: SESSION_STATUS.ending,
       // Only the two final statuses a session can have; a record that says anything else gets the one asked for.
       endStatus: [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(record.endStatus) ? record.endStatus : endStatus,
@@ -682,7 +668,7 @@ async function claimSession(store, session, endStatus, nowMs) {
     }
     const claimed = claimOf(session);
     await store.upsertDoc(SESSION_CONTAINER, claimed);
-    return { outcome: 'claimed', session: claimed, refundTaken: refundTaken(session, claimed) };
+    return { outcome: 'claimed', session: claimed };
   }
 
   const nowIso = new Date(nowMs).toISOString();
@@ -693,7 +679,7 @@ async function claimSession(store, session, endStatus, nowMs) {
       const saved = await store.replaceDocIfMatch(SESSION_CONTAINER, claimed, {
         partitionKey: current.id,
       });
-      return { outcome: 'claimed', session: saved ?? claimed, refundTaken: refundTaken(current, claimed) };
+      return { outcome: 'claimed', session: saved ?? claimed };
     } catch (error) {
       if (!lostRace(error)) throw error;
     }
@@ -844,10 +830,13 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
   if (claim.outcome !== 'claimed') return claim;
 
   const claimed = claim.session;
-  if (claim.refundTaken) await giveBackFor(store, claimed, log);
   const steps = await cleanUpCoder(fetchImpl, config, claimed);
+  // A start that never ran still owes its daily start back (#1464 review,
+  // findings C and round 2): the record is not over until the refund is written.
+  const owed = refundOwed(claimed);
+  const refunded = owed ? await recordRefund(store, claimed, nowMs, log) : false;
   const attempts = claimed.cleanupAttempts;
-  const finished = steps.workspaceGone && steps.userGone;
+  const finished = steps.workspaceGone && steps.userGone && (!owed || refunded);
   const givenUp = !finished && attempts >= MAX_CLEANUP_ATTEMPTS;
   const nowIso = new Date(nowMs).toISOString();
 
@@ -914,6 +903,7 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
     };
   }
   if (askWorkspaceAgain) delete next.workspaceConfirmedBy;
+  if (refunded) next.dailyCapRefund = DAILY_CAP_REFUND.given;
 
   if (typeof store.replaceDocIfMatch === 'function') {
     try {
@@ -932,7 +922,7 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
   // A session that no longer holds a lab lets its slot go (#1464 review, finding A).
   if (!mayHoldLab(next)) await releaseSlot(store, next, nowMs);
 
-  const where = `workspace ${steps.workspace}, user ${steps.user}`;
+  const where = `workspace ${steps.workspace}, user ${steps.user}${owed && !refunded ? ', daily start not yet given back' : ''}`;
   if (finished) {
     // A 404 or 410 is also how Coder may answer a token that may not see the
     // thing, so a clean-up confirmed that way is said in the log (#1403, item 4).
@@ -1230,26 +1220,70 @@ async function releaseSlot(store, record, nowMs) {
 }
 
 /**
- * A daily start is given back at most once (#1464 review, finding C). The
- * `provisioning` record carries `dailyCapRefund: 'pending'` and the counter
- * it was taken from (`dailyCap`). Whoever turns `pending` into `given` with a
- * conditional write (the failed start's note, or the sweep's claim of a start
- * whose process died) is the one that gives it back; a session that started
- * says `spent`. The counter's own condition only keeps it from going below
- * zero, so it is this marker, not `giveBackDailyCap`, that stops a second
- * give-back.
+ * A daily start is given back at most once, and a give-back that fails is
+ * tried again (#1464 review, finding C and round 2). The start's counter
+ * (`visitor-quota:<hash>:<day>`) is never decreased. Instead a start that made
+ * no lab writes a refund document, `visitor-refund:<session id>`, with a
+ * create: a second create of the same id is refused (409) and counts as done,
+ * so however many requests or sweeps try, there is one refund per session.
+ * The start then allows the daily limit plus the refunds of that counter
+ * (`countRefunds`). A query that misses a refund just written only refuses a
+ * start it could have allowed, which is the safe side.
+ *
+ * The record says where it is in `dailyCapRefund`: `pending` while the start
+ * is under way or its refund is not yet written, `given` once the refund
+ * document exists, `spent` once the session started. The marker turns to
+ * `given` only after the document is written, so a refund that failed is
+ * still `pending`, and the sweep writes it on its next try before it saves the
+ * record as over.
  */
 export const DAILY_CAP_REFUND = Object.freeze({ pending: 'pending', given: 'given', spent: 'spent' });
+export const REFUND_PREFIX = 'visitor-refund:';
+/** A refund lives as long as the counter it adds to (two days, the counter's own ttl). */
+const REFUND_TTL_SECONDS = 86400 * 2;
 
-/** Give a start back for a record whose marker this caller has just turned to `given`. Never throws. */
-async function giveBackFor(store, record, log) {
-  const cap = record?.dailyCap;
-  if (!cap || typeof cap.container !== 'string' || typeof cap.id !== 'string') return;
+/**
+ * Does this record still owe its daily start back? Only a start that never
+ * ran says `pending` (a session that started says `spent`, and one saved before
+ * the marker existed says nothing), so the marker alone answers it, whatever
+ * the record's status is now (a claim makes it `ending`).
+ */
+function refundOwed(record) {
+  return record?.dailyCapRefund === DAILY_CAP_REFUND.pending && typeof record.dailyCap?.id === 'string';
+}
+
+/**
+ * Write the refund document of a start that made no lab. True when it exists
+ * now (written here, or by an earlier try: 409); false when it could not be
+ * written, for the caller to try again later. Never throws.
+ */
+async function recordRefund(store, record, nowMs, log) {
+  if (typeof store.createDoc !== 'function' || typeof record?.dailyCap?.id !== 'string') return false;
   try {
-    await giveBackDailyCap(store, cap);
+    await store.createDoc(QUOTA_CONTAINER, {
+      id: `${REFUND_PREFIX}${record.id}`,
+      kind: 'visitor_refund',
+      quotaId: record.dailyCap.id,
+      createdAt: new Date(nowMs).toISOString(),
+      ttl: REFUND_TTL_SECONDS,
+    });
+    return true;
   } catch (error) {
-    log?.(`visitor-session: a daily start could not be given back (${errorKind(error)})`);
+    if (isConflict(error)) return true;
+    log?.(`visitor-session: a daily start could not be given back yet (${errorKind(error)})`);
+    return false;
   }
+}
+
+export const REFUND_QUERY = 'SELECT * FROM c WHERE c.kind = @kind AND c.quotaId = @quotaId';
+
+/** How many starts of this counter were given back. Store faults are thrown. */
+async function countRefunds(store, quotaId) {
+  const rows = await store.queryDocs(QUOTA_CONTAINER, REFUND_QUERY, [
+    { name: '@kind', value: 'visitor_refund' },
+    { name: '@quotaId', value: quotaId },
+  ]);
+  return Array.isArray(rows) ? rows.length : 0;
 }
 
 /**
@@ -1263,18 +1297,21 @@ async function giveBackFor(store, record, log) {
  * start that failed at the user (`noWorkspace`) never asked for a workspace,
  * so that half is saved as done: only the user is looked up, and the note
  * does not hold a lab slot while it waits. A user create that Coder refused
- * outright (`noUser`, a 4xx answer) made nothing at all, so the record is
- * saved as over at once and nothing is looked up by name (#1464 review,
- * finding F): a name Coder refused may be someone else's.
+ * outright (`noUser`, a 4xx answer other than 408) made nothing at all, so
+ * both halves are saved as done and nothing is looked up by name (#1464
+ * review, finding F): a name Coder refused may be someone else's.
  *
- * The note turns the daily start's marker to `given`, and only when that write
- * lands is the start given back. It lets the slot go when the note holds no lab.
+ * Then the daily start is given back (`recordRefund`), and only once that is
+ * written is the marker turned to `given`; a note with nothing left in Coder
+ * is saved as over in the same write. When the refund or that write fails,
+ * the note stays `cleanup_pending` with `dailyCapRefund: pending`, and the
+ * sweep finishes it. It lets the slot go when the note holds no lab.
  *
  * Never throws: the visitor is being answered with a 502 whatever happens
  * here, and a store that is down must not turn that into something else. A
  * note that could not be written leaves the `provisioning` record, which the
- * sweep takes up once its lease has run out (and gives the start back then).
- * The log says by kind that the note could not be written, and nothing more.
+ * sweep takes up once its lease has run out. The log says by kind what could
+ * not be written, and nothing more.
  */
 async function noteUnfinishedStart(
   store,
@@ -1283,44 +1320,37 @@ async function noteUnfinishedStart(
 ) {
   const nowIso = new Date(nowMs).toISOString();
   const { clientHash: _owner, ...record } = provisioning;
-  const refund =
-    record.dailyCapRefund === DAILY_CAP_REFUND.pending ? { dailyCapRefund: DAILY_CAP_REFUND.given } : {};
-  const note = noUser
-    ? {
-        ...record,
-        ...refund,
-        status: SESSION_STATUS.ended,
-        startFailed: true,
-        workspaceGone: true,
-        userGone: true,
-        workspaceConfirmedBy: 'never asked for',
-        userConfirmedBy: 'refused at create',
-        endedAt: nowIso,
-        ttl: VISITOR_DOC_TTL_SECONDS,
-      }
-    : {
-        ...record,
-        ...refund,
-        status: SESSION_STATUS.cleanupPending,
-        startFailed: true,
-        ...(isSafeSegment(user?.id) ? { coderUserId: user.id } : {}),
-        ...(typeof user?.username === 'string' && user.username ? { coderUsername: user.username } : {}),
-        ...(isSafeSegment(workspaceId) ? { workspaceId } : {}),
-        ...(noWorkspace ? { workspaceGone: true, workspaceConfirmedBy: 'never asked for' } : {}),
-        endedAt: nowIso,
-        cleanupAt: nowIso,
-        retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS).toISOString(),
-        ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
-      };
-  if (noUser) delete note.retryAt;
+  const note = {
+    ...record,
+    status: SESSION_STATUS.cleanupPending,
+    startFailed: true,
+    ...(isSafeSegment(user?.id) ? { coderUserId: user.id } : {}),
+    ...(typeof user?.username === 'string' && user.username ? { coderUsername: user.username } : {}),
+    ...(isSafeSegment(workspaceId) ? { workspaceId } : {}),
+    ...(noWorkspace || noUser ? { workspaceGone: true, workspaceConfirmedBy: 'never asked for' } : {}),
+    ...(noUser ? { userGone: true, userConfirmedBy: 'refused at create' } : {}),
+    endedAt: nowIso,
+    cleanupAt: nowIso,
+    retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS).toISOString(),
+    ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+  };
+  const log = (line) => context?.error?.(line);
+  let saved;
   try {
-    await saveOver(store, note);
+    saved = (await saveOver(store, note)) ?? note;
   } catch (error) {
-    context?.error?.(`visitor-session: a failed start could not be noted for clean-up (${errorKind(error)})`);
+    log(`visitor-session: a failed start could not be noted for clean-up (${errorKind(error)})`);
     return;
   }
-  if (refund.dailyCapRefund) await giveBackFor(store, note, (line) => context?.error?.(line));
   if (!mayHoldLab(note)) await releaseSlot(store, note, nowMs);
+  if (!refundOwed(saved) || !(await recordRefund(store, saved, nowMs, log))) return;
+  const { retryAt: _next, ...settled } = saved;
+  const over = noUser ? { status: SESSION_STATUS.ended, ttl: VISITOR_DOC_TTL_SECONDS } : {};
+  try {
+    await saveOver(store, noUser ? { ...settled, ...over, dailyCapRefund: DAILY_CAP_REFUND.given } : { ...saved, dailyCapRefund: DAILY_CAP_REFUND.given });
+  } catch {
+    // The refund is written; the sweep sees `pending`, finds the refund there (409) and finishes.
+  }
 }
 
 /**
@@ -1721,23 +1751,51 @@ export function createVisitorSessionHandlers({
       const sessionId = randomUUID();
       // Everything a start does while it holds the visitor's lock.
       const startHoldingLock = async () => {
-        const slot = await takeSlot(store, sessionId, maxConcurrent, nowMs);
+        // Read again now that no other start of this visitor's can run (#1464
+        // review, round 2): a start that finished between the first read and
+        // this lock has made the caller's session, which is handed back.
+        const fresh = await listHolding();
+        const mineNow = fresh.find(
+          (s) => s.status === SESSION_STATUS.active && s.expiresAt > nowIso && sameClient(s.clientHash, clientHash)
+        );
+        if (mineNow) {
+          return jsonResponse({
+            ok: true,
+            sessionId: mineNow.id,
+            labId: mineNow.labId,
+            accessUrl: mineNow.accessUrl,
+            expiresAt: mineNow.expiresAt,
+          }, 200);
+        }
+        // Records saved before the slots existed hold no slot, so they are
+        // counted here, every one that may still hold a lab, past its hour
+        // included, until its clean-up is confirmed (round 2). Slots are then
+        // taken only below what they leave. Such records are no longer made,
+        // so their number only falls, and slots taken earlier were held below
+        // an equal or smaller room: slots and old records together stay
+        // within the limit.
+        const unslotted = fresh.filter((s) => mayHoldLab(s) && !Number.isInteger(s.slot)).length;
+        const room = maxConcurrent - unslotted;
+        if (room <= 0) return full();
+        const slot = await takeSlot(store, sessionId, room, nowMs);
         if (slot === null) return full();
         const letSlotGo = () => releaseSlot(store, { id: sessionId, slot }, clock());
 
         // Only now is a new lab really going to be made, so only now is one of
         // the visitor's daily starts taken (#1400, item 1). A start that then
-        // fails gives it back, once, through the record's marker (finding C).
+        // fails gives it back with a refund document, which raises the limit
+        // by one for that counter (`recordRefund`, `countRefunds`).
         const day = utcDay(nowMs);
         const quota = { container: 'submission_quota', id: `visitor-quota:${clientHash}:${day}` };
         let allowed;
         try {
+          const refunds = await countRefunds(store, quota.id);
           allowed = await takeDailyCap(store, {
             ...quota,
             kind: 'visitor_session_daily',
             day,
             nowIso,
-            limit: VISITOR_CLIENT_DAILY_LIMIT,
+            limit: VISITOR_CLIENT_DAILY_LIMIT + refunds,
             ttlSeconds: 86400 * 2,
           });
         } catch (error) {
@@ -1780,16 +1838,17 @@ export function createVisitorSessionHandlers({
         try {
           held = (await store.createDoc(SESSION_CONTAINER, provisioning)) ?? provisioning;
         } catch (error) {
-          // Nothing was asked of Coder, so there is nothing to clean up. The
-          // start is given back only when the store plainly refused the write
-          // (a 4xx other than a timeout): after a timeout or a 5xx the record
-          // may exist after all, and then the sweep gives it back from its
-          // marker. A start lost to that is the safe side; one given back twice
-          // would be a start handed out.
+          // Nothing was asked of Coder, so there is nothing to clean up, and
+          // the start is given back. The refund is one document per session,
+          // so if the record was written after all (a timeout, a 5xx), the
+          // sweep's own give-back for it finds this refund and adds none. The
+          // slot is let go only when the store plainly refused the write (a
+          // 4xx other than 408); otherwise the record may hold it, and a slot
+          // whose record never appears is taken over after its lease.
           context?.error?.(`visitor-session: a start could not be recorded (${errorKind(error)})`);
+          await recordRefund(store, provisioning, nowMs, (line) => context?.error?.(line));
           const status = Number(error?.code ?? error?.statusCode);
           if (Number.isInteger(status) && status >= 400 && status < 500 && status !== 408) {
-            await giveBackFor(store, provisioning, (line) => context?.error?.(line));
             await letSlotGo();
           }
           return jsonResponse({
@@ -1818,9 +1877,11 @@ export function createVisitorSessionHandlers({
           // The workspace is asked for only once the user exists, so there is
           // none. A plain refusal (a 4xx answer) made no user either, so the
           // name is never looked up: it may be someone else's (finding F).
-          // No answer, or a 5xx, may have made one, so it is looked up.
+          // No answer, a 5xx, or a 408 (Coder timed the request out, and may
+          // have made the user anyway; round 2) may have made one, so it is
+          // looked up.
           const status = error?.statusCode;
-          const refused = Number.isInteger(status) && status >= 400 && status < 500;
+          const refused = Number.isInteger(status) && status >= 400 && status < 500 && status !== 408;
           return failed('the Coder user', error, { noWorkspace: true, noUser: refused });
         }
         let workspaceInfo;

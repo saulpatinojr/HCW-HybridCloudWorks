@@ -21,9 +21,9 @@
  * another run, cannot make a second set of Coder calls for the same session.
  *
  * WHAT IT NEVER DOES. It never creates a session or a Coder user: the store it
- * is given has the verbs the sweep uses (a read, a query, a conditional save,
- * and `incrementIf` to give back a dead start's daily start) and no
- * `createDoc`, and the sweep
+ * is given has the verbs the sweep uses (a read, a query, a conditional save)
+ * and a create that writes refund documents only (to give back a dead start's
+ * daily start), and the sweep
  * has no code that provisions. It does not read `LABS_VISITOR_SESSIONS_ENABLED`
  * either, on purpose: that switch closes the door to new visitors, and turning
  * it off while sessions exist must not strand their Coder users and workspaces.
@@ -86,8 +86,8 @@ function say(context, level, line) {
 
 /**
  * @param {object} deps
- * @param {{ queryDocs: Function, readDoc: Function, replaceDocIfMatch: Function, incrementIf?: Function }} deps.store -
- *   only the verbs the sweep uses; no `createDoc`, so it cannot create anything
+ * @param {{ queryDocs: Function, readDoc: Function, replaceDocIfMatch: Function, createDoc?: Function }} deps.store -
+ *   only the verbs the sweep uses; its `createDoc` writes refund documents only
  * @param {Function} [deps.fetchImpl] - Coder's HTTP client; the global `fetch` when omitted
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} [deps.env]
  * @param {() => number} [deps.now] - epoch ms

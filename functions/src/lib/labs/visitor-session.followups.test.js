@@ -61,7 +61,13 @@ function store(docs = [], { now = null } = {}) {
   return s;
 }
 
-const quotaOf = (s, key = ALICE_KEY) => s.get('submission_quota', `visitor-quota:${key}:${DAY}`)?.count ?? 0;
+/** Starts a visitor has used today: what the counter took, less the refunds written for it (#1464 review, round 2). */
+const quotaOf = (s, key = ALICE_KEY) => {
+  const id = `visitor-quota:${key}:${DAY}`;
+  const refunds = [...s.docs.values()].filter((d) => d.kind === 'visitor_refund' && d.quotaId === id).length;
+  return (s.get('submission_quota', id)?.count ?? 0) - refunds;
+};
+const refundDocs = (s) => [...s.docs.keys()].filter((key) => key.startsWith('submission_quota/visitor-refund:'));
 
 /** Turnstile, answering what the test says, and a Coder that accepts everything. */
 function visitorFetch({ siteverify = { success: true, hostname: 'hybridcloudworks.com', action: 'visitor-session' } } = {}) {
@@ -582,7 +588,7 @@ describe('#1464 review, finding C: a daily start is given back at most once', ()
     await reapExpiredVisitorSessions(s, noSuchUser, CODER, { nowIso: iso(now) });
 
     expect(quotaOf(s)).toBe(1);
-    expect(s.incrementIf).toHaveBeenCalledTimes(1);
+    expect(refundDocs(s)).toEqual(['submission_quota/visitor-refund:p-1']);
     expect(s.get('lab_jobs', 'p-1')).toMatchObject({ status: 'ended', dailyCapRefund: 'given' });
   });
 
@@ -593,7 +599,7 @@ describe('#1464 review, finding C: a daily start is given back at most once', ()
     await reapExpiredVisitorSessions(s, noSuchUser, CODER, { nowIso: iso(now) });
 
     expect(quotaOf(s)).toBe(2);
-    expect(s.incrementIf).not.toHaveBeenCalled();
+    expect(refundDocs(s)).toEqual([]);
   });
 
   it('leaves the give-back to the sweep, and gives it back once in all, when the failed start cannot write its note', async () => {
@@ -714,5 +720,180 @@ describe('#1464 review, finding G: a clean-up given up for good no longer holds 
     const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: visitorFetch(), clock });
     expect(parsed(await statusAs(handlers, BOB)).body.bounds.activeCount).toBe(0);
     expect(parsed(await startAs(handlers, BOB)).status).toBe(201);
+  });
+});
+
+describe('#1464 review, round 2', () => {
+  const labsIn = (s) =>
+    [...s.docs.entries()].filter(
+      ([path, doc]) => path.startsWith('lab_jobs/') && ['active', 'provisioning'].includes(doc.status)
+    ).length;
+
+  it('1: counts a session saved before slots existed that is past its hour, while the sweep is held back', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '1');
+    const legacy = session('legacy-1', { expiresAt: iso(NOW + 30_000) });
+    const s = store([legacy]);
+    const fetchImpl = visitorFetch();
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    // A status read runs the sweep and holds the next one back for a minute.
+    await statusAs(handlers, BOB);
+    now = NOW + 40_000; // the legacy session is now past its hour, and the sweep is still held back
+    const res = parsed(await startAs(handlers, ALICE));
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe(DOOR_CODES.capacity_full);
+    expect(coderCalls(fetchImpl)).not.toContain('POST /api/v2/users');
+  });
+
+  it('2: lets two visitors starting at once take only the room a session saved before slots existed leaves', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '2');
+    const s = store([session('legacy-1')]);
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: visitorFetch(), clock });
+
+    const results = (await Promise.all([startAs(handlers, ALICE), startAs(handlers, BOB)])).map(parsed);
+
+    expect(results.map((r) => r.status).sort()).toEqual([201, 503]);
+    expect(labsIn(s)).toBe(2); // the old session and one new one
+  });
+
+  it("3: hands back the caller's session that a start finished while this one waited for the lock", async () => {
+    const s = store();
+    const create = s.createDoc.getMockImplementation();
+    let firstDone;
+    const first = new Promise((resolve) => {
+      firstDone = resolve;
+    });
+    let lockTries = 0;
+    s.createDoc.mockImplementation(async (container, doc) => {
+      if (String(doc.id).startsWith('visitor-start:')) {
+        lockTries += 1;
+        if (lockTries === 2) await first; // the second request reaches the lock only after the first start ends
+      }
+      return create(container, doc);
+    });
+    const fetchImpl = visitorFetch();
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    const a = startAs(handlers, ALICE).then((res) => {
+      firstDone();
+      return res;
+    });
+    const b = startAs(handlers, ALICE);
+    const [ra, rb] = (await Promise.all([a, b])).map(parsed);
+
+    expect([ra.status, rb.status]).toEqual([201, 200]);
+    expect(rb.body.sessionId).toBe(ra.body.sessionId);
+    expect(coderCalls(fetchImpl).filter((call) => call === 'POST /api/v2/users')).toHaveLength(1);
+    expect(quotaOf(s)).toBe(1);
+  });
+
+  it('4: looks the user up after a 408 from Coder, which may have made it', async () => {
+    const s = store();
+    const inner = visitorFetch();
+    const fetchImpl = vi.fn(async (url, init) =>
+      String(url).endsWith('/api/v2/users') ? { ok: false, status: 408 } : inner(url, init)
+    );
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    expect((await startAs(handlers, ALICE, { error: vi.fn() })).status).toBe(502);
+
+    const [record] = [...s.docs.entries()].filter(([path]) => path.startsWith('lab_jobs/')).map(([, d]) => d);
+    expect(record).toMatchObject({ status: 'cleanup_pending', userGone: false });
+    expect(record.userConfirmedBy).toBeUndefined();
+  });
+
+  describe('5: a give-back that fails is tried again, and still happens once', () => {
+    const failingThenWorking = (s, matches, times = 1) => {
+      const create = s.createDoc.getMockImplementation();
+      let left = times;
+      s.createDoc.mockImplementation(async (container, doc) => {
+        if (matches(doc) && left > 0) {
+          left -= 1;
+          throw Object.assign(new Error('throttled'), { code: 429 });
+        }
+        return create(container, doc);
+      });
+    };
+    const refusingWorkspace = () => {
+      const inner = visitorFetch();
+      return vi.fn(async (url, init) =>
+        /\/members\/[^/]+\/workspaces$/.test(String(url)) ? { ok: false, status: 400 } : inner(url, init)
+      );
+    };
+
+    it('keeps the marker pending when the refund cannot be written, and the sweep writes it later, once', async () => {
+      const s = store();
+      failingThenWorking(s, (doc) => String(doc.id).startsWith('visitor-refund:'));
+      const fetchImpl = refusingWorkspace();
+      const context = { error: vi.fn() };
+      const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+      expect((await startAs(handlers, ALICE, context)).status).toBe(502);
+      const [note] = [...s.docs.entries()].filter(([path]) => path.startsWith('lab_jobs/')).map(([, d]) => d);
+      expect(note).toMatchObject({ status: 'cleanup_pending', dailyCapRefund: 'pending' });
+      expect(quotaOf(s)).toBe(1);
+      expect(context.error).toHaveBeenCalledWith('visitor-session: a daily start could not be given back yet (429)');
+
+      now = Date.parse(note.retryAt);
+      await reapExpiredVisitorSessions(s, fetchImpl, CODER, { nowIso: iso(now) });
+      await reapExpiredVisitorSessions(s, fetchImpl, CODER, { nowIso: iso(now + 60 * 60 * 1000) });
+
+      expect(quotaOf(s)).toBe(0);
+      expect(refundDocs(s)).toHaveLength(1);
+      expect(s.get('lab_jobs', note.id).dailyCapRefund).toBe('given');
+    });
+
+    it('does not finish a record whose refund is still owed, even when Coder has nothing left', async () => {
+      const s = store([
+        session('p-9', {
+          status: 'cleanup_pending',
+          endStatus: 'ended',
+          startFailed: true,
+          coderUserId: undefined,
+          workspaceGone: true,
+          userGone: true,
+          dailyCap: { container: 'submission_quota', id: `visitor-quota:${ALICE_KEY}:${DAY}` },
+          dailyCapRefund: 'pending',
+          retryAt: iso(NOW),
+        }),
+      ]);
+      failingThenWorking(s, (doc) => String(doc.id).startsWith('visitor-refund:'));
+
+      await reapExpiredVisitorSessions(s, vi.fn(), CODER, { nowIso: iso(now) });
+      expect(s.get('lab_jobs', 'p-9')).toMatchObject({ status: 'cleanup_pending', dailyCapRefund: 'pending' });
+
+      now = Date.parse(s.get('lab_jobs', 'p-9').retryAt);
+      await reapExpiredVisitorSessions(s, vi.fn(), CODER, { nowIso: iso(now) });
+      expect(s.get('lab_jobs', 'p-9')).toMatchObject({ status: 'ended', dailyCapRefund: 'given' });
+      expect(refundDocs(s)).toEqual(['submission_quota/visitor-refund:p-9']);
+    });
+
+    it('adds no second refund when the refund was written but the marker was not', async () => {
+      const s = store();
+      const replace = s.replaceDocIfMatch.getMockImplementation();
+      // The note is written, the refund is written, then the write that turns the marker to `given` fails.
+      let noteWrites = 0;
+      s.replaceDocIfMatch.mockImplementation(async (container, doc, options) => {
+        if (container === 'lab_jobs' && doc.startFailed) {
+          noteWrites += 1;
+          if (noteWrites === 2) throw Object.assign(new Error('down'), { code: 503 });
+        }
+        return replace(container, doc, options);
+      });
+      const fetchImpl = refusingWorkspace();
+      const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+      await startAs(handlers, ALICE, { error: vi.fn() });
+      expect(refundDocs(s)).toHaveLength(1);
+      const [note] = [...s.docs.entries()].filter(([path]) => path.startsWith('lab_jobs/')).map(([, d]) => d);
+      expect(note.dailyCapRefund).toBe('pending');
+
+      now = Date.parse(note.retryAt);
+      await reapExpiredVisitorSessions(s, fetchImpl, CODER, { nowIso: iso(now) });
+      expect(refundDocs(s)).toHaveLength(1);
+      expect(quotaOf(s)).toBe(0);
+      expect(s.get('lab_jobs', note.id).dailyCapRefund).toBe('given');
+    });
   });
 });

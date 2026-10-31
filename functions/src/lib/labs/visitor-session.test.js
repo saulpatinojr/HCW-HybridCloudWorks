@@ -87,6 +87,12 @@ function cosmosLikeStore(sessions = []) {
   });
 }
 
+/** Starts used on a counter: what it took, less the refund documents written for it (#1464 review, round 2). */
+const usedStarts = (store, quotaId) => {
+  const refunds = [...store.docs.values()].filter((d) => d.kind === 'visitor_refund' && d.quotaId === quotaId).length;
+  return (store.get('submission_quota', quotaId)?.count ?? 0) - refunds;
+};
+
 /** The store most tests use: Cosmos-like, plus the compare-and-increment the daily cap takes. */
 function mockStore(initialDocs = []) {
   const store = cosmosLikeStore(initialDocs);
@@ -2756,8 +2762,8 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
     it.each([
       ['plainly refused (429, too many requests)', 429, 0],
-      ['given no clear answer (503, so it may have been written)', 503, 1],
-    ])('answers 503 and asks Coder for nothing when the record cannot be written: %s; the start is given back only for a plain refusal', async (_name, code, count) => {
+      ['given no clear answer (503, so it may have been written)', 503, 0],
+    ])('answers 503, asks Coder for nothing, and gives the start back when the record cannot be written: %s', async (_name, code, count) => {
       const store = mockStore();
       const create = store.createDoc.getMockImplementation();
       store.createDoc.mockImplementation(async (container, doc) => {
@@ -2772,7 +2778,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       expect(res.status).toBe(503);
       expect(coderCallsOf(fetchImpl)).toEqual([]);
-      expect(store.get('submission_quota', `visitor-quota:${ALICE_KEY}:2026-10-17`).count).toBe(count);
+      expect(usedStarts(store, `visitor-quota:${ALICE_KEY}:2026-10-17`)).toBe(count);
       expect(context.error.mock.calls.map(([line]) => line)).toEqual([`visitor-session: a start could not be recorded (${code})`]);
     });
 
@@ -2828,7 +2834,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       });
       expect(note.accessUrl).toBeUndefined();
       expect(note.clientHash).toBeUndefined();
-      expect(store.get('submission_quota', `visitor-quota:${ALICE_KEY}:2026-10-17`).count).toBe(0);
+      expect(usedStarts(store, `visitor-quota:${ALICE_KEY}:2026-10-17`)).toBe(0);
     });
 
     it('gives the daily start back when a start fails, so a failed build costs the visitor nothing (#1400, item 1)', async () => {
@@ -2837,7 +2843,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       for (let i = 0; i < 3; i += 1) expect((await startAsAlice(handlers, { error: vi.fn() })).status).toBe(502);
 
-      expect(store.get('submission_quota', `visitor-quota:${ALICE_KEY}:2026-10-17`).count).toBe(0);
+      expect(usedStarts(store, `visitor-quota:${ALICE_KEY}:2026-10-17`)).toBe(0);
       const working = makeHandlers({ store, fetchImpl: startFetch({ workspace: 'ok' }), clock });
       expect((await startAsAlice(working)).status).toBe(201);
     });
@@ -2863,7 +2869,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(second.status).toBe(409);
       expect(JSON.parse(second.body).code).toBe(DOOR_CODES.start_in_progress);
       expect((await first).status).toBe(201);
-      expect(store.get('submission_quota', `visitor-quota:${ALICE_KEY}:2026-10-17`).count).toBe(1);
+      expect(usedStarts(store, `visitor-quota:${ALICE_KEY}:2026-10-17`)).toBe(1);
     });
 
     it('is not a session anyone can see or end: the status shows none and a stop is a 404 that calls nothing', async () => {

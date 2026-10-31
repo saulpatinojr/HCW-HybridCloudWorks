@@ -26,11 +26,11 @@ vi.mock('@azure/functions', () => ({
 // store a test puts in `backing`; every other verb is a spy that must not be called.
 const backing = vi.hoisted(() => ({ store: null }));
 const forbidden = vi.hoisted(() => ({
-  createDoc: vi.fn(async () => {
-    throw new Error('createDoc must not be called by the sweep');
-  }),
   upsertDoc: vi.fn(async () => {
     throw new Error('upsertDoc must not be called by the sweep');
+  }),
+  incrementIf: vi.fn(async () => {
+    throw new Error('incrementIf must not be called by the sweep');
   }),
   patchDoc: vi.fn(async () => {
     throw new Error('patchDoc must not be called by the sweep');
@@ -43,7 +43,8 @@ vi.mock('../lib/cosmos-client.js', () => ({
   queryDocs: (...args) => backing.store.queryDocs(...args),
   readDoc: (...args) => backing.store.readDoc(...args),
   replaceDocIfMatch: (...args) => backing.store.replaceDocIfMatch(...args),
-  incrementIf: (...args) => backing.store.incrementIf(...args),
+  // Reached only through the sweep's refund-only wrapper (createRefundOnly).
+  createDoc: (...args) => backing.store.createDoc(...args),
   ...forbidden,
 }));
 
@@ -52,7 +53,9 @@ import { runCosmosQuery } from '../../test/cosmos-predicate.js';
 import { reapExpiredVisitorSessions } from '../lib/labs/visitor-session.js';
 import { resetUnconfiguredWarning } from '../lib/timers/visitor-session-sweep.js';
 
-const { SWEEP_STORE, TIMER_FLAG, TIMER_NAME, TIMER_SCHEDULE, sweepEnabled } = await import('./visitor-session-sweep.js');
+const { SWEEP_STORE, TIMER_FLAG, TIMER_NAME, TIMER_SCHEDULE, createRefundOnly, sweepEnabled } = await import(
+  './visitor-session-sweep.js'
+);
 
 const iso = (ms) => new Date(ms).toISOString();
 const CODER_URL = 'https://coder.lab.hybridcloudworks.com';
@@ -152,13 +155,21 @@ describe('sweepVisitorSessions registration', () => {
     expect(timer.extraOutputs).toBeUndefined();
   });
 
-  it('is given the store verbs the sweep uses and nothing that creates a document', () => {
-    expect(Object.keys(SWEEP_STORE).sort()).toEqual(['incrementIf', 'queryDocs', 'readDoc', 'replaceDocIfMatch']);
-    expect(SWEEP_STORE.createDoc).toBeUndefined();
+  it('is given the store verbs the sweep uses, and a create that writes refund documents only', async () => {
+    expect(Object.keys(SWEEP_STORE).sort()).toEqual(['createDoc', 'queryDocs', 'readDoc', 'replaceDocIfMatch']);
+    expect(SWEEP_STORE.createDoc).toBe(createRefundOnly);
     expect(SWEEP_STORE.upsertDoc).toBeUndefined();
+    backing.store.createDoc.mockClear();
+    const session = { id: 's-1', type: 'visitor-session', status: 'active' };
+    await expect(SWEEP_STORE.createDoc('lab_jobs', session)).rejects.toThrow(TypeError);
+    await expect(SWEEP_STORE.createDoc('submission_quota', { id: 'visitor-slot:0', kind: 'visitor_slot' })).rejects.toThrow(TypeError);
+    await expect(SWEEP_STORE.createDoc('submission_quota', { id: 'visitor-x', kind: 'visitor_refund' })).rejects.toThrow(TypeError);
+    expect(backing.store.createDoc).not.toHaveBeenCalled();
+    await SWEEP_STORE.createDoc('submission_quota', { id: 'visitor-refund:s-1', kind: 'visitor_refund' });
+    expect(backing.store.createDoc).toHaveBeenCalledTimes(1);
   });
 
-  it('gives back the daily start of a start whose process died, once, and creates nothing (#1464 review, finding C)', async () => {
+  it('gives back the daily start of a start whose process died, once, and creates nothing but that refund (#1464 review, findings C and round 2)', async () => {
     const quotaId = 'visitor-quota:hash:2026-10-26';
     backing.store = sweepStore([
       session('p-dead', {
@@ -173,12 +184,7 @@ describe('sweepVisitorSessions registration', () => {
         retryAt: iso(Date.now() - 1000),
       }),
     ]);
-    backing.store.docs.set(`submission_quota/${quotaId}`, { id: quotaId, count: 2, _etag: '"q"' });
-    backing.store.incrementIf = vi.fn(async (container, id, options) => {
-      const doc = backing.store.docs.get(`${container}/${id}`);
-      doc.count += options.value;
-      return doc;
-    });
+    backing.store.createDoc.mockClear();
     // Coder has no such user: nothing was made, so the record is over at once.
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })));
     process.env.CODER_URL = CODER_URL;
@@ -188,9 +194,10 @@ describe('sweepVisitorSessions registration', () => {
     await run(recordingContext().context);
     await run(recordingContext().context);
 
-    expect(backing.store.incrementIf).toHaveBeenCalledTimes(1);
-    expect(backing.store.incrementIf).toHaveBeenCalledWith('submission_quota', quotaId, expect.objectContaining({ value: -1 }));
-    expect(backing.store.docs.get(`submission_quota/${quotaId}`).count).toBe(1);
+    // One refund document for the session, written once; a later run adds none.
+    const created = backing.store.createDoc.mock.calls.map(([container, doc]) => `${container}/${doc.id}`);
+    expect(created).toEqual(['submission_quota/visitor-refund:p-dead']);
+    expect(backing.store.get('submission_quota', 'visitor-refund:p-dead')).toMatchObject({ kind: 'visitor_refund', quotaId });
     expect(backing.store.get('lab_jobs', 'p-dead')).toMatchObject({ status: 'ended', dailyCapRefund: 'given' });
     for (const spy of Object.values(forbidden)) expect(spy).not.toHaveBeenCalled();
   });
