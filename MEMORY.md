@@ -2,8 +2,9 @@
 
 Updated: 2026-10-27, America/Chicago (CDT). This is a dated handoff, not a live
 status feed or a replacement for GitHub issues. Refresh GitHub state before acting.
-On 2026-10-31 its list of standing rules moved into `.claude/CLAUDE.md` ([#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455));
-nothing else in it was refreshed then.
+On 2026-10-31 its list of standing rules moved into `.claude/CLAUDE.md` ([#1455](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1455)),
+and [#1346](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1346) left the later list because
+[#1461](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1461) closed it; nothing else in it was refreshed then.
 
 Two working sessions wrote this file on the same day: the application work (AI Engine,
 Ambassadors, Blogs and their deployments) and the infrastructure, CI and add-on work
