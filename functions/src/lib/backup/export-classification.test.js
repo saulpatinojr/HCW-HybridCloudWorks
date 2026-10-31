@@ -17,6 +17,8 @@ import {
   classify,
   classifiedContainers,
   exportPlanFor,
+  SEPARATE_DATABASE_CONTAINERS,
+  separateDatabaseFor,
 } from './export-classification.js';
 
 const SPEC = join(
@@ -25,18 +27,34 @@ const SPEC = join(
   'cosmos-containers.json'
 );
 
-function provisioned() {
-  const spec = JSON.parse(readFileSync(SPEC, 'utf8'));
-  return spec.containers.map((c) => c.name).sort();
+const CODE_BRAIN_SPEC = join(
+  fileURLToPath(new URL('../../../..', import.meta.url)),
+  'infra',
+  'cosmos-code-brain-containers.json'
+);
+
+/** The Code Conductor brain's own database (#1457, ADR 0036). */
+function codeBrainSpec() {
+  return JSON.parse(readFileSync(CODE_BRAIN_SPEC, 'utf8'));
 }
 
+/** Every container Terraform provisions, in either database. */
+function provisioned() {
+  const spec = JSON.parse(readFileSync(SPEC, 'utf8'));
+  return [...spec.containers, ...codeBrainSpec().containers].map((c) => c.name).sort();
+}
+
+/** The app settings Terraform sets once the Code Conductor database exists. */
+const WITH_CODE_BRAIN = { CODE_BRAIN_COSMOS_DATABASE: 'hcw_code_brain' };
+
 describe('export classification against infra/cosmos-containers.json', () => {
-  it('the spec provisions 78 classified containers including Second Brain and Doc Vault', () => {
+  it('the specs provision 79 classified containers including both brains and Doc Vault', () => {
     // 72 at the ADR's writing; podcast_transcripts (#435) made it 73,
     // tool_price_history (#613 Phase 3) 74 and ambassador (ADR 0033 §4) 75.
     // Doc Vault adds one authored container. Second Brain adds authored
-    // brain_records and regenerable brain_search.
-    expect(provisioned()).toHaveLength(78);
+    // brain_records and regenerable brain_search. The Code Conductor brain
+    // (#1457) adds authored code_brain_records, in its own database.
+    expect(provisioned()).toHaveLength(79);
   });
 
   it('every provisioned container is classified exactly once', () => {
@@ -59,9 +77,10 @@ describe('export classification against infra/cosmos-containers.json', () => {
     expect(phantom, 'classified but not provisioned — remove it or provision it').toEqual([]);
   });
 
-  it('classifies 47 authored, 10 configuration, 7 operational, 14 excluded', () => {
-    // 44 at the ADR's writing; ambassador, Doc Vault and brain_records add three.
-    expect(AUTHORED).toHaveLength(47);
+  it('classifies 48 authored, 10 configuration, 7 operational, 14 excluded', () => {
+    // 44 at the ADR's writing; ambassador, Doc Vault, brain_records and
+    // code_brain_records add four.
+    expect(AUTHORED).toHaveLength(48);
     expect(CONFIGURATION).toHaveLength(10);
     expect(OPERATIONAL).toHaveLength(7);
     const excluded = ['regenerable', 'seed', 'transient'].flatMap(
@@ -85,14 +104,14 @@ describe('export classification against infra/cosmos-containers.json', () => {
 });
 
 describe('exportPlanFor', () => {
-  it('full is A + B + C (64), delta is A + B (57), both sorted and duplicate-free', () => {
-    const full = exportPlanFor('full');
-    const delta = exportPlanFor('delta');
-    expect(full).toHaveLength(64);
-    expect(delta).toHaveLength(57);
+  it('full is A + B + C (65), delta is A + B (58), both sorted and duplicate-free', () => {
+    const full = exportPlanFor('full', WITH_CODE_BRAIN);
+    const delta = exportPlanFor('delta', WITH_CODE_BRAIN);
+    expect(full).toHaveLength(65);
+    expect(delta).toHaveLength(58);
     expect(full).toEqual([...full].sort());
     expect(delta).toEqual([...delta].sort());
-    expect(new Set(full).size).toBe(64);
+    expect(new Set(full).size).toBe(65);
     // Class C is exported on full runs only (owner decision, #231).
     for (const name of OPERATIONAL) {
       expect(full).toContain(name);
@@ -110,6 +129,42 @@ describe('exportPlanFor', () => {
       expect(exportPlanFor('full')).not.toContain(name);
       expect(exportPlanFor('delta')).not.toContain(name);
     }
+  });
+
+  it('plans the Code Conductor brain on every run once its database setting exists, and not before', () => {
+    // Terraform creates the database and sets CODE_BRAIN_COSMOS_DATABASE in
+    // one apply, so the authored records are backed up before the workspace
+    // is switched on, and a deploy that lands first plans nothing it cannot read.
+    for (const mode of ['full', 'delta']) {
+      expect(exportPlanFor(mode, WITH_CODE_BRAIN)).toContain('code_brain_records');
+      expect(exportPlanFor(mode, {})).not.toContain('code_brain_records');
+      expect(exportPlanFor(mode, { CODE_BRAIN_COSMOS_DATABASE: '  ' })).not.toContain('code_brain_records');
+      // Nothing else changes with the setting.
+      expect(exportPlanFor(mode, WITH_CODE_BRAIN).filter((c) => c !== 'code_brain_records')).toEqual(
+        exportPlanFor(mode, {})
+      );
+    }
+  });
+
+  it('knows which containers live in a separate database, and each is in the Code Conductor spec', () => {
+    const codeContainers = codeBrainSpec().containers.map((c) => c.name).sort();
+    expect(Object.keys(SEPARATE_DATABASE_CONTAINERS).sort()).toEqual(codeContainers);
+    for (const name of codeContainers) {
+      expect(classify(name)).toBe('authored');
+      expect(separateDatabaseFor(name, WITH_CODE_BRAIN)).toBe(codeBrainSpec().database);
+    }
+    expect(separateDatabaseFor('brain_records', WITH_CODE_BRAIN)).toBeNull();
+    expect(separateDatabaseFor('code_brain_records', {})).toBeUndefined();
+    // A setting that names the creator database, in any spelling, is skipped
+    // rather than planned: the nightly export must not read the creator
+    // database as the Code Conductor brain's, nor fail on it.
+    for (const spelling of ['hcw', 'HCW', ' hcw']) {
+      expect(separateDatabaseFor('code_brain_records', { CODE_BRAIN_COSMOS_DATABASE: spelling }), spelling).toBeUndefined();
+      expect(exportPlanFor('delta', { CODE_BRAIN_COSMOS_DATABASE: spelling }), spelling).not.toContain('code_brain_records');
+    }
+    expect(
+      separateDatabaseFor('code_brain_records', { COSMOS_DATABASE: 'drill', CODE_BRAIN_COSMOS_DATABASE: 'Drill' })
+    ).toBeUndefined();
   });
 
   it('refuses an unknown mode rather than planning nothing', () => {

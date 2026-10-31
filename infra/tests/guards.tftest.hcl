@@ -5,6 +5,7 @@
 # 2. Deploy identity trusts environment-only subjects (SEC-2).
 # 3. Cosmos DB built-in data role is scoped to the Function App.
 # 4. Cosmos DB account enforces virtual network filtering and disables local keys (T-504).
+# 5. The Code Conductor brain has its own database, owner partitioning, and is off by default (#1457).
 
 mock_provider "azurerm" {}
 mock_provider "azurerm" {
@@ -90,5 +91,26 @@ run "infrastructure_security_guards" {
   assert {
     condition     = azurerm_cosmosdb_account.hcw.local_authentication_enabled == false
     error_message = "Cosmos DB account must have local key authentication disabled (T-504)."
+  }
+
+  # 5. Code Conductor brain isolation (#1457, ADR 0036)
+  assert {
+    condition     = azurerm_cosmosdb_sql_database.code_brain.name != azurerm_cosmosdb_sql_database.hcw.name
+    error_message = "The Code Conductor brain must have its own database, separate from the creator site's."
+  }
+
+  assert {
+    condition     = alltrue([for c in azurerm_cosmosdb_sql_container.code_brain : c.database_name == azurerm_cosmosdb_sql_database.code_brain.name && c.partition_key_paths == tolist(["/ownerId"])])
+    error_message = "Every Code Conductor brain container must live in its own database and be partitioned on /ownerId."
+  }
+
+  assert {
+    condition     = azurerm_function_app_flex_consumption.hcw.app_settings["CODE_BRAIN_ENABLED"] == "false" && azurerm_function_app_flex_consumption.hcw.app_settings["CODE_BRAIN_OWNER_OID"] == "" && azurerm_function_app_flex_consumption.hcw.app_settings["CODE_BRAIN_SYNC_CLIENT_ID"] == ""
+    error_message = "The Code Conductor brain must be off, with no owner or desktop client, by default."
+  }
+
+  assert {
+    condition     = azurerm_function_app_flex_consumption.hcw.app_settings["CODE_BRAIN_COSMOS_DATABASE"] == azurerm_cosmosdb_sql_database.code_brain.name && azurerm_function_app_flex_consumption.hcw.app_settings["COSMOS_DATABASE"] == azurerm_cosmosdb_sql_database.hcw.name
+    error_message = "CODE_BRAIN_COSMOS_DATABASE must name the Code Conductor database, and COSMOS_DATABASE must still name the creator database."
   }
 }

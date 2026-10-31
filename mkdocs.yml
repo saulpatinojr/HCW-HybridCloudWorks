@@ -126,6 +126,7 @@ nav:
       - 0033 ContentForge alignment: decisions/0033-contentforge-alignment.md
       - 0034 AI model selection: decisions/0034-ai-model-selection.md
       - 0035 AddOn pane model: decisions/0035-addon-pane-model.md
+      - 0036 Code Conductor brain: decisions/0036-code-conductor-brain.md
   - Runbooks:
       - Deployment: runbooks/deployment-runbook.md
       - Admin sign-in rollback: runbooks/admin-signin-rollback.md
@@ -139,6 +140,7 @@ nav:
       - Add an interview: runbooks/add-an-interview.md
       - Idea notes in Obsidian: runbooks/obsidian-idea-notes.md
       - Private Second Brain: runbooks/second-brain.md
+      - Code Conductor brain: runbooks/code-conductor-brain.md
       - Labs host access and Arc onboarding: runbooks/labs-host.md
       - Docker Hub publishing (OIDC connection): runbooks/docker-hub-publishing.md
       - Copilot code review MCP servers: runbooks/copilot-code-review-mcp.md

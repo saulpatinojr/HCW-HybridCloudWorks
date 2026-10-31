@@ -436,6 +436,16 @@ resource "azurerm_function_app_flex_consumption" "hcw" {
     "BRAIN_OWNER_OID"       = var.brain_owner_oid
     "BRAIN_OWNER_TENANT_ID" = var.brain_owner_tenant_id
     "BRAIN_SYNC_CLIENT_ID"  = var.brain_sync_client_id
+    # The Code Conductor brain (#1457, code-brain.tf). Separate switches from
+    # the creator brain's above. The database name is read off the records
+    # container, so the setting appears only once the database AND its
+    # container exist, and that setting is what adds code_brain_records to the
+    # out-of-account export: the export never plans a container not yet there.
+    "CODE_BRAIN_ENABLED"         = tostring(var.code_brain_enabled)
+    "CODE_BRAIN_OWNER_OID"       = var.code_brain_owner_oid
+    "CODE_BRAIN_OWNER_TENANT_ID" = var.code_brain_owner_tenant_id
+    "CODE_BRAIN_SYNC_CLIENT_ID"  = var.code_brain_sync_client_id
+    "CODE_BRAIN_COSMOS_DATABASE" = azurerm_cosmosdb_sql_container.code_brain["code_brain_records"].database_name
 
     # AWS pricing — Key Vault references, so process.env reads stay identical to
     # the Firebase defineSecret originals. Key Vault secret names cannot contain
