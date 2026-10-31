@@ -532,11 +532,28 @@ describe('every job that runs repository code has a time limit (#1441)', () => {
  * WINDOW_MARGIN minutes to spare (for setting up the job and the steps GitHub
  * adds). Then a stuck step is stopped by its own limit, never by the job's,
  * and the windows are closed before the job's clock can run out.
+ *
+ * Each step that adds a rule also writes the output its close step needs
+ * (the rule's name, or the runner's address) BEFORE the add, and each close
+ * step checks the rule is there before removing it. Otherwise an add that
+ * succeeded in Azure and then hung until the step's limit stopped it would
+ * leave the rule with no close step to remove it.
  */
 const WINDOW_MARGIN = 5;
 const isWindowClose = (step) => /\bclose\b.*\bwindow\b/i.test(step.name ?? '') && /\balways\(\)/.test(step.if ?? '');
 /** A shell line that adds an allow rule in Azure: the thing a window-close step must undo. */
 const OPENS_A_RULE = /\baz\s+(?:functionapp\s+config\s+access-restriction|storage\s+account\s+network-rule)\s+add\b/;
+
+const REMOVES_A_RULE = /\baz\s+(?:functionapp\s+config\s+access-restriction|storage\s+account\s+network-rule)\s+remove\b/;
+const LOOKS_FOR_A_RULE = /\baz\s+(?:functionapp\s+config\s+access-restriction\s+show|storage\s+account\s+network-rule\s+list)\b/;
+
+/** Whether a step's shell writes to $GITHUB_OUTPUT on a line before its first `az … add` line. */
+export function firstOutputBeforeAdd(run) {
+  const lines = String(run).split('\n');
+  const add = lines.findIndex((line) => OPENS_A_RULE.test(line));
+  const output = lines.findIndex((line) => !/^\s*#/.test(line) && /\$\{?GITHUB_OUTPUT\b/.test(line));
+  return add !== -1 && output !== -1 && output < add;
+}
 
 /** A step's own `timeout-minutes` as a number, or undefined; NaN when it is not a plain whole number. */
 export function stepTimeoutMinutes(step) {
@@ -571,6 +588,37 @@ describe('a job that opens a firewall window closes it before its own limit can 
       const after = job.steps.slice(job.steps.indexOf(step) + 1);
       expect(after.some(isWindowClose), `${label}: "${step.name}" adds an allow rule, but no later step named "Close … window" runs with always()`).toBe(true);
     }
+  });
+
+  // The close step runs only when the open step's output is set. If the step
+  // wrote it after the add, an add that succeeded in Azure and then hung until
+  // the step's limit stopped it would leave the rule with nothing to remove it.
+  it('every step that adds an allow rule writes its output (what the close step needs) before the add', () => {
+    for (const { label, job } of ALL) {
+      for (const step of job.steps.filter((candidate) => OPENS_A_RULE.test(candidate.run ?? ''))) {
+        expect(firstOutputBeforeAdd(step.run), `${label}: "${step.name}" must write to $GITHUB_OUTPUT before its \`az … add\` line`).toBe(true);
+      }
+    }
+  });
+
+  it('every close step checks that the rule is there before it removes it, so a rule that was never added is not an error', () => {
+    const closes = WINDOWED.flatMap(({ label, job }) => job.steps.filter(isWindowClose).map((step) => ({ label, step })));
+    expect(closes.length).toBeGreaterThan(3);
+    for (const { label, step } of closes) {
+      const lines = step.run.split('\n');
+      const remove = lines.findIndex((line) => REMOVES_A_RULE.test(line));
+      if (remove === -1) continue;
+      const check = lines.findIndex((line) => LOOKS_FOR_A_RULE.test(line));
+      expect(check !== -1 && check < remove, `${label}: "${step.name}" removes a rule without first checking it is there`).toBe(true);
+    }
+  });
+
+  it('the order check fails on the old order, where the output was written after the add', () => {
+    const old = ['RULE="ci-manifest-${GITHUB_RUN_ID}"', 'az functionapp config access-restriction add \\', '  --rule-name "$RULE" --output none', 'echo "rule_name=${RULE}" >> "$GITHUB_OUTPUT"'].join('\n');
+    const fixed = ['RULE="ci-manifest-${GITHUB_RUN_ID}"', 'echo "rule_name=${RULE}" >> "$GITHUB_OUTPUT"', 'az functionapp config access-restriction add \\', '  --rule-name "$RULE" --output none'].join('\n');
+    expect(firstOutputBeforeAdd(old)).toBe(false);
+    expect(firstOutputBeforeAdd(fixed)).toBe(true);
+    expect(firstOutputBeforeAdd('az storage account network-rule add --ip-address "$IP"')).toBe(false);
   });
 
   it.each(WINDOWED.map(({ label, job }) => [label, job]))('%s: every step up to the last close has a limit, and they fit inside the job limit', (label, job) => {

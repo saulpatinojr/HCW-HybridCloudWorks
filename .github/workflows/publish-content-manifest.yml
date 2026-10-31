@@ -199,12 +199,15 @@ jobs:
             exit 1
           fi
           RULE="ci-manifest-${GITHUB_RUN_ID}"
+          # Written before the add, so the close step knows the rule's name even
+          # if the add succeeds in Azure and this step is then stopped by its
+          # time limit (#1441). The close removes it only if it exists.
+          echo "rule_name=${RULE}" >> "$GITHUB_OUTPUT"
           az functionapp config access-restriction add \
             --resource-group "$RG" --name "$APP" \
             --rule-name "$RULE" --action Allow \
             --ip-address "${RUNNER_IP}/32" --priority 300 \
             --output none
-          echo "rule_name=${RULE}" >> "$GITHUB_OUTPUT"
           sleep 20
 
       - name: Build the manifest
@@ -226,9 +229,18 @@ jobs:
           RULE: ${{ steps.appfw.outputs.rule_name }}
         run: |
           set -euo pipefail
-          az functionapp config access-restriction remove \
-            --resource-group "$RG" --name "$APP" \
-            --rule-name "$RULE" --output none
+          # The open step writes the rule's name before it adds the rule, so the
+          # rule may not exist (the add failed, or the step was stopped first).
+          present=$(az functionapp config access-restriction show -n "$APP" -g "$RG" \
+            --query "length(ipSecurityRestrictions[?name=='${RULE}'])" -o tsv)
+          if [ "$present" = "0" ]; then
+            echo "rule ${RULE} is not on the origin (the open step stopped before adding it); nothing to remove"
+          else
+            az functionapp config access-restriction remove \
+              --resource-group "$RG" --name "$APP" \
+              --rule-name "$RULE" --output none
+            echo "rule ${RULE} removed from the origin"
+          fi
 
           left=$(az functionapp config access-restriction show -n "$APP" -g "$RG" \
             --query "length(ipSecurityRestrictions[?starts_with(name, 'ci-manifest-')])" -o tsv)

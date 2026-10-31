@@ -218,6 +218,10 @@ jobs:
           set -euo pipefail
           RUNNER_IP=$(curl -sS --max-time 10 https://api.ipify.org | node scripts/assert-ipv4.mjs)
           RULE="ci-deploy-scm-${GITHUB_RUN_ID}"
+          # Written before the add, so the close step knows the rule's name even
+          # if the add succeeds in Azure and this step is then stopped by its
+          # time limit (#1441). The close removes it only if it exists.
+          echo "rule_name=${RULE}" >> "$GITHUB_OUTPUT"
 
           # If SCM inherits the main site's rules, an SCM rule is ignored and
           # the Cloudflare-only origin lock applies to Kudu as well — a runner
@@ -231,11 +235,10 @@ jobs:
 
           BASELINE=$(az functionapp config access-restriction show -n "$APP" -g "$RG"             --query "scmIpSecurityRestrictionsDefaultAction" -o tsv)
           echo "scm default action before the window: $BASELINE"
+          echo "baseline=${BASELINE}" >> "$GITHUB_OUTPUT"
 
           az functionapp config access-restriction add             --resource-group "$RG"             --name "$APP"             --rule-name "$RULE"             --action Allow --ip-address "${RUNNER_IP}/32" --priority 300             --scm-site true             --output none
 
-          echo "rule_name=${RULE}" >> "$GITHUB_OUTPUT"
-          echo "baseline=${BASELINE}" >> "$GITHUB_OUTPUT"
           sleep 20
 
       # A repository VARIABLE, seeded from the `function_app_name` Terraform
@@ -351,10 +354,21 @@ jobs:
           BASELINE: ${{ steps.scmfw.outputs.baseline }}
         run: |
           set -euo pipefail
-          az functionapp config access-restriction remove             --resource-group "$RG"             --name "$APP"             --rule-name "$RULE"             --scm-site true             --output none
+          # The open step writes the rule's name before it adds the rule, so the
+          # rule may not exist: the add failed, or the step was stopped first.
+          present=$(az functionapp config access-restriction show -n "$APP" -g "$RG" \
+            --query "length(scmIpSecurityRestrictions[?name=='${RULE}'])" -o tsv)
+          if [ "$present" = "0" ]; then
+            echo "rule ${RULE} is not on the SCM site (the open step stopped before adding it); nothing to remove"
+          else
+            az functionapp config access-restriction remove             --resource-group "$RG"             --name "$APP"             --rule-name "$RULE"             --scm-site true             --output none
+            echo "rule ${RULE} removed from the SCM site"
+          fi
 
           after=$(az functionapp config access-restriction show -n "$APP" -g "$RG"             --query "scmIpSecurityRestrictionsDefaultAction" -o tsv)
-          if [ "$after" != "$BASELINE" ]; then
+          if [ -z "$BASELINE" ]; then
+            echo "no baseline was read (the open step stopped before reading it), so the default action '$after' is not compared"
+          elif [ "$after" != "$BASELINE" ]; then
             echo "::error::scm default action is '$after' after the window closed, expected '$BASELINE'"
             exit 1
           fi
@@ -378,11 +392,21 @@ jobs:
             --resource-group "${RG}" \
             --name "${SA}" \
             --default-action Deny --output none
-          az storage account network-rule remove \
-            --resource-group "${RG}" \
-            --account-name "${SA}" \
-            --ip-address "${RUNNER_IP}" \
-            --output none
+          # The open step writes runner_ip before it adds the rule, so the rule
+          # may not exist (the add failed, or the step was stopped first).
+          present=$(az storage account network-rule list \
+            --resource-group "${RG}" --account-name "${SA}" \
+            --query "length(ipRules[?ipAddressOrRange=='${RUNNER_IP}'])" -o tsv)
+          if [ "${present}" = "0" ]; then
+            echo "no storage firewall rule for ${RUNNER_IP} (the open step stopped before adding it); nothing to remove"
+          else
+            az storage account network-rule remove \
+              --resource-group "${RG}" \
+              --account-name "${SA}" \
+              --ip-address "${RUNNER_IP}" \
+              --output none
+            echo "storage firewall rule for ${RUNNER_IP} removed"
+          fi
           az storage account show --resource-group "${RG}" \
             --name "${SA}" \
             --query "networkRuleSet.defaultAction" -o tsv | grep -qx Deny \
@@ -606,11 +630,22 @@ jobs:
           APP: ${{ vars.FUNCTION_APP_NAME }}
           RG: ${{ vars.RESOURCE_GROUP }}
         run: |
-          az functionapp config access-restriction remove \
-            --resource-group "${RG}" \
-            --name "${APP}" \
-            --rule-name "ci-smoke-${GITHUB_RUN_ID}" \
-            --output none
+          set -euo pipefail
+          RULE="ci-smoke-${GITHUB_RUN_ID}"
+          # The open step writes runner_ip before it adds the rule, so the rule
+          # may not exist (the add failed, or the step was stopped first).
+          present=$(az functionapp config access-restriction show -n "${APP}" -g "${RG}" \
+            --query "length(ipSecurityRestrictions[?name=='${RULE}'])" -o tsv)
+          if [ "${present}" = "0" ]; then
+            echo "rule ${RULE} is not on the site (the open step stopped before adding it); nothing to remove"
+          else
+            az functionapp config access-restriction remove \
+              --resource-group "${RG}" \
+              --name "${APP}" \
+              --rule-name "${RULE}" \
+              --output none
+            echo "rule ${RULE} removed from the site"
+          fi
 
       # The origin lock, read where Azure enforces it (PLAT-2, #962).
       #
