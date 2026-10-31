@@ -41,8 +41,10 @@ Until a key exists, every call to the API is refused and nothing is on.
    - `403` means the switch for that call is off on the tab.
    - `429` means more than 120 calls in a minute; the answer carries a
      `Retry-After` header with the seconds to wait.
-7. Within about five minutes the card's **Last used** shows the time of that
-   call. That is the proof the connection works end to end.
+7. The `200` answer in step 6 is the proof the connection works end-to-end.
+   The card's **Last used** is a best-effort stamp, written at most once
+   every five minutes, and the tab does not refresh itself: reload the page
+   a few minutes after the call to see it move.
 
 If Muse will not accept `api-azure.hybridcloudworks.com` as the host and
 insists on `hybridcloudworks.com`, stop here and say so: the API does not
@@ -51,12 +53,14 @@ recorded as an open point in the ADR, not a setting on this tab.
 
 ## 2. Check it from your own machine (optional)
 
-These prove the same thing without Muse. Both are **PowerShell**. The first
-line asks for the key and keeps it out of your shell history; it is never
-printed.
+These prove the same thing without Muse. All are **PowerShell**; open a new
+PowerShell window for them and close it when you are done, because a
+plaintext string in a running shell cannot be reliably wiped. The first line
+asks for the key and keeps it out of your shell history; it is never printed,
+and the unmanaged copy it decodes from is zeroed and freed straight away.
 
 ```powershell
-$key = Read-Host 'Paste the Koda key' -AsSecureString; $plain = [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($key))
+$key = Read-Host 'Paste the Koda key' -AsSecureString; $ptr = [Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($key); try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringUni($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeGlobalAllocUnicode($ptr) }
 ```
 
 ```powershell
@@ -73,10 +77,10 @@ try { Invoke-RestMethod -Uri 'https://api-azure.hybridcloudworks.com/api/agent-c
 A good result prints `401`. Anything else means the API is not guarding the
 route, which would be a defect to raise at once.
 
-To clear the key from the shell when you are done:
+When you are done, drop the variables and close the window:
 
 ```powershell
-Remove-Variable plain, key
+Remove-Variable plain, key, ptr
 ```
 
 ## 3. Rotate the key
@@ -113,12 +117,12 @@ audit log.
 
 - **The Drafts page** (<https://hybridcloudworks.com/admin/drafts>): drafts
   Koda wrote show `koda (agent)` as their author.
-- **Refused calls:** every call that presented a key and was refused is a
-  row in the `admin_audit_logs` container with `kind: "agent-content-denial"`
-  and a `reason` (`no-key`, `wrong-key`, `revoked-key`, `not-an-agent-key`,
-  `capability-off`, `rate-limited`). A call with no key at all is refused
-  without a row, so internet scanners do not fill the log. The key itself is
-  never in a row.
+- **Refused calls:** every call that presented a site key (one starting
+  `hcwk_`) and was refused is a row in the `admin_audit_logs` container with
+  `kind: "agent-content-denial"` and a `reason` (`no-key`, `wrong-key`,
+  `revoked-key`, `capability-off`, `rate-limited`). A call with no key, or
+  with some other bearer value, is refused without a row, so internet
+  scanners do not fill the log. The key itself is never in a row.
 - **Key events:** rows with `action` `agent_content_key_generated`,
   `agent_content_key_rotated`, `agent_content_capabilities_changed` or
   `agent_content_key_revoked`, each with the key's first characters and who
@@ -138,8 +142,15 @@ audit log.
   track, part, tags, reading, body, kind, ideaOrigin } }` (title and body
   required), or `POST drafts/from-markdown` with `{ "markdown": "<the whole
   file, front matter included>" }` in the blog template's format. The
-  markdown route is safe to repeat: the same title answers
-  `200 ALREADY_IMPORTED` instead of a second draft.
+  markdown route is the safe way to create and the safe one to retry: a
+  title already in Drafts or In Review answers `200` with
+  `code: "ALREADY_IMPORTED"` and the existing `contentId`; a title already
+  published answers `200` with `code: "PUBLISHED_ELSEWHERE"` and
+  `existingId`; neither writes a second draft. `POST drafts` makes a new id
+  every time, so a lost answer and a retry there would make two drafts.
+- A key whose **Read drafts** switch is off still gets the outcome, id and
+  etag of its own writes, but `draft.fields` (the text) is replaced by
+  `bodyWithheld: true`.
 - The body is at most 256 KB. Errors are `{ "ok": false, "code", "error" }`.
 - `GET published` and `GET published/{slugOrId}` answer exactly as the public
   site's own reads do.

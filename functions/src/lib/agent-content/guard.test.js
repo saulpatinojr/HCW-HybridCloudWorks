@@ -1,8 +1,8 @@
 /**
  * The agent key guard (guard.js, ADR 0037): the three gates in order, what
  * each refusal answers and records, the per-minute limit's 429, the capability
- * check, the identity the Drafts routes receive, and that nothing reads the
- * store before the key's shape has passed.
+ * check, the identity the Drafts routes receive, and that nothing reads or
+ * writes the store before the key's shape has passed.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LAST_USED_EVERY_MS, createAgentContentGuard } from './guard.js';
@@ -88,14 +88,15 @@ describe('gate 1 — the bearer value', () => {
     expect(store.readDoc).not.toHaveBeenCalled();
   });
 
-  it('answers 401 for an Entra token or any value not shaped like a key, reading nothing', async () => {
+  it('answers 401 for an Entra token or any value not shaped like a key, reading and writing nothing', async () => {
     const { store, guard } = setup();
     const auth = await guard.authenticate(request(TOKEN_SHAPED));
     expect(auth.error.status).toBe(401);
     expect(store.readDoc).not.toHaveBeenCalled();
-    expect(audits).toEqual([
-      expect.objectContaining({ kind: 'agent-content-denial', outcome: 'denied', reason: 'not-an-agent-key' }),
-    ]);
+    // No audit row: a value that is not a site key is no credential, and a
+    // scanner's random bearers must not become a write per request.
+    expect(audits).toEqual([]);
+    expect(auditDenial).not.toHaveBeenCalled();
   });
 });
 
@@ -211,25 +212,8 @@ describe('the capability', () => {
   });
 });
 
-describe('as the Drafts routes see it', () => {
-  it('answers requireRole in the role guard’s shape, with Koda as the editor', async () => {
-    const { guard } = setup();
-    const asEditor = guard.asRoleGuard('drafts.write');
-    const auth = await asEditor.requireRole(request(`Bearer ${SECRET}`), 'editor');
-    expect(auth).toEqual({ user: { ...AGENT_USER, keyHint: RECORD.keyHint }, role: 'editor', error: null });
-    const denied = await asEditor.requireRole(request('Bearer nope'), 'editor');
-    expect(denied.user).toBeNull();
-    expect(denied.role).toBeNull();
-    expect(denied.error.status).toBe(401);
-  });
-
-  it('never consults the admin registry or accepts an admin token', async () => {
-    const { store, guard } = setup();
-    await guard.asRoleGuard('drafts.read').requireRole(request(TOKEN_SHAPED), 'editor');
-    expect(store.readDoc).not.toHaveBeenCalled();
-  });
-
-  it('an audit sink that throws does not change the answer', async () => {
+describe('the audit sink', () => {
+  it('never changes the answer when it throws', async () => {
     const store = memoryStore(null);
     const guard = createAgentContentGuard({
       store,
@@ -240,5 +224,12 @@ describe('as the Drafts routes see it', () => {
     });
     const auth = await guard.authenticate(request(`Bearer ${SECRET}`));
     expect(auth.error.status).toBe(401);
+  });
+
+  it('never consults the admin registry, and an admin token is refused before any read', async () => {
+    const { store, guard } = setup();
+    const auth = await guard.requireCapability(request(TOKEN_SHAPED), 'drafts.read');
+    expect(auth.error.status).toBe(401);
+    expect(store.readDoc).not.toHaveBeenCalled();
   });
 });

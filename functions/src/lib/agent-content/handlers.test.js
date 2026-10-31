@@ -50,12 +50,6 @@ function allowingGuard(record = RECORD) {
       asked.push(capability);
       return pass;
     }),
-    asRoleGuard: (capability) => ({
-      requireRole: vi.fn(async () => {
-        asked.push(capability);
-        return { user: KODA, role: 'editor', error: null };
-      }),
-    }),
   };
 }
 
@@ -64,8 +58,15 @@ function refusingGuard() {
   return {
     authenticate: vi.fn(async () => ({ record: null, user: null, error: refusal })),
     requireCapability: vi.fn(async () => ({ record: null, user: null, error: refusal })),
-    asRoleGuard: () => ({ requireRole: vi.fn(async () => ({ user: null, role: null, error: refusal })) }),
   };
+}
+
+/** A guard whose store is down: every check rejects, with a message that must not reach the answer. */
+function faultingGuard() {
+  const fault = () => {
+    throw Object.assign(new Error('cosmos is down: account key xyz'), { code: 503 });
+  };
+  return { authenticate: vi.fn(fault), requireCapability: vi.fn(fault) };
 }
 
 function memoryStore(seed = []) {
@@ -367,23 +368,66 @@ describe('the default idea origin', () => {
 });
 
 describe('a store fault inside the guard', () => {
-  it('is the content-free 500, not a throw into the host', async () => {
-    const guard = {
-      authenticate: vi.fn(async () => {
-        throw Object.assign(new Error('cosmos is down: account key xyz'), { code: 503 });
-      }),
-      requireCapability: vi.fn(async () => {
-        throw Object.assign(new Error('cosmos is down: account key xyz'), { code: 503 });
-      }),
-      asRoleGuard: () => ({ requireRole: vi.fn(async () => ({ user: KODA, role: 'editor', error: null })) }),
-    };
-    const { handlers } = setup({ guard });
-    for (const name of ['status', 'listPublished']) {
-      const res = await handlers[name](request(), context);
-      expect(res.status).toBe(500);
+  it('is the content-free 500 on every route, the Drafts routes included, not a throw into the host', async () => {
+    const { handlers, store } = setup({ guard: faultingGuard() });
+    const routes = [
+      ['status', {}],
+      ['listPublished', {}],
+      ['getPublished', { slugOrId: 'x' }],
+      ['listDrafts', {}],
+      ['getDraft', { id: 'x' }],
+      ['createDraft', { body: { fields: FIELDS } }],
+      ['saveDraft', { id: 'x', body: { fields: FIELDS, etag: '"e1"' } }],
+      ['deleteDraft', { id: 'x', body: { etag: '"e1"' } }],
+      ['sendToReview', { id: 'x', body: { etag: '"e1"' } }],
+    ];
+    for (const [name, req] of routes) {
+      const res = await handlers[name](request(req), context);
+      expect(res.status, name).toBe(500);
       expect(res.headers['Content-Type']).toBe('application/json');
       expect(res.body).not.toContain('account key');
     }
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe('a key whose Read drafts switch is off', () => {
+  const noRead = { ...RECORD, capabilities: { ...RECORD.capabilities, 'drafts.read': false } };
+
+  it('may still write, but is told the outcome without the draft’s text, etag included', async () => {
+    const { handlers, store } = setup({ guard: allowingGuard(noRead) });
+    const made = parse(await handlers.createDraft(request({ body: { fields: FIELDS } }), context));
+    expect(made.status).toBe(201);
+    expect(made.body.draft.id).toBeDefined();
+    expect(made.body.draft.etag).toBeDefined();
+    expect(made.body.draft.fields).toBeUndefined();
+    expect(made.body.draft.bodyWithheld).toBe(true);
+    expect(JSON.stringify(made.body)).not.toContain(FIELDS.body);
+    // The document itself is whole.
+    expect(store.docs.get(made.body.draft.id).postContent).toBe(FIELDS.body);
+
+    const saved = parse(
+      await handlers.saveDraft(
+        request({ id: made.body.draft.id, body: { fields: { ...FIELDS, title: 'Renamed' }, etag: made.body.draft.etag } }),
+        context,
+      ),
+    );
+    expect(saved.status).toBe(200);
+    expect(saved.body.draft.fields).toBeUndefined();
+    expect(JSON.stringify(saved.body)).not.toContain(FIELDS.body);
+
+    const stale = parse(
+      await handlers.sendToReview(request({ id: made.body.draft.id, body: { etag: '"never"' } }), context),
+    );
+    expect(stale.status).toBe(412);
+    expect(JSON.stringify(stale.body)).not.toContain(FIELDS.body);
+  });
+
+  it('with the switch on, a write answers with the text as the page would see it', async () => {
+    const { handlers } = setup();
+    const made = parse(await handlers.createDraft(request({ body: { fields: FIELDS } }), context));
+    expect(made.body.draft.fields.body).toBe(FIELDS.body);
+    expect(made.body.draft.bodyWithheld).toBeUndefined();
   });
 });
 

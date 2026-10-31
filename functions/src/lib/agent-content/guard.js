@@ -22,11 +22,13 @@
  *
  * Then the capability the route needs must be switched on for the key.
  *
- * Every refusal of a presented value is one `admin_audit_logs` row of kind
- * agent-content-denial, with the reason and never the key or any part of it.
- * A request with no Authorization header at all is refused without a row, as
- * the admin guard refuses one: there is no attempt to describe, and the
- * anonymous probes the internet sends would only fill the log. 401 for a missing,
+ * Every refusal of a presented site key (one shaped like ours: wrong, revoked,
+ * over the limit, or without the capability) is one `admin_audit_logs` row of
+ * kind agent-content-denial, with the reason and never the key or any part of
+ * it. A request with no Authorization header, or with a bearer value not
+ * shaped like a site key, is refused without a row, as the admin guard refuses
+ * a missing token: there is no attempt worth describing, and the anonymous
+ * probes the internet sends would otherwise be a write each. 401 for a missing,
  * wrong or revoked key (one sentence for all three, so the answer does not
  * say whether a key exists), 403 for a capability that is off, 429 with
  * Retry-After for the limit.
@@ -121,8 +123,11 @@ export function createAgentContentGuard({
     if (!secret) {
       return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
     }
+    // A bearer value not shaped like a site key is no credential at all, like
+    // a missing header: refused without a store read and without an audit
+    // row, so the random tokens internet scanners send cannot turn into a
+    // write per request on admin_audit_logs.
     if (!looksLikeKey(secret)) {
-      audit({ outcome: 'denied', reason: 'not-an-agent-key' });
       return { record: null, user: null, error: deny(401, 'UNAUTHENTICATED', UNAUTHENTICATED) };
     }
 
@@ -177,24 +182,7 @@ export function createAgentContentGuard({
     return auth;
   }
 
-  /**
-   * The Drafts routes' guard interface, for one capability: the drafts
-   * handlers call `guard.requireRole(request, 'editor')` and read `user`, so
-   * Koda's key answers in that shape and the routes run unchanged, with
-   * Koda's identity on every createdBy, updatedBy and audit row.
-   */
-  function asRoleGuard(capability) {
-    return {
-      requireRole: async (request) => {
-        const auth = await requireCapability(request, capability);
-        return auth.error
-          ? { user: null, role: null, error: auth.error }
-          : { user: auth.user, role: 'editor', error: null };
-      },
-    };
-  }
-
-  return { authenticate, requireCapability, asRoleGuard };
+  return { authenticate, requireCapability };
 }
 
 let guard = null;

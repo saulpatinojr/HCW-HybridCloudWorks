@@ -86,10 +86,12 @@ with access to "everything possible".
    compare-and-increment counter under a key that names the minute. Then the
    route's capability must be on. 401 for a missing, wrong or revoked key
    (one sentence for all three), 403 for a capability that is off, 429 with
-   `Retry-After` for the limit; every refusal of a presented value is an
-   `admin_audit_logs` row without the key (a request with no Authorization
-   header is refused without a row, as the admin guard does, so anonymous
-   probes do not fill the log). An admin token is refused here, and the key is refused by
+   `Retry-After` for the limit; every refusal of a presented site key (one
+   shaped like ours: wrong, revoked, over the limit or without the
+   capability) is an `admin_audit_logs` row without the key. A request with
+   no Authorization header, or with a bearer value not shaped like a site
+   key, is refused without a row, as the admin guard refuses a missing
+   token, so the random tokens internet scanners send are not a write each. An admin token is refused here, and the key is refused by
    `requireRole`, so neither can cross into the other's routes. The
    route-inventory test knows the guard by name.
 4. **The routes are the Drafts routes and the public reads, reached through
@@ -124,10 +126,14 @@ with access to "everything possible".
 7. **Where the proposal's shape is not followed, the site's existing contract
    is.** Drafts are addressed by id, not slug (a draft has no slug by design:
    drafts.js explains why a slug on a draft would push a published article
-   onto a suffix). Every change carries the `etag` of the version read and a
-   stale one is `412 CONFLICT`, which is stronger than the proposal's
-   `Idempotency-Key`; the markdown route is idempotent by title
-   (`200 ALREADY_IMPORTED`), which covers the retry case. Errors use the
+   onto a suffix). Every change to an existing draft carries the `etag` of the version read
+   and a stale one is `412 CONFLICT`, which protects edits better than the
+   proposal's `Idempotency-Key` would. ETags do not protect creation: a
+   `POST drafts` whose answer is lost and then retried makes a second draft
+   with a new id. The retry-safe way to create is the markdown route, which
+   derives the id from the title and answers `200 ALREADY_IMPORTED` (or
+   `200 PUBLISHED_ELSEWHERE`) for a title it already has, so the connector
+   should create through it. Errors use the
    site's envelope, `{ ok: false, code, error }`. The series calendar fields
    (`series`, `target_month`) have no column in the content model; the
    template's `track`, `part`, `date` and `tags` carry the same information
@@ -143,9 +149,13 @@ with access to "everything possible".
   scope (the Drafts stage and public reads only), the per-minute limit, the
   immediate revoke, the audit row on every refused key and the hint that lets the
   owner tell which key Muse holds. The owner rotates it on the tab whenever
-  Muse's handling of it is in doubt, and the credential rotation schedule in
-  [`docs/security/credential-rotation-schedule.md`](../security/credential-rotation-schedule.md)
-  should gain a row for it.
+  Muse's handling of it is in doubt and every 180 days by the
+  [credential rotation schedule](../security/credential-rotation-schedule.md),
+  which has a row for it.
+- A key whose "Read drafts" switch is off may still write when its write
+  switch is on; its answers then carry the outcome, the id and the etag but
+  not the draft's text (`bodyWithheld: true`), so the read switch means what
+  it says.
 - **Accepted risk: the plaintext crosses the browser once.** The Generate
   answer carries it to the super_admin's screen, in component state, until
   dismissed or the tab is left. It is not written to storage, the console, a

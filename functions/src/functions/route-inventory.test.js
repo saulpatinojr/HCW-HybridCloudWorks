@@ -98,7 +98,6 @@ vi.mock("../lib/agent-content/guard.js", () => ({
   getAgentContentGuard: () => ({
     authenticate: agentKeyGuard,
     requireCapability: agentKeyGuard,
-    asRoleGuard: () => ({ requireRole: agentKeyGuard }),
   }),
   resetAgentContentGuard: () => {},
 }));
