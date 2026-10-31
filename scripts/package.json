@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@azure/cosmos": "^4.10.1",
-    "@azure/identity": "^4.14.0",
+    "@azure/identity": "^4.14.1",
     "@azure/storage-blob": "^12.34.0"
   },
   "devDependencies": {
@@ -26,7 +26,6 @@
     "vitest": "^5.0.5"
   },
   "overrides": {
-    "@azure/msal-node": "7.1.1",
     "gaxios": "^7.1.5",
     "retry-request": "^8.0.3",
     "teeny-request": "^10.1.3",
