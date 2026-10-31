@@ -25,8 +25,11 @@ Until a key exists, every call to the API is refused and nothing is on.
    card says **No key yet**.
 2. Press **Generate key**. An amber box appears with the key, beginning
    `hcwk_`. This is the only time it is shown. Press **Copy key**.
-3. In Muse, add a custom connector. The **Connect Muse to the site** card on
-   the tab lists every value the form asks for; the ones that matter are:
+3. In Muse, add a custom connector. There is no public address for that
+   form: Muse opens it from its own custom-connector flow, which generates a
+   connect link for you (the proposal of 2026-10-31 describes it that way),
+   so start it from inside Muse. The **Connect Muse to the site** card on the
+   tab lists every value the form asks for; the ones that matter are:
    - Provider host: `api-azure.hybridcloudworks.com`
    - Base URL: `https://api-azure.hybridcloudworks.com/api/agent-content/v1`
    - Authentication: API key, sent in the `Authorization` header as `Bearer`
