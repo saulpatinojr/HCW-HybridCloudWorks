@@ -148,7 +148,17 @@ export const retryableStatus = (status) => status >= 500 || status === 406;
 export const TRY_TIMEOUT_MS = 30_000;
 export const READ_BUDGET_MS = 60_000;
 
-const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Wait `ms`, or less if `signal` aborts first: a caller that stops does not sit out the pause. */
+const pause = (ms, signal) =>
+  new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener('abort', done, { once: true });
+  });
 
 /** Why a try got no answer, in words: a timeout says so, a network error keeps its code (ECONNRESET). */
 function noAnswer(error, timeoutMs) {
@@ -168,9 +178,10 @@ const release = (response) => Promise.resolve(response?.body?.cancel?.()).catch(
  * case is tried again too. The request is the same every time, address and
  * headers alike: a retry that changed it would read something other than what
  * the pin rests on. Any other status fails at once, no try starts once
- * READ_BUDGET_MS is spent, and the last failure names the address, the status
- * or the reason, and how many tries it had. A caller's own `init.signal`
- * still cancels, and is not retried. `sleep`, `now` and `deadline` (the
+ * READ_BUDGET_MS is spent (checked again after each pause, which can end
+ * late), and the last failure names the address, the status or the reason,
+ * and how many tries it had. A caller's own `init.signal` still cancels,
+ * during a try or a pause, and its reason is thrown without another try. `sleep`, `now` and `deadline` (the
  * timeout signal for one try) are injectable so the tests do not wait.
  */
 export async function fetchRetrying(
@@ -209,7 +220,10 @@ export async function fetchRetrying(
     if (status !== null && !retryableStatus(status)) throw giveUp();
     const wait = delays[attempt - 1];
     if (wait === undefined || now() - started + wait >= budgetMs) throw giveUp();
-    await sleep(wait);
+    if (init.signal?.aborted) throw init.signal.reason;
+    await sleep(wait, init.signal);
+    if (init.signal?.aborted) throw init.signal.reason;
+    if (now() - started >= budgetMs) throw giveUp();
   }
 }
 

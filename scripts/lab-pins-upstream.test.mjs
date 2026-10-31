@@ -293,6 +293,41 @@ describe('trying a failed read again', () => {
     expect(slept).toEqual([RETRY_DELAYS_MS[0]]);
   });
 
+  it('starts no further try when the time runs out during a pause, which can end late', async () => {
+    let clock = 0;
+    const { impl, calls } = flaky(ok, { [url]: [503, 503] });
+    // The first pause takes a second; the second wakes after the whole budget has gone.
+    const sleep = async () => {
+      clock += calls.length === 1 ? 1_000 : READ_BUDGET_MS;
+    };
+    await expect(fetchRetrying(impl, url, {}, { sleep, now: () => clock })).rejects.toHaveProperty(
+      'message',
+      `${url}: HTTP 503 (tried 2 times)`
+    );
+    expect(calls).toHaveLength(2);
+  });
+
+  it('passes on a cancellation that comes during a pause, without another try', async () => {
+    const caller = new AbortController();
+    const { impl, calls } = flaky(ok, { [url]: [503] });
+    const sleep = async (ms, signal) => {
+      expect(signal).toBe(caller.signal);
+      caller.abort(new Error('the job is stopping'));
+    };
+    await expect(fetchRetrying(impl, url, { signal: caller.signal }, { sleep })).rejects.toThrow('the job is stopping');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('ends its own pause early when the caller cancels, rather than sitting it out', async () => {
+    const caller = new AbortController();
+    const impl = async () => {
+      setTimeout(() => caller.abort(new Error('the job is stopping')), 0);
+      return new Response('edge says no', { status: 503 });
+    };
+    // A one-minute pause: if it were not cut short, this test would time out.
+    await expect(fetchRetrying(impl, url, { signal: caller.signal }, { delays: [60_000], budgetMs: 600_000 })).rejects.toThrow('the job is stopping');
+  });
+
   it("leaves a cancellation by the caller alone: it is the caller's, not the publisher's", async () => {
     const caller = new AbortController();
     caller.abort(new Error('the job is stopping'));
