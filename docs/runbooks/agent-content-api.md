@@ -157,8 +157,12 @@ audit log.
   wherever one would carry the draft as the page sees it (`draft` with
   `fields`), the text is replaced by `bodyWithheld: true` and the summary
   (id, title, stage, etag, allowed actions) stays. The markdown route's
-  answer (`contentId`, no etag) and a delete's answer (`deleted`, `stage`)
-  are the same for every key.
+  answers and a delete's answer are the same for every key: a created
+  markdown draft answers `201` with `contentId` and a `draft` summary that
+  includes its `etag` (keep it; it is the version token for the next
+  change); the skipped answers, `200 ALREADY_IMPORTED` with `contentId` and
+  `200 PUBLISHED_ELSEWHERE` with `existingId`, carry no etag; a delete
+  answers `deleted` and `stage`.
 - The body is at most 256 KB. Errors are `{ "ok": false, "code", "error" }`.
 - `GET published` and `GET published/{slugOrId}` answer exactly as the public
   site's own reads do.

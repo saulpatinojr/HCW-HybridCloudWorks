@@ -156,10 +156,12 @@ with access to "everything possible".
   switch is on. Where a write, review or delete would answer with the draft
   as the page sees it (`draft` with `fields`), the text is withheld
   (`bodyWithheld: true`) and the summary stays: id, title, stage, etag and
-  the allowed actions. Routes that never answer with a draft view are
-  unchanged: the markdown route answers a summary with `contentId` and no
-  etag, and a delete answers `deleted` and `stage`. So the read switch means
-  what it says.
+  the allowed actions. Answers that never carry a draft view are unchanged:
+  a created markdown draft answers `201` with `contentId` and a `draft`
+  summary that includes its `etag`; the two skipped markdown answers are
+  `200 ALREADY_IMPORTED` with `contentId` and `200 PUBLISHED_ELSEWHERE` with
+  `existingId`, and carry no etag; a delete answers `deleted` and `stage`. So
+  the read switch means what it says.
 - **Accepted risk: the plaintext crosses the browser once.** The Generate
   answer carries it to the super_admin's screen, in component state, until
   dismissed or the tab is left. It is not written to storage, the console, a
