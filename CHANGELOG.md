@@ -398,6 +398,28 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **Lab image: a newer Azure CLI can no longer be quietly downgraded, and the
+  review findings on [#1466](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1466)
+  are tidied ([#1426](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1426)).**
+  The `full` build now stops, naming the line to delete, when the Azure CLI
+  already ships a package at or above the version `AZURE_CLI_PYTHON_OVERRIDES`
+  lists (the weekly bump moves the CLI alone, so a newer CLI would otherwise
+  have been put back on the older package). The replacement now happens in
+  the same step that installs the CLI, so no image layer keeps the old,
+  flagged files, and the ansible-core install runs with no network. An empty
+  or deleted overrides block now builds. `smoke.sh` signs RS256 and PS256
+  sign-in assertions with msal, reads a token's tenant id with PyJWT and
+  fetches a page over requests and urllib3 on 127.0.0.1, all with no network,
+  and a new `scripts/lab-image-azure-cli-overrides.test.mjs` checks every
+  override line's shape. `versions.env` now says truthfully why cryptography
+  stays at 48.0.1 (Microsoft still pins pyOpenSSL 26.2.0; newer pyOpenSSL
+  lifts the cap but removes APIs the CLI's certificate commands use, and
+  neither open cryptography advisory is reachable from the CLI) and that the
+  base image's patch-tag digest will move once more when its riscv64 build
+  lands. `lab-image/README.md` explains the overrides block and that urllib3
+  2.8.0's proxy change leaves the CLI's `https://` proxies checked against
+  `REQUESTS_CA_BUNDLE` as before.
+
 - **The lab image's critical Python findings are fixed, and the base moves to
   CPython 3.14.10 ([#1426](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1426)).**
   Every CRITICAL and HIGH Python finding the weekly scan reported in the
