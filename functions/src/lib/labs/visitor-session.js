@@ -45,7 +45,6 @@ import { ORIGIN_NOT_VERIFIED, assertClientIdentity, resolvedSetting } from '../a
 import {
   CHECK_WINDOW_MS,
   LOCK_CODES,
-  LOCK_REASONS,
   VISITOR_TURNSTILE_ACTION,
   createCheckLimiter,
   isSiteOrigin,
@@ -117,6 +116,21 @@ export const DOOR_REASONS = Object.freeze({
   [DOOR_CODES.reads_rate_limited]:
     'Too many requests from this browser in the last few minutes. Try again in about ten minutes.',
   [DOOR_CODES.start_in_progress]: 'Your visitor lab session is still being set up. Please wait a moment.',
+});
+
+/**
+ * What a visitor reads when a start is refused by the human verification
+ * check, by its code (the lab submission's codes, `LOCK_CODES` in
+ * public-lock.js). These are the visitor session's own sentences: the lab
+ * submission's speak of validating a job (#1464 review, finding H). They name
+ * no vendor and no setting, and the reason for a refusal goes to the log only
+ * (#1400, item 3).
+ */
+export const VISITOR_CHECK_REASONS = Object.freeze({
+  [LOCK_CODES.attempts]:
+    'Too many attempts to start a lab from this browser in the last few minutes. Try again in about ten minutes.',
+  [LOCK_CODES.failed]: "The browser check didn't pass, so no lab was started. Try again.",
+  [LOCK_CODES.unavailable]: "The browser check couldn't be completed just now, so no lab was started. Try again in a minute.",
 });
 
 export function visitorSessionsEnabled(env = process.env) {
@@ -582,6 +596,10 @@ async function lookUpUserCall(fetchImpl, config, username) {
   }
 }
 
+/** Whether a claim turned a record's daily-start marker from `pending` to `given`. */
+const refundTaken = (before, after) =>
+  before?.dailyCapRefund === DAILY_CAP_REFUND.pending && after?.dailyCapRefund === DAILY_CAP_REFUND.given;
+
 /** A count stored in a record: a negative, fractional or text one counts as none. */
 const countOf = (value) => (Number.isInteger(value) && value >= 0 ? value : 0);
 
@@ -628,10 +646,20 @@ function claimable(record, nowIso) {
  *   `status` is what the record that another request holds says now
  */
 async function claimSession(store, session, endStatus, nowMs) {
+  // A start whose process died before it gave its daily start back: the claim
+  // that turns its marker to `given` is the one that gives it back (#1464
+  // review, finding C). Only on a store that can, so the marker never says
+  // `given` for a start nobody gave back.
+  const canGiveBack = typeof store.incrementIf === 'function';
   const claimOf = ({ accessUrl: _address, ...record }) => {
     const newRound = record.status === SESSION_STATUS.cleanupFailed;
+    const refund =
+      canGiveBack && record.status === SESSION_STATUS.provisioning && record.dailyCapRefund === DAILY_CAP_REFUND.pending
+        ? { dailyCapRefund: DAILY_CAP_REFUND.given }
+        : {};
     return {
       ...record,
+      ...refund,
       status: SESSION_STATUS.ending,
       // Only the two final statuses a session can have; a record that says anything else gets the one asked for.
       endStatus: [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(record.endStatus) ? record.endStatus : endStatus,
@@ -654,17 +682,18 @@ async function claimSession(store, session, endStatus, nowMs) {
     }
     const claimed = claimOf(session);
     await store.upsertDoc(SESSION_CONTAINER, claimed);
-    return { outcome: 'claimed', session: claimed };
+    return { outcome: 'claimed', session: claimed, refundTaken: refundTaken(session, claimed) };
   }
 
   const nowIso = new Date(nowMs).toISOString();
   let current = session;
   for (let attempt = 0; attempt < FINISH_ATTEMPTS; attempt += 1) {
     try {
-      const saved = await store.replaceDocIfMatch(SESSION_CONTAINER, claimOf(current), {
+      const claimed = claimOf(current);
+      const saved = await store.replaceDocIfMatch(SESSION_CONTAINER, claimed, {
         partitionKey: current.id,
       });
-      return { outcome: 'claimed', session: saved };
+      return { outcome: 'claimed', session: saved ?? claimed, refundTaken: refundTaken(current, claimed) };
     } catch (error) {
       if (!lostRace(error)) throw error;
     }
@@ -815,6 +844,7 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
   if (claim.outcome !== 'claimed') return claim;
 
   const claimed = claim.session;
+  if (claim.refundTaken) await giveBackFor(store, claimed, log);
   const steps = await cleanUpCoder(fetchImpl, config, claimed);
   const attempts = claimed.cleanupAttempts;
   const finished = steps.workspaceGone && steps.userGone;
@@ -899,6 +929,9 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
     await store.upsertDoc(SESSION_CONTAINER, next);
   }
 
+  // A session that no longer holds a lab lets its slot go (#1464 review, finding A).
+  if (!mayHoldLab(next)) await releaseSlot(store, next, nowMs);
+
   const where = `workspace ${steps.workspace}, user ${steps.user}`;
   if (finished) {
     // A 404 or 410 is also how Coder may answer a token that may not see the
@@ -912,7 +945,7 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
   if (givenUp) {
     log?.(
       lastRound
-        ? `visitor-session: a session's Coder clean-up was given up after ${attempts} tries in round ${rounds + 1}, the last; it needs a person (${where})`
+        ? `visitor-session: a session's Coder clean-up was given up for good after ${attempts} tries in round ${rounds + 1}, the last; it no longer counts against the visitor lab limit, and a person must check the host for its workspace (${where})`
         : `visitor-session: a session's Coder clean-up was given up after ${attempts} tries in round ${rounds + 1} of ${MAX_CLEANUP_ROUNDS + 1}; another round follows in an hour (${where})${again}`
     );
     return { outcome: 'given-up' };
@@ -1023,7 +1056,8 @@ export async function reapExpiredVisitorSessions(
 
 /**
  * The three queries on `lab_jobs`, as Cosmos runs them. The tests run these
- * very strings against their documents (test/cosmos-sql.js), so a mistake in
+ * very strings against their documents (`runCosmosQuery` in
+ * test/cosmos-predicate.js), so a mistake in
  * one fails a test (#1403, item 8).
  */
 export const EXPIRED_QUERY =
@@ -1045,15 +1079,177 @@ const HOLDING_STATUSES = Object.freeze([
 ]);
 
 /**
- * Does this record count against the concurrent limit (#1403, item 5)? A
- * session within its hour, a start under way, and a session that is over but
- * whose workspace Coder has not confirmed as deleted: its lab may still be
- * running on the host. A session past its hour that is still `active` is not
- * counted, as before: the sweep that the same request starts ends it.
+ * Has the clean-up of this record been given up for good: `cleanup_failed`
+ * with no next round (`retryAt`)? Such a record is left for a person and no
+ * longer counts against the concurrent limit (#1464 review, finding G):
+ * counting it would close the lab to visitors for the week its record is
+ * kept. Its workspace may still exist on the host, which is what the log line
+ * written when it is given up says, so a person can remove it.
+ */
+const givenUpForGood = (record) =>
+  record.status === SESSION_STATUS.cleanupFailed && typeof record.retryAt !== 'string';
+
+/**
+ * May this record still hold a lab on the host? A running session (within its
+ * hour or past it: until it is cleaned up its workspace is there), a start
+ * under way, and one whose workspace Coder has not confirmed as deleted,
+ * unless its clean-up was given up for good.
+ */
+function mayHoldLab(record) {
+  return (
+    HOLDING_STATUSES.includes(record?.status) && record.workspaceGone !== true && !givenUpForGood(record)
+  );
+}
+
+/**
+ * Does this record count against the concurrent limit as the status read
+ * shows it (#1403, item 5)? What `mayHoldLab` says, except that a session past
+ * its hour that is still `active` is not counted, as before: the sweep that
+ * the same request starts ends it. The start does not rely on this count
+ * alone; it takes a slot document as well (`takeSlot`).
  */
 function holdsSlot(record, nowIso) {
   if (record.status === SESSION_STATUS.active) return record.expiresAt > nowIso;
-  return HOLDING_STATUSES.includes(record.status) && record.workspaceGone !== true;
+  return mayHoldLab(record);
+}
+
+/**
+ * The documents that make a start atomic (#1464 review, finding A). They live
+ * in `submission_quota` (partition key `/id`, beside the daily counters), and
+ * each is taken with a create that Cosmos refuses with 409 when the id is
+ * already there, so two requests cannot both take one, however close together
+ * they run and whatever a query would have shown each of them.
+ *
+ *  - `visitor-start:<hash>`: one start at a time per visitor. It holds for
+ *    PROVISION_LEASE_MS (`expiresAt`), is let go when the start ends, and a
+ *    lock whose time has passed is taken over with a conditional replace.
+ *  - `visitor-slot:<n>` for n below the concurrent limit: one per lab the
+ *    visitors may hold at once. A start takes a free one or is refused as
+ *    full. A slot is let go when its session no longer holds a lab, and one
+ *    that was never let go (its process died) is taken over only once it is
+ *    older than PROVISION_LEASE_MS and its session no longer holds a lab, so
+ *    the slots mend themselves and cannot stay full for ever.
+ */
+const QUOTA_CONTAINER = 'submission_quota';
+export const START_LOCK_PREFIX = 'visitor-start:';
+export const SLOT_PREFIX = 'visitor-slot:';
+
+const isConflict = (error) => error?.code === 409 || error?.statusCode === 409;
+
+/** Take the visitor's start lock, or null when another start of theirs holds it. Store faults are thrown. */
+async function takeStartLock(store, clientHash, sessionId, nowMs) {
+  const id = `${START_LOCK_PREFIX}${clientHash}`;
+  const lock = {
+    id,
+    kind: 'visitor_start_lock',
+    sessionId,
+    expiresAt: new Date(nowMs + PROVISION_LEASE_MS).toISOString(),
+    ttl: Math.ceil(PROVISION_LEASE_MS / 1000),
+  };
+  try {
+    return (await store.createDoc(QUOTA_CONTAINER, lock)) ?? lock;
+  } catch (error) {
+    if (!isConflict(error)) throw error;
+  }
+  const current = await store.readDoc(QUOTA_CONTAINER, id, id);
+  if (!current || current.expiresAt > new Date(nowMs).toISOString()) return null;
+  try {
+    return await store.replaceDocIfMatch(QUOTA_CONTAINER, { ...lock, _etag: current._etag }, { partitionKey: id });
+  } catch (error) {
+    if (lostRace(error)) return null;
+    throw error;
+  }
+}
+
+/** Let the start lock go by marking it run out. A failure is no fault: it runs out on its own. */
+async function releaseStartLock(store, lock, nowMs) {
+  if (!lock?._etag || typeof store.replaceDocIfMatch !== 'function') return;
+  try {
+    await store.replaceDocIfMatch(
+      QUOTA_CONTAINER,
+      { ...lock, sessionId: null, expiresAt: new Date(nowMs).toISOString() },
+      { partitionKey: lock.id }
+    );
+  } catch {
+    // Another start took it over, or it aged out: either way it is not ours.
+  }
+}
+
+/** Is a taken slot free to take over? Let go, or old enough to judge and its session holds no lab. */
+async function slotIsFree(store, slot, nowMs) {
+  if (!slot.sessionId) return true;
+  const takenMs = Date.parse(slot.takenAt);
+  if (!Number.isFinite(takenMs) || takenMs > nowMs - PROVISION_LEASE_MS) return false;
+  const holder = await store.readDoc(SESSION_CONTAINER, slot.sessionId, slot.sessionId);
+  return !mayHoldLab(holder);
+}
+
+/** Take one of the `max` slots for this session: its number, or null when all are held. Store faults are thrown. */
+async function takeSlot(store, sessionId, max, nowMs) {
+  const nowIso = new Date(nowMs).toISOString();
+  for (let n = 0; n < max; n += 1) {
+    const id = `${SLOT_PREFIX}${n}`;
+    const slot = { id, kind: 'visitor_slot', sessionId, takenAt: nowIso, ttl: VISITOR_FAILED_DOC_TTL_SECONDS };
+    try {
+      await store.createDoc(QUOTA_CONTAINER, slot);
+      return n;
+    } catch (error) {
+      if (!isConflict(error)) throw error;
+    }
+    const current = await store.readDoc(QUOTA_CONTAINER, id, id);
+    if (!current || !(await slotIsFree(store, current, nowMs))) continue;
+    try {
+      await store.replaceDocIfMatch(QUOTA_CONTAINER, { ...slot, _etag: current._etag }, { partitionKey: id });
+      return n;
+    } catch (error) {
+      if (!lostRace(error)) throw error;
+    }
+  }
+  return null;
+}
+
+/**
+ * Let a session's slot go, when its record says it no longer holds a lab.
+ * Only the session that holds the slot lets it go; a failure is no fault,
+ * because a slot that was not let go is taken over later (`slotIsFree`).
+ */
+async function releaseSlot(store, record, nowMs) {
+  if (!Number.isInteger(record?.slot) || typeof store.replaceDocIfMatch !== 'function') return;
+  const id = `${SLOT_PREFIX}${record.slot}`;
+  try {
+    const current = await store.readDoc(QUOTA_CONTAINER, id, id);
+    if (!current || current.sessionId !== record.id) return;
+    await store.replaceDocIfMatch(
+      QUOTA_CONTAINER,
+      { ...current, sessionId: null, freedAt: new Date(nowMs).toISOString() },
+      { partitionKey: id }
+    );
+  } catch {
+    // Taken over later by a start, once it is old enough.
+  }
+}
+
+/**
+ * A daily start is given back at most once (#1464 review, finding C). The
+ * `provisioning` record carries `dailyCapRefund: 'pending'` and the counter
+ * it was taken from (`dailyCap`). Whoever turns `pending` into `given` with a
+ * conditional write (the failed start's note, or the sweep's claim of a start
+ * whose process died) is the one that gives it back; a session that started
+ * says `spent`. The counter's own condition only keeps it from going below
+ * zero, so it is this marker, not `giveBackDailyCap`, that stops a second
+ * give-back.
+ */
+export const DAILY_CAP_REFUND = Object.freeze({ pending: 'pending', given: 'given', spent: 'spent' });
+
+/** Give a start back for a record whose marker this caller has just turned to `given`. Never throws. */
+async function giveBackFor(store, record, log) {
+  const cap = record?.dailyCap;
+  if (!cap || typeof cap.container !== 'string' || typeof cap.id !== 'string') return;
+  try {
+    await giveBackDailyCap(store, cap);
+  } catch (error) {
+    log?.(`visitor-session: a daily start could not be given back (${errorKind(error)})`);
+  }
 }
 
 /**
@@ -1066,35 +1262,65 @@ function holdsSlot(record, nowIso) {
  * given to a visitor, so no stop request has to reach it, only the sweep. A
  * start that failed at the user (`noWorkspace`) never asked for a workspace,
  * so that half is saved as done: only the user is looked up, and the note
- * does not hold a lab slot while it waits.
+ * does not hold a lab slot while it waits. A user create that Coder refused
+ * outright (`noUser`, a 4xx answer) made nothing at all, so the record is
+ * saved as over at once and nothing is looked up by name (#1464 review,
+ * finding F): a name Coder refused may be someone else's.
+ *
+ * The note turns the daily start's marker to `given`, and only when that write
+ * lands is the start given back. It lets the slot go when the note holds no lab.
  *
  * Never throws: the visitor is being answered with a 502 whatever happens
  * here, and a store that is down must not turn that into something else. A
  * note that could not be written leaves the `provisioning` record, which the
- * sweep takes up once its lease has run out. The log says by kind that the
- * note could not be written, and nothing more.
+ * sweep takes up once its lease has run out (and gives the start back then).
+ * The log says by kind that the note could not be written, and nothing more.
  */
-async function noteUnfinishedStart(store, provisioning, { user, workspaceId, noWorkspace = false, nowMs, context }) {
+async function noteUnfinishedStart(
+  store,
+  provisioning,
+  { user, workspaceId, noWorkspace = false, noUser = false, nowMs, context }
+) {
   const nowIso = new Date(nowMs).toISOString();
   const { clientHash: _owner, ...record } = provisioning;
-  const note = {
-    ...record,
-    status: SESSION_STATUS.cleanupPending,
-    startFailed: true,
-    ...(isSafeSegment(user?.id) ? { coderUserId: user.id } : {}),
-    ...(typeof user?.username === 'string' && user.username ? { coderUsername: user.username } : {}),
-    ...(isSafeSegment(workspaceId) ? { workspaceId } : {}),
-    ...(noWorkspace ? { workspaceGone: true, workspaceConfirmedBy: 'never asked for' } : {}),
-    endedAt: nowIso,
-    cleanupAt: nowIso,
-    retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS).toISOString(),
-    ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
-  };
+  const refund =
+    record.dailyCapRefund === DAILY_CAP_REFUND.pending ? { dailyCapRefund: DAILY_CAP_REFUND.given } : {};
+  const note = noUser
+    ? {
+        ...record,
+        ...refund,
+        status: SESSION_STATUS.ended,
+        startFailed: true,
+        workspaceGone: true,
+        userGone: true,
+        workspaceConfirmedBy: 'never asked for',
+        userConfirmedBy: 'refused at create',
+        endedAt: nowIso,
+        ttl: VISITOR_DOC_TTL_SECONDS,
+      }
+    : {
+        ...record,
+        ...refund,
+        status: SESSION_STATUS.cleanupPending,
+        startFailed: true,
+        ...(isSafeSegment(user?.id) ? { coderUserId: user.id } : {}),
+        ...(typeof user?.username === 'string' && user.username ? { coderUsername: user.username } : {}),
+        ...(isSafeSegment(workspaceId) ? { workspaceId } : {}),
+        ...(noWorkspace ? { workspaceGone: true, workspaceConfirmedBy: 'never asked for' } : {}),
+        endedAt: nowIso,
+        cleanupAt: nowIso,
+        retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS).toISOString(),
+        ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+      };
+  if (noUser) delete note.retryAt;
   try {
     await saveOver(store, note);
   } catch (error) {
     context?.error?.(`visitor-session: a failed start could not be noted for clean-up (${errorKind(error)})`);
+    return;
   }
+  if (refund.dailyCapRefund) await giveBackFor(store, note, (line) => context?.error?.(line));
+  if (!mayHoldLab(note)) await releaseSlot(store, note, nowMs);
 }
 
 /**
@@ -1237,15 +1463,6 @@ export function createVisitorSessionHandlers({
       { name: '@type', value: VISITOR_JOB_TYPE },
       { name: '@statuses', value: [...HOLDING_STATUSES] },
     ]);
-
-  /** Give a daily start back, for a start that did not make a lab (#1400, item 1). Never throws. */
-  const giveBackStart = async (quota, context) => {
-    try {
-      await giveBackDailyCap(store, quota);
-    } catch (error) {
-      context?.error?.(`visitor-session: a daily start could not be given back (${errorKind(error)})`);
-    }
-  };
 
   return {
     async getStatus(request, context) {
@@ -1418,7 +1635,7 @@ export function createVisitorSessionHandlers({
       if (!checkLimiter.take(clientHash, nowMs)) {
         context?.warn?.('visitor-session: refused a start: too many human verification checks from one visitor');
         return jsonResponse(
-          { ok: false, code: LOCK_CODES.attempts, reason: LOCK_REASONS[LOCK_CODES.attempts] },
+          { ok: false, code: LOCK_CODES.attempts, reason: VISITOR_CHECK_REASONS[LOCK_CODES.attempts] },
           429,
           retryAfterWindow
         );
@@ -1434,21 +1651,21 @@ export function createVisitorSessionHandlers({
       });
 
       if (!verification.ok) {
-        // Why goes to the log; the visitor gets a plain sentence. The detail
+        // Why goes to the log; the visitor gets a plain sentence of their own. The detail
         // can carry Cloudflare's error codes, such as `missing-input-secret`,
         // which tell an anonymous caller how the site is set up (#1400, item 3).
         context?.warn?.(`visitor-session: refused a start by the human verification check: ${verification.detail}`);
         const unavailable = verification.kind === 'unavailable';
         const code = unavailable ? LOCK_CODES.unavailable : LOCK_CODES.failed;
         return jsonResponse(
-          { ok: false, code, reason: LOCK_REASONS[code] },
+          { ok: false, code, reason: VISITOR_CHECK_REASONS[code] },
           unavailable ? 503 : 403,
           unavailable ? { 'Retry-After': '60' } : {}
         );
       }
 
       // Check active concurrency
-      const holding = await listHolding();
+      let holding = await listHolding();
       // Reclaim capacity from expired sessions (and, on the way, retry any
       // clean-up Coder has not confirmed). Waited for only when a session is
       // past its hour, so its log lines can be written; a retry alone runs
@@ -1461,6 +1678,10 @@ export function createVisitorSessionHandlers({
             nowIso,
             log: (line) => context?.warn?.(line),
           }).catch(() => {});
+          // The sweep changed what holds a lab: a session whose delete Coder
+          // refused is now waiting, and still holds one, so the list is read
+          // again rather than trusted from before the sweep (#1464 review, finding B).
+          holding = await listHolding();
         } else {
           reapExpiredVisitorSessions(store, fetchImpl, config, { nowIso }).catch(() => {});
         }
@@ -1468,10 +1689,11 @@ export function createVisitorSessionHandlers({
 
       // The caller's own running session is handed back, and costs nothing:
       // a reload and a second press of start are the same visitor's one lab
-      // (#1400, item 1). So does a start of theirs still being set up.
+      // (#1400, item 1).
       const slots = holding.filter((s) => holdsSlot(s, nowIso));
-      const mine = (s) => sameClient(s.clientHash, clientHash);
-      const existing = slots.find((s) => s.status === SESSION_STATUS.active && mine(s));
+      const existing = slots.find(
+        (s) => s.status === SESSION_STATUS.active && sameClient(s.clientHash, clientHash)
+      );
       if (existing) {
         return jsonResponse({
           ok: true,
@@ -1481,167 +1703,209 @@ export function createVisitorSessionHandlers({
           expiresAt: existing.expiresAt,
         }, 200);
       }
-      const underWay = slots.find(
-        (s) => s.status === SESSION_STATUS.provisioning && mine(s) && typeof s.retryAt === 'string' && s.retryAt > nowIso
-      );
-      if (underWay) {
+
+      const maxConcurrent = readVisitorMaxConcurrent(env);
+      const full = () =>
+        jsonResponse({
+          ok: false,
+          code: DOOR_CODES.capacity_full,
+          reason: DOOR_REASONS[DOOR_CODES.capacity_full],
+        }, 503);
+      if (slots.length >= maxConcurrent) return full();
+
+      // From here a new lab may be made, and two requests could get here at
+      // the same moment, each having read the same list. Two creates that
+      // Cosmos refuses with 409 when the id is taken make it safe (#1464
+      // review, finding A): the visitor's start lock (one start at a time per
+      // visitor) and a slot (one per lab the visitors may hold at once).
+      const sessionId = randomUUID();
+      // Everything a start does while it holds the visitor's lock.
+      const startHoldingLock = async () => {
+        const slot = await takeSlot(store, sessionId, maxConcurrent, nowMs);
+        if (slot === null) return full();
+        const letSlotGo = () => releaseSlot(store, { id: sessionId, slot }, clock());
+
+        // Only now is a new lab really going to be made, so only now is one of
+        // the visitor's daily starts taken (#1400, item 1). A start that then
+        // fails gives it back, once, through the record's marker (finding C).
+        const day = utcDay(nowMs);
+        const quota = { container: 'submission_quota', id: `visitor-quota:${clientHash}:${day}` };
+        let allowed;
+        try {
+          allowed = await takeDailyCap(store, {
+            ...quota,
+            kind: 'visitor_session_daily',
+            day,
+            nowIso,
+            limit: VISITOR_CLIENT_DAILY_LIMIT,
+            ttlSeconds: 86400 * 2,
+          });
+        } catch (error) {
+          await letSlotGo();
+          throw error;
+        }
+        if (!allowed) {
+          await letSlotGo();
+          return jsonResponse({
+            ok: false,
+            code: DOOR_CODES.client_rate_limited,
+            reason: DOOR_REASONS[DOOR_CODES.client_rate_limited],
+          }, 429);
+        }
+
+        // The record comes first, before Coder is asked for anything, so that
+        // whatever Coder makes has a record the sweep can find (#1403, item 2).
+        const creds = generateVisitorCredentials();
+        const workspaceName = VALID_LAB_WORKSPACES[labId];
+        const provisioning = {
+          id: sessionId,
+          type: VISITOR_JOB_TYPE,
+          status: SESSION_STATUS.provisioning,
+          endStatus: SESSION_STATUS.ended,
+          clientHash,
+          labId,
+          coderUsername: creds.username,
+          workspaceName,
+          slot,
+          dailyCap: quota,
+          dailyCapRefund: DAILY_CAP_REFUND.pending,
+          createdAt: nowIso,
+          cleanupAttempts: 0,
+          workspaceGone: false,
+          userGone: false,
+          retryAt: new Date(nowMs + PROVISION_LEASE_MS).toISOString(),
+          ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+        };
+        let held;
+        try {
+          held = (await store.createDoc(SESSION_CONTAINER, provisioning)) ?? provisioning;
+        } catch (error) {
+          // Nothing was asked of Coder, so there is nothing to clean up. The
+          // start is given back only when the store plainly refused the write
+          // (a 4xx other than a timeout): after a timeout or a 5xx the record
+          // may exist after all, and then the sweep gives it back from its
+          // marker. A start lost to that is the safe side; one given back twice
+          // would be a start handed out.
+          context?.error?.(`visitor-session: a start could not be recorded (${errorKind(error)})`);
+          const status = Number(error?.code ?? error?.statusCode);
+          if (Number.isInteger(status) && status >= 400 && status < 500 && status !== 408) {
+            await giveBackFor(store, provisioning, (line) => context?.error?.(line));
+            await letSlotGo();
+          }
+          return jsonResponse({
+            ok: false,
+            code: DOOR_CODES.coder_unavailable,
+            reason: DOOR_REASONS[DOOR_CODES.coder_unavailable],
+          }, 503);
+        }
+
+        const failed = async (step, error, { user, workspaceId, noWorkspace, noUser } = {}) => {
+          // The step and the kind only: never Coder's text (#1403, item 9).
+          context?.error?.(`visitor-session: a start failed at ${step} (${errorKind(error)})`);
+          await noteUnfinishedStart(store, held, { user, workspaceId, noWorkspace, noUser, nowMs: clock(), context });
+          return jsonResponse({
+            ok: false,
+            code: DOOR_CODES.coder_unavailable,
+            reason: DOOR_REASONS[DOOR_CODES.coder_unavailable],
+          }, 502);
+        };
+
+        // Provision ephemeral Coder user & workspace
+        let user;
+        try {
+          user = await createVisitorCoderUser(fetchImpl, config, creds);
+        } catch (error) {
+          // The workspace is asked for only once the user exists, so there is
+          // none. A plain refusal (a 4xx answer) made no user either, so the
+          // name is never looked up: it may be someone else's (finding F).
+          // No answer, or a 5xx, may have made one, so it is looked up.
+          const status = error?.statusCode;
+          const refused = Number.isInteger(status) && status >= 400 && status < 500;
+          return failed('the Coder user', error, { noWorkspace: true, noUser: refused });
+        }
+        let workspaceInfo;
+        try {
+          workspaceInfo = await createVisitorWorkspace(fetchImpl, config, {
+            userId: user.id,
+            username: user.username,
+            workspaceName,
+            labId,
+          });
+        } catch (error) {
+          return failed('the workspace', error, { user });
+        }
+
+        const expiresAtIso = new Date(nowMs + VISITOR_SESSION_DURATION_MS).toISOString();
+        const doc = {
+          id: sessionId,
+          type: VISITOR_JOB_TYPE,
+          status: SESSION_STATUS.active,
+          clientHash,
+          labId,
+          coderUserId: user.id,
+          coderUsername: user.username,
+          workspaceId: workspaceInfo.workspace.id,
+          workspaceName,
+          accessUrl: workspaceInfo.accessUrl,
+          slot,
+          dailyCap: quota,
+          dailyCapRefund: DAILY_CAP_REFUND.spent,
+          createdAt: nowIso,
+          expiresAt: expiresAtIso,
+          ttl: VISITOR_DOC_TTL_SECONDS,
+          ...(held?._etag ? { _etag: held._etag } : {}),
+        };
+
+        try {
+          await saveOver(store, doc);
+        } catch (error) {
+          // Both Coder calls worked and the session could not be saved: the
+          // visitor is told nothing ran, and the note gives the sweep both ids
+          // (#1403, item 2). A 412 means the sweep has already taken the record
+          // (the lease ran out), and the note is refused the same way; either
+          // way the sweep has what it needs.
+          return failed('saving the session', error, { user, workspaceId: workspaceInfo.workspace?.id });
+        }
+
+        // The start is real from here: count it, once, as plain per-lab-per-day
+        // numbers (lab-starts.js). The day is read from a fresh clock reading,
+        // not from `nowMs` above: Turnstile and the Coder calls took time, and a
+        // start that finished after UTC midnight belongs to the new day. The
+        // session's own timestamps stay as they were. A counter fault is logged
+        // by code only and never reaches the visitor, whose session already
+        // exists.
+        try {
+          const counted = await recordLabStart(store, { labId, nowMs: clock() });
+          if (!counted.counted) {
+            context?.error?.(`visitor-session: lab start not counted (${counted.reason})`);
+          }
+        } catch (err) {
+          context?.error?.(`visitor-session: lab start not counted (${safeLogCode(err)})`);
+        }
+
+        return jsonResponse({
+          ok: true,
+          sessionId,
+          labId,
+          accessUrl: workspaceInfo.accessUrl,
+          expiresAt: expiresAtIso,
+        }, 201);
+      };
+
+      const lock = await takeStartLock(store, clientHash, sessionId, nowMs);
+      if (!lock) {
         return jsonResponse({
           ok: false,
           code: DOOR_CODES.start_in_progress,
           reason: DOOR_REASONS[DOOR_CODES.start_in_progress],
         }, 409, { 'Retry-After': '30' });
       }
-
-      const maxConcurrent = readVisitorMaxConcurrent(env);
-      if (slots.length >= maxConcurrent) {
-        return jsonResponse({
-          ok: false,
-          code: DOOR_CODES.capacity_full,
-          reason: DOOR_REASONS[DOOR_CODES.capacity_full],
-        }, 503);
-      }
-
-      // Only now is a new lab really going to be made, so only now is one of
-      // the visitor's daily starts taken (#1400, item 1). A start that then
-      // fails gives it back.
-      const day = utcDay(nowMs);
-      const quota = { container: 'submission_quota', id: `visitor-quota:${clientHash}:${day}` };
-      const allowed = await takeDailyCap(store, {
-        ...quota,
-        kind: 'visitor_session_daily',
-        day,
-        nowIso,
-        limit: VISITOR_CLIENT_DAILY_LIMIT,
-        ttlSeconds: 86400 * 2,
-      });
-
-      if (!allowed) {
-        return jsonResponse({
-          ok: false,
-          code: DOOR_CODES.client_rate_limited,
-          reason: DOOR_REASONS[DOOR_CODES.client_rate_limited],
-        }, 429);
-      }
-
-      // The record comes first, before Coder is asked for anything, so that
-      // whatever Coder makes has a record the sweep can find (#1403, item 2).
-      const creds = generateVisitorCredentials();
-      const workspaceName = VALID_LAB_WORKSPACES[labId];
-      const sessionId = randomUUID();
-      const provisioning = {
-        id: sessionId,
-        type: VISITOR_JOB_TYPE,
-        status: SESSION_STATUS.provisioning,
-        endStatus: SESSION_STATUS.ended,
-        clientHash,
-        labId,
-        coderUsername: creds.username,
-        workspaceName,
-        createdAt: nowIso,
-        cleanupAttempts: 0,
-        workspaceGone: false,
-        userGone: false,
-        retryAt: new Date(nowMs + PROVISION_LEASE_MS).toISOString(),
-        ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
-      };
-      let held;
+      const released = async () => releaseStartLock(store, lock, clock());
       try {
-        held = (await store.createDoc(SESSION_CONTAINER, provisioning)) ?? provisioning;
-      } catch (error) {
-        // Nothing was asked of Coder, so there is nothing to clean up.
-        context?.error?.(`visitor-session: a start could not be recorded (${errorKind(error)})`);
-        await giveBackStart(quota, context);
-        return jsonResponse({
-          ok: false,
-          code: DOOR_CODES.coder_unavailable,
-          reason: DOOR_REASONS[DOOR_CODES.coder_unavailable],
-        }, 503);
+        return await startHoldingLock();
+      } finally {
+        await released();
       }
-
-      const failed = async (step, error, { user, workspaceId, noWorkspace } = {}) => {
-        // The step and the kind only: never Coder's text (#1403, item 9).
-        context?.error?.(`visitor-session: a start failed at ${step} (${errorKind(error)})`);
-        await noteUnfinishedStart(store, held, { user, workspaceId, noWorkspace, nowMs: clock(), context });
-        await giveBackStart(quota, context);
-        return jsonResponse({
-          ok: false,
-          code: DOOR_CODES.coder_unavailable,
-          reason: DOOR_REASONS[DOOR_CODES.coder_unavailable],
-        }, 502);
-      };
-
-      // Provision ephemeral Coder user & workspace
-      let user;
-      try {
-        user = await createVisitorCoderUser(fetchImpl, config, creds);
-      } catch (error) {
-        // The workspace is asked for only once the user exists, so there is none.
-        return failed('the Coder user', error, { noWorkspace: true });
-      }
-      let workspaceInfo;
-      try {
-        workspaceInfo = await createVisitorWorkspace(fetchImpl, config, {
-          userId: user.id,
-          username: user.username,
-          workspaceName,
-          labId,
-        });
-      } catch (error) {
-        return failed('the workspace', error, { user });
-      }
-
-      const expiresAtIso = new Date(nowMs + VISITOR_SESSION_DURATION_MS).toISOString();
-      const doc = {
-        id: sessionId,
-        type: VISITOR_JOB_TYPE,
-        status: SESSION_STATUS.active,
-        clientHash,
-        labId,
-        coderUserId: user.id,
-        coderUsername: user.username,
-        workspaceId: workspaceInfo.workspace.id,
-        workspaceName,
-        accessUrl: workspaceInfo.accessUrl,
-        createdAt: nowIso,
-        expiresAt: expiresAtIso,
-        ttl: VISITOR_DOC_TTL_SECONDS,
-        ...(held?._etag ? { _etag: held._etag } : {}),
-      };
-
-      try {
-        await saveOver(store, doc);
-      } catch (error) {
-        // Both Coder calls worked and the session could not be saved: the
-        // visitor is told nothing ran, and the note gives the sweep both ids
-        // (#1403, item 2). A 412 means the sweep has already taken the record
-        // (the lease ran out), and the note is refused the same way; either
-        // way the sweep has what it needs.
-        return failed('saving the session', error, { user, workspaceId: workspaceInfo.workspace?.id });
-      }
-
-      // The start is real from here: count it, once, as plain per-lab-per-day
-      // numbers (lab-starts.js). The day is read from a fresh clock reading,
-      // not from `nowMs` above: Turnstile and the Coder calls took time, and a
-      // start that finished after UTC midnight belongs to the new day. The
-      // session's own timestamps stay as they were. A counter fault is logged
-      // by code only and never reaches the visitor, whose session already
-      // exists.
-      try {
-        const counted = await recordLabStart(store, { labId, nowMs: clock() });
-        if (!counted.counted) {
-          context?.error?.(`visitor-session: lab start not counted (${counted.reason})`);
-        }
-      } catch (err) {
-        context?.error?.(`visitor-session: lab start not counted (${safeLogCode(err)})`);
-      }
-
-      return jsonResponse({
-        ok: true,
-        sessionId,
-        labId,
-        accessUrl: workspaceInfo.accessUrl,
-        expiresAt: expiresAtIso,
-      }, 201);
     },
 
     async stopSession(request, context) {

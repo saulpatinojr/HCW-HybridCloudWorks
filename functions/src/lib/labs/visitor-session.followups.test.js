@@ -20,6 +20,7 @@ import {
   PROVISION_LEASE_MS,
   VISITOR_DOC_TTL_SECONDS,
   VISITOR_PENDING_DOC_TTL_SECONDS,
+  VISITOR_CHECK_REASONS,
   VISITOR_READS_PER_WINDOW,
   VISITOR_SESSION_SWITCH,
   createVisitorSessionHandlers,
@@ -174,7 +175,7 @@ describe('#1400 item 2: how often one visitor may ask', () => {
 
     expect(refused.status).toBe(429);
     expect(refused.headers['Retry-After']).toBe(String(CHECK_WINDOW_MS / 1000));
-    expect(JSON.parse(refused.body)).toEqual({ ok: false, code: LOCK_CODES.attempts, reason: LOCK_REASONS[LOCK_CODES.attempts] });
+    expect(JSON.parse(refused.body)).toEqual({ ok: false, code: LOCK_CODES.attempts, reason: VISITOR_CHECK_REASONS[LOCK_CODES.attempts] });
     expect(siteverifyCalls(fetchImpl)).toBe(CHECK_ATTEMPTS_PER_WINDOW);
     expect(context.warn).toHaveBeenLastCalledWith(
       'visitor-session: refused a start: too many human verification checks from one visitor'
@@ -227,7 +228,9 @@ describe('#1400 item 3: the human verification detail goes to the log, not to th
 
     const res = parsed(await startAs(handlers, ALICE, context));
 
-    expect(res).toEqual({ status, body: { ok: false, code, reason: LOCK_REASONS[code] } });
+    expect(res).toEqual({ status, body: { ok: false, code, reason: VISITOR_CHECK_REASONS[code] } });
+    // The visitor session's own words, not the lab submission's (#1464 review, finding H).
+    expect(VISITOR_CHECK_REASONS[code]).not.toBe(LOCK_REASONS[code]);
     expect(JSON.stringify(res.body)).not.toMatch(/missing-input-secret|invalid-input-response|evil\.example|siteverify|error codes/);
     const [line] = context.warn.mock.calls.at(-1);
     expect(line).toMatch(/^visitor-session: refused a start by the human verification check: /);
@@ -454,5 +457,262 @@ describe('#1403 item 8: records age out when Cosmos would delete them', () => {
 
     now = NOW + VISITOR_PENDING_DOC_TTL_SECONDS * 1000;
     expect(s.get('lab_jobs', bob)).toBeNull();
+  });
+});
+
+describe('#1464 review, finding A: starts that overlap cannot get past the limits', () => {
+  const coderUsers = (fetchImpl) => coderCalls(fetchImpl).filter((call) => call === 'POST /api/v2/users').length;
+  const active = (s) =>
+    [...s.docs.entries()].filter(([path, doc]) => path.startsWith('lab_jobs/') && doc.status === 'active').length;
+
+  it('lets only one of two starts by one visitor at the same moment make a lab, and spends one start', async () => {
+    const s = store();
+    const fetchImpl = visitorFetch();
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    const results = (await Promise.all([startAs(handlers, ALICE), startAs(handlers, ALICE)])).map(parsed);
+
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(results.find((r) => r.status === 409).body.code).toBe(DOOR_CODES.start_in_progress);
+    expect(quotaOf(s)).toBe(1);
+    expect(active(s)).toBe(1);
+    expect(coderUsers(fetchImpl)).toBe(1);
+    // The lock is let go when the start ends: the next press gets the running session back.
+    expect(parsed(await startAs(handlers, ALICE)).status).toBe(200);
+  });
+
+  it('lets only one of two visitors starting at the same moment take the last slot', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '1');
+    const s = store();
+    const fetchImpl = visitorFetch();
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    const [alice, bob] = (await Promise.all([startAs(handlers, ALICE), startAs(handlers, BOB)])).map(parsed);
+
+    expect([alice.status, bob.status].sort()).toEqual([201, 503]);
+    expect([alice, bob].find((r) => r.status === 503).body.code).toBe(DOOR_CODES.capacity_full);
+    expect(active(s)).toBe(1);
+    expect(coderUsers(fetchImpl)).toBe(1);
+    // The visitor turned away spent nothing.
+    const turnedAway = alice.status === 503 ? ALICE_KEY : keyOf(BOB);
+    expect(quotaOf(s, turnedAway)).toBe(0);
+  });
+
+  it('takes over a start lock whose time has passed, and not one that is still running', async () => {
+    const lockId = `visitor-start:${ALICE_KEY}`;
+    const s = store();
+    s.docs.set(`submission_quota/${lockId}`, { id: lockId, sessionId: 'other', expiresAt: iso(NOW + 1000), _etag: '"l1"' });
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: visitorFetch(), clock });
+
+    expect(parsed(await startAs(handlers, ALICE)).status).toBe(409);
+    now = NOW + 1000;
+    expect(parsed(await startAs(handlers, ALICE)).status).toBe(201);
+  });
+
+  it("lets a session's slot go when it ends, so the next visitor can take it", async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '1');
+    const s = store();
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: visitorFetch(), clock });
+    const alice = parsed(await startAs(handlers, ALICE)).body.sessionId;
+    expect(s.get('submission_quota', 'visitor-slot:0')).toMatchObject({ sessionId: alice });
+    expect(parsed(await startAs(handlers, BOB)).status).toBe(503);
+
+    await stopAs(handlers, ALICE, alice);
+
+    expect(s.get('submission_quota', 'visitor-slot:0').sessionId).toBeNull();
+    expect(parsed(await startAs(handlers, BOB)).status).toBe(201);
+  });
+
+  it('takes over a slot that was never let go only once it is old and its session holds no lab', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '1');
+    const s = store([session('gone-1', { status: 'ended', workspaceGone: true, userGone: true })]);
+    s.docs.set('submission_quota/visitor-slot:0', { id: 'visitor-slot:0', sessionId: 'gone-1', takenAt: iso(NOW - 60_000), _etag: '"s1"' });
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: visitorFetch(), clock });
+
+    // Too young to judge: a session that has just taken a slot may not be visible yet.
+    expect(parsed(await startAs(handlers, ALICE)).status).toBe(503);
+    now = NOW + PROVISION_LEASE_MS;
+    expect(parsed(await startAs(handlers, ALICE)).status).toBe(201);
+  });
+});
+
+describe('#1464 review, finding B: the list of labs is read again after a sweep the start waited for', () => {
+  it('still counts a session past its hour whose workspace delete Coder refused during that sweep', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '1');
+    const s = store([session('old-1', { expiresAt: iso(NOW - 1000) })]);
+    const inner = visitorFetch();
+    const fetchImpl = vi.fn(async (url, init) =>
+      String(url).includes('/builds') ? { ok: false, status: 500 } : inner(url, init)
+    );
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    const res = parsed(await startAs(handlers, ALICE));
+
+    expect(s.get('lab_jobs', 'old-1')).toMatchObject({ status: 'cleanup_pending', workspaceGone: false });
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe(DOOR_CODES.capacity_full);
+    expect(coderCalls(fetchImpl)).not.toContain('POST /api/v2/users');
+  });
+});
+
+describe('#1464 review, finding C: a daily start is given back at most once', () => {
+  const dead = (overrides = {}) =>
+    session('p-1', {
+      status: 'provisioning',
+      endStatus: 'ended',
+      clientHash: ALICE_KEY,
+      coderUserId: undefined,
+      workspaceId: undefined,
+      coderUsername: 'v-0123456789ab',
+      dailyCap: { container: 'submission_quota', id: `visitor-quota:${ALICE_KEY}:${DAY}` },
+      dailyCapRefund: 'pending',
+      workspaceGone: false,
+      userGone: false,
+      retryAt: iso(NOW - 1000),
+      ...overrides,
+    });
+  const noSuchUser = vi.fn(async () => ({ ok: false, status: 404 }));
+
+  it('gives back the start of a start whose process died, when the sweep cleans its record, and only once', async () => {
+    const s = store([dead()]);
+    s.docs.set(`submission_quota/visitor-quota:${ALICE_KEY}:${DAY}`, { id: `visitor-quota:${ALICE_KEY}:${DAY}`, count: 2, _etag: '"q"' });
+
+    await reapExpiredVisitorSessions(s, noSuchUser, CODER, { nowIso: iso(now) });
+    now += 60 * 60 * 1000;
+    await reapExpiredVisitorSessions(s, noSuchUser, CODER, { nowIso: iso(now) });
+
+    expect(quotaOf(s)).toBe(1);
+    expect(s.incrementIf).toHaveBeenCalledTimes(1);
+    expect(s.get('lab_jobs', 'p-1')).toMatchObject({ status: 'ended', dailyCapRefund: 'given' });
+  });
+
+  it('gives nothing back for a record whose start already gave it back, or that started', async () => {
+    const s = store([dead({ dailyCapRefund: 'given', status: 'cleanup_pending' }), dead({ id: 'p-2', dailyCapRefund: 'spent', status: 'cleanup_pending' })]);
+    s.docs.set(`submission_quota/visitor-quota:${ALICE_KEY}:${DAY}`, { id: `visitor-quota:${ALICE_KEY}:${DAY}`, count: 2, _etag: '"q"' });
+
+    await reapExpiredVisitorSessions(s, noSuchUser, CODER, { nowIso: iso(now) });
+
+    expect(quotaOf(s)).toBe(2);
+    expect(s.incrementIf).not.toHaveBeenCalled();
+  });
+
+  it('leaves the give-back to the sweep, and gives it back once in all, when the failed start cannot write its note', async () => {
+    const s = store();
+    const replace = s.replaceDocIfMatch.getMockImplementation();
+    let refuse = true;
+    s.replaceDocIfMatch.mockImplementation(async (container, doc, options) => {
+      if (container === 'lab_jobs' && refuse) throw Object.assign(new Error('down'), { code: 503 });
+      return replace(container, doc, options);
+    });
+    const inner = visitorFetch();
+    const fetchImpl = vi.fn(async (url, init) =>
+      /\/members\/[^/]+\/workspaces$/.test(String(url)) ? { ok: false, status: 400 } : inner(url, init)
+    );
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    expect((await startAs(handlers, ALICE, { error: vi.fn() })).status).toBe(502);
+    expect(quotaOf(s)).toBe(1);
+
+    refuse = false;
+    now = NOW + PROVISION_LEASE_MS;
+    await reapExpiredVisitorSessions(s, fetchImpl, CODER, { nowIso: iso(now) });
+    await reapExpiredVisitorSessions(s, fetchImpl, CODER, { nowIso: iso(now + 60 * 60 * 1000) });
+    expect(quotaOf(s)).toBe(0);
+  });
+});
+
+describe('#1464 review, finding F: a user is looked up by name only when its create got no clear answer', () => {
+  /** Coder refusing (or not answering) the user create, with the lookups recorded. */
+  const createAnswering = (answer) => {
+    const inner = visitorFetch();
+    return vi.fn(async (url, init) => {
+      if (String(url).endsWith('/api/v2/users')) {
+        if (answer === 'timeout') throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+        return { ok: false, status: answer, text: async () => 'taken' };
+      }
+      return inner(url, init);
+    });
+  };
+
+  it('saves the record as over at once when Coder refuses the user outright (409), and looks nothing up', async () => {
+    const s = store();
+    const fetchImpl = createAnswering(409);
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    expect((await startAs(handlers, ALICE, { error: vi.fn() })).status).toBe(502);
+    const [record] = [...s.docs.entries()].filter(([path]) => path.startsWith('lab_jobs/')).map(([, d]) => d);
+    expect(record).toMatchObject({ status: 'ended', userGone: true, workspaceGone: true, userConfirmedBy: 'refused at create' });
+
+    now = NOW + 24 * 60 * 60 * 1000;
+    fetchImpl.mockClear();
+    await reapExpiredVisitorSessions(s, fetchImpl, CODER, { nowIso: iso(now) });
+    expect(coderCalls(fetchImpl)).toEqual([]);
+    // Nothing holds the slot, and the start was given back.
+    expect(s.get('submission_quota', 'visitor-slot:0').sessionId).toBeNull();
+    expect(quotaOf(s)).toBe(0);
+  });
+
+  it.each([['no answer', 'timeout'], ['a 5xx answer', 503]])('looks the user up by name after %s, since it may have been made', async (_name, answer) => {
+    const s = store();
+    const fetchImpl = createAnswering(answer);
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    await startAs(handlers, ALICE, { error: vi.fn() });
+    const [record] = [...s.docs.entries()].filter(([path]) => path.startsWith('lab_jobs/')).map(([, d]) => d);
+
+    expect(record).toMatchObject({ status: 'cleanup_pending', userGone: false });
+    now = Date.parse(record.retryAt);
+    fetchImpl.mockClear();
+    await reapExpiredVisitorSessions(s, fetchImpl, CODER, { nowIso: iso(now) });
+    expect(coderCalls(fetchImpl)[0]).toBe(`GET /api/v2/users/${record.coderUsername}`);
+  });
+
+  it('never deletes a user the lookup finds under another name', async () => {
+    const s = store([
+      session('p-1', { status: 'cleanup_pending', coderUserId: undefined, coderUsername: 'v-0123456789ab', workspaceGone: true, retryAt: iso(NOW) }),
+    ]);
+    const fetchImpl = vi.fn(async (url) =>
+      new URL(String(url)).pathname === '/api/v2/users/v-0123456789ab'
+        ? { ok: true, status: 200, json: async () => ({ id: 'u-someone', username: 'v-ffffffffffff' }) }
+        : { ok: true, status: 200 }
+    );
+    const log = vi.fn();
+
+    await reapExpiredVisitorSessions(s, fetchImpl, CODER, { nowIso: iso(now), log });
+
+    expect(coderCalls(fetchImpl)).toEqual(['GET /api/v2/users/v-0123456789ab']);
+    expect(s.get('lab_jobs', 'p-1')).toMatchObject({ status: 'cleanup_pending', userGone: false });
+    expect(s.get('lab_jobs', 'p-1').coderUserId).toBeUndefined();
+    expect(log.mock.calls.at(-1)[0]).toContain('user user lookup mismatch');
+  });
+});
+
+describe('#1464 review, finding G: a clean-up given up for good no longer holds a slot', () => {
+  it('does not count it, and lets its slot go when it is given up', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '1');
+    const s = store([
+      session('f-1', {
+        clientHash: ALICE_KEY,
+        status: 'cleanup_pending',
+        cleanupAttempts: 4,
+        cleanupRounds: 24,
+        workspaceGone: false,
+        slot: 0,
+        retryAt: iso(NOW - 1000),
+      }),
+    ]);
+    s.docs.set('submission_quota/visitor-slot:0', { id: 'visitor-slot:0', sessionId: 'f-1', takenAt: iso(NOW - 1000), _etag: '"s"' });
+    const refusing = vi.fn(async () => ({ ok: false, status: 500 }));
+    const log = vi.fn();
+
+    await reapExpiredVisitorSessions(s, refusing, CODER, { nowIso: iso(now), log });
+
+    expect(s.get('lab_jobs', 'f-1').status).toBe('cleanup_failed');
+    expect(s.get('lab_jobs', 'f-1').retryAt).toBeUndefined();
+    expect(s.get('submission_quota', 'visitor-slot:0').sessionId).toBeNull();
+    expect(log.mock.calls.at(-1)[0]).toMatch(/given up for good .* no longer counts against the visitor lab limit/);
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: visitorFetch(), clock });
+    expect(parsed(await statusAs(handlers, BOB)).body.bounds.activeCount).toBe(0);
+    expect(parsed(await startAs(handlers, BOB)).status).toBe(201);
   });
 });

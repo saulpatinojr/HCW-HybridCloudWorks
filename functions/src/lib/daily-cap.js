@@ -42,8 +42,12 @@ export async function takeDailyCap(store, { container, id, kind, day, nowIso, li
  * thing it was counted for (a visitor lab start that Coder failed, #1400 item
  * 1). One conditional decrement: Cosmos's increment takes a negative value
  * (https://learn.microsoft.com/azure/cosmos-db/partial-document-update#supported-operations),
- * and the condition `c.count > 0` keeps a counter from going below zero, so a
- * give-back that is sent twice cannot hand out an extra call.
+ * and the condition `c.count > 0` keeps a counter from going below zero. That
+ * is all it guards: on a counter at 2 or more, a give-back sent twice takes 2
+ * off and so hands out an extra call. The caller must make sure it gives back
+ * at most once; the visitor sessions do it with a marker on the session
+ * record that only one writer can turn from `pending` to `given`
+ * (`DAILY_CAP_REFUND` in labs/visitor-session.js).
  *
  * @param {{ incrementIf: Function }} store
  * @param {{ container: string, id: string }} args - the same counter `takeDailyCap` took from

@@ -50,7 +50,7 @@
  * kind of error, and the next tick tries again.
  */
 import { app } from '@azure/functions';
-import { queryDocs, readDoc, replaceDocIfMatch } from '../lib/cosmos-client.js';
+import { incrementIf, queryDocs, readDoc, replaceDocIfMatch } from '../lib/cosmos-client.js';
 import { logDisabledSkip, timerEnabled } from '../lib/timers/flag-gate.js';
 import { createVisitorSessionSweep } from '../lib/timers/visitor-session-sweep.js';
 
@@ -60,11 +60,14 @@ export const TIMER_FLAG = 'SWEEP_VISITOR_SESSIONS';
 export const TIMER_SCHEDULE = '0 */2 * * * *';
 
 /**
- * The store the sweep is given: the three verbs it uses and nothing that
- * creates a document, so a timer that runs on its own cannot create a session.
- * A test holds this list to exactly these names.
+ * The store the sweep is given: the verbs it uses and nothing that creates a
+ * document, so a timer that runs on its own cannot create a session. A test
+ * holds this list to exactly these names. `incrementIf` changes a counter that
+ * already exists (it answers 404 for one that does not, and creates nothing):
+ * the sweep uses it only to give back the daily start of a start whose process
+ * died, once, as the start's own marker allows (#1464 review, finding C).
  */
-export const SWEEP_STORE = Object.freeze({ queryDocs, readDoc, replaceDocIfMatch });
+export const SWEEP_STORE = Object.freeze({ queryDocs, readDoc, replaceDocIfMatch, incrementIf });
 
 /** "true" arms it; the schedulers master switch still holds it off. */
 export const sweepEnabled = (env = process.env) => timerEnabled(TIMER_FLAG, env);

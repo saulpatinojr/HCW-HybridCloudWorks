@@ -1440,7 +1440,8 @@ describe('visitor sessions know who is calling (#1387)', () => {
       // One counter each, named for the hash; nothing shared.
       expect(store.get('submission_quota', `visitor-quota:${ALICE_KEY}:${DAY}`)).toMatchObject({ count: 1 });
       expect(store.get('submission_quota', `visitor-quota:${BOB_KEY}:${DAY}`)).toMatchObject({ count: 1 });
-      const quotaIds = [...store.docs.keys()].filter((key) => key.startsWith('submission_quota/'));
+      // The daily counters only (the start lock and the slots live in the same container).
+      const quotaIds = [...store.docs.keys()].filter((key) => key.startsWith('submission_quota/visitor-quota:'));
       expect(quotaIds.some((key) => key.includes('unidentified'))).toBe(false);
       expect(quotaIds).toHaveLength(2);
     });
@@ -2230,7 +2231,8 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       const record = store.get('lab_jobs', 'f-2');
       expect(record).toMatchObject({ status: 'cleanup_failed', ttl: VISITOR_FAILED_DOC_TTL_SECONDS });
       expect(record.retryAt).toBeUndefined();
-      expect(log.mock.calls.at(-1)[0]).toContain('the last; it needs a person');
+      expect(log.mock.calls.at(-1)[0]).toContain('given up for good');
+      expect(log.mock.calls.at(-1)[0]).toContain('no longer counts against the visitor lab limit');
 
       fetchImpl.mockClear();
       now += 6 * 24 * 60 * 60 * 1000;
@@ -2752,11 +2754,14 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(session.retryAt).toBeUndefined();
     });
 
-    it('answers 503, asks Coder for nothing, and gives the daily start back, when the record cannot be written', async () => {
+    it.each([
+      ['plainly refused (429, too many requests)', 429, 0],
+      ['given no clear answer (503, so it may have been written)', 503, 1],
+    ])('answers 503 and asks Coder for nothing when the record cannot be written: %s; the start is given back only for a plain refusal', async (_name, code, count) => {
       const store = mockStore();
       const create = store.createDoc.getMockImplementation();
       store.createDoc.mockImplementation(async (container, doc) => {
-        if (container === 'lab_jobs') throw Object.assign(new Error('cosmos is down'), { code: 503 });
+        if (container === 'lab_jobs') throw Object.assign(new Error('cosmos is down'), { code });
         return create(container, doc);
       });
       const fetchImpl = startFetch({ workspace: 'ok' });
@@ -2767,8 +2772,8 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       expect(res.status).toBe(503);
       expect(coderCallsOf(fetchImpl)).toEqual([]);
-      expect(store.get('submission_quota', `visitor-quota:${ALICE_KEY}:2026-10-17`).count).toBe(0);
-      expect(context.error.mock.calls.map(([line]) => line)).toEqual(['visitor-session: a start could not be recorded (503)']);
+      expect(store.get('submission_quota', `visitor-quota:${ALICE_KEY}:2026-10-17`).count).toBe(count);
+      expect(context.error.mock.calls.map(([line]) => line)).toEqual([`visitor-session: a start could not be recorded (${code})`]);
     });
 
     it('still answers 502, and says by kind only that the note was not written, when the store cannot take it; the record stays for the sweep', async () => {

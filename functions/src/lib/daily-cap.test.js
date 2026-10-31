@@ -125,6 +125,16 @@ describe('giveBackDailyCap (#1400, item 1)', () => {
     expect(store.docs.get('cap:2026-09-27').count).toBe(0);
   });
 
+  it('does not stop a second give-back on a counter above one: callers must give back at most once', async () => {
+    const store = counterStore();
+    for (let i = 0; i < 3; i += 1) await takeDailyCap(store, args());
+    const counter = { container: 'tool_service_cache', id: 'cap:2026-09-27' };
+    await giveBackDailyCap(store, counter);
+    await giveBackDailyCap(store, counter);
+    // Two taken back for one failed call: the guard against this is the caller's.
+    expect(store.docs.get('cap:2026-09-27').count).toBe(1);
+  });
+
   it('says there was nothing to give back when there is no counter today', async () => {
     expect(await giveBackDailyCap(counterStore(), { container: 'tool_service_cache', id: 'cap:none' })).toBe(false);
   });

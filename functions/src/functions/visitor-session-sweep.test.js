@@ -22,7 +22,7 @@ vi.mock('@azure/functions', () => ({
   output: { storageQueue: (options) => ({ type: 'queue', ...options }) },
 }));
 
-// The module store, faked. The three verbs the sweep uses delegate to whatever
+// The module store, faked. The verbs the sweep uses delegate to whatever
 // store a test puts in `backing`; every other verb is a spy that must not be called.
 const backing = vi.hoisted(() => ({ store: null }));
 const forbidden = vi.hoisted(() => ({
@@ -31,9 +31,6 @@ const forbidden = vi.hoisted(() => ({
   }),
   upsertDoc: vi.fn(async () => {
     throw new Error('upsertDoc must not be called by the sweep');
-  }),
-  incrementIf: vi.fn(async () => {
-    throw new Error('incrementIf must not be called by the sweep');
   }),
   patchDoc: vi.fn(async () => {
     throw new Error('patchDoc must not be called by the sweep');
@@ -46,6 +43,7 @@ vi.mock('../lib/cosmos-client.js', () => ({
   queryDocs: (...args) => backing.store.queryDocs(...args),
   readDoc: (...args) => backing.store.readDoc(...args),
   replaceDocIfMatch: (...args) => backing.store.replaceDocIfMatch(...args),
+  incrementIf: (...args) => backing.store.incrementIf(...args),
   ...forbidden,
 }));
 
@@ -154,9 +152,47 @@ describe('sweepVisitorSessions registration', () => {
     expect(timer.extraOutputs).toBeUndefined();
   });
 
-  it('is given the three store verbs the sweep uses and nothing that creates a document', () => {
-    expect(Object.keys(SWEEP_STORE).sort()).toEqual(['queryDocs', 'readDoc', 'replaceDocIfMatch']);
+  it('is given the store verbs the sweep uses and nothing that creates a document', () => {
+    expect(Object.keys(SWEEP_STORE).sort()).toEqual(['incrementIf', 'queryDocs', 'readDoc', 'replaceDocIfMatch']);
     expect(SWEEP_STORE.createDoc).toBeUndefined();
+    expect(SWEEP_STORE.upsertDoc).toBeUndefined();
+  });
+
+  it('gives back the daily start of a start whose process died, once, and creates nothing (#1464 review, finding C)', async () => {
+    const quotaId = 'visitor-quota:hash:2026-10-26';
+    backing.store = sweepStore([
+      session('p-dead', {
+        status: 'provisioning',
+        endStatus: 'ended',
+        coderUserId: undefined,
+        workspaceId: undefined,
+        coderUsername: 'v-0123456789ab',
+        workspaceName: 'lab-lzb',
+        dailyCap: { container: 'submission_quota', id: quotaId },
+        dailyCapRefund: 'pending',
+        retryAt: iso(Date.now() - 1000),
+      }),
+    ]);
+    backing.store.docs.set(`submission_quota/${quotaId}`, { id: quotaId, count: 2, _etag: '"q"' });
+    backing.store.incrementIf = vi.fn(async (container, id, options) => {
+      const doc = backing.store.docs.get(`${container}/${id}`);
+      doc.count += options.value;
+      return doc;
+    });
+    // Coder has no such user: nothing was made, so the record is over at once.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })));
+    process.env.CODER_URL = CODER_URL;
+    process.env.CODER_BROKER_TOKEN = 'broker-token-value';
+    process.env.FEATURE_FLAG_SWEEP_VISITOR_SESSIONS = 'true';
+
+    await run(recordingContext().context);
+    await run(recordingContext().context);
+
+    expect(backing.store.incrementIf).toHaveBeenCalledTimes(1);
+    expect(backing.store.incrementIf).toHaveBeenCalledWith('submission_quota', quotaId, expect.objectContaining({ value: -1 }));
+    expect(backing.store.docs.get(`submission_quota/${quotaId}`).count).toBe(1);
+    expect(backing.store.get('lab_jobs', 'p-dead')).toMatchObject({ status: 'ended', dailyCapRefund: 'given' });
+    for (const spy of Object.values(forbidden)) expect(spy).not.toHaveBeenCalled();
   });
 });
 
