@@ -24,12 +24,13 @@ architecturally significant.
 
 ## Status lifecycle
 
-`Proposed` → `Accepted` → `Superseded` or `Deprecated`
+`Proposed` → `Accepted` → `Superseded`, `Deprecated` or `Withdrawn`
 
 - **Proposed:** under review and not authorized for implementation.
 - **Accepted:** approved direction; implementation may still be incomplete.
 - **Superseded:** replaced by a newer ADR, which must be linked.
 - **Deprecated:** retained for history but no longer applicable.
+- **Withdrawn:** accepted and then reversed by the owner before it ever operated; retained for history with the reason and the issue that reversed it.
 
 ## Required sections
 
