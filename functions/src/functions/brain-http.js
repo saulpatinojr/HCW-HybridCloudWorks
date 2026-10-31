@@ -26,6 +26,7 @@ const handlers = (context) =>
     guard: getDefaultGuard(),
     syncGuard: {
       requireRole: (...args) => getBrainSyncGuard().requireRole(...args),
+      requireUser: (...args) => getBrainSyncGuard().requireUser(...args),
     },
     repo: repository(),
     ai,

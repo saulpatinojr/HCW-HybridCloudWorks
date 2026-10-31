@@ -20,6 +20,7 @@ const handlers = (context) => {
   return createCodeBrainHandlers({
     syncGuard: {
       requireRole: (...args) => getCodeBrainSyncGuard().requireRole(...args),
+      requireUser: (...args) => getCodeBrainSyncGuard().requireUser(...args),
     },
     repo: createBrainRepository(
       store,

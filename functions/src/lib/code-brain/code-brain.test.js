@@ -65,15 +65,18 @@ const request = (body = {}, params = {}, query = '', token = true) => ({
   url: `https://hcw.invalid/?${query}`,
 });
 const json = (r) => JSON.parse(r.body);
-const guardFor = (delegatedScope, user, admin = { active: true, role: 'editor' }) =>
+const guardFor = (delegatedScope, user, admin = { active: true, role: 'editor' }, registry = {}) =>
   createRoleGuard({
     verifier: { verify: async () => user },
     delegatedScope,
-    lookupAdmin: async () => admin,
+    lookupAdmin: registry.lookupAdmin || (async () => admin),
+    auditDenial: registry.auditDenial,
   });
 
 /** One creator workspace and one Code Conductor workspace, each in its own store (database). */
-function setup({ user = codeUser, admin, settings = env } = {}) {
+function setup({ user = codeUser, admin = { active: true, role: 'editor' }, settings = env } = {}) {
+  // The admin registry and the denial log are Cosmos reads and writes too.
+  const registry = { lookupAdmin: vi.fn(async () => admin), auditDenial: vi.fn() };
   const creator = memoryStore();
   const code = memoryStore({ records: CODE_RECORDS });
   const codeRepo = createBrainRepository(code.store, 'owner', code.batch, {
@@ -82,7 +85,7 @@ function setup({ user = codeUser, admin, settings = env } = {}) {
   });
   const creatorRepo = createBrainRepository(creator.store, 'owner', creator.batch);
   const codeHandlers = createCodeBrainHandlers({
-    syncGuard: guardFor(CODE_SYNC_SCOPE, user, admin),
+    syncGuard: guardFor(CODE_SYNC_SCOPE, user, admin, registry),
     repo: codeRepo,
     env: settings,
     log: { error: vi.fn() },
@@ -94,7 +97,7 @@ function setup({ user = codeUser, admin, settings = env } = {}) {
     env: settings,
     log: { error: vi.fn() },
   });
-  return { creator, code, codeRepo, creatorRepo, codeHandlers, creatorHandlers };
+  return { creator, code, codeRepo, creatorRepo, codeHandlers, creatorHandlers, registry };
 }
 const push = (handlers, item, version, mutationId) =>
   handlers.syncPush(request({ item, version, mutationId }));
@@ -115,6 +118,10 @@ describe('Code Conductor brain configuration', () => {
       ['CODE_BRAIN_SYNC_CLIENT_ID', 'CREATOR-DESKTOP'],
       ['CODE_BRAIN_COSMOS_DATABASE', ''],
       ['CODE_BRAIN_COSMOS_DATABASE', 'hcw'],
+      // The creator database in another spelling is still the creator database.
+      ['CODE_BRAIN_COSMOS_DATABASE', 'HCW'],
+      ['CODE_BRAIN_COSMOS_DATABASE', ' hcw'],
+      ['CODE_BRAIN_COSMOS_DATABASE', 'Hcw '],
     ])
       expect(codeBrainConfig({ ...env, [name]: value }).enabled, `${name}=${value}`).toBe(false);
     // The creator database is "hcw" when COSMOS_DATABASE is unset, too.
@@ -171,6 +178,36 @@ describe('Code Conductor brain boundary', () => {
     expect(queries).not.toHaveBeenCalled();
     expect(writes).not.toHaveBeenCalled();
     expect(code.store.docs.size).toBe(0);
+  });
+
+  it.each([
+    ['switched off', { ...env, CODE_BRAIN_ENABLED: 'false' }],
+    ['never configured', {}],
+    ['no owner', { ...env, CODE_BRAIN_OWNER_OID: '' }],
+    ['the creator database', { ...env, CODE_BRAIN_COSMOS_DATABASE: 'HCW' }],
+    ['the creator desktop client', { ...env, CODE_BRAIN_SYNC_CLIENT_ID: 'creator-desktop' }],
+  ])('refuses a workspace that is %s before the admin registry or any store is read', async (_name, settings) => {
+    const { codeHandlers, code, registry } = setup({ settings });
+    const spies = ['readDoc', 'queryDocs', 'queryDocsPage', 'upsertDoc', 'createDoc'].map((m) => vi.spyOn(code.store, m));
+    for (const action of [...READ_ACTIONS, ...WRITE_ACTIONS]) {
+      const response = await codeHandlers[action](request({ item: note(), version: 0, mutationId: 'mutation-001' }, { id: 'note-1' }));
+      expect(response.status, action).toBe(404);
+    }
+    expect(registry.lookupAdmin).not.toHaveBeenCalled();
+    expect(registry.auditDenial).not.toHaveBeenCalled();
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    // Without a valid token the answer is still 401, so it does not reveal
+    // whether the workspace exists.
+    expect((await codeHandlers.status(request({}, {}, '', false))).status).toBe(401);
+    expect(registry.lookupAdmin).not.toHaveBeenCalled();
+  });
+
+  it('records a refused token in the denial log, as the admin guard does', async () => {
+    const { codeHandlers, registry } = setup({ user: { ...codeUser, scp: 'access_as_admin' } });
+    expect((await codeHandlers.status(request())).status).toBe(401);
+    expect(registry.auditDenial).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'denied', reason: 'missing-scope', required: CODE_SYNC_SCOPE }),
+    );
   });
 
   it('exposes no creator reference, search, context, draft, AI or reindex action', () => {

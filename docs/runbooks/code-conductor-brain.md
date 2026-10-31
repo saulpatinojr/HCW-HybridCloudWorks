@@ -107,8 +107,9 @@ This part waits for one more piece of work: the desktop plugin in
 `obsidian-plugin/` signs in with the creator brain's `brain_sync` scope and
 calls the creator routes. Until it can be pointed at this workspace (its
 routes and the `code_brain_sync` scope), switching on gives you an API nothing
-can sync with. Do steps 1 to 4 whenever convenient; leave step 5 until the
-plugin can use the workspace.
+can sync with. That work is tracked in
+[#1467](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1467). Do
+steps 1 to 4 whenever convenient; leave step 5 until #1467 is closed.
 
 1. Sign in to Azure as the owner, then put the three identifiers the script
    needs into this window (they stay in this window; do not paste them into
@@ -176,7 +177,9 @@ plugin can use the workspace.
    reports these three settings as `UNEXPECTED` on purpose: identities are
    never pre-approved in the repository, so read the three values in the run's
    own plan and confirm they are yours. Then apply. The workspace is still off.
-5. When the plugin can use this workspace, add `code_brain_enabled` with value
+5. When the plugin can use this workspace
+   ([#1467](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1467)
+   is closed), add `code_brain_enabled` with value
    `true` the same way (description: `Switches the Code Conductor brain on
    (#1457)`), plan and apply. Terraform refuses this if the owner, tenant or
    client is missing, or if the client is the creator brain's. Then repeat

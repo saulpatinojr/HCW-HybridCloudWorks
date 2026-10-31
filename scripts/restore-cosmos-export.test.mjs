@@ -474,6 +474,12 @@ describe('the Code Conductor brain restores into its own database (#1457)', () =
     expect(() =>
       parseOptions([...base, '--database', 'drill', '--code-brain-database', 'drill'])
     ).toThrow(/must differ from --database/);
+    // The same database in another spelling is still the same database.
+    for (const spelling of ['HCW', ' hcw', 'Hcw ']) {
+      expect(() => parseOptions([...base, '--code-brain-database', spelling]), spelling).toThrow(
+        /must differ from --database/
+      );
+    }
   });
 });
 

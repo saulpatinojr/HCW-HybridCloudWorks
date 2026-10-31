@@ -155,6 +155,16 @@ describe('exportPlanFor', () => {
     }
     expect(separateDatabaseFor('brain_records', WITH_CODE_BRAIN)).toBeNull();
     expect(separateDatabaseFor('code_brain_records', {})).toBeUndefined();
+    // A setting that names the creator database, in any spelling, is skipped
+    // rather than planned: the nightly export must not read the creator
+    // database as the Code Conductor brain's, nor fail on it.
+    for (const spelling of ['hcw', 'HCW', ' hcw']) {
+      expect(separateDatabaseFor('code_brain_records', { CODE_BRAIN_COSMOS_DATABASE: spelling }), spelling).toBeUndefined();
+      expect(exportPlanFor('delta', { CODE_BRAIN_COSMOS_DATABASE: spelling }), spelling).not.toContain('code_brain_records');
+    }
+    expect(
+      separateDatabaseFor('code_brain_records', { COSMOS_DATABASE: 'drill', CODE_BRAIN_COSMOS_DATABASE: 'Drill' })
+    ).toBeUndefined();
   });
 
   it('refuses an unknown mode rather than planning nothing', () => {

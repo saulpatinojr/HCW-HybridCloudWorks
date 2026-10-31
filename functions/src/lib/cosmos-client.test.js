@@ -305,9 +305,12 @@ describe('getDatabaseContainer (#1457)', () => {
     const saved = process.env.COSMOS_DATABASE;
     try {
       delete process.env.COSMOS_DATABASE;
-      expect(() => getDatabaseContainer('hcw', 'code_brain_records')).toThrow(/separate database/);
+      for (const spelling of ['hcw', 'HCW', ' hcw', 'Hcw ']) {
+        expect(() => getDatabaseContainer(spelling, 'code_brain_records'), spelling).toThrow(/separate database/);
+      }
       process.env.COSMOS_DATABASE = 'drill';
       expect(() => getDatabaseContainer('drill', 'code_brain_records')).toThrow(/separate database/);
+      expect(() => getDatabaseContainer(' DRILL', 'code_brain_records')).toThrow(/separate database/);
       expect(() => getDatabaseContainer('  ', 'code_brain_records')).toThrow(/database id is required/);
       expect(() => getDatabaseContainer(undefined, 'code_brain_records')).toThrow(/database id is required/);
     } finally {

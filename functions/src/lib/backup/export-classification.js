@@ -32,6 +32,8 @@
 
 /** @typedef {'authored'|'configuration'|'operational'|'regenerable'|'seed'|'transient'} ExportClass */
 
+import { isCreatorDatabase } from '../cosmos-client.js';
+
 const freeze = (list) => Object.freeze([...list].sort());
 
 /** Class A — weekly full + daily deltas. */
@@ -184,7 +186,8 @@ export const SEPARATE_DATABASE_CONTAINERS = Object.freeze({
 /**
  * The database a container is exported from: null for COSMOS_DATABASE,
  * the named database for a separate one, or undefined when that database's
- * setting is not set (the container is then not planned).
+ * setting is not set or names the creator database (the container is then
+ * not planned).
  *
  * @param {string} container
  * @param {Record<string, string|undefined>} [env]
@@ -194,7 +197,12 @@ export function separateDatabaseFor(container, env = process.env) {
   const setting = SEPARATE_DATABASE_CONTAINERS[container];
   if (!setting) return null;
   const database = String(env[setting] || '').trim();
-  return database || undefined;
+  // A setting that names the creator database (in any spelling) is treated
+  // as unset, as lib/code-brain/config.js treats it: the workspace is off
+  // then, so there is nothing of its own to export, and planning the job
+  // would read the creator database or fail every nightly run.
+  if (!database || isCreatorDatabase(database, env)) return undefined;
+  return database;
 }
 
 /**

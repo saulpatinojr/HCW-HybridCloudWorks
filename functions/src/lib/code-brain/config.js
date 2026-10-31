@@ -16,8 +16,15 @@
  *   CODE_BRAIN_SYNC_CLIENT_ID   the dedicated desktop client, and not the
  *                               creator brain's BRAIN_SYNC_CLIENT_ID
  *   CODE_BRAIN_COSMOS_DATABASE  the workspace's database, and not
- *                               COSMOS_DATABASE (default "hcw")
+ *                               COSMOS_DATABASE (default "hcw") in any
+ *                               spelling
+ *
+ * The names below must match infra/cosmos-code-brain-containers.json, the
+ * file Terraform creates the database from. The Functions package does not
+ * ship infra/, so code-brain.test.js holds the two equal instead.
  */
+import { isCreatorDatabase } from '../cosmos-client.js';
+
 export const CODE_RECORDS = 'code_brain_records';
 export const CODE_SYNC_SCOPE = 'code_brain_sync';
 export const CODE_BRAIN_UNAVAILABLE =
@@ -42,8 +49,8 @@ export function codeBrainConfig(env = process.env) {
   const ownerOid = env.CODE_BRAIN_OWNER_OID || '';
   const ownerTenantId = env.CODE_BRAIN_OWNER_TENANT_ID || '';
   const syncClientId = env.CODE_BRAIN_SYNC_CLIENT_ID || '';
-  const separateDatabase =
-    Boolean(database) && database !== (env.COSMOS_DATABASE || 'hcw');
+  // Trimmed and case-insensitive, so "HCW" cannot pass for a new database.
+  const separateDatabase = Boolean(database) && !isCreatorDatabase(database, env);
   const separateClient =
     Boolean(syncClientId) && !same(syncClientId, env.BRAIN_SYNC_CLIENT_ID);
   return {

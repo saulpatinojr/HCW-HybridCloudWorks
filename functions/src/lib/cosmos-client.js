@@ -121,6 +121,28 @@ function getCosmosClient() {
 }
 
 /**
+ * Comparing Cosmos database names (#1457). Kept in this file, not a module
+ * of its own, because other packages' tests load cosmos-client.js and the CI
+ * path filters list the files they reach.
+ *
+ * The creator site's database is COSMOS_DATABASE (default "hcw"), and the
+ * Code Conductor brain must never be pointed at it. Names are compared
+ * trimmed and case-insensitively, because Microsoft warns that some parts of
+ * the Azure platform are not case-sensitive about Cosmos resource names
+ * (https://learn.microsoft.com/azure/cosmos-db/resource-model#azure-cosmos-db-containers),
+ * so "HCW" or " hcw" must count as the creator database, not as a new one.
+ */
+export const databaseIdKey = (value) => String(value ?? '').trim().toLowerCase();
+
+/** The creator site's database name, as the app reads it. */
+export const creatorDatabase = (env = process.env) => env.COSMOS_DATABASE || 'hcw';
+
+/** True when `databaseId` names the creator site's database, in any spelling. */
+export function isCreatorDatabase(databaseId, env = process.env) {
+  return databaseIdKey(databaseId) === databaseIdKey(creatorDatabase(env));
+}
+
+/**
  * A container in a database OTHER than COSMOS_DATABASE, in the same account
  * and through the same client and identity (#1457).
  *
@@ -139,12 +161,14 @@ export function getDatabaseContainer(databaseId, containerName) {
   if (typeof databaseId !== 'string' || !databaseId.trim()) {
     throw new Error('getDatabaseContainer: a database id is required');
   }
-  if (databaseId === (process.env.COSMOS_DATABASE || 'hcw')) {
+  // Trimmed and case-insensitive: "HCW" is the creator database too
+  // (isCreatorDatabase above says why).
+  if (isCreatorDatabase(databaseId)) {
     throw new Error(
       'getDatabaseContainer is for a separate database; COSMOS_DATABASE is reached through getContainer'
     );
   }
-  return getCosmosClient().database(databaseId).container(containerName);
+  return getCosmosClient().database(databaseId.trim()).container(containerName);
 }
 
 /**

@@ -99,7 +99,8 @@ switches.
 - The desktop plugin in `obsidian-plugin/` still targets the creator routes
   and the `brain_sync` scope. Using it against this workspace needs a
   workspace setting in the plugin (routes and scope), which is a separate
-  change; the API speaks the same sync protocol (version 1) so the plugin's
+  change
+  ([#1467](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1467)); the API speaks the same sync protocol (version 1) so the plugin's
   engine is reusable as is. Until then the API can be exercised directly.
 - The admin registry lookup (`admins` in the `hcw` database) is shared: it is
   the site's one list of who is an administrator, and the Code Conductor brain
@@ -109,7 +110,24 @@ switches.
   configuration, not by Cosmos itself. Code that misused that identity could
   reach either database. This is the same position every container is in
   today.
+  Narrowing it is
+  [#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469).
+- A switched-off or half-configured workspace refuses a valid token before
+  the admin registry is read, so it costs no Cosmos read. Both workspaces'
+  sync guards now write their refusals to `admin_audit_logs`, as the admin
+  guard always has. For the creator brain this changes one edge case: while
+  it is switched off, a signed-in caller with a valid `brain_sync` token gets
+  404 where a caller missing the Admin role used to get 403.
 - One more container in the export: a few cents a month at this size.
+- The engineering notes' export copies sit in the same private `cosmos-export`
+  blob container on `stsiteprodcus01` as the creator site's backups. That
+  container is closed to the internet by the storage firewall. It is readable
+  by the Function App's identity, which holds Storage Blob Data Contributor on
+  the whole storage account (`azurerm_role_assignment.func_blob` in
+  `infra/storage.tf`), and by an operator only while they hold the temporary
+  Storage Blob Data Reader grant and firewall rule that the
+  [restore drill](../runbooks/cosmos-restore.md) adds and then removes, plus
+  anyone with owner-level access to the subscription.
 
 ## Alternatives considered
 
@@ -124,7 +142,8 @@ switches.
   ([Microsoft Learn: data plane role-based access](https://learn.microsoft.com/azure/cosmos-db/how-to-connect-role-based-access-control#grant-data-plane-role-based-access)),
   so the identity could hold one assignment per database. It would replace
   the assignment the whole site runs on, and a mistake there is a site-wide
-  403, so it belongs in its own reviewed change, not in this one.
+  403, so it belongs in its own reviewed change, not in this one. Tracked in
+  [#1469](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1469).
 - **Reuse `brain_sync` and the creator's desktop client.** Rejected: one
   token would then open both workspaces.
 

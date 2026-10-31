@@ -32,7 +32,8 @@
 # DISABLED BY DEFAULT. Creating the database switches nothing on. The routes
 # answer 404 until code_brain_enabled and its owner, tenant and desktop client
 # are set (code-brain-variables.tf). The app setting CODE_BRAIN_COSMOS_DATABASE
-# is set in the same apply that creates the database, and that is what adds
+# is set in the same apply that creates the database and its container (it is
+# read off the container, so it waits for both), and that is what adds
 # code_brain_records to the out-of-account export, so backups include it
 # before the workspace is ever switched on.
 # =============================================================================
@@ -54,7 +55,10 @@ resource "azurerm_cosmosdb_sql_database" "code_brain" {
     prevent_destroy = true
 
     precondition {
-      condition     = local.code_brain_spec.database != var.cosmos_database_name
+      # Trimmed and case-insensitive: some parts of Azure are not
+      # case-sensitive about Cosmos names, so "HCW" is the creator database too
+      # (https://learn.microsoft.com/azure/cosmos-db/resource-model#azure-cosmos-db-containers).
+      condition     = lower(trimspace(local.code_brain_spec.database)) != lower(trimspace(var.cosmos_database_name))
       error_message = "The Code Conductor brain must have its own database, not the creator site's (cosmos_database_name)."
     }
   }

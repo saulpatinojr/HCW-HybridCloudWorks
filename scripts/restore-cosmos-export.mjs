@@ -60,6 +60,7 @@ import {
   forEachConcurrent,
   CODE_BRAIN_DATABASE,
   targetDatabaseFor,
+  sameDatabase,
 } from './lib/cosmos-export-restore.mjs';
 
 export const EXPORT_CONTAINER = 'cosmos-export';
@@ -131,7 +132,7 @@ export function parseOptions(argv) {
   if (!codeBrainDatabase) {
     throw new Error(`--code-brain-database must name a database (the default is ${CODE_BRAIN_DATABASE})`);
   }
-  if (codeBrainDatabase === database) {
+  if (sameDatabase(codeBrainDatabase, database)) {
     throw new Error('--code-brain-database must differ from --database: the Code Conductor brain has its own database');
   }
   return {

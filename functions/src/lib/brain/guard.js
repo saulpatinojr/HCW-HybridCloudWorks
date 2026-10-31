@@ -1,13 +1,15 @@
 import { createRoleGuard } from '../auth/require-role.js';
 import { createTokenVerifier } from '../auth/verify-token.js';
 import { readDoc } from '../cosmos-client.js';
+import { writeDenialAudit } from '../auth/denial-audit.js';
 import { SYNC_SCOPE, fail, ownerMatches } from './model.js';
 
 /**
  * A guard that accepts only tokens carrying one delegated scope. Each private
  * workspace has its own scope (brain_sync for the creator brain,
  * code_brain_sync for the Code Conductor brain), so a token issued for one
- * fails the other. The admin registry it checks is the site's one registry.
+ * fails the other. The admin registry it checks is the site's one registry,
+ * and its refusals are written to admin_audit_logs like the admin guard's.
  */
 export function createWorkspaceSyncGuard(delegatedScope) {
   return createRoleGuard({
@@ -17,6 +19,7 @@ export function createWorkspaceSyncGuard(delegatedScope) {
       audience: process.env.ENTRA_API_AUDIENCE,
     }),
     lookupAdmin: (oid) => readDoc('admins', oid, oid),
+    auditDenial: writeDenialAudit,
   });
 }
 
@@ -41,6 +44,15 @@ export async function requireWorkspaceOwner(
   workspace,
   sync = false,
 ) {
+  // A switched-off or half-configured workspace refuses as soon as the token
+  // is known to be valid and to carry the scope, before the admin registry
+  // (a Cosmos read) is consulted. A caller with no or a wrong token still gets
+  // 401, so the answer does not say whether the workspace exists.
+  if (!(workspace.enabled === true && workspace.ownerOid && workspace.ownerTenantId)) {
+    const signedIn = await guard.requireUser(request);
+    if (signedIn.error) return signedIn;
+    fail(404, 'UNAVAILABLE', workspace.unavailable);
+  }
   const auth = await guard.requireRole(request, 'editor');
   if (auth.error) return auth;
   if (!ownerMatches(auth.user, workspace))
