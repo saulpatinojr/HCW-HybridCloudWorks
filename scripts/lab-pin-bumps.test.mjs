@@ -503,11 +503,32 @@ describe('the image base plan', () => {
   const lineTag = `${major}.${minor}${variant}`;
   const next = `${major}.${minor}.99`;
 
-  function registry({ pythonVersion = next, patchAgrees = true } = {}) {
+  /**
+   * A fake Docker Hub for the python line tag and its patch tag. `patch` says
+   * how the patch tag's index relates to the line tag's:
+   *   same           the same index (the two tags are one image list)
+   *   riscv-lag      the line tag also lists a riscv64 image the patch tag
+   *                  does not, still the previous CPython; amd64 is shared
+   *                  (python:3.14-slim-trixie on 2026-10-31, #1426)
+   *   amd64-differs  the patch tag's linux/amd64 image is a different one
+   *   no-amd64       the patch tag lists no linux/amd64 image at all
+   */
+  function registry({ pythonVersion = next, patch = 'same' } = {}) {
     const config = JSON.stringify({ config: { Env: ['PATH=/usr/local/bin', `PYTHON_VERSION=${pythonVersion}`] } });
     const amd64 = JSON.stringify({ schemaVersion: 2, config: { digest: sha(config) } });
-    const index = JSON.stringify({ schemaVersion: 2, manifests: [{ digest: sha(amd64), platform: { os: 'linux', architecture: 'amd64' } }] });
-    const other = JSON.stringify({ schemaVersion: 2, manifests: [] });
+    const amd64Entry = { digest: sha(amd64), platform: { os: 'linux', architecture: 'amd64' } };
+    // riscv64 manifests are only listed, never read: nothing here pulls them.
+    const riscvEntry = (build) => ({ digest: sha(`riscv64 ${build}`), platform: { os: 'linux', architecture: 'riscv64' } });
+    const otherAmd64Entry = { digest: sha('another amd64 build'), platform: { os: 'linux', architecture: 'amd64' } };
+    const lineManifests = patch === 'riscv-lag' ? [amd64Entry, riscvEntry('previous CPython')] : [amd64Entry];
+    const index = JSON.stringify({ schemaVersion: 2, manifests: lineManifests });
+    const patchManifests = {
+      same: lineManifests,
+      'riscv-lag': [amd64Entry],
+      'amd64-differs': [otherAmd64Entry],
+      'no-amd64': [riscvEntry('new CPython')],
+    }[patch];
+    const patchIndex = JSON.stringify({ schemaVersion: 2, manifests: patchManifests });
     const reg = 'https://registry-1.docker.io/v2';
     const hub = 'https://hub.docker.com/v2/repositories';
     const sandboxManifest = JSON.stringify({ sandbox: true });
@@ -517,13 +538,24 @@ describe('the image base plan', () => {
       [`https://auth.docker.io/token?service=registry.docker.io&scope=repository:${sandbox.name}:pull`]: { token: 't' },
       [`${reg}/library/python/manifests/${lineTag}`]: index,
       [`${hub}/library/python/tags/${lineTag}`]: { digest: sha(index) },
-      [`${reg}/library/python/manifests/${pythonVersion}${variant}`]: patchAgrees ? index : other,
-      [`${hub}/library/python/tags/${pythonVersion}${variant}`]: { digest: sha(patchAgrees ? index : other) },
+      [`${reg}/library/python/manifests/${pythonVersion}${variant}`]: patchIndex,
+      [`${hub}/library/python/tags/${pythonVersion}${variant}`]: { digest: sha(patchIndex) },
       [`${reg}/library/python/manifests/${sha(amd64)}`]: amd64,
       [`${reg}/library/python/blobs/${sha(config)}`]: config,
       [`${reg}/${sandbox.name}/manifests/${sandbox.tag}`]: sandboxManifest,
       [`${hub}/${sandbox.name}/tags/${sandbox.tag}`]: { digest: sha(sandboxManifest) },
       _index: index,
+      _patchIndex: patchIndex,
+      _amd64: sha(amd64),
+    };
+  }
+
+  /** The live files with BASE_DIGEST (and every FROM) set to `digest`, as if the pin already were that index. */
+  function pinnedAt(digest) {
+    return {
+      ...files,
+      [VERSIONS_ENV_PATH]: files[VERSIONS_ENV_PATH].replace(`BASE_DIGEST=${env.BASE_DIGEST}`, `BASE_DIGEST=${digest}`),
+      [DOCKERFILE_PATH]: files[DOCKERFILE_PATH].replaceAll(env.BASE_DIGEST, digest),
     };
   }
 
@@ -572,15 +604,55 @@ describe('the image base plan', () => {
     expect(plan.notes.map((n) => n.reason).join(' ')).toMatch(/BuildingImagesPage\.jsx was not read/);
   });
 
-  it('moves nothing when the patch tag and the line tag have not settled on one digest', async () => {
-    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(registry({ patchAgrees: false }))) });
+  it('moves nothing when the patch tag and the line tag carry different linux/amd64 images', async () => {
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(registry({ patch: 'amd64-differs' }))) });
     expect(plan.applied.filter((b) => b.key === 'base')).toEqual([]);
     expect(plan.files[VERSIONS_ENV_PATH]).toContain(`BASE_DIGEST=${env.BASE_DIGEST}`);
-    expect(plan.notes.map((n) => n.reason).join(' ')).toMatch(/have not settled/);
+    const reasons = plan.notes.map((n) => n.reason).join(' ');
+    expect(reasons).toMatch(/have not settled/);
+    expect(reasons).toContain(`linux/amd64 ${sha('another amd64 build')}`);
+  });
+
+  it('is current, with no note, when the line tag differs from the pinned patch tag only on riscv64 (#1426)', async () => {
+    // 2026-10-31: python:3.14-slim-trixie still listed a riscv64 image on the
+    // previous CPython, so its index differed from python:3.14.10-slim-trixie's
+    // while the linux/amd64 image was the same one. The pin was current.
+    const routes = registry({ pythonVersion: env.BASE_PYTHON_VERSION, patch: 'riscv-lag' });
+    expect(sha(routes._index)).not.toBe(sha(routes._patchIndex));
+    const pinned = pinnedAt(sha(routes._patchIndex));
+    const plan = await planImageBase({ files: pinned, http: makeHttp(fakeFetch(routes)) });
+    expect(plan.applied.filter((b) => b.key === 'base')).toEqual([]);
+    expect(plan.notes.filter((n) => n.label.startsWith('Lab image base'))).toEqual([]);
+    expect(plan.files[VERSIONS_ENV_PATH]).toContain(`BASE_DIGEST=${sha(routes._patchIndex)}`);
+    expect(plan.files[DOCKERFILE_PATH]).toBe(pinned[DOCKERFILE_PATH]);
+  });
+
+  it('moves to a newer patch tag whose linux/amd64 image matches the line tag, pinning the patch tag\'s own index', async () => {
+    const routes = registry({ patch: 'riscv-lag' });
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(routes)), today: new Date('2026-10-31T12:00:00Z') });
+    const base = plan.applied.find((b) => b.key === 'base');
+    expect(base).toBeTruthy();
+    const newEnv = readEnv(plan.files[VERSIONS_ENV_PATH]);
+    expect(newEnv.BASE_IMAGE).toBe(`python:${next}${variant}`);
+    // The patch tag's index, not the line tag's: the line tag's will change
+    // again when riscv64 catches up, and the patch tag's will not.
+    expect(newEnv.BASE_DIGEST).toBe(sha(routes._patchIndex));
+    expect(newEnv.BASE_DIGEST).not.toBe(sha(routes._index));
+    expect(newEnv.BASE_PYTHON_VERSION).toBe(next);
+    expect(plan.files[DOCKERFILE_PATH]).toContain(`FROM python:${next}${variant}@${sha(routes._patchIndex)} AS runner`);
+    expect(base.evidence.map((e) => e.value)).toEqual(expect.arrayContaining([sha(routes._index), sha(routes._patchIndex), routes._amd64]));
+  });
+
+  it('fails closed, as a note, when the patch tag lists no linux/amd64 image', async () => {
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(registry({ patch: 'no-amd64' }))) });
+    expect(plan.applied.filter((b) => b.key === 'base')).toEqual([]);
+    expect(readEnv(plan.files[VERSIONS_ENV_PATH]).BASE_DIGEST).toBe(env.BASE_DIGEST);
+    expect(plan.files[DOCKERFILE_PATH]).toBe(files[DOCKERFILE_PATH]);
+    expect(plan.notes.map((n) => n.reason).join(' ')).toContain(`no linux/amd64 image in python:${next}${variant}`);
   });
 
   it('moves the sandbox template base and its one FROM, independently of the python base', async () => {
-    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(registry({ patchAgrees: false }))) });
+    const plan = await planImageBase({ files, http: makeHttp(fakeFetch(registry({ patch: 'amd64-differs' }))) });
     expect(plan.applied.map((b) => b.key)).toEqual(['sandbox']);
     const sandbox = plan.applied.find((b) => b.key === 'sandbox');
     expect(sandbox).toBeTruthy();

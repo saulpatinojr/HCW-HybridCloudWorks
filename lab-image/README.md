@@ -491,7 +491,10 @@ and attests. Where each sum comes from:
   `node scripts/lab-pins-upstream.mjs --bump image-base`, which reads the
   line tag's digest twice (the registry, its bytes hashed, and the Docker
   Hub API), takes the CPython release from the image config, requires the
-  patch tag to resolve to the same digest, and opens or updates the
+  patch tag to carry the same linux/amd64 image (the only platform this
+  image is built for; another platform in the line tag can lag behind, as
+  riscv64 did in #1426, without holding the pin back), pins the patch tag's
+  own index digest, and opens or updates the
   `chore/lab-pins-image-base` pull request with all four edits, the base tag
   and CPython release the Docker guide page names
   (`frontend/src/pages/docker/BuildingImagesPage.jsx`, which

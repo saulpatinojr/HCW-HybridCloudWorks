@@ -208,10 +208,20 @@ export async function resolveTag(http, image, tag) {
   return { digest: primary.digest, manifest: primary.manifest, token: primary.token, reads };
 }
 
+/**
+ * The linux/amd64 entry of an index, or null. The lab image is built for
+ * linux/amd64 only (no `platforms:` in publish-lab-image.yml, and that
+ * workflow refuses a `--platform` on any FROM), so this is the one image in a
+ * base tag's index the build ever pulls.
+ */
+export function amd64EntryOf(index) {
+  return (index?.manifests ?? []).find((m) => m.platform?.os === 'linux' && m.platform?.architecture === 'amd64') ?? null;
+}
+
 /** The linux/amd64 image config's Env, from an index; every hop hashed against the digest that named it. */
 export async function imageEnv(http, image, index) {
   const registry = registryOf(image);
-  const entry = (index.manifests ?? []).find((m) => m.platform?.os === 'linux' && m.platform?.architecture === 'amd64');
+  const entry = amd64EntryOf(index);
   if (!entry) throw new Error(`${image}: the index has no linux/amd64 manifest`);
   const manifest = await readManifest(http, image, entry.digest);
   if (manifest.digest !== entry.digest) throw new Error(`${image}: manifest ${entry.digest} hashed to ${manifest.digest}`);
@@ -722,12 +732,16 @@ export async function planHost({ text, files = {}, rows, http, bumpers = HOST_BU
  * (python:3.14.7-slim-trixie), which stops moving once the next patch ships,
  * so the line tag (python:3.14-slim-trixie) is what is read; the CPython it
  * carries comes from the image config's PYTHON_VERSION, and the patch tag for
- * that release must resolve to the same digest before the pin moves to it.
- * A new minor line is a floors decision (scripts/version-floors.json), not a
- * rebuild, so the line stays put. lab-image/README.md, "Updating a version",
- * is this procedure by hand.
+ * that release must carry the same linux/amd64 image before the pin moves to
+ * it. The two tags' indexes (an index is the list of per-platform images
+ * behind one tag) are not compared whole: the line tag can list a platform
+ * the build never uses, still on the previous CPython (riscv64 did, #1426),
+ * and that is not a reason to wait. What is pinned is still the patch tag's
+ * own index digest. A new minor line is a floors decision
+ * (scripts/version-floors.json), not a rebuild, so the line stays put.
+ * lab-image/README.md, "Updating a version", is this procedure by hand.
  */
-/** The python base: the line tag's newest digest, its CPython, and the patch tag that must agree. */
+/** The python base: the line tag's newest digest, its CPython, and the patch tag that must agree on linux/amd64. */
 async function planPythonBase(env, http, today) {
   const base = parseImageRef(env.BASE_IMAGE);
   const tagParts = base?.tag?.match(/^(\d+)\.(\d+)\.(\d+)(-[a-z0-9.-]+)$/);
@@ -745,21 +759,35 @@ async function planPythonBase(env, http, today) {
   }
   const patchTag = `${pythonVersion}${variant}`;
   const patch = await resolveTag(http, base.name, patchTag);
-  if (patch.digest !== line.digest) {
-    throw new Error(`${base.name}:${patchTag} is ${patch.digest} but ${base.name}:${lineTag} is ${line.digest}; the two have not settled`);
+  // Settled means both tags carry the same linux/amd64 image, the only one
+  // the build pulls. Comparing the whole index would wait on platforms the
+  // lab never runs. No amd64 entry on either side is a note, not a guess.
+  const lineAmd64 = amd64EntryOf(line.manifest);
+  const patchAmd64 = amd64EntryOf(patch.manifest);
+  if (!lineAmd64 || !patchAmd64) {
+    const missing = [!lineAmd64 && `${base.name}:${lineTag}`, !patchAmd64 && `${base.name}:${patchTag}`].filter(Boolean).join(' and ');
+    throw new Error(`no linux/amd64 image in ${missing}, the only platform the lab image is built for; nothing moves until there is one`);
   }
+  if (patchAmd64.digest !== lineAmd64.digest) {
+    throw new Error(
+      `${base.name}:${patchTag} is ${patch.digest} (linux/amd64 ${patchAmd64.digest}) but ${base.name}:${lineTag} is ${line.digest} (linux/amd64 ${lineAmd64.digest}); the two have not settled`
+    );
+  }
+  // The pin is already this patch tag's index: nothing to move. Without this
+  // the line tag's index differing only on another platform read as "behind".
+  if (pythonVersion === env.BASE_PYTHON_VERSION && patch.digest === env.BASE_DIGEST) return null;
   const oldRef = `${env.BASE_IMAGE}@${env.BASE_DIGEST}`;
   const newImage = `${base.name}:${patchTag}`;
-  const newRef = `${newImage}@${line.digest}`;
+  const newRef = `${newImage}@${patch.digest}`;
   const envEdit = (key, to) => ({ file: VERSIONS_ENV_PATH, where: key, to, apply: (t) => setEnvValue(t, key, to) });
   return {
     key: 'base',
     label: `Lab image base (${base.name}:${lineTag})`,
     from: `${env.BASE_IMAGE}@${env.BASE_DIGEST.slice(0, 19)}`,
-    to: `${newImage}@${line.digest.slice(0, 19)}`,
+    to: `${newImage}@${patch.digest.slice(0, 19)}`,
     edits: [
       envEdit('BASE_IMAGE', newImage),
-      envEdit('BASE_DIGEST', line.digest),
+      envEdit('BASE_DIGEST', patch.digest),
       envEdit('BASE_PYTHON_VERSION', pythonVersion),
       { file: DOCKERFILE_PATH, where: 'every external FROM', to: newRef, apply: (t) => replaceFrom(t, oldRef, newRef) },
       // The guide page names the tag in its prose and its inspect command,
@@ -786,7 +814,12 @@ async function planPythonBase(env, http, today) {
     ],
     evidence: [
       { item: `${base.name}:${lineTag} (index digest)`, value: line.digest, source: line.reads.join('; ') },
-      { item: `${newImage} (index digest, the same)`, value: patch.digest, source: patch.reads.join('; ') },
+      { item: `${newImage} (index digest, the one pinned)`, value: patch.digest, source: patch.reads.join('; ') },
+      {
+        item: 'linux/amd64 image in both indexes (the same)',
+        value: patchAmd64.digest,
+        source: 'the linux/amd64 entry of each index above; the lab image is built for linux/amd64 only, so other platforms in the line tag are not compared',
+      },
       {
         item: 'CPython in that image',
         value: pythonVersion,
