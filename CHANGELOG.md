@@ -396,6 +396,37 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **The lab image's critical Python findings are fixed, and the base moves to
+  CPython 3.14.10 ([#1426](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1426)).**
+  Every CRITICAL and HIGH Python finding the weekly scan reported in the
+  `full` image was inside the Azure CLI's own bundled Python under `/opt/az`,
+  and Azure CLI 2.91.0 is still Microsoft's newest release. The build now
+  replaces certifi (2026.10.23), PyJWT (2.15.1), urllib3 (2.8.0) and the
+  CLI's pip (26.2.2) there, from hash-checked wheels, and runs `pip check`
+  on the result; `smoke.sh` checks each version and that the CLI's sign-in
+  libraries still import. `lab-image/versions.env`
+  (`AZURE_CLI_PYTHON_OVERRIDES`) records what waits on a publisher:
+  cryptography 48.0.1, which pyOpenSSL in the same bundle caps below 49,
+  oauthlib 3.2.2, whose fix is a new major version Microsoft has not
+  adopted, and the copies of msgpack, setuptools and urllib3 that pip keeps
+  inside itself. The base is `python:3.14.10-slim-trixie` by its own index digest
+  (the line tag differed only by a riscv64 image still on 3.14.9), and
+  terraform 1.17.1, kubectl 1.37.2 and azurerm 5.12.0 move to their newest
+  releases, each sum read from the publisher.
+
+- **Sign-in library `@azure/msal-node` no longer forced; `@azure/identity`
+  4.14.1 asks for it itself ([#1346](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1346))**.
+  The 2026-10-24 entry below added an npm `overrides` line (a line that makes
+  npm install a version the parent package did not ask for) to force msal-node
+  7.1.1, because `@azure/identity` 4.14.0 still asked for `^6.0.0` and every
+  6.x is open to [GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5).
+  `@azure/identity` 4.14.1, released by Microsoft, now asks for `^7.1.0`, so
+  `functions`, `scripts` and `vps-agent` move to `^4.14.1` and the override
+  line is gone from each `package.json`. The installed version does not change
+  (`npm ls @azure/msal-node` still shows 7.1.1 in all three, now under a range
+  the identity package declares), and the accepted-risk row in `TODO.md` is
+  removed. **Not tested:** real Azure sign-in, meaning Azure Arc on the lab
+  host and the workload-identity login in CI; confirm after the next deploy.
 - **Sign-in library `@azure/msal-node` forced to 7.1.1 in `functions`,
   `scripts` and `vps-agent`, closing three High Dependabot alerts (#163, #164,
   #165)**. Owner decision 2026-10-24. The alerts are for
