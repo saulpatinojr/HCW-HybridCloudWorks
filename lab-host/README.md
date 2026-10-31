@@ -124,8 +124,8 @@ the list does not hold the key of the most recent SSH login, which on that
 run is root's with this key (#953). The script checks the host is Ubuntu 26.04 LTS (24.04
 LTS is accepted and says it is the fallback; anything else stops), then
 checks the host is empty (below), installs
-`uv` 0.12.19 from its GitHub release after checking the archive's SHA256,
-has uv install CPython 3.14.7, clones
+`uv` 0.13.6 from its GitHub release after checking the archive's SHA256,
+has uv install CPython 3.15.2, clones
 this repository into `/opt/hcw-src` (or fetches, when the clone exists),
 checks out the current `main` commit detached and prints its full sha
 (`HCW_REPO_REF`, below), installs `ansible-core` on that CPython from the
@@ -193,11 +193,11 @@ so the floor is 3.14.5, and Ubuntu 26.04's own `/usr/bin/python3` is 3.14.4
 
 | Runs | Interpreter | Why |
 | --- | --- | --- |
-| `ansible`, `ansible-playbook`, `ansible-galaxy`, `ansible-vault` (the control side) | CPython 3.14.7 from uv, under `/opt/uv/python`, in the venv the link `/opt/uv/ansible-core` (`HCW_ANSIBLE_VENV`) points to, one generation per build under `/opt/uv/ansible-core-generations`, linked into `/usr/local/bin` through that link | The rule. `PYTHON_VERSION` at the top of `bootstrap.sh` is the pin; uv checks the download against the SHA256 it carries for that build, and uv itself is checked against `UV_SHA256`. ansible-core and every wheel it depends on are the `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and `ANSIBLE_CORE_DEPS` lines of `lab-image/versions.env`, the lines the lab image is built from; `bootstrap.sh` keeps no copy, writes them as one `name==version --hash=sha256:<hex>` line each, and installs them with `uv pip install --require-hashes --only-binary :all:`, which refuses a wheel whose SHA256 differs and any dependency the file does not list |
+| `ansible`, `ansible-playbook`, `ansible-galaxy`, `ansible-vault` (the control side) | CPython 3.15.2 from uv, under `/opt/uv/python`, in the venv the link `/opt/uv/ansible-core` (`HCW_ANSIBLE_VENV`) points to, one generation per build under `/opt/uv/ansible-core-generations`, linked into `/usr/local/bin` through that link | The rule. `PYTHON_VERSION` at the top of `bootstrap.sh` is the pin; uv checks the download against the SHA256 it carries for that build, and uv itself is checked against `UV_SHA256`. ansible-core and every wheel it depends on are the `ANSIBLE_CORE_VERSION`, `ANSIBLE_CORE_SHA256` and `ANSIBLE_CORE_DEPS` lines of `lab-image/versions.env`, the lines the lab image is built from; `bootstrap.sh` keeps no copy, writes them as one `name==version --hash=sha256:<hex>` line each, and installs them with `uv pip install --require-hashes --only-binary :all:`, which refuses a wheel whose SHA256 differs and any dependency the file does not list |
 | Every module the play runs on the host | `/usr/bin/python3`, the distribution's (3.14.4 on 26.04, 3.12.3 on 24.04) | **The one recorded exception.** `python3-apt`, `python3-debian` and `python3-docker`, which the `apt`, `deb822_repository` and `community.docker` modules import, are Ubuntu packages built for that interpreter and cannot be loaded by another. `ansible_python_interpreter` in `ansible/inventory/localhost.yml` says so |
 
 A successful run prints, before the play starts, `ansible-playbook [core
-<ANSIBLE_CORE_VERSION from versions.env>]` and a `python version = 3.14.7`
+<ANSIBLE_CORE_VERSION from versions.env>]` and a `python version = 3.15.2`
 line; a run that installs says `installing ansible-core <version> and the <n>
 wheels it depends on into /opt/uv/ansible-core-generations/<generation>`
 first, and `switched /opt/uv/ansible-core to <that generation>` once it has

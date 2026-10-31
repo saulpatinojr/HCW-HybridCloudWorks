@@ -22,7 +22,7 @@
 # Python. Ansible's control side (ansible-playbook, templating, the vault)
 # runs on CPython from uv, not on the distribution's python3. Owner rule
 # 2026-09-26: Python is on the newest release line and no more than two patch
-# releases behind that line's newest (3.14.7 then, so a 3.14.5 floor), and
+# releases behind that line's newest (3.14.7 that day, so a 3.14.5 floor), and
 # Ubuntu 26.04's /usr/bin/python3 is 3.14.4 (python3.14 3.14.4, package
 # python3 3.14.3), below that floor. uv comes from its GitHub release asset, checked against
 # UV_SHA256 before it runs (no curl | sh), and uv checks the interpreter it
@@ -35,17 +35,21 @@
 # Python and cannot be loaded by another interpreter.
 set -euo pipefail
 
-# Tool versions, each checked 2026-09-26. A bump is an edit here and a re-run.
-# uv 0.12.19, the newest release; UV_SHA256 is the sha256sum of
-# uv-x86_64-unknown-linux-gnu.tar.gz from
-# https://github.com/astral-sh/uv/releases/tag/0.12.19, equal to the
-# release's own .sha256 asset, and `gh attestation verify --repo astral-sh/uv`
-# traces the file to that repository's release workflow.
-UV_VERSION=0.12.19
-UV_SHA256=23bf5552d220e0842b65c862097b2ebaeba0064b74eda5e565e77fd25969d8c8
-# CPython 3.14.7, the newest release of the newest line. uv 0.12.19 pins its
-# python-build-standalone 20260924 build by SHA256.
-PYTHON_VERSION=3.14.7
+# Tool versions. A bump is an edit here and a re-run.
+# uv 0.13.6 (released 2026-10-26), the newest release and the first whose
+# built-in list of interpreters has CPython 3.15.2 (0.12.19 stopped at
+# 3.15.0rc2, 0.13.5 at 3.15.1). UV_SHA256 is the release's own
+# uv-x86_64-unknown-linux-gnu.tar.gz.sha256 asset, read on 2026-10-31 from
+# Astral's download mirror (releases.astral.sh/github/uv/releases/download/),
+# which served the same value for 0.12.19 as the line this replaced, and
+# equal to the sha256sum of the tarball downloaded there. Not checked that
+# day: `gh attestation verify --repo astral-sh/uv`, which traces the file to
+# that repository's release workflow; run it before this leaves draft.
+UV_VERSION=0.13.6
+UV_SHA256=f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645
+# CPython 3.15.2, the newest release of the newest line. uv 0.13.6 pins its
+# python-build-standalone 20261026 build by SHA256.
+PYTHON_VERSION=3.15.2
 # cosign, for SLSA build provenance attestation verification of add-on
 # images before pull (#1069). COSIGN_SHA256 is the sha256sum of cosign-linux-amd64
 # from the release page of COSIGN_VERSION, https://github.com/sigstore/cosign/releases,

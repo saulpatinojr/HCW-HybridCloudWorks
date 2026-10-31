@@ -1225,6 +1225,18 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Changed
 
+- **Python 3.15 for the lab image, the lab host and four CI jobs, prepared
+  ahead of ansible-core 2.22.0 (draft; follows the 3.15 floor in
+  [#1458](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1458)).**
+  The lab image's base moves to `python:3.15.2-slim-trixie` by its own index
+  digest, `lab-host/bootstrap.sh` to uv 0.13.6 (the first uv that can install
+  CPython 3.15.2) and CPython 3.15.2, and the `ansible-lint`, harness,
+  complexity and documentation jobs to `python-version: '3.15'`. ansible-core
+  is temporarily 2.22.0rc2, with its dependencies re-resolved for CPython 3.15,
+  because 2.21 stops at start-up on 3.15; it becomes 2.22.0 when that is
+  released. One more publisher blocks the image and the host: PyYAML 6.0.3,
+  still its newest release, has no wheel for CPython 3.15.
+
 - **Docs: the delivery monitor's Telegram messages are explained, and the
   Linkie key's permission label is corrected**. Owner request 2026-10-24
   ("update Pages and readme"). `docs/runbooks/alerting-and-support.md` gains

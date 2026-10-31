@@ -95,7 +95,7 @@ export const COMMANDS = Object.freeze({
     }),
     Object.freeze({ shell: 'bash', command: "grep -n '^FROM' lab-image/Dockerfile" }),
   ]),
-  inspectBase: both('docker buildx imagetools inspect python:3.14.10-slim-trixie'),
+  inspectBase: both('docker buildx imagetools inspect python:3.15.2-slim-trixie'),
   mirror: Object.freeze([
     Object.freeze({
       shell: 'PowerShell',
@@ -223,7 +223,7 @@ export default function DockerBuildingImagesPage() {
       <GuideSection id="digest" title="Base images pinned by digest">
         <p className={PROSE}>
           Both stages that start from an image, <Code>fetch</Code> and <Code>runner</Code>, start
-          from the official <Code>python:3.14.10-slim-trixie</Code> (CPython 3.14.10 on Debian 13),
+          from the official <Code>python:3.15.2-slim-trixie</Code> (CPython 3.15.2 on Debian 13),
           written as the tag, an <Code>@</Code>, and the image’s index digest. A tag can be moved to
           a different image at any time; a digest is the hash of the content, so it cannot. As the
           Dockerfile’s own header puts it, the tag beside the digest is documentation: Docker
