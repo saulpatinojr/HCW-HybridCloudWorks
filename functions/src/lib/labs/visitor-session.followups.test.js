@@ -897,3 +897,96 @@ describe('#1464 review, round 2', () => {
     });
   });
 });
+
+describe('#1464 review, round 3: every holder owns one of the slots, and slots never age out', () => {
+  const labsIn = (s) =>
+    [...s.docs.entries()].filter(
+      ([path, doc]) => path.startsWith('lab_jobs/') && ['active', 'provisioning'].includes(doc.status)
+    ).length;
+  const slotDoc = (n, sessionId, takenAt) => ({ id: `visitor-slot:${n}`, kind: 'visitor_slot', sessionId, takenAt, ttl: -1 });
+  const putSlot = (s, n, sessionId, takenAt) =>
+    s.docs.set(`submission_quota/visitor-slot:${n}`, { ...slotDoc(n, sessionId, takenAt), _etag: `"slot-${n}"` });
+  const OLD = iso(NOW - 60 * 60 * 1000);
+
+  it('1: keeps a slot for as long as its session may hold a lab, past a week, and counts it', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '1');
+    const s = store([], { now: clock });
+    const refusing = vi.fn(async (url, init) => {
+      const target = String(url);
+      if (target.includes('/builds')) return { ok: false, status: 500 };
+      return visitorFetch()(url, init);
+    });
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: visitorFetch(), clock });
+    const alice = parsed(await startAs(handlers, ALICE)).body.sessionId;
+    const ending = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: refusing, clock });
+    await stopAs(ending, ALICE, alice);
+    expect(s.get('lab_jobs', alice)).toMatchObject({ status: 'cleanup_pending', workspaceGone: false, slot: 0 });
+
+    // The waiting record is written again on day 6 (a retry), so on day 8 it is still there.
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    now = NOW + 6 * DAY_MS;
+    const record = s.get('lab_jobs', alice);
+    await s.replaceDocIfMatch('lab_jobs', { ...record, retryAt: iso(NOW + 9 * DAY_MS) }, { partitionKey: alice });
+    now = NOW + 8 * DAY_MS;
+    expect(s.get('lab_jobs', alice)).not.toBeNull();
+
+    expect(s.get('submission_quota', 'visitor-slot:0')).toMatchObject({ sessionId: alice, ttl: -1 });
+    const later = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl: visitorFetch(), clock });
+    const bob = parsed(await startAs(later, BOB));
+    expect(bob.status).toBe(503);
+    expect(bob.body.code).toBe(DOOR_CODES.capacity_full);
+  });
+
+  it('2: counts an old session, a session in slot 1 and a crashed reservation in slot 0 together, at a limit of 2', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '2');
+    // The old session passes its hour while the sweep is held back, so only the full count sees it.
+    const s = store([session('legacy-1', { expiresAt: iso(NOW + 30_000) }), session('s-1', { slot: 1 })]);
+    putSlot(s, 1, 's-1', OLD);
+    putSlot(s, 0, 'crashed-start', OLD); // its record was never written, and it is old enough to take over
+    const fetchImpl = visitorFetch();
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+    await statusAs(handlers, BOB); // runs the sweep, and holds the next one back for a minute
+    now = NOW + 40_000;
+
+    const res = parsed(await startAs(handlers, ALICE));
+
+    expect(res.status).toBe(503);
+    expect(labsIn(s)).toBe(2);
+    expect(coderCalls(fetchImpl)).not.toContain('POST /api/v2/users');
+  });
+
+  it('3: gives an old session a slot before taking one, so a start in flight in another slot is not overrun', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '3');
+    const s = store([session('legacy-1'), session('s-1', { slot: 1 })]);
+    putSlot(s, 0, 'crashed-start', OLD);
+    putSlot(s, 1, 's-1', OLD);
+    putSlot(s, 2, 'in-flight', iso(NOW - 1000)); // a start that has its slot and has not written its record yet
+    const fetchImpl = visitorFetch();
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    const res = parsed(await startAs(handlers, ALICE));
+
+    // Three holders already: the old session (now in slot 0), the session in slot 1, and the start in flight.
+    expect(res.status).toBe(503);
+    expect(s.get('submission_quota', 'visitor-slot:0').sessionId).toBe('legacy-1');
+    expect(coderCalls(fetchImpl)).not.toContain('POST /api/v2/users');
+  });
+
+  it('4: never lets two starts at once go past the limit, against an old session, a crashed reservation and a live slot', async () => {
+    vi.stubEnv('LABS_VISITOR_MAX_CONCURRENT', '3');
+    const s = store([session('legacy-1'), session('s-1', { slot: 1 })]);
+    putSlot(s, 0, 'crashed-start', OLD);
+    putSlot(s, 1, 's-1', OLD);
+    const fetchImpl = visitorFetch();
+    const handlers = createVisitorSessionHandlers({ store: s, identity: identity(), fetchImpl, clock });
+
+    const results = (await Promise.all([startAs(handlers, ALICE), startAs(handlers, BOB)])).map(parsed);
+
+    expect(results.map((r) => r.status).sort()).toEqual([201, 503]);
+    expect(labsIn(s)).toBe(3); // the old session, the one in slot 1, and one new one
+    const named = [0, 1, 2].map((n) => s.get('submission_quota', `visitor-slot:${n}`)?.sessionId);
+    expect(new Set(named).size).toBe(3);
+    expect(named).toContain('legacy-1');
+    expect(named).toContain('s-1');
+  });
+});

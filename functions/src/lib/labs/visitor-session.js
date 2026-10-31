@@ -1114,11 +1114,15 @@ function holdsSlot(record, nowIso) {
  *    PROVISION_LEASE_MS (`expiresAt`), is let go when the start ends, and a
  *    lock whose time has passed is taken over with a conditional replace.
  *  - `visitor-slot:<n>` for n below the concurrent limit: one per lab the
- *    visitors may hold at once. A start takes a free one or is refused as
- *    full. A slot is let go when its session no longer holds a lab, and one
- *    that was never let go (its process died) is taken over only once it is
- *    older than PROVISION_LEASE_MS and its session no longer holds a lab, so
- *    the slots mend themselves and cannot stay full for ever.
+ *    visitors may hold at once, and every holder owns one (round 3): a
+ *    record that may still hold a lab, or a start that has taken its slot and
+ *    not yet written its record. Under the start lock, a holding record that
+ *    no slot names is given one first, and only then does the start take its
+ *    own, or is refused as full. A slot never ages out (`ttl: -1`). It is let
+ *    go when its session no longer holds a lab, and one that was never let go
+ *    (its process died) is taken over only once it is older than
+ *    PROVISION_LEASE_MS and its holder no longer holds a lab, so the slots
+ *    mend themselves and cannot stay full for ever.
  */
 const QUOTA_CONTAINER = 'submission_quota';
 export const START_LOCK_PREFIX = 'visitor-start:';
@@ -1174,12 +1178,27 @@ async function slotIsFree(store, slot, nowMs) {
   return !mayHoldLab(holder);
 }
 
-/** Take one of the `max` slots for this session: its number, or null when all are held. Store faults are thrown. */
-async function takeSlot(store, sessionId, max, nowMs) {
+/**
+ * A slot document never ages out (`ttl: -1` on the item, since the
+ * container's own default is two hours) (#1464 review, round 3). It is let go
+ * when its session's clean-up is confirmed (`releaseSlot`), or taken over
+ * after the holder check (`slotIsFree`), and by nothing else: a slot that aged
+ * out while its record still held a lab would let a new start take it while
+ * the old workspace was still on the host.
+ */
+const SLOT_TTL_SECONDS = -1;
+
+/**
+ * Take one of the `max` slots for `holderId` (a new start's session, or a
+ * holding record that no slot names yet): its number, or null when all are
+ * held. A slot that already names the holder is its own, also when another
+ * start wrote it a moment ago. Store faults are thrown.
+ */
+async function takeSlot(store, holderId, max, nowMs) {
   const nowIso = new Date(nowMs).toISOString();
   for (let n = 0; n < max; n += 1) {
     const id = `${SLOT_PREFIX}${n}`;
-    const slot = { id, kind: 'visitor_slot', sessionId, takenAt: nowIso, ttl: VISITOR_FAILED_DOC_TTL_SECONDS };
+    const slot = { id, kind: 'visitor_slot', sessionId: holderId, takenAt: nowIso, ttl: SLOT_TTL_SECONDS };
     try {
       await store.createDoc(QUOTA_CONTAINER, slot);
       return n;
@@ -1187,15 +1206,29 @@ async function takeSlot(store, sessionId, max, nowMs) {
       if (!isConflict(error)) throw error;
     }
     const current = await store.readDoc(QUOTA_CONTAINER, id, id);
+    if (current?.sessionId === holderId) return n;
     if (!current || !(await slotIsFree(store, current, nowMs))) continue;
     try {
       await store.replaceDocIfMatch(QUOTA_CONTAINER, { ...slot, _etag: current._etag }, { partitionKey: id });
       return n;
     } catch (error) {
       if (!lostRace(error)) throw error;
+      const after = await store.readDoc(QUOTA_CONTAINER, id, id);
+      if (after?.sessionId === holderId) return n;
     }
   }
   return null;
+}
+
+/** The ids the `max` slot documents name now (a slot let go names none). Store faults are thrown. */
+async function slotHolders(store, max) {
+  const ids = new Set();
+  for (let n = 0; n < max; n += 1) {
+    const id = `${SLOT_PREFIX}${n}`;
+    const doc = await store.readDoc(QUOTA_CONTAINER, id, id);
+    if (typeof doc?.sessionId === 'string' && doc.sessionId) ids.add(doc.sessionId);
+  }
+  return ids;
 }
 
 /**
@@ -1767,17 +1800,29 @@ export function createVisitorSessionHandlers({
             expiresAt: mineNow.expiresAt,
           }, 200);
         }
-        // Records saved before the slots existed hold no slot, so they are
-        // counted here, every one that may still hold a lab, past its hour
-        // included, until its clean-up is confirmed (round 2). Slots are then
-        // taken only below what they leave. Such records are no longer made,
-        // so their number only falls, and slots taken earlier were held below
-        // an equal or smaller room: slots and old records together stay
-        // within the limit.
-        const unslotted = fresh.filter((s) => mayHoldLab(s) && !Number.isInteger(s.slot)).length;
-        const room = maxConcurrent - unslotted;
-        if (room <= 0) return full();
-        const slot = await takeSlot(store, sessionId, room, nowMs);
+        // The limit holds because every holder owns one of the `max` slot
+        // documents, and a slot is taken only by a create or a conditional
+        // replace that one request can win (#1464 review, rounds 2 and 3).
+        // A holder is a record that may still hold a lab (`mayHoldLab`: past
+        // its hour included, until its clean-up is confirmed), or a start that
+        // has taken its slot and not yet written its record (a young slot
+        // whose holder cannot be seen, which `slotIsFree` never takes over).
+        //
+        // Every holding record counts, whatever slot it has or has not.
+        const holders = fresh.filter(mayHoldLab);
+        if (holders.length >= maxConcurrent) return full();
+        // A holding record that no slot names (one saved before slots
+        // existed, or one whose slot was lost) gets one first. Only then does
+        // this start take its own, so it can never use a slot a record is
+        // still counting on, at any index. If one cannot be given a slot,
+        // the lab is full.
+        const named = await slotHolders(store, maxConcurrent);
+        for (const holder of holders) {
+          if (named.has(holder.id)) continue;
+          if ((await takeSlot(store, holder.id, maxConcurrent, nowMs)) === null) return full();
+          named.add(holder.id);
+        }
+        const slot = await takeSlot(store, sessionId, maxConcurrent, nowMs);
         if (slot === null) return full();
         const letSlotGo = () => releaseSlot(store, { id: sessionId, slot }, clock());
 
