@@ -87,8 +87,9 @@
  * sits beside the three pattern modules, with its new child
  * avm-utl-interfaces@0.6.0. The builder's full default build, both landing
  * zones included, validates offline in this image (at the job memory in
- * index.js). It is still the python:3.14.7-slim-trixie base with
- * ansible-core 2.21.4 (#714), and still carries #675's changes to
+ * index.js). Its base image and ansible-core are the ones
+ * lab-image/versions.env named at the pinned commit (BASE_IMAGE,
+ * ANSIBLE_CORE_VERSION), and it still carries #675's changes to
  * lab-image/: transitive AVM vendoring, the unpacked provider mirror, the
  * kubeconform schemas and the capability scripts three of the runner-image
  * capabilities call at /usr/local/bin (lab-image/bin/). The image and those
