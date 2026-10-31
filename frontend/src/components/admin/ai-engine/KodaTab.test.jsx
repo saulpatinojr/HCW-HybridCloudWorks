@@ -173,6 +173,22 @@ describe('KodaTab', () => {
     expect(screen.getByText('No key yet')).toBeInTheDocument();
   });
 
+  it('a generate whose re-read fails still shows the key once, and says the card may be stale', async () => {
+    readKodaKey.mockResolvedValueOnce(answer(NO_KEY)).mockRejectedValue(new Error('HTTP 503'));
+    generateKodaKey.mockResolvedValue({ ...answer(ACTIVE), secret: SECRET, shownOnce: true });
+    renderTab();
+    fireEvent.click(await screen.findByRole('button', { name: /Generate key/ }));
+    expect(await screen.findByTestId('koda-secret')).toHaveTextContent(SECRET);
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Saved, but the card could not be re-read' })
+      )
+    );
+    expect(toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Nothing was changed' })
+    );
+  });
+
   it('an editor sees the state and gated controls, and no call is made on a click', async () => {
     readKodaKey.mockResolvedValue(answer(ACTIVE));
     renderTab('editor');

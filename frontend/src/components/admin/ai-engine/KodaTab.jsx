@@ -341,11 +341,20 @@ export default function KodaTab() {
   // Leaving the tab drops the secret; nothing keeps it.
   useEffect(() => () => setSecret(null), []);
 
+  // A write that landed but whose re-read failed is still a write that
+  // landed: `done` runs with the answer (for Generate, the only copy of the
+  // key), and a second toast says the card may be stale.
   const run = async (id, work, done) => {
     if (!claim(id)) return;
     try {
-      const answer = await work();
+      const { answer, refreshed } = await work();
       done?.(answer);
+      if (!refreshed) {
+        toast({
+          title: 'Saved, but the card could not be re-read',
+          description: 'Reload the tab to see the current state.',
+        });
+      }
     } catch (err) {
       toast({
         title: 'Nothing was changed',
@@ -357,14 +366,19 @@ export default function KodaTab() {
     }
   };
 
+  // A failed read never hides a key that was just made: the reveal, with its
+  // only copy of the secret, stays above the error until the owner dismisses it.
   if (error && !loaded) {
     return (
-      <EmptyState
-        variant="error"
-        title="Koda’s key could not be read"
-        description={error}
-        onRetry={refresh}
-      />
+      <div className="space-y-6">
+        {secret && <SecretReveal secret={secret} onDismiss={() => setSecret(null)} />}
+        <EmptyState
+          variant="error"
+          title="Koda’s key could not be read"
+          description={error}
+          onRetry={refresh}
+        />
+      </div>
     );
   }
   if (!loaded) {
