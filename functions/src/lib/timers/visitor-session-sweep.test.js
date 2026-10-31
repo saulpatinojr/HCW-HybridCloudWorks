@@ -11,6 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { memoryStore } from '../../../test/memory-store.js';
+import { runCosmosQuery } from '../../../test/cosmos-predicate.js';
 import { CLEANUP_RETRY_BASE_MS } from '../labs/visitor-session.js';
 import { SWEEP_NAME, createVisitorSessionSweep, resetUnconfiguredWarning } from './visitor-session-sweep.js';
 
@@ -18,19 +19,11 @@ const NOW = Date.parse('2026-10-26T12:00:00.000Z');
 const iso = (ms) => new Date(ms).toISOString();
 const CODER_ENV = { CODER_URL: 'https://coder.lab.hybridcloudworks.com', CODER_BROKER_TOKEN: 'broker-token-value' };
 
-/** An in-memory store that answers the sweep's queries by parameter, as Cosmos would by SQL. */
+/** An in-memory store that runs the sweep's queries as written, with their parameters. */
 function sweepStore(sessions = []) {
   return memoryStore(Object.fromEntries(sessions.map((s) => [`lab_jobs/${s.id}`, s])), {
-    query: ({ docs, parameters }) => {
-      const value = (name) => parameters?.find((p) => p.name === name)?.value;
-      return docs.filter(
-        (d) =>
-          d.type === value('@type') &&
-          d.status === value('@status') &&
-          (value('@nowIso') === undefined || d.expiresAt <= value('@nowIso')) &&
-          (value('@dueIso') === undefined || d.retryAt <= value('@dueIso'))
-      );
-    },
+    // The sweep's own SQL, run against these documents (#1403, item 8).
+    query: runCosmosQuery,
   });
 }
 
@@ -108,7 +101,7 @@ describe('one run of the sweep', () => {
     expect(store.get('lab_jobs', 'w-1').status).toBe('ended');
   });
 
-  it('is quiet, and cheap, when there is nothing to do: three queries, no Coder call, an Information line', async () => {
+  it('is quiet, and cheap, when there is nothing to do: two queries, no Coder call, an Information line', async () => {
     const store = sweepStore([]);
     const fetchImpl = acceptingCoder();
     const { context, lines } = recordingContext();
@@ -117,8 +110,8 @@ describe('one run of the sweep', () => {
 
     expect(result).toEqual({ swept: true, reaped: 0, finished: 0, pending: 0, failed: 0 });
     expect(fetchImpl).not.toHaveBeenCalled();
-    // The sessions past their hour, the waiting ones, and the claims that ran out.
-    expect(store.queryDocs).toHaveBeenCalledTimes(3);
+    // The sessions past their hour; then, in one query, every record due again (#1403).
+    expect(store.queryDocs).toHaveBeenCalledTimes(2);
     expect(store.replaceDocIfMatch).not.toHaveBeenCalled();
     expect(lines.warn).toEqual([]);
     expect(lines.log).toEqual([`[${SWEEP_NAME}] reaped=0 finished=0 pending=0 failed=0`]);
@@ -278,7 +271,7 @@ describe('what it logs, and what it never throws', () => {
     const text = recorded.all().join('\n');
     expect(text).not.toMatch(/sess-secretid|u-sess|ws-sess|v-sess|coder-token-leak|broker-token-value|cosmos is down|cannot delete a user/);
     // It did say something: the given-up line and the summary, with the kinds and the numbers.
-    expect(text).toMatch(/given up after 5 tries \(workspace done, user HTTP 417\)/);
+    expect(text).toMatch(/given up after 5 tries in round 1 of 25; another round follows in an hour \(workspace done, user HTTP 417\)/);
     expect(text).toMatch(/could not be saved \(503\)/);
     expect(text).toMatch(/reaped=0 finished=0 pending=0 failed=2/);
   });
