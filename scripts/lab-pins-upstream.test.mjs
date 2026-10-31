@@ -247,6 +247,13 @@ describe('trying a failed read again', () => {
     }
   });
 
+  it('still counts the tries when a retried read ends on a status that is not retried', async () => {
+    const { impl, calls } = flaky(ok, { [url]: [503, 404] });
+    const { retry } = noWait();
+    await expect(fetchRetrying(impl, url, {}, retry)).rejects.toHaveProperty('message', `${url}: HTTP 404 (tried 2 times)`);
+    expect(calls).toHaveLength(2);
+  });
+
   it('ends a try that never gets an answer at its timeout, and tries again', async () => {
     const { impl, calls } = flaky(ok, { [url]: ['hang'] });
     const { slept, retry } = noWait();

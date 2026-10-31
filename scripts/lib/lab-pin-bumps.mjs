@@ -1441,11 +1441,15 @@ export function renderEvidence(applied, { set, date }) {
   return out.join('\n');
 }
 
-/** The pins that were not moved, and why: behind with nothing verifiable to move them to, or not read at all. */
+/**
+ * The pins that were not moved, and why. The heading covers every kind of
+ * note the planners write (the reason beside each says which), so it must
+ * not name one kind as the only one.
+ */
 export function renderNotes(notes) {
   if (notes.length === 0) return '';
   const out = [
-    'Not bumped: each of these is a note rather than an edit, because its publisher could not be read or no checksum or digest could be verified for it.',
+    'Not bumped: nothing was edited for these. The reason is beside each one: its publisher could not be read, a checksum or digest could not be verified, the edit could not be made exactly, or the move is one a person makes (a new release line, or a pin with no automated bump).',
     '',
   ];
   for (const n of notes) out.push(`- **${n.label}** ${n.from ?? '—'} → ${n.to ?? '—'}: ${n.reason}`);

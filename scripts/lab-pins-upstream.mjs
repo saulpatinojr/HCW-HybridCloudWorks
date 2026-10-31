@@ -205,11 +205,10 @@ export async function fetchRetrying(
       failure = `${url}: ${noAnswer(error, limit)}`;
     }
     await release(response);
-    if (status !== null && !retryableStatus(status)) throw new Error(failure);
+    const giveUp = () => new Error(attempt > 1 ? `${failure} (tried ${attempt} times)` : failure);
+    if (status !== null && !retryableStatus(status)) throw giveUp();
     const wait = delays[attempt - 1];
-    if (wait === undefined || now() - started + wait >= budgetMs) {
-      throw new Error(attempt > 1 ? `${failure} (tried ${attempt} times)` : failure);
-    }
+    if (wait === undefined || now() - started + wait >= budgetMs) throw giveUp();
     await sleep(wait);
   }
 }
