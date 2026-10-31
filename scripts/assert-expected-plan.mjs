@@ -542,6 +542,31 @@ export const DECLARED = [
     after: name.endsWith('_ENABLED') ? 'false' : '',
     reason: 'Second Brain: disabled-by-default settings; no owner is inferred.',
   })),
+  // The Code Conductor brain's retirement (#1479, ADR 0036 withdrawn): #1465's
+  // apply (dfac635, run confirmed by the owner on 2026-10-31) created its own
+  // database, one container and five app settings, all off and empty. This
+  // pull request removes them from infra/, so the next plan deletes the two
+  // resources and drops the five settings from the Function App. Both were
+  // empty: the brain never held a record. Delete these entries once that run
+  // has applied and the plan reads clean without them.
+  {
+    address: 'azurerm_cosmosdb_sql_database.code_brain', action: 'delete',
+    reason: '#1479: the Code Conductor brain leaves the site; its empty database goes with it.',
+  },
+  {
+    address: 'azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]', action: 'delete',
+    reason: '#1479: the Code Conductor brain leaves the site; its empty records container goes with it.',
+  },
+  ...[
+    ['CODE_BRAIN_ENABLED', 'false'],
+    ['CODE_BRAIN_OWNER_OID', ''],
+    ['CODE_BRAIN_OWNER_TENANT_ID', ''],
+    ['CODE_BRAIN_SYNC_CLIENT_ID', ''],
+    ['CODE_BRAIN_COSMOS_DATABASE', 'hcw_code_brain'],
+  ].map(([name, before]) => ({
+    address: 'azurerm_function_app_flex_consumption.hcw', path: `app_settings.${name}`, before, after: undefined,
+    reason: '#1479: the Code Conductor brain setting is removed; it was applied off or empty and never set.',
+  })),
   {
     address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue', path: 'criteria[0].query',
     before: overdueQuery([...TIMER_SCHEDULES_APPLIED, ['ambassadorAudienceMonthly', '1d', '2026-01-01 06:45']]),
