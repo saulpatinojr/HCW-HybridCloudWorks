@@ -21,7 +21,9 @@
  * another run, cannot make a second set of Coder calls for the same session.
  *
  * WHAT IT NEVER DOES. It never creates a session or a Coder user: the store it
- * is given has the three verbs the sweep uses and no `createDoc`, and the sweep
+ * is given has the verbs the sweep uses (a read, a query, a conditional save)
+ * and a create that writes refund documents only (to give back a dead start's
+ * daily start), and the sweep
  * has no code that provisions. It does not read `LABS_VISITOR_SESSIONS_ENABLED`
  * either, on purpose: that switch closes the door to new visitors, and turning
  * it off while sessions exist must not strand their Coder users and workspaces.
@@ -32,7 +34,7 @@
  * which cannot delete anything, so every try with it would be refused and
  * spent). The sweep given no usable Coder settings would still spend a try on
  * each session that has something there to delete, and five tries end a
- * session as `cleanup_failed`; the five tries come at about 0, 2, 6, 12 and 20
+ * round as `cleanup_failed`; the five tries come at about 0, 2, 6, 12 and 20
  * minutes in the best case (each wait is the base times the try number, and a
  * run that starts late in its tick can push a retry one tick later), so a timer
  * running every two minutes against a missing setting would give up on every
@@ -42,8 +44,10 @@
  * visitor arrived, so a quiet site waited out a Coder or token outage. Now they
  * are spent on the clock, and an outage that lasts longer than the tries do
  * (about twenty to thirty minutes) leaves the waiting sessions as
- * `cleanup_failed`, for a person (docs/runbooks/labs-host.md says how). No alert
- * reads these lines yet: that is in #1403.
+ * `cleanup_failed`. Each is taken up again an hour later for another round
+ * (CLEANUP_REARM_MS, up to MAX_CLEANUP_ROUNDS), and only after the last is it
+ * left for a person (docs/runbooks/labs-host.md says how). No alert reads
+ * these lines yet.
  *
  * WHAT IT LOGS: counts and kinds, never a session id, a Coder id or user name,
  * or any text Coder or Cosmos sent. The sweep's own lines are already that (its
@@ -82,8 +86,8 @@ function say(context, level, line) {
 
 /**
  * @param {object} deps
- * @param {{ queryDocs: Function, readDoc: Function, replaceDocIfMatch: Function }} deps.store -
- *   only the verbs the sweep uses; no `createDoc`, so it cannot create anything
+ * @param {{ queryDocs: Function, readDoc: Function, replaceDocIfMatch: Function, createDoc?: Function }} deps.store -
+ *   only the verbs the sweep uses; its `createDoc` writes refund documents only
  * @param {Function} [deps.fetchImpl] - Coder's HTTP client; the global `fetch` when omitted
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} [deps.env]
  * @param {() => number} [deps.now] - epoch ms
