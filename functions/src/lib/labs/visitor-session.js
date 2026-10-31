@@ -23,18 +23,38 @@
  * caller's own session only, and the stop route ends a session only for the
  * caller it belongs to; any other caller is told the session is not found, the
  * same answer as an id that never existed. When the origin cannot be proved to
- * be our Cloudflare, the helper refuses and so do these routes (403
- * FORBIDDEN, before any read, write or call to Turnstile or Coder): a quota
- * counted on an address the caller can choose is not a quota. People behind
+ * be our Cloudflare, these routes refuse (403 FORBIDDEN, before any read,
+ * write or call to Turnstile or Coder): a quota counted on an address the
+ * caller can choose is not a quota. They refuse whatever `NODE_ENV` says
+ * (#1400, item 5): the helper itself lets an unproved origin through outside
+ * production, which suits the other anonymous routes on a developer's machine
+ * and not routes that hand out a lab and decide who may end it. People behind
  * one shared network address count as one visitor, as they do for every other
  * anonymous quota here.
+ *
+ * HOW OFTEN ONE VISITOR MAY ASK (#1400, item 2). Two limits held in memory,
+ * per Function App instance, keyed on the caller's hash and checked before
+ * anything is read: a start may ask Cloudflare's Turnstile at most
+ * CHECK_ATTEMPTS_PER_WINDOW times in CHECK_WINDOW_MS (the lab submission's
+ * limit, public-lock.js), and the status read and the stop share
+ * VISITOR_READS_PER_WINDOW in the same window.
  */
 
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { ORIGIN_NOT_VERIFIED, assertClientIdentity, resolvedSetting } from '../auth/client-identity.js';
-import { isSiteOrigin, turnstileConfigured, turnstileSecret, verifyTurnstileToken, VISITOR_TURNSTILE_ACTION } from './public-lock.js';
+import {
+  CHECK_WINDOW_MS,
+  LOCK_CODES,
+  LOCK_REASONS,
+  VISITOR_TURNSTILE_ACTION,
+  createCheckLimiter,
+  isSiteOrigin,
+  turnstileConfigured,
+  turnstileSecret,
+  verifyTurnstileToken,
+} from './public-lock.js';
 import { utcDay } from '../cloud-tools/history.js';
-import { takeDailyCap } from '../daily-cap.js';
+import { giveBackDailyCap, takeDailyCap } from '../daily-cap.js';
 import { readCoderConfig } from './coder-status.js';
 import { recordLabStart, safeLogCode } from './lab-starts.js';
 
@@ -48,6 +68,15 @@ export const VISITOR_SESSION_DURATION_MS = 60 * 60 * 1000; // 60 minutes
 export const VISITOR_CLIENT_DAILY_LIMIT = 2;
 export const VISITOR_JOB_TYPE = 'visitor-session';
 export const VISITOR_DOC_TTL_SECONDS = 7200; // 2 hours
+/**
+ * Status reads and stops one visitor may make per instance in CHECK_WINDOW_MS
+ * (ten minutes). The pane reads the status once when it opens, so sixty is
+ * far above what a person needs, and still bounds a script that reads in a
+ * loop: each read is a query over every session that holds a lab.
+ */
+export const VISITOR_READS_PER_WINDOW = 60;
+/** The shape of the Coder user names the broker makes (`generateVisitorCredentials`). */
+export const VISITOR_USERNAME_SHAPE = /^v-[0-9a-f]{12}$/;
 
 export const VALID_LAB_WORKSPACES = Object.freeze({
   'landing-zone-builder-output': 'lab-lzb',
@@ -70,6 +99,8 @@ export const DOOR_CODES = Object.freeze({
   client_rate_limited: 'VISITOR_RATE_LIMITED',
   active_session_exists: 'ACTIVE_SESSION_EXISTS',
   invalid_lab: 'INVALID_LAB_ID',
+  reads_rate_limited: 'VISITOR_READS_RATE_LIMITED',
+  start_in_progress: 'VISITOR_START_IN_PROGRESS',
 });
 
 export const DOOR_REASONS = Object.freeze({
@@ -83,6 +114,9 @@ export const DOOR_REASONS = Object.freeze({
     'You have reached your visitor lab session limit for today. Please try again tomorrow, or sign in with GitHub.',
   [DOOR_CODES.active_session_exists]: 'You already have an active visitor lab session running.',
   [DOOR_CODES.invalid_lab]: 'The requested lab is not recognized.',
+  [DOOR_CODES.reads_rate_limited]:
+    'Too many requests from this browser in the last few minutes. Try again in about ten minutes.',
+  [DOOR_CODES.start_in_progress]: 'Your visitor lab session is still being set up. Please wait a moment.',
 });
 
 export function visitorSessionsEnabled(env = process.env) {
@@ -131,6 +165,17 @@ export function generateVisitorCredentials() {
 const coderTimeout = (config, fallbackMs = CODER_CALL_TIMEOUT_MS) =>
   AbortSignal.timeout(config?.timeoutMs ?? fallbackMs);
 
+/**
+ * The error a provisioning call throws when Coder refuses it: the step and the
+ * HTTP status, and nothing Coder wrote in its answer (#1403, item 9). Coder's
+ * text can name users, templates or its own settings, and this message reaches
+ * a log line. `statusCode` lets `errorKind` report the status on its own.
+ */
+function coderRefusal(what, status) {
+  const shown = Number.isInteger(status) ? `HTTP ${status}` : 'a refusal';
+  return Object.assign(new Error(`${what}: ${shown}`), Number.isInteger(status) ? { statusCode: status } : {});
+}
+
 export async function createVisitorCoderUser(fetchImpl, config, { username, email, password }) {
   const res = await fetchImpl(`${config.base}/api/v2/users`, {
     signal: coderTimeout(config, CODER_PROVISION_TIMEOUT_MS),
@@ -149,8 +194,8 @@ export async function createVisitorCoderUser(fetchImpl, config, { username, emai
     }),
   });
   if (!res.ok) {
-    const errorBody = await res.text().catch(() => '');
-    throw new Error(`Failed to create Coder user: HTTP ${res.status} ${errorBody}`);
+    await releaseBody(res);
+    throw coderRefusal('Failed to create Coder user', res.status);
   }
   return res.json();
 }
@@ -165,7 +210,8 @@ export async function getTemplateByName(fetchImpl, config, templateName = 'hcw-l
     },
   });
   if (!res.ok) {
-    throw new Error(`Failed to list Coder templates: HTTP ${res.status}`);
+    await releaseBody(res);
+    throw coderRefusal('Failed to list Coder templates', res.status);
   }
   const templates = await res.json();
   const matched = Array.isArray(templates) ? templates.find((t) => t.name === templateName) : null;
@@ -190,7 +236,8 @@ export async function createVisitorWorkspace(
     },
   });
   if (!orgRes.ok) {
-    throw new Error(`Failed to list Coder organizations: HTTP ${orgRes.status}`);
+    await releaseBody(orgRes);
+    throw coderRefusal('Failed to list Coder organizations', orgRes.status);
   }
   const orgs = await orgRes.json();
   const defaultOrg = Array.isArray(orgs) && orgs.length > 0 ? orgs[0] : null;
@@ -216,8 +263,8 @@ export async function createVisitorWorkspace(
     }
   );
   if (!res.ok) {
-    const errorBody = await res.text().catch(() => '');
-    throw new Error(`Failed to create visitor workspace: HTTP ${res.status} ${errorBody}`);
+    await releaseBody(res);
+    throw coderRefusal('Failed to create visitor workspace', res.status);
   }
   const workspace = await res.json();
   const accessUrl = `https://code-server--${workspaceName}--${username}.coder.lab.hybridcloudworks.com/?folder=/tmp/home/lab`;
@@ -242,13 +289,22 @@ export async function deleteVisitorUser(fetchImpl, config, userId) {
 const SESSION_CONTAINER = 'lab_jobs';
 
 /**
- * A session's life, in `status` (#1388).
+ * A session's life, in `status` (#1388, #1403).
  *
- *   active ──claim──▶ ending ──both Coder deletes confirmed──▶ ended | expired
- *                       │
- *                       └─ Coder has not confirmed yet ─▶ cleanup_pending ──retry──▶ ending ...
- *                                                              │
- *                                          MAX_CLEANUP_ATTEMPTS tries used ─▶ cleanup_failed
+ *   provisioning ──Coder made both──▶ active ──claim──▶ ending ──both Coder deletes confirmed──▶ ended | expired
+ *        │                                                │
+ *        └─ the start failed ─▶ cleanup_pending ◀── Coder has not confirmed yet
+ *                                     │      ▲
+ *                                     │      └─ retry ─▶ ending ...
+ *              MAX_CLEANUP_ATTEMPTS tries used ─▶ cleanup_failed ── an hour later, up to MAX_CLEANUP_ROUNDS times ─▶ ending ...
+ *
+ * `provisioning` is written BEFORE the first Coder call of a start (#1403,
+ * item 2), so that whatever Coder makes, even for a call that never answers,
+ * has a record the sweep can find. It carries the visitor's Coder user name,
+ * which the broker chose, and the workspace's name; the ids come later. A
+ * start that fails turns it into `cleanup_pending` (`startFailed`) at once,
+ * and one whose process died is taken up by the sweep once its lease
+ * (PROVISION_LEASE_MS) has run out.
  *
  * `ended` (the visitor pressed End) and `expired` (the sweep found it past its
  * hour) are saved only once Coder has confirmed that the workspace and the
@@ -261,8 +317,16 @@ const SESSION_CONTAINER = 'lab_jobs';
  * (HTTP 417), so the user delete straight after an accepted workspace delete
  * is refused for most sessions. That is the normal case, not a fault, and the
  * retry is what finishes it.
+ *
+ * Which delete confirmed each half is kept too (`workspaceConfirmedBy`,
+ * `userConfirmedBy`, #1403 item 4): `ok` (Coder accepted the delete), `gone`
+ * (Coder answered 404 or 410), or `not found` (a lookup by name found
+ * nothing). A 404 is also what Coder may answer a token that is not allowed to
+ * see the thing, so a record finished on `gone` is worth a second look when
+ * the broker token's permissions are in doubt.
  */
 export const SESSION_STATUS = Object.freeze({
+  provisioning: 'provisioning',
   active: 'active',
   ending: 'ending',
   cleanupPending: 'cleanup_pending',
@@ -271,8 +335,32 @@ export const SESSION_STATUS = Object.freeze({
   cleanupFailed: 'cleanup_failed',
 });
 
-/** Tries at a clean-up before it is given up (and left for a person, see the runbook). */
+/** Tries at a clean-up in one round before it is given up for the round (`cleanup_failed`). */
 export const MAX_CLEANUP_ATTEMPTS = 5;
+/**
+ * A given-up record is tried again, a new round of MAX_CLEANUP_ATTEMPTS tries,
+ * this long after it was given up (#1403, item 3): Coder may simply have been
+ * down for longer than one round lasts (about twenty minutes).
+ */
+export const CLEANUP_REARM_MS = 60 * 60 * 1000;
+/** Rounds after the first; after them the record is left for a person (see the runbook) until it ages out. */
+export const MAX_CLEANUP_ROUNDS = 24;
+/**
+ * After this many user deletes in a row that Coder refused with 417 (the user
+ * still has a workspace), the next try asks for the workspace delete again
+ * (#1403, item 3). An accepted workspace delete only means a delete build was
+ * queued; if that build failed, asking for the user forever cannot succeed.
+ * Coder answers 409 to a workspace delete while a build is still running,
+ * which is harmless and counted as not confirmed.
+ */
+export const USER_REFUSALS_BEFORE_WORKSPACE_RETRY = 3;
+/**
+ * How long a `provisioning` record is left alone before the sweep takes it as
+ * a start whose process died: longer than the four provisioning calls at
+ * their timeouts (CODER_PROVISION_TIMEOUT_MS each) with the store's writes
+ * around them. A test pins that arithmetic.
+ */
+export const PROVISION_LEASE_MS = 5 * 60 * 1000;
 /** After try n that Coder did not confirm, the next one waits n times this. */
 export const CLEANUP_RETRY_BASE_MS = 2 * 60 * 1000;
 /**
@@ -450,13 +538,69 @@ async function lookUpWorkspaceCall(fetchImpl, config, session) {
 }
 
 /**
+ * Look a visitor's Coder user up by the name the broker chose for it, for a
+ * record that has the name and no id: a start whose user create gave no
+ * answer (it timed out, say), or whose process died before it saved the id
+ * (#1403, item 2). Coder's API takes a user name where it takes an id:
+ * `GET /api/v2/users/{user}`, "User ID, username, or me".
+ * https://coder.com/docs/reference/api/users (read 2026-10-31)
+ *
+ * Only a name of the broker's own shape (`v-` and twelve hex characters) is
+ * looked up, so a stored value that is another person's name, or `me`, is
+ * never sent. It answers one of:
+ *  - `{ id, kind: 'user found' }`: the user, and only when Coder's answer
+ *    names the same user and carries an id that is plainly an id.
+ *  - `{ missing: true, kind: 'user not found' }`: Coder has no such user.
+ *  - `{ kind }`: Coder did not say (`user lookup HTTP 500`, `user lookup
+ *    timeout`, `user lookup network`, `user lookup mismatch`, `user lookup
+ *    invalid name`). Never an id or any of Coder's text.
+ */
+async function lookUpUserCall(fetchImpl, config, username) {
+  if (typeof username !== 'string' || !VISITOR_USERNAME_SHAPE.test(username)) {
+    return { kind: 'user lookup invalid name' };
+  }
+  try {
+    const res = await fetchImpl(`${config.base}/api/v2/users/${encodeURIComponent(username)}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json', 'Coder-Session-Token': config.token },
+      signal: coderTimeout(config),
+    });
+    if (res.status === 404 || res.status === 410) {
+      await releaseBody(res);
+      return { missing: true, kind: 'user not found' };
+    }
+    if (!res.ok) {
+      await releaseBody(res);
+      return { kind: Number.isInteger(res.status) ? `user lookup HTTP ${res.status}` : 'user lookup refused' };
+    }
+    const user = await res.json();
+    const ours = isSafeSegment(user?.id) && user.username === username;
+    return ours ? { id: user.id, kind: 'user found' } : { kind: 'user lookup mismatch' };
+  } catch (error) {
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    return { kind: timedOut ? 'user lookup timeout' : 'user lookup network' };
+  }
+}
+
+/** A count stored in a record: a negative, fractional or text one counts as none. */
+const countOf = (value) => (Number.isInteger(value) && value >= 0 ? value : 0);
+
+/**
  * Can this record be taken up by a stop or the sweep now? An `active` one, or
- * one that is cleaning up (`ending`: a claim whose lease has run out) or
- * waiting for its next try (`cleanup_pending`) whose time has come.
+ * one whose time has come (`retryAt` reached) and that is: cleaning up
+ * (`ending`, a claim whose lease has run out), waiting for its next try
+ * (`cleanup_pending`), a start whose process never finished
+ * (`provisioning`, its lease run out) or a given-up one due another round
+ * (`cleanup_failed` with a `retryAt`).
  */
 function claimable(record, nowIso) {
   if (record.status === SESSION_STATUS.active) return true;
-  const waiting = [SESSION_STATUS.ending, SESSION_STATUS.cleanupPending].includes(record.status);
+  const waiting = [
+    SESSION_STATUS.ending,
+    SESSION_STATUS.cleanupPending,
+    SESSION_STATUS.provisioning,
+    SESSION_STATUS.cleanupFailed,
+  ].includes(record.status);
   return waiting && typeof record.retryAt === 'string' && record.retryAt <= nowIso;
 }
 
@@ -464,6 +608,11 @@ function claimable(record, nowIso) {
  * Take a session for clean-up, under the ETag it was read with, so that only
  * one request does the Coder calls: the winner gets `ending`, with a lease, a
  * count of tries and a longer `ttl`; the loser is refused with a 412.
+ *
+ * A claim drops the lab's address (`accessUrl`, #1403 item 6): only a running
+ * session needs it, and a record that waits for its clean-up can wait a week.
+ * A given-up record claimed for another round starts its count of tries again
+ * and counts the round (`cleanupRounds`).
  *
  * Losing is not a failure. A stop and a sweep, or two stops, reach the same
  * session at once. The loser reads the record again: no longer claimable means
@@ -475,20 +624,25 @@ function claimable(record, nowIso) {
  * `replaceDocIfMatch(containerName, document, options)` takes the whole
  * document, `_etag` inside it, and the partition key in the options (#1383).
  *
- * @returns {Promise<{ outcome: 'claimed', session: object } | { outcome: 'taken-elsewhere' | 'gone' | 'changed' }>}
+ * @returns {Promise<{ outcome: 'claimed', session: object } | { outcome: 'taken-elsewhere', status: string } | { outcome: 'gone' | 'changed' }>}
+ *   `status` is what the record that another request holds says now
  */
 async function claimSession(store, session, endStatus, nowMs) {
-  const claimOf = (record) => ({
-    ...record,
-    status: SESSION_STATUS.ending,
-    // Only the two final statuses a session can have; a record that says anything else gets the one asked for.
-    endStatus: [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(record.endStatus) ? record.endStatus : endStatus,
-    endedAt: record.endedAt ?? new Date(nowMs).toISOString(),
-    // A count: a negative or fractional one would never reach the bound.
-    cleanupAttempts: (Number.isInteger(record.cleanupAttempts) && record.cleanupAttempts >= 0 ? record.cleanupAttempts : 0) + 1,
-    retryAt: new Date(nowMs + CLEANUP_LEASE_MS).toISOString(),
-    ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
-  });
+  const claimOf = ({ accessUrl: _address, ...record }) => {
+    const newRound = record.status === SESSION_STATUS.cleanupFailed;
+    return {
+      ...record,
+      status: SESSION_STATUS.ending,
+      // Only the two final statuses a session can have; a record that says anything else gets the one asked for.
+      endStatus: [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(record.endStatus) ? record.endStatus : endStatus,
+      endedAt: record.endedAt ?? new Date(nowMs).toISOString(),
+      // A count: a negative or fractional one would never reach the bound.
+      cleanupAttempts: newRound ? 1 : countOf(record.cleanupAttempts) + 1,
+      ...(newRound ? { cleanupRounds: countOf(record.cleanupRounds) + 1 } : {}),
+      retryAt: new Date(nowMs + CLEANUP_LEASE_MS).toISOString(),
+      ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+    };
+  };
 
   if (typeof store.replaceDocIfMatch !== 'function') {
     // A store without conditional writes, which the Functions app never has
@@ -516,7 +670,7 @@ async function claimSession(store, session, endStatus, nowMs) {
     }
     current = await store.readDoc(SESSION_CONTAINER, session.id, session.id);
     if (!current) return { outcome: 'gone' };
-    if (!claimable(current, nowIso)) return { outcome: 'taken-elsewhere' };
+    if (!claimable(current, nowIso)) return { outcome: 'taken-elsewhere', status: current.status };
   }
   return { outcome: 'changed' };
 }
@@ -531,6 +685,12 @@ async function claimSession(store, session, endStatus, nowMs) {
  * session that has something to delete cannot be cleaned without the broker
  * configuration, so it is not done, and is tried again when there is one.
  *
+ * A record with the visitor's Coder user name and no user id is a start whose
+ * user create gave no answer, or whose process died (#1403, item 2). The user
+ * is looked up by that name first. Coder having no such user means nothing was
+ * made at all (the workspace is asked for only after the user exists, and
+ * Coder cannot keep a workspace without its owner), so both halves are done.
+ *
  * A record with no workspace id but with the visitor's Coder user and a
  * workspace name is a start that failed after the user was made (its workspace
  * call timed out or was refused). Coder may still have made the workspace, so
@@ -540,12 +700,14 @@ async function claimSession(store, session, endStatus, nowMs) {
  * workspace, is the confirmation, and a workspace that turns up later is found
  * by the next try's lookup.
  *
- * @returns {Promise<{ workspaceGone: boolean, workspaceGoneSaved: boolean, workspaceId: string | undefined, userGone: boolean, workspace: string, user: string }>}
+ * @returns {Promise<{ workspaceGone: boolean, workspaceGoneSaved: boolean, workspaceId: string | undefined, coderUserId: string | undefined, userGone: boolean, workspace: string, user: string, workspaceBy?: string, userBy?: string }>}
  *   the two halves; `workspaceGoneSaved` is whether `workspaceGone` may be
- *   written to the record; `workspaceId` is the one the record had or the
- *   lookup found; and for each half a short safe word for the log (`ok`,
- *   `gone`, `found`, `not found`, `HTTP 417`, `lookup mismatch`, `timeout`,
- *   `network`, `skipped`, `unconfigured`, `done`, `none`)
+ *   written to the record; `workspaceId` and `coderUserId` are the ones the
+ *   record had or a lookup found; `workspaceBy` and `userBy` say what
+ *   confirmed a half on this try (`ok`, `gone`, `not found`); and for each half
+ *   a short safe word for the log (`ok`, `gone`, `found`, `not found`,
+ *   `HTTP 417`, `lookup mismatch`, `timeout`, `network`, `skipped`,
+ *   `unconfigured`, `done`, `none`)
  */
 async function cleanUpCoder(fetchImpl, config, session) {
   const needsLookup =
@@ -558,18 +720,47 @@ async function cleanUpCoder(fetchImpl, config, session) {
     workspaceGone: Boolean(session.workspaceGone) || nothingToDelete,
     workspaceGoneSaved: Boolean(session.workspaceGone) || nothingToDelete,
     workspaceId: session.workspaceId,
-    userGone: Boolean(session.userGone) || !session.coderUserId,
+    coderUserId: session.coderUserId,
+    userGone: Boolean(session.userGone) || (!session.coderUserId && !session.coderUsername),
     workspace: session.workspaceGone ? 'done' : 'none',
     user: session.userGone ? 'done' : 'none',
   };
+
+  // Only the user's name is known: find its id, or learn that it was never made.
+  if (!result.userGone && !result.coderUserId) {
+    if (!config) {
+      return { ...result, user: 'unconfigured', workspace: result.workspaceGone ? result.workspace : 'skipped' };
+    }
+    const found = await lookUpUserCall(fetchImpl, config, session.coderUsername);
+    if (found.missing) {
+      return {
+        ...result,
+        workspaceGone: true,
+        workspaceGoneSaved: true,
+        userGone: true,
+        workspace: 'none',
+        user: found.kind,
+        workspaceBy: 'no user',
+        userBy: 'not found',
+      };
+    }
+    if (!found.id) {
+      return { ...result, user: found.kind, workspace: result.workspaceGone ? result.workspace : 'skipped' };
+    }
+    result.coderUserId = found.id;
+  }
+
   if (needsLookup) {
     if (!config) {
       result.workspace = 'unconfigured';
     } else {
-      const found = await lookUpWorkspaceCall(fetchImpl, config, session);
+      const found = await lookUpWorkspaceCall(fetchImpl, config, { ...session, coderUserId: result.coderUserId });
       result.workspace = found.kind;
       if (found.id) result.workspaceId = found.id;
-      if (found.missing) result.workspaceGone = true;
+      if (found.missing) {
+        result.workspaceGone = true;
+        result.workspaceBy = 'not found';
+      }
     }
   }
   if (!result.workspaceGone && result.workspaceId) {
@@ -580,6 +771,7 @@ async function cleanUpCoder(fetchImpl, config, session) {
       result.workspaceGone = call.confirmed;
       result.workspaceGoneSaved = call.confirmed;
       result.workspace = call.kind;
+      if (call.confirmed) result.workspaceBy = call.kind;
     }
   }
   if (!result.userGone) {
@@ -588,9 +780,10 @@ async function cleanUpCoder(fetchImpl, config, session) {
     } else if (!result.workspaceGone) {
       result.user = 'skipped';
     } else {
-      const call = await deleteUserCall(fetchImpl, config, session.coderUserId);
+      const call = await deleteUserCall(fetchImpl, config, result.coderUserId);
       result.userGone = call.confirmed;
       result.user = call.kind;
+      if (call.confirmed) result.userBy = call.kind;
     }
   }
   return result;
@@ -610,14 +803,16 @@ async function cleanUpCoder(fetchImpl, config, session) {
  * @param {'ended' | 'expired'} options.endStatus - what it becomes (a retried record keeps the one it was first given)
  * @param {number} options.nowMs
  * @param {(line: string) => void} [options.log] - content-free lines only
- * @returns {Promise<{ outcome: 'done' | 'pending' | 'given-up' | 'taken-elsewhere' | 'gone' | 'changed' }>}
+ * @returns {Promise<{ outcome: 'done' | 'pending' | 'given-up' | 'taken-elsewhere' | 'gone' | 'changed', status?: string }>}
  *   `done`: both deletes confirmed and the record is saved as over. `pending`:
- *   not yet, it will be tried again. `given-up`: the last try was used. The
- *   rest: another request has it, its record has aged out, or it kept changing.
+ *   not yet, it will be tried again. `given-up`: the last try of a round was
+ *   used (`cleanup_failed`; another round follows unless it was the last).
+ *   The rest: another request has it, its record has aged out, or it kept
+ *   changing.
  */
 async function endSession(store, fetchImpl, config, session, { endStatus, nowMs, log = null }) {
   const claim = await claimSession(store, session, endStatus, nowMs);
-  if (claim.outcome !== 'claimed') return { outcome: claim.outcome };
+  if (claim.outcome !== 'claimed') return claim;
 
   const claimed = claim.session;
   const steps = await cleanUpCoder(fetchImpl, config, claimed);
@@ -626,34 +821,69 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
   const givenUp = !finished && attempts >= MAX_CLEANUP_ATTEMPTS;
   const nowIso = new Date(nowMs).toISOString();
 
+  // Coder refusing the user (417) after an earlier try saved the workspace as
+  // gone: after a few of those in a row, ask for the workspace delete again,
+  // since the delete build Coder accepted may have failed (#1403, item 3).
+  const refusedUser = steps.user === 'HTTP 417';
+  const refusals = refusedUser ? countOf(claimed.userRefusals) + 1 : 0;
+  const askWorkspaceAgain =
+    !finished &&
+    refusals >= USER_REFUSALS_BEFORE_WORKSPACE_RETRY &&
+    Boolean(claimed.workspaceGone) &&
+    Boolean(steps.workspaceId);
+
   const { retryAt: _lease, ...rest } = claimed;
-  // A workspace id the lookup found is kept, so a later try deletes it without looking again.
-  const found = steps.workspaceId ? { workspaceId: steps.workspaceId } : {};
+  // Ids a lookup found are kept, so a later try deletes them without looking again.
+  const found = {
+    ...(steps.workspaceId ? { workspaceId: steps.workspaceId } : {}),
+    ...(steps.coderUserId ? { coderUserId: steps.coderUserId } : {}),
+  };
+  // What confirmed each half, once it is confirmed for good (#1403, item 4).
+  const confirmedBy = (savedHalf) => ({
+    ...(steps.workspaceBy && (finished || savedHalf) ? { workspaceConfirmedBy: steps.workspaceBy } : {}),
+    ...(steps.userBy ? { userConfirmedBy: steps.userBy } : {}),
+  });
+  const waitingHalves = askWorkspaceAgain
+    ? { workspaceGone: false, userGone: steps.userGone, userRefusals: 0 }
+    : { workspaceGone: steps.workspaceGoneSaved, userGone: steps.userGone, userRefusals: refusals };
+  const rounds = countOf(claimed.cleanupRounds);
+  const lastRound = rounds >= MAX_CLEANUP_ROUNDS;
+
   let next;
   if (finished) {
-    next = { ...rest, ...found, status: claimed.endStatus, workspaceGone: true, userGone: true, ttl: VISITOR_DOC_TTL_SECONDS };
+    next = {
+      ...rest,
+      ...found,
+      ...confirmedBy(true),
+      status: claimed.endStatus,
+      workspaceGone: true,
+      userGone: true,
+      ttl: VISITOR_DOC_TTL_SECONDS,
+    };
   } else if (givenUp) {
     next = {
       ...rest,
       ...found,
+      ...confirmedBy(steps.workspaceGoneSaved && !askWorkspaceAgain),
       status: SESSION_STATUS.cleanupFailed,
-      workspaceGone: steps.workspaceGoneSaved,
-      userGone: steps.userGone,
+      ...waitingHalves,
       cleanupAt: nowIso,
+      ...(lastRound ? {} : { retryAt: new Date(nowMs + CLEANUP_REARM_MS).toISOString() }),
       ttl: VISITOR_FAILED_DOC_TTL_SECONDS,
     };
   } else {
     next = {
       ...rest,
       ...found,
+      ...confirmedBy(steps.workspaceGoneSaved && !askWorkspaceAgain),
       status: SESSION_STATUS.cleanupPending,
-      workspaceGone: steps.workspaceGoneSaved,
-      userGone: steps.userGone,
+      ...waitingHalves,
       cleanupAt: nowIso,
       retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS * attempts).toISOString(),
       ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
     };
   }
+  if (askWorkspaceAgain) delete next.workspaceConfirmedBy;
 
   if (typeof store.replaceDocIfMatch === 'function') {
     try {
@@ -662,29 +892,51 @@ async function endSession(store, fetchImpl, config, session, { endStatus, nowMs,
       if (!lostRace(error)) throw error;
       // The record changed while Coder was being called (the lease ran out and
       // another request took it over, or it aged out). That request owns it now.
-      return { outcome: 'taken-elsewhere' };
+      const current = await Promise.resolve(store.readDoc?.(SESSION_CONTAINER, next.id, next.id)).catch(() => null);
+      return current ? { outcome: 'taken-elsewhere', status: current.status } : { outcome: 'gone' };
     }
   } else {
     await store.upsertDoc(SESSION_CONTAINER, next);
   }
 
-  if (finished) return { outcome: 'done' };
   const where = `workspace ${steps.workspace}, user ${steps.user}`;
+  if (finished) {
+    // A 404 or 410 is also how Coder may answer a token that may not see the
+    // thing, so a clean-up confirmed that way is said in the log (#1403, item 4).
+    if (steps.workspaceBy === 'gone' || steps.userBy === 'gone') {
+      log?.(`visitor-session: a session's Coder clean-up was taken as done on a 404 or 410 (${where})`);
+    }
+    return { outcome: 'done' };
+  }
+  const again = askWorkspaceAgain ? '; the workspace delete will be asked for again' : '';
   if (givenUp) {
-    log?.(`visitor-session: a session's Coder clean-up was given up after ${attempts} tries (${where})`);
+    log?.(
+      lastRound
+        ? `visitor-session: a session's Coder clean-up was given up after ${attempts} tries in round ${rounds + 1}, the last; it needs a person (${where})`
+        : `visitor-session: a session's Coder clean-up was given up after ${attempts} tries in round ${rounds + 1} of ${MAX_CLEANUP_ROUNDS + 1}; another round follows in an hour (${where})${again}`
+    );
     return { outcome: 'given-up' };
   }
   log?.(
-    `visitor-session: a session's Coder clean-up is not finished (${where}); try ${attempts} of ${MAX_CLEANUP_ATTEMPTS}`
+    `visitor-session: a session's Coder clean-up is not finished (${where}); try ${attempts} of ${MAX_CLEANUP_ATTEMPTS}${again}`
   );
   return { outcome: 'pending' };
 }
 
+/** The statuses whose records the sweep takes up again once their `retryAt` has come. */
+const DUE_STATUSES = Object.freeze([
+  SESSION_STATUS.cleanupPending,
+  SESSION_STATUS.ending,
+  SESSION_STATUS.provisioning,
+  SESSION_STATUS.cleanupFailed,
+]);
+
 /**
  * The sweep. Ends every session past `expiresAt` (saved as `expired` once
  * Coder confirms its workspace and user are gone), and tries again every
- * session whose clean-up Coder has not yet confirmed and whose next try is due
- * (#1388).
+ * record whose time has come: a clean-up Coder has not yet confirmed, a claim
+ * whose holder never finished, a start whose process never finished, and a
+ * given-up record due another round (#1388, #1403).
  *
  * Never throws for one bad session: a store failure that is not a lost race
  * is counted in `failed` and, when `log` is given, reported by kind only
@@ -716,41 +968,27 @@ export async function reapExpiredVisitorSessions(
   if (!store?.queryDocs) return tally;
   const nowMs = Date.parse(nowIso);
 
-  const expiredQuery =
-    'SELECT * FROM c WHERE c.type = @type AND c.status = @status AND c.expiresAt <= @nowIso';
-  const dueQuery =
-    'SELECT * FROM c WHERE c.type = @type AND c.status = @status AND c.retryAt <= @dueIso';
-  const parametersFor = (status, extra) => [
-    { name: '@type', value: VISITOR_JOB_TYPE },
-    { name: '@status', value: status },
-    extra,
-  ];
-
   let expiredSessions = [];
   try {
-    expiredSessions = await store.queryDocs(
-      SESSION_CONTAINER,
-      expiredQuery,
-      parametersFor(SESSION_STATUS.active, { name: '@nowIso', value: nowIso })
-    );
+    expiredSessions = await store.queryDocs(SESSION_CONTAINER, EXPIRED_QUERY, [
+      { name: '@type', value: VISITOR_JOB_TYPE },
+      { name: '@status', value: SESSION_STATUS.active },
+      { name: '@nowIso', value: nowIso },
+    ]);
   } catch (error) {
     // A sweep that never ran must not look like one that found nothing.
     log?.(`visitor-session: the expired sessions could not be listed (${errorKind(error)})`);
     return tally;
   }
 
-  // Waiting for a retry, and a claim whose holder never finished (its lease ran out).
+  // Waiting for a retry, a claim or a start whose holder never finished, and a given-up record due another round.
   let due = [];
   try {
-    for (const status of [SESSION_STATUS.cleanupPending, SESSION_STATUS.ending]) {
-      due.push(
-        ...(await store.queryDocs(
-          SESSION_CONTAINER,
-          dueQuery,
-          parametersFor(status, { name: '@dueIso', value: nowIso })
-        ))
-      );
-    }
+    due = await store.queryDocs(SESSION_CONTAINER, DUE_QUERY, [
+      { name: '@type', value: VISITOR_JOB_TYPE },
+      { name: '@statuses', value: [...DUE_STATUSES] },
+      { name: '@dueIso', value: nowIso },
+    ]);
   } catch (error) {
     log?.(`visitor-session: the sessions waiting for a clean-up could not be listed (${errorKind(error)})`);
     due = [];
@@ -758,7 +996,7 @@ export async function reapExpiredVisitorSessions(
 
   const work = [
     ...expiredSessions.map((session) => ({ session, endStatus: SESSION_STATUS.expired, retry: false })),
-    ...due.map((session) => ({
+    ...(Array.isArray(due) ? due : []).map((session) => ({
       session,
       // What it was going to become, if that is one of the two final statuses; anything else is an expiry.
       endStatus: [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(session.endStatus) ? session.endStatus : SESSION_STATUS.expired,
@@ -784,46 +1022,93 @@ export async function reapExpiredVisitorSessions(
 }
 
 /**
- * Keep a record of a start that failed after Coder made the visitor's user, so
- * the sweep deletes the user, and the workspace if Coder made one.
- *
- * It is a `cleanup_pending` record carrying what the sweep reads: the Coder
- * user's id and name, the workspace's name (there is no workspace id: the call
- * that would have given it timed out or was refused), and the retry fields. The
- * first try waits CLEANUP_RETRY_BASE_MS so that a create Coder is still
- * finishing can finish. It has no `clientHash` and was never given to a
- * visitor, so no stop request can reach it: only the sweep does.
+ * The three queries on `lab_jobs`, as Cosmos runs them. The tests run these
+ * very strings against their documents (test/cosmos-sql.js), so a mistake in
+ * one fails a test (#1403, item 8).
+ */
+export const EXPIRED_QUERY =
+  'SELECT * FROM c WHERE c.type = @type AND c.status = @status AND c.expiresAt <= @nowIso';
+export const DUE_QUERY =
+  'SELECT * FROM c WHERE c.type = @type AND ARRAY_CONTAINS(@statuses, c.status) AND c.retryAt <= @dueIso';
+export const HOLDING_QUERY = 'SELECT * FROM c WHERE c.type = @type AND ARRAY_CONTAINS(@statuses, c.status)';
+
+/**
+ * The records that may hold one of the host's workspace slots: a running
+ * session, a start under way, and one whose clean-up Coder has not confirmed.
+ */
+const HOLDING_STATUSES = Object.freeze([
+  SESSION_STATUS.active,
+  SESSION_STATUS.provisioning,
+  SESSION_STATUS.ending,
+  SESSION_STATUS.cleanupPending,
+  SESSION_STATUS.cleanupFailed,
+]);
+
+/**
+ * Does this record count against the concurrent limit (#1403, item 5)? A
+ * session within its hour, a start under way, and a session that is over but
+ * whose workspace Coder has not confirmed as deleted: its lab may still be
+ * running on the host. A session past its hour that is still `active` is not
+ * counted, as before: the sweep that the same request starts ends it.
+ */
+function holdsSlot(record, nowIso) {
+  if (record.status === SESSION_STATUS.active) return record.expiresAt > nowIso;
+  return HOLDING_STATUSES.includes(record.status) && record.workspaceGone !== true;
+}
+
+/**
+ * Turn a start's `provisioning` record into a note for the sweep, when the
+ * start failed after it was written: a `cleanup_pending` record carrying what
+ * the sweep reads (the Coder user's name, its id when Coder gave one, the
+ * workspace's name, and its id when Coder gave one) and the retry fields
+ * (#1403, item 2). The first try waits CLEANUP_RETRY_BASE_MS so that a create
+ * Coder is still finishing can finish. It drops `clientHash`: it was never
+ * given to a visitor, so no stop request has to reach it, only the sweep. A
+ * start that failed at the user (`noWorkspace`) never asked for a workspace,
+ * so that half is saved as done: only the user is looked up, and the note
+ * does not hold a lab slot while it waits.
  *
  * Never throws: the visitor is being answered with a 502 whatever happens
- * here, and a store that is down must not turn that into something else. The
- * log says by kind that the note could not be written, and nothing more.
+ * here, and a store that is down must not turn that into something else. A
+ * note that could not be written leaves the `provisioning` record, which the
+ * sweep takes up once its lease has run out. The log says by kind that the
+ * note could not be written, and nothing more.
  */
-async function noteUnfinishedStart(store, { user, fallbackUsername, workspaceName, labId, nowMs, context }) {
+async function noteUnfinishedStart(store, provisioning, { user, workspaceId, noWorkspace = false, nowMs, context }) {
   const nowIso = new Date(nowMs).toISOString();
-  const record = {
-    id: randomUUID(),
-    type: VISITOR_JOB_TYPE,
+  const { clientHash: _owner, ...record } = provisioning;
+  const note = {
+    ...record,
     status: SESSION_STATUS.cleanupPending,
-    endStatus: SESSION_STATUS.ended,
     startFailed: true,
-    labId,
-    coderUserId: user.id,
-    coderUsername: user.username ?? fallbackUsername,
-    workspaceName,
-    createdAt: nowIso,
+    ...(isSafeSegment(user?.id) ? { coderUserId: user.id } : {}),
+    ...(typeof user?.username === 'string' && user.username ? { coderUsername: user.username } : {}),
+    ...(isSafeSegment(workspaceId) ? { workspaceId } : {}),
+    ...(noWorkspace ? { workspaceGone: true, workspaceConfirmedBy: 'never asked for' } : {}),
     endedAt: nowIso,
-    cleanupAttempts: 0,
-    workspaceGone: false,
-    userGone: false,
     cleanupAt: nowIso,
     retryAt: new Date(nowMs + CLEANUP_RETRY_BASE_MS).toISOString(),
     ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
   };
   try {
-    await store.createDoc(SESSION_CONTAINER, record);
+    await saveOver(store, note);
   } catch (error) {
     context?.error?.(`visitor-session: a failed start could not be noted for clean-up (${errorKind(error)})`);
   }
+}
+
+/**
+ * Replace a record the caller holds (with the `_etag` it was read or written
+ * with), or save it outright on a store without conditional writes. A 412
+ * means another request (the sweep, after the lease) has taken the record,
+ * and is thrown like any other failure.
+ */
+async function saveOver(store, record) {
+  if (typeof store.replaceDocIfMatch === 'function') {
+    return store.replaceDocIfMatch(SESSION_CONTAINER, record, { partitionKey: record.id });
+  }
+  await store.upsertDoc(SESSION_CONTAINER, record);
+  return record;
 }
 
 /**
@@ -831,10 +1116,17 @@ async function noteUnfinishedStart(store, { user, fallbackUsername, workspaceNam
  * under, and the address Cloudflare's Turnstile is given.
  *
  * Both come from the real client identity helper, as public-submit.js reads
- * them. Two cases are refused, with a log line that names nothing:
+ * them. Three cases are refused, with a log line that names nothing:
  *  - `anonymousKey` throws ORIGIN_NOT_VERIFIED when the request cannot be shown
  *    to have come through our Cloudflare (and we are not in dev): the helper
  *    failing closed.
+ *  - The helper let the request through without that proof (`trusted` is
+ *    false), which it does whenever `NODE_ENV` is not `production`. These
+ *    routes refuse it anyway (#1400, item 5), so a Function App that lost
+ *    `NODE_ENV`, or a slot that never had it, still files nothing under an
+ *    address the caller chose. A developer who wants to try the routes on
+ *    their own machine sets `CF_ORIGIN_SECRET` there and sends the
+ *    `x-hcw-origin-secret` and `CF-Connecting-IP` headers.
  *  - The request did present the Cloudflare secret but carries no usable
  *    client address (`trustedClientIp` is null). The helper would hash that to
  *    one shared "unknown" bucket, which is right for a rate limit and wrong
@@ -861,8 +1153,9 @@ function identifyCaller(identity, request, context) {
     if (error?.code !== ORIGIN_NOT_VERIFIED) throw error;
     return refused();
   }
+  if (key?.trusted !== true) return refused();
   const clientIp = identity.trustedClientIp(request);
-  if (key.trusted && clientIp === null) return refused();
+  if (clientIp === null) return refused();
   return { clientHash: key.key, clientIp };
 }
 
@@ -886,8 +1179,12 @@ export function createVisitorSessionHandlers({
   store,
   identity,
   fetchImpl = fetch,
-  limiter = null,
   clock = () => Date.now(),
+  // One of each per handler set, which is one per worker process
+  // (labs-public-http.js builds the handlers once), so the limits are per
+  // instance, as the lab submission's is (#1400, item 2).
+  checkLimiter = createCheckLimiter(),
+  readLimiter = createCheckLimiter({ limit: VISITOR_READS_PER_WINDOW }),
 }) {
   // Not a stand-in: see assertClientIdentity (#1387).
   assertClientIdentity(identity);
@@ -918,6 +1215,37 @@ export function createVisitorSessionHandlers({
 
   // The same body public-submit.js gives an origin it cannot verify.
   const forbidden = () => jsonResponse({ ok: false, code: 'FORBIDDEN', error: 'Forbidden' }, 403);
+  const retryAfterWindow = { 'Retry-After': String(CHECK_WINDOW_MS / 1000) };
+  const tooManyReads = (context) => {
+    context?.warn?.('visitor-session: refused a read: too many from one visitor');
+    return jsonResponse(
+      {
+        ok: false,
+        configured: true,
+        open: false,
+        code: DOOR_CODES.reads_rate_limited,
+        reason: DOOR_REASONS[DOOR_CODES.reads_rate_limited],
+      },
+      429,
+      retryAfterWindow
+    );
+  };
+
+  /** The records that may hold a workspace slot (HOLDING_QUERY), or a throw from the store. */
+  const listHolding = () =>
+    store.queryDocs(SESSION_CONTAINER, HOLDING_QUERY, [
+      { name: '@type', value: VISITOR_JOB_TYPE },
+      { name: '@statuses', value: [...HOLDING_STATUSES] },
+    ]);
+
+  /** Give a daily start back, for a start that did not make a lab (#1400, item 1). Never throws. */
+  const giveBackStart = async (quota, context) => {
+    try {
+      await giveBackDailyCap(store, quota);
+    } catch (error) {
+      context?.error?.(`visitor-session: a daily start could not be given back (${errorKind(error)})`);
+    }
+  };
 
   return {
     async getStatus(request, context) {
@@ -953,18 +1281,12 @@ export function createVisitorSessionHandlers({
       const { clientHash } = caller;
       const nowMs = clock();
       const nowIso = new Date(nowMs).toISOString();
+      // Before the query: a read in a loop must not become a query in a loop.
+      if (!readLimiter.take(clientHash, nowMs)) return tooManyReads(context);
 
-      // Check active sessions
-      let activeSessions = [];
+      let holding = [];
       try {
-        activeSessions = await store.queryDocs(
-          SESSION_CONTAINER,
-          'SELECT * FROM c WHERE c.type = @type AND c.status = @status',
-          [
-            { name: '@type', value: VISITOR_JOB_TYPE },
-            { name: '@status', value: 'active' },
-          ]
-        );
+        holding = await listHolding();
       } catch {
         return jsonResponse({
           configured: true,
@@ -983,14 +1305,15 @@ export function createVisitorSessionHandlers({
         reapExpiredVisitorSessions(store, fetchImpl, config, { nowIso }).catch(() => {});
       }
 
-      // Filter unexpired active sessions
-      const liveSessions = activeSessions.filter((s) => s.expiresAt > nowIso);
+      const slots = holding.filter((s) => holdsSlot(s, nowIso));
       // Only the caller's own session is ever described: its id and address
       // are what ends it or opens it, so they are not handed to anyone else.
-      const myActiveSession = liveSessions.find((s) => sameClient(s.clientHash, clientHash));
+      const myActiveSession = slots.find(
+        (s) => s.status === SESSION_STATUS.active && sameClient(s.clientHash, clientHash)
+      );
 
       const maxConcurrent = readVisitorMaxConcurrent(env);
-      const capacityReached = liveSessions.length >= maxConcurrent;
+      const capacityReached = slots.length >= maxConcurrent;
 
       return jsonResponse({
         configured: true,
@@ -1016,7 +1339,7 @@ export function createVisitorSessionHandlers({
         bounds: {
           durationMinutes: Math.round(VISITOR_SESSION_DURATION_MS / 60000),
           maxConcurrent,
-          activeCount: liveSessions.length,
+          activeCount: slots.length,
         },
       });
     },
@@ -1090,6 +1413,17 @@ export function createVisitorSessionHandlers({
       const nowMs = clock();
       const nowIso = new Date(nowMs).toISOString();
 
+      // At most CHECK_ATTEMPTS_PER_WINDOW calls to Cloudflare per visitor per
+      // instance, before any is made (#1400, item 2; public-submit.js does the same).
+      if (!checkLimiter.take(clientHash, nowMs)) {
+        context?.warn?.('visitor-session: refused a start: too many human verification checks from one visitor');
+        return jsonResponse(
+          { ok: false, code: LOCK_CODES.attempts, reason: LOCK_REASONS[LOCK_CODES.attempts] },
+          429,
+          retryAfterWindow
+        );
+      }
+
       // Verify Turnstile
       const verification = await verifyTurnstileToken({
         fetch: fetchImpl,
@@ -1100,20 +1434,80 @@ export function createVisitorSessionHandlers({
       });
 
       if (!verification.ok) {
-        const status = verification.kind === 'unavailable' ? 503 : 403;
-        return jsonResponse({
-          ok: false,
-          code: verification.kind === 'unavailable' ? 'TURNSTILE_UNAVAILABLE' : 'TURNSTILE_FAILED',
-          reason: verification.detail,
-        }, status);
+        // Why goes to the log; the visitor gets a plain sentence. The detail
+        // can carry Cloudflare's error codes, such as `missing-input-secret`,
+        // which tell an anonymous caller how the site is set up (#1400, item 3).
+        context?.warn?.(`visitor-session: refused a start by the human verification check: ${verification.detail}`);
+        const unavailable = verification.kind === 'unavailable';
+        const code = unavailable ? LOCK_CODES.unavailable : LOCK_CODES.failed;
+        return jsonResponse(
+          { ok: false, code, reason: LOCK_REASONS[code] },
+          unavailable ? 503 : 403,
+          unavailable ? { 'Retry-After': '60' } : {}
+        );
       }
 
-      // Check daily quota per client
+      // Check active concurrency
+      const holding = await listHolding();
+      // Reclaim capacity from expired sessions (and, on the way, retry any
+      // clean-up Coder has not confirmed). Waited for only when a session is
+      // past its hour, so its log lines can be written; a retry alone runs
+      // behind the answer, without a log, as the status route's does.
+      const expired = holding.filter((s) => s.status === SESSION_STATUS.active && s.expiresAt <= nowIso);
+      if (retrySweepDue(nowMs)) {
+        sweepRan(nowMs);
+        if (expired.length > 0) {
+          await reapExpiredVisitorSessions(store, fetchImpl, config, {
+            nowIso,
+            log: (line) => context?.warn?.(line),
+          }).catch(() => {});
+        } else {
+          reapExpiredVisitorSessions(store, fetchImpl, config, { nowIso }).catch(() => {});
+        }
+      }
+
+      // The caller's own running session is handed back, and costs nothing:
+      // a reload and a second press of start are the same visitor's one lab
+      // (#1400, item 1). So does a start of theirs still being set up.
+      const slots = holding.filter((s) => holdsSlot(s, nowIso));
+      const mine = (s) => sameClient(s.clientHash, clientHash);
+      const existing = slots.find((s) => s.status === SESSION_STATUS.active && mine(s));
+      if (existing) {
+        return jsonResponse({
+          ok: true,
+          sessionId: existing.id,
+          labId: existing.labId,
+          accessUrl: existing.accessUrl,
+          expiresAt: existing.expiresAt,
+        }, 200);
+      }
+      const underWay = slots.find(
+        (s) => s.status === SESSION_STATUS.provisioning && mine(s) && typeof s.retryAt === 'string' && s.retryAt > nowIso
+      );
+      if (underWay) {
+        return jsonResponse({
+          ok: false,
+          code: DOOR_CODES.start_in_progress,
+          reason: DOOR_REASONS[DOOR_CODES.start_in_progress],
+        }, 409, { 'Retry-After': '30' });
+      }
+
+      const maxConcurrent = readVisitorMaxConcurrent(env);
+      if (slots.length >= maxConcurrent) {
+        return jsonResponse({
+          ok: false,
+          code: DOOR_CODES.capacity_full,
+          reason: DOOR_REASONS[DOOR_CODES.capacity_full],
+        }, 503);
+      }
+
+      // Only now is a new lab really going to be made, so only now is one of
+      // the visitor's daily starts taken (#1400, item 1). A start that then
+      // fails gives it back.
       const day = utcDay(nowMs);
-      const quotaKey = `visitor-quota:${clientHash}:${day}`;
+      const quota = { container: 'submission_quota', id: `visitor-quota:${clientHash}:${day}` };
       const allowed = await takeDailyCap(store, {
-        container: 'submission_quota',
-        id: quotaKey,
+        ...quota,
         kind: 'visitor_session_daily',
         day,
         nowIso,
@@ -1129,95 +1523,78 @@ export function createVisitorSessionHandlers({
         }, 429);
       }
 
-      // Check active concurrency
-      const activeSessions = await store.queryDocs(
-        SESSION_CONTAINER,
-        'SELECT * FROM c WHERE c.type = @type AND c.status = @status',
-        [
-          { name: '@type', value: VISITOR_JOB_TYPE },
-          { name: '@status', value: 'active' },
-        ]
-      );
-      // Reclaim capacity from expired sessions (and, on the way, retry any
-      // clean-up Coder has not confirmed). Waited for only when a session is
-      // past its hour, so its log lines can be written; a retry alone runs
-      // behind the answer, without a log, as the status route's does.
-      const expired = activeSessions.filter((s) => s.expiresAt <= nowIso);
-      if (retrySweepDue(nowMs)) {
-        sweepRan(nowMs);
-        if (expired.length > 0) {
-          await reapExpiredVisitorSessions(store, fetchImpl, config, {
-            nowIso,
-            log: (line) => context?.warn?.(line),
-          }).catch(() => {});
-        } else {
-          reapExpiredVisitorSessions(store, fetchImpl, config, { nowIso }).catch(() => {});
-        }
-      }
-
-      const liveSessions = activeSessions.filter((s) => s.expiresAt > nowIso);
-      const existing = liveSessions.find((s) => sameClient(s.clientHash, clientHash));
-      if (existing) {
-        return jsonResponse({
-          ok: true,
-          sessionId: existing.id,
-          labId: existing.labId,
-          accessUrl: existing.accessUrl,
-          expiresAt: existing.expiresAt,
-        }, 200);
-      }
-
-      const maxConcurrent = readVisitorMaxConcurrent(env);
-      if (liveSessions.length >= maxConcurrent) {
+      // The record comes first, before Coder is asked for anything, so that
+      // whatever Coder makes has a record the sweep can find (#1403, item 2).
+      const creds = generateVisitorCredentials();
+      const workspaceName = VALID_LAB_WORKSPACES[labId];
+      const sessionId = randomUUID();
+      const provisioning = {
+        id: sessionId,
+        type: VISITOR_JOB_TYPE,
+        status: SESSION_STATUS.provisioning,
+        endStatus: SESSION_STATUS.ended,
+        clientHash,
+        labId,
+        coderUsername: creds.username,
+        workspaceName,
+        createdAt: nowIso,
+        cleanupAttempts: 0,
+        workspaceGone: false,
+        userGone: false,
+        retryAt: new Date(nowMs + PROVISION_LEASE_MS).toISOString(),
+        ttl: VISITOR_PENDING_DOC_TTL_SECONDS,
+      };
+      let held;
+      try {
+        held = (await store.createDoc(SESSION_CONTAINER, provisioning)) ?? provisioning;
+      } catch (error) {
+        // Nothing was asked of Coder, so there is nothing to clean up.
+        context?.error?.(`visitor-session: a start could not be recorded (${errorKind(error)})`);
+        await giveBackStart(quota, context);
         return jsonResponse({
           ok: false,
-          code: DOOR_CODES.capacity_full,
-          reason: DOOR_REASONS[DOOR_CODES.capacity_full],
+          code: DOOR_CODES.coder_unavailable,
+          reason: DOOR_REASONS[DOOR_CODES.coder_unavailable],
         }, 503);
       }
 
+      const failed = async (step, error, { user, workspaceId, noWorkspace } = {}) => {
+        // The step and the kind only: never Coder's text (#1403, item 9).
+        context?.error?.(`visitor-session: a start failed at ${step} (${errorKind(error)})`);
+        await noteUnfinishedStart(store, held, { user, workspaceId, noWorkspace, nowMs: clock(), context });
+        await giveBackStart(quota, context);
+        return jsonResponse({
+          ok: false,
+          code: DOOR_CODES.coder_unavailable,
+          reason: DOOR_REASONS[DOOR_CODES.coder_unavailable],
+        }, 502);
+      };
+
       // Provision ephemeral Coder user & workspace
-      const creds = generateVisitorCredentials();
-      const workspaceName = VALID_LAB_WORKSPACES[labId];
       let user;
-      let workspaceInfo;
       try {
         user = await createVisitorCoderUser(fetchImpl, config, creds);
+      } catch (error) {
+        // The workspace is asked for only once the user exists, so there is none.
+        return failed('the Coder user', error, { noWorkspace: true });
+      }
+      let workspaceInfo;
+      try {
         workspaceInfo = await createVisitorWorkspace(fetchImpl, config, {
           userId: user.id,
           username: user.username,
           workspaceName,
           labId,
         });
-      } catch (err) {
-        context?.error?.('visitor-session: provisioning failure', err?.message);
-        // The Coder user exists, and Coder may yet make (or already have made)
-        // the workspace whose call gave no answer. No visitor was told of a
-        // session, so nothing else would ever clean either up (#1388).
-        if (user?.id) {
-          await noteUnfinishedStart(store, {
-            user,
-            fallbackUsername: creds.username,
-            workspaceName,
-            labId,
-            nowMs: clock(),
-            context,
-          });
-        }
-        return jsonResponse({
-          ok: false,
-          code: DOOR_CODES.coder_unavailable,
-          reason: DOOR_REASONS[DOOR_CODES.coder_unavailable],
-        }, 502);
+      } catch (error) {
+        return failed('the workspace', error, { user });
       }
 
-      const sessionId = randomUUID();
       const expiresAtIso = new Date(nowMs + VISITOR_SESSION_DURATION_MS).toISOString();
-
       const doc = {
         id: sessionId,
         type: VISITOR_JOB_TYPE,
-        status: 'active',
+        status: SESSION_STATUS.active,
         clientHash,
         labId,
         coderUserId: user.id,
@@ -1228,9 +1605,19 @@ export function createVisitorSessionHandlers({
         createdAt: nowIso,
         expiresAt: expiresAtIso,
         ttl: VISITOR_DOC_TTL_SECONDS,
+        ...(held?._etag ? { _etag: held._etag } : {}),
       };
 
-      await store.createDoc(SESSION_CONTAINER, doc);
+      try {
+        await saveOver(store, doc);
+      } catch (error) {
+        // Both Coder calls worked and the session could not be saved: the
+        // visitor is told nothing ran, and the note gives the sweep both ids
+        // (#1403, item 2). A 412 means the sweep has already taken the record
+        // (the lease ran out), and the note is refused the same way; either
+        // way the sweep has what it needs.
+        return failed('saving the session', error, { user, workspaceId: workspaceInfo.workspace?.id });
+      }
 
       // The start is real from here: count it, once, as plain per-lab-per-day
       // numbers (lab-starts.js). The day is read from a fresh clock reading,
@@ -1267,6 +1654,8 @@ export function createVisitorSessionHandlers({
 
       const caller = identifyCaller(identity, request, context);
       if (!caller) return forbidden();
+      const nowMs = clock();
+      if (!readLimiter.take(caller.clientHash, nowMs)) return tooManyReads(context);
 
       // Someone else's session, a record that is not a visitor session, an id
       // that does not exist and text that cannot be an id all get the one
@@ -1280,19 +1669,29 @@ export function createVisitorSessionHandlers({
         return notFound();
       }
 
+      // `status: 'ended'` is what the pane has always been told; `cleanup` says
+      // whether Coder has confirmed the lab is gone (#1403, item 7): `done`,
+      // `pending` (it will be tried again) or `failed` (given up for now).
+      const ended = (cleanup) => jsonResponse({ ok: true, status: 'ended', cleanup });
+      const cleanupOf = (status) =>
+        [SESSION_STATUS.ended, SESSION_STATUS.expired].includes(status)
+          ? 'done'
+          : status === SESSION_STATUS.cleanupFailed
+          ? 'failed'
+          : 'pending';
+
       // Already over, or another request is cleaning it up, or it is waiting for
       // its next try: a second stop (a double click, a retry) has nothing to do,
       // and the answer is the same. A clean-up Coder has not confirmed whose
       // next try is due is tried again here, by whoever asks next.
-      const nowMs = clock();
       if (!claimable(doc, new Date(nowMs).toISOString())) {
-        return jsonResponse({ ok: true, status: 'ended' });
+        return ended(cleanupOf(doc.status));
       }
 
       // Only the request that claims the record calls Coder; Coder's answer
       // decides whether the record is saved as ended or left to be retried, and
       // either way the visitor's End is answered as done.
-      const { outcome } = await endSession(store, fetchImpl, readBrokerConfig(env), doc, {
+      const { outcome, status } = await endSession(store, fetchImpl, readBrokerConfig(env), doc, {
         endStatus: SESSION_STATUS.ended,
         nowMs,
         log: (line) => context?.warn?.(line),
@@ -1303,8 +1702,11 @@ export function createVisitorSessionHandlers({
           409
         );
       }
-
-      return jsonResponse({ ok: true, status: 'ended' });
+      if (outcome === 'done') return ended('done');
+      if (outcome === 'given-up') return ended('failed');
+      // Another request holds it: say what its record says. Otherwise (still
+      // waiting, or the record aged out under us) the honest word is pending.
+      return ended(status ? cleanupOf(status) : 'pending');
     },
   };
 }

@@ -19,9 +19,9 @@
  * takeover into up to 10; one minute would double the runs for no gain, because
  * the in-request sweep (at most once a minute per worker) already covers the
  * moments when visitors are about. The cost of a run with nothing to do is
- * three queries on `lab_jobs` (expired active sessions, then waiting ones, then
- * claims that ran out), so 720 runs a day are about 2,160 queries and no Coder
- * call. Not measured against the live account (request units per query are
+ * two queries on `lab_jobs` (expired active sessions; then, in one query,
+ * every record whose next try is due), so 720 runs a day are about 1,440
+ * queries and no Coder call. Not measured against the live account (request units per query are
  * Cosmos's to say); the bound is structural.
  *
  * OVERLAP. The Functions host runs one instance of a timer across all scaled-out

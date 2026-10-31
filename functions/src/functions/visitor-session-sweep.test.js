@@ -50,6 +50,7 @@ vi.mock('../lib/cosmos-client.js', () => ({
 }));
 
 import { memoryStore } from '../../test/memory-store.js';
+import { runCosmosQuery } from '../../test/cosmos-predicate.js';
 import { reapExpiredVisitorSessions } from '../lib/labs/visitor-session.js';
 import { resetUnconfiguredWarning } from '../lib/timers/visitor-session-sweep.js';
 
@@ -60,16 +61,8 @@ const CODER_URL = 'https://coder.lab.hybridcloudworks.com';
 
 function sweepStore(sessions = []) {
   return memoryStore(Object.fromEntries(sessions.map((s) => [`lab_jobs/${s.id}`, s])), {
-    query: ({ docs, parameters }) => {
-      const value = (name) => parameters?.find((p) => p.name === name)?.value;
-      return docs.filter(
-        (d) =>
-          d.type === value('@type') &&
-          d.status === value('@status') &&
-          (value('@nowIso') === undefined || d.expiresAt <= value('@nowIso')) &&
-          (value('@dueIso') === undefined || d.retryAt <= value('@dueIso'))
-      );
-    },
+    // The sweep's own SQL, run against these documents (#1403, item 8).
+    query: runCosmosQuery,
   });
 }
 
