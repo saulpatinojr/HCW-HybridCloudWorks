@@ -542,18 +542,29 @@ export const DECLARED = [
     after: name.endsWith('_ENABLED') ? 'false' : '',
     reason: 'Second Brain: disabled-by-default settings; no owner is inferred.',
   })),
-  // The Code Conductor brain (#1457, ADR 0036): its own database in the
-  // existing account, one owner-partitioned container, and five app settings,
-  // all off. The database name is not secret and is declared exactly; the
-  // owner, tenant and client stay empty here, and setting them later is its
-  // own exact-value review, which this list deliberately does not pre-approve.
+  // The Code Conductor brain's retirement (#1479, ADR 0036 withdrawn): #1465's
+  // apply (dfac635, run confirmed by the owner on 2026-10-31) created its own
+  // database, one container and five app settings, all off and empty. This
+  // pull request removes them from infra/, so the next plan deletes the two
+  // resources and drops the five settings from the Function App. Both were
+  // empty: the brain never held a record. Delete these entries once that run
+  // has applied and the plan reads clean without them.
+  //
+  // The five `before` values are the defaults dfac635 applied and declared,
+  // and nothing else is declared on purpose. Had the workspace since set the
+  // brain on or given it an owner, tenant or client, the removal would carry
+  // that value instead, and the plan would read UNEXPECTED: an owner id is a
+  // GUID this public file must not hold, and a change the owner made by hand
+  // is not pre-approved here, the same rule the sweep's disarming plan
+  // follows above. UNEXPECTED is then the prompt to read the plan, not a
+  // reason to widen the match.
   {
-    address: 'azurerm_cosmosdb_sql_database.code_brain', action: 'create',
-    reason: '#1457: the Code Conductor brain gets its own database in the existing Cosmos account.',
+    address: 'azurerm_cosmosdb_sql_database.code_brain', action: 'delete',
+    reason: '#1479: the Code Conductor brain leaves the site; its empty database goes with it.',
   },
   {
-    address: 'azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]', action: 'create',
-    reason: '#1457: private owner-partitioned engineering records, revisions, events and receipts.',
+    address: 'azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]', action: 'delete',
+    reason: '#1479: the Code Conductor brain leaves the site; its empty records container goes with it.',
   },
   ...[
     ['CODE_BRAIN_ENABLED', 'false'],
@@ -561,9 +572,9 @@ export const DECLARED = [
     ['CODE_BRAIN_OWNER_TENANT_ID', ''],
     ['CODE_BRAIN_SYNC_CLIENT_ID', ''],
     ['CODE_BRAIN_COSMOS_DATABASE', 'hcw_code_brain'],
-  ].map(([name, after]) => ({
-    address: 'azurerm_function_app_flex_consumption.hcw', path: `app_settings.${name}`, before: undefined, after,
-    reason: '#1457: Code Conductor brain settings, disabled by default; no owner or client is inferred.',
+  ].map(([name, before]) => ({
+    address: 'azurerm_function_app_flex_consumption.hcw', path: `app_settings.${name}`, before, after: undefined,
+    reason: '#1479: the Code Conductor brain setting is removed; it was applied off or empty and never set.',
   })),
   {
     address: 'azurerm_monitor_scheduled_query_rules_alert_v2.timer_overdue', path: 'criteria[0].query',

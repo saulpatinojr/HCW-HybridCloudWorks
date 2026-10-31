@@ -24,12 +24,13 @@ architecturally significant.
 
 ## Status lifecycle
 
-`Proposed` → `Accepted` → `Superseded` or `Deprecated`
+`Proposed` → `Accepted` → `Superseded`, `Deprecated` or `Withdrawn`
 
 - **Proposed:** under review and not authorized for implementation.
 - **Accepted:** approved direction; implementation may still be incomplete.
 - **Superseded:** replaced by a newer ADR, which must be linked.
 - **Deprecated:** retained for history but no longer applicable.
+- **Withdrawn:** accepted and then reversed by the owner before it ever operated; retained for history with the reason and the issue that reversed it.
 
 ## Required sections
 
@@ -93,7 +94,7 @@ Every ADR includes:
 | [0033](../decisions/0033-contentforge-alignment.md) | ContentForge as one content operating system: a navigation registry with a sentence per item, one pipeline graphic, a content taxonomy (kind and idea origin) kept apart from publish type, Forge Studio as a workspace, per-task AI routing, image lineage from prompt set to gallery, one aggregated calendar, an audio library of books and chapters with versions, labs per provider, a new Ambassador module, and Health over every hub | Accepted 2026-10-03 | Twenty-six admin pages had grown one hub at a time; the inventory found a blocking approve bug, two identical pipeline strips, five status vocabularies and features that created things and lost them |
 | [0034](../decisions/0034-ai-model-selection.md) | AI model selection: one global priority list, a per-task mode (recommended, global, custom chain), a model catalogue the providers populate, every modality a task, and policy locks in code | Accepted 2026-10-04 | Three overlapping controls (order, placement, routing) put the free trial tier ahead of the paid provider the owner had just chosen; model lists were typed into the seed |
 | [0035](../decisions/0035-addon-pane-model.md) | The AddOn pane model: each independently built tool is a sandboxed pane on its own lab name, with a generic site page at `/tools/<id>`, a catalogue row, a Function App status proxy, a `frame-src` entry and a generic `addons` Ansible role on the lab host, digest-pinned from Docker Hub | Accepted 2026-10-10; decisions 8 (AddOn containers beside Coder on the host) and 9 (`allow-downloads`) confirmed by the owner in #1044 | Show the three App-to-AddOn program tools (migration, cloud assessment, network assessment) without taking their code, secrets or release cadence into the site, keeping `connect-src` closed and the secret boundary on the lab host |
-| [0036](../decisions/0036-code-conductor-brain.md) | The Code Conductor brain is a second private workspace with its own Cosmos database (`hcw_code_brain`) in the existing account, its own switches, owner, desktop client and `code_brain_sync` scope, sharing the creator Second Brain's save and sync code | Accepted 2026-10-31; built switched off, activation is the owner's | Reuse the proven notes-and-sync setup for engineering notes without any path between the two workspaces, and back the new notes up before they exist |
+| [0036](../decisions/0036-code-conductor-brain.md) | The Code Conductor brain is a second private workspace with its own Cosmos database (`hcw_code_brain`) in the existing account, its own switches, owner, desktop client and `code_brain_sync` scope, sharing the creator Second Brain's save and sync code | Withdrawn 2026-10-31 (#1479): the engineering brain belongs to Code Conductor, not the site; code removed, Terraform decided in Phase 2 | Reuse the proven notes-and-sync setup for engineering notes without any path between the two workspaces, and back the new notes up before they exist |
 | [0037](../decisions/0037-agent-content-api.md) | Koda (the owner's content agent, run by Muse) reaches the site through an Agent Content API under `/api/agent-content/v1/` with one hashed key, scoped to the Drafts stage and the published reads by five switches, made, rotated and revoked on a Koda tab of the AI Engine | Accepted 2026-10-31; built from the owner's proposal, with the deviations recorded for the owner | Let an outside agent draft and review posts without any path to publishing, settings or secrets, reusing the Drafts routes rather than copying them, and keeping revocation immediate
 
 ## Template

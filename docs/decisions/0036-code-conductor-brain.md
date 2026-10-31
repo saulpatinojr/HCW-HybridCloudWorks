@@ -1,6 +1,6 @@
 # ADR 0036: The Code Conductor brain is a second private workspace with its own Cosmos database in the existing account, its own switches, owner, desktop client and `code_brain_sync` scope
 
-**Status:** Accepted 2026-10-31 by the owner as architecture owner, on [#1465](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1465) (implemented disabled by default; activation is the owner's, in the [runbook](../runbooks/code-conductor-brain.md))
+**Status:** Withdrawn 2026-10-31 by the owner, on [#1479](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1479): the engineering brain belongs to Code Conductor ([Proj-Code_Conductor](https://github.com/saulpatinojr/Proj-Code_Conductor)), its own product, and the site's Second Brain is for content, ideas and publications only. The code this record describes was merged switched off in [#1465](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1465), never deployed, and removed again by the pull request for #1479; the Terraform it added is decided separately there (Phase 2). Kept for the record; nothing below is current. The files it names no longer exist on `main`: the two links point at the tree as #1465 merged it ([`dfac635`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/tree/dfac635a56a4f7f4a4dd7d972a336d1d86e615dd)), and every other path in this record is read against that same commit.
 **Decision date:** 2026-10-31
 **Owners:** Workload owner and architecture owner
 
@@ -43,9 +43,9 @@ switches.
 1. **A new database, `hcw_code_brain`, in the existing account**, with one
    container, `code_brain_records`, partitioned on `/ownerId` (one logical
    partition per owner). Terraform creates both
-   ([`infra/code-brain.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/code-brain.tf)),
+   ([`infra/code-brain.tf`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/dfac635a56a4f7f4a4dd7d972a336d1d86e615dd/infra/code-brain.tf)),
    from one small file the code and the restore script also read
-   ([`infra/cosmos-code-brain-containers.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/infra/cosmos-code-brain-containers.json)).
+   ([`infra/cosmos-code-brain-containers.json`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/dfac635a56a4f7f4a4dd7d972a336d1d86e615dd/infra/cosmos-code-brain-containers.json)).
    Both carry `prevent_destroy`, and a precondition refuses a plan that would
    name the creator's `hcw` database. There is no search container: this
    workspace has no index to rebuild.
@@ -168,7 +168,7 @@ switches.
 
 - [ADR 0028](0028-cosmos-out-of-account-export.md), the export and restore.
 - [Second Brain architecture](../architecture/second-brain.md).
-- [Code Conductor brain runbook](../runbooks/code-conductor-brain.md).
+- The Code Conductor brain runbook was removed with the code ([#1479](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1479)); its text is in the history of [#1465](https://github.com/saulpatinojr/HCW-HybridCloudWorks/pull/1465).
 - [Microsoft Learn: transactional batch operations](https://learn.microsoft.com/azure/cosmos-db/transactional-batch)
   (all operations in one batch share one partition key value).
 - [Microsoft Learn: expose a web API and add a scope](https://learn.microsoft.com/entra/identity-platform/quickstart-configure-app-expose-web-apis#add-a-scope).

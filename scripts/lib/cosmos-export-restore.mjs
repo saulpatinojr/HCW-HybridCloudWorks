@@ -21,8 +21,6 @@
  * property the runbook names.
  */
 
-import { readFileSync } from 'node:fs';
-
 const BLOB = /^(full|delta)\/(\d{4}-\d{2}-\d{2})\/(.+)$/;
 export const RUN_ID = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -91,44 +89,6 @@ export function selectRestoreSet(names, { asOf } = {}) {
   return { full, deltas, incompleteSkipped };
 }
 
-/**
- * Containers that were exported from a database of their own, not the main
- * one (#1457, ADR 0036): the Code Conductor brain's. Read from
- * infra/cosmos-code-brain-containers.json, the file Terraform creates that
- * database from, so the restore cannot drift from what was provisioned. The
- * restore runs from a repository checkout, where the file always exists.
- * Mirrors SEPARATE_DATABASE_CONTAINERS in
- * functions/src/lib/backup/export-classification.js, which a test holds to the
- * same file.
- */
-const CODE_BRAIN_SPEC = JSON.parse(
-  readFileSync(new URL('../../infra/cosmos-code-brain-containers.json', import.meta.url), 'utf8')
-);
-export const CODE_BRAIN_CONTAINERS = Object.freeze(CODE_BRAIN_SPEC.containers.map((c) => c.name));
-export const CODE_BRAIN_DATABASE = CODE_BRAIN_SPEC.database;
-
-/**
- * True when two Cosmos database names are the same database: trimmed and
- * case-insensitive, because some parts of the Azure platform are not
- * case-sensitive about Cosmos resource names
- * (https://learn.microsoft.com/azure/cosmos-db/resource-model#azure-cosmos-db-containers).
- */
-export function sameDatabase(a, b) {
-  return String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
-}
-
-/**
- * The target database one container restores into. A Code Conductor brain
- * container goes back into its own database, never into the main one, so a
- * restore cannot mix the two workspaces.
- *
- * @param {string} container
- * @param {{ database: string, codeBrainDatabase: string }} targets
- */
-export function targetDatabaseFor(container, { database, codeBrainDatabase }) {
-  return CODE_BRAIN_CONTAINERS.includes(container) ? codeBrainDatabase : database;
-}
-
 /** `mode/runId/container.ndjson.gz` */
 export function dataBlobName(mode, runId, container) {
   return `${mode}/${runId}/${container}.ndjson.gz`;
@@ -168,6 +128,35 @@ export function containersToRestore(fullManifest, only = null, deltaManifests = 
     );
   }
   return [...new Set(only)].sort();
+}
+
+/**
+ * Split the containers an export set carries into the ones the current
+ * container spec (infra/cosmos-containers.json) provisions and the ones it
+ * no longer knows. An export written before a container was retired still
+ * lists it (the Code Conductor brain's `code_brain_records`, #1479), but the
+ * target was provisioned from the current spec and has no such container, so
+ * restoring it into `--database` would plant a retired workspace in the
+ * creator database or fail at the first write. Legacy names are reported and
+ * skipped; one that `--containers` asked for by name is refused instead,
+ * because the operator is then expecting it to land somewhere.
+ *
+ * @param {string[]} containers - what containersToRestore chose
+ * @param {Iterable<string>} specNames - the container names the spec provisions
+ * @param {string[]|null} only - the --containers selection, if any
+ * @returns {{restore: string[], legacy: string[]}}
+ */
+export function splitBySpec(containers, specNames, only = null) {
+  const known = new Set(specNames);
+  const legacy = containers.filter((name) => !known.has(name));
+  const asked = (only || []).filter((name) => legacy.includes(name));
+  if (asked.length) {
+    throw new Error(
+      '--containers names containers infra/cosmos-containers.json no longer provisions, so the target has ' +
+        `no container for them: ${asked.join(', ')}`
+    );
+  }
+  return { restore: containers.filter((name) => known.has(name)), legacy };
 }
 
 /**

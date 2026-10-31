@@ -879,9 +879,14 @@ describe('DECLARED', () => {
       }
       const [type, name] = declaration.address.replace(/\[.*$/, '').split('.');
       // A declared delete is the removal of a whole resource (#816), so its
-      // block must be gone; every other entry must name a block that exists.
-      if (declaration.action === 'delete' && !/\[.*\]$/.test(declaration.address)) {
-        expect(infraSource, label).not.toContain(`resource "${type}" "${name}"`);
+      // block must be gone. A delete of one for_each instance is either a key
+      // that left a block that stays, or a whole block removed with its keys
+      // (#1479), so nothing is asserted about the block for it. Every other
+      // entry must name a block that exists.
+      if (declaration.action === 'delete') {
+        if (!/\[.*\]$/.test(declaration.address)) {
+          expect(infraSource, label).not.toContain(`resource "${type}" "${name}"`);
+        }
       } else {
         expect(infraSource, label).toContain(`resource "${type}" "${name}"`);
       }
@@ -1289,51 +1294,60 @@ describe('conditional replacements and declared creates (#816)', () => {
   });
 });
 
-describe('the Code Conductor brain declarations match its spec (#1457)', () => {
-  const spec = () =>
-    JSON.parse(readFileSync(join(HERE, '..', 'infra', 'cosmos-code-brain-containers.json'), 'utf8'));
+describe('the Code Conductor brain retirement is declared (#1479)', () => {
+  // #1465 created the brain's own database, one container and five app
+  // settings (applied as dfac635). #1480 removes them, so the next plan
+  // deletes the two resources and drops the five settings. Declared here so
+  // tfc-plan-check reads that run as expected; the entries are deleted once
+  // it has applied, and this block with them.
+  const retirement = () => DECLARED.filter((entry) => /code_brain|CODE_BRAIN_/.test(entry.address + (entry.path ?? '')));
 
-  it('declares the database, each container in the spec, and the database setting by the spec name', () => {
-    const { database, containers } = spec();
-    const creates = DECLARED.filter((entry) => entry.action === 'create').map((entry) => entry.address);
-    expect(creates).toContain('azurerm_cosmosdb_sql_database.code_brain');
-    for (const container of containers) {
-      expect(creates).toContain(`azurerm_cosmosdb_sql_container.code_brain["${container.name}"]`);
-    }
-    const setting = DECLARED.find((entry) => entry.path === 'app_settings.CODE_BRAIN_COSMOS_DATABASE');
-    expect(setting?.after).toBe(database);
-  });
-
-  it('declares the switches off and the identities empty, never a value to pre-approve', () => {
-    const settings = Object.fromEntries(
-      DECLARED.filter((entry) => entry.path?.startsWith('app_settings.CODE_BRAIN_')).map((entry) => [
-        entry.path.slice('app_settings.'.length),
-        entry,
-      ])
-    );
-    expect(Object.keys(settings).sort()).toEqual([
-      'CODE_BRAIN_COSMOS_DATABASE',
-      'CODE_BRAIN_ENABLED',
-      'CODE_BRAIN_OWNER_OID',
-      'CODE_BRAIN_OWNER_TENANT_ID',
-      'CODE_BRAIN_SYNC_CLIENT_ID',
+  it('declares the deletes and the setting removals, and no longer any create', () => {
+    const entries = retirement();
+    if (entries.length === 0) return;
+    expect(entries.filter((entry) => entry.action === 'create')).toEqual([]);
+    expect(entries.filter((entry) => entry.action === 'delete').map((entry) => entry.address).sort()).toEqual([
+      'azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]',
+      'azurerm_cosmosdb_sql_database.code_brain',
     ]);
-    for (const entry of Object.values(settings)) expect(entry.before).toBeUndefined();
-    expect(settings.CODE_BRAIN_ENABLED.after).toBe('false');
-    for (const name of ['CODE_BRAIN_OWNER_OID', 'CODE_BRAIN_OWNER_TENANT_ID', 'CODE_BRAIN_SYNC_CLIENT_ID']) {
-      expect(settings[name].after, name).toBe('');
-    }
+    const settings = entries.filter((entry) => entry.path);
+    expect(settings.map((entry) => entry.path).sort()).toEqual([
+      'app_settings.CODE_BRAIN_COSMOS_DATABASE',
+      'app_settings.CODE_BRAIN_ENABLED',
+      'app_settings.CODE_BRAIN_OWNER_OID',
+      'app_settings.CODE_BRAIN_OWNER_TENANT_ID',
+      'app_settings.CODE_BRAIN_SYNC_CLIENT_ID',
+    ]);
+    for (const entry of settings) expect(entry.after, entry.path).toBeUndefined();
   });
 
-  it('reads a plan adding the database, its container and the settings as expected', () => {
+  it('reads the plan that deletes the database and container and drops the five settings as expected', () => {
+    const entries = retirement();
+    if (entries.length === 0) return;
     const plan = expectedPlan();
     plan.resource_changes.push(
-      { address: 'azurerm_cosmosdb_sql_database.code_brain', change: { actions: ['create'] } },
-      { address: 'azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]', change: { actions: ['create'] } }
+      { address: 'azurerm_cosmosdb_sql_database.code_brain', change: { actions: ['delete'] } },
+      { address: 'azurerm_cosmosdb_sql_container.code_brain["code_brain_records"]', change: { actions: ['delete'] } }
     );
-    const declared = DECLARED.filter((entry) => entry.address.includes('code_brain'));
-    const result = checkPlan(plan, { declared });
+    const app = plan.resource_changes.find((change) => change.address === EXPECTED.updated[0].address).change;
+    Object.assign(app.before.app_settings, {
+      CODE_BRAIN_ENABLED: 'false',
+      CODE_BRAIN_OWNER_OID: '',
+      CODE_BRAIN_OWNER_TENANT_ID: '',
+      CODE_BRAIN_SYNC_CLIENT_ID: '',
+      CODE_BRAIN_COSMOS_DATABASE: 'hcw_code_brain',
+    });
+    const result = checkPlan(plan, { declared: entries });
     expect(result.unexpected).toEqual([]);
+    expect(result.unused).toEqual([]);
+  });
+
+  it('does not let the declarations cover a create of the same resources', () => {
+    const entries = retirement();
+    if (entries.length === 0) return;
+    const plan = expectedPlan();
+    plan.resource_changes.push({ address: 'azurerm_cosmosdb_sql_database.code_brain', change: { actions: ['create'] } });
+    expect(checkPlan(plan, { declared: entries }).unexpected).toEqual(['azurerm_cosmosdb_sql_database.code_brain: create']);
   });
 });
 

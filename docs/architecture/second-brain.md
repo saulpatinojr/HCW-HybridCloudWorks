@@ -4,12 +4,6 @@ Owner-approved design, 2026-10-26. Implementation is in the application and
 desktop plugin; production activation and private Publish retirement follow
 the [rollout runbook](../runbooks/second-brain.md).
 
-A second, separate workspace for engineering notes, the Code Conductor brain,
-reuses this design's save and sync code with its own database, switches,
-owner, desktop client and scope; see
-[ADR 0036](../decisions/0036-code-conductor-brain.md). Nothing below changes
-for the creator workspace.
-
 ## Product and authority
 
 `/admin/second-brain` is the private creator workspace: Home, Inbox, Library,

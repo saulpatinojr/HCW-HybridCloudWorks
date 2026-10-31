@@ -2,21 +2,12 @@ import { getContainer } from '../cosmos-client.js';
 import { RECORDS, SEARCH, BrainError, fail, clean, digest } from './model.js';
 
 /** All authored mutations, revisions, receipts and cursor advancement share one
- * owner partition and one transactional batch. No timestamp-based sync cursor.
- *
- * `records` and `search` name the containers. They default to the creator
- * brain's; the Code Conductor brain passes its own records container and no
- * search container, so it has no index methods at all. */
-export function createBrainRepository(
-  store,
-  ownerId,
-  batch,
-  { records = RECORDS, search = SEARCH } = {},
-) {
-  const read = (id) => store.readDoc(records, id, ownerId);
+ * owner partition and one transactional batch. No timestamp-based sync cursor. */
+export function createBrainRepository(store, ownerId, batch) {
+  const read = (id) => store.readDoc(RECORDS, id, ownerId);
   const query = (sql, params = [], limit = 100) =>
     store.queryDocs(
-      records,
+      RECORDS,
       sql,
       [{ name: '@owner', value: ownerId }, ...params],
       { partitionKey: ownerId, maxItemCount: limit },
@@ -193,34 +184,27 @@ export function createBrainRepository(
         'SELECT TOP 100 * FROM c WHERE c.ownerId = @owner AND c.archived = false AND (ARRAY_CONTAINS(c.links, @id) OR ARRAY_CONTAINS(c.collections, @id))',
         [{ name: '@id', value: id }],
       ),
-    ...(search && {
-      searchPage: (sql, params, options) =>
-        store.queryDocsPage(
-          search,
-          sql,
-          [{ name: '@owner', value: ownerId }, ...params],
-          { ...options, partitionKey: ownerId },
-        ),
-      putIndex: (doc) => store.upsertDoc(search, { ...doc, ownerId }),
-      readIndex: (id) => store.readDoc(search, id, ownerId),
-    }),
-    putInternal: (doc) => store.upsertDoc(records, { ...doc, ownerId }),
+    searchPage: (sql, params, options) =>
+      store.queryDocsPage(
+        SEARCH,
+        sql,
+        [{ name: '@owner', value: ownerId }, ...params],
+        { ...options, partitionKey: ownerId },
+      ),
+    putIndex: (doc) => store.upsertDoc(SEARCH, { ...doc, ownerId }),
+    readIndex: (id) => store.readDoc(SEARCH, id, ownerId),
+    putInternal: (doc) => store.upsertDoc(RECORDS, { ...doc, ownerId }),
     store,
   };
 }
 
-/** One owner partition's transactional batch against the container `container()` returns. */
-export function createCosmosBatch(container) {
-  return async (ownerId, operations) => {
-    const response = await container().items.batch(operations, ownerId);
-    const bad = response.result?.find(
-      (r) => r.statusCode >= 400 && r.statusCode !== 424,
-    );
-    if (response.code >= 400 || bad)
-      throw Object.assign(new Error('Brain transaction failed'), {
-        code: bad?.statusCode || response.code,
-      });
-  };
+export async function cosmosBrainBatch(ownerId, operations) {
+  const response = await getContainer(RECORDS).items.batch(operations, ownerId);
+  const bad = response.result?.find(
+    (r) => r.statusCode >= 400 && r.statusCode !== 424,
+  );
+  if (response.code >= 400 || bad)
+    throw Object.assign(new Error('Brain transaction failed'), {
+      code: bad?.statusCode || response.code,
+    });
 }
-
-export const cosmosBrainBatch = createCosmosBatch(() => getContainer(RECORDS));

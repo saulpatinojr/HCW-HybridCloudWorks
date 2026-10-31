@@ -102,8 +102,6 @@ vi.mock("../lib/agent-content/guard.js", () => ({
   resetAgentContentGuard: () => {},
 }));
 vi.mock("../lib/brain/guard.js", async (importOriginal) => ({ ...(await importOriginal()), getBrainSyncGuard: () => ({ requireRole: syncRequireRole, requireUser: syncRequireRole }) }));
-// The Code Conductor brain's own guard (#1457): code_brain_sync tokens only.
-vi.mock("../lib/code-brain/guard.js", () => ({ getCodeBrainSyncGuard: () => ({ requireRole: syncRequireRole, requireUser: syncRequireRole }) }));
 const guardCalls = () => GUARDS.reduce((n, g) => n + g.mock.calls.length, 0);
 const clearGuards = () => GUARDS.forEach((g) => g.mockClear());
 

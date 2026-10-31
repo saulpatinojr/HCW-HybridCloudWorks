@@ -65,7 +65,7 @@ describe('writeDenialAudit', () => {
       verifier: { verify: async () => ({ oid: 'someone', scp: 'access_as_admin', roles: [] }) },
       lookupAdmin: async () => null,
       auditDenial: writeDenialAudit,
-      delegatedScope: 'code_brain_sync',
+      delegatedScope: 'brain_sync',
     });
     const request = { headers: { get: (name) => (name === 'authorization' ? 'Bearer fake' : null) } };
     const { result, seen } = await unhandledDuring(() => guard.requireRole(request, 'editor'));

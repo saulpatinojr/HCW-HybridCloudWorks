@@ -9,6 +9,7 @@ import {
   selectRestoreSet,
   restoreLayers,
   containersToRestore,
+  splitBySpec,
   assertManifest,
   layersCarrying,
   verifyTargetCount,
@@ -23,12 +24,8 @@ import {
   formatRow,
   parseConcurrency,
   forEachConcurrent,
-  CODE_BRAIN_CONTAINERS,
-  CODE_BRAIN_DATABASE,
-  targetDatabaseFor,
 } from './lib/cosmos-export-restore.mjs';
-import { readFileSync } from 'node:fs';
-import { parseOptions } from './restore-cosmos-export.mjs';
+import { parseOptions, provisionedContainerNames } from './restore-cosmos-export.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 
@@ -152,6 +149,36 @@ describe('containersToRestore', () => {
     expect(containersToRestore(full, ['brain_records'], [firstDelta, nextDelta])).toEqual(['brain_records']);
     expect(layersCarrying('brain_records', layers, manifests)).toEqual(layers.slice(1));
     expect(() => containersToRestore(full, ['brain_search'], [firstDelta, nextDelta])).toThrow(/does not carry: brain_search/);
+  });
+});
+
+describe('splitBySpec (a retired container in an older export set, #1479)', () => {
+  const spec = ['admins', 'blogs', 'content'];
+
+  it('keeps the containers the spec provisions and names the ones it no longer knows', () => {
+    expect(splitBySpec(['admins', 'blogs', 'code_brain_records', 'content'], spec)).toEqual({
+      restore: ['admins', 'blogs', 'content'],
+      legacy: ['code_brain_records'],
+    });
+    expect(splitBySpec(['admins', 'content'], spec)).toEqual({ restore: ['admins', 'content'], legacy: [] });
+  });
+
+  it('refuses a legacy container that --containers asked for by name', () => {
+    expect(() => splitBySpec(['code_brain_records', 'content'], spec, ['code_brain_records', 'content'])).toThrow(
+      /no longer provisions.*code_brain_records/
+    );
+    // Asking only for provisioned containers is fine even when the set carries a legacy one.
+    expect(splitBySpec(['code_brain_records', 'content'], spec, ['content'])).toEqual({
+      restore: ['content'],
+      legacy: ['code_brain_records'],
+    });
+  });
+
+  it('reads the names from infra/cosmos-containers.json, which no longer lists the retired container', () => {
+    const names = provisionedContainerNames();
+    expect(names).toContain('content');
+    expect(names).toContain('brain_records');
+    expect(names).not.toContain('code_brain_records');
   });
 });
 
@@ -382,7 +409,6 @@ describe('parseOptions', () => {
       storageAccount: 'stsiteprodcus01',
       targetEndpoint: null,
       database: 'hcw',
-      codeBrainDatabase: 'hcw_code_brain',
       asOf: undefined,
       containers: null,
       concurrency: 8,
@@ -448,38 +474,6 @@ describe('parseOptions', () => {
     expect(() => parseOptions(['--storage-account', 's', '--dry-run', '--bogus'])).toThrow(
       /Unknown argument/
     );
-  });
-});
-
-describe('the Code Conductor brain restores into its own database (#1457)', () => {
-  const spec = JSON.parse(readFileSync(join(SCRIPTS, '..', 'infra', 'cosmos-code-brain-containers.json'), 'utf8'));
-
-  it('names the same database and containers as infra/cosmos-code-brain-containers.json', () => {
-    expect(CODE_BRAIN_DATABASE).toBe(spec.database);
-    expect([...CODE_BRAIN_CONTAINERS].sort()).toEqual(spec.containers.map((c) => c.name).sort());
-  });
-
-  it('sends each code brain container to its database and everything else to --database', () => {
-    const targets = { database: 'hcw', codeBrainDatabase: 'hcw_code_brain' };
-    expect(targetDatabaseFor('code_brain_records', targets)).toBe('hcw_code_brain');
-    expect(targetDatabaseFor('brain_records', targets)).toBe('hcw');
-    expect(targetDatabaseFor('content', targets)).toBe('hcw');
-  });
-
-  it('takes --code-brain-database, and refuses a blank one or one equal to --database', () => {
-    const base = ['--storage-account', 's', '--dry-run'];
-    expect(parseOptions([...base, '--code-brain-database', ' drill_code ']).codeBrainDatabase).toBe('drill_code');
-    expect(() => parseOptions([...base, '--code-brain-database', ' '])).toThrow(/--code-brain-database must name/);
-    expect(() => parseOptions([...base, '--code-brain-database', 'hcw'])).toThrow(/must differ from --database/);
-    expect(() =>
-      parseOptions([...base, '--database', 'drill', '--code-brain-database', 'drill'])
-    ).toThrow(/must differ from --database/);
-    // The same database in another spelling is still the same database.
-    for (const spelling of ['HCW', ' hcw', 'Hcw ']) {
-      expect(() => parseOptions([...base, '--code-brain-database', spelling]), spelling).toThrow(
-        /must differ from --database/
-      );
-    }
   });
 });
 
