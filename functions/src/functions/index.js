@@ -61,6 +61,7 @@ import "./public-reads.js";
 import "./publish-http.js";
 import "./publish-jobs.js";
 import "./brain-http.js";
+import "./code-brain-http.js";
 import "./recording-content-http.js";
 import "./reviewer-digest-http.js";
 import "./rss-jobs.js";

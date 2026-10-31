@@ -32,11 +32,16 @@
 
 /** @typedef {'authored'|'configuration'|'operational'|'regenerable'|'seed'|'transient'} ExportClass */
 
+import { isCreatorDatabase } from '../cosmos-client.js';
+
 const freeze = (list) => Object.freeze([...list].sort());
 
 /** Class A — weekly full + daily deltas. */
 export const AUTHORED = freeze([
   'brain_records',
+  // The Code Conductor brain's engineering notes (#1457, ADR 0036). Lives in
+  // its own database: see SEPARATE_DATABASE_CONTAINERS below.
+  'code_brain_records',
   'content',
   'content_versions',
   'blogs',
@@ -162,6 +167,45 @@ export const EXPORT_CLASSES = Object.freeze({
 export const EXPORT_MODES = Object.freeze(['full', 'delta']);
 
 /**
+ * Containers that live in a database of their own rather than in
+ * COSMOS_DATABASE, keyed to the app setting that names that database
+ * (#1457, ADR 0036). Their container names are unique across the account, so
+ * the export's blob names (`<run>/<container>.ndjson.gz`) and the restore's
+ * container list need no database prefix.
+ *
+ * Such a container is planned only while its setting is set. Terraform
+ * creates the database and sets the setting in the same apply, so the export
+ * picks the container up as soon as it exists, before its workspace is
+ * switched on, and a deploy that lands before that apply cannot plan a job
+ * against a database that is not there yet.
+ */
+export const SEPARATE_DATABASE_CONTAINERS = Object.freeze({
+  code_brain_records: 'CODE_BRAIN_COSMOS_DATABASE',
+});
+
+/**
+ * The database a container is exported from: null for COSMOS_DATABASE,
+ * the named database for a separate one, or undefined when that database's
+ * setting is not set or names the creator database (the container is then
+ * not planned).
+ *
+ * @param {string} container
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {string|null|undefined}
+ */
+export function separateDatabaseFor(container, env = process.env) {
+  const setting = SEPARATE_DATABASE_CONTAINERS[container];
+  if (!setting) return null;
+  const database = String(env[setting] || '').trim();
+  // A setting that names the creator database (in any spelling) is treated
+  // as unset, as lib/code-brain/config.js treats it: the workspace is off
+  // then, so there is nothing of its own to export, and planning the job
+  // would read the creator database or fail every nightly run.
+  if (!database || isCreatorDatabase(database, env)) return undefined;
+  return database;
+}
+
+/**
  * The class a container belongs to, or `null` when it is classified nowhere —
  * which the contract test turns into a build failure for any provisioned name.
  *
@@ -178,15 +222,18 @@ export function classify(container) {
 /**
  * The containers one run exports, sorted, for a run mode.
  *
- * `full` (Sundays) is classes A + B + C: 61 containers. `delta` (every other
- * day) is A + B: 54. The scheduler enqueues exactly this list and the worker
- * that finds every one of its markers present writes the run manifest, so the
- * two halves must agree on the set — they do, because both call this.
+ * `full` (Sundays) is classes A + B + C. `delta` (every other day) is A + B.
+ * A container in a separate database is left out while its database setting
+ * is unset (SEPARATE_DATABASE_CONTAINERS). The scheduler enqueues exactly this
+ * list and the worker that finds every one of its markers present writes the
+ * run manifest, so the two halves must agree on the set — they do, because
+ * both call this, in the same app with the same settings.
  *
  * @param {'full'|'delta'} mode
+ * @param {Record<string, string|undefined>} [env]
  * @returns {string[]}
  */
-export function exportPlanFor(mode) {
+export function exportPlanFor(mode, env = process.env) {
   if (!EXPORT_MODES.includes(mode)) {
     throw new Error(
       `exportPlanFor: mode must be one of ${EXPORT_MODES.join(', ')}, got ${JSON.stringify(mode)}`
@@ -196,7 +243,7 @@ export function exportPlanFor(mode) {
   for (const spec of Object.values(EXPORT_CLASSES)) {
     if (spec[mode]) out.push(...spec.containers);
   }
-  return out.sort();
+  return out.filter((container) => separateDatabaseFor(container, env) !== undefined).sort();
 }
 
 /** Every container named in any class, sorted — the set the contract test compares to the spec. */

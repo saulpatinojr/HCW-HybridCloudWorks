@@ -26,6 +26,9 @@
  *   --storage-account <name>    account holding the cosmos-export container (required)
  *   --target-endpoint <url>     Cosmos endpoint to write to (required unless --dry-run)
  *   --database <id>             target database (default hcw)
+ *   --code-brain-database <id>  target database for the Code Conductor brain's
+ *                               containers (default hcw_code_brain; never the
+ *                               same as --database)
  *   --as-of <YYYY-MM-DD>        latest run to apply (default: everything complete)
  *   --containers <a,b,c>        restore only these (default: every container in the full)
  *   --concurrency <n>           upserts in flight per container (default 8, max 32)
@@ -55,6 +58,9 @@ import {
   formatRow,
   parseConcurrency,
   forEachConcurrent,
+  CODE_BRAIN_DATABASE,
+  targetDatabaseFor,
+  sameDatabase,
 } from './lib/cosmos-export-restore.mjs';
 
 export const EXPORT_CONTAINER = 'cosmos-export';
@@ -64,6 +70,8 @@ const HELP = `Usage: node scripts/restore-cosmos-export.mjs --storage-account <n
   --storage-account <name>    account holding the cosmos-export container (required)
   --target-endpoint <url>     Cosmos endpoint to write to (required unless --dry-run)
   --database <id>             target database (default hcw)
+  --code-brain-database <id>  target database for code_brain_records
+                              (default hcw_code_brain; must differ from --database)
   --as-of <YYYY-MM-DD>        latest run to apply (default: everything complete)
   --containers <a,b,c>        restore only these containers
   --concurrency <n>           upserts in flight per container (default 8, max 32)
@@ -86,6 +94,7 @@ export function parseOptions(argv) {
       'storage-account',
       'target-endpoint',
       'database',
+      'code-brain-database',
       'as-of',
       'containers',
       'concurrency',
@@ -116,11 +125,22 @@ export function parseOptions(argv) {
   // name here, not an SDK error about a resource with no id later.
   const database = options.database === undefined ? 'hcw' : options.database.trim();
   if (!database) throw new Error('--database must name the target database (the default is hcw)');
+  // The Code Conductor brain restores into its own database (#1457): pointing
+  // both at one database would mix the two workspaces in the target.
+  const codeBrainDatabase =
+    options['code-brain-database'] === undefined ? CODE_BRAIN_DATABASE : options['code-brain-database'].trim();
+  if (!codeBrainDatabase) {
+    throw new Error(`--code-brain-database must name a database (the default is ${CODE_BRAIN_DATABASE})`);
+  }
+  if (sameDatabase(codeBrainDatabase, database)) {
+    throw new Error('--code-brain-database must differ from --database: the Code Conductor brain has its own database');
+  }
   return {
     help: false,
     storageAccount,
     targetEndpoint: targetEndpoint || null,
     database,
+    codeBrainDatabase,
     // Trimmed like the other string options; selectRestoreSet validates the shape.
     asOf: options['as-of'] === undefined ? undefined : options['as-of'].trim(),
     containers: splitList(options.containers),
@@ -140,11 +160,12 @@ async function exportContainerClient(storageAccount) {
   return service.getContainerClient(EXPORT_CONTAINER);
 }
 
-async function targetDatabase(endpoint, database) {
+/** The target account's databases, opened through one client. */
+async function targetDatabases(endpoint) {
   const { CosmosClient } = await import('@azure/cosmos');
   const { DefaultAzureCredential } = await import('@azure/identity');
   const client = new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
-  return client.database(database);
+  return (database) => client.database(database);
 }
 
 async function listNames(container) {
@@ -221,13 +242,13 @@ export async function main(argv = process.argv.slice(2), out = console) {
     `${opts.dryRun ? 'DRY RUN — counting' : 'Restoring'} full/${set.full} + ${set.deltas.length} delta(s)` +
       (set.deltas.length ? ` (${set.deltas[0]} … ${set.deltas[set.deltas.length - 1]})` : '') +
       ` — ${containers.length} container(s)` +
-      (opts.dryRun ? '' : ` → ${opts.targetEndpoint} / ${opts.database}`)
+      (opts.dryRun ? '' : ` → ${opts.targetEndpoint} / ${opts.database} (Code Conductor brain: ${opts.codeBrainDatabase})`)
   );
   if (set.incompleteSkipped.length) {
     out.log(`Skipped incomplete runs (no manifest): ${set.incompleteSkipped.join(', ')}`);
   }
 
-  const db = opts.dryRun ? null : await targetDatabase(opts.targetEndpoint, opts.database);
+  const databaseOf = opts.dryRun ? null : await targetDatabases(opts.targetEndpoint);
   const widths = [32, 10, 10, 10, 10, 10, 10];
   out.log(
     formatRow(
@@ -242,7 +263,7 @@ export async function main(argv = process.argv.slice(2), out = console) {
   let mismatches = 0;
   for (const name of containers) {
     const t0 = Date.now();
-    const target = db ? db.container(name) : null;
+    const target = databaseOf ? databaseOf(targetDatabaseFor(name, opts)).container(name) : null;
     const tally = createRestoreTally({ writes: Boolean(target) });
     // What the target already held, so --verify can expect that plus what this
     // run creates: an empty account on a first run, more on a rerun.

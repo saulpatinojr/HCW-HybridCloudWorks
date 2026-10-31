@@ -5,6 +5,7 @@ import { ChangeFeedMode, StatusCodes } from '@azure/cosmos';
 import {
   createCosmosReader,
   createExportBlobStore,
+  exportSourceContainer,
   UPLOAD_BUFFER_BYTES,
 } from './cosmos-export-edges.js';
 
@@ -238,5 +239,30 @@ describe('createExportBlobStore', () => {
       {},
       { overwrite: true }
     );
+  });
+});
+
+describe('exportSourceContainer (#1457)', () => {
+  const deps = (env) => ({
+    env,
+    getContainer: vi.fn((name) => ({ db: 'main', name })),
+    getDatabaseContainer: vi.fn((database, name) => ({ db: database, name })),
+  });
+
+  it('reads every creator container from COSMOS_DATABASE, the Code Conductor brain from its own', () => {
+    const d = deps({ CODE_BRAIN_COSMOS_DATABASE: 'hcw_code_brain' });
+    expect(exportSourceContainer('brain_records', d)).toEqual({ db: 'main', name: 'brain_records' });
+    expect(exportSourceContainer('content', d)).toEqual({ db: 'main', name: 'content' });
+    expect(exportSourceContainer('code_brain_records', d)).toEqual({
+      db: 'hcw_code_brain',
+      name: 'code_brain_records',
+    });
+    expect(d.getDatabaseContainer).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses the Code Conductor container without its setting rather than reading the main database', () => {
+    const d = deps({});
+    expect(() => exportSourceContainer('code_brain_records', d)).toThrow(/CODE_BRAIN_COSMOS_DATABASE is not set/);
+    expect(d.getContainer).not.toHaveBeenCalled();
   });
 });
