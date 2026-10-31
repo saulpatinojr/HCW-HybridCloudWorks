@@ -28,6 +28,10 @@ export const TABS = Object.freeze([
   { id: 'mcp', label: 'MCP Servers' },
   { id: 'playground', label: 'Playground' },
   { id: 'usage', label: 'Usage & Cost' },
+  // Koda, the owner's content agent (ADR 0037): its API key, what the key may
+  // do, and how the Muse connector reaches the site. The one place the key is
+  // made, switched and revoked.
+  { id: 'koda', label: 'Koda' },
 ]);
 
 export const DEFAULT_TAB = 'services';
@@ -49,6 +53,10 @@ export const MOVED_TABS = Object.freeze({
   cost: 'usage',
   'usage-cost': 'usage',
   spend: 'usage',
+  agent: 'koda',
+  agents: 'koda',
+  muse: 'koda',
+  'agent-content': 'koda',
 });
 
 /** The tab to show for a `?tab=` value: its own, where it moved, or AI Services. */

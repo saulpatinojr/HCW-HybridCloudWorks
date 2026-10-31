@@ -34,6 +34,9 @@ export const DRAFT_ORIGINS = Object.freeze({
   repo: 'repo-import',
   vault: 'vault',
   paste: 'paste',
+  // Written through the Agent Content API by Koda's key (ADR 0037). The same
+  // Drafts routes, so the same stage; the origin is what tells them apart.
+  agent: 'agent',
 });
 
 export const statusOf = (doc = {}) => String(doc.contentStatus || 'ingested');
