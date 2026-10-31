@@ -1140,3 +1140,53 @@ describe("the sample drafts", () => {
     expect(parsed.ok, parsed.error).toBe(true);
   });
 });
+
+describe("the typed routes' body bound and the audit's credential (review of #1478)", () => {
+  it("refuses an oversize typed save by its declared size, before any read or write", async () => {
+    const { handlers, store } = setup();
+    const req = {
+      ...request({ body: { fields: FIELDS } }),
+      headers: {
+        get: (name) =>
+          name.toLowerCase() === "content-length" ? String(10 * 1024 * 1024) : "vitest",
+      },
+    };
+    const res = parse(await handlers.create(req, context));
+    expect(res).toMatchObject({ status: 413, body: { code: "TOO_LARGE" } });
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
+  it("records the admin page's token as the credential of a transition, as before", async () => {
+    const { handlers, store } = setup();
+    const draft = await created(handlers);
+    const res = parse(
+      await handlers.sendToReview(
+        request({ id: draft.id, body: { etag: draft.etag } }),
+        context,
+      ),
+    );
+    expect(res.status).toBe(200);
+    const row = store.audits.find((a) => a.action === "status_transition");
+    expect(row.metadata.authMethod).toBe("entra_bearer_token");
+  });
+
+  it("a failed counter update after a delete is logged without the id or the message", async () => {
+    const { handlers, store, onContentDeleted } = setup();
+    const draft = await created(handlers);
+    onContentDeleted.mockRejectedValueOnce(
+      Object.assign(new Error("Request rate is large: id secret-ish"), { code: 429 }),
+    );
+    const warn = vi.fn();
+    const res = await handlers.remove(
+      request({ id: draft.id, body: { etag: draft.etag } }),
+      { ...context, warn },
+    );
+    expect(res.status).toBe(200);
+    expect(store.docs.has(draft.id)).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).not.toContain(draft.id);
+    expect(line).not.toContain("secret-ish");
+    expect(line).toContain("429");
+  });
+});

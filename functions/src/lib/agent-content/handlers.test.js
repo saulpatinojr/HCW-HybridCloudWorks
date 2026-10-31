@@ -223,6 +223,18 @@ describe('a draft Koda writes', () => {
     expect(store.docs.get(res.body.draft.id).ideaOrigin).toBe('content-gap');
   });
 
+  it('refuses an oversize typed request by its declared size, before reading or writing anything', async () => {
+    const { handlers, store } = setup();
+    const big = {
+      ...request({ body: { fields: FIELDS } }),
+      headers: { get: (name) => (name.toLowerCase() === 'content-length' ? String(10 * 1024 * 1024) : null) },
+    };
+    const res = parse(await handlers.createDraft(big, context));
+    expect(res.status).toBe(413);
+    expect(res.body.code).toBe('TOO_LARGE');
+    expect(store.createDoc).not.toHaveBeenCalled();
+  });
+
   it('cannot set a slug, a status or anything outside the editor fields', async () => {
     const { handlers } = setup();
     const res = parse(
@@ -302,6 +314,10 @@ describe('a draft Koda writes', () => {
     );
     expect(sent.status).toBe(200);
     expect(store.docs.get(made.id).contentStatus).toBe('in_review');
+    // The transition's audit row names the credential that made it: the key, not a token.
+    const transition = store.audits.find((row) => row.action === 'status_transition');
+    expect(transition.metadata.authMethod).toBe('agent_key');
+    expect(transition.userId).toBe('agent:koda');
 
     const back = parse(
       await handlers.backToDrafts(request({ id: made.id, body: { etag: sent.body.draft.etag } }), context),

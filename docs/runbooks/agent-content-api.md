@@ -120,12 +120,14 @@ audit log.
 
 - **The Drafts page** (<https://hybridcloudworks.com/admin/drafts>): drafts
   Koda wrote show `koda (agent)` as their author.
-- **Refused calls:** every call that presented a site key (one starting
-  `hcwk_`) and was refused is a row in the `admin_audit_logs` container with
+- **Refused calls:** every call that presented a value shaped like a site
+  key (`hcwk_` followed by 40 to 64 letters, digits, `-` or `_`) and was
+  refused is a row in the `admin_audit_logs` container with
   `kind: "agent-content-denial"` and a `reason` (`no-key`, `wrong-key`,
   `revoked-key`, `capability-off`, `rate-limited`). A call with no key, or
-  with some other bearer value, is refused without a row, so internet
-  scanners do not fill the log. The key itself is never in a row.
+  with a bearer value of any other shape (`hcwk_bad` included), is refused
+  without a row, so internet scanners do not fill the log. The key itself is
+  never in a row.
 - **Key events:** rows with `action` `agent_content_key_generated`,
   `agent_content_key_rotated`, `agent_content_capabilities_changed` or
   `agent_content_key_revoked`, each with the key's first characters and who
@@ -151,9 +153,12 @@ audit log.
   published answers `200` with `code: "PUBLISHED_ELSEWHERE"` and
   `existingId`; neither writes a second draft. `POST drafts` makes a new id
   every time, so a lost answer and a retry there would make two drafts.
-- A key whose **Read drafts** switch is off still gets the outcome, id and
-  etag of its own writes, but `draft.fields` (the text) is replaced by
-  `bodyWithheld: true`.
+- A key whose **Read drafts** switch is off still gets its answers, but
+  wherever one would carry the draft as the page sees it (`draft` with
+  `fields`), the text is replaced by `bodyWithheld: true` and the summary
+  (id, title, stage, etag, allowed actions) stays. The markdown route's
+  answer (`contentId`, no etag) and a delete's answer (`deleted`, `stage`)
+  are the same for every key.
 - The body is at most 256 KB. Errors are `{ "ok": false, "code", "error" }`.
 - `GET published` and `GET published/{slugOrId}` answer exactly as the public
   site's own reads do.

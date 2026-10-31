@@ -23,6 +23,9 @@ import { createPublicReadHandlers } from '../public-reads.js';
 import { errorResponse } from '../http/error-response.js';
 import { AGENT_ID, API_BASE_PATH, REQUESTS_PER_MINUTE, enabledCapabilities } from './keys.js';
 
+/** What the transition audit rows record as the credential for Koda's moves. */
+export const AGENT_AUTH_METHOD = 'agent_key';
+
 /** The ideaOrigin a draft Koda creates carries when Koda names none (taxonomy.js DEFAULT_IDEA_ORIGINS). */
 export const AGENT_DEFAULT_IDEA_ORIGIN = 'ai-recommendation';
 
@@ -125,6 +128,7 @@ export function createAgentContentHandlers({
       log,
       origin: DRAFT_ORIGINS.agent,
       defaultIdeaOrigin: AGENT_DEFAULT_IDEA_ORIGIN,
+      authMethod: AGENT_AUTH_METHOD,
     });
 
   /**

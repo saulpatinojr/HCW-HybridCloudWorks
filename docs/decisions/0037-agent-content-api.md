@@ -153,9 +153,13 @@ with access to "everything possible".
   [credential rotation schedule](../security/credential-rotation-schedule.md),
   which has a row for it.
 - A key whose "Read drafts" switch is off may still write when its write
-  switch is on; its answers then carry the outcome, the id and the etag but
-  not the draft's text (`bodyWithheld: true`), so the read switch means what
-  it says.
+  switch is on. Where a write, review or delete would answer with the draft
+  as the page sees it (`draft` with `fields`), the text is withheld
+  (`bodyWithheld: true`) and the summary stays: id, title, stage, etag and
+  the allowed actions. Routes that never answer with a draft view are
+  unchanged: the markdown route answers a summary with `contentId` and no
+  etag, and a delete answers `deleted` and `stage`. So the read switch means
+  what it says.
 - **Accepted risk: the plaintext crosses the browser once.** The Generate
   answer carries it to the super_admin's screen, in component state, until
   dismissed or the tab is left. It is not written to storage, the console, a

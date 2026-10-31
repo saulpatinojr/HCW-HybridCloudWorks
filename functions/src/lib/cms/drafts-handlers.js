@@ -33,6 +33,7 @@ import { randomUUID } from "node:crypto";
 import { readJsonBodyWithin } from "../http/bounded-body.js";
 import {
   authoredMessage,
+  errorCode,
   errorResponse,
   isAuthoredError,
 } from "../http/error-response.js";
@@ -138,6 +139,12 @@ const TOO_LARGE = {
   error:
     "That file is too large to be a draft (at most about 272 KB: a 256 KB article and its front matter). Nothing was saved.",
 };
+const REQUEST_TOO_LARGE = {
+  status: 413,
+  code: "TOO_LARGE",
+  error:
+    "That request is too large to be a draft (the body is capped at 256 KB). Nothing was saved.",
+};
 const NOT_FOUND = { status: 404, code: "NOT_FOUND", error: "No such draft." };
 const BAD_ID = {
   status: 400,
@@ -166,9 +173,16 @@ const refuseIf = (refusal, extra) => {
   if (refusal) throw new Refusal(refusal, extra);
 };
 
+/**
+ * A typed request's JSON body, read under the same byte bound as a markdown
+ * file (MAX_REQUEST_BYTES: the body cap, the front matter allowance, and the
+ * doubling JSON escaping can cost), so an oversize save is refused as its
+ * bytes arrive instead of being buffered whole and parsed first.
+ */
 async function readBody(request) {
-  const body = await request.json().catch(() => null);
-  return body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const read = await readJsonBodyWithin(request, MAX_REQUEST_BYTES);
+  refuseIf(read.tooLarge && REQUEST_TOO_LARGE);
+  return read.body;
 }
 
 /**
@@ -258,7 +272,7 @@ const auditTransition = (deps, { user, request, doc, from, to }) =>
     ipAddress: null,
     userAgent: request.headers?.get?.("user-agent") || null,
     metadata: {
-      authMethod: "entra_bearer_token",
+      authMethod: deps.authMethod,
       reviewedBy: editorOf(user),
       via: "drafts",
     },
@@ -320,11 +334,12 @@ async function deleteUnderEtag(deps, id, etag) {
 }
 
 /** Counters after a delete; the change feed never delivers one (T-324). */
+// Content-free: the error's code, never its message or the document id.
 async function countersAfterDelete(deps, id, context) {
   if (!deps.onContentDeleted) return;
   await Promise.resolve(deps.onContentDeleted(id)).catch((error) =>
     context?.warn?.(
-      `[drafts] counters not updated for ${id}: ${error?.message}`,
+      `[drafts] the dashboard counters were not updated after a delete (${errorCode(error)})`,
     ),
   );
 }
@@ -729,6 +744,8 @@ const ROUTES = Object.freeze({
  *   behaviour: `drafts` for a typed draft, the body's `origin` for a markdown file
  * @param {string|null} [deps.defaultIdeaOrigin] the ideaOrigin a new draft gets when the
  *   caller names none; null keeps buildNewDraftDocument's `manual`
+ * @param {string} [deps.authMethod] what the transition audit rows record as the credential:
+ *   the admin page's Entra token by default, `agent_key` for the Agent Content API
  * @returns {Record<keyof typeof ROUTES, (request: object, context: object) => Promise<object>>}
  */
 export function createDraftsHandlers({
@@ -740,6 +757,7 @@ export function createDraftsHandlers({
   log = {},
   origin = null,
   defaultIdeaOrigin = null,
+  authMethod = "entra_bearer_token",
 }) {
   const deps = {
     guard,
@@ -750,6 +768,7 @@ export function createDraftsHandlers({
     log,
     origin,
     defaultIdeaOrigin,
+    authMethod,
   };
   return Object.fromEntries(
     Object.entries(ROUTES).map(([name, [what, wrap, work]]) => [
