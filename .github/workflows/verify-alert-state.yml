@@ -103,6 +103,7 @@ jobs:
       contents: read # the checkout, nothing more
       id-token: write # exchanged by azure/login for an Azure access token
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.6 min, Oct 2026 (#1441)
     # For anything that reads this run's outcome rather than its summary: a
     # green run that could not read a recorded subscription says `partial`.
     outputs:

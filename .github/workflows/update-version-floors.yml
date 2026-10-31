@@ -82,6 +82,7 @@ jobs:
   update:
     name: Check the floors against endoflife.date, Microsoft Learn and runner-images
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.3 min, Oct 2026 (#1441)
     permissions:
       contents: read # checkout only — this job must never be able to push
     outputs:
@@ -142,6 +143,7 @@ jobs:
     # instead of ending quietly (learn catalogue run 34408439025).
     if: needs.update.outputs.changed == 'true'
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.3 min, Oct 2026 (#1441)
     # `automation` and not `production`, as in the other scheduled
     # PR-opening jobs: this opens a pull request, runs on a schedule, and an
     # approval gate would leave the run waiting for a human who is not there.

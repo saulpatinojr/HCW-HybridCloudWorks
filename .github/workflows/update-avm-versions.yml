@@ -110,6 +110,7 @@ jobs:
   update:
     name: Check the pins against the Terraform Registry
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 1.5 min, Oct 2026 (#1441)
     permissions:
       contents: read # checkout only — this job must never be able to push
     outputs:
@@ -223,6 +224,7 @@ jobs:
     # 34408439025).
     if: needs.update.outputs.changed == 'true'
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.3 min, Oct 2026 (#1441)
     # Scoped to the `automation` environment so this job's secret is reachable
     # only from a run GitHub has admitted into it (zizmor secrets-outside-env,
     # #567), like the two other scheduled PR-opening jobs. `automation` and

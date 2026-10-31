@@ -111,6 +111,7 @@ jobs:
   check:
     name: Plan carries only the known permanent diff
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.3 min, Oct 2026 (#1441)
     # Scoped to the `automation` environment so this job's secret is reachable
     # only from a run GitHub has admitted into it (zizmor secrets-outside-env,
     # #567). The estate already does this — `production` on the two deploys,

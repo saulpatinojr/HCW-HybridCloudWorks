@@ -36,12 +36,22 @@
  * They also work out, for a pull request that changes only one frontend test
  * file, which steps of each row would run.
  *
+ * ## 3. Every job that runs repository code has a time limit (#1441)
+ *
+ * A job with no `timeout-minutes` gets GitHub's default of six hours. A test
+ * that loops forever (an import cycle the path-filter guard fails to notice,
+ * say) never gives control back to vitest, so vitest's own timeout cannot
+ * stop it, and the pull request sits on "pending" for hours instead of going
+ * red. The last part of this file reads every workflow in
+ * `.github/workflows/` and fails when a job that checks out this repository
+ * and then runs a shell step has no limit of its own.
+ *
  * Needs bash, git and grep on the path. Where one is missing the tests that
  * run the shell are skipped, and their names say so; on GitHub Actions a test
  * fails if they are missing, so the shell tests cannot go quiet in CI.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -408,5 +418,95 @@ describe('the path-filter guard runs on every pull request (#1428)', () => {
     expect(scriptsRow.test).toBe('npm test');
     expect(stepsThatRun(scriptsRow, 'true')).toEqual(['Install (lockfile-strict)', GUARD_STEP, 'Test']);
     expect(stepsThatRun(scriptsRow, 'false')).toEqual(['Install (lockfile-strict)', GUARD_STEP]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Every job that runs repository code has a time limit (#1441).
+// ---------------------------------------------------------------------------
+const WORKFLOWS = join(REPO, '.github', 'workflows');
+
+/**
+ * The rule for "runs repository code": the job checks out a repository
+ * (`actions/checkout`) and has a `run:` step after that. A shell step after a
+ * checkout can run anything the checkout brought in, so it can hang. A job
+ * made only of other actions, or one that never checks out, is left out, and
+ * every job left out today is named in LEFT_OUT below with the reason.
+ */
+export function runsRepositoryCode(job) {
+  const checkout = job.steps.findIndex((step) => /^actions\/checkout@/.test(step.uses ?? ''));
+  return checkout !== -1 && job.steps.slice(checkout + 1).some((step) => step.run !== undefined);
+}
+
+/** The job's own `timeout-minutes` as a number, or undefined when it has none (or it is not a plain number). */
+export function timeoutMinutes(job) {
+  const line = job.lines.find((text) => /^ {4}timeout-minutes:/.test(text));
+  if (!line) return undefined;
+  const value = line.replace(/^ {4}timeout-minutes:\s*/, '').replace(/\s+#.*$/, '').trim();
+  return /^\d+$/.test(value) ? Number(value) : Number.NaN;
+}
+
+/**
+ * The jobs the rule above does not cover, by `file / job`, each with the
+ * reason. The test fails if a job joins or leaves this set without the list
+ * changing too, so a job that slips outside the rule is noticed and argued
+ * for, not missed.
+ */
+const LEFT_OUT = new Map([
+  ['addon-image-scout.yml / scout', 'Never checks out this repository: it only reads the published images. It has its own limit anyway (15 minutes).'],
+  ['dependency-review.yml / dependency-review', 'Its only step after the checkout is the dependency-review action; there is no shell step that runs code from this repository.'],
+  ['docs-pages.yml / deploy', 'Never checks out the repository: it hands the site the build job made to the Pages deploy action, with no shell step.'],
+]);
+
+/** GitHub-hosted runners stop a job after six hours whatever it asks for; Copilot's setup job allows at most 59 minutes. */
+const MAX_MINUTES = 360;
+const COPILOT_MAX_MINUTES = 59;
+
+describe('every job that runs repository code has a time limit (#1441)', () => {
+  const FILES = readdirSync(WORKFLOWS)
+    .filter((name) => /\.ya?ml$/.test(name))
+    .sort();
+  const JOBS_BY_FILE = FILES.map((name) => [name, parseJobs(readFileSync(join(WORKFLOWS, name), 'utf8').replace(/\r\n/g, '\n'))]);
+  const ALL = JOBS_BY_FILE.flatMap(([name, jobs]) => jobs.map((job) => ({ label: `${name} / ${job.key}`, name, job })));
+
+  it('finds the workflow files and their jobs (a quiet read would make the checks below pass for nothing)', () => {
+    expect(FILES.length).toBeGreaterThan(20);
+    for (const [name, jobs] of JOBS_BY_FILE) expect(jobs.length, `${name} has no jobs the parser can see`).toBeGreaterThan(0);
+    expect(ALL.filter(({ job }) => runsRepositoryCode(job)).length).toBeGreaterThan(30);
+  });
+
+  it('reads the rule the way it is written', () => {
+    const job = (steps, lines = []) => ({ steps, lines });
+    const checkout = { uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' };
+    expect(runsRepositoryCode(job([checkout, { run: 'npm test' }]))).toBe(true);
+    expect(runsRepositoryCode(job([checkout, { uses: 'actions/setup-node@x' }, { run: 'npm ci' }]))).toBe(true);
+    expect(runsRepositoryCode(job([checkout, { uses: 'actions/dependency-review-action@x' }]))).toBe(false);
+    expect(runsRepositoryCode(job([{ run: 'curl -fsS https://example.invalid' }]))).toBe(false);
+    expect(runsRepositoryCode(job([{ run: 'echo before' }, checkout]))).toBe(false);
+    expect(timeoutMinutes(job([], ['    runs-on: ubuntu-26.04', '    timeout-minutes: 20 # slowest 3 min']))).toBe(20);
+    expect(timeoutMinutes(job([], ['    # timeout-minutes: 20', '        timeout-minutes: 5']))).toBeUndefined();
+    expect(timeoutMinutes(job([], ['    timeout-minutes: ${{ matrix.limit }}']))).toBeNaN();
+  });
+
+  it.each(ALL.filter(({ job }) => runsRepositoryCode(job)).map(({ label, name, job }) => [label, name, job]))(
+    '%s has a timeout-minutes of its own',
+    (label, name, job) => {
+      const minutes = timeoutMinutes(job);
+      expect(
+        minutes,
+        `${label} checks out the repository and runs a shell step, but has no \`timeout-minutes:\` on the job. Without one a stuck step ` +
+          'holds the runner for GitHub\'s default of six hours and the check shows "pending" instead of failing. Add `timeout-minutes:` under ' +
+          '`runs-on:`, a few times the slowest normal run of the job (look it up in the Actions tab first), as a plain number.'
+      ).toBeDefined();
+      expect(Number.isInteger(minutes) && minutes > 0, `${label}: timeout-minutes must be a plain whole number of minutes`).toBe(true);
+      const cap = name === 'copilot-setup-steps.yml' ? COPILOT_MAX_MINUTES : MAX_MINUTES;
+      expect(minutes, `${label}: ${minutes} minutes is more than the ${cap} allowed, so it would not be the limit that applies`).toBeLessThanOrEqual(cap);
+    }
+  );
+
+  it('leaves out exactly the jobs listed with a reason (a job slipping outside the rule is noticed)', () => {
+    const outside = ALL.filter(({ job }) => !runsRepositoryCode(job)).map(({ label }) => label).sort();
+    expect(outside).toEqual([...LEFT_OUT.keys()].sort());
+    for (const [label, why] of LEFT_OUT) expect(why.length, `${label} needs a reason`).toBeGreaterThan(40);
   });
 });

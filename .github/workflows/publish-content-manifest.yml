@@ -128,6 +128,7 @@ jobs:
     # last committed version.
     if: ${{ vars.MANIFEST_WINDOW_CLIENT_ID != '' }}
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 1.5 min, Oct 2026 (#1441)
     permissions:
       contents: read # checkout only — this job must never be able to push
       id-token: write # federated credential exchange for azure/login
@@ -242,6 +243,7 @@ jobs:
     name: Open a pull request if the manifest changed
     needs: build
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.3 min, Oct 2026 (#1441)
     # Scoped to the `automation` environment so this job's secret is reachable
     # only from a run GitHub has admitted into it (zizmor secrets-outside-env,
     # #567). The estate already does this — `production` on the two deploys,

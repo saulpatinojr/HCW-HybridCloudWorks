@@ -46,6 +46,7 @@ jobs:
   build:
     name: Build (mkdocs --strict)
     runs-on: ubuntu-26.04
+    timeout-minutes: 10 # slowest 0.7 min, Oct 2026 (#1441)
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
