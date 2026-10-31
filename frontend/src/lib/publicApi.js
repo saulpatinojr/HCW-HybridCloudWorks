@@ -617,10 +617,17 @@ export async function fetchLabSubmissionStatus() {
   return checked;
 }
 
-/** A failed lab call as an Error carrying the server's status and code; the page words it from the code. */
+/**
+ * A failed lab call as an Error carrying the server's status and code; the page words it from the code.
+ * The message is the server's `error`, or its `reason` (the visitor session routes answer a
+ * refusal with a sentence for the visitor in `reason`, #1464), and only then the HTTP status.
+ */
 async function labError(res, what) {
   const data = await res.json().catch(() => ({}));
-  const error = new Error(data.error || `${what} failed with HTTP ${res.status}`);
+  const sentence = [data.error, data.reason].find(
+    (value) => typeof value === 'string' && value.trim()
+  );
+  const error = new Error(sentence || `${what} failed with HTTP ${res.status}`);
   error.status = res.status;
   error.code = typeof data.code === 'string' ? data.code : null;
   return error;
@@ -696,6 +703,10 @@ export async function fetchVisitorSessionStatus() {
 
 /**
  * POST public/labs/visitor-session — request an ephemeral visitor lab session (#1016).
+ * A refusal throws with `status`, `code` and the server's sentence as the message: 409
+ * `VISITOR_START_IN_PROGRESS` (a start of this visitor is still being set up, so wait and read
+ * the status again), 429 `TURNSTILE_RATE_LIMITED` or `VISITOR_RATE_LIMITED`, 503
+ * `LAB_CAPACITY_REACHED`, and so on.
  *
  * @param {{ labId: string, turnstileToken: string }} body
  * @returns {Promise<{ ok: true, sessionId: string, labId: string, accessUrl: string, expiresAt: string }>}
@@ -717,9 +728,12 @@ export async function startVisitorSession(body) {
 
 /**
  * DELETE public/labs/visitor-session?sessionId=... — stop/terminate a visitor lab session (#1016).
+ * The answer is `{ ok, status: 'ended', cleanup }`: `cleanup` says whether the lab is gone
+ * (`done`), will be removed by a later try (`pending`), or needs a person (`failed`). The visitor
+ * is done with the session in every case (#1403, item 7).
  *
  * @param {string} sessionId
- * @returns {Promise<{ ok: boolean, status: string }>}
+ * @returns {Promise<{ ok: boolean, status: string, cleanup?: 'done' | 'pending' | 'failed' }>}
  */
 export async function stopVisitorSession(sessionId) {
   const path = `public/labs/visitor-session?${new URLSearchParams({ sessionId })}`;

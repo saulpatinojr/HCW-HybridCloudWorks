@@ -1,19 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { runCosmosQuery } from '../../../test/cosmos-predicate.js';
 import { memoryStore } from '../../../test/memory-store.js';
 import { createClientIdentity } from '../auth/client-identity.js';
 import {
   CLEANUP_LEASE_MS,
+  CLEANUP_REARM_MS,
   CLEANUP_RETRY_BASE_MS,
   CODER_CALL_TIMEOUT_MS,
   CODER_PROVISION_TIMEOUT_MS,
   DOOR_CODES,
   MAX_CLEANUP_ATTEMPTS,
+  MAX_CLEANUP_ROUNDS,
   MAX_SWEEP_SESSIONS,
+  PROVISION_LEASE_MS,
   RETRY_SWEEP_EVERY_MS,
   VISITOR_DOC_TTL_SECONDS,
   VISITOR_FAILED_DOC_TTL_SECONDS,
   VISITOR_PENDING_DOC_TTL_SECONDS,
   VISITOR_SESSION_SWITCH,
+  VISITOR_USERNAME_SHAPE,
   createVisitorCoderUser,
   createVisitorSessionHandlers,
   createVisitorWorkspace,
@@ -65,21 +70,6 @@ const BOB_KEY = keyOf(BOB);
 const makeHandlers = (deps) => createVisitorSessionHandlers({ identity: realIdentity(), ...deps });
 
 /**
- * Answers the three queries the module sends: by type, by status, and by expiry.
- * An in-memory store cannot run Cosmos SQL, so the test says what Cosmos would answer.
- */
-function sessionQuery({ docs, parameters }) {
-  const value = (name) => parameters?.find((p) => p.name === name)?.value;
-  return docs.filter(
-    (d) =>
-      (value('@type') === undefined || d.type === value('@type')) &&
-      (value('@status') === undefined || d.status === value('@status')) &&
-      (value('@nowIso') === undefined || d.expiresAt <= value('@nowIso')) &&
-      (value('@dueIso') === undefined || d.retryAt <= value('@dueIso'))
-  );
-}
-
-/**
  * A store that behaves like Cosmos where it matters here (test/memory-store.js):
  * a replace with a stale ETag is a 412, a create over an existing id a 409, and
  * `replaceDocIfMatch` takes the real function's arguments
@@ -92,9 +82,16 @@ function sessionQuery({ docs, parameters }) {
  */
 function cosmosLikeStore(sessions = []) {
   return memoryStore(Object.fromEntries(sessions.map((s) => [`lab_jobs/${s.id}`, s])), {
-    query: sessionQuery,
+    // The module's own SQL, run against these documents (#1403, item 8).
+    query: runCosmosQuery,
   });
 }
+
+/** Starts used on a counter: what it took, less the refund documents written for it (#1464 review, round 2). */
+const usedStarts = (store, quotaId) => {
+  const refunds = [...store.docs.values()].filter((d) => d.kind === 'visitor_refund' && d.quotaId === quotaId).length;
+  return (store.get('submission_quota', quotaId)?.count ?? 0) - refunds;
+};
 
 /** The store most tests use: Cosmos-like, plus the compare-and-increment the daily cap takes. */
 function mockStore(initialDocs = []) {
@@ -102,11 +99,13 @@ function mockStore(initialDocs = []) {
   store.incrementIf = vi.fn(async (container, id, options) => {
     const existing = store.docs.get(`${container}/${id}`);
     if (!existing) throw Object.assign(new Error('NotFound'), { code: 404 });
-    const limit = options?.conditionValues?.limit;
-    if (typeof limit === 'number' && (existing.count || 0) >= limit) {
+    // The two conditions the daily cap sends: `c.count < @limit` to take, `c.count > @floor` to give back.
+    const { limit, floor } = options?.conditionValues ?? {};
+    const count = existing.count || 0;
+    if ((typeof limit === 'number' && count >= limit) || (typeof floor === 'number' && count <= floor)) {
       throw Object.assign(new Error('PreconditionFailed'), { code: 412 });
     }
-    existing.count = (existing.count || 0) + 1;
+    existing.count = count + (options?.value ?? 1);
     return existing;
   });
   return store;
@@ -184,19 +183,20 @@ describe('Coder API helpers', () => {
     );
   });
 
-  it('throws error when user creation fails', async () => {
+  it("throws with the status only, not Coder's text, when user creation fails (#1403, item 9)", async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: false,
       status: 500,
-      text: async () => 'internal error',
+      text: async () => 'internal error naming v-123456 and the database host',
     }));
-    await expect(
-      createVisitorCoderUser(fetchImpl, { base: 'https://coder.example.com', token: 'tok' }, {
-        username: 'v-123456',
-        email: 'v-123456@visitor.lab.hybridcloudworks.com',
-        password: 'pass',
-      })
-    ).rejects.toThrow('Failed to create Coder user: HTTP 500 internal error');
+    const failure = createVisitorCoderUser(fetchImpl, { base: 'https://coder.example.com', token: 'tok' }, {
+      username: 'v-123456',
+      email: 'v-123456@visitor.lab.hybridcloudworks.com',
+      password: 'pass',
+    }).catch((error) => error);
+    const error = await failure;
+    expect(error.message).toBe('Failed to create Coder user: HTTP 500');
+    expect(errorKind(error)).toBe('500');
   });
 
   it('throws error when listing templates fails or template is not found', async () => {
@@ -239,7 +239,7 @@ describe('Coder API helpers', () => {
     ).rejects.toThrow('No default Coder organization found');
   });
 
-  it('throws error when workspace creation fails', async () => {
+  it("throws with the status only, not Coder's text, when workspace creation fails (#1403, item 9)", async () => {
     const fetchImpl = vi.fn(async (url) => {
       if (url.endsWith('/templates')) return { ok: true, json: async () => [{ id: 't1', name: 'hcw-lab' }] };
       if (url.endsWith('/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
@@ -252,7 +252,9 @@ describe('Coder API helpers', () => {
         workspaceName: 'lab-lzb',
         labId: 'landing-zone-builder-output',
       })
-    ).rejects.toThrow('Failed to create visitor workspace: HTTP 400 workspace limit reached');
+    ).rejects.toThrow(/^Failed to create visitor workspace: HTTP 400$/);
+    // Coder's text is not read at all, so it cannot reach a log line.
+    await expect(fetchImpl.mock.results.at(-1).value).resolves.toMatchObject({ status: 400 });
   });
 
   it('creates visitor workspace and returns accessUrl', async () => {
@@ -992,7 +994,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       const res = await handlers.stopSession(stopRequest('sess-1'));
 
       expect(res.status).toBe(200);
-      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended' });
+      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended', cleanup: 'done' });
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({
         status: 'ended',
         endedAt: new Date(NOW).toISOString(),
@@ -1036,7 +1038,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       const again = await handlers.stopSession(stopRequest('sess-1'));
 
       expect(again.status).toBe(200);
-      expect(JSON.parse(again.body)).toEqual({ ok: true, status: 'ended' });
+      expect(JSON.parse(again.body)).toEqual({ ok: true, status: 'ended', cleanup: 'done' });
       expect(fetchImpl).not.toHaveBeenCalled();
       expect(store.get('lab_jobs', 'sess-1').status).toBe('ended');
     });
@@ -1050,7 +1052,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       const res = await handlers.stopSession(stopRequest('sess-1'));
 
       expect(res.status).toBe(200);
-      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended' });
+      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended', cleanup: 'done' });
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'expired', endedAt: reapedAt });
     });
 
@@ -1144,7 +1146,7 @@ describe('visitor sessions against a store that behaves like Cosmos (#1383)', ()
       const res = await handlers.stopSession(stopRequest('sess-1'));
 
       expect(res.status).toBe(200);
-      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended' });
+      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended', cleanup: 'pending' });
     });
 
     it('answers success but does not save the session as ended, and warns without content, when Coder does not accept the clean-up', async () => {
@@ -1444,7 +1446,8 @@ describe('visitor sessions know who is calling (#1387)', () => {
       // One counter each, named for the hash; nothing shared.
       expect(store.get('submission_quota', `visitor-quota:${ALICE_KEY}:${DAY}`)).toMatchObject({ count: 1 });
       expect(store.get('submission_quota', `visitor-quota:${BOB_KEY}:${DAY}`)).toMatchObject({ count: 1 });
-      const quotaIds = [...store.docs.keys()].filter((key) => key.startsWith('submission_quota/'));
+      // The daily counters only (the start lock and the slots live in the same container).
+      const quotaIds = [...store.docs.keys()].filter((key) => key.startsWith('submission_quota/visitor-quota:'));
       expect(quotaIds.some((key) => key.includes('unidentified'))).toBe(false);
       expect(quotaIds).toHaveLength(2);
     });
@@ -1472,15 +1475,20 @@ describe('visitor sessions know who is calling (#1387)', () => {
     it("uses up a caller's two sessions a day through the route, and still serves the other caller", async () => {
       const store = mockStore();
       const handlers = makeHandlers({ store, fetchImpl: visitorFetch(), clock: () => NOW });
+      const quota = () => store.get('submission_quota', `visitor-quota:${ALICE_KEY}:${DAY}`)?.count;
 
       const first = parsed(await startAs(handlers, ALICE));
+      const again = parsed(await startAs(handlers, ALICE));
+      await handlers.stopSession(stopRequest(first.body.sessionId, ALICE));
       const second = parsed(await startAs(handlers, ALICE));
+      await handlers.stopSession(stopRequest(second.body.sessionId, ALICE));
       const third = parsed(await startAs(handlers, ALICE));
       const bob = parsed(await startAs(handlers, BOB));
 
-      expect([first.status, second.status, third.status, bob.status]).toEqual([201, 200, 429, 201]);
-      // The second request was Alice's own session handed back, not a new one.
-      expect(second.body.sessionId).toBe(first.body.sessionId);
+      expect([first.status, again.status, second.status, third.status, bob.status]).toEqual([201, 200, 201, 429, 201]);
+      // The repeat was Alice's own session handed back, not a new one, and it cost her nothing (#1400, item 1).
+      expect(again.body.sessionId).toBe(first.body.sessionId);
+      expect(quota()).toBe(2);
     });
 
     it("gives Cloudflare's Turnstile the caller's own address, not nothing", async () => {
@@ -1604,6 +1612,8 @@ describe('visitor sessions know who is calling (#1387)', () => {
       const handlers = makeHandlers({ store, fetchImpl, clock: () => NOW });
       const { sessionId } = parsed(await startAs(handlers, ALICE)).body;
       fetchImpl.mockClear();
+      // The start saved the session over its provisioning record; only what the stop does counts here.
+      store.replaceDocIfMatch.mockClear();
 
       const bobTries = await handlers.stopSession(stopRequest(sessionId, BOB));
       const nobody = await handlers.stopSession(stopRequest('an-id-that-never-existed', BOB));
@@ -1626,7 +1636,7 @@ describe('visitor sessions know who is calling (#1387)', () => {
 
       const alice = parsed(await handlers.stopSession(stopRequest(sessionId, ALICE)));
 
-      expect(alice).toEqual({ status: 200, body: { ok: true, status: 'ended' } });
+      expect(alice).toEqual({ status: 200, body: { ok: true, status: 'ended', cleanup: 'done' } });
       expect(store.get('lab_jobs', sessionId).status).toBe('ended');
       expect(coderCallsOf(fetchImpl)).toEqual([
         expect.stringMatching(/^POST .*\/builds$/),
@@ -1730,11 +1740,41 @@ describe('visitor sessions know who is calling (#1387)', () => {
       expect(store.get('lab_jobs', sessionId).status).toBe('active');
     });
 
-    it('is let through in dev, where the helper allows an unverified origin and no address is trusted', async () => {
-      const dev = createClientIdentity({ ipSalt: IP_SALT, allowUnverifiedOrigin: true });
+    // #1400, item 5: the helper lets an unproved origin through whenever NODE_ENV is not
+    // "production" (allowUnverifiedOrigin). These routes refuse it anyway, so a Function App or
+    // slot that lost NODE_ENV, or never had CF_ORIGIN_SECRET, files nothing under an address the
+    // caller chose.
+    it.each([
+      ['no origin secret configured at all', { ipSalt: IP_SALT, allowUnverifiedOrigin: true }],
+      ['the secret configured, and a request that does not carry it', { originSecret: ORIGIN_SECRET, ipSalt: IP_SALT, allowUnverifiedOrigin: true }],
+    ])('is refused on all three routes, reading nothing, where the helper allows an unverified origin: %s', async (_name, options) => {
+      const store = mockStore([activeSession('sess-1')]);
+      const fetchImpl = visitorFetch();
+      const context = { warn: vi.fn() };
+      const handlers = makeHandlers({ identity: createClientIdentity(options), store, fetchImpl, clock: () => NOW });
+      // A spoofed address, as anyone reaching the Function App directly could send.
+      const send = new Headers({ origin: SITE, 'cf-connecting-ip': ALICE });
+
+      const start = await handlers.startSession(
+        { headers: send, json: async () => ({ labId: 'landing-zone-builder-output', turnstileToken: TOKEN }) },
+        context
+      );
+      const status = await handlers.getStatus({ headers: send }, context);
+      const stop = await handlers.stopSession({ url: stopRequest('sess-1').url, headers: send }, context);
+
+      expect([start.status, status.status, stop.status]).toEqual([403, 403, 403]);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(store.queryDocs).not.toHaveBeenCalled();
+      expect(store.readDoc).not.toHaveBeenCalled();
+      expect(store.get('lab_jobs', 'sess-1').status).toBe('active');
+      expect(context.warn).toHaveBeenCalledWith('visitor-session: refused a request whose caller could not be verified');
+    });
+
+    it('lets a developer through on their own machine once they set the origin secret and send it', async () => {
+      const dev = createClientIdentity({ originSecret: ORIGIN_SECRET, ipSalt: IP_SALT, allowUnverifiedOrigin: true });
       const handlers = makeHandlers({ identity: dev, store: mockStore(), fetchImpl: visitorFetch(), clock: () => NOW });
 
-      expect((await handlers.getStatus({ headers: new Headers() })).status).toBe(200);
+      expect((await statusAs(handlers, ALICE)).status).toBe(200);
     });
 
     it('lets an error that is not the helper\'s refusal through, instead of answering "Forbidden"', async () => {
@@ -1908,7 +1948,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       const res = await handlers.stopSession(stopRequest('sess-1'), context);
 
       expect(res.status).toBe(200);
-      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended' });
+      expect(JSON.parse(res.body)).toEqual({ ok: true, status: 'ended', cleanup: 'pending' });
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({
         status: 'cleanup_pending',
         endStatus: 'ended',
@@ -2092,7 +2132,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(store.get('lab_jobs', 'sess-1')).toMatchObject({ status: 'expired', userGone: true });
     });
 
-    it('keeps an expired session waiting when Coder refuses, backs off more each time, and gives up after the last try', async () => {
+    it('keeps an expired session waiting when Coder refuses, backs off more each time, and gives up the round after the last try', async () => {
       const store = cosmosLikeStore([expiredSession('old-1')]);
       const fetchImpl = scriptedCoder({ workspace: [202], user: [417] });
       const log = vi.fn();
@@ -2121,21 +2161,91 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
         ttl: VISITOR_FAILED_DOC_TTL_SECONDS,
         // The ids stay, so a person can finish the clean-up by hand.
         coderUserId: 'u-old-1',
+        // Another round, an hour on (#1403, item 3).
+        retryAt: iso(now + CLEANUP_REARM_MS),
       });
-      expect(log.mock.calls.at(-1)[0]).toContain(`given up after ${MAX_CLEANUP_ATTEMPTS} tries`);
+      expect(log.mock.calls.at(-1)[0]).toContain(`given up after ${MAX_CLEANUP_ATTEMPTS} tries in round 1`);
       for (const [line] of log.mock.calls) expect(line).not.toMatch(/old-1|ws-old-1|u-old-1/);
-      // Only the first try asked for the workspace delete.
-      expect(coderCalls(fetchImpl).filter((call) => call.startsWith('POST'))).toHaveLength(1);
+      // The workspace delete was asked for on the first try, and again after three refusals of the user in a row.
+      expect(coderCalls(fetchImpl).filter((call) => call.startsWith('POST'))).toHaveLength(2);
       expect(retryAts).toHaveLength(MAX_CLEANUP_ATTEMPTS - 1);
 
-      // Given up is final: nothing looks at it again, for a stop either.
+      // Not looked at again before its next round, by the sweep or a stop.
       fetchImpl.mockClear();
-      now += 24 * 60 * 60 * 1000;
+      now += CLEANUP_REARM_MS - 1000;
       expect(await sweep(store, fetchImpl)).toEqual(tally());
       const handlers = makeHandlers({ store, fetchImpl, clock });
-      expect((await handlers.stopSession(stopRequest('old-1'))).status).toBe(200);
+      const stop = await handlers.stopSession(stopRequest('old-1'));
+      expect(JSON.parse(stop.body)).toEqual({ ok: true, status: 'ended', cleanup: 'failed' });
       expect(fetchImpl).not.toHaveBeenCalled();
       expect(store.get('lab_jobs', 'old-1').status).toBe('cleanup_failed');
+    });
+
+    it('asks for the workspace delete again after three refusals of the user in a row, since the delete build may have failed (#1403, item 3)', async () => {
+      const store = cosmosLikeStore([waiting('w-1', { userRefusals: 2 })]);
+      // The first delete build failed, so the user is refused; asked again, Coder deletes the workspace.
+      const fetchImpl = scriptedCoder({ workspace: [202], user: [417, 204] });
+      const log = vi.fn();
+      now = NOW + CLEANUP_RETRY_BASE_MS;
+
+      expect(await sweep(store, fetchImpl, { log })).toEqual(tally({ pending: 1 }));
+      expect(coderCalls(fetchImpl)).toEqual(['DELETE /api/v2/users/u-w-1']);
+      expect(store.get('lab_jobs', 'w-1')).toMatchObject({ status: 'cleanup_pending', workspaceGone: false, userRefusals: 0 });
+      expect(store.get('lab_jobs', 'w-1').workspaceConfirmedBy).toBeUndefined();
+      expect(log.mock.calls.at(-1)[0]).toContain('the workspace delete will be asked for again');
+
+      fetchImpl.mockClear();
+      now = Date.parse(store.get('lab_jobs', 'w-1').retryAt);
+      expect(await sweep(store, fetchImpl, { log })).toEqual(tally({ finished: 1 }));
+      expect(coderCalls(fetchImpl)).toEqual(['POST /api/v2/workspaces/ws-w-1/builds', 'DELETE /api/v2/users/u-w-1']);
+      expect(store.get('lab_jobs', 'w-1')).toMatchObject({ status: 'ended', workspaceConfirmedBy: 'ok', userConfirmedBy: 'ok' });
+    });
+
+    it('counts only refusals in a row: a user delete that fails another way starts the count again', async () => {
+      const store = cosmosLikeStore([waiting('w-2', { userRefusals: 2 })]);
+      const fetchImpl = scriptedCoder({ user: ['timeout'] });
+      now = NOW + CLEANUP_RETRY_BASE_MS;
+
+      await sweep(store, fetchImpl);
+
+      expect(store.get('lab_jobs', 'w-2')).toMatchObject({ workspaceGone: true, userRefusals: 0 });
+    });
+
+    it('takes a given-up record up again an hour later, as a new round, and finishes it when Coder lets go (#1403, item 3)', async () => {
+      const store = cosmosLikeStore([
+        waiting('f-1', { status: 'cleanup_failed', cleanupAttempts: MAX_CLEANUP_ATTEMPTS, retryAt: iso(NOW + CLEANUP_REARM_MS) }),
+      ]);
+      const fetchImpl = scriptedCoder({ user: [417] });
+
+      now = NOW + CLEANUP_REARM_MS;
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ pending: 1 }));
+      expect(store.get('lab_jobs', 'f-1')).toMatchObject({ status: 'cleanup_pending', cleanupAttempts: 1, cleanupRounds: 1 });
+
+      fetchImpl.mockImplementation(async () => ({ ok: true, status: 204 }));
+      now = Date.parse(store.get('lab_jobs', 'f-1').retryAt);
+      expect(await sweep(store, fetchImpl)).toEqual(tally({ finished: 1 }));
+      expect(store.get('lab_jobs', 'f-1').status).toBe('ended');
+    });
+
+    it('leaves a record for a person after the last round: no next round, and nothing calls Coder for it again', async () => {
+      const store = cosmosLikeStore([waiting('f-2', { cleanupAttempts: MAX_CLEANUP_ATTEMPTS - 1, cleanupRounds: MAX_CLEANUP_ROUNDS })]);
+      const fetchImpl = scriptedCoder({ user: [417] });
+      const log = vi.fn();
+      now = NOW + CLEANUP_RETRY_BASE_MS;
+
+      expect(await sweep(store, fetchImpl, { log })).toEqual(tally({ failed: 1 }));
+      const record = store.get('lab_jobs', 'f-2');
+      expect(record).toMatchObject({ status: 'cleanup_failed', ttl: VISITOR_FAILED_DOC_TTL_SECONDS });
+      expect(record.retryAt).toBeUndefined();
+      expect(log.mock.calls.at(-1)[0]).toContain('given up for good');
+      expect(log.mock.calls.at(-1)[0]).toContain('no longer counts against the visitor lab limit');
+
+      fetchImpl.mockClear();
+      now += 6 * 24 * 60 * 60 * 1000;
+      expect(await sweep(store, fetchImpl)).toEqual(tally());
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+      expect(JSON.parse((await handlers.stopSession(stopRequest('f-2'))).body).cleanup).toBe('failed');
+      expect(fetchImpl).not.toHaveBeenCalled();
     });
 
     it('takes over a claim whose holder never finished, once its lease has run out and not before', async () => {
@@ -2354,15 +2464,15 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       await status();
       await vi.waitFor(() => expect(store.get('lab_jobs', 'old-1').status).toBe('expired'));
-      // The status read's own query, then the sweep's three.
-      expect(store.queryDocs).toHaveBeenCalledTimes(4);
+      // The status read's own query, then the sweep's two (past their hour; due again).
+      expect(store.queryDocs).toHaveBeenCalledTimes(3);
 
       store.docs.set('lab_jobs/old-2', { ...structuredClone(expiredSession('old-2')), _etag: '"seed"' });
       now = NOW + RETRY_SWEEP_EVERY_MS - 1;
       await status();
       await new Promise((resolve) => setTimeout(resolve, 30));
       // Only the status read's own query: no second sweep, so old-2 waits.
-      expect(store.queryDocs).toHaveBeenCalledTimes(5);
+      expect(store.queryDocs).toHaveBeenCalledTimes(4);
       expect(store.get('lab_jobs', 'old-2').status).toBe('active');
     });
 
@@ -2540,6 +2650,7 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
         if (target.endsWith('/api/v2/organizations')) return { ok: true, json: async () => [{ id: 'org-1' }] };
         if (target.endsWith('/api/v2/users')) {
           if (user === 'refused') return { ok: false, status: 500, text: async () => 'boom' };
+          if (user === 'timeout') throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
           return { ok: true, json: async () => NEW_USER };
         }
         if (/\/members\/[^/]+\/workspaces$/.test(target)) {
@@ -2607,21 +2718,76 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
       expect(jobDocs(store)[0]).toMatchObject({ status: 'cleanup_pending', coderUserId: NEW_USER.id, startFailed: true });
     });
 
-    it('keeps nothing when the user was never made: there is nothing in Coder to clean up', async () => {
-      const store = mockStore();
-      const handlers = makeHandlers({ store, fetchImpl: startFetch({ user: 'refused' }), clock });
+    it("keeps a note with the user's name when the user create fails, since Coder may have made the user anyway (#1403, item 2)", async () => {
+      for (const user of ['refused', 'timeout']) {
+        const store = mockStore();
+        const fetchImpl = startFetch({ user });
+        const handlers = makeHandlers({ store, fetchImpl, clock });
 
-      expect((await startAsAlice(handlers, { error: vi.fn() })).status).toBe(502);
+        expect((await startAsAlice(handlers, { error: vi.fn() })).status).toBe(502);
 
-      expect(jobDocs(store)).toEqual([]);
+        const [note, ...others] = jobDocs(store);
+        expect(others).toEqual([]);
+        // No workspace was asked for, so that half is done and the note holds no lab slot.
+        expect(note).toMatchObject({ status: 'cleanup_pending', startFailed: true, workspaceName: 'lab-lzb', userGone: false, workspaceGone: true });
+        // The name the broker chose and sent to Coder; there is no id, since no answer gave one.
+        const sent = JSON.parse(fetchImpl.mock.calls.find(([url]) => String(url).endsWith('/api/v2/users'))[1].body);
+        expect(note.coderUsername).toBe(sent.username);
+        expect(note.coderUsername).toMatch(VISITOR_USERNAME_SHAPE);
+        expect(note.coderUserId).toBeUndefined();
+        expect(note.clientHash).toBeUndefined();
+      }
     });
 
-    it('still answers 502, and says by kind only that the note was not written, when the store cannot take it', async () => {
+    it('writes the record before it asks Coder for anything, so even a call that never answers leaves one (#1403, item 2)', async () => {
+      const store = mockStore();
+      const seen = [];
+      const inner = startFetch({ workspace: 'ok' });
+      const fetchImpl = vi.fn(async (url, init) => {
+        if (String(url).startsWith(CODER.base)) seen.push(jobDocs(store).map((d) => d.status));
+        return inner(url, init);
+      });
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      expect((await startAsAlice(handlers)).status).toBe(201);
+
+      // Every Coder call found one record, `provisioning`, until the session was saved over it.
+      expect(seen.length).toBeGreaterThan(0);
+      for (const statuses of seen) expect(statuses).toEqual(['provisioning']);
+      const [session, ...others] = jobDocs(store);
+      expect(others).toEqual([]);
+      expect(session).toMatchObject({ status: 'active', ttl: VISITOR_DOC_TTL_SECONDS });
+      expect(session.retryAt).toBeUndefined();
+    });
+
+    it.each([
+      ['plainly refused (429, too many requests)', 429, 0],
+      ['given no clear answer (503, so it may have been written)', 503, 0],
+    ])('answers 503, asks Coder for nothing, and gives the start back when the record cannot be written: %s', async (_name, code, count) => {
       const store = mockStore();
       const create = store.createDoc.getMockImplementation();
       store.createDoc.mockImplementation(async (container, doc) => {
-        if (container === 'lab_jobs') throw Object.assign(new Error('cosmos is down for u-new'), { code: 503 });
+        if (container === 'lab_jobs') throw Object.assign(new Error('cosmos is down'), { code });
         return create(container, doc);
+      });
+      const fetchImpl = startFetch({ workspace: 'ok' });
+      const context = { error: vi.fn() };
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      const res = await startAsAlice(handlers, context);
+
+      expect(res.status).toBe(503);
+      expect(coderCallsOf(fetchImpl)).toEqual([]);
+      expect(usedStarts(store, `visitor-quota:${ALICE_KEY}:2026-10-17`)).toBe(count);
+      expect(context.error.mock.calls.map(([line]) => line)).toEqual([`visitor-session: a start could not be recorded (${code})`]);
+    });
+
+    it('still answers 502, and says by kind only that the note was not written, when the store cannot take it; the record stays for the sweep', async () => {
+      const store = mockStore();
+      const replace = store.replaceDocIfMatch.getMockImplementation();
+      store.replaceDocIfMatch.mockImplementation(async (container, doc, options) => {
+        if (container === 'lab_jobs') throw Object.assign(new Error('cosmos is down for u-new'), { code: 503 });
+        return replace(container, doc, options);
       });
       const context = { error: vi.fn() };
       const handlers = makeHandlers({ store, fetchImpl: startFetch({ workspace: 'timeout' }), clock });
@@ -2630,8 +2796,80 @@ describe('a clean-up Coder has not confirmed is kept, and retried (#1388)', () =
 
       expect(res.status).toBe(502);
       const lines = context.error.mock.calls.map(([line]) => line);
-      expect(lines.at(-1)).toBe('visitor-session: a failed start could not be noted for clean-up (503)');
+      expect(lines).toEqual([
+        'visitor-session: a start failed at the workspace (TimeoutError)',
+        'visitor-session: a failed start could not be noted for clean-up (503)',
+      ]);
       expect(lines.join(' ')).not.toMatch(/u-new|cosmos is down/);
+      // The record written before the first Coder call is still there; the sweep takes it after its lease.
+      const [left] = jobDocs(store);
+      expect(left).toMatchObject({ status: 'provisioning', retryAt: iso(NOW + PROVISION_LEASE_MS) });
+    });
+
+    it('answers 502 and notes both ids when Coder made both and the session could not be saved (#1403, item 2)', async () => {
+      const store = mockStore();
+      const replace = store.replaceDocIfMatch.getMockImplementation();
+      let first = true;
+      store.replaceDocIfMatch.mockImplementation(async (container, doc, options) => {
+        if (container === 'lab_jobs' && first) {
+          first = false;
+          throw Object.assign(new Error('throttled'), { code: 429 });
+        }
+        return replace(container, doc, options);
+      });
+      const context = { error: vi.fn() };
+      const handlers = makeHandlers({ store, fetchImpl: startFetch({ workspace: 'ok' }), clock });
+
+      const res = await startAsAlice(handlers, context);
+
+      expect(res.status).toBe(502);
+      expect(context.error.mock.calls[0][0]).toBe('visitor-session: a start failed at saving the session (429)');
+      const [note] = jobDocs(store);
+      expect(note).toMatchObject({
+        status: 'cleanup_pending',
+        startFailed: true,
+        coderUserId: NEW_USER.id,
+        workspaceId: 'ws-new',
+        workspaceGone: false,
+      });
+      expect(note.accessUrl).toBeUndefined();
+      expect(note.clientHash).toBeUndefined();
+      expect(usedStarts(store, `visitor-quota:${ALICE_KEY}:2026-10-17`)).toBe(0);
+    });
+
+    it('gives the daily start back when a start fails, so a failed build costs the visitor nothing (#1400, item 1)', async () => {
+      const store = mockStore();
+      const handlers = makeHandlers({ store, fetchImpl: startFetch({ workspace: 'refused' }), clock });
+
+      for (let i = 0; i < 3; i += 1) expect((await startAsAlice(handlers, { error: vi.fn() })).status).toBe(502);
+
+      expect(usedStarts(store, `visitor-quota:${ALICE_KEY}:2026-10-17`)).toBe(0);
+      const working = makeHandlers({ store, fetchImpl: startFetch({ workspace: 'ok' }), clock });
+      expect((await startAsAlice(working)).status).toBe(201);
+    });
+
+    it('refuses a second start by the same visitor while their first is being set up, without spending a start', async () => {
+      const store = mockStore();
+      let release;
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const inner = startFetch({ workspace: 'ok' });
+      const fetchImpl = vi.fn(async (url, init) => {
+        if (String(url).endsWith('/api/v2/users')) await gate;
+        return inner(url, init);
+      });
+      const handlers = makeHandlers({ store, fetchImpl, clock });
+
+      const first = startAsAlice(handlers);
+      await vi.waitFor(() => expect(jobDocs(store)).toHaveLength(1));
+      const second = await startAsAlice(handlers);
+      release();
+
+      expect(second.status).toBe(409);
+      expect(JSON.parse(second.body).code).toBe(DOOR_CODES.start_in_progress);
+      expect((await first).status).toBe(201);
+      expect(usedStarts(store, `visitor-quota:${ALICE_KEY}:2026-10-17`)).toBe(1);
     });
 
     it('is not a session anyone can see or end: the status shows none and a stop is a 404 that calls nothing', async () => {
