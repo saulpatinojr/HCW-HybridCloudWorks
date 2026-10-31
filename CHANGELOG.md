@@ -406,6 +406,24 @@ This project has not cut a tagged release; entries are grouped under
 
 ### Security
 
+- **The lab image's critical Python findings are fixed, and the base moves to
+  CPython 3.14.10 ([#1426](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1426)).**
+  Every CRITICAL and HIGH Python finding the weekly scan reported in the
+  `full` image was inside the Azure CLI's own bundled Python under `/opt/az`,
+  and Azure CLI 2.91.0 is still Microsoft's newest release. The build now
+  replaces certifi (2026.10.23), PyJWT (2.15.1), urllib3 (2.8.0) and the
+  CLI's pip (26.2.2) there, from hash-checked wheels, and runs `pip check`
+  on the result; `smoke.sh` checks each version and that the CLI's sign-in
+  libraries still import. `lab-image/versions.env`
+  (`AZURE_CLI_PYTHON_OVERRIDES`) records what waits on a publisher:
+  cryptography 48.0.1, which pyOpenSSL in the same bundle caps below 49,
+  oauthlib 3.2.2, whose fix is a new major version Microsoft has not
+  adopted, and the copies of msgpack, setuptools and urllib3 that pip keeps
+  inside itself. The base is `python:3.14.10-slim-trixie` by its own index digest
+  (the line tag differed only by a riscv64 image still on 3.14.9), and
+  terraform 1.17.1, kubectl 1.37.2 and azurerm 5.12.0 move to their newest
+  releases, each sum read from the publisher.
+
 - **Sign-in library `@azure/msal-node` no longer forced; `@azure/identity`
   4.14.1 asks for it itself ([#1346](https://github.com/saulpatinojr/HCW-HybridCloudWorks/issues/1346))**.
   The 2026-10-24 entry below added an npm `overrides` line (a line that makes
