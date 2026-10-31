@@ -61,6 +61,13 @@ trips. The session is the orchestrator of a team of agents and does the work.
   soon as it is granted. The one thing you do not do is work around a refusal
   from the safety check; you ask the owner for an explicit "allow" and give
   the exact action.
+- **Call out every discrepancy you notice, even when nobody asked.** Owner
+  instruction 2026-10-31, given after a session pointed out that Cloud Crawler
+  was the only add-on without `CORE_AUTOMERGE=true`. When one repository, file
+  or setting differs from its siblings, from the documentation or from what a
+  ticket says, name the difference in your message with its link, say whether
+  it looks deliberate (and where that is written down) or like an oversight,
+  and give the fix. Do not quietly fix it or quietly leave it.
 - **GitHub administration is yours.** Rulesets, board fields and views,
   labels, issue and pull request housekeeping, variables, closing and
   reopening, merging a pull request whose checks and reviews are in order: do
