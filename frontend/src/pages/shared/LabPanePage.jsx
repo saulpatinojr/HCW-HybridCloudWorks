@@ -111,7 +111,7 @@
  * in". So the built HTML is the lab's heading and the opening sentence, and
  * hydration matches it.
  */
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, Navigate, useParams } from 'react-router';
 import {
@@ -155,6 +155,8 @@ export const UNAVAILABLE_SENTENCE = "Lab workspaces aren't available right now."
 export const SIGN_IN_HEADING = 'Sign in with GitHub to open your lab workspace';
 export const OPENING_SENTENCE = 'Opening your lab workspace…';
 export const VISITOR_START_BUTTON = 'Start visitor session';
+/** How long the pane waits before it reads the status again after "your session is still being set up" (409). */
+export const VISITOR_START_REREAD_MS = 5000;
 export const VISITOR_CAPACITY_FULL_REASON =
   'The lab is currently at full capacity (visitor limit reached). Please try again in a few minutes, or sign in if you are a team member.';
 export const DEFAULT_TURNSTILE = Object.freeze({
@@ -673,22 +675,37 @@ function SignInStep({
   const [visitorStatus, setVisitorStatus] = useState(null);
   const [visitorStarting, setVisitorStarting] = useState(false);
   const [visitorError, setVisitorError] = useState(null);
+  // The server's sentence when a status read is refused for too many requests (429). The last
+  // status the pane read is kept, so the guest box does not vanish (#1464).
+  const [visitorNotice, setVisitorNotice] = useState(null);
+  const mounted = useRef(true);
+  const rereadTimer = useRef(null);
+
+  const readVisitorStatus = useCallback(
+    () =>
+      fetchVisitorSessionStatus()
+        .then((st) => {
+          if (!mounted.current || !st) return;
+          setVisitorNotice(null);
+          setVisitorStatus(st);
+          if (st.session) {
+            onVisitorSessionStarted?.(st.session);
+          }
+        })
+        .catch((err) => {
+          if (mounted.current && err?.status === 429 && err.message) setVisitorNotice(err.message);
+        }),
+    [onVisitorSessionStarted]
+  );
 
   useEffect(() => {
-    let active = true;
-    fetchVisitorSessionStatus()
-      .then((st) => {
-        if (!active || !st) return;
-        setVisitorStatus(st);
-        if (st.session) {
-          onVisitorSessionStarted?.(st.session);
-        }
-      })
-      .catch(() => {});
+    mounted.current = true;
+    readVisitorStatus();
     return () => {
-      active = false;
+      mounted.current = false;
+      clearTimeout(rereadTimer.current);
     };
-  }, [onVisitorSessionStarted]);
+  }, [readVisitorStatus]);
 
   const turnstileActive = Boolean(visitorStatus?.configured && visitorStatus?.open);
   const {
@@ -724,6 +741,12 @@ function SignInStep({
       renewTurnstile();
       setVisitorError(err?.message || 'Failed to start visitor session');
       setVisitorStarting(false);
+      // A start of this visitor's is still being set up: wait, then read the status again, which
+      // opens the session once it is running (#1464).
+      if (err?.code === 'VISITOR_START_IN_PROGRESS') {
+        clearTimeout(rereadTimer.current);
+        rereadTimer.current = setTimeout(readVisitorStatus, VISITOR_START_REREAD_MS);
+      }
     }
   };
 
@@ -787,6 +810,15 @@ function SignInStep({
             </p>
           ) : null}
         </div>
+      ) : null}
+      {visitorNotice ? (
+        <p
+          className="text-xs text-amber-700 dark:text-amber-400"
+          data-testid="visitor-session-notice"
+          role="status"
+        >
+          {visitorNotice}
+        </p>
       ) : null}
 
       {/* Pre-flight card with duration, toolchains, terminal preview and trust disclosures */}
