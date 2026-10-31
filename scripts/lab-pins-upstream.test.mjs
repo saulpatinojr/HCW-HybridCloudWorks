@@ -211,7 +211,7 @@ describe('trying a failed read again', () => {
     for (const status of [404, 403]) {
       const { impl, calls } = flaky(ok, { [url]: [status] });
       const { slept, retry } = noWait();
-      await expect(fetchRetrying(impl, url, {}, retry)).rejects.toThrow(new RegExp(`^${url.replace(/[.]/g, '\\.')}: HTTP ${status}$`));
+      await expect(fetchRetrying(impl, url, {}, retry)).rejects.toHaveProperty('message', `${url}: HTTP ${status}`);
       expect(calls).toHaveLength(1);
       expect(slept).toEqual([]);
     }
