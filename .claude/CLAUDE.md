@@ -80,7 +80,12 @@ trips. The session is the orchestrator of a team of agents and does the work.
 - **Use the team.** Hand each ticket, review, build and test run to the
   matching agent (see "Use the specialist agents"), brief it fully, run
   independent ones in parallel, and check what comes back yourself before you
-  call it done. Agents work in their own worktrees. Other Claude sessions
+  call it done. Agents work in their own worktrees (separate working folders
+  of the same clone), and those worktrees share one `git stash` list: on
+  2026-10-31 two agents stashed and popped within seconds of each other and
+  each got the other's changes. So an agent never uses `git stash`; to set
+  work aside it makes a temporary commit on its own branch, and every briefing
+  says so. Other Claude sessions
   work the App repositories: message them before touching the same files,
   never duplicate their branch, and never ask one to do something your own
   permissions refused.
