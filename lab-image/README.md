@@ -430,6 +430,36 @@ and attests. Where each sum comes from:
   <https://packages.microsoft.com/repos/azure-cli/dists/> lists one. The
   sandbox template installs the same release from `dists/resolute`, its
   base's own suite, so check the version is published there too.
+- Packages replaced inside the Azure CLI's own Python
+  (`AZURE_CLI_PYTHON_OVERRIDES`): the CLI bundles its own Python under
+  `/opt/az`, and this block swaps some of its outdated packages for newer
+  ones, one `name==version --hash=sha256:<sum>` line each, the sum of the
+  package's one `py3-none-any` wheel from
+  `https://pypi.org/pypi/<name>/<version>/json`. A CLI bump does not touch
+  this block, so the build checks it for you: if the new CLI already ships a
+  package at or above the version listed, or no longer ships it, the `full`
+  build stops with `Azure CLI <version> already ships <name> <version>, not
+  older than the <version> listed; remove its AZURE_CLI_PYTHON_OVERRIDES line
+  from lab-image/versions.env` (or `does not ship <name>`). Delete that line
+  and push again. When the last line goes, leave the empty block or delete
+  it; both build. `scripts/lab-image-azure-cli-overrides.test.mjs` checks the
+  shape of every line.
+- urllib3 2.8.0, one of those replacements, keeps a proxy's TLS settings
+  apart from the destination's
+  ([GHSA-8988-9cw3-xx77](https://github.com/urllib3/urllib3/security/advisories/GHSA-8988-9cw3-xx77)).
+  For the Azure CLI behind a proxy this changes nothing: it reaches HTTPS
+  sites through a proxy by a `CONNECT` tunnel (the proxy only passes the
+  encrypted traffic along) and sets no proxy-only TLS settings, so a proxy
+  written as `HTTPS_PROXY=https://…` is still checked against the CA bundle in
+  `REQUESTS_CA_BUNDLE`, as before, and an `http://` proxy has no TLS of its
+  own. Only code that passes `proxy_ssl_context` or
+  `use_forwarding_for_https=True` to urllib3 itself sees a difference (read in
+  urllib3 2.8.0's
+  [changelog](https://github.com/urllib3/urllib3/blob/2.8.0/CHANGES.rst) and
+  `src/urllib3/connection.py`, and tried on 2026-10-31 with the CLI's own
+  Python: requests reached an HTTPS site through an `https://` proxy whose
+  CA was only in `REQUESTS_CA_BUNDLE`, and failed at the proxy once that CA
+  was taken out).
 - Providers: `shasum` from
   `https://registry.terraform.io/v1/providers/<namespace>/<name>/<version>/download/linux/amd64`.
 - Builder modules (the `AVM_<KEY>_VERSION` / `AVM_<KEY>_SHA256` pairs):
