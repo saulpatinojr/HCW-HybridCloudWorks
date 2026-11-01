@@ -96,9 +96,10 @@ with access to "everything possible".
    (one sentence for all three), 403 for a capability that is off, 429 with
    `Retry-After` for the limit; every refusal of a presented site key (one
    shaped like ours: wrong, revoked, over the limit or without the
-   capability) is an `admin_audit_logs` row without the key. A request with
-   no Authorization header, or with a bearer value not shaped like a site
-   key, is refused without a row, as the admin guard refuses a missing
+   capability) is an `admin_audit_logs` row without the key. A request that
+   presents no key (no non-empty `Authorization` value and no `X-API-Key` or
+   `X-Agent-Key` header; a blank `Authorization` counts as absent), or whose
+   selected value is not shaped like a site key, is refused without a row, as the admin guard refuses a missing
    token, so the random tokens internet scanners send are not a write each. An admin token is refused here, and the key is refused by
    `requireRole`, so neither can cross into the other's routes. The
    route-inventory test knows the guard by name.
