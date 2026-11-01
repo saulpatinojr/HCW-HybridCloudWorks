@@ -594,7 +594,8 @@ so it is recorded here, where every session reads it.
     minute it names, then ask again for the same head. Once a head has been
     reviewed, ask again only for a head that changed. If a bot's first review has not
     arrived an hour after it was due (Copilot: after the required checks
-    went green; CodeRabbit: after the ask), say so on the PR, naming the
+    went green; CodeRabbit: after the first ask that was not rate limited,
+    since a rate-limited ask starts no review), say so on the PR, naming the
     bot, and treat it as unavailable for that PR: reviews stopped arriving
     altogether once before (2026-10-03), and a PR does not wait on a
     reviewer that is not coming.
