@@ -19,8 +19,15 @@ const RECORD = buildKeyRecord({ secret: SECRET, actor: 'owner@hcw.dev', now: () 
  */
 const TOKEN_SHAPED = `Bearer ${Buffer.from('{"alg":"RS256"}').toString('base64url')}.${Buffer.from('{}').toString('base64url')}.sig`;
 
-const request = (authorization) => ({
-  headers: { get: (name) => (name.toLowerCase() === 'authorization' ? authorization : null) },
+const request = (authorization, extra = {}) => ({
+  headers: {
+    get: (name) => {
+      const lower = name.toLowerCase();
+      if (lower === 'authorization') return authorization;
+      return extra[lower] ?? null;
+    },
+  },
+  query: { get: (name) => (name === 'key' || name === 'api_key' ? SECRET : null) },
 });
 const body = (res) => JSON.parse(res.body);
 
@@ -231,5 +238,32 @@ describe('the audit sink', () => {
     const auth = await guard.requireCapability(request(TOKEN_SHAPED), 'drafts.read');
     expect(auth.error.status).toBe(401);
     expect(store.readDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe('the key is read in the shapes connectors send (#1477, 2026-11-01)', () => {
+  it('accepts Bearer, the bare Authorization value, X-API-Key and X-Agent-Key, and never the query string', async () => {
+    const { guard } = setup();
+    expect((await guard.authenticate(request(`Bearer ${SECRET}`))).error).toBeNull();
+    expect((await guard.authenticate(request(`bearer ${SECRET}`))).error).toBeNull();
+    expect((await guard.authenticate(request(SECRET))).error).toBeNull();
+    expect((await guard.authenticate(request(null, { 'x-api-key': SECRET }))).error).toBeNull();
+    expect((await guard.authenticate(request(null, { 'x-agent-key': ` ${SECRET} ` }))).error).toBeNull();
+    // Only headers: the helper's query string carries the key and is ignored.
+    expect((await guard.authenticate(request(null))).error.status).toBe(401);
+  });
+
+  it('lets a non-empty Authorization win, treats a blank one as absent, and still refuses without a row what is not a site key', async () => {
+    const { guard } = setup();
+    // A token in Authorization is not rescued by a good key in X-API-Key.
+    expect((await guard.authenticate(request(TOKEN_SHAPED, { 'x-api-key': SECRET }))).error.status).toBe(401);
+    expect((await guard.authenticate(request('Basic abc', { 'x-api-key': SECRET }))).error.status).toBe(401);
+    // A blank Authorization carries nothing to prefer: the key header is read
+    // (a client that sends an empty Authorization beside its API key header).
+    expect((await guard.authenticate(request('   ', { 'x-api-key': SECRET }))).error).toBeNull();
+    expect((await guard.authenticate(request('', { 'x-agent-key': SECRET }))).error).toBeNull();
+    expect((await guard.authenticate(request(null, { 'x-api-key': 'hcwk_bad' }))).error.status).toBe(401);
+    expect(audits).toEqual([]);
+    expect(auditDenial).not.toHaveBeenCalled();
   });
 });

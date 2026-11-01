@@ -28,6 +28,14 @@ host registered when the connector is set up. It cannot run an OAuth flow,
 cannot sign requests and cannot send a second header. So the choice is an API
 key or no connection.
 
+Amended 2026-11-01: the paragraph above describes the connector as the
+proposal described it. In practice Muse's first calls carried a working key in
+a shape other than `Authorization: Bearer`, and the guard refused them. It now
+reads the key from `Authorization: Bearer <key>`, from the bare key as the
+Authorization value, or from an `X-API-Key` / `X-Agent-Key` header, never from
+the address; a non-empty Authorization wins, a blank one counts as absent. The
+hash compare behind every shape is the same, so nothing below changes.
+
 Everything else that calls this API by machine signs in with Entra: the lab
 agent with an App Role and a registry record
 ([`require-agent.js`](https://github.com/saulpatinojr/HCW-HybridCloudWorks/blob/main/functions/src/lib/auth/require-agent.js)),
@@ -88,9 +96,10 @@ with access to "everything possible".
    (one sentence for all three), 403 for a capability that is off, 429 with
    `Retry-After` for the limit; every refusal of a presented site key (one
    shaped like ours: wrong, revoked, over the limit or without the
-   capability) is an `admin_audit_logs` row without the key. A request with
-   no Authorization header, or with a bearer value not shaped like a site
-   key, is refused without a row, as the admin guard refuses a missing
+   capability) is an `admin_audit_logs` row without the key. A request that
+   presents no key (no non-empty `Authorization` value and no `X-API-Key` or
+   `X-Agent-Key` header; a blank `Authorization` counts as absent), or whose
+   selected value is not shaped like a site key, is refused without a row, as the admin guard refuses a missing
    token, so the random tokens internet scanners send are not a write each. An admin token is refused here, and the key is refused by
    `requireRole`, so neither can cross into the other's routes. The
    route-inventory test knows the guard by name.
